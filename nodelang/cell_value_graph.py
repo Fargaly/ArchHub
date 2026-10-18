@@ -412,6 +412,18 @@ def read_value_graph(
     )
     if registered.count(root_id) != 1:
         raise InvalidCell("value-graph root is not registered exactly once")
+    return read_rooted_value_graph(snapshot, protocol, root_id, max_depth=max_depth)
+
+
+def read_rooted_value_graph(snapshot: Snapshot, protocol: ValueGraphProtocol,
+                            root_id: str, *, max_depth: int = MAX_DEPTH) -> object:
+    """Validate content reached through an independently admitted direct root.
+
+    This does not establish registry membership or authorize access. The
+    ordinary public reader above still requires exactly one registration.
+    Governed legacy-content migration already holds the authoritative entry's
+    direct payload reference and must not walk the global payload registry.
+    """
     seen: set[str] = set()
 
     def read(root: str, depth: int) -> object:

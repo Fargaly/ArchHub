@@ -5,14 +5,15 @@ This stands a socket on the canvas port before the authority opens, answers
 every request with one honest progress page, and steps aside the moment the
 real canvas is ready to take the port.
 
-It holds no graph, no keys, and no authority: it can only report phases the
-boot itself published, so nothing here can serve product state.
+It holds no graph, keys or product authority. It reports boot phases and admits
+explicit retry/close choices after a refusal; it cannot serve product state.
 """
 from __future__ import annotations
 
 import base64
 import json
 import re
+import secrets
 import threading
 import time
 from http.server import BaseHTTPRequestHandler
@@ -44,6 +45,9 @@ class BootProgress:
         self._done = False
         self._detail = ""
         self._migration = None
+        self._failure = None
+        self._action = None
+        self._action_ready = threading.Event()
         self._expected = {
             str(label): float(seconds) for label, seconds in (expected or {}).items()
             if label in BOOT_PHASES and isinstance(seconds, (int, float)) and seconds > 0
@@ -79,6 +83,28 @@ class BootProgress:
         with self._lock:
             self._migration = dict(status) if status is not None else None
 
+    def fail(self, message: str) -> None:
+        """Pause for an explicit choice; a stale page cannot retry a later failure."""
+        with self._lock:
+            self._action = None
+            self._action_ready.clear()
+            self._failure = {"message": str(message)[:500], "token": secrets.token_urlsafe(24)}
+
+    def choose(self, action: str, token: str) -> bool:
+        with self._lock:
+            if (action not in ("retry", "keep") or self._failure is None
+                    or not secrets.compare_digest(str(token), self._failure["token"])):
+                return False
+            self._action = action
+            self._failure = None
+            self._action_ready.set()
+            return True
+
+    def wait_for_action(self) -> str:
+        self._action_ready.wait()
+        with self._lock:
+            return self._action
+
     def durations(self) -> dict[str, float]:
         """The seconds each finished phase took: the next start's expectation."""
         with self._lock:
@@ -94,6 +120,7 @@ class BootProgress:
                 "total": len(BOOT_PHASES),
                 "detail": self._detail,
                 "migration": self._migration,
+                "failure": dict(self._failure) if self._failure is not None else None,
                 "expected": dict(self._expected),
             }
 
@@ -201,9 +228,24 @@ animation:slide 1.4s ease-in-out infinite}
 @keyframes slide{0%%{transform:translateX(-110%%)}100%%{transform:translateX(440%%)}}
 .line{display:flex;justify-content:space-between;margin-top:10px;
 font-size:11px;color:%(ink_muted)s;font-variant-numeric:tabular-nums}
+.failure{margin-bottom:18px;font-size:13px;line-height:1.6;max-width:650px}
+.failure[hidden]{display:none}
+.actions{display:flex;gap:10px;margin-top:14px}
+button{font:inherit;color:%(ink)s;background:%(bg)s;border:1px solid %(line)s;
+border-radius:6px;padding:8px 14px;cursor:pointer}
+button:first-child{border-color:%(accent)s}
+button:focus-visible{outline:2px solid %(accent)s;outline-offset:3px}
 </style>
 <div class="mark"><span class="site-logo" aria-hidden="true"><span class="site-logo-eye"></span></span><span class="site-brand-word"><span>Arch</span><span class="site-brand-mark">Hub</span></span></div>
 <div class="foot">
+  <div class="failure" id="failure" role="alert" hidden>
+    <strong>ArchHub could not finish opening</strong>
+    <div id="failure-message"></div>
+    <div>Your saved data and current selection are kept. Retry reuses completed recovery copies.
+      Keeping the current data version closes ArchHub.</div>
+    <div class="actions"><button id="retry" accesskey="r" title="Retry (Alt+R)">Retry</button>
+      <button id="keep" accesskey="k" title="Keep current version and close (Alt+K)">Keep current version and close</button></div>
+  </div>
   <div class="bar" data-determinate="false"><div class="fill"></div></div>
   <div class="line"><span><span id="phase">opening the graph</span><span id="detail"></span></span><span id="elapsed"></span></div>
 </div>
@@ -243,6 +285,16 @@ function progressView(state){
 // "try again" left the founder looking at the boot screen forever after
 // the graph was already open, so a run of failures IS the handover.
 let missed=0;
+let failureToken=null;
+async function chooseBootAction(action){
+  if(!failureToken)return;
+  const response=await fetch('/api/universal/boot/action',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({action,token:failureToken})});
+  if(response.ok){failureToken=null;document.getElementById('retry').disabled=true;
+    document.getElementById('keep').disabled=true;}
+}
+document.getElementById('retry').onclick=()=>chooseBootAction('retry');
+document.getElementById('keep').onclick=()=>chooseBootAction('keep');
 async function tick(){
   try{
     const answer=await fetch('/api/universal/boot',{cache:'no-store'});
@@ -250,8 +302,17 @@ async function tick(){
     const state=await answer.json();
     missed=0;
     if(state.done){setTimeout(()=>location.reload(),250);return;}
+    const failure=state.failure;
+    document.getElementById('failure').hidden=!failure;
+    failureToken=failure?failure.token:null;
+    if(failure){
+      document.getElementById('failure-message').textContent=failure.message;
+      document.getElementById('retry').disabled=false;
+      document.getElementById('keep').disabled=false;
+    }
     const view=progressView(state);
     const bar=document.querySelector('.bar');
+    bar.hidden=Boolean(failure);
     bar.dataset.determinate=String(view.determinate);
     bar.querySelector('.fill').style.width=view.determinate?(view.fraction*100)+'%%':'';
     document.getElementById('phase').textContent=view.text;
@@ -303,7 +364,25 @@ class _BootHandler(BaseHTTPRequestHandler):
         self.close_connection = True
 
     def do_POST(self) -> None:  # noqa: N802
-        self.do_GET()
+        if self.path != "/api/universal/boot/action":
+            self.do_GET()
+            return
+        try:
+            size = int(self.headers.get("Content-Length", "0"))
+            if not 0 < size <= 4096:
+                raise ValueError("invalid action size")
+            value = json.loads(self.rfile.read(size))
+            accepted = self.server.progress.choose(value.get("action"), value.get("token", ""))
+        except (ValueError, TypeError, AttributeError):
+            accepted = False
+        body = json.dumps({"ok": accepted}).encode("utf-8")
+        self.send_response(200 if accepted else 409)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(body)
+        self.close_connection = True
 
 
 class _BootServer(ThreadingHTTPServer):

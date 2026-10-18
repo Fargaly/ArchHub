@@ -21,7 +21,7 @@ from types import MappingProxyType
 import sys
 import threading
 import time
-from typing import Callable, Iterable, Iterator, Mapping, Protocol
+from typing import Callable, Generator, Iterable, Iterator, Mapping, Protocol
 import uuid
 
 from rpds import HashTrieMap
@@ -1072,6 +1072,20 @@ def revision_chain_digest_step(
 def _ordered_revision_chain_digest_step(
     previous: bytes, revision: int, changed: Iterable[Cell]
 ) -> bytes:
+    """Consume the canonical digest steps for synchronous callers."""
+    steps = _ordered_revision_chain_digest_steps(previous, revision, changed)
+    while True:
+        try:
+            next(steps)
+        except StopIteration as completed:
+            digest = completed.value
+            break
+    return digest
+
+
+def _ordered_revision_chain_digest_steps(
+    previous: bytes, revision: int, changed: Iterable[Cell]
+) -> Generator[None, None, bytes]:
     """Hash canonical ordered Cells without retaining a whole revision."""
     if not isinstance(previous, bytes) or len(previous) != 32:
         raise InvalidCell("Cell revision digest predecessor is invalid")
@@ -1099,6 +1113,7 @@ def _ordered_revision_chain_digest_step(
         ):
             digest.update(len(raw).to_bytes(8, "big"))
             digest.update(raw)
+        yield None
     if last_id is None:
         raise InvalidCell("Cell revision contains no changed Cells")
     return digest.digest()
@@ -1115,6 +1130,8 @@ class InterprocessOwnerFence:
             os.path.realpath(os.path.abspath(database_path))
         )
         self._lock_path = self._database_path + ".owner.lock"
+        physical = os.stat(self._database_path) if os.path.isfile(self._database_path) else None
+        self._database_file_id = (physical.st_dev, physical.st_ino) if physical is not None else None
         self._stream = None
         self._released = False
         with self._process_guard:
@@ -1220,10 +1237,20 @@ class _SqliteJournal:
         path: str | os.PathLike[str],
         fault_injector: Callable[[str], None] | None,
         *, progress_handler: Callable[[], int] | None = None,
+        owner_fence: InterprocessOwnerFence | None = None,
     ) -> None:
         self._path = os.path.abspath(os.fspath(path))
         self._fault_injector = fault_injector
-        self._owner_fence = InterprocessOwnerFence(self._path)
+        self._owns_owner_fence = owner_fence is None
+        if owner_fence is not None:
+            if (not isinstance(owner_fence, InterprocessOwnerFence)
+                    or owner_fence._released or owner_fence._stream is None
+                    or (os.stat(self._path).st_dev, os.stat(self._path).st_ino) != owner_fence._database_file_id
+                    or not os.path.samefile(self._path + '.owner.lock', owner_fence._lock_path)):
+                raise InvalidCell("borrowed journal ownership must cover this exact physical file")
+            self._owner_fence = owner_fence
+        else:
+            self._owner_fence = InterprocessOwnerFence(self._path)
         self._connection = None
         self._closing = threading.Event()
         try:
@@ -1381,7 +1408,8 @@ class _SqliteJournal:
             if self._connection is not None:
                 self._connection.close()
                 self._connection = None
-            self._owner_fence.close()
+            if self._owns_owner_fence:
+                self._owner_fence.close()
             raise
 
     def _fault(self, stage: str) -> None:
@@ -1469,6 +1497,8 @@ class _SqliteJournal:
 
     def _load_head_in_transaction(self) -> LoadedJournalHead:
         """Validate streamed history and its index without retaining replayed Cells."""
+        if self._connection.execute("SELECT 1 FROM sqlite_master WHERE name='trace_live_proofs'").fetchone():
+            self._validate_partition_checkpoint()
         revision_count, first_revision, latest = self._connection.execute(
             "SELECT COUNT(*), MIN(revision), MAX(revision) FROM revisions"
         ).fetchone()
@@ -1491,15 +1521,15 @@ class _SqliteJournal:
         ).fetchone()
         if checkpoint is not None:
             checkpoint_revision, checkpoint_digest, prefix_rows = checkpoint
-            # Without an index this count scans every version row on
-            # every open. The index is an accelerator: dropping it costs
-            # time, never meaning.
+            # Native total cardinality minus the indexed delta preserves the
+            # witness without enumerating the already verified prefix.
             self._connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_cell_versions_revision "
                 "ON cell_versions(revision)"
             )
             covered = self._connection.execute(
-                "SELECT COUNT(*) FROM cell_versions WHERE revision <= ?",
+                "SELECT (SELECT COUNT(*) FROM cell_versions) - "
+                "(SELECT COUNT(*) FROM cell_versions WHERE revision > ?)",
                 (int(checkpoint_revision),),
             ).fetchone()[0]
             # Genesis is the one revision whose content is fixed by the
@@ -1533,7 +1563,7 @@ class _SqliteJournal:
             seen = False
             for _, cell_id, link0, link1, atom, has_link0, has_link1 in revision_rows:
                 cell = Cell(str(cell_id), str(link0), str(link1), bytes(atom))
-                _validate_cell(cell)
+                # The ordered digest iterator validates each yielded Cell.
                 if row_revision == 0 and (
                     seen or cell != Cell(NULL_CELL_ID, NULL_CELL_ID, NULL_CELL_ID, b"")
                 ):
@@ -1630,6 +1660,10 @@ class _SqliteJournal:
                     ).fetchone()[0]),
                 ),
             )
+        if self._connection.execute("SELECT 1 FROM sqlite_master WHERE name='trace_live_proofs'").fetchone():
+            self._accelerators().execute('INSERT OR REPLACE INTO partition_checkpoints VALUES(?,?,?)',
+                (latest, previous, int(self._connection.execute(
+                    'SELECT COUNT(*) FROM cell_versions').fetchone()[0])))
         reader = _HeadRowReader(self._connection, self._io_lock, base_revision=latest,
                                 closing=self._closing)
         history = _SqliteHistoryReader(self, latest, previous.hex())
@@ -1643,6 +1677,343 @@ class _SqliteJournal:
     def append(self, *args, **kwargs):
         with self._io_lock:
             return self._append_unlocked(*args, **kwargs)
+
+    def _trace_chain_schema(self):
+        """Custody proofs are journal evidence, never disposable accelerators."""
+        self._connection.execute('CREATE TABLE IF NOT EXISTS trace_chain_proofs('
+            'revision INTEGER PRIMARY KEY, digest BLOB NOT NULL)')
+        self._connection.execute('CREATE TABLE IF NOT EXISTS trace_live_proofs('
+            'revision INTEGER PRIMARY KEY, live_rows INTEGER NOT NULL, '
+            'live_sum BLOB NOT NULL, archived_rows INTEGER NOT NULL)')
+        self._connection.execute('CREATE TABLE IF NOT EXISTS trace_set_deltas('
+            'revision INTEGER PRIMARY KEY, delta BLOB NOT NULL)')
+        self._connection.execute('CREATE TABLE IF NOT EXISTS trace_projection_custody('
+            'revision INTEGER NOT NULL,cell_id TEXT NOT NULL,original_hash TEXT NOT NULL,'
+            'live_hash TEXT NOT NULL,PRIMARY KEY(revision,cell_id))')
+        self._connection.execute('CREATE TABLE IF NOT EXISTS trace_snapshot_proofs('
+            'revision INTEGER PRIMARY KEY, fingerprint TEXT NOT NULL, digest TEXT NOT NULL)')
+        self._connection.execute('CREATE TABLE IF NOT EXISTS trace_signed_head_proofs('
+            'revision INTEGER PRIMARY KEY, head_root TEXT NOT NULL, digest TEXT NOT NULL)')
+        for table in ('trace_chain_proofs', 'trace_live_proofs', 'trace_set_deltas', 'trace_projection_custody',
+                      'trace_snapshot_proofs', 'trace_signed_head_proofs'):
+            for action in ('INSERT', 'UPDATE', 'DELETE'):
+                self._connection.execute(f'CREATE TRIGGER IF NOT EXISTS {table}_{action.lower()} '
+                    f'BEFORE {action} ON {table} WHEN trace_custody_write()=0 BEGIN '
+                    "SELECT RAISE(ABORT, 'archive custody is immutable'); END")
+
+    def _prepare_trace_chain(self, through, check):
+        """Retain an unfinished canonical revision across idle slices."""
+        self._trace_chain_schema()
+        row = self._connection.execute('SELECT revision,digest FROM trace_chain_proofs '
+            'ORDER BY revision DESC LIMIT 1').fetchone()
+        start, previous = (row[0] + 1, bytes(row[1])) if row else (0, b'\0' * 32)
+        for revision in range(start, through + 1):
+            check()
+            pending = getattr(self, '_trace_chain_preparation', None)
+            if pending is not None and pending[:2] != (revision, previous):
+                pending[2].close()
+                pending = None
+            if pending is None:
+                def cells(selected_revision=revision):
+                    for cell_id, link0, link1, atom in self._connection.execute(
+                            'SELECT cell_id,link0,link1,atom FROM cell_versions WHERE revision=? ORDER BY cell_id',
+                            (selected_revision,)):
+                        yield Cell(cell_id, link0, link1, bytes(atom))
+                steps = _ordered_revision_chain_digest_steps(previous, revision, cells())
+                self._trace_chain_preparation = (revision, previous, steps)
+            else:
+                steps = pending[2]
+            try:
+                while True:
+                    # The deadline must throw OUTSIDE the generator. Throwing
+                    # from cells() would close it and discard the partial hash.
+                    check()
+                    try:
+                        next(steps)
+                    except StopIteration as completed:
+                        previous = completed.value
+                        break
+            except TimeoutError:
+                raise
+            except BaseException:
+                steps.close()
+                self._trace_chain_preparation = None
+                raise
+            self._trace_chain_preparation = None
+            self._connection.create_function('trace_custody_write', 0, lambda: 1)
+            try:
+                self._connection.execute('INSERT INTO trace_chain_proofs VALUES(?,?)', (revision, previous))
+            finally:
+                self._connection.create_function('trace_custody_write', 0, lambda: 0)
+
+    def _partition_chain_digest(self, through):
+        """Re-prove live bytes against immutable original-chain custody anchors."""
+        from .cell_set_digest import SET_HASH_BYTES, SET_HASH_MODULUS, cell_set_hash
+        previous = b'\0' * 32
+        for revision in range(through + 1):
+            def cells():
+                for c, l0, l1, a in self._connection.execute(
+                        'SELECT cell_id,link0,link1,atom FROM cell_versions '
+                        'WHERE revision=? ORDER BY cell_id', (revision,)):
+                    yield Cell(c, l0, l1, bytes(a))
+            proof = self._connection.execute('SELECT live_rows,live_sum,archived_rows '
+                'FROM trace_live_proofs WHERE revision=?', (revision,)).fetchone()
+            original = self._connection.execute('SELECT digest FROM trace_chain_proofs WHERE revision=?',
+                (revision,)).fetchone()
+            if proof:
+                count, accumulator = 0, 0
+                for cell in cells():
+                    count += 1
+                    accumulator = (accumulator + cell_set_hash(cell)) % SET_HASH_MODULUS
+                if (original is None or proof[0] != count or proof[2] <= 0 or
+                        bytes(proof[1]) != accumulator.to_bytes(SET_HASH_BYTES, 'big')):
+                    raise InvalidCell('archived revision live projection differs from custody proof')
+                previous = bytes(original[0])
+            else:
+                previous = _ordered_revision_chain_digest_step(previous, revision, cells())
+                if original and previous != bytes(original[0]):
+                    raise InvalidCell('archived journal original chain proof differs')
+        return previous
+
+    def _validate_partition_checkpoint(self):
+        # A surviving checkpoint verifies delta entries only, alongside native
+        # B-tree cardinality metadata. Cold Cells are never opened.
+        latest = self._connection.execute('SELECT MAX(revision) FROM revisions').fetchone()[0]
+        count = self._connection.execute('SELECT COUNT(*) FROM cell_versions').fetchone()[0]
+        cache = self._accelerators()
+        cache.execute('CREATE TABLE IF NOT EXISTS partition_checkpoints('
+            'revision INTEGER PRIMARY KEY,chain_digest BLOB NOT NULL,prefix_rows INTEGER NOT NULL)')
+        cache.execute('DELETE FROM partition_checkpoints WHERE revision>?', (latest,))
+        held = cache.execute('SELECT revision,chain_digest,prefix_rows FROM partition_checkpoints '
+            'ORDER BY revision DESC LIMIT 1').fetchone()
+        if held and self.append_only_fence_present:
+            covered = count - self._connection.execute('SELECT COUNT(*) FROM cell_versions WHERE revision>?',
+                (held[0],)).fetchone()[0]
+            if covered == held[2]:
+                # A rollback kernel may have cached the projected chain. Seed
+                # only our proved original prefix; the ordinary loader verifies
+                # every revision/index row in the suffix before advancing it.
+                cache.execute('DELETE FROM chain_checkpoints WHERE revision>?', (held[0],))
+                cache.execute('INSERT OR REPLACE INTO chain_checkpoints VALUES(?,?,?)', held)
+                return
+        digest = self._partition_chain_digest(latest)
+        if self._connection.execute('SELECT 1 FROM current_cells c WHERE NOT EXISTS('
+                'SELECT 1 FROM cell_versions v WHERE v.cell_id=c.cell_id AND v.revision=c.revision '
+                'AND v.link0=c.link0 AND v.link1=c.link1 AND v.atom=c.atom) LIMIT 1').fetchone():
+            raise InvalidCell('partitioned current index differs from live versions')
+        if self._connection.execute('SELECT 1 FROM cell_versions v WHERE NOT EXISTS('
+                'SELECT 1 FROM current_cells c WHERE c.cell_id=v.cell_id) LIMIT 1').fetchone():
+            raise InvalidCell('partitioned current index is incomplete')
+        self._accelerators().execute('INSERT OR REPLACE INTO chain_checkpoints VALUES(?,?,?)',
+            (latest, digest, count))
+        cache.execute('INSERT OR REPLACE INTO partition_checkpoints VALUES(?,?,?)',
+            (latest, digest, count))
+
+    def refuse_archived_creates(self, identifiers):
+        """Retired identity stays reserved, without consulting any cold Cells."""
+        if not identifiers:
+            return
+        if not self._connection.execute("SELECT 1 FROM sqlite_master WHERE name='trace_retired_identities'").fetchone():
+            return
+        for identifier in identifiers:
+            identity = hashlib.sha256(identifier.encode('utf-8')).digest()
+            if self._connection.execute('SELECT 1 FROM trace_retired_identities WHERE identity=?', (identity,)).fetchone():
+                raise InvalidCell("cannot create existing cell %r" % identifier)
+
+    def partition_verified_rows(self, cold, identifiers, check, projections=(), expected_revision=None):
+        """Archive custody exception: exact cold readback before atomic partition.
+
+        The caller owns semantic eligibility and the conversation projection.
+        Only the verified IDs can cross the append-only trigger, only while
+        this transaction is executing. A raw SQLite DELETE still fails closed.
+        """
+        from .cell_set_digest import (SET_HASH_BYTES, SET_HASH_MODULUS,
+            accumulator_remove, cell_set_hash, set_accumulator)
+        identifiers = tuple(dict.fromkeys(identifiers))
+        projections = tuple(sorted(projections, key=lambda item: (item[0], item[2].id)))
+        if len({(revision, new.id) for revision, _old, new in projections}) != len(projections):
+            raise InvalidCell('archive projection repeats a version')
+        if not (identifiers or projections) or len(identifiers) > 256 or len(projections) > 1024:
+            raise InvalidCell('archive partition requires a bounded exact selection')
+        source_version = self._connection.execute('PRAGMA data_version').fetchone()[0]
+        self._prepare_trace_chain(self._connection.execute('SELECT MAX(revision) FROM revisions').fetchone()[0], check)
+        versions, deltas, replacements, certificates = {}, {}, {}, []
+        row_hash = lambda row: hashlib.sha256(repr(tuple(row)).encode('utf-8')).hexdigest()
+        for revision, old, new in projections:
+            check()
+            _validate_cell(new)
+            if old is not None and old.id != new.id or new.id in identifiers:
+                raise InvalidCell('archive projection changes identity')
+            actual = self._connection.execute('SELECT revision,cell_id,link0,link1,atom,rowid '
+                'FROM cell_versions WHERE revision=? AND cell_id=?', (revision, new.id)).fetchone()
+            current = self._connection.execute('SELECT revision FROM current_cells WHERE cell_id=?', (new.id,)).fetchone()
+            if (old is None and actual is not None or old is not None and (actual is None or tuple(actual[1:5]) != (old.id, old.link0, old.link1, old.atom)) or current is None or revision >= current[0]):
+                raise InvalidCell('archive projection is not an exact obsolete version')
+            copied = cold.execute('SELECT revision,cell_id,link0,link1,atom,source_rowid '
+                'FROM trace_versions WHERE revision=? AND cell_id=?', (revision, new.id)).fetchone()
+            certificate = self._connection.execute('SELECT original_hash,live_hash FROM trace_projection_custody '
+                'WHERE revision=? AND cell_id=?', (revision, new.id)).fetchone()
+            original_hash = row_hash(copied) if copied else 'absent'
+            if ((old is None and (copied is not None or certificate is not None)) or
+                    (old is not None and (certificate is None and (copied is None or tuple(actual) != tuple(copied)) or
+                    certificate is not None and tuple(certificate) != (original_hash, row_hash(actual))))):
+                raise InvalidCell('archive projection original custody differs')
+            certificates.append((revision, new.id, original_hash))
+            versions.setdefault(revision, []).extend((old,) if old is not None else ())
+            replacements.setdefault(revision, []).append(new)
+            semantic_old = old
+            if old is None:
+                prior_row = self._connection.execute('SELECT revision,link0,link1,atom FROM cell_versions WHERE cell_id=? AND revision<? ORDER BY revision DESC LIMIT 1', (new.id, revision)).fetchone()
+                prior_planned = [(r, cell) for r, _before, cell in projections if r < revision and cell.id == new.id]
+                if prior_planned and (prior_row is None or prior_planned[-1][0] >= prior_row[0]):
+                    semantic_old = prior_planned[-1][1]
+                elif prior_row is not None:
+                    semantic_old = Cell(new.id, prior_row[1], prior_row[2], bytes(prior_row[3]))
+            delta = ((cell_set_hash(semantic_old) if semantic_old is not None else 0) - cell_set_hash(new)) % SET_HASH_MODULUS
+            deltas[revision] = (deltas.get(revision, 0) + delta) % SET_HASH_MODULUS
+            following = self._connection.execute('SELECT MIN(revision) FROM cell_versions WHERE cell_id=? AND revision>?', (new.id, revision)).fetchone()[0]
+            if following is not None:
+                deltas[following] = (deltas.get(following, 0) - delta) % SET_HASH_MODULUS
+        for identifier in identifiers:
+            check()
+            actual = self._connection.execute('SELECT cell_id,revision,link0,link1,atom '
+                'FROM current_cells WHERE cell_id=?', (identifier,)).fetchone()
+            copied = cold.execute('SELECT cell_id,revision,link0,link1,atom FROM trace_current '
+                'WHERE cell_id=?', (identifier,)).fetchone()
+            if actual is None or copied is None or tuple(actual) != tuple(copied):
+                raise InvalidCell('archive partition current readback differs')
+            prior = 0
+            for row in self._connection.execute('SELECT revision,cell_id,link0,link1,atom,rowid '
+                    'FROM cell_versions WHERE cell_id=? ORDER BY revision', (identifier,)):
+                check()
+                if tuple(row) != cold.execute('SELECT revision,cell_id,link0,link1,atom,source_rowid '
+                        'FROM trace_versions WHERE revision=? AND cell_id=?', row[:2]).fetchone():
+                    raise InvalidCell('archive partition historical readback differs')
+                cell = Cell(row[1], row[2], row[3], bytes(row[4]))
+                versions.setdefault(row[0], []).append(cell)
+                contribution = cell_set_hash(cell)
+                deltas[row[0]] = (deltas.get(row[0], 0) + contribution - prior) % SET_HASH_MODULUS
+                prior = contribution
+        if projections:
+            # Invalidate before the durable rewrite: a kill after publication
+            # must never leave a same-rowid fingerprint for the old bytes.
+            for table in ('prefix_fingerprints', 'prefix_chain', 'set_accumulators'):
+                if self._accelerators().execute("SELECT 1 FROM sqlite_master WHERE name=?", (table,)).fetchone():
+                    self._accelerators().execute('DELETE FROM ' + table)
+        self._connection.execute('BEGIN IMMEDIATE')
+        self._connection.create_function('trace_custody_write', 0, lambda: 1)
+        self._connection.create_function('trace_cell_custody', 1, lambda ident: int(ident in identifiers))
+        try:
+            if (self._connection.execute('PRAGMA data_version').fetchone()[0] != source_version or
+                    expected_revision is not None and self._connection.execute('SELECT MAX(revision) FROM revisions').fetchone()[0] != expected_revision):
+                raise TimeoutError('trace source changed before partition')
+            self._connection.execute('CREATE TABLE IF NOT EXISTS trace_retired_identities('
+                'identity BLOB PRIMARY KEY CHECK(length(identity)=32)) WITHOUT ROWID')
+            self._connection.execute('CREATE TRIGGER IF NOT EXISTS trace_retired_identities_insert '
+                'BEFORE INSERT ON trace_retired_identities WHEN trace_custody_write()=0 BEGIN '
+                "SELECT RAISE(ABORT, 'retired identities are immutable'); END")
+            for action in ('UPDATE', 'DELETE'):
+                self._connection.execute('CREATE TRIGGER IF NOT EXISTS trace_retired_identities_' + action.lower() +
+                    ' BEFORE ' + action + ' ON trace_retired_identities BEGIN '
+                    "SELECT RAISE(ABORT, 'retired identities are immutable'); END")
+            self._connection.executemany('INSERT INTO trace_retired_identities VALUES(?)',
+                ((hashlib.sha256(identifier.encode('utf-8')).digest(),) for identifier in identifiers))
+            self._connection.execute('DROP TRIGGER cell_versions_append_only_delete')
+            self._connection.execute('CREATE TRIGGER cell_versions_append_only_delete '
+                'BEFORE DELETE ON cell_versions WHEN trace_cell_custody(OLD.cell_id)=0 BEGIN '
+                "SELECT RAISE(ABORT, 'cell_versions is append-only'); END")
+            if projections:
+                allowed = {(revision, new.id, new.link0, new.link1, new.atom) for revision, old, new in projections if old is not None}
+                self._connection.create_function('trace_projection_write', 5, lambda *row: int(row in allowed))
+                self._connection.execute('DROP TRIGGER cell_versions_append_only_update')
+                self._connection.execute('CREATE TRIGGER cell_versions_append_only_update BEFORE UPDATE ON cell_versions '
+                    'WHEN OLD.rowid<>NEW.rowid OR OLD.revision<>NEW.revision OR OLD.cell_id<>NEW.cell_id '
+                    'OR trace_projection_write(NEW.revision,NEW.cell_id,NEW.link0,NEW.link1,NEW.atom)=0 BEGIN '
+                    "SELECT RAISE(ABORT, 'cell_versions is append-only'); END")
+            for revision, delta in deltas.items():
+                prior_delta = self._connection.execute('SELECT delta FROM trace_set_deltas WHERE revision=?',
+                    (revision,)).fetchone()
+                if prior_delta is None:
+                    self._connection.execute('INSERT INTO trace_set_deltas VALUES(?,?)',
+                        (revision, delta.to_bytes(SET_HASH_BYTES, 'big')))
+                else:
+                    value = (int.from_bytes(prior_delta[0], 'big') + delta) % SET_HASH_MODULUS
+                    self._connection.execute('UPDATE trace_set_deltas SET delta=? WHERE revision=?',
+                        (value.to_bytes(SET_HASH_BYTES, 'big'), revision))
+            for revision, removed in versions.items():
+                check()
+                proof = self._connection.execute('SELECT live_rows,live_sum,archived_rows '
+                    'FROM trace_live_proofs WHERE revision=?', (revision,)).fetchone()
+                if proof is None:
+                    cells = (Cell(c, l0, l1, bytes(a)) for c, l0, l1, a in self._connection.execute(
+                        'SELECT cell_id,link0,link1,atom FROM cell_versions WHERE revision=?', (revision,)))
+                    accumulator = set_accumulator(cells)
+                    count = self._connection.execute('SELECT COUNT(*) FROM cell_versions WHERE revision=?',
+                        (revision,)).fetchone()[0]
+                    archived = 0
+                else:
+                    count, accumulator, archived = proof[0], int.from_bytes(proof[1], 'big'), proof[2]
+                remaining = accumulator_remove(accumulator, removed)
+                added = replacements.get(revision, ())
+                remaining = (remaining + sum(cell_set_hash(cell) for cell in added)) % SET_HASH_MODULUS
+                live_count = count-len(removed)+len(added)
+                if live_count == 0:
+                    # 2230 requires every revision to have a physical row.
+                    # NULL is already in every head: a no-op version preserves
+                    # both the exact live identity count and its semantic hash.
+                    null = Cell(NULL_CELL_ID, NULL_CELL_ID, NULL_CELL_ID, b'')
+                    self._insert_versions(revision, (null,))
+                    current_null = self._connection.execute('SELECT revision FROM current_cells '
+                        'WHERE cell_id=?', (NULL_CELL_ID,)).fetchone()[0]
+                    if revision > current_null:
+                        self._upsert_current(revision, (null,))
+                    live_count = 1
+                    remaining = (remaining + cell_set_hash(null)) % SET_HASH_MODULUS
+                self._connection.execute('INSERT OR REPLACE INTO trace_live_proofs VALUES(?,?,?,?)',
+                    (revision, live_count, remaining.to_bytes(SET_HASH_BYTES, 'big'), archived+len(removed)+len(added)))
+            self._connection.executemany('DELETE FROM current_cells WHERE cell_id=?', ((i,) for i in identifiers))
+            self._connection.executemany('DELETE FROM cell_versions WHERE cell_id=?', ((i,) for i in identifiers))
+            for revision, old, new in projections:
+                check()
+                if old is None:
+                    self._insert_versions(revision, (new,))
+                else:
+                    self._connection.execute('UPDATE cell_versions SET link0=?,link1=?,atom=? WHERE revision=? AND cell_id=?',
+                        (new.link0, new.link1, new.atom, revision, old.id))
+            for revision, identifier, original_hash in certificates:
+                row = self._connection.execute('SELECT revision,cell_id,link0,link1,atom,rowid FROM cell_versions WHERE revision=? AND cell_id=?', (revision, identifier)).fetchone()
+                self._connection.execute('INSERT OR REPLACE INTO trace_projection_custody VALUES(?,?,?,?)', (revision, identifier, original_hash, row_hash(row)))
+            if projections:
+                self._connection.execute('DROP TRIGGER cell_versions_append_only_update')
+                self._connection.execute('CREATE TRIGGER cell_versions_append_only_update BEFORE UPDATE ON cell_versions BEGIN '
+                    "SELECT RAISE(ABORT, 'cell_versions is append-only'); END")
+            check()
+            self._fault('trace_partition_before_commit')
+            self._connection.commit()
+        except BaseException:
+            self._connection.rollback()
+            raise
+        finally:
+            self._connection.create_function('trace_custody_write', 0, lambda: 0)
+            self._connection.create_function('trace_cell_custody', 1, lambda _ident: 0)
+            self._connection.create_function('trace_projection_write', 5, lambda *_row: 0)
+        self._fault('trace_partition_committed')
+        # Crash before this cache refresh is safe: load detects the row-count
+        # mismatch and re-proves the small live projection from journal seals.
+        latest, digest = self._connection.execute('SELECT revision,digest FROM trace_chain_proofs '
+            'ORDER BY revision DESC LIMIT 1').fetchone()
+        count = self._connection.execute('SELECT COUNT(*) FROM cell_versions').fetchone()[0]
+        self._accelerators().execute('INSERT OR REPLACE INTO chain_checkpoints VALUES(?,?,?)',
+            (latest, digest, count))
+        self._accelerators().execute('CREATE TABLE IF NOT EXISTS partition_checkpoints('
+            'revision INTEGER PRIMARY KEY,chain_digest BLOB NOT NULL,prefix_rows INTEGER NOT NULL)')
+        self._accelerators().execute('INSERT OR REPLACE INTO partition_checkpoints VALUES(?,?,?)',
+            (latest, digest, count))
+        if projections:
+            for table in ('prefix_fingerprints', 'prefix_chain', 'set_accumulators'):
+                if self._accelerators().execute("SELECT 1 FROM sqlite_master WHERE name=?", (table,)).fetchone():
+                    self._accelerators().execute('DELETE FROM ' + table)
+        return sum(len(rows) for rows in versions.values())
 
     def _append_unlocked(
         self,
@@ -1716,7 +2087,8 @@ class _SqliteJournal:
                     accelerators.close()
                     self._accelerator_connection = None
             finally:
-                self._owner_fence.close()
+                if self._owns_owner_fence:
+                    self._owner_fence.close()
 
     @property
     def path(self) -> str:
@@ -2191,7 +2563,7 @@ class _SqliteHistoryReader:
         ):
             rows += 1
             newest = int(row[0])
-            content.update(repr(row).encode("utf-8"))
+            content.update(repr(tuple(row)).encode("utf-8"))
         digest_hex = content.hexdigest()
         try:
             accelerators.execute(
@@ -2271,40 +2643,75 @@ class _SqliteHistoryReader:
         link_rows_now, link_newest_now = (
             covered_at(start_revision) if start_revision >= 0 else (0, 0)
         )
-        for link_revision in range(start_revision + 1, target + 1):
-            content = hashlib.blake2b(digest_size=32)
-            content.update(b"ArchHub/prefix-chain/v2")
-            content.update(previous.encode("ascii"))
-            for row in connection.execute(
-                "SELECT rowid, revision, cell_id, link0, link1, atom "
-                "FROM cell_versions WHERE revision = ? ORDER BY rowid",
-                (link_revision,),
-            ):
-                content.update(repr(row).encode("utf-8"))
-                link_rows_now += 1
-                if int(row[0]) > link_newest_now:
-                    link_newest_now = int(row[0])
-            previous = content.hexdigest()
-            try:
-                accelerators.execute(
-                    "INSERT OR REPLACE INTO prefix_chain"
-                    "(revision, rows, newest, digest) VALUES(?, ?, ?, ?)",
-                    (link_revision, link_rows_now, link_newest_now, previous),
-                )
-            except sqlite3.Error:
-                pass
+        # This derivable cache may be lost without changing meaning. Batch its
+        # links in one FULL-durability transaction instead of fsync per revision.
+        cache_batch = False
+        try:
+            if not accelerators.in_transaction:
+                accelerators.execute("BEGIN")
+                cache_batch = True
+        except sqlite3.Error:
+            cache_batch = False
+        try:
+            for link_revision in range(start_revision + 1, target + 1):
+                content = hashlib.blake2b(digest_size=32)
+                content.update(b"ArchHub/prefix-chain/v2")
+                content.update(previous.encode("ascii"))
+                for row in connection.execute(
+                    "SELECT rowid, revision, cell_id, link0, link1, atom "
+                    "FROM cell_versions WHERE revision = ? ORDER BY rowid",
+                    (link_revision,),
+                ):
+                    content.update(repr(tuple(row)).encode("utf-8"))
+                    link_rows_now += 1
+                    if int(row[0]) > link_newest_now:
+                        link_newest_now = int(row[0])
+                previous = content.hexdigest()
+                if cache_batch:
+                    try:
+                        accelerators.execute(
+                            "INSERT OR REPLACE INTO prefix_chain"
+                            "(revision, rows, newest, digest) VALUES(?, ?, ?, ?)",
+                            (link_revision, link_rows_now, link_newest_now, previous),
+                        )
+                    except sqlite3.Error:
+                        accelerators.rollback()
+                        cache_batch = False
+            if cache_batch:
+                try:
+                    accelerators.commit()
+                except sqlite3.Error:
+                    accelerators.rollback()
+        finally:
+            if cache_batch and accelerators.in_transaction:
+                accelerators.rollback()
         return (rows_now, newest_now, previous)
 
     def chain_digest(self, revision: int) -> str:
         target = self._admit_revision(revision)
         if target == self._head_revision:
             return self._head_digest
-        previous = b"\x00" * 32
-        active_revision = -1
+        seed = None
+        if self._journal._connection.execute("SELECT 1 FROM sqlite_master WHERE name='trace_chain_proofs'").fetchone():
+            proof = self._journal._connection.execute('SELECT digest FROM trace_chain_proofs WHERE revision=?',
+                (target,)).fetchone()
+            if proof:
+                return bytes(proof[0]).hex()
+            seed = self._journal._connection.execute('SELECT revision,digest FROM trace_chain_proofs '
+                'WHERE revision<? ORDER BY revision DESC LIMIT 1', (target,)).fetchone()
+        checkpoint = self._journal._accelerators().execute('SELECT chain_digest,prefix_rows '
+            'FROM chain_checkpoints WHERE revision=?', (target,)).fetchone()
+        if checkpoint and self._append_only_fenced():
+            count = self._journal._connection.execute('SELECT COUNT(*) FROM cell_versions WHERE revision<=?',
+                (target,)).fetchone()[0]
+            if count == checkpoint[1]:
+                return bytes(checkpoint[0]).hex()
+        previous = bytes(seed[1]) if seed else b"\x00" * 32
+        active_revision = seed[0] if seed else -1
         rows = self._journal._connection.execute(
             "SELECT revision, cell_id, link0, link1, atom "
-            "FROM cell_versions WHERE revision<=? ORDER BY revision, cell_id COLLATE BINARY",
-            (target,),
+            "FROM cell_versions WHERE revision>? AND revision<=? ORDER BY revision, cell_id COLLATE BINARY",
+            (active_revision, target),
         )
         with closing(rows):
             for row_revision, revision_rows in groupby(rows, key=lambda row: row[0]):
@@ -3025,6 +3432,111 @@ class CellStore:
             raise InvalidCell("shared physical storage requires a live SQLite owner")
         return self._journal._connection, self._lock
 
+    def partition_archived_cells(self, cold, identifiers, *, check, projections=()):
+        """Transfer an admitted batch without changing original revision identity."""
+        with self._lock:
+            if type(self._journal) is not _SqliteJournal or self._stable_snapshot_depth:
+                raise InvalidCell('archive partition requires the exclusive idle SQLite owner')
+            with self._journal._io_lock:
+                self._journal._trace_chain_schema()
+                self._journal._prepare_trace_chain(self._revision, check)
+                original = self._journal._connection.execute(
+                    'SELECT digest FROM trace_chain_proofs WHERE revision=?', (self._revision,)).fetchone()
+                if original is None or bytes(original[0]).hex() != self._history_reader.head_digest:
+                    raise InvalidCell('archive original chain differs from the authenticated live owner')
+                authority = getattr(self, '_signed_commit_authority', None)
+                if authority is not None:
+                    # A v1 accepted snapshot cannot be reconstructed from a
+                    # live projection. Preserve its already authenticated
+                    # original proof in immutable journal custody, not a cache.
+                    manifest = authority.manifest
+                    found = self.archived_snapshot_proof(manifest.accepted_revision)
+                    if found is None:
+                        from .unified_authority_runtime import _AcceptedSnapshotProof
+                        proof = _AcceptedSnapshotProof(Path(self.database_path).parent)
+                        key = proof.fingerprint(self, manifest.accepted_revision)
+                        self._journal._connection.create_function('trace_custody_write', 0, lambda: 1)
+                        try:
+                            self._journal._connection.execute('INSERT INTO trace_snapshot_proofs VALUES(?,?,?)',
+                                (manifest.accepted_revision, key, manifest.accepted_snapshot_digest))
+                        finally:
+                            self._journal._connection.create_function('trace_custody_write', 0, lambda: 0)
+                    elif found[1] != manifest.accepted_snapshot_digest:
+                        raise InvalidCell('archive accepted-snapshot custody differs')
+                    from .unified_authority import capture_archived_v1_heads
+                    capture_archived_v1_heads(authority, check)
+                count = self._journal.partition_verified_rows(cold, identifiers, check, projections, self._revision)
+                reader = _HeadRowReader(self._journal._connection, self._journal._io_lock,
+                    base_revision=self._revision, closing=self._journal._closing)
+                head = _LazyHeadCellMap(reader, None, None, 0)
+                self._adopt_journal_state(LoadedJournalHead(head, self._revision,
+                    self._history_reader.head_digest, self._history_reader))
+                self._set_accumulators.clear()
+                self._set_accumulator_cover = None
+                return count
+
+    def archived_head_proof(self, revision, head_root):
+        """Authenticated original v1 head digest; no archived Cell access."""
+        with self._lock:
+            if not isinstance(self._journal, _SqliteJournal):
+                return None
+            connection = self._journal._connection
+            if not connection.execute("SELECT 1 FROM sqlite_master WHERE name='trace_signed_head_proofs'").fetchone():
+                return None
+            row = connection.execute('SELECT head_root,digest FROM trace_signed_head_proofs WHERE revision=?',
+                                     (revision,)).fetchone()
+            if row is None:
+                return None
+            if row[0] != head_root:
+                raise InvalidCell('archive signed-head custody identity differs')
+            return row[1]
+
+    def _record_archived_head_proof(self, revision, head_root, digest):
+        """Trusted signer capture only; the caller authenticates before entry."""
+        with self._lock:
+            if not isinstance(self._journal, _SqliteJournal):
+                raise InvalidCell('archive signed-head custody requires a SQLite owner')
+            existing = self.archived_head_proof(revision, head_root)
+            if existing is not None:
+                if existing != digest:
+                    raise InvalidCell('archive signed-head custody digest differs')
+                return
+            connection = self._journal._connection
+            connection.create_function('trace_custody_write', 0, lambda: 1)
+            try:
+                connection.execute('INSERT INTO trace_signed_head_proofs VALUES(?,?,?)',
+                                   (revision, head_root, digest))
+            finally:
+                connection.create_function('trace_custody_write', 0, lambda: 0)
+
+    def archived_snapshot_proof(self, revision):
+        """Original authenticated snapshot certificate, containing no cold Cells."""
+        if not isinstance(self._journal, _SqliteJournal):
+            return None
+        connection = self._journal._connection
+        if not connection.execute("SELECT 1 FROM sqlite_master WHERE name='trace_snapshot_proofs'").fetchone():
+            return None
+        row = connection.execute('SELECT fingerprint,digest FROM trace_snapshot_proofs WHERE revision=?',
+            (revision,)).fetchone()
+        return tuple(row) if row else None
+
+    def _archived_set_delta(self, revision, *, exact=False):
+        """Small per-revision hash deltas retain signed logical history.
+
+        Physical head iteration remains live-only. A signature still commits
+        to archived evidence without opening, loading or hashing its Cells.
+        """
+        from .cell_set_digest import SET_HASH_MODULUS
+        if not isinstance(self._journal, _SqliteJournal):
+            return 0
+        connection = self._journal._connection
+        if not connection.execute("SELECT 1 FROM sqlite_master WHERE name='trace_set_deltas'").fetchone():
+            return 0
+        comparison = '=' if exact else '<='
+        return sum(int.from_bytes(row[0], 'big') for row in connection.execute(
+            'SELECT delta FROM trace_set_deltas WHERE revision' + comparison + '?',
+            (revision,))) % SET_HASH_MODULUS
+
     def __enter__(self) -> "CellStore":
         return self
 
@@ -3471,6 +3983,9 @@ class CellStore:
                 named.add(cell.id)
                 delta[cell.id] = cell
 
+            if created and isinstance(self._journal, _SqliteJournal):
+                self._journal.refuse_archived_creates(tuple(cell.id for cell in created))
+
             changed_replacements: list[Cell] = []
             for cell in replaced:
                 _validate_cell(cell)
@@ -3673,7 +4188,7 @@ class CellStore:
         none trusts a stored number for content it did not hash.
         """
         from .cell_set_digest import (
-            accumulator_add, accumulator_remove, set_accumulator,
+            SET_HASH_MODULUS, accumulator_add, accumulator_remove, set_accumulator,
         )
         with self._lock:
             revision = snapshot.revision
@@ -3681,7 +4196,7 @@ class CellStore:
             if is_current and snapshot.cells is not self._cells:
                 # A foreign mapping claiming the head revision is hashed
                 # for real, never answered from the head's cache.
-                return set_accumulator(snapshot.cells.values())
+                return (set_accumulator(snapshot.cells.values()) + self._archived_set_delta(revision)) % SET_HASH_MODULUS
             held = self._set_accumulators.get(revision)
             if held is not None:
                 self._set_accumulators.move_to_end(revision)
@@ -3697,10 +4212,11 @@ class CellStore:
                 accumulator = accumulator_add(
                     accumulator_remove(above, written), restored
                 )
+                accumulator = (accumulator - self._archived_set_delta(revision + 1, exact=True)) % SET_HASH_MODULUS
             else:
                 accumulator = self._recorded_set_accumulator(revision)
                 if accumulator is None:
-                    accumulator = set_accumulator(snapshot.cells.values())
+                    accumulator = (set_accumulator(snapshot.cells.values()) + self._archived_set_delta(revision)) % SET_HASH_MODULUS
                     self._record_set_accumulator(revision, accumulator)
             self._remember_set_accumulator(revision, accumulator)
             return accumulator

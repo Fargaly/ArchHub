@@ -597,24 +597,6 @@ first_boot = not _saved_graph_exists(state_dir, state_path)
 print("  first boot  :", first_boot, flush=True)
 started = time.perf_counter()
 
-# Startup recovery copies the whole graph and history while holding the owner
-# locks. Measured 2026-09-15: 105.4 MiB/s for copy, both quick_checks, hash and
-# fsync, so the 2-second budget covers about 210 MiB. A larger graph is not
-# copied at startup; its recovery is left to the update-close path.
-_STARTUP_BACKUP_MAX_BYTES = 64 * 1024 * 1024
-
-def _startup_backup_bytes(*paths):
-    total = 0
-    for path in dict.fromkeys(paths):
-        if path is None:
-            continue
-        for suffix in ("", "-wal"):
-            try:
-                total += os.stat(str(path) + suffix).st_size
-            except FileNotFoundError:
-                pass
-    return total
-
 def _prune_backups(directory, verified, owner=None, policy=None):
     """Apply the graph's count and byte policy after verifying a new backup."""
     try:
@@ -639,7 +621,7 @@ def _boot():
 
 def _boot_unsampled():
     global state_path, backup_dir, first_boot
-    from nodelang.persistence import prepare_application_database
+    from nodelang.persistence import prepare_application_database, application_content_path, _MigrationProgress
     print("  migration  : checking complete application journal", flush=True)
     try:
         migration = prepare_application_database(state_dir, state_path,
@@ -666,24 +648,45 @@ def _boot_unsampled():
     workshop_arguments.update(create_social_execution_arguments())
     if workshop_transport is None:
         print("  workshop   : native transport unavailable; declare SESSION_LINK_NODE or install the bundled runtime", flush=True)
-    server = ApplicationServer(
-        universal_state_path=state_path,
-        port=int(os.environ.get('ARCHHUB_TEST_HTTP_PORT', '0')),
-        legacy_state_directory=state_dir,
-        pipeline_effect_engines=PIPELINE_ENGINES,
-        enable_machine_transport=True,
-        enable_brain_cloud_sync=True,
-        machine_descriptor_path=descriptor_path,
-        machine_pointer_path=_machine_pointer,
-        machine_key_provider=machine_key_provider,
-        project_work_execution_broker=ProjectWorkExecutionBroker(artifact_root),
-        model_execution_broker=ModelExecutionBroker(
-            workspace_root=Path(__file__).resolve().parent,
-            credential_resolver=ApplicationOpenRouterCredentialResolver(),
-            timeout_seconds=60.0,
-        ),
-        **workshop_arguments,
-    )
+    opening = True
+    import threading as _opening_threads
+    opening_thread = _opening_threads.get_ident()
+    open_progress = _MigrationProgress(30, _migration_progress)
+
+    def opening_sqlite_work():
+        if opening and _opening_threads.get_ident() == opening_thread:
+            open_progress.advance('Opening saved graph')
+        return 0
+
+    try:
+        server = ApplicationServer(
+            universal_state_path=state_path,
+            conversation_history_path=application_content_path(state_path),
+            port=int(os.environ.get('ARCHHUB_TEST_HTTP_PORT', '0')),
+            legacy_state_directory=state_dir,
+            pipeline_effect_engines=PIPELINE_ENGINES,
+            enable_machine_transport=True,
+            enable_brain_cloud_sync=True,
+            machine_descriptor_path=descriptor_path,
+            machine_pointer_path=_machine_pointer,
+            machine_key_provider=machine_key_provider,
+            universal_journal_progress_handler=opening_sqlite_work,
+            project_work_execution_broker=ProjectWorkExecutionBroker(artifact_root),
+            model_execution_broker=ModelExecutionBroker(
+                workspace_root=Path(__file__).resolve().parent,
+                credential_resolver=ApplicationOpenRouterCredentialResolver(),
+                timeout_seconds=60.0,
+            ),
+            **workshop_arguments,
+        )
+    finally:
+        # A failed constructor may retain a partial store until GC; its hook
+        # must become inert too. A live app must never inherit a boot watchdog.
+        opening = False
+        _migration_progress(None)
+    connection, _lock = server.universal_store.sqlite_storage()
+    with _lock:
+        connection.set_progress_handler(None, 0)
     from app.secrets_store import bind_settings_owner
     bind_settings_owner(server.universal_store)
     from nodelang.desktop import bind_coordination_surface
@@ -698,27 +701,6 @@ def _boot_unsampled():
     # runs through this same broker's host process, never a second runner.
     from nodelang import model_router as _model_router
     _model_router.bind_local_cli_broker(server.model_execution_broker)
-    startup_backup_bytes = _startup_backup_bytes(state_path, server.conversation_content._path)
-    if startup_backup_bytes > _STARTUP_BACKUP_MAX_BYTES:
-        print("  backup     : skipped at startup (%.0f MiB exceeds the %d MiB startup limit); "
-              "existing backups retained" % (startup_backup_bytes / 1048576,
-                                             _STARTUP_BACKUP_MAX_BYTES // 1048576), flush=True)
-    else:
-        try:
-            recovery = server.conversation_content.backup_recovery(backup_dir,
-                authentication_context=server.universal_registry.authorization.session.context(),
-                timeout_seconds=2.0)
-            print("  backup     : checked post-construction recovery saved: " + recovery.name, flush=True)
-            _prune_backups(backup_dir, recovery, owner=server)
-        except Exception as refusal:
-            print("  backup     : not completed (%s); existing backups retained" % type(refusal).__name__, flush=True)
-            if isinstance(refusal, TimeoutError):
-                print("  backup     : startup recovery exceeded its 2-second budget; no new recovery was published", flush=True)
-            sqlite_code = getattr(refusal, "sqlite_errorcode", None)
-            if type(sqlite_code) is int:
-                print("  backup     : SQLite error code %d; recovery remains incomplete" % sqlite_code, flush=True)
-            for note in getattr(refusal, "__notes__", ()):
-                print("  backup     : " + note, flush=True)
     server._existing_workshop_native_host = ExistingWorkshopNativeHost(server,
         state_dir=state_dir, descriptor_path=descriptor_path, key_provider=machine_key_provider)
     try:
@@ -1152,9 +1134,27 @@ def _open_saved_graph(*, max_wait_seconds=45.0, sleep_seconds=1.0):
     return server, boot_refusal
 
 
+def _open_saved_graph_with_recovery():
+    """Keep a failed desktop boot on its existing splash until the user chooses."""
+    global _boot_deadline
+    opened, refusal = _open_saved_graph()
+    while refusal is not None and _boot_surface is not None:
+        # Waiting for the user is not stalled migration work. The next attempt
+        # arms the watchdog again through its normal completed-work callbacks.
+        _boot_deadline = None
+        faulthandler.cancel_dump_traceback_later()
+        _boot_surface.progress.fail(str(refusal))
+        if _boot_surface.progress.wait_for_action() == "keep":
+            _exit_process(0)
+        _boot_deadline = time.monotonic() + 90
+        _arm_boot_watchdog()
+        opened, refusal = _open_saved_graph()
+    return opened, refusal
+
+
 _finish_boot_phase("prepare desktop")
 _boot_phase(0)
-server, boot_refusal = _off_the_qt_thread(_open_saved_graph)
+server, boot_refusal = _off_the_qt_thread(_open_saved_graph_with_recovery)
 _boot_phase(0, finished=True)
 # A startup failure never selects a replacement graph. Recovery of damaged
 # state is a separate operation; its files and original refusal stay visible.
@@ -2067,6 +2067,9 @@ _desktop_refresh_client = None
 _desktop_refresh_status = None
 _retention_cursor = None
 _retention_status = None
+_trace_retention_cursor = None
+_trace_retention_status = None
+_trace_inventory_completed_at = None
 
 
 def _renew_desktop_session():
@@ -2127,24 +2130,142 @@ def _renew_desktop_session():
         print("  desktop session : %s%s" % (status, elapsed), flush=True)
 
 
+def _conversation_maintenance_context():
+    session = server.universal_registry.authorization.session
+    held = []
+    try:
+        for lock in (session._lock, session.broker._lock):
+            if not lock.acquire(blocking=False):
+                return None
+            held.append(lock)
+        return session.context(minimum_validity_seconds=5)
+    finally:
+        for lock in reversed(held):
+            lock.release()
+
+
+@contextlib.contextmanager
+def _trace_background_priority():
+    """Lower only this existing worker's CPU/I/O priority, never the GUI."""
+    kernel, handle = None, None
+    if os.name == 'nt':
+        import ctypes
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel.GetCurrentThread.restype = ctypes.c_void_p
+        kernel.SetThreadPriority.argtypes = (ctypes.c_void_p, ctypes.c_int)
+        kernel.SetThreadPriority.restype = ctypes.c_int
+        handle = kernel.GetCurrentThread()
+        if not kernel.SetThreadPriority(handle, 0x00010000):
+            raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        yield
+    finally:
+        if kernel is not None and not kernel.SetThreadPriority(handle, 0x00020000):
+            raise OSError('could not restore conversation worker thread priority')
+
+
+def _maintain_legacy_conversations():
+    global _trace_retention_cursor, _trace_retention_status, _migration_status, _trace_inventory_completed_at
+    import time as trace_clock
+    import sqlite3 as trace_sqlite
+    if _update_stop.is_set() or _trace_retention_status == 'failed':
+        return False
+    try:
+        context = _conversation_maintenance_context()
+        if context is None:
+            return False
+        with _trace_background_priority():
+            completed = globals().get('_trace_inventory_completed_at')
+            if completed is None or trace_clock.monotonic() - completed >= 3600:
+                result = server.conversation_content.maintain_legacy_trace_inventory(
+                    authentication_context=context, cursor=_trace_retention_cursor,
+                    cancellation_event=_update_stop, timeout_seconds=2.0)
+                if result['status'] == 'inventory-complete':
+                    _trace_inventory_completed_at = trace_clock.monotonic()
+            else:
+                result = dict(status='inventory-complete', next_cursor=None)
+            if result['status'] == 'inventory-complete':
+                from nodelang.conversation_retention_maintenance import (
+                    maintain_trace_families, compact_trace_journal, _user_is_active)
+                from nodelang.conversation_trace_receipts import maintain_trace_receipts
+                result = maintain_trace_families(server.conversation_content,
+                    authentication_context=context, cancellation_event=_update_stop,
+                    prepare_only=True)
+                if result['status'] in ('family-ready', 'family-complete'):
+                    result = maintain_trace_receipts(server.conversation_content,
+                        authentication_context=context, cancellation_event=_update_stop)
+                    if result['status'] == 'receipts-complete':
+                        result = maintain_trace_families(server.conversation_content,
+                            authentication_context=context, cancellation_event=_update_stop)
+                if result['status'] == 'family-complete':
+                    def idle_check():
+                        if _update_stop.is_set() or _user_is_active(server):
+                            raise TimeoutError('trace compaction yields to user activity')
+                    def compact_progress(event):
+                        progress = dict(_migration_status or {})
+                        progress.update(label='Compacting archived trace space', background=True, **event)
+                        if _boot_surface is not None:
+                            _boot_surface.progress.migration(progress)
+                    from nodelang.persistence import finalize_application_adoption
+                    idle_check()
+                    registry = server.universal_registry
+                    authority = finalize_application_adoption(server.universal_store,
+                        registry.authorization.relationship_broker._key_provider,
+                        check=idle_check)
+                    if authority is not None and getattr(server, '_coordination_surface', None) is None:
+                        from nodelang.desktop import bind_coordination_surface
+                        bind_coordination_surface(server, state_dir)
+                    result = {**result, **compact_trace_journal(server.universal_store,
+                        check=idle_check, on_progress=compact_progress)}
+        _trace_retention_cursor = result['next_cursor']
+        status = result['status']
+        # The progress channel survives boot, but the boot watchdog must never
+        # be renewed/rearmed by later archive work.
+        _migration_status = dict(label='Archiving old agent traces', stage=status,
+            completed=result.get('copied', 0), total=None, percent=None,
+            exported=result.get('exported', 0), moved=result.get('moved', 0),
+            background=True)
+        if _boot_surface is not None:
+            _boot_surface.progress.migration(_migration_status)
+        if status != _trace_retention_status or result.get('exported'):
+            print('  trace archive : %s; copied %d; exported %d; moved %d' %
+                (status, result.get('copied', 0), result.get('exported', 0),
+                 result.get('moved', 0)), flush=True)
+        _trace_retention_status = status
+        return status in ('copying', 'inventory', 'archived', 'compacting',
+            'family-reset', 'family-inventory', 'family-delta', 'family-protection',
+            'family-retained-dependencies', 'family-ready', 'family-archiving',
+            'receipt-preparing', 'receipt-copying', 'receipt-scanning', 'receipt-reset')
+    except TimeoutError:
+        return False
+    except Exception as refusal:
+        if isinstance(refusal, trace_sqlite.OperationalError) and (
+                getattr(refusal, 'sqlite_errorcode', 0) & 255) in (
+                trace_sqlite.SQLITE_BUSY, trace_sqlite.SQLITE_LOCKED, trace_sqlite.SQLITE_INTERRUPT):
+            return False
+        _trace_retention_status = 'failed'
+        _migration_status = dict(label='Agent trace archive paused', stage='failed',
+            error=str(refusal), background=True, completed=None, total=None, percent=None)
+        if _boot_surface is not None:
+            _boot_surface.progress.migration(_migration_status)
+        from nodelang.conversation_archive import archive_directory, write_status
+        try:
+            write_status(archive_directory(server.conversation_content._path), _migration_status,
+                name='trace-maintenance-status.json')
+        except (OSError, ValueError) as status_error:
+            print('  trace archive : status could not be saved: %s' % status_error, flush=True)
+        print('  trace archive : paused: %s' % refusal, flush=True)
+        return False
+
+
 def _maintain_conversations():
     global _retention_cursor, _retention_status
     if _update_stop.is_set():
         return
     try:
-        session = server.universal_registry.authorization.session
-        held = []
-        try:
-            # Skip this cadence if process trust is busy; never wait behind a
-            # session renewal while the application is trying to shut down.
-            for lock in (session._lock, session.broker._lock):
-                if not lock.acquire(blocking=False):
-                    return
-                held.append(lock)
-            context = session.context(minimum_validity_seconds=5)
-        finally:
-            for lock in reversed(held):
-                lock.release()
+        context = _conversation_maintenance_context()
+        if context is None:
+            return
         result = server.conversation_content.maintain_retention(authentication_context=context,
             after_conversation_id=_retention_cursor, cancellation_event=_update_stop, timeout_seconds=2.0)
         _retention_cursor = result['next_conversation_id']
@@ -2168,8 +2289,9 @@ def _stage_update_quietly():
     _stage_once()
     next_renewal = time.monotonic() + 60
     next_update = time.monotonic() + 60
+    next_trace = time.monotonic() + 30
     while not _update_stop.is_set():
-        delay = max(0.0, min(next_renewal, next_update) - time.monotonic())
+        delay = max(0.0, min(next_renewal, next_update, next_trace) - time.monotonic())
         if _update_stop.wait(delay):
             return
         now = time.monotonic()
@@ -2183,6 +2305,9 @@ def _stage_update_quietly():
             if not _update_stop.is_set():
                 _maintain_conversations()
             next_renewal = time.monotonic() + 60
+        if not _update_stop.is_set() and time.monotonic() >= next_trace:
+            pending = _maintain_legacy_conversations()
+            next_trace = time.monotonic() + (0.25 if pending else 60)
         if not _update_stop.is_set() and time.monotonic() >= next_update:
             _stage_once()
             next_update = time.monotonic() + 60

@@ -31,7 +31,7 @@ def isolated_profile(tmp_path, monkeypatch):
     return local
 
 
-def _journal(path, label, timestamp, commits=1):
+def _journal(path, label, timestamp, commits=1, *, trace_history=False):
     import nodelang.universal_cell as kernel
     path.parent.mkdir(parents=True, exist_ok=True)
     # Set the commit clock at creation; journal triggers remain fully enabled.
@@ -43,15 +43,15 @@ def _journal(path, label, timestamp, commits=1):
                 Cell("app:archhub", NULL_CELL_ID, NULL_CELL_ID, label.encode()),))
             for index in range(commits):
                 store.commit(store.revision, create=(Cell(
-                    "work:" + str(index), NULL_CELL_ID, NULL_CELL_ID,
+                    ("app:agent-session:fixture:chain:" if trace_history and index else "work:") + str(index), NULL_CELL_ID, NULL_CELL_ID,
                     (label + ":" + str(index)).encode()),))
     return path
 
 
-def _selected(root, label="stale", timestamp=100, commits=1):
+def _selected(root, label="stale", timestamp=100, commits=1, *, trace_history=False):
     ident = str(uuid.uuid4())
     folder = root / "unified-authority" / "generations" / ident
-    database = _journal(folder / "authority.sqlite3", label, timestamp, commits)
+    database = _journal(folder / "authority.sqlite3", label, timestamp, commits, trace_history=trace_history)
     (folder / "bootstrap.json").write_text(json.dumps({"graph_id": ident}), encoding="utf-8")
     (root / "unified-authority" / "CURRENT").write_text(ident, encoding="ascii")
     return database
@@ -61,6 +61,18 @@ def _bytes(paths):
     return {str(path): hashlib.sha256(path.read_bytes()).hexdigest()
             for source in paths for path in source.parent.glob(source.name + "*")
             if path.is_file() and not path.name.endswith(".owner.lock")}
+
+
+def _closed_backup(source):
+    # Runtime import avoids the shared synthetic-fixture module's import cycle.
+    from tests_replica.test_adopt import closed_backup
+    return closed_backup(source.parent, source, include_content_when_absent=False)
+
+
+def _preserved_paths(paths, original, backup):
+    # The adopted inode is the writable live owner; the installer rollback copy
+    # retains its original closed bytes. Disposable accelerators may refresh.
+    return (*(path for path in paths if path != original), *backup.iterdir())
 
 
 def _history(path):
@@ -94,21 +106,27 @@ def test_all_declared_candidates_choose_newest_committed_time(
         isolated_profile, winner, stale_commits, legacy_time, root_time):
     local = isolated_profile
     root = local / "ArchHub"
-    stale = _selected(root, commits=stale_commits)
+    stale = _selected(root, commits=stale_commits, trace_history=True)
     legacy = _journal(local / "ArchHub-Test" / "archhub-test.universal.sqlite3", "legacy", legacy_time)
     direct = _journal(root / "authority.sqlite3", "root", root_time)
     sources = {"selected": stale, "legacy": legacy, "root": direct}
-    before = _bytes(sources.values())
+    backup = _closed_backup(sources[winner])
+    preserved = _preserved_paths(sources.values(), sources[winner], backup)
+    before = _bytes(preserved)
+    physical = sources[winner].stat().st_dev, sources[winner].stat().st_ino
     expected = _history(sources[winner])
     selected = _prepare(root)
     assert _history(selected) == expected
-    assert _bytes(sources.values()) == before
+    assert _bytes(preserved) == before
+    assert (selected.stat().st_dev, selected.stat().st_ino) == physical
     if winner == "selected":
         assert selected == stale.resolve()
     else:
-        assert selected not in {source.resolve() for source in sources.values()}
-        assert selected.parent.parent.name == "generations"
-        assert (root / "unified-authority" / "CURRENT").read_text().strip() == selected.parent.name
+        assert selected == sources[winner].resolve()
+        generation = root / "unified-authority/generations" / (root / "unified-authority/CURRENT").read_text().strip()
+        migration = json.loads((generation / "migration.json").read_text())
+        assert migration["generation_id"] == generation.name
+        assert (root / migration["journal_relative_path"]).resolve() == selected
 
 
 def test_equal_committed_time_uses_revision_not_file_mtime(isolated_profile):
@@ -116,31 +134,13 @@ def test_equal_committed_time_uses_revision_not_file_mtime(isolated_profile):
     root = local / "ArchHub"
     stale = _selected(root, timestamp=100, commits=1)
     legacy = _journal(local / "ArchHub-Test" / "archhub-test.universal.sqlite3", "legacy", 100, commits=4)
-    before = _bytes((stale, legacy))
+    backup = _closed_backup(legacy)
+    preserved = _preserved_paths((stale, legacy), legacy, backup)
+    before = _bytes(preserved)
+    expected = _history(legacy)
     selected = _prepare(root)
-    assert _history(selected) == _history(legacy)
-    assert _bytes((stale, legacy)) == before
-
-
-def test_failed_copy_keeps_current_and_both_old_histories(isolated_profile, monkeypatch):
-    from nodelang import application_recovery_files
-    local = isolated_profile
-    root = local / "ArchHub"
-    stale = _selected(root)
-    legacy = _journal(local / "ArchHub-Test" / "archhub-test.universal.sqlite3", "legacy", 200)
-    current = root / "unified-authority" / "CURRENT"
-    pointer = current.read_bytes()
-    before = _bytes((stale, legacy))
-
-    def interrupt(_connection, _destination, _check):
-        raise TimeoutError("independent court interruption before CURRENT publication")
-
-    monkeypatch.setattr(application_recovery_files, "_backup_sqlite", interrupt)
-    with pytest.raises(TimeoutError, match="independent court interruption"):
-        _prepare(root)
-    assert current.read_bytes() == pointer
-    assert persistence.application_database_path(root) == stale.resolve()
-    assert _bytes((stale, legacy)) == before
+    assert _history(selected) == expected
+    assert _bytes(preserved) == before
 
 
 def test_committed_wal_and_shared_memory_bytes_stay_untouched(isolated_profile):
@@ -163,12 +163,24 @@ def test_committed_wal_and_shared_memory_bytes_stay_untouched(isolated_profile):
         journal.execute("COMMIT")
         assert Path(str(legacy) + "-wal").stat().st_size > 0
         before = _bytes((stale, legacy))
-        chosen = _prepare(root)
+        pointer = (root / "unified-authority/CURRENT").read_bytes()
+        # A hot source cannot have the installer's final-closed receipt. Refuse
+        # without checkpointing, rewriting or moving its committed WAL bytes.
+        with pytest.raises(ValueError, match="verified installer.*closed.*backup"):
+            _prepare(root)
         assert _bytes((stale, legacy)) == before
-        adopted = _history(chosen)
-        assert adopted["revisions"][-1] == (first + 1, 300)
-        assert ("work:wal", first + 1, NULL_CELL_ID, NULL_CELL_ID,
-                b"committed only in WAL") in adopted["current_cells"]
+        assert (root / "unified-authority/CURRENT").read_bytes() == pointer
+    # Installer close/checkpoint establishes the independently restorable file;
+    # adoption must retain the exact committed history, including its WAL edit.
+    backup = _closed_backup(legacy)
+    preserved = _preserved_paths((stale, legacy), legacy, backup)
+    before = _bytes(preserved)
+    chosen = _prepare(root)
+    assert _bytes(preserved) == before
+    adopted = _history(chosen)
+    assert adopted["revisions"][-1] == (first + 1, 300)
+    assert ("work:wal", first + 1, NULL_CELL_ID, NULL_CELL_ID,
+            b"committed only in WAL") in adopted["current_cells"]
 
 
 def test_candidate_head_observation_honors_migration_deadline(isolated_profile, monkeypatch):
@@ -252,22 +264,29 @@ def test_real_application_receipts_survive_new_generation_and_server_reopen(isol
         revision = server.universal_store.revision
     finally:
         server.close()
-    before = _bytes((stale, legacy))
+    backup = _closed_backup(legacy)
+    preserved = (stale, *(backup / name for name in (legacy.name, legacy.name + ".conversations.sqlite3")))
+    before = _bytes(preserved)
     expected = _history(legacy)
     assert expected["revisions"][-1][0] == revision
     chosen = _prepare(root, key_provider=keys)
-    assert chosen != stale and chosen != legacy
+    assert chosen != stale and chosen == legacy
+    generation = root / "unified-authority/generations" / (root / "unified-authority/CURRENT").read_text().strip()
     migrated = _history(chosen)
     for table in ("revisions", "cell_versions"):
         assert [row for row in migrated[table] if row[0] <= revision] == expected[table]
     original_ids = {row[0] for row in expected["current_cells"]}
     assert [row for row in migrated["current_cells"] if row[0] in original_ids] == expected["current_cells"]
-    assert (chosen.parent / "adoption.json").is_file()
-    assert _bytes((stale, legacy)) == before
+    # Boot adopts the physical journal; the existing idle owner anchors its
+    # signed authority after archival. Emulate that phase on this small fixture.
+    with CellStore(chosen) as background_store:
+        persistence.finalize_application_adoption(background_store, keys)
+    assert (generation / "adoption.json").is_file()
+    assert _bytes(preserved) == before
     assert manifest.read_bytes() == manifest_before
-    # A copied legacy journal must not impersonate the old unified graph identity.
-    assert not (chosen.parent / "bootstrap.json").exists()
-    assert (chosen.parent / "migration.json").is_file()
+    # The adopted legacy journal must not impersonate the old unified graph identity.
+    assert not (generation / "bootstrap.json").exists()
+    assert (generation / "migration.json").is_file()
     reopened = ApplicationServer(universal_state_path=chosen, **kwargs)
     try:
         assert reopened.universal_store._signed_commit_authority.store is reopened.universal_store
@@ -278,7 +297,7 @@ def test_real_application_receipts_survive_new_generation_and_server_reopen(isol
     for table in ("revisions", "cell_versions"):
         after = _history(chosen)[table]
         assert [row for row in after if row[0] <= revision] == expected[table]
-    assert _bytes((stale, legacy)) == before
+    assert _bytes(preserved) == before
     assert manifest.read_bytes() == manifest_before
 
     # An unchanged accepted snapshot cannot cover a changed retained-history
@@ -286,7 +305,7 @@ def test_real_application_receipts_survive_new_generation_and_server_reopen(isol
     from nodelang.unified_authority import BootstrapManifest, open_unified_authority
     from nodelang.universal_cell import InvalidCell
     adopted_manifest = BootstrapManifest.from_json(
-        (chosen.parent / "adoption.json").read_text(encoding="utf-8"))
+        (generation / "adoption.json").read_text(encoding="utf-8"))
     with CellStore(chosen) as check:
         original_digest = check.revision_chain_digest
         source_revision = adopted_manifest.accepted_revision
@@ -316,10 +335,16 @@ def test_migrated_selected_profile_binds_signed_owner_for_coordination(isolated_
                   enable_machine_transport=False, enable_universal_cloud_gateway=False, live_watch=False)
     original = ApplicationServer(universal_state_path=legacy, **kwargs)
     original.close()
-    before = _bytes((stale, legacy))
+    backup = _closed_backup(legacy)
+    preserved = (stale, *(backup / name for name in (legacy.name, legacy.name + ".conversations.sqlite3")))
+    before = _bytes(preserved)
     chosen = _prepare(root, key_provider=keys)
-    assert chosen != stale and chosen != legacy
+    assert chosen != stale and chosen == legacy
     assert persistence.selected_application_generation(chosen)
+    # Signed coordination is the post-archival background phase, never boot's
+    # full-graph adoption work. Preserve the same actual signed-owner court.
+    with CellStore(chosen) as background_store:
+        persistence.finalize_application_adoption(background_store, keys)
     reopened = ApplicationServer(universal_state_path=chosen, **kwargs)
     try:
         authority = getattr(reopened.universal_store, "_signed_commit_authority", None)
@@ -342,7 +367,7 @@ def test_migrated_selected_profile_binds_signed_owner_for_coordination(isolated_
         assert not reopened._coordination_thread.is_alive()
     finally:
         reopened.close()
-    assert _bytes((stale, legacy)) == before
+    assert _bytes(preserved) == before
 
 @pytest.mark.parametrize("invalid", ("receipts", "history"))
 def test_adoption_refuses_invalid_receipts_or_history_without_writes(

@@ -310,6 +310,7 @@ def _workshop_token_positions(token, prefix, count):
 def _read_ordinary_browser_workshop(owner, binding, *, root, scope, expected_revision, session_token,
                                     content_after=None, before=None, connections=None, feed='all'):
     """Keep graph/scope authority stable through ordinary-page projection."""
+    import base64
     from .conversation_content import read_content_binding
     registry, store = owner.universal_registry, owner.universal_store
     authority = registry.authorization
@@ -333,14 +334,39 @@ def _read_ordinary_browser_workshop(owner, binding, *, root, scope, expected_rev
                     identity.append(feed)
                 before_sequence = None
                 before_generation = None
+                session_archive = isinstance(before, str) and before.startswith("a2:")
+                archive_request = session_archive or isinstance(before, str) and before.startswith("a1:")
                 if before is not None:
-                    page_prefix = "p2" if isinstance(before, str) and before.startswith("p2:") else "p1"
-                    page_positions = _workshop_token_positions(before, page_prefix, 2 if page_prefix == "p2" else 1)
+                    page_prefix = "a2" if session_archive else "a1" if archive_request else "p2" if isinstance(before, str) and before.startswith("p2:") else "p1"
+                    if session_archive:
+                        if binding.subject_root != authority.subject_root or root != registry.workshop_root or feed != 'all':
+                            raise AuthorizationDenied("Session archives require the founder main Workshop")
+                        fields = before.split(':')
+                        if len(before) > 6000 or len(fields) != 5:
+                            raise InvalidCell("Archive session position is invalid")
+                        try:
+                            session_bytes = base64.b64decode(fields[1] + '=' * (-len(fields[1]) % 4), altchars=b'-_', validate=True)
+                            archive_session = session_bytes.decode('utf-8')
+                        except ValueError as exc:
+                            raise InvalidCell("Archive session position is invalid") from exc
+                        if (not session_bytes or len(session_bytes) > 4096
+                                or base64.urlsafe_b64encode(session_bytes).decode().rstrip('=') != fields[1]):
+                            raise InvalidCell("Archive session position is invalid")
+                        page_positions = _workshop_token_positions('a2:' + ':'.join(fields[2:]), 'a2', 2)
+                    else:
+                        page_positions = _workshop_token_positions(before, page_prefix, 2 if page_prefix in ("p2", "a1") else 1)
                     before_sequence = page_positions[0]
                     before_generation = page_positions[1] if page_prefix == "p2" else 0
-                    if before_sequence < 1:
+                    if archive_request:
+                        if page_positions[0] >= 2**32:
+                            raise InvalidCell("Archive text position exceeds its limit")
+                        before_sequence = ((archive_session, *page_positions) if session_archive else
+                            -(1 + page_positions[0] + page_positions[1] * 2**32))
+                        before_generation = None
+                    if not archive_request and before_sequence < 1:
                         raise InvalidCell("Workshop older-page position must be positive")
-                    if before != _workshop_position_token(page_prefix, page_positions, identity):
+                    signed_positions = (fields[1], *page_positions) if session_archive else page_positions
+                    if before != _workshop_position_token(page_prefix, signed_positions, identity):
                         raise AuthorizationDenied("Workshop page changed; return to latest messages")
                 if_visible_head = None
                 if_content_generation = None
@@ -352,6 +378,11 @@ def _read_ordinary_browser_workshop(owner, binding, *, root, scope, expected_rev
                         if_visible_head = positions[0]
                         if content_prefix == "c2":
                             if_content_generation = positions[2]
+                archive_metadata = (service._history_for(content_binding).archived_trace_session(root, metadata_only=True)
+                    if binding.subject_root == authority.subject_root else None)
+                if archive_request or archive_metadata is not None:
+                    # Archive indexing has its own generation, independent of message etags.
+                    if_visible_head = if_content_generation = None
                 page = service.page_for_workshop_browser(session_token, binding=binding, space_root=root,
                     before=before_sequence, if_visible_head=if_visible_head,
                     **({'category': registry.workshop_category_roots[
@@ -379,8 +410,8 @@ def _read_ordinary_browser_workshop(owner, binding, *, root, scope, expected_rev
                     "assignments": _assignment_rows(owner, snapshot, root),
                     "page_before": before,
                     "content_cursor": _workshop_position_token("c2" if generation else "c1",
-                        (page["visible_head"], before_sequence or 0, generation) if generation
-                        else (page["visible_head"], before_sequence or 0), identity)}
+                        (page["visible_head"], 0 if archive_request else before_sequence or 0, generation) if generation
+                        else (page["visible_head"], 0 if archive_request else before_sequence or 0), identity)}
                 if page.get("unchanged") is True:
                     if header["content_cursor"] != content_after:
                         raise InvalidCell("Workshop unchanged position does not match")
@@ -518,6 +549,38 @@ def _read_ordinary_browser_workshop(owner, binding, *, root, scope, expected_rev
                     result["next_before"] = page_token(min(groups[parent][0]["sequence"] for parent in kept))
                 if (page["messages"] and not kept) or encoded_size(result) > 262144:
                     raise InvalidCell("Workshop response exceeds its byte budget")
+                if archive_request:
+                    archived = page.get("trace_archive")
+                    if archived is None:
+                        raise InvalidCell("Conversation archive is unavailable")
+                    archive_root = "trace-archive:" + hashlib.sha256(json.dumps([archived.get('session_id', root), archived["generation"]]).encode()).hexdigest()
+                    next_offset = archived["next_offset"]
+                    def session_token_for(metadata, offset=0):
+                        encoded = base64.urlsafe_b64encode(metadata['session_id'].encode()).decode().rstrip('=')
+                        return _workshop_position_token('a2', (encoded, offset, metadata['generation']), identity)
+                    next_archive = (session_token_for(archived, next_offset) if session_archive else
+                        _workshop_position_token('a1', (next_offset, archived['generation']), identity)) if next_offset is not None else None
+                    following = page.get('trace_catalogue_next') if session_archive else page.get('trace_catalogue_available')
+                    if next_archive is None and following is not None:
+                        next_archive = session_token_for(following)
+                    result.update(can_send=False, can_manage_history=False, total=1,
+                        has_older=next_archive is not None, next_before=next_archive,
+                        messages=[dict(root=archive_root, message_id=archive_root, sequence=1,
+                            sender_root="Conversation archive", recipient_root="Local archive", recipient_roots=[],
+                            body=("Archived session " + archived['session_id'] + " (read only)\n\n" if session_archive else
+                                "Archived conversation (read only)\n\n") + archived["content"], category="archive",
+                            reply_to_root=None, reference_roots=[], evidence_roots=[], created_at="",
+                            state="archived", archive_projection=True)])
+                elif not result["has_older"] and page.get("trace_archive_available") is not None:
+                    metadata = page["trace_archive_available"]
+                    result.update(has_older=True,
+                        next_before=_workshop_position_token("a1", (0, metadata["generation"]), identity))
+                elif not result['has_older'] and page.get('trace_catalogue_available') is not None:
+                    metadata = page['trace_catalogue_available']
+                    encoded = base64.urlsafe_b64encode(metadata['session_id'].encode()).decode().rstrip('=')
+                    result.update(has_older=True, next_before=_workshop_position_token('a2', (encoded, 0, metadata['generation']), identity))
+                if encoded_size(result) > 262144:
+                    raise InvalidCell("Workshop archive response exceeds its byte budget")
                 if owner._resolve_browser_session(session_token) != binding:
                     raise AuthorizationDenied("Workshop browser binding changed during read")
                 _admit(owner, binding, root, scope, allow_child=True)

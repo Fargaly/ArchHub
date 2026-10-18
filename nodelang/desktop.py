@@ -59,7 +59,7 @@ def bind_coordination_surface(server, state_directory):
     """
     import threading
     from urllib.parse import urlsplit
-    from .persistence import selected_application_generation
+    from .persistence import selected_application_generation, _application_generation_directory
     if not selected_application_generation(server.universal_state_path):
         return None
     from .runtime_caller_capability import WindowsDpapiCallerKeyStore
@@ -69,7 +69,7 @@ def bind_coordination_surface(server, state_directory):
     from .clean_revit_adapter import invoke as revit
     from .clean_model_adapter import CleanModelAdapter
     database = Path(server.universal_state_path)
-    generation = database.parent
+    generation = _application_generation_directory(database)
     authority = getattr(server.universal_store, '_signed_commit_authority', None)
     if authority is None:
         raise ValueError('selected application has no bound signed commit owner')

@@ -950,10 +950,16 @@ def _expected_head_digest(
     snapshot: Snapshot,
     blank_atom_roots: Iterable[str],
     recorded: object,
+    *, head_root: str | None = None,
 ) -> str:
     """Recompute a head's snapshot digest under the formula it recorded."""
     blank = tuple(blank_atom_roots)
     if not _is_v2_digest(recorded):
+        if (head_root is not None and snapshot.revision <= authority.store.revision
+                and snapshot.cells is authority.store.at(snapshot.revision).cells):
+            certificate = authority.store.archived_head_proof(snapshot.revision, head_root)
+            if certificate is not None:
+                return certificate
         return _normalized_snapshot_digest(snapshot, blank)
     accumulator = authority.store.set_accumulator(snapshot)
     held = tuple(snapshot.cells[root] for root in blank)
@@ -1245,6 +1251,7 @@ def _verify_authority_head(
     head_root: str,
     *,
     candidate_changes=None,
+    authenticated_archive_digest: str | None = None,
 ) -> None:
     projection = validate_composition(authority, snapshot, head_root)
     if projection.protocol_root != authority.shape("authority-head"):
@@ -1277,12 +1284,23 @@ def _verify_authority_head(
     ):
         raise InvalidCell("current authority head signing identity does not match")
     blank = (payload_roots["snapshot-digest"], payload_roots["signature"])
-    if candidate_changes is not None and _is_v2_digest(values['snapshot-digest']):
+    if authenticated_archive_digest is not None:
+        # Only the already bound signer may capture its authenticated ancestry.
+        # Its immutable head-record chain anchors this exact original digest;
+        # ordinary verification never enters this owner-only capture path.
+        if (getattr(authority.store, '_signed_commit_authority', None) is not authority
+                or _is_v2_digest(values['snapshot-digest'])
+                or values['snapshot-digest'] != authenticated_archive_digest
+                or snapshot.cells is not authority.store.at(snapshot.revision).cells):
+            raise InvalidCell('archive head capture lacks its authenticated owner')
+        expected_digest = authenticated_archive_digest
+    elif candidate_changes is not None and _is_v2_digest(values['snapshot-digest']):
         base, created, replaced = candidate_changes
         expected_digest = _committed_head_digest(authority, base,
             create=created, replace=replaced, blank_atom_roots=blank)
     else:
-        expected_digest = _expected_head_digest(authority, snapshot, blank, values['snapshot-digest'])
+        expected_digest = _expected_head_digest(authority, snapshot, blank, values['snapshot-digest'],
+                                               head_root=head_root)
     if values["snapshot-digest"] != expected_digest:
         raise InvalidCell("current authority head snapshot digest does not match")
     payload = _head_payload(
@@ -1301,6 +1319,76 @@ def _verify_authority_head(
         signature,
     ):
         raise InvalidCell("current authority head signature is invalid")
+
+
+def capture_archived_v1_heads(authority: UnifiedAuthority, check) -> None:
+    """Resumable signer audit; publish bounded pages before retirement.
+
+    An in-memory frontier makes later batches inspect only newly signed heads.
+    Cancellation retains the ancestry and publication cursors. A partial page
+    never becomes a completed ancestry frontier.
+    """
+    store = authority.store
+    if getattr(store, '_signed_commit_authority', None) is not authority:
+        raise InvalidCell('archive head capture requires the authenticated signed owner')
+    while True:
+        latest = _current_head_member(authority, store.snapshot())
+        if latest is None:
+            return
+        frontier = getattr(store, '_archive_v1_frontier', None)
+        if latest.participant_id == frontier:
+            return
+        state = getattr(store, '_archive_v1_capture', None)
+        if state is None:
+            state = dict(latest=latest.participant_id, head=latest.participant_id,
+                         revision=store.revision, pending=[], published=0)
+            store._archive_v1_capture = state
+        while state['head'] is not None and state['head'] != frontier:
+            check()
+            head, revision = state['head'], state['revision']
+            snapshot = store.at(revision)
+            current = _current_head_member(authority, snapshot)
+            if current is None or current.participant_id != head:
+                raise InvalidCell('archive signed-head ancestry differs')
+            digest = _decode_value(authority, snapshot,
+                _single_member(snapshot, head, authority.role('snapshot-digest')))
+            if not _is_v2_digest(digest):
+                _verify_authority_head(authority, snapshot, head,
+                                       authenticated_archive_digest=str(digest))
+                state['pending'].append((revision, head, str(digest)))
+            projection = validate_composition(authority, snapshot, head)
+            parents = tuple(member.participant_id for member in projection.members
+                if member.role_id == authority.role('parent-head'))
+            if len(parents) > 1:
+                raise InvalidCell('archive signed-head ancestry repeats a parent')
+            if not parents:
+                state['head'] = None
+                break
+            parent = parents[0]
+            parent_revision = _decode_value(authority, snapshot,
+                _single_member(snapshot, parent, authority.role('head-revision')))
+            if type(parent_revision) is not int or parent_revision != revision - 1:
+                raise InvalidCell('archive signed-head parent revision differs')
+            parent_digest = _decode_value(authority, snapshot,
+                _single_member(snapshot, head, authority.role('parent-head-digest')))
+            if parent_digest != _stored_head_record_digest(authority, store.at(parent_revision), parent):
+                raise InvalidCell('archive signed-head parent digest differs')
+            state.update(head=parent, revision=parent_revision)
+        connection, _ = store.sqlite_storage()
+        while state['published'] < len(state['pending']):
+            check()
+            page = state['pending'][state['published']:state['published'] + 32]
+            connection.execute('BEGIN IMMEDIATE')
+            try:
+                for revision, head, digest in page:
+                    store._record_archived_head_proof(revision, head, digest)
+                connection.commit()
+            except BaseException:
+                connection.rollback()
+                raise
+            state['published'] += len(page)
+        store._archive_v1_frontier = state['latest']
+        store._archive_v1_capture = None
 
 
 # Verifying a head is a pure function of the graph it verifies, and every
@@ -1337,14 +1425,19 @@ def _verify_exact_snapshot_head_uncached(
     snapshot: Snapshot,
 ) -> None:
     """Verify the signed head without consulting the per-snapshot verdict."""
+    if snapshot.revision == authority.manifest.accepted_revision:
+        # An adopted prefix predates the unified head-index vocabulary. Its
+        # signed manifest authenticates the original snapshot directly.
+        store = authority.store
+        if snapshot.cells is store.at(snapshot.revision).cells:
+            proof = store.archived_snapshot_proof(snapshot.revision)
+            if proof is not None and proof[1] == authority.manifest.accepted_snapshot_digest:
+                return
+        if snapshot_digest(snapshot) == authority.manifest.accepted_snapshot_digest:
+            return
+        raise InvalidCell("accepted bootstrap snapshot digest does not match")
     current = _current_head_member(authority, snapshot)
     if current is None:
-        if (
-            snapshot.revision == authority.manifest.accepted_revision
-            and snapshot_digest(snapshot)
-            == authority.manifest.accepted_snapshot_digest
-        ):
-            return
         raise InvalidCell("current authority head is missing")
     _verify_authority_head(authority, snapshot, current.participant_id)
 
@@ -1425,8 +1518,11 @@ def _verify_current_head(
                 authority.role("head-revision"),
             ),
         )
-        if type(parent_revision) is not int or parent_revision != expected_revision - 1:
+        if type(parent_revision) is not int or parent_revision >= expected_revision:
             raise InvalidCell("authority head parent revision is not contiguous")
+        if parent_revision != expected_revision - 1:
+            from .authority_adoption import verify_legacy_continuation
+            verify_legacy_continuation(authority, historical, parent_root, parent_revision)
         parent_snapshot = authority.store.at(parent_revision)
         expected_parent_digest = _stored_head_record_digest(
             authority, parent_snapshot, parent_root
@@ -1485,6 +1581,10 @@ def bind_signed_commit_owner(authority: UnifiedAuthority) -> None:
                 'key-id', 'key-version', 'key-fingerprint', 'signature')}
             while root is not None and root not in protected_heads:
                 protected_heads.add(root)
+                from .authority_adoption import _legacy_continuation_id
+                revision = _decode_value(authority, snapshot,
+                    _single_member(snapshot, root, authority.role('head-revision')))
+                protected_records.add(_legacy_continuation_id(authority, revision))
                 protected_records.update(_relation_chain_ids(snapshot, root, budget=COMMAND_BUDGET))
                 parent = None
                 for item in read_relation(snapshot, root, budget=COMMAND_BUDGET):
@@ -2285,6 +2385,7 @@ def open_unified_authority(
     manifest: BootstrapManifest,
     key_provider: SigningKeyProvider,
     accepted_proof=None,
+    *, resume_application_legacy: bool = False,
 ) -> UnifiedAuthority:
     """Verify a signed bootstrap and open the exact same persisted authority."""
     import time as _time
@@ -2396,6 +2497,9 @@ def open_unified_authority(
     # carried by the generation records which head, at which revision, over
     # which append-only prefix, was verified; anything different pays in
     # full.
+    if resume_application_legacy:
+        from .authority_adoption import resume_application_legacy_authority
+        resume_application_legacy_authority(authority)
     current = store.snapshot()
     head_key = None
     if accepted_proof is not None:

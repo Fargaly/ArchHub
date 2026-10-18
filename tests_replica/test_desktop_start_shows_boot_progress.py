@@ -31,7 +31,7 @@ def test_the_window_and_boot_page_stand_before_the_graph_opens():
     window = _line_of(source, "app = QApplication(sys.argv)")
     surface = _line_of(source, "_boot_surface = create_boot_surface(")
     shown = _line_of(source, "    window.show()")
-    opened = _line_of(source, "server, boot_refusal = _off_the_qt_thread(_open_saved_graph)")
+    opened = _line_of(source, "server, boot_refusal = _off_the_qt_thread(_open_saved_graph_with_recovery)")
     assert window < surface < shown < opened
 
 

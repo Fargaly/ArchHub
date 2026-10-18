@@ -97,6 +97,10 @@ Name: "desktopicon"; Description: "Create a Desktop shortcut"; GroupDescription:
 Name: "connectassistants"; Description: "Connect my AI assistants to ArchHub (adds ArchHub's end-of-turn check to Claude Code, Codex and Gemini CLI and the Session Link plugin to OpenCode; your other settings are kept)"; GroupDescription: "Assistants:"
 
 [Files]
+; Setup extracts the new product backup owner before replacing any old code.
+Source: "..\nodelang\application_recovery_files.py"; Flags: dontcopy
+Source: "..\nodelang\backup_retention.py"; Flags: dontcopy
+Source: "..\nodelang\conversation_trace_shapes.py"; Flags: dontcopy
 Source: "{#NodeRuntimePath}"; DestDir: "{app}\runtime"; DestName: "node.exe"; Flags: ignoreversion; Check: NodeRuntimeNeedsInstall
 Source: "{#NodeLicensePath}"; DestDir: "{app}\runtime"; DestName: "Node-LICENSE.txt"; Flags: ignoreversion
 Source: "{#GoosePayloadPath}\*"; DestDir: "{app}\runtime\goose"; Flags: recursesubdirs ignoreversion
@@ -540,6 +544,8 @@ begin
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  BackupCode: Integer;
 begin
   { Before any file is copied, a machine without Python 3.14 (e.g. 3.12 only)
     gets the pinned 3.14.7. If it still has none, the reason is returned: Inno
@@ -550,6 +556,18 @@ begin
     if not InstallPython() then
       Result := 'ArchHub needs Python 3.14 and it could not be installed on this machine. ' +
                 'Install Python 3.14 from python.org, then run this setup again.';
+  if Result = '' then
+  begin
+    ExtractTemporaryFile('application_recovery_files.py');
+    ExtractTemporaryFile('backup_retention.py');
+    ExtractTemporaryFile('conversation_trace_shapes.py');
+    if not Exec(FindPython(), '"' + ExpandConstant('{tmp}\application_recovery_files.py') +
+        '" --closed-profile "' + ExpandConstant('{localappdata}') + '" --build "{#BuildId}"',
+        '', SW_HIDE, ewWaitUntilTerminated, BackupCode) then
+      Result := 'The pre-upgrade journal backup could not start. Your saved work was kept.'
+    else if BackupCode <> 0 then
+      Result := 'The pre-upgrade journal backup did not complete. Close ArchHub and retry Setup. Your saved work was kept.';
+  end;
 end;
 
 function InitializeSetup(): Boolean;

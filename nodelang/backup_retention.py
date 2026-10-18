@@ -55,17 +55,38 @@ def prune_backups(directory, *, keep, keep_count=3, max_bytes=10 * 1024**3,
     if not keep.is_dir() or keep.parent != directory:
         raise ValueError("the new verified backup must be a folder inside the backup directory")
     protected = {keep.name.casefold(), *(str(n).casefold() for n in protected_names)}
+    closed = {}
+    for candidate in directory.glob('*-closed'):
+        receipt = candidate / 'closed-files.json'
+        if (candidate.is_symlink() or candidate.is_junction() or not receipt.is_file()
+                or receipt.is_symlink()):
+            continue
+        if receipt.stat().st_size <= 65536:
+            record = json.loads(receipt.read_text(encoding='utf-8'))
+            if record.get('kind') == 'closed-file-preservation':
+                closed[candidate] = record
+    # Old installers pinned every daily copy. Only the newest pinned custody
+    # survives that legacy mistake; the others obey ordinary retention.
+    pins = [path for path, record in closed.items()
+            if record.get('retain_until_user_deletes') is True]
+    pin = max(pins, key=lambda path: (path.stat().st_mtime_ns, path.name), default=None)
+    if pin is not None:
+        protected.add(pin.name.casefold())
     candidates = [p for p in directory.iterdir() if p.is_dir() and not p.is_symlink()
                   and not p.is_junction() and not p.name.startswith('.')
-                  and any((p / name).is_file() and not (p / name).is_symlink()
-                          for name in ('graph.sqlite3', 'authority.sqlite3'))]
+                  and (any((p / name).is_file() and not (p / name).is_symlink()
+                          for name in ('graph.sqlite3', 'authority.sqlite3'))
+                  or (p in closed and any((p / name).is_file() and not (p / name).is_symlink()
+                          for name in ('archhub-test.universal.sqlite3',
+                                       'node-native-wip.json.gz.universal.sqlite3'))))]
     if keep not in candidates:
         raise ValueError('verified backup has no owned graph snapshot')
     candidates.sort(key=lambda p: (p.stat().st_mtime_ns,
         (backup_date(p.name) or date.min).toordinal(), p.name), reverse=True)
     sizes = {p.name: _backup_bytes(p) for p in candidates}
     retained = set(p.name for p in candidates if p.name.casefold() in protected)
-    available = max(0, keep_count - len(retained))
+    # The pre-ADOPT pin is exceptional custody, additional to the normal N.
+    available = max(0, keep_count - len(retained - ({pin.name} if pin is not None else set())))
     retained.update(p.name for p in [p for p in candidates if p.name not in retained][:available])
     total = sum(sizes[n] for n in retained)
     for path in reversed(candidates):
@@ -109,7 +130,7 @@ def backup_policy(snapshot, registry=None):
     }
 
 
-def protected_update_backups(state_directory, backup_directory):
+def protected_update_backups(state_directory, backup_directory, *, strict_directory=True):
     """An armed update keeps its exact final-close recovery until disarmed."""
     marker = Path(state_directory) / 'updates' / 'update-ready.json'
     if not marker.exists():
@@ -119,6 +140,8 @@ def protected_update_backups(state_directory, backup_directory):
     receipt = json.loads(marker.read_text(encoding='utf-8'))
     recovery = Path(receipt['recovery']['path']).resolve()
     if recovery.parent != Path(backup_directory).resolve():
+        if not strict_directory:
+            return ()
         raise ValueError('armed update recovery is outside this backup directory')
     return (recovery.name,)
 

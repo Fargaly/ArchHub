@@ -6,6 +6,7 @@ released graph authority and an opaque authenticated context internally.
 """
 from __future__ import annotations
 
+from collections import ChainMap
 from dataclasses import dataclass, replace
 import hashlib
 import json
@@ -865,11 +866,43 @@ def _read_authorization_receipt(
     *,
     work_budget: _ReadWorkBudget | None = None,
 ) -> AuthorizationReceiptProjection:
-    members = read_relation(
-        snapshot,
-        receipt_root,
-        budget=MAX_RECEIPT_RELATION_MEMBERS + 1,
-    )
+    receipt = snapshot.cells.get(receipt_root)
+    if receipt is not None and receipt.atom:
+        if receipt.link0 != NULL_CELL_ID or receipt.link1 != NULL_CELL_ID:
+            raise InvalidCell("authorization receipt links drifted")
+        try:
+            payload = json.loads(receipt.atom)
+            if (type(payload) is not dict or set(payload) != {"version", "members", "values"}
+                    or type(payload["version"]) is not int or payload["version"] != 1
+                    or type(payload["members"]) is not list
+                    or type(payload["values"]) is not dict
+                    or len(payload["members"]) > MAX_RECEIPT_RELATION_MEMBERS
+                    or len(payload["values"]) > 7):
+                raise ValueError("invalid compact receipt")
+            expected_values = {receipt_root + suffix for suffix in (
+                ":revision", ":evaluated-at", ":context-expires-at", ":policy-digest", ":reason")}
+            resolver_values = {receipt_root + suffix for suffix in (":resolver-revision", ":resolver-evaluated-at")}
+            if set(payload["values"]) not in (expected_values, expected_values | resolver_values):
+                raise ValueError("invalid receipt terminal keys")
+            values = {root: _terminal(root, value) for root, value in payload["values"].items()
+                      if type(root) is str and root.startswith(receipt_root + ":") and type(value) is str}
+            if len(values) != len(payload["values"]):
+                raise ValueError("invalid receipt terminal")
+            if any(root in snapshot.cells and snapshot.cells[root] != cell
+                   for root, cell in values.items()):
+                raise ValueError("compact receipt terminal differs from graph")
+            members = tuple(RelationMember(receipt_root + ":" + str(index), *pair)
+                            for index, pair in enumerate(payload["members"])
+                            if type(pair) is list and len(pair) == 2
+                            and all(type(root) is str for root in pair))
+            if len(members) != len(payload["members"]):
+                raise ValueError("invalid receipt membership")
+            snapshot = Snapshot(snapshot.revision, ChainMap(values, snapshot.cells))
+        except (TypeError, ValueError, UnicodeError) as exc:
+            raise InvalidCell("authorization receipt content is invalid") from exc
+    else:
+        # Read-only compatibility for receipts issued before content compaction.
+        members = read_relation(snapshot, receipt_root, budget=MAX_RECEIPT_RELATION_MEMBERS + 1)
     if len(members) > MAX_RECEIPT_RELATION_MEMBERS:
         raise InvalidCell("authorization receipt exceeds its member limit")
     if work_budget is not None:

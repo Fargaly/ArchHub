@@ -5840,7 +5840,8 @@ class ApplicationServer:
                  project_work_execution_broker=None,
                  session_link_transport=None,
                  social_execution_host=None,
-                 social_account_binding_verifier=None):
+                 social_account_binding_verifier=None,
+                 universal_journal_progress_handler=None):
         migrate_legacy_sources = legacy_state_directory is not None
         runtime_compliance_runner = (
             runtime_compliance_runner or run_physical_runtime_compliance_court
@@ -6204,7 +6205,13 @@ class ApplicationServer:
                 )
             if self.universal_state_path is not None:
                 self.universal_state_path.parent.mkdir(parents=True, exist_ok=True)
-                universal_store = CellStore(self.universal_state_path)
+                if universal_journal_progress_handler is None:
+                    universal_store = CellStore(self.universal_state_path)
+                else:
+                    from .universal_cell import _SqliteJournal
+                    universal_store = CellStore(journal=_SqliteJournal(
+                        self.universal_state_path, None,
+                        progress_handler=universal_journal_progress_handler))
                 # The persistent graph this server owns publishes a revision
                 # only for a declared user, agent-Work or migration intent.
                 universal_store.require_declared_intent()

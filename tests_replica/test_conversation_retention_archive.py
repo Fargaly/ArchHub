@@ -358,14 +358,65 @@ def test_geometry_receipts_rotate_at_their_cap(tmp_path, monkeypatch):
     assert max(sizes.values()) < 2000 + 64
 
 
-def test_launcher_writes_through_the_rotating_log():
+def test_launcher_writes_through_the_rotating_log(tmp_path):
+    import ast
+    import builtins
+    from types import SimpleNamespace
+    from nodelang.log_rotation import LAUNCHER_LOG_BYTES, LOG_KEEP
+
     source = (Path(__file__).resolve().parents[1] / "launch_archhub_test.py").read_text(encoding="utf-8")
-    assert "_log = RotatingLog(_log_path)" in source
-    # The plain append file survives only as the fallback for a broken import.
-    assert source.count('open(_log_path, "a"') == 1
-    assert source.index("except Exception:") < source.index('open(_log_path, "a"')
-    assert '_rotate_log(_log_dir / "brain.log", LAUNCHER_LOG_BYTES, LOG_KEEP)' in source
-    assert "_log.on_rotate = lambda stream: faulthandler.enable(file=stream)" in source
+    tree = ast.parse(source)
+    callback = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                    and node.name == "_follow_boot_log_rotation")
+    index = next(index for index, node in enumerate(tree.body) if isinstance(node, ast.Try)
+                 and any(isinstance(child, ast.ImportFrom) and child.module == "nodelang.log_rotation"
+                         for child in ast.walk(node)))
+    # Execute the actual launcher callback and log setup, including both output
+    # streams and bootstrap descriptor handoff, against only synthetic files.
+    setup = compile(ast.Module(body=[callback, *tree.body[index:index + 4]], type_ignores=[]),
+                    "launcher-log-court", "exec")
+    log_path, brain = tmp_path / "launcher.log", tmp_path / "brain.log"
+    brain.write_bytes(b"b" * LAUNCHER_LOG_BYTES)
+    bootstrap = log_path.open("a", encoding="utf-8")
+    followed, armed, cancelled = [], [], []
+    namespace = {"_log_dir": tmp_path, "_log_path": log_path, "_bootstrap_log": bootstrap,
+        "sys": SimpleNamespace(), "_arm_boot_watchdog": lambda: armed.append(True),
+        "faulthandler": SimpleNamespace(enable=lambda **kwargs: followed.append(kwargs["file"]),
+            cancel_dump_traceback_later=lambda: cancelled.append(True))}
+    exec(setup, namespace)
+    log = namespace["_log"]
+    try:
+        assert isinstance(log, RotatingLog)
+        assert namespace["sys"].stdout is namespace["sys"].stderr is log
+        assert bootstrap.closed and cancelled == [True] and armed == [True]
+        for _ in range(LOG_KEEP + 2):
+            log.write("x" * LAUNCHER_LOG_BYTES + "\n")
+        log.flush()
+        assert followed and all(stream is log for stream in followed)
+        assert len(armed) == 1 + len(followed)
+        assert "log continued after rotation" in log_path.read_text(encoding="utf-8")
+        assert not brain.exists() and brain.with_name("brain.log.1").is_file()
+        assert len(list(tmp_path.glob("launcher.log*"))) == LOG_KEEP + 1
+        assert max(path.stat().st_size for path in tmp_path.glob("launcher.log*")) <= LAUNCHER_LOG_BYTES + 128
+    finally:
+        log.close()
+
+    # A broken optional import must still leave both streams on a usable log.
+    bootstrap = log_path.open("a", encoding="utf-8")
+    original_import = builtins.__import__
+    def broken_rotation(name, *args, **kwargs):
+        if name == "nodelang.log_rotation":
+            raise ImportError("synthetic interrupted update")
+        return original_import(name, *args, **kwargs)
+    namespace.update(_bootstrap_log=bootstrap, __builtins__=dict(vars(builtins), __import__=broken_rotation))
+    try:
+        exec(setup, namespace)
+        assert namespace["_log"] is namespace["sys"].stdout is namespace["sys"].stderr is bootstrap
+        bootstrap.write("fallback remains writable\n")
+        bootstrap.flush()
+        assert "fallback remains writable" in log_path.read_text(encoding="utf-8")
+    finally:
+        bootstrap.close()
 
 
 # Courts 1, 2, 4, 5 on the real application: maintenance, Work, HTTP, graph.
@@ -739,15 +790,20 @@ def test_an_install_created_before_draft_protection_is_upgraded_at_an_idle_pass(
         with sqlite3.connect(content) as check:
             assert check.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
             assert check.execute("PRAGMA user_version").fetchone()[0] == 4
-        restored = ConversationHistoryStore(content, instance_id=history.instance_id, create=False)
-        try:
-            assert _rows(restored, registry.workshop_root) == 5
-            assert restored._has_content_digests() is False
-            restored.initialize_page_protection()             # what the next idle pass does
-            assert restored._db.execute("PRAGMA user_version").fetchone()[0] == 5
-            assert restored._db.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-        finally:
-            restored.close()
+        from nodelang.universal_cell import CellStore
+        # Recovery now returns the same physical graph/content owner. Preserve
+        # standalone refusal; reopen the embedded index through its real owner.
+        with CellStore(content) as restored_store:
+            restored = ConversationHistoryStore(content, instance_id=history.instance_id,
+                                                create=False, store=restored_store)
+            try:
+                assert _rows(restored, registry.workshop_root) == 5
+                assert restored._has_content_digests() is False
+                restored.initialize_page_protection()             # what the next idle pass does
+                assert restored._db.execute("PRAGMA user_version").fetchone()[0] == 5
+                assert restored._db.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+            finally:
+                restored.close()
         # And the reverse shape: a backup of the upgraded, purged owner restores too.
         again = service.backup_recovery(tmp_path / "backups-after", authentication_context=context,
                                         timeout_seconds=60.0)

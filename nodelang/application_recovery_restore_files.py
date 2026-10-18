@@ -156,6 +156,7 @@ def _hash_source(path, expected, identity, check_budget):
 
 def _copy_exact(source, destination, expected, identity, check_budget):
     digest, size = hashlib.sha256(), 0
+    synced = 0
     if _file_identity(source) != identity:
         raise ValueError("restore source file changed before copying")
     with source.open("rb") as reader, destination.open("r+b") as writer:
@@ -170,6 +171,10 @@ def _copy_exact(source, destination, expected, identity, check_budget):
             if writer.write(block) != len(block):
                 raise OSError("restore copy write was incomplete")
             digest.update(block)
+            if size - synced >= 64 * 1024 * 1024:
+                writer.flush()
+                os.fsync(writer.fileno())
+                synced = size
             _advance(check_budget, 'Preparing journal bytes', size, expected['size_bytes'])
         writer.flush()
         os.fsync(writer.fileno())
@@ -197,8 +202,9 @@ def _verify_sqlite_readonly(path, check_budget, *, graph=False):
             return 0
 
         database.execute("PRAGMA cache_size=-1024")
+        database.execute("PRAGMA mmap_size=2147483648")
         database.execute("PRAGMA query_only=ON")
-        database.set_progress_handler(progress, 1000)
+        database.set_progress_handler(progress, 1)
         try:
             check_budget()
             if database.execute("PRAGMA quick_check(1)").fetchall() != [("ok",)]:
@@ -228,21 +234,18 @@ def _verify_staged(copies, manifest, stage, parent, check_budget):
 
 
 def prepare_application_restore(recovery_directory, destination, *, output_names,
-                                verify_copies, before_publish, deadline, progress=None,
-                                stage_prefix='.application-recovery-restore-'):
+                                verify_copies, before_publish, deadline):
     """Prepare exact startup filenames in a new folder; never replace live data."""
     if not callable(verify_copies) or not callable(before_publish):
         raise TypeError("restore verification and publication admission must be callable")
     if type(deadline) not in (int, float) or not math.isfinite(deadline):
         raise ValueError("restore deadline must be a finite monotonic timestamp")
-    if stage_prefix not in ('.application-recovery-restore-', '.journal-migration-restore-'):
-        raise ValueError('invalid restore stage prefix')
 
     def deadline_check():
         if time.monotonic() >= deadline:
             raise TimeoutError("application restore time budget exceeded")
 
-    check_budget = progress if progress is not None else deadline_check
+    check_budget = deadline_check
     check_budget()
     source = _plain_path(recovery_directory)
     if source.name.casefold().startswith(".application-recovery-"):
@@ -280,7 +283,7 @@ def prepare_application_restore(recovery_directory, destination, *, output_names
     required_bytes = sum(manifest["files"][role]["size_bytes"] for role in roles if not (shared and role == 'content'))
     _require_disk_reserve(parent, required_bytes)
     check_budget()
-    stage = parent / (stage_prefix + uuid.uuid4().hex)
+    stage = parent / ('.application-recovery-restore-' + uuid.uuid4().hex)
     stage.mkdir(mode=0o700)
     owned_paths = []
     try:
@@ -302,7 +305,13 @@ def prepare_application_restore(recovery_directory, destination, *, output_names
             copies[role] = path
             remaining -= description["size_bytes"]
         _check_source(source, directory_identity, identities, required_names)
-        _verify_staged(copies, manifest, stage, parent, check_budget)
+        # _copy_exact already validated every copied byte against the manifest.
+        # One mandatory on-disk integrity/hash check follows the owner verifier,
+        # catching storage errors and even rolled-back verifier mutations.
+        _check_stage_files(stage, parent, {path.name for path in copies.values()})
+        for path in set(copies.values()):
+            _check_file(path, stage, parent)
+            _file_identity(path)
         verifier_manifest = json.loads(_json_bytes(manifest, _MANIFEST_BYTES))
         verify_copies(dict(copies), verifier_manifest, check_budget)
         check_budget()

@@ -7,6 +7,7 @@ refused and the full stream runs.
 """
 import sqlite3
 import uuid
+import pytest
 from pathlib import Path
 
 from nodelang.universal_cell import Cell, CellStore, NULL_CELL_ID
@@ -32,6 +33,7 @@ def test_checkpoint_resume_yields_the_full_stream_digest(tmp_path: Path):
     assert reopened.revision == full_revision
     assert reopened.revision_chain_digest(full_revision) == full_digest
     reopened.close()
+
     with sqlite3.connect(str(database) + ".accelerators") as raw:
         recorded = raw.execute(
             "SELECT revision, prefix_rows FROM chain_checkpoints"
@@ -168,3 +170,38 @@ def test_chained_prefix_fingerprint_equals_itself_and_costs_only_new_rows(tmp_pa
         raw.execute("UPDATE prefix_chain SET rows = rows + 1 WHERE revision = ?", (revision,))
     assert reopened.chained_prefix_fingerprint(revision) == (rows, newest, digest_a)
     reopened.close()
+
+
+@pytest.mark.parametrize("failure", [None, "insert", "commit"])
+def test_prefix_cache_batches_durable_writes_and_rolls_back_failure(tmp_path, failure):
+    with CellStore(tmp_path / "batch.sqlite3") as store:
+        _grow(store, 24)
+        expected = store.chained_prefix_fingerprint(store.revision)
+        cache = store._journal._accelerators()
+        cache.execute("DELETE FROM prefix_chain")
+        writes = []
+
+        class ObservedCache:
+            def __getattr__(self, name):
+                return getattr(cache, name)
+
+            def execute(self, sql, parameters=()):
+                if sql.startswith("INSERT OR REPLACE INTO prefix_chain"):
+                    writes.append(cache.in_transaction)
+                    if failure == "insert":
+                        raise sqlite3.OperationalError("synthetic cache write refusal")
+                return cache.execute(sql, parameters)
+
+            def commit(self):
+                if failure == "commit":
+                    raise sqlite3.OperationalError("synthetic cache commit refusal")
+                cache.commit()
+
+        store._journal._accelerator_connection = ObservedCache()
+        assert store.chained_prefix_fingerprint(store.revision) == expected
+        assert writes and all(writes), "cache writes must share a durable transaction"
+        assert not cache.in_transaction
+        if failure:
+            assert cache.execute("SELECT count(*) FROM prefix_chain").fetchone() == (0,)
+        else:
+            assert cache.execute("SELECT count(*) FROM prefix_chain").fetchone()[0] == store.revision + 1

@@ -5,6 +5,7 @@ and read_all. Neither an ID nor read_all is a credential. Legacy migration,
 cutover, and application integration remain separate work. No workers or replay.
 """
 from contextlib import closing, contextmanager, nullcontext
+from builtins import UnicodeDecodeError
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -66,6 +67,39 @@ def message_content_digest(message):
                                      separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
+def migration_message_digest(message, structured):
+    """Seal the content and its trusted migrated structured classification."""
+    if type(structured) is not bool:
+        raise ValueError('migration trace classification is invalid')
+    value = ('structured:' if structured else 'literal:') + message_content_digest(message)
+    return hashlib.sha256(value.encode('ascii')).hexdigest()
+
+
+def _trace_projection_digest(content, atoms):
+    if (type(atoms) is not dict or any(type(key) is not str or type(value) is not str
+            for key, value in atoms.items()) or '\n'.join(atoms[key] for key in sorted(atoms)) != content):
+        raise ValueError('trace archive sparse content integrity check failed')
+    digest = hashlib.sha256(content.encode('utf-8'))
+    digest.update(json.dumps(atoms, sort_keys=True, ensure_ascii=False,
+        separators=(',', ':')).encode('utf-8'))
+    return digest.hexdigest()
+
+
+@contextmanager
+def _bounded_cold_trace(cold, check):
+    def progress():
+        try:
+            check()
+            return 0
+        except TimeoutError:
+            return 1
+    cold.set_progress_handler(progress, 1000)
+    try:
+        yield
+    finally:
+        cold.set_progress_handler(None, 0)
+
+
 def validate_message_fields(conversation_id, *, author, content, category="note", recipients=(),
                             refs=(), evidence=(), reply_to=None, idempotency_key,
                             message_id=None, created_at=None):
@@ -102,8 +136,14 @@ def validate_message_fields(conversation_id, *, author, content, category="note"
 
 class ConversationHistoryStore(ConversationPageProtection):
     def __init__(self, path, *, instance_id, create=True, busy_timeout_seconds=2.0,
-                 retention_clock=None, store=None):
+                 retention_clock=None, store=None, migration_custody=None):
         self.instance_id = _text(instance_id, "instance")
+        self._verified_trace_projections = {}
+        if migration_custody is not None:
+            if type(migration_custody) is not tuple or len(migration_custody) != 2:
+                raise ValueError('invalid trace migration custody')
+            for value in migration_custody:
+                _text(value, 'trace migration custody', 4096)
         if retention_clock is not None and not callable(retention_clock):
             raise TypeError("retention clock must be a trusted callable")
         self._retention_clock = retention_clock or time.time
@@ -133,6 +173,7 @@ class ConversationHistoryStore(ConversationPageProtection):
                                        check_same_thread=False, cached_statements=64,
                                        uri=not create)
         self._db.row_factory = sqlite3.Row
+        self._db.create_function('trace_registry_custody_write', 0, lambda: 0)
         self._database_uri = None
         try:
             listed = self._db.execute("PRAGMA database_list").fetchone()
@@ -146,6 +187,10 @@ class ConversationHistoryStore(ConversationPageProtection):
                 version = self._db.execute("PRAGMA user_version").fetchone()[0]
                 if create and not objects and app_id == 0 and version == 0:
                     self._initialize()
+                    if migration_custody is not None:
+                        for statement in self._trace_schema_statements():
+                            self._db.execute(statement)
+                        self._db.execute('INSERT INTO trace_owner VALUES(1,?,?)', migration_custody)
                 elif app_id != _APP_ID or version not in (_VERSION, _RETENTION_VERSION, PAGE_PROTECTION_VERSION):
                     raise ValueError("not a supported conversation history database")
                 identity = self._db.execute("SELECT instance_id FROM history_identity WHERE singleton=1").fetchone()
@@ -162,6 +207,8 @@ class ConversationHistoryStore(ConversationPageProtection):
                 elif self._db.execute("SELECT 1 FROM sqlite_master WHERE name IN "
                         "('conversation_pages','conversation_page_tracking','conversation_pages_protected') LIMIT 1").fetchone():
                     raise ValueError('page protection objects have an older schema version')
+                self._trace_seals_available = self._db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE name='trace_migration_messages'").fetchone() is not None
         except BaseException:
             if not self._embedded:
                 self._db.close()
@@ -174,6 +221,8 @@ class ConversationHistoryStore(ConversationPageProtection):
             # history objects remain an error, as in the standalone importer.
             sql += (" AND tbl_name NOT IN ('revisions','cell_versions','current_cells',"
                 "'runtime_presence_leases','runtime_presence_tombstones','runtime_presence_migration',"
+                "'trace_chain_proofs','trace_live_proofs','trace_set_deltas','trace_snapshot_proofs',"
+                "'trace_signed_head_proofs','trace_retired_identities','trace_projection_custody',"
                 "'baboom_activities','operational_records','operational_events','cde_write_permits',"
                 "'cde_write_receipts','cde_write_settlements')")
         return self._db.execute(sql + " LIMIT 65").fetchall()
@@ -280,6 +329,224 @@ class ConversationHistoryStore(ConversationPageProtection):
             self._db.execute("INSERT OR IGNORE INTO conversations(id) VALUES(?)", (conversation_id,))
 
     @staticmethod
+    def _trace_schema_statements():
+        """Optional owner metadata; no graph authority or startup body scan."""
+        return (
+            "CREATE TABLE trace_owner(singleton INTEGER PRIMARY KEY CHECK(singleton=1), source_authority TEXT NOT NULL, application_root TEXT NOT NULL)",
+            "CREATE TABLE trace_migrations(conversation_id TEXT PRIMARY KEY REFERENCES conversations(id), source_authority TEXT NOT NULL, source_revision INTEGER NOT NULL, delta_cell TEXT NOT NULL, cursor TEXT NOT NULL, controls TEXT NOT NULL, copied INTEGER NOT NULL DEFAULT 0, state TEXT NOT NULL, binding_root TEXT, last_activity_at REAL)",
+            "CREATE TABLE trace_migration_cells(conversation_id TEXT NOT NULL REFERENCES trace_migrations(conversation_id), cell_id TEXT NOT NULL, digest TEXT NOT NULL, walked INTEGER NOT NULL DEFAULT 0, owned INTEGER NOT NULL DEFAULT 0, activity_at REAL, exported INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(conversation_id,cell_id))",
+            "CREATE INDEX trace_migration_cells_identity ON trace_migration_cells(cell_id,owned)",
+            "CREATE TABLE trace_sessions(session_id TEXT PRIMARY KEY, archive_path TEXT NOT NULL, content TEXT NOT NULL, cell_count INTEGER NOT NULL, last_cell_id TEXT NOT NULL, content_digest TEXT NOT NULL, text_atoms TEXT NOT NULL)",
+            "CREATE TABLE trace_projection_versions(session_id TEXT PRIMARY KEY, generation INTEGER NOT NULL)",
+            "CREATE TABLE trace_family_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1), phase TEXT NOT NULL, cursor TEXT NOT NULL, watermark INTEGER NOT NULL, delta_revision INTEGER NOT NULL, delta_cell TEXT NOT NULL, next_due_at REAL NOT NULL DEFAULT 0)",
+            "CREATE TABLE trace_family_sessions(session_id TEXT PRIMARY KEY, last_activity_at REAL NOT NULL)",
+            "CREATE TABLE trace_receipt_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1), cursor TEXT NOT NULL, dirty INTEGER NOT NULL DEFAULT 0 CHECK(dirty IN(0,1)), next_due_at REAL NOT NULL DEFAULT 0)",
+            "CREATE TABLE trace_registry_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1), phase TEXT NOT NULL, cursor TEXT NOT NULL, ordinal INTEGER NOT NULL, source_revision INTEGER NOT NULL, previous_kept TEXT, detach_cursor INTEGER NOT NULL DEFAULT 0, protected_from INTEGER, pending TEXT, next_due_at REAL NOT NULL DEFAULT 0)",
+            "CREATE TABLE trace_registry_members(ordinal INTEGER PRIMARY KEY, chain_id TEXT UNIQUE NOT NULL, live_chain_id TEXT NOT NULL, incidence_id TEXT UNIQUE NOT NULL, role_id TEXT NOT NULL, payload_root TEXT NOT NULL, next_id TEXT NOT NULL, chain_digest TEXT NOT NULL, incidence_digest TEXT NOT NULL, conversation_id TEXT, activity_at REAL, protected INTEGER NOT NULL DEFAULT 0, detached INTEGER NOT NULL DEFAULT 0, previous_id TEXT)",
+            "CREATE INDEX trace_registry_payload ON trace_registry_members(payload_root,detached)",
+            "CREATE INDEX trace_registry_live_chain ON trace_registry_members(live_chain_id,detached)",
+            "CREATE TABLE trace_registry_detached(cell_id TEXT PRIMARY KEY, payload_root TEXT NOT NULL, conversation_id TEXT NOT NULL, activity_at REAL NOT NULL, digest TEXT NOT NULL)",
+            "CREATE TRIGGER trace_registry_pending_insert BEFORE INSERT ON trace_registry_state WHEN (NEW.pending IS NOT NULL OR EXISTS(SELECT 1 FROM trace_registry_state WHERE singleton=NEW.singleton AND pending IS NOT NULL)) AND trace_registry_custody_write()=0 BEGIN SELECT RAISE(ABORT,'trace registry custody is immutable'); END",
+            "CREATE TRIGGER trace_registry_pending_update BEFORE UPDATE OF pending ON trace_registry_state WHEN (NEW.pending IS NOT NULL OR OLD.pending IS NOT NULL) AND trace_registry_custody_write()=0 BEGIN SELECT RAISE(ABORT,'trace registry custody is immutable'); END",
+            "CREATE TRIGGER trace_registry_pending_delete BEFORE DELETE ON trace_registry_state WHEN OLD.pending IS NOT NULL AND trace_registry_custody_write()=0 BEGIN SELECT RAISE(ABORT,'trace registry custody is immutable'); END",
+            "CREATE TRIGGER trace_registry_detached_insert BEFORE INSERT ON trace_registry_detached WHEN trace_registry_custody_write()=0 BEGIN SELECT RAISE(ABORT,'trace registry custody is immutable'); END",
+            "CREATE TRIGGER trace_registry_detached_update BEFORE UPDATE ON trace_registry_detached WHEN trace_registry_custody_write()=0 BEGIN SELECT RAISE(ABORT,'trace registry custody is immutable'); END",
+            "CREATE TRIGGER trace_registry_detached_delete BEFORE DELETE ON trace_registry_detached WHEN trace_registry_custody_write()=0 BEGIN SELECT RAISE(ABORT,'trace registry custody is immutable'); END",
+            "CREATE TABLE trace_family_protected(cell_id TEXT PRIMARY KEY, walked INTEGER NOT NULL DEFAULT 0)",
+            "CREATE INDEX trace_family_protected_pending ON trace_family_protected(walked,cell_id)",
+            "CREATE TRIGGER trace_projection_insert AFTER INSERT ON trace_sessions BEGIN INSERT INTO trace_projection_versions VALUES(NEW.session_id,1) ON CONFLICT(session_id) DO UPDATE SET generation=generation+1; END",
+            "CREATE TRIGGER trace_projection_update AFTER UPDATE OF content,text_atoms,content_digest ON trace_sessions BEGIN INSERT INTO trace_projection_versions VALUES(NEW.session_id,1) ON CONFLICT(session_id) DO UPDATE SET generation=generation+1; END",
+            "CREATE TABLE trace_migration_messages(conversation_id TEXT NOT NULL REFERENCES trace_migrations(conversation_id), message_id TEXT NOT NULL, canonical_digest TEXT NOT NULL, structured INTEGER NOT NULL CHECK(structured IN (0,1)), PRIMARY KEY(conversation_id,message_id), FOREIGN KEY(conversation_id,message_id) REFERENCES messages(conversation_id,id))",
+        )
+
+    @contextmanager
+    def _registry_custody_write(self):
+        """Narrow native publication/partition scope, like journal custody."""
+        self._db.create_function('trace_registry_custody_write', 0, lambda: 1)
+        try:
+            yield
+        finally:
+            self._db.create_function('trace_registry_custody_write', 0, lambda: 0)
+
+    def initialize_trace_maintenance(self):
+        """Admit the exact additive schema only during explicit idle work."""
+        with self._transaction(write=True):
+            self._validate_retention_source_schema(self._db.execute('PRAGMA user_version').fetchone()[0])
+            for statement in self._trace_schema_statements():
+                name = statement.split()[2].split('(', 1)[0]
+                if self._db.execute('SELECT 1 FROM sqlite_master WHERE name=?', (name,)).fetchone() is None:
+                    self._db.execute(statement)
+            self._trace_seals_available = True
+
+    def admit_trace_custody(self, source_authority, application_root):
+        """Bind idle metadata to the already authenticated migration owner."""
+        expected = (_text(source_authority, 'trace source authority', 4096),
+                    _text(application_root, 'trace application root'))
+        with self._transaction(write=True):
+            row = self._db.execute('SELECT source_authority,application_root FROM trace_owner WHERE singleton=1').fetchone()
+            if row is None:
+                self._db.execute('INSERT INTO trace_owner VALUES(1,?,?)', expected)
+            elif tuple(row) != expected:
+                raise ValueError('trace migration custody belongs to another owner')
+
+    def index_trace_archive(self, cold, session_ids, *, archive_path, check=lambda: None,
+                            cell_ids=None):
+        """Index one session row from an exact bounded cold export batch.
+
+        The archive owns every exact byte. Only nonempty UTF-8 atoms enter the
+        searchable text projection; binary and empty receipt scaffolding stay
+        cold. The cursor and projection commit together, making a repeated
+        callback after a killed retirement idempotent. Sparse text atoms carry
+        identities only for actual nonempty text, never receipt scaffolding.
+        An explicit selection supports later eligible cells below the previous
+        lexical cursor. The default ordered cursor supports older exporters.
+        Receipt-only batches neither recount the cold session nor read/rewrite
+        its text. A generation changes only on projection mutation, so full
+        integrity verification runs once per generation per owner lifetime.
+        Text changes retain the exact ordered sparse projection. SQLite work
+        is deadline cancellable; startup never opens the cold archive.
+        """
+        sessions = tuple(dict.fromkeys(session_ids))
+        if len(sessions) > 256:
+            raise ValueError('trace index batch exceeds its session bound')
+        selected = None if cell_ids is None else tuple(dict.fromkeys(cell_ids))
+        if selected is not None and (not selected or len(selected) > 256):
+            raise ValueError('trace index batch exceeds its cell bound')
+        with _bounded_cold_trace(cold, check), self._transaction(write=True, before_commit=check):
+            verified = {}
+            for session in sessions:
+                check()
+                _text(session, 'trace session', 4096)
+                previous = self._db.execute('SELECT archive_path,last_cell_id FROM trace_sessions WHERE session_id=?', (session,)).fetchone()
+                cursor = previous['last_cell_id'] if previous else ''
+                if selected is None:
+                    rows = cold.execute('SELECT cell_id,atom FROM trace_current WHERE session_id=? AND cell_id>? ORDER BY cell_id LIMIT 257',
+                        (session, cursor)).fetchall()
+                else:
+                    rows = cold.execute('SELECT cell_id,atom FROM trace_current WHERE session_id=? AND cell_id IN (' +
+                        ','.join('?' for _ in selected) + ') ORDER BY cell_id', (session, *selected)).fetchall()
+                if len(rows) > 256:
+                    raise ValueError('trace index export batch exceeds its cell bound')
+                if previous and previous['archive_path'] != str(archive_path):
+                    raise ValueError('trace archive session custody changed')
+                additions = {}
+                for row in rows:
+                    check()
+                    raw = bytes(row[1])
+                    if not raw:
+                        continue
+                    try:
+                        value = raw.decode('utf-8')
+                    except UnicodeDecodeError:
+                        continue
+                    if value.strip() and '\x00' not in value:
+                        additions[row[0]] = value
+                generation = self._db.execute('SELECT generation FROM trace_projection_versions WHERE session_id=?', (session,)).fetchone()
+                token = (self._db.execute('PRAGMA data_version').fetchone()[0], generation[0] if generation else 0)
+                atoms = {}
+                if previous and (additions or self._verified_trace_projections.get(session) != token):
+                    projection = self._db.execute('SELECT content,text_atoms,content_digest FROM trace_sessions WHERE session_id=?', (session,)).fetchone()
+                    atoms = json.loads(projection['text_atoms'])
+                    check()
+                    if _trace_projection_digest(projection['content'], atoms) != projection['content_digest']:
+                        raise ValueError('trace archive content integrity check failed')
+                for identifier, value in additions.items():
+                    if identifier in atoms and atoms[identifier] != value:
+                        raise ValueError('trace archive indexed atom changed')
+                    atoms[identifier] = value
+                check()
+                if not rows:
+                    if previous:
+                        verified[session] = token
+                    continue
+                count = cold.execute('SELECT cell_count FROM trace_session_counts WHERE session_id=?', (session,)).fetchone()[0]
+                cursor = max(cursor, rows[-1][0])
+                if previous and not additions:
+                    self._db.execute('UPDATE trace_sessions SET cell_count=?,last_cell_id=? WHERE session_id=?',
+                        (count, cursor, session))
+                else:
+                    content = '\n'.join(atoms[key] for key in sorted(atoms))
+                    digest = _trace_projection_digest(content, atoms)
+                    self._db.execute('INSERT INTO trace_sessions VALUES(?,?,?,?,?,?,?) ON CONFLICT(session_id) DO UPDATE SET content=excluded.content,cell_count=excluded.cell_count,last_cell_id=excluded.last_cell_id,content_digest=excluded.content_digest,text_atoms=excluded.text_atoms',
+                        (session, str(archive_path), content, count, cursor, digest, _json(atoms)))
+                generation = self._db.execute('SELECT generation FROM trace_projection_versions WHERE session_id=?', (session,)).fetchone()
+                verified[session] = (token[0], generation[0] if generation else 0)
+        self._verified_trace_projections.update(verified)
+
+    def archived_trace_session(self, session_id, *, metadata_only=False, offset=None, expected_generation=None,
+                               catalogue=False, after_session='', exclude_session='', expected_owner=None):
+        """On-demand index read; opening the owner never reads archived text."""
+        with self._transaction():
+            if not self._db.execute("SELECT 1 FROM sqlite_master WHERE name='trace_sessions'").fetchone():
+                return None
+            if catalogue and expected_owner is None:
+                raise ValueError('trace archive catalogue requires its source owner')
+            predicate = (' AND s.session_id<>? AND NOT EXISTS(SELECT 1 FROM trace_migrations m '
+                'WHERE m.conversation_id=s.session_id AND (m.binding_root IS NULL OR m.binding_root!=m.conversation_id))') if catalogue else ''
+            if session_id is None:
+                if not catalogue or not metadata_only or type(after_session) is not str or len(after_session.encode()) > 4096:
+                    raise ValueError('trace archive catalogue position is invalid')
+                selected = self._db.execute('SELECT s.session_id FROM trace_sessions s WHERE s.session_id>?' +
+                    predicate + ' ORDER BY s.session_id LIMIT 1', (after_session, exclude_session)).fetchone()
+                if selected is None:
+                    return None
+                session_id = selected[0]
+            metadata = self._db.execute('SELECT s.cell_count,v.generation' + (',s.content_digest' if not metadata_only else '') + ' FROM trace_sessions s JOIN trace_projection_versions v ON v.session_id=s.session_id WHERE s.session_id=?' + predicate,
+                (session_id, *((exclude_session,) if catalogue else ()))).fetchone()
+            if metadata is None:
+                return None
+            if expected_owner is not None:
+                owner = self._db.execute('SELECT source_authority,application_root FROM trace_owner WHERE singleton=1').fetchone()
+                if owner is None or tuple(owner) != expected_owner:
+                    raise ValueError('trace archive belongs to another source owner')
+            if metadata_only:
+                return dict(session_id=session_id, cell_count=metadata['cell_count'], generation=metadata['generation'])
+            if expected_generation is not None and expected_generation != metadata['generation']:
+                raise ValueError('trace archive changed; return to latest history')
+            token = (self._db.execute('PRAGMA data_version').fetchone()[0], metadata['generation'], metadata['content_digest'])
+            cached = getattr(self, '_trace_read_projection', None)
+            if offset is not None and cached is not None and cached[:2] == (session_id, token):
+                row, atoms = cached[2:]
+            else:
+                row = dict(self._db.execute('SELECT * FROM trace_sessions WHERE session_id=?', (session_id,)).fetchone())
+                atoms = json.loads(row['text_atoms'])
+                if _trace_projection_digest(row['content'], atoms) != row['content_digest']:
+                    raise ValueError('trace archive content integrity check failed')
+                if offset is not None:
+                    # One explicitly opened session, never a startup inventory.
+                    self._trace_read_projection = (session_id, token, row, atoms)
+            result = dict(row)
+            result['generation'] = metadata['generation']
+            from .conversation_archive import TRACE_ARCHIVE_NAME, trace_archive_path, read_trace_archive, _open_trace_archive, _trace_digest
+            content_path = Path(self._db.execute('PRAGMA database_list').fetchone()[2])
+            if Path(row['archive_path']).name == TRACE_ARCHIVE_NAME:
+                result['archive_path'] = str(trace_archive_path(content_path))
+            if offset is not None:
+                if type(offset) is not int or not 0 <= offset <= len(row['content']):
+                    raise ValueError('trace archive text position is invalid')
+                authority = self._db.execute('SELECT source_authority FROM trace_owner WHERE singleton=1').fetchone()
+                if authority is None:
+                    raise ValueError('trace archive has no admitted source owner')
+                with closing(_open_trace_archive(result['archive_path'], authority[0], create=False)) as cold:
+                    page = read_trace_archive(result['archive_path'], session_id)
+                    position = 0
+                    for identifier in sorted(atoms):
+                        value = atoms[identifier]
+                        if position < offset+16384 and position+len(value) > offset:
+                            held = cold.execute('SELECT cell_id,revision,link0,link1,atom,session_id,digest FROM trace_current WHERE cell_id=? AND session_id=?', (identifier, session_id)).fetchone()
+                            if held is None or _trace_digest(held[:-1]) != held[-1] or held[4].decode('utf-8') != value:
+                                raise ValueError('trace archive displayed text custody differs')
+                        position += len(value)+1
+                        if position >= offset+16384:
+                            break
+                if not page['cells']:
+                    raise ValueError('trace archive session custody is missing')
+                text = row['content'][offset:offset+16384]
+                result = dict(session_id=session_id, content=text, cell_count=metadata['cell_count'], offset=offset, generation=metadata['generation'],
+                    next_offset=offset+len(text) if offset+len(text) < len(row['content']) else None)
+            return result
+
+    @staticmethod
     def _retention_schema_statements():
         return (
             """CREATE TABLE conversation_retention(
@@ -332,7 +599,7 @@ class ConversationHistoryStore(ConversationPageProtection):
         # repair. The upgraded-v2 variant retains its historical message table
         # and supplies the v3 recipient FK target with an explicit unique index.
         objects = self._schema_objects()
-        if len(objects) > 64 or any(row["type"] not in ("table", "index") for row in objects):
+        if len(objects) > 64 or any(row["type"] not in ("table", "index", "trigger") for row in objects):
             raise ValueError("unsupported retention source schema objects")
         declarations = {row["name"]: row for row in objects}
 
@@ -369,9 +636,13 @@ class ConversationHistoryStore(ConversationPageProtection):
             "migration_staging": "CREATE TABLE migration_staging(singleton INTEGER PRIMARY KEY CHECK(singleton=1), ticket_digest TEXT NOT NULL, destination TEXT NOT NULL, stage_id TEXT NOT NULL)",
             "migration_publications": "CREATE TABLE migration_publications(conversation_id TEXT PRIMARY KEY REFERENCES conversations(id), application_root TEXT NOT NULL, instance_id TEXT NOT NULL, binding_root TEXT NOT NULL, manifest_digest TEXT NOT NULL, stage_id TEXT NOT NULL, source_authority TEXT NOT NULL, source_revision INTEGER NOT NULL, source_digest TEXT NOT NULL, imported_count INTEGER NOT NULL)",
         }
+        migration_tables.update({statement.split()[2].split('(', 1)[0]: statement
+                                for statement in self._trace_schema_statements()})
         for name, expected in migration_tables.items():
             actual = declarations.get(name)
-            if actual is not None and (actual["type"] != "table"
+            expected_type = ('trigger' if expected.startswith('CREATE TRIGGER ') else
+                             'index' if expected.startswith('CREATE INDEX ') else 'table')
+            if actual is not None and (actual["type"] != expected_type
                                       or normalized(actual["sql"]) != normalized(expected)):
                 raise ValueError("unsupported retention migration schema: " + name)
         permitted = set(required) | set(migration_tables) | {
@@ -740,12 +1011,19 @@ class ConversationHistoryStore(ConversationPageProtection):
             raise ValueError("unknown conversation")
         return row[0]
 
-    @staticmethod
-    def _message(row):
+    def _message(self, row):
         result = {key: row[key] for key in
                   ("id", "conversation_id", "sequence", "author", "content", "category", "reply_to", "created_at", "idempotency_key")}
         for key in ("recipients", "refs", "evidence"):
             result[key] = json.loads(row[key])
+        if self._trace_seals_available:
+            seal = self._db.execute('SELECT s.canonical_digest,m.state,m.binding_root,m.source_authority,o.source_authority,s.structured FROM trace_migration_messages s JOIN trace_migrations m ON m.conversation_id=s.conversation_id JOIN trace_owner o ON o.singleton=1 WHERE s.conversation_id=? AND s.message_id=?',
+                (result['conversation_id'], result['id'])).fetchone()
+            if seal is not None:
+                if seal[5] not in (0, 1) or seal[0] != migration_message_digest(result, bool(seal[5])) or seal[3] != seal[4]:
+                    raise ValueError('migrated conversation content integrity check failed')
+                if seal[5] == 1 and seal[1] == 'bound' and seal[2] is not None:
+                    result['trace_content_verified'] = True
         return result
 
     def append(self, conversation_id, *, author, content, category="note", recipients=(),
@@ -884,8 +1162,7 @@ class ConversationHistoryStore(ConversationPageProtection):
                 "audience_kind='principal' AND principal=?" + suffix,
                 (conversation_id, *category_args, conversation_id, principal, *category_args))
 
-    @staticmethod
-    def _collect(cursor, limit, max_bytes):
+    def _collect(self, cursor, limit, max_bytes):
         result = []
         size = 2
         extra = False
@@ -894,7 +1171,7 @@ class ConversationHistoryStore(ConversationPageProtection):
                 if len(result) == limit:
                     extra = True
                     break
-                message = ConversationHistoryStore._message(row)
+                message = self._message(row)
                 cost = len(_json(message).encode("utf-8")) + int(bool(result))
                 if size + cost > max_bytes:
                     if not result:

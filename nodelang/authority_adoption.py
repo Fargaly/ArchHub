@@ -327,3 +327,102 @@ def verify_application_adoption(authority):
     # The signed checkpoint must name its digest; hashing it again adds no proof.
     if statement.source_snapshot_digest != manifest.accepted_snapshot_digest:
         raise InvalidCell('application adoption source snapshot hash mismatch')
+
+
+def _legacy_continuation_id(authority, revision):
+    return 'app:legacy-continuation:%s:%d' % (authority.manifest.graph_id, revision)
+
+
+def verify_legacy_continuation(authority, snapshot, parent_root, parent_revision):
+    """A signed head may bridge only the exact recorded legacy history prefix."""
+    from .universal_cell import InvalidCell
+    cell = snapshot.cells.get(_legacy_continuation_id(authority, snapshot.revision))
+    if cell is None or (cell.link0, cell.link1) != (authority.manifest.head_index_root, parent_root):
+        raise InvalidCell('legacy continuation record is missing')
+    try:
+        record = json.loads(cell.atom)
+    except (ValueError, UnicodeDecodeError) as error:
+        raise InvalidCell('legacy continuation record is invalid') from error
+    if record != dict(anchor=parent_revision, through=snapshot.revision - 1,
+            history=authority.store.revision_chain_digest(snapshot.revision - 1)):
+        raise InvalidCell('legacy continuation history does not match')
+
+
+def resume_application_legacy_authority(authority, *, index_budget: int = 10_000,
+                                        record_budget: int = 100_000):
+    """Re-sign the verified unsigned suffix left by the released 2230 kernel.
+
+    Only the application's verified adoption manifest admits this transition.
+    Existing signed history is audited first; immutable head records cannot be
+    changed by the legacy writer. The new signed record binds every suffix byte
+    and explicitly represents the gap in the same authority's head ancestry.
+    """
+    from types import SimpleNamespace
+    from . import universal_application as application, unified_authority as unified, commit_intent
+    from .cell_protocols import _relation_chain_ids, read_relation
+    from .universal_cell import Cell, InvalidCell, revision_chain_digest_step
+    store = authority.store
+    with store._lock:
+        snapshot = store.snapshot()
+        current = unified._current_head_member(authority, snapshot)
+        if current is None:
+            return  # Ordinary signed verification reports a missing head.
+        head = current.participant_id
+        anchor = unified._decode_value(authority, snapshot,
+            unified._single_member(snapshot, head, authority.role('head-revision')))
+        if type(anchor) is not int or anchor >= snapshot.revision:
+            return
+        if authority.manifest.accepted_revision <= 1:
+            raise InvalidCell('legacy continuation requires verified application adoption')
+        historical = store.at(anchor)
+        unified._verify_current_head(authority, historical)
+        original = unified._current_head_member(authority, historical)
+        if original != current:
+            raise InvalidCell('legacy continuation changed the signed head index')
+        protected = set(_relation_chain_ids(historical, authority.manifest.head_index_root, budget=index_budget))
+        protected.add(current.incidence_id)
+        # The entire head chain and its encoded values are immutable records.
+        pending, seen = [head], set()
+        value_roles = {authority.role(name) for name in ('parent-head-digest', 'head-revision',
+            'snapshot-digest', 'key-id', 'key-version', 'key-fingerprint', 'signature')}
+        while pending:
+            root = pending.pop()
+            if root in seen:
+                continue
+            seen.add(root)
+            protected.update(_relation_chain_ids(historical, root, budget=record_budget))
+            revision = unified._decode_value(authority, historical,
+                unified._single_member(historical, root, authority.role('head-revision')))
+            protected.add(_legacy_continuation_id(authority, revision))
+            for member in read_relation(historical, root, budget=record_budget):
+                protected.add(member.incidence_id)
+                if member.role_id == authority.role('parent-head'):
+                    pending.append(member.participant_id)
+                if member.role_id in value_roles:
+                    value = member.participant_id
+                    protected.update(_relation_chain_ids(historical, value, budget=record_budget))
+                    for part in read_relation(historical, value, budget=record_budget):
+                        protected.update((part.incidence_id, part.participant_id))
+        digest = bytes.fromhex(store.revision_chain_digest(anchor))
+        for revision in range(anchor + 1, snapshot.revision + 1):
+            changed = store._changed_at(revision)
+            if any(cell.id in protected for cell in changed):
+                raise InvalidCell('legacy continuation changed immutable signed head records')
+            digest = revision_chain_digest_step(digest, revision, changed)
+            if digest.hex() != store.revision_chain_digest(revision):
+                raise InvalidCell('legacy continuation revision integrity does not match')
+        authorization = application._restore_application_authorization(store, authority.key_provider)
+        protocol = application.open_agent_body_protocol(snapshot, prefix=application._AGENT_BODY_PROTOCOL_PREFIX)
+        body = application.read_agent_body(snapshot, protocol, authorization.protocol, application._AGENT_BODY_ROOT)
+        session = application.read_agent_session(snapshot, protocol, authorization.protocol, application._AGENT_SESSION_ROOT)
+        if not application._verify_application_agent_receipts(store, authorization,
+                SimpleNamespace(protocol=protocol, body=body, session=session)):
+            raise InvalidCell('legacy continuation application receipts are missing')
+        marker = Cell(_legacy_continuation_id(authority, snapshot.revision + 1),
+            authority.manifest.head_index_root, head, json.dumps(dict(anchor=anchor,
+                through=snapshot.revision, history=digest.hex()), sort_keys=True).encode())
+        with commit_intent.declare(commit_intent.MIGRATION, actor='app:archhub',
+                reason='sign verified original-owner legacy continuation'):
+            unified._commit_signed_change(authority, snapshot, create=(marker,), replace_cells=())
+        print('  adoption   : verified legacy continuation anchor=%d through=%d signed=%d' %
+            (anchor, snapshot.revision, store.revision), flush=True)

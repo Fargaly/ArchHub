@@ -9,7 +9,7 @@ import copy
 import time
 import threading
 import uuid
-from contextlib import closing, contextmanager, ExitStack
+from contextlib import closing, contextmanager, ExitStack, nullcontext
 from pathlib import Path
 
 from .core import Store, validate_store
@@ -74,7 +74,17 @@ def application_database_path(state_directory=None):
     if current.exists():
         from .unified_authority_runtime import _generation_id
         selected = _generation_id(current.read_text(encoding='ascii'))
-        database = runtime / 'generations' / selected / 'authority.sqlite3'
+        generation = runtime / 'generations' / selected
+        metadata = generation / 'migration.json'
+        database = generation / 'authority.sqlite3'
+        if metadata.is_file():
+            held = json.loads(metadata.read_text(encoding='utf-8'))
+            if held.get('adoption') == 'flat-in-place':
+                database = (root / held['journal_relative_path']).resolve()
+                allowed = (root / 'authority.sqlite3', root / 'archhub-test.universal.sqlite3',
+                    root / 'node-native-wip.json.gz.universal.sqlite3', _legacy_desktop_journal(root))
+                if database not in allowed:
+                    raise ValueError('selected flat journal is outside this profile')
         if any(path.is_symlink() or path.is_junction() for path in
                (database, database.parent, database.parent.parent, runtime)):
             raise ValueError('selected authority must not be a link; source preserved')
@@ -159,13 +169,45 @@ def _application_journal_candidates(root):
     legacy = _legacy_desktop_journal(root)
     if legacy is not None:
         paths.append(legacy)
+    generations = root / 'unified-authority' / 'generations'
+    if generations.is_dir():
+        for generation in generations.iterdir():
+            metadata = generation / 'migration.json'
+            if not metadata.is_file() or metadata.stat().st_size > 16384:
+                continue
+            try:
+                record = json.loads(metadata.read_text(encoding='utf-8'))
+            except (ValueError, OSError):
+                continue
+            if (record.get('format') == 'archhub-application-journal-migration/v1'
+                    and record.get('adoption') == 'same-volume-move'
+                    and record.get('generation_id') == generation.name):
+                paths.append(generation / 'authority.sqlite3')
     found = []
     for path in paths:
-        if path.is_symlink() or path.is_junction():
+        if path.is_symlink() or path.is_junction() or path.resolve() != path.absolute():
             raise ValueError('retired application journal must not be a link')
-        if path.is_file():
+        if path.is_file() and not any(os.path.samefile(path, held) for held in found):
             found.append(path.resolve())
     return tuple(dict.fromkeys(found))
+
+
+def _journal_work_cells(path, check_budget, *, exact=False):
+    prefixes = sorted(('app:deliberation', 'app:agent-session:', 'app:workshop:', 'app:baboom-session:'))
+    with _application_journal_reader(path, check_budget=check_budget) as journal:
+        if exact:
+            from .conversation_retention_maintenance import _trace_family_descriptor
+            journal.create_function('trace_candidate', 1, lambda ident: int(_trace_family_descriptor(ident)[1]))
+            journal.set_progress_handler(lambda: (check_budget(), 0)[1], 1000)
+            return journal.execute('SELECT COUNT(*) FROM current_cells WHERE trace_candidate(cell_id)=0').fetchone()[0]
+        lower, count = '', 0
+        for prefix in prefixes:
+            check_budget()
+            count += journal.execute('SELECT COUNT(*) FROM current_cells WHERE cell_id>=? AND cell_id<?',
+                (lower, prefix)).fetchone()[0]
+            lower = prefix + chr(0x10ffff)
+        count += journal.execute('SELECT COUNT(*) FROM current_cells WHERE cell_id>=?', (lower,)).fetchone()[0]
+        return count, journal.execute('SELECT COUNT(*) FROM current_cells').fetchone()[0]
 
 
 def _journal_head(path, *, check_budget=lambda: None, timeout_seconds=30.0):
@@ -183,12 +225,12 @@ def _journal_head(path, *, check_budget=lambda: None, timeout_seconds=30.0):
 
 
 @contextmanager
-def _migration_store(database, check_budget):
+def _migration_store(database, check_budget, *, owner_fence=None):
     """Use the existing journal's admitted loader with observable SQLite work."""
     from .universal_cell import CellStore, _SqliteJournal
     journal = None
     try:
-        journal = _SqliteJournal(database, None, progress_handler=
+        journal = _SqliteJournal(database, None, owner_fence=owner_fence, progress_handler=
             lambda: (_advance(check_budget, 'Reading saved graph'), 0)[1])
         with CellStore(journal=journal) as store:
             yield store
@@ -200,15 +242,17 @@ def _migration_store(database, check_budget):
             journal.close()
 
 
-def _verify_migrated_application(database, key_provider, check_budget=lambda: None):
+def _verify_migrated_application(database, key_provider, check_budget=lambda: None, *, owner_fence=None,
+                                 store=None):
     """Read the original receipt revisions with their original signing custody."""
     from types import SimpleNamespace
     from . import universal_application as application
     from .cell_secret_keys import WindowsDpapiSigningKeyProvider
-    with _migration_store(database, check_budget) as store:
+    scope = _migration_store(database, check_budget, owner_fence=owner_fence) if store is None else nullcontext(store)
+    with scope as store:
         snapshot = store.snapshot()
         if 'app:authorization-protocol:root' not in snapshot.cells:
-            return
+            return ()
         keys = key_provider if key_provider is not None else WindowsDpapiSigningKeyProvider(
             WindowsDpapiSigningKeyProvider.default_path())
         authorization = application._restore_application_authorization(store, keys)
@@ -218,21 +262,37 @@ def _verify_migrated_application(database, key_provider, check_budget=lambda: No
             application._AGENT_BODY_ROOT)
         session = application.read_agent_session(snapshot, protocol, authorization.protocol,
             application._AGENT_SESSION_ROOT)
-        application._verify_application_agent_receipts(store, authorization,
+        return application._verify_application_agent_receipts(store, authorization,
             SimpleNamespace(protocol=protocol, body=body, session=session))
+
+
+def _file_change_token(path):
+    """NTFS ChangeTime cannot be hidden by restoring LastWriteTime with utime."""
+    stat = path.stat()
+    if os.name != 'nt':
+        return stat.st_ctime_ns
+    import ctypes
+    import msvcrt
+    class BasicInfo(ctypes.Structure):
+        _fields_ = [(name, ctypes.c_longlong) for name in
+            ('created', 'accessed', 'written', 'changed')] + [('attributes', ctypes.c_ulong)]
+    function = ctypes.WinDLL('kernel32', use_last_error=True).GetFileInformationByHandleEx
+    function.argtypes = (ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_ulong)
+    function.restype = ctypes.c_int
+    info = BasicInfo()
+    with path.open('rb') as stream:
+        if not function(msvcrt.get_osfhandle(stream.fileno()), 0, ctypes.byref(info), ctypes.sizeof(info)):
+            raise ctypes.WinError(ctypes.get_last_error())
+    return info.changed
 
 
 def prepare_application_database(state_directory, database, *, timeout_seconds=30.0,
                                  key_provider=None, on_progress=None):
-    """Preserve the newest committed application's entire journal on upgrade.
+    """Adopt the newest committed journal without copying on the boot path.
 
-    A head-only merge into revision one invalidates historical authorization
-    receipts. The existing physical recovery/restore owners retain every
-    revision, publish verified copies, and leave the retired source untouched.
-    Existing files stay untouched. A stale selected authority is superseded only
-    by a read-back-verified new physical generation, never a head-only merge.
-    ``timeout_seconds`` bounds inactivity, not total work. Percentages describe
-    the named byte/page operation; verification reports real work without a fake ETA.
+    The installer's verified final-close backup supplies rollback custody.
+    Existing selection and the stale journal remain untouched until CURRENT
+    atomically selects the same physical source; trace cleanup is idle work.
     """
     from .universal_cell import InterprocessOwnerFence
     root, target = Path(state_directory).resolve(), Path(database).resolve()
@@ -242,6 +302,9 @@ def prepare_application_database(state_directory, database, *, timeout_seconds=3
             if stream.read(16) != b'SQLite format 3\0':
                 return {'state': 'existing', 'backup_path': None, 'database_path': str(target)}
     runtime = root / 'unified-authority'
+    if any(path.is_symlink() or path.is_junction() for path in (root / 'backups', runtime,
+            runtime / 'generations')):
+        raise ValueError('application adoption path contains an alias; source preserved')
     runtime.mkdir(exist_ok=True)
     check_budget = _MigrationProgress(timeout_seconds, on_progress)
     with ExitStack() as owners:
@@ -251,238 +314,227 @@ def prepare_application_database(state_directory, database, *, timeout_seconds=3
         paths = _application_journal_candidates(root)
         if not paths:
             return {'state': 'not_required', 'backup_path': None, 'database_path': str(target)}
+        source_owners = {}
         for path in paths:
             if path.is_symlink() or path.is_junction():
                 raise ValueError('retired application journal must not be a link')
-            owners.callback(InterprocessOwnerFence(str(path)).close)
+            held_owner = InterprocessOwnerFence(str(path))
+            source_owners[path] = held_owner
+            owners.callback(held_owner.close)
         heads = {path: _journal_head(path, check_budget=check_budget,
                     timeout_seconds=timeout_seconds) for path in paths}
-        chosen = max(paths, key=heads.__getitem__)
+        # Indexed bounds avoid reading trace IDs when one candidate plainly
+        # contains more work. Only ambiguous overlapping bounds need exact
+        # trace-shape classification, including graph controls in those families.
+        bounds = {path: _journal_work_cells(path, check_budget) for path in paths}
+        best_floor = max(value[0] for value in bounds.values())
+        contenders = [path for path in paths if bounds[path][1] >= best_floor]
+        work = {path: (_journal_work_cells(path, check_budget, exact=True)
+            if len(contenders) > 1 and bounds[path][0] != bounds[path][1] else bounds[path][0])
+            for path in contenders}
+        chosen = max(contenders, key=lambda path: (work[path], heads[path], path == target))
         print('  migration  : candidates ' + '; '.join('%s rev=%d time=%.6f' %
             (path, heads[path][1], heads[path][0]) for path in paths) +
-            '; chosen %s (newest committed time, then revision)' % chosen, flush=True)
+            '; chosen %s (work cells, committed head, existing selection)' % chosen, flush=True)
         if chosen == target:
             return {'state': 'existing', 'backup_path': None, 'database_path': str(target)}
-        return _prepare_application_journal(root, target, chosen, heads, check_budget, key_provider)
+        if chosen.parent.parent == runtime / 'generations':
+            from .unified_authority_runtime import _atomic_text
+            _verify_migrated_application(chosen, key_provider, check_budget,
+                owner_fence=source_owners[chosen])
+            _atomic_text(runtime / 'CURRENT', chosen.parent.name)
+            return {'state': 'existing', 'backup_path': None, 'database_path': str(chosen)}
+        return _prepare_application_journal(root, target, chosen, heads, check_budget, key_provider,
+            owner_fence=source_owners[chosen])
 
 
-def _discard_migration_stage(stage, names, check_budget):
-    """Under migration fences, discard only exact, unpublished helper files."""
-    if stage.resolve(strict=False) != stage.absolute():
-        raise ValueError('interrupted migration path contains an alias; source preserved')
-    if not os.path.lexists(stage):
-        return
-    if stage.is_symlink() or stage.is_junction() or not stage.is_dir():
-        raise ValueError('interrupted migration stage is not a plain directory; source preserved')
-    paths = list(stage.iterdir())
-    names = set(names)
-    for path in paths:
-        atomic = re.fullmatch(r'\.(adoption\.json|migration\.json)\.[0-9a-f]{32}\.tmp', path.name)
-        if atomic and atomic.group(1) in names:
-            names.add(path.name)
-    if any(path.name not in names or path.is_symlink() or path.is_junction()
-           or not path.is_file() for path in paths):
-        raise ValueError('interrupted migration has unknown files; source preserved')
-    for path in paths:
-        path.unlink()
-        _advance(check_budget, 'Discarding interrupted migration copy')
-    stage.rmdir()
 
 
-def _prepare_application_journal(root, target, source, heads, check_budget, key_provider):
-    """The existing recovery/restore cutover, under all candidate owner fences."""
-    from types import SimpleNamespace
-    from .application_recovery_files import publish_application_recovery
-    from .application_recovery_restore_files import prepare_application_restore, _read_manifest
-    from .backup_retention import backup_policy, _backup_bytes
-    from .conversation_content import FRESH_CONTENT_BOOTSTRAP_ROOT, read_fresh_content_bootstrap
-    from .universal_cell import Cell, Snapshot, _LazyRevisionCellMap
-    from .unified_authority_runtime import _atomic_text
+def _installer_closed_backup(root, source):
+    """Admit the installer's already byte-verified, closed rollback copy.
 
-    runtime = root / 'unified-authority'
-    current = runtime / 'CURRENT'
-    pointer = current.read_bytes() if current.exists() else None
-    promote = target.exists() or pointer is not None
-    generation_id = str(uuid.uuid4())
-    # This prefix cannot be selected by CURRENT's UUID-only grammar. A retry
-    # may reclaim it, but never deletes a formerly published UUID generation.
-    staging_id = uuid.uuid5(uuid.NAMESPACE_URL, 'archhub-journal-migration:' +
-        str(source) + ':' + repr(heads[source])).hex
-    if promote:
-        generations = runtime / 'generations'
-        generations.mkdir(exist_ok=True)
-        destination = generations / ('.journal-migration-prepared-' + staging_id)
-    else:
-        destination = root / ('.application-upgrade-' + staging_id)
-
-    def check_target():
-        check_budget()
-        if ((current.read_bytes() if current.exists() else None) != pointer
-                or any(_journal_head(path, check_budget=check_budget,
-                    timeout_seconds=check_budget.stall_seconds) != head
-                    for path, head in heads.items())
-                or (not promote and (target.parent != root or any(
-                    os.path.lexists(Path(str(target) + suffix))
-                    for suffix in ('', '-wal', '-shm', '-journal'))))):
-            raise ValueError('application recovery required; migration target changed or has recovery files')
-
-    check_target()
-    with _application_journal_reader(source, check_budget=check_budget) as old:
-        old.set_progress_handler(lambda: (_advance(check_budget, 'Reading journal settings'), 0)[1], 100)
-        old.execute('BEGIN')
-        if old.execute("SELECT 1 FROM current_cells WHERE cell_id='app:archhub'").fetchone() is None:
-            raise ValueError('retired application root is missing; source preserved')
-        bootstrap = old.execute('SELECT cell_id,link0,link1,atom FROM current_cells WHERE cell_id=?',
-                                (FRESH_CONTENT_BOOTSTRAP_ROOT,)).fetchone()
-        if bootstrap is not None:
-            value = read_fresh_content_bootstrap(SimpleNamespace(cells={
-                FRESH_CONTENT_BOOTSTRAP_ROOT: Cell(*bootstrap)}))
-            if value['state'] == 'pending':
-                raise ValueError('fresh conversation recovery required; pending bootstrap custody cannot move')
-        revision = old.execute('SELECT MAX(revision) FROM revisions').fetchone()[0]
-        backup_names = {'graph.sqlite3', 'recovery.json'} | {
-            'graph.sqlite3' + suffix for suffix in ('-journal', '-wal', '-shm')}
-        restore_names = {target.name if not promote else 'authority.sqlite3',
-            'restoration.json', 'adoption.json', 'migration.json'}
-        restore_names |= {name + suffix for name in tuple(restore_names) if name.endswith('.sqlite3')
-            for suffix in ('-journal', '-wal', '-shm', '.owner.lock', '.accelerators', '.accelerators-journal', '.accelerators-wal', '.accelerators-shm')}
-        backups = root / 'backups'
-        backups.mkdir(exist_ok=True)
-        if backups.resolve() != backups or destination.parent.resolve() != destination.parent:
-            raise ValueError('migration directories contain an alias; source preserved')
-        for stage in backups.glob('.journal-migration-copy-*'):
-            _discard_migration_stage(stage, backup_names, check_budget)
-        for stage in destination.parent.glob('.journal-migration-restore-*'):
-            _discard_migration_stage(stage, restore_names, check_budget)
-        _discard_migration_stage(destination, restore_names, check_budget)
-        digest = _sqlite_source_digest(source, check_budget=check_budget)
-
-        def verify(copies, check_budget):
-            check_budget()
-            if _sqlite_source_digest(copies['graph'], check_budget=check_budget) != digest:
-                raise ValueError('application journal recovery differs; source preserved')
-            return {'source_sha256': digest, 'head_revision': revision}
-
-        def admitted():
-            check_target()
-            if _sqlite_source_digest(source, check_budget=check_budget) != digest:
-                raise ValueError('retired application changed during migration; source preserved')
-
-        # Read the retired graph's actual Settings, without opening a
-        # second writable store or materialising its whole head.
-        policy = backup_policy(Snapshot(revision,
-            _LazyRevisionCellMap(old, threading.RLock(), revision)))
-        remaining = policy['max_bytes'] - _backup_bytes(backups)
-        backup = None
-        for candidate in backups.glob('journal-migration-*'):
-            if candidate.is_symlink() or candidate.is_junction() or not candidate.is_dir():
+    The installer owns the expensive copy/hash. Boot checks its completed
+    receipt and file sizes; it does not repeat that multi-GB operation.
+    """
+    # The verified installer closes its owner and refuses WAL/rollback files.
+    # A subsequently reopened/hot source is not that final-closed snapshot.
+    if any(Path(str(source) + suffix).exists() for suffix in ('-wal', '-journal')):
+        raise ValueError('verified installer final-closed rollback backup is missing for this open source')
+    for directory in dict.fromkeys((source.parent / 'backups', root / 'backups')):
+        for backup in sorted(directory.glob('*-closed'), reverse=True):
+            receipt = backup / 'closed-files.json'
+            if backup.is_symlink() or backup.is_junction() or not receipt.is_file():
                 continue
-            manifest, _, _ = _read_manifest(candidate)
-            if manifest['metadata'] == {'source_sha256': digest, 'head_revision': revision}:
-                # A cache hint only: restore verifies manifest bytes and our
-                # logical digest again before this backup can become authority.
-                backup = candidate
-                _advance(check_budget, 'Reusing verified migration recovery')
-                break
-        if backup is None:
-            backup = publish_application_recovery({'graph': old},
-                backups / ('journal-migration-' + uuid.uuid4().hex), verify_copies=verify,
-                before_publish=admitted, deadline=0, max_bytes=remaining, progress=check_budget,
-                stage_prefix='.journal-migration-copy-')
-        prepared = prepare_application_restore(backup,
-            destination,
-            output_names={'graph': 'authority.sqlite3' if promote else target.name},
-            verify_copies=lambda copies, manifest, budget: verify(copies, budget),
-            before_publish=admitted, deadline=0, progress=check_budget,
-            stage_prefix='.journal-migration-restore-')
-        admitted()
-        copied = prepared / ('authority.sqlite3' if promote else target.name)
-        _verify_migrated_application(copied, key_provider, check_budget)
-        if _sqlite_source_digest(copied, check_budget=check_budget) != digest:
-            raise ValueError('application journal readback changed; source preserved')
-        if promote:
-            # Anchor this application's own receipts/history. Never borrow
-            # the discarded generation's signed manifest or key identity.
-            from .authority_adoption import adopt_application_authority
-            from .cell_secret_keys import WindowsDpapiSigningKeyProvider
-            with _migration_store(copied, check_budget) as migrated:
-                if 'app:authorization-protocol:root' in migrated.snapshot().cells:
-                    keys = key_provider if key_provider is not None else WindowsDpapiSigningKeyProvider(
-                        WindowsDpapiSigningKeyProvider.default_path())
-                    authority = adopt_application_authority(migrated, keys,
-                        source_history_digest=migrated.snapshot_transition().chain_digest)
-                    _atomic_text(prepared / 'adoption.json', authority.manifest.to_json())
-            # Re-open from disk before publishing CURRENT, using the same
-            # verifier and signed commit binding as every subsequent boot.
-            if (prepared / 'adoption.json').is_file():
-                from .unified_authority import BootstrapManifest, open_unified_authority, bind_signed_commit_owner
-                with _migration_store(copied, check_budget) as readback:
-                    manifest = BootstrapManifest.from_json((prepared / 'adoption.json').read_text(encoding='utf-8'))
-                    bind_signed_commit_owner(open_unified_authority(readback, manifest, keys))
-                _verify_migrated_application(copied, keys, check_budget)
-            _atomic_text(prepared / 'migration.json', json.dumps({
-                'format': 'archhub-application-journal-migration/v1',
-                'generation_id': generation_id, 'source_path': str(source),
-                'source_revision': revision, 'source_committed_at': heads[source][0],
-                'source_sha256': digest, 'backup_path': str(backup)}, sort_keys=True))
-            admitted()
-            published = generations / generation_id
-            os.rename(prepared, published)
-            _atomic_text(current, generation_id)
-            prepared, target = published, published / 'authority.sqlite3'
-        else:
-            admitted()
-            # Windows rename refuses an existing destination; never replace.
-            os.rename(copied, target)
-        try:
-            (prepared / 'restoration.json').unlink()
-            if not promote:
-                _discard_migration_stage(prepared, restore_names, check_budget)
-        except OSError as cleanup:
-            print('  migration  : verified preparation metadata retained (%s)' %
-                  type(cleanup).__name__, flush=True)
-        return {'state': 'migrated', 'backup_path': str(backup), 'database_path': str(target)}
+            try:
+                if receipt.stat().st_size > 65536:
+                    continue
+                manifest = json.loads(receipt.read_text(encoding='utf-8'))
+                if type(manifest) is not dict:
+                    continue
+                descriptor_path = source.parent / 'runtime-descriptor.json'
+                if descriptor_path.is_file() and manifest.get('producer') != 'archhub-product-installer/v1':
+                    if descriptor_path.stat().st_size > 65536:
+                        continue
+                    descriptor = json.loads(descriptor_path.read_text(encoding='utf-8'))
+                    if type(descriptor) is not dict or manifest.get('runtime') != descriptor.get('runtime_id'):
+                        continue
+                if (manifest.get('kind') != 'closed-file-preservation'
+                        or not re.fullmatch(r'[0-9a-f]{32}', manifest.get('runtime', ''))
+                        or not re.fullmatch(r'[A-Za-z0-9._-]{1,128}', manifest.get('build', ''))):
+                    continue
+                records = manifest['files']
+                by_name = {item['name']: item for item in records}
+                record = by_name[source.name]
+                # Opening the same head may add derivable indexes. The backup
+                # keeps its original bytes; source identity is checked below.
+                if (len(by_name) != len(records) or type(record['bytes']) is not int
+                        or record['bytes'] <= 0):
+                    continue
+                expected_names = {source.name}
+                content = Path(str(source) + '.conversations.sqlite3')
+                if content.is_file():
+                    expected_names.add(content.name)
+                if set(by_name) != expected_names:
+                    continue
+                for name, item in by_name.items():
+                    if (Path(name).name != name or '/' in name or '\\' in name
+                            or not re.fullmatch(r'[0-9a-f]{64}', item['sha256'])
+                            or (backup / name).is_symlink() or (backup / name).is_junction()
+                            or (backup / name).stat().st_size != item['bytes']
+                            or (backup / name).stat().st_nlink != 1
+                            or os.path.samefile(backup / name, source.parent / name)):
+                        raise ValueError('incomplete closed backup')
+                if _journal_head(backup / source.name) != _journal_head(source):
+                    continue
+                return backup, record['sha256']
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+    raise ValueError('verified installer final-closed rollback backup is missing; saved graph kept in place')
+
+
+def _journal_identity(path, check_budget):
+    with _application_journal_reader(path, check_budget=check_budget) as connection:
+        head, count = connection.execute('SELECT MAX(revision),COUNT(*) FROM revisions').fetchone()
+    return head, count
+
+
+
+def _prepare_application_journal(root, target, source, heads, check_budget, key_provider, *, owner_fence=None):
+    """Select the existing flat file; CURRENT is the only publication commit."""
+    from .unified_authority_runtime import _atomic_text
+    backup, backup_digest = _installer_closed_backup(root, source)
+    runtime = root / 'unified-authority'
+    generations = runtime / 'generations'
+    generations.mkdir(exist_ok=True)
+    generation_id = str(uuid.uuid4())
+    prepared = generations / generation_id
+    prepared.mkdir()
+    before = _journal_identity(source, check_budget)
+    identity = (source.stat().st_dev, source.stat().st_ino)
+    if _journal_identity(backup / source.name, check_budget) != before:
+        prepared.rmdir()
+        raise ValueError('verified installer final-closed rollback backup is missing for this head')
+    with _migration_store(source, check_budget, owner_fence=owner_fence) as store:
+        change = _file_change_token(source)
+        receipt_evidence = _verify_migrated_application(source, key_provider, check_budget,
+            owner_fence=owner_fence, store=store)
+        if _file_change_token(source) != change:
+            raise ValueError('source changed during migration verification; CURRENT preserved')
+        history_digest = store.revision_chain_digest()
+    after = _journal_identity(source, check_budget)
+    if before != after or identity != (source.stat().st_dev, source.stat().st_ino):
+        raise ValueError('application adoption identity changed; CURRENT preserved')
+    _atomic_text(prepared / 'migration.json', json.dumps({
+        'format': 'archhub-application-journal-migration/v1',
+        'generation_id': generation_id,
+        'journal_relative_path': os.path.relpath(source, root),
+        'source_revision': before[0], 'source_revision_count': before[1],
+        'source_history_digest': history_digest, 'source_committed_at': heads[source][0],
+        'installer_backup_sha256': backup_digest, 'backup_path': os.path.relpath(backup, root),
+        'adoption': 'flat-in-place', 'physical_file_id': identity,
+        'receipt_evidence': receipt_evidence}, sort_keys=True))
+    # A portable locator for metadata, checked against CURRENT before use.
+    _atomic_text(Path(str(source) + '.adoption.json'), json.dumps({
+        'generation_relative_path': os.path.relpath(prepared, source.parent)}))
+    _atomic_text(runtime / 'CURRENT', generation_id)
+    _advance(check_budget, 'Existing journal adopted')
+    print('  adoption   : source head=%d revisions=%d receipts=verified:%d; '
+          'selected head=%d revisions=%d receipts=verified:%d; verified rollback=%s' %
+          (*before, len(receipt_evidence), *after, len(receipt_evidence), backup), flush=True)
+    return {'state': 'adopted', 'backup_path': str(backup), 'database_path': str(source)}
+
+
+def _application_generation_directory(database):
+    path = Path(database).resolve()
+    if path.name == 'authority.sqlite3' and path.parent.parent.name == 'generations':
+        return path.parent
+    locator = Path(str(path) + '.adoption.json')
+    if not locator.is_file():
+        return None
+    if locator.is_symlink() or locator.is_junction() or locator.stat().st_size > 16384:
+        raise ValueError('application adoption locator is invalid')
+    held = json.loads(locator.read_text(encoding='utf-8'))
+    generation = (path.parent / held['generation_relative_path']).resolve()
+    if (generation.parent.name != 'generations' or generation.parent.parent.name != 'unified-authority'
+            or not generation.is_relative_to(path.parent.parent)):
+        raise ValueError('application adoption locator leaves this profile')
+    return generation
 
 
 def application_state_directory(database):
     """Locate profile metadata beside its validated selected-generation layout."""
     path = Path(database).resolve()
-    return path.parents[3] if selected_application_generation(path) else path.parent
+    generation = _application_generation_directory(path)
+    return generation.parents[2] if selected_application_generation(path) else path.parent
 
 
 def selected_application_generation(database):
     if database is None:
         return False
     path = Path(database).resolve()
-    if path.name != 'authority.sqlite3' or path.parent.parent.name != 'generations':
+    generation = _application_generation_directory(path)
+    if generation is None:
         return False
-    runtime = path.parent.parent.parent
+    runtime = generation.parent.parent
     current = runtime / 'CURRENT'
-    manifest = path.parent / 'bootstrap.json'
+    manifest = generation / 'bootstrap.json'
     if not current.is_file():
         return False
     if not manifest.is_file():
-        migration = path.parent / 'migration.json'
+        migration = generation / 'migration.json'
         if not migration.is_file():
             return False
         held = json.loads(migration.read_text(encoding='utf-8'))
-        return (current.read_text(encoding='ascii').strip() == path.parent.name
+        return (current.read_text(encoding='ascii').strip() == generation.name
                 and held.get('format') == 'archhub-application-journal-migration/v1'
-                and held.get('generation_id') == path.parent.name)
+                and held.get('generation_id') == generation.name
+                and (held.get('adoption') != 'flat-in-place'
+                     or application_database_path(runtime.parent) == path))
     held = json.loads(manifest.read_text(encoding='utf-8'))
-    return (current.read_text(encoding='ascii').strip() == path.parent.name
-            and held.get('graph_id') == path.parent.name)
+    return (current.read_text(encoding='ascii').strip() == generation.name
+            and held.get('graph_id') == generation.name)
 
 
 def bind_selected_application_authority(store, key_provider):
     """Verify the selected generation once, before its first app migration."""
     if not selected_application_generation(store.database_path):
         return None
-    generation = Path(store.database_path).parent
+    generation = _application_generation_directory(store.database_path)
     manifest_path = generation / 'bootstrap.json'
     if not manifest_path.is_file():
         manifest_path = generation / 'adoption.json'
     if not manifest_path.is_file():
+        migration = generation / 'migration.json'
+        if not migration.is_file():
+            return None
+        record = json.loads(migration.read_text(encoding='utf-8'))
+        if record.get('adoption') in ('same-volume-move', 'flat-in-place'):
+            from .universal_cell import InvalidCell
+            if store.revision_chain_digest(record['source_revision']) != record['source_history_digest']:
+                raise InvalidCell('application adoption history hash mismatch')
+            evidence = _verify_migrated_application(Path(store.database_path), key_provider, store=store)
+            if tuple(record['receipt_evidence']) != evidence:
+                raise InvalidCell('application adoption original receipt identity differs')
         return None
     held = getattr(store, '_signed_commit_authority', None)
     if held is not None:
@@ -491,8 +543,49 @@ def bind_selected_application_authority(store, key_provider):
     from .unified_authority_runtime import _AcceptedSnapshotProof
     manifest = BootstrapManifest.from_json(manifest_path.read_text(encoding='utf-8'))
     authority = open_unified_authority(store, manifest, key_provider,
-        accepted_proof=_AcceptedSnapshotProof(generation))
+        accepted_proof=_AcceptedSnapshotProof(generation),
+        resume_application_legacy=manifest_path.name == 'adoption.json')
     bind_signed_commit_owner(authority)
+    return authority
+
+
+def finalize_application_adoption(store, key_provider, *, check=lambda: None):
+    """Finish signed-owner anchoring after idle archival, never on the boot path.
+
+    The existing bootstrap hashes its source snapshot. Deferring that explicit
+    work until traces are cold keeps adoption itself independent of journal
+    size while preserving the original receipts and the coordination owner.
+    """
+    if not selected_application_generation(store.database_path):
+        return None
+    generation = _application_generation_directory(store.database_path)
+    if (generation / 'bootstrap.json').is_file() or (generation / 'adoption.json').is_file():
+        return bind_selected_application_authority(store, key_provider)
+    if 'app:authorization-protocol:root' not in store.snapshot().cells:
+        return None
+    from .authority_adoption import adopt_application_authority
+    from .unified_authority import bind_signed_commit_owner
+    from .unified_authority_runtime import _atomic_text
+    connection, lock = store.sqlite_storage()
+    def idle_progress():
+        try:
+            check()
+            return 0
+        except TimeoutError:
+            return 1
+    # The existing anchor walks the remaining graph. Yield its SQL work to
+    # user activity too; holding the owner lock confines cancellation to this
+    # maintenance operation, never a concurrent foreground query.
+    with lock, store._journal._io_lock:
+        check()
+        connection.set_progress_handler(idle_progress, 1000)
+        try:
+            authority = adopt_application_authority(store, key_provider,
+                source_history_digest=store.revision_chain_digest())
+        finally:
+            connection.set_progress_handler(None, 0)
+        _atomic_text(generation / 'adoption.json', authority.manifest.to_json())
+        bind_signed_commit_owner(authority)
     return authority
 
 
@@ -535,10 +628,10 @@ def migrate_graph_source(store, source_path):
     snapshot = store.snapshot()
     if marker_id in snapshot.cells:
         marker = json.loads(snapshot.cells[marker_id].atom)
-        if marker['sha256'] != _sqlite_source_digest(source):
+        if marker['sha256'] != _sqlite_legacy_source_digest(source):
             raise ValueError('retired graph changed; preserve and reconcile it explicitly')
         return {'state': 'already_migrated', 'backup_path': marker['backup_path']}
-    source_digest = _sqlite_source_digest(source)
+    source_digest = _sqlite_legacy_source_digest(source)
     with closing(sqlite3.connect(source.as_uri() + '?mode=ro', uri=True, isolation_level=None)) as old:
         old.execute('BEGIN')
         if old.execute('PRAGMA quick_check').fetchone()[0] != 'ok':
@@ -552,9 +645,9 @@ def migrate_graph_source(store, source_path):
             if held is None:
                 creates.append(cell)
         backup = _migration_backup(store, {'source.sqlite3': (source, old)}, 'graph-migration')
-        if _sqlite_source_digest(backup / 'source.sqlite3') != source_digest:
+        if _sqlite_legacy_source_digest(backup / 'source.sqlite3') != source_digest:
             raise ValueError('retired graph changed during backup')
-    if _sqlite_source_digest(source) != source_digest:
+    if _sqlite_legacy_source_digest(source) != source_digest:
         raise ValueError('retired graph changed during backup')
     stat = source.stat()
     marker = {'path': str(source), 'size': stat.st_size, 'mtime_ns': stat.st_mtime_ns,
@@ -756,8 +849,16 @@ def _file_digest(path):
 
 
 
-def _sqlite_source_digest(path, *, check_budget=lambda: None):
-    """Hash committed SQLite content, including WAL, independent of checkpointing."""
+
+
+
+
+def _sqlite_legacy_source_digest(path, *, check_budget=lambda: None):
+    """Released legacy marker identity; never used for application upgrade scans.
+
+    Existing retired-graph/truth markers store this exact old wire digest. Keep
+    their comparisons compatible; raw verification above owns the upgrade path.
+    """
     import hashlib
     result = hashlib.sha256()
     with _application_journal_reader(path, check_budget=check_budget) as database:
@@ -787,7 +888,7 @@ def _sqlite_source_digest(path, *, check_budget=lambda: None):
 
 
 def _truth_source_digests(sources):
-    return {key: _sqlite_source_digest(path) if key == 'history' else _file_digest(path)
+    return {key: _sqlite_legacy_source_digest(path) if key == 'history' else _file_digest(path)
             for key, path in sources.items()}
 
 
@@ -850,7 +951,7 @@ def _migration_backup(store, sources, prefix):
     from .backup_retention import backup_policy, _backup_bytes, prune_backups, protected_update_backups
     graph = Path(store.database_path).resolve()
     descriptors = {'graph.sqlite3': (graph, store.sqlite_storage()[0]), **sources}
-    fingerprints = {name: _sqlite_source_digest(path) if connection is not None else _file_digest(path)
+    fingerprints = {name: _sqlite_legacy_source_digest(path) if connection is not None else _file_digest(path)
                     for name, (path, connection) in descriptors.items()}
     identity = hashlib.sha256(json.dumps(fingerprints, sort_keys=True).encode()).hexdigest()
     directory = graph.parent / 'backups'
@@ -865,7 +966,7 @@ def _migration_backup(store, sources, prefix):
         if target.exists():
             if target.is_symlink() or target.is_junction():
                 raise ValueError('migration backup file must not be a link')
-            digest = _sqlite_source_digest(target) if connection is not None else _file_digest(target)
+            digest = _sqlite_legacy_source_digest(target) if connection is not None else _file_digest(target)
             if digest != fingerprints[name]:
                 raise ValueError('previous migration backup differs; preserve it for reconciliation')
         else:
@@ -898,7 +999,7 @@ def _migration_backup(store, sources, prefix):
                     destination.flush()
                     os.fsync(destination.fileno())
             try:
-                digest = _sqlite_source_digest(staged) if connection is not None else _file_digest(staged)
+                digest = _sqlite_legacy_source_digest(staged) if connection is not None else _file_digest(staged)
             except sqlite3.DatabaseError as error:
                 raise ValueError('migration backup verification failed; prior backups preserved') from error
             if digest != fingerprints[name]:

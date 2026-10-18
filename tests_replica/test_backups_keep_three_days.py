@@ -61,10 +61,8 @@ def test_application_recovery_folder_names_carry_their_date(tmp_path):
 
 def test_the_launcher_applies_retention_after_each_verified_backup():
     source = LAUNCHER.read_text(encoding="utf-8")
-    startup = source.index("checked post-construction recovery saved")
     armed = source.index("arm_update(state_dir")
-    for anchor in (startup, armed):
-        assert "_prune_backups(backup_dir, recovery" in source[anchor:anchor + 400], anchor
+    assert "_prune_backups(backup_dir, recovery" in source[armed:armed + 400], armed
 
 
 def test_retention_preserves_unrelated_directories_even_inside_backups(tmp_path):

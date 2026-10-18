@@ -329,6 +329,8 @@ class ApplicationConversationContent:
     def close(self):
         with self._owner.mutation_lock:
             self._closed = True
+            from .conversation_trace_receipts import close_trace_receipt_preparation
+            close_trace_receipt_preparation(self)
             current, pending = self._history, self._pending_activation_history
             self._history = self._pending_activation_history = None
             self._pending_activation_lock_mode = None
@@ -520,6 +522,23 @@ class ApplicationConversationContent:
         """Settings: the retention policy, the last pass and archived conversations."""
         from .conversation_retention_maintenance import conversation_retention_overview
         return conversation_retention_overview(self, authentication_context=authentication_context)
+
+    def maintain_legacy_traces(self, *, authentication_context, space_root,
+                              timeout_seconds=2.0, max_chain_cells=64, cancellation_event=None):
+        """Internal idle conversion through this existing content owner."""
+        from .conversation_retention_maintenance import maintain_legacy_traces
+        return maintain_legacy_traces(self, authentication_context=authentication_context,
+            space_root=space_root, timeout_seconds=timeout_seconds,
+            max_chain_cells=max_chain_cells, cancellation_event=cancellation_event)
+
+    def maintain_legacy_trace_inventory(self, *, authentication_context, cursor=None,
+                                         timeout_seconds=2.0, max_chain_cells=64,
+                                         cancellation_event=None):
+        """Internal bounded registered-space inventory for the existing idle worker."""
+        from .conversation_retention_maintenance import maintain_legacy_trace_inventory
+        return maintain_legacy_trace_inventory(self, authentication_context=authentication_context,
+            cursor=cursor, timeout_seconds=timeout_seconds, max_chain_cells=max_chain_cells,
+            cancellation_event=cancellation_event)
 
     def archive_location(self, conversation_id, *, authentication_context):
         from .conversation_retention_maintenance import conversation_archive_location
@@ -1020,15 +1039,46 @@ class ApplicationConversationContent:
                         authentication_context=authentication_context, principal=principal, machine=machine)
                     try:
                         history = self._history_for(binding)
+                        session_position = type(before) is tuple
+                        if session_position and (len(before) != 3 or type(before[0]) is not str or not before[0]
+                                or len(before[0].encode()) > 4096 or type(before[1]) is not int or not 0 <= before[1] < 2**32
+                                or type(before[2]) is not int or not 1 <= before[2] < 2**63):
+                            raise InvalidCell('trace session archive position is invalid')
+                        archive_position = session_position or type(before) is int and before < 0
+                        if archive_position and route not in (('GET', '/api/universal/workshop'), ('GET', '/api/universal/deliberation')):
+                            raise InvalidCell('trace archive route is not admitted')
+                        if archive_position and (not read_all or _counts_only):
+                            raise AuthorizationDenied('trace archive requires full conversation read authority')
+                        catalogue_reader = (route == ('GET', '/api/universal/workshop') and not machine and read_all
+                            and principal == registry.agent_body.session.root_id and space_root == registry.workshop_root
+                            and _category is None and not _counts_only)
+                        if session_position and not catalogue_reader:
+                            raise AuthorizationDenied('trace session archives require the founder main Workshop')
+                        archive_owner = (store.authority_identity, registry.application_root)
+                        catalogue = (history.archived_trace_session(None, metadata_only=True, catalogue=True,
+                            exclude_session=space_root, expected_owner=archive_owner) if catalogue_reader else None)
                         page = (history.counts(space_root, principal=principal, read_all=read_all)
                             if _counts_only else history.page(space_root, principal=principal,
-                                read_all=read_all, limit=limit, before=before, high_water=high_water,
+                                read_all=read_all, limit=limit, before=1 if archive_position else before, high_water=high_water,
                                 max_bytes=max_bytes, include_categories=_include_categories,
-                                include_visible_head=_include_visible_head, if_visible_head=_if_visible_head,
+                                include_visible_head=_include_visible_head, if_visible_head=None if archive_position or catalogue is not None else _if_visible_head,
                                 **({"if_content_generation": _if_content_generation}
-                                   if _if_content_generation is not None else {}),
+                                   if _if_content_generation is not None and not archive_position and catalogue is None else {}),
                                 **({"category": _category} if _category is not None else {}),
                                 **({"head_any_category": True} if _head_any_category else {})))
+                        if not _counts_only and read_all and route in (('GET', '/api/universal/workshop'), ('GET', '/api/universal/deliberation')):
+                            archived = history.archived_trace_session(before[0] if session_position else space_root,
+                                metadata_only=not archive_position, catalogue=session_position,
+                                offset=before[1] if session_position else (-before-1) % 2**32 if archive_position else None,
+                                expected_generation=before[2] if session_position else (-before-1) // 2**32 if archive_position else None,
+                                exclude_session=space_root, expected_owner=archive_owner)
+                            if archived is not None:
+                                page['trace_archive' if archive_position else 'trace_archive_available'] = archived
+                        if catalogue is not None:
+                            page['trace_catalogue_available'] = catalogue
+                        if session_position and archived is not None and archived['next_offset'] is None:
+                            page['trace_catalogue_next'] = history.archived_trace_session(None, metadata_only=True,
+                                catalogue=True, after_session=before[0], exclude_session=space_root, expected_owner=archive_owner)
                     except (sqlite3.Error, OSError, ValueError) as exc:
                         if not _translate_content_errors or isinstance(exc, InvalidCell):
                             raise

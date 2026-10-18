@@ -106,7 +106,17 @@ def _schema(source, copied, check, *, optional=(), extra=()):
 
 
 def _graph_prefix(source, copied, revision, check):
-    _schema(source, copied, check)
+    if source.execute("SELECT 1 FROM sqlite_master WHERE name='history_identity'").fetchone():
+        # Embedded content may acquire only these exact owner-defined idle
+        # page objects after capture. Unknown or altered objects still refuse.
+        from .conversation_pages import validate_page_schema
+        if source.execute("SELECT 1 FROM sqlite_master WHERE name='conversation_pages'").fetchone():
+            validate_page_schema(source)
+        if copied.execute("SELECT 1 FROM sqlite_master WHERE name='conversation_pages'").fetchone():
+            validate_page_schema(copied)
+        _schema(source, copied, check, optional=_PAGE_OBJECTS, extra=_PAGE_OBJECTS)
+    else:
+        _schema(source, copied, check)
     _equal_rows(source, copied, "SELECT revision,committed_at FROM revisions WHERE revision<=? "
         "ORDER BY revision", (revision,), check, "revision prefix")
     _equal_rows(source, copied, "SELECT revision,cell_id,link0,link1,atom FROM cell_versions "

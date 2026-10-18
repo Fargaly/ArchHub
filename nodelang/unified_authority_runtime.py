@@ -129,12 +129,17 @@ class _AcceptedSnapshotProof:
         value = held.get(key)
         return value if type(value) is str else None
     def fingerprint(self, store, accepted_revision: int) -> str:
+        self._archived_accepted = store.archived_snapshot_proof(accepted_revision)
+        if self._archived_accepted is not None:
+            return self._archived_accepted[0]
         rows, newest, content = self._content(
             store, accepted_revision, self._recorded("fingerprint")
         )
         return "%d:%d:%d:%s" % (accepted_revision, rows, newest, content)
 
     def proven(self, fingerprint: str, digest: str) -> bool:
+        if getattr(self, '_archived_accepted', None) == (fingerprint, digest):
+            return True
         try:
             held = json.loads(self._path.read_text(encoding="utf-8"))
         except (OSError, ValueError):

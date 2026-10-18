@@ -3466,6 +3466,29 @@
         "installer/rollback-rehearsal-ci/",
         "tests_replica/test_mainrel_ci.py"
       ]
+    },
+    "MAINBUILD": {
+      "source": "Founder MAINBUILD request: release admission for main 1522de8f; per landed commit, existing settings owner, remove MAINREL lane leaks; no installer/install.",
+      "scope": [
+        "tools/pipeline/build.py",
+        "tests_replica/test_acompiler_gate.py",
+        "nodelang/assistant_registration.py",
+        "evidence/mainbuild/",
+        "MAINBUILD.patch",
+        "MAINBUILD.patch.sha256",
+        "RESULT-MAINBUILD-final.md",
+        "BRIEF-MAINREL.md",
+        "RESULT-MAINREL.md",
+        "RESULT-MAINREL-final.md",
+        "PROGRESS.md",
+        "plan.md",
+        "tasks.json",
+        "notes.md",
+        "READ-PROOF.md",
+        "REGISTER.md",
+        "tools/pipeline/strict_check.py",
+        "tools/pipeline/record_observation.py"
+      ]
     }
   }
 }

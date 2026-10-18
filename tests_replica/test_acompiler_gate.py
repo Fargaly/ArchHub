@@ -953,3 +953,17 @@ def test_release_history_ignores_future_local_observations(repository):
                                          "HEAD", {"author": "Future author", "intent": "FIRST"}, committed_history=True)
     assert context["history"] == []
     assert context["deviation_state"] == {}
+
+
+@pytest.mark.parametrize("message,why", [
+    ("change\n\nThe founder needs the8GB journal adopted in place.\n\nIntent: ADOPT\nCo-Authored-By: Agent <agent@example.invalid>\n", "The founder needs the8GB journal adopted in place."),
+    ("change\n\nExisting explanation.\n\nIntent: FIRST\nWhy: explicit reason", "explicit reason"),
+    ("subject only", None),
+    ("subject\n\nChange-Id: I123\nReviewed-on: https://example.invalid\nIntent: FIRST", None),
+    ("subject\n\nRecorded reason.\n\nChange-Id: I123\nReviewed-on: https://example.invalid\nIntent: FIRST", "Recorded reason."),
+    ("subject\n\nIntent: FIRST\nSigned-off-by: Person <person@example.invalid>\nReviewed-by: Agent", None),
+])
+def test_release_preserves_recorded_explanation_without_inventing_one(message, why):
+    context = build.release_context(message, "Recorded author")
+    assert context["author"] == "Recorded author"
+    assert context.get("why") == why

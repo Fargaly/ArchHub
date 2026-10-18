@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -16,6 +17,22 @@ if __package__ in (None, ""):
 
 from tools import ratchet
 from tools.pipeline import pre_commit, strict_check
+
+
+def release_context(message, author):
+    """Preserve the landed author's recorded explanation, including prose bodies."""
+    context = pre_commit.trailers(message)
+    context["author"] = author
+    if not context.get("why"):
+        lines = message.partition("\n")[2].splitlines()
+        # A terminal metadata footer is not an author's explanation.
+        while lines and (not lines[-1].strip() or re.match(r"^[A-Za-z][A-Za-z0-9-]*:", lines[-1])):
+            lines.pop()
+        body = "\n".join(line for line in lines
+                         if not re.match(r"^[\w-]+-by:|^Intent:|^Why:", line, re.IGNORECASE)).strip()
+        if body:
+            context["why"] = body
+    return context
 
 
 def admit_sequence(root, base):
@@ -44,8 +61,9 @@ def admit_sequence(root, base):
                     if Path(path).suffix.lower() not in strict_check.NON_CODE:
                         raise
                     overlay[path] = ""  # Non-executable asset, never substitute today's bytes.
-        context = pre_commit.trailers(strict_check.git(root, "show", "-s", "--format=%B", commit).decode("utf-8"))
-        context["author"] = strict_check.git(root, "show", "-s", "--format=%an", commit).decode("utf-8").strip()
+        message = strict_check.git(root, "show", "-s", "--format=%B", commit).decode("utf-8")
+        author = strict_check.git(root, "show", "-s", "--format=%an", commit).decode("utf-8").strip()
+        context = release_context(message, author)
         result = strict_check.check_files(root, paths, overlay=overlay, revision=parent, context=context,
                                           committed_history=True)
         strict_check.print_diagnostics(result)

@@ -2,7 +2,7 @@
 
 Owner:717. Public test harness; use only the founder-approved PRIVATE Fargaly/archhub-rehearsal repository. Source code and synthetic data only. No client files, account exports or live-profile copies.
 
-Copy `installer/rollback-rehearsal.ps1` and this folder's `prepare-rehearsal.ps1` into the same relative `installer/` paths in that repository. Copy `.github/workflows/rollback-rehearsal.yml` from this folder to its repository-root `.github/workflows/`. MAINREL neither pushes nor publishes releases or starts a workflow.
+Copy this folder's `rollback-rehearsal.ps1` (to `installer/rollback-rehearsal.ps1`) and this folder's `prepare-rehearsal.ps1` into the same relative `installer/` paths in that repository. Copy `.github/workflows/rollback-rehearsal.yml` from this folder to its repository-root `.github/workflows/`. MAINREL neither pushes nor publishes releases or starts a workflow.
 
 717 publishes the real0400 and clean-built candidate installers as two private Releases, each with asset `ArchHub-Setup-0.exe` and exactly these note lines (actual values):
 

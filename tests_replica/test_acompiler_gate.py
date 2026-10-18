@@ -835,3 +835,121 @@ def test_ratchet_keeps_main_ui_metrics_and_refuses_missing_baseline(repository, 
     baseline.write_text(json.dumps({"counts": {}}), encoding="utf-8")
     monkeypatch.setattr(strict_check, "check_changed", lambda *a, **k: pytest.fail("missing baseline reached compiler"))
     assert ratchet.main(["compare", str(repository), str(baseline), "--whole-tree"]) == 2
+
+
+def _release_commit(repository, text, message, author="Release author"):
+    target = repository / "nodelang" / "old.py"
+    target.write_text(text, encoding="utf-8")
+    run_git(repository, "add", ".")
+    run_git(repository, "-c", "user.name=" + author, "commit", "-qm", message)
+    return run_git(repository, "rev-parse", "HEAD").decode().strip()
+
+
+def test_release_replays_each_author_intent_and_exact_blob(repository, monkeypatch):
+    base = run_git(repository, "rev-parse", "HEAD").decode().strip()
+    first = _release_commit(repository, "old = 1\n", "first\n\nIntent: FIRST\nWhy: first reason", "First author")
+    second = _release_commit(repository, "old = 2\n", "second\n\nIntent: SECOND", "Second author")
+    seen = []
+    def check(root, paths, **kwargs):
+        seen.append((paths, kwargs))
+        return {"ok": True, "diagnostics": []}
+    monkeypatch.setattr(strict_check, "check_files", check)
+    assert build.admit_sequence(repository, base) == 0
+    assert len(seen) == 2
+    assert seen[0][1] == {"overlay": {"nodelang/old.py": "old = 1\n"}, "revision": base,
+                          "context": {"intent": "FIRST", "why": "first reason", "author": "First author"}, "committed_history": True}
+    assert seen[1][1]["revision"] == first
+    assert seen[1][1]["context"] == {"intent": "SECOND", "author": "Second author"}
+    assert seen[1][1]["overlay"] == {"nodelang/old.py": "old = 2\n"}
+    assert second == run_git(repository, "rev-parse", "HEAD").decode().strip()
+
+
+def test_release_refuses_earlier_bad_commit_before_final_ratchet(repository, monkeypatch):
+    evidence = repository / "evidence"
+    evidence.mkdir()
+    base = run_git(repository, "rev-parse", "HEAD").decode().strip()
+    (evidence / "acompiler.json").write_text(json.dumps({"base_revision": base}), encoding="utf-8")
+    _release_commit(repository, "old = 1\n", "bad\n\nIntent: FIRST")
+    _release_commit(repository, "old = 2\n", "good\n\nIntent: SECOND")
+    seen = []
+    def check(*args, **kwargs):
+        seen.append(kwargs["context"]["intent"])
+        return {"ok": False, "diagnostics": []}
+    monkeypatch.setattr(strict_check, "check_files", check)
+    monkeypatch.setattr(ratchet, "main", lambda *args: pytest.fail("ratchet after refused commit"))
+    assert build.main(["--root", str(repository)]) == 1
+    assert seen == ["FIRST"]
+
+
+def test_release_preserves_deletions_and_merge_resolution(repository, monkeypatch):
+    base = run_git(repository, "rev-parse", "HEAD").decode().strip()
+    branch = run_git(repository, "branch", "--show-current").decode().strip()
+    run_git(repository, "checkout", "-qb", "side")
+    (repository / "side.txt").write_text("side", encoding="utf-8")
+    run_git(repository, "add", ".")
+    run_git(repository, "commit", "-qm", "side\n\nIntent: SIDE")
+    run_git(repository, "checkout", branch)
+    run_git(repository, "rm", "nodelang/old.py")
+    run_git(repository, "commit", "-qm", "delete\n\nIntent: DELETE")
+    run_git(repository, "merge", "--no-ff", "side", "-m", "merge\n\nIntent: MERGE")
+    seen = []
+    monkeypatch.setattr(strict_check, "check_files", lambda *a, **k: seen.append(k) or {"ok": True, "diagnostics": []})
+    assert build.admit_sequence(repository, base) == 0
+    assert seen[0]["overlay"] == {"nodelang/old.py": None}
+    assert seen[1]["overlay"] == {"side.txt": "side"}
+    assert seen[1]["context"]["intent"] == "MERGE"
+
+
+def test_release_rejects_dirty_tree_and_unrelated_base(repository, monkeypatch):
+    base = run_git(repository, "rev-parse", "HEAD").decode().strip()
+    (repository / "nodelang/old.py").write_text("dirty", encoding="utf-8")
+    with pytest.raises(ValueError, match="differs from HEAD"):
+        build.admit_sequence(repository, base)
+    run_git(repository, "checkout", "--", ".")
+    run_git(repository, "checkout", "--orphan", "unrelated")
+    run_git(repository, "commit", "-qm", "unrelated")
+    with pytest.raises(strict_check.CompilerFailure):
+        build.admit_sequence(repository, base)
+
+
+def test_default_release_keeps_final_whole_tree_gate(repository, monkeypatch):
+    evidence = repository / "evidence"
+    evidence.mkdir()
+    base = run_git(repository, "rev-parse", "HEAD").decode().strip()
+    (evidence / "acompiler.json").write_text(json.dumps({"base_revision": base}), encoding="utf-8")
+    _release_commit(repository, "old = 1\n", "change\n\nIntent: FIRST")
+    monkeypatch.setattr(strict_check, "check_files", lambda *a, **k: {"ok": True, "diagnostics": []})
+    seen = []
+    monkeypatch.setattr(ratchet, "main", lambda args: seen.append(args) or 1)
+    assert build.main(["--root", str(repository)]) == 1
+    assert seen[0][-2:] == ["--commit", "HEAD"]
+    assert "--whole-tree" in seen[0]
+
+
+def test_release_rejects_untracked_source(repository):
+    base = run_git(repository, "rev-parse", "HEAD").decode().strip()
+    (repository / "untracked.py").write_text("value = 1", encoding="utf-8")
+    with pytest.raises(ValueError, match="uncommitted source"):
+        build.admit_sequence(repository, base)
+
+
+def test_release_binary_assets_never_read_from_current_tree(repository, monkeypatch):
+    base = run_git(repository, "rev-parse", "HEAD").decode().strip()
+    (repository / "icon.png").write_bytes(b"\xff\x00")
+    run_git(repository, "add", ".")
+    run_git(repository, "commit", "-qm", "asset\n\nIntent: ASSET")
+    seen = []
+    monkeypatch.setattr(strict_check, "check_files", lambda *a, **k: seen.append(k) or {"ok": True, "diagnostics": []})
+    assert build.admit_sequence(repository, base) == 0
+    assert seen[0]["overlay"] == {"icon.png": ""}
+
+
+def test_release_history_ignores_future_local_observations(repository):
+    path = record_observation.history_path(repository)
+    path.write_text(json.dumps({"schema_version": 1, "history": [{"commit": "future", "author": "Future author"}],
+                                "authors": {"Future author": {"deviation_state": {"poison": True}}}}), encoding="utf-8")
+    assert record_observation.load_history(repository)["history"][0]["commit"] == "future"
+    context = strict_check.change_context(repository, ["nodelang/old.py"], {"nodelang/old.py": "old = 2"},
+                                         "HEAD", {"author": "Future author", "intent": "FIRST"}, committed_history=True)
+    assert context["history"] == []
+    assert context["deviation_state"] == {}

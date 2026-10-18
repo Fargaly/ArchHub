@@ -15,6 +15,44 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools import ratchet
+from tools.pipeline import pre_commit, strict_check
+
+
+def admit_sequence(root, base):
+    """Replay immutable landed changes with their own authority and metrics."""
+    head = strict_check.git(root, "rev-parse", "HEAD").decode().strip()
+    strict_check.git(root, "merge-base", "--is-ancestor", base, head)
+    if strict_check.git(root, "diff", "--name-only", head, "--").strip():
+        raise ValueError("release tree differs from HEAD; commit the pending change before release")
+    untracked = strict_check.git(root, "ls-files", "--others", "--exclude-standard", "-z").decode().split("\0")
+    if any(path and Path(path).suffix.lower() not in strict_check.NON_CODE for path in untracked):
+        raise ValueError("release tree contains uncommitted source files")
+    commits = strict_check.git(root, "rev-list", "--reverse", "--first-parent", f"{base}..{head}").decode().splitlines()
+    for commit in commits:
+        parent = strict_check.git(root, "rev-parse", f"{commit}^").decode().strip()
+        paths = strict_check.git(root, "diff", "--no-renames", "--name-only", "-z", parent, commit, "--").decode().split("\0")
+        paths = sorted(path for path in paths if path)
+        overlay = {}
+        for path in paths:
+            present = strict_check.git(root, "ls-tree", "-z", commit, "--", path)
+            overlay[path] = None
+            if present:
+                raw = strict_check.git(root, "show", f"{commit}:{path}")
+                try:
+                    overlay[path] = raw.decode("utf-8")
+                except UnicodeError:
+                    if Path(path).suffix.lower() not in strict_check.NON_CODE:
+                        raise
+                    overlay[path] = ""  # Non-executable asset, never substitute today's bytes.
+        context = pre_commit.trailers(strict_check.git(root, "show", "-s", "--format=%B", commit).decode("utf-8"))
+        context["author"] = strict_check.git(root, "show", "-s", "--format=%an", commit).decode("utf-8").strip()
+        result = strict_check.check_files(root, paths, overlay=overlay, revision=parent, context=context,
+                                          committed_history=True)
+        strict_check.print_diagnostics(result)
+        print(f"ACOMPILER COMMIT {commit}: {'PASS' if result['ok'] else 'FAIL'}", flush=True)
+        if not result["ok"]:
+            return 1
+    return 0
 
 
 def main(argv=None):
@@ -36,6 +74,11 @@ def main(argv=None):
             base = baseline["base_revision"]
             if not isinstance(base, str) or not base:
                 raise ValueError("compiler baseline needs base_revision for build/land ownership")
+            status = admit_sequence(root, base)
+            if status:
+                return status
+            # Keep the final whole-tree ratchets and exact HEAD admission.
+            args.commit = "HEAD"
         gate = ["compare", str(root), str(root / "evidence" / "ratchet.json"), "--whole-tree"]
         gate += ["--commit", args.commit] if args.commit is not None else ["--base", base]
         if args.context:
@@ -44,7 +87,7 @@ def main(argv=None):
         if status:
             return status
         return subprocess.run(command, cwd=root, check=False).returncode if command else 0
-    except (OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
+    except (strict_check.CompilerFailure, OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
         print(f"ACOMPILER BUILD REFUSED: {exc}")
         return 2
 

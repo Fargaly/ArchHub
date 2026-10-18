@@ -613,14 +613,14 @@ def repair_hooks(client, *, consent, plan_digest, environment=None):
 def migrate_gemini(install_root, state_root, *, consent, environment=None) -> dict:
     """Replace only this product's retired Gemini entry, with encrypted custody."""
     import hashlib
-    from .session_link_config import write_with_backup
+    from .session_link_config import write_with_backup, settings_target
     from .cell_secret_keys import protect_current_user_data
     from .client_mcp_installation import _require_plain
     env = os.environ if environment is None else environment
     profile = env.get('USERPROFILE')
     if consent is not True or not profile:
         return {'client': 'gemini-cli', 'state': 'not_connected'}
-    path = Path(profile) / '.gemini' / 'settings.json'
+    path = settings_target('gemini-cli', home=profile)
     _require_plain(path, 'file', may_be_absent=True)
     if not path.is_file():
         return {'client': 'gemini-cli', 'state': 'not_installed'}
@@ -671,7 +671,8 @@ def preflight_install_connectors(environment=None, *, warning=None):
     env = os.environ if environment is None else environment
     paths = [('codex', _codex_config(env), tomllib.loads, 'mcp_servers')]
     if env.get('USERPROFILE'):
-        paths.append(('gemini', Path(env['USERPROFILE']) / '.gemini/settings.json', json.loads, 'mcpServers'))
+        from .session_link_config import settings_target
+        paths.append(('gemini', settings_target('gemini-cli', home=env['USERPROFILE']), json.loads, 'mcpServers'))
     ownership = {}
     report = warning if warning is not None else lambda message: print(message, flush=True)
     for vendor, path, parse, table in paths:

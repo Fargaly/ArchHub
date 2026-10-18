@@ -61,7 +61,7 @@ def reserve_notices(root, context, observation):
         observation.update(notices=notices, alert_state=states[author])
 
 
-def load_history(root, revision="HEAD"):
+def load_history(root, revision="HEAD", *, include_local=True):
     """Committed policy history plus locally recorded successful effects.
 
     The pending versioned baseline and caller history never grant admission.
@@ -74,6 +74,8 @@ def load_history(root, revision="HEAD"):
             baseline = json.loads(git(root, "show", f"{revision}:{relative}"))
     elif (Path(root) / relative).is_file():
         baseline = json.loads((Path(root) / relative).read_text(encoding="utf-8"))
+    if not include_local:
+        return baseline
     local_path = history_path(root)
     if local_path.is_file():
         local = json.loads(local_path.read_text(encoding="utf-8"))

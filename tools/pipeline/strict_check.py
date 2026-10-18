@@ -411,7 +411,7 @@ def check_artifact(root, pending, context=None, *, compiler_command=None, timeou
             path.unlink(missing_ok=True)
 
 
-def change_context(root, selected, candidate, revision, context, *, patch_scope=None):
+def change_context(root, selected, candidate, revision, context, *, patch_scope=None, committed_history=False):
     """Bind intent to real changed paths and repository-owned author history."""
     import difflib
     import re
@@ -444,7 +444,7 @@ def change_context(root, selected, candidate, revision, context, *, patch_scope=
         if patch_scope is not None:
             patch_scope[path] = {"new": not present, "ranges": ranges}
     from tools.pipeline.record_observation import load_history
-    historical = load_history(root, revision)
+    historical = load_history(root, revision, include_local=not committed_history)
     # Scopes and machine rules are resolved by the binary's authoritative
     # rules.json, never a caller-provided permission list.
     for key in ("scope", "rules", "history", "deviation_state", "metrics"):
@@ -488,7 +488,7 @@ def change_context(root, selected, candidate, revision, context, *, patch_scope=
     return supplied
 
 
-def check_files(root, paths, overlay=None, *, revision="HEAD", context=None, compiler_command=None, timeout=None, build_options=None):
+def check_files(root, paths, overlay=None, *, revision="HEAD", context=None, compiler_command=None, timeout=None, build_options=None, committed_history=False):
     root = Path(root).resolve()
     selected = selected_files(root, files=paths)
     overlay_paths = {normalize(root, p) for p in (overlay or {})}
@@ -511,7 +511,8 @@ def check_files(root, paths, overlay=None, *, revision="HEAD", context=None, com
             elif not target.exists():
                 candidate[path] = None
     patch_scope = {}
-    prepared_context = change_context(root, selected, candidate, revision, context, patch_scope=patch_scope)
+    prepared_context = change_context(root, selected, candidate, revision, context, patch_scope=patch_scope,
+                                      committed_history=committed_history)
     # Source-intent rules must see the same declared files on both revisions.
     # Caller flags/machine overrides are candidate-only, so invalid change
     # metadata cannot establish its own baseline.

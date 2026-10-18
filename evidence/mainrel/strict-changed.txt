@@ -1,0 +1,49 @@
+STAGED_PATH_COUNT=89
+ACOMPILER FILE FAIL: evidence/mainrel/big-backup-only.json E0007 0 -> 3
+ACOMPILER FILE FAIL: evidence/mainrel/big-measurement.json E0007 0 -> 3
+ACOMPILER FILE FAIL: evidence/mainrel/measure_big.py E0007 0 -> 2
+ACOMPILER FILE FAIL: evidence/mainrel/regression-status.json E0007 0 -> 1
+ACOMPILER BUCKET FAIL: E0007/json 66 -> 73
+ACOMPILER BUCKET FAIL: E0007/python 1884 -> 1886
+error[E0002]: module is unreachable from shipped entrypoints
+ --> nodelang/application_update_recovery.py:1:1
+ note: Unused: a declared parameter, route or module has no resolved runtime reader or shipped entrypoint. Test imports and prose do not count.
+ help: connect it to a product entrypoint or remove it
+error[E0007]: behaviour `backup_seconds` is hard-coded outside a node parameter
+ --> evidence/mainrel/big-backup-only.json:6:21
+ note: Configuration: a behaviour-shaping literal must be a visible, editable node parameter with a typed socket.
+ help: move the value into the owning node's typed parameters
+error[E0007]: behaviour `migration_seconds` is hard-coded outside a node parameter
+ --> evidence/mainrel/big-backup-only.json:7:24
+ note: Configuration: a behaviour-shaping literal must be a visible, editable node parameter with a typed socket.
+ help: move the value into the owning node's typed parameters
+error[E0007]: behaviour `startup_within_30_seconds` is hard-coded outside a node parameter
+ --> evidence/mainrel/big-backup-only.json:16:32
+ note: Configuration: a behaviour-shaping literal must be a visible, editable node parameter with a typed socket.
+ help: move the value into the owning node's typed parameters
+error[E0007]: behaviour `backup_seconds` is hard-coded outside a node parameter
+ --> evidence/mainrel/big-measurement.json:6:21
+ note: Configuration: a behaviour-shaping literal must be a visible, editable node parameter with a typed socket.
+ help: move the value into the owning node's typed parameters
+error[E0007]: behaviour `migration_seconds` is hard-coded outside a node parameter
+ --> evidence/mainrel/big-measurement.json:7:24
+ note: Configuration: a behaviour-shaping literal must be a visible, editable node parameter with a typed socket.
+ help: move the value into the owning node's typed parameters
+error[E0007]: behaviour `startup_within_30_seconds` is hard-coded outside a node parameter
+ --> evidence/mainrel/big-measurement.json:16:32
+ note: Configuration: a behaviour-shaping literal must be a visible, editable node parameter with a typed socket.
+ help: move the value into the owning node's typed parameters
+error[E0007]: behaviour `existing_route_refusal_exit` is hard-coded outside a node parameter
+ --> evidence/mainrel/regression-status.json:5:37
+ note: Configuration: a behaviour-shaping literal must be a visible, editable node parameter with a typed socket.
+ help: move the value into the owning node's typed parameters
+error[E0007]: literal behaviour argument `timeout_seconds`
+ --> evidence/mainrel/measure_big.py:65:124
+ note: Configuration: a behaviour-shaping literal must be a visible, editable node parameter with a typed socket.
+ help: read a typed node parameter instead of an inline default
+error[E0007]: literal behaviour argument `startup_within_30_seconds`
+ --> evidence/mainrel/measure_big.py:74:35
+ note: Configuration: a behaviour-shaping literal must be a visible, editable node parameter with a typed socket.
+ help: read a typed node parameter instead of an inline default
+ACOMPILER FAIL
+STRICT_SECONDS=143.1046594

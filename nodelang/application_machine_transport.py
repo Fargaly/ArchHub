@@ -2523,7 +2523,7 @@ class UniversalRuntimeClient:
             "persona_form", "suggestion",
             "agents", "brain", "canvas", "hosts", "update",
         }
-        if set(result) != expected:
+        if set(result) not in (expected, expected | {"shows_as"}):
             raise MachineTransportError("BABOOM context response shape is invalid")
         if (
             result["cell_native"] is not True
@@ -2532,6 +2532,7 @@ class UniversalRuntimeClient:
             or result["revision"] < 0
             or type(result["persona_form"]) is not str
             or type(result["suggestion"]) is not str
+            or result.get("shows_as", "Tray") not in ("Screen", "Tray", "Hidden")
         ):
             raise MachineTransportError("BABOOM context response values are invalid")
         work = result["work"]

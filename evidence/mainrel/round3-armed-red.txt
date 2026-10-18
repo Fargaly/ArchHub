@@ -1,0 +1,21 @@
+F
+================================== FAILURES ===================================
+_______ test_three_installs_replace_pin_with_real_size_accounting[True] _______
+tests_replica\test_mainrel_round3.py:98: in test_three_installs_replace_pin_with_real_size_accounting
+    completed = files.preserve_closed_application_journals(tmp_path, f'install-{number}')
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+nodelang\application_recovery_files.py:408: in preserve_closed_application_journals
+    return _preserve_closed_application_journals(profile, build, keep_count=keep_count,
+nodelang\application_recovery_files.py:528: in _preserve_closed_application_journals
+    raise ValueError('Installer backup over budget: %d required bytes exceeds %d bytes; saved work was kept'
+E   ValueError: Installer backup over budget: 17874403404 required bytes exceeds 10737418240 bytes; saved work was kept
+============================== warnings summary ===============================
+..\..\..\..\..\..\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434
+  C:\Users\fargaly\AppData\Local\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434: PytestConfigWarning: Unknown config option: cache_dir
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests_replica/test_mainrel_round3.py::test_three_installs_replace_pin_with_real_size_accounting[True]
+1 failed, 1 warning in 5.73s

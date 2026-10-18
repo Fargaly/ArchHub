@@ -1,0 +1,24 @@
+........................................................................ [ 45%]
+..........................................................F
+================================== FAILURES ===================================
+_____________ test_machine_projection_prewarm_primes_read_caches ______________
+tests_replica\test_application_machine_transport.py:3839: in test_machine_projection_prewarm_primes_read_caches
+    server.close()
+nodelang\application_server.py:20549: in close
+    _stop_background_refreshes(self)
+nodelang\application_server.py:67: in _stop_background_refreshes
+    raise RuntimeError('background refresh did not stop; store teardown refused')
+E   RuntimeError: background refresh did not stop; store teardown refused
+---------------------------- Captured stdout call -----------------------------
+  library    : 141 node-library card(s) installed
+============================== warnings summary ===============================
+..\..\..\..\..\..\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434
+  C:\Users\fargaly\AppData\Local\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434: PytestConfigWarning: Unknown config option: cache_dir
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests_replica/test_application_machine_transport.py::test_machine_projection_prewarm_primes_read_caches
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 130 passed, 1 warning in 671.30s (0:11:11)

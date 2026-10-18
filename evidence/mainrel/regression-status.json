@@ -1,0 +1,13 @@
+{
+  "baseline_red_exit": 1,
+  "guards_exit": 0,
+  "shows_as_exit": 0,
+  "existing_route_refusal_exit": {
+    "type": "integer",
+    "value": 1,
+    "unit": "process-exit-code",
+    "mutability": "measured",
+    "source": "rest-first-failure.txt"
+  },
+  "updater_exit": 0
+}

@@ -902,7 +902,7 @@ LIBRARY_ITEM_ENGINES.update({
                                  "backup_count": 3, "backup_budget_bytes": 10737418240,
                                  "keep_running_in_tray": False,
                                  "update_check_interval_minutes": 30, "update_auto_apply_on_quit": True,
-                                 "update_preview_channel": False}},
+                                 "update_preview_channel": False, "backup_location": "auto"}},
     "tool_brain": {"engine": "tool.brain",
                    "params": {"tool": "brain"}},
     "tool_baboom": {"engine": "tool.baboom",
@@ -1379,7 +1379,7 @@ ENGINE_SOCKETS = {
     "tool.workshop": {"source": ("out",), "target": (
         "tool", "stale_claim_after_idle_minutes", "archive_after_idle_days",
         "tick_cadence_minutes", "backup_count", "backup_budget_bytes", "keep_running_in_tray",
-        "update_check_interval_minutes", "update_auto_apply_on_quit", "update_preview_channel")},
+        "update_check_interval_minutes", "update_auto_apply_on_quit", "update_preview_channel", "backup_location")},
     "data.constant": {"source": ("value",), "target": ()},
     "data.list": {"source": ("value",), "target": ()},
     "input.parameter": {"source": ("value",), "target": ()},

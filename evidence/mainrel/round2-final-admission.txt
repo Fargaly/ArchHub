@@ -1,0 +1,5 @@
+Final validation command: run-heavy.ps1 -> evidence/mainrel/court-state/final-checks.ps1 (ignored wrapper).
+Native PowerShell 0errors; actual compiler tree-sitter HAS_ERROR=false; Node --check PASS (round2-parser-final.txt).
+Real0400 SHA verified read-only; not executed (round2-0400-hash.json).
+Registered-main fullpacket ACOMPILER PASS162.738576s (round2-strict-packet-final.txt).
+Following exactstage refused unstaged reviewer-report update E0010, exit2 (round2-strict-review-stage-red.txt); no compiler/source defect. Final index checkpoint is required before commit and binds its tested tree in .git/mainrel-final-index.json.

@@ -397,6 +397,10 @@
       topologyCanvas = value; topologyGraph = graph;
       if (navigated) navGeneration += 1;
       if (value.workshop_scope) api.setCanvas(value.workshop_scope);
+      else if (value.canvas_deferred === true) {
+        api.setCanvas({graph_id:value.application_root, root:value.scope.current, revision:value.revision,
+          authorization:value.authorization, workshops:[]});
+      }
       publish(); return value;
     };
     // One committed drag is the held canvas with the admitted points at the
@@ -988,10 +992,13 @@
             details.native && (!text(details.native.app) || !text(details.native.session_id))) {
           fail('Write a request and choose one agent or model.');
         }
-        const viewIdentity = () => JSON.stringify([canvas?.graph_id,
-          topologyCanvas?.authorization?.subject, topologyCanvas?.authorization?.session]);
+        const viewIdentity = () => {
+          const authorization = activeAuthorization();
+          return JSON.stringify([canvas?.graph_id, authorization.subject, authorization.session]);
+        };
         const identity = viewIdentity(), graph = canvas?.graph_id;
-        if (!text(graph) || !text(topologyCanvas?.authorization?.subject) || !text(topologyCanvas?.authorization?.session)) {
+        const authorization = activeAuthorization();
+        if (!text(graph) || !text(authorization.subject) || !text(authorization.session)) {
           fail('Wait for the application connection before starting a session.');
         }
         const body = {action:'start-session',prompt:details.prompt.trim(),

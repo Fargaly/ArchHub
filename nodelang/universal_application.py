@@ -20305,6 +20305,7 @@ _APPLICATION_SETTING_SPECS = {
     "update_check_interval_minutes": ("number", {"min": 1, "max": 1440, "step": 1}),
     "update_auto_apply_on_quit": ("boolean", {"min": 0, "max": 1, "step": 1}),
     "update_preview_channel": ("boolean", {"min": 0, "max": 1, "step": 1}),
+    "backup_location": ("text", {}),
 }
 
 # Each edge names an actual reader of an owner object. Imported Grand Map
@@ -20353,9 +20354,10 @@ def _application_reader_relations(registry, visible_roots):
                    "target_incidence": root + ":target"}
 
 
-def _application_setting_default(key: str) -> int:
+def _application_setting_default(key: str) -> int | str:
     from .library_engines import LIBRARY_ITEM_ENGINES
-    return int(LIBRARY_ITEM_ENGINES['tool_workshop']['params'][key])
+    value = LIBRARY_ITEM_ENGINES['tool_workshop']['params'][key]
+    return str(value) if key == 'backup_location' else int(value)
 
 
 def _project_application_node_settings(
@@ -20374,10 +20376,15 @@ def _project_application_node_settings(
         if node["id"] == _system_tool_canvas_root("tool_workshop"):
             for key, (editor, constraints) in _APPLICATION_SETTING_SPECS.items():
                 relation, value_root = _workshop_board_property_root(str(node["id"]), key)
-                node["params"].append({
-                    "label": key, "value": (bool if editor == 'boolean' else int)(_workshop_board_int_param(
+                if key == 'backup_location':
+                    from .application_recovery_files import backup_location
+                    value = backup_location(Path(os.environ.get('LOCALAPPDATA', str(Path.home()))))['location']
+                else:
+                    value = (bool if editor == 'boolean' else int)(_workshop_board_int_param(
                         snapshot, registry, key, default=_application_setting_default(key),
-                        lower=constraints["min"], upper=constraints["max"])),
+                        lower=constraints["min"], upper=constraints["max"]))
+                node["params"].append({
+                    "label": key, "value": value,
                     "owner": node["id"], "relation": relation,
                     "value_root": value_root, "cell_id": value_root if _workshop_board_override_active(snapshot, registry, relation) else None,
                     "editable": True, "editor": editor, "constraints": constraints,
@@ -52687,6 +52694,13 @@ def edit_universal_property(
         visible, _relations, _properties = _session_canvas_roots(snapshot, registry, view_session)
         if owner not in visible:
             raise InvalidCell("property relation is outside the application lens")
+        if key == 'backup_location':
+            from .application_recovery_files import set_backup_location
+            try:
+                set_backup_location(Path(os.environ.get('LOCALAPPDATA', str(Path.home()))), value)
+            except (OSError, ValueError) as error:
+                raise InvalidCell(str(error)) from error
+            return value_root
         if _editor == 'boolean':
             if value not in {'true', 'false'}:
                 raise InvalidCell('application toggle requires true or false')

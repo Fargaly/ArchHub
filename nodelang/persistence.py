@@ -360,7 +360,13 @@ def _installer_closed_backup(root, source):
     # A subsequently reopened/hot source is not that final-closed snapshot.
     if any(Path(str(source) + suffix).exists() for suffix in ('-wal', '-journal')):
         raise ValueError('verified installer final-closed rollback backup is missing for this open source')
-    for directory in dict.fromkeys((source.parent / 'backups', root / 'backups')):
+    from .application_recovery_files import installer_backup_directory
+    profiles = dict.fromkeys((Path(os.environ.get('LOCALAPPDATA', root.parent)).resolve(), root.parent))
+    directories = [installer_backup_directory(profile, source) for profile in profiles
+                   if source.is_relative_to(profile)]
+    for directory in dict.fromkeys((*directories, source.parent / 'backups', root / 'backups')):
+        if directory.is_symlink() or directory.is_junction():
+            raise ValueError('installer rollback custody directory is a link')
         for backup in sorted(directory.glob('*-closed'), reverse=True):
             receipt = backup / 'closed-files.json'
             if backup.is_symlink() or backup.is_junction() or not receipt.is_file():

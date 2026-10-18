@@ -1,0 +1,9 @@
+OWNED FIXTURE REMOVED; FREE_BYTES=46553010176
+npm.cmd : npm notice
+At C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpa
+d\mainrel\evidence\mainrel\run_js_final.ps1:5 char:1
++ & 'C:\Program Files\nodejs\npm.cmd' ci --ignore-scripts --no-audit -- ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (npm notice:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 

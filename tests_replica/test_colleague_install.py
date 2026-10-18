@@ -318,7 +318,7 @@ def test_assistant_receipt_uses_the_launcher_state_root():
     launcher = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
     setup = (ROOT / "colleague_setup.py").read_text(encoding="utf-8")
     for part in ('os.environ.get("ARCHHUB_TEST_STATE_DIR")',
-                 'Path(os.environ["LOCALAPPDATA"]) / "ArchHub-Test"'):
+                 'Path(os.environ["LOCALAPPDATA"]) / "ArchHub"'):
         assert part in launcher and part in setup
 
 

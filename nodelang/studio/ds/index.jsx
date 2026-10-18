@@ -134,7 +134,7 @@
     if (text === undefined) return <Tag {...props} style={{ background:A.bg, borderRight:`1px solid ${A.lineSoft}`,
       display:'grid', gridTemplateRows:'auto 1fr auto', paddingTop:6, width:44, ...style }}>{children}</Tag>;
     return <button {...props} type="button" title={props.title || text} aria-label={props['aria-label'] || text}
-      aria-current={selected ? 'page' : undefined} style={{ width:44, height:52, display:'grid', placeItems:'center', alignContent:'center',
+      aria-current={selected ? (props['aria-current'] ?? 'page') : undefined} style={{ width:44, height:52, display:'grid', placeItems:'center', alignContent:'center',
         gap:2, position:'relative', color:selected ? A.ink : A.inkSoft, border:0, padding:0, background:'transparent', fontFamily:A.sans, cursor:'pointer', ...style }}>
       {selected && variant!=='home' && <i aria-hidden="true" style={{ position:'absolute', left:0, top:12, bottom:12, width:2, background:A.accent, borderRadius:2 }}/>}
       <span aria-hidden="true" style={{ width:variant==='home'?36:28, height:variant==='home'?30:28, borderRadius:variant==='home'?8:6, display:'grid', placeItems:'center', background:selected ? A.bgHover : 'transparent', fontSize:15 }}>{glyph ?? g}</span>

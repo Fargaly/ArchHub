@@ -1,0 +1,35 @@
+{
+  "fixture_bytes": 8937168896,
+  "fixture_GiB": 8.323387145996094,
+  "semantic_fixture": "small valid graph plus SQLite padding; not a six-million-Cell court",
+  "candidates": 5,
+  "backup_seconds": {
+    "type": "number",
+    "value": 227.70879669999704,
+    "unit": "s",
+    "mutability": "measured",
+    "source": "measure_big.py"
+  },
+  "migration_seconds": {
+    "type": "number",
+    "value": 4.34308580000652,
+    "unit": "s",
+    "mutability": "measured",
+    "source": "measure_big.py"
+  },
+  "migration": {
+    "state": "adopted",
+    "backup_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\claude\\C--Users-fargaly-00-ARCHUB\\71743447-6dd5-4050-bc4f-d228f7a1d91e\\scratchpad\\mainrel\\evidence\\mainrel\\court-state\\big-profile\\ArchHub\\backups\\journal-f2486c29a48996ac4f641f82fdc7f9c0cbc4c64daf231f81e51c8a641fb1fc85\\mainrel-big-bc671cf747224cfa9d93d56378c25d31-closed",
+    "database_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\claude\\C--Users-fargaly-00-ARCHUB\\71743447-6dd5-4050-bc4f-d228f7a1d91e\\scratchpad\\mainrel\\evidence\\mainrel\\court-state\\big-profile\\ArchHub-Test\\archhub-test.universal.sqlite3"
+  },
+  "backup_directories": 5,
+  "free_before_bytes": 37949050880,
+  "free_after_bytes": 28692336640,
+  "startup_within_30_seconds": {
+    "type": "boolean",
+    "value": true,
+    "unit": "predicate",
+    "mutability": "measured",
+    "source": "measure_big.py"
+  }
+}

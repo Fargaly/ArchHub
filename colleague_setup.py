@@ -626,7 +626,7 @@ def register_autocad_add_ins(root: Path, *, environment=None, install=None,
             user_plugins_root=str(Path(env["APPDATA"]) / "Autodesk" / "ApplicationPlugins"),
             machine_plugins_root=str(Path(env.get("ProgramData", r"C:\ProgramData")) / "Autodesk" / "ApplicationPlugins"),
             # launch_archhub_test.py owns this state location (see _launcher_state_root).
-            state_root=str(Path(env.get("ARCHHUB_TEST_STATE_DIR") or Path(env["LOCALAPPDATA"]) / "ArchHub-Test")))
+            state_root=str(Path(env.get("ARCHHUB_TEST_STATE_DIR") or Path(env["LOCALAPPDATA"]) / "ArchHub")))
         for result in results:
             print("  autocad %s : %s%s" % (result["host_version"], result["status"],
                                            (" - " + result["reason"]) if result.get("reason") else
@@ -660,7 +660,7 @@ def report_rhino_blender(root: Path, *, detected=None) -> list[dict]:
 def _launcher_state_root() -> Path:
     # launch_archhub_test.py owns this location; a court holds the two equal.
     return Path(os.environ.get("ARCHHUB_TEST_STATE_DIR")
-                or Path(os.environ["LOCALAPPDATA"]) / "ArchHub-Test")
+                or Path(os.environ["LOCALAPPDATA"]) / "ArchHub")
 
 
 def _assistant_integration(root: Path, identity: str) -> None:
@@ -898,6 +898,17 @@ def main():
         report_rhino_blender(root)
     except Exception as exc:  # noqa: BLE001 - evidence only; the build must still become ready
         print("  rhino/blender: not reported (%s)" % type(exc).__name__)
+    # Existing managed connectors must survive even when the person does not
+    # choose to connect NEW assistants. This also covers a repaired/missing venv.
+    from nodelang.assistant_registration import main as migrate_assistant_connectors
+    try:
+        (root / '.archhub-ready').unlink(missing_ok=True)
+        if migrate_assistant_connectors(['migrate-connectors']) != 0:
+            print('  REFUSED: existing assistant connector migration needs repair; prior-file backups were kept.')
+            return 8
+    except (OSError, ValueError) as refused:
+        print('  REFUSED: existing assistant connector migration: ' + str(refused))
+        return 8
     try:
         if readiness_identity(root) != identity:
             raise ValueError("installed build changed during setup")

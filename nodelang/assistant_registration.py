@@ -50,7 +50,7 @@ def install_roots(environment=None) -> tuple[Path, Path]:
     env = os.environ if environment is None else environment
     root = Path(os.path.abspath(Path(__file__).resolve().parent.parent))
     state = Path(env.get("ARCHHUB_TEST_STATE_DIR")
-                 or Path(env.get("LOCALAPPDATA", str(Path.home()))) / "ArchHub-Test")
+                 or Path(env.get("LOCALAPPDATA", str(Path.home()))) / "ArchHub")
     return root, state
 
 
@@ -117,16 +117,55 @@ _DEV_ERA_ARGS = ["-m", "nodelang.clean_coordination_mcp"]
 _DEV_ERA_ENV = {"PYTHONPATH", "ARCHHUB_COORDINATION_VENDOR"}
 
 
-def _dev_era_codex_entry(entry) -> bool:
+def _retired_runpy_args(args):
+    """Recognise the old loader's AST, never execute client configuration."""
+    import ast
     import ntpath
-    if type(entry) is not dict or set(entry) != {"command", "args", "env"}:
+    if type(args) is not list or '-c' not in args:
         return False
-    command, env = entry["command"], entry["env"]
-    return (entry["args"] == _DEV_ERA_ARGS
-            and type(command) is str and ntpath.basename(command).casefold() == "python.exe"
-            and type(env) is dict and set(env) == _DEV_ERA_ENV
-            and env["ARCHHUB_COORDINATION_VENDOR"] == "codex"
-            and type(env["PYTHONPATH"]) is str and ntpath.isabs(env["PYTHONPATH"]))
+    offset = args.index('-c')
+    if any(flag not in ('-I', '-B', '-E', '-s') for flag in args[:offset]) or len(args) not in (offset + 2, offset + 3):
+        return False
+    try:
+        code = ast.parse(args[offset + 1]).body
+    except (TypeError, SyntaxError):
+        return False
+    if (len(code) != 3 or not isinstance(code[0], ast.Import)
+            or {item.name for item in code[0].names} != {'runpy', 'sys'}
+            or any(item.asname for item in code[0].names)):
+        return False
+    expected = ast.parse("import runpy,sys;sys.path.insert(0,sys.argv.pop(1));runpy.run_module('nodelang.clean_coordination_mcp',run_name='__main__')").body
+    if ast.dump(code[2]) != ast.dump(expected[2]):
+        return False
+    if ast.dump(code[1]) == ast.dump(expected[1]):
+        return len(args) == offset + 3 and type(args[-1]) is str and ntpath.isabs(args[-1])
+    if not isinstance(code[1], ast.Expr) or not isinstance(code[1].value, ast.Call):
+        return False
+    call, held = code[1].value, expected[1].value
+    return (ast.dump(call.func) == ast.dump(held.func) and not call.keywords and len(call.args) == 2
+            and ast.dump(call.args[0]) == ast.dump(held.args[0])
+            and isinstance(call.args[1], ast.Constant) and type(call.args[1].value) is str
+            and ntpath.isabs(call.args[1].value) and len(args) == offset + 2)
+
+
+def _dev_era_connector_entry(entry, vendor) -> bool:
+    import ntpath
+    if type(entry) is not dict or set(entry) - {"command", "args", "env", "env_vars"}:
+        return False
+    command, env, args = entry.get("command"), entry.get("env"), entry.get("args")
+    if (type(command) is not str or ntpath.basename(command).casefold() != 'python.exe'
+            or type(env) is not dict or set(env) - _DEV_ERA_ENV
+            or env.get('ARCHHUB_COORDINATION_VENDOR', vendor) != vendor
+            or 'PYTHONPATH' in env and (type(env['PYTHONPATH']) is not str or not ntpath.isabs(env['PYTHONPATH']))):
+        return False
+    if args == _DEV_ERA_ARGS:
+        return 'env_vars' not in entry and 'PYTHONPATH' in env
+    return (_retired_runpy_args(args)
+            and entry.get('env_vars', ['CODEX_THREAD_ID']) == ['CODEX_THREAD_ID'])
+
+
+def _dev_era_codex_entry(entry) -> bool:
+    return _dev_era_connector_entry(entry, 'codex')
 
 
 def _replace_codex_table(text: str, block: str) -> str:
@@ -571,6 +610,94 @@ def repair_hooks(client, *, consent, plan_digest, environment=None):
         return _repair_hooks(client, consent=consent, plan_digest=plan_digest, environment=environment)
 
 
+def migrate_gemini(install_root, state_root, *, consent, environment=None) -> dict:
+    """Replace only this product's retired Gemini entry, with encrypted custody."""
+    import hashlib
+    from .session_link_config import write_with_backup
+    from .cell_secret_keys import protect_current_user_data
+    from .client_mcp_installation import _require_plain
+    env = os.environ if environment is None else environment
+    profile = env.get('USERPROFILE')
+    if consent is not True or not profile:
+        return {'client': 'gemini-cli', 'state': 'not_connected'}
+    path = Path(profile) / '.gemini' / 'settings.json'
+    _require_plain(path, 'file', may_be_absent=True)
+    if not path.is_file():
+        return {'client': 'gemini-cli', 'state': 'not_installed'}
+    if path.stat().st_size > _MAX_CONFIG_BYTES:
+        raise ValueError('Gemini settings exceed the config byte budget')
+    raw = path.read_bytes()
+    data = json.loads(raw.decode('utf-8'))
+    servers = data.get('mcpServers') if type(data) is dict else None
+    old = servers.get(SERVER_NAME) if type(servers) is dict else None
+    entry = managed_entry(install_root, state_root)
+    entry.pop('type', None)
+    entry['env']['ARCHHUB_COORDINATION_VENDOR'] = 'gemini'
+    if old == entry:
+        return {'client': 'gemini-cli', 'state': 'registered'}
+    if not _dev_era_connector_entry(old, 'gemini'):
+        return {'client': 'gemini-cli', 'state': 'conflict' if old is not None else 'not_connected'}
+    servers[SERVER_NAME] = entry
+    backups = Path(state_root) / 'private-client-backups'
+    _require_plain(backups, 'directory', may_be_absent=True)
+    backups.mkdir(parents=True, exist_ok=True)
+    result = write_with_backup(path, json.dumps(data, ensure_ascii=False, indent=2) + '\n', backups,
+        expected_digest=hashlib.sha256(raw).hexdigest(),
+        protect_backup=lambda value: protect_current_user_data(value, purpose='archhub.client-hook-backup/v1'))
+    if json.loads(path.read_text(encoding='utf-8')) != data:
+        raise ValueError('Gemini connector migration readback failed')
+    return {'client': 'gemini-cli', 'state': 'registered', 'backup': result.get('backup')}
+
+
+def migrate_install_connectors(*, consent, environment=None, warning=None) -> list:
+    """The Setup consent applies to existing managed connectors, never new ones."""
+    env = os.environ if environment is None else environment
+    ownership = preflight_install_connectors(env, warning=warning)
+    root, state = install_roots(env)
+    rows = []
+    for vendor, migrate in (('codex', migrate_codex), ('gemini', migrate_gemini)):
+        if ownership.get(vendor) == 'retired':
+            rows.append(migrate(root, state, consent=consent, environment=env))
+        else:
+            rows.append({'client': 'gemini-cli' if vendor == 'gemini' else vendor,
+                         'state': 'skipped_unmanaged' if ownership.get(vendor) == 'other' else 'not_installed'})
+    return rows
+
+
+def preflight_install_connectors(environment=None, *, warning=None):
+    """Leave unrecognised user settings unchanged; disclose file and reason."""
+    import tomllib
+    from .client_mcp_installation import _require_plain
+    env = os.environ if environment is None else environment
+    paths = [('codex', _codex_config(env), tomllib.loads, 'mcp_servers')]
+    if env.get('USERPROFILE'):
+        paths.append(('gemini', Path(env['USERPROFILE']) / '.gemini/settings.json', json.loads, 'mcpServers'))
+    ownership = {}
+    report = warning if warning is not None else lambda message: print(message, flush=True)
+    for vendor, path, parse, table in paths:
+        if path is None:
+            continue
+        try:
+            _require_plain(path, 'file', may_be_absent=True)
+            if not path.is_file():
+                continue
+            if path.stat().st_size > _MAX_CONFIG_BYTES:
+                raise ValueError('connector settings are over budget')
+            data = parse(path.read_text(encoding='utf-8'))
+            if type(data) is not dict or type(data.get(table, {})) is not dict:
+                raise ValueError('connector table is unreadable')
+            entry = data.get(table, {}).get(SERVER_NAME)
+            ownership[vendor] = ('absent' if entry is None else
+                                 'retired' if _dev_era_connector_entry(entry, vendor) else 'other')
+            if entry is not None and ownership[vendor] == 'other':
+                report('Connector warning: ' + str(path) + ': unknown or unmanaged entry; left untouched')
+        except (OSError, ValueError, RegistrationRefused):
+            ownership[vendor] = 'other'
+            # Do not print config contents or parser snippets containing secrets.
+            report('Connector warning: ' + str(path) + ': unreadable or unsafe settings; left untouched')
+    return ownership
+
+
 def connect_hooks_on_setup(*, consent, environment=None) -> list:
     """The installer's "Connect my AI assistants to ArchHub" choice, through the same consent
     path as Settings > Repair: ArchHub's end-of-turn check for each assistant that is
@@ -681,6 +808,15 @@ def disconnect_hooks_on_uninstall(environment=None) -> list:
 def main(argv=None) -> int:
     import sys
     args = sys.argv[1:] if argv is None else argv
+    if args == ['preflight-connectors']:
+        preflight_install_connectors()
+        return 0
+    if args == ['migrate-connectors']:
+        rows = migrate_install_connectors(consent=True)
+        for row in rows:
+            print('%s: %s' % (row['client'], row['state']))
+        return int(any(row['state'] not in ('registered', 'skipped_unmanaged', 'ready_to_register', 'not_installed',
+                                           'not_connected') for row in rows))
     if args != ["disconnect-hooks"]:
         print("usage: python -m nodelang.assistant_registration disconnect-hooks", file=sys.stderr)
         return 2

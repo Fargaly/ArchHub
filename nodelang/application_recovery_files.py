@@ -20,9 +20,53 @@ import uuid
 
 
 _RESERVE_BYTES = 256 * 1024 * 1024
+_INSTALL_RESERVE_BYTES = 25 * 1024**3
 _METADATA_BYTES = 64 * 1024
 _MANIFEST_BYTES = 128 * 1024
 _FILE_NAMES = {"graph": "graph.sqlite3", "content": "content.sqlite3"}
+
+
+@contextmanager
+def _closed_source_lease(path):
+    """Deny writers/deletion without SQLite's 1-GiB Windows byte-range lock."""
+    if os.name == 'nt':
+        import ctypes
+        from ctypes import wintypes
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        create = kernel.CreateFileW
+        create.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                           ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+        create.restype = wintypes.HANDLE
+        handle = create(str(path), 0x80000000, 1, None, 3, 0x80, None)
+        if handle == ctypes.c_void_p(-1).value:
+            raise OSError('close ArchHub before preserving its pre-upgrade journal: ' + str(ctypes.WinError(ctypes.get_last_error())))
+        close = kernel.CloseHandle
+        close.argtypes = (wintypes.HANDLE,)
+        try:
+            with closing(sqlite3.connect(path.as_uri() + '?mode=ro&immutable=1', uri=True)) as db:
+                yield db
+        finally:
+            close(handle)
+    else:
+        with closing(sqlite3.connect(path.as_uri() + '?mode=rw', uri=True, isolation_level=None)) as db:
+            db.execute('PRAGMA busy_timeout=0')
+            db.execute('BEGIN EXCLUSIVE')
+            yield db
+
+
+def _copy_closed_file(source, destination, report):
+    """Stream one closed file; the caller verifies its complete byte digest."""
+    with source.open('rb') as reader, destination.open('xb') as writer:
+        copied = 0
+        last_report = time.monotonic()
+        while chunk := reader.read(1024 * 1024):
+            writer.write(chunk)
+            copied += len(chunk)
+            if time.monotonic() - last_report >= 0.5:
+                report('Copying %s: %d / %d bytes' % (source.name, copied, source.stat().st_size))
+                last_report = time.monotonic()
+        writer.flush()
+        os.fsync(writer.fileno())
 
 
 def _closed_receipts(parent):
@@ -152,7 +196,221 @@ def _closed_source_score(source, selected, *, exact=False):
     return work, total, head or (0, 0), source == selected
 
 
-def preserve_closed_application_journals(profile, build, *, keep_count=3, max_bytes=10 * 1024**3):
+def _owned_backup_directory(profile, directory):
+    """Validate current and historical locations with the same ownership rule."""
+    selected = Path(directory)
+    identity = hashlib.sha256(str(profile).casefold().encode('utf-8')).hexdigest()
+    if (not selected.is_absolute() or str(selected).startswith(('\\\\', '//'))
+            or (selected != profile / 'ArchHub/backups' and
+                (selected.name != 'profile-' + identity or selected.parent.name != 'ArchHub-backups'))):
+        raise ValueError('installer backup directory is outside its owned container')
+    if selected != profile / 'ArchHub/backups' and any(selected.is_relative_to(profile / name)
+            for name in ('ArchHub', 'ArchHub-Test')):
+        raise ValueError('installer backup directory is outside its owned container')
+    for ancestor in (selected, *selected.parents):
+        if ancestor.is_symlink() or ancestor.is_junction():
+            raise ValueError('installer backup directory contains a link')
+    return selected
+
+
+def backup_location(profile):
+    """Installer-owned physical preference; Settings and Setup use this file."""
+    profile = Path(profile).resolve()
+    path = profile / 'ArchHub/backup-location.json'
+    if not path.exists():
+        return {'location': 'auto', 'directory': str(profile / 'ArchHub/backups')}
+    if path.is_symlink() or path.is_junction() or path.stat().st_size > 16384:
+        raise ValueError('installer backup location is not a bounded plain file')
+    record = json.loads(path.read_text(encoding='utf-8'))
+    if (type(record) is not dict or type(record.get('location')) is not str
+            or type(record.get('directory')) is not str):
+        raise ValueError('installer backup location is invalid')
+    history = record.get('managed_directories', [])
+    if type(history) is not list or any(type(item) is not str for item in history):
+        raise ValueError('installer backup directory history is invalid')
+    for directory in [record['directory'], *history]:
+        _owned_backup_directory(profile, directory)
+    return record
+
+
+def set_backup_location(profile, location, *, directory=None):
+    """One explicit preference; custom locations get a dedicated owned child."""
+    profile = Path(profile).resolve()
+    location = str(location).strip()
+    if not location or (location != 'auto' and not Path(location).is_absolute()):
+        raise ValueError('backup location must be auto or an absolute local folder')
+    identity = hashlib.sha256(str(profile).casefold().encode('utf-8')).hexdigest()
+    default = profile / 'ArchHub/backups'
+    if location != 'auto':
+        base = Path(location)
+        if str(base).startswith(('\\\\', '//')):
+            raise ValueError('backup location must be a local folder, not a network share')
+        for live in (profile / 'ArchHub', profile / 'ArchHub-Test'):
+            if base == live or base.is_relative_to(live):
+                raise ValueError('backup location must be outside application profile directories')
+    selected = Path(directory) if directory is not None else (
+        default if location == 'auto' else Path(location) / 'ArchHub-backups' / ('profile-' + identity))
+    if not selected.is_absolute():
+        raise ValueError('backup directory must be absolute')
+    for live in (profile / 'ArchHub', profile / 'ArchHub-Test'):
+        if selected == live or live.is_relative_to(selected):
+            raise ValueError('backup directory cannot contain a live application profile')
+    for path in (selected, *selected.parents, profile / 'ArchHub'):
+        if path.is_symlink() or path.is_junction():
+            raise ValueError('installer backup location contains a link')
+    _owned_backup_directory(profile, selected)
+    previous = backup_location(profile)
+    managed = list(dict.fromkeys([*previous.get('managed_directories', []), previous['directory'], str(selected)]))
+    record = dict(location=location, directory=str(selected), managed_directories=managed)
+    if len(json.dumps(record).encode('utf-8')) > 16384:
+        raise ValueError('installer backup location history exceeds its bounded file size; existing custody was kept')
+    target = profile / 'ArchHub/backup-location.json'
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.is_symlink() or target.is_junction():
+        raise ValueError('installer backup preference is a link')
+    pending = target.with_name('.backup-location-' + uuid.uuid4().hex)
+    try:
+        with pending.open('x', encoding='utf-8') as stream:
+            json.dump(record, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(pending, target)
+    finally:
+        pending.unlink(missing_ok=True)
+    return record
+
+
+def _fixed_backup_drives():
+    if os.name != 'nt':
+        return []
+    import ctypes
+    return [Path(drive) for drive in os.listdrives()
+            if ctypes.windll.kernel32.GetDriveTypeW(drive) == 3]
+
+
+def _install_reserve(profile, destination):
+    """Keep25GiB on the system/profile disk; other drives retain256MiB."""
+    return _INSTALL_RESERVE_BYTES if Path(destination).anchor.casefold() == Path(profile).anchor.casefold() else _RESERVE_BYTES
+
+
+def _select_backup_location(profile, planned_bytes):
+    preference = backup_location(profile)
+    chosen = Path(preference['directory'])
+    probe = next((path for path in (chosen, *chosen.parents) if path.exists()), profile)
+    if preference['location'] == 'auto' and shutil.disk_usage(probe).free - planned_bytes < _install_reserve(profile, chosen):
+        drives = [path for path in _fixed_backup_drives()
+                  if shutil.disk_usage(path).free - planned_bytes >= _install_reserve(profile, path)]
+        if drives:
+            drive = max(drives, key=lambda path: shutil.disk_usage(path).free)
+            # Different Windows profiles cannot claim the same physical custody.
+            identity = hashlib.sha256(str(profile).casefold().encode('utf-8')).hexdigest()
+            chosen = drive / 'ArchHub-backups' / ('profile-' + identity)
+    return set_backup_location(profile, preference['location'], directory=chosen)
+
+
+def installer_backup_directory(profile, source):
+    """One installer custody container; isolate same-name legacy journals."""
+    profile, source = Path(profile).resolve(), Path(source).resolve()
+    relative = source.relative_to(profile).as_posix()
+    identity = hashlib.sha256(relative.encode('utf-8')).hexdigest()
+    return Path(backup_location(profile)['directory']) / ('journal-' + identity)
+
+
+def _installer_copies(profile, container):
+    """Adopt 0400's existing physical copies into this same retention owner."""
+    roots = {Path(container), profile / 'ArchHub/backups', profile / 'ArchHub-Test/backups',
+             *(Path(path) for path in backup_location(profile).get('managed_directories', []))}
+    copies = set()
+    for root in roots:
+        if not root.is_dir() or root.is_symlink() or root.is_junction():
+            continue
+        parents = [root, *(p for p in root.glob('journal-*')
+                          if p.is_dir() and not p.is_symlink() and not p.is_junction())]
+        for parent in parents:
+            for child in parent.iterdir():
+                if not child.is_dir() or child.is_symlink() or child.is_junction() or child.name.endswith('-pending'):
+                    continue
+                receipt = child / 'closed-files.json'
+                legacy = child / 'recovery.json'
+                if receipt.is_file() and not receipt.is_symlink() and receipt.stat().st_size <= 65536:
+                    record = json.loads(receipt.read_text(encoding='utf-8'))
+                    if (record.get('producer') == 'archhub-product-installer/v1'
+                            and record.get('kind') == 'closed-file-preservation'):
+                        copies.add(child)
+                elif legacy.is_file() and not legacy.is_symlink() and legacy.stat().st_size <= _MANIFEST_BYTES:
+                    record = json.loads(legacy.read_text(encoding='utf-8'))
+                    if (type(record) is dict and record.get('format') == 1
+                            and type(record.get('files')) is dict and 'graph' in record['files']
+                            and record['files']['graph'].get('name') == 'graph.sqlite3'
+                            and type(record.get('metadata')) is dict
+                            and all(path.is_file() and not path.is_symlink() for path in child.iterdir())
+                            and set(path.name for path in child.iterdir()) <= {'graph.sqlite3','content.sqlite3','recovery.json'}):
+                        copies.add(child)
+    return copies
+
+
+
+def _clean_installer_pending(parent, report):
+    # Only the exact stage format emitted by this owner is eligible. Never
+    # follow links or delete unknown contents belonging to someone else.
+    import re
+    for path in parent.glob('*-pending'):
+        if (not re.fullmatch(r'[A-Za-z0-9._-]{1,128}-[a-f0-9]{32}-pending', path.name)
+                or path.is_symlink() or path.is_junction() or not path.is_dir()):
+            continue
+        entries = list(path.iterdir())
+        if all(child.is_file() and not child.is_symlink() and child.name in {
+                'authority.sqlite3', 'archhub-test.universal.sqlite3',
+                'node-native-wip.json.gz.universal.sqlite3', 'closed-files.json',
+                'authority.sqlite3.conversations.sqlite3', 'archhub-test.universal.sqlite3.conversations.sqlite3',
+                'node-native-wip.json.gz.universal.sqlite3.conversations.sqlite3'} for child in entries):
+            shutil.rmtree(path)
+            report('Removed incomplete installer backup: ' + str(path))
+
+
+@contextmanager
+def _installer_backup_lease(profile):
+    """Serialize Setup custody so crash cleanup cannot erase an active copy."""
+    if os.name != 'nt':
+        yield
+        return
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    create = kernel.CreateMutexW
+    create.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR)
+    create.restype = wintypes.HANDLE
+    identity = hashlib.sha256(str(Path(profile).resolve()).casefold().encode('utf-8')).hexdigest()
+    handle = create(None, False, 'Local\\ArchHubInstallerBackup-' + identity)
+    if not handle:
+        raise ctypes.WinError(ctypes.get_last_error())
+    wait = kernel.WaitForSingleObject
+    wait.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    release = kernel.ReleaseMutex
+    release.argtypes = (wintypes.HANDLE,)
+    close = kernel.CloseHandle
+    close.argtypes = (wintypes.HANDLE,)
+    admitted = False
+    try:
+        admitted = wait(handle, 0) in (0, 128)
+        if not admitted:
+            raise OSError('Another Setup is preserving this profile; no backup or incomplete stage was changed')
+        yield
+    finally:
+        if admitted:
+            release(handle)
+        close(handle)
+
+
+def preserve_closed_application_journals(profile, build, *, keep_count=3, max_bytes=10 * 1024**3,
+                                        progress=None):
+    with _installer_backup_lease(profile):
+        return _preserve_closed_application_journals(profile, build, keep_count=keep_count,
+                                                    max_bytes=max_bytes, progress=progress)
+
+
+def _preserve_closed_application_journals(profile, build, *, keep_count=3, max_bytes=10 * 1024**3,
+                                        progress=None):
     """Installer-only, before replacing files: retain verified pre-upgrade bytes.
 
     The caller closes ArchHub first. An exclusive SQLite lease and byte readback
@@ -162,6 +420,8 @@ def preserve_closed_application_journals(profile, build, *, keep_count=3, max_by
     Setup extracts this stdlib-only module and backup_retention before installing.
     """
     import re
+    report = progress if progress is not None else lambda message: None
+    report('Selecting closed journals')
     if not re.fullmatch(r'[A-Za-z0-9._-]{1,128}', build):
         raise ValueError('invalid closed-backup build')
     profile = Path(profile).resolve()
@@ -198,35 +458,46 @@ def preserve_closed_application_journals(profile, build, *, keep_count=3, max_by
     # journal can neither steal its pin nor win merely by being newer.
     candidates.sort(key=lambda path: path != primary)
     completed = []
+    written = False
+    all_protected = set()
+    total_planned = sum(path.stat().st_size + (Path(str(path) + '.conversations.sqlite3').stat().st_size
+        if Path(str(path) + '.conversations.sqlite3').is_file() else 0) + _METADATA_BYTES for path in candidates)
+    retention = importlib.import_module((__package__ + '.' if __package__ else '') + 'backup_retention')
     for source in candidates:
         if not source.is_file():
-            continue
+            raise ValueError('closed journal changed after backup selection; saved work was kept')
         if source.is_symlink() or source.is_junction() or source.resolve() != source.absolute():
             raise ValueError('closed-backup journal is a link')
         paths = [source]
         content = Path(str(source) + '.conversations.sqlite3')
         if content.is_file():
             paths.append(content)
-        parent = source.parent / 'backups'
-        parent.mkdir(exist_ok=True)
+        planned_bytes = sum(path.stat().st_size for path in paths) + _METADATA_BYTES
+        parent = installer_backup_directory(profile, source)
+        for ancestor in (parent, *parent.parents):
+            if ancestor.is_symlink() or ancestor.is_junction():
+                raise ValueError('closed-backup directory contains a link')
+        parent.mkdir(parents=True, exist_ok=True)
         if parent.is_symlink() or parent.is_junction():
             raise ValueError('closed-backup directory is a link')
         from contextlib import ExitStack
-        retention = importlib.import_module((__package__ + '.' if __package__ else '') + 'backup_retention')
-        protected = tuple(name for state in dict.fromkeys((root, source.parent))
-            for name in retention.protected_update_backups(state, parent, strict_directory=False))
+        custody_parents = {parent, *(path.parent for path in _installer_copies(profile,
+                                      Path(backup_location(profile)['directory'])))}
+        for state in dict.fromkeys((root, profile / 'ArchHub-Test', source.parent)):
+            for custody_parent in custody_parents:
+                all_protected.update(custody_parent / name for name in
+                    retention.protected_update_backups(state, custody_parent, strict_directory=False))
         with ExitStack() as leases:
             graph_database = None
             for path in paths:
                 if path.is_symlink() or path.is_junction() or any(
                         Path(str(path) + suffix).exists() for suffix in ('-wal', '-journal')):
                     raise ValueError('close ArchHub before preserving its pre-upgrade journal')
-                db = sqlite3.connect(path.as_uri() + '?mode=rw', uri=True, isolation_level=None)
-                leases.callback(db.close)
-                db.execute('PRAGMA busy_timeout=0')
-                db.execute('BEGIN EXCLUSIVE')
+                db = leases.enter_context(_closed_source_lease(path))
                 if path == source:
                     graph_database = db
+            _clean_installer_pending(parent, report)
+            report('Hashing closed journal: ' + source.name)
             records = [_closed_file_record(path) for path in paths]
             receipts = _closed_receipts(parent)
             latest = next(((path, record) for path, record in receipts if any(
@@ -236,7 +507,7 @@ def preserve_closed_application_journals(profile, build, *, keep_count=3, max_by
             adopted = Path(str(source) + '.adoption.json').exists()
             pinned = next((path for path, record in receipts
                            if record.get('retain_until_user_deletes') is True and any(
-                               item['name'] == primary.name for item in record['files'])), None) if parent == primary.parent / 'backups' else None
+                               item['name'] == primary.name for item in record['files'])), None) if parent == installer_backup_directory(profile, primary) else None
             same_files = latest is not None and sorted(latest[1]['files'], key=lambda item: item['name']) == sorted(
                 records, key=lambda item: item['name'])
             # Unchanged daily installs need only streaming file SHA, not a row
@@ -249,14 +520,24 @@ def preserve_closed_application_journals(profile, build, *, keep_count=3, max_by
                     == [item for item in records if item['name'] != source.name])
             if same_files or same_journal:
                 destination = latest[0]
+                report('Reusing verified installer backup: ' + destination.name)
             else:
-                # Once verified pre-ADOPT custody exists, ordinary copies can
-                # be reclaimed before reserving the next large physical copy.
-                if pinned is not None:
-                    pin_record = next(record for path, record in receipts if path == pinned)
-                    _verify_closed_receipt(pinned, pin_record)
-                    retention.prune_backups(parent, keep=pinned, keep_count=keep_count, max_bytes=max_bytes,
-                                  protected_names=protected)
+                # 0400's mandatory final-close custody stays protected until
+                # disarmed, outside the ordinary rotating budget. Existing bytes
+                # already reduce real disk free space; reserve checks stay exact.
+                required_bytes = total_planned
+                if required_bytes > max_bytes:
+                    raise ValueError('Installer backup over budget: %d required bytes exceeds %d bytes; saved work was kept'
+                                     % (required_bytes, max_bytes))
+                preference = _select_backup_location(profile, total_planned)
+                parent = installer_backup_directory(profile, source)
+                parent.mkdir(parents=True, exist_ok=True)
+                report('Installer backup location: ' + preference['directory'])
+                free = shutil.disk_usage(parent).free
+                reserve = _install_reserve(profile, parent)
+                if free - planned_bytes < reserve:
+                    raise OSError('Installer backup over budget: %d bytes free minus %d planned bytes must leave %d bytes (25 GiB on system disk); saved work was kept'
+                                  % (free, planned_bytes, reserve))
                 _require_disk_reserve(parent, sum(item['bytes'] for item in records))
                 stage = parent / (build + '-' + uuid.uuid4().hex + '-pending')
                 stage.mkdir()
@@ -264,15 +545,15 @@ def preserve_closed_application_journals(profile, build, *, keep_count=3, max_by
                 try:
                     for path in paths:
                         destination = stage / path.name
-                        with path.open('rb') as reader, destination.open('xb') as writer:
-                            owned_paths.append(destination)
-                            shutil.copyfileobj(reader, writer, 1024 * 1024)
-                            writer.flush()
-                            os.fsync(writer.fileno())
+                        report('Copying ' + path.name)
+                        owned_paths.append(destination)
+                        _copy_closed_file(path, destination, report)
                     receipt = dict(kind='closed-file-preservation', runtime=uuid.uuid4().hex,
                         build=build, producer='archhub-product-installer/v1',
+                        source_relative_path=source.relative_to(profile).as_posix(),
                         retain_until_user_deletes=not adopted and source == primary, files=records,
                         journal_identity=journal_identity)
+                    report('Verifying installer backup: ' + source.name)
                     _verify_closed_receipt(stage, receipt)
                     with (stage / 'closed-files.json').open('x', encoding='utf-8') as writer:
                         owned_paths.append(stage / 'closed-files.json')
@@ -281,16 +562,33 @@ def preserve_closed_application_journals(profile, build, *, keep_count=3, max_by
                         os.fsync(writer.fileno())
                     destination = stage.with_name(stage.name.removesuffix('-pending') + '-closed')
                     os.rename(stage, destination)
+                    written = True
                 except BaseException as error:
                     _cleanup_stage(stage, parent, owned_paths, error)
                     raise
-            if not adopted and source == primary:
+            if pinned is not None or (not adopted and source == primary):
                 pinned = destination
             for path, record in _closed_receipts(parent):
                 _set_closed_pin(path, record, path == pinned)
-            retention.prune_backups(parent, keep=destination, keep_count=keep_count, max_bytes=max_bytes,
-                          protected_names=protected)
             completed.append(str(destination))
+    if written:
+        container = Path(backup_location(profile)['directory'])
+        if all_protected:
+            report('Preserving armed recovery outside rotating budget: %d bytes' %
+                   sum(retention._backup_bytes(path) for path in all_protected if path.is_dir()))
+        # All copy/budget admission has passed and every replacement is verified
+        # before an older copy (including 0400's legacy folders) can be removed.
+        if shutil.disk_usage(container).free < _install_reserve(profile, container):
+            raise OSError('Installer backup over budget: insufficient reserve remains after backup (25 GiB on system disk); saved work and verified copies were kept')
+        retained = retention.prune_backups(container, keep=Path(completed[-1]),
+            keep_count=keep_count, max_bytes=max_bytes,
+            owned_candidates=_installer_copies(profile, container),
+            verified_paths=completed, protected_paths=all_protected)
+        for removed in retained['removed']:
+            report('Removed older installer-owned backup: ' + removed)
+        if retained['budget_exceeded']:
+            raise ValueError('Installer backup over budget: required verified custody exceeds its configured byte budget')
+    report('Complete: installer journal backup verified')
     return completed
 
 
@@ -581,4 +879,9 @@ if __name__ == '__main__':
     parser.add_argument('--closed-profile', required=True)
     parser.add_argument('--build', required=True)
     arguments = parser.parse_args()
-    preserve_closed_application_journals(arguments.closed_profile, arguments.build)
+    try:
+        preserve_closed_application_journals(arguments.closed_profile, arguments.build,
+                                             progress=lambda message: print(message, flush=True))
+    except (OSError, ValueError, sqlite3.Error) as refused:
+        print('Setup refused: ' + str(refused), flush=True)
+        raise SystemExit(1) from refused

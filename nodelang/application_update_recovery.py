@@ -1,6 +1,6 @@
-"""Bind a staged update to an already verified final-close recovery receipt.
+"""Bind a staged update to closed sources; Setup owns the pre-upgrade backup.
 
-The launcher calls ``arm_update`` only after authorized final recovery and close
+The launcher calls ``arm_update`` only after the existing owner closes
 succeed. It keeps its instance lock through arming, restart and preboot admission.
 This module creates no backup, opens no database and grants no runtime authority.
 File identities detect ordinary changes after arming; they do not prove that live
@@ -177,7 +177,30 @@ def _capture(state_dir, app_dir, graph_path, content_path, recovery_path):
     if len(all_source_paths) != 4 * expected_sources:
         raise ValueError("update database paths or sidecars overlap")
 
-    recovery = _plain_path(recovery_path)
+    recovery = _plain_path(recovery_path) if recovery_path is not None else None
+    recovery_evidence = {'owner': 'archhub-product-installer/v1', 'state': 'required-before-copy'}
+    if recovery is not None:
+        recovery_evidence = _legacy_recovery(recovery, sources, all_source_paths)
+
+    return {
+        "format": 2 if recovery is None else 1,
+        "state_dir": str(state),
+        "app_dir": str(application),
+        "directories": directories,
+        "installed": {"build_id": build, "identity": build_identity,
+                      "sha256": hashlib.sha256(build_raw).hexdigest(),
+                      "build_metadata": build_metadata},
+        "staged": {"build_id": staged["build_id"], "sha256": staged["sha256"].lower(),
+                   "marker_identity": staged_identity,
+                   "marker_sha256": hashlib.sha256(staged_raw).hexdigest(),
+                   "installer_identity": installer_identity},
+        "sources": sources,
+        "recovery": recovery_evidence,
+    }
+
+
+def _legacy_recovery(recovery, sources, all_source_paths):
+    """Read existing armed v1 receipts during this upgrade; never make a copy."""
     if recovery.name.startswith(".application-recovery-"):
         raise ValueError("update recovery has not been published")
     recovery_identity = _directory_identity(recovery)
@@ -198,26 +221,12 @@ def _capture(state_dir, app_dir, graph_path, content_path, recovery_path):
         identities[path.name] = identity
     _check_source(recovery, recovery_identity, identities, set(identities))
 
-    return {
-        "format": 1,
-        "state_dir": str(state),
-        "app_dir": str(application),
-        "directories": directories,
-        "installed": {"build_id": build, "identity": build_identity,
-                      "sha256": hashlib.sha256(build_raw).hexdigest(),
-                      "build_metadata": build_metadata},
-        "staged": {"build_id": staged["build_id"], "sha256": staged["sha256"].lower(),
-                   "marker_identity": staged_identity,
-                   "marker_sha256": hashlib.sha256(staged_raw).hexdigest(),
-                   "installer_identity": installer_identity},
-        "sources": sources,
-        "recovery": {"path": str(recovery), "directory_identity": list(recovery_identity),
+    return {"path": str(recovery), "directory_identity": list(recovery_identity),
                      "manifest_sha256": manifest_sha, "manifest": manifest,
-                     "files": {name: list(value) for name, value in identities.items()}},
-    }
+                     "files": {name: list(value) for name, value in identities.items()}}
 
 
-def arm_update(state_dir, app_dir, graph_path, content_path, recovery_path, *, expected_build=None) -> Path:
+def arm_update(state_dir, app_dir, graph_path, content_path, recovery_path=None, *, expected_build=None) -> Path:
     """Record a successful final close; caller retains its existing instance lock.
 
     No installed files, source databases or recovery artifacts are changed. A
@@ -230,9 +239,12 @@ def arm_update(state_dir, app_dir, graph_path, content_path, recovery_path, *, e
         # exactly the armed staged build, so a different one is never armed.
         raise ValueError("staged build %s is not the confirmed build %s; nothing was armed"
                          % (evidence["staged"]["build_id"], expected_build))
+    other = Path(evidence['state_dir']) / 'updates' / (
+        _MARKER_NAME if evidence['format'] == 2 else 'installer-update-ready.json')
+    other_identity = _plain_file_identity(other) if other.exists() else None
     raw = _json_bytes(evidence, _MARKER_BYTES)
     updates = _plain_path(Path(evidence["state_dir"]) / "updates")
-    marker = _plain_path(updates / _MARKER_NAME)
+    marker = _plain_path(updates / ("installer-update-ready.json" if evidence["format"] == 2 else _MARKER_NAME))
     if os.path.lexists(marker):
         _plain_file_identity(marker)
     descriptor, name = tempfile.mkstemp(prefix=".update-ready-", suffix=".tmp", dir=updates)
@@ -253,6 +265,10 @@ def arm_update(state_dir, app_dir, graph_path, content_path, recovery_path, *, e
             _plain_file_identity(marker)
         os.replace(temporary, marker)
         published = True
+        if other_identity is not None:
+            if _plain_file_identity(other) != other_identity:
+                raise ValueError('prior-version update marker changed while arming')
+            other.unlink()
         return marker
     except BaseException as error:
         try:
@@ -268,23 +284,42 @@ def arm_update(state_dir, app_dir, graph_path, content_path, recovery_path, *, e
 
 
 def validate_update_ready(state_dir, app_dir, graph_path, content_path) -> dict:
-    """Read-only preboot admission; caller must verify installer bytes separately.
+    """Admit the unique receipt matching current source and staged identities.
 
-    Raises on a missing marker or any durable-file/staged-build/receipt drift.
-    Nothing-staged and already-installed cases belong to the owning updater.
-    This function neither consumes the marker nor starts a replacement runtime.
+    A rollback0400 may publish legacy1 without knowing the new marker name.
+    A stale file cannot shadow that valid receipt; ambiguity still fails closed.
     """
     state = _plain_path(state_dir)
-    marker = _plain_path(state / "updates" / _MARKER_NAME)
+    paths = [state / 'updates' / name for name in ('installer-update-ready.json', _MARKER_NAME)]
+    present = [path for path in paths if path.exists()]
+    matches, errors = [], []
+    for marker in present or [paths[-1]]:
+        try:
+            matches.append(_validate_update_marker(_plain_path(marker), state, app_dir, graph_path, content_path))
+        except (OSError, ValueError) as error:
+            errors.append(error)
+    if len(matches) == 1:
+        if errors:
+            import logging
+            logging.getLogger(__name__).info('Ignored stale update admission; unique current staged/source receipt verified')
+        return matches[0]
+    if len(matches) > 1:
+        raise ValueError('multiple update ready markers match current sources; arm the update again')
+    raise errors[0]
+
+
+def _validate_update_marker(marker, state, app_dir, graph_path, content_path):
     raw, identity = _small_file(marker, _MARKER_BYTES)
     evidence = _object(raw)
     if (set(evidence) != {"format", "state_dir", "app_dir", "directories", "installed",
                          "staged", "sources", "recovery"}
-            or type(evidence["format"]) is not int or evidence["format"] != 1
+            or type(evidence["format"]) is not int or evidence["format"] not in (1, 2)
             or type(evidence["recovery"]) is not dict
-            or type(evidence["recovery"].get("path")) is not str):
+            or evidence['format'] == 1 and type(evidence['recovery'].get('path')) is not str
+            or evidence['format'] == 2 and evidence['recovery'] != {
+                'owner': 'archhub-product-installer/v1', 'state': 'required-before-copy'}):
         raise ValueError("update ready marker is invalid")
-    current = _capture(state, app_dir, graph_path, content_path, evidence["recovery"]["path"])
+    current = _capture(state, app_dir, graph_path, content_path, evidence['recovery'].get('path'))
     if (_json_bytes(current, _MARKER_BYTES) != _json_bytes(evidence, _MARKER_BYTES)
             or list(_plain_file_identity(marker)) != identity):
         raise ValueError("update inputs changed after final recovery; preserve current state again")

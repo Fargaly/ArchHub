@@ -3231,6 +3231,13 @@ def test_baboom_context_transport_accepts_bounded_founder_approval_count_and_rej
         "update": {},
     }
     assert Client(base).baboom_context()["workshop"]["pending_founder_approvals"] == 2
+    for mode in ("Screen", "Tray", "Hidden"):
+        assert Client(dict(base, shows_as=mode)).baboom_context()["shows_as"] == mode
+    for mode in (None, "Other", False, []):
+        with pytest.raises(MachineTransportError, match="BABOOM context response values"):
+            Client(dict(base, shows_as=mode)).baboom_context()
+    with pytest.raises(MachineTransportError, match="BABOOM context response shape"):
+        Client(dict(base, unknown_field="Tray")).baboom_context()
     missing = json.loads(json.dumps(base))
     del missing["workshop"]["pending_founder_approvals"]
     assert "pending_founder_approvals" not in Client(missing).baboom_context()["workshop"]
@@ -6687,8 +6694,10 @@ def test_machine_transport_is_authenticated_replay_safe_and_cell_backed(tmp_path
             "workshop", "attention", "presence", "activity", "meeting_notes",
             "device", "persona_form", "suggestion",
             "agents", "brain", "canvas", "hosts", "update",
+            "shows_as",
         }
         assert baboom_context["cell_native"] is True
+        assert baboom_context["shows_as"] == "Tray"
         assert baboom_context["context_lens"] == "app:baboom-context:v3"
         assert baboom_context["work"] == {
             "total": 0,

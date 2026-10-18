@@ -1,0 +1,51 @@
+..................codex: migration_unconfirmed
+.codex: config_unreadable
+.codex: conflict
+..ArchHub setup
+  python     : 3.14.3
+  packages   : already present
+  checking   : ArchHub is finishing setup...
+  ready. ArchHub is opening now.
+  Next time, open it from the ArchHub icon on your Desktop or in the Start menu.
+.ArchHub setup
+  python     : 3.14.3
+  packages   : already present
+  checking   : ArchHub is finishing setup...
+  REFUSED: existing assistant connector migration needs repair; prior-file backups were kept.
+...............  library    : 141 node-library card(s) installed
+......  shutdown   : INCOMPLETE (server close: ValueError); active descriptor retained
+...........  update     : installed build new; relaunching
+.  update     : restored; relaunch failed (OSError). Reopen ArchHub; recovery is retained.
+.  update     : installed build new; relaunching
+  update     : installed; relaunch failed (OSError). Reopen ArchHub; recovery is retained.
+..................F..........  library    : 141 node-library card(s) installed
+....  library    : 141 node-library card(s) installed
+.INSTALL_1_PASS fixture_bytes=8937168896 retained_bytes=8937169331
+INSTALL_2_PASS fixture_bytes=8937168896 retained_bytes=8937169331
+INSTALL_3_PASS fixture_bytes=8937168896 retained_bytes=8937169331
+.....................zero-idle baseline [max(revision), cell_versions, current_cells]: [1091, 123893, 123241]
+zero-idle after: {"interval 1": [1091, 123893, 123241], "interval 2": [1091, 123893, 123241], "interval 3": [1091, 123893, 123241], "interval 4": [1091, 123893, 123241], "interval 5": [1091, 123893, 123241], "interval 6": [1091, 123893, 123241], "interval 7": [1091, 123893, 123241], "interval 8": [1091, 123893, 123241], "interval 9": [1091, 123893, 123241], "interval 10": [1091, 123893, 123241], "close": [1091, 123893, 123241], "restart 1": [1091, 123893, 123241], "restart 2": [1091, 123893, 123241]}
+.undo court: old-release edit wrote 43 cells; new edit wrote 18 cells
+.
+================================== FAILURES ===================================
+_________ test_real_build_reader_reconciles_final_compiled_inventory __________
+tests_replica\test_autoupd.py:350: in test_real_build_reader_reconciles_final_compiled_inventory
+    manifest = json.loads((ROOT / 'nodelang/studio/compiled/manifest.json').read_text(encoding='utf-8'))
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\..\..\..\..\Python\pythoncore-3.14-64\Lib\pathlib\__init__.py:787: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors, newline=newline) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\..\..\..\..\Python\pythoncore-3.14-64\Lib\pathlib\__init__.py:771: in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   FileNotFoundError: [Errno 2] No such file or directory: 'C:\\Users\\fargaly\\AppData\\Local\\Temp\\claude\\C--Users-fargaly-00-ARCHUB\\71743447-6dd5-4050-bc4f-d228f7a1d91e\\scratchpad\\mainrel\\nodelang\\studio\\compiled\\manifest.json'
+============================== warnings summary ===============================
+..\..\..\..\..\..\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434
+  C:\Users\fargaly\AppData\Local\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434: PytestConfigWarning: Unknown config option: cache_dir
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests_replica/test_autoupd.py::test_real_build_reader_reconciles_final_compiled_inventory
+1 failed, 113 passed, 1 warning in 218.53s (0:03:38)

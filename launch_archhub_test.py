@@ -233,7 +233,6 @@ except Exception as refusal:
 state_dir.mkdir(parents=True, exist_ok=True)
 from nodelang.persistence import application_database_path
 state_path = application_database_path(state_dir)
-backup_dir = state_path.parent / "backups"
 
 def _force_foreground(handle) -> bool:
     """Make Windows actually bring our window forward.
@@ -597,21 +596,6 @@ first_boot = not _saved_graph_exists(state_dir, state_path)
 print("  first boot  :", first_boot, flush=True)
 started = time.perf_counter()
 
-def _prune_backups(directory, verified, owner=None, policy=None):
-    """Apply the graph's count and byte policy after verifying a new backup."""
-    try:
-        from nodelang.backup_retention import prune_backups
-        from nodelang.backup_retention import backup_policy, protected_update_backups
-        policy = policy if policy is not None else backup_policy(owner.universal_store.snapshot(), owner.universal_registry)
-        result = prune_backups(directory, keep=verified, **policy,
-            protected_names=protected_update_backups(state_dir, directory))
-    except Exception as refusal:
-        print("  backup     : retention not applied (%s); every backup kept" % type(refusal).__name__, flush=True)
-        return
-    print("  backup     : kept %d recovery copies, %d bytes; removed %d; budget exceeded=%s" % (
-        len(result["kept"]), result["retained_bytes"], len(result["removed"]), result["budget_exceeded"]), flush=True)
-
-
 def _boot():
     # The boot is sampled while it runs: boot-profile.log beside launcher.log
     # says where the seconds went (the founder's boot reached 694s and nobody
@@ -620,7 +604,7 @@ def _boot():
     return profile_boot(_boot_unsampled, state_dir=state_dir, on_sample=_boot_step_seen)
 
 def _boot_unsampled():
-    global state_path, backup_dir, first_boot
+    global state_path, first_boot
     from nodelang.persistence import prepare_application_database, application_content_path, _MigrationProgress
     print("  migration  : checking complete application journal", flush=True)
     try:
@@ -629,7 +613,6 @@ def _boot_unsampled():
     finally:
         _migration_progress(None)
     state_path = application_database_path(state_dir)
-    backup_dir = state_dir / "backups"
     first_boot = not _saved_graph_exists(state_dir, state_path)
     print("  graph store :", state_path, flush=True)
     print("  first boot  :", first_boot, flush=True)
@@ -2377,13 +2360,11 @@ def _finish_application_shutdown():
         return False
     try:
         if _restart_after_shutdown or _apply_on_quit:
-            from nodelang.application_update_recovery import arm_update
+            from nodelang.desktop import arm_update
             content_path = server.conversation_content._path
-            from nodelang.backup_retention import backup_policy
-            shutdown_policy = backup_policy(server.universal_store.snapshot(), server.universal_registry)
-            recovery = server.close(recovery_directory=backup_dir,
-                recovery_authentication_context=server.universal_registry.authorization.session.context(),
-                recovery_timeout_seconds=300.0)
+            # Setup owns the one pre-upgrade copy after this owner closes.
+            # Keep the instance fence until its existing preboot admission.
+            server.close()
             if _update_rollback_requested.is_set():
                 from nodelang.quiet_update import rollback_staged
                 rolled = rollback_staged(state_dir, Path(__file__).resolve().parent)
@@ -2391,9 +2372,8 @@ def _finish_application_shutdown():
                     raise ValueError(rolled.get("reason", "previous build could not be restored"))
             else:
                 arm_update(state_dir, Path(__file__).resolve().parent, state_path,
-                    content_path if content_path is not None and content_path.is_file() else None, recovery,
+                    content_path if content_path is not None and content_path.is_file() else None,
                     expected_build=server.application_update.confirmed_build)
-            _prune_backups(backup_dir, recovery, policy=shutdown_policy)
         else:
             server.close()
     except Exception as refusal:

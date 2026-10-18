@@ -412,9 +412,7 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
     window.ARCHHUB_EXISTING_WORKSHOP = window.ArchHubExistingWorkshop.create({get:jget, post:jpost,
       projectCanvas:projectStudioCanvas});
     window.ARCHHUB_EXISTING_WORKSHOP.setThemeCanvas(canvas);
-    if (canvas.workshop_scope) {
-      window.ARCHHUB_EXISTING_WORKSHOP.setCanvas(canvas.workshop_scope);
-    }
+    window.ARCHHUB_EXISTING_WORKSHOP.setTopologyCanvas(canvas);
     let canvasRead = null;
     window.ARCHHUB_LOAD_CANVAS = () => {
       if (canvasRead) return canvasRead;
@@ -609,7 +607,6 @@ window.ARCHHUB_REFRESH_NODE_LIBRARY = async () => {
     }
     return {nodes, wires};
     }
-    window.ARCHHUB_EXISTING_WORKSHOP.setTopologyCanvas(canvas);
     const {nodes, wires} = window.ARCHHUB_EXISTING_WORKSHOP.getSnapshot().topology.graph;
     const graphIndex = await jget('/api/universal/graphs?screen=home');
     window.ARCHHUB_LIVE = {

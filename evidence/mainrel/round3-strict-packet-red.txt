@@ -1,0 +1,13 @@
+STAGED_PATH_COUNT=68
+ACOMPILER FILE FAIL: installer/rollback-rehearsal.ps1 E0011 0 -> 2
+ACOMPILER BUCKET FAIL: E0011/powershell 20 -> 22
+error[E0011]: source contains a syntax error or missing token
+ --> installer/rollback-rehearsal.ps1:224:76
+ note: Syntax: a parser recovery or missing token means there is no valid model to check. Repair syntax first.
+ help: fix syntax before product-model analysis
+error[E0011]: source contains a syntax error or missing token
+ --> installer/rollback-rehearsal.ps1:229:51
+ note: Syntax: a parser recovery or missing token means there is no valid model to check. Repair syntax first.
+ help: fix syntax before product-model analysis
+ACOMPILER FAIL
+STRICT_SECONDS=162.1824306

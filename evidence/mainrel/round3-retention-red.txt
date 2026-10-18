@@ -1,0 +1,26 @@
+F.F                                                                      [100%]
+================================== FAILURES ===================================
+__________ test_three_installs_replace_pin_with_real_size_accounting __________
+tests_replica\test_mainrel_round3.py:32: in test_three_installs_replace_pin_with_real_size_accounting
+    source.unlink()
+..\..\..\..\..\..\Python\pythoncore-3.14-64\Lib\pathlib\__init__.py:1042: in unlink
+    os.unlink(self)
+E   PermissionError: [WinError 32] The process cannot access the file because it is being used by another process: 'C:\\Users\\fargaly\\AppData\\Local\\Temp\\claude\\C--Users-fargaly-00-ARCHUB\\71743447-6dd5-4050-bc4f-d228f7a1d91e\\scratchpad\\mainrel\\evidence\\mainrel\\court-state\\test-profile\\TEMP\\pytest-of-Fargaly\\pytest-0\\test_three_installs_replace_pi0\\ArchHub-Test\\archhub-test.universal.sqlite3'
+___________ test_reused_backup_does_not_refuse_post_copy_disk_check ___________
+tests_replica\test_mainrel_round3.py:82: in test_reused_backup_does_not_refuse_post_copy_disk_check
+    assert files.preserve_closed_application_journals(tmp_path, 'unchanged') == before
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+nodelang\application_recovery_files.py:348: in preserve_closed_application_journals
+    raise OSError('Installer backup over budget: less than 25 GiB remains after backup; saved work and verified copies were kept')
+E   OSError: Installer backup over budget: less than 25 GiB remains after backup; saved work and verified copies were kept
+============================== warnings summary ===============================
+..\..\..\..\..\..\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434
+  C:\Users\fargaly\AppData\Local\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434: PytestConfigWarning: Unknown config option: cache_dir
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests_replica/test_mainrel_round3.py::test_three_installs_replace_pin_with_real_size_accounting
+FAILED tests_replica/test_mainrel_round3.py::test_reused_backup_does_not_refuse_post_copy_disk_check
+2 failed, 1 passed, 1 warning in 1.22s

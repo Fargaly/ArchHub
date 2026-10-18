@@ -1,0 +1,3 @@
+ISSUE " " Point { row: 105, column: 42 } parent=Some("command_argument_sep")
+TEXT Ok("")
+HAS_ERROR=true

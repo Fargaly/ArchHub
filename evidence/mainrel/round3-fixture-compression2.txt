@@ -1,0 +1,9 @@
+Out of memory.
+Owned fixture NTFS compression failed
+At C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpa
+d\mainrel\evidence\mainrel\compress_finished_fixtures.ps1:13 char:36
++ ... LASTEXITCODE -ne 0) { throw 'Owned fixture NTFS compression failed' }
++                           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : OperationStopped: (Owned fixture NTFS compression failed:String) [], RuntimeException
+    + FullyQualifiedErrorId : Owned fixture NTFS compression failed
+ 

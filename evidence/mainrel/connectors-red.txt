@@ -1,0 +1,50 @@
+FF                                                                       [100%]
+================================== FAILURES ===================================
+___________ test_codex_runpy_is_migrated_not_left_on_deleted_module ___________
+
+machine = <class 'tests_replica.test_assistant_registration.Machine'>
+
+    def test_codex_runpy_is_migrated_not_left_on_deleted_module(machine):
+        config = machine.profile / '.codex' / 'config.toml'
+        config.parent.mkdir()
+        legacy = {'command': r'C:\Python\python.exe',
+                  'args': ['-I', '-B', '-c', "import runpy,sys;sys.path.insert(0,sys.argv.pop(1));runpy.run_module('nodelang.clean_coordination_mcp',run_name='__main__')", str(machine.install)],
+                  'env': {'ARCHHUB_COORDINATION_VENDOR': 'codex'}}
+        text = 'model = "fixture"\n' + registration._codex_block(dict(legacy, env_vars=['CODEX_THREAD_ID']))
+        config.write_text(text, encoding='utf-8')
+        result = registration.migrate_codex(machine.install, machine.state, consent=True, environment=machine.env)
+>       assert result['state'] == 'registered', result
+E       AssertionError: {'client': 'codex', 'config': 'C:\\Users\\fargaly\\AppData\\Local\\Temp\\pytest-of-Fargaly\\pytest-6647\\test_codex_ru... 'env': {'ARCHHUB_COORDINATION_VENDOR': 'codex'}, 'env_vars': ['CODEX_THREAD_ID']}, 'legacy_migration_needed': [], ...}
+E       assert 'conflict' == 'registered'
+E         
+E         - registered
+E         + conflict
+
+tests_replica\test_mainrel_connectors.py:19: AssertionError
+________ test_gemini_deleted_module_is_migrated_with_encrypted_backup _________
+
+machine = <class 'tests_replica.test_assistant_registration.Machine'>
+
+    def test_gemini_deleted_module_is_migrated_with_encrypted_backup(machine):
+        config = machine.profile / '.gemini' / 'settings.json'
+        config.parent.mkdir()
+        before = {'theme': 'fixture', 'mcpServers': {'other': {'url': 'https://fixture.invalid'},
+            SERVER_NAME: {'command': r'C:\Python\python.exe', 'args': ['-m', 'nodelang.clean_coordination_mcp'],
+                          'env': {'PYTHONPATH': str(machine.install), 'ARCHHUB_COORDINATION_VENDOR': 'gemini'}}}}
+        config.write_text(json.dumps(before), encoding='utf-8')
+>       result = registration.migrate_gemini(machine.install, machine.state, consent=True, environment=machine.env)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'nodelang.assistant_registration' has no attribute 'migrate_gemini'
+
+tests_replica\test_mainrel_connectors.py:32: AttributeError
+============================== warnings summary ===============================
+..\..\..\..\..\..\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434
+  C:\Users\fargaly\AppData\Local\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434: PytestConfigWarning: Unknown config option: cache_dir
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests_replica/test_mainrel_connectors.py::test_codex_runpy_is_migrated_not_left_on_deleted_module
+FAILED tests_replica/test_mainrel_connectors.py::test_gemini_deleted_module_is_migrated_with_encrypted_backup
+2 failed, 1 warning in 2.63s

@@ -100,6 +100,9 @@ Name: "connectassistants"; Description: "Connect my AI assistants to ArchHub (ad
 ; Setup extracts the new product backup owner before replacing any old code.
 Source: "..\nodelang\application_recovery_files.py"; Flags: dontcopy
 Source: "..\nodelang\backup_retention.py"; Flags: dontcopy
+Source: "..\nodelang\assistant_registration.py"; Flags: dontcopy
+Source: "..\nodelang\client_mcp_installation.py"; Flags: dontcopy
+Source: "..\nodelang\native_workshop_profile.py"; Flags: dontcopy
 Source: "..\nodelang\conversation_trace_shapes.py"; Flags: dontcopy
 Source: "{#NodeRuntimePath}"; DestDir: "{app}\runtime"; DestName: "node.exe"; Flags: ignoreversion; Check: NodeRuntimeNeedsInstall
 Source: "{#NodeLicensePath}"; DestDir: "{app}\runtime"; DestName: "Node-LICENSE.txt"; Flags: ignoreversion
@@ -401,50 +404,6 @@ begin
     Log('Retired runtime task absent or unavailable (exit ' + IntToStr(Code) + ').');
 end;
 
-procedure CurStepChanged(CurStep: TSetupStep);
-var
-  ReadyPath: String;
-  ReadyIdentity: AnsiString;
-begin
-  { Match the private-environment receipt schema used by colleague_setup.py.
-    Preserve a same-build receipt; invalidate older setup BEFORE replacing
-    application files. The launcher independently validates the environment. }
-  if CurStep = ssInstall then
-  begin
-    { v1.x left its whole code tree beside this one; sweep it once, guarded. }
-    SweepLegacyV1(ExpandConstant('{app}'));
-    { These stale files were never payloads of this package. Preserve exact
-      known v1 bytes in an archive; do not remove unknown/user-edited docs. }
-    ArchiveLegacyDocs(ExpandConstant('{app}'));
-    { A running Revit/AutoCAD/3ds Max holds its broker: set it aside, never abort. }
-    RetireLockedHostFiles(ExpandConstant('{app}'), '{#BuildId}');
-    ReadyPath := ExpandConstant('{app}\.archhub-ready');
-    if FileExists(ReadyPath) then
-      if (not LoadStringFromFile(ReadyPath, ReadyIdentity)) or
-         (Trim(String(ReadyIdentity)) <> 'venv-v1:{#BuildId}:{#RequirementsSha256}') then
-        if not DeleteFile(ReadyPath) then
-          RaiseException('The previous ArchHub setup marker could not be reset. Close ArchHub and retry setup.');
-  end;
-  { The installed build's identity, read by setup and the quiet updater. }
-  if CurStep = ssPostInstall then
-    HostFilesInstalled();
-  if CurStep = ssPostInstall then
-  begin
-    if not SaveStringToFile(ExpandConstant('{app}\BUILD_ID'), '{#BuildId}', False) then
-      RaiseException('The ArchHub build identity could not be saved. Run setup again.');
-    { After BUILD_ID: the task script recognises an installed tree by it. }
-    RemoveRetiredRuntimeTask(CleanCoordinationTask);
-    RemoveRetiredRuntimeTask(UniversalRuntimeTask);
-    { The "Connect my AI assistants" choice; the first open honours it once. }
-    if WizardIsTaskSelected('connectassistants') then
-    begin
-      if not SaveStringToFile(ExpandConstant('{app}\.assistant-hooks-consent'), 'connect-assistants-v1', False) then
-        RaiseException('The assistant connection choice could not be saved. Run setup again.');
-    end
-    else
-      DeleteFile(ExpandConstant('{app}\.assistant-hooks-consent'));
-  end;
-end;
 
 { A colleague without Python is not sent away: the setup fetches the
   python.org installer (pinned by SHA-256, over HTTPS) and runs it quietly
@@ -543,9 +502,94 @@ begin
   RestoreRetiredHostFiles();
 end;
 
+var
+  BackupProgress: TOutputMarqueeProgressWizardPage;
+  BackupFailure: String;
+  ConnectorWarnings: String;
+
+procedure OnBackupLog(const S: String; const Error, FirstLine: Boolean);
+begin
+  Log(S);
+  BackupProgress.SetText(S, 'Your saved work is kept until this backup is verified.');
+  BackupProgress.Animate();
+  if Pos('Setup refused:', S) > 0 then
+    BackupFailure := S;
+end;
+
+procedure OnConnectorLog(const S: String; const Error, FirstLine: Boolean);
+begin
+  Log(S);
+  BackupProgress.SetText(S, 'Checking existing assistant connections.');
+  BackupProgress.Animate();
+  if Pos('Connector warning:', S) > 0 then
+    ConnectorWarnings := ConnectorWarnings + S + #13#10;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ReadyPath: String;
+  ReadyIdentity: AnsiString;
+  ConnectorCode: Integer;
+begin
+  { Match the private-environment receipt schema used by colleague_setup.py.
+    Preserve a same-build receipt; invalidate older setup BEFORE replacing
+    application files. The launcher independently validates the environment. }
+  if CurStep = ssInstall then
+  begin
+    { v1.x left its whole code tree beside this one; sweep it once, guarded. }
+    SweepLegacyV1(ExpandConstant('{app}'));
+    { These stale files were never payloads of this package. Preserve exact
+      known v1 bytes in an archive; do not remove unknown/user-edited docs. }
+    ArchiveLegacyDocs(ExpandConstant('{app}'));
+    { A running Revit/AutoCAD/3ds Max holds its broker: set it aside, never abort. }
+    RetireLockedHostFiles(ExpandConstant('{app}'), '{#BuildId}');
+    ReadyPath := ExpandConstant('{app}\.archhub-ready');
+    if FileExists(ReadyPath) then
+      if (not LoadStringFromFile(ReadyPath, ReadyIdentity)) or
+         (Trim(String(ReadyIdentity)) <> 'venv-v1:{#BuildId}:{#RequirementsSha256}') then
+        if not DeleteFile(ReadyPath) then
+          RaiseException('The previous ArchHub setup marker could not be reset. Close ArchHub and retry setup.');
+  end;
+  { The installed build's identity, read by setup and the quiet updater. }
+  if CurStep = ssPostInstall then
+    HostFilesInstalled();
+  if CurStep = ssPostInstall then
+  begin
+    if not SaveStringToFile(ExpandConstant('{app}\BUILD_ID'), '{#BuildId}', False) then
+      RaiseException('The ArchHub build identity could not be saved. Run setup again.');
+    { After BUILD_ID: the task script recognises an installed tree by it. }
+    RemoveRetiredRuntimeTask(CleanCoordinationTask);
+    RemoveRetiredRuntimeTask(UniversalRuntimeTask);
+    { The "Connect my AI assistants" choice; the first open honours it once. }
+    if WizardIsTaskSelected('connectassistants') then
+    begin
+      if not SaveStringToFile(ExpandConstant('{app}\.assistant-hooks-consent'), 'connect-assistants-v1', False) then
+        RaiseException('The assistant connection choice could not be saved. Run setup again.');
+    end
+    else
+      DeleteFile(ExpandConstant('{app}\.assistant-hooks-consent'));
+    BackupProgress.SetText('Updating recognised assistant connections', 'Unrecognised settings are left untouched.');
+    ConnectorWarnings := '';
+    BackupProgress.Show();
+    try
+      if not ExecAndLogOutput(FindPython(), '-u -E -s -B -m nodelang.assistant_registration migrate-connectors',
+          ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ConnectorCode, @OnConnectorLog) then
+        ConnectorWarnings := 'Assistant migration could not start. Existing client settings were kept; use Settings to Repair.'
+      else if ConnectorCode <> 0 then
+        ConnectorWarnings := ConnectorWarnings + 'Assistant migration needs Repair in Settings; Setup completed and existing settings were kept.';
+    finally
+      BackupProgress.Hide();
+    end;
+    if ConnectorWarnings <> '' then
+      SuppressibleMsgBox(ConnectorWarnings, mbInformation, MB_OK, IDOK);
+
+  end;
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   BackupCode: Integer;
+  ConnectorTemp: String;
 begin
   { Before any file is copied, a machine without Python 3.14 (e.g. 3.12 only)
     gets the pinned 3.14.7. If it still has none, the reason is returned: Inno
@@ -558,16 +602,60 @@ begin
                 'Install Python 3.14 from python.org, then run this setup again.';
   if Result = '' then
   begin
+    { The new classifier checks known retired shapes before deleting old code.
+      A tiny extracted package has no application __init__ side effects. }
+    ConnectorTemp := ExpandConstant('{tmp}\mainrel-connectors');
+    ForceDirectories(ConnectorTemp + '\nodelang');
+    SaveStringToFile(ConnectorTemp + '\nodelang\__init__.py', '', False);
+    ExtractTemporaryFile('assistant_registration.py');
+    ExtractTemporaryFile('client_mcp_installation.py');
+    ExtractTemporaryFile('native_workshop_profile.py');
+    FileCopy(ExpandConstant('{tmp}\assistant_registration.py'), ConnectorTemp + '\nodelang\assistant_registration.py', False);
+    FileCopy(ExpandConstant('{tmp}\client_mcp_installation.py'), ConnectorTemp + '\nodelang\client_mcp_installation.py', False);
+    FileCopy(ExpandConstant('{tmp}\native_workshop_profile.py'), ConnectorTemp + '\nodelang\native_workshop_profile.py', False);
+    BackupProgress := CreateOutputMarqueeProgressPage('Checking assistant connections',
+      'Checking existing entries before replacing application files');
+    ConnectorWarnings := '';
+    BackupProgress.Show();
+    BackupProgress.Animate();
+    try
+      if not ExecAndLogOutput(FindPython(), '-u -E -s -B -m nodelang.assistant_registration preflight-connectors', ConnectorTemp, SW_HIDE, ewWaitUntilTerminated, BackupCode, @OnConnectorLog) then
+        Result := 'Assistant connector preflight could not start. Your installed files were kept.'
+      else if BackupCode <> 0 then
+        Result := 'Assistant connector preflight refused. Your installed files were kept.';
+    finally
+      BackupProgress.Hide();
+    end;
+    if ConnectorWarnings <> '' then
+      SuppressibleMsgBox(ConnectorWarnings, mbInformation, MB_OK, IDOK);
+  end;
+  if Result = '' then
+  begin
     ExtractTemporaryFile('application_recovery_files.py');
     ExtractTemporaryFile('backup_retention.py');
     ExtractTemporaryFile('conversation_trace_shapes.py');
-    if not Exec(FindPython(), '"' + ExpandConstant('{tmp}\application_recovery_files.py') +
-        '" --closed-profile "' + ExpandConstant('{localappdata}') + '" --build "{#BuildId}"',
-        '', SW_HIDE, ewWaitUntilTerminated, BackupCode) then
-      Result := 'The pre-upgrade journal backup could not start. Your saved work was kept.'
-    else if BackupCode <> 0 then
-      Result := 'The pre-upgrade journal backup did not complete. Close ArchHub and retry Setup. Your saved work was kept.';
+    BackupProgress := CreateOutputMarqueeProgressPage('Preserving your saved work',
+      'Checking disk budget and backing up closed journals before replacing files');
+    BackupFailure := '';
+    BackupProgress.Show();
+    BackupProgress.Animate();
+    try
+      if not ExecAndLogOutput(FindPython(), '-u "' + ExpandConstant('{tmp}\application_recovery_files.py') +
+          '" --closed-profile "' + ExpandConstant('{localappdata}') + '" --build "{#BuildId}"',
+          '', SW_HIDE, ewWaitUntilTerminated, BackupCode, @OnBackupLog) then
+        Result := 'The pre-upgrade journal backup could not start. Your saved work was kept.'
+      else if BackupCode <> 0 then
+      begin
+        Result := BackupFailure;
+        if Result = '' then
+          Result := 'The pre-upgrade journal backup did not complete. Close ArchHub and retry Setup. Your saved work was kept.';
+      end;
+    finally
+      BackupProgress.Hide();
+    end;
   end;
+  if Result <> '' then
+    Log('ArchHub Setup refused: ' + Result);
 end;
 
 function InitializeSetup(): Boolean;

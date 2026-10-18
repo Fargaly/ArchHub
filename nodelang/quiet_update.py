@@ -525,17 +525,25 @@ def apply_staged(state_dir: Path, app_dir: Path, runner=subprocess.run, *, befor
             data = {**data, "previous": _retain_previous(updates, Path(app_dir))}
             _marker(updates, {**data, "phase": "applying"})
             attempted_build = data["build_id"]
-            options = {"timeout": 600}
-            if os.name == "nt":
-                startup = subprocess.STARTUPINFO()
-                startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                startup.wShowWindow = subprocess.SW_HIDE
-                options.update(startupinfo=startup, creationflags=subprocess.CREATE_NO_WINDOW)
-            result = runner([data["installer"], "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
+            # Setup may hash/copy several large closed journals. Wait for its
+            # real exit rather than killing it on an arbitrary 600s deadline.
+            options = {"timeout": None}
+            setup_log = updates / 'setup.log'
+            setup_log.unlink(missing_ok=True)
+            result = runner([data["installer"], "/SILENT", "/NORESTART",
                              "/NOCLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS",
-                             "/SP-", "/DIR=" + str(app_dir)], **options)
+                             "/SP-", "/LOG=" + str(setup_log), "/DIR=" + str(app_dir)], **options)
             if getattr(result, "returncode", 1) != 0 or not _installed_matches_target(app_dir, data):
-                return {**_rollback(updates, app_dir, data, "installer did not confirm its outcome"), "applied": False}
+                reason = "installer did not confirm its outcome"
+                if setup_log.is_file() and not setup_log.is_symlink():
+                    with setup_log.open('rb') as stream:
+                        stream.seek(max(0, setup_log.stat().st_size - 1024 * 1024))
+                        raw = stream.read()
+                    encoding = 'utf-16-le' if b'\x00' in raw[:64] else 'utf-8-sig'
+                    for line in raw.decode(encoding, errors='replace').splitlines():
+                        if 'ArchHub Setup refused: ' in line:
+                            reason = line.split('ArchHub Setup refused: ', 1)[1]
+                return {**_rollback(updates, app_dir, data, reason), "applied": False, "reason": reason}
             _marker(updates, {**data, "phase": "awaiting_boot"})
             return {"applied": True, "build_id": data["build_id"], "status": "awaiting_boot",
                     "reason": "installer completed; successful new boot acknowledgment required"}

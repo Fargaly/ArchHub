@@ -16,12 +16,14 @@ def _journal(profile):
     with sqlite3.connect(path) as db:
         db.execute('CREATE TABLE work (value TEXT)')
         db.execute("INSERT INTO work VALUES ('original graph')")
+    db.close()
     return path
 
 
 def _edit(path, value):
     with sqlite3.connect(path) as db:
         db.execute('INSERT INTO work VALUES (?)', (value,))
+    db.close()
 
 
 def test_five_identical_installs_reuse_verified_copy_before_disk_reserve(tmp_path, monkeypatch):
@@ -31,7 +33,7 @@ def test_five_identical_installs_reuse_verified_copy_before_disk_reserve(tmp_pat
         pytest.fail('RED: identical journal requires another full-copy disk reserve'))
     for number in range(1, 5):
         assert files.preserve_closed_application_journals(tmp_path, f'install-{number}') == first
-    backups = list((source.parent / 'backups').glob('*-closed'))
+    backups = list((files.installer_backup_directory(source.parent.parent, source)).glob('*-closed'))
     assert len(backups) == 1
     assert (backups[0] / source.name).read_bytes() == source.read_bytes()
 
@@ -60,7 +62,7 @@ def test_same_head_with_derived_index_reuses_custody_but_changed_rows_do_not(tmp
     assert (Path(changed[0]) / source.name).read_bytes() == source.read_bytes()
 
 
-def test_changed_installs_keep_one_pre_adopt_pin_and_three_normal_copies(tmp_path):
+def test_changed_installs_replace_pin_within_three_copy_policy(tmp_path):
     source = _journal(tmp_path)
     first = Path(files.preserve_closed_application_journals(tmp_path, 'initial')[0])
     # Adoption's existing locator marks that future backups are ordinary recovery.
@@ -68,12 +70,14 @@ def test_changed_installs_keep_one_pre_adopt_pin_and_three_normal_copies(tmp_pat
     for number in range(5):
         _edit(source, str(number))
         files.preserve_closed_application_journals(tmp_path, f'changed-{number}')
-    backups = list((source.parent / 'backups').glob('*-closed'))
+    backups = list((files.installer_backup_directory(source.parent.parent, source)).glob('*-closed'))
     pinned = [path for path in backups if json.loads((path / 'closed-files.json').read_text())
               .get('retain_until_user_deletes') is True]
-    assert pinned == [first]
-    assert len(backups) == 4
-    assert sum((path / source.name).stat().st_size for path in backups) <= 4 * source.stat().st_size
+    assert len(pinned) == 1
+    assert pinned[0] != first
+    assert not first.exists()
+    assert len(backups) == 3
+    assert sum((path / source.name).stat().st_size for path in backups) <= 3 * source.stat().st_size
 
 
 def test_latest_pre_adopt_copy_replaces_previous_pin(tmp_path):
@@ -102,13 +106,13 @@ def test_newer_empty_candidate_cannot_unpin_selected_work(tmp_path):
     (directory.parent.parent / 'CURRENT').write_text(generation)
     for number in range(5):
         files.preserve_closed_application_journals(tmp_path, f'install-{number}')
-    backups = list((source.parent / 'backups').glob('*-closed'))
+    backups = list((files.installer_backup_directory(source.parent.parent, source)).glob('*-closed'))
     pinned = [path for path in backups if json.loads((path / 'closed-files.json').read_text())
               .get('retain_until_user_deletes') is True]
     assert len(pinned) == 1
     assert (pinned[0] / source.name).read_bytes() == source.read_bytes()
     assert not (pinned[0] / stale.name).exists()
-    assert len(backups) == 2
+    assert len(list((tmp_path / 'ArchHub/backups').glob('journal-*/*-closed'))) == 2
 
 
 def test_graph_control_work_inside_trace_prefix_outranks_empty_selection(tmp_path):
@@ -123,8 +127,8 @@ def test_graph_control_work_inside_trace_prefix_outranks_empty_selection(tmp_pat
     with CellStore(empty):
         pass
     files.preserve_closed_application_journals(tmp_path, 'graph-control')
-    pinned = [path for parent in (source.parent, empty.parent)
-              for path in (parent / 'backups').glob('*-closed')
+    pinned = [path for journal in (source, empty)
+              for path in files.installer_backup_directory(tmp_path, journal).glob('*-closed')
               if json.loads((path / 'closed-files.json').read_text())['retain_until_user_deletes']]
     assert len(pinned) == 1
     assert (pinned[0] / source.name).read_bytes() == source.read_bytes()
@@ -155,10 +159,10 @@ def test_flat_closed_backups_participate_in_runtime_retention(tmp_path):
         _edit(source, str(number))
         paths.append(Path(files.preserve_closed_application_journals(tmp_path, f'changed-{number}')[0]))
     removed = []
-    result = prune_backups(source.parent / 'backups', keep=paths[-1], keep_count=1,
+    result = prune_backups(files.installer_backup_directory(source.parent.parent, source), keep=paths[-1], keep_count=1,
                           remove=lambda path: removed.append(path.name))
-    assert result['kept'] == sorted((paths[0].name, paths[-1].name))
-    assert removed == [paths[1].name]
+    assert result['kept'] == [paths[-1].name]
+    assert removed == [paths[0].name, paths[1].name]
 
 
 @pytest.mark.parametrize('hot', [False, True])
@@ -187,4 +191,4 @@ def test_installer_script_runs_with_only_extracted_stdlib_owners(tmp_path):
             '--closed-profile', str(tmp_path / 'profile'), '--build', build], cwd=extracted,
             capture_output=True, text=True, timeout=30)
         assert result.returncode == 0, result.stderr
-    assert len(list((source.parent / 'backups').glob('*-closed'))) == 1
+    assert len(list((files.installer_backup_directory(source.parent.parent, source)).glob('*-closed'))) == 1

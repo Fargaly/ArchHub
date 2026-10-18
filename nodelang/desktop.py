@@ -12,6 +12,14 @@ import sys
 from .clean_boot_surface import BootSurface
 
 
+def arm_update(state_directory, application_directory, database_path, content_path, *, expected_build):
+    """Compose the launcher's existing recovery owner after its final close."""
+    from .application_update_recovery import arm_update as arm_closed_update
+
+    return arm_closed_update(state_directory, application_directory, database_path, content_path,
+                             expected_build=expected_build)
+
+
 def create_boot_surface(host, port, *, expected):
     """Compose the one desktop boot transport before its application owner opens."""
     return BootSurface(host, port, expected=expected)

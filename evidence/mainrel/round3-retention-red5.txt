@@ -1,0 +1,34 @@
+F.F                                                                      [100%]
+================================== FAILURES ===================================
+__________ test_three_installs_replace_pin_with_real_size_accounting __________
+tests_replica\test_mainrel_round3.py:57: in test_three_installs_replace_pin_with_real_size_accounting
+    completed = files.preserve_closed_application_journals(tmp_path, f'install-{number}')
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+nodelang\application_recovery_files.py:387: in preserve_closed_application_journals
+    records = [_closed_file_record(path) for path in paths]
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+nodelang\application_recovery_files.py:63: in _closed_file_record
+    sha256=hashlib.file_digest(reader, 'sha256').hexdigest())
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\..\..\..\..\Python\pythoncore-3.14-64\Lib\hashlib.py:233: in file_digest
+    size = fileobj.readinto(buf)
+           ^^^^^^^^^^^^^^^^^^^^^
+E   PermissionError: [Errno 13] Permission denied
+___________ test_reused_backup_does_not_refuse_post_copy_disk_check ___________
+tests_replica\test_mainrel_round3.py:90: in test_reused_backup_does_not_refuse_post_copy_disk_check
+    assert files.preserve_closed_application_journals(tmp_path, 'unchanged') == before
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+nodelang\application_recovery_files.py:473: in preserve_closed_application_journals
+    raise OSError('Installer backup over budget: less than 25 GiB remains after backup; saved work and verified copies were kept')
+E   OSError: Installer backup over budget: less than 25 GiB remains after backup; saved work and verified copies were kept
+============================== warnings summary ===============================
+..\..\..\..\..\..\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434
+  C:\Users\fargaly\AppData\Local\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434: PytestConfigWarning: Unknown config option: cache_dir
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests_replica/test_mainrel_round3.py::test_three_installs_replace_pin_with_real_size_accounting
+FAILED tests_replica/test_mainrel_round3.py::test_reused_backup_does_not_refuse_post_copy_disk_check
+2 failed, 1 passed, 1 warning in 51.01s

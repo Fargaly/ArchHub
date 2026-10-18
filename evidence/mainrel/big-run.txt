@@ -1,0 +1,277 @@
+Selecting closed journals
+Hashing closed journal: archhub-test.universal.sqlite3
+Copying archhub-test.universal.sqlite3
+Copying archhub-test.universal.sqlite3: 423624704 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 911212544 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 1473249280 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 1564475392 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 1758461952 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 2285895680 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 2408579072 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 2437939200 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 2463105024 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 2486173696 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 2496659456 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 2513436672 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 2536505344 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 2545942528 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 2581594112 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 2604662784 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 2631925760 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 2800746496 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 2863661056 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 2929721344 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 2966421504 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 2975858688 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3301965824 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3354394624 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3357540352 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3752853504 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3839885312 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3852468224 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3867148288 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3882876928 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3895459840 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3909091328 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3929014272 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3941597184 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3959422976 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3976200192 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3986685952 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3996123136 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4005560320 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4023386112 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4028628992 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4037017600 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4045406208 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4056940544 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4059037696 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4075814912 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4091543552 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4114612224 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4120903680 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4150263808 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4171235328 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4188012544 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4205838336 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4221566976 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4227858432 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4239392768 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4248829952 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4256169984 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4268752896 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4277141504 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4282384384 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4304404480 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4314890240 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4331667456 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4350541824 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4357881856 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4362076160 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4368367616 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4371513344 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4376756224 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4377804800 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4388290560 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4391436288 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4416602112 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4453302272 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4498391040 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4517265408 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4538236928 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4571791360 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4606394368 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4635754496 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4676648960 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4710203392 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4743757824 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4784652288 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4815060992 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4834983936 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4865392640 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4889509888 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4918870016 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4959764480 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4977590272 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4995416064 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5014290432 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5038407680 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5056233472 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5118099456 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5144313856 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5225054208 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5263851520 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5282725888 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5343543296 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5372903424 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5416943616 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5427429376 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5436866560 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5450498048 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5457838080 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5469372416 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5483003904 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5496635392 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5508169728 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5516558336 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5530189824 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5531238400 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5552209920 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5576327168 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5609881600 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5639241728 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5669650432 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5700059136 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5727322112 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5754585088 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5784993792 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5819596800 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5830082560 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5878317056 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5903482880 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5906628608 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5910822912 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5917114368 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5919211520 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5924454400 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5929697280 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5935988736 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5938085888 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5962203136 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5988417536 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6018826240 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6051332096 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6113198080 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6150946816 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6174015488 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6206521344 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6250561536 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6287261696 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6315573248 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6355419136 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6383730688 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6410993664 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6450839552 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6484393984 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6509559808 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6566182912 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6599737344 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6618611712 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6631194624 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6655311872 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6666846208 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6688866304 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6704594944 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6714032128 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6720323584 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6727663616 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6732906496 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6743392256 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6748635136 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6754926592 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6759120896 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6764363776 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6767509504 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6770655232 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6779043840 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6785335296 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6788481024 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6797918208 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6807355392 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6819938304 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6827278336 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6865027072 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6900678656 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6940524544 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7006584832 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7025459200 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7053770752 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7074742272 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7102005248 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7142899712 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7163871232 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7256145920 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7282360320 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7321157632 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7347372032 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7381975040 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7423918080 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7451181056 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7476346880 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7630487552 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7643070464 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7650410496 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7654604800 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7661944832 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7668236288 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7671382016 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7675576320 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7679770624 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7682916352 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7708082176 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7738490880 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7777288192 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7813988352 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7864320000 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7902068736 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7931428864 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7967080448 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8004829184 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8042577920 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8086618112 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8117026816 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8140095488 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8142192640 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8160018432 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8203010048 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8249147392 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8285847552 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8326742016 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8359247872 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8409579520 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8446279680 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8486125568 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8520728576 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8543797248 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8568963072 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8600420352 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8642363392 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8671723520 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8724152320 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8821669888 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8845787136 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8884584448 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8919187456 / 8937168896 bytes
+Verifying installer backup: archhub-test.universal.sqlite3
+Hashing closed journal: authority.sqlite3
+Copying authority.sqlite3
+Verifying installer backup: authority.sqlite3
+Hashing closed journal: archhub-test.universal.sqlite3
+Copying archhub-test.universal.sqlite3
+Verifying installer backup: archhub-test.universal.sqlite3
+Hashing closed journal: node-native-wip.json.gz.universal.sqlite3
+Copying node-native-wip.json.gz.universal.sqlite3
+Verifying installer backup: node-native-wip.json.gz.universal.sqlite3
+Hashing closed journal: authority.sqlite3
+Copying authority.sqlite3
+Verifying installer backup: authority.sqlite3
+Complete: installer journal backup verified
+  migration  : Updating your data — Reading indexed journal head
+  migration  : candidates C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\evidence\mainrel\court-state\big-profile\ArchHub\unified-authority\generations\3da42d25-f8df-4c16-9e1a-580e546ab5ad\authority.sqlite3 rev=2 time=100.000000; C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\evidence\mainrel\court-state\big-profile\ArchHub\authority.sqlite3 rev=2 time=100.000000; C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\evidence\mainrel\court-state\big-profile\ArchHub\archhub-test.universal.sqlite3 rev=2 time=100.000000; C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\evidence\mainrel\court-state\big-profile\ArchHub\node-native-wip.json.gz.universal.sqlite3 rev=2 time=100.000000; chosen C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\evidence\mainrel\court-state\big-profile\ArchHub\unified-authority\generations\3da42d25-f8df-4c16-9e1a-580e546ab5ad\authority.sqlite3 (work cells, committed head, existing selection)
+{
+  "fixture_bytes": 8937168896,
+  "fixture_GiB": 8.323387145996094,
+  "semantic_fixture": "small valid graph plus SQLite padding; not a six-million-Cell court",
+  "candidates": 5,
+  "backup_seconds": 249.55643360002432,
+  "migration_seconds": 0.7602302999584936,
+  "migration": {
+    "state": "existing",
+    "backup_path": null,
+    "database_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\claude\\C--Users-fargaly-00-ARCHUB\\71743447-6dd5-4050-bc4f-d228f7a1d91e\\scratchpad\\mainrel\\evidence\\mainrel\\court-state\\big-profile\\ArchHub\\unified-authority\\generations\\3da42d25-f8df-4c16-9e1a-580e546ab5ad\\authority.sqlite3"
+  },
+  "backup_directories": 5,
+  "free_before_bytes": 42363822080,
+  "free_after_bytes": 34085494784,
+  "startup_within_30_seconds": true
+}

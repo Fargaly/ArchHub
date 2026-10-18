@@ -1332,13 +1332,16 @@ const StudioLM = () => {
                   !snapshot.workshops?.some(row => row.root === result.root)) {
                 throw new Error('Your session is saved. Refresh the Workshop to open it.');
               }
-              setOpenTabs(tabs => tabs.includes(result.graph_id) ? tabs : [...tabs, result.graph_id]);
+              const graphTab = visibleSessions.find(row => row.id === result.graph_id) ||
+                [...result.scope_path].reverse().map(root => visibleSessions.find(row => row.id === root)).find(Boolean);
+              if (!graphTab) throw new Error('Your session is saved. Refresh graphs to open its canvas.');
+              setOpenTabs(tabs => tabs.includes(graphTab.id) ? tabs : [...tabs, graphTab.id]);
               setWorkspaceSelection({mode:'chat', conversationRoot:result.root,
                 target:result.contact ? 'contact:' + result.contact : result.delivery?.node ? 'model:' + result.delivery.node : '',
                 notice:result.warning || '', pending:false,
-                scope:JSON.stringify([result.graph_id, snapshot.canvas.graph_id, snapshot.canvas.root,
+                scope:JSON.stringify([graphTab.id, snapshot.canvas.graph_id, snapshot.canvas.root,
                   authorization?.subject || '', authorization?.session || ''])});
-              setOpenId(result.graph_id);
+              setOpenId(graphTab.id);
             }}/>}
       {pickerOpen && <ModelPicker setModel={m => !session
         ? rememberComposerModel(m).then(picked => { setHomeNative(null); setModel(picked); }) : modelTarget
@@ -2176,7 +2179,7 @@ const NodesPanel = ({ addNodeFromLibrary, onHome, account, onAccount, onSwitchPa
   const library = libraryDisplayGroups(librarySource(projected));
   const [q, setQ] = React.useState(initialQuery);
   const [family, setFamily] = React.useState('all');
-  const [openCats, setOpenCats] = React.useState(() => ({shape:true}));
+  const [openCats, setOpenCats] = React.useState(() => ({}));
   const [selectedId, setSelectedId] = React.useState('');
   const [insertBusy, setInsertBusy] = React.useState(false), [insertError, setInsertError] = React.useState('');
   const admission = React.useRef({busy:false,live:true,last:null});
@@ -2194,7 +2197,7 @@ const NodesPanel = ({ addNodeFromLibrary, onHome, account, onAccount, onSwitchPa
     } catch(error) {if(held.live)setInsertError(window.AH_DS.errorText(error.message || 'The node could not be added.'));return false;}
     finally {held.busy=false;if(held.live)setInsertBusy(false);}
   }, []);
-  const toggleCat = React.useCallback(cat => setOpenCats(o => ({ ...o, [cat]: !o[cat] })), []);
+  const toggleCat = React.useCallback(cat => setOpenCats(o => ({ ...o, [cat]: o[cat] === false })), []);
   const groups = libraryVisibleGroups(library, family, q);
   return (
     <window.AH_DS.Frame data-library-panel="" style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
@@ -2261,7 +2264,7 @@ const NodeLibraryGroups = React.memo(({ library, q, openCats, onToggle, onAdd, s
           const c = studioCategory(group.cat);
           const items = group.items || [];
           if (items.length === 0) return null;
-          const open = q ? true : !!openCats[group.cat];
+          const open = q ? true : openCats[group.cat] !== false;
           const family = LIBRARY_FAMILIES.find(row => row.id === LIBRARY_FAMILY_BY_CAT[String(group.cat || '').toLowerCase()]);
           const prev = library.slice(0, index).reverse().find(row => (row.items || []).length);
           const prevFamily = prev && LIBRARY_FAMILIES.find(row => row.id === LIBRARY_FAMILY_BY_CAT[String(prev.cat || '').toLowerCase()]);
@@ -10271,7 +10274,7 @@ const SettingsStorage = () => {
   <div>
     <SHead title="Storage" sub="Saved sessions and the folders that hold your data."/>
     {backupOwner && <window.ApplicationNodeParameters node={{...backupOwner, actions:[],
-      params:backupOwner.params.filter(row => ['backup_count', 'backup_budget_bytes'].includes(row.setting?.key))}}/>}
+      params:backupOwner.params.filter(row => ['backup_count', 'backup_budget_bytes', 'backup_location'].includes(row.setting?.key))}}/>}
     <SettingsRetention/>
     <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10, marginBottom:14 }}>
       {[

@@ -1,0 +1,8 @@
+{
+  "base": "d89a50fd2304ea4cbda75e1313c08ed187404f2f",
+  "patch_sha256": "353c8f62ef7878e5eb44842611820772f40fda72839b3ac051387976cc53726c",
+  "apply_check": "PASS",
+  "paths": 35,
+  "mismatches": [],
+  "hash_model": "sha256=staged canonical Git blob; worktree_sha256=actual WIP bytes before CRLF normalization"
+}

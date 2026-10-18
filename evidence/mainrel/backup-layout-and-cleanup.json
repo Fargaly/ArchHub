@@ -1,0 +1,132 @@
+{
+    "fixture_root":  "C:\\Users\\fargaly\\AppData\\Local\\Temp\\claude\\C--Users-fargaly-00-ARCHUB\\71743447-6dd5-4050-bc4f-d228f7a1d91e\\scratchpad\\mainrel\\evidence\\mainrel\\court-state\\big-profile",
+    "backup_containers":  [
+                              "C:\\Users\\fargaly\\AppData\\Local\\Temp\\claude\\C--Users-fargaly-00-ARCHUB\\71743447-6dd5-4050-bc4f-d228f7a1d91e\\scratchpad\\mainrel\\evidence\\mainrel\\court-state\\big-profile\\ArchHub\\backups"
+                          ],
+    "backups":  [
+                    {
+                        "path":  "C:\\Users\\fargaly\\AppData\\Local\\Temp\\claude\\C--Users-fargaly-00-ARCHUB\\71743447-6dd5-4050-bc4f-d228f7a1d91e\\scratchpad\\mainrel\\evidence\\mainrel\\court-state\\big-profile\\ArchHub\\backups\\journal-017079a8a7b0cbc7f3de692650e3f51ea783d34cb4b8b41b5ceac61d1c78a0bd\\mainrel-big-8b183adbaee740f38ddbc176fba110a1-closed",
+                        "container":  "C:\\Users\\fargaly\\AppData\\Local\\Temp\\claude\\C--Users-fargaly-00-ARCHUB\\71743447-6dd5-4050-bc4f-d228f7a1d91e\\scratchpad\\mainrel\\evidence\\mainrel\\court-state\\big-profile\\ArchHub\\backups",
+                        "receipt":  {
+                                        "build":  "mainrel-big",
+                                        "files":  [
+                                                      {
+                                                          "bytes":  32768,
+                                                          "name":  "archhub-test.universal.sqlite3",
+                                                          "sha256":  "d78e31bc593818d14a4c9e691b29815db93bbc9231b336cfec31653dcc032a60"
+                                                      }
+                                                  ],
+                                        "journal_identity":  {
+                                                                 "head_revision":  2,
+                                                                 "logical_sha256":  "e2a76fea35ce5f52eeb3de6b54cfd141d5128156816b4c5a8b1b227697eedeca",
+                                                                 "revisions":  3
+                                                             },
+                                        "kind":  "closed-file-preservation",
+                                        "producer":  "archhub-product-installer/v1",
+                                        "retain_until_user_deletes":  false,
+                                        "runtime":  "1de02922ce104d1887565fc5f29cf80d",
+                                        "source_relative_path":  "ArchHub/archhub-test.universal.sqlite3"
+                                    }
+                    },
+                    {
+                        "path":  "C:\\Users\\fargaly\\AppData\\Local\\Temp\\claude\\C--Users-fargaly-00-ARCHUB\\71743447-6dd5-4050-bc4f-d228f7a1d91e\\scratchpad\\mainrel\\evidence\\mainrel\\court-state\\big-profile\\ArchHub\\backups\\journal-3a3792b0a28a5d51e9d59ca1d065700d3076fa498a549ea233a49dfc4d814b4c\\mainrel-big-e1e16e4b8d72486c89c200a4a3d06263-closed",
+                        "container":  "C:\\Users\\fargaly\\AppData\\Local\\Temp\\claude\\C--Users-fargaly-00-ARCHUB\\71743447-6dd5-4050-bc4f-d228f7a1d91e\\scratchpad\\mainrel\\evidence\\mainrel\\court-state\\big-profile\\ArchHub\\backups",
+                        "receipt":  {
+                                        "build":  "mainrel-big",
+                                        "files":  [
+                                                      {
+                                                          "bytes":  32768,
+                                                          "name":  "authority.sqlite3",
+                                                          "sha256":  "099446abdab0870813fa4e3a4c038c2361d2f6db92b594e6503b0e87593cddda"
+                                                      }
+                                                  ],
+                                        "journal_identity":  {
+                                                                 "head_revision":  2,
+                                                                 "logical_sha256":  "4e106cdfa0dcd11e25b1fa9e6e5e3899dad1232c66541095be39a64a75ad32fb",
+                                                                 "revisions":  3
+                                                             },
+                                        "kind":  "closed-file-preservation",
+                                        "producer":  "archhub-product-installer/v1",
+                                        "retain_until_user_deletes":  false,
+                                        "runtime":  "0eeab7e2d1da444193e100385abb394d",
+                                        "source_relative_path":  "ArchHub/unified-authority/generations/3da42d25-f8df-4c16-9e1a-580e546ab5ad/authority.sqlite3"
+                                    }
+                    },
+                    {
+                        "path":  "C:\\Users\\fargaly\\AppData\\Local\\Temp\\claude\\C--Users-fargaly-00-ARCHUB\\71743447-6dd5-4050-bc4f-d228f7a1d91e\\scratchpad\\mainrel\\evidence\\mainrel\\court-state\\big-profile\\ArchHub\\backups\\journal-48e78d32d8cf52e052a86f40dc70c13491502dcafe974614750f94d9f3598acb\\mainrel-big-260f480ed35747ee8f2d9fb78db07d35-closed",
+                        "container":  "C:\\Users\\fargaly\\AppData\\Local\\Temp\\claude\\C--Users-fargaly-00-ARCHUB\\71743447-6dd5-4050-bc4f-d228f7a1d91e\\scratchpad\\mainrel\\evidence\\mainrel\\court-state\\big-profile\\ArchHub\\backups",
+                        "receipt":  {
+                                        "build":  "mainrel-big",
+                                        "files":  [
+                                                      {
+                                                          "bytes":  32768,
+                                                          "name":  "authority.sqlite3",
+                                                          "sha256":  "8a145d85a3a20c3840237bfbbfc4c0b9eb00457f8f3f5e3a73390cb44253f7d1"
+                                                      }
+                                                  ],
+                                        "journal_identity":  {
+                                                                 "head_revision":  2,
+                                                                 "logical_sha256":  "ff1c074b151b49d3d20e520698245ea68bc8dd3ea27bb785c60ce63bcc2b02ca",
+                                                                 "revisions":  3
+                                                             },
+                                        "kind":  "closed-file-preservation",
+                                        "producer":  "archhub-product-installer/v1",
+                                        "retain_until_user_deletes":  false,
+                                        "runtime":  "d390e8cceceb4d61acb77d2e0ebfa3d8",
+                                        "source_relative_path":  "ArchHub/authority.sqlite3"
+                                    }
+                    },
+                    {
+                        "path":  "C:\\Users\\fargaly\\AppData\\Local\\Temp\\claude\\C--Users-fargaly-00-ARCHUB\\71743447-6dd5-4050-bc4f-d228f7a1d91e\\scratchpad\\mainrel\\evidence\\mainrel\\court-state\\big-profile\\ArchHub\\backups\\journal-75cd06f01b3e52e5c5f630b1e87c8e918001c40f27bba80a64bcc62403f9a070\\mainrel-big-b1f836a17d204710aa0c25a10aba8724-closed",
+                        "container":  "C:\\Users\\fargaly\\AppData\\Local\\Temp\\claude\\C--Users-fargaly-00-ARCHUB\\71743447-6dd5-4050-bc4f-d228f7a1d91e\\scratchpad\\mainrel\\evidence\\mainrel\\court-state\\big-profile\\ArchHub\\backups",
+                        "receipt":  {
+                                        "build":  "mainrel-big",
+                                        "files":  [
+                                                      {
+                                                          "bytes":  32768,
+                                                          "name":  "node-native-wip.json.gz.universal.sqlite3",
+                                                          "sha256":  "cd3b5d0fb2baa6079a5926033dd43952ff0e62295ffb9d46f7521175a29255d2"
+                                                      }
+                                                  ],
+                                        "journal_identity":  {
+                                                                 "head_revision":  2,
+                                                                 "logical_sha256":  "9fcecf9e93845115ecc284d9d1571ecc7923614204aa4913901ea48aaa3502c4",
+                                                                 "revisions":  3
+                                                             },
+                                        "kind":  "closed-file-preservation",
+                                        "producer":  "archhub-product-installer/v1",
+                                        "retain_until_user_deletes":  false,
+                                        "runtime":  "d33810fee2de4f86a6391a5e97c0c01d",
+                                        "source_relative_path":  "ArchHub/node-native-wip.json.gz.universal.sqlite3"
+                                    }
+                    },
+                    {
+                        "path":  "C:\\Users\\fargaly\\AppData\\Local\\Temp\\claude\\C--Users-fargaly-00-ARCHUB\\71743447-6dd5-4050-bc4f-d228f7a1d91e\\scratchpad\\mainrel\\evidence\\mainrel\\court-state\\big-profile\\ArchHub\\backups\\journal-f2486c29a48996ac4f641f82fdc7f9c0cbc4c64daf231f81e51c8a641fb1fc85\\mainrel-big-bc671cf747224cfa9d93d56378c25d31-closed",
+                        "container":  "C:\\Users\\fargaly\\AppData\\Local\\Temp\\claude\\C--Users-fargaly-00-ARCHUB\\71743447-6dd5-4050-bc4f-d228f7a1d91e\\scratchpad\\mainrel\\evidence\\mainrel\\court-state\\big-profile\\ArchHub\\backups",
+                        "receipt":  {
+                                        "build":  "mainrel-big",
+                                        "files":  [
+                                                      {
+                                                          "bytes":  8937168896,
+                                                          "name":  "archhub-test.universal.sqlite3",
+                                                          "sha256":  "b765251e3a19eea37cdaa42e3353eb01e37c4e84bbb9e7461e66738d3e0e6eea"
+                                                      }
+                                                  ],
+                                        "journal_identity":  {
+                                                                 "head_revision":  5,
+                                                                 "logical_sha256":  "034f1945eeaf473a80717160396eae222160f498d27a1e5594851374798c1633",
+                                                                 "revisions":  6
+                                                             },
+                                        "kind":  "closed-file-preservation",
+                                        "producer":  "archhub-product-installer/v1",
+                                        "retain_until_user_deletes":  true,
+                                        "runtime":  "e29ac58a076a4eb6a3cbe7538c3c03e5",
+                                        "source_relative_path":  "ArchHub-Test/archhub-test.universal.sqlite3"
+                                    }
+                    }
+                ],
+    "files":  30,
+    "bytes":  17874648699,
+    "free_before_bytes":  28678483968,
+    "purpose":  "Recorded byte-scale fixture removed after its completed court; no live profile used"
+}

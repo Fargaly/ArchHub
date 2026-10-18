@@ -1,0 +1,36 @@
+{
+  "method": "Static named Python test definitions and single-line JS test/it declarations. Not collected parametrized cases; full-suite collection/run reserved for717 by CPU rule.",
+  "base": "d89a50fd2304ea4cbda75e1313c08ed187404f2f",
+  "python_before": 5044,
+  "python_after": 5065,
+  "javascript_before": 1099,
+  "javascript_after": 1100,
+  "removed_python": [],
+  "added_python": [
+    "tests_replica/test_mainrel_connectors.py:def test_codex_runpy_is_migrated_not_left_on_deleted_module(machine):",
+    "tests_replica/test_mainrel_connectors.py:def test_inline_runpy_loader_is_recognised_but_extra_code_is_refused():",
+    "tests_replica/test_mainrel_connectors.py:def test_setup_cli_refuses_unsuccessful_connector_migration(monkeypatch, state):",
+    "tests_replica/test_mainrel_connectors.py:def test_preflight_unknown_retired_entry_refuses_without_writes(machine):",
+    "tests_replica/test_mainrel_connectors.py:def test_setup_publishes_ready_only_after_managed_migration(tmp_path, monkeypatch, migration_status):",
+    "tests_replica/test_mainrel_connectors.py:def test_registration_and_setup_follow_exact_launcher_state_root(tmp_path, monkeypatch, override):",
+    "tests_replica/test_mainrel_connectors.py:def test_gemini_deleted_module_is_migrated_with_encrypted_backup(machine):",
+    "tests_replica/test_mainrel_installer.py:def test_installer_keeps_25_gib_after_copy(tmp_path, monkeypatch):",
+    "tests_replica/test_mainrel_installer.py:def test_installer_refuses_over_budget_before_copy(tmp_path):",
+    "tests_replica/test_mainrel_installer.py:def test_installer_reports_every_backup_stage(tmp_path):",
+    "tests_replica/test_mainrel_installer.py:def test_all_candidate_copies_have_one_installer_container(tmp_path):",
+    "tests_replica/test_mainrel_installer.py:def test_installer_rechecks_reserve_after_copy_before_payload_replacement(tmp_path, monkeypatch):",
+    "tests_replica/test_mainrel_update.py:def test_arm_without_app_copy_preserves_drift_refusal(tmp_path):",
+    "tests_replica/test_mainrel_update.py:def test_retention_refuses_malformed_installer_only_marker(tmp_path, receipt):"
+  ],
+  "round2_added_python": [
+    "tests_replica/test_mainrel_rollback.py:test_parse_and_dry_run_emit_read_only_releases_and_exact_hashes",
+    "tests_replica/test_mainrel_rollback.py:test_main_hash_mismatch_refuses_before_creating_output",
+    "tests_replica/test_mainrel_rollback.py:test_previous_evidence_is_not_overwritten",
+    "tests_replica/test_mainrel_rollback.py:test_guest_mode_refuses_host_before_any_plan_read",
+    "tests_replica/test_mainrel_rollback.py:test_real_run_refuses_dummy_0400_before_sandbox_launch",
+    "tests_replica/test_mainrel_rollback.py:test_typed_measurement_values_preserve_original_observations",
+    "tests_replica/test_mainrel_update.py:test_desktop_shutdown_uses_one_recovery_owner_only_after_close"
+  ],
+  "round2_removed_assertions": [],
+  "round2_parametrized_cases": 10
+}

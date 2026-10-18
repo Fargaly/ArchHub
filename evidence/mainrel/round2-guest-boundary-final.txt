@@ -1,0 +1,11 @@
+Captured stdout from exec_command chunk e98847; queue PID422548 recorded exit=0, job empty. Command: run-heavy.ps1 -> powershell -NoProfile -ExecutionPolicy Bypass -File evidence/mainrel/run_round2.ps1 -Court rollback
+Final script SHA256 D35354F7FB930B3167C42C346B0D4E9E8C002DB2BEAA24FF969A176F1C50ECDA
+........                                                                 [100%]
+============================== warnings summary ===============================
+..\..\..\..\..\..\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434
+  C:\Users\fargaly\AppData\Local\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434: PytestConfigWarning: Unknown config option: cache_dir
+
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+8 passed, 1 warning in 4.89s

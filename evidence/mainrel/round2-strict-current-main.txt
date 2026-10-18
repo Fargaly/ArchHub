@@ -1,0 +1,11 @@
+STAGED_PATH_COUNT=36
+error[E0002]: module is unreachable from shipped entrypoints
+ --> nodelang/application_update_recovery.py:1:1
+ note: Unused: a declared parameter, route or module has no resolved runtime reader or shipped entrypoint. Test imports and prose do not count.
+ help: connect it to a product entrypoint or remove it
+error[E0100]: change has no registered intent and identified author
+ --> BRIEF-MAINREL.md:1:1
+ note: Intent: an agent or human change must identify an authoritative intent through its session record or Intent trailer.
+ help: supply an authoritative founder-row or session-record intent and author; register its declared scope in rules.json
+ACOMPILER FAIL
+STRICT_SECONDS=161.6961693

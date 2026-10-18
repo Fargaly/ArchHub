@@ -20,7 +20,8 @@ function fixture(post) {
   const identity = session => api.setTopologyCanvas({application_root:'application-a',revision:1,
     authorization:{subject:'owner-a',session},scope:{current:'scope-a'},nodes:[],wires:[],
     interaction_projection:{revision:1,bindings:[]},
-    workshop_scope:{graph_id:'graph-a',root:'scope-a',revision:1,workshops:[]}});
+    workshop_scope:{graph_id:'graph-a',root:'scope-a',revision:1,
+      authorization:{subject:'owner-a',session},workshops:[]}});
   identity('session-a');return {api,posts,saved,identity};
 }
 const receipt=body=>({ok:true,graph_id:'graph-a',root:'conversation-new',title:'My task',
@@ -117,17 +118,19 @@ test('Home form and Enter invoke the same submission handler',()=>{
   assert.match(home,/onKeyDown=\{event => \{if \(event.key === 'Enter'[\s\S]*?startSession\(event\)/);
   assert.match(home,/<window\.AH_DS\.Btn[^>]*type="submit" disabled=\{starting \|\| !draft.trim\(\)\}/);
 });
-function studioFixture() {
+function studioFixture(applicationRoot = false) {
   const start=jsx.indexOf('onStarted={async (result,');const end=jsx.indexOf('\n            }}/>}',start);
   assert.ok(start>0&&end>start);const callback=jsx.slice(start+'onStarted={'.length,end)+'\n}';
-  const held=deferred(),refresh=deferred(),opened=[];let session='session-a',mounted=true;
-  const ctx=vm.createContext({setOpenTabs:()=>opened.push('tabs'),setWorkspaceSelection:()=>opened.push('selection'),setOpenId:value=>opened.push(value),
+  const held=deferred(),refresh=deferred(),opened=[],selections=[];let session='session-a',mounted=true;
+  const ctx=vm.createContext({visibleSessions:[{id:applicationRoot?'app:canvas':'graph-a'}],
+    setOpenTabs:()=>opened.push('tabs'),setWorkspaceSelection:value=>{selections.push(value);opened.push('selection');},setOpenId:value=>opened.push(value),
     window:{ARCHHUB_SCOPE_OPEN:()=>held.promise,ARCHHUB_EXISTING_WORKSHOP:{refreshTopologyCanvas:()=>refresh.promise,
-      getSnapshot:()=>({canvas:{graph_id:'graph-a',root:'scope-a'},workshops:[{root:'conversation-new'}],
+      getSnapshot:()=>({canvas:{graph_id:applicationRoot?'app:archhub':'graph-a',root:'scope-a'},workshops:[{root:'conversation-new'}],
         topology:{canvas:{authorization:{subject:'owner-a',session}}}})}}});
   vm.runInContext('globalThis.open='+callback,ctx);
-  return {held,refresh,opened,changeAuth:()=>{session='session-b';},unmount:()=>{mounted=false;},
-    open:()=>ctx.open(receipt({idempotency_key:'start-1'}),()=>mounted)};
+  return {held,refresh,opened,selections,changeAuth:()=>{session='session-b';},unmount:()=>{mounted=false;},
+    open:()=>ctx.open({...receipt({idempotency_key:'start-1'}),
+      ...(applicationRoot?{graph_id:'app:archhub',scope_path:['app:canvas','conversation-new']}:{} )},()=>mounted)};
 }
 test('Studio does not open a stale Home result if authentication changes during scope navigation',async()=>{
   const f=studioFixture();const pending=f.open();f.changeAuth();f.held.resolve();f.refresh.resolve();
@@ -141,4 +144,9 @@ test('Studio refuses unmounted Home continuation during topology refresh',async(
 test('Studio current continuation opens the existing Workspace after both reads',async()=>{
   const f=studioFixture();const pending=f.open();f.held.resolve();f.refresh.resolve();await pending;
   assert.deepEqual(f.opened,['tabs','selection','graph-a']);
+});
+test('New chat maps application identity to the admitted canvas tab',async()=>{
+  const f=studioFixture(true);const pending=f.open();f.held.resolve();f.refresh.resolve();await pending;
+  assert.deepEqual(f.opened,['tabs','selection','app:canvas']);
+  assert.equal(JSON.parse(f.selections[0].scope)[0], 'app:canvas');
 });

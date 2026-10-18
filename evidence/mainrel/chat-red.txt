@@ -1,0 +1,210 @@
+✖ saved Home session exposes provider refusal and retains its request identity (11.2216ms)
+✖ Home never settles an incomplete model reply or unbound native delivery (1.8697ms)
+✖ Home model submission makes one existing Workshop request with real text (1.8045ms)
+✖ native selection sends exact environment and existing session without a model (3.3641ms)
+✖ concurrent submissions share one admitted request (15.0487ms)
+✖ lost receipt retains identity until explicit retry; no automatic second request (3.3734ms)
+✖ mismatched receipt stays unconfirmed and retains retry identity (2.0214ms)
+✖ truthy ok and nonstring title receipts are refused (1.8701ms)
+✖ authorization changes during request prohibit opening its saved result (5.0217ms)
+✔ Home busy guard prevents double submit and unmounted Home never opens result (2.7372ms)
+✔ Home refuses a saved result after its authentication changed (1.2768ms)
+✔ Home form and Enter invoke the same submission handler (0.6257ms)
+✔ Studio does not open a stale Home result if authentication changes during scope navigation (1.7552ms)
+✔ Studio refuses unmounted Home continuation during topology refresh (6.605ms)
+✔ Studio current continuation opens the existing Workspace after both reads (2.0471ms)
+✖ New chat maps application identity to the admitted canvas tab (1.652ms)
+ℹ tests 16
+ℹ suites 0
+ℹ pass 6
+ℹ fail 10
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 412.5442
+
+✖ failing tests:
+
+test at tests_js\studio_home_session.test.cjs:30:1
+✖ saved Home session exposes provider refusal and retains its request identity (11.2216ms)
+  Error: Wait for the application connection before starting a session.
+      at fail (evalmachine.<anonymous>:4:32)
+      at Object.startSession (evalmachine.<anonymous>:1002:11)
+      at TestContext.<anonymous> (C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_home_session.test.cjs:32:28)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1106:25)
+      at Test.start (node:internal/test_runner/test:1003:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:358:17)
+
+test at tests_js\studio_home_session.test.cjs:39:1
+✖ Home never settles an incomplete model reply or unbound native delivery (1.8697ms)
+  Error: Wait for the application connection before starting a session.
+      at fail (evalmachine.<anonymous>:4:32)
+      at Object.startSession (evalmachine.<anonymous>:1002:11)
+      at TestContext.<anonymous> (C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_home_session.test.cjs:43:30)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1106:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+      at Test.postRun (node:internal/test_runner/test:1235:19)
+      at Test.run (node:internal/test_runner/test:1163:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3)
+
+test at tests_js\studio_home_session.test.cjs:52:1
+✖ Home model submission makes one existing Workshop request with real text (1.8045ms)
+  Error: Wait for the application connection before starting a session.
+      at fail (evalmachine.<anonymous>:4:32)
+      at Object.startSession (evalmachine.<anonymous>:1002:11)
+      at TestContext.<anonymous> (C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_home_session.test.cjs:53:46)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1106:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+      at Test.postRun (node:internal/test_runner/test:1235:19)
+      at Test.run (node:internal/test_runner/test:1163:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7)
+
+test at tests_js\studio_home_session.test.cjs:58:1
+✖ native selection sends exact environment and existing session without a model (3.3641ms)
+  Error: Wait for the application connection before starting a session.
+      at fail (evalmachine.<anonymous>:4:32)
+      at Object.startSession (evalmachine.<anonymous>:1002:11)
+      at TestContext.<anonymous> (C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_home_session.test.cjs:59:33)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1106:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+      at Test.postRun (node:internal/test_runner/test:1235:19)
+      at Test.run (node:internal/test_runner/test:1163:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7)
+
+test at tests_js\studio_home_session.test.cjs:63:1
+✖ concurrent submissions share one admitted request (15.0487ms)
+  Error: Wait for the application connection before starting a session.
+      at fail (evalmachine.<anonymous>:4:32)
+      at Object.startSession (evalmachine.<anonymous>:1002:11)
+      at TestContext.<anonymous> (C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_home_session.test.cjs:65:17)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1106:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+      at Test.postRun (node:internal/test_runner/test:1235:19)
+      at Test.run (node:internal/test_runner/test:1163:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7)
+
+test at tests_js\studio_home_session.test.cjs:68:1
+✖ lost receipt retains identity until explicit retry; no automatic second request (3.3734ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /connection lost/. Input:
+  
+  'Error: Wait for the application connection before starting a session.'
+  
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async TestContext.<anonymous> (C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_home_session.test.cjs:70:3)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: Wait for the application connection before starting a session.
+        at fail (evalmachine.<anonymous>:4:32)
+        at Object.startSession (evalmachine.<anonymous>:1002:11)
+        at TestContext.<anonymous> (C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_home_session.test.cjs:70:30)
+        at Test.runInAsyncScope (node:async_hooks:214:14)
+        at Test.run (node:internal/test_runner/test:1106:25)
+        at Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+        at Test.postRun (node:internal/test_runner/test:1235:19)
+        at Test.run (node:internal/test_runner/test:1163:12)
+        at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:788:7),
+    expected: /connection lost/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at tests_js\studio_home_session.test.cjs:74:1
+✖ mismatched receipt stays unconfirmed and retains retry identity (2.0214ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /unconfirmed/. Input:
+  
+  'Error: Wait for the application connection before starting a session.'
+  
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async TestContext.<anonymous> (C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_home_session.test.cjs:76:3)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: Wait for the application connection before starting a session.
+        at fail (evalmachine.<anonymous>:4:32)
+        at Object.startSession (evalmachine.<anonymous>:1002:11)
+        at TestContext.<anonymous> (C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_home_session.test.cjs:76:30)
+        at Test.runInAsyncScope (node:async_hooks:214:14)
+        at Test.run (node:internal/test_runner/test:1106:25)
+        at Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+        at Test.postRun (node:internal/test_runner/test:1235:19)
+        at Test.run (node:internal/test_runner/test:1163:12)
+        at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:788:7),
+    expected: /unconfirmed/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at tests_js\studio_home_session.test.cjs:79:1
+✖ truthy ok and nonstring title receipts are refused (1.8701ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /unconfirmed/. Input:
+  
+  'Error: Wait for the application connection before starting a session.'
+  
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async TestContext.<anonymous> (C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_home_session.test.cjs:82:5)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: Wait for the application connection before starting a session.
+        at fail (evalmachine.<anonymous>:4:32)
+        at Object.startSession (evalmachine.<anonymous>:1002:11)
+        at TestContext.<anonymous> (C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_home_session.test.cjs:82:32)
+        at Test.runInAsyncScope (node:async_hooks:214:14)
+        at Test.run (node:internal/test_runner/test:1106:25)
+        at Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+        at Test.postRun (node:internal/test_runner/test:1235:19)
+        at Test.run (node:internal/test_runner/test:1163:12)
+        at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:788:7),
+    expected: /unconfirmed/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at tests_js\studio_home_session.test.cjs:85:1
+✖ authorization changes during request prohibit opening its saved result (5.0217ms)
+  Error: Wait for the application connection before starting a session.
+      at fail (evalmachine.<anonymous>:4:32)
+      at Object.startSession (evalmachine.<anonymous>:1002:11)
+      at TestContext.<anonymous> (C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_home_session.test.cjs:86:73)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1106:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+      at Test.postRun (node:internal/test_runner/test:1235:19)
+      at Test.run (node:internal/test_runner/test:1163:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7)
+
+test at tests_js\studio_home_session.test.cjs:147:1
+✖ New chat maps application identity to the admitted canvas tab (1.652ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    [
+      'tabs',
+      'selection',
+  +   'app:archhub'
+  -   'app:canvas'
+    ]
+  
+      at TestContext.<anonymous> (C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_home_session.test.cjs:149:10)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ 'tabs', 'selection', 'app:archhub' ],
+    expected: [ 'tabs', 'selection', 'app:canvas' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

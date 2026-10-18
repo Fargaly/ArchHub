@@ -49,6 +49,7 @@ def tool_settings(params: Mapping[str, object], feeds: Mapping[str, object]):
             'tick_cadence_minutes': params.get('tick_cadence_minutes'),
             'backup_count': params.get('backup_count'),
             'backup_budget_bytes': params.get('backup_budget_bytes'),
+            'backup_location': params.get('backup_location'),
             'keep_running_in_tray': params.get('keep_running_in_tray'),
             'update_check_interval_minutes': params.get('update_check_interval_minutes'),
             'update_auto_apply_on_quit': params.get('update_auto_apply_on_quit'),
@@ -59,7 +60,14 @@ def tool_settings(params: Mapping[str, object], feeds: Mapping[str, object]):
             if value is None:
                 value = _application_setting_default(key)
             editor, bounds = _APPLICATION_SETTING_SPECS[key]
-            if editor == 'boolean':
+            if key == 'backup_location':
+                if type(value) is not str or not value.strip():
+                    raise ValueError('backup_location must be auto or an absolute folder')
+                from pathlib import Path
+                if value != 'auto' and not Path(value).is_absolute():
+                    raise ValueError('backup_location must be auto or an absolute folder')
+                held[key] = value
+            elif editor == 'boolean':
                 if type(value) not in (bool, int) or value not in (0, 1):
                     raise ValueError('%s must be a boolean' % key)
                 held[key] = bool(value)

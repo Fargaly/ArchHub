@@ -1,0 +1,2 @@
+PATCH APPLY-CHECK PASS; current main equals recorded base; frozen23paths match.
+FREE_BYTES=45381214208

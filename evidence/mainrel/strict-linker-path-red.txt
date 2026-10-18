@@ -1,0 +1,11 @@
+STAGED_PATH_COUNT=83
+error[E0010]: ACOMPILER REFUSED: compiler exited 101: error: linking with `link.exe` failed: exit code: 1104
+  |
+  = note: "link.exe" "/NOLOGO" "C:\\Users\\fargaly\\AppData\\Local\\Temp\\claude\\C--Users-fargaly-00-ARCHUB\\71743447-6dd5-4050-bc4f-d228f7a1d91e\\scratchpad\\mainrel\\evidence\\mainrel\\court-state\\compiler-target\\release\\build\\tree-sitter-language-cc4285bdc57442ca\\rustc4Jawcw\\symbols.o" "<2 object files omitted>" "<sysroot>\\lib\\rustlib\\x86_64-pc-windows-msvc\\lib/{libstd-*,libpanic_unwind-*,libcfg_if-*,libwindows_link-*,librustc_demangle-*,libstd_detect-*,libhashbrown-*,librustc_std_workspace_alloc-*,libunwind-*,librustc_std_workspace_core-*,liballoc-*,libcore-*,libcompiler_builtins-*}.rlib" "kernel32.lib" "kernel32.lib" "kernel32.lib" "ntdll.lib" "userenv.lib" "ws2_32.lib" "dbghelp.lib" "/defaultlib:msvcrt" "/NXCOMPAT" "/OUT:C:\\Users\\fargaly\\AppData\\Local\\Temp\\claude\\C--Users-fargaly-00-ARCHUB\\71743447-6dd5-4050-bc4f-d228f7a1d91e\\scratchpad\\mainrel\\evidence\\mainrel\\court-state\\compiler-target\\release\\build\\tree-sitter-language-cc4285bdc57442ca\\build_script_build-cc4285bdc57442ca.exe" "/OPT:REF,NOICF" "/DEBUG" "/PDBALTPATH:%_PDB%" "/NATVIS:<sysroot>\\lib\\rustlib\\etc\\intrinsic.natvis" "/NATVIS:<sysroot>\\lib\\rustlib\\etc\\liballoc.natvis" "/NATVIS:<sysroot>\\lib\\rustlib\\etc\\libcore.natvis" "/NATVIS:<sysroot>\\lib\\rustlib\\etc\\libstd.natvis"
+  = note: some arguments are omitted. use `--verbose` to show all linker arguments
+  = note: LINK : fatal error LNK1104: cannot open file 'C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\evidence\mainrel\court-state\compiler-target\release\build\tree-sitter-language-cc4285bdc57442ca\build_script_build-cc4285bdc57442ca.exe'
+          
+
+error: could not compile `tree-sitter-language` (build script) due to 1 previous error
+ help: repair the compiler/input contract before retrying
+STRICT_SECONDS=11.460756799999999

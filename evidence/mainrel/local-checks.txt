@@ -1,0 +1,824 @@
+FIXTURE BACKUPS REMOVED: 5; source journals and CURRENT kept
+Selecting closed journals
+Hashing closed journal: archhub-test.universal.sqlite3
+Copying archhub-test.universal.sqlite3
+Copying archhub-test.universal.sqlite3: 437256192 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 901775360 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 1361051648 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 1515192320 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 1600126976 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 1676673024 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 1716518912 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 1765801984 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 1805647872 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 1835008000 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 1854930944 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 1870659584 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 1887436800 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 1903165440 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 1919942656 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 1941962752 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 1968177152 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 1977614336 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 1984954368 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 2001731584 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 2023751680 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 2033188864 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 2107637760 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 2181038080 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 2222981120 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 2253389824 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 2321547264 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 2692743168 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 2872049664 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 2981101568 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3005218816 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3007315968 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3334471680 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3356491776 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3390046208 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3425697792 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3431989248 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3434086400 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3441426432 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3446669312 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3456106496 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3465543680 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3478126592 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3492806656 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3504340992 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3514826752 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3526361088 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3553624064 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3559915520 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3582984192 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3622830080 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3632267264 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3680501760 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3685744640 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3690987520 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3702521856 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3709861888 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3719299072 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3724541952 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3729784832 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3744464896 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3751804928 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3760193536 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3766484992 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3776970752 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3796893696 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3805282304 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3817865216 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3830448128 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3843031040 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3848273920 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3852468224 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3859808256 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3866099712 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3875536896 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3883925504 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3895459840 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3904897024 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3916431360 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3929014272 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3936354304 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3944742912 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3957325824 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3966763008 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3973054464 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3978297344 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3986685952 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 3999268864 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4012900352 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4025483264 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4048551936 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4055891968 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4062183424 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4070572032 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4073717760 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4077912064 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4084203520 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4096786432 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4109369344 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4128243712 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4151312384 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4275044352 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4325376000 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4342153216 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4361027584 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4394582016 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4415553536 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4430233600 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4445962240 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4466933760 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4508876800 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4528799744 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4647288832 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4664066048 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4683988992 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4793040896 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4820303872 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4837081088 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4859101184 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4897898496 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4913627136 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 4941938688 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5021630464 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5048893440 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5069864960 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5148508160 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5169479680 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5190451200 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5286920192 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5419040768 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5457838080 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5478809600 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5510266880 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5523898368 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5548015616 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5642387456 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5660213248 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5679087616 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5691670528 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5714739200 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5759827968 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5784993792 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5801771008 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5810159616 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5833228288 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5887754240 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5902434304 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5920260096 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5934940160 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5943328768 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5958008832 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 5973737472 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6039797760 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6073352192 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6079643648 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6086983680 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6095372288 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6098518016 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6105858048 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6111100928 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6129975296 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6164578304 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6182404096 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6197084160 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6239027200 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6255804416 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6265241600 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6286213120 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6314524672 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6347030528 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6386876416 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6430916608 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6470762496 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6588203008 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6600785920 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6619660288 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6660554752 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6695157760 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6747586560 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6771703808 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6800015360 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6819938304 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6845104128 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6873415680 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6923747328 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6942621696 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6974078976 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 6998196224 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7029653504 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7054819328 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7096762368 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7135559680 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7149191168 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7165968384 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7203717120 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7240417280 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7260340224 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7381975040 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7412383744 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7439646720 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7481589760 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7506755584 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7536115712 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7578058752 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7637827584 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7680819200 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7701790720 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7731150848 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7774142464 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7863271424 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7903117312 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7928283136 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 7991197696 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8037335040 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8064598016 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8083472384 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8088715264 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8112832512 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8143241216 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8161067008 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8176795648 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8198815744 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8208252928 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8220835840 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8233418752 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8256487424 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8271167488 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8282701824 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8293187584 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8302624768 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8312061952 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8357150720 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8377073664 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8406433792 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8432648192 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8450473984 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8472494080 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8527020032 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8589934592 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8600420352 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8609857536 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8623489024 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8638169088 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8649703424 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8675917824 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8687452160 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8703180800 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8726249472 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8753512448 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8793358336 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8840544256 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8867807232 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8888778752 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8916041728 / 8937168896 bytes
+Copying archhub-test.universal.sqlite3: 8933867520 / 8937168896 bytes
+Verifying installer backup: archhub-test.universal.sqlite3
+Hashing closed journal: authority.sqlite3
+Copying authority.sqlite3
+Verifying installer backup: authority.sqlite3
+Hashing closed journal: archhub-test.universal.sqlite3
+Copying archhub-test.universal.sqlite3
+Verifying installer backup: archhub-test.universal.sqlite3
+Hashing closed journal: node-native-wip.json.gz.universal.sqlite3
+Copying node-native-wip.json.gz.universal.sqlite3
+Verifying installer backup: node-native-wip.json.gz.universal.sqlite3
+Hashing closed journal: authority.sqlite3
+Copying authority.sqlite3
+Verifying installer backup: authority.sqlite3
+Complete: installer journal backup verified
+  migration  : Updating your data — Reading indexed journal head
+  migration  : candidates C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\evidence\mainrel\court-state\big-profile\ArchHub\unified-authority\generations\3da42d25-f8df-4c16-9e1a-580e546ab5ad\authority.sqlite3 rev=2 time=100.000000; C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\evidence\mainrel\court-state\big-profile\ArchHub\authority.sqlite3 rev=2 time=100.000000; C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\evidence\mainrel\court-state\big-profile\ArchHub\archhub-test.universal.sqlite3 rev=2 time=100.000000; C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\evidence\mainrel\court-state\big-profile\ArchHub\node-native-wip.json.gz.universal.sqlite3 rev=2 time=100.000000; C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\evidence\mainrel\court-state\big-profile\ArchHub-Test\archhub-test.universal.sqlite3 rev=5 time=500.000000; chosen C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\evidence\mainrel\court-state\big-profile\ArchHub-Test\archhub-test.universal.sqlite3 (work cells, committed head, existing selection)
+  migration  : Updating your data — Existing journal adopted
+  adoption   : source head=5 revisions=6 receipts=verified:0; selected head=5 revisions=6 receipts=verified:0; verified rollback=C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\evidence\mainrel\court-state\big-profile\ArchHub\backups\journal-f2486c29a48996ac4f641f82fdc7f9c0cbc4c64daf231f81e51c8a641fb1fc85\mainrel-big-bc671cf747224cfa9d93d56378c25d31-closed
+{
+  "fixture_bytes": 8937168896,
+  "fixture_GiB": 8.323387145996094,
+  "semantic_fixture": "small valid graph plus SQLite padding; not a six-million-Cell court",
+  "candidates": 5,
+  "backup_seconds": 227.70879669999704,
+  "migration_seconds": 4.34308580000652,
+  "migration": {
+    "state": "adopted",
+    "backup_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\claude\\C--Users-fargaly-00-ARCHUB\\71743447-6dd5-4050-bc4f-d228f7a1d91e\\scratchpad\\mainrel\\evidence\\mainrel\\court-state\\big-profile\\ArchHub\\backups\\journal-f2486c29a48996ac4f641f82fdc7f9c0cbc4c64daf231f81e51c8a641fb1fc85\\mainrel-big-bc671cf747224cfa9d93d56378c25d31-closed",
+    "database_path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\claude\\C--Users-fargaly-00-ARCHUB\\71743447-6dd5-4050-bc4f-d228f7a1d91e\\scratchpad\\mainrel\\evidence\\mainrel\\court-state\\big-profile\\ArchHub-Test\\archhub-test.universal.sqlite3"
+  },
+  "backup_directories": 5,
+  "free_before_bytes": 37949050880,
+  "free_after_bytes": 28692336640,
+  "startup_within_30_seconds": true
+}
+{"ok":true,"action":"compile","files":15,"output_bytes":1748734,"manifest_sha256":"effef20f3782ecff60470eac561b9cd88a468b070ac04c490f2bcc5b402f4324","babel_version":"7.29.0"}
+✔ Everyone sends its broadcast marker and surfaces actual mixed delivery outcomes (10.6342ms)
+✔ social enrollment confirms exact account without publishing credentials (0.5411ms)
+✔ social credential save serializes writes and never echoes provider errors (0.87ms)
+✔ social enrollment rejects a response for a different account (0.2701ms)
+✔ native repair creation stores exact graph material and bounded runtime parameters (1.1796ms)
+✔ native approval binds exact worker and digest; expiry and missing approval refuse before dispatch (2.1908ms)
+✔ native response loss reads status once without replay and stop keeps exact operation identity (0.9504ms)
+✔ saved native artifact download verifies mode, bytes and digest without execution (1.0055ms)
+✔ concurrent native stop reaches transport and a delayed stop reply cannot replace settled status (1.0522ms)
+✔ native release requires exact confirmed cancellation, never stopped or uncertain state (3.7648ms)
+✔ native failed result closes only its exact settled operation (2.9599ms)
+✔ native failed close preserves exact request across lost response and explicit reconciliation (1.1265ms)
+✔ native pending close rejects foreign reply owner after idle status loses mode (1.3217ms)
+✔ expired project review refresh retains operation and worker, requires fresh approval and never executes (0.9508ms)
+✔ refresh refuses unexpired, approved or changed selectors before dispatch (1.2138ms)
+✔ lost refresh response performs only a status read and cannot replay from uncertainty (0.684ms)
+✔ refresh rejects foreign worker, material or refresh provenance in a successful reply (2.369ms)
+✔ local delivery abandonment submits only the exact selected attempt and creates no execution receipt or artifact (1.1815ms)
+✔ abandonment refuses a changed or ambiguous unreceived selection before any POST (2.1251ms)
+✔ lost abandonment response triggers one GET and never replays the action or runs a provider (0.6236ms)
+✔ foreign or mismatched abandonment resolution replies cannot be accepted as closure (3.5356ms)
+✔ an abandonment reply from the previous canvas scope is rejected without replay (0.6209ms)
+✔ local recovery selects its saved decision and prepares fresh approval without execution (0.7306ms)
+✔ local recovery rejects another owner or decision and never treats preparation as approval (1.6334ms)
+✔ lost local release reply survives owner and adapter restart through exact durable selectors (0.9045ms)
+✔ a status read started before an action cannot replace that action input (0.4041ms)
+✔ saved review recovery binds the exact artifact and retains one request across response loss (1.1973ms)
+✔ revision editor reads selected graph inputs without replacing operation metadata or persisting source (0.5714ms)
+✔ same-Work revision submits structured values once and checks the exact revision receipt (0.561ms)
+✔ historical revision receipt retains the current digest and malformed current identity refuses (2.2433ms)
+✔ revision response loss reads status without replaying the mutation or executing a model (0.478ms)
+✔ revision unlock requires exact completed no-write refusal, never a staged or mismatched response (0.9996ms)
+✔ revision local preflight refusal permits correcting fields without issuing a request (0.2747ms)
+✔ local closed-result revision preserves exact decision and uses fresh approval semantics from active or idle (0.5706ms)
+✔ local revision rejects foreign decisions and response loss reads once without replay (1.2929ms)
+✔ read draft returns exact saved local revision and refuses another decision (0.5813ms)
+✔ pending revision blocks preparation and release before writes (0.4436ms)
+✔ Work creation uses refreshed conversation scope and checks its returned link (0.5684ms)
+✔ Work creation never posts after failed refresh and does not imply partial creation (0.2784ms)
+✔ Work creation with wrong returned conversation remains uncertain without retry (0.2433ms)
+✔ editor: message receipt cannot clear a separate repair draft; close preserves it (1.3581ms)
+✔ editor: editing does not post a protection write for every keystroke (0.3449ms)
+✔ actual Studio POST transports only the explicit completed page refusal for adapter reconciliation (2.4475ms)
+✔ editor: unrelated graph advance before every page request preserves exact page transitions without retries (0.3676ms)
+✔ editor: old confirmed conflicts and generic or foreign failures never retry (0.7057ms)
+✔ editor: missing correlation, stale actual revision and foreign owner or view refuse without replay (2.1117ms)
+✔ editor: late message receipt refuses to clear a newer draft (0.6019ms)
+✔ editor: protection failure prevents physical message sending and preserves pending identity (1.4979ms)
+✔ editor: an open editor alone never loads the page; a send before the page is read is refused and posts nothing (0.4722ms)
+✔ editor: navigation does not close a page through a different scope (0.3786ms)
+✔ editor: retry re-admits the same page after sibling removal without losing its draft (0.6236ms)
+✔ editor: retried staging is invalidated by newer local text (0.6615ms)
+✔ storage review: actual owner flag and reviewed metadata gate release (1.193ms)
+✔ storage review: navigation invalidates prior release metadata (0.2711ms)
+✔ storage review: rejects private pending references and invalid pagination (0.5462ms)
+✔ storage archive: requires the exact clear review and retains graph/content positions (0.568ms)
+✔ storage tracking: explicit resolution uses reviewed activity and preserves protected editors (0.3813ms)
+✔ existing: an unchanged page at a newer graph revision keeps its messages and carries the graph's assignments (0.4838ms)
+✔ authority: an unchanged page at a newer graph revision keeps its messages and carries the graph's assignments (1.5604ms)
+✔ existing: participant activity changes refresh without replacing message history (0.3256ms)
+✔ existing: a page's bounded activity read is carried; an unbounded one is refused (0.839ms)
+✔ authority: a page's bounded activity read is carried; an unbounded one is refused (1.7729ms)
+✔ existing: activity text is bounded in code points, not UTF-16 units (0.6242ms)
+✔ authority: activity text is bounded in code points, not UTF-16 units (0.6024ms)
+✔ existing: ordinary refresh uses visible cursor at the same graph revision without republishing unchanged (0.9008ms)
+✔ existing: older navigation replaces one bounded page and polls that opaque position (0.9058ms)
+✔ existing: explicit navigation wins over pending latest polls and coalesces only its own page (0.5589ms)
+✔ existing: Latest supersedes a pending older read without retaining conversation content in storage (0.5505ms)
+✔ existing: Latest recovers refused older tokens and rejects wrong-page or oversized data (1.2416ms)
+✔ existing: ordinary unchanged requires exact cursor and page and clears refused content (0.8017ms)
+✔ existing: canvas invalidates older authority but keeps a projection while catching up (0.3999ms)
+✔ existing: removing and restoring a Workshop ignores a previously pending page (0.2536ms)
+✔ existing: legacy transcripts keep graph polling without offering opaque paging (0.4703ms)
+✔ authority: ordinary refresh uses visible cursor at the same graph revision without republishing unchanged (0.4317ms)
+✔ authority: older navigation replaces one bounded page and polls that opaque position (0.4281ms)
+✔ authority: explicit navigation wins over pending latest polls and coalesces only its own page (0.2678ms)
+✔ authority: Latest supersedes a pending older read without retaining conversation content in storage (0.3071ms)
+✔ authority: Latest recovers refused older tokens and rejects wrong-page or oversized data (1.6297ms)
+✔ authority: ordinary unchanged requires exact cursor and page and clears refused content (0.4781ms)
+✔ authority: canvas invalidates older authority but keeps a projection while catching up (0.5252ms)
+✔ authority: removing and restoring a Workshop ignores a previously pending page (0.2168ms)
+✔ authority: legacy transcripts keep graph polling without offering opaque paging (0.4036ms)
+✔ WorkshopConversation visibility and 2.5 second poll keep the selected page live and dispose cleanly (28.8743ms)
+✔ WorkshopConversation opens a newly shown Workshop once, then polls with refresh (3.1656ms)
+✔ WorkshopConversation message refresh settles before pending native status without overlapping polls (5.1141ms)
+✔ authorized descriptors and exact guarded legacy message body (0.6103ms)
+✔ no fake join, execution or sender override (0.3058ms)
+✔ server refusal of send capability and detached recipient are respected (0.5478ms)
+✔ stale and foreign transcript responses are refused (0.4039ms)
+✔ navigation ignores the old outstanding read (0.1481ms)
+✔ same-scope reads coalesce and unchanged requires an exact prior stamp (0.4909ms)
+✔ lost reply keeps digest-only pending identity across adapter reload (0.7044ms)
+✔ simultaneous same message invokes one POST (0.3814ms)
+✔ accepted response survives navigation and storage cleanup errors (0.3175ms)
+✔ unrecognized success does not clear pending identity (0.2226ms)
+✔ post acceptance projection callback or refresh failure cannot request resend (0.3539ms)
+✔ lost execution response is read back without a second execution request (0.4564ms)
+✔ lost reconciliation response reads the recovered receipt without executing again (0.3421ms)
+✔ older native status read cannot replace a newer result (0.1891ms)
+✔ lost release survives adapter reload and replays the same identity (0.6386ms)
+✔ accepted release remains recoverable if storage cleanup fails (0.3141ms)
+✔ slow panel catalogue reads coalesce and publish related rows together (4.2267ms)
+✔ invalid host rows preserve prior data and a failed subscriber cannot reject completion (5.5724ms)
+✔ catalog pages coalesce separately and never replace the selected child transcript (3.7422ms)
+✔ catalog navigation and scope removal invalidate pending pages (0.5006ms)
+✔ catalog rejects foreign scopes, oversized pages and incomplete participant authority (0.8241ms)
+✔ lost conversation creation survives reload and reuses identity before refreshing the real canvas (1.7624ms)
+✔ creation uses the catalog while a child remains selected and coalesces the same request (7.3241ms)
+✔ accepted creation keeps success when projection fails and an unverified receipt retains retry identity (1.4608ms)
+✔ navigation during creation canvas refresh cannot overwrite the new workspace (5.3058ms)
+✔ catalog creation permission and UTF-8 title budget reject before submission (1.0817ms)
+✔ removing and restoring an anchor or changing authenticated view cannot revive pending catalog authority (1.3175ms)
+✔ local social removal checks exact identity and never claims provider revocation (0.8757ms)
+✔ a refused canvas connection edit is a rejected promise, never a synchronous throw that escapes .catch() (0.632ms)
+✖ saved Home session exposes provider refusal and retains its request identity (9.8419ms)
+✖ Home never settles an incomplete model reply or unbound native delivery (1.7356ms)
+✖ Home model submission makes one existing Workshop request with real text (1.5382ms)
+✖ native selection sends exact environment and existing session without a model (2.8454ms)
+✖ concurrent submissions share one admitted request (10.2163ms)
+✖ lost receipt retains identity until explicit retry; no automatic second request (3.6615ms)
+✖ mismatched receipt stays unconfirmed and retains retry identity (1.7529ms)
+✖ truthy ok and nonstring title receipts are refused (1.9887ms)
+✖ authorization changes during request prohibit opening its saved result (5.0857ms)
+✔ Home busy guard prevents double submit and unmounted Home never opens result (4.0728ms)
+✔ Home refuses a saved result after its authentication changed (0.9443ms)
+✔ Home form and Enter invoke the same submission handler (0.5079ms)
+✔ Studio does not open a stale Home result if authentication changes during scope navigation (1.2526ms)
+✔ Studio refuses unmounted Home continuation during topology refresh (4.9406ms)
+✔ Studio current continuation opens the existing Workspace after both reads (2.2693ms)
+✔ New chat maps application identity to the admitted canvas tab (1.6151ms)
+LAZYONREL_CATALOGUE_VISIBILITY {"raw_ids":["tr_manual","tr_schedule","tr_file","tr_host","tr_approval","tr_webhook","n_number","n_text","n_list","n_yesno","n_file","n_colour","n_parameter","n_slider","n_run","h_read","r_xl_range","b_all_category","b_get_parameter","b_set_parameter","b_create_sheets","b_renumber","h_revit","h_autocad","h_max","h_rhino","h_blender","h_excel","h_word","h_ppt","h_outlook","h_notion","h_dropbox","h_speckle","s_filter","s_map","s_sort","s_group","s_unique","s_pluck","s_count","s_slice","s_flatten","s_join","t_set_field","t_move_handoff","t_rotate_handoff","t_scale_handoff","t_setp","t_move","t_rot","t_scale","t_group","t_sort","l_if_handoff","l_foreach","l_switch_handoff","l_loop_handoff","l_merge_handoff","l_if","l_switch","l_loop","l_merge","d_add_text","d_dimensions","d_tag_rooms","d_place_tags","d_place_sheet","d_schedule","d_legend","f_write_table","text_ops","math_expression","math_series","ai_master","ai_recall","i_think","i_match","i_embed","i_vis","g_remember","g_dryrun_diff","g_host_health","g_evidence_attach","g_approval_gate","g_rule_check","w_watch","o_result","o_skill_handoff","o_pdf_handoff","o_email_handoff","o_notify_handoff","o_speckle_send","o_skill","o_email","o_notify","o_pdf","o_spk","o_term","n_note","n_reroute","sk_skill","archhub_enforce","f_type","f_cat","f_level","f_param","f_pred","a_text","a_dims","a_rooms","a_tags","c_sched","c_legend","c_sheet","tool_studio","tool_workshop","tool_brain","tool_baboom","tool_connectors","tool_cloud","w_workshop","w_agent","w_review","r_walls","r_doors","r_windows","r_sheets","r_views","r_levels","r_selection","r_warnings","r_xl_sheets","r_doc_paras","r_ppt_slides"],"visible_ids":["tr_manual","tr_schedule","tr_file","tr_host","tr_approval","tr_webhook","n_number","n_text","n_list","n_yesno","n_file","n_colour","n_parameter","n_slider","n_run","h_read","r_xl_range","b_all_category","b_get_parameter","b_set_parameter","b_create_sheets","b_renumber","s_filter","s_map","s_sort","s_group","s_unique","s_pluck","s_count","s_slice","s_flatten","s_join","t_set_field","t_move_handoff","t_rotate_handoff","t_scale_handoff","l_if_handoff","l_foreach","l_switch_handoff","l_loop_handoff","l_merge_handoff","d_add_text","d_dimensions","d_tag_rooms","d_place_tags","d_place_sheet","d_schedule","d_legend","f_write_table","text_ops","math_expression","math_series","ai_master","ai_recall","g_remember","g_dryrun_diff","g_host_health","g_evidence_attach","g_approval_gate","g_rule_check","w_watch","o_result","o_skill_handoff","o_pdf_handoff","o_email_handoff","o_notify_handoff","o_speckle_send","n_note","n_reroute","sk_skill","archhub_enforce"],"excluded":[{"id":"h_revit","reason":"hidden:true"},{"id":"h_autocad","reason":"hidden:true"},{"id":"h_max","reason":"hidden:true"},{"id":"h_rhino","reason":"hidden:true"},{"id":"h_blender","reason":"hidden:true"},{"id":"h_excel","reason":"hidden:true"},{"id":"h_word","reason":"hidden:true"},{"id":"h_ppt","reason":"hidden:true"},{"id":"h_outlook","reason":"hidden:true"},{"id":"h_notion","reason":"hidden:true"},{"id":"h_dropbox","reason":"hidden:true"},{"id":"h_speckle","reason":"hidden:true"},{"id":"t_setp","reason":"hidden:true"},{"id":"t_move","reason":"hidden:true"},{"id":"t_rot","reason":"hidden:true"},{"id":"t_scale","reason":"hidden:true"},{"id":"t_group","reason":"hidden:true"},{"id":"t_sort","reason":"hidden:true"},{"id":"l_if","reason":"hidden:true"},{"id":"l_switch","reason":"hidden:true"},{"id":"l_loop","reason":"hidden:true"},{"id":"l_merge","reason":"hidden:true"},{"id":"i_think","reason":"hidden:true"},{"id":"i_match","reason":"hidden:true"},{"id":"i_embed","reason":"hidden:true"},{"id":"i_vis","reason":"hidden:true"},{"id":"o_skill","reason":"hidden:true"},{"id":"o_email","reason":"hidden:true"},{"id":"o_notify","reason":"hidden:true"},{"id":"o_pdf","reason":"hidden:true"},{"id":"o_spk","reason":"hidden:true"},{"id":"o_term","reason":"hidden:true"},{"id":"f_type","reason":"hidden:true"},{"id":"f_cat","reason":"hidden:true"},{"id":"f_level","reason":"hidden:true"},{"id":"f_param","reason":"hidden:true"},{"id":"f_pred","reason":"hidden:true"},{"id":"a_text","reason":"hidden:true"},{"id":"a_dims","reason":"hidden:true"},{"id":"a_rooms","reason":"hidden:true"},{"id":"a_tags","reason":"hidden:true"},{"id":"c_sched","reason":"hidden:true"},{"id":"c_legend","reason":"hidden:true"},{"id":"c_sheet","reason":"hidden:true"},{"id":"tool_studio","reason":"hidden:true"},{"id":"tool_workshop","reason":"hidden:true"},{"id":"tool_brain","reason":"hidden:true"},{"id":"tool_baboom","reason":"hidden:true"},{"id":"tool_connectors","reason":"hidden:true"},{"id":"tool_cloud","reason":"hidden:true"},{"id":"w_workshop","reason":"hidden:true"},{"id":"w_agent","reason":"hidden:true"},{"id":"w_review","reason":"hidden:true"},{"id":"r_walls","reason":"hidden:true"},{"id":"r_doors","reason":"hidden:true"},{"id":"r_windows","reason":"hidden:true"},{"id":"r_sheets","reason":"hidden:true"},{"id":"r_views","reason":"hidden:true"},{"id":"r_levels","reason":"hidden:true"},{"id":"r_selection","reason":"hidden:true"},{"id":"r_warnings","reason":"hidden:true"},{"id":"r_xl_sheets","reason":"hidden:true"},{"id":"r_doc_paras","reason":"hidden:true"},{"id":"r_ppt_slides","reason":"hidden:true"}]}
+✖ Home renders and its Nodes control responds before the first catalogue request finishes (9.9561ms)
+✖ first Workspace opens the saved original canvas once after Home becomes interactive (6.4828ms)
+✖ first Workspace refused projection remains a visible failure and Retry reads again (5.4062ms)
+✖ first Workspace missing projection remains a visible failure and Retry reads again (5.3158ms)
+✖ Settings waits for original canvas controls before mounting its existing appearance and action panels (6.3296ms)
+✔ Home graph creation, node placement, Run and model selection wait for the original shared canvas read (3.2298ms)
+✖ Home node overlay preserves refusal, Retry, complete catalogue rows, and catalogue refresh (6.3673ms)
+✖ main Ctrl+K catalogue and Skills each load only on their first open (6.5651ms)
+✖ first Workspace open loads verified categories and wire metadata without changing declared socket types (6.0035ms)
+✖ RELGATEFIX cold Home mounts the shared rail without loading Workshop (6.856ms)
+ℹ tests 140
+ℹ suites 0
+ℹ pass 122
+ℹ fail 18
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 15947.9155
+
+✖ failing tests:
+
+test at tests_js\studio_home_session.test.cjs:30:1
+✖ saved Home session exposes provider refusal and retains its request identity (9.8419ms)
+  Error: Wait for the application connection before starting a session.
+      at fail (evalmachine.<anonymous>:4:32)
+      at Object.startSession (evalmachine.<anonymous>:1002:11)
+      at TestContext.<anonymous> (C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_home_session.test.cjs:32:28)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1106:25)
+      at Test.start (node:internal/test_runner/test:1003:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:358:17)
+
+test at tests_js\studio_home_session.test.cjs:39:1
+✖ Home never settles an incomplete model reply or unbound native delivery (1.7356ms)
+  Error: Wait for the application connection before starting a session.
+      at fail (evalmachine.<anonymous>:4:32)
+      at Object.startSession (evalmachine.<anonymous>:1002:11)
+      at TestContext.<anonymous> (C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_home_session.test.cjs:43:30)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1106:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+      at Test.postRun (node:internal/test_runner/test:1235:19)
+      at Test.run (node:internal/test_runner/test:1163:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3)
+
+test at tests_js\studio_home_session.test.cjs:52:1
+✖ Home model submission makes one existing Workshop request with real text (1.5382ms)
+  Error: Wait for the application connection before starting a session.
+      at fail (evalmachine.<anonymous>:4:32)
+      at Object.startSession (evalmachine.<anonymous>:1002:11)
+      at TestContext.<anonymous> (C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_home_session.test.cjs:53:46)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1106:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+      at Test.postRun (node:internal/test_runner/test:1235:19)
+      at Test.run (node:internal/test_runner/test:1163:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7)
+
+test at tests_js\studio_home_session.test.cjs:58:1
+✖ native selection sends exact environment and existing session without a model (2.8454ms)
+  Error: Wait for the application connection before starting a session.
+      at fail (evalmachine.<anonymous>:4:32)
+      at Object.startSession (evalmachine.<anonymous>:1002:11)
+      at TestContext.<anonymous> (C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_home_session.test.cjs:59:33)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1106:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+      at Test.postRun (node:internal/test_runner/test:1235:19)
+      at Test.run (node:internal/test_runner/test:1163:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7)
+
+test at tests_js\studio_home_session.test.cjs:63:1
+✖ concurrent submissions share one admitted request (10.2163ms)
+  Error: Wait for the application connection before starting a session.
+      at fail (evalmachine.<anonymous>:4:32)
+      at Object.startSession (evalmachine.<anonymous>:1002:11)
+      at TestContext.<anonymous> (C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_home_session.test.cjs:65:17)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1106:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+      at Test.postRun (node:internal/test_runner/test:1235:19)
+      at Test.run (node:internal/test_runner/test:1163:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7)
+
+test at tests_js\studio_home_session.test.cjs:68:1
+✖ lost receipt retains identity until explicit retry; no automatic second request (3.6615ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /connection lost/. Input:
+  
+  'Error: Wait for the application connection before starting a session.'
+  
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async TestContext.<anonymous> (C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_home_session.test.cjs:70:3)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: Wait for the application connection before starting a session.
+        at fail (evalmachine.<anonymous>:4:32)
+        at Object.startSession (evalmachine.<anonymous>:1002:11)
+        at TestContext.<anonymous> (C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_home_session.test.cjs:70:30)
+        at Test.runInAsyncScope (node:async_hooks:214:14)
+        at Test.run (node:internal/test_runner/test:1106:25)
+        at Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+        at Test.postRun (node:internal/test_runner/test:1235:19)
+        at Test.run (node:internal/test_runner/test:1163:12)
+        at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:788:7),
+    expected: /connection lost/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at tests_js\studio_home_session.test.cjs:74:1
+✖ mismatched receipt stays unconfirmed and retains retry identity (1.7529ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /unconfirmed/. Input:
+  
+  'Error: Wait for the application connection before starting a session.'
+  
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async TestContext.<anonymous> (C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_home_session.test.cjs:76:3)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: Wait for the application connection before starting a session.
+        at fail (evalmachine.<anonymous>:4:32)
+        at Object.startSession (evalmachine.<anonymous>:1002:11)
+        at TestContext.<anonymous> (C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_home_session.test.cjs:76:30)
+        at Test.runInAsyncScope (node:async_hooks:214:14)
+        at Test.run (node:internal/test_runner/test:1106:25)
+        at Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+        at Test.postRun (node:internal/test_runner/test:1235:19)
+        at Test.run (node:internal/test_runner/test:1163:12)
+        at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:788:7),
+    expected: /unconfirmed/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at tests_js\studio_home_session.test.cjs:79:1
+✖ truthy ok and nonstring title receipts are refused (1.9887ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /unconfirmed/. Input:
+  
+  'Error: Wait for the application connection before starting a session.'
+  
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async TestContext.<anonymous> (C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_home_session.test.cjs:82:5)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: Wait for the application connection before starting a session.
+        at fail (evalmachine.<anonymous>:4:32)
+        at Object.startSession (evalmachine.<anonymous>:1002:11)
+        at TestContext.<anonymous> (C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_home_session.test.cjs:82:32)
+        at Test.runInAsyncScope (node:async_hooks:214:14)
+        at Test.run (node:internal/test_runner/test:1106:25)
+        at Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+        at Test.postRun (node:internal/test_runner/test:1235:19)
+        at Test.run (node:internal/test_runner/test:1163:12)
+        at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:788:7),
+    expected: /unconfirmed/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at tests_js\studio_home_session.test.cjs:85:1
+✖ authorization changes during request prohibit opening its saved result (5.0857ms)
+  Error: Wait for the application connection before starting a session.
+      at fail (evalmachine.<anonymous>:4:32)
+      at Object.startSession (evalmachine.<anonymous>:1002:11)
+      at TestContext.<anonymous> (C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_home_session.test.cjs:86:73)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1106:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+      at Test.postRun (node:internal/test_runner/test:1235:19)
+      at Test.run (node:internal/test_runner/test:1163:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7)
+
+test at tests_js\studio_lazyboot_home.test.cjs:174:1
+✖ Home renders and its Nodes control responds before the first catalogue request finishes (9.9561ms)
+  Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'jsdom' imported from C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_lazyboot_home.test.cjs
+      at Object.getPackageJSONURL (node:internal/modules/package_json_reader:316:9)
+      at packageResolve (node:internal/modules/esm/resolve:768:81)
+      at moduleResolve (node:internal/modules/esm/resolve:858:18)
+      at defaultResolve (node:internal/modules/esm/resolve:990:11)
+      at #cachedDefaultResolve (node:internal/modules/esm/loader:718:20)
+      at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:735:38)
+      at ModuleLoader.resolveSync (node:internal/modules/esm/loader:764:52)
+      at #resolve (node:internal/modules/esm/loader:700:17)
+      at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:620:35)
+      at onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:649:32) {
+    code: 'ERR_MODULE_NOT_FOUND'
+  }
+
+test at tests_js\studio_lazyboot_home.test.cjs:217:1
+✖ first Workspace opens the saved original canvas once after Home becomes interactive (6.4828ms)
+  Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'jsdom' imported from C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_lazyboot_home.test.cjs
+      at Object.getPackageJSONURL (node:internal/modules/package_json_reader:316:9)
+      at packageResolve (node:internal/modules/esm/resolve:768:81)
+      at moduleResolve (node:internal/modules/esm/resolve:858:18)
+      at defaultResolve (node:internal/modules/esm/resolve:990:11)
+      at #cachedDefaultResolve (node:internal/modules/esm/loader:718:20)
+      at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:735:38)
+      at ModuleLoader.resolveSync (node:internal/modules/esm/loader:764:52)
+      at #resolve (node:internal/modules/esm/loader:700:17)
+      at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:620:35)
+      at onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:649:32) {
+    code: 'ERR_MODULE_NOT_FOUND'
+  }
+
+test at tests_js\studio_lazyboot_home.test.cjs:248:47
+✖ first Workspace refused projection remains a visible failure and Retry reads again (5.4062ms)
+  Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'jsdom' imported from C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_lazyboot_home.test.cjs
+      at Object.getPackageJSONURL (node:internal/modules/package_json_reader:316:9)
+      at packageResolve (node:internal/modules/esm/resolve:768:81)
+      at moduleResolve (node:internal/modules/esm/resolve:858:18)
+      at defaultResolve (node:internal/modules/esm/resolve:990:11)
+      at #cachedDefaultResolve (node:internal/modules/esm/loader:718:20)
+      at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:735:38)
+      at ModuleLoader.resolveSync (node:internal/modules/esm/loader:764:52)
+      at #resolve (node:internal/modules/esm/loader:700:17)
+      at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:620:35)
+      at onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:649:32) {
+    code: 'ERR_MODULE_NOT_FOUND'
+  }
+
+test at tests_js\studio_lazyboot_home.test.cjs:248:47
+✖ first Workspace missing projection remains a visible failure and Retry reads again (5.3158ms)
+  Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'jsdom' imported from C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_lazyboot_home.test.cjs
+      at Object.getPackageJSONURL (node:internal/modules/package_json_reader:316:9)
+      at packageResolve (node:internal/modules/esm/resolve:768:81)
+      at moduleResolve (node:internal/modules/esm/resolve:858:18)
+      at defaultResolve (node:internal/modules/esm/resolve:990:11)
+      at #cachedDefaultResolve (node:internal/modules/esm/loader:718:20)
+      at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:735:38)
+      at ModuleLoader.resolveSync (node:internal/modules/esm/loader:764:52)
+      at #resolve (node:internal/modules/esm/loader:700:17)
+      at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:620:35)
+      at onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:649:32) {
+    code: 'ERR_MODULE_NOT_FOUND'
+  }
+
+test at tests_js\studio_lazyboot_home.test.cjs:273:1
+✖ Settings waits for original canvas controls before mounting its existing appearance and action panels (6.3296ms)
+  Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'jsdom' imported from C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_lazyboot_home.test.cjs
+      at Object.getPackageJSONURL (node:internal/modules/package_json_reader:316:9)
+      at packageResolve (node:internal/modules/esm/resolve:768:81)
+      at moduleResolve (node:internal/modules/esm/resolve:858:18)
+      at defaultResolve (node:internal/modules/esm/resolve:990:11)
+      at #cachedDefaultResolve (node:internal/modules/esm/loader:718:20)
+      at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:735:38)
+      at ModuleLoader.resolveSync (node:internal/modules/esm/loader:764:52)
+      at #resolve (node:internal/modules/esm/loader:700:17)
+      at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:620:35)
+      at onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:649:32) {
+    code: 'ERR_MODULE_NOT_FOUND'
+  }
+
+test at tests_js\studio_lazyboot_home.test.cjs:314:1
+✖ Home node overlay preserves refusal, Retry, complete catalogue rows, and catalogue refresh (6.3673ms)
+  Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'jsdom' imported from C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_lazyboot_home.test.cjs
+      at Object.getPackageJSONURL (node:internal/modules/package_json_reader:316:9)
+      at packageResolve (node:internal/modules/esm/resolve:768:81)
+      at moduleResolve (node:internal/modules/esm/resolve:858:18)
+      at defaultResolve (node:internal/modules/esm/resolve:990:11)
+      at #cachedDefaultResolve (node:internal/modules/esm/loader:718:20)
+      at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:735:38)
+      at ModuleLoader.resolveSync (node:internal/modules/esm/loader:764:52)
+      at #resolve (node:internal/modules/esm/loader:700:17)
+      at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:620:35)
+      at onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:649:32) {
+    code: 'ERR_MODULE_NOT_FOUND'
+  }
+
+test at tests_js\studio_lazyboot_home.test.cjs:350:1
+✖ main Ctrl+K catalogue and Skills each load only on their first open (6.5651ms)
+  Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'jsdom' imported from C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_lazyboot_home.test.cjs
+      at Object.getPackageJSONURL (node:internal/modules/package_json_reader:316:9)
+      at packageResolve (node:internal/modules/esm/resolve:768:81)
+      at moduleResolve (node:internal/modules/esm/resolve:858:18)
+      at defaultResolve (node:internal/modules/esm/resolve:990:11)
+      at #cachedDefaultResolve (node:internal/modules/esm/loader:718:20)
+      at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:735:38)
+      at ModuleLoader.resolveSync (node:internal/modules/esm/loader:764:52)
+      at #resolve (node:internal/modules/esm/loader:700:17)
+      at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:620:35)
+      at onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:649:32) {
+    code: 'ERR_MODULE_NOT_FOUND'
+  }
+
+test at tests_js\studio_lazyboot_home.test.cjs:372:1
+✖ first Workspace open loads verified categories and wire metadata without changing declared socket types (6.0035ms)
+  Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'jsdom' imported from C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_lazyboot_home.test.cjs
+      at Object.getPackageJSONURL (node:internal/modules/package_json_reader:316:9)
+      at packageResolve (node:internal/modules/esm/resolve:768:81)
+      at moduleResolve (node:internal/modules/esm/resolve:858:18)
+      at defaultResolve (node:internal/modules/esm/resolve:990:11)
+      at #cachedDefaultResolve (node:internal/modules/esm/loader:718:20)
+      at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:735:38)
+      at ModuleLoader.resolveSync (node:internal/modules/esm/loader:764:52)
+      at #resolve (node:internal/modules/esm/loader:700:17)
+      at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:620:35)
+      at onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:649:32) {
+    code: 'ERR_MODULE_NOT_FOUND'
+  }
+
+test at tests_js\studio_lazyboot_home.test.cjs:399:2
+✖ RELGATEFIX cold Home mounts the shared rail without loading Workshop (6.856ms)
+  Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'jsdom' imported from C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\tests_js\studio_lazyboot_home.test.cjs
+      at Object.getPackageJSONURL (node:internal/modules/package_json_reader:316:9)
+      at packageResolve (node:internal/modules/esm/resolve:768:81)
+      at moduleResolve (node:internal/modules/esm/resolve:858:18)
+      at defaultResolve (node:internal/modules/esm/resolve:990:11)
+      at #cachedDefaultResolve (node:internal/modules/esm/loader:718:20)
+      at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:735:38)
+      at ModuleLoader.resolveSync (node:internal/modules/esm/loader:764:52)
+      at #resolve (node:internal/modules/esm/loader:700:17)
+      at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:620:35)
+      at onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:649:32) {
+    code: 'ERR_MODULE_NOT_FOUND'
+  }
+Inno Setup 6 Command-Line Compiler
+Copyright (C) 1997-2026 Jordan Russell. All rights reserved.
+Portions Copyright (C) 2000-2026 Martijn Laan. All rights reserved.
+Portions Copyright (C) 2001-2004 Alex Yackimoff. All rights reserved.
+https://www.innosetup.com
+
+Compiler engine version: Inno Setup 6.7.1
+Non-commercial use only
+
+Preprocessing
+   Reading file: C:\Program Files (x86)\Inno Setup 6\ISPPBuiltins.iss
+   Line 22: Including file: C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\installer\legacy_sweep.iss
+   Reading file: C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\installer\legacy_sweep.iss
+   Line 24 of legacy_sweep.iss: Including file: C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\installer\legacy_v1_files.iss
+   Reading file: C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\installer\legacy_v1_files.iss
+   Line 166 of legacy_sweep.iss: Including file: C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\installer\legacy_doc_files.iss
+   Reading file: C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\installer\legacy_doc_files.iss
+   Line 24: Including file: C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\installer\host_registrations.iss
+   Reading file: C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\installer\host_registrations.iss
+   Line 26: Including file: C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\installer\host_file_staging.iss
+   Reading file: C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\installer\host_file_staging.iss
+Parsing [Setup] section, line 7
+Parsing [Setup] section, line 8
+Parsing [Setup] section, line 9
+Parsing [Setup] section, line 10
+Parsing [Setup] section, line 11
+Parsing [Setup] section, line 12
+Parsing [Setup] section, line 13
+Reading file (WizardImageFile)
+Reading file (WizardSmallImageFile)
+Preparing Setup program executable
+   Verification successful
+   Updating icons (Setup.e32)
+   Updating version info (Setup.e32)
+Determining language code pages
+   Reading file: C:\Program Files (x86)\Inno Setup 6\Default.isl
+   Messages in script file
+Reading default messages from Default.isl
+Parsing [LangOptions], [Messages], and [CustomMessages] sections
+   Reading file: C:\Program Files (x86)\Inno Setup 6\Default.isl
+   Messages in script file
+Reading [Code] section
+Parsing [Files] section, line 15
+   Reading version info: C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\nodelang\application_recovery_files.py
+Parsing [Files] section, line 16
+   Reading version info: C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\nodelang\backup_retention.py
+Parsing [Files] section, line 17
+   Reading version info: C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\nodelang\conversation_trace_shapes.py
+Parsing [Files] section, line 18
+   Reading version info: C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\nodelang\assistant_registration.py
+Parsing [Files] section, line 19
+   Reading version info: C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\nodelang\client_mcp_installation.py
+Parsing [Files] section, line 20
+   Reading version info: C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\nodelang\native_workshop_profile.py
+Compiling [Code] section
+Creating setup files
+   Verification successful
+   Updating icons (Setup.exe)
+   Compressing: C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\nodelang\application_recovery_files.py
+   Compressing: C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\nodelang\backup_retention.py
+   Compressing: C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\nodelang\conversation_trace_shapes.py
+   Compressing: C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\nodelang\assistant_registration.py
+   Compressing: C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\nodelang\client_mcp_installation.py
+   Compressing: C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\nodelang\native_workshop_profile.py
+   Compressing Setup program executable
+   Updating version info (Setup.exe)
+   Updating manifest (Setup.exe)
+
+Warning: Line 359, Column 5: [Hint] Support function "FileCopy" has been renamed. Use "CopyFile" instead.
+
+Successful compile (2.360 sec). Resulting Setup program filename is:
+C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\evidence\mainrel\court-state\inno-code\MAINREL-code-only-NOT-A-RELEASE.exe
+MAINREL full production [Code] ISCC compilation PASS; fixture installer is never run.

@@ -1,0 +1,73 @@
+{
+  "name": "Real0400 main rollback rehearsal",
+  "on": {
+    "workflow_dispatch": {
+      "inputs": {
+        "base_tag": {
+          "description": "Private release tag containing the pinned0400 installer",
+          "required": true,
+          "type": "string"
+        },
+        "candidate_tag": {
+          "description": "Private release tag containing the clean built main installer",
+          "required": true,
+          "type": "string"
+        }
+      }
+    }
+  },
+  "permissions": {
+    "contents": "read"
+  },
+  "concurrency": {
+    "group": "rollback-rehearsal",
+    "cancel-in-progress": false
+  },
+  "jobs": {
+    "rehearse": {
+      "runs-on": "windows-latest",
+      "timeout-minutes": 360,
+      "defaults": {
+        "run": {
+          "shell": "pwsh"
+        }
+      },
+      "steps": [
+        {
+          "name": "Require the approved private rehearsal repository",
+          "run": "if ($env:GITHUB_REPOSITORY -ne 'Fargaly/archhub-rehearsal') { throw 'Wrong rehearsal repository.' }"
+        },
+        {
+          "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+          "with": {
+            "persist-credentials": false
+          }
+        },
+        {
+          "name": "Download and verify release assets; prepare native runner plan",
+          "env": {
+            "GH_TOKEN": "${{ github.token }}",
+            "BASE_TAG": "${{ inputs.base_tag }}",
+            "CANDIDATE_TAG": "${{ inputs.candidate_tag }}"
+          },
+          "run": "$ErrorActionPreference = 'Stop'\n& ./installer/rollback-rehearsal-ci/prepare-rehearsal.ps1 -BaseTag $env:BASE_TAG -CandidateTag $env:CANDIDATE_TAG"
+        },
+        {
+          "name": "Real0400 to main to0400; screenshots and journal readback",
+          "run": "$ErrorActionPreference = 'Stop'\n(Get-Process -Id $PID).PriorityClass = 'BelowNormal'\nforeach ($name in @('GH_TOKEN','GITHUB_TOKEN','ACTIONS_RUNTIME_TOKEN','ACTIONS_ID_TOKEN_REQUEST_TOKEN')) {\n  [Environment]::SetEnvironmentVariable($name,$null,'Process')\n}\n& ./installer/rollback-rehearsal.ps1 -Guest -PlanPath C:\\MainrelInput\\plan.json\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }"
+        },
+        {
+          "name": "Upload screenshots, receipts and setup logs",
+          "if": "always()",
+          "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+          "with": {
+            "name": "rollback-rehearsal-${{ github.run_id }}-${{ github.run_attempt }}",
+            "path": "C:\\MainrelResults\\**\nC:\\MainrelInput\\**",
+            "if-no-files-found": "error",
+            "retention-days": 7
+          }
+        }
+      ]
+    }
+  }
+}

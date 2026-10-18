@@ -1,0 +1,7 @@
+STAGED_PATH_COUNT=36
+error[E0002]: module is unreachable from shipped entrypoints
+ --> nodelang/application_update_recovery.py:1:1
+ note: Unused: a declared parameter, route or module has no resolved runtime reader or shipped entrypoint. Test imports and prose do not count.
+ help: connect it to a product entrypoint or remove it
+ACOMPILER FAIL
+STRICT_SECONDS=166.1237681

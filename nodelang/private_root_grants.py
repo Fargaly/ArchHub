@@ -10,6 +10,7 @@ from contextlib import contextmanager
 import hashlib
 import json
 import os
+import sys
 import threading
 import time
 import uuid
@@ -46,6 +47,39 @@ def default_grant_path() -> Path:
     base = os.environ.get("LOCALAPPDATA")
     root = Path(base) / "ArchHub" if base else Path.home() / ".archhub"
     return root / "governance" / "private-root-grants.json"
+
+
+GRANT_EVENT_LOG = "private-grant-events.log"
+_GRANT_EVENT_LOG_LIMIT = 1024 * 1024
+_RECEIPT_FIELDS = ("action", "id", "runtime", "session_id")
+_receipt_lock = threading.Lock()
+
+
+def record_grant_event(stage: str, outcome: str, message: str, request: object = None,
+                       *, directory: str | Path | None = None) -> None:
+    """Append one non-secret line per grant/revoke/list-sessions outcome.
+
+    The founder's Settings answer alone shows a refusal once; this receipt keeps
+    the exact text so the next look at the machine reads what happened. Only the
+    request's identifying fields are kept (no keys, tickets or signatures). A
+    receipt that cannot be written is reported on stderr and never changes the
+    grant's own outcome.
+    """
+    body = request if isinstance(request, dict) else {}
+    line = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "stage": stage,
+            "outcome": outcome, "message": str(message)[:1000]}
+    line.update({field: str(body[field])[:200] for field in _RECEIPT_FIELDS if field in body})
+    path = Path(directory) if directory is not None else default_grant_path().parent
+    path = path / GRANT_EVENT_LOG
+    try:
+        with _receipt_lock:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if path.exists() and path.stat().st_size > _GRANT_EVENT_LOG_LIMIT:
+                os.replace(path, path.with_name(GRANT_EVENT_LOG + ".1"))
+            with path.open("a", encoding="utf-8", newline="\n") as handle:
+                handle.write(json.dumps(line, sort_keys=True) + "\n")
+    except OSError as exc:
+        print("private-grant receipt not written: %s" % exc, file=sys.stderr)
 
 
 def _text(value: object, field: str, *, maximum: int = 512) -> str:

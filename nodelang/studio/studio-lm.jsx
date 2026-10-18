@@ -10520,6 +10520,98 @@ async function workspaceRoots(body, renewed) {
   if (!response.ok || !data || data.ok === false) throw new Error((data && data.error) || 'The workspace registry did not answer.');
   return data;
 }
+// Consent uses the existing live native-session registry and Settings admission.
+const PRIVATE_ROOT_ACTIONS = {
+  "private-root-open": "openPrivateRootAccess",
+  "private-root-choose": "choosePrivateRootSession",
+  "private-root-grant": "confirmPrivateRootGrant",
+  "private-root-revoke": "revokePrivateRootGrant",
+  "private-root-refresh": "refreshPrivateRootSessions",
+  "private-root-back": "backPrivateRootSession",
+  "private-root-cancel": "cancelPrivateRootAccess"
+};
+const PrivateRootAccess = ({ root, view, ready, busy, run }) => {
+  const [open, setOpen] = React.useState(false);
+  const [discovery, setDiscovery] = React.useState({status:'waiting', sessions:[]});
+  const [selected, setSelected] = React.useState(null);
+  const [refresh, setRefresh] = React.useState(0);
+  const sending = React.useRef(false);
+  function openPrivateRootAccess() { setOpen(true); }
+  function choosePrivateRootSession(agent) { setSelected(agent); }
+  function refreshPrivateRootSessions() { setRefresh(n => n + 1); }
+  function backPrivateRootSession() { setSelected(null); }
+  function cancelPrivateRootAccess() { setOpen(false); setSelected(null); }
+  async function confirmPrivateRootGrant() { await change('grant-private-root', selected); }
+  async function revokePrivateRootGrant(agent) { await change('revoke-private-root', agent); }
+  const defaults = view.private_grant_defaults;
+  const grants = (view.private_grants || []).filter(g => g.root_id === root.root_id);
+  const button = window.AH_DS.styles.button('secondary', true);
+  React.useEffect(() => {
+    if (!open) return undefined;
+    let current = true;
+    setDiscovery({status:'waiting', sessions:[]}); setSelected(null);
+    run('Reading sessions', {action:'list'}).then(data => {
+      if (!data) throw new Error('Live session discovery is unavailable.');
+      const registryRead = data.private_grant_sessions;
+      if (!registryRead || registryRead.status !== 'ok' || !Array.isArray(registryRead.sessions))
+        throw new Error(registryRead?.reason || 'Live session discovery is unavailable.');
+      const stamp = row => Number(row.issued_at) || 0;
+      const refused = row => (row.refused_roots || []).includes(root.root_id);
+      const live = registryRead.sessions.filter(row => row.connected === true && row.selectable !== false && row.app && row.session_id)
+        .sort((a,b) => Number(refused(b)) - Number(refused(a)) || stamp(b) - stamp(a));
+      if (current) setDiscovery({status:live.length ? 'loaded' : 'empty', sessions:live});
+    }).catch(error => { if (current) setDiscovery({status:'error', sessions:[], error:error.message}); });
+    return () => { current = false; };
+  }, [open, refresh, root.root_id]);
+  const change = async (action, agent) => {
+    if (sending.current || busy || (action === 'grant-private-root' && !ready)) return;
+    sending.current = true;
+    try {
+      const next = await run(action === 'grant-private-root' ? 'Granting agent access' : 'Revoking agent access', {
+        action, id:root.root_id, runtime:agent.app || agent.runtime, session_id:agent.session_id,
+      });
+      if (next && action === 'grant-private-root') { setOpen(false); setSelected(null); }
+    } finally { sending.current = false; }
+  };
+  return <div style={{ marginTop:LM.sp.md, display:'grid', gap:LM.sp.sm }}>
+    <div><window.AH_DS.Btn data-action={PRIVATE_ROOT_ACTIONS['private-root-open']} disabled={!!busy || !ready || !defaults} onClick={openPrivateRootAccess}
+      title="Grant one live agent session access to this private workspace" style={button}>Grant agent access</window.AH_DS.Btn></div>
+    {!defaults && <div role="status">Private grant details are unavailable. Read the registry again.</div>}
+    {grants.length === 0 && <div style={window.AH_DS.styles.muted}>No active agent grants.</div>}
+    {grants.map(grant => <div key={JSON.stringify([grant.runtime,grant.session_id])} data-private-grant=""
+      style={{ padding:LM.sp.sm, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.sm, overflowWrap:'anywhere' }}>
+      <div>{grant.runtime} · {grant.session_id}</div>
+      <div style={window.AH_DS.styles.muted}>{grant.operations.join(', ')} · Expires {new Date(grant.expires_at * 1000).toISOString()}</div>
+      <window.AH_DS.Btn data-action={PRIVATE_ROOT_ACTIONS['private-root-revoke']} disabled={!!busy} onClick={() => revokePrivateRootGrant(grant)} style={button}>Revoke</window.AH_DS.Btn>
+    </div>)}
+    {open && <div role="dialog" aria-label={selected ? 'Confirm agent access' : 'Choose agent session'}
+      style={{ padding:LM.sp.md, background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.panel, display:'grid', gap:LM.sp.sm, overflowWrap:'anywhere' }}>
+      <div style={{fontWeight:500}}>{selected ? 'Confirm agent access' : 'Choose one live agent session'}</div>
+      <div>Workspace: {root.root_id}</div><div>{root.path}</div>
+      {!selected && <>
+        {discovery.status === 'error' && <window.AH_DS.EmptyState compact error title="Live session discovery unavailable"
+          detail={discovery.error} onRetry={refreshPrivateRootSessions}/>}
+        {discovery.status === 'waiting' && <div role="status">Reading live agent sessions…</div>}
+        {discovery.status === 'empty' && <div role="status">No live agent sessions. Open an agent session, then Refresh.</div>}
+        {discovery.status === 'loaded' && discovery.sessions.map(agent => <window.AH_DS.Btn key={JSON.stringify([agent.app,agent.session_id])} data-private-session="" disabled={!!busy || !(root.writers || []).includes(agent.app)}
+          data-action={PRIVATE_ROOT_ACTIONS['private-root-choose']} onClick={() => choosePrivateRootSession(agent)} style={{...button,display:'block',height:'auto',padding:`${LM.sp.sm}px ${LM.sp.md}px`,textAlign:'left',whiteSpace:'normal',overflowWrap:'anywhere'}}>
+          {agent.app} · {agent.title || 'Session title unavailable'}<br/>{agent.session_id}
+          {!(root.writers || []).includes(agent.app) && <span> · Enable this runtime for the workspace first.</span>}
+        </window.AH_DS.Btn>)}
+        <div><window.AH_DS.Btn data-action={PRIVATE_ROOT_ACTIONS['private-root-refresh']} disabled={!!busy} onClick={refreshPrivateRootSessions} style={button}>Refresh</window.AH_DS.Btn></div>
+      </>}
+      {selected && <>
+        <div>Runtime: {selected.app}</div><div>Session: {selected.session_id}</div><div>{selected.title}</div>
+        <div>Operations: {defaults.operations.join(', ')}</div>
+        <div>Expiry: {defaults.expires_after_seconds / 86400} days from confirmation (store default).</div>
+        <div><window.AH_DS.Btn data-action={PRIVATE_ROOT_ACTIONS['private-root-grant']} disabled={!!busy || !ready} onClick={confirmPrivateRootGrant}
+          style={window.AH_DS.styles.button('primary', true)}>Confirm grant</window.AH_DS.Btn>
+          <window.AH_DS.Btn data-action={PRIVATE_ROOT_ACTIONS['private-root-back']} disabled={!!busy} onClick={backPrivateRootSession} style={button}>Back</window.AH_DS.Btn></div>
+      </>}
+      <div><window.AH_DS.Btn data-action={PRIVATE_ROOT_ACTIONS['private-root-cancel']} disabled={!!busy} onClick={cancelPrivateRootAccess} style={button}>Cancel</window.AH_DS.Btn></div>
+    </div>}
+  </div>;
+};
 const SettingsWorkspaces = () => {
   const [view, setView] = React.useState(null);
   const [error, setError] = React.useState('');
@@ -10590,6 +10682,7 @@ const SettingsWorkspaces = () => {
   return (
     <div style={{ display:'flex', flexDirection:'column', gap:LM.sp.lg }}>
       <SHead title="Workspaces" sub="Private workspaces are never shared publicly."/>
+      {view?.last_private_grant_event?.message && <div role="status">{view.last_private_grant_event.message}</div>}
       {checking && (
         <div role="status" style={{ fontSize:LM.fs.caption.sz, color:LM.inkSoft }}>
           Checking the registry the governance hooks read against the graph{'\u2026'} Changes wait for the check.
@@ -10618,6 +10711,7 @@ const SettingsWorkspaces = () => {
             <div style={{ flex:1, minWidth:0 }}>
               <div style={{ fontSize:13, fontWeight:500 }}>{r.root_id}</div>
               <div style={mono}>{r.path}</div>
+              {r.privacy === 'private' && <PrivateRootAccess root={r} view={view} ready={ready} busy={busy} run={run}/>}
               {r.privacy === 'private' && (
                 <div style={{ display:'flex', gap:LM.sp.sm, flexWrap:'wrap', marginTop:LM.sp.sm }}>
                   {WORKSPACE_AGENTS.map(w => {
@@ -10645,7 +10739,7 @@ const SettingsWorkspaces = () => {
         {view && !registered.length && <SettingsEmpty>No workspace is registered yet.</SettingsEmpty>}
         {!view && !error && <SettingsEmpty>Reading the workspace registry{'\u2026'}</SettingsEmpty>}
         {!view && error && workspaceGraphOwnerDown(error) && <SettingsEmpty action={<window.AH_DS.Btn disabled={!!busy} onClick={() => { setOwnerReadRetries(0); read(); }} style={{ ...window.AH_DS.styles.button("secondary", true), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>Retry</window.AH_DS.Btn>}>Starting ArchHub's graph service{'\u2026'} {'\u00b7'}</SettingsEmpty>}
-        {!view && error && !workspaceGraphOwnerDown(error) && <SettingsEmpty role="alert" action={<window.AH_DS.Btn disabled={!!busy} onClick={read} style={{ ...window.AH_DS.styles.button("secondary", true), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>Read again</window.AH_DS.Btn>}>The workspace registry is unavailable: {error}</SettingsEmpty>}
+        {!view && error && !workspaceGraphOwnerDown(error) && <SettingsEmpty role="alert" action={<window.AH_DS.Btn disabled={!!busy} onClick={read} style={{ ...window.AH_DS.styles.button("secondary", true), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>Read again</window.AH_DS.Btn>}>The workspace registry was not read: {error}</SettingsEmpty>}
       </div>
       {confirming && (
         <div role="dialog" style={{ padding:`${LM.sp.md}px ${LM.sp.lg}px`, border:`1px solid ${LM.line}`, borderRadius:LM.rad.panel, background:LM.bgSoft, fontSize:LM.fs.bodySm.sz, display:'flex', flexDirection:'column', gap:LM.sp.sm }}>

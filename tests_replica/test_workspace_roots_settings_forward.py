@@ -16,7 +16,8 @@ from tests_replica.test_workspace_roots_graph_current import graph  # noqa: F401
 
 
 def _bind(graph, calls):
-    def route(body):
+    def route(body, *, admission=None):
+        assert admission["principal"] == CoordinationIdentity(*roots.SETTINGS_IDENTITY).normalized().key_id
         calls.append(body)
         return {"answered_by": "the owner's route", "action": body.get("action")}
     graph["host"].bind_workspace_settings(graph["authority"], route)
@@ -38,9 +39,11 @@ def test_an_owner_without_the_route_refuses(graph):
 def test_the_settings_key_asks_only_for_settings_and_no_other_key_may(graph):
     _bind(graph, [])
     settings = CoordinationIdentity(*roots.SETTINGS_IDENTITY)
-    for method, parameters in (("list_agents", {}), ("workspace_roots_state", {"nonce": "0" * 32})):
-        with pytest.raises(InvalidCell, match="not admitted for this key"):
-            graph["host"].dispatch(sign_coordination_request(graph["keys"], settings, method, parameters))
+    with pytest.raises(InvalidCell, match="coordination method is not admitted"):
+        sign_coordination_request(graph["keys"], settings, "list_agents", {})
+    with pytest.raises(InvalidCell, match="not admitted for this key"):
+        graph["host"].dispatch(sign_coordination_request(
+            graph["keys"], settings, "workspace_roots_state", {"nonce": "0" * 32}))
     for other in (CoordinationIdentity(*roots.ISSUER_IDENTITY), CoordinationIdentity("codex", "court-other")):
         with pytest.raises(InvalidCell, match="not admitted for this key"):
             graph["host"].dispatch(sign_coordination_request(

@@ -1501,9 +1501,7 @@ class _CleanAuthorityHttpServer:
             install_workspace_root_catalogue,
             NO_WINDOW,
             owner_change,
-            root_bound_registration,
             roots_view,
-            SETTINGS_IDENTITY,
         )
         if type(body) is not dict:
             raise WorkspaceRootRefused("workspace-roots request is invalid")
@@ -1552,41 +1550,16 @@ class _CleanAuthorityHttpServer:
                               built_in=self.clean_workspace_root)
         else:
             if action in ("grant-private-root", "revoke-private-root"):
-                allowed = {"action", "id", "runtime", "session_id", "operations", "expires_at"}
-                if set(request) - allowed or not {"id", "runtime", "session_id"} <= set(request):
-                    raise WorkspaceRootRefused("workspace-roots request is invalid")
-                principal = admission.get("principal") if isinstance(admission, dict) else None
-                vendor, session = SETTINGS_IDENTITY
-                expected_principal = "agent-session.%s" % hashlib.sha256(
-                    (vendor.lower() + "\0" + session).encode("utf-8")
-                ).hexdigest()
-                if principal != expected_principal:
-                    raise WorkspaceRootRefused(
-                        "the authenticated workspace-roots settings admission is required; "
-                        "nothing was changed")
-                root_id = str(request["id"]).strip()
-                runtime = str(request["runtime"]).strip().lower()
-                session_id = str(request["session_id"]).strip()
+                from .private_root_grants import record_grant_event
+                receipt_dir = self.private_root_grants.path.parent
                 try:
-                    _container, digest, registration = root_bound_registration(
-                        "workspace-roots/%s/__grant__" % root_id, runtime=runtime)
-                except InvalidCell as exc:
-                    raise WorkspaceRootRefused(str(exc)) from exc
-                if registration.get("privacy") != "private":
-                    raise WorkspaceRootRefused("only a private workspace root uses local grants")
-                if action == "grant-private-root":
-                    self.private_root_grants.grant(
-                        root_id=root_id,
-                        runtime=runtime,
-                        session_id=session_id,
-                        root_digest=digest,
-                        operations=request.get("operations"),
-                        expires_at=request.get("expires_at"),
-                        replace_unverifiable=True,
-                    )
-                else:
-                    self.private_root_grants.revoke(
-                        root_id=root_id, runtime=runtime, session_id=session_id)
+                    self._clean_private_grant(request, action, admission)
+                except Exception as exc:
+                    record_grant_event("owner", "refused", "%s: %s" % (type(exc).__name__, exc),
+                                       request, directory=receipt_dir)
+                    raise
+                record_grant_event("owner", "ok", self._last_private_grant_event.get("message", ""),
+                                   request, directory=receipt_dir)
                 request = {"action": "list"}
             if admission is None:
                 admission = {"principal": "archhub-browser-workspace-settings"}
@@ -1623,8 +1596,66 @@ class _CleanAuthorityHttpServer:
             if action != "list":
                 self.workspace_roots_boot = view["projection"]
         grant_store = getattr(self, "private_root_grants", None)
+        from .workspace_roots_catalogue import private_grant_settings_view
         return {**view, "boot": self.workspace_roots_boot,
-                "private_grants": grant_store.list() if grant_store is not None else []}
+                **private_grant_settings_view(grant_store),
+                "last_private_grant_event": getattr(self, "_last_private_grant_event", None)}
+
+    def _clean_private_grant(self, request, action, admission):
+        """Grant or revoke one private-root consent (Settings admission only)."""
+        from .workspace_roots_catalogue import (
+            SETTINGS_IDENTITY, WorkspaceRootRefused, root_bound_registration)
+        allowed = {"action", "id", "runtime", "session_id", "operations", "expires_at"}
+        if set(request) - allowed or not {"id", "runtime", "session_id"} <= set(request):
+            raise WorkspaceRootRefused("workspace-roots request is invalid")
+        principal = admission.get("principal") if isinstance(admission, dict) else None
+        vendor, session = SETTINGS_IDENTITY
+        expected_principal = "agent-session.%s" % hashlib.sha256(
+            (vendor.lower() + "\0" + session).encode("utf-8")
+        ).hexdigest()
+        if principal != expected_principal:
+            raise WorkspaceRootRefused(
+                "the authenticated workspace-roots settings admission is required; "
+                "nothing was changed")
+        root_id = str(request["id"]).strip()
+        runtime = str(request["runtime"]).strip().lower()
+        session_id = str(request["session_id"]).strip()
+        try:
+            _container, digest, registration = root_bound_registration(
+                "workspace-roots/%s/__grant__" % root_id, runtime=runtime)
+        except InvalidCell as exc:
+            raise WorkspaceRootRefused(str(exc)) from exc
+        if registration.get("privacy") != "private":
+            raise WorkspaceRootRefused("only a private workspace root uses local grants")
+        with self._mutation_lock:
+            event = {"action": action, "root_id": root_id, "runtime": runtime,
+                     "session_id": session_id, "issued_at": time.time()}
+            if action == "grant-private-root":
+                grant_path = self.private_root_grants.path
+                pattern = grant_path.stem + ".unverifiable-*.json"
+                before = set(grant_path.parent.glob(pattern))
+                previous_hash = hashlib.sha256(grant_path.read_bytes()).hexdigest() if grant_path.exists() else None
+                grant = self.private_root_grants.grant(
+                    root_id=root_id,
+                    runtime=runtime,
+                    session_id=session_id,
+                    root_digest=digest,
+                    operations=request.get("operations"),
+                    expires_at=request.get("expires_at"),
+                    replace_unverifiable=True,
+                )
+                event.update(issued_at=grant["issued_at"], expires_at=grant["expires_at"],
+                             message="Agent access granted.")
+                set_aside = set(grant_path.parent.glob(pattern)) - before
+                matching = [path for path in set_aside
+                            if hashlib.sha256(path.read_bytes()).hexdigest() == previous_hash]
+                if matching:
+                    event["message"] = "unverifiable document set aside as " + sorted(matching)[-1].name
+            else:
+                self.private_root_grants.revoke(
+                    root_id=root_id, runtime=runtime, session_id=session_id)
+                event["message"] = "Agent access revoked."
+            self._last_private_grant_event = event
 
     def _clean_sign_in(self):
         """Mint one bounded browser session for an explicit same-origin POST.
@@ -8029,8 +8060,13 @@ class ApplicationServer:
                         # request is its to answer (owner-only, like Hosts).
                         from .workspace_roots_catalogue import (
                             approve_in_this_window, normalized_picked_folder)
+                        from .private_root_grants import record_grant_event
                         body = self._body(max_bytes=8192)
                         if binding.subject_root != owner.universal_registry.authorization.subject_root:
+                            if isinstance(body, dict) and body.get('action') in (
+                                    'grant-private-root', 'revoke-private-root'):
+                                record_grant_event('desktop', 'refused',
+                                                   'AuthorizationDenied: not this instance owner', body)
                             raise AuthorizationDenied('only this instance owner changes its workspaces')
                         picker = getattr(owner, 'native_folder_picker', None)
                         if body == {'action': 'browse'} and picker is not None:
@@ -8044,8 +8080,20 @@ class ApplicationServer:
                         # THIS window (the prompt needs a visible window; the graph's
                         # owner runs without one); the owner verifies before commit.
                         handle = getattr(owner, 'native_window_handle', None)
-                        self._json(200, {'ok': True, **approve_in_this_window(
-                            body, window_handle=handle() if callable(handle) else handle)})
+                        receipt = isinstance(body, dict) and body.get('action') in (
+                            'grant-private-root', 'revoke-private-root')
+                        try:
+                            answer = approve_in_this_window(
+                                body, window_handle=handle() if callable(handle) else handle)
+                        except Exception as exc:
+                            if receipt:
+                                record_grant_event('desktop', 'refused',
+                                                   '%s: %s' % (type(exc).__name__, exc), body)
+                            raise
+                        if receipt:
+                            event = answer.get('last_private_grant_event') or {}
+                            record_grant_event('desktop', 'ok', event.get('message', ''), body)
+                        self._json(200, {'ok': True, **answer})
                         return
                     if self.path == '/api/universal/assistant-registration':
                         body = self._body(max_bytes=4096)
@@ -11864,10 +11912,15 @@ class ApplicationServer:
                 raise InvalidCell(
                     "runtime Agent Session surface property is malformed"
                 ) from exc
-            if label not in {"runtime", "session fingerprint"}:
+            if label not in {"runtime", "session fingerprint", "title"}:
+                continue
+            if label == "title" and not owners[0].startswith("app:agent-session:runtime:"):
                 continue
             for_owner = index.setdefault(owners[0], {})
             if label in for_owner:
+                if label == "title":
+                    for_owner[label] = ""
+                    continue
                 raise InvalidCell(
                     "runtime Agent Session surface property is ambiguous"
                 )
@@ -11881,7 +11934,8 @@ class ApplicationServer:
         session_root: str,
     ) -> dict[str, str]:
         """The two released runtime identity properties for one session."""
-        return dict(self._machine_session_surface_index(snapshot).get(session_root, {}))
+        return {key: value for key, value in self._machine_session_surface_index(snapshot).get(session_root, {}).items()
+                if key in {"runtime", "session fingerprint"}}
 
 
     @staticmethod
@@ -13228,6 +13282,34 @@ class ApplicationServer:
             "revision": self.universal_store.revision,
         }
 
+    def _private_root_grant_sessions(self) -> dict:
+        """Display the exact live identities consumed by private-root grant status."""
+        from .workspace_roots_catalogue import OPEN_AGENT_RUNTIMES
+        with self._machine_agent_session_lock:
+            bindings = {root: dict(binding) for root, binding in self._machine_agent_sessions.items()}
+        snapshot = self.universal_store.snapshot()
+        surface = self._machine_session_surface_index(snapshot)
+        sessions = []
+        for root, binding in bindings.items():
+            if (float(binding["expires_at"]) <= time.time()
+                    or binding.get("access", "full") != "full"
+                    or self._machine_agent_holder_is_gone(root, binding)):
+                continue
+            try:
+                session = read_agent_session(snapshot, self.universal_registry.agent_body.protocol,
+                    self.universal_registry.authorization.protocol, root)
+                entry = _agent_body_catalog_entry_for_session(snapshot, self.universal_registry, session)
+            except (InvalidCell, AuthorizationDenied):
+                continue
+            if (session.state_root != self.universal_registry.agent_body.protocol.state("active")
+                    or entry.root_id != binding["catalog_entry"] or entry.runtime != binding["runtime"]
+                    or entry.runtime not in OPEN_AGENT_RUNTIMES):
+                continue
+            sessions.append({"session_id": root, "app": entry.runtime, "runtime": entry.runtime,
+                "title": surface.get(root, {}).get("title") or "Session title unavailable",
+                "issued_at": binding["issued_at"], "connected": True, "selectable": True})
+        return {"status": "ok", "sessions": sorted(sessions, key=lambda row: row["issued_at"], reverse=True)}
+
     def _resolve_universal_machine_agent_session(
         self, request: dict[str, object]
     ) -> str:
@@ -14512,6 +14594,13 @@ class ApplicationServer:
                 return repair_visibility_recovery(self.universal_store, self.universal_registry,
                     request=body, agent_session_root=agent_session, context=context)
         if method == "GET" and path == "/api/universal/private-root-grant":
+            if body == {"action": "list-sessions"}:
+                verified = _VERIFIED_MACHINE_RECOVERY_CONTEXT.get()
+                if (direct or request.get("session") != {} or verified is None
+                        or verified[0] is not self or verified[1] is not request):
+                    raise AuthorizationDenied("private-root session discovery requires the authenticated local Settings reader")
+                self.require_universal_http_route(method, path, authentication_context=context)
+                return self._private_root_grant_sessions()
             if direct or set(body) != {"path", "operation"}:
                 raise AuthorizationDenied("private-root grant status requires one exact path and operation")
             agent_session_root = self._resolve_universal_machine_agent_session(request)

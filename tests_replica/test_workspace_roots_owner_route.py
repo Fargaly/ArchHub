@@ -367,6 +367,11 @@ def test_unsigned_private_root_grant_and_revoke_are_refused_before_store_mutatio
     }
     status, body = _post(server, grant_body)
     assert status == 403 and "authenticated workspace-roots settings admission" in body["error"]
+    receipts = (tmp_path / "private-grant-events.log").read_text(encoding="utf-8").splitlines()
+    receipt = json.loads(receipts[-1])
+    assert (receipt["stage"], receipt["outcome"], receipt["id"]) == ("owner", "refused", "client-a")
+    assert receipt["message"] == ("WorkspaceRootRefused: the authenticated workspace-roots "
+                                  "settings admission is required; nothing was changed")
     assert server.private_root_grants.status(
         root_id="client-a",
         runtime="claude",

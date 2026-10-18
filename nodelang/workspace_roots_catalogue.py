@@ -1603,6 +1603,50 @@ def root_bound_registration(path, *, runtime=None, verifier=None, snapshot_path=
     return "workspace-root:" + parts[1], digest, dict(entry)
 
 
+_last_session_refusal = None
+
+
+def private_grant_settings_view(grant_store) -> dict:
+    """Read active consent and canonical sessions through the existing machine pipe."""
+    from .private_root_grants import DEFAULT_OPERATIONS
+    from .application_machine_transport import (
+        UniversalRuntimeClient, default_runtime_descriptor_path,
+    )
+    grants = []
+    if grant_store is not None:
+        for grant in grant_store.list():
+            if grant["revoked"] or grant["expires_at"] <= time.time():
+                continue
+            try:
+                _, digest, registration = root_bound_registration(
+                    "workspace-roots/%s/__grant__" % grant["root_id"], runtime=grant["runtime"])
+            except InvalidCell:
+                continue
+            if registration.get("privacy") == "private" and digest == grant["root_digest"]:
+                grants.append(grant)
+    try:
+        if grant_store is None:
+            raise InvalidCell("private-root grant store is unavailable")
+        client = UniversalRuntimeClient(default_runtime_descriptor_path(), grant_store.provider)
+        sessions = client.request("GET", "/api/universal/private-root-grant",
+                                  {"action": "list-sessions"})
+    except (InvalidCell, OSError, RuntimeError, ValueError) as exc:
+        sessions = {"status": "unavailable", "sessions": [], "reason": str(exc)}
+        global _last_session_refusal
+        if sessions["reason"] != _last_session_refusal:
+            _last_session_refusal = sessions["reason"]
+            from .private_root_grants import record_grant_event
+            record_grant_event("list-sessions", "unavailable", "%s: %s" % (type(exc).__name__, exc),
+                               directory=None if grant_store is None else grant_store.path.parent)
+    return {
+        "private_grants": grants,
+        # The existing store's default is measured against grant receipts by the court.
+        "private_grant_defaults": {"operations": list(DEFAULT_OPERATIONS),
+                                   "expires_after_seconds": 30 * 24 * 60 * 60},
+        "private_grant_sessions": sessions,
+    }
+
+
 def roots_view(revision, roots, pin, status, *, built_in=None, enrollment=None) -> dict:
     return {
         "revision": revision,

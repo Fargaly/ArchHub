@@ -24,10 +24,12 @@ const view = (boot, projection, roots = [], pinned = roots.length > 0) => ({
 });
 
 async function mount(answers, options = {}) {
-  const manifest = JSON.parse(read('nodelang/studio/compiled/manifest.json'));
+  const sourceMode = process.env.PRIVGRANT_SOURCE === '1';
+  const names = ['tokens.jsx','ds/index.jsx','design-canvas.jsx','shared-data.jsx','studio-suite.jsx','param-types.jsx','studio-params.jsx','studio-mobile.jsx','studio-account.jsx','node-registry.jsx','brain-model.jsx','workshop-board.jsx','studio-workshop.jsx','studio-lm.jsx'];
+  const manifest = sourceMode ? {files:names.map(source => ({source}))} : JSON.parse(read('nodelang/studio/compiled/manifest.json'));
   const held = manifest.files.find(file => file.source === 'studio-lm.jsx');
   const live = createHash('sha256').update(fs.readFileSync(path.join(root, 'nodelang/studio/studio-lm.jsx'))).digest('hex');
-  assert.equal(held && held.source_sha256, live, 'Studio build is stale for studio-lm.jsx: run npm run build:studio');
+  if (!sourceMode) assert.equal(held && held.source_sha256, live, 'Studio build is stale for studio-lm.jsx: run npm run build:studio');
   let JSDOM;
   try { ({JSDOM} = require('jsdom')); } catch (error) { ({JSDOM} = await import('jsdom')); }
   const dom = new JSDOM('<div id="root"></div>', {url:'http://localhost/', runScripts:'outside-only', pretendToBeVisual:true});
@@ -35,7 +37,7 @@ async function mount(answers, options = {}) {
   const requests = [];
   const hostAnswers = [...(options.hosts || [{ok:true, connectors:[], operations:[]}])];
   let lastHostAnswer = {ok:true, connectors:[], operations:[]};
-  win.fetch = (url, options = {}) => {
+  win.fetch = (url, fetchOptions = {}) => {
     if (String(url) === '/api/universal/hosts') {
       const answer = hostAnswers.length ? (lastHostAnswer = hostAnswers.shift()) : lastHostAnswer;
       return Promise.resolve({ok:answer.ok !== false, status:answer.ok === false ? 500 : 200, json:async () => answer});
@@ -43,14 +45,14 @@ async function mount(answers, options = {}) {
     if (String(url) === '/tools') return Promise.resolve({ok:true, json:async () => ({tools:[]})});
     if (String(url) === '/waiting') return Promise.resolve({ok:true, json:async () => ({items:[]})});
     if (String(url) !== '/api/universal/workspace-roots') return new Promise(() => {});
-    const body = JSON.parse(options.body || '{}');
+    const body = JSON.parse(fetchOptions.body || '{}');
     requests.push(body);
     const answer = answers.shift();
     if (!answer) return new Promise(() => {});
     if (answer === 'fail') return Promise.resolve({ok:false, json:async () => ({ok:false, error:'registry unreachable'})});
     if (answer === 'owner-down') return Promise.resolve({ok:false, json:async () => ({ok:false, error:"the ArchHub graph owner is not answering (connection refused); start ArchHub's graph service"})});
     if (answer.refused) return Promise.resolve({ok:false, status:403, json:async () => ({ok:false, error:answer.refused})});
-    return Promise.resolve({ok:true, status:200, json:async () => answer});
+    return Promise.resolve({ok:true, status:200, json:async () => ({...answer,private_grant_sessions:options.native || {status:'ok',sessions:[]}})});
   };
   win.ARCHHUB_THEME = {...seed};
   win.ARCHHUB_LIVE = {hosts:[], connectors:[], skills:[], memory:[], graph:{nodes:[], wires:[]}};
@@ -74,8 +76,9 @@ async function mount(answers, options = {}) {
   win.matchMedia = () => ({matches:false, addEventListener() {}, removeEventListener() {}});
   win.eval(read('nodelang/studio/vendor/react.js'));
   win.eval(read('nodelang/studio/vendor/react-dom.js'));
+  if (sourceMode) win.eval(read('nodelang/studio/vendor/babel.js'));
   for (const file of manifest.files) {
-    if (file.source !== 'mount.jsx') win.eval(read('nodelang/studio/compiled/' + file.output));
+    if (file.source !== 'mount.jsx') win.eval(sourceMode ? win.Babel.transform(read('nodelang/studio/' + file.source), {presets:['react','env']}).code : read('nodelang/studio/compiled/' + file.output));
   }
   win.eval('window.__studioRoot=ReactDOM.createRoot(document.getElementById("root")); ReactDOM.flushSync(()=>window.__studioRoot.render(React.createElement(StudioLM)));');
   const doc = win.document;
@@ -346,4 +349,40 @@ test('each workspace row has one immediate writer toggle per agent', async () =>
     });
     assert.equal(ui.doc.querySelector('[aria-label="Allow codex to write alpha"]').checked, false);
   } finally { ui.close(); }
+});
+
+const pickedSession = {kind:'native-session',app:'codex',session_id:'session-exact-codex-82e79',title:'August 7 sheet work',connected:true,selectable:true,issued_at:200};
+const privateView = () => ({...view('match','match',['alpha']),private_grants:[],private_grant_defaults:{operations:['edit_file','apply_patch','write_file','create'],expires_after_seconds:2592000}});
+test('PRIVGRANT private row chooses one live registry session, confirms exact scope, grants and revokes server state', async () => {
+  const first=privateView();
+  const grant={root_id:'alpha',runtime:'codex',session_id:pickedSession.session_id,operations:first.private_grant_defaults.operations,expires_at:1800000000};
+  const granted={...first,private_grants:[grant],last_private_grant_event:{action:'grant-private-root',root_id:'alpha',runtime:'codex',session_id:pickedSession.session_id,message:'unverifiable document set aside as private-root-grants.unverifiable-court.json'}};
+  const ui=await mount([first,first,granted,first],{native:{ok:true,status:'ok',sessions:[{...pickedSession,session_id:'older',title:'Older',issued_at:100},pickedSession,{...pickedSession,session_id:'dead',connected:false}]}});
+  try {
+    await ui.settle(80);
+    assert.ok(ui.button('Grant agent access'),'private root must offer grant consent');
+    ui.click(ui.button('Grant agent access')); await ui.settle(80);
+    const choices=[...ui.doc.querySelectorAll('[data-private-session]')];
+    assert.equal(choices.length,2); assert.match(choices[0].textContent,/session-exact-codex-82e79/);
+    assert.match(choices[0].textContent,/Codex|codex/); assert.match(choices[0].textContent,/August 7 sheet work/);
+    ui.click(choices[0]);
+    const confirm=ui.doc.querySelector('[aria-label="Confirm agent access"]');
+    for(const text of ['alpha','D:\\Clients\\alpha','codex',pickedSession.session_id,'edit_file','apply_patch','write_file','create','30 days']) assert.ok(confirm.textContent.includes(text),text);
+    assert.equal(ui.requests.length,2,'selection must only read');
+    ui.click(ui.button('Confirm grant')); await ui.settle(80);
+    assert.deepEqual(ui.requests[2],{action:'grant-private-root',id:'alpha',runtime:'codex',session_id:pickedSession.session_id});
+    assert.match(ui.doc.body.textContent,/unverifiable document set aside as/);
+    assert.match(ui.doc.querySelector('[data-private-grant]').textContent,/session-exact-codex-82e79/);
+    assert.match(ui.doc.querySelector('[data-private-grant]').textContent,/2027/);
+    ui.click(ui.button('Revoke')); await ui.settle(80);
+    assert.deepEqual(ui.requests[3],{action:'revoke-private-root',id:'alpha',runtime:'codex',session_id:pickedSession.session_id});
+    assert.equal(ui.doc.querySelectorAll('[data-private-grant]').length,0);
+  } finally {ui.close();}
+});
+test('PRIVGRANT public roots have no grant; empty discovery explains absence and Cancel sends no grant', async () => {
+  const publicState=privateView();publicState.roots[0].privacy='public';
+  let ui=await mount([publicState]);
+  try {await ui.settle(80);assert.equal(ui.button('Grant agent access'),undefined);} finally {ui.close();}
+  ui=await mount([privateView(),privateView()]);
+  try {await ui.settle(80);ui.click(ui.button('Grant agent access'));await ui.settle(80);assert.match(ui.doc.body.textContent,/No live agent sessions/);ui.click(ui.button('Cancel'));assert.equal(ui.requests.length,2);} finally {ui.close();}
 });

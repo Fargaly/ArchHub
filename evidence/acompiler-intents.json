@@ -3208,6 +3208,23 @@
         "nodelang/application_server.py"
       ]
     },
+    "PRIVGRANT": {
+      "source": "Founder via Ping 2026-10-17 (BBC4): grant one exact agent session access to a private workspace from Settings, and record every grant outcome so a refused Confirm is never invisible",
+      "scope": [
+        "nodelang/application_server.py",
+        "nodelang/studio/studio-lm.jsx",
+        "nodelang/workspace_roots_catalogue.py",
+        "nodelang/private_root_grants.py",
+        "tests_js/privgrant_screenshots.cjs",
+        "tests_js/studio_workspaces_settings.test.cjs",
+        "tests_replica/test_privgrant_settings.py",
+        "tests_replica/test_workspace_roots_settings_forward.py",
+        "tests_replica/test_private_grant_receipts.py",
+        "tests_replica/test_workspace_roots_owner_route.py",
+        "tools/archhub-compiler/rules.json",
+        "evidence/acompiler-intents.json"
+      ]
+    },
     "TRACEARCHIVE": {
       "source": "Founder 2026-10-17 ARCH-DECISIONS-AUDIT #1 + goal 'Conversations are indexed content, not message Cells; apply eligible 20-day inactivity retention'; reconcile CLAUDE.md:37 journal note that refused the ADOPT archive step",
       "scope": [

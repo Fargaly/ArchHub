@@ -1294,11 +1294,7 @@ const StudioLM = () => {
             onNewSession={createSessionGraphInPlace}
             onSettings={() => openSettings(true, 'system')}
             onAccount={() => openSettings(true, 'account')}/>
-        : panel ? <main data-rail-workspace={panel} style={{height:'100%',display:'grid',placeItems:'center'}}>
-            <window.AH_DS.EmptyState title={sessionOpenError ? 'Graph could not be read' : panel === 'chats' ? 'Choose a chat' : 'Build your graph'}
-              detail={sessionOpenError || (panel === 'chats' ? 'Open a session from Chats to continue its conversation.' : 'Choose a node in the Library, or open a graph to add it to your canvas.')}
-              action={sessionOpenError ? <window.AH_DS.Btn onClick={() => window.location.reload()}>Refresh graphs</window.AH_DS.Btn> : panel !== 'chats' ? <window.AH_DS.Btn onClick={() => setLibraryOpen(true)}>Add node</window.AH_DS.Btn> : undefined}/>
-          </main> : <Home onOpen={openSession} sessions={visibleSessions} model={model} native={homeNative}
+        : <Home onOpen={openSession} sessions={visibleSessions} model={model} native={homeNative}
             readiness={readiness} onModelReadRetry={readInitialModel} setPickerOpen={setPickerOpen}
             setLibraryOpen={setLibraryOpen} setPanel={setPanel}
             onOpenTool={openTool} onOpenToolGraph={openToolGraph} workshopState={workshopState} account={account}
@@ -3117,9 +3113,15 @@ const LazyWorkshopWindow = props => {
   const [View, setView] = React.useState(() => window.WorkshopView || null);
   const [error, setError] = React.useState('');
   const [attempt, setAttempt] = React.useState(0);
+  const opening = React.useRef(null);
+  React.useLayoutEffect(() => {
+    if (error) opening.current?.abort(new Error(error));
+  }, [error]);
   React.useEffect(() => {
     if (View) return undefined;
     let live = true;
+    const controller = new window.AbortController();
+    opening.current = controller;
     setError('');
     const timer = setTimeout(() => { if (live) setError('Workshop did not answer. Retry opening it.'); }, 1900);
     const load = window.ARCHHUB_LOAD_WORKSHOP;
@@ -3127,14 +3129,14 @@ const LazyWorkshopWindow = props => {
       clearTimeout(timer); setError('Workshop could not be opened. Refresh the application and try again.');
       return () => {live = false;};
     }
-    Promise.resolve().then(load).then(component => {
+    Promise.resolve().then(() => load({signal:controller.signal})).then(component => {
       clearTimeout(timer);
-      if (live) setView(() => component);
+      if (live && !controller.signal.aborted) setView(() => component);
     }).catch(reason => {
       clearTimeout(timer);
       if (live) setError(reason?.message || 'Workshop could not be opened. Retry opening it.');
     });
-    return () => { live = false; clearTimeout(timer); };
+    return () => { live = false; clearTimeout(timer); controller.abort(); };
   }, [View, attempt]);
   return View ? <View {...props}/> : <window.AH_DS.EmptyState data-workshop-loading="" error={!!error}
     title={error ? 'Workshop unavailable' : 'Opening Workshop…'} detail={error}
@@ -7940,7 +7942,7 @@ const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadi
       <span aria-hidden="true">▾</span>
     </window.AH_DS.Btn>
     <div style={{display:'grid',gap:8}}>
-      <window.AH_DS.TextField multiline data-sysnodes-chat={target.kind === 'graph' || target.node?.application ? '' : undefined} aria-label="Ask selection" value={text} onChange={e => updateText(e.target.value)}
+      <window.AH_DS.TextField data-sysnodes-chat={target.kind === 'graph' || target.node?.application ? '' : undefined} aria-label="Ask selection" value={text} onChange={e => updateText(e.target.value)}
         onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) {e.preventDefault();ask();} }} placeholder={placeholder}
         style={{width:'100%',minHeight:56,resize:'vertical',minWidth:0,background:LM.bgSoft,border:`1px solid ${LM.line}`,borderRadius:5,padding:'8px 10px',outline:0,color:LM.ink,fontFamily:LM.sans,fontSize:13}}/>
       <window.AH_DS.Btn onClick={ask} disabled={!text.trim()} style={{alignSelf:'end',justifySelf:'end', padding:'4px 11px', background:LM.accent,
@@ -8042,7 +8044,7 @@ const NodeRail = ({ libraryMode = false, node, hiddenWork = false, workshopRoom 
       overflow:'hidden', minHeight:0, minWidth:0,
       // One column, never wider than the 320px track: a long chip or value ellipsizes instead of
       // widening the panel past the window edge (founder window, 2026-10-12).
-      display:'grid', gridTemplateRows:visibleTab!=='Chat'?'1fr':'1fr auto', gridTemplateColumns:'minmax(0, 1fr)',
+      display:'grid', gridTemplateRows:'1fr auto', gridTemplateColumns:'minmax(0, 1fr)',
     }}>
       <div className="ah-scroll" style={{ overflowY:'auto', overflowX:'hidden', minWidth:0, padding:0, display:'flex', flexDirection:'column', gap:0 }}>
         <window.AH_DS.SelectionHeader glyph={cat.icon} color={cat.col} title={inspectedNode.title} subtitle={inspectedNode.subtitle || inspectedNode.sub || inspectedNode.description}/>
@@ -8053,8 +8055,8 @@ const NodeRail = ({ libraryMode = false, node, hiddenWork = false, workshopRoom 
         {visibleTab === 'Properties' && properties}
         {visibleTab === 'Runs' && <InspectorRuns node={inspectedNode} graph={graph} execution={execution}/>}
       </div>
-      {visibleTab==='Chat' && <ScopeComposer target={target} model={model} setPickerOpen={setPickerOpen} readiness={readiness} onSend={() => setActiveTab('Chat')}
-        onReadinessStale={onReadinessStale} onModelReadRetry={onModelReadRetry} onAccount={onAccount}/>}
+      <ScopeComposer target={target} model={model} setPickerOpen={setPickerOpen} readiness={readiness} onSend={() => setActiveTab('Chat')}
+        onReadinessStale={onReadinessStale} onModelReadRetry={onModelReadRetry} onAccount={onAccount}/>
     </aside>
   );
 };

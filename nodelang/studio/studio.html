@@ -32,7 +32,7 @@ async function watchRuntimeReadiness() {
     if (!response.ok) throw new Error('Readiness is unavailable');
     const state = await response.json();
     if (!['almost_ready', 'ready', 'failed'].includes(state.state)) throw new Error('Invalid readiness');
-    status.hidden = state.state === 'ready';
+    status.hidden = state.state === 'ready' && !state.warning;
     status.textContent = state.message;
     status.dataset.state = state.state;
     if (state.state === 'almost_ready') {
@@ -65,8 +65,12 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
         'studio-mobile.jsx','studio-account.jsx','node-registry.jsx','brain-model.jsx','workshop-board.jsx','studio-workshop.jsx','studio-lm.jsx','mount.jsx'];
       const refusal = message => { throw new Error(message + ' Run npm run build:studio, or install a complete release.'); };
       if (!window.crypto?.subtle) refusal('Studio build verification is unavailable.');
-      const asset = async (name, limit) => {
-        const response = await fetch('/studio/' + name, {cache:'no-store', redirect:'error'});
+      const checkOpening = signal => {
+        if (signal?.aborted) throw signal.reason || new Error('Workshop opening was cancelled.');
+      };
+      const asset = async (name, limit, signal = undefined) => {
+        checkOpening(signal);
+        const response = await fetch('/studio/' + name, {cache:'no-store', redirect:'error', signal});
         if (!response.ok || !response.body) refusal('Studio build asset is missing: ' + name + '.');
         const reader = response.body.getReader(), chunks = [];
         let length = 0;
@@ -107,32 +111,55 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
       if (sourceBytes > 2097152 || outputBytes > 4194304) refusal('Studio build exceeds its aggregate bound.');
       // The Workshop face and agent surfaces are checked and loaded only on first open.
       const workshopSources = new Set(['workshop-board.jsx', 'studio-workshop.jsx']);
-      const verifySource = async file => {
-        const bytes = await asset(file.source, 1048576);
+      const verifySource = async (file, signal = undefined) => {
+        const bytes = await asset(file.source, 1048576, signal);
         const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)),
           byte => byte.toString(16).padStart(2, '0')).join('');
+        checkOpening(signal);
         if (bytes.byteLength !== file.source_bytes || hash !== file.source_sha256) refusal('Studio build is stale: ' + file.source + '.');
       };
-      const loadCompiled = async file => {
+      const loadCompiled = async (file, signal = undefined) => {
+        checkOpening(signal);
         await new Promise((resolve, reject) => {
           const tag = document.createElement('script');
+          let settled = false;
+          const finish = error => {
+            if (settled) return;
+            settled = true;
+            signal?.removeEventListener('abort', cancel);
+            tag.onload = null; tag.onerror = null;
+            if (error) { tag.remove(); reject(error); } else resolve();
+          };
+          const cancel = () => finish(signal.reason || new Error('Workshop opening was cancelled.'));
           tag.src = '/studio/compiled/' + file.output + '?sha256=' + file.sha256;
           tag.integrity = file.integrity; tag.crossOrigin = 'anonymous'; tag.async = false;
-          tag.onload = resolve;
-          tag.onerror = () => reject(new Error('Studio compiled asset is missing or corrupt: ' + file.output + '. Run npm run build:studio, or install a complete release.'));
+          tag.onload = () => finish(null);
+          tag.onerror = () => finish(new Error('Studio compiled asset is missing or corrupt: ' + file.output + '. Run npm run build:studio, or install a complete release.'));
+          signal?.addEventListener('abort', cancel, {once:true});
+          if (signal?.aborted) { cancel(); return; }
           document.body.appendChild(tag);
         });
       };
       let workshopLoad;
-      window.ARCHHUB_LOAD_WORKSHOP = () => {
-        if (!workshopLoad) workshopLoad = (async () => {
-          for (const file of manifest.files.filter(file => workshopSources.has(file.source))) {
-            await verifySource(file);
-            await loadCompiled(file);
-          }
-          if (typeof window.WorkshopView !== 'function') refusal('The Workshop window is unavailable.');
-          return window.WorkshopView;
-        })();
+      window.ARCHHUB_LOAD_WORKSHOP = ({signal} = {}) => {
+        if (signal?.aborted) return Promise.reject(signal.reason || new Error('Workshop opening was cancelled.'));
+        if (!workshopLoad) {
+          let pending;
+          const forget = () => { if (workshopLoad === pending) workshopLoad = undefined; };
+          pending = (async () => {
+            for (const file of manifest.files.filter(file => workshopSources.has(file.source))) {
+              await verifySource(file, signal);
+              await loadCompiled(file, signal);
+            }
+            if (typeof window.WorkshopView !== 'function') refusal('The Workshop window is unavailable.');
+            return window.WorkshopView;
+          })().catch(error => { forget(); throw error; })
+            .finally(() => signal?.removeEventListener('abort', forget));
+          workshopLoad = pending;
+          signal?.addEventListener('abort', forget, {once:true});
+          if (signal?.aborted) forget();
+          return pending;
+        }
         return workshopLoad;
       };
       // Validate and mount the rest of Studio without fetching either Workshop source or output.
@@ -617,6 +644,11 @@ window.ARCHHUB_REFRESH_NODE_LIBRARY = async () => {
       memory:[], skills:[],
     };
     await mountStudio();
+    if (canvas.backup_warning) {
+      const status = document.getElementById('studio-ready-status');
+      status.textContent = canvas.backup_warning;
+      status.dataset.state = 'warning'; status.hidden = false;
+    }
   } catch (error) {
     fail(error?.message || String(error));
   }

@@ -5,7 +5,7 @@ coordinates transactions across databases nor grants recovery/activation authori
 The destination's parent must exist. The verifier receives self-contained file
 paths and must close its handles before returning small, non-secret metadata.
 """
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, ExitStack
 import hashlib
 import importlib
 import json
@@ -449,11 +449,9 @@ def _preserve_closed_application_journals(profile, build, *, keep_count=3, max_b
     if not candidates:
         return []
     bounds = {path: _closed_source_score(path, selected) for path in candidates}
-    best_floor = max(value[0] for value in bounds.values())
-    contenders = [path for path in candidates if bounds[path][1] >= best_floor]
     scores = {path: (_closed_source_score(path, selected, exact=True)
-        if len(contenders) > 1 and bounds[path][0] != bounds[path][1] else bounds[path]) for path in contenders}
-    primary = max(contenders, key=lambda path: (scores[path][0], scores[path][2], scores[path][3]))
+        if bounds[path][0] <= 1 < bounds[path][1] else bounds[path]) for path in candidates}
+    primary = max(candidates, key=lambda path: (scores[path][0] > 1, scores[path][2], scores[path][3]))
     # Authoritative work receives custody first; a later empty compatibility
     # journal can neither steal its pin nor win merely by being newer.
     candidates.sort(key=lambda path: path != primary)
@@ -680,6 +678,54 @@ def _backup_sqlite(source, path, check_budget):
         source.backup(target, pages=64,
             progress=progress, sleep=0.01)
         _verify_database(target, check_budget)
+
+
+def preserve_open_application_journal(root, source, snapshot, *, progress):
+    """Reuse the recovery publisher for a bounded WAL-aware boot snapshot.
+
+    Rollback custody is desirable, never a prerequisite to opening saved work.
+    Large/busy/over-budget sources open in place with a boot warning instead.
+    The installer's location and byte policy remain the single backup owner.
+    """
+    from .backup_retention import _backup_bytes, backup_policy
+    root, source = Path(root).resolve(), Path(source).resolve()
+    profile = Path(os.environ.get('LOCALAPPDATA', root.parent)).resolve()
+    deadline = time.monotonic() + 2.0
+    try:
+        policy = backup_policy(snapshot)
+        with ExitStack() as stack:
+            paths = {'graph': source}
+            content = Path(str(source) + '.conversations.sqlite3')
+            if content.is_file():
+                paths['content'] = content
+            sources = {}
+            for role, path in paths.items():
+                connection = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True,
+                    timeout=max(0, deadline-time.monotonic()))
+                sources[role] = stack.enter_context(closing(connection))
+            size = sum(max(paths[role].stat().st_size, db.execute('PRAGMA page_count').fetchone()[0] *
+                db.execute('PRAGMA page_size').fetchone()[0]) for role, db in sources.items())
+            # Do not start multi-GB copy/hash work on the path to Studio.
+            if size > 64 * 1024**2:
+                raise TimeoutError('rollback snapshot deferred for a large saved graph')
+            location = _select_backup_location(profile, size)
+            parent = Path(location['directory'])
+            parent.mkdir(parents=True, exist_ok=True)
+            inventory = _installer_copies(profile, parent)
+            available = policy['max_bytes'] - sum(_backup_bytes(path) for path in inventory)
+            if len(inventory) >= policy['keep_count']:
+                raise ValueError('rollback snapshot would exceed the configured retained backup count')
+            if size + _MANIFEST_BYTES > available or shutil.disk_usage(parent).free - size < _install_reserve(profile, parent):
+                raise ValueError('rollback snapshot exceeds the configured backup budget or disk reserve')
+            def verify(copies, check):
+                check()
+                return {'kind': 'boot-snapshot', 'source': str(source)}
+            return publish_application_recovery(sources, parent / ('boot-' + uuid.uuid4().hex),
+                verify_copies=verify, before_publish=lambda: None, deadline=deadline, max_bytes=available)
+    except (OSError, ValueError, sqlite3.Error, TimeoutError) as error:
+        message = 'Your saved graph is opening without a new rollback backup: ' + str(error)
+        _advance(progress, message)
+        return None
 
 
 def _require_sqlite_header(path):

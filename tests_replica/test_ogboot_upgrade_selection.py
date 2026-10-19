@@ -163,13 +163,14 @@ def test_committed_wal_and_shared_memory_bytes_stay_untouched(isolated_profile):
         journal.execute("COMMIT")
         assert Path(str(legacy) + "-wal").stat().st_size > 0
         before = _bytes((stale, legacy))
-        pointer = (root / "unified-authority/CURRENT").read_bytes()
-        # A hot source cannot have the installer's final-closed receipt. Refuse
-        # without checkpointing, rewriting or moving its committed WAL bytes.
-        with pytest.raises(ValueError, match="verified installer.*closed.*backup"):
-            _prepare(root)
-        assert _bytes((stale, legacy)) == before
-        assert (root / "unified-authority/CURRENT").read_bytes() == pointer
+        # A committed hot WAL opens in place; the boot snapshot preserves its
+        # committed edit and the previous selection remains byte-identical.
+        result = persistence.prepare_application_database(root, stale)
+        assert persistence.application_database_path(root) == legacy
+        assert _bytes((stale,))[str(stale)] == before[str(stale)]
+        with CellStore(legacy) as reopened:
+            assert reopened.read('work:wal').atom == b'committed only in WAL'
+        assert result['backup_path']
     # Installer close/checkpoint establishes the independently restorable file;
     # adoption must retain the exact committed history, including its WAL edit.
     backup = _closed_backup(legacy)

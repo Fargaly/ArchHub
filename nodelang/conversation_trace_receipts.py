@@ -347,7 +347,7 @@ def _eligible_receipt(snapshot, history, protocol, root, cutoff, *, protected_ro
 
 
 def maintain_trace_receipts(service, *, authentication_context, timeout_seconds=2.0,
-                            max_cells=64, cancellation_event=None):
+                            max_cells=256, cancellation_event=None):
     """One receipt/root inventory page, after the family age scan and before export.
 
     A completed pass resets family protection ONCE if any root changed. Existing
@@ -360,14 +360,16 @@ def maintain_trace_receipts(service, *, authentication_context, timeout_seconds=
             or cancellation_event is not None and not callable(getattr(cancellation_event, 'is_set', None))):
         raise ValueError('receipt maintenance bounds are invalid')
     deadline = time.monotonic() + timeout_seconds
+    owner = service._owner
     def check():
         if time.monotonic() >= deadline or cancellation_event is not None and cancellation_event.is_set():
             raise TimeoutError('receipt maintenance cancelled or budget exhausted')
+        if _user_is_active(owner):
+            raise TimeoutError('receipt maintenance yielded to foreground activity')
     result = dict(status='receipt-deferred', inspected=0, converted=0, copied=0, versions=0, next_cursor=None)
-    owner = service._owner
     if _user_is_active(owner):
         try:
-            with _short_lock(owner.mutation_lock, check):
+            with _short_lock(owner.mutation_lock, lambda: None):
                 close_trace_receipt_preparation(service)
         except TimeoutError:
             return result
@@ -414,17 +416,23 @@ def maintain_trace_receipts(service, *, authentication_context, timeout_seconds=
                                 candidate[1], authentication_context, check))
                             if result.get('pending'):
                                 return {**result, 'status': 'receipt-copying'}
-                        with history._transaction(write=True, before_commit=check):
-                            history._db.execute('UPDATE trace_receipt_state SET cursor=? WHERE singleton=1', (root,))
                         if result['converted']:
                             break
+                    # Only completed roots reach this checkpoint. A pending
+                    # conversion returns above and retries the same root.
+                    with history._transaction(write=True, before_commit=check):
+                        history._db.execute('UPDATE trace_receipt_state SET cursor=? WHERE singleton=1', (root,))
                     return {**result, 'status': 'receipt-scanning'}
     except (TimeoutError, sqlite3.OperationalError) as error:
         if isinstance(error, sqlite3.OperationalError) and (
                 getattr(error, 'sqlite_errorcode', 0) & 255) not in (
                 sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED, sqlite3.SQLITE_INTERRUPT):
             raise
-        if cancellation_event is not None and cancellation_event.is_set():
-            with owner.mutation_lock:
-                close_trace_receipt_preparation(service)
+        if _user_is_active(owner) or cancellation_event is not None and cancellation_event.is_set():
+            try:
+                with _short_lock(owner.mutation_lock, lambda: None):
+                    close_trace_receipt_preparation(service)
+            except TimeoutError:
+                # The next owner call retries cleanup without blocking work.
+                return {**result, 'cleanup_pending': True}
         return result

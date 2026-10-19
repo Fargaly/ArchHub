@@ -101,6 +101,78 @@ def _prepare(server, history):
     pytest.fail('bounded family inventory failed to complete')
 
 
+def _receipt_scan_page(server):
+    store = server.universal_store
+    prefix = 'app:agent-session:zz-court:'
+    identifiers = tuple(prefix + f'{index:04d}' for index in range(80))
+    with commit_intent.declare(commit_intent.MIGRATION,
+            actor='court', reason='synthetic nonreceipt descendants for bounded receipt traversal'):
+        store.commit(store.revision, create=tuple(Cell(identifier, NULL_CELL_ID,
+            NULL_CELL_ID, b'court') for identifier in identifiers))
+    history = _history(server)
+    # This court starts at the scanner's completed-inventory boundary. The
+    # ordinary conversion courts below exercise full ownership preparation.
+    history._db.execute("INSERT OR REPLACE INTO trace_family_state(singleton,phase,cursor,watermark,delta_revision,delta_cell) VALUES(1,'export','',?,?,'')",
+        (store.revision, store.revision+1))
+    history._db.execute('UPDATE trace_receipt_state SET cursor=?,dirty=0,next_due_at=0 WHERE singleton=1',
+        (prefix,))
+    server.last_user_action_monotonic = 0
+    return history, identifiers
+
+
+def test_receipt_scan_checkpoints_one_completed_page(server):
+    history, identifiers = _receipt_scan_page(server)
+    revision = server.universal_store.revision
+    statements = []
+    history._db.set_trace_callback(statements.append)
+    try:
+        result = receipts.maintain_trace_receipts(server.conversation_content,
+            authentication_context=server.universal_registry.authorization.session.context(), max_cells=32)
+    finally:
+        history._db.set_trace_callback(None)
+    checkpoints = [sql for sql in statements if sql.startswith('UPDATE trace_receipt_state SET cursor=')]
+    assert result['status'] == 'receipt-scanning'
+    assert result['inspected'] == 32
+    assert history._db.execute('SELECT cursor FROM trace_receipt_state').fetchone()[0] == identifiers[31]
+    assert len(checkpoints) == 1
+    # Existing authority/schema admission has independent transactions. Only
+    # the cursor mutation belongs to this page's durable progress contract.
+    checkpoint = statements.index(checkpoints[0])
+    assert 'COMMIT' in statements[checkpoint+1:]
+    assert not history._db.in_transaction
+    assert server.universal_store.revision == revision
+    assert all(identifier in server.universal_store.snapshot().cells for identifier in identifiers)
+    print('MAINFIX_RECEIPT inspected=32 cursor_checkpoints=1 source_unchanged=True')
+
+
+def test_receipt_scan_yields_when_foreground_becomes_active(server, monkeypatch):
+    history, identifiers = _receipt_scan_page(server)
+    before = history._db.execute('SELECT cursor FROM trace_receipt_state').fetchone()[0]
+    revision = server.universal_store.revision
+    original = receipts._eligible_receipt
+    def activate(*args, **kwargs):
+        result = original(*args, **kwargs)
+        server.last_user_action_monotonic = time.monotonic()
+        return result
+    monkeypatch.setattr(receipts, '_eligible_receipt', activate)
+    result = receipts.maintain_trace_receipts(server.conversation_content,
+        authentication_context=server.universal_registry.authorization.session.context(), max_cells=32)
+    assert result['status'] == 'receipt-deferred'
+    assert history._db.execute('SELECT cursor FROM trace_receipt_state').fetchone()[0] == before
+    assert server.universal_store.revision == revision
+    assert all(identifier in server.universal_store.snapshot().cells for identifier in identifiers)
+    released = []
+    def probe():
+        if server.mutation_lock.acquire(timeout=.1):
+            released.append(True)
+            server.mutation_lock.release()
+    thread = threading.Thread(target=probe)
+    thread.start()
+    thread.join(.2)
+    assert released == [True]
+    print('MAINFIX_RECEIPT foreground_yield=True cursor_unchanged=True lock_released=True')
+
+
 def _convert(server, session, receipt, *, check=lambda: None, once=False):
     history = _history(server)
     copied, versions = 0, 0

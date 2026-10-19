@@ -1412,7 +1412,9 @@ class _CleanAuthorityHttpServer:
         if self._boot_error is not None:
             return {"state": "failed", "message": "Some tools are unavailable. Reopen ArchHub to try again."}
         if self._boot_ready.is_set():
-            return {"state": "ready", "message": "Ready"}
+            from .persistence import application_backup_warning
+            warning = application_backup_warning(getattr(getattr(self, 'clean_store', None), 'database_path', None))
+            return {"state": "ready", "message": warning or "Ready", "warning": bool(warning)}
         return {"state": "almost_ready", "message": "Almost ready — preparing your tools."}
 
     def _await_clean_warmup(self):
@@ -7611,6 +7613,8 @@ class ApplicationServer:
                                 owner.universal_store, owner.universal_registry,
                                 authentication_context=binding.context,
                             )
+                            from .persistence import application_backup_warning
+                            projection['backup_warning'] = application_backup_warning(owner.universal_store.database_path)
                         self._json(200, {'ok': True, **projection})
                         return
                     # The projection takes the graph lock itself, and only for

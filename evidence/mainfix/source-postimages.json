@@ -1,0 +1,38 @@
+{
+  "base": "ce671c2e9e1006a7ada88c3e9a5f91a68ba99271",
+  "scope": "frozen production postimages for final runtime courts, existing kernel checkpoint count and Workshop cancellation",
+  "files": [
+    {
+      "file": "nodelang/application_recovery_files.py",
+      "sha256": "e2eab03f920f7bc4d75355f44c019b656b5d93296f822dd23c41cab70b06baed"
+    },
+    {
+      "file": "nodelang/application_server.py",
+      "sha256": "028ba291e85090a82fee24d540b0578d92c05ad2f1fefec4d0e12622e7195c48"
+    },
+    {
+      "file": "nodelang/conversation_retention_maintenance.py",
+      "sha256": "be4e102ebacea6c152909561f97284e0196d873c2e3d4aa51a9812ce756c057b"
+    },
+    {
+      "file": "nodelang/conversation_trace_receipts.py",
+      "sha256": "91d773a5f2ae0d12b99fc25c2d04a6f53b51d7ce034e29a31a25f99fe0903369"
+    },
+    {
+      "file": "nodelang/persistence.py",
+      "sha256": "b20fa9bccc413481fc1c01a564c4027f12655dc50be6785c91c614cd293e4348"
+    },
+    {
+      "file": "nodelang/studio/studio-lm.jsx",
+      "sha256": "71539a1e05968e75ff8e07dc2b836b3c1bdd526f9f0399403b49d89971eabe60"
+    },
+    {
+      "file": "nodelang/studio/studio.html",
+      "sha256": "f6a16970cff216dfd9562a198142349418f20d3cad1d6275d74d7894473f77f6"
+    },
+    {
+      "file": "nodelang/universal_cell.py",
+      "sha256": "7cdfce1bc44625821d3728b99ab786012f4136e99f720f0d8f255e1fe5837848"
+    }
+  ]
+}

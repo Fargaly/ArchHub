@@ -7,8 +7,6 @@ import shutil
 import sqlite3
 import time
 
-import pytest
-
 from nodelang import persistence
 from nodelang.universal_cell import CellStore
 from tests_replica import test_ogboot_upgrade_selection as upgrade
@@ -66,12 +64,14 @@ def test_upgrade_never_calls_the_blocking_copy(isolated_profile, monkeypatch):
     print("ADOPT_BOOT_SECONDS", seconds)
 
 
-def test_missing_installer_backup_refuses_without_changing_current(isolated_profile):
+def test_missing_installer_backup_opens_and_preserves_old_selection_bytes(isolated_profile):
     root = isolated_profile / "ArchHub"
     stale = upgrade._selected(root)
-    upgrade._journal(isolated_profile / "ArchHub-Test/archhub-test.universal.sqlite3", "saved", 200)
-    current = root / "unified-authority/CURRENT"
-    before = current.read_bytes()
-    with pytest.raises(ValueError, match="verified installer.*closed.*backup"):
-        persistence.prepare_application_database(root, stale)
-    assert current.read_bytes() == before
+    source = upgrade._journal(isolated_profile / "ArchHub-Test/archhub-test.universal.sqlite3", "saved", 200)
+    before = stale.read_bytes()
+    result = persistence.prepare_application_database(root, stale)
+    assert persistence.application_database_path(root) == source
+    assert stale.read_bytes() == before
+    assert result['backup_path']
+    with CellStore(source) as reopened:
+        assert reopened.read('app:archhub').atom == b'saved'

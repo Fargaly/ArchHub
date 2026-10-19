@@ -267,6 +267,55 @@ def _page_all(path, session):
     return cells
 
 
+@pytest.mark.parametrize('interruption', ['none', 'append', 'external', 'committed-fault'])
+def test_mainfix_partition_count_witness_preserves_exact_checkpoint(tmp_path, monkeypatch, interruption):
+    from nodelang.conversation_retention_maintenance import partition_archived_trace_batch
+    path, graph, old, recent, sessions = _trace_fixture(tmp_path, monkeypatch)
+    content = Path(str(path)+'.conversations.sqlite3')
+    cold_path = archive.trace_archive_path(content)
+    removed = sorted(old)[:24]
+    with CellStore(path) as store, ConversationHistoryStore(content, instance_id='adopt-court') as history:
+        history.initialize_trace_maintenance()
+        _export(store, cold_path, sorted(old), sessions, history)
+        connection, _ = store.sqlite_storage()
+        statements = []
+        connection.set_trace_callback(statements.append)
+        try:
+            for page in range(3):
+                if page == 1 and interruption == 'append':
+                    store.commit(store.revision, create=(Cell('work:count-witness-edit', NULL_CELL_ID, NULL_CELL_ID, b'saved'),))
+                if page == 1 and interruption == 'external':
+                    with closing(sqlite3.connect(path)) as other:
+                        other.execute('PRAGMA application_id=7040')
+                ids = removed[page*8:(page+1)*8]
+                if page == 1 and interruption == 'committed-fault':
+                    def fault(stage):
+                        if stage == 'trace_partition_committed':
+                            raise RuntimeError('court interrupted after durable partition')
+                    with monkeypatch.context() as failures:
+                        failures.setattr(store._journal, '_fault_injector', fault)
+                        with pytest.raises(RuntimeError, match='after durable partition'):
+                            partition_archived_trace_batch(store, history, cold_path, ids, sessions, check=lambda: None)
+                else:
+                    partition_archived_trace_batch(store, history, cold_path, ids, sessions, check=lambda: None)
+        finally:
+            connection.set_trace_callback(None)
+        recounts = sum(statement.strip().upper() == 'SELECT COUNT(*) FROM CELL_VERSIONS' for statement in statements)
+        assert recounts == (1 if interruption == 'none' else 2), 'unchanged custody must not rescan the entire history per batch'
+        actual = connection.execute('SELECT COUNT(*) FROM cell_versions').fetchone()[0]
+        checkpoint = store._journal._accelerators().execute('SELECT prefix_rows FROM partition_checkpoints ORDER BY revision DESC LIMIT 1').fetchone()[0]
+        assert checkpoint == actual
+        assert set(removed).isdisjoint(store.snapshot().cells)
+        assert all(store.read(ident) == cell for ident, cell in {**graph, **recent}.items())
+        digest = store.revision_chain_digest()
+        print('MAINFIX_PARTITION', json.dumps(dict(interruption=interruption, batches=3, full_recounts=recounts, exact_checkpoint=True)))
+    with CellStore(path) as reopened:
+        assert reopened.revision_chain_digest() == digest
+        assert set(removed).isdisjoint(reopened.snapshot().cells)
+        if interruption == 'append':
+            assert reopened.read('work:count-witness-edit').atom == b'saved'
+
+
 def test_cold_custody_keeps_every_current_and_historical_byte_once(tmp_path, monkeypatch):
     path, graph, old, recent, sessions = _trace_fixture(tmp_path, monkeypatch)
     content = Path(str(path)+".conversations.sqlite3")

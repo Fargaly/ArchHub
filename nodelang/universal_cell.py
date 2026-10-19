@@ -1837,6 +1837,16 @@ class _SqliteJournal:
             raise InvalidCell('archive partition requires a bounded exact selection')
         source_version = self._connection.execute('PRAGMA data_version').fetchone()[0]
         self._prepare_trace_chain(self._connection.execute('SELECT MAX(revision) FROM revisions').fetchone()[0], check)
+        # Recount once per unchanged connection generation, rather than once
+        # per 256-cell transfer. Any external commit or intervening local
+        # write invalidates this witness; reopen still validates checkpoints.
+        count_key = (source_version, self._connection.total_changes)
+        held_count = getattr(self, '_trace_partition_count', None)
+        if held_count is None or held_count[:2] != count_key:
+            prior_count = self._connection.execute('SELECT COUNT(*) FROM cell_versions').fetchone()[0]
+            self._trace_partition_count = (*count_key, prior_count)
+        else:
+            prior_count = held_count[2]
         versions, deltas, replacements, certificates = {}, {}, {}, []
         row_hash = lambda row: hashlib.sha256(repr(tuple(row)).encode('utf-8')).hexdigest()
         for revision, old, new in projections:
@@ -1900,6 +1910,7 @@ class _SqliteJournal:
             for table in ('prefix_fingerprints', 'prefix_chain', 'set_accumulators'):
                 if self._accelerators().execute("SELECT 1 FROM sqlite_master WHERE name=?", (table,)).fetchone():
                     self._accelerators().execute('DELETE FROM ' + table)
+        inserted_versions = 0
         self._connection.execute('BEGIN IMMEDIATE')
         self._connection.create_function('trace_custody_write', 0, lambda: 1)
         self._connection.create_function('trace_cell_custody', 1, lambda ident: int(ident in identifiers))
@@ -1963,6 +1974,7 @@ class _SqliteJournal:
                     # both the exact live identity count and its semantic hash.
                     null = Cell(NULL_CELL_ID, NULL_CELL_ID, NULL_CELL_ID, b'')
                     self._insert_versions(revision, (null,))
+                    inserted_versions += 1
                     current_null = self._connection.execute('SELECT revision FROM current_cells '
                         'WHERE cell_id=?', (NULL_CELL_ID,)).fetchone()[0]
                     if revision > current_null:
@@ -1972,11 +1984,12 @@ class _SqliteJournal:
                 self._connection.execute('INSERT OR REPLACE INTO trace_live_proofs VALUES(?,?,?,?)',
                     (revision, live_count, remaining.to_bytes(SET_HASH_BYTES, 'big'), archived+len(removed)+len(added)))
             self._connection.executemany('DELETE FROM current_cells WHERE cell_id=?', ((i,) for i in identifiers))
-            self._connection.executemany('DELETE FROM cell_versions WHERE cell_id=?', ((i,) for i in identifiers))
+            removed_versions = self._connection.executemany('DELETE FROM cell_versions WHERE cell_id=?', ((i,) for i in identifiers)).rowcount
             for revision, old, new in projections:
                 check()
                 if old is None:
                     self._insert_versions(revision, (new,))
+                    inserted_versions += 1
                 else:
                     self._connection.execute('UPDATE cell_versions SET link0=?,link1=?,atom=? WHERE revision=? AND cell_id=?',
                         (new.link0, new.link1, new.atom, revision, old.id))
@@ -2002,13 +2015,14 @@ class _SqliteJournal:
         # mismatch and re-proves the small live projection from journal seals.
         latest, digest = self._connection.execute('SELECT revision,digest FROM trace_chain_proofs '
             'ORDER BY revision DESC LIMIT 1').fetchone()
-        count = self._connection.execute('SELECT COUNT(*) FROM cell_versions').fetchone()[0]
+        count = prior_count - removed_versions + inserted_versions
         self._accelerators().execute('INSERT OR REPLACE INTO chain_checkpoints VALUES(?,?,?)',
             (latest, digest, count))
         self._accelerators().execute('CREATE TABLE IF NOT EXISTS partition_checkpoints('
             'revision INTEGER PRIMARY KEY,chain_digest BLOB NOT NULL,prefix_rows INTEGER NOT NULL)')
         self._accelerators().execute('INSERT OR REPLACE INTO partition_checkpoints VALUES(?,?,?)',
             (latest, digest, count))
+        self._trace_partition_count = (source_version, self._connection.total_changes, count)
         if projections:
             for table in ('prefix_fingerprints', 'prefix_chain', 'set_accumulators'):
                 if self._accelerators().execute("SELECT 1 FROM sqlite_master WHERE name=?", (table,)).fetchone():

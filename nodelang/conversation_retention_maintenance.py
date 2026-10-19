@@ -874,9 +874,10 @@ def _advance_trace_registry(service, history, authentication_context, check, max
             history._db.execute("UPDATE trace_family_state SET phase='reset' WHERE singleton=1")
         return dict(status='registry-source-changed', inspected=0)
     phase = state['phase']
+    registry_cells = min(max_cells, 1024)
     if phase == 'cleanup':
         from .conversation_archive import _open_trace_archive, _trace_digest
-        rows = history._db.execute('SELECT cell_id,conversation_id,digest FROM trace_registry_detached WHERE cell_id>? ORDER BY cell_id LIMIT ?', (state['cursor'], max_cells)).fetchall()
+        rows = history._db.execute('SELECT cell_id,conversation_id,digest FROM trace_registry_detached WHERE cell_id>? ORDER BY cell_id LIMIT ?', (state['cursor'], registry_cells)).fetchall()
         absent = []
         for identifier, session, digest in rows:
             check()
@@ -896,7 +897,7 @@ def _advance_trace_registry(service, history, authentication_context, check, max
                 raise InvalidCell('trace catalog progress lacks a committed partition receipt')
             absent.append((identifier,))
         with history._registry_custody_write(), history._transaction(write=True, before_commit=check):
-            history._db.execute('DELETE FROM trace_registry_members WHERE ordinal IN (SELECT ordinal FROM trace_registry_members ORDER BY ordinal LIMIT ?)', (max_cells,))
+            history._db.execute('DELETE FROM trace_registry_members WHERE ordinal IN (SELECT ordinal FROM trace_registry_members ORDER BY ordinal LIMIT ?)', (registry_cells,))
             history._db.executemany('DELETE FROM trace_registry_detached WHERE cell_id=?', absent)
             if rows:
                 history._db.execute('UPDATE trace_registry_state SET cursor=? WHERE singleton=1', (rows[-1][0],))
@@ -906,7 +907,7 @@ def _advance_trace_registry(service, history, authentication_context, check, max
         return dict(status='registry-cleanup', inspected=0)
     if phase == 'reset':
         with history._transaction(write=True, before_commit=check):
-            history._db.execute('DELETE FROM trace_registry_members WHERE ordinal IN (SELECT ordinal FROM trace_registry_members ORDER BY ordinal LIMIT ?)', (max_cells,))
+            history._db.execute('DELETE FROM trace_registry_members WHERE ordinal IN (SELECT ordinal FROM trace_registry_members ORDER BY ordinal LIMIT ?)', (registry_cells,))
             if not history._db.execute('SELECT 1 FROM trace_registry_members LIMIT 1').fetchone():
                 history._db.execute("UPDATE trace_registry_state SET phase='scan' WHERE singleton=1")
         return dict(status='registry-reset', inspected=0)
@@ -919,7 +920,7 @@ def _advance_trace_registry(service, history, authentication_context, check, max
             store._trace_registry_cache = cache
         additions = []
         with history._transaction(write=True, before_commit=check):
-            for _ in range(max_cells):
+            for _ in range(registry_cells):
                 check()
                 if cursor == NULL_CELL_ID:
                     history._db.execute("UPDATE trace_registry_state SET phase='prospective' WHERE singleton=1")
@@ -1292,10 +1293,13 @@ def _advance_family_inventory(store, history, check, max_cells):
     """One keyset/frontier page; no transcript-sized membership mirror."""
     connection, _lock = store.sqlite_storage()
     cutoff = time.time() - _RETENTION_SECONDS
+    # Current-row classification writes derived session metadata too. Bound
+    # every inventory phase inside the existing SQL/time operation guards.
+    page_cells = min(max_cells, 1024)
     frontier = None
     state = history._db.execute('SELECT * FROM trace_family_state WHERE singleton=1').fetchone()
     if state is not None and state['phase'] == 'historical':
-        frontier = _project_trace_catalogue_page(store, history, state, check, max_cells)
+        frontier = _project_trace_catalogue_page(store, history, state, check, page_cells)
     with history._transaction(write=True, before_commit=check):
         state = history._db.execute('SELECT * FROM trace_family_state WHERE singleton=1').fetchone()
         if state is None:
@@ -1309,7 +1313,7 @@ def _advance_family_inventory(store, history, check, max_cells):
         if phase == 'reset':
             for table, key in (('trace_family_sessions', 'session_id'), ('trace_family_protected', 'cell_id')):
                 check()
-                history._db.execute('DELETE FROM ' + table + ' WHERE ' + key + ' IN (SELECT ' + key + ' FROM ' + table + ' ORDER BY ' + key + ' LIMIT ?)', (max_cells,))
+                history._db.execute('DELETE FROM ' + table + ' WHERE ' + key + ' IN (SELECT ' + key + ' FROM ' + table + ' ORDER BY ' + key + ' LIMIT ?)', (page_cells,))
             pending = any(history._db.execute('SELECT 1 FROM ' + table + ' LIMIT 1').fetchone() is not None
                 for table in ('trace_family_sessions', 'trace_family_protected'))
             if not pending:
@@ -1322,7 +1326,7 @@ def _advance_family_inventory(store, history, check, max_cells):
             state = history._db.execute('SELECT * FROM trace_family_state WHERE singleton=1').fetchone()
         if phase == 'scan':
             rows = connection.execute('SELECT c.cell_id,c.revision,c.link0,c.link1,r.committed_at FROM current_cells c JOIN revisions r ON r.revision=c.revision WHERE c.cell_id>? ORDER BY c.cell_id LIMIT ?',
-                (state['cursor'], max_cells)).fetchall()
+                (state['cursor'], page_cells)).fetchall()
             for row in rows:
                 _record_family_cell(history, row, cutoff, check)
             if rows:
@@ -1337,7 +1341,7 @@ def _advance_family_inventory(store, history, check, max_cells):
                 'WHERE (v.revision,v.cell_id)>(?,?) ' +
                 ('AND (v.revision,v.cell_id)<=(?,?) ' if frontier is not None else '') +
                 'ORDER BY v.revision,v.cell_id LIMIT ?',
-                (state['delta_revision'], state['delta_cell'], *(frontier or ()), max_cells)).fetchall()
+                (state['delta_revision'], state['delta_cell'], *(frontier or ()), page_cells)).fetchall()
             for row in rows:
                 _record_family_cell(history, row, cutoff, check)
             if rows:
@@ -1348,7 +1352,7 @@ def _advance_family_inventory(store, history, check, max_cells):
             return dict(status='family-inventory', inspected=len(rows), next_cursor=str(rows[-1][:2]) if rows else '')
         if phase == 'delta':
             rows = connection.execute('SELECT revision,cell_id FROM cell_versions WHERE (revision,cell_id)>(?,?) ORDER BY revision,cell_id LIMIT ?',
-                (state['delta_revision'], state['delta_cell'], max_cells)).fetchall()
+                (state['delta_revision'], state['delta_cell'], page_cells)).fetchall()
             for revision, identifier in rows:
                 check()
                 current = connection.execute('SELECT c.cell_id,c.revision,c.link0,c.link1,r.committed_at FROM current_cells c JOIN revisions r ON r.revision=c.revision WHERE c.cell_id=?', (identifier,)).fetchone()
@@ -1370,7 +1374,7 @@ def _advance_family_inventory(store, history, check, max_cells):
             # Session age is now complete. Even an old member of a recent
             # session remains live and therefore protects its dependencies.
             rows = connection.execute('SELECT cell_id,link0,link1 FROM current_cells WHERE cell_id>? ORDER BY cell_id LIMIT ?',
-                (state['cursor'], max_cells)).fetchall()
+                (state['cursor'], page_cells)).fetchall()
             for identifier, link0, link1 in rows:
                 check()
                 session, candidate, owned_activity, digest = _family_descriptor(history, identifier)
@@ -1385,7 +1389,7 @@ def _advance_family_inventory(store, history, check, max_cells):
                 history._db.execute("UPDATE trace_family_state SET phase='protect',cursor='' WHERE singleton=1")
             return dict(status='family-retained-dependencies', inspected=len(rows), next_cursor=rows[-1][0] if rows else '')
         if phase == 'protect':
-            rows = history._db.execute('SELECT cell_id FROM trace_family_protected WHERE walked=0 ORDER BY cell_id LIMIT ?', (max_cells,)).fetchall()
+            rows = history._db.execute('SELECT cell_id FROM trace_family_protected WHERE walked=0 ORDER BY cell_id LIMIT ?', (page_cells,)).fetchall()
             for (identifier,) in rows:
                 check()
                 for version in connection.execute('SELECT link0,link1 FROM cell_versions WHERE cell_id=?', (identifier,)):
@@ -1461,21 +1465,22 @@ def partition_archived_trace_batch(store, history, archive_path, ids, sessions, 
 
 
 def maintain_trace_families(service, *, authentication_context, timeout_seconds=2.0,
-                            max_cells=256, cancellation_event=None, prepare_only=False):
+                            max_cells=1024, cancellation_event=None, prepare_only=False):
     """Authenticated idle fallback for unregistered obsolete trace chains."""
     from .conversation_archive import choose_trace_batch, preserve_trace_batch, trace_archive_path
     if authentication_context is None:
         raise AuthorizationDenied('trace family maintenance requires process authentication')
     if (type(timeout_seconds) not in (int, float) or not math.isfinite(timeout_seconds)
-            or not 0 < timeout_seconds <= 2 or type(max_cells) is not int or not 1 <= max_cells <= 256
+            or not 0 < timeout_seconds <= 2 or type(max_cells) is not int or not 1 <= max_cells <= 8192
             or type(prepare_only) is not bool):
         raise ValueError('trace family maintenance bounds are invalid')
     deadline = time.monotonic() + timeout_seconds
+    owner = service._owner
     def check():
-        if time.monotonic() >= deadline or cancellation_event is not None and cancellation_event.is_set():
+        if (time.monotonic() >= deadline or _user_is_active(owner)
+                or cancellation_event is not None and cancellation_event.is_set()):
             raise TimeoutError('trace family maintenance cancelled or budget exhausted')
     result = dict(status='family-deferred', inspected=0, exported=0, moved=0, versions=0, next_cursor=None)
-    owner = service._owner
     if _user_is_active(owner):
         return {**result, 'status': 'waiting-for-idle'}
     try:
@@ -1499,7 +1504,7 @@ def maintain_trace_families(service, *, authentication_context, timeout_seconds=
                         return {**result, **advanced}
                     connection, _lock = store.sqlite_storage()
                     cursor = history._db.execute('SELECT cursor FROM trace_family_state WHERE singleton=1').fetchone()[0]
-                    rows = connection.execute('SELECT c.cell_id,r.committed_at FROM current_cells c JOIN revisions r ON r.revision=c.revision WHERE c.cell_id>? ORDER BY c.cell_id LIMIT ?', (cursor, max_cells)).fetchall()
+                    rows = connection.execute('SELECT c.cell_id,r.committed_at FROM current_cells c JOIN revisions r ON r.revision=c.revision WHERE c.cell_id>? ORDER BY c.cell_id LIMIT ?', (cursor, min(max_cells, 256))).fetchall()
                     if not rows:
                         with history._transaction(write=True, before_commit=check):
                             cutoff = time.time() - _RETENTION_SECONDS
@@ -1529,7 +1534,9 @@ def maintain_trace_families(service, *, authentication_context, timeout_seconds=
                             sessions[identifier] = session
                     last = rows[-1][0]
                     if selected:
-                        identifiers = choose_trace_batch(connection, selected, check)
+                        # Inventory pages can be larger than the physical
+                        # custody transaction, whose existing cap stays 256.
+                        identifiers = choose_trace_batch(connection, selected[:256], check)
                         # Unselected eligible cells remain ahead of the cursor.
                         if len(identifiers) < len(selected):
                             last = identifiers[-1]
@@ -1544,7 +1551,11 @@ def maintain_trace_families(service, *, authentication_context, timeout_seconds=
                     with history._transaction(write=True, before_commit=check):
                         history._db.execute('UPDATE trace_family_state SET cursor=? WHERE singleton=1', (last,))
                     return {**result, 'status': 'family-archiving', 'inspected': len(rows), 'next_cursor': last}
-    except TimeoutError:
+    except (TimeoutError, sqlite3.OperationalError) as error:
+        if isinstance(error, sqlite3.OperationalError) and (
+                getattr(error, 'sqlite_errorcode', 0) & 255) not in (
+                sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED, sqlite3.SQLITE_INTERRUPT):
+            raise
         return result
 
 

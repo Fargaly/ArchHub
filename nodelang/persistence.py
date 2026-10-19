@@ -302,7 +302,7 @@ def prepare_application_database(state_directory, database, *, timeout_seconds=3
             if stream.read(16) != b'SQLite format 3\0':
                 return {'state': 'existing', 'backup_path': None, 'database_path': str(target)}
     runtime = root / 'unified-authority'
-    if any(path.is_symlink() or path.is_junction() for path in (root / 'backups', runtime,
+    if any(path.is_symlink() or path.is_junction() for path in (runtime,
             runtime / 'generations')):
         raise ValueError('application adoption path contains an alias; source preserved')
     runtime.mkdir(exist_ok=True)
@@ -323,19 +323,17 @@ def prepare_application_database(state_directory, database, *, timeout_seconds=3
             owners.callback(held_owner.close)
         heads = {path: _journal_head(path, check_budget=check_budget,
                     timeout_seconds=timeout_seconds) for path in paths}
-        # Indexed bounds avoid reading trace IDs when one candidate plainly
-        # contains more work. Only ambiguous overlapping bounds need exact
-        # trace-shape classification, including graph controls in those families.
+        # Distinguish saved work from a genesis-only compatibility file. Cell
+        # counts are not recency: a fresh catalogue can exceed a saved graph.
+        # Once non-trace work is known to exist, never classify millions of
+        # trace IDs merely to rank two non-empty journals.
         bounds = {path: _journal_work_cells(path, check_budget) for path in paths}
-        best_floor = max(value[0] for value in bounds.values())
-        contenders = [path for path in paths if bounds[path][1] >= best_floor]
         work = {path: (_journal_work_cells(path, check_budget, exact=True)
-            if len(contenders) > 1 and bounds[path][0] != bounds[path][1] else bounds[path][0])
-            for path in contenders}
-        chosen = max(contenders, key=lambda path: (work[path], heads[path], path == target))
+            if bounds[path][0] <= 1 < bounds[path][1] else bounds[path][0]) for path in paths}
+        chosen = max(paths, key=lambda path: (work[path] > 1, heads[path], path == target))
         print('  migration  : candidates ' + '; '.join('%s rev=%d time=%.6f' %
             (path, heads[path][1], heads[path][0]) for path in paths) +
-            '; chosen %s (work cells, committed head, existing selection)' % chosen, flush=True)
+            '; chosen %s (non-empty work, committed head, existing selection)' % chosen, flush=True)
         if chosen == target:
             return {'state': 'existing', 'backup_path': None, 'database_path': str(target)}
         if chosen.parent.parent == runtime / 'generations':
@@ -350,23 +348,35 @@ def prepare_application_database(state_directory, database, *, timeout_seconds=3
 
 
 
+class _MissingInstallerBackup(ValueError):
+    """No rollback copy for this head; this is never a graph-open refusal."""
+
+
 def _installer_closed_backup(root, source):
     """Admit the installer's already byte-verified, closed rollback copy.
 
     The installer owns the expensive copy/hash. Boot checks its completed
     receipt and file sizes; it does not repeat that multi-GB operation.
     """
-    # The verified installer closes its owner and refuses WAL/rollback files.
+    import sqlite3
+    # The verified installer closes its owner. A read probe's empty WAL is
+    # not a committed edit and cannot invalidate the same verified head.
     # A subsequently reopened/hot source is not that final-closed snapshot.
-    if any(Path(str(source) + suffix).exists() for suffix in ('-wal', '-journal')):
-        raise ValueError('verified installer final-closed rollback backup is missing for this open source')
+    if any(path.is_file() and path.stat().st_size for path in
+            (Path(str(source) + suffix) for suffix in ('-wal', '-journal'))):
+        raise _MissingInstallerBackup('verified installer final-closed rollback backup is missing for this open source')
     from .application_recovery_files import installer_backup_directory
     profiles = dict.fromkeys((Path(os.environ.get('LOCALAPPDATA', root.parent)).resolve(), root.parent))
-    directories = [installer_backup_directory(profile, source) for profile in profiles
-                   if source.is_relative_to(profile)]
+    try:
+        directories = [installer_backup_directory(profile, source) for profile in profiles
+                       if source.is_relative_to(profile)]
+    except (OSError, ValueError):
+        # Invalid rollback-location metadata cannot make the user's graph
+        # unavailable. The boot snapshot owner will report unavailable custody.
+        raise _MissingInstallerBackup('rollback backup location is unavailable') from None
     for directory in dict.fromkeys((*directories, source.parent / 'backups', root / 'backups')):
         if directory.is_symlink() or directory.is_junction():
-            raise ValueError('installer rollback custody directory is a link')
+            continue
         for backup in sorted(directory.glob('*-closed'), reverse=True):
             receipt = backup / 'closed-files.json'
             if backup.is_symlink() or backup.is_junction() or not receipt.is_file():
@@ -413,9 +423,9 @@ def _installer_closed_backup(root, source):
                 if _journal_head(backup / source.name) != _journal_head(source):
                     continue
                 return backup, record['sha256']
-            except (OSError, ValueError, KeyError, TypeError):
+            except (OSError, ValueError, KeyError, TypeError, sqlite3.Error):
                 continue
-    raise ValueError('verified installer final-closed rollback backup is missing; saved graph kept in place')
+    raise _MissingInstallerBackup('verified installer final-closed rollback backup is missing; saved graph kept in place')
 
 
 def _journal_identity(path, check_budget):
@@ -428,7 +438,11 @@ def _journal_identity(path, check_budget):
 def _prepare_application_journal(root, target, source, heads, check_budget, key_provider, *, owner_fence=None):
     """Select the existing flat file; CURRENT is the only publication commit."""
     from .unified_authority_runtime import _atomic_text
-    backup, backup_digest = _installer_closed_backup(root, source)
+    try:
+        backup, backup_digest = _installer_closed_backup(root, source)
+        backup_source = backup / source.name
+    except _MissingInstallerBackup:
+        backup, backup_digest, backup_source = None, None, None
     runtime = root / 'unified-authority'
     generations = runtime / 'generations'
     generations.mkdir(exist_ok=True)
@@ -437,10 +451,18 @@ def _prepare_application_journal(root, target, source, heads, check_budget, key_
     prepared.mkdir()
     before = _journal_identity(source, check_budget)
     identity = (source.stat().st_dev, source.stat().st_ino)
-    if _journal_identity(backup / source.name, check_budget) != before:
+    if backup_source and _journal_identity(backup_source, check_budget) != before:
         prepared.rmdir()
         raise ValueError('verified installer final-closed rollback backup is missing for this head')
     with _migration_store(source, check_budget, owner_fence=owner_fence) as store:
+        if backup is None:
+            from .application_recovery_files import preserve_open_application_journal
+            backup = preserve_open_application_journal(root, source, store.snapshot(), progress=check_budget)
+            backup_source = backup / 'graph.sqlite3' if backup else None
+            if backup:
+                backup_digest = json.loads((backup / 'recovery.json').read_text(encoding='utf-8'))['files']['graph']['sha256']
+            if backup_source and _journal_identity(backup_source, check_budget) != before:
+                raise ValueError('boot rollback backup does not match the selected head')
         change = _file_change_token(source)
         receipt_evidence = _verify_migrated_application(source, key_provider, check_budget,
             owner_fence=owner_fence, store=store)
@@ -456,7 +478,9 @@ def _prepare_application_journal(root, target, source, heads, check_budget, key_
         'journal_relative_path': os.path.relpath(source, root),
         'source_revision': before[0], 'source_revision_count': before[1],
         'source_history_digest': history_digest, 'source_committed_at': heads[source][0],
-        'installer_backup_sha256': backup_digest, 'backup_path': os.path.relpath(backup, root),
+        'installer_backup_sha256': backup_digest, 'backup_path': (os.path.relpath(backup, root)
+            if backup.drive.casefold() == root.drive.casefold() else str(backup)) if backup else None,
+        'backup_warning': 'Your saved graph is open without a new rollback backup. Existing backups are unchanged.' if backup is None else '',
         'adoption': 'flat-in-place', 'physical_file_id': identity,
         'receipt_evidence': receipt_evidence}, sort_keys=True))
     # A portable locator for metadata, checked against CURRENT before use.
@@ -467,7 +491,7 @@ def _prepare_application_journal(root, target, source, heads, check_budget, key_
     print('  adoption   : source head=%d revisions=%d receipts=verified:%d; '
           'selected head=%d revisions=%d receipts=verified:%d; verified rollback=%s' %
           (*before, len(receipt_evidence), *after, len(receipt_evidence), backup), flush=True)
-    return {'state': 'adopted', 'backup_path': str(backup), 'database_path': str(source)}
+    return {'state': 'adopted', 'backup_path': str(backup) if backup else None, 'database_path': str(source)}
 
 
 def _application_generation_directory(database):
@@ -481,8 +505,12 @@ def _application_generation_directory(database):
         raise ValueError('application adoption locator is invalid')
     held = json.loads(locator.read_text(encoding='utf-8'))
     generation = (path.parent / held['generation_relative_path']).resolve()
+    declared = os.environ.get('ARCHHUB_TEST_STATE_DIR')
+    declared_root = Path(declared).resolve() if declared else None
+    declared_legacy = (declared_root is not None and path == _legacy_desktop_journal(declared_root)
+        and generation.parent.parent.parent == declared_root)
     if (generation.parent.name != 'generations' or generation.parent.parent.name != 'unified-authority'
-            or not generation.is_relative_to(path.parent.parent)):
+            or not (generation.is_relative_to(path.parent.parent) or declared_legacy)):
         raise ValueError('application adoption locator leaves this profile')
     return generation
 
@@ -492,6 +520,19 @@ def application_state_directory(database):
     path = Path(database).resolve()
     generation = _application_generation_directory(path)
     return generation.parents[2] if selected_application_generation(path) else path.parent
+
+
+def application_backup_warning(database):
+    """Read the adoption's warning for the existing visible boot-status owner."""
+    if database is None:
+        return ''
+    generation = _application_generation_directory(database)
+    if generation is None:
+        return ''
+    path = generation / 'migration.json'
+    if not path.is_file() or path.stat().st_size > 16384:
+        return ''
+    return str(json.loads(path.read_text(encoding='utf-8')).get('backup_warning', ''))
 
 
 def selected_application_generation(database):
@@ -623,7 +664,9 @@ def migrate_graph_source(store, source_path):
         return {'state': 'selected'}
     selected = Path(store.database_path).resolve()
     root = application_state_directory(selected)
-    if source in _application_journal_candidates(root):
+    source_generation = _application_generation_directory(source)
+    if source in _application_journal_candidates(root) or (source_generation is not None
+            and source_generation.parent == root / 'unified-authority' / 'generations'):
         source_head, selected_head = _journal_head(source), _journal_head(selected)
         if source_head <= selected_head and (selected_application_generation(selected)
                 or source_head < selected_head):

@@ -3714,6 +3714,23 @@
         "tests_replica/test_workspace_root_machine_permit.py",
         "tools/real_app_check/agent_propose.py"
       ]
+    },
+    "INSTALLFIX": {
+      "source": "Founder INSTALLFIX: No, fix it in the product. Setup clean-close/checkpoint/verify/back up; same-build retries; isolated Setup twice; no install on founder profile.",
+      "source_sha256": "f2b6038f1ce81ab8ce34579aedc5e64b1ae8afa8a90742349e845fd517b27768",
+      "scope": [
+        "nodelang/application_recovery_files.py",
+        "nodelang/installer_closed_profile.py",
+        "installer/ArchHub.iss",
+        "tests_replica/test_installer_clean_close.py",
+        "tests_replica/test_installer_setup_isolated.py",
+        "READ-PROOF.md",
+        "PROGRESS.md",
+        "docs/DECISIONS.md",
+        "evidence/installfix/",
+        "tests_replica/test_adopt_backup_resume5.py",
+        "tests_replica/test_mainfix.py"
+      ]
     }
   }
 }

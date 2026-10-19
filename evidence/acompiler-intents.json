@@ -1,6 +1,37 @@
 {
   "schema_version": 1,
   "intents": {
+    "OPENWS": {
+      "source": "F62 Founder 2026-10-18 OPENWS: own account agents in registered workspaces never wait for grants; permission system stays. Why: وكسم البريميشنز وقفل الشغل ده حاجة انا قلت متتكررش مليون مرة ; مبقولش نمسح البيرميشن سيستم",
+      "scope": [
+        "nodelang/private_root_grants.py",
+        "nodelang/workspace_roots_catalogue.py",
+        "nodelang/universal_application.py",
+        "nodelang/application_server.py",
+        "nodelang/studio/studio-lm.jsx",
+        "tests_replica/test_openws_owner_default.py",
+        "tests_replica/test_workspace_root_machine_permit.py",
+        "tests_js/studio_workspaces_settings.test.cjs",
+        "docs/DECISIONS.md",
+        "READ-PROOF.md",
+        "plan.md",
+        "tasks.json",
+        "notes.md",
+        "PROGRESS.md",
+        "REGISTER.md",
+        "BRIEF-OPENWS.md",
+        "LANE-DISCIPLINE.md",
+        "RESULT-OPENWS-final.md",
+        "RESULT-OPENWS-fix.md",
+        "BRIEF-OPENWS-FIX.md",
+        "OPENWS.patch",
+        "OPENWS.patch.sha256",
+        "evidence/openws/",
+        "evidence/acompiler-intents.json",
+        "nodelang/application_machine_transport.py",
+        "tests_replica/test_privgrant_settings.py"
+      ]
+    },
     "AGENTLINK2": {
       "source": "Founder 2026-10-17 BRIEF-AGENTLINK2.md: SIMPLIFY per ARCH-DECISIONS-AUDIT decision #5; one existing Workshop store with MCP send/read, same-patch replacement deletion; installed acceptance 717 after landing",
       "scope": [

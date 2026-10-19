@@ -3494,6 +3494,7 @@
     "MAINFIX": {
       "source": "Founder MAINFIX request: repair ce671c2e NO-GO Workshop, old-graph and composer regressions; preserve ADOPT AGENTLINK2 MAINREL; no build or install.",
       "scope": [
+        "docs/DECISIONS.md",
         "nodelang/persistence.py",
         "nodelang/application_recovery_files.py",
         "nodelang/studio/studio-lm.jsx",

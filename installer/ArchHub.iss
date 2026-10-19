@@ -99,6 +99,7 @@ Name: "connectassistants"; Description: "Connect my AI assistants to ArchHub (ad
 [Files]
 ; Setup extracts the new product backup owner before replacing any old code.
 Source: "..\nodelang\application_recovery_files.py"; Flags: dontcopy
+Source: "..\nodelang\installer_closed_profile.py"; Flags: dontcopy
 Source: "..\nodelang\backup_retention.py"; Flags: dontcopy
 Source: "..\nodelang\assistant_registration.py"; Flags: dontcopy
 Source: "..\nodelang\client_mcp_installation.py"; Flags: dontcopy
@@ -638,10 +639,11 @@ begin
   if Result = '' then
   begin
     ExtractTemporaryFile('application_recovery_files.py');
+    ExtractTemporaryFile('installer_closed_profile.py');
     ExtractTemporaryFile('backup_retention.py');
     ExtractTemporaryFile('conversation_trace_shapes.py');
     BackupProgress := CreateOutputMarqueeProgressPage('Preserving your saved work',
-      'Checking disk budget and backing up closed journals before replacing files');
+      'Closing ArchHub journal holders, checking SQLite and preserving saved work');
     BackupFailure := '';
     BackupProgress.Show();
     BackupProgress.Animate();
@@ -654,7 +656,7 @@ begin
       begin
         Result := BackupFailure;
         if Result = '' then
-          Result := 'The pre-upgrade journal backup did not complete. Close ArchHub and retry Setup. Your saved work was kept.';
+          Result := 'The pre-upgrade journal backup did not complete. Your saved work was kept; see the Setup log for the store and holder.';
       end;
     finally
       BackupProgress.Hide();

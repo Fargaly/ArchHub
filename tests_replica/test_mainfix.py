@@ -135,6 +135,7 @@ def test_invalid_sync_metadata_refuses_copy_plainly(isolated_profile, monkeypatc
 
 
 def test_setup_preserve_cli_refuses_hot_journal_with_nonzero_exit(isolated_profile):
+    import os
     import sqlite3
     import subprocess
     import sys
@@ -152,7 +153,8 @@ def test_setup_preserve_cli_refuses_hot_journal_with_nonzero_exit(isolated_profi
             '--build', 'mainfix-refused-setup'], capture_output=True, text=True, check=False)
         assert result.returncode == 1
         refusal = result.stdout.splitlines()[-1]
-        assert refusal == 'Setup refused: close ArchHub before preserving its pre-upgrade journal'
+        assert refusal.startswith('Setup refused: Cannot close SQLite journals:')
+        assert 'PID %d' % os.getpid() in refusal
         assert 'Traceback' not in result.stdout + result.stderr
         assert source.read_bytes() == graph_before
         assert Path(str(source) + '-wal').read_bytes() == wal_before

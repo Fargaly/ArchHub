@@ -184,7 +184,7 @@ def test_installer_script_runs_with_only_extracted_stdlib_owners(tmp_path):
     source = _journal(tmp_path / 'profile')
     extracted = tmp_path / 'setup'
     extracted.mkdir()
-    for module in ('application_recovery_files.py', 'backup_retention.py', 'conversation_trace_shapes.py'):
+    for module in ('application_recovery_files.py', 'installer_closed_profile.py', 'backup_retention.py', 'conversation_trace_shapes.py'):
         (extracted / module).write_bytes((Path(files.__file__).parent / module).read_bytes())
     for build in ('one', 'two'):
         result = subprocess.run([sys.executable, str(extracted / 'application_recovery_files.py'),

@@ -169,11 +169,16 @@ def _set_closed_pin(backup, record, pinned):
         pending.unlink(missing_ok=True)
 
 
+def _has_journal_content(path):
+    return any(side.exists() and side.stat().st_size for side in
+               (Path(str(path) + suffix) for suffix in ('-wal', '-journal')))
+
+
 def _closed_source_score(source, selected, *, exact=False):
     """Match adoption's work-content preference, never filesystem timestamps."""
     if source.is_symlink() or source.is_junction() or source.resolve() != source.absolute():
         raise ValueError('closed-backup journal is a link')
-    if any(Path(str(source) + suffix).exists() for suffix in ('-wal', '-journal')):
+    if _has_journal_content(source):
         raise ValueError('close ArchHub before preserving its pre-upgrade journal')
     # Closed WAL-mode files must not acquire fresh sidecars merely for scoring.
     with closing(sqlite3.connect(source.as_uri() + '?mode=ro&immutable=1', uri=True)) as db:
@@ -507,29 +512,8 @@ def _installer_backup_lease(profile):
         close(handle)
 
 
-def preserve_closed_application_journals(profile, build, *, keep_count=3, max_bytes=10 * 1024**3,
-                                        progress=None):
-    with _installer_backup_lease(profile):
-        return _preserve_closed_application_journals(profile, build, keep_count=keep_count,
-                                                    max_bytes=max_bytes, progress=progress)
-
-
-def _preserve_closed_application_journals(profile, build, *, keep_count=3, max_bytes=10 * 1024**3,
-                                        progress=None):
-    """Installer-only, before replacing files: retain verified pre-upgrade bytes.
-
-    The caller closes ArchHub first. An exclusive SQLite lease and byte readback
-    fence the copy; a hot WAL/journal or busy owner refuses the upgrade. Completed
-    Identical bytes reuse verified custody before reserving copy space. Only the
-    latest pre-ADOPT copy is pinned; later copies use the common retention owner.
-    Setup extracts this stdlib-only module and backup_retention before installing.
-    """
-    import re
-    report = progress if progress is not None else lambda message: None
-    report('Selecting closed journals')
-    if not re.fullmatch(r'[A-Za-z0-9._-]{1,128}', build):
-        raise ValueError('invalid closed-backup build')
-    profile = Path(profile).resolve()
+def _closed_profile_candidates(profile):
+    """The same bounded inventory drives clean-close, scoring and custody."""
     candidates = [profile / 'ArchHub-Test/archhub-test.universal.sqlite3']
     root = profile / 'ArchHub'
     candidates.extend(root / name for name in ('authority.sqlite3',
@@ -551,6 +535,44 @@ def _preserve_closed_application_journals(profile, build, *, keep_count=3, max_b
                     raise ValueError('closed-backup selected journal leaves this profile')
         candidates.append(selected)
     candidates = list(dict.fromkeys(path for path in candidates if path.is_file()))
+    return candidates, selected
+
+
+def preserve_closed_application_journals(profile, build, *, keep_count=3, max_bytes=10 * 1024**3,
+                                        progress=None, close_writers=False):
+    profile = Path(profile).resolve()
+    with _installer_backup_lease(profile), ExitStack() as closing_profile:
+        if close_writers:
+            if __package__:
+                from .installer_closed_profile import closed_profile as package_close
+            else:
+                standalone_close = importlib.import_module('installer_closed_profile')
+            closer = package_close if __package__ else standalone_close.closed_profile
+            candidates, _selected = _closed_profile_candidates(profile)
+            closing_profile.enter_context(closer(profile, candidates, _closed_source_lease,
+                progress if progress is not None else lambda message: None))
+        return _preserve_closed_application_journals(profile, build, keep_count=keep_count,
+                                                    max_bytes=max_bytes, progress=progress)
+
+
+def _preserve_closed_application_journals(profile, build, *, keep_count=3, max_bytes=10 * 1024**3,
+                                        progress=None):
+    """Installer-only, before replacing files: retain verified pre-upgrade bytes.
+
+    Setup closes owned holders and folds SQLite before entering here. Exclusive
+    leases and byte readback fence the copy; a live writer still refuses the upgrade.
+    Identical bytes reuse verified custody before reserving copy space. Only the
+    latest pre-ADOPT copy is pinned; later copies use the common retention owner.
+    Setup extracts this stdlib-only module and backup_retention before installing.
+    """
+    import re
+    report = progress if progress is not None else lambda message: None
+    report('Selecting closed journals')
+    if not re.fullmatch(r'[A-Za-z0-9._-]{1,128}', build):
+        raise ValueError('invalid closed-backup build')
+    profile = Path(profile).resolve()
+    root = profile / 'ArchHub'
+    candidates, selected = _closed_profile_candidates(profile)
     if not candidates:
         return []
     bounds = {path: _closed_source_score(path, selected) for path in candidates}
@@ -596,8 +618,7 @@ def _preserve_closed_application_journals(profile, build, *, keep_count=3, max_b
         with ExitStack() as leases:
             graph_database = None
             for path in paths:
-                if path.is_symlink() or path.is_junction() or any(
-                        Path(str(path) + suffix).exists() for suffix in ('-wal', '-journal')):
+                if path.is_symlink() or path.is_junction() or _has_journal_content(path):
                     raise ValueError('close ArchHub before preserving its pre-upgrade journal')
                 db = leases.enter_context(_closed_source_lease(path))
                 if path == source:
@@ -1035,7 +1056,7 @@ if __name__ == '__main__':
     arguments = parser.parse_args()
     try:
         preserve_closed_application_journals(arguments.closed_profile, arguments.build,
-                                             progress=lambda message: print(message, flush=True))
+                                             close_writers=True, progress=lambda message: print(message, flush=True))
     except (OSError, ValueError, sqlite3.Error) as refused:
         print('Setup refused: ' + str(refused), flush=True)
         raise SystemExit(1) from refused

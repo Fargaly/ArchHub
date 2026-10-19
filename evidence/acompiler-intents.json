@@ -3443,6 +3443,7 @@
     "MAINREL": {
       "source": "Founder2026-10-18 BRIEF-MAINREL.md: eight measured PREMORTEM-A release guards; Codex/Gemini old connector migration and file fallback; no live installation. Base d89a50fd2304ea4cbda75e1313c08ed187404f2f.",
       "scope": [
+        "evidence/acompiler.json",
         "installer/ArchHub.iss",
         "colleague_setup.py",
         "launch_archhub_test.py",

@@ -21,8 +21,8 @@ def test_fresh_process_has_send_read_without_binding(tmp_path):
                 await client.initialize()
                 tools = {tool.name: tool for tool in (await client.list_tools()).tools}
                 assert "send" in tools and "read" in tools
-                assert set(tools["send"].inputSchema["properties"]) == {"to", "text"}
-                assert set(tools["read"].inputSchema["properties"]) == {"since"}
+                assert set(tools["send"].inputSchema["properties"]) == {"to", "text", "reply_to"}
+                assert set(tools["read"].inputSchema["properties"]) == {"since", "declarations_after", "include_archived"}
                 assert not any("recover" in name or "rebind" in name or "owner_" in name for name in tools)
     asyncio.run(court())
 

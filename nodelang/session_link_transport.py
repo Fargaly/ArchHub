@@ -200,7 +200,7 @@ class SessionLinkTransport:
         return result
 
     def request(self, recipient, text, timeout_seconds=180, cancel_event=None,
-                *, permission_mode="prompting"):
+                *, permission_mode="prompting", mailbox_message=None):
         """Request a reply from an exact discovered recipient, rechecked by worker.
 
         cancelled_wait means local waiting stopped, never recipient cancellation.
@@ -219,7 +219,8 @@ class SessionLinkTransport:
         if self._attachment is not None and permission_mode != "prompting":
             return {"status": "not_sent", "reason": "attachment_requires_prompting"}
         return self._call({"operation": "request", "recipient": dict(recipient),
-                           "text": text, "permission_mode": permission_mode}, budget, cancel_event)
+                           "text": text, "permission_mode": permission_mode,
+                           **({"mailbox_message":mailbox_message} if mailbox_message else {})}, budget, cancel_event)
 
     def _call(self, payload, budget, cancel_event):
         request_id = str(uuid.uuid4())

@@ -10,7 +10,7 @@ const readTools = new Set(['read','glob','grep','list','skill']);
 const shellTools = new Set(['bash','powershell']);
 // Only selected Work executes through the native Work owner.
 const nativeTools = new Set(['archhub_work']);
-const mailboxTools = new Set(['archhub_agent_coordination_send','archhub_agent_coordination_read']);
+const mailboxTools = new Set(['archhub_agent_coordination_send','archhub_agent_coordination_read','archhub_agent_coordination_declare']);
 // Only these tools' effects are fully accounted by the owner's permit/receipt
 // ledger (reads have none; write/edit hold a permit until receipted).
 const stringify = value => JSON.stringify(value, (_key,item)=>object(item)?Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])):item);
@@ -41,10 +41,13 @@ const toolClassification = new Map([
  ['archhub-hosts_rhino_ping','read'],['archhub-hosts_rhino_execute_python','execute'],
  ['archhub_agent_coordination_read','read'],
  ['archhub_agent_coordination_send','execute'],
+ ['archhub_agent_coordination_declare','execute'],
  ['archhub_agent_coordination_native_work_artifact_material','read'],
  ['archhub_agent_coordination_native_work_read_artifact','read'],
  ['archhub_agent_coordination_native_work_assignment','read'],
  ['archhub_agent_coordination_native_work_current','read'],
+ ['archhub_agent_coordination_native_work_current_detail','read'],
+ ['archhub_agent_coordination_native_work_task_detach','execute'],
  ['archhub_agent_coordination_native_work_material','read'],
  ['archhub_agent_coordination_native_work_configuration','read'],
  ['archhub_agent_coordination_native_work_plan_read','read'],
@@ -414,7 +417,8 @@ function normalized(tool,args) {
  return {tool_name:String(tool),tool_input:args};
 }
 
-export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expectedSessions,selectedWorks={},workToolFactory,sessionLink,laneFolders={},readStaleMs=60000}) {
+export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expectedSessions,selectedWorks={},workToolFactory,sessionLink,laneFolders={},trustedDirectories=[],readStaleMs=60000}) {
+ if(!Array.isArray(trustedDirectories)||trustedDirectories.some(p=>typeof p!=='string'||!path.isAbsolute(p)))fail('trusted directories must be explicit absolute paths');
  const invoke=gateRunner||createNativeGateRunner(gateCommand,gateArgs,{expectedSessions,selectedWorks,sessionLink,laneFolders});
  // Retained for all workspaces in this loaded plugin; never clear on idle/error.
   const pending=new Map();
@@ -427,6 +431,15 @@ export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expect
    if(!input || typeof input.sessionID!=='string'||!/^ses_[A-Za-z0-9]+$/.test(input.sessionID)||
       typeof input.callID!=='string'||!input.callID||input.callID.length>256)fail('native session/call identity unavailable');
    return input.sessionID+'\0'+input.callID;
+  };
+  const settle=(key,record,status)=>{
+   record.state='settling';
+   record.event={...record.event,hook_event_name:'PostToolUse'};
+   record.settlement=invoke({...record.event,tool_response:{status}}).then(result=>{
+    if(!result.allow){record.state='uncertain';fail('postwrite receipt denied; continuation blocked');}
+    pending.delete(key);
+   },error=>{record.state='uncertain';throw error;});
+   return record.settlement;
   };
   // One execution path for every owner-executed tool: the call must match an
   // admission this session's before-hook recorded; lost output is never replayed.
@@ -443,6 +456,19 @@ export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expect
   };
   const nativeArgs=()=>({operation:workToolFactory.schema.string(),arguments:workToolFactory.schema.object({}).passthrough(),_archhub_call:workToolFactory.schema.string().optional()});
   return {
+   config:async config=>{
+    // This removes only the vendor's outside-cwd prompt at the explicitly
+    // registered roots. The native permission gate still admits each tool.
+    const home=process.env.USERPROFILE||process.env.HOME;
+    const folders=[directory,...Object.values(laneFolders),...trustedDirectories,
+     ...(home?['.claude/rules','.codex/skills','.agents/skills','.gemini/skills'].map(p=>path.join(home,p)):[])];
+    config.permission=object(config.permission)?config.permission:
+     (typeof config.permission==='string'?{'*':config.permission}:{});
+    if(config.permission.external_directory==='allow')return;
+    const existing=object(config.permission.external_directory)?config.permission.external_directory:
+     {'*':config.permission.external_directory||'ask'};
+    config.permission.external_directory={...existing,...Object.fromEntries(folders.map(p=>[path.resolve(p).replaceAll('\\','/')+'/*','allow']))};
+   },
    ...(workToolFactory?{tool:{
     archhub_work:workToolFactory({
      description:'Use this native session’s configured Workshop task. Attachment does not grant execution or file permission.',
@@ -453,6 +479,15 @@ export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expect
     // No idle turn end with open Work: OpenCode cannot block a stop, so a session that
     // goes idle with open Work is prompted once to continue; its next idle passes.
     event:async({event})=>{
+     // OpenCode omits tool.execute.after on failures. Its terminal tool part
+     // is the receipt for this exact call; do not leave a session-wide lock.
+     const part=event?.type==='message.part.updated'?event.properties?.part:null;
+     if(part?.type==='tool'&&part.state?.status==='error'){
+      const key=part.sessionID+'\0'+part.callID,record=pending.get(key);
+      if(record&&record.tool===part.tool&&record.args===stringify(part.state.input)&&record.state==='admitted'){
+       await settle(key,record,'failed');
+      }
+     }
      const seen=messageEvidence(event);
      if(seen?.role==='assistant'){
       lastAssistant.set(seen.session,seen.text);
@@ -505,6 +540,13 @@ export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expect
     const blocker=()=>pending.get(key)||[...pending.values()].find(p=>p.session===input.sessionID&&
        (!read||!p.read||!['preparing','admitted','settling'].includes(p.state)));
     let blocking=blocker();
+    // OpenCode may schedule the next tool while its previous after hook is
+    // awaiting the owner's receipt. Join that exact in-flight settlement;
+    // never replay an effect or discard an uncertain/admitted call.
+    for(let joined=0;joined<64&&blocking?.state==='settling'&&blocking.call!==input.callID&&blocking.settlement;joined++){
+     await blocking.settlement;
+     blocking=blocker();
+    }
     // Uncertain read/write/edit records settle only on the owner's verdict:
     // released or gone with zero unreceipted permits proves no open write effect.
     // Shell calls and Work executions carry no permit, so the ledger cannot
@@ -552,13 +594,7 @@ export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expect
     }
     const skipped=nativeTools.has(input.tool)&&record?.state==='admitted';
     if(!record||(!skipped&&record.state!==(nativeTools.has(input.tool)?'executed':'admitted'))||record.tool!==input.tool||record.args!==stringify(supplied)||record.event.cwd!==directory)fail('postwrite identity or arguments differ');
-    record.state='settling';
-    record.event={...record.event,hook_event_name:'PostToolUse'};
-    let result;
-    try{result=await invoke({...record.event,hook_event_name:'PostToolUse',tool_response:{status:skipped?'skipped':'completed'}});}
-    catch(error){record.state='uncertain';throw error;}
-    if(!result.allow){record.state='uncertain';fail('postwrite receipt denied; continuation blocked');}
-    pending.delete(key);
+    await settle(key,record,skipped?'skipped':'completed');
    },
   };
  };

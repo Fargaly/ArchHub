@@ -108,30 +108,58 @@ def test_contact_creates_atomic_user_node_and_relays_once_in_same_content(owner,
     assert rows[0]['root']==bound['contact'] and rows[0]['connected'] is True
     body={'root':bound['root'],'scope':bound['scope'],'contact':bound['contact'],
         'binding_digest':bound['binding_digest'],'text':'User message','idempotency_key':'contact-one'}
-    result=contact.send_native_contact(owner,browser,body,browser_guard=lambda:None,execute_work=True)
+    def dispatch_public(payload):
+        sent=contact.send_native_contact(owner,browser,payload,browser_guard=lambda:None,execute_work=False)
+        target=contact.read_contact(owner,browser,payload['contact'],payload['binding_digest'],
+            payload['root'],payload['scope'])
+        sent['relay']=owner.native_work_delivery.request_contact(space_root=payload['root'],
+            message_id=sent['message_id'],sender_root=browser.subject_root,
+            contact_root=payload['contact'],endpoint=target,revalidate=lambda:contact.read_contact(
+                owner,browser,payload['contact'],payload['binding_digest'],payload['root'],payload['scope']),
+            text='Read the existing Workshop message')
+        return sent
+    result=dispatch_public(body)
     deadline=time.monotonic()+3
     while owner.native_work_delivery._pending_jobs and time.monotonic()<deadline:time.sleep(.01)
     assert owner.native_work_delivery.last_error is None
     assert len(transport.calls)==1
-    again=contact.send_native_contact(owner,browser,body,browser_guard=lambda:None,execute_work=True)
+    again=dispatch_public(body)
     assert again['message_id']==result['message_id']
     assert again['relay']['state']=='already_recorded'
     assert len(transport.calls)==1 and not owner._machine_agent_sessions
     page=owner.conversation_content.page_for_workshop_browser(owner.browser_session_token,binding=browser,space_root=bound['root'])
-    assert 'Fixture reply' in str(page)
+    assert 'Fixture reply' not in str(page)
+    assert 'native_reply_without_workshop_receipt' in str(page)
+    private=contact.send_native_contact(owner,browser,{**body,'idempotency_key':'private-source'},
+        browser_guard=lambda:None,execute_work=True)
+    assert private['relay']['reason']=='private_source_not_copied_to_public_mailbox'
+    assert len(transport.calls)==1
     # A process change after binding may not redirect the persisted contact.
     transport.endpoint={**transport.endpoint,'pid':124}
-    contact.send_native_contact(owner,browser,{**body,'idempotency_key':'changed-endpoint'},browser_guard=lambda:None,execute_work=True)
+    dispatch_public({**body,'idempotency_key':'changed-endpoint'})
     deadline=time.monotonic()+3
     while owner.native_work_delivery._pending_jobs and time.monotonic()<deadline:time.sleep(.01)
     assert len(transport.calls)==1
     transport.endpoint={**transport.endpoint,'pid':123};transport.status='held'
-    contact.send_native_contact(owner,browser,{**body,'idempotency_key':'held-endpoint'},browser_guard=lambda:None,execute_work=True)
+    dispatch_public({**body,'idempotency_key':'held-endpoint'})
     deadline=time.monotonic()+3
     while owner.native_work_delivery._pending_jobs and time.monotonic()<deadline:time.sleep(.01)
     assert len(transport.calls)==2
     page=owner.conversation_content.page_for_workshop_browser(owner.browser_session_token,binding=browser,space_root=bound['root'])
     assert 'held or refused' in str(page)
+    transport.status='not_sent'
+    retry_body={**body,'idempotency_key':'definite-non-dispatch'}
+    dispatch_public(retry_body)
+    deadline=time.monotonic()+3
+    while owner.native_work_delivery._pending_jobs and time.monotonic()<deadline:time.sleep(.01)
+    assert len(transport.calls)==3
+    transport.status='replied'
+    dispatch_public(retry_body)
+    deadline=time.monotonic()+3
+    while owner.native_work_delivery._pending_jobs and time.monotonic()<deadline:time.sleep(.01)
+    assert len(transport.calls)==4
+    dispatch_public(retry_body)
+    assert len(transport.calls)==4
     assert not owner._machine_agent_sessions
     # A real registered child uses this same content owner and exact retry binding.
     from nodelang.workshop_conversation_catalog import create_workshop_conversation
@@ -151,12 +179,13 @@ def test_contact_creates_atomic_user_node_and_relays_once_in_same_content(owner,
     deadline=time.monotonic()+3
     while owner.native_work_delivery._pending_jobs and time.monotonic()<deadline:time.sleep(.01)
     assert owner.native_work_delivery.last_error is None
-    assert len(transport.calls)==3
+    assert len(transport.calls)==4
+    assert child_sent['relay']['reason']=='private_source_not_copied_to_public_mailbox'
     child_retry=contact.send_native_contact(owner,browser,child_body,browser_guard=lambda:None,execute_work=True)
-    assert child_retry['message_id']==child_sent['message_id'] and len(transport.calls)==3
+    assert child_retry['message_id']==child_sent['message_id'] and len(transport.calls)==4
     child_page=owner.conversation_content.page_for_workshop_browser(owner.browser_session_token,
         binding=browser,space_root=child['root'])
-    assert 'Fixture reply' in str(child_page) and not owner._machine_agent_sessions
+    assert 'Fixture reply' not in str(child_page) and not owner._machine_agent_sessions
     import pytest
     from nodelang.cell_authorization import AuthorizationDenied
     with pytest.raises(AuthorizationDenied):

@@ -181,3 +181,33 @@ def test_session_mismatch_is_refused(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="requires its observed installed parent"):
         OpenCodeProcessCustody("ses_expected", environment=env, process_reader=_reader(self_process, parent_process),
                                session_reader=lambda *_: None)
+
+
+def test_cli_parent_verifies_session_via_sqlite_without_server_password(tmp_path, monkeypatch):
+    import sqlite3
+    from nodelang.opencode_native_custody import verify_session
+
+    env, cli, desktop = _env(tmp_path)
+    db_path = Path(env["USERPROFILE"]) / ".local" / "share" / "opencode" / "opencode.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute("CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT NOT NULL)")
+        conn.execute("INSERT INTO session (id, directory) VALUES (?, ?)", ("ses_cli_db", str(tmp_path.resolve())))
+        conn.commit()
+
+    class FakeParentProc:
+        def __init__(self, proc_env):
+            self._env = proc_env
+        def environ(self):
+            return dict(self._env)
+
+    monkeypatch.setattr("psutil.Process", lambda _pid: FakeParentProc(env))
+    parent_cli = _process(20, 1, cli, tmp_path, "")
+    verify_session(parent_cli, "ses_cli_db", str(tmp_path.resolve()))
+
+    with pytest.raises(RuntimeError, match="authenticated native session read unavailable"):
+        verify_session(parent_cli, "ses_missing", str(tmp_path.resolve()))
+
+    parent_desktop = _process(20, 1, desktop, tmp_path, "")
+    with pytest.raises(RuntimeError, match="authenticated native session read unavailable"):
+        verify_session(parent_desktop, "ses_cli_db", str(tmp_path.resolve()))

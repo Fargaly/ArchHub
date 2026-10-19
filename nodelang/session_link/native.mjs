@@ -1,9 +1,24 @@
 import net from 'node:net';
+import {spawnSync} from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {stateDir} from './paths.mjs';
+const root=path.dirname(fileURLToPath(import.meta.url));
+export function mailbox(method,body,timeoutMs=10_000){
+ const python=process.env.ARCHHUB_PYTHON||[
+  path.resolve(root,'../../.venv/Scripts/python.exe'),path.resolve(root,'../../runtime/python/python.exe')
+ ].find(value=>fs.existsSync(value))||'python';
+ const options={cwd:path.resolve(root,'../..'),input:JSON.stringify(body),encoding:'utf8',windowsHide:true,maxBuffer:1048576};
+ options.timeout=timeoutMs;
+ const result=spawnSync(python,['-m','nodelang.native_agent_mcp',method==='read'?'--mailbox-read':'--mailbox-send'],options);
+ if(result.error)throw result.error;
+ if(result.status!==0)throw new Error(result.stderr||'Workshop mailbox unavailable; no relay fallback.');
+ return JSON.parse(result.stdout);
+}
+export function mailboxSend(to,text){if(typeof text!=='string'||!text.trim()||text.length>32000)throw new Error('Text must contain 1–32000 characters');return mailbox('send',{to,text});}
+
 let admittedAttachment=null;
 export function setAttachment(value){admittedAttachment=value;}
 export async function attachmentCall(operation,extra={}){

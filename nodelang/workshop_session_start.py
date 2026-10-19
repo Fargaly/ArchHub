@@ -380,7 +380,10 @@ def _dispatch_model_turn(owner, browser, conversation, scope, prompt, node, rout
             binding_guard()
             app.project_universal_canvas(store, registry, authentication_context=browser.context)
             conversation_context = context(user["sequence"])
-        result = run_agent_composer(store, registry, prompt, model=route, node_root=node,
+        from .agent_declarations import declaration_scope
+        with declaration_scope(owner, task="Respond to a founder conversation request", request_id=user["id"], session=conversation,
+                               paths=[str(owner.universal_workspace_root), "node://" + node]):
+            result = run_agent_composer(store, registry, prompt, model=route, node_root=node,
             authentication_context=browser.context, mutation_lock=owner.mutation_lock,
             revalidate=binding_guard, before_dispatch=before_dispatch,
             conversation_context=conversation_context,
@@ -404,6 +407,10 @@ def _dispatch_model_turn(owner, browser, conversation, scope, prompt, node, rout
         tool_steps_text = _tool_steps_record(result.get("steps"))
         reply = append("Model reply from %s:\n%s%s%s" % (route, result.get("answer", ""), tool_steps_text, draft_text),
             ":reply", refs=draft_roots, reply_to=user["id"])
+        if applied:
+            from .agent_declarations import notify_founder
+            notify_founder(owner, "An agent prepared a draft for your review. Open its Workshop conversation: " + conversation,
+                           context={"archhub/sessionID":conversation})
         return response(user, "replied", reply_message_id=reply["id"], model=route,
             node=node, applied=result.get("applied", []))
     except AuthorizationDenied:

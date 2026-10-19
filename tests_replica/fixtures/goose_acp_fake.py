@@ -59,7 +59,11 @@ for line in sys.stdin.buffer:
         assert "extensions" not in recipe
         assert recipe["settings"]["goose_provider"] in {"openrouter", "ollama"}
         assert recipe["settings"]["goose_provider"] == "ollama" or recipe["settings"]["goose_model"] == "openrouter/free" or recipe["settings"]["goose_model"].endswith(":free")
-        assert params["mcpServers"] == []
+        servers = params["mcpServers"]
+        assert len(servers) == 1 and servers[0]["name"] == "archhub-agent"
+        assert servers[0]["command"] == sys.executable
+        assert "nodelang.native_agent_mcp" in servers[0]["args"][1]
+        assert any(row["name"] == "GOOSE_SESSION_ID" for row in servers[0]["env"])
         assert len(meta["enabledExtensions"]) == 1
         extension = meta["enabledExtensions"][0]
         assert extension["type"] == "mcp" and extension["available_tools"] == ["hosts_state"]

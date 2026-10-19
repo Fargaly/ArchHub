@@ -36,6 +36,13 @@ $selectedRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $compilerPython = if ($PythonPath) { $PythonPath } else { 'python' }
 & $compilerPython (Join-Path $selectedRoot 'tools/pipeline/build.py') --root $selectedRoot
 if ($LASTEXITCODE -ne 0) { throw "ACOMPILER refused release build (exit $LASTEXITCODE)." }
+# No optional switch and no cached PASS: real clients qualify this exact source.
+$agentLinkEvidence = Join-Path $selectedRoot 'evidence/agentlink-release.json'
+Push-Location $selectedRoot
+try {
+    & $compilerPython -m tools.real_app_check.agentlink_release --profile-parent $selectedRoot --output $agentLinkEvidence
+    if ($LASTEXITCODE -ne 0) { throw "AGENTLINK refused release: real message, overlap or OpenCode write proof failed." }
+} finally { Pop-Location }
 $compilerSourceRoot = $selectedRoot
 $acompilerInputs = @(
     'NOTICE', 'tools/__init__.py', 'tools/ratchet.py', 'tools/pipeline/__init__.py',

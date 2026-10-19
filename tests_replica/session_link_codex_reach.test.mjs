@@ -10,7 +10,7 @@ import {pathToFileURL} from 'node:url';
 // Courts for Session Link reaching Codex tasks. Isolated: temp HOME (Claude
 // session registry), temp SESSION_LINK_STATE_DIR, private LOCAL pipes. No live
 // app, session, bridge or message is touched.
-const BS=String.fromCharCode(92),NL=String.fromCharCode(10);
+const BS=String.fromCharCode(92);
 const pipe=name=>BS+BS+'.'+BS+'pipe'+BS+'LOCAL'+BS+name+'-'+crypto.randomUUID();
 const home=fs.mkdtempSync(path.join(os.tmpdir(),'sl-court-'));
 process.env.HOME=home;
@@ -82,70 +82,54 @@ test('C2 without Codex app context the empty list says why, and ask names that r
  await assert.rejects(ask('codex',PING,'hello'),/Codex tasks unavailable: No live Session Link bridge/);
 });
 
-test('C3 Claude asks a Codex task by exact id through a live bridge and receives its answer',async()=>{
- const token=crypto.randomBytes(16).toString('hex'),keyPath=path.join(home,'bridge.key'),control=pipe('sl-court-bridge');
- fs.writeFileSync(keyPath,JSON.stringify({peerToken:token}));
- const posted=[],answered=[];
- const answerAsPing=async text=>{
-  const id=/Session Link request ([0-9a-f-]{36})/.exec(text)[1];
-  const req=JSON.parse(fs.readFileSync(path.join(process.env.SESSION_LINK_STATE_DIR,'requests',id+'.json'),'utf8'));
-  const peerToken=JSON.parse(fs.readFileSync(req.keyPath,'utf8')).peerToken;
-  answered.push(await new Promise((resolve,reject)=>{const s=net.connect(req.control);let d='';s.setEncoding('utf8');s.on('error',reject);
-   s.on('connect',()=>s.write(JSON.stringify({token:peerToken,session:PING,text:'pong from Ping'})+NL));
-   s.on('data',c=>{d+=c;if(d.includes(NL)){s.destroy();resolve(JSON.parse(d));}});}));
+test('C3 native dispatch and reply text use one Workshop instead of request pipes',async()=>{
+ let ready=false,sent=[];
+ const mailboxCall=(method,body)=>{
+  if(method==='send'){sent.push(body);return {message_id:'request',sequence:1,sender_label:'founder'};}
+  return {declarations:[],messages:ready?[{id:'reply',reply_to:'request',author:'Codex unknown',content:'pong'}]:[],next_since:2};
  };
- const server=net.createServer(sock=>{let d='';sock.setEncoding('utf8');sock.on('error',()=>{});sock.on('data',c=>{d+=c;if(!d.includes(NL))return;
-  const r=JSON.parse(d.slice(0,d.indexOf(NL)));let result;
-  if(r.token!==token){sock.end(JSON.stringify({ok:false,error:'Unauthenticated request'})+NL);return;}
-  if(r.operation==='list')result={claude:[],codex:[{id:PING,title:'Ping',cwd:'C:/fixture',app:'codex'}]};
-  else if(r.operation==='capabilities')result={postCodex:true,ask:true,scopedAttachment:true};
-  else if(r.operation==='post-codex'){posted.push(r);result={submitted:true};setTimeout(()=>answerAsPing(r.text),20);}
-  sock.end(JSON.stringify({ok:true,result})+NL);
- });});
- await new Promise(resolve=>server.listen(control,resolve));
- const runtime=path.join(connections,'c3c3c3c3c3c3c3c3.runtime.json');
- fs.writeFileSync(runtime,JSON.stringify({id:'c3c3c3c3c3c3c3c3',pid:process.pid,control,keyPath}));
- try{
-  const result=await ask('codex',PING,'ping from Claude');
-  assert.equal(result.text,'pong from Ping');
-  assert.equal(posted.length,1);assert.equal(posted[0].threadId,PING);
-  for(let i=0;i<50&&!answered.length;i++)await new Promise(r=>setTimeout(r,20));
-  assert.deepEqual(answered,[{ok:true}]);
- }finally{fs.rmSync(runtime,{force:true});await new Promise(done=>server.close(done));}
+ const result=await ask('codex',PING,'ping from Claude','prompting',{
+  discover:async()=>({codex:[{app:'codex',id:PING}]}),mailboxCall,
+  dispatchControl:async(target,pointer)=>{assert.equal(target.id,PING);assert.match(pointer,/message request/);assert.doesNotMatch(pointer,/ping from Claude/);ready=true;}});
+ assert.equal(sent.length,1);assert.equal(sent[0].text,'ping from Claude');
+ assert.equal(result.reason,'recipient_identity_unverified');
+ assert.equal(fs.existsSync(path.join(process.env.SESSION_LINK_STATE_DIR,'requests')),false);
 });
 
-test('C4 a Codex task asking Claude gets a durable reply peer on the persistent bridge',async()=>{
+const fixtureMailbox=ready=>{let sent=false;return (method)=>{
+ if(method==='send'){sent=true;return {message_id:'request',sequence:1,sender_label:'founder'};}
+ return {declarations:[{process_alive:true,app:'claude',native_session_id:CLAUDE,agent:'Claude',session:'fixture',process_lineage:[{pid:process.ppid,created_at:1}]}],
+  messages:sent&&ready()?[{id:'reply',reply_to:'request',author:'Claude [fixture]',content:'ack'}]:[],next_since:2};
+};};
+
+test('C4 a Codex task asking Claude gets its result through Workshop without a reply peer',async()=>{
  const app=await mockCodexApp([row(CALLER,'Caller')]);
  const entry=path.join(sessions,process.ppid+'.json');
  fs.writeFileSync(entry,JSON.stringify({pid:process.ppid,sessionId:CLAUDE,cwd:'C:/fixture',name:'Claude fixture',messagingSocketPath:pipe('cc-msg-fixture'),startedAt:Date.now()}));
- const original=PeerEndpoint.prototype.sendAndWait,sent=[],links=[];
- PeerEndpoint.prototype.sendAndWait=async function(socket,text){sent.push({socket,text});return {msgId:'m1',delivery:null,reply:{msgId:'r1',text:'ack'}};};
+ const original=PeerEndpoint.prototype.send,sent=[],links=[];
+ PeerEndpoint.prototype.send=async function(socket,text){sent.push({socket,text});return {msgId:'m1',delivery:null,reply:{msgId:'r1',text:'ack'}};};
  const connectLink=async(request,{observedCatalog})=>{links.push({request,observedCatalog});return attested('codex-01a0cafe-d4d4');};
  try{
-  const result=await inCodexTask(app,()=>ask('claude',CLAUDE,'hello Claude','prompting',{connectLink}));
-  assert.equal(links.length,1);
-  assert.deepEqual(links[0].request,{app:'claude',claude:CLAUDE,codex:CALLER,permissionMode:'prompting'});
-  assert.ok(links[0].observedCatalog.codex.some(t=>t.id===CALLER));
-  assert.ok(links[0].observedCatalog.claude.some(s=>s.id===CLAUDE));
+  const result=await inCodexTask(app,()=>ask('claude',CLAUDE,'hello Claude','prompting',{connectLink,mailboxCall:fixtureMailbox(()=>sent.length===1)}));
+  assert.equal(links.length,0);
   assert.equal(sent.length,1);
-  assert.match(sent[0].text,/use native SendMessage to peer codex-01a0cafe-d4d4 /);
+  assert.match(sent[0].text,/Reply ONLY with MCP send/);
   assert.equal(result.text,'ack');
-  assert.deepEqual(result.durable_reply,{connection:linkId(CLAUDE,CALLER),peer:'codex-01a0cafe-d4d4'});
- }finally{PeerEndpoint.prototype.sendAndWait=original;fs.rmSync(entry,{force:true});await app.close();}
+  assert.equal(result.durable_reply,undefined);assert.equal(result.mailbox_message,'request');
+ }finally{PeerEndpoint.prototype.send=original;fs.rmSync(entry,{force:true});await app.close();}
 });
 test('C5 a one-off bypass ask never creates a bypass durable link',async()=>{
  const app=await mockCodexApp([row(CALLER,'Caller')]);
  const entry=path.join(sessions,process.ppid+'.json');
  fs.writeFileSync(entry,JSON.stringify({pid:process.ppid,sessionId:CLAUDE,cwd:'C:/fixture',name:'Claude fixture',messagingSocketPath:pipe('cc-msg-fixture'),startedAt:Date.now()}));
- const original=PeerEndpoint.prototype.sendAndWait,modes=[],links=[];
- PeerEndpoint.prototype.sendAndWait=async function(socket,text,options){modes.push(options.permissionMode);return {msgId:'m1',delivery:null,reply:{msgId:'r1',text:'ack'}};};
+ const original=PeerEndpoint.prototype.send,modes=[],links=[];
+ PeerEndpoint.prototype.send=async function(socket,text,options){modes.push(options.permissionMode);return {msgId:'m1',delivery:null,reply:{msgId:'r1',text:'ack'}};};
  const connectLink=async request=>{links.push(request);return attested('codex-01a0cafe-d5d5');};
  try{
-  await inCodexTask(app,()=>ask('claude',CLAUDE,'one-off','bypass',{connectLink}));
-  assert.equal(links.length,1);
-  assert.equal(links[0].permissionMode,'prompting');
+  await inCodexTask(app,()=>ask('claude',CLAUDE,'one-off','bypass',{connectLink,mailboxCall:fixtureMailbox(()=>modes.length===1)}));
+  assert.equal(links.length,0);
   assert.deepEqual(modes,['bypass']);
- }finally{PeerEndpoint.prototype.sendAndWait=original;fs.rmSync(entry,{force:true});await app.close();}
+ }finally{PeerEndpoint.prototype.send=original;fs.rmSync(entry,{force:true});await app.close();}
 });
 
 test('C6 a failed Codex attachment reports a reason, never undefined',async()=>{

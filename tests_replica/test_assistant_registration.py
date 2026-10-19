@@ -41,6 +41,18 @@ def _codex(machine):
     return next(c for c in registration.readiness(machine.env)["clients"] if c["client"] == "codex")
 
 
+def test_all_six_provider_specs_share_the_native_owner(machine):
+    specs={name:registration.mcp_server_spec(name,environment=machine.env)
+           for name in ('claude-code','codex','antigravity','opencode','goose','baboom')}
+    assert {spec['server_name'] for spec in specs.values()} == {SERVER_NAME}
+    for name,spec in specs.items():
+        if name=='baboom':
+            assert spec['in_process']=='ApplicationServer.shared_agent_mail'
+        else:
+            assert set(spec['add'])=={SERVER_NAME}
+            assert 'nodelang.native_agent_mcp' in str(spec['add'])
+
+
 def test_nothing_is_written_without_consent(machine):
     config = machine.profile / ".codex" / "config.toml"
     assert _codex(machine)["state"] == "ready_to_register"

@@ -10063,6 +10063,10 @@ class BaboomConfirmations:
             return record["held"]
 
 
+from .agent_declarations import declared_baboom
+
+
+@declared_baboom
 def execute_universal_baboom_utterance(
     store: CellStore,
     registry: UniversalApplicationRegistry,
@@ -10491,6 +10495,7 @@ def _baboom_latest_model_result(
     }
 
 
+@declared_baboom
 def respond_universal_baboom_utterance(
     store: CellStore,
     registry: UniversalApplicationRegistry,

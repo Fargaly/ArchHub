@@ -144,26 +144,10 @@ const run=(args,input,env)=>new Promise(resolve=>{const child=spawn(process.exec
  let stdout='',stderr='';child.stdout.setEncoding('utf8');child.stderr.setEncoding('utf8');
  child.stdout.on('data',d=>{stdout+=d;});child.stderr.on('data',d=>{stderr+=d;});
  child.on('close',status=>resolve({status,stdout,stderr}));child.stdin.end(input);});
-const bridgeFile=path.join(lib,'bridge.mjs'),askFile=path.join(lib,'ask.mjs');
-const CLAUDE='c4c4c4c4-0000-4000-8000-000000000004';
+const bridgeFile=path.join(lib,'bridge.mjs');
 const sendsTo=app=>app.calls.filter(c=>c.params?.tool==='send_message_to_thread').map(c=>c.params);
 const until=async(check,ms=15000)=>{const end=Date.now()+ms;while(Date.now()<end){const v=check();if(v)return v;await new Promise(r=>setTimeout(r,100));}throw new Error('timed out waiting');};
 
-async function realBridge(app){
- const id=bridge.idFor(CLAUDE,TARGET),dir=path.join(process.env.SESSION_LINK_STATE_DIR,'connections');
- const bindingFile=path.join(dir,id+'.binding.json');
- process.env.CODEX_THREAD_ID=CALLER;process.env.CODEX_APP_TOOLS_CALLER_HOST_ID=CALLER_HOST;
- try{fs.writeFileSync(bindingFile,JSON.stringify(bridge.bindingRecord({id,claude:{id:CLAUDE,title:'C',cwd:'C:/fixture',app:'claude'},
-  codex:{id:TARGET,title:'T',cwd:'C:/fixture',app:'codex',hostId:TARGET_HOST},permissionMode:'prompting'})));}
- finally{delete process.env.CODEX_THREAD_ID;delete process.env.CODEX_APP_TOOLS_CALLER_HOST_ID;}
- const child=spawn(process.execPath,[bridgeFile,'serve',bindingFile],{stdio:'ignore',windowsHide:true,
-  env:{...process.env,CODEX_APP_TOOLS_PIPE_PATH:app.name,CODEX_THREAD_ID:CALLER,CODEX_APP_TOOLS_CALLER_HOST_ID:CALLER_HOST}});
- const runtime=path.join(dir,id+'.runtime.json');
- await until(()=>fs.existsSync(runtime));
- const saved=JSON.parse(fs.readFileSync(bindingFile,'utf8'));
- return {id,child,saved,config:JSON.parse(fs.readFileSync(runtime,'utf8')),
-  stop:()=>{child.kill();for(const f of fs.readdirSync(dir))if(f.startsWith(id))fs.rmSync(path.join(dir,f),{force:true});}};
-}
 const assertHosts=(params,requestId)=>{
  assert.equal(params.hostId,CALLER_HOST,'caller host in the call');
  assert.equal(params.threadId,CALLER,'caller thread in the call');
@@ -173,50 +157,42 @@ const assertHosts=(params,requestId)=>{
  assert.equal(params.turnId,'session-link-turn-'+requestId);
 };
 
-test('B1 the shell reply names its identity at the origin; the receipt and the wire carry that same id',async()=>{
- const app=await mockCodexApp([row(TARGET,TARGET_HOST)]);const link=await realBridge(app);
- try{
-  assert.equal(link.saved.executorHostId,CALLER_HOST);assert.equal('hostId' in link.saved.codex,false);
-  const done=await run([bridgeFile,'reply',link.id,'--stdin'],'shell reply text',{...process.env});
-  assert.equal(done.status,0,done.stderr);
-  const receipt=JSON.parse(done.stdout);
-  assert.equal(receipt.delivered,true);assert.match(receipt.messageId,/^[0-9a-f-]{36}$/);
-  const sent=await until(()=>sendsTo(app).at(-1));
-  assertHosts(sent,receipt.messageId);
- }finally{link.stop();await app.close();}
-});
-
-test('B2 a terminal post and an attachment post each carry the caller\'s own request id to the wire',async()=>{
- const app=await mockCodexApp([row(TARGET,TARGET_HOST)]);const link=await realBridge(app);
- try{
-  const posted=crypto.randomUUID();
-  const viaBridge=await native.postCodex(TARGET,'terminal post',{requestId:posted});
-  assert.equal(viaBridge.messageId,posted);
-  assertHosts(await until(()=>sendsTo(app).find(p=>p.arguments.prompt==='terminal post')),posted);
-  const grant=await bridge.delegateInstance(link.config,'instance-court',60);
-  native.setAttachment(grant);
-  try{
-   const attached=crypto.randomUUID();
-   const viaAttachment=await native.postCodex(TARGET,'attachment post',{requestId:attached});
-   assert.equal(viaAttachment.messageId,attached);
-   assertHosts(await until(()=>sendsTo(app).find(p=>p.arguments.prompt==='attachment post')),attached);
-  }finally{native.setAttachment(null);}
- }finally{link.stop();await app.close();}
-});
-
-test('D1 an ask from a Codex task: the sixth path reads the target host live and the wire carries the ask id',async()=>{
+test('B1 retired shell reply cannot create a peer reply or bridge',async()=>{
  const app=await mockCodexApp([row(TARGET,TARGET_HOST)]);
- process.env.CODEX_APP_TOOLS_PIPE_PATH=app.name;process.env.CODEX_THREAD_ID=CALLER;process.env.CODEX_APP_TOOLS_CALLER_HOST_ID=CALLER_HOST;
- const asking=(await load('ask.mjs')).ask('codex',TARGET,'what is two plus two','prompting');asking.catch(()=>{});
  try{
-  const sent=await until(()=>sendsTo(app).find(p=>/Session Link request [0-9a-f-]{36}/.test(p.arguments.prompt||'')));
-  const askId=sent.arguments.prompt.match(/Session Link request ([0-9a-f-]{36})/)[1];
-  assertHosts(sent,askId);
-  const listed=app.calls.filter(c=>c.params?.tool==='list_threads');
-  assert.ok(listed.length>=1,'the target row was read live before the send');
-  const answered=await run([askFile,'answer',askId,'--stdin'],'four',{...process.env,CODEX_THREAD_ID:TARGET,CODEX_APP_TOOLS_PIPE_PATH:''});
-  assert.equal(answered.status,0,answered.stderr);
-  const reply=await asking;
-  assert.equal(reply.id,askId);assert.equal(reply.text,'four');
- }finally{for(const k of ['CODEX_APP_TOOLS_PIPE_PATH','CODEX_THREAD_ID','CODEX_APP_TOOLS_CALLER_HOST_ID'])delete process.env[k];await app.close();}
+  const done=await run([bridgeFile,'serve','unused-binding'],'',{...process.env});
+  assert.equal(done.status,0,done.stderr);
+  assert.deepEqual(JSON.parse(done.stdout).channel,'Workshop');
+  assert.equal(JSON.parse(done.stdout).retired,true);
+  assert.equal(sendsTo(app).length,0);
+ }finally{await app.close();}
+});
+
+test('B2 native app control preserves caller and target hosts without creating a peer channel',async()=>{
+ const app=await mockCodexApp([row(TARGET,TARGET_HOST)]);
+ try{
+  const request=crypto.randomUUID();
+  process.env.CODEX_APP_TOOLS_CALLER_HOST_ID=CALLER_HOST;
+  const receipt=await inCodexTask(app,()=>native.postCodex(TARGET,'Workshop task pointer',{requestId:request}),CALLER_HOST);
+  assert.equal(receipt.success,true);assertHosts(sendsTo(app).at(-1),request);
+  assert.equal(sendsTo(app).length,1);
+ }finally{delete process.env.CODEX_APP_TOOLS_CALLER_HOST_ID;await app.close();}
+});
+
+test('D1 native ask carries the Workshop id and reports missing Codex process identity',async()=>{
+ const app=await mockCodexApp([row(TARGET,TARGET_HOST)]);
+ let sent=false,delivered=false;
+ const message=crypto.randomUUID();
+ const mailboxCall=(method)=>{
+  if(method==='send'){sent=true;return {message_id:message,sequence:1,sender_label:'founder'};}
+  return {declarations:[],messages:sent&&delivered?[{id:'reply',reply_to:message,author:'unverified',content:'four'}]:[],next_since:2};
+ };
+ try{
+  process.env.CODEX_APP_TOOLS_CALLER_HOST_ID=CALLER_HOST;
+  const result=await inCodexTask(app,()=>(load('ask.mjs').then(module=>module.ask('codex',TARGET,'what is two plus two','prompting',{mailboxCall,dispatchControl:async(target,pointer)=>{await native.postCodex(target.id,pointer,{requestId:message});delivered=true;}}))),CALLER_HOST);
+  assert.equal(result.status,'uncertain');assert.equal(result.reason,'recipient_identity_unverified');
+  const wire=await until(()=>sendsTo(app).at(-1));assertHosts(wire,message);
+  assert.match(wire.arguments.prompt,/Reply ONLY with MCP send/);
+  assert.doesNotMatch(wire.arguments.prompt,/what is two plus two/);
+ }finally{delete process.env.CODEX_APP_TOOLS_CALLER_HOST_ID;await app.close();}
 });

@@ -116,3 +116,7 @@ Do not kill the process or restart other apps to activate this feature.
 Agent coordination uses the existing Workshop messages table through MCP `send(to, text)` and `read(since)` (`nodelang/native_agent_mcp.py`). It has no native-owner attachment, recovery-only server, enrollment, Session Link host channel or Workshop relay.
 
 Session Link files still used by separate capabilities remain here: `session_link_transport.py` supplies the cloud relay and the existing Work/session discovery and execution paths; `_OwnedProcessJob` contains Goose ACP child-process lifetime. `session_link_config.py` and the governance hooks still install and enforce governed file/Work permissions. These are not the agent mailbox. Historical delivery readers continue to render previously stored receipts without replaying them.
+
+## Agent communication cutover (AGENTDECLARE)
+
+Public ask/send/reply/answer chat entrypoints now post to Workshop through the existing MCP sink. serve/connect/reconnect no longer start a peer-chat pipe. Use MCP declare/read/send for all agent communication; reply_to keeps coordination in one thread. The earlier personal-chat examples above are historical and are not the post-cutover interface. Application-owned native task execution uses a mailbox task pointer, then reads its authenticated completion from that same mailbox. No separate request/reply files or completion pipe are created by ask.mjs.

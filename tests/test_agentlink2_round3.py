@@ -50,9 +50,11 @@ def test_recent_peers_exclude_app_and_old_first_page(mailbox_owner):
     call(app, recent, "send", {"to": "*", "text": "latest", "context": {"threadId": "current-session"}})
     app.shared_agent_mail("send", {"to": "*", "text": "builtin"})
     revision = app.universal_store.revision
-    agents = list_agents(mailbox=app.shared_agent_mail)
+    peers = app.shared_agent_mail("read", {"since":0})["peers"]
+    agents = [{"session_root":row["label"], **row} for row in peers]
     assert [row["session_root"] for row in agents] == [sent["sender_label"]]
     assert agents[0]["sender_key"] == sent["sender_key"]
+    assert list_agents(mailbox=app.shared_agent_mail) == []  # fixture peer has no live declaration
     assert app.universal_store.revision == revision
 
 def test_runtime_labels_survive_connector_restart_without_forgery(mailbox_owner):

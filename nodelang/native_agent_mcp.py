@@ -131,14 +131,18 @@ class _WorkControl:
         if not metadata:
             return self
         key, identity = next(iter(metadata.items()))
-        runtime = "codex" if key == "threadId" else "opencode"
+        from .agent_declarations import SESSION_KEYS
+        from .agent_runtime_registry import RUNTIMES
+        runtime = SESSION_KEYS[key]
+        if runtime not in RUNTIMES:
+            return self
         with self.lock:
             if (runtime, identity) not in self.controls:
                 environment = dict(os.environ)
                 for name in ("CODEX_THREAD_ID", "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID", "OPENCODE_SESSION_ID", "GEMINI_SESSION_ID"):
                     environment.pop(name, None)
                 environment.update(ARCHHUB_AGENT_RUNTIME=runtime, ARCHHUB_EXTERNAL_SESSION_ID=identity)
-                environment["CODEX_THREAD_ID" if runtime == "codex" else "OPENCODE_SESSION_ID"] = identity
+                environment[RUNTIMES[runtime]["session_environment"][0]] = identity
                 self.controls[(runtime, identity)] = _WorkControl(environment=environment)
             return self.controls[(runtime, identity)]
 
@@ -188,12 +192,29 @@ class _WorkControl:
 
 def _caller_context(ctx):
     """Host-supplied MCP session metadata, never model-visible tool arguments."""
-    return _session_metadata(ctx.request_context.meta)
+    return _session_metadata(ctx.request_context.meta) or _default_context()
+
+
+def _default_context():
+    """Connector-owned environment, never model-visible identity arguments."""
+    from .agent_runtime_registry import RUNTIMES
+    keys = {"codex": "threadId", "opencode": "ai.opencode/sessionID",
+            "claude": "claude/sessionID", "gemini": "gemini/sessionID"}
+    for runtime, definition in RUNTIMES.items():
+        for name in definition["session_environment"]:
+            if os.environ.get(name):
+                return {keys[runtime]: os.environ[name]}
+    if os.environ.get("GOOSE_SESSION_ID"):
+        return {"goose/sessionID": os.environ["GOOSE_SESSION_ID"]}
+    if os.environ.get("ANTIGRAVITY_SESSION_ID"):
+        return {"antigravity/sessionID": os.environ["ANTIGRAVITY_SESSION_ID"]}
+    return {}
 
 
 def _session_metadata(meta):
     values = meta.model_dump(by_alias=True) if meta is not None else {}
-    keys = [key for key in ("threadId", "ai.opencode/sessionID") if key in values]
+    from .agent_declarations import SESSION_KEYS
+    keys = [key for key in SESSION_KEYS if key in values and key != "archhub/sessionID"]
     if len(keys) > 1:
         raise ValueError("ambiguous calling session metadata")
     if not keys:
@@ -213,29 +234,91 @@ def _mailbox_call(method, body, context):
         raise MachineTransportError("ArchHub is not running: existing signing key unavailable")
     client = UniversalRuntimeClient(local / "active-universal-runtime.json",
         WindowsDpapiSigningKeyProvider(key_path))
-    verb = "POST" if method == "send" else "GET"
+    verb = "GET" if method == "read" else "POST"
     return client.request(verb, "/api/universal/agent-mail/" + method, {**body, "context": context})
 
 
 def build_server(*, session=None, workshop_task=None, mailbox_call=None):
     """The shared message tools are available before any Work identity is needed."""
-    server = FastMCP("archhub-agent")
+    from contextlib import asynccontextmanager
+    import logging
+
+    @asynccontextmanager
+    async def startup(_server):
+        context = _default_context()
+        start(context)
+        state["bootstrap_only"] = not context and () in declared
+        yield {}
+
+    server = FastMCP("archhub-agent", lifespan=startup)
     call = _mailbox_call if mailbox_call is None else mailbox_call
+    declared = set()
+    state = {"bootstrap_only": False}
+
+    def retire_bootstrap(context):
+        if not context:
+            state["bootstrap_only"] = False  # A real tool call uses this unqualified session.
+        elif state["bootstrap_only"]:
+            try:
+                call("declare", {"task":"Starting; task details pending", "paths":[str(Path.cwd())],
+                    "status":"done", "request_id":"unassigned"}, {})
+            except Exception:
+                logging.getLogger(__name__).warning("Workshop startup alias could not be archived; task continues.")
+            else:
+                declared.discard(())
+                state["bootstrap_only"] = False
+
+    def start(context):
+        retire_bootstrap(context)
+        key = tuple(context.items())
+        if key not in declared:
+            try:
+                call("declare", {"task": "Starting; task details pending", "paths": [str(Path.cwd())],
+                     "status": "working", "request_id": "unassigned"}, context)
+                declared.add(key)
+            except Exception:
+                logging.getLogger(__name__).warning("Workshop declaration unavailable; message tools remain usable.")
+
+    @server.tool(name="declare")
+    def declare(task: str, paths: list[str], status: str, request_id: str, ctx: Context) -> dict[str, object]:
+        """Keep your Workshop node current: plain task, exact paths/hosts, founder request id,
+        and working/blocked/done. Call at start and whenever scope or status changes.
+        Overlaps post a shared coordination thread; they never lock anyone's work.
+        Send new findings/decisions/proposals with send(to='founder', text=plain_language).
+        """
+        context = _caller_context(ctx)
+        retire_bootstrap(context)
+        result = call("declare", {"task": task, "paths": paths, "status": status,
+                      "request_id": request_id}, context)
+        declared.add(tuple(context.items()))
+        return result
 
     @server.tool(name="send")
-    def send(to: str, text: str, ctx: Context) -> dict[str, object]:
+    def send(to: str, text: str, ctx: Context, reply_to: str = "") -> dict[str, object]:
         """Post to the shared Workshop room; to='*' addresses everyone.
 
         Use a peer's sender_label as its readable address across connector restarts.
         The application records this connection's own name. No sender override,
         binding, enrollment or relay is accepted. All room members can read it.
         """
-        return call("send", {"to": to, "text": text}, _caller_context(ctx))
+        context = _caller_context(ctx)
+        start(context)
+        return call("send", {"to": to, "text": text, **({"reply_to":reply_to} if reply_to else {})}, context)
 
-    @server.tool(name="read", annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False))
-    def read(ctx: Context, since: int = 0) -> dict[str, object]:
-        """Read shared Workshop messages after a sequence; use next_since to continue."""
-        return call("read", {"since": since}, _caller_context(ctx))
+    @server.tool(name="read", annotations=ToolAnnotations(destructiveHint=False))
+    def read(ctx: Context, since: int = 0, declarations_after: str = "", include_archived: bool = False) -> dict[str, object]:
+        """Read Workshop messages and live declarations. Continue with next_since;
+        if declarations_more, keep that cursor and pass declarations_after.
+        """
+        context = _caller_context(ctx)
+        start(context)
+        result = call("read", {"since": since, "declarations_after":declarations_after,
+                               "include_archived":include_archived}, context)
+        current = next((row for row in result.get("declarations", [])
+                        if row["session"] == result["sender_key"]), None)
+        result["declaration_reminder"] = ("Declare your current task, founder request id and exact paths with declare()."
+            if not current or current["request_id"] == "unassigned" else "")
+        return result
 
     control = _WorkControl(session)
     server.work_control = control
@@ -261,9 +344,12 @@ def _register_work_tools(server, control):
     attached = {}
 
     @server.tool(name="native.hook_stop")
-    def hook_stop() -> dict[str, object]:
+    def hook_stop(ctx: Context) -> dict[str, object]:
         """Observe the current Work gate through its existing Work authority."""
-        return stop_context(control)
+        from .agent_declarations import reminder
+        notice = reminder(mailbox=lambda: _mailbox_call("read", {"since":0}, _caller_context(ctx)))
+        result = stop_context(control)
+        return {**result, **({"systemMessage":notice} if notice else {})}
 
     @server.tool(name="native.hook_user_prompt_submit")
     def hook_user_prompt_submit() -> dict[str, object]:
@@ -499,7 +585,15 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workshop-task")
+    parser.add_argument("--mailbox-send", action="store_true", help="Legacy CLI adapter to the same Workshop mailbox; JSON on stdin")
+    parser.add_argument("--mailbox-read", action="store_true", help="Native task receipt reader over the same mailbox")
     args = parser.parse_args()
+    if args.mailbox_send or args.mailbox_read:
+        import json
+        import sys
+        body = json.loads(sys.stdin.buffer.read(65537))
+        print(json.dumps(_mailbox_call("read" if args.mailbox_read else "send", body, _default_context())))
+        return
     server = build_server(workshop_task=args.workshop_task)
     try:
         server.run(transport="stdio")

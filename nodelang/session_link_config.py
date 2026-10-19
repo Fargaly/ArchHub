@@ -176,6 +176,10 @@ def render_governance_loader(spec, *, install_root=None, state_dir=None) -> str:
     if set(works) - set(connections):
         raise SessionLinkConfigRefused("selected Work requires its Session Link connection")
     lanes = spec.get("laneFolders")
+    trusted = spec.get("trustedDirectories", [])
+    if (type(trusted) is not list or len(trusted)>256 or any(type(p) is not str or
+            not Path(p).is_absolute() or any(c in p for c in '*?\x00') for p in trusted)):
+        raise SessionLinkConfigRefused("trusted directories must be explicit absolute paths")
     if lanes is not None:
         lanes = _mapping(lanes, _SESSION, _LANE, "laneFolders")
         if set(lanes) - set(connections):
@@ -193,7 +197,7 @@ def render_governance_loader(spec, *, install_root=None, state_dir=None) -> str:
         ("selectedWorks", works),
         ("gateCommand", gate_command),
         ("gateArgs", gate_args),
-    ] + ([("laneFolders", lanes)] if lanes is not None else [])
+    ] + ([("laneFolders", lanes)] if lanes is not None else []) + ([("trustedDirectories", trusted)] if trusted else [])
     return ("import {tool} from '@opencode-ai/plugin/tool';\n"
             "import {createOpenCodeGovernance} from " + _json(module.as_uri() + "?revision=" + revision) + ";\n"
             "export const ArchHubGovernance = createOpenCodeGovernance({\n"
@@ -222,6 +226,8 @@ def spec_from_loader(text) -> dict:
             "selectedWorks": literal(one(key("selectedWorks") + r"(\{[^{}]*\})")),
             "gateCommand": literal(one(key("gateCommand") + r"""(['"][^'"]*['"])""")),
             "gateArgs": literal(one(key("gateArgs") + r"(\[[^\[\]]*\])")),
+            **({"trustedDirectories": json.loads(one(key("trustedDirectories") + r"(\[[^\[\]]*\])"))}
+               if re.search(key("trustedDirectories"), text) else {}),
             **({"laneFolders": literal(one(key("laneFolders") + r"(\{[^{}]*\})"))}
                if re.search(key("laneFolders"), text) else {})}
 

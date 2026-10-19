@@ -206,6 +206,7 @@ __all__ = ["InstalledWorkshopCoordinationClient", "InstalledWorkshopInboxReader"
 MAILBOX_ROUTES = frozenset({
     ("POST", "/api/universal/agent-mail/send"),
     ("GET", "/api/universal/agent-mail/read"),
+    ("POST", "/api/universal/agent-mail/declare"),
 })
 _mailbox_now = time.monotonic
 
@@ -248,13 +249,17 @@ def dispatch_mailbox(owner, request, peer):
     if request.get("session") != {}:
         raise AuthorizationDenied("shared messages do not accept an alternate sender")
     body = request.get("body")
-    send = route[0] == "POST"
-    fields = {"to", "text"} if send else {"since"}
-    if type(body) is not dict or set(body) not in (fields, fields | {"context"}):
+    declaring = route[1].endswith("/declare")
+    send = route[1].endswith("/send")
+    writing = send or declaring
+    fields = {"task", "request_id", "paths", "status"} if declaring else {"to", "text"} if send else {"since"}
+    optional = {"context"} | ({"declarations_after", "include_archived"} if not writing else {"reply_to"} if send else set())
+    if type(body) is not dict or not fields <= set(body) or set(body) - fields - optional:
         raise ValueError("shared message arguments are invalid")
     name = "agent:%d:%d" % (peer.pid, round(peer.created_at * 1000000))
     context = body.get("context", {})
-    if type(context) is not dict or (context and (len(context) != 1 or not set(context) <= {"threadId", "ai.opencode/sessionID"})):
+    from .agent_declarations import SESSION_KEYS
+    if type(context) is not dict or (context and (len(context) != 1 or not set(context) <= set(SESSION_KEYS))):
         raise ValueError("calling session metadata is invalid")
     if context:
         from hashlib import sha256
@@ -267,23 +272,37 @@ def dispatch_mailbox(owner, request, peer):
     import os
     from .agent_runtime_registry import mailbox_label
     label, _runtime = ("BABOOM", "baboom") if peer.pid == os.getpid() else mailbox_label(peer, context)
+    if peer.pid == os.getpid() and "archhub/sessionID" in context:
+        label = "ArchHub / " + context["archhub/sessionID"]
     identity = {"sender_key": name, "sender_label": label}
     name = label + " [" + name + "]"
     if send:
         target = _text(body["to"], "recipient name", 512)
+        if target.casefold() == "founder":
+            target = "founder"
         if "\n" in target or "\r" in target:
             raise ValueError("recipient name must be one line")
         text = _text(body["text"], "message", 65536)
         content = _text("To " + target + ":\n" + text, "addressed message", 65536)
-    else:
+        if "reply_to" in body:
+            _text(body["reply_to"], "thread message", 512)
+    elif not declaring:
         _integer(body["since"], "message cursor", 0, 2**63 - 1)
+        if type(body.get("declarations_after", "")) is not str or len(body.get("declarations_after", "")) > 512:
+            raise ValueError("invalid declaration cursor")
+        if type(body.get("include_archived", False)) is not bool:
+            raise ValueError("invalid declaration archive selection")
     with owner.mutation_lock:
         service = owner.conversation_content
         service._require_live_owner()
         registry, store = owner.universal_registry, owner.universal_store
         authority = registry.authorization
         context = authority.session.context()
-        with authority.broker.live_context(context), store.stable_snapshot() as snapshot:
+        from contextlib import nullcontext
+        # A declaration writes graph nodes. Ordinary notes/reads retain their
+        # stable read boundary; graph writes hold the same owner/broker locks.
+        boundary = nullcontext(store.snapshot()) if declaring else store.stable_snapshot()
+        with authority.broker.live_context(context), boundary as snapshot:
             space = registry.workshop_root
             binding = read_content_binding(snapshot, registry.deliberation_protocol,
                 application_root=registry.application_root, space_root=space)
@@ -295,13 +314,32 @@ def dispatch_mailbox(owner, request, peer):
                 if not service.belongs_to(store, registry) or store.revision != snapshot.revision:
                     raise AuthorizationDenied("Workshop authority changed")
                 _require_application_authorization(snapshot, registry,
-                    "edit" if send else "read", space, authentication_context=context)
+                    "edit" if writing else "read", space, authentication_context=context)
                 if owner.universal_checkpoint_guard is not None:
                     owner.universal_checkpoint_guard.require_healthy()
-                owner.require_universal_http_route("POST" if send else "GET",
+                owner.require_universal_http_route("POST" if writing else "GET",
                     "/api/universal/workshop", authentication_context=context)
 
             guard()
+            if declaring:
+                from .agent_declarations import publish
+
+                def append_notice(content, key, refs):
+                    nonlocal snapshot
+                    snapshot = store.snapshot()
+                    return history.append(space, author="Workshop coordination", content=content,
+                        category=registry.workshop_category_roots["note"], refs=refs,
+                        idempotency_key=key, before_commit=guard)
+
+                # publish reuses the currently authenticated identity; the tool
+                # cannot name an agent, session, node root or process itself.
+                caller = body.get("context", {})
+                from .commit_intent import USER_ACTION, declare
+                with declare(USER_ACTION, actor=authority.subject_root,
+                             reason="authenticated founder-local Workshop task declaration"):
+                    result = publish(owner, peer, identity, caller, body,
+                        append=append_notice)
+                return {**identity, **result}
             if send:
                 from collections import deque
                 now = _mailbox_now()
@@ -322,6 +360,7 @@ def dispatch_mailbox(owner, request, peer):
                 # recipients ACL or a native delivery/relay promise.
                 row = history.append(space, author=name, content=content,
                     category=registry.workshop_category_roots["note"], recipients=(), idempotency_key=uuid4().hex,
+                    reply_to=body.get("reply_to"), reply_principal=name,
                     before_commit=guard)
                 window.append(_mailbox_now())
                 return {**identity, "sender": name, "to": target, "text": text,
@@ -334,5 +373,31 @@ def dispatch_mailbox(owner, request, peer):
                 rows, more = history._collect(cursor, 100, 180000)
                 peers = _recent_mailbox_peers(history, space)
                 guard()
-            return {**identity, "sender": name, "messages": rows, "peers": peers, "more": more,
-                    "next_since": rows[-1]["sequence"] if rows else body["since"]}
+            from .agent_declarations import declarations
+            import json
+            current = sorted(declarations(owner, include_archived=body.get("include_archived",False)), key=lambda row: row["root"])
+            result = {**identity, "sender": name, "messages": [], "peers": peers, "more": more,
+                      "next_since": body["since"],
+                      "declarations": [], "declaration_total":len(current),
+                      "working_count":sum(row["current"] and row["status"] == "working" for row in current),
+                      "declarations_more":False, "declarations_after":""}
+            for row in rows:
+                candidate = {**result, "messages":[*result["messages"], row], "next_since":row["sequence"]}
+                if len(json.dumps(candidate, ensure_ascii=True).encode()) > 240000:
+                    if not result["messages"]:
+                        raise ValueError("single Workshop message exceeds the machine envelope budget")
+                    result["more"] = True
+                    break
+                result = candidate
+            # The entire envelope shares the existing pipe byte budget. Large
+            # declarations page independently of the ordinary message cursor.
+            for row in current:
+                if row["root"] <= body.get("declarations_after", ""):
+                    continue
+                candidate = {**result, "declarations":[*result["declarations"], row]}
+                if len(json.dumps(candidate, ensure_ascii=True).encode()) > 240000:
+                    result["declarations_more"] = True
+                    break
+                result = candidate
+                result["declarations_after"] = row["root"]
+            return result

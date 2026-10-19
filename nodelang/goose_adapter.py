@@ -10,6 +10,9 @@ import json
 import queue
 import re
 import subprocess
+import sys
+from pathlib import Path
+from uuid import uuid4
 import threading
 import time
 
@@ -22,6 +25,32 @@ class GooseRefused(ModelRouteRefused):
 
 class GooseResponseRefused(GooseRefused):
     """A complete remote refusal: the connection remains synchronised."""
+
+
+def safe_workshop_call(identity, arguments):
+    if (type(identity) is not dict or identity.get("extensionName") != "archhub-agent"
+            or type(arguments) is not dict):
+        return False
+    tool = identity.get("toolName")
+    fields = {"archhub-agent__declare":({"task", "paths", "status", "request_id"}, set()),
+              "archhub-agent__send":({"to", "text"}, {"reply_to"}),
+              "archhub-agent__read":(set(), {"since", "declarations_after", "include_archived"})}
+    if tool not in fields:
+        return False
+    required, optional = fields[tool]
+    if not required <= set(arguments) or set(arguments) - required - optional:
+        return False
+    # This grant covers only the existing mailbox boundary, which validates
+    # identity, audience and byte budgets again. It never grants a host effect.
+    return len(json.dumps(arguments, ensure_ascii=True).encode()) <= 200000
+
+
+def workshop_mcp_server():
+    from .client_mcp_installation import LOADER
+    return {"name":"archhub-agent", "command":sys.executable,
+        "args":["-c", LOADER, str(Path(__file__).resolve().parents[1])],
+        "env":[{"name":"PYTHONUTF8", "value":"1"},
+               {"name":"GOOSE_SESSION_ID", "value":"connector-"+uuid4().hex}]}
 
 
 def free_route(route: str) -> tuple[str, str]:
@@ -113,9 +142,9 @@ class AcpTransport:
                         permission = message.get("params") or {}
                         call = permission.get("toolCall") or {}
                         identity = tool_identities.get((permission.get("sessionId"), call.get("toolCallId")))
-                        safe = (permission.get("sessionId") == params.get("sessionId")
-                            and identity == {"extensionName": "archhub-hosts", "toolName": "archhub-hosts__hosts_state"}
-                            and call.get("rawInput") == {})
+                        safe = permission.get("sessionId") == params.get("sessionId") and (
+                            identity == {"extensionName": "archhub-hosts", "toolName": "archhub-hosts__hosts_state"}
+                            and call.get("rawInput") == {} or safe_workshop_call(identity, call.get("rawInput")))
                         option = next((row.get("optionId") for row in permission.get("options", ())
                                        if row.get("kind") == "allow_once"), None) if safe else None
                         outcome = {"outcome": "selected", "optionId": option} if option else {"outcome": "cancelled"}
@@ -195,8 +224,9 @@ class GooseAdapter:
             recipe = {"version": "1.0.0", "title": "BABOOM", "description": "ArchHub agent",
                       "instructions": _SYSTEM, "settings": settings}
             encoded = base64.urlsafe_b64encode(json.dumps(recipe).encode()).decode().rstrip("=")
+            # Goose owns this MCP client; messages go to the existing Workshop.
             session = transport.request("session/new", {
-                "cwd": str(self.runtime.work_dir), "mcpServers": [],
+                "cwd": str(self.runtime.work_dir), "mcpServers": [workshop_mcp_server()],
                 "_meta": {"recipeDeeplink": encoded, "enabledExtensions": [{
                     "type": "mcp", "server": self.runtime.host_extension,
                     "available_tools": ["hosts_state"],

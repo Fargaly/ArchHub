@@ -29,6 +29,8 @@ def _observed_runtime(peer):
                         names.update(part.casefold() for part in Path(arg).parts)
                 runtime = next((key for key, definition in RUNTIMES.items()
                     if names.intersection(definition["executables"])), None)
+                if runtime is None:
+                    runtime = next((key for key in ("goose", "antigravity") if key in names), None)
                 parent = process.parent()
                 if runtime or parent is None:
                     return runtime
@@ -41,9 +43,11 @@ def _observed_runtime(peer):
 def mailbox_label(peer, context):
     """Display only: registry host plus observed project/session, never authority."""
     from hashlib import sha256
-    runtime = {"threadId": "codex", "ai.opencode/sessionID": "opencode"}.get(
+    from .agent_declarations import SESSION_KEYS
+    runtime = SESSION_KEYS.get(
         next(iter(context), "")) or _observed_runtime(peer)
-    host = RUNTIMES[runtime]["label"] if runtime else "Agent"
+    host = RUNTIMES.get(runtime, {}).get("label", {"goose":"Goose", "antigravity":"Antigravity",
+        "antigravity-ide":"Antigravity"}.get(runtime, "Agent"))
     project = (Path(peer.cwd).name if peer.cwd else "Session")
     project = project.replace("\n", " ").replace("\r", " ").replace("[", "(").replace("]", ")")
     project = project.encode("utf-8")[:48].decode("utf-8", errors="ignore")

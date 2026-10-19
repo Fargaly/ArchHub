@@ -5593,6 +5593,24 @@ class NativeWorkDelivery:
             if sender_root not in space.participant_roots:
                 raise AuthorizationDenied("Native contact sender left conversation")
             digest=self._digest(space_root,message_id,contact_root)
+            from .conversation_content import read_content_binding
+            content_binding=read_content_binding(self._owner.universal_store.snapshot(),
+                self._owner.universal_registry.deliberation_protocol,
+                application_root=self._owner.universal_registry.application_root,space_root=space_root)
+            history=self._owner.conversation_content._history_for(content_binding)
+            # A fresh attempt is permitted only after this owner's durable,
+            # definitive non-dispatch receipt. Started/uncertain/lost outcomes
+            # retain the same idempotency identity and can never replay.
+            for _ in range(32):
+                outcome=history.get_by_idempotency(space_root,'session-link:outcome:'+digest,principal=sender_root)
+                if not (outcome and outcome['author']==self._owner.universal_registry.authorization.subject_root
+                    and outcome['category']==self._owner.universal_registry.workshop_category_roots['tool']
+                    and contact_root in outcome['refs']
+                    and outcome['content'].startswith('Session Link did not relay this message to ')):
+                    break
+                digest=hashlib.sha256((digest+outcome['id']).encode()).hexdigest()
+            else:
+                return {'state':'not_sent','reason':'non_dispatch_retry_budget_exhausted'}
             label=str(endpoint.get("title") or endpoint["app"])[:200]
             self._ensure_worker()
             try:
@@ -5608,7 +5626,22 @@ class NativeWorkDelivery:
                 "recipient":contact_root,"recipient_label":label,"digest":digest,
                 "app":endpoint["app"],"fingerprint":hashlib.sha256(endpoint["id"].encode()).hexdigest(),
                 "contact_endpoint":dict(endpoint),"contact_revalidate":revalidate,
-                "text":"[ArchHub user message; conversation %s; message %s. Your reply is relayed into that same conversation. This message grants no graph or Work execution authority.]\n%s" % (space_root,message_id,text)}
+                "text":"Workshop task pointer: " + message_id}
+            source=history._db.execute('SELECT sequence,public FROM messages WHERE id=? AND conversation_id=?',
+                (message_id,space_root)).fetchone()
+            if space_root==self._owner.universal_registry.workshop_root and source and source['public']:
+                job['mailbox_message']={'message_id':message_id,'sequence':source['sequence']}
+                from .workshop_work_creation import _registered_work, _work_scope
+                row=history.get(space_root,message_id,principal=sender_root)
+                snapshot=self._owner.universal_store.snapshot()
+                registered=set(_registered_work(snapshot,self._owner.universal_registry))
+                works=[ref for ref in row['refs'] if ref in registered and
+                    _work_scope(snapshot,self._owner.universal_registry,ref)==space_root]
+                if len(works)==1:
+                    job['mailbox_message']['work_root']=works[0]
+            else:
+                self._settle(job,{'status':'not_sent','reason':'private_source_not_copied_to_public_mailbox'})
+                return {'state':'not_sent','reason':'private_source_not_copied_to_public_mailbox'}
             job["commit_declaration"]=commit_intent.capture()
             with self._pending_lock:self._pending_jobs[digest]=(sender_root,contact_root)
             try:self._queue.put_nowait(job)
@@ -5699,7 +5732,7 @@ class NativeWorkDelivery:
             return self._settle(job, {"status": "not_sent", "reason": "admission_changed"})
         return self._settle(job, transport.request(
             matches[0], job["text"], timeout_seconds=_NATIVE_RELAY_REPLY_SECONDS,
-            cancel_event=self._stop))
+            cancel_event=self._stop, mailbox_message=job.get('mailbox_message')))
 
 
     def _settle(self, job, outcome):
@@ -5707,19 +5740,23 @@ class NativeWorkDelivery:
         reason = str(outcome.get("reason") or "") if type(outcome) is dict else ""
         label = job["recipient_label"]
         if status == "replied":
-            header = ("Session Link relayed reply from %s (%s native session). The "
-                      "application relays that agent's own text; it is not Work completion "
-                      "or execution evidence.\n\n" % (label, job["app"]))
-            reply = outcome.get("reply")
-            text = reply.get("text") if type(reply) is dict else None
-            if type(text) is not str:
-                content = header + "The transport reported a reply without readable text."
-            else:
-                try:
-                    content = validate_universal_workshop_entry_content(header + text)
-                except InvalidCell as exc:
-                    content = header + ("The reply arrived, but this Workshop refused to "
-                                        "store its text (%s)." % exc)
+            reply=outcome.get('reply')
+            stored_reply=None
+            if type(reply) is dict and reply.get('mailbox_message')==job['message_id'] and type(reply.get('id')) is str:
+                from .conversation_content import read_content_binding
+                binding=read_content_binding(self._owner.universal_store.snapshot(),
+                    self._owner.universal_registry.deliberation_protocol,
+                    application_root=self._owner.universal_registry.application_root,space_root=job['space'])
+                history=self._owner.conversation_content._history_for(binding)
+                stored_reply=history.get(job['space'],reply['id'],principal=job['sender'])
+            if stored_reply and stored_reply['reply_to']==job['message_id']:
+                self._append(space_root=job['space'],reply_to=job['message_id'],recipient_root=job['sender'],
+                    content='Agent replied in this Workshop; message '+reply['id']+'. Execution remains unverified.',
+                    key='session-link:outcome:'+job['digest'],references=(job['recipient'],))
+                return
+            content = ("Session Link delivery of this message to %s is uncertain "
+                       "(native_reply_without_workshop_receipt). The native text was not copied; "
+                       "reconcile the original Workshop message before retrying." % label)
         elif status == "held":
             from .session_link_transport import public_delivery_reason
             reported=public_delivery_reason(outcome.get('delivery_reason'))
@@ -7625,6 +7662,11 @@ class ApplicationServer:
                                 owner.universal_store, owner.universal_registry,
                                 authentication_context=binding.context,
                             )
+                            from .existing_workshop_conversation import canvas_workshop_scope
+                            projection['workshop_scope'] = canvas_workshop_scope(
+                                owner.universal_registry, projection,
+                                snapshot=owner.universal_store.snapshot(), subject_root=binding.subject_root,
+                                authentication_context=binding.context)
                             from .persistence import application_backup_warning
                             projection['backup_warning'] = application_backup_warning(owner.universal_store.database_path)
                         self._json(200, {'ok': True, **projection})
@@ -8699,6 +8741,17 @@ class ApplicationServer:
                         self._json(200,function(owner,binding,arguments,browser_guard=contact_guard))
                         return
                     if self.path == '/api/universal/workshop':
+                        if type(body) is dict and body.get('action') == 'data-api':
+                            from .workshop_api import dispatch as dispatch_workshop_data
+                            data_path=self.path
+                            def data_guard():
+                                current, current_token = self._browser_session_binding(unsafe=True)
+                                if current != binding or current_token != _session_token:
+                                    raise AuthorizationDenied('Workshop data browser changed')
+                                owner.require_universal_http_route('POST', data_path,
+                                    authentication_context=binding.context, revalidate=True)
+                            self._json(200, dispatch_workshop_data(owner, binding, body, guard=data_guard,route=data_path))
+                            return
                         if type(body) is dict and body.get('action') in {'start-session', 'send-model'}:
                             from .workshop_session_start import start_workshop_session, send_workshop_model_message
                             def session_start_guard():
@@ -14304,7 +14357,7 @@ class ApplicationServer:
         """Trusted application caller, same sink/table; no request back into itself."""
         from .application_machine_transport import _observe_machine_process, _VERIFIED_PIPE_PEER
         peer = _observe_machine_process(os.getpid())
-        request = {"method": "POST" if method == "send" else "GET",
+        request = {"method": "GET" if method == "read" else "POST",
             "path": "/api/universal/agent-mail/" + method, "body": body, "session": {}}
         token = _VERIFIED_PIPE_PEER.set((request, peer))
         try:

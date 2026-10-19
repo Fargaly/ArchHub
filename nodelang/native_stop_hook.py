@@ -1368,6 +1368,10 @@ def main():
             result=_merge_followup(result,followup_decision(payload,registry_directory=Path.home()/'.claude'/'sessions'))
         except Exception:
             pass
+    from nodelang.agent_declarations import reminder
+    notice = reminder()
+    if notice:
+        result = {**result, "systemMessage": " ".join(filter(None, (result.get("systemMessage"), notice)))}
     sys.stdout.write(json.dumps(result))
     return 0
 

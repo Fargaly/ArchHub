@@ -6,7 +6,7 @@ import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {stateDir,readMessage} from './paths.mjs';
 import {PeerEndpoint,listClaudeSessions} from './vendor/src/peer-protocol.mjs';
-import {nativeCall,hasAttachment,attachmentCall,assertTargetHostLoaded} from './native.mjs';
+import {nativeCall,hasAttachment,attachmentCall,assertTargetHostLoaded,mailboxSend} from './native.mjs';
 import {discoverExtra,sendExtra} from './extra-apps.mjs';
 import {ScopedAttachments} from './scoped-attachment.mjs';
 import {resumeSaved,confirmsSavedChild} from './resume.mjs';
@@ -359,7 +359,11 @@ async function serve(binding){
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url))try{
  let result;
- if(cmd==='serve'){await serve(argv[1]);}
+ if(['serve','connect','reconnect'].includes(cmd))result={channel:'Workshop',retired:true,note:'Use the existing MCP send/read/declare tools; no agent-chat pipe is started.'};
+ else if(cmd==='send'||cmd==='reply'){
+  if(modelFromArgs(argv))throw new Error('Model selection is not used for Workshop messages');
+  result=mailboxSend(argv[1]||'*',await readMessage(argv));
+ }
  else if(cmd==='resume'){
   if(argv[1]==='--current'){
    const runtime=process.env.ARCHHUB_AGENT_RUNTIME || (process.env.CODEX_THREAD_ID?'codex':
@@ -390,20 +394,6 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
   }else result=await resume(argv[1]);
  }
  else if(cmd==='list')result=await catalog();
- else if(cmd==='connect'||cmd==='reconnect'){
-   const allowed=new Set(['--claude','--codex','--opencode','--antigravity','--antigravity-ide','--permission-mode']);
-   if(argv.slice(1).some(v=>v.startsWith('--')&&!allowed.has(v)))throw new Error('Unknown connection option; run help');
-   if(['claude','opencode','antigravity','antigravity-ide'].filter(a=>option(a)).length>1)throw new Error('Choose exactly one remote app');
-   const app=['opencode','antigravity','antigravity-ide'].find(a=>option(a))||'claude';
-   const request={app,claude:option(app)||claudes().find(c=>c.socket===process.env.CLAUDE_CODE_MESSAGING_SOCKET)?.id,codex:option('codex')||process.env.CODEX_THREAD_ID,permissionMode:option('permission-mode')};
-   if(cmd==='reconnect'){
-     if(!process.env.CODEX_APP_TOOLS_PIPE_PATH||!process.env.CODEX_THREAD_ID)throw new Error('Reconnect from a current Codex Desktop task to refresh the native app connection');
-     const all=await catalog(),c=select(all,app,request.claude,app),x=select(all,'codex',request.codex,'Codex');
-     const previous=configs().find(v=>v.id===idFor(c.id,x.id));
-     if(previous&&alive(previous.pid)){await rpc(previous,{operation:'disconnect'});for(let n=0;n<30&&alive(previous.pid);n++)await new Promise(r=>setTimeout(r,100));if(alive(previous.pid))throw new Error('Previous process has not stopped');}
-   }
-   result=await connect(request);
- }
  else if(cmd==='status'){result=[];const down=[];
    for(const c of configs()){if(!alive(c.pid)){down.push(c.id);continue;}try{result.push(await rpc(c,{operation:'status'}));}catch(e){result.push({id:c.id,status:'unreachable',error:e.message});}}
    for(const id of savedIds())if(!down.includes(id)&&!result.some(r=>r.id===id)&&!liveOwner(id))down.push(id);
@@ -420,8 +410,6 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
    result=await rpc(matches[0],{operation:'settle',messageId:argv[2],as:option('as')});
  }
  else if(cmd==='interrupt-link'){const matches=configs().filter(c=>c.id===argv[1]);if(matches.length!==1)throw new Error('Exact connection ID required; nothing sent');result=await rpc(matches[0],{operation:'interrupt',reason:option('reason'),...(option('permission-mode')?{permissionMode:option('permission-mode')}:{})});}
- else if(cmd==='send'||cmd==='reply'||cmd==='disconnect'){const model=modelFromArgs(argv);if(model&&cmd!=='send')throw new Error('Only send can select a model');const matches=configs().filter(c=>c.id===argv[1]);if(matches.length!==1)throw new Error('Use exact connection ID from status');result=await rpc(matches[0],{...(cmd==='reply'?{messageId:crypto.randomUUID()}:{}),operation:model?'send-model':cmd,...(model?{model}:{}),text:cmd==='send'||cmd==='reply'?await readMessage(argv):undefined,...(cmd==='send'&&option('permission-mode')?{permissionMode:option('permission-mode')}:{} ),...(cmd==='send'&&option('kind')?{kind:option('kind')}:{}),...(cmd==='send'&&option('followup-of')?{followupOf:option('followup-of')}:{})});}
- else result={commands:['list','connect --claude|--opencode|--antigravity|--antigravity-ide "title or ID" --codex "title or ID"','ask --app APP --session "title or ID" --file UTF8_FILE|--stdin','answer REQUEST_ID --file UTF8_FILE|--stdin','status','send CONNECTION_ID --file UTF8_FILE|--stdin','reply CONNECTION_ID --file UTF8_FILE|--stdin','interrupt --app claude --session "title or ID" --reason "why" (Claude Code only; requests immediate interruption)','interrupt-link CONNECTION_ID --reason "why" (bound Claude Code only)','disconnect CONNECTION_ID','forget CONNECTION_ID (offline only)','reconnect --claude ID --codex ID'],apps:['claude','codex','opencode','antigravity','antigravity-ide'],note:'Use session-link.ps1 for ask/answer. Any shell-capable agent can initiate ask and receive its reply. This does not wake arbitrary idle terminals. Check adapterStatus and verify a real reply. Recipient permissions remain active.'};
+ else if(cmd==='disconnect'){const matches=configs().filter(c=>c.id===argv[1]);if(matches.length!==1)throw new Error('Use exact connection ID from status');result=await rpc(matches[0],{operation:'disconnect'});} else result={channel:'Workshop',note:'Agent communication: MCP send/read/declare. Native task execution and discovery remain application-owned.'};
  if(result!==undefined)console.log(JSON.stringify(result,null,2));
 }catch(e){console.error(e.message);process.exitCode=1;}
-

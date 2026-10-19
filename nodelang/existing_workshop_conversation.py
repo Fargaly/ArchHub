@@ -96,7 +96,7 @@ def _admit(owner, binding, root, scope, *, allow_child=False):
     from .universal_application import (
         _view_session_for_context, _require_application_authorization,
         _session_canvas_roots, _cached_authority_snapshot, _property_index,
-        _text, _node_conversation_root)
+        _text, _node_conversation_root, _read_view_scope_trail_structure)
     registry, store = owner.universal_registry, owner.universal_store
     if binding.context is None or (root != registry.workshop_root and not allow_child):
         raise AuthorizationDenied("Workshop request is outside this application")
@@ -106,10 +106,9 @@ def _admit(owner, binding, root, scope, *, allow_child=False):
         raise AuthorizationDenied("Workshop browser view changed")
     _require_application_authorization(snapshot, registry, "read", root,
         authentication_context=context)
-    visible, _relations, _properties, trail = _session_canvas_roots(snapshot, registry, view,
-        include_trail=True, authority_snapshot=_cached_authority_snapshot(snapshot, registry.authorization))
     workbench = getattr(registry, "workshop_workbench_root", None)
     if root == registry.workshop_root:
+        trail = _read_view_scope_trail_structure(snapshot, registry, view)
         # SPEC section 6: the general Workshop is reachable from every canvas
         # level, subject to the read authority required above. The view binding
         # and its current scope still bind the request; the drawn card does not.
@@ -120,6 +119,8 @@ def _admit(owner, binding, root, scope, *, allow_child=False):
             raise AuthorizationDenied("The Workshop is not attached to this application")
         workbench_visible = False
     else:
+        visible, _relations, _properties, trail = _session_canvas_roots(snapshot, registry, view,
+            include_trail=True, authority_snapshot=_cached_authority_snapshot(snapshot, registry.authorization))
         workbench_visible = workbench is not None and (workbench in visible or scope == workbench
             or (allow_child and scope == root and workbench in trail))
         if workbench_visible:
@@ -169,7 +170,15 @@ def read_browser_workshop(owner, binding, *, root, scope, after=None, session_to
         result = _read_ordinary_browser_workshop(owner, binding, root=root, scope=scope,
             expected_revision=snapshot.revision, session_token=session_token,
             content_after=content_after, before=before, connections=connections, feed=feed)
-        return {**result, "model_agent":model_agent}
+        from .agent_declarations import declarations, founder_inbox
+        from .conversation_content import read_content_binding
+        with owner.mutation_lock:
+            rows = declarations(owner) if root == owner.universal_registry.workshop_root else []
+            content_binding = read_content_binding(owner.universal_store.snapshot(), owner.universal_registry.deliberation_protocol,
+                application_root=owner.universal_registry.application_root, space_root=root)
+            history = owner.conversation_content._history_for(content_binding)
+            inbox = founder_inbox(history, root)
+        return {**result, "model_agent":model_agent, "declarations":rows, "founder_inbox":inbox}
     if feed != 'all':
         raise InvalidCell('Workshop feed selection requires ordinary indexed history')
     if content_after is not None or before is not None:

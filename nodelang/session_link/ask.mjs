@@ -1,102 +1,107 @@
-import fs from 'node:fs';
+/* Native task control stays application-owned; all task text/replies live in Workshop. */
 import path from 'node:path';
-import net from 'node:net';
-import crypto from 'node:crypto';
-import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {PeerEndpoint,listClaudeSessions,publicDeliveryReceipt} from './vendor/src/peer-protocol.mjs';
 import {sendExtra} from './extra-apps.mjs';
-import {postCodex} from './native.mjs';
-import {catalog,connect,idFor} from './bridge.mjs';
-import {stateDir,readMessage} from './paths.mjs';
-import {modelFromArgs,validateModel} from './opencode-model.mjs';
+import {postCodex,mailbox,mailboxSend} from './native.mjs';
+export {mailboxSend} from './native.mjs';
+import {catalog} from './bridge.mjs';
+import {readMessage} from './paths.mjs';
+import {validateModel} from './opencode-model.mjs';
 import {interrupt} from './interrupt.mjs';
-const root=path.dirname(fileURLToPath(import.meta.url));
-const psQuote=value=>"'"+String(value).replaceAll("'","''")+"'";
 const args=process.argv.slice(2),opt=n=>{const i=args.indexOf('--'+n);return i<0?undefined:args[i+1];};
 const validate=text=>{if(typeof text!=='string'||!text.trim()||text.length>32000)throw new Error('Text must contain 1–32000 characters');return text;};
-// Any shell-capable agent can use this request/reply interface. It neither
-// starts a second model session nor writes into another terminal's stdin.
-// A Codex task asking Claude gets a durable reply address: the persistent
-// bridge peer, which forwards any later SendMessage into this Codex task. The
-// one-shot request pipe below still carries the synchronous reply. The durable
-// link is always 'prompting': a per-request sender mode never outlives its request.
-export async function durableReply(target,{connectLink=connect}={}){
- if(!process.env.CODEX_APP_TOOLS_PIPE_PATH||!process.env.CODEX_THREAD_ID)return null;
- const codex=process.env.CODEX_THREAD_ID;let link;
- try{
-  const observedCatalog=await catalog({apps:['claude','codex']});
-  link=await connectLink({app:'claude',claude:target.id,codex,permissionMode:'prompting'},{observedCatalog});
- }catch(e){if(e?.code==='SESSION_LINK_MISMATCH')throw e;return {error:e.message};}
- // Advertise only the exact prompting link for this pair, as the bridge attests it.
- if(link?.id!==idFor(target.id,codex)||(link.remoteApp||'claude')!=='claude'||link.remoteId!==target.id||link.codex!==codex||
-    link.permissionMode!=='prompting'||typeof link.peer!=='string'||!link.peer){
-  const e=new Error('Durable Session Link is not the exact prompting link for this request; nothing sent');e.code='SESSION_LINK_MISMATCH';throw e;
- }
- return {connection:link.id,peer:link.peer};
-}
-export async function ask(app,session,text,permissionMode='prompting',{expected,onDispatch=()=>{},model,connectLink}={}){
- validate(text);
- validateModel(model);
- if(model!==undefined && app!=='opencode')throw new Error('Explicit model selection is OpenCode-only; not sent');
+const span=(units,scale=1000)=>units*scale;
+export async function ask(app,session,text,permissionMode='prompting',{expected,onDispatch=()=>{},model,discover,dispatchControl,mailboxMessage,mailboxCall}={}){
+ const callMailbox=mailboxCall||mailbox;
+ validate(text);validateModel(model);
+ if(model!==undefined&&app!=='opencode')throw new Error('Explicit model selection is OpenCode-only; not sent');
  if(!['claude','codex','opencode','antigravity','antigravity-ide'].includes(app))throw new Error('Unsupported target app');
  if(!['prompting','bypass'].includes(permissionMode))throw new Error('Invalid sender permission mode');
- const all=await catalog({apps:[app]});
+ const list=discover||catalog;
+ const all=await list({apps:[app]});
  const matches=(all[app]||[]).filter(s=>s.id===session||s.selector===session||s.title===session);
- if(matches.length!==1){
-  const down=all.adapterStatus?.[app];
-  if(app==='codex'&&!matches.length&&down?.status==='unavailable')throw new Error('Codex tasks unavailable: '+(down.reason||'no reason reported'));
-  throw new Error('Target must resolve to exactly one live session; use its exact ID');
- }
+ if(!matches.length&&all.adapterStatus?.[app]?.status==='unavailable')throw new Error((app==='codex'?'Codex tasks':app)+' unavailable: '+all.adapterStatus[app].reason);
+ if(matches.length!==1)throw new Error('Target must resolve to exactly one live session; use its exact ID');
  const target=matches[0];
- if(expected){for(const field of ['app','id','pid','port','socket','cwd','runtimeId'])if(expected[field]!==target[field])throw new Error('Recipient binding changed before dispatch: '+field);}
- if(app!=='claude'&&app!=='codex')return await sendExtra(target,text,{onDispatch,model});
+ // OpenCode's native plugin returns its OS process.pid as runtimeId.
+ // Codex list_threads has no per-target PID: keep its completion unverified.
+ const targetPid=target.pid ?? (app==='opencode'&&Number.isInteger(target.runtimeId)&&target.runtimeId>0?target.runtimeId:undefined);
+ if(expected)for(const field of ['app','id','pid','port','socket','cwd','runtimeId'])if(expected[field]!==target[field])throw new Error('Recipient binding changed before dispatch: '+field);
  if(app==='codex'&&target.id===process.env.CODEX_THREAD_ID)throw new Error('Synchronous self-request would deadlock; use another existing task');
- const id=crypto.randomUUID(),peer=new PeerEndpoint({name:'session-link-request-'+id.slice(0,8),cwd:process.cwd()});
- peer.permissionMode=permissionMode;
- await peer.start();
- const control='\\\\.\\pipe\\LOCAL\\session-link-request-'+id;
- const requestDir=path.join(stateDir(),'requests'),file=path.join(requestDir,id+'.json');
- fs.mkdirSync(requestDir,{recursive:true});
- let server,timer;
- let resolveReply,rejectReply;
- const reply=new Promise((resolve,reject)=>{resolveReply=resolve;rejectReply=reject;});
- // Attach rejection handling before sending so timeouts never become unhandled.
- reply.catch(()=>{});
- try{
-  if(app==='codex'){
-   server=net.createServer(socket=>{let data='',handled=false;socket.setEncoding('utf8');socket.setTimeout(10000,()=>socket.destroy());socket.on('error',()=>{});socket.on('data',chunk=>{
-    if(handled)return;data+=chunk;if(data.length>70000){socket.destroy();return;}if(!data.includes('\n'))return;handled=true;
-    try{const r=JSON.parse(data.slice(0,data.indexOf('\n')));if(r.token!==peer.peerToken||r.session!==target.id)throw new Error('Wrong request/session authentication');validate(r.text);socket.end(JSON.stringify({ok:true})+'\n');resolveReply({id,text:r.text});}catch(e){socket.end(JSON.stringify({ok:false,error:e.message})+'\n');}
-   });});
-   await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(control,resolve);});
-   fs.writeFileSync(file,JSON.stringify({control,keyPath:peer.keyPath,target:target.id,pid:process.pid}));
+ let identityPage=callMailbox('read',{since:0,include_archived:true}),identities=[...identityPage.declarations];
+ while(identityPage.declarations_more){identityPage=callMailbox('read',{since:identityPage.next_since,include_archived:true,declarations_after:identityPage.declarations_after});identities.push(...identityPage.declarations);}
+ const targetGenerations=new Set(identities.filter(row=>row.process_alive&&row.app===app&&row.native_session_id===target.id)
+  .flatMap(row=>(row.process_lineage||[]).filter(process=>process.pid===targetPid).map(process=>process.created_at)));
+ let targetGeneration=targetGenerations.size===1?[...targetGenerations][0]:null;
+ let note;
+ if(mailboxMessage){
+  if(typeof mailboxMessage.message_id!=='string'||!Number.isSafeInteger(mailboxMessage.sequence)||mailboxMessage.sequence<1)throw new Error('Invalid Workshop source reference');
+  const page=callMailbox('read',{since:mailboxMessage.sequence-1});
+  if(!page.messages.some(row=>row.id===mailboxMessage.message_id&&row.sequence===mailboxMessage.sequence&&
+     (!mailboxMessage.work_root||row.refs?.includes(mailboxMessage.work_root))))throw new Error('Workshop source is not public and readable; private content is never copied');
+  note={...mailboxMessage,sender_label:'founder'};
+ }else note=callMailbox('send',{to:target.id,text});
+ const pointer=`Application task in Workshop, message ${note.message_id}. Use MCP read(since=${note.sequence-1}) to read it. Declare task/paths/status with request_id=${note.work_root||note.message_id}. Reply ONLY with MCP send(to=${JSON.stringify(note.sender_label)}, reply_to=${JSON.stringify(note.message_id)}, text=your_result). Keep the declaration current. No Session Link answer or peer reply.`;
+ let controlError=null,controlHeld=null;
+ // Native transport wakes the client; Workshop is the result channel. A
+ // vendor's unfinished planner response cannot hide an already stored reply.
+ const dispatch=async()=>{
+ if(dispatchControl){await dispatchControl(target,pointer,{onDispatch,model});return;}
+ if(app==='claude'){
+  const live=listClaudeSessions().find(s=>s.sessionId===target.id);if(!live)throw new Error('Claude went offline before task dispatch');
+  const peer=new PeerEndpoint({name:'workshop-task-control',cwd:process.cwd()});peer.permissionMode=permissionMode;
+  await peer.start();
+  try{
+   const outcome=await peer.send(live.socket,pointer,{permissionMode,beforeSend:onDispatch});
+   const delivery=outcome?.delivery;
+   if(delivery&&['held','refused','rejected','denied','expired','dropped'].includes(delivery.status))controlHeld={status:'held',...publicDeliveryReceipt(delivery)};
+  }finally{peer.stop();}
+ }else if(app==='codex'){onDispatch();await postCodex(target.id,pointer,{requestId:note.message_id});}
+ else await sendExtra(target,pointer,{onDispatch,model});
+ };
+ void dispatch().catch(error=>{controlError=error;});
+ let since=note.sequence;
+ const deadline=Date.now()+span(180);
+ let followups=0,nextFollowup=Date.now()+span(45);
+ const ownFollowups=new Set();
+ const pollWait=span(1);
+ while(Date.now()<deadline){
+  let page=callMailbox('read',{since,include_archived:true}),declarations=[...(page.declarations||[])];
+  const messages=page.messages;since=page.next_since;
+  while(page.declarations_more){
+   page=callMailbox('read',{since,declarations_after:page.declarations_after,include_archived:true});
+   declarations.push(...page.declarations);messages.push(...page.messages);since=page.next_since;
   }
-  if(app==='codex')timer=setTimeout(()=>rejectReply(new Error('No reply confirmed in 180 seconds. The prompt may have arrived; do not resend automatically.')),180000);
-  if(app==='claude'){
-   const live=listClaudeSessions().find(s=>s.sessionId===target.id);if(!live)throw new Error('Claude went offline before send');
-   const durable=await durableReply(target,{connectLink});
-   const later=durable?.peer?` If you reply after this request closes, or to follow up later, use native SendMessage to peer ${durable.peer} (Session Link connection ${durable.connection}); it delivers into the requesting Codex task.`:'';
-   const outcome=await peer.sendAndWait(live.socket,`[Session Link request ${id}. Reply using native SendMessage to peer ${peer.name}. The requesting agent is waiting for the reply.${later} Respect your existing execution permissions.]\n${text}`,{timeoutMs:180000,permissionMode,beforeSend:onDispatch});
-   const delivery=outcome.delivery,route=durable?{durable_reply:durable}:{};
-   if(delivery && ['held','refused','rejected','denied','expired','dropped'].includes(delivery.status))
-    return {status:'held',id:outcome.msgId,...publicDeliveryReceipt(delivery),...route};
-   if(!outcome.reply)throw new Error('No reply confirmed in 180 seconds; delivery remains uncertain; do not resend'+(durable?.peer?`; a late reply still reaches this task through peer ${durable.peer}`:''));
-   return {id:outcome.reply.msgId,text:outcome.reply.text,...route};
-  }else{
-   onDispatch();await postCodex(target.id,`[Session Link request ${id}. An existing terminal agent is waiting. After preparing your response, write it to a UTF-8 file inside your permitted workspace, then run PowerShell: & ${psQuote(path.join(root,'session-link.ps1'))} answer ${id} --state-dir ${psQuote(stateDir())} --file 'ABSOLUTE_RESPONSE_FILE'. This returns your response to the caller. Respect your current permissions.]\n${text}`,{requestId:id});
+  if(targetGeneration===null&&targetPid!==undefined){
+   const generations=new Set(declarations.filter(row=>row.process_alive&&row.app===app&&row.native_session_id===target.id)
+    .flatMap(row=>(row.process_lineage||[]).filter(process=>process.pid===targetPid).map(process=>process.created_at)));
+   if(generations.size===1)targetGeneration=[...generations][0];
   }
-  return await reply;
- }finally{clearTimeout(timer);server?.close();peer.stop();if(fs.existsSync(file))fs.rmSync(file);}
+  const senders=new Set(declarations.filter(row=>row.app===app&&row.native_session_id===target.id&&targetGeneration!==null&&
+   row.process_lineage?.some(process=>process.pid===targetPid&&process.created_at===targetGeneration)).map(row=>row.agent+' ['+row.session+']'));
+  const reply=messages.find(row=>row.reply_to===note.message_id&&senders.has(row.author));
+  if(reply)return {status:'replied',id:reply.id,text:reply.content.replace(/^To [^\n]+:\n/,''),mailbox_message:note.message_id};
+  if(controlHeld)return controlHeld;
+  if(controlError)return {status:'uncertain',reason:'native_control_failed',mailbox_message:note.message_id};
+  if(targetGeneration===null&&messages.some(row=>row.reply_to===note.message_id&&!ownFollowups.has(row.id)&&row.author!==note.sender_label))return {status:'uncertain',reason:'recipient_identity_unverified',mailbox_message:note.message_id};
+  if(Date.now()>=nextFollowup&&followups<3){
+   const followup=callMailbox('send',{to:target.id,reply_to:note.message_id,text:
+    'Follow-up '+(++followups)+': awaiting your Workshop reply on this existing task. Continue it or report the exact blocker here. This is not a new task or authorization to repeat an uncertain effect.'});
+   ownFollowups.add(followup.message_id);
+   nextFollowup=Date.now()+span(45);
+  }
+  await new Promise(resolve=>setTimeout(resolve,pollWait));
+ }
+ throw new Error('No Workshop reply confirmed in 180 seconds; task may have run; do not resend automatically.');
 }
-async function answer(id,text){
- if(!/^[0-9a-f-]{36}$/.test(id||''))throw new Error('Invalid request ID');validate(text);
- const r=JSON.parse(fs.readFileSync(path.join(stateDir(),'requests',id+'.json'),'utf8'));
- if(process.env.CODEX_THREAD_ID!==r.target)throw new Error('Answer must run inside the exact receiving Codex task');
- const token=JSON.parse(fs.readFileSync(r.keyPath,'utf8')).peerToken;
- return await new Promise((resolve,reject)=>{const s=net.connect(r.control);let data='';s.setEncoding('utf8');s.setTimeout(10000,()=>{s.destroy();reject(new Error('Answer timeout; delivery uncertain'));});s.on('error',reject);s.on('connect',()=>s.write(JSON.stringify({token,session:process.env.CODEX_THREAD_ID,text})+'\n'));s.on('data',c=>{data+=c;if(data.includes('\n')){s.destroy();try{const v=JSON.parse(data);v.ok?resolve({delivered:true}):reject(new Error(v.error));}catch(e){reject(e);}}});});
+async function runCli(){
+ if(args[0]==='interrupt')console.log(JSON.stringify(await interrupt(opt('app'),opt('session'),opt('reason'),{permissionMode:opt('permission-mode')??'prompting'})));
+ else if(args[0]==='ask')console.log(JSON.stringify(await ask(opt('app'),opt('session'),await readMessage(args),opt('permission-mode')??'prompting')));
+ else if(args[0]==='send')console.log(JSON.stringify(mailboxSend(opt('session')||'*',await readMessage(args))));
+ else if(args[0]==='answer'){await readMessage(args);throw new Error('Replies use MCP send(reply_to=the Workshop message id); no peer reply endpoint.');}
+ else throw new Error('Use ask or send; replies use MCP send(reply_to=the Workshop message id).');
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
- try{if(args[0]==='interrupt'){console.log(JSON.stringify(await interrupt(opt('app'),opt('session'),opt('reason'),{permissionMode:opt('permission-mode')??'prompting'}),null,2));}
- else{const model=modelFromArgs(args);const text=validate(await readMessage(args));if(args[0]==='answer'&&model)throw new Error('Answer cannot select a model');const result=args[0]==='answer'?await answer(args[1],text):await ask(opt('app'),opt('session'),text,opt('permission-mode'),{model});console.log(JSON.stringify(result,null,2));if(result.status==='model_selection_failed')process.exitCode=1;}}catch(e){console.error(e.message);process.exitCode=1;}
+ runCli().catch(err=>{console.error(err.message);process.exitCode=1;});
 }

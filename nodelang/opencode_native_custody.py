@@ -34,6 +34,50 @@ def observe(pid):
     return result
 
 
+def _sqlite_session_databases(env):
+    candidates = []
+    xdg = env.get("XDG_DATA_HOME", "").strip()
+    if xdg:
+        candidates.append(Path(xdg) / "opencode" / "opencode.db")
+    for home_key in ("USERPROFILE", "HOME"):
+        home = env.get(home_key, "").strip()
+        if home:
+            candidates.append(Path(home) / ".local" / "share" / "opencode" / "opencode.db")
+    localappdata = env.get("LOCALAPPDATA", "").strip()
+    if localappdata:
+        candidates.append(Path(localappdata) / "opencode" / "opencode.db")
+    seen = set()
+    result = []
+    for path in candidates:
+        key = _normal_path(path)
+        if key not in seen:
+            seen.add(key)
+            result.append(path)
+    return result
+
+
+def _verify_session_sqlite(env, session_id, directory):
+    import sqlite3
+    target_dir = _normal_path(Path(directory).resolve())
+    for db_path in _sqlite_session_databases(env):
+        if not db_path.is_file():
+            continue
+        try:
+            uri = db_path.resolve().as_uri() + "?mode=ro"
+            with sqlite3.connect(uri, uri=True) as conn:
+                row = conn.execute(
+                    "SELECT id, directory FROM session WHERE id = ? LIMIT 1",
+                    (session_id,),
+                ).fetchone()
+            if row and row[0] == session_id and row[1]:
+                row_dir = _normal_path(Path(row[1]).resolve())
+                if row_dir == target_dir:
+                    return True
+        except Exception:
+            continue
+    return False
+
+
 def verify_session(parent, session_id, directory):
     import psutil
     p = psutil.Process(parent.pid)
@@ -41,6 +85,9 @@ def verify_session(parent, session_id, directory):
     password = env.get("OPENCODE_SERVER_PASSWORD")
     username = env.get("OPENCODE_SERVER_USERNAME", "opencode")
     if not password:
+        cli = resolve_installed_cli(env)
+        if cli and _normal_path(parent.executable) == _normal_path(cli) and _verify_session_sqlite(env, session_id, directory):
+            return
         raise RuntimeError("OpenCode authenticated native session read unavailable")
     token = base64.b64encode((username + ":" + password).encode()).decode()
     ports = sorted({c.laddr.port for c in p.net_connections(kind="tcp")

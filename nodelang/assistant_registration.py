@@ -75,6 +75,20 @@ def mcp_server_spec(client: str, *, existing=None, environment=None) -> dict:
         entry = managed_entry(root, state)
     elif client == "codex":
         entry = codex_entry(root, state)
+    elif client in {"opencode", "antigravity", "antigravity-ide", "gemini-cli", "goose"}:
+        entry = managed_entry(root, state)
+        entry["env"]["ARCHHUB_COORDINATION_VENDOR"] = client
+        if client == "opencode":
+            entry = {"type":"local", "enabled":True,
+                "command":[entry["command"], *entry["args"]], "environment":entry["env"]}
+        elif client in {"antigravity", "antigravity-ide", "gemini-cli"}:
+            entry.pop("type", None)
+        elif client == "goose":
+            entry = {"type":"stdio", "enabled":True, "name":SERVER_NAME,
+                "cmd":entry["command"], "args":entry["args"], "envs":entry["env"]}
+    elif client == "baboom":
+        return {"client":client,"server_name":SERVER_NAME,"add":{},"remove":{},"ask":{},
+                "in_process":"ApplicationServer.shared_agent_mail"}
     else:
         raise ValueError("no MCP server spec for %r" % client)
     return {"client": client, "server_name": SERVER_NAME, "add": {SERVER_NAME: entry},

@@ -6,6 +6,7 @@ import path from 'node:path';
 import net from 'node:net';
 import crypto from 'node:crypto';
 import {spawn} from 'node:child_process';
+import {createInterface} from 'node:readline';
 
 // Courts for the Session Link --stdin message input. Isolated: temp HOME and
 // state, private LOCAL pipes, a mock bridge/request endpoint in this process.
@@ -17,7 +18,40 @@ const home=fs.mkdtempSync(path.join(os.tmpdir(),'sl-stdin-'));
 const state=path.join(home,'state'),connections=path.join(state,'connections'),requests=path.join(state,'requests');
 fs.mkdirSync(connections,{recursive:true});fs.mkdirSync(requests,{recursive:true});
 const lib=path.join(import.meta.dirname,'..','nodelang','session_link');
-test.after(()=>fs.rmSync(home,{recursive:true,force:true}));
+// Real Workshop owner for CLI byte round-trips; the old mock peer endpoints
+// below must receive nothing. All state remains in this one disposable profile.
+const ownerEnv={...process.env,HOME:home,USERPROFILE:home,LOCALAPPDATA:home,APPDATA:home,ARCHHUB_TEST_STATE_DIR:home};
+const owner=spawn(process.env.ARCHHUB_PYTHON,['-u','-c',`
+import json,sys
+from pathlib import Path
+from nodelang.application_server import ApplicationServer
+from nodelang.cell_secret_keys import WindowsDpapiSigningKeyProvider
+root=Path.home()/'ArchHub'
+keys=WindowsDpapiSigningKeyProvider(root/'keys/authority-signing-v1.dpapi.json')
+keys.current('archhub.local.universal-runtime-pipe')
+app=ApplicationServer(enable_machine_transport=True,machine_key_provider=keys,
+    machine_descriptor_path=root/'active-universal-runtime.json',universal_workspace_root=Path.home(),
+    universal_state_path=Path.home()/'graph.sqlite3',enable_universal_cloud_gateway=False,
+    enable_brain_cloud_sync=False,enable_machine_projection_prewarm=False,live_watch=False).start()
+print(json.dumps({'ready':True}),flush=True)
+try:
+    for line in sys.stdin:
+        print(json.dumps(app.shared_agent_mail('read',{'since':int(line)})),flush=True)
+finally:
+    app.close()
+`],{env:ownerEnv,windowsHide:true,stdio:['pipe','pipe','pipe']});
+const ownerLines=[],ownerWait=[];let ownerError='';
+owner.stderr.on('data',data=>{ownerError+=data.toString();});
+createInterface({input:owner.stdout}).on('line',line=>{
+ if(!line.startsWith('{'))return;
+ const value=JSON.parse(line);if(ownerWait.length)ownerWait.shift()(value);else ownerLines.push(value);
+});
+const nextOwner=()=>ownerLines.length?Promise.resolve(ownerLines.shift()):new Promise((resolve,reject)=>{
+ const timer=setTimeout(()=>reject(new Error('Workshop fixture timeout: '+ownerError)),30000);
+ ownerWait.push(value=>{clearTimeout(timer);resolve(value);});
+});
+assert.equal((await nextOwner()).ready,true);
+test.after(async()=>{owner.stdin.end();await new Promise(resolve=>owner.once('close',resolve));fs.rmSync(home,{recursive:true,force:true});});
 const sentinel=name=>path.join(home,'EXECUTED-'+name);
 const payload=tag=>'taskkill /IM python.exe'+CR+NL+'$(New-Item -ItemType File -Path '+JSON.stringify(sentinel(tag+'-ps'))+')'+NL+
  '$(node -e "require(\'fs\').writeFileSync('+JSON.stringify(sentinel(tag+'-node'))+',\'x\')")'+NL+
@@ -29,6 +63,11 @@ const noSentinels=tag=>{for(const s of ['-ps','-node','-bt'])assert.equal(fs.exi
 const token=crypto.randomBytes(16).toString('hex'),keyPath=path.join(home,'peer.key');
 fs.writeFileSync(keyPath,JSON.stringify({peerToken:token}));
 const received=[];
+let since=0;
+async function refresh(){
+ owner.stdin.write(String(since)+'\n');const page=await nextOwner();since=page.next_since;
+ for(const row of page.messages)if(row.author!=='Workshop coordination')received.push({text:row.content.replace(/^To [^\n]+:\n/,'')});
+}
 function endpoint(control,check){
  const server=net.createServer(sock=>{let d='';sock.setEncoding('utf8');sock.on('error',()=>{});sock.on('data',c=>{d+=c;if(!d.includes(NL))return;
   const r=JSON.parse(d.slice(0,d.indexOf(NL)));
@@ -43,14 +82,14 @@ fs.writeFileSync(path.join(connections,CONNECTION+'.runtime.json'),JSON.stringif
 fs.writeFileSync(path.join(requests,REQUEST+'.json'),JSON.stringify({control:requestControl,keyPath,target:CODEX,pid:process.pid}));
 test.after(()=>{for(const s of servers)s.close();});
 
-const env={...process.env,HOME:home,SESSION_LINK_STATE_DIR:state,CODEX_THREAD_ID:CODEX};
+const env={...ownerEnv,SESSION_LINK_STATE_DIR:state,CODEX_THREAD_ID:CODEX};
 delete env.CODEX_APP_TOOLS_PIPE_PATH;
 function run(file,args,input,{command=process.execPath,extraEnv={}}={}){
  return new Promise(resolve=>{
   const child=spawn(command,file?[path.join(lib,file),...args]:args,{env:{...env,...extraEnv},windowsHide:true,stdio:['pipe','pipe','pipe']});
   let out='',err='';child.stdout.setEncoding('utf8');child.stderr.setEncoding('utf8');
   child.stdout.on('data',c=>out+=c);child.stderr.on('data',c=>err+=c);
-  child.on('close',code=>resolve({code,out,err}));
+  child.on('close',async code=>{await refresh();resolve({code,out,err});});
   if(input!==undefined)child.stdin.end(Buffer.from(input,'utf8'));else child.stdin.end();
  });
 }
@@ -59,6 +98,9 @@ const verbs=[['bridge.mjs',['send',CONNECTION]],['bridge.mjs',['reply',CONNECTIO
 for(const [file,args] of verbs)test('S1 '+args[0]+' --stdin delivers the exact text and executes nothing',async()=>{
  received.length=0;const text=payload(args[0]);
  const r=await run(file,[...args,'--stdin'],text);
+ if(args[0]==='answer'){
+  assert.equal(r.code,1);assert.match(r.err,/Replies use MCP send/);assert.equal(received.length,0);noSentinels(args[0]);return;
+ }
  assert.equal(r.code,0,r.err);
  assert.equal(received.length,1);
  assert.equal(Buffer.compare(Buffer.from(received[0].text,'utf8'),Buffer.from(text,'utf8')),0);
@@ -105,7 +147,7 @@ function runShell(shell,args,{input,keepOpen=false,timeoutMs=5000}={}){
   let out='',err='',done=false;child.stdout.setEncoding('utf8');child.stderr.setEncoding('utf8');
   child.stdout.on('data',c=>out+=c);child.stderr.on('data',c=>err+=c);
   const timer=setTimeout(()=>{if(!done){done=true;child.kill();resolve({code:'timeout',out,err,ms:Date.now()-started});}},timeoutMs);
-  child.on('close',code=>{if(done)return;done=true;clearTimeout(timer);child.stdin.destroy();resolve({code,out,err,ms:Date.now()-started});});
+  child.on('close',async code=>{if(done)return;done=true;clearTimeout(timer);child.stdin.destroy();await refresh();resolve({code,out,err,ms:Date.now()-started});});
   if(input!==undefined)child.stdin.write(input);
   if(!keepOpen)child.stdin.end();
  });

@@ -48,6 +48,17 @@ def test_state_dir_follows_the_application(tmp_path):
         slc.app_state_dir({})
 
 
+def test_explicit_trusted_directories_round_trip_without_wildcard_expansion(install,tmp_path):
+    root,loader=install
+    spec=slc.spec_from_loader(loader)
+    spec['trustedDirectories']=[str(tmp_path/'registered-workspace'),str(tmp_path/'agent-rules')]
+    text=slc.render_governance_loader(spec,install_root=root,state_dir=tmp_path/'state')
+    assert slc.spec_from_loader(text)==spec
+    for invalid in (['relative'],[str(tmp_path/'*')],['C:/x\x00']):
+        with pytest.raises(slc.SessionLinkConfigRefused):
+            slc.render_governance_loader({**spec,'trustedDirectories':invalid},install_root=root,state_dir=tmp_path/'state')
+
+
 def test_migration_keeps_ids_never_overwrites_or_deletes(tmp_path):
     src, dst = tmp_path / "old", tmp_path / "new"
     a = "a" * 16

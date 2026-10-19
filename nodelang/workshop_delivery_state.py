@@ -83,6 +83,8 @@ def _relay_decision(content):
 
 
 def _relay_outcome(content):
+    if content.startswith("Agent replied in this Workshop; message "):
+        return "replied", None
     if content.startswith(RELAYED_REPLY):
         return "replied", None
     if content.startswith("The native recipient held or refused"):
@@ -174,6 +176,8 @@ def project_delivery(messages, replies, *, relay_pending=frozenset(), note_categ
                 row = {"recipient": recipient, "state": state, "via": "session-link"}
                 if state == "replied" and child["id"] in relayed:
                     row["reply_message_id"] = child["id"]
+                elif state == "replied" and child["content"].startswith("Agent replied in this Workshop; message "):
+                    row["reply_message_id"] = child["content"].split("; message ",1)[1].split(". ",1)[0]
                 elif state == "replied":
                     reason = "the reply arrived but its text was not stored"
             elif "decision" in entry:

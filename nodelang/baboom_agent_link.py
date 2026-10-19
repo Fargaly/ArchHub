@@ -13,6 +13,14 @@ def _call(method, arguments, mailbox=None):
 def list_agents(*, mailbox=None) -> list[dict]:
     """Latest public activity, bounded by the server; no claim of live presence."""
     page = _call("read", {"since": 0}, mailbox)
+    if "declarations" in page:
+        rows = list(page["declarations"])
+        while page.get("declarations_more"):
+            page = _call("read", {"since":page["next_since"],
+                "declarations_after":page["declarations_after"]}, mailbox)
+            rows.extend(page["declarations"])
+        return [{**row, "session_root":row["agent"], "provider":row["agent"],
+                 "sender_key":row["session"]} for row in rows]
     return [{"session_root": row["label"], "provider": row["label"],
              "sender_key": row["sender_key"], "runtime": row["runtime"],
              "status": "observed"} for row in page["peers"]]
@@ -32,6 +40,11 @@ def resolve_target(name: str, agents: Optional[Sequence[Mapping[str, object]]] =
 def send_message(target_root: str, message: str, *, mailbox=None) -> dict:
     row = _call("send", {"to": target_root, "text": message}, mailbox)
     return {**row, "message": {"root_id": row["message_id"], "sequence": row["sequence"]}}
+
+
+def declare(task: str, paths: list[str], status: str, request_id: str, *, mailbox=None) -> dict:
+    """BABOOM uses precisely the same declaration tool and graph nodes."""
+    return _call("declare", {"task":task, "paths":paths, "status":status, "request_id":request_id}, mailbox)
 
 
 def interrupt_agent(target_root: str, reason: str, *, mailbox=None) -> dict:

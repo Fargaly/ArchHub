@@ -52,7 +52,8 @@ const inCodexTask=async(pipeName,body)=>{process.env.CODEX_APP_TOOLS_PIPE_PATH=p
 // answers status the way a running bridge does.
 const goodBinding=()=>({id:ID,claude:{id:CLAUDE,title:'Claude fixture',cwd:'C:/fixture',pid:process.ppid,app:'claude'},codex:{id:CALLER,title:'Caller',cwd:'C:/fixture',app:'codex'},executor:CALLER,permissionMode:'prompting'});
 const goodStatus=()=>({id:ID,pid:process.pid,remoteApp:'claude',remoteId:CLAUDE,claude:CLAUDE,codex:CALLER,codexTitle:'Caller',peer:'codex-01a0cafe-'+ID.slice(0,4),permissionMode:'prompting',sent:0,forwarded:0,lastError:null});
-async function scenario({binding,status}){
+async function scenario(options){
+ const {binding,status}=options;
  const app=await mockCodexApp([row(CALLER,'Caller')]);
  const token=crypto.randomBytes(16).toString('hex'),keyPath=path.join(home,'link.key'),control=pipe('sl-reuse-link');
  fs.writeFileSync(keyPath,JSON.stringify({peerToken:token}));
@@ -65,25 +66,30 @@ async function scenario({binding,status}){
  if(binding)fs.writeFileSync(bindingFile,JSON.stringify(binding));
  const entry=path.join(sessions,process.ppid+'.json');
  fs.writeFileSync(entry,JSON.stringify({pid:process.ppid,sessionId:CLAUDE,cwd:'C:/fixture',name:'Claude fixture',messagingSocketPath:pipe('cc-msg-fixture'),startedAt:Date.now()}));
- const original=PeerEndpoint.prototype.sendAndWait,sent=[];
- PeerEndpoint.prototype.sendAndWait=async function(socket,text,options){sent.push({text,mode:options.permissionMode});return {msgId:'m1',delivery:null,reply:{msgId:'r1',text:'ack'}};};
+ const original=PeerEndpoint.prototype.send,sent=[];
+ PeerEndpoint.prototype.send=async function(socket,text,options){sent.push({text,mode:options.permissionMode});return {msgId:'m1',delivery:null,reply:{msgId:'r1',text:'ack'}};};
  try{
-  let result,error;
-  try{result=await inCodexTask(app.name,()=>ask('claude',CLAUDE,'hello Claude','prompting'));}catch(e){error=e;}
-  return {result,error,sent};
+  const mailboxCall=method=>{
+   if(method==='send')return {message_id:'request',sequence:1,sender_label:'founder'};
+   return {declarations:[{process_alive:true,app:'claude',native_session_id:CLAUDE,agent:'Claude',session:'fixture',process_lineage:[{pid:process.ppid,created_at:1}]}],
+    messages:sent.length?[{id:'reply',reply_to:'request',author:'Claude [fixture]',content:'ack'}]:[],next_since:2};
+  };
+  const outcome=await inCodexTask(app.name,()=>ask('claude',CLAUDE,'hello Claude','prompting',{mailboxCall})).then(
+   value=>({result:value,error:undefined}),reason=>({result:undefined,error:reason}));
+  return {...outcome,sent};
  }finally{
-  PeerEndpoint.prototype.sendAndWait=original;
+  PeerEndpoint.prototype.send=original;
   for(const f of [runtimeFile,bindingFile,entry])fs.rmSync(f,{force:true});
   await new Promise(done=>server.close(done));await app.close();
  }
 }
 
-test('R1 the exact live prompting link is reused and advertised',async()=>{
+test('R1 the native target uses Workshop and ignores the retired peer link',async()=>{
  const {result,error,sent}=await scenario({binding:goodBinding(),status:goodStatus()});
  assert.equal(error,undefined);
  assert.equal(sent.length,1);
- assert.match(sent[0].text,new RegExp('use native SendMessage to peer '+goodStatus().peer+' '));
- assert.deepEqual(result.durable_reply,{connection:ID,peer:goodStatus().peer});
+ assert.match(sent[0].text,/Reply ONLY with MCP send/);
+ assert.equal(result.durable_reply,undefined);assert.equal(result.mailbox_message,'request');
 });
 
 const refusals={
@@ -95,10 +101,9 @@ const refusals={
  'R8 runtime record answers as another connection':{status:{...goodStatus(),id:'0123456789abcdef'}},
  'R9 running link reports another remote session':{status:{...goodStatus(),remoteId:'c9c9c9c9-0000-4000-8000-000000000009'}},
 };
-test('R10 an older bridge that does not report its mode gets the plain reconnect message; nothing sent',async()=>{
- const {error,sent}=await scenario({binding:goodBinding(),status:(({permissionMode,...rest})=>rest)(goodStatus())});
- assert.equal(sent.length,0);
- assert.equal(error?.message,'This connection was made by an older version of Session Link. Reconnect it once (disconnect, then connect) and try again.');
+test('R10 an older bridge cannot require reconnecting a retired channel',async()=>{
+ const {error,sent,result}=await scenario({binding:goodBinding(),status:(({permissionMode,...rest})=>rest)(goodStatus())});
+ assert.equal(error,undefined);assert.equal(sent.length,1);assert.equal(result.mailbox_message,'request');assert.equal(result.durable_reply,undefined);
 });
 
 test('N3 app pipe paths are redacted: the live value, forward slashes and names with spaces',async()=>{
@@ -111,11 +116,10 @@ test('N3 app pipe paths are redacted: the live value, forward slashes and names 
  }
 });
 
-for(const [name,change] of Object.entries(refusals))test(name+': refused and nothing is sent',async()=>{
- const {error,sent}=await scenario({binding:'binding' in change?change.binding:goodBinding(),status:change.status||goodStatus()});
- assert.equal(sent.length,0,'a message was sent');
- assert.ok(error,'ask did not refuse');
- assert.match(error.message,/nothing sent/);
+for(const [name,change] of Object.entries(refusals))test(name+': obsolete peer metadata cannot control Workshop delivery',async()=>{
+ const {error,sent,result}=await scenario({binding:'binding' in change?change.binding:goodBinding(),status:change.status||goodStatus()});
+ assert.equal(error,undefined);assert.equal(sent.length,1);assert.equal(result.mailbox_message,'request');
+ assert.equal(result.durable_reply,undefined);assert.match(sent[0].text,/Reply ONLY with MCP send/);
 });
 
 test('N1 a Codex app-tool refusal becomes adapterStatus unavailable with a plain reason',async()=>{

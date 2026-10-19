@@ -3559,6 +3559,13 @@
         "tests_replica/test_mainrel_installer.py",
         "tests_js/studio_workshop72_node_lazy.test.cjs"
       ]
+    },
+    "WSGOV2-MIGRATION": {
+      "source": "Founder RESUME9: fix root README, held folders, canonical product folder and GitHub shape; BRIEF-WSGOV2.md / STUDY-REPORT.md in the existing WSGOV2 lane. Explicit path migration, no product architecture change.",
+      "source_sha256": "9021fe59edec9120d8c2e250284a50624d035cb13ded53c4a201e1e460b2e2e0",
+      "scope": [
+        "nodelang/cell_legacy_surface_catalog.py"
+      ]
     }
   }
 }

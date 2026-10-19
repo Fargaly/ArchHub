@@ -3490,6 +3490,39 @@
         "tools/pipeline/strict_check.py",
         "tools/pipeline/record_observation.py"
       ]
+    },
+    "MAINFIX": {
+      "source": "Founder MAINFIX request: repair ce671c2e NO-GO Workshop, old-graph and composer regressions; preserve ADOPT AGENTLINK2 MAINREL; no build or install.",
+      "scope": [
+        "nodelang/persistence.py",
+        "nodelang/application_recovery_files.py",
+        "nodelang/studio/studio-lm.jsx",
+        "nodelang/studio/studio-workshop.jsx",
+        "nodelang/studio/studio-existing-workshop.js",
+        "tests_replica/test_mainfix.py",
+        "tests_js/studio_mainfix.test.cjs",
+        "evidence/mainfix/",
+        "PROGRESS.md",
+        "READ-PROOF.md",
+        "plan.md",
+        "tasks.json",
+        "notes.md",
+        "REGISTER.md",
+        "MAINFIX.patch",
+        "MAINFIX.patch.sha256",
+        "RESULT-MAINFIX-final.md",
+        "docs/FAILURE_LOG.md",
+        "nodelang/application_server.py",
+        "nodelang/studio/studio.html",
+        "nodelang/conversation_retention_maintenance.py",
+        "tests_replica/test_adopt.py",
+        "tests_replica/test_ogboot_upgrade_selection.py",
+        "tests_replica/mainfix_big_boot.py",
+        "nodelang/conversation_trace_receipts.py",
+        "tests_replica/test_adopt_owned_receipts.py",
+        "nodelang/universal_cell.py",
+        "tests_replica/test_adopt_archive.py"
+      ]
     }
   }
 }

@@ -243,6 +243,8 @@ def _separate_machine_owner(control, workspace, descriptor, grant_path, files, b
             universal_workspace_root=workspace, private_root_grants_path=grant_path,
             machine_key_provider=provider,
             runtime_compliance_runner=_green_runtime_compliance).start()
+        # Preserve the exact-session grant courts with the owner default explicitly off.
+        server.private_root_grants.set_own_agents_write_without_asking(False)
         control.send({"ready": True, "pid": os.getpid()})
         while True:
             command = control.recv()

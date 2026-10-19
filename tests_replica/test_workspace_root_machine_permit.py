@@ -145,6 +145,8 @@ def runtime(tmp_path, monkeypatch, request):
                                machine_key_provider=provider,
                                runtime_compliance_runner=_green_runtime_compliance).start()
     agent = UniversalRuntimeClient(descriptor_path, provider)
+    # These unchanged grant/Work assertions exercise the reversible explicit-grant mode.
+    server.private_root_grants.set_own_agents_write_without_asking(False)
     try:
         cde_provider = LocalEd25519KmsProvider(provider_id="court.workspace-root",
                                                authority_id="court-workspace-root")
@@ -231,6 +233,8 @@ def test_a_private_root_settings_grant_reaches_status_permit_receipt_and_revoke(
         runtime_compliance_runner=_green_runtime_compliance,
     ).start()
     agent = UniversalRuntimeClient(descriptor_path, provider)
+    # These unchanged grant/Work assertions exercise the reversible explicit-grant mode.
+    server.private_root_grants.set_own_agents_write_without_asking(False)
     try:
         cde_provider = LocalEd25519KmsProvider(
             provider_id="court.private-root", authority_id="court-private-root")

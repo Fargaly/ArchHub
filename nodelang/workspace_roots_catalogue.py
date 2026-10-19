@@ -1639,6 +1639,8 @@ def private_grant_settings_view(grant_store) -> dict:
             record_grant_event("list-sessions", "unavailable", "%s: %s" % (type(exc).__name__, exc),
                                directory=None if grant_store is None else grant_store.path.parent)
     return {
+        "own_agents_write_without_asking": (True if grant_store is None else
+            getattr(grant_store, "own_agents_write_without_asking", lambda: True)()),
         "private_grants": grants,
         # The existing store's default is measured against grant receipts by the court.
         "private_grant_defaults": {"operations": list(DEFAULT_OPERATIONS),

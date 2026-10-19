@@ -44208,17 +44208,32 @@ def authorize_universal_cde_write(
     private_root_grants=None,
     authentication_context: object | None = None,
     content_service=None,
+    content_digest: str | None = None,
+    write_evidence: object | None = None,
+    write_completed: bool = False,
+    status_only: bool = False,
 ) -> UniversalCdeWriteAdmission:
-    """Resolve one write solely from the session's claimed Work and CDE node."""
+    """Admit owner-account workspace writes, otherwise use existing grants and Work."""
     registration_digest = None
     root_writers = ()
     root_registration = None
     normalized_path = str(path).replace("\\", "/")
     if normalized_path.startswith("workspace-roots/"):
         from .workspace_roots_catalogue import root_bound_registration
+        snapshot = store.snapshot()
+        authorization = getattr(registry, "authorization", None)
+        owner_default = authorization is not None and runtime is not None
+        if owner_default:
+            session = read_agent_session(snapshot, registry.agent_body.protocol,
+                                         authorization.protocol, agent_session_root)
+            owner_default = (session.subject_root == authorization.subject_root
+                             and session.state_root == registry.agent_body.protocol.state("active")
+                             and _agent_body_catalog_entry_for_session(snapshot, registry, session).runtime == runtime)
+            if owner_default and private_root_grants is not None:
+                owner_default = private_root_grants.own_agents_write_without_asking()
         try:
             _root_container, registration_digest, registration = root_bound_registration(
-                normalized_path, runtime=runtime)
+                normalized_path, runtime=None if owner_default else runtime)
         except InvalidCell as exc:
             raise AuthorizationDenied(str(exc)) from exc
         root_writers = tuple(registration.get("writers") or ())
@@ -44228,6 +44243,64 @@ def authorize_universal_cde_write(
             "identity": list(registration.get("identity") or ()),
             "digest": registration_digest,
         }
+        if owner_default:
+            evidence = {} if write_evidence is None else write_evidence
+            if (type(evidence) is not dict or set(evidence) - {"source_path", "copy_path"}
+                    or any(type(value) is not str for value in evidence.values())):
+                raise AuthorizationDenied("Write evidence must name registered source or copy paths.")
+
+            def registered_file(logical_path):
+                _container, digest, root = root_bound_registration(logical_path, runtime=None)
+                base = Path(str(root["path"])).resolve()
+                parts = logical_path.split("/")[2:]
+                if any(":" in item for item in parts):
+                    raise AuthorizationDenied("This write leaves the registered workspace.")
+                resolved = base.joinpath(*parts).resolve()
+                if not resolved.is_relative_to(base):
+                    raise AuthorizationDenied("This write leaves the registered workspace.")
+                return resolved, root, digest
+
+            def file_digest(file_path):
+                if not file_path.is_file():
+                    raise AuthorizationDenied("Write evidence must name a readable file.")
+                with file_path.open("rb") as stream:
+                    return hashlib.file_digest(stream, "sha256").hexdigest()
+
+            target, _target_root, _target_digest = registered_file(normalized_path)
+            bound_evidence = {}
+            if not status_only:
+                if registration.get("privacy") != "private":
+                    if "source_path" not in evidence:
+                        raise AuthorizationDenied("Private or client content cannot be written to a public workspace; verified public source content is required.")
+                    source, source_root, source_digest = registered_file(evidence["source_path"])
+                    if source_root.get("privacy") != "public" or file_digest(source) != content_digest:
+                        raise AuthorizationDenied("Private or client content cannot be written to a public workspace.")
+                    bound_evidence["source"] = [evidence["source_path"], source_digest, content_digest]
+                if "copy_path" in evidence:
+                    copy_path, copy_root, copy_digest = registered_file(evidence["copy_path"])
+                    copied_digest = file_digest(copy_path)
+                    if (copy_root.get("privacy") != "private" or copy_path == target
+                            or target.exists() and copy_path.samefile(target)):
+                        raise AuthorizationDenied("A verified copy must be a separate private file.")
+                    if not write_completed and target.exists() and copied_digest != file_digest(target):
+                        raise AuthorizationDenied("The verified copy does not match the existing data.")
+                    bound_evidence["copy"] = [evidence["copy_path"], copy_digest, copied_digest]
+                destructive = str(operation).lower() in {
+                    "delete", "delete_file", "remove", "remove_file", "unlink", "rmdir",
+                    "remove_directory", "rename", "move"}
+                created_directory = (write_completed and operation in {"mkdir", "create_directory"}
+                                     and target.is_dir())
+                changed = target.exists() and not created_directory and (
+                    not target.is_file() or content_digest is None or file_digest(target) != content_digest)
+                if (destructive or changed) and "copy" not in bound_evidence:
+                    raise AuthorizationDenied("Deleting or overwriting data requires a verified copy before the write.")
+            container_digest = hashlib.sha256(json.dumps(
+                ["owner-workspace-default/v1", registration_digest, bound_evidence],
+                sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+            return UniversalCdeWriteAdmission(
+                agent_session_root, agent_session_root, agent_session_root, agent_session_root,
+                "GM.nodes.owner-workspace-default", container_digest, operation, normalized_path,
+                snapshot.revision, root_writers=root_writers, root_registration=root_registration)
         if (registration.get("privacy") == "private" and runtime is not None
                 and private_root_grants is not None):
             status = private_root_grants.status(

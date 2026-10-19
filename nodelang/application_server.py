@@ -1539,7 +1539,7 @@ class _CleanAuthorityHttpServer:
             catalogue = find_workspace_root_catalogue(
                 self.clean_authority, caller=self.clean_caller
             )
-            if catalogue is None and action in ("register", "unregister", "republish", "update-writers"):
+            if catalogue is None and action in ("register", "unregister", "republish", "update-writers", "set-own-agents-write"):
                 catalogue = install_workspace_root_catalogue(
                     self.clean_authority,
                     operation_id=str(_uuid.uuid4()),
@@ -1551,7 +1551,7 @@ class _CleanAuthorityHttpServer:
             view = roots_view(self.clean_authority.store.revision, (), None, boot,
                               built_in=self.clean_workspace_root)
         else:
-            if action in ("grant-private-root", "revoke-private-root"):
+            if action in ("grant-private-root", "revoke-private-root", "set-own-agents-write"):
                 from .private_root_grants import record_grant_event
                 receipt_dir = self.private_root_grants.path.parent
                 try:
@@ -1607,6 +1607,18 @@ class _CleanAuthorityHttpServer:
         """Grant or revoke one private-root consent (Settings admission only)."""
         from .workspace_roots_catalogue import (
             SETTINGS_IDENTITY, WorkspaceRootRefused, root_bound_registration)
+        if action == "set-own-agents-write":
+            if set(request) != {"action", "enabled"} or type(request["enabled"]) is not bool:
+                raise WorkspaceRootRefused("Own agents write without asking must be on or off")
+            vendor, session = SETTINGS_IDENTITY
+            expected = "agent-session.%s" % hashlib.sha256(
+                (vendor.lower() + "\0" + session).encode("utf-8")).hexdigest()
+            if not isinstance(admission, dict) or admission.get("principal") != expected:
+                raise WorkspaceRootRefused("Only this instance owner's Settings can change this default.")
+            self.private_root_grants.set_own_agents_write_without_asking(request["enabled"])
+            self._last_private_grant_event = {"action": action,
+                "message": "Own agents write without asking is " + ("on." if request["enabled"] else "off.")}
+            return
         allowed = {"action", "id", "runtime", "session_id", "operations", "expires_at"}
         if set(request) - allowed or not {"id", "runtime", "session_id"} <= set(request):
             raise WorkspaceRootRefused("workspace-roots request is invalid")
@@ -14619,6 +14631,22 @@ class ApplicationServer:
                 snapshot, self.universal_registry, session
             ).runtime
             self.require_universal_http_route(method, path, authentication_context=context)
+            admission_refusal = None
+            try:
+                admission = authorize_universal_cde_write(
+                    self.universal_store, self.universal_registry,
+                    agent_session_root=agent_session_root, operation=str(body["operation"]),
+                    path=str(body["path"]), runtime=runtime, status_only=True,
+                    private_root_grants=getattr(self, "private_root_grants", None),
+                    authentication_context=context,
+                    content_service=getattr(self, "conversation_content", None))
+                if admission.container_id == "GM.nodes.owner-workspace-default":
+                    return {"granted": True, "reason": "Own agents write without asking is on.",
+                            "agent_session": agent_session_root,
+                            "root_id": admission.root_registration["id"],
+                            "owner_default": admission.container_id == "GM.nodes.owner-workspace-default"}
+            except AuthorizationDenied as exc:
+                admission_refusal = str(exc)
             from .workspace_roots_catalogue import root_bound_registration
             try:
                 _container, digest, registration = root_bound_registration(
@@ -14637,6 +14665,8 @@ class ApplicationServer:
                           operation=str(body["operation"]),
                           root_digest=digest,
                       ))
+            if admission_refusal and status.get("granted") is not True:
+                status = {**status, "reason": status.get("reason") or admission_refusal}
             return {**status, "agent_session": agent_session_root,
                     "root_id": registration.get("id")}
         if method == "GET" and path in {'/api/universal/models', '/api/universal/providers'}:
@@ -16363,7 +16393,7 @@ class ApplicationServer:
                     "permit", "operation", "path", "content_digest",
                     "request_id",
                 }
-                if direct or set(body) != expected:
+                if direct or set(body) not in (expected, expected | {"write_evidence"}):
                     raise AuthorizationDenied(
                         "CDE receipt requires one bound exact write result"
                     )
@@ -16402,6 +16432,9 @@ class ApplicationServer:
                     path=body["path"],
                     runtime=runtime,
                     private_root_grants=getattr(self, "private_root_grants", None),
+                    content_digest=body["content_digest"],
+                    write_evidence=body.get("write_evidence"),
+                    write_completed=path == "/api/universal/cde-write-receipt",
                     authentication_context=context,
                     # Without an owner service a content-store gate fails closed.
                     content_service=getattr(self, "conversation_content", None),
@@ -17505,7 +17538,7 @@ class ApplicationServer:
                 expected = {
                     "operation", "path", "content_digest", "request_id", "nonce"
                 }
-                if direct or set(body) != expected:
+                if direct or set(body) not in (expected, expected | {"write_evidence"}):
                     raise AuthorizationDenied(
                         "CDE permit requires one bound exact write request"
                     )
@@ -17544,6 +17577,9 @@ class ApplicationServer:
                     path=body["path"],
                     runtime=runtime,
                     private_root_grants=getattr(self, "private_root_grants", None),
+                    content_digest=body["content_digest"],
+                    write_evidence=body.get("write_evidence"),
+                    write_completed=path == "/api/universal/cde-write-receipt",
                     authentication_context=context,
                     # Without an owner service a content-store gate fails closed.
                     content_service=getattr(self, "conversation_content", None),

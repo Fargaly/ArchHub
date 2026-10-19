@@ -15,7 +15,7 @@ import threading
 import time
 import uuid
 
-from .cell_secret_keys import SigningKeyProvider
+from .cell_secret_keys import SigningKeyError, SigningKeyProvider
 from .universal_cell import InvalidCell
 from .workspace_roots_catalogue import OPEN_AGENT_RUNTIMES
 
@@ -120,6 +120,25 @@ class PrivateRootGrantStore:
         self.provider = provider
         self.key_id = key_id
         self._mutation_lock = threading.RLock()
+
+    def own_agents_write_without_asking(self) -> bool:
+        """The owner default uses the existing signed document; absence needs no key."""
+        if not self.path.exists():
+            return True
+        try:
+            body, _retired = self._load()
+        except (InvalidCell, SigningKeyError):
+            # An unusable third-party grant must not lock out the account owner.
+            return True
+        value = body.get("own_agents_write_without_asking", True)
+        return value if type(value) is bool else True
+
+    def set_own_agents_write_without_asking(self, enabled: bool) -> None:
+        if type(enabled) is not bool:
+            raise InvalidCell("Own agents write without asking must be on or off")
+        with self._locked_mutation():
+            body = self._read()
+            self._write({**body, **self._header(), "own_agents_write_without_asking": enabled})
 
     @contextmanager
     def _locked_mutation(self):
@@ -234,7 +253,7 @@ class PrivateRootGrantStore:
             if not retired:
                 return
             signer = body["key_id"]
-            self._write({**self._header(), "grants": body["grants"]})
+            self._write({**body, **self._header(), "grants": body["grants"]})
         print("  grants     : re-signed %d private-root grant(s) from retired key %s under %s"
               % (len(body["grants"]), signer, self.key_id), flush=True)
 
@@ -334,7 +353,7 @@ class PrivateRootGrantStore:
                 for item in body["grants"]
             ]
             grants.append(grant)
-            self._write({**self._header(), "grants": grants})
+            self._write({**body, **self._header(), "grants": grants})
         return grant
 
     def revoke(self, *, root_id: str, runtime: str | None = None, session_id: str | None = None) -> int:
@@ -350,7 +369,7 @@ class PrivateRootGrantStore:
                     count += 1
                     grant = {**grant, "revoked": True}
                 grants.append(grant)
-            self._write({**self._header(), "grants": grants})
+            self._write({**body, **self._header(), "grants": grants})
         return count
 
     def status(self, *, root_id: str, runtime: str, session_id: str, operation: str,

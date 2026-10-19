@@ -3535,8 +3535,9 @@ class UniversalRuntimeClient:
         request_id: str,
         nonce: str,
         response_timeout_seconds: float | None = None,
+        write_evidence: dict[str, str] | None = None,
     ) -> dict[str, object]:
-        """Request one short-lived permit derived from this session's Work.
+        """Request one short-lived permit through the existing write-admission owner.
 
         Optional timeout bounds the response wait, not renewal or connection.
         """
@@ -3573,6 +3574,7 @@ class UniversalRuntimeClient:
                 "path": path,
                 "content_digest": content_digest,
                 "request_id": request_id,
+                **({"write_evidence": write_evidence} if write_evidence is not None else {}),
                 "nonce": nonce,
             },
             **timeout_options,
@@ -3637,7 +3639,7 @@ class UniversalRuntimeClient:
         operation: str,
         response_timeout_seconds: float | None = None,
     ) -> dict[str, object]:
-        """Read whether this Agent Session has a local PRIVATE-root grant."""
+        """Read this session's private-workspace access, including the owner default."""
         if not self.agent_session_root:
             raise MachineTransportError(
                 "private-root grant status requires a bound runtime Agent Session"
@@ -3674,6 +3676,7 @@ class UniversalRuntimeClient:
         content_digest: str,
         request_id: str,
         response_timeout_seconds: float | None = None,
+        write_evidence: dict[str, str] | None = None,
     ) -> dict[str, object]:
         """Record one exact write result against its graph-held permit.
 
@@ -3713,6 +3716,7 @@ class UniversalRuntimeClient:
                 "path": path,
                 "content_digest": content_digest,
                 "request_id": request_id,
+                **({"write_evidence": write_evidence} if write_evidence is not None else {}),
             },
             **timeout_options,
         )

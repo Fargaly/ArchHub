@@ -386,3 +386,22 @@ test('PRIVGRANT public roots have no grant; empty discovery explains absence and
   ui=await mount([privateView(),privateView()]);
   try {await ui.settle(80);ui.click(ui.button('Grant agent access'));await ui.settle(80);assert.match(ui.doc.body.textContent,/No live agent sessions/);ui.click(ui.button('Cancel'));assert.equal(ui.requests.length,2);} finally {ui.close();}
 });
+
+test('OPENWS owner default is visibly on, keyboard reachable, reversible and persisted by the Settings route', async () => {
+  const first={...view('match','match',['alpha']),own_agents_write_without_asking:true};
+  const off={...first,own_agents_write_without_asking:false};
+  const ui=await mount([first,off,first]);
+  try {
+    await ui.settle(80);
+    const toggle=()=>ui.doc.querySelector('[role="switch"][aria-label="Own agents write without asking"]');
+    assert.ok(toggle()); assert.equal(toggle().checked,true); assert.equal(toggle().disabled,false);
+    toggle().focus(); assert.equal(ui.doc.activeElement,toggle());
+    ui.click(toggle()); await ui.settle(80);
+    assert.equal(toggle().checked,false);
+    assert.deepEqual(ui.requests.at(-1),{action:'set-own-agents-write',enabled:false});
+    ui.click(toggle()); await ui.settle(80);
+    assert.equal(toggle().checked,true);
+    assert.deepEqual(ui.requests.at(-1),{action:'set-own-agents-write',enabled:true});
+    assert.ok(ui.button('Grant agent access'),'real-boundary grant controls remain');
+  } finally { ui.close(); }
+});

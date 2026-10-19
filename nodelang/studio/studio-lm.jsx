@@ -10703,6 +10703,13 @@ const SettingsWorkspaces = () => {
   return (
     <div style={{ display:'flex', flexDirection:'column', gap:LM.sp.lg }}>
       <SHead title="Workspaces" sub="Private workspaces are never shared publicly."/>
+      <label style={row}>
+        <span style={{ flex:1 }}>Own agents write without asking</span>
+        <input type="checkbox" role="switch" aria-label="Own agents write without asking"
+          checked={view?.own_agents_write_without_asking !== false} disabled={!view || !!busy}
+          onChange={event => run('Saving owner write default', {
+            action:'set-own-agents-write', enabled:event.target.checked })}/>
+      </label>
       {view?.last_private_grant_event?.message && <div role="status">{view.last_private_grant_event.message}</div>}
       {checking && (
         <div role="status" style={{ fontSize:LM.fs.caption.sz, color:LM.inkSoft }}>

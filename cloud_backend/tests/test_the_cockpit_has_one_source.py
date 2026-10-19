@@ -1,7 +1,7 @@
 """The founder cockpit has ONE source, and the cloud serves the build of it.
 
 Founder, 2026-09-17: "exactly as I sent it" and "I do not want a million sources for the thing".
-The cockpit modules lived twice, in 13.NODE-LANGUAGE/nodelang/studio and in cloud_backend/cockpit_assets,
+The cockpit modules lived twice, in 11.ARCHHUB-APP/nodelang/studio and in cloud_backend/cockpit_assets,
 and were mirrored by hand, so they drifted: the deployed side panel was the library he had rejected, and
 the cloud tokens lacked the theme store Studio reads. The .jsx now live only in the studio tree
 (tokens.jsx and param-types.jsx shared with Studio); tools/build_cockpit_assets.js compiles from there
@@ -46,7 +46,7 @@ def test_the_build_compiles_from_the_studio_tree():
 
 def test_every_module_is_built_and_the_manifest_names_its_source():
     manifest = json.loads((COMPILED / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["source_root"] == "13.NODE-LANGUAGE/nodelang/studio"
+    assert manifest["source_root"] == "11.ARCHHUB-APP/nodelang/studio"
     entries = {entry["module"]: entry for entry in manifest["files"]}
     assert set(MODULES) <= set(entries), sorted(set(MODULES) - set(entries))
     for module in MODULES:

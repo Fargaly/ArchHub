@@ -549,7 +549,7 @@ FOUNDER_MAP_STATE = DATA_DIR / "founder-map.json"
 FOUNDER_MAP_PUSHED_AT = DATA_DIR / "founder-map.pushed-at.json"
 # A map older than this is still served, but never labelled live.
 MAP_FRESH_SECONDS = 900
-# The five keys the desktop publishes (13.NODE-LANGUAGE nodelang/cloud_relay.py
+# The five keys the desktop publishes (11.ARCHHUB-APP nodelang/cloud_relay.py
 # OFFER_KEYS / published_offer_form). The server accepts exactly that form.
 OFFER_KEYS = ("revision", "sha256", "availability", "pricing_visible",
               "public_label")

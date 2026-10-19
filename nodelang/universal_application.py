@@ -33046,7 +33046,7 @@ def _grand_map_work_candidates(
                 },
             },
             "applicable_policy": {
-                "authority": "10.PRODUCT/13.NODE-LANGUAGE",
+                "authority": "10.PRODUCT/11.ARCHHUB-APP",
                 "source": "Universal Cell Grand Map",
                 "source_root": registry.map.grand_map_root,
                 "promotion_allowed": False,

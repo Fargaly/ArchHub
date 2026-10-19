@@ -470,7 +470,7 @@ def test_setup_moves_claude_code_off_archhubs_development_entries_on_a_yes(
     (home / ".local" / "bin").mkdir(parents=True)
     (home / ".local" / "bin" / "claude.exe").write_text("")
     coordination = {"command": "C:/Python/python.exe", "args": ["-m", "nodelang.clean_coordination_mcp"],
-                    "env": {"ARCHHUB_COORDINATION_VENDOR": "claude", "PYTHONPATH": "C:/src/13.NODE-LANGUAGE"}}
+                    "env": {"ARCHHUB_COORDINATION_VENDOR": "claude", "PYTHONPATH": "C:/src/11.ARCHHUB-APP"}}
     own = {"magnific": {"type": "http", "url": "https://example.invalid/mcp"}}
     (home / ".claude.json").write_text(json.dumps(
         {"mcpServers": {"archhub-agent-coordination": coordination, **own}}), encoding="utf-8")

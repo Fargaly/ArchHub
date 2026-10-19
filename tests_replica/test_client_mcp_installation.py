@@ -298,7 +298,7 @@ _SHIM = ('@echo off\r\nsetlocal\r\nset ARCHHUB_GOVERNED_SHIM_ACTIVE=1\r\n'
 _COORDINATION = {"command": "C:/Users/someone/AppData/Local/Python/pythoncore-3.14-64/python.exe",
                  "args": ["-m", "nodelang.clean_coordination_mcp"],
                  "env": {"ARCHHUB_COORDINATION_VENDOR": "claude",
-                         "PYTHONPATH": "C:/Users/someone/00.ARCHUB/10.PRODUCT/13.NODE-LANGUAGE"}}
+                         "PYTHONPATH": "C:/Users/someone/00.ARCHUB/10.PRODUCT/11.ARCHHUB-APP"}}
 _HOSTS = {"type": "stdio", "command": "C:/Users/someone/AppData/Local/Python/pythoncore-3.14-64/pythonw.exe",
           "args": ["C:/Users/someone/00.ARCHUB/10.PRODUCT/12.PRODUCTION/payload/bridge/server.py"], "env": {}}
 _OWN = {"gmail-secondary": {"command": "npx", "args": ["-y", "gmail-mcp"]},

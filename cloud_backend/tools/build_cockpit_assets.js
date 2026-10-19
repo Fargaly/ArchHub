@@ -1,4 +1,4 @@
-// Compiles the founder cockpit FROM its one source, 13.NODE-LANGUAGE/nodelang/studio, with the same
+// Compiles the founder cockpit FROM its one source, 11.ARCHHUB-APP/nodelang/studio, with the same
 // @babel/standalone the page used to load in the browser. The .jsx modules live only there (founder,
 // 2026-09-17: one source for everything); this tree keeps map.html, the vendor files and the compiled
 // output. Run after editing any cockpit module:
@@ -28,4 +28,4 @@ for (const name of order) {
   console.log(name.padEnd(14), String(bytes.length).padStart(6), '->', String(out.length).padStart(6));
 }
 fs.writeFileSync(path.join(assets, 'compiled', 'manifest.json'),
-  JSON.stringify({ source_root: '13.NODE-LANGUAGE/nodelang/studio', files }, null, 1) + '\n');
+  JSON.stringify({ source_root: '11.ARCHHUB-APP/nodelang/studio', files }, null, 1) + '\n');

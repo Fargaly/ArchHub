@@ -29,7 +29,7 @@ ROLE_NAMES = (
 )
 
 DEFAULT_CONTRACT_ROOT = "legacy-webshell-host:route-contract:v1"
-ACTIVE_CELL_AUTHORITY = "10.PRODUCT/13.NODE-LANGUAGE"
+ACTIVE_CELL_AUTHORITY = "10.PRODUCT/11.ARCHHUB-APP"
 ROUTE_SPECS = (
     {
         "route": "/__archhub_preview_bridge.js",

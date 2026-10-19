@@ -26,3 +26,24 @@ self-hosting-map.html
 test-results/
 tests_replica/test_authority_coherence.py
 packaging/website/offer.json
+
+# WSGOV2: generated/private material is never new public source.
+# Ignore rules do not remove files already tracked or clean old history.
+/evidence/
+/node-language/evidence/
+/20.CLIENTS/
+/60.PERSONAL/
+/70.HANDOFFS/
+/80.BABOOM/
+**/proof_bbc4/
+.env
+.env.*
+!.env.example
+!**/.env.example
+cloud.json
+*.key
+*.pem
+*.pfx
+*.p12
+Financial_Plan.xlsx
+signature_AFargaly*

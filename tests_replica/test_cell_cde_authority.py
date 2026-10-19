@@ -113,7 +113,7 @@ def _issue(world, *, now=100.0):
         container_id="GM.nodes.cde-authority",
         container_digest="a" * 64,
         operation="apply_patch",
-        path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+        path="10.PRODUCT/11.ARCHHUB-APP/nodelang/cell_cde_authority.py",
         content_digest=content_digest,
         request_id="court-write-request-1",
         nonce="court-nonce-1",
@@ -133,7 +133,7 @@ def _issue(world, *, now=100.0):
         ({"container_root": "cde:container:other"}, "container root"),
         ({"container_digest": "b" * 64}, "container"),
         ({"operation": "write_file"}, "operation"),
-        ({"path": "10.PRODUCT/13.NODE-LANGUAGE/nodelang/other.py"}, "path"),
+        ({"path": "10.PRODUCT/11.ARCHHUB-APP/nodelang/other.py"}, "path"),
         ({"content_digest": "c" * 64}, "content"),
         ({"request_id": "different-request"}, "request"),
         ({"authority_revision": 999}, "revision"),
@@ -152,7 +152,7 @@ def test_permit_denies_every_foreign_or_stale_request(override, message):
         "container_id": "GM.nodes.cde-authority",
         "container_digest": "a" * 64,
         "operation": "apply_patch",
-        "path": "10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+        "path": "10.PRODUCT/11.ARCHHUB-APP/nodelang/cell_cde_authority.py",
         "content_digest": content_digest,
         "request_id": "court-write-request-1",
         "authorization_evidence": "court:write-authorization",
@@ -242,26 +242,26 @@ def _cde_container(*, lifecycle="WIP"):
         "checker": "court",
         "allowed_paths": [
             (
-                "10.PRODUCT/13.NODE-LANGUAGE/"
+                "10.PRODUCT/11.ARCHHUB-APP/"
                 "nodelang/cell_cde_authority.py"
             ),
-            "10.PRODUCT/13.NODE-LANGUAGE/tests_replica",
+            "10.PRODUCT/11.ARCHHUB-APP/tests_replica",
         ],
         "gate_kind": "pytest",
         "gate_spec": {
-            "path": "10.PRODUCT/13.NODE-LANGUAGE/tests_replica"
+            "path": "10.PRODUCT/11.ARCHHUB-APP/tests_replica"
         },
         "write_grants": [
             {
                 "path": (
-                    "10.PRODUCT/13.NODE-LANGUAGE/"
+                    "10.PRODUCT/11.ARCHHUB-APP/"
                     "nodelang/cell_cde_authority.py"
                 ),
                 "scope": "exact",
                 "operations": ["apply_patch"],
             },
             {
-                "path": "10.PRODUCT/13.NODE-LANGUAGE/tests_replica",
+                "path": "10.PRODUCT/11.ARCHHUB-APP/tests_replica",
                 "scope": "descendants",
                 "operations": ["apply_patch", "write_file"],
             },
@@ -273,12 +273,12 @@ def test_cde_container_admission_is_wip_operation_and_path_exact():
     container_id, digest = authorize_cde_container_write(
         _cde_container(),
         operation="apply_patch",
-        path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+        path="10.PRODUCT/11.ARCHHUB-APP/nodelang/cell_cde_authority.py",
     )
     same_id, same_digest = authorize_cde_container_write(
         _cde_container(),
         operation="write_file",
-        path="10.PRODUCT/13.NODE-LANGUAGE/tests_replica/court.txt",
+        path="10.PRODUCT/11.ARCHHUB-APP/tests_replica/court.txt",
     )
 
     assert container_id == same_id == "GM.nodes.cde-authority"
@@ -290,24 +290,24 @@ def test_cde_container_admission_is_wip_operation_and_path_exact():
     ("container", "operation", "path", "message"),
     (
         (_cde_container(lifecycle="SHARED"), "apply_patch",
-         "10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+         "10.PRODUCT/11.ARCHHUB-APP/nodelang/cell_cde_authority.py",
          "WIP"),
         (_cde_container(lifecycle="PUBLISHED"), "apply_patch",
-         "10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+         "10.PRODUCT/11.ARCHHUB-APP/nodelang/cell_cde_authority.py",
          "WIP"),
         (_cde_container(), "shell_command",
-         "10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+         "10.PRODUCT/11.ARCHHUB-APP/nodelang/cell_cde_authority.py",
          "operation"),
         (_cde_container(), "apply_patch",
-         "10.PRODUCT/13.NODE-LANGUAGE/nodelang/other.py", "path"),
+         "10.PRODUCT/11.ARCHHUB-APP/nodelang/other.py", "path"),
         (_cde_container(), "apply_patch", "../outside.py", "path"),
         ({**_cde_container(), "revision": 7}, "apply_patch",
-         "10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+         "10.PRODUCT/11.ARCHHUB-APP/nodelang/cell_cde_authority.py",
          "revision"),
         ({**_cde_container(), "allowed_paths": [
-            "10.PRODUCT/13.NODE-LANGUAGE/nodelang/other.py"
+            "10.PRODUCT/11.ARCHHUB-APP/nodelang/other.py"
         ]}, "apply_patch",
-         "10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+         "10.PRODUCT/11.ARCHHUB-APP/nodelang/cell_cde_authority.py",
          "disagree"),
     ),
 )
@@ -337,7 +337,7 @@ def test_cde_container_denies_non_wip_foreign_operation_or_path(
             container_id="GM.nodes.cde-authority",
             container_digest="a" * 64,
             operation="apply_patch",
-            path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+            path="10.PRODUCT/11.ARCHHUB-APP/nodelang/cell_cde_authority.py",
             content_digest=content_digest,
             request_id="court-write-request-1",
             authorization_evidence="court:write-authorization",
@@ -423,7 +423,7 @@ def test_application_cde_admission_uses_exact_session_work_claim_and_container(
         agent_session_root=session_root,
         operation="apply_patch",
         path=(
-            "10.PRODUCT/13.NODE-LANGUAGE/"
+            "10.PRODUCT/11.ARCHHUB-APP/"
             "nodelang/cell_cde_authority.py"
         ),
         authentication_context=object(),
@@ -471,7 +471,7 @@ def test_machine_route_issues_from_admission_claim_not_caller_work(
         "GM.nodes.cde-authority",
         "a" * 64,
         "apply_patch",
-        "10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+        "10.PRODUCT/11.ARCHHUB-APP/nodelang/cell_cde_authority.py",
         store.revision,
     )
     monkeypatch.setattr(
@@ -547,7 +547,7 @@ def test_runtime_client_requests_cde_permit_without_caller_authority_roots():
             "container_digest": "a" * 64,
             "operation": "apply_patch",
             "path": (
-                "10.PRODUCT/13.NODE-LANGUAGE/"
+                "10.PRODUCT/11.ARCHHUB-APP/"
                 "nodelang/cell_cde_authority.py"
             ),
             "content_digest": "b" * 64,
@@ -561,7 +561,7 @@ def test_runtime_client_requests_cde_permit_without_caller_authority_roots():
     result = client.issue_cde_write_permit(
         operation="apply_patch",
         path=(
-            "10.PRODUCT/13.NODE-LANGUAGE/"
+            "10.PRODUCT/11.ARCHHUB-APP/"
             "nodelang/cell_cde_authority.py"
         ),
         content_digest="b" * 64,
@@ -602,7 +602,7 @@ def test_runtime_client_consumes_cde_permit_without_caller_authority_roots():
         permit="app:cde-write-permit:court",
         operation="apply_patch",
         path=(
-            "10.PRODUCT/13.NODE-LANGUAGE/"
+            "10.PRODUCT/11.ARCHHUB-APP/"
             "nodelang/cell_cde_authority.py"
         ),
         content_digest="b" * 64,
@@ -697,7 +697,7 @@ def test_permit_issue_denies_replayed_nonce_or_request(replayed, indexed):
             container_digest="a" * 64,
             operation="apply_patch",
             path=(
-                "10.PRODUCT/13.NODE-LANGUAGE/"
+                "10.PRODUCT/11.ARCHHUB-APP/"
                 "nodelang/cell_cde_authority.py"
             ),
             content_digest=content_digest,
@@ -728,7 +728,7 @@ def test_permit_issue_denies_non_graph_session_work_container_or_evidence():
             "container_digest": "a" * 64,
             "operation": "apply_patch",
             "path": (
-                "10.PRODUCT/13.NODE-LANGUAGE/"
+                "10.PRODUCT/11.ARCHHUB-APP/"
                 "nodelang/cell_cde_authority.py"
             ),
             "content_digest": "b" * 64,
@@ -803,7 +803,7 @@ def test_cde_operational_storage_repeated_writes_preserve_graph_revision_and_cel
             container_id="GM.nodes.cde-authority",
             container_digest="a" * 64,
             operation="apply_patch",
-            path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+            path="10.PRODUCT/11.ARCHHUB-APP/nodelang/cell_cde_authority.py",
             content_digest=content_digest,
             request_id=f"court-req-{i}",
             nonce=f"court-nonce-{i}",
@@ -828,7 +828,7 @@ def test_cde_operational_storage_repeated_writes_preserve_graph_revision_and_cel
             container_id="GM.nodes.cde-authority",
             container_digest="a" * 64,
             operation="apply_patch",
-            path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+            path="10.PRODUCT/11.ARCHHUB-APP/nodelang/cell_cde_authority.py",
             content_digest=content_digest,
             request_id=f"court-req-{i}",
             authorization_evidence="court:write-authorization",
@@ -853,7 +853,7 @@ def test_cde_operational_storage_repeated_writes_preserve_graph_revision_and_cel
             container_id="GM.nodes.cde-authority",
             container_digest="a" * 64,
             operation="apply_patch",
-            path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+            path="10.PRODUCT/11.ARCHHUB-APP/nodelang/cell_cde_authority.py",
             content_digest=content_digest,
             request_id=f"court-req-{i}",
             authorization_evidence="court:write-authorization",
@@ -927,7 +927,7 @@ def test_cde_operational_storage_reopen_preserves_evidence_without_resurrecting_
         container_id="GM.nodes.cde-authority",
         container_digest="a" * 64,
         operation="apply_patch",
-        path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+        path="10.PRODUCT/11.ARCHHUB-APP/nodelang/cell_cde_authority.py",
         content_digest=content_digest_1,
         request_id="req-1",
         nonce="nonce-1",
@@ -945,7 +945,7 @@ def test_cde_operational_storage_reopen_preserves_evidence_without_resurrecting_
         container_id="GM.nodes.cde-authority",
         container_digest="a" * 64,
         operation="apply_patch",
-        path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+        path="10.PRODUCT/11.ARCHHUB-APP/nodelang/cell_cde_authority.py",
         content_digest=content_digest_1,
         request_id="req-1",
         authorization_evidence="court:write-authorization",
@@ -964,7 +964,7 @@ def test_cde_operational_storage_reopen_preserves_evidence_without_resurrecting_
         container_id="GM.nodes.cde-authority",
         container_digest="a" * 64,
         operation="apply_patch",
-        path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+        path="10.PRODUCT/11.ARCHHUB-APP/nodelang/cell_cde_authority.py",
         content_digest=content_digest_2,
         request_id="req-2",
         nonce="nonce-2",
@@ -1001,7 +1001,7 @@ def test_cde_operational_storage_reopen_preserves_evidence_without_resurrecting_
             container_id="GM.nodes.cde-authority",
             container_digest="a" * 64,
             operation="apply_patch",
-            path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+            path="10.PRODUCT/11.ARCHHUB-APP/nodelang/cell_cde_authority.py",
             content_digest="b" * 64,
             request_id="req-1-retry",
             authorization_evidence="court:write-authorization",
@@ -1020,7 +1020,7 @@ def test_cde_operational_storage_reopen_preserves_evidence_without_resurrecting_
             container_id="GM.nodes.cde-authority",
             container_digest="a" * 64,
             operation="apply_patch",
-            path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+            path="10.PRODUCT/11.ARCHHUB-APP/nodelang/cell_cde_authority.py",
             content_digest=content_digest_2,
             request_id="req-2",
             authorization_evidence="court:write-authorization",
@@ -1074,7 +1074,7 @@ def test_cde_operational_storage_refuses_replays_wrong_actor_and_tampered_proofs
         container_id="GM.nodes.cde-authority",
         container_digest="a" * 64,
         operation="apply_patch",
-        path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+        path="10.PRODUCT/11.ARCHHUB-APP/nodelang/cell_cde_authority.py",
         content_digest=content_digest,
         request_id="sec-req-1",
         nonce="sec-nonce-1",
@@ -1094,7 +1094,7 @@ def test_cde_operational_storage_refuses_replays_wrong_actor_and_tampered_proofs
             container_id="GM.nodes.cde-authority",
             container_digest="a" * 64,
             operation="apply_patch",
-            path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+            path="10.PRODUCT/11.ARCHHUB-APP/nodelang/cell_cde_authority.py",
             content_digest=content_digest,
             request_id="sec-req-2",
             nonce="sec-nonce-1",
@@ -1114,7 +1114,7 @@ def test_cde_operational_storage_refuses_replays_wrong_actor_and_tampered_proofs
             container_id="GM.nodes.cde-authority",
             container_digest="a" * 64,
             operation="apply_patch",
-            path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+            path="10.PRODUCT/11.ARCHHUB-APP/nodelang/cell_cde_authority.py",
             content_digest=content_digest,
             request_id="sec-req-1",
             nonce="sec-nonce-3",
@@ -1134,7 +1134,7 @@ def test_cde_operational_storage_refuses_replays_wrong_actor_and_tampered_proofs
             container_id="GM.nodes.cde-authority",
             container_digest="a" * 64,
             operation="apply_patch",
-            path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+            path="10.PRODUCT/11.ARCHHUB-APP/nodelang/cell_cde_authority.py",
             content_digest=content_digest,
             request_id="sec-req-1",
             authorization_evidence="court:write-authorization",

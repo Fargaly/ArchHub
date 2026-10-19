@@ -51,7 +51,7 @@ pytestmark = pytest.mark.skipif(os.name != 'nt', reason='Windows secured pipe')
 
 def _permit_args(session=SESSION, **changes):
     return {'session_id': session, 'vendor': 'claude', 'operation': 'apply_patch',
-            'path': '10.PRODUCT/13.NODE-LANGUAGE/nodelang/court_gate_target.py',
+            'path': '10.PRODUCT/11.ARCHHUB-APP/nodelang/court_gate_target.py',
             'content_digest': 'd' * 64, 'request_id': 'toolu_court:0:' + 'a' * 32,
             'nonce': 'n' * 32, **changes}
 
@@ -276,13 +276,13 @@ def test_real_application_issues_the_same_actor_permit_and_consumes_its_receipt(
             server.cde_write_signing_descriptor_root = application_server_module._ensure_cde_write_signing_authority(
                 server.universal_store, server.universal_registry, signer,
                 descriptor_root='court:cde-write-signing-key:v1')
-        target = '10.PRODUCT/13.NODE-LANGUAGE/nodelang/court_gate_target.py'
+        target = '10.PRODUCT/11.ARCHHUB-APP/nodelang/court_gate_target.py'
         container = {
             'container_id': 'GM.nodes.court-gate', 'source_requirement': 'court:gate',
             'domain': 'nodes', 'tier': 'T1', 'lifecycle_state': 'WIP', 'suitability_status': 'S0',
             'revision': 'P01', 'owner': 'founder', 'checker': 'court', 'allowed_paths': [target],
             'gate_kind': 'pytest',
-            'gate_spec': {'path': '10.PRODUCT/13.NODE-LANGUAGE/tests_replica/test_cell_cde_authority.py'},
+            'gate_spec': {'path': '10.PRODUCT/11.ARCHHUB-APP/tests_replica/test_cell_cde_authority.py'},
             'write_grants': [{'path': target, 'scope': 'exact', 'operations': ['apply_patch']}],
         }
         with commit_intent.declare(commit_intent.USER_ACTION, actor='app:identity:founder', reason='court work'):

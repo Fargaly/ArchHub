@@ -2,7 +2,7 @@
 # nodelang.site_export and served by BusyBox httpd (packaging/website/Dockerfile).
 # Ported from the frozen 12.PRODUCTION/web/fly.toml: same app, port and check.
 #
-# Founder, from the 13.NODE-LANGUAGE repository root (the build context):
+# Founder, from the 11.ARCHHUB-APP repository root (the build context):
 #   flyctl deploy . --config packaging/website/fly.toml \
 #       --build-arg OFFER_SHA256=<sha256 of the offer record>
 #   flyctl certs add archhub.io    # once, after DNS points at the app

@@ -35,7 +35,7 @@ ROLE_NAMES = (
     "digest",
 )
 
-ACTIVE_CELL_AUTHORITY = "10.PRODUCT/13.NODE-LANGUAGE"
+ACTIVE_CELL_AUTHORITY = "10.PRODUCT/11.ARCHHUB-APP"
 AUTHORITY_STATUS = "control_plane_projection_until_universal_cell_policy"
 DEFAULT_CONTRACT_ROOT = "legacy-brain-governance:control-contract:v1"
 AUTHORITY_MODES = frozenset({

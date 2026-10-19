@@ -29,8 +29,8 @@ const proposal = (title, extra = {}) => ({title, description:'proposed by an age
   purpose:'general', inputs:{}, requirements:{},
   container:{container_id:'GM.nodes.cde-authority', source_requirement:'court:proposals', domain:'nodes',
     tier:'T1', suitability_status:'S0', revision:'P01', owner:'founder', checker:'court', gate_kind:'pytest',
-    gate_spec:{path:'10.PRODUCT/13.NODE-LANGUAGE/tests_replica/test_cell_cde_authority.py'}},
-  write_grants:[{path:'10.PRODUCT/13.NODE-LANGUAGE/nodelang/work_proposals.py', scope:'exact', operations:['apply_patch']},
+    gate_spec:{path:'10.PRODUCT/11.ARCHHUB-APP/tests_replica/test_cell_cde_authority.py'}},
+  write_grants:[{path:'10.PRODUCT/11.ARCHHUB-APP/nodelang/work_proposals.py', scope:'exact', operations:['apply_patch']},
     {path:'70.HANDOFFS/court-proposals', scope:'descendants', operations:['apply_patch']}], ...extra});
 const message = payload => MARKER + '\n' + JSON.stringify(sorted(payload));
 const digest = text => createHash('sha256').update(text.slice(MARKER.length + 1)).digest('hex');
@@ -96,7 +96,7 @@ test('the founder sees every proposal with its grants per governed root and its 
   assert.equal(a.digest, digest(A), 'the digest is of the exact document the application re-reads');
   assert.equal(a.proposer, PROPOSER);
   assert.deepEqual(plain(a.grants), {
-    '10.PRODUCT':[{path:'10.PRODUCT/13.NODE-LANGUAGE/nodelang/work_proposals.py', scope:'exact', operations:['apply_patch']}],
+    '10.PRODUCT':[{path:'10.PRODUCT/11.ARCHHUB-APP/nodelang/work_proposals.py', scope:'exact', operations:['apply_patch']}],
     '70.HANDOFFS':[{path:'70.HANDOFFS/court-proposals', scope:'descendants', operations:['apply_patch']}]});
   assert.deepEqual(plain(a.reviewers), []);
   assert.deepEqual(plain(b.reviewers), [REVIEWER]);

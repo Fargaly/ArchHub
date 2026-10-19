@@ -48,7 +48,7 @@ def test_antigravity_without_a_session_id_refuses_on_the_native_path():
 # ---- The exact argv predicate, in isolation (lookalikes refused) --------------
 
 _CLEAN_STOP = ('"C:\\Python\\python.exe" '
-               '"C:/ARCHUB/10.PRODUCT/13.NODE-LANGUAGE/nodelang/clean_antigravity_hook.py" stop')
+               '"C:/ARCHUB/10.PRODUCT/11.ARCHHUB-APP/nodelang/clean_antigravity_hook.py" stop')
 
 
 def test_argv_predicate_accepts_only_the_exact_clean_stop_command():

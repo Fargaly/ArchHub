@@ -18,8 +18,8 @@ from nodelang.native_agent_session import NativeAgentSession  # noqa: E402
 CONTAINER = {"container_id": "GM.nodes.cde-authority", "source_requirement": "court:proposals",
              "domain": "nodes", "tier": "T1", "suitability_status": "S0", "revision": "P01",
              "owner": "founder", "checker": "court", "gate_kind": "pytest",
-             "gate_spec": {"path": "10.PRODUCT/13.NODE-LANGUAGE/tests_replica/test_cell_cde_authority.py"}}
-GRANTS = [{"path": "10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py", "scope": "exact",
+             "gate_spec": {"path": "10.PRODUCT/11.ARCHHUB-APP/tests_replica/test_cell_cde_authority.py"}}
+GRANTS = [{"path": "10.PRODUCT/11.ARCHHUB-APP/nodelang/cell_cde_authority.py", "scope": "exact",
            "operations": ["apply_patch"]}]
 
 environment = dict(os.environ, CLAUDE_CODE_SESSION_ID=session_id)

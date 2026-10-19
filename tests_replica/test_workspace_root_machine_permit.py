@@ -43,7 +43,7 @@ from tests_replica.workshop_gate_support import open_execution_gate
 
 PATH = "workspace-roots/client-a/drawings/a.dwg"
 ROOT_GRANT = {"path": "workspace-roots/client-a", "scope": "descendants", "operations": ["write_file"]}
-UNRELATED_GRANT = {"path": "10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+UNRELATED_GRANT = {"path": "10.PRODUCT/11.ARCHHUB-APP/nodelang/cell_cde_authority.py",
                    "scope": "exact", "operations": ["write_file"]}
 
 
@@ -118,7 +118,7 @@ def _container(grant):
         "checker": "court",
         "allowed_paths": [grant["path"]],
         "gate_kind": "pytest",
-        "gate_spec": {"path": "10.PRODUCT/13.NODE-LANGUAGE/tests_replica/test_cell_cde_authority.py"},
+        "gate_spec": {"path": "10.PRODUCT/11.ARCHHUB-APP/tests_replica/test_cell_cde_authority.py"},
         "write_grants": [grant],
     }
 

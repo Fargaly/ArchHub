@@ -338,7 +338,7 @@ FOUNDER_LEGACY = {
     "archhub-agent-coordination": {
         "command": "C:/Users/fargaly/AppData/Local/Python/pythoncore-3.14-64/python.exe",
         "args": ["-m", "nodelang.clean_coordination_mcp"],
-        "env": {"PYTHONPATH": "C:/Users/fargaly/00.ARCHUB/10.PRODUCT/13.NODE-LANGUAGE",
+        "env": {"PYTHONPATH": "C:/Users/fargaly/00.ARCHUB/10.PRODUCT/11.ARCHHUB-APP",
                 "ARCHHUB_COORDINATION_VENDOR": "claude"}},
 }
 FOUNDER_BRAIN = {"type": "http", "url": "http://127.0.0.1:8473/mcp"}

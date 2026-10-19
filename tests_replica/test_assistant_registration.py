@@ -103,7 +103,7 @@ command = 'C:\\Users\\someone\\AppData\\Local\\Python\\pythoncore-3.14-64\\pytho
 args = ["-m", "nodelang.clean_coordination_mcp"]
 
 [mcp_servers.%(name)s.env]
-PYTHONPATH = 'C:\\Users\\someone\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE'
+PYTHONPATH = 'C:\\Users\\someone\\00.ARCHUB\\10.PRODUCT\\11.ARCHHUB-APP'
 ARCHHUB_COORDINATION_VENDOR = "codex"
 
 # the next table's own note
@@ -132,7 +132,7 @@ def test_only_the_exact_development_era_entry_is_offered_for_replacement(machine
                                     'args = ["-m", "nodelang.clean_coordination_mcp"]\nenv_vars = ["X"]\n'),
         "another module": ("nodelang.clean_coordination_mcp", "nodelang.native_agent_mcp"),
         "another vendor": ('ARCHHUB_COORDINATION_VENDOR = "codex"', 'ARCHHUB_COORDINATION_VENDOR = "claude"'),
-        "a relative path": ("PYTHONPATH = 'C:\\Users\\someone\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE'",
+        "a relative path": ("PYTHONPATH = 'C:\\Users\\someone\\00.ARCHUB\\10.PRODUCT\\11.ARCHHUB-APP'",
                             "PYTHONPATH = 'src'"),
         "an extra variable": ('ARCHHUB_COORDINATION_VENDOR = "codex"\n',
                               'ARCHHUB_COORDINATION_VENDOR = "codex"\nOTHER = "1"\n'),

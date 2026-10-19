@@ -463,7 +463,7 @@ def test_stop_hook_points_at_the_installed_copy_keeps_other_hooks_and_is_idempot
 def test_stop_hook_refuses_a_source_checkout(inputs, tmp_path):
     """Court: without an install (BUILD_METADATA.json) nothing points at a source path."""
     home, _, _, _ = inputs
-    checkout = tmp_path / "00.ARCHUB" / "10.PRODUCT" / "13.NODE-LANGUAGE"
+    checkout = tmp_path / "00.ARCHUB" / "10.PRODUCT" / "11.ARCHHUB-APP"
     for rel in (".venv/Scripts/python.exe", "nodelang/native_stop_hook.py"):
         (checkout / rel).parent.mkdir(parents=True, exist_ok=True)
         (checkout / rel).write_text("#", encoding="utf-8")

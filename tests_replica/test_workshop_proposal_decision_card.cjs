@@ -28,8 +28,8 @@ const proposal = (title, extra = {}) => ({title, description:'proposed by an age
   purpose:'general', inputs:{}, requirements:{},
   container:{container_id:'GM.nodes.cde-authority', source_requirement:'court:proposals', domain:'nodes',
     tier:'T1', suitability_status:'S0', revision:'P01', owner:'founder', checker:'court', gate_kind:'pytest',
-    gate_spec:{path:'10.PRODUCT/13.NODE-LANGUAGE/tests_replica/test_cell_cde_authority.py'}},
-  write_grants:[{path:'10.PRODUCT/13.NODE-LANGUAGE/nodelang/work_proposals.py', scope:'exact', operations:['apply_patch']}], ...extra});
+    gate_spec:{path:'10.PRODUCT/11.ARCHHUB-APP/tests_replica/test_cell_cde_authority.py'}},
+  write_grants:[{path:'10.PRODUCT/11.ARCHHUB-APP/nodelang/work_proposals.py', scope:'exact', operations:['apply_patch']}], ...extra});
 const message = payload => MARKER + '\n' + JSON.stringify(sorted(payload));
 const PROPOSER = 'app:agent-session:runtime:proposer', REVIEWER = 'app:agent-session:runtime:reviewer';
 const A = message(proposal('Proposal A'));
@@ -113,7 +113,7 @@ test('a proposal message becomes a queued task card with [Approve, Reject] and t
   assert.deepEqual(open.decision.map(d => [d.label, d.action, d.message]),
     [['Approve', 'approve-proposal', 'm-3'], ['Reject', 'decline-proposal', 'm-3']]);
   assert.match(open.lead, /^Proposes this Work: proposed by an agent\. Reviewers: app:agent-session:runtime:reviewer\. Nothing exists or is granted until you approve\.$/);
-  assert.equal(open.tools.list, '10.PRODUCT/13.NODE-LANGUAGE/nodelang/work_proposals.py · exact · apply_patch');
+  assert.equal(open.tools.list, '10.PRODUCT/11.ARCHHUB-APP/nodelang/work_proposals.py · exact · apply_patch');
   assert.equal(open.tools.t, 'CDE GM.nodes.cde-authority · T1');
 
   const approved = plain(wsProposalTask(MESSAGES[2], {work_root:'work-m-3'}));

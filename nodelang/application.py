@@ -723,7 +723,7 @@ def build_archhub_application(store=None):
                 'work_claim_result': brain_work_claim_result},
     )
     cde_stage = _param(store, 'CDE stage', 'WIP')
-    cde_scope = _param(store, 'CDE scope', '10.PRODUCT/13.NODE-LANGUAGE')
+    cde_scope = _param(store, 'CDE scope', '10.PRODUCT/11.ARCHHUB-APP')
     cde_tier = _param(store, 'privacy tier', 'T1 INTERNAL')
     cde_container_id = _param(store, 'CDE container id', 'UNASSIGNED')
     cde_runtime = _param(store, 'CDE runtime', 'UNASSIGNED')

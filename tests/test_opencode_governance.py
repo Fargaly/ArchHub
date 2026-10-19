@@ -846,7 +846,7 @@ def test_opencode_shell_allows_read_only_diagnostics_inside_workspace(tmp_path, 
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     workspace = tmp_path / '00.ARCHUB'
-    product = workspace / '10.PRODUCT' / '13.NODE-LANGUAGE'
+    product = workspace / '10.PRODUCT' / '11.ARCHHUB-APP'
     private = workspace / '20.CLIENTS'
     product.mkdir(parents=True)
     private.mkdir(parents=True)
@@ -927,7 +927,7 @@ def test_opencode_shell_denies_recursive_search_through_private_junction(tmp_pat
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     workspace = tmp_path / '00.ARCHUB'
-    product = workspace / '10.PRODUCT' / '13.NODE-LANGUAGE'
+    product = workspace / '10.PRODUCT' / '11.ARCHHUB-APP'
     private = workspace / '20.CLIENTS'
     product.mkdir(parents=True)
     private.mkdir(parents=True)
@@ -963,7 +963,7 @@ def test_opencode_shell_denies_search_through_private_file_symlink(tmp_path, mon
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     workspace = tmp_path / '00.ARCHUB'
-    product = workspace / '10.PRODUCT' / '13.NODE-LANGUAGE'
+    product = workspace / '10.PRODUCT' / '11.ARCHHUB-APP'
     private = workspace / '20.CLIENTS'
     product.mkdir(parents=True)
     private.mkdir(parents=True)

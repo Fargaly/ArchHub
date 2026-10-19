@@ -6,7 +6,7 @@ catalogue is empty and checkout is refused. S3 both founder addresses own the
 cockpit. S4 the subscriptions panel carries no price source while pricing is
 hidden. Plus the map push timestamp, so a stale map is never labelled live.
 
-The record shape is the one the desktop publishes (13.NODE-LANGUAGE
+The record shape is the one the desktop publishes (11.ARCHHUB-APP
 nodelang/cloud_relay.py OFFER_KEYS): revision, sha256, availability,
 pricing_visible, public_label.
 

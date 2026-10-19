@@ -169,7 +169,7 @@ def worker():
             painter.end()
         assert image.save(str(OUTPUT / filename))
 
-    canonical = r'C:\Users\fargaly\00.ARCHUB\10.PRODUCT\13.NODE-LANGUAGE'
+    canonical = r'C:\Users\fargaly\00.ARCHUB\10.PRODUCT\11.ARCHHUB-APP'
     baseline = subprocess.check_output(['git','-C',canonical,'show','b7fc5330:nodelang/baboom_native_companion.py'], text=True, encoding='utf-8')
     output['base_source_sha256'] = hashlib.sha256(baseline.encode('utf-8')).hexdigest()
     baseline_folder = ROOT / 'tmp-base'

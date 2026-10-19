@@ -106,7 +106,7 @@ const PROPOSAL_MARKER = 'ArchHub work proposal v1\n';
 const proposalBody = title => PROPOSAL_MARKER + JSON.stringify({container:{container_id:'GM.nodes.workshop', gate_kind:'node-test',
   gate_spec:{path:'tests_js/studio_workshop_w8_design.test.cjs'}, tier:'T1'}, description:'proposed work',
   inputs:{}, priority:10, purpose:'general', requirements:{artifact_reviewers:['app:agent-session:runtime:reviewer']}, title,
-  write_grants:[{path:'10.PRODUCT/13.NODE-LANGUAGE/tests_js/studio_workshop_w8_design.test.cjs', scope:'exact', operations:['apply_patch']}]});
+  write_grants:[{path:'10.PRODUCT/11.ARCHHUB-APP/tests_js/studio_workshop_w8_design.test.cjs', scope:'exact', operations:['apply_patch']}]});
 
 const {mounted,transport,plain}=require('./workshop72_regression_helpers.cjs');
 const {mountWorkshopNode}=require('./workshop72_node_helpers.cjs');

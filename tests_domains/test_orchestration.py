@@ -30,7 +30,7 @@ def _task(key="build", **overrides):
         "required_capability": "code",
         "priority": 1.0,
         "write_capable": True,
-        "cde_scope": "10.PRODUCT/13.NODE-LANGUAGE",
+        "cde_scope": "10.PRODUCT/11.ARCHHUB-APP",
         "approved": True,
         "brain_connected": True,
         "hooks_ready": True,

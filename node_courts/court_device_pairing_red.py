@@ -29,8 +29,8 @@ import pytest
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 # node-language/ inside this repository first (PR #306); the sibling
-# 13.NODE-LANGUAGE worktree is the founder-workstation fallback.
-# One project (WORKSPACE-STANDARD.md:489): the courts live in 13.NODE-LANGUAGE/node_courts
+# 11.ARCHHUB-APP worktree is the founder-workstation fallback.
+# One project (WORKSPACE-STANDARD.md:489): the courts live in 11.ARCHHUB-APP/node_courts
 # and run against nodelang/ in the same checkout.
 NL = os.path.join(_HERE, "..")
 sys.path.insert(0, os.path.abspath(NL))

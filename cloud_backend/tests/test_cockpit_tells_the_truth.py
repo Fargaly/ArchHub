@@ -31,7 +31,7 @@ import pytest
 
 SOURCES = Path(__file__).resolve().parents[1] / "cockpit_assets"
 COMPILED = SOURCES / "compiled"
-# ONE SOURCE: the cockpit .jsx live only in 13.NODE-LANGUAGE/nodelang/studio; the cloud build compiles
+# ONE SOURCE: the cockpit .jsx live only in 11.ARCHHUB-APP/nodelang/studio; the cloud build compiles
 # them from there, and cockpit_assets keeps the page, the vendor files and the compiled output.
 STUDIO = Path(__file__).resolve().parents[2] / "nodelang" / "studio"
 

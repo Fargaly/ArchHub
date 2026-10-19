@@ -474,13 +474,13 @@ def test_the_real_permit_route_refuses_only_a_retry_of_the_reconciled_operation(
             server.cde_write_signing_descriptor_root = application_server_module._ensure_cde_write_signing_authority(
                 server.universal_store, server.universal_registry, signer,
                 descriptor_root="court:cde-write-signing-key:v1")
-        target = "10.PRODUCT/13.NODE-LANGUAGE/nodelang/court_replay_target.py"
+        target = "10.PRODUCT/11.ARCHHUB-APP/nodelang/court_replay_target.py"
         container = {
             "container_id": "GM.nodes.court-replay", "source_requirement": "court:replay",
             "domain": "nodes", "tier": "T1", "lifecycle_state": "WIP", "suitability_status": "S0",
             "revision": "P01", "owner": "founder", "checker": "court", "allowed_paths": [target],
             "gate_kind": "pytest",
-            "gate_spec": {"path": "10.PRODUCT/13.NODE-LANGUAGE/tests_replica/test_cell_cde_authority.py"},
+            "gate_spec": {"path": "10.PRODUCT/11.ARCHHUB-APP/tests_replica/test_cell_cde_authority.py"},
             "write_grants": [{"path": target, "scope": "exact", "operations": ["apply_patch"]}],
         }
         with commit_intent.declare(commit_intent.USER_ACTION, actor="app:identity:founder", reason="court work"):

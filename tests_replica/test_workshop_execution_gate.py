@@ -26,7 +26,7 @@ from nodelang.cell_value_graph import build_value_graph
 from nodelang.universal_application import create_universal_governed_work
 
 GATE = "plan and source-backed research"
-TARGET = "10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py"
+TARGET = "10.PRODUCT/11.ARCHHUB-APP/nodelang/cell_cde_authority.py"
 
 
 def _start(kind, tmp_path, monkeypatch, descriptor, provider):
@@ -88,7 +88,7 @@ def _container(key, allowed=None):
         "domain": "nodes", "tier": "T1", "lifecycle_state": "WIP", "suitability_status": "S0",
         "revision": "P01", "owner": "founder", "checker": "court", "allowed_paths": list(allowed or [TARGET]),
         "gate_kind": "pytest",
-        "gate_spec": {"path": "10.PRODUCT/13.NODE-LANGUAGE/tests_replica/test_cell_cde_authority.py"},
+        "gate_spec": {"path": "10.PRODUCT/11.ARCHHUB-APP/tests_replica/test_cell_cde_authority.py"},
         "write_grants": [{"path": TARGET, "scope": "exact", "operations": ["apply_patch"]}],
     }
 
@@ -266,7 +266,7 @@ def test_capture_admits_a_file_under_a_directory_the_container_lists(memory):
     # Regression 07a1364: live containers list directories; exact match refused every capture.
     server, descriptor, provider = memory
     handoff = "70.HANDOFFS/archhub-integrated-repair-20260909"
-    work = _work(server, "court:directory", allowed=["10.PRODUCT/13.NODE-LANGUAGE", handoff])
+    work = _work(server, "court:directory", allowed=["10.PRODUCT/11.ARCHHUB-APP", handoff])
     a, sa = _agent(descriptor, provider, "gate-directory-a")
     _assign(server, "app:workshop-assignment:gate-directory", work, sa)
     root = server.universal_workspace_root

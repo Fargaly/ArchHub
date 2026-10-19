@@ -41,7 +41,7 @@ DEFAULT_TASKS = (
         "required_capability": "code",
         "priority": 1.0,
         "write_capable": True,
-        "cde_scope": "10.PRODUCT/13.NODE-LANGUAGE",
+        "cde_scope": "10.PRODUCT/11.ARCHHUB-APP",
         "approved": False,
         "brain_connected": False,
         "hooks_ready": False,

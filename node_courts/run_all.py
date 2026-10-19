@@ -10,7 +10,7 @@ Standing + re-runnable. Honors the patent hold: local only, nothing external.
 import sys, os
 _HERE = os.path.dirname(os.path.abspath(__file__))
 # The node language lives at node-language/ inside this repository (PR #306);
-# the founder's workstation also carries it as the sibling 13.NODE-LANGUAGE
+# the founder's workstation also carries it as the sibling 11.ARCHHUB-APP
 # worktree. Whichever exists first is the one the courts run against.
 for _candidate in (
     os.path.join(_HERE, ".."),  # one project: nodelang/ sits beside node_courts/

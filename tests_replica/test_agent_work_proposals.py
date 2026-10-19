@@ -32,7 +32,7 @@ HANDOFF = "70.HANDOFFS/court-proposals"
 CONTAINER = {"container_id": "GM.nodes.cde-authority", "source_requirement": "court:proposals",
              "domain": "nodes", "tier": "T1", "suitability_status": "S0", "revision": "P01",
              "owner": "founder", "checker": "court", "gate_kind": "pytest",
-             "gate_spec": {"path": "10.PRODUCT/13.NODE-LANGUAGE/tests_replica/test_cell_cde_authority.py"}}
+             "gate_spec": {"path": "10.PRODUCT/11.ARCHHUB-APP/tests_replica/test_cell_cde_authority.py"}}
 # Two separately scoped roots, each its own grant: a product file and a handoff folder.
 GRANTS = [{"path": TARGET, "scope": "exact", "operations": ["apply_patch"]},
           {"path": HANDOFF, "scope": "descendants", "operations": ["apply_patch"]}]
@@ -186,7 +186,7 @@ def test_an_agent_proposes_and_only_the_founders_one_action_binds(world):
     assert permit(TARGET, "inside-product")["work"] == work
     assert permit(HANDOFF + "/notes.md", "inside-handoff")["work"] == work
     with pytest.raises(MachineTransportError, match="not granted"):
-        permit("10.PRODUCT/13.NODE-LANGUAGE/nodelang/universal_application.py", "outside")
+        permit("10.PRODUCT/11.ARCHHUB-APP/nodelang/universal_application.py", "outside")
 
 
 def test_an_agent_still_cannot_create_work_and_an_unbound_proposal_grants_nothing(world):

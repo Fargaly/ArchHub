@@ -1348,7 +1348,7 @@ def test_machine_cde_permit_is_derived_from_claimed_work_not_caller_authority(
         server.cde_write_signing_provider = cde_provider
         server.cde_write_signing_descriptor_root = descriptor_root
         target = (
-            "10.PRODUCT/13.NODE-LANGUAGE/"
+            "10.PRODUCT/11.ARCHHUB-APP/"
             "nodelang/cell_cde_authority.py"
         )
         container = {
@@ -1365,7 +1365,7 @@ def test_machine_cde_permit_is_derived_from_claimed_work_not_caller_authority(
             "gate_kind": "pytest",
             "gate_spec": {
                 "path": (
-                    "10.PRODUCT/13.NODE-LANGUAGE/"
+                    "10.PRODUCT/11.ARCHHUB-APP/"
                     "tests_replica/test_cell_cde_authority.py"
                 )
             },

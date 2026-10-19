@@ -25,7 +25,7 @@ from ..universal_cell import NULL_CELL_ID, Cell, CellStore, InvalidCell, Snapsho
 
 DEFAULT_PROPOSAL = {
     "intent": "Build a reusable node subgraph",
-    "target_scope": "10.PRODUCT/13.NODE-LANGUAGE",
+    "target_scope": "10.PRODUCT/11.ARCHHUB-APP",
     "requested_by": "founder",
     "mode": "plan",
 }

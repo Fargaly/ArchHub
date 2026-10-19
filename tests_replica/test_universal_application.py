@@ -1011,7 +1011,7 @@ def test_grand_map_work_sync_creates_bounded_cell_native_work_without_brain_meta
 	assert requirements["gate"]["spec"]["authority"] == registry.map.grand_map_root
 	assert cde["sync_authority"] == registry.map.grand_map_root
 	assert policy == {
-		"authority": "10.PRODUCT/13.NODE-LANGUAGE",
+		"authority": "10.PRODUCT/11.ARCHHUB-APP",
 		"source": "Universal Cell Grand Map",
 		"source_root": registry.map.grand_map_root,
 		"promotion_allowed": False,

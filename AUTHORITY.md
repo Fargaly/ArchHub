@@ -32,7 +32,7 @@ evidence and MUST NOT silently override the higher source.
 
 ### Normative product target
 
-- `10.PRODUCT/13.NODE-LANGUAGE/SPEC.md`
+- `10.PRODUCT/11.ARCHHUB-APP/SPEC.md`
 
 There is one active Node Language product specification. It contains no mutable
 test count, percentage, deployment, or completion claim.
@@ -63,7 +63,7 @@ counts are not authority.
 
 ### Revision-bound implementation evidence
 
-- `10.PRODUCT/13.NODE-LANGUAGE/evidence/current-evidence.json`
+- `10.PRODUCT/11.ARCHHUB-APP/evidence/current-evidence.json`
 
 This generated record binds scoped test results to exact source hashes and names
 the required boundaries it did not execute. A green local check cannot make its
@@ -71,7 +71,7 @@ explicitly open product or release requirements green.
 
 ### Research and adversarial evidence
 
-- `10.PRODUCT/13.NODE-LANGUAGE/RESEARCH-UNIVERSAL-CELL.md`
+- `10.PRODUCT/11.ARCHHUB-APP/RESEARCH-UNIVERSAL-CELL.md`
 - `30.KNOWLEDGE/strategy/persistent-graph-attention-reconciliation-2026-07-16.md`
 - `30.KNOWLEDGE/strategy/universal-visual-authority-adversarial-audit-2026-07-16.md`
 - founder screenshots and real-browser court artifacts

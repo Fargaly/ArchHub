@@ -8,7 +8,7 @@ from pathlib import Path
 from .map_import import load_map, resolve_map_path
 
 
-ROOT = '10.PRODUCT/13.NODE-LANGUAGE/'
+ROOT = '10.PRODUCT/11.ARCHHUB-APP/'
 DOMAIN_TARGETS = {
     'ui': (['nodelang/application.py', 'nodelang/ui_runtime.py'],
            'tests_replica/test_node_native_application.py'),

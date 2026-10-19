@@ -265,7 +265,7 @@ def test_brain_surface_samples_confirmed_mcp_report_into_field_nodes(monkeypatch
 
     report = {
         'ok': True,
-        'active_cde': {'scope': '10.PRODUCT/13.NODE-LANGUAGE', 'stage': 'WIP'},
+        'active_cde': {'scope': '10.PRODUCT/11.ARCHHUB-APP', 'stage': 'WIP'},
         'work': {'leaf': 'application-parity'},
         'hook_coverage': {'status': 'green'},
         'history': {'count': 12},
@@ -296,7 +296,7 @@ def test_brain_claim_assigns_the_real_cde_fields_and_refreezes_effect(monkeypatc
                 'lifecycle_state': 'WIP',
                 'tier': 'T1',
                 'allowed_paths': [
-                    '10.PRODUCT/13.NODE-LANGUAGE/nodelang/application.py'],
+                    '10.PRODUCT/11.ARCHHUB-APP/nodelang/application.py'],
             },
         },
         'work': {'counts': {'open': 281, 'claimed': 1}},
@@ -322,7 +322,7 @@ def test_brain_claim_assigns_the_real_cde_fields_and_refreezes_effect(monkeypatc
     assert store.pull(cde['params']['stage']) == 'WIP'
     assert store.pull(cde['params']['privacy_tier']) == 'T1'
     assert store.pull(cde['params']['scope']) == [
-        '10.PRODUCT/13.NODE-LANGUAGE/nodelang/application.py']
+        '10.PRODUCT/11.ARCHHUB-APP/nodelang/application.py']
     assert store.pull(cde['params']['runtime']) == 'archhub-app'
     assert store.pull(reg['brain_work_claim_result'])['result']['blocked'] is False
 
@@ -333,7 +333,7 @@ def test_live_watcher_samples_only_the_open_operating_view(monkeypatch):
         'ok': True,
         'active_cde': {'runtime': 'archhub-app', 'container': {
             'container_id': 'GM.nodes.nodes_kernel', 'lifecycle_state': 'WIP',
-            'tier': 'T1', 'allowed_paths': ['10.PRODUCT/13.NODE-LANGUAGE/nodelang/core.py']}},
+            'tier': 'T1', 'allowed_paths': ['10.PRODUCT/11.ARCHHUB-APP/nodelang/core.py']}},
         'work': {'counts': {'open': 281, 'claimed': 1}},
         'hook_coverage': {'status': 'green'}, 'history': {'count': 514},
         'last_gate_decision': {'allow': True},
@@ -350,7 +350,7 @@ def test_live_watcher_samples_only_the_open_operating_view(monkeypatch):
         cde = store.nodes[reg['cde']]
         assert store.pull(cde['params']['container_id']) == 'GM.nodes.nodes_kernel'
         assert store.pull(cde['params']['scope']) == [
-            '10.PRODUCT/13.NODE-LANGUAGE/nodelang/core.py']
+            '10.PRODUCT/11.ARCHHUB-APP/nodelang/core.py']
         task = reg['orchestration']['task_params']['task-build']
         assert store.pull(task['brain_connected']) is True
         assert store.pull(task['hooks_ready']) is True

@@ -97,7 +97,7 @@ const text = el => {
 const MARKER = 'ArchHub work proposal v1\n';
 const proposalBody = title => MARKER + JSON.stringify({container:{container_id:'GM.nodes.cde-authority', gate_kind:'pytest',
   gate_spec:{path:'tests_replica/test_cell_cde_authority.py'}, tier:'T1'}, description:'proposed by an agent', inputs:{}, priority:100,
-  purpose:'general', requirements:{}, title, write_grants:[{operations:['apply_patch'], path:'10.PRODUCT/13.NODE-LANGUAGE/nodelang/work_proposals.py', scope:'exact'}]});
+  purpose:'general', requirements:{}, title, write_grants:[{operations:['apply_patch'], path:'10.PRODUCT/11.ARCHHUB-APP/nodelang/work_proposals.py', scope:'exact'}]});
 const withProposal = fx => fx.state.workshop.messages.push({root:'p1', message_id:'p1', sequence:50,
   sender_root:fx.ids.codex, recipient_roots:[], body:proposalBody('Tighten the CDE check'), category:'note', state:'recorded'});
 const mountView = async (setup = () => {}) => {

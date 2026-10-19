@@ -18,6 +18,7 @@ import re
 from pathlib import Path
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import time
@@ -453,7 +454,17 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
         # This exact newly-created directory belongs solely to this invocation.
         # Parent and root guards prevent a command-line profile from deleting data.
         if profile.is_dir() and profile.name.startswith("agentlink-qualification-"):
-            shutil.rmtree(profile)
+            _remove_qualification_profile(profile)
+
+
+def _remove_qualification_profile(profile):
+    """Remove this invocation's disposable profile, including Git read-only packs."""
+    def clear_readonly(function, path, error):
+        if not isinstance(error, PermissionError):
+            raise error
+        os.chmod(path, stat.S_IWRITE)
+        function(path)
+    shutil.rmtree(profile, onexc=clear_readonly)
 
 
 def main(argv=None):

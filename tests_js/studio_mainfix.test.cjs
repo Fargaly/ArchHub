@@ -6,9 +6,10 @@ const path = require('node:path');
 const vm = require('node:vm');
 const {settingsNavigator} = require('./settings_navigation_helpers.cjs');
 const studio = path.join(__dirname, '../nodelang/studio');
-const baseline = process.env.MAINFIX_BASELINE === '1';
+const baselineRef = process.env.MAINFIX_BASELINE === '1' ? 'ce671c2e' : process.env.MAINFIX_BASELINE;
+const baseline = !!baselineRef && baselineRef !== '0';
 const read = name => baseline ? require('node:child_process').execFileSync('git',
-  ['show','ce671c2e:nodelang/studio/'+name],{encoding:'utf8',maxBuffer:8*1024*1024}) :
+  ['show',baselineRef+':nodelang/studio/'+name],{encoding:'utf8',maxBuffer:8*1024*1024}) :
   fs.readFileSync(path.join(studio, name), 'utf8');
 const babel = vm.createContext({});
 vm.runInContext(read('vendor/babel.js'), babel);
@@ -32,7 +33,8 @@ async function loaderFixture() {
   const fixture=await harness.exports.loaderFixture();
   return {...fixture,context};
 }
-async function mounted() {
+async function mounted(options = {}) {
+  const {deferredWorkshop = false, failCanvas = false} = options;
   const {JSDOM} = await import('jsdom');
   const dom = new JSDOM('<div id="root"></div>', {url:'http://127.0.0.1:53941/',runScripts:'outside-only',pretendToBeVisual:true});
   const w = dom.window, listeners = new Set();
@@ -42,11 +44,37 @@ async function mounted() {
     authorization:{subject:'owner-a',session:'view-a'}};
   const snapshot = {canvas,workshops:[{root:'room-a',label:'Workshop',is_general:true}],
     topology:{canvas,graph,selected:null}};
+  let published = snapshot;
+  const publish = () => {
+    published = {...snapshot,canvas:{...snapshot.canvas},topology:{...snapshot.topology,canvas:{...snapshot.topology.canvas}}};
+    listeners.forEach(fn=>fn());
+  };
+  let canvasLoads = 0;
   w.ARCHHUB_LIVE = {sessions:[{id:'graph-a',title:'Mine',state:'idle'}],currentGraph:'graph-a',graph,hosts:[],connectors:[],skills:[],memory:[]};
-  w.ARCHHUB_BOOT = {open_graph:'graph-a'};
-  w.ARCHHUB_EXISTING_WORKSHOP = {getSnapshot:()=>snapshot,subscribe:fn=>{listeners.add(fn);return()=>listeners.delete(fn);},
+  w.ARCHHUB_BOOT = {open_graph:deferredWorkshop ? null : 'graph-a'};
+  w.ARCHHUB_EXISTING_WORKSHOP = {getSnapshot:()=>published,subscribe:fn=>{listeners.add(fn);return()=>listeners.delete(fn);},
     readProviders:async()=>[{id:'nvidia',name:'NVIDIA',state:'no key'}],
     watchApplicationUpdate:()=>()=>{}};
+  if (deferredWorkshop) {
+    canvas.canvas_deferred = true;
+    snapshot.workshops = [];
+    w.ARCHHUB_LOAD_CANVAS = async () => {
+      if (canvas.canvas_deferred !== true) return canvas;
+      canvasLoads++;
+      if (failCanvas && canvasLoads === 1) throw new Error('Canvas connection unavailable');
+      canvas.canvas_deferred = false;
+      snapshot.workshops = [{root:'room-a',label:'Workshop',is_general:true}];
+      publish();
+      return canvas;
+    };
+    w.ARCHHUB_EXISTING_WORKSHOP.openWorkshop = async root => {
+      snapshot.workshop = {root,graph_id:canvas.graph_id,scope_root:canvas.root,revision:1,
+        self:'owner-a',participants:[{root:'agent-a',label:'Agent A',is_agent:true}],
+        messages:[{root:'mail-a',sender_root:'agent-a',body:'Real shared mailbox message'}],can_send:true};
+      publish();
+      return snapshot.workshop;
+    };
+  }
   w.matchMedia = ()=>({matches:false,addEventListener(){},removeEventListener(){}});
   w.fetch = async url => ({ok:true,json:async()=>String(url).includes('/models') ?
     {ok:true,groups:[],selected_route:'openrouter/free',default_model:{name:'Free',route:'openrouter/free'}} : {ok:true,tools:[],items:[]}});
@@ -64,8 +92,9 @@ async function mounted() {
     Object.getOwnPropertyDescriptor(w.HTMLInputElement.prototype,'value').set.call(input,value);
     input.dispatchEvent(new w.Event('input',{bubbles:true}));
   });
-  return {w,doc:w.document,rail,settle,flush,type,snapshot,select(id){snapshot.topology={...snapshot.topology,selected:id,
-    canvas:{...canvas,selection:id?[id]:[]}};flush(()=>listeners.forEach(fn=>fn()));},
+  return {w,doc:w.document,rail,settle,flush,type,snapshot,get canvasLoads(){return canvasLoads;},
+    publish(){flush(publish);},select(id){snapshot.topology={...snapshot.topology,selected:id,
+    canvas:{...canvas,selection:id?[id]:[]}};flush(publish);},
     close(){flush(()=>w.__root.unmount());w.close();}};
 }
 test('MAINFIX Workshop rail resolves the real lazy face on a fresh profile', async()=>{
@@ -74,6 +103,32 @@ test('MAINFIX Workshop rail resolves the real lazy face on a fresh profile', asy
     assert.ok(face.querySelector('textarea[aria-label="Workshop message"]'));
     assert.ok(face.querySelectorAll('[data-workshop-primary]').length>=2,'Workshop owns its New task and Send controls');
     assert.equal(ui.doc.querySelector('[data-workshop-loading]'),null);
+  } finally {ui.close();}
+});
+test('MAINFIX Workshop opens its deferred Home scope and draws the shared mailbox message',async()=>{
+  const ui=await mounted({deferredWorkshop:true});
+  try {
+    assert.equal(ui.canvasLoads,0,'Home does not load the deferred canvas');
+    await ui.rail('Workshop');await ui.settle();
+    assert.match(ui.doc.querySelector('[data-workshop72]').textContent,/Real shared mailbox message/);
+    assert.equal(ui.snapshot.workshop.root,'room-a');
+    assert.equal(ui.snapshot.topology.canvas.canvas_deferred,false);
+    assert.equal(ui.canvasLoads,1);
+    ui.snapshot.workshops=[{root:'room-b',label:'Different room',is_general:true}];
+    ui.publish();await ui.settle();
+    assert.doesNotMatch(ui.doc.querySelector('[data-workshop72]').textContent,/Different room/,
+      'a refreshed descriptor cannot silently switch the opened mailbox');
+  } finally {ui.close();}
+});
+test('MAINFIX deferred Workshop reports a failed canvas read and Retry opens the mailbox',async()=>{
+  const ui=await mounted({deferredWorkshop:true,failCanvas:true});
+  try {
+    await ui.rail('Workshop');await ui.settle();
+    assert.match(ui.doc.body.textContent,/Canvas connection unavailable/);
+    const retry=[...ui.doc.querySelectorAll('button')].find(row=>/retry/i.test(row.textContent));
+    assert.ok(retry);ui.flush(()=>retry.click());await ui.settle();await ui.settle();
+    assert.match(ui.doc.querySelector('[data-workshop72]').textContent,/Real shared mailbox message/);
+    assert.equal(ui.canvasLoads,2);
   } finally {ui.close();}
 });
 test('MAINFIX Workshop retries a failed lazy asset load without restarting Studio',async()=>{
@@ -237,6 +292,8 @@ test('MAINFIX absent node-send handler leaves a visible error and retains the dr
     await ui.settle();
     assert.equal(input.value,'keep this request');
     assert.match(ui.doc.body.textContent,/Sending is unavailable/);
+    const visibleStatus=input.closest('[data-ds-composer]').querySelector('[data-chat-turn=error]');
+    assert.match(visibleStatus.textContent,/Sending is unavailable/,'the verifier reads the actual composer error owner');
     assert.equal(ui.doc.querySelector('[role="dialog"][aria-label="Choose a model"]'),null);
   } finally {ui.close();}
 });

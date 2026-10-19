@@ -1,4 +1,4 @@
-param([ValidateSet('red-python','red-js','green-python','green-js','red-big','green-big','fresh-big','related-python','related-js','red-receipts','green-receipts','green-receipt-page','red-partition','green-partition','related-partition','kernel-review','workshop-js','strict')][string]$Court)
+param([ValidateSet('r2-big-conversation','r2-proposals','r2-red-js','r2-green-js','r2-green-python','r2-related-python','r2-related-js','red-python','red-js','green-python','green-js','red-big','green-big','fresh-big','related-python','related-js','red-receipts','green-receipts','green-receipt-page','red-partition','green-partition','related-partition','kernel-review','workshop-js','strict')][string]$Court)
 $ErrorActionPreference = 'Stop'
 $fixtureRoot = Join-Path $PSScriptRoot 'court-state'
 New-Item -ItemType Directory -Force $fixtureRoot | Out-Null
@@ -11,7 +11,24 @@ $env:ARCHHUB_TEST_STATE_DIR = Join-Path $env:LOCALAPPDATA 'ArchHub'
 $env:PYTHONDONTWRITEBYTECODE = '1'
 $python = 'C:\Users\fargaly\AppData\Local\Python\pythoncore-3.14-64\python.exe'
 $ErrorActionPreference = 'Continue' # Preserve complete native tracebacks in court evidence.
-if ($Court -in @('red-partition','green-partition')) {
+if ($Court -eq 'r2-big-conversation') {
+    & $python tests_replica/mainfix_big_boot.py --conversation --expect-red-writes *> "$PSScriptRoot/$Court.txt"
+} elseif ($Court -eq 'r2-proposals') {
+    & $python -m pytest -q -p no:cacheprovider --basetemp "$fixtureRoot/pytest-$Court" tests_replica/test_agent_work_proposals.py *> "$PSScriptRoot/$Court.txt"
+} elseif ($Court -eq 'r2-red-js') {
+    $env:MAINFIX_BASELINE = 'aab5b20e'
+    & node @('--test', '--test-concurrency=1', '--test-force-exit', '--test-name-pattern=deferred', 'tests_js/studio_mainfix.test.cjs') *> "$PSScriptRoot/$Court.txt"
+} elseif ($Court -eq 'r2-green-js') {
+    $env:MAINFIX_BASELINE = '0'
+    & node @('--test', '--test-concurrency=1', '--test-force-exit', 'tests_js/studio_mainfix.test.cjs') *> "$PSScriptRoot/$Court.txt"
+} elseif ($Court -eq 'r2-green-python') {
+    & $python -m pytest -q -s -p no:cacheprovider --basetemp "$fixtureRoot/pytest-$Court" tests_replica/test_mainfix.py *> "$PSScriptRoot/$Court.txt"
+} elseif ($Court -eq 'r2-related-python') {
+    & $python -m pytest -q -p no:cacheprovider --basetemp "$fixtureRoot/pytest-$Court" tests_replica/test_mainrel_round3.py tests_replica/test_mainrel_installer.py *> "$PSScriptRoot/$Court.txt"
+} elseif ($Court -eq 'r2-related-js') {
+    $env:CHATSEND_SOURCE = '1'
+    & node @('--test', '--test-concurrency=1', '--test-force-exit', 'tests_js/studio_boot2_home.test.cjs', 'tests_js/studio_chatsend.test.cjs', 'tests_js/studio_workshop72_node_lazy.test.cjs') *> "$PSScriptRoot/$Court.txt"
+} elseif ($Court -in @('red-partition','green-partition')) {
     & $python -m pytest -q -s -p no:cacheprovider --basetemp "$fixtureRoot/pytest-$Court" tests_replica/test_adopt_archive.py -k 'test_mainfix_partition_count_witness' *> "$PSScriptRoot/$Court.txt"
 } elseif ($Court -eq 'related-partition') {
     & $python -m pytest -q -s -p no:cacheprovider --basetemp "$fixtureRoot/pytest-$Court" tests_replica/test_adopt_archive.py *> "$PSScriptRoot/$Court.txt"

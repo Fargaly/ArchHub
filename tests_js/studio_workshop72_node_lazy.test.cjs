@@ -206,7 +206,7 @@ test('WORKSHOP-72 no-graph Workshop tool opens the same lazy window with an hone
   vm.runInContext(transformSync(read('nodelang/studio/shared-data.jsx'),{loader:'jsx'}).code,context);
   let received;win.WorkshopView=props=>{received=props;return React.createElement('div',{'data-unavailable-workshop':''},'Not available yet');};
   const source=read('nodelang/studio/studio-lm.jsx');
-  vm.runInContext(transformSync(slice(source,'const LazyWorkshopWindow =','const Workspace =')+
+  vm.runInContext(transformSync(slice(source,'const useDeferredCanvas =','const LazyWorkshopWindow =')+slice(source,'const LazyWorkshopWindow =','const Workspace =')+
     slice(source,'const ToolMainView =','// ──────────────────────── WORKSPACE')+'\nglobalThis.ToolMainView=ToolMainView;',{loader:'jsx'}).code,context);
   const root=createRoot(win.document.getElementById('root'));
   try{

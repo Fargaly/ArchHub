@@ -21,7 +21,7 @@ from collections.abc import Iterable
 from datetime import datetime, timezone
 
 from .cell_authorization import AuthorizationDenied
-from .universal_cell import InvalidCell
+from .universal_cell import InvalidCell, ids_with_prefix
 
 MARKER = "ArchHub work proposal v1"
 _FIELDS = {"title", "description", "priority", "purpose", "inputs", "requirements", "container", "write_grants"}
@@ -277,9 +277,7 @@ def _read_decline(snapshot, registry, message_id):
 
 def _declined_proposals(snapshot, registry):
     result = {}
-    for cell_id in snapshot.cells:
-        if not cell_id.startswith(DECLINE_PREFIX):
-            continue
+    for cell_id in ids_with_prefix(snapshot.cells, DECLINE_PREFIX):
         try:
             from .cell_value_graph import read_value_graph
             record = read_value_graph(snapshot, registry.value_graph_protocol, cell_id)

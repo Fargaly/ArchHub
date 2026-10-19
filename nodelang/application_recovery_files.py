@@ -283,9 +283,104 @@ def set_backup_location(profile, location, *, directory=None):
 def _fixed_backup_drives():
     if os.name != 'nt':
         return []
+    try:
+        drives = os.listdrives()
+    except OSError:
+        return []
+    return [Path(drive) for drive in drives
+            if _local_backup_path(Path(drive))]
+
+
+def _backup_volume_info(path):
+    """Probe native volume/storage facts; unknown or virtual storage is ineligible."""
     import ctypes
-    return [Path(drive) for drive in os.listdrives()
-            if ctypes.windll.kernel32.GetDriveTypeW(drive) == 3]
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    root = Path(path).anchor
+    label, filesystem = ctypes.create_unicode_buffer(261), ctypes.create_unicode_buffer(261)
+    if (not root or kernel.GetDriveTypeW(root) != 3 or not kernel.GetVolumeInformationW(
+            root, label, len(label), None, None, None, filesystem, len(filesystem))):
+        return None
+    create = kernel.CreateFileW
+    create.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                       ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+    create.restype = wintypes.HANDLE
+    handle = create('\\\\.\\' + root.rstrip('\\'), 0, 7, None, 3, 0, None)
+    if handle == ctypes.c_void_p(-1).value:
+        return None
+    close = kernel.CloseHandle
+    close.argtypes = (wintypes.HANDLE,)
+    ioctl = kernel.DeviceIoControl
+    ioctl.argtypes = (wintypes.HANDLE, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD,
+                     ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p)
+    query, descriptor, returned = ctypes.create_string_buffer(struct.pack('<III', 0, 0, 0)), ctypes.create_string_buffer(4096), wintypes.DWORD()
+    try:
+        if not ioctl(handle, 0x2D1400, query, 12, descriptor, len(descriptor), ctypes.byref(returned), None) or returned.value < 36:
+            return None
+        # StorageDeviceProperty: reject unknown, network/iSCSI, virtual, VHD and
+        # storage-space buses. A fixed cloud filesystem alone is not a disk.
+        bus = struct.unpack_from('<I', descriptor.raw, 28)[0]
+        physical = bus in (1, 2, 3, 7, 8, 10, 11, 12, 13, 17, 19) and not descriptor.raw[10]
+        return dict(label=label.value, filesystem=filesystem.value, physical=physical)
+    finally:
+        close(handle)
+
+
+def _backup_sync_roots():
+    """Registered sync roots plus the providers' conventional local locations."""
+    home = Path(os.environ.get('USERPROFILE', Path.home()))
+    roots = [home / name for name in ('Google Drive', 'My Drive', 'OneDrive', 'Dropbox', 'Box', 'Box Sync')]
+    roots.extend(Path(value) for key, value in os.environ.items() if key.casefold().startswith('onedrive') and value)
+    if os.name == 'nt':
+        import winreg
+        for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+            try:
+                with winreg.OpenKey(hive, r'Software\Microsoft\Windows\CurrentVersion\Explorer\SyncRootManager') as manager:
+                    for index in range(winreg.QueryInfoKey(manager)[0]):
+                        try:
+                            with winreg.OpenKey(manager, winreg.EnumKey(manager, index) + r'\UserSyncRoots') as key:
+                                for item in range(winreg.QueryInfoKey(key)[1]):
+                                    _, value, kind = winreg.EnumValue(key, item)
+                                    if kind in (winreg.REG_SZ, winreg.REG_EXPAND_SZ) and value:
+                                        roots.append(Path(os.path.expandvars(value)))
+                        except FileNotFoundError:
+                            continue
+            except FileNotFoundError:
+                continue
+    for variable in ('LOCALAPPDATA', 'APPDATA'):
+        base = os.environ.get(variable)
+        info = Path(base) / 'Dropbox/info.json' if base else None
+        if info and info.is_file():
+            if info.is_symlink() or info.is_junction() or info.stat().st_size > _METADATA_BYTES:
+                raise ValueError('Dropbox sync location is unavailable')
+            accounts = json.loads(info.read_text(encoding='utf-8'))
+            if not isinstance(accounts, dict):
+                raise ValueError('Dropbox sync location is unavailable')
+            for account in accounts.values():
+                if isinstance(account, dict) and isinstance(account.get('path'), str):
+                    roots.append(Path(account['path']))
+    if any(not root.is_absolute() for root in roots):
+        raise ValueError('A sync location is unavailable')
+    return roots
+
+
+def _local_backup_path(path):
+    import re
+    path = Path(path)
+    try:
+        if str(path).startswith(('\\\\', '//')) or any(p.is_symlink() or p.is_junction() for p in (path, *path.parents)):
+            return False
+        if os.name == 'nt':
+            volume = _backup_volume_info(path)
+            if not volume or not volume['physical'] or volume['filesystem'].casefold() not in ('ntfs', 'refs'):
+                return False
+            if re.search(r'google|gdrive|onedrive|dropbox|\bbox\b', volume['label'], re.IGNORECASE):
+                return False
+        if any(re.match(r'^(google drive|my drive|onedrive|dropbox|box)(\b|[-_])', part, re.IGNORECASE) for part in path.parts):
+            return False
+        return not any(path == root or path.is_relative_to(root) for root in _backup_sync_roots())
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
 
 
 def _install_reserve(profile, destination):
@@ -297,14 +392,24 @@ def _select_backup_location(profile, planned_bytes):
     preference = backup_location(profile)
     chosen = Path(preference['directory'])
     probe = next((path for path in (chosen, *chosen.parents) if path.exists()), profile)
-    if preference['location'] == 'auto' and shutil.disk_usage(probe).free - planned_bytes < _install_reserve(profile, chosen):
-        drives = [path for path in _fixed_backup_drives()
-                  if shutil.disk_usage(path).free - planned_bytes >= _install_reserve(profile, path)]
-        if drives:
-            drive = max(drives, key=lambda path: shutil.disk_usage(path).free)
-            # Different Windows profiles cannot claim the same physical custody.
-            identity = hashlib.sha256(str(profile).casefold().encode('utf-8')).hexdigest()
-            chosen = drive / 'ArchHub-backups' / ('profile-' + identity)
+    def fits(path, capacity_probe):
+        try:
+            return _local_backup_path(path) and shutil.disk_usage(capacity_probe).free - planned_bytes >= _install_reserve(profile, path)
+        except OSError:
+            return False
+    admitted = fits(chosen, probe)
+    if preference['location'] == 'auto' and not admitted:
+        # Test the actual owned destination too: a sync root can be a child
+        # folder on an otherwise eligible physical disk.
+        identity = hashlib.sha256(str(profile).casefold().encode('utf-8')).hexdigest()
+        destinations = [(drive, drive / 'ArchHub-backups' / ('profile-' + identity))
+                        for drive in _fixed_backup_drives()]
+        destinations = [(drive, destination) for drive, destination in destinations if fits(destination, drive)]
+        if destinations:
+            _drive, chosen = max(destinations, key=lambda item: shutil.disk_usage(item[0]).free)
+            admitted = True
+    if not admitted:
+        raise OSError('Free space on a local NTFS or ReFS disk while keeping 25 GiB on the system disk, or choose a backup folder there outside Google Drive, OneDrive, Dropbox and Box.')
     return set_backup_location(profile, preference['location'], directory=chosen)
 
 
@@ -460,6 +565,10 @@ def _preserve_closed_application_journals(profile, build, *, keep_count=3, max_b
     all_protected = set()
     total_planned = sum(path.stat().st_size + (Path(str(path) + '.conversations.sqlite3').stat().st_size
         if Path(str(path) + '.conversations.sqlite3').is_file() else 0) + _METADATA_BYTES for path in candidates)
+    # A previous auto preference may itself point into a sync drive. Do not
+    # create, inspect custody, or reconcile pending copies there.
+    if not _local_backup_path(Path(backup_location(profile)['directory'])):
+        _select_backup_location(profile, total_planned)
     retention = importlib.import_module((__package__ + '.' if __package__ else '') + 'backup_retention')
     for source in candidates:
         if not source.is_file():
@@ -475,7 +584,6 @@ def _preserve_closed_application_journals(profile, build, *, keep_count=3, max_b
         for ancestor in (parent, *parent.parents):
             if ancestor.is_symlink() or ancestor.is_junction():
                 raise ValueError('closed-backup directory contains a link')
-        parent.mkdir(parents=True, exist_ok=True)
         if parent.is_symlink() or parent.is_junction():
             raise ValueError('closed-backup directory is a link')
         from contextlib import ExitStack

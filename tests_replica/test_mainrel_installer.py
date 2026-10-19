@@ -7,6 +7,11 @@ import pytest
 from nodelang import application_recovery_files as files
 
 
+@pytest.fixture(autouse=True)
+def installer_fixtures_stay_in_lane(monkeypatch):
+    monkeypatch.setattr(files, '_fixed_backup_drives', lambda: [])
+
+
 def journal(profile):
     path = profile / 'ArchHub-Test' / 'archhub-test.universal.sqlite3'
     path.parent.mkdir(parents=True)

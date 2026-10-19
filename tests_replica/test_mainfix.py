@@ -11,10 +11,184 @@ from tests_replica.test_adopt import closed_backup
 isolated_profile = upgrade.isolated_profile
 
 
+@pytest.mark.parametrize('volume', [
+    {'label': 'Google Drive', 'filesystem': 'FAT32', 'physical': True},
+    {'label': 'Google Drive', 'filesystem': 'NTFS', 'physical': True},
+    {'label': 'OneDrive', 'filesystem': 'NTFS', 'physical': True},
+    {'label': 'Dropbox', 'filesystem': 'NTFS', 'physical': True},
+    {'label': 'Box', 'filesystem': 'ReFS', 'physical': True},
+    {'label': 'Local', 'filesystem': 'FAT32', 'physical': True},
+    {'label': 'Local', 'filesystem': 'NTFS', 'physical': False},
+])
+def test_backup_rejects_cloud_virtual_and_small_file_volumes(tmp_path, monkeypatch, volume):
+    from nodelang import application_recovery_files as files
+    from collections import namedtuple
+    profile = tmp_path / 'profile'
+    profile.mkdir()
+    google = tmp_path / 'G-like'
+    google.mkdir()
+    usage = namedtuple('usage', 'total used free')
+    monkeypatch.setattr(files, '_backup_volume_info', lambda path: volume, raising=False)
+    monkeypatch.setattr(files, '_fixed_backup_drives', lambda: [google])
+    monkeypatch.setattr(files.shutil, 'disk_usage', lambda path: usage(100 * 1024**3, 0,
+        (80 if Path(path) == google else 26) * 1024**3))
+    before = sorted(str(path.relative_to(tmp_path)) for path in tmp_path.rglob('*'))
+    with pytest.raises(OSError, match='local NTFS or ReFS') as refused:
+        files._select_backup_location(profile, 8 * 1024**3)
+    assert str(refused.value).count('.') == 1, 'one plain sentence'
+    assert before == sorted(str(path.relative_to(tmp_path)) for path in tmp_path.rglob('*'))
+    print('MAINFIX_BACKUP rejected=' + volume['label'] + '/' + volume['filesystem'] + ' copied=0')
+
+
+def test_backup_uses_only_eligible_local_volume(tmp_path, monkeypatch):
+    from nodelang import application_recovery_files as files
+    from collections import namedtuple
+    profile, google, local = (tmp_path / name for name in ('profile', 'google', 'local'))
+    for path in (profile, google, local):
+        path.mkdir()
+    usage = namedtuple('usage', 'total used free')
+    monkeypatch.setattr(files, '_backup_volume_info', lambda path: {
+        'label': 'Google Drive' if Path(path).is_relative_to(google) else 'Local',
+        'filesystem': 'FAT32' if Path(path).is_relative_to(google) else 'NTFS', 'physical': True}, raising=False)
+    monkeypatch.setattr(files, '_fixed_backup_drives', lambda: [google, local])
+    monkeypatch.setattr(files.shutil, 'disk_usage', lambda path: usage(100 * 1024**3, 0,
+        (90 if Path(path) == google else 60 if Path(path) == local else 26) * 1024**3))
+    record = files._select_backup_location(profile, 8 * 1024**3)
+    assert Path(record['directory']).is_relative_to(local)
+    assert not list(google.iterdir())
+    print('MAINFIX_BACKUP local_ntfs_selected=True cloud_copied=0')
+
+
+def test_installer_without_local_capacity_refuses_before_copy(tmp_path, monkeypatch):
+    from nodelang import application_recovery_files as files
+    from collections import namedtuple
+    source = upgrade._journal(tmp_path / 'ArchHub/authority.sqlite3', 'keep private edit', 200)
+    before = source.read_bytes()
+    usage = namedtuple('usage', 'total used free')
+    monkeypatch.setattr(files.shutil, 'disk_usage', lambda path: usage(100 * 1024**3, 0, 25 * 1024**3))
+    monkeypatch.setattr(files, '_backup_volume_info', lambda path: dict(label='Local',filesystem='NTFS',physical=True))
+    def no_copy(*args):
+        pytest.fail('copy began without an eligible destination')
+    monkeypatch.setattr(files, '_copy_closed_file', no_copy)
+    with pytest.raises(OSError, match='local NTFS or ReFS'):
+        files.preserve_closed_application_journals(tmp_path, 'mainfix-r2')
+    assert source.read_bytes() == before
+    assert not (tmp_path / 'ArchHub/backup-location.json').exists()
+    assert not list(tmp_path.rglob('*-pending'))
+    assert not list(tmp_path.rglob('closed-files.json'))
+    print('MAINFIX_BACKUP no_capacity_refused=True source_unchanged=True copied=0')
+
+
+@pytest.mark.parametrize('registered', [False, True])
+def test_backup_refuses_sync_folder_even_on_physical_ntfs(tmp_path, monkeypatch, registered):
+    from nodelang import application_recovery_files as files
+    profile = tmp_path / 'profile'
+    sync = tmp_path / ('custom-synchronised-folder' if registered else 'OneDrive - Company')
+    sync.mkdir()
+    files.set_backup_location(profile, str(sync))
+    original = (profile / 'ArchHub/backup-location.json').read_bytes()
+    monkeypatch.setattr(files, '_backup_volume_info', lambda path: dict(label='Local',filesystem='NTFS',physical=True))
+    monkeypatch.setattr(files, '_backup_sync_roots', lambda: [sync] if registered else [])
+    with pytest.raises(OSError, match='local NTFS or ReFS'):
+        files._select_backup_location(profile, 1)
+    assert not list(sync.iterdir())
+    assert (profile / 'ArchHub/backup-location.json').read_bytes() == original
+
+
+def test_backup_discovers_machine_registered_custom_sync_root(tmp_path, monkeypatch):
+    import sys
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    from nodelang import application_recovery_files as files
+    custom = tmp_path / 'arbitrary-business-files'
+    custom.mkdir()
+    queried = []
+    base = r'Software\Microsoft\Windows\CurrentVersion\Explorer\SyncRootManager'
+    def opened(parent, path):
+        queried.append((parent, path))
+        if parent == 'HKLM' and path == base:
+            return nullcontext('manager')
+        if parent == 'manager' and path == r'GoogleDrive!account\UserSyncRoots':
+            return nullcontext('roots')
+        raise FileNotFoundError(path)
+    registry = SimpleNamespace(HKEY_LOCAL_MACHINE='HKLM', HKEY_CURRENT_USER='HKCU',
+        REG_SZ=1, REG_EXPAND_SZ=2, OpenKey=opened,
+        QueryInfoKey=lambda key: (1, 0, 0) if key == 'manager' else (0, 1, 0),
+        EnumKey=lambda key, index: 'GoogleDrive!account',
+        EnumValue=lambda key, index: ('owner-sid', str(custom), 1))
+    monkeypatch.setitem(sys.modules, 'winreg', registry)
+    monkeypatch.setattr(files, '_backup_volume_info', lambda path: dict(label='Local',filesystem='NTFS',physical=True))
+    assert not files._local_backup_path(custom / 'ArchHub-backups/profile-test')
+    assert ('HKLM', base) in queried
+    print('MAINFIX_BACKUP machine_registered_custom_sync_root_rejected=True')
+
+
+def test_invalid_sync_metadata_refuses_copy_plainly(isolated_profile, monkeypatch):
+    from nodelang import application_recovery_files as files
+    info = isolated_profile / 'Dropbox/info.json'
+    info.parent.mkdir()
+    info.write_text('[]', encoding='utf-8')
+    monkeypatch.setattr(files, '_backup_volume_info', lambda path: dict(label='Local',filesystem='NTFS',physical=True))
+    with pytest.raises(OSError, match='local NTFS or ReFS'):
+        files._select_backup_location(isolated_profile, 1)
+    assert not (isolated_profile / 'ArchHub/backup-location.json').exists()
+
+
+def test_setup_preserve_cli_refuses_hot_journal_with_nonzero_exit(isolated_profile):
+    import sqlite3
+    import subprocess
+    import sys
+    from nodelang import application_recovery_files as files
+    source = isolated_profile / 'ArchHub/authority.sqlite3'
+    source.parent.mkdir()
+    db = sqlite3.connect(source)
+    try:
+        db.execute('PRAGMA journal_mode=WAL')
+        db.execute('CREATE TABLE work(value TEXT)')
+        db.execute("INSERT INTO work VALUES('private saved conversation')")
+        db.commit()
+        graph_before, wal_before = source.read_bytes(), Path(str(source) + '-wal').read_bytes()
+        result = subprocess.run([sys.executable, '-u', files.__file__, '--closed-profile', str(isolated_profile),
+            '--build', 'mainfix-refused-setup'], capture_output=True, text=True, check=False)
+        assert result.returncode == 1
+        refusal = result.stdout.splitlines()[-1]
+        assert refusal == 'Setup refused: close ArchHub before preserving its pre-upgrade journal'
+        assert 'Traceback' not in result.stdout + result.stderr
+        assert source.read_bytes() == graph_before
+        assert Path(str(source) + '-wal').read_bytes() == wal_before
+        assert not list(isolated_profile.rglob('closed-files.json'))
+        print('MAINFIX_SETUP exit=1 plain_refusal=True graph_and_wal_unchanged=True copied=0')
+    finally:
+        db.close()
+
+
 @pytest.fixture(autouse=True)
 def backup_drives_stay_in_lane(monkeypatch):
     from nodelang import application_recovery_files as files
     monkeypatch.setattr(files, '_fixed_backup_drives', lambda: [])
+
+
+def test_declines_read_real_lazy_journal_without_scanning_unrelated_cells(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from nodelang import work_proposals
+    from nodelang.cell_value_graph import bootstrap_value_graph_protocol, build_value_graph
+    from nodelang.universal_cell import Cell, NULL_CELL_ID, _LazyHeadCellMap
+    path = tmp_path / 'declines.sqlite3'
+    record = dict(state='declined', message_id='saved-proposal', digest='d' * 64,
+        actor='founder', declined_at='court')
+    with CellStore(path) as store:
+        protocol = bootstrap_value_graph_protocol(store)
+        build_value_graph(store, protocol, record, root_id=work_proposals._decline_root(record['message_id']))
+        store.commit(store.revision, create=tuple(Cell('unrelated:' + str(i), NULL_CELL_ID,
+            NULL_CELL_ID, b'trace') for i in range(300)))
+    with CellStore(path) as store:
+        snapshot = store.snapshot()
+        def no_full_scan(_self):
+            pytest.fail('decline projection streamed the entire graph')
+        monkeypatch.setattr(_LazyHeadCellMap, '__iter__', no_full_scan)
+        assert work_proposals._declined_proposals(snapshot, SimpleNamespace(value_graph_protocol=protocol)) == {
+            record['message_id']: record}
+    print('MAINFIX_DECLINES persisted_record=True unrelated_head_scan=False')
 
 
 @pytest.mark.parametrize('hot_wal', [False, True])

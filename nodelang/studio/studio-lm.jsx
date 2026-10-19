@@ -3044,16 +3044,32 @@ const ToolMainView = ({ view, account, setAccount, onSignOut, onSettings, onHome
   const title = tool === 'baboom' ? 'BABOOM' : tool[0].toUpperCase() + tool.slice(1);
   const tab = view?.tab || firstToolTab(tool);
   const workshopState = useWorkshopProjection();
+  const canvasRead = useDeferredCanvas(false, tool === 'workshop');
+  const workshopRows = workshopState?.workshops || [];
+  const workshop = workshopRows.find(row => row.root === view?.root) ||
+    (view?.root === WORKSHOP_UNAVAILABLE_ROOT ? workshopRows.find(row => row.is_general === true) || workshopRows[0] : null);
+  React.useEffect(() => {
+    if (tool === 'workshop' && view?.root === WORKSHOP_UNAVAILABLE_ROOT && workshop?.root) {
+      updateView?.({...view, root:workshop.root});
+    }
+  }, [tool, view, workshop?.root, updateView]);
   const personal = usePersonalTheme();
   const hub = useToolHubProjection();
   const toolRow = toolRowsFromOwners({workshopState, account, personal, hub}).find(row => row.id === tool);
   const offTool = toolRow?.state === 'off' ? toolRow : null;
   if (tool === 'workshop') {
-    const descriptor = (workshopState?.workshops || []).find(row => row.root === view?.root) ||
-      {root:WORKSHOP_UNAVAILABLE_ROOT, label:'Workshop', unavailable:true, native_work_available:false};
-    return <LazyWorkshopWindow embedded state={workshopState || {}} descriptor={descriptor} account={account} sel={{task:view?.focus || null}}
-      setSel={next => updateView?.({...view, focus:next.task || null})} onHome={onHome} onDocs={onDocs}
-      onChats={onChats} onCockpit={onCockpit} onSettings={() => onSettings?.(true)} onLibrary={onLibrary} onAddNode={onLibrary} onLeave={onHome}/>;
+    const state = canvasRead.error ? 'error' : canvasRead.pending ? 'waiting' : workshop ? 'loaded' : 'empty';
+    if (state === 'error') return <window.AH_DS.EmptyState data-workshop-scope-loading="" error
+      title="Workshop unavailable" detail={canvasRead.error} onRetry={canvasRead.retry}
+      style={{gridColumn:'1 / -1',gridRow:'1 / -1',background:LM.bgDeep}}/>;
+    if (state === 'waiting') return <window.AH_DS.EmptyState data-workshop-scope-loading=""
+      title="Reading your Workshop…" style={{gridColumn:'1 / -1',gridRow:'1 / -1',background:LM.bgDeep}}/>;
+    const faceProps = {embedded:true, state:workshopState || {}, account, sel:{task:view?.focus || null},
+      setSel:next => updateView?.({...view, focus:next.task || null}), onHome, onDocs, onChats, onCockpit,
+      onSettings:() => onSettings?.(true), onLibrary, onAddNode:onLibrary, onLeave:onHome};
+    if (state === 'empty') return <LazyWorkshopWindow {...faceProps} descriptor={
+      {root:view?.root || WORKSHOP_UNAVAILABLE_ROOT, label:'Workshop', unavailable:true, native_work_available:false}}/>;
+    if (state === 'loaded') return <LazyWorkshopWindow {...faceProps} descriptor={workshop}/>;
   }
   return <main data-tool-view={tool} data-tool-tab={tab} data-tool-focus={view?.focus || ''} className="ah-scroll" style={{
     gridColumn:'2', gridRow:'1', overflow:'auto', minHeight:0, padding:'28px 44px 36px',
@@ -3077,7 +3093,7 @@ const ToolMainView = ({ view, account, setAccount, onSignOut, onSettings, onHome
 };
 
 // ──────────────────────── WORKSPACE ────────────────────────
-const useDeferredCanvas = (needsDocumentation = false) => {
+const useDeferredCanvas = (needsDocumentation = false, enabled = true) => {
   const signed = window.ARCHHUB_STUDIO_AUTHORITY;
   const signedLoader = React.useCallback(() => {
     const held = signed.getSnapshot()?.canvas;
@@ -3088,10 +3104,10 @@ const useDeferredCanvas = (needsDocumentation = false) => {
   const held = signed?.getSnapshot()?.canvas;
   const deferred = signed ? held?.projection === 'home' || needsDocumentation && !held?.documentation?.tutorials?.length
     : window.ARCHHUB_EXISTING_WORKSHOP?.getSnapshot()?.topology?.canvas?.canvas_deferred === true;
-  const [state, setState] = React.useState(() => ({pending:!!loader && deferred, error:''}));
+  const [state, setState] = React.useState(() => ({pending:enabled && !!loader && deferred, error:''}));
   const [attempt, setAttempt] = React.useState(0);
   React.useEffect(() => {
-    if (typeof loader !== 'function') return;
+    if (!enabled || typeof loader !== 'function') return;
     let active = true;
     setState({pending:deferred, error:''});
     const timer = deferred ? setTimeout(() => {
@@ -3105,8 +3121,8 @@ const useDeferredCanvas = (needsDocumentation = false) => {
       if (active) setState({pending:false, error:error?.message || 'Canvas reading was refused.'});
     });
     return () => {active = false; clearTimeout(timer);};
-  }, [loader, deferred, attempt, signed]);
-  return {...state, retry:() => setAttempt(value => value + 1)};
+  }, [loader, deferred, attempt, signed, enabled]);
+  return {...state, pending:enabled && state.pending, error:enabled ? state.error : '', retry:() => setAttempt(value => value + 1)};
 };
 // Loading this face is the only point where its code enters Studio.
 const LazyWorkshopWindow = props => {

@@ -60,12 +60,17 @@ os.environ['ARCHHUB_GRAND_MAP_PATH'] = str(ROOT / 'nodelang/data/public_runtime_
 keys = WindowsDpapiSigningKeyProvider(WindowsDpapiSigningKeyProvider.default_path())
 stale = _selected(root)
 started = time.monotonic()
-with CellStore(source) as store:
-    marker = 'mainfix:saved-edit'
-    if marker not in store.snapshot().cells:
-        store.commit(store.revision, create=(Cell(marker, NULL_CELL_ID, NULL_CELL_ID, b'MAINFIX saved edit'),))
-with closing(sqlite3.connect(source.as_uri() + '?mode=ro&immutable=1', uri=True)) as db:
-    before = db.execute('SELECT COUNT(*) FROM current_cells').fetchone()[0]
+marker = 'mainfix:saved-edit'
+conversation_court = '--conversation' in sys.argv
+if not conversation_court:
+    with CellStore(source) as store:
+        if marker not in store.snapshot().cells:
+            store.commit(store.revision, create=(Cell(marker, NULL_CELL_ID, NULL_CELL_ID, b'MAINFIX saved edit'),))
+    # The fixture may retain committed WAL frames after an interrupted court.
+    with closing(sqlite3.connect(source.as_uri() + '?mode=ro', uri=True)) as db:
+        before = db.execute('SELECT COUNT(*) FROM current_cells').fetchone()[0]
+else:
+    before = None
 print(json.dumps({'fixture_bytes': source.stat().st_size, 'live_before': before, 'fresh_fixture_copy': fresh_copy}), flush=True)
 faulthandler.dump_traceback_later(20, repeat=True)
 adoption = persistence.prepare_application_database(root, stale, key_provider=keys)
@@ -82,10 +87,10 @@ try:
     canvas = project_universal_home_frame(server.universal_store, server.universal_registry, authentication_context=context)
     measurement = 'direct-authenticated-home'
     if '--boot-only' in sys.argv:
-        from tests_replica.test_adopt_boot import _browser, _json
+        from tests_replica.test_adopt_boot import _browser, _json as boot_json
         server.start()
         opener, _csrf = _browser(server)
-        assert _json(opener, server, '/api/universal/canvas?screen=home')['ok']
+        assert boot_json(opener, server, '/api/universal/canvas?screen=home')['ok']
         for asset in ('/studio/', '/studio/studio-lm.jsx'):
             with opener.open(server.url + asset, timeout=10) as response:
                 assert response.status == 200 and response.read()
@@ -95,6 +100,61 @@ try:
     assert server.universal_store.snapshot().cells[marker].atom == b'MAINFIX saved edit'
     print(json.dumps({'studio_home_seconds': elapsed, 'measurement': measurement,
         'saved_edit': True, 'selected_same_file': selected == source}), flush=True)
+    if conversation_court:
+        from urllib.parse import urlencode
+        from tests_replica.test_clean_server_visual_projection import _json
+        from nodelang import agent_composer, pipeline_engines
+        from nodelang.existing_workshop_conversation import agent_graph_conversation_root
+        pipeline_engines.brain_recall = lambda *_a, **_k: ({'out': ''}, '')
+        calls = []
+        def provider(prompt, *_a, **_k):
+            calls.append(prompt)
+            return json.dumps({'actions': [], 'answer': 'MAINFIX durable large reply'})
+        agent_composer._chat = provider
+        def request(path, body=None):
+            began = time.monotonic()
+            status, answer = _json(server.url, path, body,
+                token=server.browser_session_token, csrf=server.browser_csrf_token)
+            print(json.dumps({'path': path.split('?')[0], 'seconds': round(time.monotonic()-began, 3),
+                'status': status, 'ok': answer.get('ok'), 'delivery': answer.get('delivery'),
+                'error': answer.get('error')}), flush=True)
+            assert status == 200, answer
+            return answer
+        server.start()
+        canvas = request('/api/universal/canvas')
+        scope = canvas['scope']['current']
+        transcript_path = '/api/universal/workshop-transcript?' + urlencode({'node':'graph:'+scope,'scope':scope})
+        conversation_root = agent_graph_conversation_root(server.universal_registry, scope)
+        print(json.dumps({'scope':scope,'conversation_root':conversation_root,
+            'content_path':str(persistence.application_content_path(selected))}), flush=True)
+        faulthandler.dump_traceback_later(15, repeat=True)
+        # The RED run acknowledged these writes before its transcript timed out.
+        initial = request(transcript_path)
+        texts = ('MAINFIX large saved message one', 'MAINFIX large saved message two')
+        if '--expect-red-writes' in sys.argv:
+            for text in texts:
+                assert any(row['text'] == text for row in initial['rows'])
+        run_id = str(time.time_ns())
+        for index, text in enumerate(texts):
+            answer = request('/api/universal/agent', {'prompt':text,'model':'court/free','graph':True,
+                'graph_id':scope,'request_id':'mainfix-r2-large-'+run_id+'-'+str(index)})
+            assert answer['delivery']['state'] == 'replied', answer
+        first = request(transcript_path)
+        server.close()
+        server = ApplicationServer(universal_state_path=selected, universal_key_provider=keys,
+            conversation_history_path=persistence.application_content_path(selected),
+            universal_workspace_root=work, legacy_state_directory=root, enable_machine_transport=False,
+            enable_universal_cloud_gateway=False, enable_machine_projection_prewarm=False,
+            enable_brain_cloud_sync=False, live_watch=False).start()
+        reopened = request(transcript_path)
+        assert reopened['conversation_root'] == first['conversation_root'] == conversation_root
+        assert reopened['rows'] == first['rows']
+        for text in texts:
+            assert any(row['text'] == text for row in reopened['rows'])
+        assert calls == ['MAINFIX large saved message one', 'MAINFIX large saved message two']
+        faulthandler.cancel_dump_traceback_later()
+        print('MAINFIX_LARGE conversation_saved=2 reopened=2 provider_replayed=0', flush=True)
+        raise SystemExit(0)
     assert elapsed <= 45, 'Studio exceeds the 45 s first-boot budget'
     if '--boot-only' in sys.argv:
         print(json.dumps({'FRESH_BOOT_PASS': True, 'fresh_fixture_copy': fresh_copy,

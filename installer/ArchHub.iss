@@ -103,6 +103,8 @@ Source: "..\nodelang\backup_retention.py"; Flags: dontcopy
 Source: "..\nodelang\assistant_registration.py"; Flags: dontcopy
 Source: "..\nodelang\client_mcp_installation.py"; Flags: dontcopy
 Source: "..\nodelang\native_workshop_profile.py"; Flags: dontcopy
+Source: "..\nodelang\session_link_config.py"; Flags: dontcopy
+Source: "..\nodelang\cell_secret_keys.py"; Flags: dontcopy
 Source: "..\nodelang\conversation_trace_shapes.py"; Flags: dontcopy
 Source: "{#NodeRuntimePath}"; DestDir: "{app}\runtime"; DestName: "node.exe"; Flags: ignoreversion; Check: NodeRuntimeNeedsInstall
 Source: "{#NodeLicensePath}"; DestDir: "{app}\runtime"; DestName: "Node-LICENSE.txt"; Flags: ignoreversion
@@ -610,9 +612,13 @@ begin
     ExtractTemporaryFile('assistant_registration.py');
     ExtractTemporaryFile('client_mcp_installation.py');
     ExtractTemporaryFile('native_workshop_profile.py');
+    ExtractTemporaryFile('session_link_config.py');
+    ExtractTemporaryFile('cell_secret_keys.py');
     FileCopy(ExpandConstant('{tmp}\assistant_registration.py'), ConnectorTemp + '\nodelang\assistant_registration.py', False);
     FileCopy(ExpandConstant('{tmp}\client_mcp_installation.py'), ConnectorTemp + '\nodelang\client_mcp_installation.py', False);
     FileCopy(ExpandConstant('{tmp}\native_workshop_profile.py'), ConnectorTemp + '\nodelang\native_workshop_profile.py', False);
+    FileCopy(ExpandConstant('{tmp}\session_link_config.py'), ConnectorTemp + '\nodelang\session_link_config.py', False);
+    FileCopy(ExpandConstant('{tmp}\cell_secret_keys.py'), ConnectorTemp + '\nodelang\cell_secret_keys.py', False);
     BackupProgress := CreateOutputMarqueeProgressPage('Checking assistant connections',
       'Checking existing entries before replacing application files');
     ConnectorWarnings := '';

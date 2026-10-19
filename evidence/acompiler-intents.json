@@ -3522,7 +3522,10 @@
         "nodelang/conversation_trace_receipts.py",
         "tests_replica/test_adopt_owned_receipts.py",
         "nodelang/universal_cell.py",
-        "tests_replica/test_adopt_archive.py"
+        "tests_replica/test_adopt_archive.py",
+        "nodelang/work_proposals.py",
+        "tests_replica/test_mainrel_installer.py",
+        "tests_js/studio_workshop72_node_lazy.test.cjs"
       ]
     }
   }

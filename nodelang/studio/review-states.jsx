@@ -84,18 +84,18 @@
       marginTop: 10
     }}><summary>Sources</summary>{rows.length === 0 && <p className="muted">This message has no attributed sources.</p>}{rows.map((r, i) => <div className="row" key={i} style={{
         opacity: r.status === 'Excluded' ? .45 : 1
-      }}><small>{api.contextLabel(r.sourceId)} · {r.status}</small><input aria-label={'Correct source ' + message.id} value={r.excerpt} onChange={e => executeAction("correctAnswerSource", u, message.id, i, {
+      }}><small>{api.contextLabel(r.sourceId)} · {r.status}</small>{api.supportsAction?.('correctAnswerSource') !== false && <input aria-label={'Correct source ' + message.id} value={r.excerpt} onChange={e => executeAction("correctAnswerSource", u, message.id, i, {
           excerpt: e.target.value,
           status: 'Corrected'
-        })} /><Btn sm onClick={() => executeAction("correctAnswerSource", u, message.id, i, {
+        })} />}{api.supportsAction?.('correctAnswerSource') !== false && <Btn sm onClick={() => executeAction("correctAnswerSource", u, message.id, i, {
           status: r.status === 'Excluded' ? 'Included' : 'Excluded'
-        })}>{r.status === 'Excluded' ? 'Restore source' : 'Exclude source'}</Btn></div>)}</details>;
+        })}>{r.status === 'Excluded' ? 'Restore source' : 'Exclude source'}</Btn>}</div>)}</details>;
   }
   function TranscriptProvenance({
     turn
   }) {
     const u = useApp();
-    return <details><summary className="muted">whisper.cpp + provider pass · {turn.acceptedPass || 'compare'}</summary><p>whisper.cpp: {turn.primary || turn.text}</p><p>Provider pass: {turn.secondary || 'No provider transcript has been received'}</p><div className="flex"><Btn sm onClick={() => executeAction("setTranscriptPass", u, turn.id, 'primary')}>Use whisper.cpp</Btn><Btn sm onClick={() => executeAction("setTranscriptPass", u, turn.id, 'secondary')}>Use provider pass</Btn></div></details>;
+    return <details><summary className="muted">whisper.cpp + provider pass · {turn.acceptedPass || 'compare'}</summary><p>whisper.cpp: {turn.primary || turn.text}</p><p>Provider pass: {turn.secondary || 'No provider transcript has been received'}</p><div className="flex">{api.supportsAction?.('setTranscriptPass') !== false && <Btn sm onClick={() => executeAction("setTranscriptPass", u, turn.id, 'primary')}>Use whisper.cpp</Btn>}{api.supportsAction?.('setTranscriptPass') !== false && <Btn sm onClick={() => executeAction("setTranscriptPass", u, turn.id, 'secondary')}>Use provider pass</Btn>}</div></details>;
   }
   function ApprovalRubric({
     id
@@ -105,7 +105,7 @@
       c = s.approvals.find(c => c.id === id);
     return <details style={{
       padding: 16
-    }}><summary>Review checklist &amp; evidence</summary>{['Target and revision match', 'Changes fit the requested scope', 'Evidence supports the result'].map(label => <label key={label} className="row spread"><span>{label}</span><D.Toggle label={label} checked={!!c?.rubric?.[label]} onCheckedChange={v => executeAction("setApprovalRubric", u, id, label, v)} /></label>)}<small className="muted">The checklist records your review; the Approve card remains your decision.</small></details>;
+    }}><summary>Review checklist &amp; evidence</summary>{['Target and revision match', 'Changes fit the requested scope', 'Evidence supports the result'].map(label => <label key={label} className="row spread"><span>{label}</span>{api.supportsAction?.('setApprovalRubric') !== false && <D.Toggle label={label} checked={!!c?.rubric?.[label]} onCheckedChange={v => executeAction("setApprovalRubric", u, id, label, v)} />}</label>)}<small className="muted">The checklist records your review; the Approve card remains your decision.</small></details>;
   }
   function ResearchReview({
     id
@@ -121,20 +121,20 @@
         padding: 16
       }}><h3>Provenance</h3>{n.provenance ? <Table rows={[n.provenance]} /> : <p className="muted">Create a content hash for this output.</p>}<Btn sm onClick={() => executeAction("verifyOutputStamp", u, id)}>Verify content hash</Btn><small className="muted">Cryptographic signing requires the identity service.</small></Card>}{kind === 'Select target' && <Card style={{
         padding: 16
-      }}><Chip c={n.params.matchCount === 1 ? A.ok : A.warn}>{n.status}</Chip><p>Expected {n.params.expected} · found {n.params.matchCount}</p>{(n.output || []).map(r => <Btn key={r.element} sm onClick={() => {
+      }}><Chip c={n.params.matchCount === 1 ? A.ok : A.warn}>{n.status}</Chip><p>Expected {n.params.expected} · found {n.params.matchCount}</p>{(n.output || []).map(r => (api.supportsAction?.('setResearchReview') !== false && <Btn key={r.element} sm onClick={() => {
           executeAction("setNodeParam", u, id, 'selector', r.element);
           executeAction("setNodeParam", u, id, 'matchCount', 1);
           executeAction("setResearchReview", u, id, {
             selected: r.element
           });
-        }}>Choose {r.element}</Btn>)}<Btn sm onClick={() => {
+        }}>Choose {r.element}</Btn>))}<Btn sm onClick={() => {
           executeAction("ui.close", u);
           executeAction("ui.go", u, 'canvas');
         }}>Correct selector</Btn></Card>}{/Recall-settings/.test(kind) && <Card style={{
         padding: 16
-      }}><h3>Last successful preset</h3><Table rows={n.successfulPresets || []} /><Btn p onClick={() => executeAction("setResearchReview", u, id, {
+      }}><h3>Last successful preset</h3><Table rows={n.successfulPresets || []} />{api.supportsAction?.('setResearchReview') !== false && <Btn p onClick={() => executeAction("setResearchReview", u, id, {
           usePreset: true
-        })}>Use &amp; prefill</Btn></Card>}{/Procedural test-scene/.test(kind) && <Card style={{
+        })}>Use &amp; prefill</Btn>}</Card>}{/Procedural test-scene/.test(kind) && <Card style={{
         padding: 16
       }}><h3>Condition matrix</h3><Table rows={Array.isArray(n.output) ? n.output : []} /></Card>}{kind === 'OSM to 3D' && <svg aria-label="OSM site context preview" viewBox="0 0 400 160" style={{
         background: '#141419',

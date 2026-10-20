@@ -201,7 +201,7 @@
       u = useApp();
     return <Card style={{
       padding: 20
-    }}><div className="spread"><h2>Program skills</h2><Btn sm title="Import skill" aria-label="Import skill" onClick={() => executeAction("ui.show", u, 'Import skill')}><Icon name="plus" size={16} /></Btn></div>{s.hostSkills.map(skill => <div className="row" key={skill.id}><div className="spread"><div><h3>{skill.name}</h3><p className="muted">{skill.host} · {skill.format}</p></div><div className="flex"><D.Toggle label={'Enable skill ' + skill.name} checked={skill.enabled} onCheckedChange={v => executeAction("setHostSkillEnabled", u, skill.id, v)} /><Btn sm title={'Open skill ' + skill.name} aria-label={'Open skill ' + skill.name} onClick={() => executeAction("ui.show", u, 'Host skill', {
+    }}><div className="spread"><h2>Program skills</h2>{api.supportsAction?.('importHostSkill') !== false && <Btn sm title="Import skill" aria-label="Import skill" onClick={() => executeAction("ui.show", u, 'Import skill')}><Icon name="plus" size={16} /></Btn>}</div>{s.hostSkills.map(skill => <div className="row" key={skill.id}><div className="spread"><div><h3>{skill.name}</h3><p className="muted">{skill.host} · {skill.format}</p></div><div className="flex">{api.supportsAction?.('setHostSkillEnabled') !== false && <D.Toggle label={'Enable skill ' + skill.name} checked={skill.enabled} onCheckedChange={v => executeAction("setHostSkillEnabled", u, skill.id, v)} />}<Btn sm title={'Open skill ' + skill.name} aria-label={'Open skill ' + skill.name} onClick={() => executeAction("ui.show", u, 'Host skill', {
               id: skill.id
             })}><Icon name="arrow" size={16} /></Btn></div></div><p className="muted" style={{
           fontSize: 11,
@@ -214,7 +214,7 @@
     const s = useData(),
       u = useApp(),
       skill = s.hostSkills.find(r => r.id === id);
-    return skill ? <div className="grid"><h2>{skill.name}</h2><p>{skill.description}</p><div className="row spread"><span>Program</span><b>{skill.host}</b></div><div className="row spread"><span>Network access</span><Chip c={skill.network ? A.warn : A.ok}>{skill.network ? 'Requested' : 'None'}</Chip></div><h3>Included scripts</h3>{skill.scripts.length ? skill.scripts.map(script => <p className="mono" key={script}>{script}</p>) : <p className="muted">No scripts</p>}<Chip>{skill.audit}</Chip><div className="flex"><Btn p onClick={() => executeAction("auditHostSkill", u, id)}>Review access</Btn><Btn sm onClick={async () => {
+    return skill ? <div className="grid"><h2>{skill.name}</h2><p>{skill.description}</p><div className="row spread"><span>Program</span><b>{skill.host}</b></div><div className="row spread"><span>Network access</span><Chip c={skill.network ? A.warn : A.ok}>{skill.network ? 'Requested' : 'None'}</Chip></div><h3>Included scripts</h3>{skill.scripts.length ? skill.scripts.map(script => <p className="mono" key={script}>{script}</p>) : <p className="muted">No scripts</p>}<Chip>{skill.audit}</Chip><div className="flex">{api.supportsAction?.('auditHostSkill') !== false && <Btn p onClick={() => executeAction("auditHostSkill", u, id)}>Review access</Btn>}<Btn sm onClick={async () => {
           const node = await executeAction("addNode", u, skill.name);
           if (node) executeAction("ui.go", u, 'canvas');
         }}>Open as node</Btn></div></div> : null;
@@ -230,7 +230,7 @@
           const n = await executeAction("addNode", u, action === 'Read' ? 'Read from host' : 'Write to host');
           if (n) await executeAction("setNodeParam", u, n.id, 'host', c.name);
           executeAction("ui.go", u, 'canvas');
-        }}>{action} node</Btn>)}</div><Btn sm onClick={() => executeAction("ui.show", u, 'Connector bundle')}>Install connector bundle</Btn></div> : null;
+        }}>{action} node</Btn>)}</div>{api.supportsAction?.('inspectConnectorBundle') !== false && <Btn sm onClick={() => executeAction("ui.show", u, 'Connector bundle')}>Install connector bundle</Btn>}</div> : null;
   }
   function BrainControls() {
     const s = useData(),
@@ -256,11 +256,11 @@
       u = useApp(),
       input = React.useRef(),
       bundle = s.connectorBundle;
-    return <div className="grid"><p className="muted">Review the bundle’s declared tools and configuration before enabling it.</p><input ref={input} className="sr-only" type="file" accept=".mcpb,.json" aria-label="Choose connector bundle" onChange={async e => {
+    return <div className="grid"><p className="muted">Review the bundle’s declared tools and configuration before enabling it.</p>{api.supportsAction?.('inspectConnectorBundle') !== false && <input ref={input} className="sr-only" type="file" accept=".mcpb,.json" aria-label="Choose connector bundle" onChange={async e => {
         const f = e.target.files?.[0];
         if (f) await executeAction("inspectConnectorBundle", u, f);
         e.target.value = '';
-      }} /><Btn p onClick={() => executeAction("ui.chooseBundle", input)}>Choose bundle</Btn>{bundle && <><h2>{bundle.name}</h2><p>{bundle.description}</p><Chip c={bundle.error ? A.warn : A.ok}>{bundle.status}</Chip>{bundle.error && <p>{bundle.error}</p>}<h3>Tools</h3>{bundle.tools.map((t, i) => <p key={i}>{typeof t === 'string' ? t : t.name}</p>)}<h3>Configuration</h3>{bundle.config.map(r => <label className="parameter-row" key={r.key}><span>{r.label}</span>{r.sensitive ? <Chip>Protected by your account</Chip> : r.type === 'boolean' ? <D.Toggle label={r.label} checked={!!r.value} onCheckedChange={v => executeAction("configureConnectorBundle", u, r.key, v)} /> : <input aria-label={r.label} type={r.type === 'number' ? 'number' : 'text'} value={r.value} onChange={e => executeAction("configureConnectorBundle", u, r.key, r.type === 'number' ? Number(e.target.value) : e.target.value)} />}</label>)}<Btn disabled={!!bundle.error || bundle.status === 'Installed'} p onClick={() => executeAction("installConnectorBundle", u)}>{bundle.status === 'Installed' ? 'Installed' : 'Install reviewed bundle'}</Btn></>}</div>;
+      }} />}{api.supportsAction?.('inspectConnectorBundle') !== false && <Btn p onClick={() => executeAction("ui.chooseBundle", input)}>Choose bundle</Btn>}{bundle && <><h2>{bundle.name}</h2><p>{bundle.description}</p><Chip c={bundle.error ? A.warn : A.ok}>{bundle.status}</Chip>{bundle.error && <p>{bundle.error}</p>}<h3>Tools</h3>{bundle.tools.map((t, i) => <p key={i}>{typeof t === 'string' ? t : t.name}</p>)}<h3>Configuration</h3>{bundle.config.map(r => <label className="parameter-row" key={r.key}><span>{r.label}</span>{r.sensitive ? <Chip>Protected by your account</Chip> : r.type === 'boolean' ? (api.supportsAction?.('configureConnectorBundle') !== false && <D.Toggle label={r.label} checked={!!r.value} onCheckedChange={v => executeAction("configureConnectorBundle", u, r.key, v)} />) : (api.supportsAction?.('configureConnectorBundle') !== false && <input aria-label={r.label} type={r.type === 'number' ? 'number' : 'text'} value={r.value} onChange={e => executeAction("configureConnectorBundle", u, r.key, r.type === 'number' ? Number(e.target.value) : e.target.value)} />)}</label>)}{api.supportsAction?.('installConnectorBundle') !== false && <Btn disabled={!!bundle.error || bundle.status === 'Installed'} p onClick={() => executeAction("installConnectorBundle", u)}>{bundle.status === 'Installed' ? 'Installed' : 'Install reviewed bundle'}</Btn>}</>}</div>;
   }
   Object.assign(window.UI, {
     AgentChannel,

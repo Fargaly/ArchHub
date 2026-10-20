@@ -15,6 +15,7 @@
     Table
   } = window.UI;
   const routeNames = window.ArchHubRouteNames;
+  const modalActions = {'Talk':'startVoiceInput','Timesheet':'settleTimesheet','Import skill':'importHostSkill','Contest decision':'contestDecision','Add comment':'addComment','Change plan':'changePlan','Connector bundle':'inspectConnectorBundle','Notifications':'readNotification'};
   function App() {
     const s = useData();
     const [route, setRoute] = React.useState('home'),
@@ -110,6 +111,7 @@
       setModal(null);
     };
     const show = (kind, data = {}) => {
+      if (modalActions[kind] && !api.supportsAction(modalActions[kind])) return;
       priorFocus.current = document.activeElement;
       setModal({
         kind,
@@ -125,7 +127,7 @@
       try {
         const result = await fn();
         if (result?.ok === false) {
-          setToast(result.message || result.error || "Not connected yet");
+          setToast(result.message || result.error || 'Could not complete that action. Retry.');
           return null;
         }
         if (result?.uiCommand === 'voice') voice(text => api.setNodeParam(result.nodeId, 'transcript', text));else if (result?.uiCommand === 'desktop') await api.windowAction('hide');else if (result?.uiCommand === 'access') go('access');else if (result?.uiCommand === 'meetings') go('meetings');else if (result?.uiCommand === 'speak') {
@@ -227,13 +229,13 @@
           e.preventDefault();
           act(api.stopEverything);
         }
-        if (e.key === 'F2') {
+        if (e.key === 'F2' && api.supportsAction('startVoiceInput')) {
           e.preventDefault();
           voice(text => show('Voice command', {
             text
           }));
         }
-        if (e.code === 'Space' && !e.repeat && !e.target.matches('input,textarea,select,button')) {
+        if (e.code === 'Space' && api.supportsAction('startVoiceInput') && !e.repeat && !e.target.matches('input,textarea,select,button')) {
           e.preventDefault();
           const duration = timing('voice_hold_ms');
           if (duration === null) { setToast('Reload System graph settings, then retry voice input.'); return; }
@@ -474,6 +476,7 @@
       if (result) close();
     };
     const k = m.kind;
+    if (modalActions[k] && !api.supportsAction(modalActions[k])) return null;
     let body;
     if (k === 'Compatible nodes') body = <><input aria-label="Search compatible nodes" placeholder="Find a compatible node…" value={query} onChange={e => setQuery(e.target.value)} /><div className="grid">{api.compatibleNodes(m.endpoint).filter(c => c.name.toLowerCase().includes(query.toLowerCase())).map(c => <button className="listbutton spread" key={c.id} onClick={event => executeAction("appShell.Control.18", {
           api,
@@ -481,23 +484,23 @@
           close,
           m,
           u
-        }, event)}><span>{c.name}</span><span className="muted">{c.input} → {c.output}</span></button>)}</div></>;else if (k === 'Capability') body = <><h2>{s.capabilities.find(c => c.id === m.id)?.name}</h2><window.UI.CapabilitySettings id={m.id} /></>;else if (k === 'Action evidence') body = <window.UI.ActionEvidence id={m.id} />;else if (k === 'Node') body = <window.UI.NodeDetails id={m.id} />;else if (k === 'Timesheet') body = <><Table rows={s.timesheet.rows} /><Chip>{s.timesheet.status}</Chip><div className="flex"><Btn p onClick={event => executeAction("appShell.AcceptDraft.19", {
+        }, event)}><span>{c.name}</span><span className="muted">{c.input} → {c.output}</span></button>)}</div></>;else if (k === 'Capability') body = <><h2>{s.capabilities.find(c => c.id === m.id)?.name}</h2><window.UI.CapabilitySettings id={m.id} /></>;else if (k === 'Action evidence') body = <window.UI.ActionEvidence id={m.id} />;else if (k === 'Node') body = <window.UI.NodeDetails id={m.id} />;else if (k === 'Timesheet') body = <><Table rows={s.timesheet.rows} /><Chip>{s.timesheet.status}</Chip><div className="flex">{api.supportsAction?.('settleTimesheet') !== false && <Btn p onClick={event => executeAction("appShell.AcceptDraft.19", {
           api,
           u
-        }, event)}>Accept draft</Btn><Btn onClick={event => executeAction("appShell.Dismiss.20", {
+        }, event)}>Accept draft</Btn>}{api.supportsAction?.('settleTimesheet') !== false && <Btn onClick={event => executeAction("appShell.Dismiss.20", {
           api,
           u
-        }, event)}>Dismiss</Btn></div></>;else if (k === 'Contest decision') body = <><h2>{m.title}</h2><textarea aria-label="Contest reason" value={text} onChange={e => setText(e.target.value)} /><Btn p disabled={!text.trim()} onClick={event => executeAction("appShell.RequestReview.21", {
+        }, event)}>Dismiss</Btn>}</div></>;else if (k === 'Contest decision') body = <><h2>{m.title}</h2><textarea aria-label="Contest reason" value={text} onChange={e => setText(e.target.value)} />{api.supportsAction?.('contestDecision') !== false && <Btn p disabled={!text.trim()} onClick={event => executeAction("appShell.RequestReview.21", {
         api,
         m,
         saved,
         text
-      }, event)}>Request review</Btn></>;else if (k === 'Connector bundle') body = <window.UI.ConnectorBundle />;else if (k === 'Host skill') body = <window.UI.HostSkill id={m.id} />;else if (k === 'Correct source') body = <><input aria-label="Source reference" value={text} onChange={e => setText(e.target.value)} /><Btn p onClick={event => executeAction("appShell.Save.22", {
+      }, event)}>Request review</Btn>}</>;else if (k === 'Connector bundle') body = <window.UI.ConnectorBundle />;else if (k === 'Host skill') body = <window.UI.HostSkill id={m.id} />;else if (k === 'Correct source') body = <><input aria-label="Source reference" value={text} onChange={e => setText(e.target.value)} /><Btn p onClick={event => executeAction("appShell.Save.22", {
         api,
         m,
         saved,
         text
-      }, event)}>Save</Btn></>;else if (k === 'Import skill') body = <><p className="muted">Choose the program and the skill instructions. Review scripts and network access before enabling.</p><select aria-label="Skill program" value={mode === 'All' ? 'Revit' : mode} onChange={e => setMode(e.target.value)}>{s.connections.map(c => <option key={c.id}>{c.name}</option>)}</select><input type="file" aria-label="Choose SKILL.md" accept=".md" onChange={async e => {
+      }, event)}>Save</Btn></>;else if (k === 'Import skill') body = <><p className="muted">Choose the program and the skill instructions. Review scripts and network access before enabling.</p><select aria-label="Skill program" value={mode === 'All' ? 'Revit' : mode} onChange={e => setMode(e.target.value)}>{s.connections.map(c => <option key={c.id}>{c.name}</option>)}</select>{api.supportsAction?.('importHostSkill') !== false && <input type="file" aria-label="Choose SKILL.md" accept=".md" onChange={async e => {
         const f = e.target.files?.[0];
         if (f) {
           const body = await f.text();
@@ -510,7 +513,7 @@
             id: skill.id
           });
         }
-      }} /></>;else if (k === 'Rename graph') body = <><input aria-label="Graph name" value={text} onChange={e => setText(e.target.value)} /><Btn p disabled={!text.trim()} onClick={event => executeAction("appShell.Save.23", {
+      }} />}</>;else if (k === 'Rename graph') body = <><input aria-label="Graph name" value={text} onChange={e => setText(e.target.value)} /><Btn p disabled={!text.trim()} onClick={event => executeAction("appShell.Save.23", {
         api,
         m,
         saved,
@@ -596,11 +599,11 @@
         s,
         saved,
         text
-      }, event)}>Save</Btn></>;else if (k === 'My secrets') body = <><p className="muted">Your connected accounts are protected. No secret values are shown or copied.</p>{s.secrets.map(x => <div className="spread row" key={x.id}><div><h3>{x.name}</h3><p className="muted">{x.status}</p></div><Btn sm onClick={event => executeAction("appShell.Disconnect.37", {
+      }, event)}>Save</Btn></>;else if (k === 'My secrets') body = <><p className="muted">Your connected accounts are protected. No secret values are shown or copied.</p>{s.secrets.map(x => <div className="spread row" key={x.id}><div><h3>{x.name}</h3><p className="muted">{x.status}</p></div>{api.supportsAction?.('disconnectSecret') !== false && <Btn sm onClick={event => executeAction("appShell.Disconnect.37", {
           api,
           u,
           x
-        }, event)}>Disconnect</Btn></div>)}<Btn onClick={event => executeAction("appShell.ConnectAnAccount.38", {
+        }, event)}>Disconnect</Btn>}</div>)}<Btn onClick={event => executeAction("appShell.ConnectAnAccount.38", {
         u
       }, event)}>Connect an account</Btn></>;else if (k === 'My files') body = <><Btn onClick={event => executeAction("appShell.AddFile.39", {
         u
@@ -647,11 +650,11 @@
         }}><window.UI.Task task={t} select={() => {
             u.setTask(t.id);
             u.go('workshop');
-          }} /></Card>)}</div>)}</div>;else if (k === 'Notifications' || k === 'Founder inbox') body = <div className="grid">{s.notifications.map(n => <button className="listbutton" key={n.id} onClick={event => executeAction("appShell.Control.49", {
+          }} /></Card>)}</div>)}</div>;else if (k === 'Notifications' || k === 'Founder inbox') body = <div className="grid">{s.notifications.map(n => (api.supportsAction?.('readNotification') !== false && <button className="listbutton" key={n.id} onClick={event => executeAction("appShell.Control.49", {
         api,
         n,
         u
-      }, event)}>{n.read ? '✓' : '●'} {n.text}</button>)}{s.approvals.filter(c => ['pending', 'postponed', 'stale', 'refused'].includes(c.status)).map(c => <Btn key={c.id} onClick={event => executeAction("appShell.Review.50", {
+      }, event)}>{n.read ? '✓' : '●'} {n.text}</button>))}{s.approvals.filter(c => ['pending', 'postponed', 'stale', 'refused'].includes(c.status)).map(c => <Btn key={c.id} onClick={event => executeAction("appShell.Review.50", {
         c,
         u
       }, event)}>Review · {c.title}</Btn>)}</div>;else if (k === 'Schedule') body = <><label className="grid">Every day at<input aria-label="Schedule time" type="time" value={text || '08:00'} onChange={e => setText(e.target.value)} /></label><Btn p onClick={event => executeAction("appShell.AddSchedule.51", {
@@ -754,27 +757,27 @@
         m,
         saved,
         text
-      }, event)}>Save</Btn></>;else if (k === 'Add comment') body = <><textarea aria-label="Comment text" rows={3} placeholder="Your comment…" value={text} onChange={e => setText(e.target.value)} /><Btn p disabled={!text.trim()} onClick={event => executeAction("appShell.AddComment.77", {
+      }, event)}>Save</Btn></>;else if (k === 'Add comment') body = <><textarea aria-label="Comment text" rows={3} placeholder="Your comment…" value={text} onChange={e => setText(e.target.value)} />{api.supportsAction?.('addComment') !== false && <Btn p disabled={!text.trim()} onClick={event => executeAction("appShell.AddComment.77", {
         api,
         m,
         saved,
         text
-      }, event)}>Add comment</Btn></>;else if (k === 'Comment') body = <p>{m.text}</p>;else if (k === 'Invite') body = <><label className="grid">Email<input type="email" aria-label="Teammate email" value={text} placeholder="colleague@office.com" onChange={e => setText(e.target.value)} /></label><Btn p disabled={!text.includes('@')} onClick={event => executeAction("appShell.Invite.78", {
+      }, event)}>Add comment</Btn>}</>;else if (k === 'Comment') body = <p>{m.text}</p>;else if (k === 'Invite') body = <><label className="grid">Email<input type="email" aria-label="Teammate email" value={text} placeholder="colleague@office.com" onChange={e => setText(e.target.value)} /></label><Btn p disabled={!text.includes('@')} onClick={event => executeAction("appShell.Invite.78", {
         api,
         saved,
         text
-      }, event)}>Invite</Btn></>;else if (k === 'Change plan') body = <><select aria-label="Plan" value={text || 'Office'} onChange={e => setText(e.target.value)}><option>Office</option><option>Team</option><option>Personal</option></select><Btn p onClick={event => executeAction("appShell.Apply.79", {
+      }, event)}>Invite</Btn></>;else if (k === 'Change plan') body = <><select aria-label="Plan" value={text || 'Office'} onChange={e => setText(e.target.value)}><option>Office</option><option>Team</option><option>Personal</option></select>{api.supportsAction?.('changePlan') !== false && <Btn p onClick={event => executeAction("appShell.Apply.79", {
         api,
         m,
         saved,
         text
-      }, event)}>Apply</Btn></>;else if (k === 'Save skill') body = <><input aria-label="Skill name" placeholder="Name this skill" value={text} onChange={e => setText(e.target.value)} /><Btn p disabled={!text.trim()} onClick={event => executeAction("appShell.SaveSkill.80", {
+      }, event)}>Apply</Btn>}</>;else if (k === 'Save skill') body = <><input aria-label="Skill name" placeholder="Name this skill" value={text} onChange={e => setText(e.target.value)} /><Btn p disabled={!text.trim()} onClick={event => executeAction("appShell.SaveSkill.80", {
         api,
         saved,
         text
       }, event)}>Save skill</Btn></>;else if (k === 'Agent') {
       const p = s.providers.find(p => p.id === m.id);
-      body = p ? <div className="grid"><window.UI.Providers /><window.UI.AgentProfile id={p.id} /><label className="grid">Model<select aria-label="Provider model" value={p.model} onChange={e => u.act(() => api.setProviderModel(p.id, e.target.value))}>{[...new Set([p.model, 'Best free model', 'Claude · your plan', 'Codex · your plan'])].map(x => <option key={x}>{x}</option>)}</select></label><Btn onClick={event => executeAction("appShell.AgentSettings.81", {
+      body = p ? <div className="grid"><window.UI.Providers /><window.UI.AgentProfile id={p.id} /><label className="grid">Model{api.supportsAction?.('setProviderModel') !== false && <select aria-label="Provider model" value={p.model} onChange={e => u.act(() => api.setProviderModel(p.id, e.target.value))}>{[...new Set([p.model, 'Best free model', 'Claude · your plan', 'Codex · your plan'])].map(x => <option key={x}>{x}</option>)}</select>}</label><Btn onClick={event => executeAction("appShell.AgentSettings.81", {
           u
         }, event)}>Agent settings</Btn></div> : <Empty>No agent selected.</Empty>;
     } else if (k === 'Teammate') {
@@ -811,12 +814,12 @@
         onStatus: setListening,
         onError: setVoiceError
       });
-      body = <><p>Speak one sentence. Review it before sending.</p><Btn onClick={event => executeAction("appShell.Control.88", {
+      body = <><p>Speak one sentence. Review it before sending.</p>{api.supportsAction?.('stopVoiceInput') !== false && <Btn onClick={event => executeAction("appShell.Control.88", {
           api,
           listening,
           setListening,
           talk
-        }, event)}>{listening ? 'Stop listening' : '🎙 Start talking'}</Btn>{voiceError && <p role="status" className="muted">{voiceError}</p>}<textarea aria-label="Spoken sentence" rows={3} value={text} onChange={e => setText(e.target.value)} /><div className="flex"><Btn p disabled={!text.trim()} onClick={event => executeAction("appShell.UseSentence.89", {
+        }, event)}>{listening ? 'Stop listening' : '🎙 Start talking'}</Btn>}{voiceError && <p role="status" className="muted">{voiceError}</p>}<textarea aria-label="Spoken sentence" rows={3} value={text} onChange={e => setText(e.target.value)} /><div className="flex"><Btn p disabled={!text.trim()} onClick={event => executeAction("appShell.UseSentence.89", {
             close,
             m,
             text
@@ -847,7 +850,7 @@
         m,
         text,
         u
-      }, event)}>Review change</Btn></>;else if (k === 'Tool check') body = <><p>Check each managed tool from its Settings row.</p><div className="grid">{s.settings.filter(r => r.page === 'Dependencies').map(r => <window.UI.SettingControl key={r.id} row={r} />)}</div></>;else if (k === 'Meeting notes') body = <><h2>{s.meeting.title || "Not connected yet"}</h2><p>{s.meeting.actions.join(" · ") || "No meeting notes available."}</p><Btn onClick={event => executeAction("appShell.OpenTeam.95", {
+      }, event)}>Review change</Btn></>;else if (k === 'Tool check') body = <><p>Check each managed tool from its Settings row.</p><div className="grid">{s.settings.filter(r => r.page === 'Dependencies').map(r => <window.UI.SettingControl key={r.id} row={r} />)}</div></>;else if (k === 'Meeting notes') body = <><h2>{s.meeting.title || "Meeting notes"}</h2><p>{s.meeting.actions.join(" · ") || "No meeting notes available."}</p><Btn onClick={event => executeAction("appShell.OpenTeam.95", {
         u
       }, event)}>Open team</Btn></>;else if (k === 'What’s new') body = <><p>One companion, one Workshop, editable nodes and settings, and a clear review before a change.</p><Btn onClick={event => executeAction("appShell.UpdatesAbout.96", {
         u

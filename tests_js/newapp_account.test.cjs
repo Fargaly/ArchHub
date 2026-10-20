@@ -28,6 +28,60 @@ async function adapter(account, responses={}){
  return {api:window.ArchHubAPI,requests,window};
 }
 
+test('unfinished controls use actual adapter availability without invoking an action',async()=>{
+ const {api,requests}=await adapter({signed_in:false});const count=requests.length;
+ assert.equal(api.supportsAction('startVoiceInput'),false);
+ assert.equal(api.supportsAction('signInProvider'),false);
+ assert.equal(api.supportsAction('reviewProofRow'),false);
+ assert.equal(api.supportsAction('signIn'),true);
+ assert.equal(api.supportsAction('setProviderEnabled'),true);
+ assert.equal(api.supportsAction('missing-action'),false);
+ assert.equal(api.supportsAction('archiveActivity'),true);
+ assert.equal(api.supportsAction('decline'),false);
+ assert.equal(api.supportsAction('approve','session'),false);
+ for(const name of ['runValuation','setApprovalRubric','correctAnswerSource','setResearchReview','stampOutput','runSpecialNode','setTranscriptPass','startVoiceInput','stopVoiceInput','speak','setDesktopProgram','offerDesktopAction','prepareDesktopAction','settleTimesheet','postponeApproval','resumeApproval','contestDecision','setScheduleResponsibility','reviewScheduledWork','runResearchNode','importHostSkill','inspectConnectorBundle','configureConnectorBundle','installConnectorBundle','setHostSkillEnabled','auditHostSkill','refreshApproval','addDimension','setCompanionState','ensureDependency','reviewProofRow','exposeSettingsPage','setWatcherView','signInProvider','setProviderModel','editWall','addMark','addComment','proposeWatcherEdit','discardWatcherChanges','setWatcherHost','disconnectSecret','changePlan','readNotification'])assert.equal(api.supportsAction(name),false,name);
+ assert.equal(requests.length,count);
+});
+
+test('unfinished controls and modal launchers are omitted from the rendered design',async()=>{
+ const {api}=await adapter({signed_in:false},{'/api/universal/providers':{providers:[{id:'codex',name:'Codex',enabled:true,signedIn:true}]}});
+ await api.listProviders();
+ const {JSDOM}=require('jsdom');
+ const dom=new JSDOM('<div id="root"></div>',{runScripts:'outside-only',pretendToBeVisual:true});
+ const w=dom.window,studio=path.join(__dirname,'../nodelang/studio');
+ const snapshot={...api.getSnapshot(),approvals:[{id:'review',title:'Review',status:'pending',kind:'model',rows:[]}],connections:[{id:'youtube',name:'YouTube',connected:true}],hostSkills:[]};
+ w.ArchHubAPI={...api,getSnapshot:()=>snapshot};w.matchMedia=()=>({matches:false});
+ for(const name of ['vendor/react.js','vendor/react-dom.js','vendor/babel.js'])w.eval(fs.readFileSync(path.join(studio,name),'utf8'));
+ for(const name of ['tokens.jsx','ds/index.jsx','icons.jsx','ui.jsx','ds_baboom.jsx','ds_settings3.jsx','workflow-states.jsx','agent-states.jsx','answer-widgets.jsx'])w.eval(w.Babel.transform(fs.readFileSync(path.join(studio,name),'utf8'),{presets:['react']}).code);
+ const root=w.ReactDOM.createRoot(w.document.getElementById('root'));
+ const render=(component,props={})=>w.ReactDOM.flushSync(()=>root.render(w.React.createElement(w.UI.Ctx.Provider,{value:{act:fn=>fn()}},w.React.createElement(component,props))));
+ try{
+  render(w.UI.Providers);
+  assert.equal(w.document.querySelector('[aria-label="Codex signed in"]'),null);
+  assert.ok(w.document.querySelector('[aria-label="Codex enabled"]'));
+  render(w.UI.Composer);
+  assert.equal(w.document.querySelector('[title="Talk · F2"]'),null);
+  assert.ok(w.document.querySelector('[aria-label="Send ↵"]'));
+  render(w.UI.ApprovalCard,{id:'review'});
+  assert.doesNotMatch(w.document.body.textContent,/Decline|Postpone|Approve similar/);
+  assert.match(w.document.body.textContent,/Approve once/);
+  render(w.UI.Storage);
+  assert.match(w.document.body.textContent,/Archive old activity/);
+  assert.match(w.document.body.textContent,/Back up now/);
+  render(w.UI.Connections);
+  assert.equal(w.document.querySelector('[aria-label="YouTube read"]'),null);
+  assert.equal(w.document.querySelector('[aria-label="YouTube reply"]'),null);
+  assert.equal(w.document.querySelector('[aria-label="YouTube post"]'),null);
+  assert.ok(w.document.querySelector('[aria-label="Open"]'));
+  render(w.UI.HomeAwareness);
+  assert.doesNotMatch(w.document.body.textContent,/Timesheet draft/);
+  render(w.UI.HostSkills);
+  assert.equal(w.document.querySelector('[aria-label="Import skill"]'),null);
+  render(w.UI.ActionEvidence,{id:'review'});
+  assert.doesNotMatch(w.document.body.textContent,/Request another review/);
+ }finally{root.unmount();dom.window.close();}
+});
+
 test('OPS projects actions call their owner and retain confirmed state on refusal',async()=>{
  const {api,requests}=await adapter({signed_in:false},{'/api/universal/canvas-op':body=>{
   if(body.op==='add_interface_element')return {ok:true,result:{id:'ui-real'}};

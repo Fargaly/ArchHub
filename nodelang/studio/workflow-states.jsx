@@ -67,18 +67,18 @@
       r = s.schedules.find(t => t.id === id);
     return r ? <div className="grid" style={{
       marginTop: 16
-    }}><label className="grid">Operation<select aria-label={'Scheduled operation ' + r.title} value={r.operation || 'Workflow'} onChange={e => executeAction("setScheduleResponsibility", u, id, {
+    }}><label className="grid">Operation{api.supportsAction?.('setScheduleResponsibility') !== false && <select aria-label={'Scheduled operation ' + r.title} value={r.operation || 'Workflow'} onChange={e => executeAction("setScheduleResponsibility", u, id, {
           operation: e.target.value
-        })}>{['Workflow', 'Brain reindex', 'Batch job', 'Requests evidence audit'].map(x => <option key={x}>{x}</option>)}</select></label><label className="grid">Responsibility<input aria-label={'Responsibility ' + r.title} value={r.responsibility || ''} onChange={e => executeAction("setScheduleResponsibility", u, id, {
+        })}>{['Workflow', 'Brain reindex', 'Batch job', 'Requests evidence audit'].map(x => <option key={x}>{x}</option>)}</select>}</label><label className="grid">Responsibility{api.supportsAction?.('setScheduleResponsibility') !== false && <input aria-label={'Responsibility ' + r.title} value={r.responsibility || ''} onChange={e => executeAction("setScheduleResponsibility", u, id, {
           responsibility: e.target.value
-        })} /></label><div className="spread"><span>Self-review after each run</span><D.Toggle label={'Self-review ' + r.title} checked={r.selfReview !== false} onCheckedChange={v => executeAction("setScheduleResponsibility", u, id, {
+        })} />}</label><div className="spread"><span>Self-review after each run</span>{api.supportsAction?.('setScheduleResponsibility') !== false && <D.Toggle label={'Self-review ' + r.title} checked={r.selfReview !== false} onCheckedChange={v => executeAction("setScheduleResponsibility", u, id, {
           selfReview: v
-        })} /></div><Btn sm onClick={async () => {
+        })} />}</div>{api.supportsAction?.('reviewScheduledWork') !== false && <Btn sm onClick={async () => {
         const c = await executeAction("reviewScheduledWork", u, id);
         if (c) executeAction("ui.show", u, 'Approve', {
           id: c.id
         });
-      }}>Review lesson</Btn></div> : null;
+      }}>Review lesson</Btn>}</div> : null;
   }
   function NodeDetails({
     id
@@ -137,7 +137,7 @@
   function HomeAwareness() {
     const s = useData(),
       u = useApp();
-    return <div className="home-awareness"><div className="spread"><span className="eyebrow">Office awareness</span><button className="icon-button" aria-label="Refresh open items" title="Refresh" onClick={() => executeAction("refreshOfficeAwareness", u)}><Icon name="refresh" size={15} /></button></div><div className="awareness-items">{[...s.officeItems].sort((a, b) => (a.when === 'Overdue' ? -1 : 1) - (b.when === 'Overdue' ? -1 : 1) || String(a.when).localeCompare(String(b.when))).map(r => <button key={r.id} onClick={() => {executeAction("ui.setTask",u,r.id);executeAction("ui.go",u,"workshop");}}><span className={'status-dot ' + (r.when === 'Overdue' ? 'attention' : '')} /><span><b>{r.title}</b><small>{r.when} · {r.owner}</small></span></button>)}</div><div className="spread row"><span className="muted">{s.officeUpdated || 'Office context ready'}</span><Btn sm onClick={() => executeAction("ui.show", u, 'Timesheet')}>Timesheet draft</Btn></div></div>;
+    return <div className="home-awareness"><div className="spread"><span className="eyebrow">Office awareness</span><button className="icon-button" aria-label="Refresh open items" title="Refresh" onClick={() => executeAction("refreshOfficeAwareness", u)}><Icon name="refresh" size={15} /></button></div><div className="awareness-items">{[...s.officeItems].sort((a, b) => (a.when === 'Overdue' ? -1 : 1) - (b.when === 'Overdue' ? -1 : 1) || String(a.when).localeCompare(String(b.when))).map(r => <button key={r.id} onClick={() => {executeAction("ui.setTask",u,r.id);executeAction("ui.go",u,"workshop");}}><span className={'status-dot ' + (r.when === 'Overdue' ? 'attention' : '')} /><span><b>{r.title}</b><small>{r.when} · {r.owner}</small></span></button>)}</div><div className="spread row"><span className="muted">{s.officeUpdated || 'Office context ready'}</span>{api.supportsAction?.('settleTimesheet') !== false && <Btn sm onClick={() => executeAction("ui.show", u, 'Timesheet')}>Timesheet draft</Btn>}</div></div>;
   }
   Object.assign(window.UI, {
     XrayLayers,

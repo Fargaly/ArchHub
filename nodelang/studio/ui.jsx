@@ -211,10 +211,10 @@
           u
         }, event)}><window.AHIcon name={icon} size={15} /></button>)}<select aria-label="Agent picker" value={provider} onChange={e => setProvider(e.target.value)} style={{
           fontSize: 12
-        }}><option value="">BABOOM chooses · free first</option>{s.providers.filter(p => p.enabled && p.signedIn).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select><span className="fill" /><Btn sm onClick={event => executeAction("sharedUI.TalkF2.8", {
+        }}><option value="">BABOOM chooses · free first</option>{s.providers.filter(p => p.enabled && p.signedIn).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select><span className="fill" />{api.supportsAction?.('startVoiceInput') !== false && <Btn sm onClick={event => executeAction("sharedUI.TalkF2.8", {
           setText,
           u
-        }, event)} title="Talk · F2">🎙 Talk</Btn><Btn p sm type="submit" aria-label="Send ↵" title="Send · Enter" disabled={sending || !text.trim()}><window.AHIcon name="send" size={15} /></Btn></div>
+        }, event)} title="Talk · F2">🎙 Talk</Btn>}<Btn p sm type="submit" aria-label="Send ↵" title="Send · Enter" disabled={sending || !text.trim()}><window.AHIcon name="send" size={15} /></Btn></div>
  </D.Composer>;
   }
   function ApprovalCard({
@@ -260,41 +260,41 @@
   {window.UI.ApprovalRubric && <window.UI.ApprovalRubric id={id} />}<Table rows={c.rows} columns={c.kind === 'qc' ? ['element', 'before', 'after', 'decision'] : ['element', 'before', 'after']} />
   {c.kind === 'qc' && <div className="grid" style={{
         padding: 16
-      }}>{c.rows.map((row, i) => <div className="spread" key={i}><span className="flex"><window.UI.Sheet mark />{row.element} · {row.decision || 'Needs review'}</span><div className="flex"><Btn sm onClick={event => executeAction("sharedUI.AcceptRow.9", {
+      }}>{c.rows.map((row, i) => <div className="spread" key={i}><span className="flex"><window.UI.Sheet mark />{row.element} · {row.decision || 'Needs review'}</span><div className="flex">{api.supportsAction?.('reviewProofRow') !== false && <Btn sm onClick={event => executeAction("sharedUI.AcceptRow.9", {
               api,
               i,
               id,
               u
-            }, event)}>Accept row {i + 1}</Btn><Btn sm onClick={event => executeAction("sharedUI.RejectRow.10", {
+            }, event)}>Accept row {i + 1}</Btn>}{api.supportsAction?.('reviewProofRow') !== false && <Btn sm onClick={event => executeAction("sharedUI.RejectRow.10", {
               api,
               i,
               id,
               u
-            }, event)}>Reject row {i + 1}</Btn></div></div>)}</div>}
+            }, event)}>Reject row {i + 1}</Btn>}</div></div>)}</div>}
   {decisionError && <p role="alert">{decisionError}</p>}
-  {s.nativeApproval && c.status === 'refused' ? <p role="alert">This review is closed. Request a fresh review before trying again.</p> : c.status === 'postponed' ? <div className="row spread"><span>Saved for later review.</span><Btn p onClick={event => executeAction("sharedUI.ResumeReview.11", {
+  {s.nativeApproval && c.status === 'refused' ? <p role="alert">This review is closed. Request a fresh review before trying again.</p> : c.status === 'postponed' ? <div className="row spread"><span>Saved for later review.</span>{api.supportsAction?.('resumeApproval') !== false && <Btn p onClick={event => executeAction("sharedUI.ResumeReview.11", {
           api,
           id,
           u
-        }, event)}>Resume review</Btn></div> : c.status === 'stale' || c.status === 'refused' ? <div className="row spread"><span>{c.status === 'refused' ? 'The program is disconnected. Reconnect, then review again.' : 'The content changed after this review.'}</span><Btn p onClick={event => executeAction("sharedUI.ReviewLatest.12", {
+        }, event)}>Resume review</Btn>}</div> : c.status === 'stale' || c.status === 'refused' ? <div className="row spread"><span>{c.status === 'refused' ? 'The program is disconnected. Reconnect, then review again.' : 'The content changed after this review.'}</span>{api.supportsAction?.('refreshApproval') !== false && <Btn p onClick={event => executeAction("sharedUI.ReviewLatest.12", {
           api,
           id,
           u
-        }, event)}>Review latest</Btn></div> : c.status === 'pending' ? <div className="flex" style={{
+        }, event)}>Review latest</Btn>}</div> : c.status === 'pending' ? <div className="flex" style={{
         padding: '14px 18px',
         background: '#16161b',
         flexWrap: 'wrap'
       }}><Btn p sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.ApproveOnce.13", {
           decide
-        }, event)}>Approve once</Btn>{!s.nativeApproval && <Btn sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.ApproveSimilarThisSession.14", {
+        }, event)}>Approve once</Btn>{!s.nativeApproval && api.supportsAction?.('approve', 'session') !== false && <Btn sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.ApproveSimilarThisSession.14", {
           decide
-        }, event)}>Approve similar this session</Btn>}<Btn sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.Decline.15", {
+        }, event)}>Approve similar this session</Btn>}{api.supportsAction?.('decline') !== false && <Btn sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.Decline.15", {
           decide
-        }, event)}>Decline</Btn>{!s.nativeApproval && <><Btn sm ghost onClick={event => executeAction("sharedUI.Postpone.16", {
+        }, event)}>Decline</Btn>}{!s.nativeApproval && <>{api.supportsAction?.('postponeApproval') !== false && <Btn sm ghost onClick={event => executeAction("sharedUI.Postpone.16", {
             api,
             id,
             u
-          }, event)}>Postpone</Btn><Btn sm ghost onClick={event => executeAction("sharedUI.WhyThisChange.17", {
+          }, event)}>Postpone</Btn>}<Btn sm ghost onClick={event => executeAction("sharedUI.WhyThisChange.17", {
             id,
             u
           }, event)}>Why this change?</Btn><span className="muted" style={{
@@ -324,12 +324,12 @@
         gap: 6,
         minWidth: 0
       }}>
-  <D.Socket t={row.type === 'boolean' ? 'boolean' : row.type === 'number' ? 'number' : 'text'} hit role="button" tabIndex={0} aria-label={'Wire ' + row.label} onClick={event => executeAction("sharedUI.Control.20", {
+  {api.supportsAction?.('exposeSettingsPage') !== false && <D.Socket t={row.type === 'boolean' ? 'boolean' : row.type === 'number' ? 'number' : 'text'} hit role="button" tabIndex={0} aria-label={'Wire ' + row.label} onClick={event => executeAction("sharedUI.Control.20", {
           row,
           u
         }, event)} onKeyDown={e => {
           if (e.key === 'Enter') u.openSystem(row.page);
-        }} />
+        }} />}
   {row.type === 'boolean' ? <D.Toggle variant="settings" label={row.label} checked={row.value} onCheckedChange={v => u.act(() => api.setSetting(row.id, v))} /> : row.options ? <select id={'setting-' + row.id} aria-label={row.label} value={row.value} onChange={e => u.act(() => api.setSetting(row.id, e.target.value))}>{row.options.map(v => <option key={v}>{v}</option>)}</select> : <input id={'setting-' + row.id} aria-label={row.label} type={row.type === 'number' ? 'number' : row.type === 'color' ? 'color' : 'text'} min={0} value={row.value} onChange={e => u.act(() => api.setSetting(row.id, row.type === 'number' ? Number(e.target.value) : e.target.value))} />}
   {changed && <button className="reset" aria-label={'Reset ' + row.label} onClick={event => executeAction("sharedUI.Reset.21", {
           api,

@@ -147,7 +147,7 @@
         handleAnswerwidgetsjsx4
       })(id, ...args);
     }
-    return c ? <div className="grid"><window.UI.ActionStatus action={actionState} /><h2>{c.title}</h2><p className="muted">This decision uses the reviewed inputs and the proposed differences shown in the card.</p><div className="row spread"><b>Target</b><span>{c.target || s.files.find((f) => f.id === s.activeFile)?.name}</span></div><div className="row spread"><b>Changes</b><span>{c.rows.length} reviewed rows</span></div><h3>Evidence and source</h3>{c.rows.map((r, i) => <div className="row" key={i}><b>{r.element}</b><p className="muted">{r.before} → {r.after}</p></div>)}<div className="flex"><Btn p onClick={(event) => dispatch("answer-widgets.3", event)}>Back to review</Btn><Btn sm onClick={(event) => dispatch("answer-widgets.4", event)}>Request another review</Btn></div></div> : null;
+    return c ? <div className="grid"><window.UI.ActionStatus action={actionState} /><h2>{c.title}</h2><p className="muted">This decision uses the reviewed inputs and the proposed differences shown in the card.</p><div className="row spread"><b>Target</b><span>{c.target || s.files.find((f) => f.id === s.activeFile)?.name}</span></div><div className="row spread"><b>Changes</b><span>{c.rows.length} reviewed rows</span></div><h3>Evidence and source</h3>{c.rows.map((r, i) => <div className="row" key={i}><b>{r.element}</b><p className="muted">{r.before} → {r.after}</p></div>)}<div className="flex"><Btn p onClick={(event) => dispatch("answer-widgets.3", event)}>Back to review</Btn>{api.supportsAction?.('contestDecision') !== false && <Btn sm onClick={(event) => dispatch("answer-widgets.4", event)}>Request another review</Btn>}</div></div> : null;
   }
   Object.assign(window.UI, {
     AnswerWidget,

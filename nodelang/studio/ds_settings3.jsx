@@ -84,13 +84,13 @@ ConnectionsAction1: (c, event) => (() => c.connected ? u.show('Connection', {
             }))(event)});
     return <><window.UI.RegisteredActionStatus state={actionState} retry={retryAction} /><div className="grid"><div className="flex">{['All', 'Programs', 'Social', 'Work apps'].map(g => <Btn sm ghost key={g} aria-pressed={filter === g} onClick={event => runAction('settings.ds_settings3.ConnectionsAction0', g, event)}>{g}</Btn>)}</div><Card><div style={{
           display: 'grid',
-          gridTemplateColumns: '1fr 60px 60px 60px 130px',
+          gridTemplateColumns: '1fr 130px',
           padding: '14px 16px 8px',
           fontSize: 11,
           color: A.inkSoft
-        }}><span>PROGRAM OR ACCOUNT</span><span>READ</span><span>REPLY</span><span>POST</span><span /></div>{s.connections.filter(c => filter === 'All' || group(c) === filter).map((c, i) => <div key={c.id} style={{
+        }}><span>PROGRAM OR ACCOUNT</span><span /></div>{s.connections.filter(c => filter === 'All' || group(c) === filter).map((c, i) => <div key={c.id} style={{
           display: 'grid',
-          gridTemplateColumns: '1fr 60px 60px 60px 130px',
+          gridTemplateColumns: '1fr 130px',
           alignItems: 'center',
           padding: '8px 16px',
           borderTop: '1px solid ' + A.lineSoft
@@ -105,9 +105,7 @@ ConnectionsAction1: (c, event) => (() => c.connected ? u.show('Connection', {
               fontWeight: 800
             }}>{c.name[0]}</span><div><h3>{c.name}</h3><span className="muted" style={{
                 fontSize: 12
-              }}>{c.connected ? 'Connected to your account' : 'Not connected'}{c.checked ? ' · checked' : ''}</span></div></div>{['read', 'reply', 'post'].map(k => <D.Toggle variant="settings" key={k} label={c.name + ' ' + k} checked={c[k]} onCheckedChange={v => u.act(() => api.setConnection(c.id, {
-            [k]: v
-          }))} />)}<div style={{
+              }}>{c.connected ? 'Connected to your account' : 'Not connected'}{c.checked ? ' · checked' : ''}</span></div></div><div style={{
             justifySelf: 'end'
           }}><Btn sm onClick={event => runAction('settings.ds_settings3.ConnectionsAction1', c, event)}>{c.connected ? 'Open' : 'Connect'}</Btn></div></div>)}</Card></div></>;
   }
@@ -157,7 +155,7 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
       padding: 16,
       display: 'grid',
       gap: 12
-    }}><h2>Where your work lives</h2><p className="muted">Graphs and settings stay with your account. Client work stays on this machine.</p><div className="flex"><Btn sm onClick={event => runAction('settings.ds_settings3.StorageAction0', event)}>Archive old activity</Btn><Btn sm onClick={event => runAction('settings.ds_settings3.StorageAction1', event)}>Back up now</Btn></div>{s.backups.map(b => <div className="spread" key={b.id}><span>{b.name}</span><Btn sm onClick={event => runAction('settings.ds_settings3.StorageAction2', b, event)}>Roll back</Btn></div>)}</Card></>;
+    }}><h2>Where your work lives</h2><p className="muted">Graphs and settings stay with your account. Client work stays on this machine.</p><div className="flex">{api.supportsAction?.('archiveActivity') !== false && <Btn sm onClick={event => runAction('settings.ds_settings3.StorageAction0', event)}>Archive old activity</Btn>}<Btn sm onClick={event => runAction('settings.ds_settings3.StorageAction1', event)}>Back up now</Btn></div>{s.backups.map(b => <div className="spread" key={b.id}><span>{b.name}</span><Btn sm onClick={event => runAction('settings.ds_settings3.StorageAction2', b, event)}>Roll back</Btn></div>)}</Card></>;
   }
   function Settings({
     page = 'Account',

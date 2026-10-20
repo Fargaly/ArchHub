@@ -44,7 +44,7 @@ const copy=value=>window.structuredClone(value);
 function publish(values={}) { state={...state,...values,revision:state.revision+1};listeners.forEach(fn=>fn()); }
 function notice(message) { window.dispatchEvent(new CustomEvent('archhub:notice',{detail:{message}})); }
 function unavailable(operation,reason='') {
- const result={ok:false,status:'not_connected',operation,message:'Not connected yet'+(reason?' · '+reason:'')};
+ const result={ok:false,status:'not_connected',operation,message:reason||'This action is not available in this release.'};
  notice(result.message);return result;
 }
 const normalise=data=>data && (data.canvas_root||data.root) && Array.isArray(data.nodes)
@@ -225,6 +225,8 @@ async function nodeProperty(id,key,value) {
 }
 const api={};
 for(const name of exportedNames)api[name]=()=>unavailable(name);
+const unfinishedActions={...api};
+api.supportsAction=(name,mode)=>!(name==='approve'&&mode&&mode!=='once')&&typeof api[name]==='function'&&api[name]!==unfinishedActions[name];
 Object.assign(api,{
  async signIn(enabled=true){
   const result=await request(enabled?'/api/universal/cloud-signin':'/api/universal/cloud-signout',enabled?{method:'google'}:{});
@@ -264,7 +266,7 @@ Object.assign(api,{
  getCapabilityParameters:id=>copy(state.capabilities.find(c=>c.id===id)?.parameterSchema||[]),
  getNodeOutput:id=>copy(state.graph.nodes.find(n=>n.id===id)?.output||[]),
  getHealthHistory:async()=>copy(state.healthHistory),getDocs:()=>copy(state.docs),getSocial:()=>copy(state.social),
- getKnowledgeGraph:()=>({nodes:[],edges:[],status:'not_connected',message:'Not connected yet'}),
+ getKnowledgeGraph:()=>({nodes:[],edges:[],status:'not_connected',message:'Knowledge graph is unavailable.'}),
  contextLabel:id=>state.files.find(x=>x.id===id)?.name||state.graph.nodes.find(x=>x.id===id)?.title||id,
  compatibleNodes:()=>[],getDecisionState:()=>null,
  async sendToBaboom(text,options={}){if(options.scope&&options.scope!==state.graph.id)return unavailable('sendToBaboom','Node-scoped requests are not exposed by the Workshop owner');const admitted=Object.fromEntries(['provider','taskId'].filter(k=>typeof options[k]==='string'&&options[k]).map(k=>[k,options[k]]));const task=await workshop('sendToBaboom',[text,admitted]);if(task?.ok===false)return task;await refreshTasks();return task;},
@@ -316,7 +318,7 @@ Object.assign(api,{
  async approve(id){const card=state.approvals.find(c=>c.id===id);if(!card?.delegation||!card?.input_digest||!card?.work)return unavailable('approve','No reviewed model delegation');const binding=workshopBinding();const body={...binding,work:card.work,delegation:card.delegation,input_digest:card.input_digest};const inspected=await request('/api/universal/workshop-model-approval?'+new URLSearchParams(body));if(inspected.expired||inspected.input_digest!==card.input_digest)return {ok:false,status:'stale',message:'Review changed; refresh before approving.'};const result=await request('/api/universal/workshop-model-approval',{...body,revision:inspected.revision});await refreshTasks();return result;},
  async selectGraph(id){scopeEpoch++;workingAgents=[];publish({tasks:[]});await request('/api/universal/graph-open',{root:id});await commands.load();project();await refreshGraphs();await refreshTasks();await refreshAgents();return state.graph;},
  async selectWorkspace(id){return api.selectGraph(id);},
- getUsageSummary:()=>({'Usage':'Not connected yet'}),
+ getUsageSummary:()=>({'Usage':'Usage is unavailable.'}),
  async setConnection(id,values){if(values.connected===false)return request('/api/universal/social-connection',{provider:id,action:'cancel'});if(values.connected===true)return request('/api/universal/social-connection',{provider:id,action:'start'});return unavailable('setConnection','No sign-in action requested');},
  async checkConnection(id){return request('/api/universal/social-connection?provider='+encodeURIComponent(id));},
  refreshApplicationUpdate,
@@ -327,7 +329,6 @@ Object.assign(api,{
   if(state.update.restartRefusal)throw Error(state.update.restartRefusal);
   return updateAction('reload');
  },
- async archiveActivity(){return unavailable('archiveActivity','The available retention owner is read-only');},
  async listWorkspaces(){const data=await request('/api/universal/workspace-roots',{action:'list'});const roots=[...(data.built_in?[{...data.built_in,root_id:data.built_in.id,builtIn:true}]:[]),...(data.roots||[])];const workspaces=roots.map(w=>({id:w.root_id,name:w.label||w.root_id,folder:w.path,canvas:w.canvas||'',builtIn:w.builtIn===true,removable:w.removable!==false,privacy:w.privacy}));publish({workspaces});return workspaces;},
  async addWorkspace(input={}){let path=input.folder;if(!path){const picked=await request('/api/universal/workspace-roots',{action:'browse'});path=picked.path;if(!path)return null;}const result=await request('/api/universal/workspace-roots',{action:'register',path,privacy:'private',profile:'client'});await api.listWorkspaces();return result;},
  async removeWorkspace(id){const result=await request('/api/universal/workspace-roots',{action:'unregister',id});await api.listWorkspaces();return result;},
@@ -933,7 +934,7 @@ api.ready=(async()=>{
  if(!session?.token||!session?.csrf)await signIn();else window.__archhubSession=session;
  commands=window.ArchHubStudioAuthority.create({get:path=>request(path),post:(path,body)=>request(path,body)});
  await commands.load();project();
- publish({learning:{...state.learning,layer:'Host'},billing:{...state.billing,status:'Not connected yet'},meeting:{...state.meeting,status:'Not connected yet'},connectionNotice:'Some features are not connected yet'});
+ publish({learning:{...state.learning,layer:'Host'}});
  ready=true;watchRefresh();
  // Account/network discovery must not hold the usable graph behind its timeout.
  void (async()=>{

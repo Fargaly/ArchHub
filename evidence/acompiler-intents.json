@@ -4376,7 +4376,24 @@
         "nodelang/managed_dependencies.py",
         "nodelang/settings_owner.py",
         "tests/test_wire_settings_owner.py",
-        "tests_js/wire_settings.test.cjs"
+        "tests_js/wire_settings.test.cjs",
+        "tools/pipeline/strict_check.py",
+        "tools/pipeline/package_compiler.py",
+        "nodelang/library_engines.py",
+        "nodelang/pipeline_engines.py",
+        "tests/test_ops_settings.py",
+        "tests_js/ops_settings.test.cjs",
+        "nodelang/session_link/ask.mjs",
+        "tests/session_link_workshop_delivery.mjs",
+        "tools/archhub-compiler/src/main.rs",
+        "tools/archhub-compiler/src/intent.rs"
+      ],
+      "external_entrypoints": [
+        {
+          "name": "CLAUDE-BRAIN",
+          "source": "C:/Users/fargaly/00.ARCHUB/70.COMPANY/72.HANDOFFS/72.99-CLAUDE-BRAIN-MOD/ARCHHUB-BRAIN/brain_entry.py",
+          "blob_oid": "c3f96b3e16741ae119a0f38f1ca4a2e22139ebd3"
+        }
       ]
     }
   }

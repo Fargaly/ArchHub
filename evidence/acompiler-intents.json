@@ -4391,7 +4391,27 @@
         "nodelang/domains/selfext.py",
         "nodelang/universal_pipeline.py",
         "cloud_backend/main.py",
-        "cloud_backend/tests/test_user_profile.py"
+        "cloud_backend/tests/test_user_profile.py",
+        "docs/AUTHORITY.md",
+        "docs/FOUNDER_MANDATES.md",
+        "docs/OPENCODE-NATIVE-GOVERNANCE.md",
+        "nodelang/cell_cde_authority.py",
+        "nodelang/cell_legacy_surface_catalog.py",
+        "nodelang/native_stop_hook.py",
+        "nodelang/runtime_hook_observer.py",
+        "nodelang/session_link_config.py",
+        "tests/test_opencode_governance.py",
+        "tests_replica/test_acompiler_gate.py",
+        "tests_replica/test_agent_work_proposals.py",
+        "tests_replica/test_conduct.py",
+        "tests_replica/test_hosts_open_from_archhub.py",
+        "tests_replica/test_native_host_tools.py",
+        "tests_replica/test_native_inbox_read_only.py",
+        "tests_replica/test_native_inbox_recovery.py",
+        "tests_replica/test_runtime_hook_observer.py",
+        "tests_replica/test_workshop_execution_gate.py",
+        "tests_replica/test_work_proposals_ui.cjs",
+        "tools/pipeline/build.py"
       ],
       "external_entrypoints": [
         {

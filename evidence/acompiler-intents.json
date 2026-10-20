@@ -4396,7 +4396,6 @@
         "docs/FOUNDER_MANDATES.md",
         "docs/OPENCODE-NATIVE-GOVERNANCE.md",
         "nodelang/cell_cde_authority.py",
-        "nodelang/cell_legacy_surface_catalog.py",
         "nodelang/native_stop_hook.py",
         "nodelang/runtime_hook_observer.py",
         "nodelang/session_link_config.py",

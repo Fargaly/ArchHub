@@ -985,6 +985,19 @@ def test_release_preserves_recorded_explanation_without_inventing_one(message, w
     assert context.get("why") == why
 
 
+@pytest.mark.parametrize('message, intent', [
+    ('ACOMPILER2B: register selected-profile qualifier repair', 'ACOMPILER2B'),
+    ('MAINREL: prepare the existing release', 'MAINREL'),
+    ('ACOMPILER2B: registration\n\nIntent: NEWAPP', 'NEWAPP'),
+    ('fix: ordinary subject without an owner', None),
+    ('MAINREL:\nbody is not a subject-line attribution', None),
+])
+def test_release_reads_explicit_subject_owner_without_overriding_trailers(message, intent):
+    context = build.release_context(message, 'Recorded author')
+    assert context.get('intent') == intent
+    assert context['author'] == 'Recorded author'
+
+
 @pytest.mark.parametrize('kind', ['additive', 'mixed-code', 'changed-old', 'removed-old', 'changed-policy'])
 def test_release_bootstrap_registration_keeps_immutable_authority_checks(repository, monkeypatch, kind):
     registry = repository / 'evidence' / 'acompiler-intents.json'

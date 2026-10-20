@@ -23,6 +23,10 @@ def release_context(message, author):
     """Preserve the landed author's recorded explanation, including prose bodies."""
     context = pre_commit.trailers(message)
     context["author"] = author
+    if not context.get("intent"):
+        owner = re.match(r"^([A-Z][A-Z0-9_]+):[ \t]+\S", message)
+        if owner:
+            context["intent"] = owner.group(1)
     if not context.get("why"):
         lines = message.partition("\n")[2].splitlines()
         # A terminal metadata footer is not an author's explanation.

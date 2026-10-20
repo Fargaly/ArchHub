@@ -181,6 +181,9 @@ def _claude_auth(env, original_home):
     raise QualificationRefused("Claude account authentication unavailable to isolated child")
 
 
+_GOOSE_MODEL = "dots-studio/dots-3-note-preview:free"
+
+
 def _goose_turn(executable, prompt, *, env, cwd):
     from nodelang.goose_adapter import AcpTransport, workshop_mcp_server
     from nodelang.session_link_transport import _OwnedProcessJob
@@ -197,7 +200,7 @@ def _goose_turn(executable, prompt, *, env, cwd):
             "clientCapabilities":{"fs":{"readTextFile":False,"writeTextFile":False},"terminal":False}}, deadline=deadline)
         recipe = {"version":"1.0.0","title":"Workshop release qualification",
             "description":"Disposable agent message proof", "instructions":"Use only the Workshop MCP tools.",
-            "settings":{"goose_provider":"openrouter","goose_model":"openrouter/free"}}
+            "settings":{"goose_provider":"openrouter","goose_model":_GOOSE_MODEL}}
         encoded = base64.urlsafe_b64encode(json.dumps(recipe).encode()).decode().rstrip("=")
         created = transport.request("session/new", {"cwd":str(cwd),
             "mcpServers":[workshop_mcp_server()], "_meta":{"recipeDeeplink":encoded}}, deadline=deadline)
@@ -255,7 +258,8 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
         from nodelang.model_router import discover_key
         env["OPENROUTER_API_KEY"], _ = discover_key("openrouter")
         env.update(GOOSE_PATH_ROOT=str(profile/"goose"), GOOSE_PROVIDER="openrouter",
-            GOOSE_MODEL="openrouter/free", GOOSE_MODE="approve")
+            GOOSE_MODEL=_GOOSE_MODEL, GOOSE_MODE="approve",
+            OPENROUTER_PARAMETERS=json.dumps({"max_tokens":4096}))
         env["GOOSE_TELEMETRY_ENABLED"]=str(False).lower()
     profile.mkdir(parents=True)
     fixture = profile / "workspace"
@@ -405,7 +409,8 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
                     "--allowedTools", "mcp__archhub_agent_coordination__declare,mcp__archhub_agent_coordination__read,mcp__archhub_agent_coordination__send"], env=env, cwd=fixture)
             else:
                 answer, peer_session, peer_pid = _goose_turn(cc, prompt, env=env, cwd=fixture)
-                evidence.update(peer_session=peer_session, peer_pid=peer_pid)
+                evidence.update(peer_session=peer_session, peer_pid=peer_pid,
+                    peer_provider="openrouter", peer_model=_GOOSE_MODEL)
             page = app.shared_agent_mail("read", {"since":0, "include_archived":True})
             replies = [row for row in page["messages"] if row["reply_to"] == note["id"]
                        and row["content"].endswith("AGENTLINK-REPLY " + nonce)]
@@ -414,7 +419,7 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
             reply = replies[0] if len(replies) == 1 else None
             notice = notices[0] if len(notices) == 1 else None
             if reply is None or notice is None:
-                raise QualificationRefused("Real Claude turn did not return the paired reply and overlap")
+                raise QualificationRefused("Real " + peer.title() + " turn did not return the paired reply and overlap")
             final_prompt = ("Use Workshop read(since=0). Read message " + reply["id"] +
                 " with AGENTLINK-REPLY " + nonce + " and overlap " + notice["id"] +
                 ". Send(to='"+peer.title()+"',reply_to='" + reply["id"] + "',text='AGENTLINK-ACK " + nonce +

@@ -1,4 +1,5 @@
 """Release refusal executes the same predicate the real qualification calls."""
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -54,9 +55,10 @@ def test_goose_only_auto_allows_the_shared_mailbox_boundary():
     assert not safe_workshop_call({"extensionName":"other","toolName":"archhub-agent__read"}, {})
 
 
-def test_qualification_server_and_native_mailbox_select_one_profile(tmp_path, monkeypatch):
+@pytest.mark.parametrize("peer", ["claude", "goose"])
+def test_qualification_server_and_native_mailbox_select_one_profile(tmp_path, monkeypatch, peer):
     from tools.real_app_check import agentlink_release as gate
-    from nodelang import application_server, cell_secret_keys, workshop_mailbox
+    from nodelang import application_server, cell_secret_keys, model_router, workshop_mailbox
     from nodelang.persistence import application_database_path
 
     profile = tmp_path / "agentlink-qualification-profile"
@@ -64,6 +66,7 @@ def test_qualification_server_and_native_mailbox_select_one_profile(tmp_path, mo
     native_gate.touch()
     monkeypatch.setattr(gate, "_executable", lambda *_: sys.executable)
     monkeypatch.setattr(gate, "_claude_auth", lambda *_: None)
+    monkeypatch.setattr(model_router, "discover_key", lambda *_: ("fixture-credential", "fixture"))
     monkeypatch.setattr(gate, "source_digest", lambda *_: "source-fixture")
     monkeypatch.setattr(gate.shutil, "copytree", lambda *_args, **_kwargs: None)
 
@@ -77,6 +80,9 @@ def test_qualification_server_and_native_mailbox_select_one_profile(tmp_path, mo
         pass
 
     def server(**options):
+        if peer == "goose":
+            assert json.loads(os.environ["OPENROUTER_PARAMETERS"]) == {"max_tokens":4096}
+            assert os.environ["GOOSE_MODEL"] == gate._GOOSE_MODEL
         selected = options["universal_state_path"]
         assert selected == application_database_path(profile)
         assert selected == workshop_mailbox.profile_database()
@@ -85,5 +91,5 @@ def test_qualification_server_and_native_mailbox_select_one_profile(tmp_path, mo
     monkeypatch.setattr(cell_secret_keys, "WindowsDpapiSigningKeyProvider", Keys)
     monkeypatch.setattr(application_server, "ApplicationServer", server)
     with pytest.raises(SelectedProfileChecked):
-        gate.qualify(profile, native_gate=native_gate, peer="claude")
+        gate.qualify(profile, native_gate=native_gate, peer=peer)
     assert not profile.exists()

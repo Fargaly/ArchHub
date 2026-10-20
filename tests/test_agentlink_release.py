@@ -51,6 +51,7 @@ def test_goose_only_auto_allows_the_shared_mailbox_boundary():
     assert safe_workshop_call(identity("read"), {"since":0})
     assert safe_workshop_call(identity("declare"), {"task":"Check fixture","paths":["fixture"],"status":"working","request_id":"proof"})
     assert safe_workshop_call(identity("send"), {"to":"OpenCode","text":"proof","reply_to":"root"})
+    assert safe_workshop_call(identity("send"), {"to":"OpenCode","text":"proof","reply_to":"root","idempotency_key":"stable-reply"})
     assert not safe_workshop_call(identity("send"), {"to":"OpenCode","text":"proof","sender":"forged"})
     assert not safe_workshop_call(identity("office_execute"), {"code":"unsafe"})
     assert not safe_workshop_call({"extensionName":"other","toolName":"archhub-agent__read"}, {})

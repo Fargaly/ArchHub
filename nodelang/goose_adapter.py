@@ -33,7 +33,7 @@ def safe_workshop_call(identity, arguments):
         return False
     tool = identity.get("toolName")
     fields = {"archhub-agent__declare":({"task", "paths", "status", "request_id"}, set()),
-              "archhub-agent__send":({"to", "text"}, {"reply_to"}),
+              "archhub-agent__send":({"to", "text"}, {"reply_to", "idempotency_key"}),
               "archhub-agent__read":(set(), {"since", "declarations_after", "include_archived"})}
     if tool not in fields:
         return False

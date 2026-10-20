@@ -265,7 +265,7 @@ def test_capture_reads_only_the_works_cde_paths(memory):
 def test_capture_admits_a_file_under_a_directory_the_container_lists(memory):
     # Regression 07a1364: live containers list directories; exact match refused every capture.
     server, descriptor, provider = memory
-    handoff = "70.HANDOFFS/archhub-integrated-repair-20260909"
+    handoff = "70.COMPANY/72.HANDOFFS/72.03-ARCHHUB-INTEGRATED-REPAIR"
     work = _work(server, "court:directory", allowed=["10.PRODUCT/11.ARCHHUB-APP", handoff])
     a, sa = _agent(descriptor, provider, "gate-directory-a")
     _assign(server, "app:workshop-assignment:gate-directory", work, sa)
@@ -300,7 +300,7 @@ def _link_directory(link, target):
 def test_capture_refuses_a_junction_under_a_listed_directory_into_another_area(memory):
     # Follow-up to 7488a5b: the name matched a listed folder while the bytes lived elsewhere.
     server, descriptor, provider = memory
-    handoff = "70.HANDOFFS/archhub-integrated-repair-20260909"
+    handoff = "70.COMPANY/72.HANDOFFS/72.03-ARCHHUB-INTEGRATED-REPAIR"
     work = _work(server, "court:junction", allowed=[handoff])
     a, sa = _agent(descriptor, provider, "gate-junction-a")
     _assign(server, "app:workshop-assignment:gate-junction", work, sa)

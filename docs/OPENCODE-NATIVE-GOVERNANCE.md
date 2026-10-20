@@ -39,7 +39,7 @@ secrets, BelowNormal, private areas), each refusing with its own quoted rule.
 Only then do rules SHELL-0..6 narrow it to the OpenCode allowlist: read-only git
 (status, log, diff, show; archive/--output only into the admitted lane),
 `cmd /c start "" /belownormal /wait /b` python -m pytest or node --test with
-every path inside one 70.HANDOFFS/<lane>/work/<export> and each test path an
+every path inside one 70.COMPANY/72.HANDOFFS/<lane>/work/<export> and each test path an
 existing directory or a .py (pytest) / .js .mjs .cjs (node, at least one path)
 source, never a glob, mkdir/rmdir of the
 test lock, and mkdir/rmdir/Set-Content only inside the session's admitted lane

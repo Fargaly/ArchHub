@@ -350,7 +350,7 @@ OPENCODE_PLUGIN_NAME = "session-link.js"
 OPENCODE_GOVERNANCE_BLOCKER = (
     "OpenCode's tool governance loader is not written: its write gate "
     "(opencode_native_gate.py with pretooluse_validate and governed_write_broker) lives only "
-    "in the ArchHub workspace's 00.GOVERNANCE/hooks, and the installed app ships no gate")
+    "in the ArchHub workspace's 00.GOVERNANCE/03.AGENT-HOOKS, and the installed app ships no gate")
 
 
 def _opencode_config_dir(env) -> Path | None:

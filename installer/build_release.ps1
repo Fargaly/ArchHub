@@ -135,7 +135,7 @@ function Get-CandidateRoots([string]$Source) {
     }
     $parent = Split-Path -Parent $sourcePath
     if ((Split-Path -Leaf $parent) -ceq '10.PRODUCT') {
-        return @($parent, (Join-Path (Split-Path -Parent $parent) '70.HANDOFFS'))
+        return @($parent, (Join-Path (Split-Path -Parent $parent) '70.COMPANY/72.HANDOFFS'))
     }
     if ((Split-Path -Leaf $sourcePath) -ceq 'PRODUCT' -and
         (Split-Path -Leaf $parent) -ceq '01.WIP') {

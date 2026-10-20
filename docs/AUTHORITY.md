@@ -56,7 +56,7 @@ gap statements remain binding honesty constraints.
 
 ### Requirement graph
 
-- `30.KNOWLEDGE/grand-map/data/grand_domains.json`
+- `30.KNOWLEDGE/31.GRAND-MAP/data/grand_domains.json`
 
 Counts and summaries MUST be generated from this source. README prose and old
 counts are not authority.

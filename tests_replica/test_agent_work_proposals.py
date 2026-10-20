@@ -28,7 +28,7 @@ from nodelang.native_agent_session import NativeAgentSession
 from nodelang.universal_cell import InvalidCell
 from tests_replica.test_workshop_execution_gate import GATE, TARGET, _agent, _post, _serve
 
-HANDOFF = "70.HANDOFFS/court-proposals"
+HANDOFF = "70.COMPANY/72.HANDOFFS/court-proposals"
 CONTAINER = {"container_id": "GM.nodes.cde-authority", "source_requirement": "court:proposals",
              "domain": "nodes", "tier": "T1", "suitability_status": "S0", "revision": "P01",
              "owner": "founder", "checker": "court", "gate_kind": "pytest",

@@ -29,6 +29,8 @@ def repository(tmp_path):
     run_git(root, "init", "-q")
     run_git(root, "config", "user.name", "Compiler court")
     run_git(root, "config", "user.email", "court@example.invalid")
+    if os.name == "nt":
+        run_git(root, "config", "core.longpaths", "true")
     (root / "nodelang").mkdir()
     (root / "nodelang" / "old.py").write_text("old = 'legacy'\n", encoding="utf-8")
     run_git(root, "add", ".")
@@ -576,14 +578,14 @@ $definition = $ast.Find({param($n) $n -is [System.Management.Automation.Language
 
 @pytest.fixture
 def patched_stop_gate(tmp_path):
-    external = Path("C:/Users/fargaly/00.ARCHUB/00.GOVERNANCE/hooks")
+    external = Path("C:/Users/fargaly/00.ARCHUB/00.GOVERNANCE/03.AGENT-HOOKS")
     if not external.is_dir():
         pytest.skip("external governance handoff source unavailable on this machine")
-    destination = tmp_path / "governance" / "00.GOVERNANCE" / "hooks"
+    destination = tmp_path / "governance" / "00.GOVERNANCE" / "03.AGENT-HOOKS"
     destination.mkdir(parents=True)
     for name in ("agent_stop_gate.py", "archhub_enforcer.py"):
         shutil.copyfile(external / name, destination / name)
-    patch = Path(__file__).resolve().parents[1] / "evidence" / "acompiler-governance-hooks.patch"
+    patch = Path(os.environ.get("ACOMPILER_GOVERNANCE_HANDOFF", str(Path(__file__).resolve().parents[1] / "evidence" / "acompiler-governance-hooks.patch")))
     subprocess.run(["git", "-c", "core.autocrlf=false", "apply", str(patch)], cwd=destination.parents[1],
                    capture_output=True, check=True)
     source = destination / "agent_stop_gate.py"
@@ -817,7 +819,13 @@ def test_node_build_options_change_command_and_child_environment(repository, tmp
     monkeypatch.setenv("CARGO_ENCODED_RUSTFLAGS", "inherited-encoded-flags")
     configured = strict_check._environment(options=options)
     assert configured["RUSTFLAGS"] == options["rustflags"] and "CARGO_ENCODED_RUSTFLAGS" not in configured
+    cargo_home = tmp_path / "CARGO"
+    cargo = cargo_home / "bin" / "cargo.exe"
+    original_is_file = Path.is_file
+    monkeypatch.setenv("CARGO_HOME", str(cargo_home))
+    monkeypatch.setattr(Path, "is_file", lambda path: path == cargo or original_is_file(path))
     command = strict_check._command(repository, options)
+    assert command[0] == str(cargo)
     assert command[command.index("--jobs") + 1] == "3"
     payload = json.dumps(report())
     child = fake_compiler(tmp_path, source="import os\nassert os.environ['RUSTFLAGS'] == '-C target-feature=+crt-static'\nprint(" + repr(payload) + ")\n")
@@ -975,3 +983,38 @@ def test_release_preserves_recorded_explanation_without_inventing_one(message, w
     context = build.release_context(message, "Recorded author")
     assert context["author"] == "Recorded author"
     assert context.get("why") == why
+
+
+@pytest.mark.parametrize('kind', ['additive', 'mixed-code', 'changed-old', 'removed-old', 'changed-policy'])
+def test_release_bootstrap_registration_keeps_immutable_authority_checks(repository, monkeypatch, kind):
+    registry = repository / 'evidence' / 'acompiler-intents.json'
+    registry.parent.mkdir()
+    old = {'schema_version': 1, 'intents': {'EXISTING': {'source': 'Existing request', 'scope': ['nodelang/old.py']}}}
+    registry.write_text(json.dumps(old), encoding='utf-8')
+    run_git(repository, 'add', '.')
+    run_git(repository, 'commit', '-qm', 'Initial authority')
+    base = run_git(repository, 'rev-parse', 'HEAD').decode().strip()
+    updated = json.loads(json.dumps(old))
+    updated['intents']['NEW'] = {'source': 'Founder new request', 'scope': ['nodelang/new.py']}
+    if kind == 'mixed-code':
+        (repository / 'nodelang' / 'old.py').write_text('changed = True\n', encoding='utf-8')
+    elif kind == 'changed-old':
+        updated['intents']['EXISTING']['scope'].append('nodelang/unclaimed.py')
+    elif kind == 'removed-old':
+        del updated['intents']['EXISTING']
+    elif kind == 'changed-policy':
+        updated['schema_version'] = 2
+    registry.write_text(json.dumps(updated), encoding='utf-8')
+    run_git(repository, 'add', '.')
+    run_git(repository, 'commit', '-qm', 'Register new request\n\nIntent: NEW\nWhy: Founder request')
+    head = run_git(repository, 'rev-parse', 'HEAD')
+    seen = []
+    def check(root, paths, **kwargs):
+        seen.append(kwargs['context'])
+        return {'ok': kwargs['context']['intent'] == 'ACOMPILER2B', 'diagnostics': []}
+    monkeypatch.setattr(strict_check, 'check_files', check)
+    assert build.admit_sequence(repository, base) == (0 if kind == 'additive' else 1)
+    assert seen[0]['author'] == 'Compiler court'
+    assert seen[0]['why'] == 'Founder request'
+    assert seen[0]['intent'] == ('ACOMPILER2B' if kind == 'additive' else 'NEW')
+    assert run_git(repository, 'rev-parse', 'HEAD') == head

@@ -66,6 +66,8 @@ def make_project(root):
     git("init", "-q")
     git("config", "user.name", "court")
     git("config", "user.email", "court@example.invalid")
+    if os.name == "nt":
+        git("config", "core.longpaths", "true")
     (root / "evidence").mkdir()
     (root / "old.py").write_text("print('ready')\n")
     (root / "tasks.json").write_text(json.dumps({"owner":"codex","next_task":"continue","tasks":[{"state":"ACTIVE"}]}))
@@ -128,9 +130,9 @@ def test_governance_patch_applies_and_adapter_uses_real_pass(tmp_path, monkeypat
     isolated = ROOT / "tmp-base"
     assert not isolated.exists()
     try:
-        target = isolated / "00.GOVERNANCE/hooks"
+        target = isolated / "00.GOVERNANCE/03.AGENT-HOOKS"
         target.mkdir(parents=True)
-        source = Path("C:/Users/fargaly/00.ARCHUB/00.GOVERNANCE/hooks")
+        source = Path("C:/Users/fargaly/00.ARCHUB/00.GOVERNANCE/03.AGENT-HOOKS")
         for name in ["agent_stop_gate.py", "pretooluse_validate.py"]:
             shutil.copyfile(source / name, target / name)
         patch = ROOT / "evidence/conduct-governance.patch"

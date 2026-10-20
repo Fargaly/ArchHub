@@ -1,7 +1,7 @@
 """Court: runtime compliance means the landed governance hooks, not the Brain.
 
 The personal Brain is retired, so a client whose config binds the landed
-gates (00.GOVERNANCE/hooks/agent_scope_gate.py before and after each tool,
+gates (00.GOVERNANCE/03.AGENT-HOOKS/agent_scope_gate.py before and after each tool,
 native_start_hook.py at session start, native_stop_hook.py at completion where
 the vendor supports them) is compliant WITHOUT the Brain MCP entry or brainwrap.
 A client missing the pre-tool gate is not compliant, whatever else it has. A
@@ -20,7 +20,7 @@ from nodelang.runtime_compliance_adapter import (
 )
 
 PY = "C:/Users/someone/AppData/Local/Python/python.exe"
-GATE = PY + " C:/Users/someone/ArchHub/00.GOVERNANCE/hooks/agent_scope_gate.py --vendor %s"
+GATE = PY + " C:/Users/someone/ArchHub/00.GOVERNANCE/03.AGENT-HOOKS/agent_scope_gate.py --vendor %s"
 START = PY + " C:/Users/someone/AppData/Local/ArchHub/nodelang/native_start_hook.py --runtime %s"
 STOP = PY + " C:/Users/someone/AppData/Local/ArchHub/nodelang/native_stop_hook.py --vendor claude-code"
 
@@ -201,5 +201,5 @@ def test_opencode_governance_plugin_is_found_in_the_singular_plugin_folder(tmp_p
     red = observe_runtime_compliance("opencode", home=tmp_path)
     assert red["status"] == "red" and red["checks"]["scope-gate"] is False
     _write(tmp_path / ".config" / "opencode" / "plugin" / "archhub-governance-abc-product.js",
-           "const gate = 'C:/Users/someone/ArchHub/00.GOVERNANCE/hooks/opencode_native_gate.py';")
+           "const gate = 'C:/Users/someone/ArchHub/00.GOVERNANCE/03.AGENT-HOOKS/opencode_native_gate.py';")
     assert observe_runtime_compliance("opencode", home=tmp_path)["status"] == "green"

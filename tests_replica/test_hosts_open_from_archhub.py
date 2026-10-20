@@ -106,10 +106,10 @@ def test_max_is_honest_about_needing_maxmcp():
 def test_the_installer_ships_both_bridges_beside_the_app():
     iss = (ROOT / "installer" / "ArchHub.iss").read_text(encoding="utf-8")
     # Founder decision 2026-09-14: the bridges ship from this one canonical
-    # project (bridges/), never from a sibling 12.PRODUCTION payload folder.
+    # project (bridges/), never from a sibling 10.PRODUCT/11.ARCHHUB-APP payload folder.
     assert r'Source: "..\bridges\rhino\archhub_mcp.py"; DestDir: "{app}\bridges\rhino"' in iss
     assert r'Source: "..\bridges\blender\archhub_mcp\__init__.py"; DestDir: "{app}\bridges\blender\archhub_mcp"' in iss
-    assert "12.PRODUCTION" not in iss, "no installer input resolves through a sibling product copy"
+    assert "10.PRODUCT/11.ARCHHUB-APP" not in iss, "no installer input resolves through a sibling product copy"
     assert (ROOT / "bridges" / "rhino" / "archhub_mcp.py").is_file()
     assert (ROOT / "bridges" / "blender" / "archhub_mcp" / "__init__.py").is_file()
     src = inspect.getsource(hb._bridges_dir)

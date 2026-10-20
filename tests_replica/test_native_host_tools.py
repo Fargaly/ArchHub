@@ -415,5 +415,8 @@ def test_mcp_server_spec_writes_only_the_shipped_server_and_asks_before_brain(in
         assert set(spec["remove"]) == set(FOUNDER_LEGACY)
         assert set(spec["ask"]) == {"brain"}
     assert mcp_server_spec("codex", environment={})["add"][SERVER_NAME]["env_vars"] == ["CODEX_THREAD_ID"]
+    opencode = mcp_server_spec("opencode", environment={})["add"][SERVER_NAME]
+    assert opencode["type"] == "local" and opencode["command"][-1] == str(install)
+    assert opencode["environment"]["ARCHHUB_COORDINATION_VENDOR"] == "opencode"
     with pytest.raises(ValueError):
-        mcp_server_spec("opencode", environment={})
+        mcp_server_spec("unknown-client", environment={})

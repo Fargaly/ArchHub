@@ -937,7 +937,7 @@ _CODEX_REPLY = re.compile(r'\[From Claude Code: [^;\]]*; session ([0-9a-f-]{36})
 
 def _message_roots():
     import tempfile
-    return (Path(tempfile.gettempdir()).resolve(), (Path.home() / '00.ARCHUB' / '70.HANDOFFS').resolve())
+    return (Path(tempfile.gettempdir()).resolve(), (Path.home() / '00.ARCHUB' / '70.COMPANY/72.HANDOFFS').resolve())
 
 
 def _message_file(path, sent_at=None):

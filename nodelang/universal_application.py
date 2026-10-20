@@ -8004,8 +8004,10 @@ def _ensure_application_workshop_workbench(
     removable = tuple(
         member.incidence_id for member in brain_members
         if (
-            member.role_id == roles["member"]
-            and member.participant_id in internal_scope_roots
+            (member.role_id == roles["member"]
+             and member.participant_id in internal_scope_roots)
+            or (member.role_id == roles["relation"]
+                and member.participant_id == _WORKSHOP_WORK_WIRE_ROOT)
         )
     )
     removal = prepare_remove_relation_members(
@@ -17588,8 +17590,9 @@ def restore_universal_application(
                     map_registry.nodes
                 if scope_root in (_DESIGN_SYSTEM_ROOT, _THEME_SYSTEM_ROOT):
                     design_group.get("ready")
-                if scope_root in (_WORKSHOP_ROOT, _GOVERNED_WORK_REGISTRY_ROOT,
-                                  _WORKSHOP_WORKBENCH_ROOT, _AGENT_CONTROL_ROOT):
+                if (scope_root == map_registry.domains.get("brain")
+                        or scope_root in (_WORKSHOP_ROOT, _GOVERNED_WORK_REGISTRY_ROOT,
+                                          _WORKSHOP_WORKBENCH_ROOT, _AGENT_CONTROL_ROOT)):
                     work_group.get("agent_body")
                 _ensure_nested_scope_canvas_interfaces(
                     store, assembly, roles, application_root, (scope_root,),

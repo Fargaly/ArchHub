@@ -5,7 +5,7 @@ counted a client as compliant only while its config still named the Brain MCP
 server and the brainwrap hooks. Here a client is compliant when its own config
 binds the governance hooks that actually enforce work in this workspace:
 
-* scope-gate      -- its pre-tool event runs ``00.GOVERNANCE/hooks/agent_scope_gate.py``
+* scope-gate      -- its pre-tool event runs ``00.GOVERNANCE/03.AGENT-HOOKS/agent_scope_gate.py``
                      (or the vendor gate) for that vendor, and the hook's tool
                      matcher covers every file-writing tool of the vendor;
 * required-hooks  -- scope-gate, plus the post-tool settle hook (same coverage)
@@ -47,8 +47,8 @@ CHECKS = (
     "scope-gate",
     "workshop-authority",
 )
-GATES = ("00.GOVERNANCE/hooks/agent_scope_gate.py", "00.GOVERNANCE/hooks/pretooluse_validate.py")
-OPENCODE_GATE = "00.GOVERNANCE/hooks/opencode_native_gate.py"
+GATES = ("00.GOVERNANCE/03.AGENT-HOOKS/agent_scope_gate.py", "00.GOVERNANCE/03.AGENT-HOOKS/pretooluse_validate.py")
+OPENCODE_GATE = "00.GOVERNANCE/03.AGENT-HOOKS/opencode_native_gate.py"
 START_HOOK = "native_start_hook.py"
 STOP_HOOK = "native_stop_hook.py"
 

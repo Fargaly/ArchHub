@@ -79,7 +79,7 @@ class World:
         values = cde._permit_values(
             runtime="claude", agent_session_root=actor, work_root="court:work",
             container_root="court:container", container_id="GM.nodes.court",
-            container_digest="a" * 64, operation="write_file", path="70.HANDOFFS/court/target.txt",
+            container_digest="a" * 64, operation="write_file", path="70.COMPANY/72.HANDOFFS/court/target.txt",
             content_digest=hashlib.sha256(b"x").hexdigest(), request_id="court-request-" + name,
             nonce="court-nonce-" + name, authority_revision=snap.revision,
             issued_at=issued, expires_at=issued + 60.0)
@@ -138,7 +138,7 @@ def test_reads_survive_an_owner_change_while_writes_stay_blocked(world):
                 "category": "note", "text": "x", "refs": [], "evidence": [], "recipients": [actor],
                 "reply_to": None, "idempotency_key": "w2", "created_at": None}),
             ("POST", "/api/universal/cde-write-permit", {
-                "operation": "write_file", "path": "70.HANDOFFS/court/target.txt",
+                "operation": "write_file", "path": "70.COMPANY/72.HANDOFFS/court/target.txt",
                 "content_digest": "b" * 64, "request_id": "r", "nonce": "n"})):
         with pytest.raises(MachineTransportError, match="read-only"):
             reader._client.request(method, path, body)

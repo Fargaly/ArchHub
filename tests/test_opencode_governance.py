@@ -861,7 +861,7 @@ def test_opencode_shell_allows_read_only_diagnostics_inside_workspace(tmp_path, 
     monkeypatch.setattr(module, '_PUBLIC_CHECKOUT', module._real(str(workspace / 'ArchHub')))
     monkeypatch.setattr(module, '_PRIVATE_ROOTS', (module._real(str(private)), module._real(str(workspace / '60.PERSONAL'))))
     monkeypatch.setattr(module, '_CANONICAL_CHECKOUTS', (module._real(str(product)),))
-    monkeypatch.setattr(module, '_HANDOFFS', module._real(str(workspace / '70.HANDOFFS')))
+    monkeypatch.setattr(module, '_HANDOFFS', module._real(str(workspace / '70.COMPANY/72.HANDOFFS')))
     monkeypatch.setattr(module, '_private_registered_root', lambda path: False)
     allowed = [
         'dir .',
@@ -939,7 +939,7 @@ def test_opencode_shell_denies_recursive_search_through_private_junction(tmp_pat
     monkeypatch.setattr(module, '_PUBLIC_CHECKOUT', module._real(str(workspace / 'ArchHub')))
     monkeypatch.setattr(module, '_PRIVATE_ROOTS', (module._real(str(private)),))
     monkeypatch.setattr(module, '_CANONICAL_CHECKOUTS', (module._real(str(product)),))
-    monkeypatch.setattr(module, '_HANDOFFS', module._real(str(workspace / '70.HANDOFFS')))
+    monkeypatch.setattr(module, '_HANDOFFS', module._real(str(workspace / '70.COMPANY/72.HANDOFFS')))
     monkeypatch.setattr(module, '_private_registered_root', lambda path: False)
     created = False
     try:
@@ -981,7 +981,7 @@ def test_opencode_shell_denies_search_through_private_file_symlink(tmp_path, mon
     monkeypatch.setattr(module, '_PUBLIC_CHECKOUT', module._real(str(workspace / 'ArchHub')))
     monkeypatch.setattr(module, '_PRIVATE_ROOTS', (module._real(str(private)),))
     monkeypatch.setattr(module, '_CANONICAL_CHECKOUTS', (module._real(str(product)),))
-    monkeypatch.setattr(module, '_HANDOFFS', module._real(str(workspace / '70.HANDOFFS')))
+    monkeypatch.setattr(module, '_HANDOFFS', module._real(str(workspace / '70.COMPANY/72.HANDOFFS')))
     monkeypatch.setattr(module, '_private_registered_root', lambda path: False)
     verdict = module.shell_admission('rg -- ArchHub .', cwd=str(product), runtime='opencode')
     assert not verdict['allow'], verdict

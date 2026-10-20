@@ -28,7 +28,7 @@ from nodelang.native_agent_mcp import _OwnedWorkshopClient
 from nodelang.native_agent_session import NativeAgentSession
 
 KEY = MemorySigningKeyProvider("archhub.local.universal-runtime-pipe", b"n" * 32)
-TARGET = "70.HANDOFFS/court-inbox/target.txt"
+TARGET = "70.COMPANY/72.HANDOFFS/court-inbox/target.txt"
 PLANNED = b"planned content\n"
 
 

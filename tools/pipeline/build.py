@@ -35,6 +35,25 @@ def release_context(message, author):
     return context
 
 
+def registration_context(root, parent, commit, paths, context):
+    """A new intent registers under the existing registration owner, never itself."""
+    registry = 'evidence/acompiler-intents.json'
+    if paths != [registry]:
+        return context
+    try:
+        before = json.loads(strict_check.git(root, 'show', f'{parent}:{registry}'))
+        after = json.loads(strict_check.git(root, 'show', f'{commit}:{registry}'))
+        prior, added = before['intents'], after['intents']
+        declared = context.get('intent')
+        if (declared in prior or declared not in added
+                or {k: v for k, v in before.items() if k != 'intents'} != {k: v for k, v in after.items() if k != 'intents'}
+                or any(added.get(key) != value for key, value in prior.items())):
+            return context
+    except (strict_check.CompilerFailure, ValueError, KeyError, TypeError):
+        return context
+    return {**context, 'intent': 'ACOMPILER2B'}
+
+
 def admit_sequence(root, base):
     """Replay immutable landed changes with their own authority and metrics."""
     head = strict_check.git(root, "rev-parse", "HEAD").decode().strip()
@@ -63,7 +82,10 @@ def admit_sequence(root, base):
                     overlay[path] = ""  # Non-executable asset, never substitute today's bytes.
         message = strict_check.git(root, "show", "-s", "--format=%B", commit).decode("utf-8")
         author = strict_check.git(root, "show", "-s", "--format=%an", commit).decode("utf-8").strip()
-        context = release_context(message, author)
+        recorded = release_context(message, author)
+        context = registration_context(root, parent, commit, paths, recorded)
+        if context.get('intent') != recorded.get('intent'):
+            print(f"ACOMPILER REGISTRATION {commit}: ACOMPILER2B (declared {recorded.get('intent')})", flush=True)
         result = strict_check.check_files(root, paths, overlay=overlay, revision=parent, context=context,
                                           committed_history=True)
         strict_check.print_diagnostics(result)

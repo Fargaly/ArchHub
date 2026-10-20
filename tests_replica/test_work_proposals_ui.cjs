@@ -31,7 +31,7 @@ const proposal = (title, extra = {}) => ({title, description:'proposed by an age
     tier:'T1', suitability_status:'S0', revision:'P01', owner:'founder', checker:'court', gate_kind:'pytest',
     gate_spec:{path:'10.PRODUCT/11.ARCHHUB-APP/tests_replica/test_cell_cde_authority.py'}},
   write_grants:[{path:'10.PRODUCT/11.ARCHHUB-APP/nodelang/work_proposals.py', scope:'exact', operations:['apply_patch']},
-    {path:'70.HANDOFFS/court-proposals', scope:'descendants', operations:['apply_patch']}], ...extra});
+    {path:'70.COMPANY/72.HANDOFFS/court-proposals', scope:'descendants', operations:['apply_patch']}], ...extra});
 const message = payload => MARKER + '\n' + JSON.stringify(sorted(payload));
 const digest = text => createHash('sha256').update(text.slice(MARKER.length + 1)).digest('hex');
 const PROPOSER = 'app:agent-session:runtime:proposer', REVIEWER = 'app:agent-session:runtime:reviewer';
@@ -97,7 +97,7 @@ test('the founder sees every proposal with its grants per governed root and its 
   assert.equal(a.proposer, PROPOSER);
   assert.deepEqual(plain(a.grants), {
     '10.PRODUCT':[{path:'10.PRODUCT/11.ARCHHUB-APP/nodelang/work_proposals.py', scope:'exact', operations:['apply_patch']}],
-    '70.HANDOFFS':[{path:'70.HANDOFFS/court-proposals', scope:'descendants', operations:['apply_patch']}]});
+    '70.COMPANY/72.HANDOFFS':[{path:'70.COMPANY/72.HANDOFFS/court-proposals', scope:'descendants', operations:['apply_patch']}]});
   assert.deepEqual(plain(a.reviewers), []);
   assert.deepEqual(plain(b.reviewers), [REVIEWER]);
   assert.match(unreadable.problem, /cannot be bound/);
@@ -194,7 +194,7 @@ test('rendered list: grants per root and reviewers shown, one confirm binds only
       ['Work proposal Proposal A', 'Work proposal Proposal B', 'Work proposal Unreadable proposal']);
     const box = label => document.querySelector(`input[aria-label="Bind ${label}"]`);
     assert.ok(sets[0].querySelector('[aria-label="Grants in 10.PRODUCT"]').textContent.includes('work_proposals.py · exact · apply_patch'));
-    assert.ok(sets[0].querySelector('[aria-label="Grants in 70.HANDOFFS"]').textContent.includes('court-proposals · descendants'));
+    assert.ok(sets[0].querySelector('[aria-label="Grants in 70.COMPANY/72.HANDOFFS"]').textContent.includes('court-proposals · descendants'));
     assert.match(sets[0].textContent, /Reviewers: none/);
     assert.match(sets[1].textContent, new RegExp('Reviewers: ' + REVIEWER));
     assert.equal(box('Unreadable proposal').disabled, true, 'an unreadable proposal cannot be checked');

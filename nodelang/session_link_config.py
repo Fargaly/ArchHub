@@ -34,7 +34,7 @@ _CONNECTION = re.compile(r"^[a-f0-9]{16}$")
 _ACTOR = re.compile(r"^app:agent-session:runtime:[a-f0-9]{32}$")
 _WORK = re.compile(r"^assembly-instance:[a-f0-9]{32}$")
 _PLAIN = re.compile(r"^[A-Za-z0-9 _:./\-]+$")
-# A lane is one absolute 70.HANDOFFS/<lane>/work/<name> folder; shell writes stay inside it.
+# A lane is one absolute 70.COMPANY/72.HANDOFFS/<lane>/work/<name> folder; shell writes stay inside it.
 _LANE = re.compile(r"^[A-Za-z]:/(?:[A-Za-z0-9 _.\-]+/)*70\.HANDOFFS/[A-Za-z0-9_.\-]+/work/[A-Za-z0-9_.\-]+$")
 
 

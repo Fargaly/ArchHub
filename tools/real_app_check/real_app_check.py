@@ -47,7 +47,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
-DEFAULT_WINAPP = r"C:\Users\fargaly\00.ARCHUB\50.TOOLING\outlook-project-categories\.runtime\winapp-v0.6.0\winapp.exe"
+DEFAULT_WINAPP = shutil.which("winapp") or ""
 # The installed tree's code; never its data (the installed folder also holds the founder's state).
 CODE_ENTRIES = ("nodelang", "app", "runtime", "governed-bin", "workflows", "library", "custom_nodes",
                 "ui_widgets", "skills", "VERSION", "BUILD_ID",

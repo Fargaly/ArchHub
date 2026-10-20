@@ -4359,7 +4359,14 @@
         "nodelang/model_router.py",
         "nodelang/model_execution_broker.py",
         "nodelang/model_session_bridge.py",
-        "tests_replica/test_model_session_bridge.py"
+        "tests_replica/test_model_session_bridge.py",
+        "nodelang/workshop_api.py",
+        "tests_replica/test_wire_agents.py",
+        "tests_js/wire_agents.test.cjs",
+        "tests_js/wire_agents_adapter.test.cjs",
+        "nodelang/social_research_community_backend.py",
+        "tests_js/wire_social.test.cjs",
+        "tests_replica/test_wire_social.py"
       ]
     }
   }

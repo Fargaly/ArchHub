@@ -106,7 +106,7 @@
       ]
     },
     "OPENWS": {
-      "source": "F62 Founder 2026-10-18 OPENWS: own account agents in registered workspaces never wait for grants; permission system stays. Why: \u0648\u0643\u0633\u0645 \u0627\u0644\u0628\u0631\u064a\u0645\u064a\u0634\u0646\u0632 \u0648\u0642\u0641\u0644 \u0627\u0644\u0634\u063a\u0644 \u062f\u0647 \u062d\u0627\u062c\u0629 \u0627\u0646\u0627 \u0642\u0644\u062a \u0645\u062a\u062a\u0643\u0631\u0631\u0634 \u0645\u0644\u064a\u0648\u0646 \u0645\u0631\u0629 ; \u0645\u0628\u0642\u0648\u0644\u0634 \u0646\u0645\u0633\u062d \u0627\u0644\u0628\u064a\u0631\u0645\u064a\u0634\u0646 \u0633\u064a\u0633\u062a\u0645",
+      "source": "F62 Founder 2026-10-18 OPENWS: own account agents in registered workspaces never wait for grants; permission system stays. Why: وكسم البريميشنز وقفل الشغل ده حاجة انا قلت متتكررش مليون مرة ; مبقولش نمسح البيرميشن سيستم",
       "scope": [
         "nodelang/private_root_grants.py",
         "nodelang/workspace_roots_catalogue.py",
@@ -4355,7 +4355,11 @@
         "tools/real_app_check/designwire.mjs",
         "tools/real_app_check/designwire.py",
         "tools/real_app_check/real_app_check.py",
-        "tools/rollback-rehearsal-ci/rollback-rehearsal.ps1"
+        "tools/rollback-rehearsal-ci/rollback-rehearsal.ps1",
+        "nodelang/model_router.py",
+        "nodelang/model_execution_broker.py",
+        "nodelang/model_session_bridge.py",
+        "tests_replica/test_model_session_bridge.py"
       ]
     }
   }

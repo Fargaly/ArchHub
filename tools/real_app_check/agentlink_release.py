@@ -278,6 +278,7 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
     env["OPENCODE_CONFIG_CONTENT"] = json.dumps({"plugin":[loader.as_uri()],
         "mcp":{"archhub_agent_coordination":mcp}, "share":"disabled", "autoupdate":False})
     from nodelang.application_server import ApplicationServer
+    from nodelang.persistence import application_database_path
     from nodelang.cell_secret_keys import WindowsDpapiSigningKeyProvider
     app = server = server_job = None
     checks = {name:False for name in ("exchange", "overlap", "opencode")}
@@ -299,7 +300,7 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
             keys.current("archhub.local.universal-runtime-pipe")
             app = ApplicationServer(enable_machine_transport=True, machine_key_provider=keys,
                 machine_descriptor_path=local / "active-universal-runtime.json",
-                universal_workspace_root=fixture, universal_state_path=profile / "graph.sqlite3",
+                universal_workspace_root=fixture, universal_state_path=application_database_path(profile),
                 enable_universal_cloud_gateway=False, enable_brain_cloud_sync=False,
                 enable_machine_projection_prewarm=False, live_watch=False).start()
             with socket.socket() as listener:

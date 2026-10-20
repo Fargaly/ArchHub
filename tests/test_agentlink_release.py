@@ -52,3 +52,38 @@ def test_goose_only_auto_allows_the_shared_mailbox_boundary():
     assert not safe_workshop_call(identity("send"), {"to":"OpenCode","text":"proof","sender":"forged"})
     assert not safe_workshop_call(identity("office_execute"), {"code":"unsafe"})
     assert not safe_workshop_call({"extensionName":"other","toolName":"archhub-agent__read"}, {})
+
+
+def test_qualification_server_and_native_mailbox_select_one_profile(tmp_path, monkeypatch):
+    from tools.real_app_check import agentlink_release as gate
+    from nodelang import application_server, cell_secret_keys, workshop_mailbox
+    from nodelang.persistence import application_database_path
+
+    profile = tmp_path / "agentlink-qualification-profile"
+    native_gate = tmp_path / "native_gate.py"
+    native_gate.touch()
+    monkeypatch.setattr(gate, "_executable", lambda *_: sys.executable)
+    monkeypatch.setattr(gate, "_claude_auth", lambda *_: None)
+    monkeypatch.setattr(gate, "source_digest", lambda *_: "source-fixture")
+    monkeypatch.setattr(gate.shutil, "copytree", lambda *_args, **_kwargs: None)
+
+    class Keys:
+        def __init__(self, *_):
+            pass
+        def current(self, *_):
+            pass
+
+    class SelectedProfileChecked(Exception):
+        pass
+
+    def server(**options):
+        selected = options["universal_state_path"]
+        assert selected == application_database_path(profile)
+        assert selected == workshop_mailbox.profile_database()
+        raise SelectedProfileChecked
+
+    monkeypatch.setattr(cell_secret_keys, "WindowsDpapiSigningKeyProvider", Keys)
+    monkeypatch.setattr(application_server, "ApplicationServer", server)
+    with pytest.raises(SelectedProfileChecked):
+        gate.qualify(profile, native_gate=native_gate, peer="claude")
+    assert not profile.exists()

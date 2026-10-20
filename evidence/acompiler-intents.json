@@ -4386,7 +4386,12 @@
         "nodelang/session_link/ask.mjs",
         "tests/session_link_workshop_delivery.mjs",
         "tools/archhub-compiler/src/main.rs",
-        "tools/archhub-compiler/src/intent.rs"
+        "tools/archhub-compiler/src/intent.rs",
+        "nodelang/cell_brain_community.py",
+        "nodelang/domains/selfext.py",
+        "nodelang/universal_pipeline.py",
+        "cloud_backend/main.py",
+        "cloud_backend/tests/test_user_profile.py"
       ],
       "external_entrypoints": [
         {

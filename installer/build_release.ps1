@@ -30,19 +30,9 @@ $GooseArchivePath = (Resolve-Path -LiteralPath $GooseArchivePath).Path
 $utf8 = [Text.UTF8Encoding]::new($false, $true)
 $builtAt = [DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", [Globalization.CultureInfo]::InvariantCulture)
 $selectedRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
-# ACOMPILER is admission, before candidate/output creation and packaging effects.
 # Resolve the selected build interpreter early; the later packaging logic still
 # owns its Python/dependency validation.
 $compilerPython = if ($PythonPath) { $PythonPath } else { 'python' }
-& $compilerPython (Join-Path $selectedRoot 'tools/pipeline/build.py') --root $selectedRoot
-if ($LASTEXITCODE -ne 0) { throw "ACOMPILER refused release build (exit $LASTEXITCODE)." }
-# No optional switch and no cached PASS: real clients qualify this exact source.
-$agentLinkEvidence = Join-Path $selectedRoot 'evidence/agentlink-release.json'
-Push-Location $selectedRoot
-try {
-    & $compilerPython -m tools.real_app_check.agentlink_release --profile-parent $selectedRoot --output $agentLinkEvidence
-    if ($LASTEXITCODE -ne 0) { throw "AGENTLINK refused release: real message, overlap or OpenCode write proof failed." }
-} finally { Pop-Location }
 $compilerSourceRoot = $selectedRoot
 $acompilerInputs = @(
     'NOTICE', 'tools/__init__.py', 'tools/ratchet.py', 'tools/pipeline/__init__.py',
@@ -560,6 +550,17 @@ if ($PrepareCandidateManifest) {
     Write-Output "Files: $($prepared.Rows.Count); bytes: $($prepared.TotalBytes). Review before building; no compiler or application launched."
     return
 }
+# Manifest preparation inventories source only. Every actual build still runs
+# fresh admission before creating its snapshot, runtime or installer output.
+& $compilerPython (Join-Path $selectedRoot 'tools/pipeline/build.py') --root $selectedRoot
+if ($LASTEXITCODE -ne 0) { throw "ACOMPILER refused release build (exit $LASTEXITCODE)." }
+# No optional switch and no cached PASS: real clients qualify this exact source.
+$agentLinkEvidence = Join-Path $selectedRoot 'evidence/agentlink-release.json'
+Push-Location $selectedRoot
+try {
+    & $compilerPython -m tools.real_app_check.agentlink_release --profile-parent $selectedRoot --output $agentLinkEvidence
+    if ($LASTEXITCODE -ne 0) { throw "AGENTLINK refused release: real message, overlap or OpenCode write proof failed." }
+} finally { Pop-Location }
 $isCandidate = -not [string]::IsNullOrEmpty($LocalCandidateManifest)
 if ($isCandidate -ne (-not [string]::IsNullOrEmpty($LocalCandidateManifestSha256))) {
     throw 'LocalCandidateManifest and its reviewed SHA256 must be supplied together.'

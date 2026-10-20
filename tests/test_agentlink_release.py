@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import pytest
@@ -93,3 +94,37 @@ def test_qualification_server_and_native_mailbox_select_one_profile(tmp_path, mo
     with pytest.raises(SelectedProfileChecked):
         gate.qualify(profile, native_gate=native_gate, peer=peer)
     assert not profile.exists()
+
+
+@pytest.mark.parametrize("refused", ["compiler", "agentlink"])
+def test_actual_installer_refuses_before_creating_output(tmp_path, refused):
+    product = tmp_path / "01.WIP" / "PRODUCT"
+    (product / "installer").mkdir(parents=True)
+    (product / "tools" / "pipeline").mkdir(parents=True)
+    (product / "tools" / "real_app_check").mkdir()
+    root = Path(__file__).resolve().parents[1]
+    shutil.copyfile(root / "installer/build_release.ps1", product / "installer/build_release.ps1")
+    (product / "tools/__init__.py").touch()
+    (product / "tools/real_app_check/__init__.py").touch()
+    (product / "tools/pipeline/build.py").write_text(
+        "print('COMPILER_REACHED',flush=True)\nraise SystemExit(" + ("23" if refused == "compiler" else "0") + ")\n")
+    (product / "tools/real_app_check/agentlink_release.py").write_text(
+        "print('AGENTLINK_REACHED',flush=True)\nraise SystemExit(24)\n")
+    env = {**os.environ, "GIT_CONFIG_GLOBAL":os.devnull, "PYTHONPATH":str(product)}
+    for args in (["init", "--quiet"], ["add", "."],
+                 ["-c", "user.name=Gate fixture", "-c", "user.email=gate@example.invalid",
+                  "commit", "--quiet", "-m", "Fixture"]):
+        subprocess.run(["git", "-c", "core.longpaths=true", *args],
+                       cwd=product, env=env, check=True, capture_output=True)
+    archive = tmp_path / "GOOSE.zip"
+    archive.touch()
+    output = tmp_path / "OUTPUT"
+    result = subprocess.run(["powershell.exe", "-NoProfile", "-File",
+        str(product / "installer/build_release.ps1"), "-BuildId", "candidate-FIXTURE",
+        "-OutputDirectory", str(output), "-GooseArchivePath", str(archive), "-PythonPath", sys.executable],
+        cwd=product, env=env, capture_output=True, encoding="utf-8", errors="replace", timeout=30)
+    assert result.returncode != 0
+    assert "COMPILER_REACHED" in result.stdout
+    assert ("AGENTLINK_REACHED" in result.stdout) == (refused == "agentlink")
+    assert ("ACOMPILER refused release build" if refused == "compiler" else "AGENTLINK refused release") in result.stderr
+    assert not output.exists()

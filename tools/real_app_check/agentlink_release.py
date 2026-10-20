@@ -233,7 +233,7 @@ def _environment(env):
 
 def qualify(profile, *, opencode=None, claude=None, native_gate=None,
             model="opencode/mimo-v2.6-flash-free", peer="goose", goose=None, inject_failure=None,
-            stop_wait=10, connect_wait=1, startup_wait=30, poll_interval=0.1):
+            stop_wait=10, connect_wait=1, startup_wait=30, poll_interval=0.1, initial_turn_timeout=300):
     root = Path(__file__).resolve().parents[2]
     profile = Path(profile).resolve()
     if profile.exists():
@@ -342,7 +342,8 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
                 "After that failed MCP call, read a.txt and write recovered.txt with exact bytes '"+nonce+
                 "'. Continue even if the MCP tool fails. Then send(to='"+peer.title()+"',text='AGENTLINK-REQUEST " + nonce +
                 "'). Keep declaration working for the paired reader. Do not use a shell to fake MCP calls. Stop.")
-            output = _run([oc, "run", "--attach", address, "--format", "json", "-m", model, request], env=env, cwd=fixture)
+            output = _run([oc, "run", "--attach", address, "--format", "json", "-m", model, request],
+                          env=env, cwd=fixture, timeout=initial_turn_timeout)
             events = [json.loads(line) for line in output.splitlines() if line.startswith("{")]
             _log_tools(output)
             session = next((row.get("sessionID") for row in events if row.get("sessionID")), None)

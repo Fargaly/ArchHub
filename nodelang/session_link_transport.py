@@ -85,8 +85,11 @@ class SessionLinkTransport:
         if state_dir is None or not Path(state_dir).is_absolute():
             raise ValueError("an absolute disposable state directory is required")
         self._state = Path(state_dir).resolve()
-        code_root = Path(sys._MEIPASS).resolve() if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[1]
-        if self._state.is_relative_to(code_root):
+        code_root = Path(__file__).resolve().parent
+        code_roots = (code_root, code_root.parent / "runtime", self._assets)
+        if getattr(sys, "frozen", False):
+            code_roots += (Path(sys._MEIPASS),)
+        if any(self._state.is_relative_to(root.resolve()) for root in code_roots):
             raise ValueError("transport state must be outside installed code")
         self._env = dict(os.environ)
         self._env.update(env or {})

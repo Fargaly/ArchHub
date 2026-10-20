@@ -70,7 +70,7 @@ def test_functional_round_trip_verify_hits_the_seeded_digest(tmp_path):
         "archhub.unified.bootstrap", b"digest-memo-court" + b"0" * 16,
     )
     caller_keys = WindowsDpapiCallerKeyStore(root / "callers.dpapi.json")
-    specification = (Path(__file__).parents[1] / "SPEC.md").read_bytes()
+    specification = (Path(__file__).parents[1] / "docs/SPEC.md").read_bytes()
     grand_map = (
         b'[{"key":"court","title":"Court domain","nodes":[{"id":"court_a",'
         b'"cat":"note","title":"Court requirement","sub":"held","status":'

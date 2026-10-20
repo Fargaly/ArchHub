@@ -45,7 +45,7 @@ GRAND_MAP = (
 
 @pytest.fixture
 def runtime(tmp_path):
-    specification = (Path(__file__).parents[1] / "SPEC.md").read_bytes()
+    specification = (Path(__file__).parents[1] / "docs/SPEC.md").read_bytes()
     built = provision_clean_runtime(
         tmp_path,
         PROVIDER,

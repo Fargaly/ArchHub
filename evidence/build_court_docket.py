@@ -16,7 +16,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
-SPEC = ROOT / "SPEC.md"
+SPEC = ROOT / "docs/SPEC.md"
 DOCKET = HERE / "the-court-docket.json"
 BINDINGS = HERE / "court_bindings.json"
 

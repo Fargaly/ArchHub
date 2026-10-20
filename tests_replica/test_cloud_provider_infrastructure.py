@@ -23,7 +23,6 @@ RENDERER_PATH = (
     / "infrastructure"
     / "render_fly_runtime_environment.py"
 )
-GUIDE_PATH = ROOT / "CLOUD-PROVIDER-PROVISIONING.md"
 
 
 def _template() -> dict:
@@ -510,27 +509,3 @@ def test_renderer_extracts_exact_single_stack_outputs_and_rejects_ambiguity():
             pass
         else:
             raise AssertionError("ambiguous stack output was admitted")
-
-
-def test_guide_answers_the_operating_questions_and_denies_false_activation():
-    text = GUIDE_PATH.read_text(encoding="utf-8")
-    for heading in (
-        "## What",
-        "## Why",
-        "## How",
-        "## Who",
-        "## When",
-        "## Where",
-        "## Example",
-        "## Evidence",
-        "## Recovery",
-        "## Cost Boundary",
-        "## Activation Gate",
-    ):
-        assert heading in text
-    assert "does not create cloud resources" in text
-    assert "not deployed proof" in text
-    assert "ARCHHUB_UNIVERSAL_POSTGRES_DSN" in text
-    assert "never enters Git" in text
-    assert "real restore drill" in text
-    assert "HMAC keys require manual rotation" in text

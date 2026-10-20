@@ -1,3 +1,5 @@
+Host-program connectors and their source adapters.
+
 # Host bridges
 
 ArchHub drives Revit, AutoCAD, Rhino, Blender and 3ds Max through a small

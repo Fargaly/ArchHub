@@ -415,7 +415,6 @@ function Read-ReleaseSnapshotManifest([switch]$WorkingCandidate) {
         }
         foreach ($relative in $paths) {
             # Retired Studio surfaces are kept in the repository for history only; replaced code never ships.
-            if ($relative.StartsWith('nodelang/studio/archive/', [StringComparison]::Ordinal)) { continue }
             if ($WorkingCandidate -and -not (Test-CandidateInput $role $relative)) { continue }
             if (-not (Test-CandidateInput $role $relative) -or -not $seen.Add($role + '/' + $relative)) {
                 throw "Committed release input is outside the selected public payload: $role/$relative"

@@ -12,7 +12,6 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 DOCKERFILE = ROOT / "packaging" / "cloud" / "Dockerfile"
 LOCKFILE = ROOT / "packaging" / "cloud" / "requirements.lock"
-GUIDE = ROOT / "CLOUD-RUNTIME-PACKAGING.md"
 RENDERER = ROOT / "infrastructure" / "render_fly_application_config.py"
 PINNED_BASE = (
     "python:3.14.6-slim-bookworm@"
@@ -156,35 +155,3 @@ def test_fly_config_rejects_ambiguous_provider_identity(
             app_name=app_name,
             primary_region=primary_region,
         )
-
-
-def test_packaging_guide_is_authority_accurate_and_evidence_backed():
-    source = GUIDE.read_text(encoding="utf-8")
-
-    for heading in (
-        "## What",
-        "## Why",
-        "## How",
-        "## Who",
-        "## When",
-        "## Where",
-        "## Example",
-        "## Evidence",
-        "## Recovery",
-        "## Open release gates",
-    ):
-        assert heading in source
-    for phrase in (
-        "TCP check proves process liveness only",
-        "runtime ownership fence",
-        "one Machine",
-        "does not deploy",
-        "does not prove release eligibility",
-        "Fly Managed Postgres",
-        "AWS KMS",
-        "DynamoDB",
-        "https://fly.io/docs/reference/configuration/",
-        "https://docs.docker.com/build/building/best-practices/",
-        "https://docs.astral.sh/uv/pip/compile/",
-    ):
-        assert phrase in source

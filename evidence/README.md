@@ -1,3 +1,5 @@
+Check generators and retained machine-readable policy inputs; generated run output is ignored.
+
 # Node Language implementation evidence
 
 This directory contains revision-bound generated evidence. It is not normative

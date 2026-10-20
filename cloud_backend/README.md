@@ -1,3 +1,5 @@
+Cloud API and cockpit service source.
+
 # ArchHub Cloud — Backend
 
 FastAPI service that powers the **Solo / Studio / Firm** paid tiers

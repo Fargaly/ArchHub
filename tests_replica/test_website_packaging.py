@@ -52,9 +52,8 @@ HOSTING_WORDS = (
 TRACKED_PUBLIC_SITE = (
     "public_site/.gitignore",
     "public_site/README.md",
-    "public_site/site-export.json",
 )
-PUBLIC_SITE_FILES = (".gitignore", "README.md", "site-export.json")
+PUBLIC_SITE_FILES = (".gitignore", "README.md")
 README_SENTENCES = (
     "the exporter writes no README",
     "`write_public_site(store, registry, project_dir, *, offer, "
@@ -177,7 +176,7 @@ def test_offer_record_is_ignored_never_tracked():
     assert tracked.strip() == "", tracked
 
 
-def test_public_site_tracks_only_the_sealed_export_its_readme_and_gitignore():
+def test_public_site_tracks_only_its_readme_and_gitignore():
     stdout, _rc = _git("ls-files", "--", "public_site")
     tracked = tuple(sorted(
         line.strip() for line in stdout.splitlines() if line.strip()
@@ -192,6 +191,8 @@ def test_public_site_tracks_only_the_sealed_export_its_readme_and_gitignore():
     assert present == PUBLIC_SITE_FILES, present
     ignored = (PUBLIC_SITE / ".gitignore").read_text(encoding="utf-8").splitlines()
     assert "dist/" in ignored
+    _stdout, generated_ignored = _git("check-ignore", "-q", "--", "public_site/site-export.json")
+    assert generated_ignored == 0
 
 
 def test_public_site_readme_describes_the_one_source_and_the_offer_record():

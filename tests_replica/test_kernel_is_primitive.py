@@ -4,7 +4,7 @@ The founder rejected the fixed role catalogue itself as non-universal. These
 tests remain only to stop the legacy runtime growing while it is retained for
 migration comparison. They do NOT establish that value/group/session/ui/etc.
 are accepted primitives. The replacement authority is
-``RESEARCH-UNIVERSAL-CELL.md`` and ``test_universal_cell_kernel.py``.
+the current founder direction and ``test_universal_cell_kernel.py``.
 
 Historical line (founder, 2026-07-09): the kernel is a fixed set of roles and
 floor capabilities, not a growing catalogue of special product nodes.

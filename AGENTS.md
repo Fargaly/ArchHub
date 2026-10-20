@@ -4,7 +4,7 @@ Read before your first edit, in this order:
 
 1. `../../AGENTS.md` -- the workspace contract (placement, CDE containers, the
    signed write gate).
-2. `AUTHORITY.md` and `SPEC.md` -- the law this repository is measured against.
+2. `docs/AUTHORITY.md` and `docs/SPEC.md` -- the law this repository is measured against.
 3. `docs/FOUNDER_MANDATES.md` -- the founder's standing mandates, carried from
    the retired 12.PRODUCTION, with their reconciliation to the current
    authority. They bind every vendor (Claude, Codex, Gemini/Antigravity,

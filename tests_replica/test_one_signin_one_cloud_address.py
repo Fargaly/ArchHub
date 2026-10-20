@@ -287,7 +287,7 @@ def test_b_settings_shows_expired_and_the_date():
 
 # ---- (c) one cloud address ---------------------------------------------------------
 
-_SCANNED = ("nodelang", "desktop", "tools", "legacy_engine", "packaging")
+_SCANNED = ("nodelang", "desktop", "tools", "packaging")
 _SUFFIXES = {".py", ".js", ".jsx", ".html", ".json", ".ps1", ".toml", ".vbs", ".spec"}
 
 

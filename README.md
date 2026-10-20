@@ -12,6 +12,9 @@ BABOOM is the companion; supported AI providers are engines it can route work to
 | Desktop source | [nodelang](nodelang/) |
 | Website source and exporter | [public_site](public_site/) · [site_export.py](nodelang/site_export.py) |
 | Cockpit and cloud source | [cloud_backend](cloud_backend/) |
+| Contribute | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| Security | [SECURITY.md](SECURITY.md) |
+| Source documentation | [docs/README.md](docs/README.md) |
 | Catalogue reference | [docs/CATALOGUE.md](docs/CATALOGUE.md) |
 
 ## Install and update

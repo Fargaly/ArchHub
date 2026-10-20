@@ -1,3 +1,5 @@
+Website source and generated-site export instructions.
+
 # ArchHub public website export
 
 The website and user documentation have one generator:

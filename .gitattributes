@@ -3,5 +3,3 @@
 # Generated diffs and verbatim court output contain intentional format spaces.
 COHMAIN2.patch -text -whitespace
 evidence/cohmain2/*.out text eol=lf -whitespace
-docs/archive/cleanup-2026-10-15/** -whitespace
-docs/archive/cleanup-2026-10-15/SETUP.bat binary

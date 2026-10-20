@@ -1,3 +1,5 @@
+Desktop integration and context UI support.
+
 # The desktop shell
 
 `clean_shell.py` is the window the founder opens: the Qt shell -- icon, title,

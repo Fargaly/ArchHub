@@ -1,1 +1,0 @@
-{"ok":true,"action":"compile","files":15,"output_bytes":1748957,"manifest_sha256":"781410530c1a21d2bdf602051cb196320f04195abda342daaa539d23e1d85fcd","babel_version":"7.29.0"}

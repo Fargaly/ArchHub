@@ -34,17 +34,13 @@ def test_installer_file_list_excludes_stale_v1_documentation():
     assert destinations
     assert not forbidden.intersection(value.lower() for value in destinations)
     assert not [value for value in destinations if value.lower().startswith("{app}\\docs\\")]
-    assert not [value for value in destinations if "archive/cleanup-2026-10-15" in value.lower()]
 
 
-def test_retired_docs_archive_is_not_an_active_handwritten_copy():
-    archive = ROOT / "docs/archive/cleanup-2026-10-15"
+def test_retired_docs_are_not_an_active_handwritten_copy():
     for name in ("SETUP.txt", "SETUP.bat", "GAPS.md", "NODE-LANGUAGE-VISUAL-GUIDE.md",
                  "NODE-LANGUAGE-100-LAYER-ARCHITECTURE.md", "INTERACTION-LOCALITY-AUTHORITY-PLAN.md"):
         assert not (ROOT / name).exists(), name
-        assert (archive / name).is_file(), name
-    assert (archive / "docs/FOUNDER_MANDATES.md").is_file()
-    assert (archive / "docs/prototypes/website-update-2026-06-20.html").is_file()
+    assert not any(p.is_file() for p in (ROOT / "docs" / "archive").rglob("*"))
 
 
 @pytest.mark.skipif(sys.platform != "win32" or not ISCC.is_file(), reason="needs Inno Setup 6 on Windows")

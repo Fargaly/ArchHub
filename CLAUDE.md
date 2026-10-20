@@ -14,12 +14,12 @@ the incidents go (its earlier entries were carried from 12.PRODUCTION).
 
 ## The law this repository is measured against
 
-`SPEC.md` §1 and §3.1. One graph; every part a lens over it, never a separate
+`docs/SPEC.md` §1 and §3.1. One graph; every part a lens over it, never a separate
 product exchanging copied status reports. One persisted record — `Cell{id,
 link0, link1, atom}`. A semantic side table is forbidden; accelerators are
 disposable and deleting one may not change meaning.
 
-`AUTHORITY.md` and the applicable specification come before product work.
+`docs/AUTHORITY.md` and the applicable specification come before product work.
 
 ## Traps that have cost real hours here
 

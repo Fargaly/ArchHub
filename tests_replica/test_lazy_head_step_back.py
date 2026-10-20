@@ -37,7 +37,7 @@ GRAND_MAP = (
 @pytest.fixture(scope="module")
 def reopened(tmp_path_factory):
     root = tmp_path_factory.mktemp("lazy-head")
-    specification = (Path(__file__).parents[1] / "SPEC.md").read_bytes()
+    specification = (Path(__file__).parents[1] / "docs/SPEC.md").read_bytes()
     built = provision_clean_runtime(
         root,
         PROVIDER,

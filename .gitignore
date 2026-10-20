@@ -47,3 +47,6 @@ cloud.json
 *.p12
 Financial_Plan.xlsx
 signature_AFargaly*
+
+# Generated website payload; rebuild with nodelang.site_export.
+/public_site/site-export.json

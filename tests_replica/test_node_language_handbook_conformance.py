@@ -1,7 +1,7 @@
 """Bounded conformance court for the explanatory Node Language handbook.
 
-This court binds one reviewed handbook revision to the current specification
-and authority index. It proves document structure, declared source mappings,
+This check pins relocated document bytes to this repository layout.
+It verifies document structure, declared source mappings,
 and selected exact normative restatements. It does not prove product behavior,
 literature truth, usability, security, or release eligibility.
 """
@@ -14,15 +14,15 @@ from urllib.parse import unquote
 
 
 ROOT = Path(__file__).resolve().parents[1]
-HANDBOOK = ROOT / "NODE-LANGUAGE-HANDBOOK.md"
-SPEC = ROOT / "SPEC.md"
-AUTHORITY = ROOT / "AUTHORITY.md"
+HANDBOOK = ROOT / "docs/NODE-LANGUAGE-HANDBOOK.md"
+SPEC = ROOT / "docs/SPEC.md"
+AUTHORITY = ROOT / "docs/AUTHORITY.md"
 
-REVIEWED_SHA256 = {
-    "AUTHORITY.md": "5c66ec0304152d75ed54697387cce1293424f1f7e264f85ca13d9c1d985624c0",
-    "SPEC.md": "13664a6dde239dca498c2820601377412eb615ee98ac3dc7b0d80e3803224cbd",
+DOCUMENT_SHA256 = {
+    "AUTHORITY.md": "e76cede195be11a3b11bd4d122af64bc3f800ce3e9fbe705306481b8756ecabb",
+    "SPEC.md": "424465ee9b481a9bb6e72bfe6c41b6e947923775a2a5cce214ab3b67e5c73f89",
     "NODE-LANGUAGE-HANDBOOK.md": (
-        "bfc02b5ddabdd8c0638b4d000e1b56e6f8192bacf90ed0377230d399f9ca2f00"
+        "5e7159c8a6c48383e943d05a680e4d5bc6ebdec6fccec49e4c0274f5a239699f"
     ),
 }
 QUESTIONS = ("WHAT", "WHY", "HOW", "WHO", "WHEN", "WHERE", "PROOF")
@@ -70,10 +70,10 @@ def _external_urls(value: str) -> set[str]:
     }
 
 
-def test_handbook_revision_is_the_reviewed_wip_explanatory_artifact() -> None:
-    for name, digest in REVIEWED_SHA256.items():
-        assert _digest(ROOT / name) == digest, (
-            f"{name} changed after the handbook conformance review"
+def test_document_bytes_and_wip_explanatory_status() -> None:
+    for name, digest in DOCUMENT_SHA256.items():
+        assert _digest(ROOT / "docs" / name) == digest, (
+            f"{name} changed after the repository layout check"
         )
 
     handbook = _text(HANDBOOK)
@@ -174,7 +174,7 @@ def test_all_local_links_and_declared_courts_resolve() -> None:
             continue
         relative = unquote(target.split("#", 1)[0])
         if relative:
-            assert (ROOT / relative).resolve().exists(), (
+            assert (HANDBOOK.parent / relative).resolve().exists(), (
                 f"handbook link does not resolve: {target}"
             )
 

@@ -63,7 +63,7 @@ def plan_graph_owner(run_dir: Path, app_env: dict, *, repo: Path = REPO, ports=N
     return {
         "run_dir": str(run_dir), "env": env, "endpoint": endpoint,
         "coordination_port": coordination, "canvas_port": canvas, "runtime_root": str(runtime_root),
-        "sources": {"specification": pinned_source(repo / "SPEC.md"), "grand_map": pinned_source(OWNER_MAP)},
+        "sources": {"specification": pinned_source(repo / "docs/SPEC.md"), "grand_map": pinned_source(OWNER_MAP)},
         "service_args": ["-B", "-m", "nodelang.desktop"],
     }
 

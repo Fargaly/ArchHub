@@ -213,7 +213,7 @@ def test_requirement_source_digest_and_endpoints_fail_closed():
 def test_normative_specification_imports_as_one_revision_bound_governance_graph():
     authority = _authority()
     caller = _Caller(authority)
-    source = (Path(__file__).parents[1] / "SPEC.md").read_bytes()
+    source = (Path(__file__).parents[1] / "docs/SPEC.md").read_bytes()
     digest = hashlib.sha256(source).hexdigest()
     request = {
         "source_bytes": source,
@@ -284,7 +284,7 @@ def test_normative_specification_imports_as_one_revision_bound_governance_graph(
 def test_specification_digest_and_executable_html_fail_closed_without_writes():
     authority = _authority()
     caller = _Caller(authority)
-    source = (Path(__file__).parents[1] / "SPEC.md").read_bytes()
+    source = (Path(__file__).parents[1] / "docs/SPEC.md").read_bytes()
     revision = authority.store.revision
     count = len(authority.store.snapshot().cells)
 
@@ -384,7 +384,7 @@ def test_a_graph_bootstrapped_before_scope_panels_can_still_be_given_them():
     authority = _authority()
     caller = _Caller(authority)
     composition_root(authority, "Governance", caller=caller)
-    source = (Path(__file__).parents[1] / "SPEC.md").read_bytes()
+    source = (Path(__file__).parents[1] / "docs/SPEC.md").read_bytes()
     imported = import_specification_graph(
         authority,
         source_bytes=source,

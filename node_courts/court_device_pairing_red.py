@@ -1,6 +1,6 @@
 """RED courts for new-device pairing authority.
 
-Encodes REMOTE-DEVICE-SESSION-AUTHORITY.md sec 3.3 (new-device admission
+Encodes the retired design at revision 388b5cd5 sec 3.3 (new-device admission
 sequence) and sec 7.2 courts 1-5. Court 6 (first-device recovery) is HELD OUT:
 it needs a separately released root of trust, not the normal pairing path.
 
@@ -58,7 +58,7 @@ class _MissingPairingAuthority:
             "RED: nodelang.cell_device_pairing.%s does not exist. "
             "New-device pairing authority is unbuilt — the gap between "
             "'download ArchHub on another device' and 'that device may join "
-            "the account'. See REMOTE-DEVICE-SESSION-AUTHORITY.md sec 3.3 "
+            "the account'. See the retired design at revision 388b5cd5 sec 3.3 "
             "(sequence) and sec 7.2 (courts 1-5)." % name
         )
 

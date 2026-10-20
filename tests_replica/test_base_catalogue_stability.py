@@ -22,7 +22,7 @@ def test_base_catalogue_reopen_is_bounded_on_large_fixture(tmp_path):
         b"clean-coordination-host-key" + b"0" * 5,
     )
     key_store = WindowsDpapiCallerKeyStore(tmp_path / "callers.dpapi.json")
-    specification = (Path(__file__).parents[1] / "SPEC.md").read_bytes()
+    specification = (Path(__file__).parents[1] / "docs/SPEC.md").read_bytes()
     grand_map = json.dumps(
         [{"key": "brain", "title": "Brain", "nodes": [], "wires": [], "cross": []}],
         sort_keys=True,

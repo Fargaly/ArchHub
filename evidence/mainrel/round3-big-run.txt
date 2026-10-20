@@ -1,4 +1,0 @@
-Traceback (most recent call last):
-  File "C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\mainrel\evidence\mainrel\measure_big.py", line 62, in <module>
-    raise OSError('OGF fixture plus backup must leave 25 GiB; no large allocation started')
-OSError: OGF fixture plus backup must leave 25 GiB; no large allocation started

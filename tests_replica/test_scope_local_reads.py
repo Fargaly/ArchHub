@@ -52,7 +52,7 @@ GRAND_MAP = (
 @pytest.fixture(scope="module")
 def runtime(tmp_path_factory):
     root = tmp_path_factory.mktemp("scope-local")
-    specification = (Path(__file__).parents[1] / "SPEC.md").read_bytes()
+    specification = (Path(__file__).parents[1] / "docs/SPEC.md").read_bytes()
     keys = WindowsDpapiCallerKeyStore(root / "callers.dpapi.json")
     built = provision_clean_runtime(
         root,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -46,7 +47,7 @@ def test_clean_runtime_selects_only_complete_sources_and_replays_zero(tmp_path):
         b"clean-bootstrap-authority-key" + b"0" * 5,
     )
     caller_keys = WindowsDpapiCallerKeyStore(tmp_path / "caller.dpapi.json")
-    specification = (Path(__file__).parents[1] / "SPEC.md").read_bytes()
+    specification = (Path(__file__).parents[1] / "docs/SPEC.md").read_bytes()
     grand_map = _map_source()
     request = {
         "caller_key_id": "founder.bootstrap",
@@ -114,7 +115,7 @@ def test_clean_runtime_builds_full_accepted_sources_and_replays_zero(tmp_path):
     caller_keys = WindowsDpapiCallerKeyStore(tmp_path / "caller.dpapi.json")
     node_language = Path(__file__).parents[1]
     workspace = Path(__file__).parents[3]
-    specification = (node_language / "SPEC.md").read_bytes()
+    specification = (node_language / "docs/SPEC.md").read_bytes()
     grand_map_path = (
         workspace
         / "30.KNOWLEDGE"
@@ -122,6 +123,7 @@ def test_clean_runtime_builds_full_accepted_sources_and_replays_zero(tmp_path):
         / "data"
         / "grand_domains.json"
     )
+    grand_map_path = Path(os.environ.get("ARCHHUB_GRAND_MAP_PATH", grand_map_path))
     grand_map = grand_map_path.read_bytes()
     decoded_map = json.loads(grand_map.decode("utf-8"))
     domain_count = len(decoded_map)
@@ -172,7 +174,7 @@ def test_clean_runtime_rejects_source_drift_before_pointer_creation(tmp_path):
         b"clean-bootstrap-authority-key" + b"0" * 5,
     )
     caller_keys = WindowsDpapiCallerKeyStore(tmp_path / "caller.dpapi.json")
-    specification = (Path(__file__).parents[1] / "SPEC.md").read_bytes()
+    specification = (Path(__file__).parents[1] / "docs/SPEC.md").read_bytes()
     grand_map = _map_source()
     with pytest.raises(InvalidCell, match="specification source digest"):
         provision_clean_runtime(

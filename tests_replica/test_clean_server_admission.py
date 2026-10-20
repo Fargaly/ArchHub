@@ -122,7 +122,7 @@ def _provision_clean_runtime(
     )
     provider.add_key("archhub.local.private-root-grants", b"private-root-grants-admission" + b"0" * 3)
     caller_keys = WindowsDpapiCallerKeyStore(root / "callers.dpapi.json")
-    specification = (Path(__file__).parents[1] / "SPEC.md").read_bytes()
+    specification = (Path(__file__).parents[1] / "docs/SPEC.md").read_bytes()
     grand_map = grand_map_source if grand_map_source is not None else _map_source()
     built = provision_clean_runtime(
         root,

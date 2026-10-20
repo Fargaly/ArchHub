@@ -60,7 +60,7 @@ def _map_source() -> bytes:
 def _clean_settings_owner(tmp_path, provider, grant_path):
     root = tmp_path / "clean-owner"
     key_store = WindowsDpapiCallerKeyStore(root / "callers.dpapi.json")
-    specification = (Path(__file__).parents[1] / "SPEC.md").read_bytes()
+    specification = (Path(__file__).parents[1] / "docs/SPEC.md").read_bytes()
     grand_map = _map_source()
     built = provision_clean_runtime(
         root,

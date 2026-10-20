@@ -1,5 +1,0 @@
-{
-  "author": "Fargaly",
-  "why": "Founder explicitly requested release installer/launcher safeguards and replacement of duplicate automatic backup; eight guard scope requires cross-language edits, existing behavioral tests retained.",
-  "intent": "MAINREL"
-}

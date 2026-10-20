@@ -38,7 +38,7 @@ if '--baseline' in sys.argv:
 from nodelang import persistence
 
 fixture = Path('E:/ARCHHUB-RIG-FIXTURES/ogfbig-20261018-1030-4535ff5-8')
-work = ROOT / 'evidence/mainfix/court-state/big'
+work = ROOT / 'evidence/large-boot/court-state/big'
 local = work / 'LOCALAPPDATA'
 root = work / 'state'
 source = local / 'ArchHub-Test/archhub-test.universal.sqlite3'

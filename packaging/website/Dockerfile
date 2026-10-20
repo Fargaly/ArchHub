@@ -2,7 +2,7 @@
 # and served by BusyBox httpd.
 #
 # One source: nodelang/cell_website.py, exported by nodelang/site_export.py
-# (the same exporter that writes public_site/site-export.json).  The frozen
+# (the same exporter that writes the website export manifest).  The frozen
 # 12.PRODUCTION/web Astro site is not built here.
 #
 # Build context: the 13.NODE-LANGUAGE repository root, filtered by

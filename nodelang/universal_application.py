@@ -310,6 +310,7 @@ from .cell_cloud_routes import (
     bootstrap_cloud_route_protocol,
     external_object_root,
     list_cloud_routes,
+    prepare_cloud_route,
     project_cloud_route_protocol,
     read_cloud_route,
 )
@@ -3669,6 +3670,29 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("GET", "/api/universal/social-connection", "read"),
     ("POST", "/api/universal/social-connection", "manage-policy"),
 )
+_NEWAPP_HTTP_ROUTE_KEYS = frozenset({
+    "POST /api/universal/canvas-op",
+    "POST /api/universal/settings-action",
+    "POST /api/universal/social-surface",
+})
+
+
+def _application_http_route_fields(authorization, standard_library,
+                                    ui_protocol, method, path_template, action_name):
+    return dict(
+        route_id="app:http-route:%s:%s" % (method.lower(), _part(path_template)),
+        method=method, path_template=path_template,
+        action_root=authorization.protocol.actions[action_name],
+        object_root=authorization.route_scope_root,
+        interface_root=ui_protocol.root_id,
+        purpose_root=authorization.purpose_root,
+        audience_root=authorization.audience_root,
+        classification_root=authorization.classification_root,
+        lifecycle_state_root=standard_library.lifecycle_protocol.states["published"],
+        resource_lineage_roots=(authorization.scope_root, authorization.route_scope_root),
+    )
+
+
 _FOUNDER_BABOOM_CAPABILITY_REPORT_VERSION = (
     "founder-local-baboom-capability-report"
 )
@@ -12644,26 +12668,9 @@ def build_universal_application(
     for method, path_template, action_name in _APPLICATION_HTTP_ROUTE_SPECS:
         key = "%s %s" % (method, path_template)
         application_http_route_roots[key] = build_cloud_route(
-            store,
-            cloud_route_protocol,
-            route_id="app:http-route:%s:%s" % (
-                method.lower(), _part(path_template)
-            ),
-            method=method,
-            path_template=path_template,
-            action_root=authorization.protocol.actions[action_name],
-            object_root=authorization.route_scope_root,
-            interface_root=ui_protocol.root_id,
-            purpose_root=authorization.purpose_root,
-            audience_root=authorization.audience_root,
-            classification_root=authorization.classification_root,
-            lifecycle_state_root=(
-                standard_library.lifecycle_protocol.states["published"]
-            ),
-            resource_lineage_roots=(
-                authorization.scope_root,
-                authorization.route_scope_root,
-            ),
+            store, cloud_route_protocol,
+            **_application_http_route_fields(authorization, standard_library,
+                ui_protocol, method, path_template, action_name),
         )
     presentation = build_application_presentation(store, ui_protocol)
     icon_catalog = ensure_archhub_icon_catalog(store)
@@ -15707,8 +15714,7 @@ def restore_universal_application(
         "%s %s" % (method, path)
         for method, path, _ in _APPLICATION_HTTP_ROUTE_SPECS
     }
-    # Both released route sets remain valid. Opening an older graph is a read;
-    # adding the social surface is part of an explicit release, never restore.
+    # Admit only exact released shapes before adding this release's routes.
     expected_active_route_keys = expected_route_keys - _RETIRED_APPLICATION_HTTP_ROUTE_KEYS
     social_route_keys = {
         "GET /api/universal/social-connections",
@@ -15757,11 +15763,15 @@ def restore_universal_application(
         'POST /api/universal/workshop-board/tick',
         'POST /api/universal/workshop-work-assign',
         'POST /api/universal/workspace-roots',
+        *_NEWAPP_HTTP_ROUTE_KEYS,
     }
     released_route_sets = (
         expected_active_route_keys,
         expected_active_route_keys - social_route_keys,
+        expected_active_route_keys - _NEWAPP_HTTP_ROUTE_KEYS,
+        expected_active_route_keys - social_route_keys - _NEWAPP_HTTP_ROUTE_KEYS,
         expected_active_route_keys - post_20260923_route_keys,
+        (expected_active_route_keys - post_20260923_route_keys) | _NEWAPP_HTTP_ROUTE_KEYS,
     )
     website_revision_route_keys = tuple(
         {"GET %s" % path for path in paths}
@@ -15775,6 +15785,34 @@ def restore_universal_application(
         *(routes | keys for routes in released_route_sets for keys in website_revision_route_keys),
     ):
         raise InvalidCell("persisted application HTTP route graph drifted")
+    missing_release_routes = _NEWAPP_HTTP_ROUTE_KEYS - active_route_keys
+    if missing_release_routes:
+        ui = project_ui_protocol(snapshot, "app:ui-protocol")
+        new_routes = {}
+        route_cells = []
+        for method, path, action_name in _APPLICATION_HTTP_ROUTE_SPECS:
+            key = "%s %s" % (method, path)
+            if key in missing_release_routes:
+                fields = _application_http_route_fields(authorization, standard_library,
+                    ui, method, path, action_name)
+                route_cells.extend(prepare_cloud_route(snapshot, cloud_route_protocol, **fields))
+                new_routes[key] = fields["route_id"]
+        protocol_members = prepare_append_relation_members(
+            snapshot, cloud_route_protocol.root_id,
+            tuple((cloud_route_protocol.role("route-member"), root) for root in new_routes.values()),
+        )
+        route_members = prepare_append_relation_members(
+            snapshot, application_root,
+            tuple((roles["member"], root) for root in new_routes.values()),
+        )
+        store.commit(snapshot.revision,
+            create=(*route_cells, *protocol_members.create, *route_members.create),
+            replace=(*protocol_members.replace, *route_members.replace))
+        for root in new_routes.values():
+            read_cloud_route(store.snapshot(), cloud_route_protocol, root)
+        projected_routes.update(new_routes)
+        snapshot = store.snapshot()
+    released_route_sets = tuple(routes | _NEWAPP_HTTP_ROUTE_KEYS for routes in released_route_sets)
     active_projected_routes = {
         key: root
         for key, root in projected_routes.items()

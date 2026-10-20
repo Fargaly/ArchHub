@@ -164,3 +164,15 @@ def test_old_change_records_undo_and_redo_on_an_old_graph_with_new_code(
     assert result["new_edit"]["position"] == ["512.0", "128.0"]
     assert result["after_new_undo"] == old["moved"]
     assert result["after_new_redo"] == ["512.0", "128.0"]
+
+
+@pytest.mark.parametrize("corruption", ["", "unrelated", "1", "2"])
+def test_release_routes_migrate_atomically_and_refuse_partial_registries(old_graph, tmp_path, corruption):
+    state = _copy_graph(old_graph, tmp_path / "state")
+    result_path = tmp_path / "routes-result.json"
+    _run("release-routes", _source_under_test(), state, str(result_path), corruption)
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    assert len(result["routes"]) == 3
+    assert result["atomic_refusals"] == (0 if corruption else 1)
+    assert result["corruption"] == corruption
+    assert result["reopen_unchanged"] is True

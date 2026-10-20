@@ -231,8 +231,8 @@ def project_cloud_route_protocol(
     return CloudRouteProtocol(root_id, MappingProxyType(roles))
 
 
-def build_cloud_route(
-    store: CellStore,
+def prepare_cloud_route(
+    snapshot: Snapshot,
     protocol: CloudRouteProtocol,
     *,
     route_id: str,
@@ -249,8 +249,8 @@ def build_cloud_route(
     lifecycle_state_root: str | None = None,
     operational_state_root: str | None = None,
     resource_lineage_roots: tuple[str, ...] = (),
-) -> str:
-    """Create and register one immutable protected-route relation."""
+) -> tuple[Cell, ...]:
+    """Compose a validated route without publishing or registering it."""
     method = _validate_method(method)
     path_template = _validate_path_template(path_template)
     static = object_root is not None
@@ -283,7 +283,6 @@ def build_cloud_route(
         "resource_lineage_roots": lineage,
     }
     digest = _digest(**fields)
-    snapshot = store.snapshot()
     if route_id in snapshot.cells:
         raise InvalidCell("cloud route identity already exists")
     for existing in list_cloud_routes(snapshot, protocol):
@@ -332,6 +331,43 @@ def build_cloud_route(
     )
     members.append((protocol.role("route-digest"), scalar_roots["route-digest"]))
     relation = compose_relation_cells(members, relation_id=route_id)
+    scalars = tuple(
+        _terminal(scalar_roots[name], value) for name, value in scalar_values
+    )
+    return (*scalars, *relation.cells)
+
+
+def build_cloud_route(
+    store: CellStore,
+    protocol: CloudRouteProtocol,
+    *,
+    route_id: str,
+    method: str,
+    path_template: str,
+    action_root: str,
+    object_root: str | None = None,
+    object_namespace: str | None = None,
+    object_path_parameter: str | None = None,
+    interface_root: str | None = None,
+    purpose_root: str | None = None,
+    audience_root: str | None = None,
+    classification_root: str | None = None,
+    lifecycle_state_root: str | None = None,
+    operational_state_root: str | None = None,
+    resource_lineage_roots: tuple[str, ...] = (),
+) -> str:
+    """Create and register one immutable protected-route relation."""
+    snapshot = store.snapshot()
+    cells = prepare_cloud_route(
+        snapshot, protocol, route_id=route_id, method=method,
+        path_template=path_template, action_root=action_root,
+        object_root=object_root, object_namespace=object_namespace,
+        object_path_parameter=object_path_parameter, interface_root=interface_root,
+        purpose_root=purpose_root, audience_root=audience_root,
+        classification_root=classification_root, lifecycle_state_root=lifecycle_state_root,
+        operational_state_root=operational_state_root,
+        resource_lineage_roots=resource_lineage_roots,
+    )
     registry_patch = prepare_append_relation_member(
         snapshot,
         protocol.root_id,
@@ -339,12 +375,9 @@ def build_cloud_route(
         route_id,
         budget=100_000,
     )
-    scalars = tuple(
-        _terminal(scalar_roots[name], value) for name, value in scalar_values
-    )
     store.commit(
         snapshot.revision,
-        create=(*scalars, *relation.cells, *registry_patch.create),
+        create=(*cells, *registry_patch.create),
         replace=registry_patch.replace,
     )
     read_cloud_route(store.snapshot(), protocol, route_id)

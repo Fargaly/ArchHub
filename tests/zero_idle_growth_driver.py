@@ -443,6 +443,84 @@ def undo_old(result_path):
     Path(result_path).write_text(json.dumps(result, indent=1), encoding="utf-8")
 
 
+def release_routes(result_path, corruption=""):
+    from nodelang.cell_protocols import read_relation, prepare_remove_relation_members
+    paths = ("/api/universal/canvas-op", "/api/universal/settings-action",
+             "/api/universal/social-surface")
+    from nodelang.universal_application import _part
+    roots = {"app:http-route:post:" + _part(path) for path in paths}
+    original = universal_cell.CellStore.commit
+    attempts = []
+
+    def refuse_route_publication(self, expected_revision, *, create=(), **kwargs):
+        create = tuple(create)
+        touched = roots.intersection(cell.id for cell in create)
+        if touched:
+            assert touched == roots, "release routes must publish atomically"
+            attempts.append(expected_revision)
+            raise RuntimeError("injected route publication refusal")
+        return original(self, expected_revision, create=create, **kwargs)
+
+    if not corruption:
+        universal_cell.CellStore.commit = refuse_route_publication
+        try:
+            try:
+                server = open_server()
+            except RuntimeError as exc:
+                assert str(exc) == "injected route publication refusal"
+            else:
+                server.close()
+                raise AssertionError("route publication fault did not fire")
+        finally:
+            universal_cell.CellStore.commit = original
+        assert len(attempts) == 1
+        with universal_cell.CellStore(GRAPH) as store:
+            assert not roots.intersection(store.snapshot().cells)
+
+    server = open_server()
+    try:
+        store, registry = server.universal_store, server.universal_registry
+        for path in paths:
+            server.require_universal_http_route("POST", path,
+                authentication_context=registry.authorization.session.context())
+        members = read_relation(store.snapshot(), "app:archhub", budget=100_000)
+        for root in roots:
+            assert sum(member.participant_id == root for member in members) == 1
+        if corruption:
+            snapshot = store.snapshot()
+            protocol = registry.cloud_route_protocol
+            if corruption == "unrelated":
+                removed = {registry.application_http_route_roots["GET /api/universal/canvas"]}
+            else:
+                removed = set(sorted(roots)[:int(corruption)])
+            incidences = [member.incidence_id for member in read_relation(
+                snapshot, protocol.root_id, budget=100_000) if member.participant_id in removed]
+            patch = prepare_remove_relation_members(snapshot, protocol.root_id,
+                incidences, budget=100_000)
+            with user_action("corrupt only the isolated release fixture"):
+                store.commit(snapshot.revision, replace=patch.replace)
+    finally:
+        server.close()
+    baseline = counts()
+    if corruption:
+        try:
+            server = open_server()
+        except universal_cell.InvalidCell as exc:
+            assert str(exc) == "persisted application HTTP route graph drifted"
+        else:
+            server.close()
+            raise AssertionError("corrupt route registry was admitted")
+        assert counts() == baseline
+    else:
+        for _ in range(2):
+            server = open_server()
+            server.close()
+            assert counts() == baseline
+    Path(result_path).write_text(json.dumps({"routes":sorted(roots),
+        "atomic_refusals":len(attempts), "corruption":corruption,
+        "reopen_unchanged":True}), encoding="utf-8")
+
+
 if __name__ == "__main__":
     if MODE == "build-old":
         build_old()
@@ -450,5 +528,7 @@ if __name__ == "__main__":
         idle(sys.argv[4])
     elif MODE == "undo-old":
         undo_old(sys.argv[4])
+    elif MODE == "release-routes":
+        release_routes(sys.argv[4], sys.argv[5] if len(sys.argv) > 5 else "")
     else:
         raise SystemExit("unknown phase " + MODE)

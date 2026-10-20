@@ -4366,7 +4366,14 @@
         "tests_js/wire_agents_adapter.test.cjs",
         "nodelang/social_research_community_backend.py",
         "tests_js/wire_social.test.cjs",
-        "tests_replica/test_wire_social.py"
+        "tests_replica/test_wire_social.py",
+        "requirements.txt",
+        "cloud_backend/companies.py",
+        "cloud_backend/db.py",
+        "nodelang/managed_dependencies.py",
+        "nodelang/settings_owner.py",
+        "tests/test_wire_settings_owner.py",
+        "tests_js/wire_settings.test.cjs"
       ]
     }
   }

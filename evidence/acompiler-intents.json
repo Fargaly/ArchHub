@@ -3731,6 +3731,14 @@
         "tests_replica/test_adopt_backup_resume5.py",
         "tests_replica/test_mainfix.py"
       ]
+    },
+    "APPFIX": {
+      "source": "Founder APPFIX: installed build 20261019-2356-7cc521c must open with state under app_root/session-link, outside shipped code. Smallest root guard repair; real-layout RED/GREEN; isolated default-state boot; no install; 717 builds and installs.",
+      "source_sha256": "ed405c4c49d7a977ccf256df1ef6864684d0136fa85318af0fd97c25109edb87",
+      "scope": [
+        "nodelang/session_link_transport.py",
+        "tests_replica/test_session_link_worker_release.py"
+      ]
     }
   }
 }

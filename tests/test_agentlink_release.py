@@ -128,3 +128,21 @@ def test_actual_installer_refuses_before_creating_output(tmp_path, refused):
     assert ("AGENTLINK_REACHED" in result.stdout) == (refused == "agentlink")
     assert ("ACOMPILER refused release build" if refused == "compiler" else "AGENTLINK refused release") in result.stderr
     assert not output.exists()
+
+
+def test_installer_includes_the_required_stylesheet_without_allowing_arbitrary_assets(tmp_path):
+    script = tmp_path / "CHECK.ps1"
+    script.write_text(r'''
+param([string]$Build)
+$tokens=$null; $errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile($Build,[ref]$tokens,[ref]$errors)
+$function=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Test-CandidateInput'},$true)
+Invoke-Expression $function.Extent.Text
+$acompilerInputs=@()
+@('nodelang/studio/style.css','nodelang/studio/other.css','nodelang/credentials.json','nodelang/.env') | ForEach-Object { Test-CandidateInput 'selected' $_ } | ConvertTo-Json -Compress
+''', encoding="utf-8")
+    result = subprocess.run(["powershell.exe", "-NoProfile", "-File", str(script), "-Build",
+        str(Path(__file__).resolve().parents[1] / "installer/build_release.ps1")],
+        capture_output=True, encoding="utf-8", errors="replace", timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == [True, False, False, False]

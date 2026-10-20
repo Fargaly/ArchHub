@@ -159,7 +159,7 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
         # The generic JavaScript allowlist must never admit stale compiled files.
         if ($Path.StartsWith('nodelang/studio/compiled/', [StringComparison]::OrdinalIgnoreCase)) { return $false }
         if ($Path -cin @(
-            'nodelang/launcher.py', 'colleague_setup.py', 'requirements.txt',
+            'nodelang/launcher.py', 'nodelang/studio/style.css', 'colleague_setup.py', 'requirements.txt',
             'NOTICE', 'packaging/windows/goose-pin.json', 'packaging/windows/stage_goose.py',
             'package.json', 'packaging/compile_studio.cjs',
             'installer/ArchHub.iss', 'installer/ArchHub.bat', 'installer/ArchHub.vbs',

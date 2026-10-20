@@ -21,7 +21,7 @@ from PyQt6.QtCore import QThread, QTimer  # noqa: E402
 
 from nodelang.gui_thread import GuiThreadAsker  # noqa: E402
 
-LAUNCHER = Path(__file__).resolve().parents[1] / "launch_archhub_test.py"
+LAUNCHER = Path(__file__).resolve().parents[1] / "nodelang/launcher.py"
 
 
 @pytest.fixture(scope="module")

@@ -104,7 +104,7 @@ def test_actual_launcher_answers_restarts_signed_in_and_x_leaves_no_process(tmp_
         for restart in range(2):
             result_path = profile / "state/instfix-launcher.json"
             result_path.unlink(missing_ok=True)
-            process = desktop.spawn(subprocess.list2cmdline([sys.executable, "-B", str(ROOT / "launch_archhub_test.py")]),
+            process = desktop.spawn(subprocess.list2cmdline([sys.executable, "-B", str(ROOT / "nodelang/launcher.py")]),
                 env=environment, cwd=str(ROOT))
             try:
                 deadline = time.monotonic() + 150

@@ -131,7 +131,7 @@ def test_real_launcher_opens_same_journal_and_saved_edit_without_copy(
         state_path=stale, machine_key_provider=keys, _migration_progress=events.append,
         _boot_step_seen=lambda *_: None, application_database_path=persistence.application_database_path,
         _saved_graph_exists=lambda *_: True, ApplicationServer=factory,
-        Path=Path, os=os, __file__=str(ROOT/"launch_archhub_test.py"),
+        Path=Path, os=os, __file__=str(ROOT/"nodelang/launcher.py"),
         PIPELINE_ENGINES={}, descriptor_path=root/"runtime-descriptor.json", _machine_pointer=None)
     started = time.monotonic()
     server = namespace["_boot"]()

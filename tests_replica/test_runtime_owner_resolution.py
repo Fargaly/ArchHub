@@ -262,7 +262,7 @@ def test_the_generation_read_never_takes_the_write_lock(tmp_path, monkeypatch):
 
 def test_the_launcher_announces_by_pointer_and_restores_nothing():
     source = open(os.path.join(os.path.dirname(__file__), os.pardir,
-                               "launch_archhub_test.py"), encoding="utf-8").read()
+                               "nodelang/launcher.py"), encoding="utf-8").read()
     assert "_previous_active" not in source
     assert "machine_pointer_path=" in source
     assert "active-universal-runtime.json" in source

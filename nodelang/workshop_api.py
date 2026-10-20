@@ -164,6 +164,8 @@ class WorkshopAPI:
             "queuedMessages":[item for item in options.get("queuedMessages", []) if item["state"] == "queued"], "delegate":options.get("delegate"),
             "blocked":state == "blocked" or any(item["status"] == "blocked" for item in active),
             "declarations":active, "delivery":delivery,
+            # WIRE-agents: restore only saved task parameters; never claim Work completion.
+            "planMode":options.get("planMode"), "checkpoints":options.get("checkpoints",[]),
             "revision":self.owner.universal_store.revision}
 
     def listTasks(self):
@@ -237,6 +239,13 @@ class WorkshopAPI:
         if type(options) is not dict or set(options) - {"provider", "taskId"}:
             raise InvalidCell("Task options accept provider and taskId")
         text = _text(text)
+        # Re-read Settings at dispatch; a saved choice is never execution authority.
+        from .settings_owner import SettingsOwner
+        settings = SettingsOwner(self.owner.universal_store, runtime=self.owner,
+            authentication_context=self.binding.context).executionContext(self.scope)
+        if settings['workspaces']:
+            text += '\n\nWorkspace policy from the Settings owner (apply only within existing access):\n' + json.dumps(
+                settings['workspaces'], ensure_ascii=False)
         task = options.get("taskId")
         if task is None:
             result = create_browser_workshop_work(self.owner, self.binding,
@@ -357,6 +366,183 @@ class WorkshopAPI:
         return options["reviews"][index]
 
 
+    # WIRE-agents: parameters extend the current admitted graph and task owner.
+    def _surface_rows(self):
+        from .canvas_graph_owner import CanvasOwner
+        self.admit()
+        return CanvasOwner(self.owner.universal_store, self.owner.universal_registry,
+                           self.binding.context)
+
+    def _surface_node(self, create=False):
+        ops=self._surface_rows()
+        canvas=ops.canvas()
+        found=[n['id'] for n in canvas['nodes'] if
+            ops._rows(None,n['id']).get('wire_agents_owner',{}).get('value')==self.root]
+        if len(found)>1:raise InvalidCell('More than one Agent settings node; merge its parameters before editing')
+        if found:return ops,found[0]
+        if not create:return ops,None
+        from .universal_pipeline import create_engine_node
+        node=create_engine_node(self.owner.universal_store,self.owner.universal_registry,
+            title='Agent settings',engine='data.constant',properties={'wire_agents_owner':self.root},
+            authentication_context=self.binding.context)
+        return ops,node['root']
+
+    def _parameter(self, name, default=None):
+        ops,root=self._surface_node()
+        held=ops._rows(None,root).get(name) if root else None
+        return json.loads(held['value']) if held else default
+
+    def _put_parameter(self, name, value):
+        encoded=json.dumps(value,ensure_ascii=False,allow_nan=False)
+        if len(encoded.encode('utf-8'))>65536:
+            raise InvalidCell('Parameter exceeds 64 KiB; reduce the selected content')
+        self.guard()
+        ops,root=self._surface_node(create=True)
+        ops.set_property(root,name,encoded)
+        return value
+
+    def getAgentSurface(self):
+        return {name:self._parameter("studio:" + name, default) for name,default in
+            (("agentProfiles",{}),("intakeRules",[]),("uncertainLinks",[]),("onboarding",{}),
+             ("provenance",[]),("learning",{}),("hostSkills",[]))}
+
+    def setAgentProfile(self, id, values):
+        if id not in LABELS or type(values) is not dict or not values or set(values) - {
+                "purpose","humanOwner","admins","autonomy","questionsPerDay","memoryScope","skillIds"}:
+            raise InvalidCell("Choose a known agent and supported profile fields")
+        if "questionsPerDay" in values and (type(values["questionsPerDay"]) is not int or values["questionsPerDay"] < 0):
+            raise InvalidCell("Questions per day must be a nonnegative integer")
+        if "autonomy" in values and (type(values["autonomy"]) is not dict or
+                set(values["autonomy"]) - {"Read","Write","Send","Spend"} or
+                any(v not in {"Review all","Escalate hard","Autonomous"} for v in values["autonomy"].values())):
+            raise InvalidCell("Choose a supported autonomy policy")
+        profiles=self._parameter("studio:agentProfiles",{})
+        profiles[id]={**profiles.get(id,{}),**values}
+        self._put_parameter("studio:agentProfiles",profiles)
+        return profiles[id]
+
+    def setTaskPlanMode(self, id, mode):
+        if mode not in {"Run on its own","Confirm each step","Keep planning"}:
+            raise InvalidCell("Choose a task plan mode")
+        self._work(id)
+        options=self._options(id); options["planMode"]=mode; self._save(id,options)
+        return self._task(self._work(id))
+
+    def checkpointTask(self, id):
+        self._work(id)
+        options=self._options(id)
+        checkpoints=options.setdefault("checkpoints",[])
+        key="checkpoint:"+self.request_id
+        if not any(row["id"]==key for row in checkpoints):
+            checkpoints.append({"id":key,"title":"Checkpoint " + str(len(checkpoints)+1),
+                "steps":options.get("steps",[]),"planMode":options.get("planMode")})
+            self._save(id,options)
+        return next(row for row in checkpoints if row["id"]==key)
+
+    def restoreTaskCheckpoint(self, id, checkpoint):
+        self._work(id); options=self._options(id)
+        saved=next((row for row in options.get("checkpoints",[]) if row["id"]==checkpoint),None)
+        if saved is None: raise InvalidCell("Checkpoint no longer exists; refresh the task")
+        options.update(steps=saved["steps"],planMode=saved["planMode"])
+        self._save(id,options)
+        return self._task(self._work(id))
+
+    def openTaskGraph(self, id):
+        self._work(id)
+        ops=self._surface_rows(); canvas=ops.canvas()
+        ops._node(canvas,id)
+        return {"id":canvas.get('scope',{}).get('current',canvas['root']),"taskId":id}
+
+    def setIntakeRule(self, id, values):
+        if type(values) is not dict or set(values)-{"synonym","canonical","unit","shorthand"} or any(type(v) is not str for v in values.values()):
+            raise InvalidCell("Dictionary fields must be text")
+        rows=self._parameter("studio:intakeRules",[])
+        if id is None:
+            id="intake:"+self.request_id
+            if not any(r["id"]==id for r in rows):
+                rows.append({"id":id,"synonym":"","canonical":"","unit":"","shorthand":""})
+        row=next((row for row in rows if row["id"]==id),None)
+        if row is None: raise InvalidCell("Dictionary row disappeared; refresh before editing")
+        row.update(values); self._put_parameter("studio:intakeRules",rows); return row
+
+    def setOnboarding(self, values):
+        if type(values) is not dict or set(values)-{"role","assessment"} or any(type(v) is not str for v in values.values()):
+            raise InvalidCell("Onboarding accepts a role and assessment")
+        return self._put_parameter("studio:onboarding",{**self._parameter("studio:onboarding",{}),**values})
+
+    def reviewBrainLink(self, id, decision):
+        if decision not in {"Accepted","Rejected"}: raise InvalidCell("Choose Accept or Reject")
+        rows=self._parameter("studio:uncertainLinks",[])
+        row=next((row for row in rows if row["id"]==id),None)
+        if row is None: raise InvalidCell("Link disappeared; reload Brain before reviewing it")
+        row["status"]=decision; self._put_parameter("studio:uncertainLinks",rows); return row
+
+    def setSourceEvidence(self, id, values):
+        if type(values) is not dict or set(values)-{"cited","trust","source","excluded"}:
+            raise InvalidCell("Unsupported source evidence fields")
+        rows=self._parameter("studio:provenance",[])
+        row=next((row for row in rows if row["id"]==id),None)
+        if row is None: raise InvalidCell("Source disappeared; refresh the evidence list")
+        row.update(values); self._put_parameter("studio:provenance",rows); return row
+
+    def setLearningLayer(self, layer, values=None):
+        keys={"Host":{"program","operation","preserveRelationships"},
+            "Habit":{"pattern","minimumRepeats","learn"},"Intent":{"baseline","deviation","why"},
+            "Self":{"metric","threshold","rebaseline"},"Agent":{"provider","checkResults","maxIterations"},
+            "Session":{"graph","shareContext","retainCheckpoints"}}
+        values={} if values is None else values
+        if layer not in keys or type(values) is not dict or set(values)-keys[layer]:
+            raise InvalidCell("Choose a learning layer and its displayed parameters")
+        held=self._parameter("studio:learning",{"layers":{}})
+        held["layer"]=layer; held["layers"][layer]={**held["layers"].get(layer,{}),**values}
+        return self._put_parameter("studio:learning",held)
+
+    def setGraphMetadata(self, id, values):
+        if id != self.scope or type(values) is not dict or set(values)-{"documentation","customProperties","courtStatus","thumbnail"}:
+            raise InvalidCell("Only metadata for the currently selected graph may be edited")
+        if values.get("courtStatus") == "Pass":
+            raise InvalidCell("Pass requires a court receipt; open Run history and run its court")
+        return self._put_parameter('graph-metadata:'+id,{**self.getGraphMetadata(),**values})
+
+    def getGraphMetadata(self):
+        return self._parameter('graph-metadata:'+self.scope,{})
+
+    def setPinnedOutput(self, id, text):
+        rows=json.loads(_text(text))
+        if not isinstance(rows,(list,dict)): raise InvalidCell("Output JSON must be an array or object")
+        ops=self._surface_rows(); ops._node(ops.canvas(),id)
+        ops.set_property(id,"pinned_output",json.dumps(rows,ensure_ascii=False))
+        ops.set_node_flags(id,pinned=True)
+        return rows
+
+    def setNodeRunPolicy(self, id, values):
+        if type(values) is not dict or set(values)-{"onError","retries","previewOff","hostHighlighted"}:
+            raise InvalidCell("Unsupported node run policy")
+        if "retries" in values and (type(values["retries"]) is not int or not 0<=values["retries"]<=10):
+            raise InvalidCell("Retries must be an integer from 0 to 10")
+        if values.get("hostHighlighted"):
+            raise InvalidCell("Choose this target in the connected program's Watcher, then retry highlighting")
+        ops=self._surface_rows(); ops._node(ops.canvas(),id)
+        for key,value in values.items(): ops.set_property(id,key,json.dumps(value))
+        return values
+
+    def verifyOutputStamp(self, id):
+        ops=self._surface_rows(); node=ops._node(ops.canvas(),id)
+        output=node.get("output",node.get("result"))
+        if output is None: raise InvalidCell("Run this node to produce an output before verifying its hash")
+        expected=ops._rows(None,id).get("output_hash",{}).get("value")
+        actual=hashlib.sha256(json.dumps(output,sort_keys=True,separators=(",",":"),ensure_ascii=False).encode()).hexdigest()
+        if not expected: raise InvalidCell("Output has no provenance stamp; run its Provenance stamp node first")
+        if expected != actual: raise InvalidCell("Content hash differs from its recorded stamp; inspect the output before rerunning")
+        return {"verified":True,"sha256":actual}
+
+    def refreshOfficeAwareness(self):
+        tasks=self.listTasks()
+        return [{"id":t["id"],"title":t["title"],"when":t["status"],"owner":t["owner"] or "Unassigned"}
+                for t in tasks if t["status"] not in {"DONE","ARCHIVED"}]
+    # WIRE-agents end.
+
+
 def _text(value):
     if type(value) is not str or not value.strip() or len(value.encode()) > 32000 or "\0" in value:
         raise InvalidCell("Task text must contain 1–32000 UTF-8 bytes")
@@ -379,3 +565,10 @@ def dispatch(owner, binding, body, *, guard, route):
         except TypeError as exc:
             raise InvalidCell("Workshop data function arguments are invalid") from exc
         return {"ok":True, "result":result, "revision":owner.universal_store.revision}
+
+# WIRE-agents: extend the same authenticated dispatch allowlist.
+FUNCTIONS = FUNCTIONS | frozenset({"getAgentSurface","setAgentProfile","setTaskPlanMode",
+    "checkpointTask","restoreTaskCheckpoint","openTaskGraph","setIntakeRule","setOnboarding",
+    "reviewBrainLink","setSourceEvidence","setLearningLayer","setGraphMetadata","getGraphMetadata",
+    "setPinnedOutput","setNodeRunPolicy","verifyOutputStamp","refreshOfficeAwareness"})
+# WIRE-agents end.

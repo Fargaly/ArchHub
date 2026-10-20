@@ -96,7 +96,7 @@ For Each arg In WScript.Arguments
     args = args & " " & QuoteArgument(arg)
 Next
 py = here & "\.venv\Scripts\pythonw.exe"
-rc = RunAndWait("""" & py & """ -E -s """ & here & "\launch_archhub_test.py""" & args, 0)
+rc = RunAndWait("""" & py & """ -E -s """ & here & "\nodelang\launcher.py""" & args, 0)
 If rc <> 0 Then
     If RecoverFailedUpdate() Then WScript.Quit 0
 End If

@@ -18,7 +18,7 @@ import sys
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from tools.pipeline.strict_check import CompilerFailure, COMPILER_SOURCES, RUNTIME_FILES, _environment, node_parameter, node_timeout, source_digest, system_dependencies, verify_runtime
+from tools.pipeline.strict_check import CompilerFailure, COMPILER_SOURCES, RUNTIME_FILES, _environment, node_parameter, rust_root, node_timeout, source_digest, system_dependencies, verify_runtime
 
 
 def sha(path):
@@ -95,7 +95,7 @@ def package(root, toolchain_root):
     env["RUSTFLAGS"] = str(node_parameter("compiler_rustflags"))
     if env["RUSTFLAGS"] != "-C target-feature=+crt-static":
         raise CompilerFailure("installer compiler node flags must produce a static CRT")
-    cargo = Path(env.get("CARGO_HOME", str(toolchain_root.parent / "rust" / "cargo"))) / "bin" / "cargo.exe"
+    cargo = Path(env.get("CARGO_HOME", str(rust_root(toolchain_root) / "cargo"))) / "bin" / "cargo.exe"
     target = Path(os.environ["CARGO_TARGET_DIR"]) / "package-static" if os.environ.get("CARGO_TARGET_DIR") else toolchain_root / "tools" / "archhub-compiler" / "target" / "package-static"
     jobs = int(node_parameter("compiler_jobs"))
     if jobs <= 0:

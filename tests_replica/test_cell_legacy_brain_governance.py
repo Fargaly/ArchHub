@@ -75,7 +75,7 @@ def test_brain_governance_contract_matches_real_sources_and_courts():
     for spec in BRAIN_GOVERNANCE_SPECS:
         assert not (ROOT / str(spec["source_path"])).exists(), (
             "a retired Brain source came back: %s" % spec["source_path"])
-    for path in list((ROOT / "nodelang").rglob("*.py")) + [ROOT / "launch_archhub_test.py"]:
+    for path in list((ROOT / "nodelang").rglob("*.py")) + [ROOT / "nodelang/launcher.py"]:
         text = path.read_text(encoding="utf-8", errors="ignore")
         assert "import personal_brain" not in text and "from personal_brain" not in text, path.name
 

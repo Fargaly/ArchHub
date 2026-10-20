@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-LAUNCHER = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
+LAUNCHER = (ROOT / "nodelang/launcher.py").read_text(encoding="utf-8")
 
 
 def test_the_launcher_locks_the_view_and_forgets_what_is_behind_the_studio():

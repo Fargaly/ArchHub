@@ -26,7 +26,7 @@ def test_second_launch_forwards_arguments_to_the_existing_qt_owner():
     import socket
     import threading
     from types import SimpleNamespace
-    source = ast.parse((Path(__file__).resolve().parents[1] / 'launch_archhub_test.py').read_text(encoding='utf-8'))
+    source = ast.parse((Path(__file__).resolve().parents[1] / 'nodelang/launcher.py').read_text(encoding='utf-8'))
     names = {'_forward_launch_arguments', '_serve_launch_requests', '_resume_from_launch'}
     definitions = [node for node in ast.walk(source) if isinstance(node, ast.FunctionDef) and node.name in names]
     properties, activated = {}, []

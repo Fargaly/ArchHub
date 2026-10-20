@@ -1,7 +1,6 @@
 /* Native task control stays application-owned; all task text/replies live in Workshop. */
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {PeerEndpoint,listClaudeSessions,publicDeliveryReceipt} from './vendor/src/peer-protocol.mjs';
 import {sendExtra} from './extra-apps.mjs';
 import {postCodex,mailbox,mailboxSend} from './native.mjs';
 export {mailboxSend} from './native.mjs';
@@ -43,22 +42,12 @@ export async function ask(app,session,text,permissionMode='prompting',{expected,
   note={...mailboxMessage,sender_label:'founder'};
  }else note=callMailbox('send',{to:target.id,text});
  const pointer=`Application task in Workshop, message ${note.message_id}. Use MCP read(since=${note.sequence-1}) to read it. Declare task/paths/status with request_id=${note.work_root||note.message_id}. Reply ONLY with MCP send(to=${JSON.stringify(note.sender_label)}, reply_to=${JSON.stringify(note.message_id)}, text=your_result). Keep the declaration current. No Session Link answer or peer reply.`;
- let controlError=null,controlHeld=null;
- // Native transport wakes the client; Workshop is the result channel. A
- // vendor's unfinished planner response cannot hide an already stored reply.
+ let controlError=null;
+ // Claude follows the Workshop record in its plugin; other apps retain native wakeup.
  const dispatch=async()=>{
+ if(app==='claude'){onDispatch();return;}
  if(dispatchControl){await dispatchControl(target,pointer,{onDispatch,model});return;}
- if(app==='claude'){
-  const live=listClaudeSessions().find(s=>s.sessionId===target.id);if(!live)throw new Error('Claude went offline before task dispatch');
-  const peer=new PeerEndpoint({name:'workshop-task-control',cwd:process.cwd()});peer.permissionMode=permissionMode;
-  await peer.start();
-  try{
-   const outcome=await peer.send(live.socket,pointer,{permissionMode,beforeSend:onDispatch});
-   const delivery=outcome?.delivery;
-   if(delivery&&['held','refused','rejected','denied','expired','dropped'].includes(delivery.status))controlHeld={status:'held',...publicDeliveryReceipt(delivery)};
-  }finally{peer.stop();}
- }else if(app==='codex'){onDispatch();await postCodex(target.id,pointer,{requestId:note.message_id});}
- else await sendExtra(target,pointer,{onDispatch,model});
+ if(app==='codex'){onDispatch();await postCodex(target.id,pointer,{requestId:note.message_id});} else await sendExtra(target,pointer,{onDispatch,model});
  };
  void dispatch().catch(error=>{controlError=error;});
  let since=note.sequence;
@@ -82,7 +71,6 @@ export async function ask(app,session,text,permissionMode='prompting',{expected,
    row.process_lineage?.some(process=>process.pid===targetPid&&process.created_at===targetGeneration)).map(row=>row.agent+' ['+row.session+']'));
   const reply=messages.find(row=>row.reply_to===note.message_id&&senders.has(row.author));
   if(reply)return {status:'replied',id:reply.id,text:reply.content.replace(/^To [^\n]+:\n/,''),mailbox_message:note.message_id};
-  if(controlHeld)return controlHeld;
   if(controlError)return {status:'uncertain',reason:'native_control_failed',mailbox_message:note.message_id};
   if(targetGeneration===null&&messages.some(row=>row.reply_to===note.message_id&&!ownFollowups.has(row.id)&&row.author!==note.sender_label))return {status:'uncertain',reason:'recipient_identity_unverified',mailbox_message:note.message_id};
   if(Date.now()>=nextFollowup&&followups<3){

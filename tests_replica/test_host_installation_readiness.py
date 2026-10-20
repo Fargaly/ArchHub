@@ -161,7 +161,7 @@ class HostInstallationReadinessTests(unittest.TestCase):
              patch.object(setup, "prepare_environment", return_value=None), \
              patch.object(setup, "ready_for_build", return_value=True), \
              patch.object(setup, "_has", return_value=True), \
-             patch.object(Path, "is_file", lambda path: path.name == "launch_archhub_test.py"), \
+             patch.object(Path, "is_file", lambda path: path.name == "launcher.py"), \
              patch.object(setup, "_write_ready", side_effect=lambda root, value: events.append(("ready", value))), \
              patch.object(setup, "_assistant_integration", side_effect=lambda root, value: events.append("assistant")), \
              patch.object(setup.subprocess, "run", side_effect=AssertionError("no subprocess")), \

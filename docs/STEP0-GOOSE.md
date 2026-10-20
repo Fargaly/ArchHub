@@ -44,7 +44,7 @@ Goose recipes map their instructions/extensions/parameters/subrecipes to existin
 ## Plan / exact initial owned files (Tier L, isolated proof)
 
 1. This Step 0 and PROGRESS.md, committed before product edits.
-2. `nodelang/goose_adapter.py`, `nodelang/goose_runtime.py`, `nodelang/agent_composer.py`, `nodelang/native_host_tools.py`, `nodelang/baboom_native_host.py`, `launch_archhub_test.py`: one ACP client, managed lifecycle, existing host MCP read, old BABOOM-loop deletion.
+2. `nodelang/goose_adapter.py`, `nodelang/goose_runtime.py`, `nodelang/agent_composer.py`, `nodelang/native_host_tools.py`, `nodelang/baboom_native_host.py`, `nodelang/launcher.py`: one ACP client, managed lifecycle, existing host MCP read, old BABOOM-loop deletion.
 3. `installer/build_release.ps1`, `installer/ArchHub.iss`, `packaging/windows/goose-pin.json`, `NOTICE`, license files: offline pinned packaging, fail closed if missing/mismatched.
 4. `tests_replica/test_goose_brain.py` and touched existing caller courts; `evidence/grandmap_bindings.json`: fake transport/process, actual MCP protocol with fake host, face result, write refusal, missing binary, timeout, paid-route refusal and cleanup. Run only touched courts via run-heavy. Independent review is evidence, not installed acceptance.
 5. `GOOSE.patch`, `RESULT-GOOSE.md`: exact Removed symbols/paths, file:line, GM ids and scoped pass lines; SHA-256; final commit. No live install; 717 fetches the pinned archive with founder OK.

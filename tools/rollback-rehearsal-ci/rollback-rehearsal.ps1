@@ -332,7 +332,7 @@ function Open-Verify-Close($Stage,$Operation) {
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $database -PathType Leaf)) { throw 'Installed app selected no journal.' }
     [IO.File]::WriteAllText((Join-Path $app 'quit-request'),'quit',$utf8)
     do {
-        $running = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^pythonw?\.exe$' -and $_.CommandLine -like ('*' + $app + '*launch_archhub_test.py*') })
+        $running = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^pythonw?\.exe$' -and ($_.CommandLine -like ('*' + $app + '*nodelang\launcher.py*') -or $_.CommandLine -like ('*' + $app + '*launch_archhub_test.py*')) })
         if (-not $running.Count) { break }
         if ($clock.Elapsed.TotalSeconds -gt $StepDeadline) { throw 'Installed app did not close cleanly; no next installer was started.' }
         [Threading.Thread]::Sleep($PollPeriod)

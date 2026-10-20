@@ -102,12 +102,12 @@ import hashlib, json, os
 from nodelang.cell_secret_keys import WindowsDpapiSigningKeyProvider
 from nodelang.runtime_caller_capability import WindowsDpapiCallerKeyStore
 from nodelang.clean_runtime_bootstrap import provision_clean_runtime
-spec=Path('SPEC.md').read_bytes()
+spec=Path('docs/SPEC.md').read_bytes()
 gm=json.dumps([{'key':'workspace-root','title':'Workspace Root','nodes':[],'wires':[],'cross':[]}],sort_keys=True,separators=(',',':')).encode()
 provision_clean_runtime(Path(os.environ['LOCALAPPDATA'])/'ArchHub/unified-authority', WindowsDpapiSigningKeyProvider(WindowsDpapiSigningKeyProvider.default_path()), WindowsDpapiCallerKeyStore(WindowsDpapiCallerKeyStore.default_path()), caller_key_id='founder.bootstrap', specification_source=spec, specification_sha256=hashlib.sha256(spec).hexdigest(), grand_map_source=gm, grand_map_sha256=hashlib.sha256(gm).hexdigest())
 """
         subprocess.run([sys.executable, '-B', '-c', code], env=env, cwd=ROOT, check=True, capture_output=True, timeout=120)
-    proc = subprocess.Popen([sys.executable, '-B', str(ROOT / 'launch_archhub_test.py')],
+    proc = subprocess.Popen([sys.executable, '-B', str(ROOT / 'nodelang/launcher.py')],
         env=env, cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     rows = []
     try:
@@ -149,7 +149,8 @@ provision_clean_runtime(Path(os.environ['LOCALAPPDATA'])/'ArchHub/unified-author
         provider_call = profile / 'state/provider-call.json'
         report = {'rig_env': rig_env, 'fake_provider': fake_provider, 'reads': rows, 'chat': chat,
             'provider_call': json.loads(provider_call.read_text(encoding='utf-8')) if provider_call.exists() else None}
-        out = ROOT / 'evidence/reads'
+        out = tmp_path / 'EVIDENCE'
+        out.mkdir(exist_ok=True)
         label = 'fake-provider' if fake_provider else ('rig-profile' if rig_env else 'no-rig')
         (out / (label + '.json.txt')).write_text(json.dumps(report, indent=2), encoding='utf-8')
         for name in ('launcher.log', 'threads.txt'):

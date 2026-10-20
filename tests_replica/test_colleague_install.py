@@ -115,7 +115,7 @@ def test_every_shortcut_opens_the_vbs_that_resolves_pythonw():
     assert "#define AppExe \"ArchHub.vbs\"" in iss
     vbs = (ROOT / "installer" / "ArchHub.vbs").read_text(encoding="utf-8")
     assert "pythoncore" in vbs, "the launcher must find the installed interpreter itself"
-    assert "launch_archhub_test.py" in vbs
+    assert "nodelang\\launcher.py" in vbs
 
 
 def test_setup_no_longer_writes_a_second_desktop_shortcut():
@@ -137,8 +137,8 @@ def test_installer_preserves_the_current_setup_receipt_schema(tmp_path):
 
 
 def test_window_icon_is_the_one_the_installer_ships():
-    launcher = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
-    assert "Path(__file__).resolve().parent / \"archhub.ico\"" in launcher
+    launcher = (ROOT / "nodelang/launcher.py").read_text(encoding="utf-8")
+    assert "Path(__file__).resolve().parents[1] / \"archhub.ico\"" in launcher
     iss = (ROOT / "installer" / "ArchHub.iss").read_text(encoding="utf-8")
     assert "archhub.ico" in iss
 
@@ -241,7 +241,8 @@ def test_environment_drops_inherited_python_paths(monkeypatch):
 def test_pip_failure_removes_marker_and_stays_failed(tmp_path, monkeypatch, isolated_user_state):
     from types import SimpleNamespace
     _private_environment(tmp_path, monkeypatch)
-    (tmp_path / "launch_archhub_test.py").write_text("")
+    (tmp_path / "nodelang/launcher.py").parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "nodelang/launcher.py").write_text("")
     monkeypatch.setattr(colleague_setup, "__file__", str(tmp_path / "colleague_setup.py"))
     colleague_setup._write_ready(tmp_path, colleague_setup.readiness_identity(tmp_path))
     monkeypatch.setattr(colleague_setup, "_has", lambda module: False)
@@ -257,7 +258,8 @@ def test_pip_failure_removes_marker_and_stays_failed(tmp_path, monkeypatch, isol
 
 def test_ready_environment_does_not_reinstall(tmp_path, monkeypatch, isolated_user_state):
     _private_environment(tmp_path, monkeypatch)
-    (tmp_path / "launch_archhub_test.py").write_text("")
+    (tmp_path / "nodelang/launcher.py").parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "nodelang/launcher.py").write_text("")
     monkeypatch.setattr(colleague_setup, "__file__", str(tmp_path / "colleague_setup.py"))
     colleague_setup._write_ready(tmp_path, colleague_setup.readiness_identity(tmp_path))
     monkeypatch.setattr(colleague_setup, "_has", lambda module: True)
@@ -272,7 +274,8 @@ def test_upgrade_reapplies_constraints_and_records_new_build(
         tmp_path, monkeypatch, isolated_user_state):
     from types import SimpleNamespace
     _private_environment(tmp_path, monkeypatch)
-    (tmp_path / "launch_archhub_test.py").write_text("")
+    (tmp_path / "nodelang/launcher.py").parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "nodelang/launcher.py").write_text("")
     monkeypatch.setattr(colleague_setup, "__file__", str(tmp_path / "colleague_setup.py"))
     colleague_setup._write_ready(tmp_path, colleague_setup.readiness_identity(tmp_path))
     (tmp_path / "BUILD_ID").write_text("new-build")
@@ -315,7 +318,7 @@ def test_assistant_integration_cannot_block_a_ready_build():
 
 def test_assistant_receipt_uses_the_launcher_state_root():
     """One state location: setup derives it exactly as the installed launcher does."""
-    launcher = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
+    launcher = (ROOT / "nodelang/launcher.py").read_text(encoding="utf-8")
     setup = (ROOT / "colleague_setup.py").read_text(encoding="utf-8")
     for part in ('os.environ.get("ARCHHUB_TEST_STATE_DIR")',
                  'Path(os.environ["LOCALAPPDATA"]) / "ArchHub"'):
@@ -354,7 +357,8 @@ def test_main_records_the_consent_receipt_only_inside_this_court(
     fixture, the receipt lands in the person's own ArchHub-Test."""
     import json
     _private_environment(tmp_path, monkeypatch)
-    (tmp_path / "launch_archhub_test.py").write_text("")
+    (tmp_path / "nodelang/launcher.py").parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "nodelang/launcher.py").write_text("")
     monkeypatch.setattr(colleague_setup, "__file__", str(tmp_path / "colleague_setup.py"))
     colleague_setup._write_ready(tmp_path, colleague_setup.readiness_identity(tmp_path))
     monkeypatch.setattr(colleague_setup, "_has", lambda module: True)
@@ -385,7 +389,8 @@ def test_setup_refuses_registration_on_a_redirected_install_root(
     winapi = pytest.importorskip("_winapi")
     real_root = tmp_path / "real"
     _private_environment(real_root, monkeypatch)
-    (real_root / "launch_archhub_test.py").write_text("")
+    (real_root / "nodelang/launcher.py").parent.mkdir(parents=True, exist_ok=True)
+    (real_root / "nodelang/launcher.py").write_text("")
     for relative in ("nodelang/native_agent_mcp.py", "runtime/node.exe"):
         target = real_root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -418,7 +423,8 @@ def test_interrupted_consent_prompt_leaves_the_offer_open(
     import json
     from types import SimpleNamespace
     _private_environment(tmp_path, monkeypatch)
-    (tmp_path / "launch_archhub_test.py").write_text("")
+    (tmp_path / "nodelang/launcher.py").parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "nodelang/launcher.py").write_text("")
     for relative in ("nodelang/native_agent_mcp.py", "runtime/node.exe"):
         target = tmp_path / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -461,7 +467,8 @@ def test_setup_moves_claude_code_off_archhubs_development_entries_on_a_yes(
     import subprocess
     from nodelang import client_mcp_installation as installation
     _private_environment(tmp_path, monkeypatch)
-    (tmp_path / "launch_archhub_test.py").write_text("")
+    (tmp_path / "nodelang/launcher.py").parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "nodelang/launcher.py").write_text("")
     for relative in ("nodelang/native_agent_mcp.py", "runtime/node.exe"):
         target = tmp_path / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -548,7 +555,8 @@ def test_import_check_counts_an_unstartable_interpreter_as_missing(tmp_path, mon
 def test_unimportable_package_refuses_in_plain_words(
         tmp_path, monkeypatch, capsys, isolated_user_state):
     _private_environment(tmp_path, monkeypatch)
-    (tmp_path / "launch_archhub_test.py").write_text("")
+    (tmp_path / "nodelang/launcher.py").parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "nodelang/launcher.py").write_text("")
     monkeypatch.setattr(colleague_setup, "__file__", str(tmp_path / "colleague_setup.py"))
     colleague_setup._write_ready(tmp_path, colleague_setup.readiness_identity(tmp_path))
     monkeypatch.setattr(colleague_setup, "_has", lambda module: True)

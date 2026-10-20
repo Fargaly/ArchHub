@@ -345,6 +345,6 @@ def test_real_installer_deletes_only_named_application_files_never_user_state():
     for kind, name in entries:
         assert kind == "files" and name.startswith("{app}\\"), (kind, name)
         assert not re.search(r"(?i)sqlite|graph|settings|credential|ArchHub-Test", name), name
-    launcher = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
+    launcher = (ROOT / "nodelang/launcher.py").read_text(encoding="utf-8")
     assert '"ARCHHUB_TEST_STATE_DIR"' in launcher, "fixture state must remain isolated"
     assert not {'state', 'updates', 'web-profile'} & set(qu._PAYLOAD_DIRS), "rollback must not own user data"

@@ -17,12 +17,29 @@ def test_one_package_uses_the_current_product_version_and_canonical_state():
     assert not (PACKAGE / 'package-manifest.json').exists()
 
 
-def test_installed_launcher_uses_only_its_private_pythonw_and_same_entry():
+def test_installed_launcher_uses_only_its_private_pythonw_and_same_entry(tmp_path):
     launcher = (ROOT / 'installer/ArchHub.vbs').read_text(encoding='utf-8')
-    assert 'launch_archhub_test.py' in launcher
+    assert 'nodelang\\launcher.py' in launcher
     assert '\\.venv\\Scripts\\pythonw.exe' in launcher
     assert 'C:\\Users\\' not in launcher
-    assert 'args, 0, True' in launcher
+    if os.name == 'nt':
+        function = launcher[launcher.index('Function RunAndWait('):launcher.index('Function RecoverFailedUpdate()')]
+        harness = tmp_path / 'BOOTSTRAP.vbs'
+        harness.write_text('''Class ShellFixture
+Function Run(command, style, wait)
+If command <> "fixture command" Or style <> 0 Or wait <> True Then Err.Raise 5
+Run = 7
+End Function
+End Class
+Dim sh
+Set sh = New ShellFixture
+''' + function + '''
+If RunAndWait("fixture command", 0) <> 7 Then WScript.Quit 1
+WScript.Echo "HIDDEN WAIT PASS"
+''', encoding='utf-8')
+        result = subprocess.run([str(Path(os.environ['SystemRoot']) / 'System32/cscript.exe'), '//nologo', str(harness)],
+            capture_output=True, text=True, timeout=15, creationflags=subprocess.CREATE_NO_WINDOW)
+        assert result.returncode == 0 and 'HIDDEN WAIT PASS' in result.stdout, result.stdout + result.stderr
     assert not (PACKAGE / 'Launch-ArchHub.vbs').exists()
 
 
@@ -102,3 +119,36 @@ def test_the_module_entry_can_be_imported_without_loading_qt_or_an_application()
     code = "import sys; import nodelang.desktop; assert 'PyQt6.QtWidgets' not in sys.modules"
     done = subprocess.run([sys.executable, '-c', code], cwd=ROOT, capture_output=True, text=True, timeout=30)
     assert done.returncode == 0, done.stderr
+
+
+def test_reviewed_lane_copy_has_one_contained_candidate_output_root(tmp_path):
+    lane = tmp_path / 'LANE'
+    source = lane / '01.WIP' / 'PRODUCT'
+    source.mkdir(parents=True)
+    (source / '.git').mkdir()
+    (lane / 'README.md').write_text('Public product source; private fixtures stay outside PRODUCT.')
+    (lane / 'REGISTER.md').write_text('Generated register')
+    outside = tmp_path / 'PRIVATE' / 'PRODUCT'
+    outside.mkdir(parents=True)
+    env = dict(os.environ, ARCHHUB_PACKAGE_SOURCE=str(ROOT / 'installer/build_release.ps1'),
+               ARCHHUB_ALLOWED_SOURCE=str(source), ARCHHUB_DENIED_SOURCE=str(outside))
+    command = r"""
+$tokens=$null; $errors=$null
+$ast=[System.Management.Automation.Language.Parser]::ParseFile($env:ARCHHUB_PACKAGE_SOURCE,[ref]$tokens,[ref]$errors)
+if($errors.Count){throw 'Builder parse failed'}
+$definition=$ast.Find({param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-CandidateRoots'},$true)
+if($null -eq $definition){throw 'No governed lane candidate reader'}
+. ([scriptblock]::Create($definition.Extent.Text))
+$roots=@(Get-CandidateRoots $env:ARCHHUB_ALLOWED_SOURCE)
+if($roots.Count -ne 1 -or $roots[0] -cne (Split-Path -Parent $env:ARCHHUB_ALLOWED_SOURCE)){throw 'Lane output escaped WIP'}
+$refused=$false
+try { Get-CandidateRoots $env:ARCHHUB_DENIED_SOURCE | Out-Null } catch { $refused=$true }
+if(-not $refused){throw 'Ungoverned source accepted'}
+Remove-Item -LiteralPath (Join-Path (Split-Path -Parent $roots[0]) 'REGISTER.md')
+$refused=$false
+try { Get-CandidateRoots $env:ARCHHUB_ALLOWED_SOURCE | Out-Null } catch { $refused=$true }
+if($refused){throw 'Missing routine register blocked the reviewed source'}
+"""
+    result = subprocess.run(['powershell.exe', '-NoProfile', '-Command', command],
+                            env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr

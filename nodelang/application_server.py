@@ -6575,6 +6575,8 @@ class ApplicationServer:
         self._fresh_content_bootstrap = False
         # The reused Session Link transport is optional; absent, sends are unchanged.
         self.native_work_delivery = NativeWorkDelivery(self, session_link_transport)
+        from .app_agents import AgentsAPI
+        self.app_agents = AgentsAPI(transport=session_link_transport)
         self._cloud_relay_enabled = bool(enable_cloud_relay)
         self._cloud_relay_transport = session_link_transport
         self._cloud_relay_appdata = None  # cloud_relay's canonical account locator; explicit fixtures may override.
@@ -8235,11 +8237,12 @@ class ApplicationServer:
                         if action == 'install':
                             row = install_mod_package(
                                 owner.universal_store, body.get('path') or '',
+                                reviewed_digest=str(body.get('reviewed_digest') or ''),
                             )
                             self._json(200, {'ok': True, 'mod': row, 'mods': mods_rows(owner.universal_store)})
                             return
                         if action == 'enable':
-                            row = set_mod_enabled(owner.universal_store, str(body.get('id') or ''), bool(body.get('enabled')))
+                            row = set_mod_enabled(owner.universal_store, str(body.get('id') or ''), body.get('enabled'))
                             self._json(200, {'ok': True, 'mod': row, 'mods': mods_rows(owner.universal_store)})
                             return
                         if action == 'param':
@@ -8741,6 +8744,27 @@ class ApplicationServer:
                         self._json(200,function(owner,binding,arguments,browser_guard=contact_guard))
                         return
                     if self.path == '/api/universal/workshop':
+                        if type(body) is dict and body.get('action') == 'agent-channel':
+                            from contextlib import nullcontext
+                            from .app_agents import dispatch as dispatch_agent_surface
+                            def agent_surface_guard():
+                                current, current_token = self._browser_session_binding(unsafe=True)
+                                if current != binding or current_token != _session_token:
+                                    raise AuthorizationDenied('Agent surface browser changed')
+                                owner.require_universal_http_route('POST', self.path,
+                                    authentication_context=binding.context, revalidate=True)
+                            effect = body.get('function') in {'installAgentChannel', 'repairAgentChannel'}
+                            try:
+                                with owner.mutation_lock if effect else nullcontext():
+                                    payload = dispatch_agent_surface(owner.app_agents, body, guard=agent_surface_guard)
+                            except ValueError as exc:
+                                self._json(400, {'ok': False, 'error': str(exc)})
+                                return
+                            except RuntimeError as exc:
+                                self._json(409, {'ok': False, 'error': str(exc)})
+                                return
+                            self._json(200, payload)
+                            return
                         if type(body) is dict and body.get('action') == 'data-api':
                             from .workshop_api import dispatch as dispatch_workshop_data
                             data_path=self.path
@@ -9650,6 +9674,94 @@ class ApplicationServer:
                             held = {'raw': listing[:200000]}
                         self._json(200, {'ok': True, 'facts': held})
                         return
+                    # WIRE-social: I/O stays outside the mutation lock; publication rechecks browser and graph.
+                    if self.path == '/api/universal/social-surface':
+                        from .social_research_community_backend import SocialResearchCommunityBackend
+                        if type(body) is not dict or set(body) != {'op', 'args'}:
+                            raise InvalidCell('invalid social surface operation')
+                        backend = SocialResearchCommunityBackend(owner.universal_store,
+                            owner.universal_registry, binding.context, lock=owner.mutation_lock)
+                        canvas = backend.graph.canvas()
+                        social_scope = canvas.get('scope', {}).get('current') or canvas['root']
+                        def social_guard():
+                            current, token = self._browser_session_binding(unsafe=True)
+                            if current.context is not binding.context or token != _session_token:
+                                raise AuthorizationDenied('Browser changed during source reading. Refresh before retrying.')
+                            current_canvas = backend.graph.canvas()
+                            if (current_canvas.get('scope', {}).get('current') or current_canvas['root']) != social_scope:
+                                raise InvalidCell('The graph changed. Return to the source graph and read again.')
+                            owner.require_universal_http_route('POST', self.path,
+                                authentication_context=binding.context, revalidate=True)
+                        backend.guard = social_guard
+                        try:
+                            social_guard()
+                            if body['op'] == 'read_content_source':
+                                result = backend.dispatch(body['op'], body['args'])
+                            else:
+                                with owner.mutation_lock:
+                                    social_guard()
+                                    result = backend.dispatch(body['op'], body['args'])
+                        except ValueError as error:
+                            raise InvalidCell(str(error)) from error
+                        self._json(200, {'ok': True, **result})
+                        return
+                    # WIRE-social end
+                    # WIRE-projects: cloud waits never hold the local graph's mutation lock.
+                    if self.path == '/api/universal/canvas-op' and type(body) is dict and body.get('op') in (
+                            'read_company', 'set_account_seats', 'transfer_ownership', 'sign_out_everywhere'):
+                        from .canvas_graph_owner import CanvasOwner as AccountCanvasOwner
+                        if type(body) is not dict or set(body) != {'op', 'args'}:
+                            raise InvalidCell('invalid account operation request')
+                        if binding.subject_root != owner.universal_registry.authorization.subject_root:
+                            raise AuthorizationDenied('only this instance owner manages its office account')
+                        result = AccountCanvasOwner(owner.universal_store, owner.universal_registry,
+                            binding.context).dispatch(body['op'], body['args'])
+                        self._json(200, {'ok': True, 'result': result})
+                        return
+                    if self.path == '/api/universal/canvas-op' and type(body) is dict and body.get('op') == 'review_model':
+                        from .canvas_graph_owner import CanvasOwner as ReviewCanvasOwner
+                        from urllib.request import Request, urlopen
+                        if set(body) != {'op', 'args'}:
+                            raise InvalidCell('invalid model review request')
+                        review_owner = ReviewCanvasOwner(owner.universal_store, owner.universal_registry, binding.context)
+                        with owner.mutation_lock:
+                            plan = review_owner.dispatch('review_model', body['args'])
+                            review_scope = review_owner.canvas()['scope']['current']
+                        run_request = Request(owner.public_url + '/api/universal/run-graph',
+                            data=json.dumps({'roots': plan['roots']}).encode('utf-8'), method='POST',
+                            headers={'Content-Type': 'application/json',
+                                     'X-ArchHub-Session': self.headers.get('X-ArchHub-Session', ''),
+                                     'X-ArchHub-CSRF': self.headers.get('X-ArchHub-CSRF', '')})
+                        with urlopen(run_request, timeout=plan['wait_seconds']) as run_response:
+                            actual_review = json.load(run_response)
+                        with owner.mutation_lock:
+                            self._browser_session_binding(unsafe=True)
+                            if review_owner.canvas()['scope']['current'] != review_scope:
+                                raise InvalidCell('The graph changed during review. Return to its original graph to inspect the run.')
+                            result = review_owner.record_model_review(body['args'][0], actual_review)
+                        self._json(200, {'ok': True, 'result': result})
+                        return
+                    # WIRE-projects: a schedule uses the same admitted engine path.
+                    if self.path == '/api/universal/canvas-op' and type(body) is dict and body.get('op') == 'scheduler_tick':
+                        from datetime import datetime
+                        from .canvas_graph_owner import CanvasOwner as ScheduleCanvasOwner
+                        if set(body) != {'op', 'args'} or body['args'] != []:
+                            raise InvalidCell('scheduler tick takes no arguments')
+                        def scheduled_run(roots):
+                            from urllib.request import Request, urlopen
+                            # Re-enter the existing Run owner, including its terminal and host admission.
+                            request = Request(owner.public_url + '/api/universal/run-graph',
+                                data=json.dumps({'roots': roots}).encode('utf-8'), method='POST',
+                                headers={'Content-Type': 'application/json',
+                                    'X-ArchHub-Session': self.headers.get('X-ArchHub-Session', ''),
+                                    'X-ArchHub-CSRF': self.headers.get('X-ArchHub-CSRF', '')})
+                            with urlopen(request) as response:
+                                return json.load(response)
+                        result = ScheduleCanvasOwner(owner.universal_store, owner.universal_registry,
+                            binding.context).tick_schedules(datetime.now(), scheduled_run, owner.mutation_lock)
+                        self._json(200, {'ok': True, 'result': result})
+                        return
+                    # WIRE-projects end
                     if self.path == '/api/universal/run-graph':
                         # The run wire: nodes whose graph-held engine property
                         # names an effect evaluate along their wires; answers
@@ -9699,11 +9811,26 @@ class ApplicationServer:
                             owner.universal_registry,
                             effect_engines=engines,
                             authentication_context=binding.context,
+                            only_roots=body.get('roots'),
                             mutation_lock=owner.mutation_lock,
                             revalidate=run_authority,
                         )
                         self._json(200, run_result)
                         return
+                    # WIRE-settings
+                    if self.path == '/api/universal/settings-action':
+                        if type(body) is not dict or set(body) != {'function', 'args'}:
+                            raise InvalidCell('Settings requires one registered function and its argument list.')
+                        if binding.subject_root != owner.universal_registry.authorization.subject_root:
+                            raise AuthorizationDenied('Settings account actions require this application owner.')
+                        from .settings_owner import SettingsOwner
+                        with owner.mutation_lock, owner.universal_registry.authorization.broker.live_context(binding.context):
+                            result = SettingsOwner(
+                                owner.universal_store, content=owner.conversation_content, runtime=owner,
+                                authentication_context=binding.context).dispatch(body.get('function'), body.get('args', []))
+                        self._json(200, {'ok': True, 'result': result})
+                        return
+                    # WIRE-settings end
                     with owner.mutation_lock:
                         if self.path.startswith('/api/universal/'):
                             created_root = None
@@ -10034,6 +10161,14 @@ class ApplicationServer:
                                 self._json(200, {
                                     'ok': True, 'path': str(chosen or ''),
                                 })
+                                return
+                            elif self.path == '/api/universal/canvas-op':
+                                from .canvas_graph_owner import CanvasOwner
+                                if type(body) is not dict or set(body) != {'op', 'args'}:
+                                    raise InvalidCell('invalid canvas operation request')
+                                result = CanvasOwner(owner.universal_store, owner.universal_registry,
+                                    binding.context).dispatch(body['op'], body['args'])
+                                self._json(200, {'ok': True, 'result': result})
                                 return
                             elif self.path == '/api/universal/set-property':
                                 from .universal_application import (
@@ -14355,15 +14490,9 @@ class ApplicationServer:
 
     def shared_agent_mail(self, method, body):
         """Trusted application caller, same sink/table; no request back into itself."""
-        from .application_machine_transport import _observe_machine_process, _VERIFIED_PIPE_PEER
-        peer = _observe_machine_process(os.getpid())
-        request = {"method": "GET" if method == "read" else "POST",
-            "path": "/api/universal/agent-mail/" + method, "body": body, "session": {}}
-        token = _VERIFIED_PIPE_PEER.set((request, peer))
-        try:
-            return self._dispatch_verified_machine_route(request)
-        finally:
-            _VERIFIED_PIPE_PEER.reset(token)
+        from .workshop_mailbox import call
+        return call(method, {key: value for key, value in body.items() if key != "context"},
+                    body.get("context", {}), database=self.universal_store.database_path)
 
     def _dispatch_verified_machine_route(self, request):
         """Only the authenticated, decoded local pipe calls this wrapper."""

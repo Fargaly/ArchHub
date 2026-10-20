@@ -118,7 +118,7 @@ def test_draft_email_opens_a_draft_and_never_sends(monkeypatch):
 
 
 def test_the_launcher_registers_its_tray_as_the_notify_surface():
-    launcher = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
+    launcher = (ROOT / "nodelang/launcher.py").read_text(encoding="utf-8")
     assert "set_notify_surface(" in launcher
     block = launcher[launcher.index("class _Notifier"):]
     assert "asked = _signal(str, str)" in block and "_tray.showMessage(title, message)" in block

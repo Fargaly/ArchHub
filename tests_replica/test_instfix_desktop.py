@@ -15,7 +15,7 @@ def test_window_x_quits_by_default_and_only_hides_when_opted_in(keep_running):
     from PyQt6.QtWidgets import QApplication, QMainWindow
     from PyQt6.QtGui import QCloseEvent
     application = QApplication.instance() or QApplication([])
-    source = ast.parse((ROOT / "launch_archhub_test.py").read_text(encoding="utf-8"))
+    source = ast.parse((ROOT / "nodelang/launcher.py").read_text(encoding="utf-8"))
     window_class = next(node for node in ast.walk(source) if isinstance(node, ast.ClassDef) and node.name == "_ArchHubWindow")
     quits = []
     namespace = {"QMainWindow": QMainWindow, "_quit_from_window": lambda widget: quits.append(widget),
@@ -56,6 +56,21 @@ def test_tray_toggle_is_the_same_graph_property_read_by_the_launcher():
     assert store.revision == changed
     app.edit_universal_property(store, registry, row["relation"], "false")
     assert app.read_universal_keep_running_in_tray(store.snapshot(), registry) is False
+    timing = next(item for item in canvas['properties'] if item['label'] == 'toast_visible_ms')
+    assert timing['value'] == app._application_setting_default('toast_visible_ms')
+    app.edit_universal_property(store, registry, timing['relation'], '4500')
+    source = ast.parse((ROOT / 'nodelang/launcher.py').read_text(encoding='utf-8'))
+    methods = [node for node in source.body if isinstance(node, ast.FunctionDef)
+               and node.name in ('_launcher_parameter', '_launcher_seconds')]
+    from types import SimpleNamespace
+    namespace = {'server': SimpleNamespace(universal_store=store, universal_registry=registry)}
+    exec(compile(ast.Module(body=methods, type_ignores=[]), 'launcher-parameters', 'exec'), namespace)
+    assert namespace['_launcher_seconds']('toast_visible_ms') == 4.5
+    assert app.project_universal_canvas(store, registry)['runtime_parameters']['toast_visible_ms'] == 4500
+    changed = store.revision
+    with pytest.raises(InvalidCell):
+        app.edit_universal_property(store, registry, timing['relation'], '-1')
+    assert store.revision == changed
 
 
 def test_workshop_runtime_uses_typed_defaults_and_wired_feed_precedence():

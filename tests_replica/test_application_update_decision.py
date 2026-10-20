@@ -19,6 +19,8 @@ import hashlib
 import io
 import json
 import os
+import shutil
+import subprocess
 from pathlib import Path
 import threading
 from types import SimpleNamespace
@@ -113,7 +115,7 @@ def _run_checks(tmp_path, monkeypatch, offered, *, count=1, api_error=None, stag
 
 
 def _launcher(names, **bindings):
-    path = ROOT / "launch_archhub_test.py"
+    path = ROOT / "nodelang/launcher.py"
     tree = ast.parse(path.read_text(encoding="utf-8"))
     selected = [node for node in tree.body if getattr(node, "name", None) in names]
     assert {node.name for node in selected} == set(names), "the launcher defines " + ", ".join(sorted(names))
@@ -297,7 +299,7 @@ def test_launcher_prints_each_check_decision_as_one_update_line():
         report("check: x")
     assert written.getvalue() == "  update     : check: x\n"
     # Supplementary: the controller the launcher builds carries that sink, the push and the boot knowledge.
-    source = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
+    source = (ROOT / "nodelang/launcher.py").read_text(encoding="utf-8")
     start = source.index("server.application_update = ApplicationUpdate(")
     construction = source[start:source.index("\n\n", start)]
     for fragment in ("report=_report_update_check", "on_ready=_update_push.ready.emit", "first_boot=first_boot"):
@@ -324,7 +326,13 @@ def test_a_ready_download_is_pushed_to_the_studio_on_the_qt_thread():
         assert not worker.is_alive() and scripts == [], "the download worker never touches the page"
         app.processEvents()
         assert len(scripts) == 1 and scripts[0][1] is True, scripts
-        assert "window.ARCHHUB_EXISTING_WORKSHOP.refreshApplicationUpdate()" in scripts[0][0]
+        node = shutil.which("node")
+        assert node, "Node is required to exercise the native page notification"
+        result = subprocess.run([node, "-e", "const vm=require('node:vm');let sent=[];"
+            "vm.runInNewContext(process.argv[1],{Event,window:{dispatchEvent:e=>sent.push(e.type)}});"
+            "process.stdout.write(JSON.stringify(sent));", scripts[0][0]],
+            capture_output=True, text=True, timeout=10, check=True)
+        assert json.loads(result.stdout) == ["archhub:update-ready"]
     finally:
         push.deleteLater()
         app.processEvents()

@@ -51,3 +51,5 @@ pluggy==1.6.0
 packaging==26.2
 Pygments==2.20.0
 colorama==0.4.6; sys_platform == "win32"
+# Canvas recipes use safe_load; include its parser in the offline installer.
+PyYAML==6.0.3

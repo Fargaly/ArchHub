@@ -234,7 +234,9 @@ impl Pass<'_> {
                     variadic |= !raw.starts_with("**");
                     keyword_only = true;
                 } else {
-                    if let Some(name) = parameter_name(p, self.source) {
+                    if let Some(name) = parameter_name(p, self.source).or_else(|| {
+                        (self.language != "python").then(|| format!("#{}", positional.len()))
+                    }) {
                         if let Some(annotation) = p.child_by_field_name("type") {
                             types.insert(
                                 name.clone(),
@@ -370,6 +372,51 @@ impl Pass<'_> {
                 }
             } else if ch.kind() == "identifier" {
                 self.bind(ch, scope, "import");
+            }
+        }
+    }
+    fn loop_statement(&mut self, node: Node<'_>, scope: usize) {
+        let lexical = node.child_by_field_name("kind")
+            .is_some_and(|n| matches!(text(n, self.source), "const" | "let"))
+            || node.child_by_field_name("initializer")
+                .is_some_and(|n| n.kind() == "lexical_declaration");
+        let scope = if self.language != "python" && lexical {
+            let id = self.scopes.len();
+            self.scopes.push(Scope {
+                parent: Some(scope),
+                function: self.scopes[scope].function,
+                ..Scope::default()
+            });
+            id
+        } else {
+            scope
+        };
+        if let Some(left) = node.child_by_field_name("left") {
+            if self.language == "python" || node.child_by_field_name("kind").is_some() {
+                self.pattern(left, scope, "variable");
+            } else {
+                self.walk(left, scope);
+            }
+        }
+        for child in children(node) {
+            if node.child_by_field_name("left") != Some(child) {
+                self.walk(child, scope);
+            }
+        }
+    }
+    fn catch_clause(&mut self, node: Node<'_>, scope: usize) {
+        let id = self.scopes.len();
+        self.scopes.push(Scope {
+            parent: Some(scope),
+            function: self.scopes[scope].function,
+            ..Scope::default()
+        });
+        if let Some(parameter) = node.child_by_field_name("parameter") {
+            self.pattern(parameter, id, "parameter");
+        }
+        if let Some(body) = node.child_by_field_name("body") {
+            for child in children(body) {
+                self.walk(child, id);
             }
         }
     }
@@ -517,14 +564,11 @@ impl Pass<'_> {
             return;
         }
         if matches!(k, "for_statement" | "for_in_statement" | "for_in_clause") {
-            if let Some(left) = node.child_by_field_name("left") {
-                self.pattern(left, scope, "variable");
-            }
-            for ch in children(node) {
-                if node.child_by_field_name("left") != Some(ch) {
-                    self.walk(ch, scope);
-                }
-            }
+            self.loop_statement(node, scope);
+            return;
+        }
+        if k == "catch_clause" {
+            self.catch_clause(node, scope);
             return;
         }
         if k == "except_clause" {
@@ -810,6 +854,7 @@ fn has_value_return(node: Node<'_>, source: &str) -> bool {
     if matches!(
         node.kind(),
         "function_definition" | "function_declaration" | "arrow_function" | "function_expression"
+            | "method_definition" | "generator_function_declaration"
     ) {
         return false;
     }
@@ -875,8 +920,8 @@ fn terminates(node: Node<'_>, source: &str) -> bool {
     }
 }
 fn builtins(language: &str) -> BTreeSet<&'static str> {
-    let py="abs aiter all anext any ascii bin bool breakpoint bytearray bytes callable chr classmethod compile complex delattr dict dir divmod enumerate eval exec filter float format frozenset getattr globals hasattr hash help hex id input int isinstance issubclass iter len list locals map max memoryview min next object oct open ord pow print property range repr reversed round set setattr slice sorted staticmethod str sum super tuple type vars zip __import__ __name__ __file__ __package__ __doc__ __builtins__ True False None Ellipsis NotImplemented BaseException Exception ValueError TypeError RuntimeError KeyError AttributeError ImportError OSError IOError StopIteration NotImplementedError FileNotFoundError FileExistsError PermissionError TimeoutError AssertionError IndexError UnicodeError UnicodeDecodeError ZeroDivisionError NameError UnboundLocalError SystemExit GeneratorExit Warning RecursionError ConnectionError SyntaxError EOFError";
-    let js="Array ArrayBuffer Atomics BigInt Boolean Date Error EvalError Function Infinity Intl JSON Map Math NaN Number Object Promise Proxy RangeError ReferenceError Reflect RegExp Set String Symbol SyntaxError TypeError URIError WeakMap WeakSet WeakRef arguments console decodeURI decodeURIComponent encodeURI encodeURIComponent escape eval globalThis isFinite isNaN parseFloat parseInt undefined unescape window document navigator location history localStorage sessionStorage fetch alert confirm prompt setTimeout clearTimeout setInterval clearInterval requestAnimationFrame cancelAnimationFrame URL URLSearchParams Blob File FormData Headers Request Response AbortController Event CustomEvent HTMLElement Node TextEncoder TextDecoder Buffer process module exports require __dirname __filename React";
+    let py="abs aiter all anext any ascii bin bool breakpoint bytearray bytes callable chr classmethod compile complex delattr dict dir divmod enumerate eval exec filter float format frozenset getattr globals hasattr hash help hex id input int isinstance issubclass iter len list locals map max memoryview min next object oct open ord pow print property range repr reversed round set setattr slice sorted staticmethod str sum super tuple type vars zip __import__ __name__ __file__ __package__ __doc__ __builtins__ True False None Ellipsis NotImplemented BaseException Exception ValueError TypeError RuntimeError KeyError AttributeError ImportError OSError IOError StopIteration NotImplementedError FileNotFoundError FileExistsError PermissionError TimeoutError AssertionError IndexError UnicodeError UnicodeDecodeError ZeroDivisionError NameError UnboundLocalError SystemExit GeneratorExit Warning RecursionError ConnectionError ConnectionRefusedError KeyboardInterrupt SyntaxError EOFError";
+    let js="Array ArrayBuffer Atomics BigInt Boolean Date Error EvalError Function Infinity Intl JSON Map Math NaN Number Object Promise Proxy RangeError ReferenceError Reflect RegExp Set String Symbol SyntaxError TypeError URIError WeakMap WeakSet WeakRef arguments console decodeURI decodeURIComponent encodeURI encodeURIComponent escape eval globalThis isFinite isNaN parseFloat parseInt undefined unescape window document navigator location history localStorage sessionStorage fetch alert confirm prompt setTimeout clearTimeout setInterval clearInterval requestAnimationFrame cancelAnimationFrame URL URLSearchParams Blob File FormData Headers Request Response AbortController AbortSignal Event CustomEvent HTMLElement Node TextEncoder TextDecoder Buffer process module exports require __dirname __filename React";
     if language == "python" { py } else { js }
         .split_whitespace()
         .collect()

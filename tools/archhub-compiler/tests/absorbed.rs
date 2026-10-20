@@ -17,6 +17,37 @@ fn undefined_name_red_fixed_and_lexical_isolation() {
     assert!(has("E0020", "a.js", "function f() { return missing; }"));
     assert!(!has("E0020", "a.js", "function f(value) { return value; }"));
 }
+
+#[test]
+fn catch_bindings_are_local_and_platform_builtins_are_resolved() {
+    assert!(!has("E0020", "a.js", "try { fetch('/'); } catch (error) { console.error(error); }"));
+    assert!(has("E0020", "a.js", "try { fetch('/'); } catch (error) { console.error(error); } console.log(error);"));
+    assert!(!has("E0020", "a.js", "fetch('/', {signal: AbortSignal.timeout(100)});"));
+    assert!(!has("E0020", "a.py", "try:\n    print('ready')\nexcept (KeyboardInterrupt, ConnectionRefusedError):\n    raise\n"));
+    assert!(has("E0020", "a.py", "raise ConnectionRefussedError()\n"));
+}
+
+#[test]
+fn optional_destructured_parameters_still_occupy_argument_positions() {
+    let source = "function mount(data, {active = true} = {}) { return [data, active]; } mount({}, {});";
+    assert!(!has("E0025", "a.js", source));
+    assert!(has("E0025", "a.js", &source.replace("mount({}, {});", "mount({}, {}, {});")));
+}
+
+#[test]
+fn anonymous_function_returns_do_not_belong_to_the_enclosing_function() {
+    assert!(!has("E0024", "a.js", "(() => { const f = function() { return 1; }; console.log(f()); })();"));
+    assert!(has("E0024", "a.js", "function f(value) { if(value) return 1; }"));
+    assert!(!has("E0024", "a.js", "(() => { const api = { read() { return 1; } }; console.log(api.read()); })();"));
+}
+
+#[test]
+fn javascript_loop_declarations_have_block_scope() {
+    assert!(!has("E0021", "a.js", "for(const fn of [1]) { console.log(fn); } for(const fn of [2]) { console.log(fn); }"));
+    assert!(has("E0020", "a.js", "for(const fn of [1]) { console.log(fn); } console.log(fn);"));
+    assert!(!has("E0020", "a.js", "for(var fn of [1]) { console.log(fn); } console.log(fn);"));
+    assert!(!has("E0020", "a.js", "let fn=0; for(fn of [1]) { console.log(fn); } console.log(fn);"));
+}
 #[test]
 fn redefinition_red_fixed_shadow_is_allowed() {
     assert!(has(

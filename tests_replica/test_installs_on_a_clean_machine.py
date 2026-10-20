@@ -28,7 +28,7 @@ import threading
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-LAUNCHER = ROOT / "launch_archhub_test.py"
+LAUNCHER = ROOT / "nodelang/launcher.py"
 REQUIREMENTS = ROOT / "requirements.txt"
 
 

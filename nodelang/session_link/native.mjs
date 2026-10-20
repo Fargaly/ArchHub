@@ -7,6 +7,7 @@ import {fileURLToPath} from 'node:url';
 import {stateDir} from './paths.mjs';
 const root=path.dirname(fileURLToPath(import.meta.url));
 export function mailbox(method,body,timeoutMs=10_000){
+ if(method==='send')body={...body,idempotency_key:body.idempotency_key||crypto.randomUUID()};
  const python=process.env.ARCHHUB_PYTHON||[
   path.resolve(root,'../../.venv/Scripts/python.exe'),path.resolve(root,'../../runtime/python/python.exe')
  ].find(value=>fs.existsSync(value))||'python';

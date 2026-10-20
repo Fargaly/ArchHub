@@ -119,3 +119,16 @@ class TestGetUserWithProfile:
     def test_unknown_user_returns_none(self):
         import db
         assert db.get_user_with_profile("u_does_not_exist") is None
+
+
+def test_account_me_preserves_existing_profile_for_desktop_update(client, monkeypatch):
+    import db
+    account = db.get_or_create_user('profile-update@example.test')
+    db.update_user_profile(account['id'], full_name='Existing account name', firm_name='Existing office')
+    token = google_sign_in(client, monkeypatch, 'profile-update@example.test', name='Google account name')
+    response = client.get('/v1/me', headers={'Authorization': 'Bearer ' + token})
+    assert response.status_code == 200
+    assert response.json()['user_id'] == account['id']
+    assert response.json()['full_name'] == 'Existing account name'
+    assert response.json()['firm_name'] == 'Existing office'
+    assert 'stripe_id' not in response.json()

@@ -33,14 +33,14 @@ def test_the_sampler_names_the_function_that_ate_the_time(tmp_path):
 
 
 def test_the_launcher_boots_through_the_sampler():
-    src = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
+    src = (ROOT / "nodelang/launcher.py").read_text(encoding="utf-8")
     assert "profile_boot(_boot_unsampled, state_dir=state_dir" in src
     assert src.index("def _boot():") < src.index("def _boot_unsampled():")
 
 
 def test_launcher_writes_before_its_first_product_import(tmp_path, monkeypatch):
     monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(tmp_path))
-    source = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
+    source = (ROOT / "nodelang/launcher.py").read_text(encoding="utf-8")
     prefix = source[:source.index("\ndef _require_complete_local_update")]
     original_import = builtins.__import__
     seen = []
@@ -52,11 +52,11 @@ def test_launcher_writes_before_its_first_product_import(tmp_path, monkeypatch):
             raise ImportError("court blocks product import")
         return original_import(name, *args, **kwargs)
 
-    namespace = {"__file__": str(ROOT / "launch_archhub_test.py")}
+    namespace = {"__file__": str(ROOT / "nodelang/launcher.py")}
     stdout, stderr = sys.stdout, sys.stderr
     monkeypatch.setattr(builtins, "__import__", product_import)
     try:
-        exec(compile(prefix, "launch_archhub_test.py", "exec"), namespace)
+        exec(compile(prefix, "nodelang/launcher.py", "exec"), namespace)
     finally:
         sys.stdout, sys.stderr = stdout, stderr
         if namespace.get("_log"):
@@ -66,9 +66,9 @@ def test_launcher_writes_before_its_first_product_import(tmp_path, monkeypatch):
 
 
 def test_stalled_boot_phase_writes_its_stack_and_exits_bounded(tmp_path):
-    source = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
+    source = (ROOT / "nodelang/launcher.py").read_text(encoding="utf-8")
     prefix = source[:source.index("\ndef _require_complete_local_update")]
-    script = '__file__ = ' + repr(str(ROOT / "launch_archhub_test.py")) + '\n' + prefix + '\n_start_boot_phase("stalled court", timeout_seconds=0.1)\ntime.sleep(10)\n'
+    script = '__file__ = ' + repr(str(ROOT / "nodelang/launcher.py")) + '\n' + prefix + '\n_start_boot_phase("stalled court", timeout_seconds=0.1)\ntime.sleep(10)\n'
     env = dict(os.environ, ARCHHUB_TEST_STATE_DIR=str(tmp_path))
     result = subprocess.run([sys.executable, "-B", "-c", script], env=env,
                             capture_output=True, timeout=5, text=True)
@@ -77,7 +77,7 @@ def test_stalled_boot_phase_writes_its_stack_and_exits_bounded(tmp_path):
 
 
 def test_optional_pipeline_waits_for_visible_home_and_starts_once(monkeypatch):
-    tree = ast.parse((ROOT / "launch_archhub_test.py").read_text(encoding="utf-8"))
+    tree = ast.parse((ROOT / "nodelang/launcher.py").read_text(encoding="utf-8"))
     definitions = [node for node in tree.body if getattr(node, "name", None) == "_prepare_pipeline_after_home"]
     assert definitions, "optional pipeline has no first-paint admission"
     callbacks, scheduled, started, finished = [], [], [], []
@@ -88,7 +88,7 @@ def test_optional_pipeline_waits_for_visible_home_and_starts_once(monkeypatch):
                  "server": object(), "_prepare_pipeline": lambda: None,
                  "_start_background_refresh": lambda owner, work, **kwargs: started.append(work),
                  "_boot_phase_finish_all": lambda held: finished.append(held)}
-    exec(compile(ast.Module(body=definitions, type_ignores=[]), "launch_archhub_test.py", "exec"), namespace)
+    exec(compile(ast.Module(body=definitions, type_ignores=[]), "nodelang/launcher.py", "exec"), namespace)
     work = namespace["_prepare_pipeline_after_home"]
     work("surface")
     assert not started
@@ -102,12 +102,12 @@ def test_optional_pipeline_waits_for_visible_home_and_starts_once(monkeypatch):
 
 def test_current_launcher_log_is_nonempty_after_a_rotation(tmp_path):
     from nodelang.log_rotation import RotatingLog
-    tree = ast.parse((ROOT / "launch_archhub_test.py").read_text(encoding="utf-8"))
+    tree = ast.parse((ROOT / "nodelang/launcher.py").read_text(encoding="utf-8"))
     functions = [node for node in tree.body if getattr(node, "name", None) == "_follow_boot_log_rotation"]
     armed = []
     namespace = {"faulthandler": SimpleNamespace(enable=lambda **kwargs: None),
                  "_arm_boot_watchdog": lambda: armed.append(True)}
-    exec(compile(ast.Module(body=functions, type_ignores=[]), "launch_archhub_test.py", "exec"), namespace)
+    exec(compile(ast.Module(body=functions, type_ignores=[]), "nodelang/launcher.py", "exec"), namespace)
     path = tmp_path / "launcher.log"
     stream = RotatingLog(path, max_bytes=128, on_rotate=namespace["_follow_boot_log_rotation"])
     try:
@@ -121,13 +121,13 @@ def test_current_launcher_log_is_nonempty_after_a_rotation(tmp_path):
 
 def _pipeline_install_functions():
     import contextlib
-    tree = ast.parse((ROOT / "launch_archhub_test.py").read_text(encoding="utf-8"))
+    tree = ast.parse((ROOT / "nodelang/launcher.py").read_text(encoding="utf-8"))
     names = {"_startup_pipeline_state", "_record_startup_pipeline_intent",
-             "_initialize_startup_pipeline", "_held_guard"}
+             "_initialize_startup_pipeline", "_held_guard", "_launcher_parameter", "_launcher_seconds"}
     functions = [node for node in tree.body if getattr(node, "name", None) in names]
     assert {node.name for node in functions} == names, "first-run seed has no durable resume intent"
     namespace = {"contextlib": contextlib, "time": time}
-    exec(compile(ast.Module(body=functions, type_ignores=[]), "launch_archhub_test.py", "exec"), namespace)
+    exec(compile(ast.Module(body=functions, type_ignores=[]), "nodelang/launcher.py", "exec"), namespace)
     return namespace
 
 

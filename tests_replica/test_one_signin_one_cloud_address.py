@@ -293,7 +293,7 @@ _SUFFIXES = {".py", ".js", ".jsx", ".html", ".json", ".ps1", ".toml", ".vbs", ".
 
 def test_c_no_code_path_names_the_fly_host():
     hits = []
-    files = [ROOT / "launch_archhub_test.py"]
+    files = [ROOT / "nodelang/launcher.py"]
     for folder in _SCANNED:
         files += [p for p in (ROOT / folder).rglob("*") if p.suffix in _SUFFIXES]
     for path in files:

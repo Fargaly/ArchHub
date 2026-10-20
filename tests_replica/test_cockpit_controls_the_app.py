@@ -158,7 +158,7 @@ def test_the_launcher_starts_the_relay_after_baboom_attaches():
     # Preserve this court selector while exercising the actual late binding.
     test_cockpit_uses_late_signed_attachment_without_restarting_relay()
     test_cockpit_reads_switch_to_same_signed_host_after_attachment()
-    src = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
+    src = (ROOT / "nodelang/launcher.py").read_text(encoding="utf-8")
     assert "map_script=lambda: _atlas(server.universal_store, server.universal_registry)" in src
     assert '"  cockpit    :"' in src
 

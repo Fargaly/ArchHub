@@ -562,6 +562,8 @@ def me(authorization: str | None = Header(None)) -> dict:
         "user_id": user["id"],
         "brain_id": user.get("brain_id") or user["id"],
         "email": user["email"],
+        "full_name": user.get("full_name") or "",
+        "firm_name": user.get("firm_name") or "",
         "plan": user["plan"],
         "remaining_messages": remaining,
         "period_end": user.get("period_end"),

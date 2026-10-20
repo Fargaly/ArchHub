@@ -124,7 +124,7 @@ def test_a_transient_open_error_never_sets_the_graph_aside():
     opened an empty canvas. Owner-conflict refusals now poll for the predecessor
     to release the OS fence, then refuse with the graph kept in place: no path
     sets it aside or replaces it."""
-    src = (Path(__file__).resolve().parents[1] / "launch_archhub_test.py").read_text(encoding="utf-8")
+    src = (Path(__file__).resolve().parents[1] / "nodelang/launcher.py").read_text(encoding="utf-8")
     retry = src[src.index("boot_refusal = None"):src.index('print(f"  booted in')]
     assert "while time.monotonic() - started_wait < max_wait_seconds:" in retry
     assert "_is_transient_owner_conflict(refusal)" in retry

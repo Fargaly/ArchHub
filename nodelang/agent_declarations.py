@@ -1,42 +1,13 @@
 """Workshop declaration nodes; the mailbox remains the only coordination channel."""
-from datetime import datetime, timezone
 from hashlib import sha256
-import json
 import ntpath
 from pathlib import Path
 
-from .cell_protocols import compose_relation_cells, prepare_append_relation_members, read_relation
-from .universal_cell import Cell, NULL_CELL_ID
 
-FIELDS = ("agent", "session", "task", "request_id", "paths", "status", "updated_at",
-          "runtime", "app", "native_session_id", "pid", "created_at", "version", "process_lineage")
-ROLE = "workshop:agent-declaration:"
 SESSION_KEYS = {"threadId": "codex", "ai.opencode/sessionID": "opencode",
                 "claude/sessionID": "claude", "gemini/sessionID": "gemini",
                 "goose/sessionID": "goose", "archhub/sessionID": "archhub"}
 SESSION_KEYS.update({"antigravity/sessionID": "antigravity", "antigravity-ide/sessionID": "antigravity-ide"})
-
-
-def _terminal(root, value):
-    return Cell(root, NULL_CELL_ID, NULL_CELL_ID, json.dumps(value, ensure_ascii=False).encode())
-
-
-def _index(registry):
-    return registry.workshop_root + ":agent-declarations"
-
-
-def _rows(snapshot, registry):
-    index = _index(registry)
-    if index not in snapshot.cells:
-        return []
-    result = []
-    for member in read_relation(snapshot, index):
-        if member.role_id != ROLE + "member":
-            continue
-        values = {item.role_id.removeprefix(ROLE): json.loads(snapshot.cells[item.participant_id].atom)
-                  for item in read_relation(snapshot, member.participant_id)}
-        result.append({"root": member.participant_id, **values})
-    return result
 
 
 def _alive(row):
@@ -66,14 +37,11 @@ def _lineage(peer):
 
 
 def declarations(owner, *, include_archived=False):
-    """No idle writes: process exit or done archives the node in this same lens."""
-    registry = owner.universal_registry
-    rows = _rows(owner.universal_store.snapshot(), registry)
-    for row in rows:
-        row["process_alive"] = _alive(row)
-        row["current"] = row["status"] != "done" and row["process_alive"]
-        row["sockets"] = {field: row["root"] + ":" + field for field in FIELDS}
-    return [row for row in rows if include_archived or row["current"]]
+    """Read the same typed declaration rows used with the UI closed."""
+    from .workshop_mailbox import read_declarations
+    connection, lock = owner.universal_store.sqlite_storage()
+    with lock:
+        return read_declarations(connection, include_archived=include_archived)
 
 
 def canonical_path(value, cwd):
@@ -91,76 +59,6 @@ def canonical_path(value, cwd):
 def overlaps(first, second):
     return sorted({a if len(a) >= len(b) else b for a in first for b in second
                    if a == b or a.startswith(b + "/") or b.startswith(a + "/")})
-
-
-def publish(owner, peer, identity, context, body, *, append):
-    """Caller holds the app mutation lock and existing mailbox authority guard."""
-    from .agent_runtime_registry import mailbox_label
-    task, request, status, paths = (body[key] for key in ("task", "request_id", "status", "paths"))
-    for value, maximum in ((task, 1024), (request, 256)):
-        if (type(value) is not str or not value.strip() or "\0" in value or "\n" in value
-                or "\r" in value or len(value.encode()) > maximum):
-            raise ValueError("declare one plain task line and its founder request id")
-    if type(status) is not str or status not in ("working", "blocked", "done"):
-        raise ValueError("declaration status must be working, blocked or done")
-    if type(paths) is not list or not 1 <= len(paths) <= 128:
-        raise ValueError("declare between 1 and 128 exact paths")
-    paths = sorted({canonical_path(path, peer.cwd) for path in paths})
-    if sum(len(path.encode()) for path in paths) > 16384:
-        raise ValueError("declaration paths exceed the 16 KiB node budget")
-    registry, store = owner.universal_registry, owner.universal_store
-    root = _index(registry) + ":" + sha256(identity["sender_key"].encode()).hexdigest()
-    snapshot = store.snapshot()
-    old = next((row for row in _rows(snapshot, registry) if row["root"] == root), None)
-    runtime = SESSION_KEYS.get(next(iter(context), ""), mailbox_label(peer, context)[1])
-    if identity["sender_label"] == "BABOOM":
-        runtime = "baboom"
-    row = dict(agent=identity["sender_label"], session=identity["sender_key"], task=task.strip(),
-               request_id=request.strip(), paths=paths, status=status, runtime=runtime, app=runtime,
-               native_session_id=next(iter(context.values()), None), pid=peer.pid, created_at=peer.created_at,
-               process_lineage=_lineage(peer))
-    changed = old is None or any(row[key] != old[key] for key in row)
-    row.update(updated_at=datetime.now(timezone.utc).isoformat(),
-               version=(old["version"] if old else 0) + int(changed))
-    create, replace = [], []
-    if old is None:
-        for field in (*FIELDS, "member"):
-            if ROLE + field not in snapshot.cells:
-                create.append(_terminal(ROLE + field, field))
-        create.extend(_terminal(root + ":" + field, row[field]) for field in FIELDS)
-        create.extend(compose_relation_cells(((ROLE + field, root + ":" + field) for field in FIELDS),
-                                            relation_id=root).cells)
-        index = _index(registry)
-        if index not in snapshot.cells:
-            create.extend(compose_relation_cells(((ROLE + "member", root),), relation_id=index).cells)
-            patch = prepare_append_relation_members(snapshot, registry.application_root,
-                ((registry.roles["member"], index),))
-        else:
-            patch = prepare_append_relation_members(snapshot, index, ((ROLE + "member", root),))
-        create.extend(patch.create)
-        replace.extend(patch.replace)
-    else:
-        replace.extend(_terminal(root + ":" + field, row[field]) for field in FIELDS if row[field] != old[field])
-    store.commit(snapshot.revision, create=tuple(create), replace=tuple(replace))
-    row = {"root": root, **row, "current": status != "done"}
-    notices = []
-    if row["current"] and row["request_id"] != "unassigned":
-        for other in declarations(owner):
-            shared = overlaps(paths, other["paths"]) if other["root"] != root and other["request_id"] != "unassigned" else []
-            if not shared:
-                continue
-            pair = sorted(((root, row["version"]), (other["root"], other["version"])))
-            key = "declaration-overlap:" + sha256(json.dumps(pair).encode()).hexdigest()
-            ordered = sorted((row, other), key=lambda item: item["root"])
-            attached = [{field: item[field] for field in
-                ("root", "agent", "session", "task", "request_id", "paths", "status", "version")}
-                for item in ordered]
-            content = ("To " + ordered[0]["agent"] + ", " + ordered[1]["agent"] + ":\n"
-                "Your work overlaps at " + ", ".join(shared) + ". Coordinate here: one yields or split the paths. "
-                "This is a notice, never a lock.\n" + json.dumps({"declarations": attached}, ensure_ascii=False))
-            notice = append(content, key, tuple(item["root"] for item in ordered))
-            notices.append(notice["id"])
-    return {"declaration": row, "coordination_messages": notices}
 
 
 def founder_inbox(history, space):

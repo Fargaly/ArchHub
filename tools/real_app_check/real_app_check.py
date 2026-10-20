@@ -50,12 +50,12 @@ REPO = HERE.parents[1]
 DEFAULT_WINAPP = r"C:\Users\fargaly\00.ARCHUB\50.TOOLING\outlook-project-categories\.runtime\winapp-v0.6.0\winapp.exe"
 # The installed tree's code; never its data (the installed folder also holds the founder's state).
 CODE_ENTRIES = ("nodelang", "app", "runtime", "governed-bin", "workflows", "library", "custom_nodes",
-                "ui_widgets", "skills", "launch_archhub_test.py", "VERSION", "BUILD_ID",
+                "ui_widgets", "skills", "VERSION", "BUILD_ID",
                 "BUILD_METADATA.json", "version.json", "archhub.ico", "HOST_ARTIFACTS.json", "LICENSE",
                 "requirements.txt")
 # An overlay may only replace or add files under these code roots.
 OVERLAY_ROOTS = ("nodelang", "app", "runtime", "workflows", "library", "custom_nodes", "ui_widgets",
-                 "skills", "launch_archhub_test.py")
+                 "skills")
 DROPPED_ENV = ("CLAUDE", "ARCHHUB", "SESSION_LINK", "CODEX", "ANTHROPIC", "PYTHON")
 SIGNING_KEY_NAME = "ArchHub-workspace-roots-v1"      # nodelang/workspace_roots_catalogue.py KEY_NAME
 NTE_BAD_KEYSET = 0x80090016                           # the one NCryptOpenKey answer that means "no key"

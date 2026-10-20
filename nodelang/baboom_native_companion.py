@@ -663,24 +663,29 @@ def baboom_approval_html(approval: Mapping[str, object], binding: str) -> str:
     """Physical WebEngine adapter to the shipped shared card; no copied JSX."""
     from html import escape
     studio = Path(__file__).parent / "studio"
-    sources = ["vendor/react.js", "vendor/react-dom.js", "compiled/tokens.js", "compiled/shared-data.js"]
+    sources = ["vendor/react.js", "vendor/react-dom.js", "compiled/tokens.js", "compiled/ds-index.js",
+               "compiled/api.js", "compiled/icons.js", "compiled/ui.js"]
     scripts = "".join('<script src="%s"></script>' % escape((studio / source).resolve().as_uri(), quote=True)
         for source in sources)
     payload = json.dumps(dict(approval), ensure_ascii=True).replace("<", "\\u003c")
-    identity = json.dumps(binding)
+    identity = json.dumps(binding).replace("<", "\\u003c")
     return ('<!doctype html><meta charset="utf-8">'
-        '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src file: qrc: \'unsafe-inline\'; style-src \'unsafe-inline\'; img-src data: file:">'
+        '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src file: qrc: \'unsafe-inline\'; style-src file: \'unsafe-inline\'; img-src data: file:">'
         '<style>html,body{margin:0;background:transparent}button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}</style>'
+        '<link rel="stylesheet" href="' + escape((studio / 'style.css').resolve().as_uri(), quote=True) + '">'
+        '<script>window.ARCHHUB_NATIVE_APPROVAL={approval:' + payload + ',binding:' + identity + '};</script>'
         '<div id="approval"></div>' + scripts + '<script src="qrc:///qtwebchannel/qwebchannel.js"></script><script>'
         'document.documentElement.style.setProperty("--accent",window.AH.accent);'
+        'window.ARCHHUB_APPROVAL_CARD=window.UI.ApprovalCard;'
         'new QWebChannel(qt.webChannelTransport,function(channel){const bridge=channel.objects.baboom;'
         'const approval=' + payload + ';const binding=' + identity + ';'
         'const decide=choice=>new Promise((resolve,reject)=>{'
         'if(choice==="decline"){bridge.decide(binding,choice);resolve();return;}'
         'const settle=(id,error)=>{if(id!==binding)return;bridge.settled.disconnect(settle);error?reject(new Error(error)):resolve();};'
         'bridge.settled.connect(settle);bridge.decide(binding,choice);});'
-        'ReactDOM.createRoot(document.getElementById("approval")).render(React.createElement(window.ARCHHUB_APPROVAL_CARD,'
-        '{approval,surface:"baboom",approveLabel:approval.title,onApprove:()=>decide("approve"),onDecline:()=>decide("decline")}));});'
+        'window.ARCHHUB_NATIVE_DECIDE=decide;'
+        'ReactDOM.createRoot(document.getElementById("approval")).render(React.createElement(window.UI.Ctx.Provider,'
+        '{value:{act:fn=>fn()}},React.createElement(window.ARCHHUB_APPROVAL_CARD,{id:approval.id||binding,compact:true})));});'
         '</script>')
 
 
@@ -725,6 +730,7 @@ def create_baboom_native_companion_window(
         def decide(self, binding, choice):
             window = self.parent()
             if binding != window._approval_binding or not window._pending_task_utterance:
+                self.settled.emit(binding, "This review expired. Request a fresh review.")
                 return
             if choice == "approve":
                 window._executing_approval_binding = binding
@@ -1834,6 +1840,9 @@ def create_baboom_native_companion_window(
                 if result.get("owner", id(controller._host._transport)) != id(controller._host._transport):
                     self._busy = False
                     self._transient_report = "ArchHub restarted. Check the result in ArchHub."
+                    if self._executing_approval_binding:
+                        self._approval_bridge.settled.emit(self._executing_approval_binding, self._transient_report)
+                        self._executing_approval_binding = ""
                     self.refresh()
                     return
                 result = result["payload"]

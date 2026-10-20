@@ -181,12 +181,18 @@ def _command(root, options=None):
     manifest = owner / "tools" / "archhub-compiler" / "Cargo.toml"
     if not manifest.is_file():
         raise CompilerFailure(f"missing compiler source: {manifest}")
-    cargo_home = Path(os.environ.get("CARGO_HOME", str(owner.parent / "rust" / "cargo")))
+    cargo_home = Path(os.environ.get("CARGO_HOME", str(rust_root(owner) / "cargo")))
     cargo = cargo_home / "bin" / ("cargo.exe" if os.name == "nt" else "cargo")
     if not cargo.is_file():
         raise CompilerFailure(f"missing supplied Cargo toolchain: {cargo}")
     options = compiler_options(options)
     return [str(cargo), "run", "--quiet", "--release", "--locked", "--jobs", str(options["jobs"]), "--manifest-path", str(manifest), "--"]
+
+
+def rust_root(owner):
+    """The supplied Rust toolchain: 10.PRODUCT/rust, or its workspace home since 2026-10-20 (50.TOOLING)."""
+    moved = owner.parents[1] / "50.TOOLING" / "53.AGENT-TOOLS" / "53.08-RUST-TOOLCHAIN"
+    return owner.parent / "rust" if (owner.parent / "rust").is_dir() or not moved.is_dir() else moved
 
 
 def _build_environment(env, options):
@@ -204,7 +210,7 @@ def _environment(compiler_command=None, owner=None, options=None):
     owner = Path(owner).resolve() if owner else Path(__file__).resolve().parents[2]
     if not explicit_owner and (owner / "runtime" / "acompiler").exists():
         return _build_environment(env, options)
-    rust = owner.parent / "rust"
+    rust = rust_root(owner)
     setup = owner / "tools" / "archhub-compiler" / "target" / "msvc" / "setup_x64.bat"
     if os.name == "nt" and setup.is_file():
         command = f'"{env.get("COMSPEC", "cmd.exe")}" /d /s /c ""{setup}" >nul && set"'

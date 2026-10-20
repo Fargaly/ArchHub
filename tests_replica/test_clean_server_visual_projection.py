@@ -2735,7 +2735,7 @@ def test_application_dispatch_covers_every_declared_operation(monkeypatch):
 
     # Inspect the real launcher wiring without importing/running the desktop.
     launcher = ast.parse((Path(__file__).resolve().parents[1]
-                          / "launch_archhub_test.py").read_text(encoding="utf-8"))
+                          / "nodelang/launcher.py").read_text(encoding="utf-8"))
     launches = [node for node in ast.walk(launcher)
                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
                 and node.func.id == "ApplicationServer"]

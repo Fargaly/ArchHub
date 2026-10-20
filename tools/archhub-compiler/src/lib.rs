@@ -109,8 +109,12 @@ impl Report {
 }
 
 pub fn compile(sources: &[(String, String)], context: Option<&Value>) -> Report {
+    compile_with_entrypoints(sources, context, &[])
+}
+
+pub fn compile_with_entrypoints(sources: &[(String, String)], context: Option<&Value>, entrypoints: &[String]) -> Report {
     let (expanded, locations) = expanded_sources(sources);
-    let mut report = analyze_flat(&expanded);
+    let mut report = analyze_flat(&expanded, entrypoints);
     report.extend(semantics::check(&expanded));
     restore_locations(&mut report, &locations);
     if let Some(context) = context {
@@ -120,7 +124,7 @@ pub fn compile(sources: &[(String, String)], context: Option<&Value>) -> Report 
 }
 pub fn analyze(sources: &[(String, String)]) -> Report {
     let (expanded, locations) = expanded_sources(sources);
-    let mut report = analyze_flat(&expanded);
+    let mut report = analyze_flat(&expanded, &[]);
     restore_locations(&mut report, &locations);
     report
 }
@@ -294,6 +298,8 @@ struct Model {
     routes: Vec<(String, Span)>,
     imports: BTreeMap<String, BTreeSet<String>>,
     modules: BTreeMap<String, Span>,
+    entrypoints: BTreeSet<String>,
+    navigation_routes: BTreeSet<String>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -726,6 +732,7 @@ fn is_literal(node: Node<'_>) -> bool {
 }
 fn behaviour(name: &str) -> bool {
     let name = name.to_lowercase().replace('-', "_");
+    if name.chars().any(char::is_whitespace) || name.ends_with("_status") { return false; }
     [
         "timeout",
         "threshold",
@@ -1103,6 +1110,11 @@ impl Extractor<'_> {
                 }
             }
         }
+        if upper == "NAVIGATION_ROUTES" {
+            if let Some(routes) = data.as_object() {
+                self.model.navigation_routes.extend(routes.keys().cloned());
+            }
+        }
         if upper == "ENGINE_SOCKETS" {
             if let Some(map) = data.as_object() {
                 for (engine, sides) in map {
@@ -1409,7 +1421,8 @@ impl Extractor<'_> {
                 node.child_by_field_name("value"),
             ) {
                 if let Some(name) = scalar(key, self.source) {
-                    if behaviour(&name) && is_literal(val) && !in_param(node, self.source) {
+                    if behaviour(&name) && is_literal(val) && !in_param(node, self.source)
+                        && !(name == "route" && scalar(val, self.source).is_some_and(|v| self.model.navigation_routes.contains(&v))) {
                         self.diag(
                             "E0007",
                             val,
@@ -2182,9 +2195,39 @@ impl Extractor<'_> {
         if !matches!(name, "button" | "Btn" | "Button") {
             return;
         }
-        let mut action = None;
+        let mut action = children(node).into_iter().find_map(|attr| {
+            let parts = children(attr);
+            parts.first().filter(|n| matches!(text(**n, self.source), "action" | "actionId" | "data-action"))
+                .and_then(|_| parts.get(1).and_then(|n| scalar(*n, self.source)))
+        });
         let mut callback = String::new();
-        for attr in children(node)
+        let submit = children(node).into_iter().any(|attr| {
+            let parts = children(attr);
+            parts.first().is_some_and(|n| text(*n, self.source) == "type")
+                && parts.get(1).and_then(|n| scalar(*n, self.source)).as_deref() == Some("submit")
+        });
+        let mut binding = node;
+        if submit {
+            let mut parent = node.parent();
+            while let Some(element) = parent {
+                if element.kind() == "jsx_element" {
+                    if let Some(open) = children(element).into_iter().find(|n| n.kind() == "jsx_opening_element") {
+                        let tag = open.child_by_field_name("name").map(|n| text(n, self.source)).unwrap_or("");
+                        let composer_form = tag == "D.Composer" && children(open).into_iter().any(|attr| {
+                            let parts = children(attr);
+                            parts.first().is_some_and(|n| text(*n, self.source) == "as")
+                                && parts.get(1).and_then(|n| scalar(*n, self.source)).as_deref() == Some("form")
+                        });
+                        if tag == "form" || composer_form {
+                            binding = open;
+                            break;
+                        }
+                    }
+                }
+                parent = element.parent();
+            }
+        }
+        for attr in children(binding)
             .into_iter()
             .filter(|n| n.kind() == "jsx_attribute")
         {
@@ -2193,7 +2236,7 @@ impl Extractor<'_> {
             if matches!(key, "action" | "actionId" | "data-action") {
                 action = parts.get(1).and_then(|n| scalar(*n, self.source));
             }
-            if key == "onClick" {
+            if key == "onClick" || (submit && key == "onSubmit") {
                 if let Some(expression) = parts.get(1) {
                     let expression = children(*expression)
                         .first()
@@ -2426,9 +2469,9 @@ fn finish(mut model: Model, files: Vec<SourceFile>) -> Report {
         .modules
         .keys()
         .filter(|p| {
-            matches!(
+            model.entrypoints.contains(*p) || matches!(
                 p.as_str(),
-                "launch_archhub_test.py"
+                "nodelang/launcher.py"
                     | "colleague_setup.py"
                     | "nodelang/desktop.py"
                     | "nodelang/clean_coordination_service.py"
@@ -2510,8 +2553,8 @@ fn finish(mut model: Model, files: Vec<SourceFile>) -> Report {
     }
 }
 
-fn analyze_flat(sources: &[(String, String)]) -> Report {
-    let mut model = Model::default();
+fn analyze_flat(sources: &[(String, String)], entrypoints: &[String]) -> Report {
+    let mut model = Model { entrypoints: entrypoints.iter().cloned().collect(), ..Model::default() };
     let mut files = vec![];
     for (file, source) in sources {
         let language = language_name(file);

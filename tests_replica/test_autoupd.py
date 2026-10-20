@@ -39,7 +39,7 @@ def release_fixture(tmp_path):
 
 
 def launcher_function(name, namespace):
-    source = ast.parse((ROOT / 'launch_archhub_test.py').read_text(encoding='utf-8-sig'))
+    source = ast.parse((ROOT / 'nodelang/launcher.py').read_text(encoding='utf-8-sig'))
     node = next(n for n in source.body if isinstance(n, ast.FunctionDef) and n.name == name)
     exec(compile(ast.Module(body=[node], type_ignores=[]), '<launcher-fixture>', 'exec'), namespace)
     return namespace[name]
@@ -49,7 +49,7 @@ def launcher_function(name, namespace):
 @pytest.mark.parametrize('launch_failed', [False, True])
 def test_preboot_relaunch_uses_one_process_owner_and_never_falls_through(tmp_path, monkeypatch, mode, launch_failed):
     from nodelang import application_update_recovery as recovery
-    source = ast.parse((ROOT / 'launch_archhub_test.py').read_text(encoding='utf-8-sig'))
+    source = ast.parse((ROOT / 'nodelang/launcher.py').read_text(encoding='utf-8-sig'))
     node = next(n for n in source.body if isinstance(n, ast.Try)
         and any(isinstance(child, ast.Name) and child.id == 'begin_update_boot' for child in ast.walk(n)))
     monkeypatch.setattr(qu, 'begin_update_boot', lambda *a: {'rolled_back': True} if mode == 'rolled_back'
@@ -61,7 +61,7 @@ def test_preboot_relaunch_uses_one_process_owner_and_never_falls_through(tmp_pat
         calls.append((command, kwargs))
         if launch_failed:
             raise OSError('fixture launcher unavailable')
-    namespace = dict(Path=Path, __file__=str(tmp_path / 'launch_archhub_test.py'), state_dir=tmp_path,
+    namespace = dict(Path=Path, __file__=str(tmp_path / 'nodelang/launcher.py'), state_dir=tmp_path,
         state_path=tmp_path / 'graph.db', _instance_lock=SimpleNamespace(close=lambda: calls.append('close')),
         _update_preboot_process=SimpleNamespace(Popen=launch, CREATE_NO_WINDOW=123))
     with pytest.raises(SystemExit) as stopped:
@@ -177,7 +177,7 @@ def test_restart_guard_reads_real_execution_state_and_allows_settled_work():
 
 def test_window_quit_does_not_hard_kill_a_ready_update(monkeypatch):
     import threading
-    tree = ast.parse((ROOT / 'launch_archhub_test.py').read_text(encoding='utf-8'))
+    tree = ast.parse((ROOT / 'nodelang/launcher.py').read_text(encoding='utf-8'))
     function = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == '_quit_from_window')
     started, queued = [], []
     monkeypatch.setattr(threading, 'Thread', lambda **kwargs: started.append(kwargs))
@@ -349,3 +349,49 @@ Write-Output $result.Files
         env={key: value for key, value in os.environ.items() if key.upper() != 'PSMODULEPATH'})
     manifest = json.loads((ROOT / 'nodelang/studio/compiled/manifest.json').read_text(encoding='utf-8'))
     assert result.returncode == 0 and int(result.stdout.strip()) == len(manifest['files']), result.stderr
+
+
+@pytest.mark.parametrize('damage', ['extra', 'duplicate', 'escape', 'hash'])
+def test_build_inventory_refuses_extra_duplicate_escaped_or_changed_output(tmp_path, damage):
+    import os
+    import subprocess
+    if os.name != 'nt':
+        pytest.skip('PowerShell build-reader fixture')
+    root = tmp_path / 'PRODUCT'
+    installer = root / 'INSTALLER'
+    generated = root / 'NODELANG/STUDIO/COMPILED'
+    installer.mkdir(parents=True)
+    generated.mkdir(parents=True)
+    (installer / 'build_release.ps1').write_bytes((ROOT / 'installer/build_release.ps1').read_bytes())
+    payload = b'void 0;'
+    (generated / 'app.js').write_bytes(payload)
+    record = dict(output='app.js',bytes=len(payload),sha256=hashlib.sha256(payload).hexdigest())
+    records = [record]
+    if damage == 'extra':
+        (generated / 'unlisted.js').write_bytes(payload)
+    elif damage == 'duplicate':
+        records.append(dict(record))
+    elif damage == 'escape':
+        record['output'] = '../app.js'
+    else:
+        (generated / 'app.js').write_bytes(b'changed;')
+    (generated / 'manifest.json').write_text(json.dumps(dict(format=1,files=records)),encoding='utf-8')
+    script = tmp_path / 'CHECK.ps1'
+    script.write_text('''param([string]$Root)
+$ErrorActionPreference = 'Stop'
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $Root 'installer/build_release.ps1'), [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'Release build PowerShell syntax is invalid.' }
+$functions = $ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in @('Assert-PlainAncestors','Read-StudioBuild')}, $true)
+foreach ($function in $functions) { . ([scriptblock]::Create($function.Extent.Text)) }
+$selectedRoot = $Root; $utf8 = [Text.UTF8Encoding]::new($false, $true)
+$plainDirectories = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+Read-StudioBuild
+''',encoding='utf-8')
+    result = subprocess.run(['powershell','-NoProfile','-File',str(script),str(root)], capture_output=True,
+        text=True,timeout=30,creationflags=subprocess.CREATE_NO_WINDOW,
+        env={key:value for key,value in os.environ.items() if key.upper() != 'PSMODULEPATH'})
+    assert result.returncode != 0
+    expected = {'extra':'inventory differs', 'duplicate':'duplicate Studio output',
+                'escape':'Invalid or duplicate', 'hash':'does not match its manifest'}
+    assert expected[damage] in result.stderr

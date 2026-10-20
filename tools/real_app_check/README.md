@@ -17,7 +17,7 @@ Options:
   is hashed before and after every run.
 - `--overlay <dir>`: candidate files laid out like the app. Only files under the code allowlist
   (`nodelang`, `app`, `runtime`, `workflows`, `library`, `custom_nodes`, `ui_widgets`, `skills`,
-  `launch_archhub_test.py`) are accepted. Each must be contained in the overlay folder and must not be a
+  `nodelang/launcher.py`) are accepted. Each must be contained in the overlay folder and must not be a
   link; anything else is refused before any copy. The files are laid over a copy of the installed code
   in the run folder, and every report row is labelled `CANDIDATE OVERLAY`. If the overlay holds Studio
   `.jsx` files, the copy's compiled Studio is rebuilt with this repository's

@@ -155,13 +155,13 @@ def test_an_old_graph_and_a_forged_email_never_change_the_offer_as_the_founder(t
                             founder_account=account, execute=True)
     assert read_offer(store.snapshot()) == before
     # The launcher takes the founder from the cloud, never from cloud.json.
-    launcher = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
+    launcher = (ROOT / "nodelang/launcher.py").read_text(encoding="utf-8")
     offer = launcher[launcher.index("def _cockpit_offer_command"):]
     offer = offer[:offer.index("\ncloud_relay = None")]
     assert "founder_account=signed_in_founder_account()" in offer
     assert "signed_in_cloud_account" not in offer
     # No founder_account anywhere in the shipped code comes from the file.
-    for path in [ROOT / "launch_archhub_test.py", *(ROOT / "nodelang").rglob("*.py")]:
+    for path in [ROOT / "nodelang/launcher.py", *(ROOT / "nodelang").rglob("*.py")]:
         text = path.read_text(encoding="utf-8", errors="replace")
         assert "founder_account=signed_in_cloud_account" not in text, path
 

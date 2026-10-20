@@ -181,6 +181,8 @@ def test_python_command_arguments_cannot_impersonate_an_archhub_helper(tmp_path)
     from nodelang.installer_closed_profile import _python_role
     app = tmp_path / 'ArchHub'
     executable = str(app / '.venv/Scripts/python.exe')
+    assert _python_role(app, [executable, str(app / 'nodelang/launcher.py')]) == 'desktop'
+    assert _python_role(app, [executable, str(app / 'launch_archhub_test.py')]) == 'desktop'
     assert _python_role(app, [executable, 'user.py', '-m', 'nodelang.native_agent_mcp']) == ''
     assert _python_role(app, [executable, '-c', "print('-m nodelang.native_agent_mcp')", str(app)]) == ''
     assert _python_role(app, [executable, '-I', '-B', '-m', 'nodelang.native_agent_mcp']) == 'helper'

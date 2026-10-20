@@ -111,7 +111,7 @@ def _respond(graph, utterance, **kwargs):
 def _relay(call):
     """The launcher's real relay entries (_cockpit_respond, _cockpit_execute)
     over the real machine routes, through the same signed BABOOM host."""
-    source = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
+    source = (ROOT / "nodelang/launcher.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
     nodes = [n for n in tree.body if getattr(n, "name", None) in {"_cockpit_respond", "_cockpit_execute"}]
     assert len(nodes) == 2
@@ -121,7 +121,7 @@ def _relay(call):
             respond_input=lambda utterance: call(RESPOND, utterance, piped=True),
             execute_input=lambda utterance: call(EXECUTE, utterance, piped=True)),
     }
-    exec(compile(ast.Module(body=nodes, type_ignores=[]), "launch_archhub_test.py", "exec"), namespace)
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), "nodelang/launcher.py", "exec"), namespace)
     return namespace["_cockpit_respond"], namespace["_cockpit_execute"]
 
 
@@ -466,7 +466,7 @@ def test_the_confirmed_build_is_the_only_build_the_next_boot_can_arm(graph, tmp_
     with pytest.raises(ValueError, match="not the confirmed build"):
         recovery.arm_update(state_dir, app_dir, None, None, None, expected_build=update.confirmed_build)
     assert not (state_dir / "updates" / recovery._MARKER_NAME).exists()
-    launcher = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
+    launcher = (ROOT / "nodelang/launcher.py").read_text(encoding="utf-8")
     assert "expected_build=server.application_update.confirmed_build" in launcher
 
 

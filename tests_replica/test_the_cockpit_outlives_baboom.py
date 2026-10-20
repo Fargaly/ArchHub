@@ -15,7 +15,7 @@ from pathlib import Path
 import nodelang.application_server as application_server
 
 ROOT = Path(__file__).resolve().parents[1]
-LAUNCHER = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
+LAUNCHER = (ROOT / "nodelang/launcher.py").read_text(encoding="utf-8")
 
 
 def _start_actual_relay_block(monkeypatch):
@@ -148,7 +148,7 @@ def test_the_same_observation_from_a_new_session_is_not_a_reused_identity():
 def test_a_stale_quit_marker_never_closes_a_fresh_build():
     """A marker written for the copy that is already gone made a freshly
     installed build quit itself the moment it finished booting."""
-    launcher = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
+    launcher = (ROOT / "nodelang/launcher.py").read_text(encoding="utf-8")
     watcher = launcher[launcher.index("def _watch_quit_request()"):]
     watcher = watcher[:watcher.index("    timer.start()")]
     clear = watcher.index("marker.unlink()")
@@ -163,7 +163,7 @@ def test_a_show_marker_brings_the_window_up_on_the_qt_thread():
     outside (ShowWindow on the HWND) leaves Qt believing the widget is hidden
     and paints nothing (2026-09-06). A stale show marker is cleared before
     the watch starts, like the quit marker."""
-    launcher = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
+    launcher = (ROOT / "nodelang/launcher.py").read_text(encoding="utf-8")
     watcher = launcher[launcher.index("def _watch_quit_request()"):]
     watcher = watcher[:watcher.index("    timer.start()")]
     assert 'shower = state_dir / "show-request"' in watcher
@@ -181,7 +181,7 @@ def test_the_tray_open_settles_after_qt_and_writes_a_receipt():
     so the launcher log answers "did it open" instead of a guess
     (2026-09-06: a screen-capture tool that minimizes every window it is
     not allowed to see made the window look minimized by us)."""
-    launcher = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
+    launcher = (ROOT / "nodelang/launcher.py").read_text(encoding="utf-8")
     body = launcher[launcher.index("def _tray_open()"):]
     body = body[:body.index("def _tray_check_updates()")]
     assert "window.showNormal()" in body

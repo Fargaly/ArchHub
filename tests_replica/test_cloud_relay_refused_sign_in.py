@@ -63,7 +63,7 @@ def test_no_session_on_disk_still_backs_off():
 def test_the_relay_is_started_with_the_machine_session_loader_and_the_boot_line_names_the_cause():
     relay_source = (ROOT / "nodelang" / "cloud_relay.py").read_text(encoding="utf-8")
     assert "session_loader=lambda: load_cloud_session(appdata)" in relay_source
-    launcher = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
+    launcher = (ROOT / "nodelang/launcher.py").read_text(encoding="utf-8")
     # 7554226: a 403 can be founder-only access, not an expired sign-in, so the
     # boot line names the refusal and where to fix it instead of promising expiry.
     refused = launcher[launcher.index("if getattr(_refusal, \"code\", None) in (401, 403):"):]

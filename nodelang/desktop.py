@@ -1,6 +1,6 @@
 """Desktop entry aliases and physical dependencies for the installed launcher.
 
-Every supported launch executes launch_archhub_test.py, including module callers.
+Every supported launch executes nodelang/launcher.py, including module callers.
 Importing this module never constructs an application or opens a window.
 """
 from __future__ import annotations
@@ -107,7 +107,7 @@ def bind_coordination_surface(server, state_directory):
 
 
 def main():
-    runpy.run_path(str(Path(__file__).resolve().parents[1] / "launch_archhub_test.py"),
+    runpy.run_path(str(Path(__file__).resolve().parents[1] / "nodelang/launcher.py"),
                    run_name="__main__")
     return 0
 

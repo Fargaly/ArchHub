@@ -45,6 +45,7 @@ from .universal_cell import InvalidCell
 from .model_execution_broker import (
     OPENCODE_DEFAULT_CLI_MODEL,
     opencode_free_cli_model,
+    opencode_session_model,
 )
 
 _LOG = logging.getLogger(__name__)
@@ -192,20 +193,21 @@ _PROVIDER_NAMES = {
 LOCAL_CLI_ASSISTANTS = {
     "claude": "Claude Code",
     "codex": "Codex",
+    "copilot": "GitHub Copilot",
     "gemini": "Gemini CLI",
     "opencode": "OpenCode (local)",
     "antigravity": "Antigravity",
     "cursor": "Cursor",
 }
 # Settings rows (SUBSCRIPTION_CLIS) by the local-cli/ name they route through.
-_CLI_ROUTE_NAME = {"claude-code": "claude", "codex": "codex", "gemini-cli": "gemini",
+_CLI_ROUTE_NAME = {"claude-code": "claude", "codex": "codex", "copilot": "copilot", "gemini-cli": "gemini",
                    "opencode": "opencode", "antigravity": "antigravity", "cursor": "cursor"}
 # Where a chat through each assistant is sent: the picker says so.
-_CLI_VENDOR = {"claude": "Anthropic", "codex": "OpenAI", "gemini": "Google",
+_CLI_VENDOR = {"claude": "Anthropic", "codex": "OpenAI", "copilot": "GitHub", "gemini": "Google",
                "opencode": "OpenRouter", "antigravity": "Google", "cursor": "Cursor"}
 # What the picker must say besides where the chat goes: only Claude Code can run
 # with every tool off; the others, read-only, can still read files on this computer.
-_CLI_CAUTION = {"claude": "", "codex": "",
+_CLI_CAUTION = {"claude": "", "codex": "", "copilot": "; chat only, tools disabled",
                 "gemini": "; it can read files on this computer",
                 "opencode": "; approved free OpenRouter model only",
                 "antigravity": "; it can read files on this computer",
@@ -357,6 +359,7 @@ KEY_INVALID = "key invalid, paste a real key in Settings"
 SUBSCRIPTION_CLIS = (
     ("claude-code", "Claude Code", "claude"),
     ("codex", "Codex", "codex"),
+    ("copilot", "GitHub Copilot", "copilot"),
     ("gemini-cli", "Gemini CLI", "gemini"),
     ("opencode", "OpenCode", "opencode"),
     ("antigravity", "Antigravity", "antigravity"),
@@ -366,6 +369,7 @@ SUBSCRIPTION_CLIS = (
 # The OpenCode desktop app runs its own server and puts no CLI on PATH; the
 # OpenCode install script puts its CLI in %USERPROFILE%\.opencode\bin.
 ASSISTANT_INSTALL_PATHS = {
+    "antigravity": (("LOCALAPPDATA", "Programs", "Antigravity", "Antigravity.exe"),),
     "opencode": (("LOCALAPPDATA", "Programs", "@opencode-aidesktop", "OpenCode.exe"),
                  ("USERPROFILE", ".opencode", "bin", "opencode.exe")),
 }
@@ -497,10 +501,11 @@ def _destination(
                 "local-cli/ chats through claude, codex, gemini, opencode, antigravity or cursor, not %r." % assistant)
         if assistant == "opencode":
             try:
-                cli_model = opencode_free_cli_model(model.split("/", 1)[1] if "/" in model else "")
+                # free or subscription only: OpenCode's free models, approved free OpenRouter ids, GitHub Copilot
+                cli_model = opencode_session_model(model.split("/", 1)[1] if "/" in model else "")
             except ValueError as exc:
                 raise ModelRouteRefused(
-                    "OpenCode chat requires an approved free OpenRouter model."
+                    "OpenCode chat requires one of its free models, an approved free OpenRouter model or GitHub Copilot."
                 ) from exc
             model = "opencode/" + cli_model
         return ModelRoute(family, model, "local-cli:" + assistant,
@@ -1266,7 +1271,7 @@ def _checked_tools(tools: object) -> list:
     if tools is None:
         return []
     rows = list(tools or ())
-    if len(rows) > 32:
+    if len(rows) > 256:
         raise ModelRouteRefused("The tool list is too large.")
     checked = []
     for row in rows:
@@ -1306,9 +1311,29 @@ def _body(
                 "An ollama route cannot carry an image in this build; pick a "
                 "vision model on openrouter or the cloud."
             )
+        rows, tool_names = [], {}
+        for message in messages:
+            row = dict(message)
+            if row.get("tool_calls"):
+                calls = []
+                for call in row["tool_calls"]:
+                    fn = dict(call["function"])
+                    try:
+                        arguments = json.loads(fn["arguments"])
+                    except (ValueError, TypeError) as error:
+                        raise ModelRouteRefused("Invalid Ollama tool history arguments.") from error
+                    if not isinstance(arguments, dict):
+                        raise ModelRouteRefused("Invalid Ollama tool history arguments.")
+                    fn["arguments"] = arguments
+                    tool_names[call["id"]] = fn["name"]
+                    calls.append({**call, "function": fn})
+                row["tool_calls"] = calls
+            if row["role"] == "tool" and row.get("tool_call_id") in tool_names:
+                row["tool_name"] = tool_names[row["tool_call_id"]]
+            rows.append(row)
         body = {
             "model": destination.model,
-            "messages": list(messages),
+            "messages": rows,
             "stream": False,
             "options": {"temperature": temperature, "top_p": top_p, "num_predict": max_tokens},
         }
@@ -1431,6 +1456,8 @@ def _answer_tool_calls(_destination: ModelRoute, payload: object) -> list:
     choices = payload.get("choices")
     first = choices[0] if isinstance(choices, (list, tuple)) and choices else None
     message = first.get("message") if isinstance(first, Mapping) else None
+    if _destination.family == "ollama":
+        message = payload.get("message")
     calls = message.get("tool_calls") if isinstance(message, Mapping) else None
     if not isinstance(calls, (list, tuple)):
         return []
@@ -1619,7 +1646,9 @@ def _openrouter_free_pick_allowed(
     if require_tools:
         opener = urllib.request.urlopen if opener is None else opener
         models, _source = _openrouter_free_tool_catalogue_models(opener, timeout=timeout)
-        return model in models
+        if models:
+            return model in models
+        return False
     if model.endswith(":free"):
         return True
     if model in _openrouter_free_catalogue_models(session):
@@ -2071,7 +2100,7 @@ def bind_local_cli_broker(broker) -> None:
                 installed_cli_version(executable, wait=False)
 
 
-def _local_cli_chat(destination, messages, *, timeout, before_dispatch):
+def _local_cli_chat(destination, messages, *, timeout, before_dispatch, session=None):
     broker = _LOCAL_CLI["broker"]
     if broker is None:
         raise ModelRouteRefused(
@@ -2096,7 +2125,7 @@ def _local_cli_chat(destination, messages, *, timeout, before_dispatch):
                 reason_code="unverified_version")
     if before_dispatch is not None:
         before_dispatch()
-    said = broker.chat(assistant, model.strip(), rows, timeout_seconds=timeout)
+    said = broker.chat(assistant, model.strip(), rows, timeout_seconds=timeout, **({"session": session} if session else {}))
     if not said.get("ok"):
         partial = str(said.get("text") or said.get("partial") or "").strip()
         error_code = str(said.get("error_code") or "no answer")
@@ -2421,8 +2450,12 @@ def route_chat(
     response_byte_limit: Optional[int] = None,
     before_dispatch: Optional[Callable] = None,
     tools: object = None,
+    local_cli_session: Optional[Mapping[str, str]] = None,
 ) -> dict:
     """Send these messages to the provider this route names, and read its answer.
+
+    local_cli_session ({cwd, effort, access}) runs a local assistant as a stand-in for a
+    Claude Code session (ArchHub Switch) instead of the tools-off chat turn.
 
     response_byte_limit opts into bounded body reads and complete-response
     checks. It does not turn timeout into an absolute elapsed-time deadline.
@@ -2513,15 +2546,20 @@ def route_chat(
         if not (free_only and destination.model.startswith("opencode/")):
             # No HTTP: one turn through the model broker's host process.
             return _local_cli_chat(destination, messages, timeout=timeout,
-                                   before_dispatch=before_dispatch_once)
+                                   before_dispatch=before_dispatch_once, session=local_cli_session)
         try:
             return _local_cli_chat(destination, messages, timeout=timeout,
-                                   before_dispatch=before_dispatch_once)
+                                   before_dispatch=before_dispatch_once, session=local_cli_session)
         except ModelRouteRefused:
             if dispatched:
                 raise
             destination = resolve_model_route("openrouter/free")
     rows = _checked_messages(messages)
+    if destination.url == GOOGLE_CHAT:
+        # Gemini 3 refuses replayed tool calls without a thought signature; history from other hosts has none, so use Google's documented bypass value.
+        for row in rows:
+            for call in row.get("tool_calls") or ():
+                call.setdefault("extra_content", {"google": {"thought_signature": "skip_thought_signature_validator"}})
     headers = {"Content-Type": "application/json"}
     key_source = "not required"
     if destination.needs_key:
@@ -2561,7 +2599,9 @@ def route_chat(
             trace.close("free_model_exhausted")
             raise _openrouter_free_exhausted_refusal()
         body = _body(attempt, rows, max_tokens, temperature, top_p, tools=tool_rows)
-        if reasoning_effort is not None:
+        if reasoning_effort is not None and attempt.url == GOOGLE_CHAT:
+            body["reasoning_effort"] = "high" if reasoning_effort == "xhigh" else reasoning_effort  # Gemini's OpenAI-compatible field
+        elif reasoning_effort is not None:
             body["reasoning"] = {"effort": reasoning_effort}
         if free_only:
             body["provider"] = {
@@ -2664,6 +2704,8 @@ def route_chat(
         first = choices[0] if isinstance(choices, (list, tuple)) and choices else None
         if attempt.family == "anthropic":
             first = {"finish_reason": payload.get("stop_reason")} if isinstance(payload, Mapping) else None
+        if attempt.family == "ollama" and isinstance(payload, Mapping) and payload.get("done") is True:
+            first = {"finish_reason": payload.get("done_reason") or "stop", "message": payload.get("message")}
         if response_byte_limit is not None and (
             not isinstance(first, Mapping) or type(first.get("finish_reason")) is not str or not first["finish_reason"]
         ):

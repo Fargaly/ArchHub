@@ -41,6 +41,7 @@ def project_graph_index(store, registry, *, authentication_context=None, include
             "id": root,
             "title": (app._text(snapshot, title.value_root) if title is not None
                       else "ArchHub" if root == registry.canvas_root else "Graph"),
+            "pinned": "pinned" in rows and app._text(snapshot, rows["pinned"].value_root) == "true",
             "state": "idle", "host": "archhub", "when": "saved",
             "file": "Graph composition", "last": "Open graph", "model": "",
         })

@@ -167,7 +167,7 @@ def test_the_boot_retries_the_pipeline_run_not_only_the_seed():
     from pathlib import Path
 
     launcher = (
-        Path(__file__).resolve().parents[1] / "launch_archhub_test.py"
+        Path(__file__).resolve().parents[1] / "nodelang/launcher.py"
     ).read_text(encoding="utf-8")
     run = launcher[launcher.index("outcome = None"):]
     run = run[:run.index('print("  pipeline   : %d node(s) ran"')]

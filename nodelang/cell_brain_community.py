@@ -76,9 +76,12 @@ def subscribe(store, peer_root):
     snapshot = store.snapshot()
     if peer_root in subscriptions(snapshot):
         raise InvalidCell("already subscribed to %s" % peer_root)
+    members = ((SUBSCRIPTION_ROLE, peer_root),)
+    if peer_root not in peers(snapshot):
+        members += ((PEER_ROLE, peer_root),)
     patch = prepare_append_relation_members(
         snapshot, COMMUNITY_ROOT,
-        ((SUBSCRIPTION_ROLE, peer_root),), budget=100_000)
+        members, budget=len(snapshot.cells))
     store.commit(snapshot.revision, create=patch.create, replace=patch.replace)
     return peer_root
 
@@ -91,6 +94,31 @@ def subscriptions(snapshot):
         for m in read_relation(snapshot, COMMUNITY_ROOT, budget=100_000)
         if m.role_id == SUBSCRIPTION_ROLE
     ))
+
+
+def unsubscribe(store, peer_root):
+    from .cell_protocols import prepare_remove_relation_members
+    snapshot = store.snapshot()
+    budget = len(snapshot.cells)
+    members = read_relation(snapshot, COMMUNITY_ROOT, budget=budget)
+    ids = tuple(m.incidence_id for m in members
+                if m.role_id == SUBSCRIPTION_ROLE and m.participant_id == peer_root)
+    if not ids:
+        raise InvalidCell('This peer is not subscribed. Refresh Community.')
+    if not any(m.role_id == PEER_ROLE and m.participant_id == peer_root for m in members):
+        catalog = prepare_append_relation_members(snapshot, COMMUNITY_ROOT, ((PEER_ROLE, peer_root),), budget=budget)
+        store.commit(snapshot.revision, create=catalog.create, replace=catalog.replace)
+        snapshot = store.snapshot()
+    patch = prepare_remove_relation_members(snapshot, COMMUNITY_ROOT, ids, budget=budget)
+    store.commit(snapshot.revision, replace=patch.replace)
+    return peer_root
+
+
+def peers(snapshot):
+    if COMMUNITY_ROOT not in snapshot.cells:
+        return ()
+    return tuple(m.participant_id for m in read_relation(snapshot, COMMUNITY_ROOT, budget=len(snapshot.cells))
+                 if m.role_id in (PEER_ROLE, SUBSCRIPTION_ROLE))
 
 
 def _incoming_root(peer_root, claim):

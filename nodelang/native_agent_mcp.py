@@ -8,7 +8,7 @@ import builtins
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
-from .application_machine_transport import MachineTransportError, UniversalRuntimeClient
+from .application_machine_transport import MachineTransportError
 from .installed_workshop_coordination import InstalledWorkshopCoordinationClient
 from .native_agent_hooks import user_prompt_submit_context, stop_context
 
@@ -227,15 +227,8 @@ def _session_metadata(meta):
 
 
 def _mailbox_call(method, body, context):
-    from .cell_secret_keys import WindowsDpapiSigningKeyProvider
-    local = Path(os.environ["LOCALAPPDATA"]) / "ArchHub"
-    key_path = local / "keys" / "authority-signing-v1.dpapi.json"
-    if not key_path.is_file():
-        raise MachineTransportError("ArchHub is not running: existing signing key unavailable")
-    client = UniversalRuntimeClient(local / "active-universal-runtime.json",
-        WindowsDpapiSigningKeyProvider(key_path))
-    verb = "GET" if method == "read" else "POST"
-    return client.request(verb, "/api/universal/agent-mail/" + method, {**body, "context": context})
+    from .workshop_mailbox import call
+    return call(method, body, context)
 
 
 def build_server(*, session=None, workshop_task=None, mailbox_call=None):
@@ -294,16 +287,18 @@ def build_server(*, session=None, workshop_task=None, mailbox_call=None):
         return result
 
     @server.tool(name="send")
-    def send(to: str, text: str, ctx: Context, reply_to: str = "") -> dict[str, object]:
+    def send(to: str, text: str, ctx: Context, reply_to: str = "", idempotency_key: str = "") -> dict[str, object]:
         """Post to the shared Workshop room; to='*' addresses everyone.
 
         Use a peer's sender_label as its readable address across connector restarts.
         The application records this connection's own name. No sender override,
         binding, enrollment or relay is accepted. All room members can read it.
+        Keep idempotency_key unchanged when retrying an uncertain send.
         """
         context = _caller_context(ctx)
         start(context)
-        return call("send", {"to": to, "text": text, **({"reply_to":reply_to} if reply_to else {})}, context)
+        return call("send", {"to": to, "text": text, **({"reply_to":reply_to} if reply_to else {}),
+            **({"idempotency_key": idempotency_key} if idempotency_key else {})}, context)
 
     @server.tool(name="read", annotations=ToolAnnotations(destructiveHint=False))
     def read(ctx: Context, since: int = 0, declarations_after: str = "", include_archived: bool = False) -> dict[str, object]:

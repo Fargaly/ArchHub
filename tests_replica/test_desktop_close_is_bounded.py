@@ -17,4 +17,4 @@ def test_canonical_close_request_does_not_start_a_supervisor_or_second_runtime(m
         assert stopped.code == 0
     else:
         raise AssertionError('the launcher exit must propagate')
-    assert calls == [('launch_archhub_test.py', '__main__')]
+    assert calls == [('launcher.py', '__main__')]

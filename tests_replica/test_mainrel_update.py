@@ -63,7 +63,7 @@ def test_desktop_shutdown_uses_one_recovery_owner_only_after_close(tmp_path, mon
         armed.append((args, kwargs))
 
     monkeypatch.setattr(recovery, 'arm_update', arm)
-    source = Path(__file__).resolve().parents[1] / 'launch_archhub_test.py'
+    source = Path(__file__).resolve().parents[1] / 'nodelang/launcher.py'
     owner = SimpleNamespace(close=close, conversation_content=SimpleNamespace(_path=None),
         application_update=SimpleNamespace(apply_on_quit=lambda: True,
             close=lambda **kwargs: True, confirmed_build='new'))

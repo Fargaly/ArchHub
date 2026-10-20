@@ -1099,6 +1099,10 @@ def quota_remaining_for_actor(user: dict) -> int:
     if not isinstance(user, dict):
         return 0
     cid = user.get("current_company_id") or None
+    # WIRE-settings
+    if cid and get_membership(cid, user['id']) is None:
+        cid = None
+    # WIRE-settings end
     if cid:
         with connect() as con:
             r = con.execute(
@@ -1117,6 +1121,10 @@ def increment_usage_for_actor(user: dict, n: int = 1) -> int:
     if not isinstance(user, dict):
         return 0
     cid = user.get("current_company_id") or None
+    # WIRE-settings
+    if cid and get_membership(cid, user['id']) is None:
+        cid = None
+    # WIRE-settings end
     if cid:
         with connect() as con:
             con.execute(
@@ -1192,6 +1200,10 @@ def ai_mode_for_actor(user: dict) -> str:
     if not isinstance(user, dict):
         return config.DEFAULT_AI_MODE
     cid = user.get("current_company_id") or None
+    # WIRE-settings
+    if cid and get_membership(cid, user['id']) is None:
+        cid = None
+    # WIRE-settings end
     if cid:
         c = get_company(cid)
         if c is not None:
@@ -1301,6 +1313,10 @@ def credit_balance_for_actor(user: dict, *, now: int | None = None) -> int:
     if not isinstance(user, dict):
         return 0
     cid = user.get("current_company_id") or None
+    # WIRE-settings
+    if cid and get_membership(cid, user['id']) is None:
+        cid = None
+    # WIRE-settings end
     if cid:
         return credit_balance(company_id=cid, now=now)
     return credit_balance(user_id=user["id"], now=now)
@@ -1355,6 +1371,10 @@ def consume_credit_for_actor(user: dict, n: int = 1, *,
                              now: int | None = None) -> dict:
     """Spend hosted credits on the right billing actor (company if set)."""
     cid = user.get("current_company_id") or None
+    # WIRE-settings
+    if cid and get_membership(cid, user['id']) is None:
+        cid = None
+    # WIRE-settings end
     if cid:
         return consume_credit(n=n, company_id=cid, now=now)
     return consume_credit(n=n, user_id=user["id"], now=now)
@@ -1598,6 +1618,10 @@ def user_for_token(token: str) -> Optional[dict]:
             "UPDATE tokens SET last_used_at = ? WHERE token = ?",
             (now, digest),
         )
+        # WIRE-settings
+        if r['current_company_id'] and get_membership(r['current_company_id'], r['id']) is None:
+            return {**dict(r), 'current_company_id': None}
+        # WIRE-settings end
         return dict(r)
 
 
@@ -2067,6 +2091,10 @@ def _reader_company_id(user_id: str) -> Optional[str]:
             ).fetchone()
     except Exception:
         return None
+    # WIRE-settings
+    if row is not None and get_membership(str(row['company_id']), user_id) is None:
+        return None
+    # WIRE-settings end
     return str(row["company_id"]) if row is not None else None
 
 
@@ -2682,6 +2710,12 @@ def get_membership(company_id: str, user_id: str) -> Optional[dict]:
             " WHERE company_id = ? AND user_id = ?",
             (company_id, user_id),
         ).fetchone()
+        # WIRE-settings
+        if r and 'access_until' in r.keys() and r['access_until']:
+            from datetime import date
+            if r['access_until'] < date.today().isoformat():
+                return None
+        # WIRE-settings end
         return dict(r) if r else None
 
 

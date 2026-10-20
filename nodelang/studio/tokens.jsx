@@ -8,8 +8,6 @@
 //   • short keys (panel, soft, hover, deep)   → self-heal C
 // Both map from the SAME canonical values below.
 
-const AH_BASE_DUR = Object.freeze({ instant:60, fast:120, med:180, slow:240, reduced:0 });
-
 window.AH = {
   // ── surfaces (dark canonical) ──
   bgDeep:  '#0a0a0d',
@@ -73,47 +71,29 @@ window.AH = {
   l_line:    '#e3ddd0',
   l_accent:  '#c96442',
   // ── type ──
-  // Product UI uses Inter only. Keep the display serif behind an explicit
-  // marketing token for website/marketing surfaces.
+  serif: "'Instrument Serif', Georgia, serif",
   sans:  "'Inter', system-ui, sans-serif",
-  serif: "'Inter', system-ui, sans-serif",
-  marketingSerif: "'Instrument Serif', Georgia, serif",
   mono:  "'JetBrains Mono', ui-monospace, monospace",
   arch:  "'Architects Daughter', 'Comic Sans MS', cursive",
   // ── scales ──
-  sp:  { xs:4, sm:8, md:12, lg:16, xl:24, '2xl':32, '3xl':40, '4xl':48 },
-  rad: { chip:3, xs:3, control:5, sm:5, node:6, md:6, panel:8, lg:8, dialog:10, xl:10, pill:999 },
+  sp:  { xs:4, sm:8, md:12, lg:16, xl:24, '2xl':32, '3xl':40, '4xl':48, '5xl':56, '6xl':72, '7xl':96 },
+  rad: { xs:3, sm:5, md:6, lg:8, xl:10, pill:999 },
   fs: {
-    display:{sz:24, ln:30, wt:600, fam:'sans'},
-    title:{sz:16, ln:22, wt:600, fam:'sans'},
-    body:{sz:14, ln:20, wt:400, fam:'sans'},
-    bodySm:{sz:13, ln:18, wt:400, fam:'sans'},
-    bodySmStrong:{sz:13, ln:18, wt:500, fam:'sans'},
-    caption:{sz:12, ln:16, wt:400, fam:'sans'},
-    label:{sz:11, ln:14, wt:500, fam:'sans', letter:'.04em'},
-    data:{sz:12, ln:16, wt:400, fam:'mono'},
-    dataSm:{sz:11, ln:14, wt:400, fam:'mono'},
+    d0:  { sz:104, ln:0.90, fam:'serif', use:'Web marketing hero — archhub.app only' },
+    d1:  { sz:88,  ln:0.92, fam:'serif', use:'Cover · product hero' },
+    d2:  { sz:56,  ln:0.95, fam:'serif', use:'Section openers' },
+    h1:  { sz:40,  ln:1.05, fam:'serif', use:'Page heading' },
+    h2:  { sz:24,  ln:1.15, fam:'serif', use:'Italic lede · pull-quote' },
+    h3:  { sz:21,  ln:1.20, fam:'serif', use:'In-product section title' },
+    bodyLg: { sz:16, ln:1.55, fam:'sans', use:'Body large · composer' },
+    body:   { sz:14, ln:1.55, fam:'sans', use:'Body · rows · descriptions' },
+    bodySm: { sz:13, ln:1.50, fam:'sans', use:'Body small · dense lists' },
+    mono:   { sz:12, ln:1.50, fam:'mono', use:'Data · params · prices · tokens' },
+    monoSm: { sz:11, ln:1.55, fam:'mono', use:'Mono small · captions · timestamps' },
+    cap:    { sz:9,  ln:1.40, fam:'mono', use:'All-caps section labels · tags' },
   },
-  shadow: { flat:'none', popover:'0 8px 24px rgba(0,0,0,.45)', dialog:'0 16px 48px rgba(0,0,0,.55)' },
-  // DESIGNSYS-050 §3.x / DSYS-077–078: one swappable surface vocabulary.
-  elev: { e1:'0 1px 0 rgba(255,255,255,.04) inset, 0 1px 2px rgba(0,0,0,.4)',
-    e2:'0 1px 0 rgba(255,255,255,.05) inset, 0 8px 24px rgba(0,0,0,.45)' },
-  surf:'linear-gradient(180deg, #1c1c22 0%, #17171c 100%)',
-  surf2:'linear-gradient(180deg, #202027 0%, #1a1a20 100%)',
-  get glow() { return {
-    warn:`0 0 0 1px ${this.warn}, 0 0 0 4px ${this.warn}22, 0 8px 28px rgba(0,0,0,.5)`,
-    accent:`0 0 0 1px ${this.accent}, 0 0 0 4px ${this.accent}22, 0 8px 28px rgba(0,0,0,.5)` }; },
-  workshop: {rail:64, list:340, thread:780, status:28, header:72,
-    background:'#0c0c0f', railBackground:'#0f0f13', listBackground:'#111115',
-    threadBackground:'radial-gradient(1200px 500px at 50% -10%, #1a1a22 0%, #0c0c0f 60%)',
-    progressBackground:'#2a2a31', buttonBackground:'#26262d', bubbleBackground:'#24242b',
-    agentColour:{claude:'#d97757',codex:'#9b87f5',opencode:'#5b9cf5'},
-    type:{meta:12.5,secondary:13,row:14,thread:15,list:20,title:22}},
-  scrim: 'rgba(0,0,0,.5)',
-  selection: { outline:'2px solid #d97757', outlineOffset:2 },
-  dur:  { ...AH_BASE_DUR },
+  dur:  { instant:60, fast:120, med:180, slow:240 },
   rowH: { comfortable:32, compact:26, cozy:22 },
-  icon: { ui:{size:16, stroke:1.5, box:20}, category:{size:12, box:20} },
 };
 
 window.ArchHubTheme = (() => {
@@ -126,17 +106,6 @@ window.ArchHubTheme = (() => {
   ]);
   const listeners = new Set(), derived = [];
   let epoch = 0, source = 'not-read';
-  const notifyAll = () => {
-    epoch += 1;
-    for (const notify of listeners) { try { notify(); } catch (_) {} }
-  };
-  const reducedDur = () => ({ instant:0, fast:0, med:0, slow:0, reduced:0 });
-  const applyReducedMotion = matches => {
-    const next = matches ? reducedDur() : AH_BASE_DUR;
-    const changed = Object.keys(next).some(key => window.AH.dur[key] !== next[key]);
-    if (changed) Object.assign(window.AH.dur, next);
-    return changed;
-  };
   const tokenKey = key => {
     const light = key.startsWith('l_');
     const base = light ? key.slice(2) : key;
@@ -162,7 +131,8 @@ window.ArchHubTheme = (() => {
     for (const update of updates) Object.assign(update.target, update.values);
     source = 'graph';
     window.ARCHHUB_THEME_ERROR = '';
-    notifyAll();
+    epoch += 1;
+    for (const notify of listeners) { notify(); }
     return true;
   };
   const derive = build => {
@@ -176,33 +146,10 @@ window.ArchHubTheme = (() => {
   window.ARCHHUB_THEME_ERROR = '';
   if (window.ARCHHUB_THEME != null) {
     try { apply(window.ARCHHUB_THEME); }
-    catch (error) { source = 'rejected'; window.ARCHHUB_THEME_ERROR = error.message; }
+    catch { source = 'rejected'; window.ARCHHUB_THEME_ERROR = 'Personal Settings did not return a complete colour theme. Open Appearance settings and retry.'; }
   }
-  try {
-    const reduce = typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
-    if (reduce) {
-      applyReducedMotion(!!reduce.matches);
-      const onMotionChange = event => { if (applyReducedMotion(!!event.matches)) notifyAll(); };
-      if (typeof reduce.addEventListener === 'function') reduce.addEventListener('change', onMotionChange);
-      else if (typeof reduce.addListener === 'function') reduce.addListener(onMotionChange);
-    }
-  } catch (_) {}
-  try {
-    const doc = window.document;
-    if (doc && !doc.getElementById('archhub-reduced-motion-style')) {
-      const style = doc.createElement('style');
-      style.id = 'archhub-reduced-motion-style';
-      style.textContent = '@media (prefers-reduced-motion: reduce){*:not([role="progressbar"]):not([data-progress]){transition-duration:0ms!important;transition-delay:0ms!important;animation-duration:0ms!important;animation-delay:0ms!important;}}';
-      (doc.head || doc.documentElement).appendChild(style);
-    }
-  } catch (_) {}
   return store;
 })();
-
-window.AH.selection = window.ArchHubTheme.derive(A => ({
-  outline:'2px solid ' + A.accent,
-  outlineOffset:2,
-}));
 
 // Convenience: short-key projection (brain / self-heal style) so those files can
 // do `const C = window.AHShort` if they prefer. This legacy projection is boot-only.
@@ -212,9 +159,8 @@ window.AHShort = (() => {
     bg:A.bg, panel:A.bgPanel, soft:A.bgSoft, deep:A.bgDeep, hover:A.bgHover,
     raised:A.bgRaised, ink:A.ink, inkSoft:A.inkSoft, inkMuted:A.inkMuted, inkDim:A.inkDim,
     line:A.line, lineSoft:A.lineSoft, lineHair:A.lineHair,
-    accent:A.accent, accentSoft:A.accentSoft, accentDim:A.accentDim, accentHi:A.accentHi, accentPress:A.accentPress,
+    accent:A.accent, accentSoft:A.accentSoft, accentDim:A.accentDim, accentHi:A.accentHi,
     ok:A.ok, warn:A.warn, err:A.err, cyan:A.cyan, purple:A.purple, blue:A.blue,
-    sp:A.sp, rad:A.rad, fs:A.fs, shadow:A.shadow, scrim:A.scrim, selection:A.selection,
-    dur:A.dur, rowH:A.rowH, icon:A.icon,
+    sp:A.sp, rad:A.rad,
   };
 })();

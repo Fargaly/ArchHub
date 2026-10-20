@@ -176,7 +176,7 @@ def test_desktop_main_routes_to_installed_launcher_without_opening_ui(monkeypatc
         return {"__name__": "__main__"}
     monkeypatch.setattr(runpy, "run_path", execute)
     desktop.main()
-    assert calls == [(ROOT / "launch_archhub_test.py", {"run_name": "__main__"})]
+    assert calls == [(ROOT / "nodelang/launcher.py", {"run_name": "__main__"})]
 
 
 def test_production_entry_modules_do_not_construct_a_second_application():

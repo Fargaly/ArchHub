@@ -44,7 +44,7 @@ def _slow_relay(block_seconds=8.0):
 
 
 def test_the_launcher_waits_out_one_relay_request():
-    launcher = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
+    launcher = (ROOT / "nodelang/launcher.py").read_text(encoding="utf-8")
     assert LAUNCHER_CLOSE in launcher
     assert "cloud_relay.close(timeout_seconds=6.0)" not in launcher
 

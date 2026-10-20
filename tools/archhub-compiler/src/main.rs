@@ -1,5 +1,5 @@
 use archhub_compiler::{
-    analyze_artifact, apply_context_with_authority, compile, explain, intent, language_name,
+    analyze_artifact, apply_context_with_authority, compile, compile_with_entrypoints, explain, intent, language_name,
     Diagnostic, SourceFile,
 };
 use std::{
@@ -286,6 +286,11 @@ fn run() -> Result<bool, String> {
             pending.insert(file, content);
         }
     }
+    let external = external_entrypoints(&authority)?;
+    let entrypoints = external.iter().map(|(file, _)| file.clone()).collect::<Vec<_>>();
+    for (file, content) in external {
+        if pending.insert(file, content).is_some() { return Err("external entrypoint shadows product source".into()); }
+    }
     let sources = pending.into_iter().collect::<Vec<_>>();
     let context: Option<serde_json::Value> = context
         .map(|path| {
@@ -294,7 +299,7 @@ fn run() -> Result<bool, String> {
                 .and_then(|b| serde_json::from_slice(&b).map_err(|e| e.to_string()))
         })
         .transpose()?;
-    let mut report = compile(&sources, None);
+    let mut report = compile_with_entrypoints(&sources, None, &entrypoints);
     for (file, message) in failures {
         let language = language_name(&file).to_string();
         report.files.push(SourceFile {
@@ -341,6 +346,37 @@ fn run() -> Result<bool, String> {
     }
     Ok(report_only || report.diagnostics.is_empty())
 }
+fn external_entrypoints(authority: &serde_json::Value) -> Result<Vec<(String, String)>, String> {
+    let mut sources = BTreeMap::new();
+    for intent in authority["intents"].as_object().ok_or("intent authority unavailable")?.values() {
+        let Some(entries) = intent.get("external_entrypoints") else { continue; };
+        for entry in entries.as_array().ok_or("external entrypoints must be an array")? {
+            let name = entry["name"].as_str().ok_or("external entrypoint requires name")?;
+            if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+                return Err("invalid external entrypoint name".into());
+            }
+            let path = PathBuf::from(entry["source"].as_str().ok_or("external entrypoint requires source")?);
+            if !path.is_absolute() || !fs::symlink_metadata(&path).map_err(|_| "external entrypoint unavailable")?.file_type().is_file() {
+                return Err("external entrypoint must be an absolute regular file".into());
+            }
+            let content = fs::read_to_string(&path).map_err(|_| "external entrypoint must be UTF-8")?;
+            // Hash the exact bytes being parsed, so a concurrent source replacement cannot change the proof.
+            use std::io::Write;
+            use std::process::Stdio;
+            let mut hash = Command::new("git").args(["hash-object", "--stdin"]).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().map_err(|e| e.to_string())?;
+            hash.stdin.take().ok_or("hash stdin unavailable")?.write_all(content.as_bytes()).map_err(|e| e.to_string())?;
+            let output = hash.wait_with_output().map_err(|e| e.to_string())?;
+            let oid = String::from_utf8(output.stdout).map_err(|e| e.to_string())?;
+            if !output.status.success() || entry["blob_oid"].as_str() != Some(oid.trim()) {
+                return Err("external entrypoint source hash mismatch".into());
+            }
+            if sources.insert(format!("EXTERNAL/{name}/ENTRY.py"), content).is_some() {
+                return Err("duplicate external entrypoint".into());
+            }
+        }
+    }
+    Ok(sources.into_iter().collect())
+}
 fn main() -> ExitCode {
     match run() {
         Ok(true) => ExitCode::SUCCESS,
@@ -351,5 +387,25 @@ fn main() -> ExitCode {
             );
             ExitCode::from(2)
         }
+    }
+}
+
+#[cfg(test)]
+mod external_tests {
+    use super::*;
+    #[test]
+    fn changed_missing_and_duplicate_external_sources_refuse() {
+        let source = env::current_dir().unwrap().join("../../nodelang/model_session_bridge.py").canonicalize().unwrap();
+        let mut entry = serde_json::json!({"name":"PLUGIN", "source":source, "blob_oid":"wrong"});
+        let authority = |entries| serde_json::json!({"intents":{"PLUGIN":{"external_entrypoints":entries}}});
+        assert_eq!(external_entrypoints(&authority(serde_json::json!([entry]))).unwrap_err(), "external entrypoint source hash mismatch");
+        let mut hash = Command::new("git").args(["hash-object", "--stdin"]).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).spawn().unwrap();
+        use std::io::Write;
+        hash.stdin.take().unwrap().write_all(&fs::read(&source).unwrap()).unwrap();
+        entry["blob_oid"] = String::from_utf8(hash.wait_with_output().unwrap().stdout).unwrap().trim().into();
+        assert_eq!(external_entrypoints(&authority(serde_json::json!([entry]))).unwrap().len(), 1);
+        assert_eq!(external_entrypoints(&authority(serde_json::json!([entry,entry]))).unwrap_err(), "duplicate external entrypoint");
+        entry["source"] = source.with_file_name("MISSING-EXTERNAL-ENTRY.py").to_str().unwrap().into();
+        assert!(external_entrypoints(&authority(serde_json::json!([entry]))).is_err());
     }
 }

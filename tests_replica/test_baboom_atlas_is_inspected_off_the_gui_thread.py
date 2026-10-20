@@ -17,7 +17,7 @@ import pytest
 from nodelang import baboom_native_runtime as runtime
 from nodelang.baboom_visual_assets import inspect_baboom_sprite_atlas_v2
 
-LAUNCHER = Path(__file__).resolve().parents[1] / "launch_archhub_test.py"
+LAUNCHER = Path(__file__).resolve().parents[1] / "nodelang/launcher.py"
 
 
 def test_the_prepared_atlas_equals_a_direct_inspection_and_is_made_off_the_gui_thread():

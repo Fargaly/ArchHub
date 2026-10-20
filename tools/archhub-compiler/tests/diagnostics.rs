@@ -509,6 +509,15 @@ fn synchronous_timer_effect_is_not_a_request() {
     let r = report("hub.jsx", "const Hub = () => { const [open,setOpen]=useState(false); useEffect(() => { if(!open) return; const timer=setTimeout(() => setOpen(false),6000); return () => clearTimeout(timer); },[open]); return <div>{open ? 'Confirm' : 'Ready'}</div>; };");
     assert!(!has(&r, "E0003") && !has(&r, "E0004"), "timer effect is synchronous UI state: {:?}", r.diagnostics);
 }
+
+#[test]
+fn submit_button_uses_its_registered_form_action() {
+    let source = "const save=()=>send(); const ACTIONS={save:save}; const View=()=> <form onSubmit={()=>save()}><button type='submit'>Save</button></form>;";
+    assert!(!has(&report("view.jsx", source), "E0005"));
+    assert!(has(&report("view.jsx", &source.replace(" onSubmit={()=>save()}", "")), "E0005"));
+    assert!(has(&report("view.jsx", &source.replace("save()}", "missing()}")), "E0005"));
+    assert!(has(&report("view.jsx", &source.replace("type='submit'", "type='submit' actionId='absent'")), "E0005"));
+}
 #[test]
 fn request_effects_still_need_rendered_request_states() {
     for source in [
@@ -521,4 +530,34 @@ fn request_effects_still_need_rendered_request_states() {
         let r = report("screen.jsx", source);
         assert!(has(&r, "E0003") && has(&r, "E0004"), "request effect escaped: {:?}", r.diagnostics);
     }
+}
+
+#[test]
+fn external_roots_follow_real_imports_and_do_not_hide_unused_modules() {
+    let files = vec![
+        ("EXTERNAL/PLUGIN/ENTRY.py".into(), "from nodelang import extension
+".into()),
+        ("nodelang/extension.py".into(), "def answer():
+    return 1
+".into()),
+        ("nodelang/orphan.py".into(), "def orphan():
+    return 2
+".into()),
+    ];
+    assert!(analyze(&files).diagnostics.iter().any(|d| d.code == "E0002" && d.file == "nodelang/extension.py"));
+    let report = archhub_compiler::compile_with_entrypoints(&files, None, &["EXTERNAL/PLUGIN/ENTRY.py".into()]);
+    assert!(!report.diagnostics.iter().any(|d| d.code == "E0002" && d.file == "nodelang/extension.py"));
+    assert!(report.diagnostics.iter().any(|d| d.code == "E0002" && d.file == "nodelang/orphan.py"));
+}
+
+#[test]
+fn state_messages_and_registered_ui_targets_are_not_configuration() {
+    let source = "const NAVIGATION_ROUTES={canvas:'Canvas'}; const doc={route:'canvas'};";
+    assert!(!has(&report("ui.js", source), "E0007"));
+    assert!(has(&report("ui.js", "const NAVIGATION_ROUTES={canvas:'Canvas'}; const config={route:'remote'};"), "E0007"));
+    assert!(!has(&report("status.py", "archive_status = 'failed'
+codes = {'response timeout invalid':'invalid'}
+"), "E0007"));
+    assert!(has(&report("policy.py", "archive_timeout = 5
+"), "E0007"));
 }

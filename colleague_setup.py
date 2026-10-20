@@ -625,7 +625,7 @@ def register_autocad_add_ins(root: Path, *, environment=None, install=None,
             user_profile_root=env["USERPROFILE"],
             user_plugins_root=str(Path(env["APPDATA"]) / "Autodesk" / "ApplicationPlugins"),
             machine_plugins_root=str(Path(env.get("ProgramData", r"C:\ProgramData")) / "Autodesk" / "ApplicationPlugins"),
-            # launch_archhub_test.py owns this state location (see _launcher_state_root).
+            # nodelang/launcher.py owns this state location (see _launcher_state_root).
             state_root=str(Path(env.get("ARCHHUB_TEST_STATE_DIR") or Path(env["LOCALAPPDATA"]) / "ArchHub")))
         for result in results:
             print("  autocad %s : %s%s" % (result["host_version"], result["status"],
@@ -658,7 +658,7 @@ def report_rhino_blender(root: Path, *, detected=None) -> list[dict]:
     return rows
 
 def _launcher_state_root() -> Path:
-    # launch_archhub_test.py owns this location; a court holds the two equal.
+    # nodelang/launcher.py owns this location; a court holds the two equal.
     return Path(os.environ.get("ARCHHUB_TEST_STATE_DIR")
                 or Path(os.environ["LOCALAPPDATA"]) / "ArchHub")
 
@@ -845,8 +845,8 @@ def main():
         print("  REFUSED: the installed build or requirements manifest is missing or invalid.")
         print("  Run the ArchHub installer again.")
         return 5
-    if not (root / "launch_archhub_test.py").is_file():
-        print("  REFUSED: launch_archhub_test.py is not beside this file.")
+    if not (root / "nodelang/launcher.py").is_file():
+        print("  REFUSED: nodelang/launcher.py is missing from this installation.")
         return 3
     try:
         child_status = prepare_environment(root)

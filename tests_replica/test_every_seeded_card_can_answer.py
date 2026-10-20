@@ -45,7 +45,7 @@ from nodelang.universal_pipeline import (
 def launcher_engines(store, registry) -> set[str]:
     """What the launcher's run can actually reach.
 
-    launch_archhub_test.py hands run_universal_pipeline PIPELINE_ENGINES,
+    nodelang/launcher.py hands run_universal_pipeline PIPELINE_ENGINES,
     and the run merges its own graph engines in. Both sides are computed
     here: a court that restated the list would pass while the launcher
     stayed blind to a card.

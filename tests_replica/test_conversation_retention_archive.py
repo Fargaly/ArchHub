@@ -364,7 +364,7 @@ def test_launcher_writes_through_the_rotating_log(tmp_path):
     from types import SimpleNamespace
     from nodelang.log_rotation import LAUNCHER_LOG_BYTES, LOG_KEEP
 
-    source = (Path(__file__).resolve().parents[1] / "launch_archhub_test.py").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parents[1] / "nodelang/launcher.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
     callback = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
                     and node.name == "_follow_boot_log_rotation")

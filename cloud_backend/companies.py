@@ -71,6 +71,10 @@ def _require_membership(company_id: str, user_id: str,
     m = db.get_membership(company_id, user_id)
     if m is None:
         raise HTTPException(status_code=403, detail="not_a_member")
+    # WIRE-settings
+    if m['role'] == 'viewer' and roles == ('owner', 'admin', 'member'):
+        roles = (*roles, 'viewer')
+    # WIRE-settings end
     if m["role"] not in roles:
         raise HTTPException(status_code=403,
                             detail=f"requires_role:{'|'.join(roles)}")
@@ -178,6 +182,9 @@ def create_company(req: CreateCompanyReq,
 def list_my_companies(authorization: str | None = Header(None)) -> dict:
     user = _require_user(authorization)
     rows = db.list_companies_for_user(user["id"])
+    # WIRE-settings
+    rows = [r for r in rows if db.get_membership(r['id'], user['id']) is not None]
+    # WIRE-settings end
     return {
         "companies": [
             {
@@ -221,6 +228,9 @@ def get_company_detail(company_id: str,
                 "full_name": x.get("full_name"),
                 "role": x["role"],
                 "joined_at": x["joined_at"],
+                # WIRE-settings
+                'access_until': x.get('access_until'),
+                # WIRE-settings end
             }
             for x in members
         ],
@@ -477,3 +487,75 @@ def switch_company(company_id: str,
     _require_membership(company_id, user["id"])
     db.set_current_company(user["id"], company_id)
     return {"ok": True, "current_company_id": company_id}
+# WIRE-settings
+class MemberAccessReq(BaseModel):
+    role: Optional[str] = None
+    access_until: Optional[str] = None
+
+
+@router.patch('/v1/companies/{company_id}/members/{user_id}')
+def set_member_access(company_id: str, user_id: str, req: MemberAccessReq,
+                      authorization: str | None = Header(None)) -> dict:
+    from datetime import date
+    actor = _require_user(authorization)
+    _require_membership(company_id, actor['id'], roles=('owner',))
+    target = next((row for row in db.list_company_members(company_id) if row['user_id'] == user_id), None)
+    if target is None:
+        raise HTTPException(status_code=404, detail='member_not_found')
+    if target['role'] == 'owner':
+        raise HTTPException(status_code=409, detail='transfer_ownership_before_changing_owner_access')
+    if req.role is not None and req.role not in ('admin', 'member', 'viewer'):
+        raise HTTPException(status_code=400, detail='invalid_role')
+    if req.access_until:
+        try:
+            until = date.fromisoformat(req.access_until)
+        except ValueError:
+            raise HTTPException(status_code=400, detail='use_an_ISO_access_date') from None
+        if until < date.today():
+            raise HTTPException(status_code=400, detail='access_date_has_passed')
+    with db.connect() as con:
+        con.execute('BEGIN IMMEDIATE')
+        actor_row = con.execute('SELECT role FROM company_members WHERE company_id=? AND user_id=?',
+                                (company_id, actor['id'])).fetchone()
+        target_row = con.execute('SELECT role FROM company_members WHERE company_id=? AND user_id=?',
+                                 (company_id, user_id)).fetchone()
+        if actor_row is None or actor_row['role'] != 'owner':
+            raise HTTPException(status_code=403, detail='owner_changed_refresh_before_retry')
+        if target_row is None or target_row['role'] == 'owner':
+            raise HTTPException(status_code=409, detail='membership_changed_refresh_before_retry')
+        columns = {r[1] for r in con.execute('PRAGMA table_info(company_members)')}
+        if 'access_until' not in columns:
+            con.execute('ALTER TABLE company_members ADD COLUMN access_until TEXT')
+        if req.role is not None:
+            con.execute('UPDATE company_members SET role=? WHERE company_id=? AND user_id=?',
+                        (req.role, company_id, user_id))
+        if req.access_until is not None:
+            con.execute('UPDATE company_members SET access_until=? WHERE company_id=? AND user_id=?',
+                        (req.access_until or None, company_id, user_id))
+    return {'ok': True, 'member': db.get_membership(company_id, user_id)}
+# WIRE-settings end
+# WIRE-settings
+@router.get('/v1/companies/invites/mine')
+def list_account_invitations(authorization: str | None = Header(None)) -> dict:
+    user = _require_user(authorization)
+    with db.connect() as con:
+        rows = con.execute('SELECT i.*, c.name AS office FROM company_invites i JOIN companies c ON c.id=i.company_id WHERE i.email=?',
+                           (user['email'].strip().lower(),)).fetchall()
+    now = int(time.time())
+    return {'invitations': [{'id': r['token'], 'office': r['office'], 'email': r['email'],
+                            'role': r['role'], 'status': 'Accepted' if r['accepted_at'] else 'Expired' if r['expires_at'] < now else 'Pending'} for r in rows]}
+
+
+@router.post('/v1/companies/invites/decline')
+def decline_account_invitation(req: AcceptInviteReq, authorization: str | None = Header(None)) -> dict:
+    user = _require_user(authorization)
+    invite = db.get_company_invite(req.invite_token)
+    if invite is None or invite['email'].strip().lower() != user['email'].strip().lower():
+        raise HTTPException(status_code=403, detail='invitation_does_not_belong_to_this_account')
+    if invite.get('accepted_at'):
+        raise HTTPException(status_code=409, detail='invitation_already_accepted')
+    with db.connect() as con:
+        con.execute('UPDATE company_invites SET expires_at=? WHERE token=? AND accepted_at IS NULL',
+                    (int(time.time())-1,req.invite_token))
+    return {'ok': True}
+# WIRE-settings end

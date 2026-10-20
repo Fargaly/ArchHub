@@ -274,9 +274,12 @@ def trusted_desktop_peer():
     """The launcher's own pipe peer, as the Desktop renewal presents it."""
     from nodelang import application_machine_transport as transport
     from nodelang import application_server as application
+    launcher = SOURCE / "nodelang/launcher.py"
+    if not launcher.is_file():
+        launcher = SOURCE / "launch_archhub_test.py"  # Historical source fixture.
     peer = transport.MachinePipePeer(
         os.getpid(), 100.0, str(Path(sys.executable).resolve()),
-        (sys.executable, str(SOURCE / "launch_archhub_test.py")), str(SOURCE),
+        (sys.executable, str(launcher)), str(SOURCE),
     )
     transport._observe_machine_process = lambda pid: peer if pid == peer.pid else None
     application._verified_machine_pipe_peer = lambda request: peer

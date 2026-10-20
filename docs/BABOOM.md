@@ -141,13 +141,13 @@ does, read from the working tree on 2026-09-16 (line numbers as of HEAD
   other than `on`/`off` (`:26648-26653`) or an actor other than the owner
   (`:26654-26655`) raises `InvalidCell`. The launcher then does not start
   BABOOM and records "BABOOM did not start because its Settings value is
-  unreadable; no action was performed." (`launch_archhub_test.py:1013-1022`),
+  unreadable; no action was performed." (`nodelang/launcher.py:1013-1022`),
   and the canvas projection reports `source` `"unreadable"` (`:26672-26685`).
   The court `test_baboom_startup_setting.py:385` holds that. This is where the
   code fails closed; an absent record does not.
 - `off`: the launcher records "BABOOM is turned off in Settings; no action
   was performed." and returns before any key file, custody commit or attach
-  attempt (`launch_archhub_test.py:1025-1028`). While no host is attached,
+  attempt (`nodelang/launcher.py:1025-1028`). While no host is attached,
   a relay execute request is refused with that recorded reason
   (`_cockpit_execute`, `:1101-1108`); the `DELIVERY-STATUS.md` row "DONE landed 2026-09-16 17:33" states that relay
   reads are answered while off.
@@ -167,7 +167,7 @@ does, read from the working tree on 2026-09-16 (line numbers as of HEAD
   `test_baboom_startup_qt.py` is untracked in the working tree.
 - The session-only controls (hide, stop-new-requests, voice cancellation,
   stale-report suppression; `DELIVERY-STATUS.md` row "ACTIVE - BABOOM") and the tray action "Stop
-  BABOOM for this launch" (`launch_archhub_test.py:912`) remain session-only
+  BABOOM for this launch" (`nodelang/launcher.py:912`) remain session-only
   and do not write the setting.
 
 ## External capability boundary

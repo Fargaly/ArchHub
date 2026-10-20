@@ -15,7 +15,7 @@ from nodelang.application_server import ApplicationServer
 from tests_replica.test_the_session_cookie_outlives_an_hour import _cookie_line, _http_get
 from tests_replica.test_universal_workshop_assignments import _green_runtime_compliance
 
-LAUNCHER = Path(__file__).resolve().parents[1] / "launch_archhub_test.py"
+LAUNCHER = Path(__file__).resolve().parents[1] / "nodelang/launcher.py"
 
 
 def test_the_window_never_loads_the_universal_document():

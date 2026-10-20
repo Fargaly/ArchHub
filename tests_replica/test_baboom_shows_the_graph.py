@@ -150,14 +150,14 @@ def test_the_window_records_where_it_landed():
     for field in ("asked=", "qt=", "win=", "visible=", "sprite_img="):
         assert field in window, field
     assert "GetWindowRect" in window
-    launcher = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
+    launcher = (ROOT / "nodelang/launcher.py").read_text(encoding="utf-8")
     assert 'controller.watch_geometry(state_dir / "baboom-geometry.log")' in launcher
 
 
 def test_the_app_can_be_asked_to_quit_so_its_tray_icon_goes_with_it():
     """14 force-kills in one day left 14 dead tray icons; the founder clicked
     one and nothing opened, because that icon owned no process."""
-    launcher = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
+    launcher = (ROOT / "nodelang/launcher.py").read_text(encoding="utf-8")
     assert "def _watch_quit_request()" in launcher
     watcher = launcher[launcher.index("def _watch_quit_request()"):]
     assert 'marker = state_dir / "quit-request"' in watcher
@@ -171,7 +171,7 @@ def test_the_window_exposes_its_controller_so_the_receipt_can_be_wired():
     when the founder reported BABOOM missing (2026-09-06)."""
     src = (ROOT / "nodelang" / "baboom_native_companion.py").read_text(encoding="utf-8")
     assert "made.controller = controller" in src
-    launcher = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
+    launcher = (ROOT / "nodelang/launcher.py").read_text(encoding="utf-8")
     land = launcher[launcher.index("def land(self, host):"):launcher.index("_baboom_attachment = _BaboomAttachment(app)")]
     assert 'controller = getattr(companion, "controller", None)' in land
     assert 'controller.watch_geometry(state_dir / "baboom-geometry.log")' in land

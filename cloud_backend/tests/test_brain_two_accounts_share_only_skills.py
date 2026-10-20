@@ -138,4 +138,4 @@ def test_only_the_application_turns_the_runner_on():
     source = (ROOT / "nodelang" / "application_server.py").read_text(encoding="utf-8")
     assert "enable_brain_cloud_sync=False," in source
     assert "if enable_brain_cloud_sync:" in source and "brain_cloud_runner.stop()" in source
-    assert "enable_brain_cloud_sync=True," in (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
+    assert "enable_brain_cloud_sync=True," in (ROOT / "nodelang/launcher.py").read_text(encoding="utf-8")

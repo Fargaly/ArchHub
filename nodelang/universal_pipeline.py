@@ -555,6 +555,7 @@ def _pipeline_outcome(stem_nodes, stem_wires, evaluation, written, revision):
         "display": dict(evaluation.display),
         "pending": dict(evaluation.pending),
         "results": dict(evaluation.results),
+        "outputs": dict(evaluation.node_outputs or {}),
         "lines": previews,
         "written": written,
         "revision": revision,

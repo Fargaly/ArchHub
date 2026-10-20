@@ -61,7 +61,7 @@ def test_all_shortcuts_use_the_same_installed_qt_launcher():
     source, _ = _retirement()
     assert '#define AppExe "ArchHub.vbs"' in source
     launcher = (ROOT / 'installer/ArchHub.vbs').read_text(encoding='utf-8')
-    assert 'launch_archhub_test.py' in launcher and 'pythonw.exe' in launcher
+    assert 'nodelang\\launcher.py' in launcher and 'pythonw.exe' in launcher
     assert 'clean_coordination_service' not in launcher
 
 

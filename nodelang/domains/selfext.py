@@ -132,6 +132,10 @@ def read_mod_manifest(folder: str | Path) -> dict[str, Any]:
         raw = json.loads(manifest_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise ValueError("mod manifest is not valid JSON") from exc
+    return _validated_mod_manifest(raw)
+
+
+def _validated_mod_manifest(raw):
     if not isinstance(raw, dict):
         raise ValueError("mod manifest must be an object")
     identity = raw.get("identity") if isinstance(raw.get("identity"), dict) else {}
@@ -221,6 +225,7 @@ def _decode_mod_state(snapshot: Snapshot, base: Mapping[str, Any]) -> dict[str, 
         "enabled": bool(raw.get("enabled")),
         "fired_today": int(raw.get("fired_today") or 0),
         "params": dict(params),
+        **{k: raw[k] for k in ('manifest', 'digest', 'removed') if k in raw},
     }
 
 
@@ -232,6 +237,7 @@ def _encode_mod_state(mod_id: str, state: Mapping[str, Any]) -> bytes:
             "enabled": bool(state.get("enabled")),
             "fired_today": int(state.get("fired_today") or 0),
             "params": dict(state.get("params") or {}),
+            **{k: state[k] for k in ('manifest', 'digest', 'removed') if k in state},
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -244,7 +250,14 @@ def _commit_mod_state(store: CellStore, base: Mapping[str, Any], state: Mapping[
     snapshot = store.snapshot()
     create: list[Cell] = []
     replace: list[Cell] = []
-    if MODS_OWNER_ROOT not in snapshot.cells:
+    owner = snapshot.cells.get(MODS_OWNER_ROOT)
+    if state.get('manifest'):
+        packages = [] if owner is None or bytes(owner.atom) == b'mods-owner' else json.loads(bytes(owner.atom))
+        if mod_id not in packages:
+            packages.append(mod_id)
+        owner_cell = Cell(MODS_OWNER_ROOT, NULL_CELL_ID, NULL_CELL_ID, json.dumps(packages).encode('utf-8'))
+        (replace if owner is not None else create).append(owner_cell)
+    elif owner is None:
         create.append(Cell(MODS_OWNER_ROOT, NULL_CELL_ID, NULL_CELL_ID, b"mods-owner"))
     cell = Cell(root, MODS_OWNER_ROOT, NULL_CELL_ID, _encode_mod_state(mod_id, state))
     if root in snapshot.cells:
@@ -258,6 +271,7 @@ def _commit_mod_state(store: CellStore, base: Mapping[str, Any], state: Mapping[
         "enabled": bool(state.get("enabled")),
         "fired_today": int(state.get("fired_today") or 0),
         "params": dict(state.get("params") or {}),
+        **{k: state[k] for k in ('manifest', 'digest', 'removed') if k in state},
     }
     if readback != expected:
         raise InvalidCell("Mods state readback failed: %s" % mod_id)
@@ -421,21 +435,66 @@ def _mod_has_real_harm(manifest: Mapping[str, Any]) -> bool:
 
 
 def review_mod_package(folder: str | Path) -> dict[str, Any]:
-    raise PermissionError("Mod package review is not available in this build")
+    import hashlib
+    from ..cell_brain_secrets import assert_not_a_secret
+    from ..library_engines import STEM_RUN_ENGINES
+    path = _mod_manifest_path(Path(folder).resolve())
+    if path.stat().st_size > 65536:
+        raise ValueError('Choose a mod manifest within 64 KiB.')
+    raw = path.read_bytes()
+    assert_not_a_secret(raw.decode('utf-8'), 'mod manifest')
+    manifest = _validated_mod_manifest(json.loads(raw))
+    if manifest['id'] in SHIPPED_MOD_IDS:
+        raise ValueError('A package cannot replace a built-in mod.')
+    # shortcut: packages compose pure stream engines only; executable plugins need their reviewed adapter.
+    if set(manifest['permissions']) - {'observe settings'} or manifest['hooks']:
+        raise ValueError('This package needs an executable permission or hook adapter. Use pure stream nodes without hooks.')
+    if not manifest['nodes']:
+        raise ValueError('Add at least one executable stream node to the manifest.')
+    for node in manifest['nodes']:
+        engine = node['behavior'].get('engine')
+        if set(node['behavior']) != {'engine'} or engine not in STEM_RUN_ENGINES or not str(engine).startswith('shape.'):
+            raise ValueError('Mod nodes must name an existing shape.* stream engine.')
+        if any(type(v) not in (str, int, float, bool) or type(v) is float and not math.isfinite(v)
+               for v in node['params'].values()):
+            raise ValueError('Mod node parameters must be scalar values.')
+    return {**manifest, 'path': str(Path(folder).resolve()), 'digest': hashlib.sha256(raw).hexdigest()}
 
 
-def install_mod_package(mods_root: str | Path, folder: str | Path, *, granted: bool = False) -> dict[str, Any]:
-    raise PermissionError("Mod package installation is not available in this build")
+def install_mod_package(mods_root: str | Path, folder: str | Path, *, granted: bool = False,
+                        reviewed_digest: str = '') -> dict[str, Any]:
+    store = _require_mods_store(mods_root)
+    manifest = review_mod_package(folder)
+    if not reviewed_digest or manifest['digest'] != reviewed_digest:
+        raise ValueError('The package changed. Review the current manifest before installing.')
+    state = {'enabled': True, 'fired_today': 0, 'params': {}, 'manifest': manifest,
+             'digest': reviewed_digest, 'removed': False}
+    _commit_mod_state(store, manifest, state)
+    return next(r for r in mods_rows(store)['rows'] if r['id'] == manifest['id'])
+
+
+def _package_bases(snapshot):
+    result = []
+    owner = snapshot.cells.get(MODS_OWNER_ROOT)
+    packages = [] if owner is None or bytes(owner.atom) == b'mods-owner' else json.loads(bytes(owner.atom))
+    for identity in packages:
+        cell = snapshot.cells[_mod_state_root(identity)]
+        held = json.loads(bytes(cell.atom).decode('utf-8'))
+        if held.get('schema') == MOD_STATE_SCHEMA and isinstance(held.get('manifest'), dict):
+            result.append(held['manifest'])
+    return result
 
 
 def set_mod_enabled(mods_store: CellStore, mod_id: str, enabled: bool) -> dict[str, Any]:
     store = _require_mods_store(mods_store)
     _migrate_legacy_mods_state(store)
     key = str(mod_id)
-    if key not in SHIPPED_MOD_IDS:
-        raise KeyError("mod is not installed")
-    base = next(row for row in SHIPPED_MOD_ROWS if str(row["id"]) == key)
+    base = next((row for row in (*SHIPPED_MOD_ROWS, *_package_bases(store.snapshot())) if str(row['id']) == key), None)
+    if base is None or type(enabled) is not bool:
+        raise ValueError('Choose an installed mod and a boolean enabled value.')
     held = _decode_mod_state(store.snapshot(), base)
+    if held.get('removed'):
+        raise ValueError('The mod was removed. Review and install its package again.')
     held["enabled"] = bool(enabled)
     _commit_mod_state(store, base, held)
     return next(row for row in mods_rows(store)["rows"] if row["id"] == key)
@@ -458,7 +517,14 @@ def set_mod_param(mods_store: CellStore, mod_id: str, param: str, value: Any) ->
 
 
 def remove_mod_package(mods_root: str | Path, mod_id: str) -> dict[str, Any]:
-    raise PermissionError("Mod package removal is not available in this build")
+    store = _require_mods_store(mods_root)
+    base = next((r for r in _package_bases(store.snapshot()) if r['id'] == mod_id), None)
+    if base is None:
+        raise ValueError('Built-in protection mods stay installed. Disable their optional behavior in Settings.')
+    held = _decode_mod_state(store.snapshot(), base)
+    held.update(enabled=False, removed=True)
+    _commit_mod_state(store, base, held)
+    return {'manifest': base, 'removed': True}
 
 
 def mods_rows(mods_store: CellStore) -> dict[str, Any]:
@@ -480,7 +546,12 @@ def mods_rows(mods_store: CellStore) -> dict[str, Any]:
                             node["params"][key] = value
         row["status"] = "built-in" if row.get("enabled") else "off"
         rows.append(row)
-    return {"installed": 0, "built_in": len(rows), "failed": 0, "rows": rows}
+    built_in = len(rows)
+    for base in _package_bases(snapshot):
+        held = _decode_mod_state(snapshot, base)
+        if not held.get('removed'):
+            rows.append({**base, 'enabled': held['enabled'], 'status': 'Installed' if held['enabled'] else 'off'})
+    return {"installed": len(rows) - built_in, "built_in": built_in, "failed": 0, "rows": rows}
 
 
 def merge_mod_library(groups: list[dict[str, Any]], mods_root: str | Path) -> list[dict[str, Any]]:

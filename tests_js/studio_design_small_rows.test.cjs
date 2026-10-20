@@ -380,9 +380,9 @@ test('onboarding: mounted on the first run the launcher measured, from live rows
     assert.equal(first.win.sessionStorage.getItem('archhub.onboarding.closed.v1'), '1', 'and it stays closed for this page session');
   } finally { first.close(); }
   // The signal is the launcher's saved-graph check, carried by the server's Studio boot payload.
-  const launcherPath = path.join(root, 'launch_archhub_test.py');
+  const launcherPath = path.join(root, 'nodelang/launcher.py');
   if (fs.existsSync(launcherPath)) {
-    const launcher = read('launch_archhub_test.py');
+    const launcher = read('nodelang/launcher.py');
     assert.match(launcher, /^first_boot = not _saved_graph_exists\(/m, 'the launcher still computes first_boot');
     assert.match(launcher, /^server\.studio_first_run = first_boot is True$/m, 'the launcher hands first_boot to the server');
     assert.match(launcher, /return server\.public_url \+ "\/studio" \+ \("\?bootstrap=" \+ token if token else ""\)/,

@@ -479,6 +479,58 @@ _CODEX_CHAT_FEATURES_OFF = (
 )
 
 
+def opencode_session_model(model: object = "") -> str:
+    """A session stand-in may use OpenCode's free models (its own '-free' Zen models and big-pickle,
+    approved free OpenRouter ids) or the person's GitHub Copilot subscription; never a paid key."""
+    text = str(model or "").strip()
+    if any(ch.isspace() for ch in text):
+        raise ValueError("invalid OpenCode model")
+    if text.startswith("github-copilot/") or (text.startswith("opencode/") and (text.endswith("-free") or text == "opencode/big-pickle")):
+        return text
+    return opencode_free_cli_model(text)
+
+
+_SESSION_EFFORT = {"low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh", "max": "xhigh"}
+
+
+def local_cli_session_command(assistant: str, executable: str, model: str, effort: str, access: str, cwd: str = "") -> tuple:
+    """The argv when a local assistant stands in for a Claude Code session (ArchHub Switch):
+    the session's effort and permission level translated to the assistant's own switches.
+    access: read (plan mode), write (default/acceptEdits/auto), full (bypassPermissions)."""
+    effort = _SESSION_EFFORT.get(effort, "medium")
+    three = "high" if effort == "xhigh" else effort  # assistants without xhigh
+    if access not in ("read", "write", "full"):
+        raise ValueError("unknown access level")
+    with_model = ("--model", model) if model else ()
+    if assistant == "codex":
+        # Codex runs its tools through helper programs beside its own exe; only the desktop install ships them.
+        installs = sorted(Path(os.environ.get("LOCALAPPDATA", "")).glob("OpenAI/Codex/bin/*/codex.exe"),
+                          key=lambda p: p.stat().st_mtime, reverse=True)
+        executable = next((str(p) for p in installs if (p.parent / "codex-code-mode-host.exe").is_file()), executable)
+        # shortcut: Codex's Windows sandbox only starts commands when Codex inherits a visible console, which a
+        # background stand-in never has ("Access is denied"); so it runs unsandboxed like ArchHub's Codex lanes,
+        # read access is enforced by the session instruction. Revisit when Codex's sandbox works headless.
+        # MCP servers are switched off so a turn enrols no Workshop session.
+        sandbox = "danger-full-access"
+        return (executable, "exec", "--ephemeral", "--skip-git-repo-check", "-c", "mcp_servers={}",
+                "--sandbox", sandbox, "--color", "never", "-c", 'model_reasoning_effort="%s"' % effort)             + (("-m", model) if model else ()) + ("-",)
+    if assistant == "copilot":
+        tools = ("--available-tools", "") if access == "read" else ("--allow-all-tools",)
+        return (executable, "--prompt", "", "--silent", "--no-ask-user", "--reasoning-effort", three) + tools + with_model
+    if assistant == "opencode":
+        # OpenCode resolves files from --dir (not the process folder); a background build agent must auto-approve.
+        return (executable, "run", "--pure", "--agent", "plan" if access == "read" else "build", "--format", "json",
+                "--model", opencode_session_model(model)) + (("--dir", cwd) if cwd else ()) + (() if access == "read" else ("--auto",))
+    if assistant == "gemini":  # Gemini CLI has no effort switch; permissions map to its approval modes
+        mode = {"read": "plan", "write": "auto_edit", "full": "yolo"}[access]
+        return (executable, "--prompt", "", "--output-format", "json", "--approval-mode", mode,
+                "--allowed-mcp-server-names", "none", "--extensions", "none") + with_model
+    if assistant == "claude":
+        mode = {"read": "plan", "write": "acceptEdits", "full": "bypassPermissions"}[access]
+        return (executable, "-p", "--output-format", "json", "--no-session-persistence", "--permission-mode", mode) + with_model
+    raise ValueError("unknown assistant")
+
+
 def local_cli_chat_command(assistant: str, executable: str, model: str = "") -> tuple:
     """The one argv a local-cli chat turn runs: tools off where the assistant can,
     no session, and none of the person's own configuration -- no MCP servers
@@ -487,6 +539,9 @@ def local_cli_chat_command(assistant: str, executable: str, model: str = "") -> 
     and writes nothing to the graph. Where the machine's managed requirements
     force Codex hooks on, ArchHub's deny-only scope gate and its read-only Stop
     hook still run; the Stop hook may keep a small per-session guard file on disk."""
+    if assistant == "copilot":
+        return (executable, "--prompt", "", "--silent", "--no-ask-user",
+                "--available-tools", "", "--reasoning-effort", "medium") + (("--model", model) if model else ())
     if assistant == "opencode":
         return (executable, "run", "--pure", "--agent", "plan", "--format", "json",
                 "--model", opencode_free_cli_model(model))
@@ -502,7 +557,7 @@ def local_cli_chat_command(assistant: str, executable: str, model: str = "") -> 
         # them: ArchHub's own deny-only scope gate and the read-only Stop hook.
         # The empty chat folder is no git repository.
         "codex": (executable, "exec", "--ephemeral", "--ignore-user-config", "--skip-git-repo-check",
-                  "--sandbox", "read-only", "--color", "never")
+                  "--sandbox", "read-only", "--color", "never", "-c", 'model_reasoning_effort="medium"')
                  + tuple(arg for feature in _CODEX_CHAT_FEATURES_OFF for arg in ("--disable", feature))
                  + (("-m", model) if model else ()) + ("-",),
         "gemini": (executable, "--prompt", "", "--output-format", "json", "--approval-mode", "plan",
@@ -513,7 +568,7 @@ def local_cli_chat_command(assistant: str, executable: str, model: str = "") -> 
 # How each local assistant's chat answer is unwrapped (_extract_provider_text):
 # claude and gemini print one JSON object; codex prints text; opencode emits
 # JSON events from `opencode run --format json`.
-_CHAT_EXTRACT = {"claude": "claude", "gemini": "gemini", "codex": "gpt", "opencode": "opencode"}
+_CHAT_EXTRACT = {"copilot": "copilot", "claude": "claude", "gemini": "gemini", "codex": "gpt", "opencode": "opencode"}
 
 
 class ModelExecutionBroker:
@@ -550,6 +605,7 @@ class ModelExecutionBroker:
         if configured:
             return configured
         candidates = {
+            "local-cli:copilot": (str(Path(os.environ.get("APPDATA", "")) / "npm" / "copilot.cmd"), "copilot.exe", "copilot.cmd", "copilot"),
             "local-cli:codex": (str(Path.home() / ".codex" / ".sandbox-bin" / "codex.exe"), "codex.exe", "codex"),
             "local-cli:claude": (str(Path.home() / ".local" / "bin" / "claude.exe"), "claude.exe", "claude"),
             "local-cli:gemini": (str(Path(os.environ.get("APPDATA", "")) / "npm" / "gemini.cmd"), "gemini.exe", "gemini.cmd", "gemini"),
@@ -569,7 +625,7 @@ class ModelExecutionBroker:
         return self._executable("local-cli:" + str(assistant))
 
     def chat(self, assistant: str, model: str, messages, *,
-             timeout_seconds: float | None = None) -> dict[str, object]:
+             timeout_seconds: float | None = None, session: Mapping | None = None) -> dict[str, object]:
         """ONE free-text chat turn through a signed-in local assistant.
 
         Chat mode, not the review format: the messages become one transcript
@@ -595,17 +651,28 @@ class ModelExecutionBroker:
         executable = self._executable("local-cli:" + assistant)
         if not executable:
             return {"ok": False, "error_code": "provider_unavailable"}
+        # A session stand-in (ArchHub Switch) works in the session's own folder with its effort and access.
+        workdir = Path(str(session.get("cwd") or "")) if session else None
         try:
-            command = local_cli_chat_command(assistant, executable, model)
+            if session:
+                if not workdir or not workdir.is_dir():
+                    return {"ok": False, "error_code": "invalid_invocation"}
+                command = local_cli_session_command(assistant, executable, model,
+                                                    str(session.get("effort") or "medium"), str(session.get("access") or "read"), str(workdir))
+            else:
+                command = local_cli_chat_command(assistant, executable, model)
         except ValueError:
             return {"ok": False, "error_code": "provider_binding_denied"}
         timeout = self._timeout_seconds if timeout_seconds is None else min(
             self._timeout_seconds, max(1.0, float(timeout_seconds)))
-        # A CLI (or a helper it started) can still hold the folder when the turn
-        # ends; the answer stands and the folder is left for the OS temp sweep.
-        with tempfile.TemporaryDirectory(prefix="archhub-chat-", ignore_cleanup_errors=True) as empty:
-            result = self._host.run_process(command, prompt=prompt, cwd=Path(empty),
-                                            timeout_seconds=timeout)
+        if workdir:
+            result = self._host.run_process(command, prompt=prompt, cwd=workdir, timeout_seconds=timeout)
+        else:
+            # A CLI (or a helper it started) can still hold the folder when the turn
+            # ends; the answer stands and the folder is left for the OS temp sweep.
+            with tempfile.TemporaryDirectory(prefix="archhub-chat-", ignore_cleanup_errors=True) as empty:
+                result = self._host.run_process(command, prompt=prompt, cwd=Path(empty),
+                                                timeout_seconds=timeout)
         raw = result.stdout[:_MAX_OUTPUT_BYTES]
         if not result.ok:
             return {"ok": False, "error_code": result.error_code or "provider_failed"}
@@ -619,6 +686,7 @@ class ModelExecutionBroker:
         readiness: dict[str, dict[str, object]] = {}
         for provider, location in (
             ("codex", "local-cli:codex"),
+            ("copilot", "local-cli:copilot"),
             ("claude", "local-cli:claude"),
             ("gemini", "local-cli:gemini"),
             ("opencode", "local-cli:opencode"),

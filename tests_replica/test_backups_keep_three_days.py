@@ -8,7 +8,7 @@ import re
 from datetime import date
 from pathlib import Path
 
-LAUNCHER = Path(__file__).resolve().parents[1] / "launch_archhub_test.py"
+LAUNCHER = Path(__file__).resolve().parents[1] / "nodelang/launcher.py"
 HEX = "0123456789abcdef" * 2
 
 

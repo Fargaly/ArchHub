@@ -54,7 +54,7 @@ MESSAGES = [{"role": "system", "content": "You are ArchHub."},
       "--disable-slash-commands", "--model", "sonnet"]),
     ("codex", b"About 100 mm.\n",
      ["exec", "--ephemeral", "--ignore-user-config", "--skip-git-repo-check", "--sandbox", "read-only",
-      "--color", "never", "--disable", "shell_tool", "--disable", "unified_exec", "--disable", "hooks",
+      "--color", "never", "-c", 'model_reasoning_effort="medium"', "--disable", "shell_tool", "--disable", "unified_exec", "--disable", "hooks",
       "--disable", "plugins", "--disable", "memories", "--disable", "apps", "--disable", "browser_use",
       "--disable", "browser_use_external", "--disable", "in_app_browser", "--disable", "computer_use",
       "--disable", "multi_agent", "--disable", "image_generation", "--disable", "skill_mcp_dependency_install",
@@ -194,12 +194,21 @@ def test_the_picker_row_says_where_the_chat_goes():
     assert "approved free OpenRouter model" in by["opencode"]["source"]
 
 
-def test_the_application_binds_its_broker_and_the_studio_knows_the_family():
-    root = Path(__file__).resolve().parents[1]
-    launcher = (root / "launch_archhub_test.py").read_text(encoding="utf-8")
-    assert "_model_router.bind_local_cli_broker(server.model_execution_broker)" in launcher
-    jsx = (root / "nodelang" / "studio" / "studio-lm.jsx").read_text(encoding="utf-8")
-    assert "['local-cli/', 'local-cli']" in jsx
+def test_session_bridge_binds_the_existing_broker_and_routes_the_family(tmp_path, monkeypatch):
+    from nodelang import model_session_bridge as bridge
+    host = FakeHost(json.dumps({"result": "Hello from the bound broker."}).encode())
+    broker = _broker(tmp_path, host, claude="C:/tools/claude.exe")
+    monkeypatch.setattr(bridge, "ModelExecutionBroker", lambda **kwargs: broker)
+    monkeypatch.setattr(model_router, "discover_key", lambda *args, **kwargs: ("", "not configured"))
+    try:
+        result = bridge.answer({"brain": "local-cli/claude", "messages": MESSAGES, "tools": []},
+                               workspace=tmp_path)
+        assert result["text"] == "Hello from the bound broker."
+        assert result["tools"] == [] and len(host.calls) == 1
+        assert host.calls[0]["command"][0] == "C:/tools/claude.exe"
+        assert model_router.resolve_model_route("local-cli/claude").family == "local-cli"
+    finally:
+        model_router.bind_local_cli_broker(None)
 
 # Real assistants, opt-in: ARCHHUB_REAL_CLI_COURT=1 sends one "hello" turn to each
 # installed assistant through the real host process (it uses the subscription).

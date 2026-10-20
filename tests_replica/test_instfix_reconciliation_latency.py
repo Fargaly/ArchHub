@@ -50,7 +50,7 @@ def test_effects_scan_yields_to_desktop_and_signed_baboom(world, monkeypatch):
     baboom.baboom_native_frame()
     root = Path(transport.__file__).resolve().parents[1]
     desktop = transport.MachinePipePeer(12345, 100.0, str(Path(sys.executable).resolve()),
-        (sys.executable, str(root / "launch_archhub_test.py")), str(root))
+        (sys.executable, str(root / "nodelang/launcher.py")), str(root))
     observed = transport._observe_machine_process
     physical = application_server._verified_machine_pipe_peer
     monkeypatch.setattr(transport, "_observe_machine_process", lambda pid: desktop if pid == desktop.pid else observed(pid))

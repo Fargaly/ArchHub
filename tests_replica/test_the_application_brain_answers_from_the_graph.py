@@ -124,5 +124,5 @@ def test_no_product_code_dials_the_retired_brain_port():
     before removing an old registration; naming it is not dialling it."""
     assert _dials_the_retired_brain('import urllib.request\nurllib.request.urlopen("http://127.0.0.1:8473/mcp")\n')
     assert _dials_the_retired_brain("BRAIN_DAEMON_URL = 'x'\n")
-    for path in list((ROOT / "nodelang").rglob("*.py")) + [ROOT / "launch_archhub_test.py"]:
+    for path in list((ROOT / "nodelang").rglob("*.py")) + [ROOT / "nodelang/launcher.py"]:
         assert not _dials_the_retired_brain(path.read_text(encoding="utf-8")), path.name

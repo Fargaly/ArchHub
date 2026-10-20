@@ -138,7 +138,7 @@ def _python_role(app, arguments):
                 matches = False
             if matches:
                 return 'desktop' if module == 'desktop' else 'helper'
-    if args and Path(args[0]).resolve() == app / 'launch_archhub_test.py':
+    if args and Path(args[0]).resolve() in (app / 'nodelang/launcher.py', app / 'launch_archhub_test.py'):
         return 'desktop'
     return ''
 

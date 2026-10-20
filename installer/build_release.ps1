@@ -59,7 +59,7 @@ $acompilerInputs = @(
     'tools/archhub-compiler/licenses/tree-sitter-typescript-0.23.2-LICENSE.txt'
 )
 $selectedInputs = @(
-    'nodelang', 'nodelang/outlook_graph.ps1', 'launch_archhub_test.py', 'colleague_setup.py',
+    'nodelang', 'nodelang/outlook_graph.ps1', 'colleague_setup.py',
     'requirements.txt', 'installer', 'packaging/windows/Test-SourcePortability.ps1',
     'packaging/windows/publish_release.ps1', 'packaging/windows/check_update_offer.py',
     'package.json', 'packaging/compile_studio.cjs',
@@ -127,6 +127,23 @@ function Test-Below([string]$Path, [string]$Root) {
         [StringComparison]::OrdinalIgnoreCase)
 }
 
+function Get-CandidateRoots([string]$Source) {
+    $sourcePath = [IO.Path]::GetFullPath($Source)
+    if (-not (Test-Path -LiteralPath $sourcePath -PathType Container) -or
+        -not (Test-Path -LiteralPath (Join-Path $sourcePath '.git'))) {
+        throw 'Candidate source must be the selected Git checkout.'
+    }
+    $parent = Split-Path -Parent $sourcePath
+    if ((Split-Path -Leaf $parent) -ceq '10.PRODUCT') {
+        return @($parent, (Join-Path (Split-Path -Parent $parent) '70.HANDOFFS'))
+    }
+    if ((Split-Path -Leaf $sourcePath) -ceq 'PRODUCT' -and
+        (Split-Path -Leaf $parent) -ceq '01.WIP') {
+        return $parent
+    }
+    throw 'Candidate source must be a public checkout or a governed lane 01.WIP/PRODUCT copy.'
+}
+
 function Get-SourceIdentity([string]$Path) {
     Assert-PlainAncestors $Path
     $item = Get-Item -LiteralPath $Path -Force
@@ -152,7 +169,7 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
         # The generic JavaScript allowlist must never admit stale compiled files.
         if ($Path.StartsWith('nodelang/studio/compiled/', [StringComparison]::OrdinalIgnoreCase)) { return $false }
         if ($Path -cin @(
-            'launch_archhub_test.py', 'colleague_setup.py', 'requirements.txt',
+            'nodelang/launcher.py', 'colleague_setup.py', 'requirements.txt',
             'NOTICE', 'packaging/windows/goose-pin.json', 'packaging/windows/stage_goose.py',
             'package.json', 'packaging/compile_studio.cjs',
             'installer/ArchHub.iss', 'installer/ArchHub.bat', 'installer/ArchHub.vbs',
@@ -250,7 +267,7 @@ function Read-CandidateManifest([string]$Path) {
         })
     }
     $required = @(
-        'selected/launch_archhub_test.py', 'selected/colleague_setup.py', 'selected/requirements.txt',
+        'selected/nodelang/launcher.py', 'selected/colleague_setup.py', 'selected/requirements.txt',
         'selected/installer/ArchHub.iss', 'selected/installer/ArchHub.bat', 'selected/installer/ArchHub.vbs',
         'selected/installer/legacy_sweep.iss', 'selected/installer/legacy_doc_files.iss', 'selected/installer/legacy_v1_files.iss', 'selected/installer/host_file_staging.iss',
         'selected/installer/build_release.ps1', 'selected/packaging/windows/Test-SourcePortability.ps1',
@@ -272,12 +289,8 @@ function Read-CandidateManifest([string]$Path) {
         'selected/nodelang/session_link/vendor/LICENSE',
         'selected/nodelang/session_link/vendor/PROVENANCE.md',
         'selected/nodelang/studio/studio.html', 'selected/nodelang/studio/vendor/babel.js',
-        'selected/nodelang/studio/tokens.jsx', 'selected/nodelang/studio/ds/index.jsx', 'selected/nodelang/studio/design-canvas.jsx',
-        'selected/nodelang/studio/shared-data.jsx', 'selected/nodelang/studio/studio-suite.jsx',
-        'selected/nodelang/studio/param-types.jsx', 'selected/nodelang/studio/studio-params.jsx',
-        'selected/nodelang/studio/studio-mobile.jsx', 'selected/nodelang/studio/studio-account.jsx',
-        'selected/nodelang/studio/node-registry.jsx', 'selected/nodelang/studio/brain-model.jsx',
-        'selected/nodelang/studio/workshop-board.jsx', 'selected/nodelang/studio/studio-workshop.jsx', 'selected/nodelang/studio/studio-lm.jsx', 'selected/nodelang/studio/mount.jsx',
+        'selected/nodelang/studio/tokens.jsx', 'selected/nodelang/studio/ds/index.jsx',
+        'selected/nodelang/studio/api.js', 'selected/nodelang/studio/app.jsx', 'selected/nodelang/studio/style.css',
         'selected/nodelang/__init__.py',
         'selected/bridges/rhino/archhub_mcp.py', 'selected/bridges/blender/archhub_mcp/__init__.py',
         'selected/archhub.ico', 'selected/app/secrets_store.py', 'selected/app/credential_lock.py', 'selected/app/__init__.py',
@@ -470,22 +483,32 @@ function Assert-BuildSnapshot($Manifest) {
 function Read-StudioBuild {
     $generated = Join-Path $selectedRoot 'nodelang/studio/compiled'
     Assert-PlainAncestors $generated
-    $names = @('tokens.js', 'ds-index.js', 'design-canvas.js', 'shared-data.js', 'studio-suite.js',
-        'param-types.js', 'studio-params.js', 'studio-mobile.js', 'studio-account.js',
-        'node-registry.js', 'brain-model.js', 'workshop-board.js', 'studio-workshop.js', 'studio-lm.js', 'mount.js')
+    $manifestPath = Join-Path $generated 'manifest.json'
+    $manifestInfo = Get-Item -LiteralPath $manifestPath
+    if ($manifestInfo.PSIsContainer -or ($manifestInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'Studio compiler manifest must be a regular file.'
+    }
+    if ($manifestInfo.Length -gt 32kb) { throw 'Studio compiler manifest exceeds 32 KiB.' }
+    $bytes = [IO.File]::ReadAllBytes($manifestPath)
+    $manifest = $utf8.GetString($bytes) | ConvertFrom-Json
+    if ($manifest.format -ne 1 -or $manifest.files.Count -lt 1 -or $manifest.files.Count -gt 256) {
+        throw 'Unsupported Studio compiler manifest.'
+    }
+    $names = @($manifest.files | ForEach-Object { $_.output })
+    $unique = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($name in $names) {
+        if ($name -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_.-]*\.js$' -or -not $unique.Add($name)) {
+            throw 'Invalid or duplicate Studio output name.'
+        }
+    }
     $entries = @(Get-ChildItem -LiteralPath $generated -Force)
-    if ($entries.Count -ne 16) { throw 'Studio compiler did not produce exactly fifteen scripts and one manifest.' }
+    if ($entries.Count -ne ($names.Count + 1)) { throw 'Studio output inventory differs from its manifest.' }
     foreach ($entry in $entries) {
         if ($entry.PSIsContainer -or ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
             ($entry.Name -cne 'manifest.json' -and $entry.Name -cnotin $names)) {
             throw 'Unexpected Studio compiler output.'
         }
     }
-    $manifestPath = Join-Path $generated 'manifest.json'
-    if ((Get-Item -LiteralPath $manifestPath).Length -gt 32KB) { throw 'Studio compiler manifest exceeds 32 KiB.' }
-    $bytes = [IO.File]::ReadAllBytes($manifestPath)
-    $manifest = $utf8.GetString($bytes) | ConvertFrom-Json
-    if ($manifest.format -ne 1 -or $manifest.files.Count -ne $names.Count) { throw 'Unsupported Studio compiler manifest.' }
     # --check has reconciled source inputs, options and output bytes. Also bind
     # the exact physical output inventory here before handing it to Inno.
     [long]$total = 0
@@ -516,11 +539,9 @@ if ($PrepareCandidateManifest) {
         $LocalCandidateManifest -or $LocalCandidateManifestSha256) {
         throw 'Preparation is local candidate-* mode only; do not supply a prior manifest.'
     }
-    $publicRoot = Split-Path -Parent $selectedRoot
-    if ((Split-Path -Leaf $publicRoot) -cne '10.PRODUCT') { throw 'Canonical public checkout required.' }
+    $candidateRoots = @(Get-CandidateRoots $selectedRoot)
     $preparedOutput = [IO.Path]::GetFullPath($OutputDirectory)
-    $handoffsRoot = Join-Path (Split-Path -Parent $publicRoot) '70.HANDOFFS'
-    if ((-not (Test-Below $preparedOutput $publicRoot) -and -not (Test-Below $preparedOutput $handoffsRoot)) -or
+    if (@($candidateRoots | Where-Object { Test-Below $preparedOutput $_ }).Count -eq 0 -or
         (Test-Below $preparedOutput $selectedRoot) -or (Test-Path -LiteralPath $preparedOutput)) {
         throw 'Preparation requires a new governed directory outside the canonical checkout.'
     }
@@ -547,10 +568,7 @@ if ($isCandidate) {
     if ($BuildId -cnotmatch '^candidate-[A-Za-z0-9._-]+$' -or $env:CI -or $env:GITHUB_ACTIONS) {
         throw 'Candidate mode is local only and requires a candidate-* BuildId.'
     }
-    $publicRoot = Split-Path -Parent $selectedRoot
-    if ((Split-Path -Leaf $publicRoot) -cne '10.PRODUCT') {
-        throw 'Local candidates require the canonical selected checkout inside the public 10.PRODUCT area.'
-    }
+    $candidateRoots = @(Get-CandidateRoots $selectedRoot)
     Assert-PlainAncestors $selectedRoot
     $candidate = Read-CandidateManifest ([IO.Path]::GetFullPath($LocalCandidateManifest))
 } else {
@@ -598,8 +616,7 @@ $buildOutputCreated = $false
 $statusName = if ($candidate) { 'candidate-status.txt' } else { 'build-status.txt' }
 try {
 if ($candidate) {
-    $handoffsRoot = Join-Path (Split-Path -Parent $publicRoot) '70.HANDOFFS'
-    if (-not (Test-Below $output $publicRoot) -and -not (Test-Below $output $handoffsRoot)) {
+    if (@($candidateRoots | Where-Object { Test-Below $output $_ }).Count -eq 0) {
         throw 'Candidate output must be a new governed WIP directory under 10.PRODUCT or 70.HANDOFFS.'
     }
 }
@@ -638,7 +655,6 @@ $selectedRoot = Join-Path $output 'source/selected'
 $portabilityGate = Join-Path $selectedRoot 'packaging/windows/Test-SourcePortability.ps1'
 $shippedCode = @(
     (Join-Path $selectedRoot 'nodelang'),
-    (Join-Path $selectedRoot 'launch_archhub_test.py'),
     (Join-Path $selectedRoot 'colleague_setup.py'),
     (Join-Path $selectedRoot 'app/secrets_store.py'),
     (Join-Path $selectedRoot 'app/credential_lock.py'),

@@ -136,7 +136,7 @@ def validate_message_fields(conversation_id, *, author, content, category="note"
 
 class ConversationHistoryStore(ConversationPageProtection):
     def __init__(self, path, *, instance_id, create=True, busy_timeout_seconds=2.0,
-                 retention_clock=None, store=None, migration_custody=None):
+                 retention_clock=None, store=None, migration_custody=None, connection=None):
         self.instance_id = _text(instance_id, "instance")
         self._verified_trace_projections = {}
         if migration_custody is not None:
@@ -152,6 +152,12 @@ class ConversationHistoryStore(ConversationPageProtection):
         if (type(busy_timeout_seconds) not in (int, float)
                 or not 0 <= busy_timeout_seconds <= 30):
             raise ValueError("invalid history lock wait budget")
+        if connection is not None:
+            if not isinstance(connection, sqlite3.Connection):
+                raise ValueError("history requires a SQLite connection")
+            selected = connection.execute("PRAGMA database_list").fetchone()
+            if selected is None or not selected[2] or Path(selected[2]).resolve() != Path(path).resolve():
+                raise ValueError("history connection must belong to the selected profile")
         if store is not None and Path(store.database_path).resolve() != Path(path).resolve():
             raise ValueError("history must share its owner's graph journal")
         if not create:
@@ -161,13 +167,17 @@ class ConversationHistoryStore(ConversationPageProtection):
             # mode=rw prevents a deletion between the check and connect from
             # silently creating replacement content. No URI comes from a request.
             path = existing.as_uri() + "?mode=rw"
-        self._embedded = store is not None
+        if store is not None and connection is not None:
+            raise ValueError("provide one conversation connection owner")
+        self._embedded = store is not None or connection is not None
         self._lock = threading.RLock()
         self._journal_lock = nullcontext()
         self._operation_cancelled = None
-        if self._embedded:
+        if store is not None:
             self._db, self._lock = store.sqlite_storage()
             self._journal_lock = store._journal._io_lock
+        elif connection is not None:
+            self._db = connection
         else:
             self._db = sqlite3.connect(path, timeout=busy_timeout_seconds, isolation_level=None,
                                        check_same_thread=False, cached_statements=64,
@@ -224,7 +234,7 @@ class ConversationHistoryStore(ConversationPageProtection):
                 "'trace_chain_proofs','trace_live_proofs','trace_set_deltas','trace_snapshot_proofs',"
                 "'trace_signed_head_proofs','trace_retired_identities','trace_projection_custody',"
                 "'baboom_activities','operational_records','operational_events','cde_write_permits',"
-                "'cde_write_receipts','cde_write_settlements')")
+                "'cde_write_receipts','cde_write_settlements','workshop_declarations')")
         return self._db.execute(sql + " LIMIT 65").fetchall()
 
     @staticmethod

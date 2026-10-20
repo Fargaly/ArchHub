@@ -3503,6 +3503,10 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/agent", "edit"),
     ("POST", "/api/universal/run-graph", "edit"),
     ("POST", "/api/universal/set-property", "edit"),
+    # WIRE-social: the existing authenticated edit interface.
+    ("POST", "/api/universal/social-surface", "edit"),
+    # WIRE-social end
+    ("POST", "/api/universal/canvas-op", "edit"),
     # Editing a connection's parameter, including the first edit that has
     # to declare the row: the same capability the inspector already holds
     # for a node's parameter, because a wire is a node.
@@ -3539,6 +3543,9 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("GET", "/api/universal/native-agents", "read"),
     ("GET", "/api/universal/providers", "read"),
     ("GET", "/api/universal/cloud-session", "read"),
+    # WIRE-settings
+    ("POST", "/api/universal/settings-action", "edit"),
+    # WIRE-settings end
     ("GET", "/api/universal/cloud-signin", "read"),
     ("POST", "/api/universal/cloud-signin", "execute"),
     ("POST", "/api/universal/cloud-signout", "execute"),
@@ -20306,6 +20313,28 @@ _APPLICATION_SETTING_SPECS = {
     "tick_cadence_minutes": ("number", {"min": 1, "max": 1440, "step": 1}),
     "backup_count": ("number", {"min": 1, "max": 100, "step": 1}),
     "backup_budget_bytes": ("number", {"min": 1048576, "max": 1099511627776, "step": 1048576}),
+    "recovery_timeout_seconds": ("number", {"min": 1, "max": 3600, "step": 1}),
+    "instance_retry_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "preflight_database_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "broker_start_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "refusal_poll_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "quit_watchdog_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "account_http_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "session_minimum_validity_seconds": ("number", {"min": 1, "max": 3600, "step": 1}),
+    "session_poll_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "worker_join_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "host_stop_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "host_cancel_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "mutation_poll_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "desktop_refresh_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "archive_step_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "cloud_shutdown_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "update_shutdown_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "export_release_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "toast_visible_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "voice_hold_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "model_request_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "model_cli_request_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
     "keep_running_in_tray": ("boolean", {"min": 0, "max": 1, "step": 1}),
     "update_check_interval_minutes": ("number", {"min": 1, "max": 1440, "step": 1}),
     "update_auto_apply_on_quit": ("boolean", {"min": 0, "max": 1, "step": 1}),
@@ -28452,6 +28481,13 @@ def project_universal_canvas(
     projection = _project_universal_canvas_answer(
         store, registry, authentication_context=authentication_context
     )
+    snapshot = store.snapshot()
+    projection['runtime_parameters'] = {
+        key: _workshop_board_int_param(snapshot, registry, key,
+            default=_application_setting_default(key), lower=bounds['min'], upper=bounds['max'])
+        for key, (_editor, bounds) in _APPLICATION_SETTING_SPECS.items()
+        if key.endswith('_ms') or key == 'session_minimum_validity_seconds'
+    }
     selection = projection.get("selection")
     if isinstance(selection, list):
         filtered_selection = [
@@ -45989,6 +46025,9 @@ def _connect_universal_roots(
     )
     visibility_patches = []
     for view in eligible_views:
+        # Internal wires live in their scope; their endpoints are not top-level nodes.
+        if active_scope_root != registry.canvas_root:
+            continue
         visibility_members = read_relation(
             snapshot, view.visibility_root, budget=100_000
         )

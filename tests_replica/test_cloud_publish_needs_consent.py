@@ -33,7 +33,7 @@ def test_consent_belongs_to_the_account_that_gave_it(tmp_path):
 
 
 def test_the_launcher_checks_consent_before_any_network():
-    src = (Path(__file__).resolve().parents[1] / "launch_archhub_test.py").read_text(encoding="utf-8")
+    src = (Path(__file__).resolve().parents[1] / "nodelang/launcher.py").read_text(encoding="utf-8")
     gate = src.index("cloud_publish_allowed(state_dir)")
     assert gate < src.index("urllib.request.Request(\n        base.rstrip")
     assert "no consent recorded; nothing left this machine" in src

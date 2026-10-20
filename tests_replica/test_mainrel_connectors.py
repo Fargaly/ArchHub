@@ -52,7 +52,8 @@ def test_preflight_unknown_retired_entry_warns_without_writes(machine):
 def test_setup_publishes_ready_only_after_managed_migration(tmp_path, monkeypatch, migration_status):
     import colleague_setup as setup
     monkeypatch.setattr(setup, '__file__', str(tmp_path / 'colleague_setup.py'))
-    (tmp_path / 'launch_archhub_test.py').write_text('# fixture')
+    (tmp_path / 'nodelang/launcher.py').parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / 'nodelang/launcher.py').write_text('# fixture')
     (tmp_path / '.archhub-ready').write_text('old same-build marker')
     monkeypatch.setattr(setup, 'readiness_identity', lambda _: 'fixture-build')
     monkeypatch.setattr(setup, 'prepare_environment', lambda _: None)
@@ -83,7 +84,7 @@ def test_registration_and_setup_follow_exact_launcher_state_root(tmp_path, monke
     monkeypatch.delenv('ARCHHUB_TEST_STATE_DIR', raising=False)
     if override:
         monkeypatch.setenv('ARCHHUB_TEST_STATE_DIR', str(tmp_path / 'explicit-state'))
-    source = ast.parse((Path(__file__).resolve().parents[1] / 'launch_archhub_test.py').read_text(encoding='utf-8-sig'))
+    source = ast.parse((Path(__file__).resolve().parents[1] / 'nodelang/launcher.py').read_text(encoding='utf-8-sig'))
     assignment = next(node for node in source.body if isinstance(node, ast.Assign)
         and any(isinstance(target, ast.Name) and target.id == 'state_dir' for target in node.targets))
     namespace = {'Path': Path, 'os': os}

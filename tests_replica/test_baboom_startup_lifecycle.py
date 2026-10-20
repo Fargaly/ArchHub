@@ -24,17 +24,22 @@ def load_names(path, names, **bindings):
 
 
 def launcher_names(*names, **bindings):
+    from nodelang.library_engines import LIBRARY_ITEM_ENGINES
+    parameters = LIBRARY_ITEM_ENGINES['tool_workshop']['params']
+    bindings.setdefault('_launcher_parameter', lambda key: parameters[key])
+    bindings.setdefault('_launcher_seconds', lambda key: parameters[key] / 1000)
     if '_finish_application_shutdown' in names:
         # These tests exercise BABOOM/descriptor teardown after the unrelated
         # update/relay owners have quiesced. Supply that real callback's newer
         # dependencies explicitly instead of failing before the target branch.
         bindings.setdefault('cloud_relay', None)
         bindings.setdefault('_update_stop', threading.Event())
+        bindings.setdefault('_update_rollback_requested', threading.Event())
         bindings.setdefault('_quiet_update_thread', SimpleNamespace(join=lambda **kw: None, is_alive=lambda: False))
         bindings.setdefault('_restart_after_shutdown', False)
         if not hasattr(bindings['server'], 'application_update'):
-            bindings['server'].application_update = SimpleNamespace(close=lambda **kw: True)
-    return load_names(ROOT / "launch_archhub_test.py", names, **bindings)
+            bindings['server'].application_update = SimpleNamespace(close=lambda **kw: True, apply_on_quit=lambda: False)
+    return load_names(ROOT / "nodelang/launcher.py", names, **bindings)
 
 
 class TransportFailure(RuntimeError):

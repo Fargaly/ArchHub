@@ -11,8 +11,8 @@ RUNTIMES = {definition["id"]: definition for definition in (CLAUDE, CODEX, GEMIN
 
 
 @lru_cache(maxsize=256)
-def _observed_runtime(peer):
-    """Bounded display derivation for one immutable OS peer, not a session map."""
+def observed_runtime_process(peer):
+    """Nearest actual runtime ancestor and its generation, never a display claim."""
     try:
         import psutil
     except ImportError as exc:
@@ -32,12 +32,19 @@ def _observed_runtime(peer):
                 if runtime is None:
                     runtime = next((key for key in ("goose", "antigravity") if key in names), None)
                 parent = process.parent()
-                if runtime or parent is None:
-                    return runtime
+                if runtime:
+                    return {"runtime": runtime, "pid": process.pid, "created_at": process.create_time()}
+                if parent is None:
+                    return None
                 process = parent
     except (psutil.Error, OSError, ValueError) as exc:
         logging.getLogger(__name__).debug("Runtime label observation unavailable for peer %s: %s", peer.pid, exc)
     return None
+
+
+def _observed_runtime(peer):
+    observed = observed_runtime_process(peer)
+    return observed["runtime"] if observed else None
 
 
 def mailbox_label(peer, context):

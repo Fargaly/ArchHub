@@ -8,9 +8,7 @@ const {createHash, randomUUID} = require('node:crypto');
 const root = path.resolve(__dirname, '..');
 const studio = path.join(root, 'nodelang', 'studio');
 const output = path.join(studio, 'compiled');
-const names = ['tokens.jsx', 'ds/index.jsx', 'design-canvas.jsx', 'shared-data.jsx', 'studio-suite.jsx',
-  'param-types.jsx', 'studio-params.jsx', 'studio-mobile.jsx', 'studio-account.jsx',
-  'node-registry.jsx', 'brain-model.jsx', 'workshop-board.jsx', 'studio-workshop.jsx', 'studio-lm.jsx', 'mount.jsx'];
+const names = ["tokens.jsx", "ds/index.jsx", "api.js", "icons.jsx", "ui.jsx", "answer-widgets.jsx", "ds_home2.jsx", "ds_workshop3.jsx", "ds_screens.jsx", "ds_library.jsx", "ds_colleagues.jsx", "ds_baboom.jsx", "ds_settings3.jsx", "watcher-controls.jsx", "ds_watch_edit.jsx", "ds_firstrun.jsx", "surfaces.jsx", "integration-states.jsx", "project-tools.jsx", "community-tools.jsx", "agent-states.jsx", "research-surfaces.jsx", "dependencies.jsx", "workflow-states.jsx", "decision-results.jsx", "review-states.jsx", "canvas-states.jsx", "desktop.jsx", "meetings.jsx", "social.jsx", "research.jsx", "xray.jsx", "access.jsx", "account-tools.jsx", "routing.jsx", "brain.jsx", "docs.jsx", "companion.jsx", "context-menus.jsx", "app.jsx"];
 const version = '7.29.0';
 // These are the actual classic-script defaults in this vendored version's
 // transformScriptTags/SEe function. Only its inline source maps are omitted.
@@ -36,6 +34,7 @@ function inputs() {
     compiler:input('packaging/compile_studio.cjs', 128 * 1024),
     babel:input('nodelang/studio/vendor/babel.js', 4 * 1024 * 1024),
     loader:input('nodelang/studio/studio.html', 256 * 1024),
+    stylesheet:input('nodelang/studio/style.css', 1024 * 1024),
     package:input('package.json', 128 * 1024),
   };
 }

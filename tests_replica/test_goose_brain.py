@@ -113,7 +113,7 @@ def test_fresh_install_launcher_starts_goose_and_companion_then_answers_within_2
     ns = launcher_names("_keep_attaching", server=server, state_dir=packaged.root / "state",
         descriptor_path=packaged.root / "fake-descriptor", machine_key_provider=object(),
         _baboom_stop=threading.Event(), _baboom_attachment=attachment, _baboom_startup_choice=lambda: "on",
-        Path=Path, __file__=str(Path(__file__).resolve().parents[1] / "launch_archhub_test.py"))
+        Path=Path, __file__=str(Path(__file__).resolve().parents[1] / "nodelang/launcher.py"))
     began = time.monotonic()
     ns["_keep_attaching"]()
     assert displayed == [host] and attachment.prepared_atlas is not None

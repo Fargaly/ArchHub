@@ -11,7 +11,7 @@ machine, so each commits under the admitted migration/install intent:
 * the registration of this machine's BABOOM device (BABOOM starts by default).
   Without it BABOOM's attachment is refused with CommitRefused.
 
-This court boots the REAL launcher (launch_archhub_test.py) in a separate
+This court boots the REAL launcher (nodelang/launcher.py) in a separate
 process against a fresh profile with no graph: its own APPDATA, LOCALAPPDATA
 and state directory, a free single-instance port, offscreen Qt (no window on
 any desktop).
@@ -43,7 +43,7 @@ pytestmark = pytest.mark.skipif(
 def _source_under_test() -> Path:
     configured = os.environ.get("ARCHHUB_COURT_SOURCE", "").strip()
     source = Path(configured).resolve() if configured else ROOT
-    if not (source / "launch_archhub_test.py").is_file():
+    if not (source / "nodelang/launcher.py").is_file():
         pytest.fail("source under test has no launcher: %s" % source)
     return source
 
@@ -54,7 +54,7 @@ def _free_port() -> int:
         return probe.getsockname()[1]
 
 
-def _first_boot(tmp_path: Path, *, window: bool, until: str) -> str:
+def _first_boot(tmp_path: Path, *, window: bool, until: str | tuple[str, ...]) -> str:
     """Boot the real launcher on a fresh profile; return its log at ``until``."""
     source = _source_under_test()
     profile = tmp_path / "profile"
@@ -79,18 +79,19 @@ def _first_boot(tmp_path: Path, *, window: bool, until: str) -> str:
         environment["ARCHHUB_TEST_NO_OPEN"] = "1"
     assert not (state / "archhub-test.universal.sqlite3").exists()
     process = subprocess.Popen(
-        [sys.executable, str(source / "launch_archhub_test.py")],
+        [sys.executable, str(source / "nodelang/launcher.py")],
         cwd=str(source), env=environment,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     log_path = state / "launcher.log"
     text = ""
+    terminal = (until,) if isinstance(until, str) else until
     try:
         deadline = time.monotonic() + BOOT_TIMEOUT_SECONDS
         while time.monotonic() < deadline:
             text = log_path.read_text(encoding="utf-8", errors="replace") if log_path.is_file() else ""
-            if until in text or process.poll() is not None:
+            if any(marker in text for marker in terminal) or process.poll() is not None:
                 break
             time.sleep(1)
     finally:
@@ -103,7 +104,8 @@ def _first_boot(tmp_path: Path, *, window: bool, until: str) -> str:
 
 
 def test_first_run_seed_commits_under_admitted_install_intent(tmp_path):
-    text = _first_boot(tmp_path, window=False, until="  pipeline   :")
+    text = _first_boot(tmp_path, window=False,
+                       until=("  pipeline   : initial seed checked", "  pipeline   : not seeded"))
     seed = re.search(
         r"^  seed       : (\d+) declared · (\d+) placed · (\d+) adopted · "
         r"(\d+) row\(s\) completed · (\d+) skipped(.*)$", text, re.M)

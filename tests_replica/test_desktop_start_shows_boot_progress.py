@@ -1,6 +1,6 @@
 """Court: the desktop start shows the boot's progress while the graph opens.
 
-launch_archhub_test.py (the founder's start path: ArchHub.vbs) opened the graph
+nodelang/launcher.py (the founder's start path: ArchHub.vbs) opened the graph
 first and only then built its window, so a start showed nothing for the whole
 boot and the "phase k of n" page (clean_boot_surface) was never on his screen.
 The window now stands first on the boot page, dark before its first paint, and
@@ -12,7 +12,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-LAUNCHER = Path(__file__).resolve().parents[1] / "launch_archhub_test.py"
+LAUNCHER = Path(__file__).resolve().parents[1] / "nodelang/launcher.py"
 
 
 def _module():

@@ -15,6 +15,40 @@ import json
 from typing import Mapping
 
 
+def convert_value(params: Mapping[str, object], feeds: Mapping[str, object]):
+    import math
+    if 'in' not in feeds:
+        raise ValueError('Wire a value into Convert before running it.')
+    value, target = feeds['in'], str(params.get('target_type') or '').lower()
+    try:
+        if target == 'any':
+            converted = value
+        elif target == 'text':
+            converted = json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else str(value)
+        elif target == 'number':
+            if isinstance(value, bool):
+                raise ValueError('a boolean is not a number')
+            converted = float(value)
+            if not math.isfinite(converted):
+                raise ValueError('number must be finite')
+        elif target == 'boolean':
+            if type(value) is bool:
+                converted = value
+            elif type(value) is str and value.casefold() in ('true', 'false'):
+                converted = value.casefold() == 'true'
+            else:
+                raise ValueError('use true or false')
+        elif target in ('list', 'object'):
+            converted = json.loads(value) if isinstance(value, str) else value
+            if type(converted) is not (list if target == 'list' else dict):
+                raise ValueError('JSON has the wrong shape')
+        else:
+            raise ValueError('Choose text, number, boolean, list, object or any as target_type.')
+    except (TypeError, ValueError) as error:
+        raise ValueError('Cannot convert input to %s. Use a finite number, true/false, or matching JSON.' % target) from error
+    return {'out': converted}, target + ' value'
+
+
 def _local_input_path(path: str, *, label: str) -> str:
     """An input file the graph names must be a local file, never a UNC share.
 
@@ -49,6 +83,28 @@ def tool_settings(params: Mapping[str, object], feeds: Mapping[str, object]):
             'tick_cadence_minutes': params.get('tick_cadence_minutes'),
             'backup_count': params.get('backup_count'),
             'backup_budget_bytes': params.get('backup_budget_bytes'),
+            'recovery_timeout_seconds': params.get('recovery_timeout_seconds'),
+            'instance_retry_ms': params.get('instance_retry_ms'),
+            'preflight_database_ms': params.get('preflight_database_ms'),
+            'broker_start_ms': params.get('broker_start_ms'),
+            'refusal_poll_ms': params.get('refusal_poll_ms'),
+            'quit_watchdog_ms': params.get('quit_watchdog_ms'),
+            'account_http_ms': params.get('account_http_ms'),
+            'session_minimum_validity_seconds': params.get('session_minimum_validity_seconds'),
+            'session_poll_ms': params.get('session_poll_ms'),
+            'worker_join_ms': params.get('worker_join_ms'),
+            'host_stop_ms': params.get('host_stop_ms'),
+            'host_cancel_ms': params.get('host_cancel_ms'),
+            'mutation_poll_ms': params.get('mutation_poll_ms'),
+            'desktop_refresh_ms': params.get('desktop_refresh_ms'),
+            'archive_step_ms': params.get('archive_step_ms'),
+            'cloud_shutdown_ms': params.get('cloud_shutdown_ms'),
+            'update_shutdown_ms': params.get('update_shutdown_ms'),
+            'export_release_ms': params.get('export_release_ms'),
+            'toast_visible_ms': params.get('toast_visible_ms'),
+            'voice_hold_ms': params.get('voice_hold_ms'),
+            'model_request_ms': params.get('model_request_ms'),
+            'model_cli_request_ms': params.get('model_cli_request_ms'),
             'backup_location': params.get('backup_location'),
             'keep_running_in_tray': params.get('keep_running_in_tray'),
             'update_check_interval_minutes': params.get('update_check_interval_minutes'),
@@ -532,6 +588,7 @@ def thinking_chain(params: Mapping[str, object], feeds: Mapping[str, object]):
 
 
 PIPELINE_ENGINES = {
+    "data.convert": convert_value,
     "vision.sketch_lines": sketch_lines,
     "cad.read_lines": cad_lines,
     "cad.host_lines": cad_lines_from_host,

@@ -126,7 +126,7 @@ def test_the_app_has_one_close_owner_and_optional_tray(monkeypatch):
 
 
 def test_the_launcher_keeps_the_one_brain_owner_and_no_retired_daemon():
-    source = (Path(__file__).resolve().parents[1] / 'launch_archhub_test.py').read_text(encoding='utf-8')
+    source = (Path(__file__).resolve().parents[1] / 'nodelang/launcher.py').read_text(encoding='utf-8')
     tree = ast.parse(source)
     names = {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
     assert '_watch_brain' not in names and '_ensure_brain' not in names

@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SHIPPED = sorted(ROOT.glob("nodelang/*.py")) + [ROOT / "launch_archhub_test.py"]
+SHIPPED = sorted(ROOT.glob("nodelang/*.py")) + [ROOT / "nodelang/launcher.py"]
 SPAWN = re.compile(r"(?:subprocess|_sp|_sub)\.(?:run|Popen|call|check_output|check_call)\s*\(")
 
 

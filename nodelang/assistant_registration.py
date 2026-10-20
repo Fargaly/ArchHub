@@ -46,7 +46,7 @@ _MAX_CONFIG_BYTES = 4 * 1024 * 1024
 
 
 def install_roots(environment=None) -> tuple[Path, Path]:
-    """This installation and the launcher's state folder (launch_archhub_test.py owns it)."""
+    """This installation and the launcher's state folder (nodelang/launcher.py owns it)."""
     env = os.environ if environment is None else environment
     root = Path(os.path.abspath(Path(__file__).resolve().parent.parent))
     state = Path(env.get("ARCHHUB_TEST_STATE_DIR")

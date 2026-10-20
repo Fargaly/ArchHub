@@ -36,7 +36,7 @@ def test_the_wordmark_reads_archhub_as_on_the_website():
 
 
 def test_the_phase_plan_is_the_one_the_boot_runs():
-    source = Path(clean_boot_surface.__file__).resolve().parents[1] / 'launch_archhub_test.py'
+    source = Path(clean_boot_surface.__file__).resolve().parents[1] / 'nodelang/launcher.py'
     tree = ast.parse(source.read_text(encoding='utf-8'))
     definitions = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == '_boot_phase']
     progress = BootProgress()

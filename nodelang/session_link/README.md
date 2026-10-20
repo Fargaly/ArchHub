@@ -1,5 +1,14 @@
 # Session Link physical transport
 
+Ordinary MCP `send`, `read`, and `declare` now use the selected profile's public
+Workshop conversation table through `workshop_mailbox.py`. They do not resolve
+the GUI runtime pointer, start Qt, open the graph, or acquire a signing key.
+The application uses the same implementation and rows. Declarations are typed
+SQLite rows rather than graph cells. The profile must already contain its
+conversation binding; missing profiles never create a replacement database.
+Private conversations and private reply references remain outside this API.
+Work and host actions retain their existing authority boundary.
+
 The existing Session Link implementation is reused here. `../session_link_transport.py`
 owns one bounded Node worker per call, with no new service, room, model session or
 message database. The application owns graph admission, enrolled identities,
@@ -112,6 +121,15 @@ session, then resume the exact saved binding and verify one new reply/receipt.
 Do not kill the process or restart other apps to activate this feature.
 
 ## Retained transport boundaries
+
+The public mailbox uses the selected profile's existing conversation tables even
+when the Qt window is closed; a missing profile is never replaced. MCP session
+metadata supplies a stable display address across connector restarts, not Work
+or host authority. Raw pipe clients use their observed process identity. Supply
+the same `idempotency_key` to MCP `send` when retrying an uncertain message;
+reuse with different content is refused. Native task completion still requires
+the independently observed target process generation. Declaration liveness
+follows the originating native agent parent, not unrelated desktop ancestors.
 
 Agent coordination uses the existing Workshop messages table through MCP `send(to, text)` and `read(since)` (`nodelang/native_agent_mcp.py`). It has no native-owner attachment, recovery-only server, enrollment, Session Link host channel or Workshop relay.
 

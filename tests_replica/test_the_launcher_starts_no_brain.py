@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_the_launcher_starts_no_brain():
-    src = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
+    src = (ROOT / "nodelang/launcher.py").read_text(encoding="utf-8")
     for gone in ("_ensure_brain", "brain_supervisor_start", "personal_brain", "8473"):
         assert gone not in src, gone
     assert not (ROOT / "nodelang" / "brain_supervisor_start.py").exists()

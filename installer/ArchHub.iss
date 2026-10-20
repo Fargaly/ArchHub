@@ -128,7 +128,6 @@ Source: "..\tools\pipeline\install_hooks.py"; DestDir: "{app}\tools\pipeline"; F
 Source: "..\tools\pipeline\record_observation.py"; DestDir: "{app}\tools\pipeline"; Flags: ignoreversion
 Source: "..\tools\pipeline\build.py"; DestDir: "{app}\tools\pipeline"; Flags: ignoreversion
 Source: "..\tools\pipeline\land.py"; DestDir: "{app}\tools\pipeline"; Flags: ignoreversion
-Source: "..\launch_archhub_test.py"; DestDir: "{app}"; Flags: ignoreversion
 ; The graph owner task is re-registered from the installed copy (RefreshCleanCoordinationTask).
 ; Generated once for this exact build; pairs with BUILD_ID after installation.
 Source: "{#BuildMetadataPath}"; DestDir: "{app}"; DestName: "BUILD_METADATA.json"; Flags: ignoreversion
@@ -154,6 +153,35 @@ Source: "ArchHub.vbs"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\archhub.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [InstallDelete]
+Type: files; Name: "{app}\nodelang\studio\brain-model.jsx"
+Type: files; Name: "{app}\nodelang\studio\cockpit-core.jsx"
+Type: files; Name: "{app}\nodelang\studio\design-canvas.jsx"
+Type: files; Name: "{app}\nodelang\studio\hub-kit.jsx"
+Type: files; Name: "{app}\nodelang\studio\mount.jsx"
+Type: files; Name: "{app}\nodelang\studio\node-registry.jsx"
+Type: files; Name: "{app}\nodelang\studio\param-types.jsx"
+Type: files; Name: "{app}\nodelang\studio\shared-data.jsx"
+Type: files; Name: "{app}\nodelang\studio\studio-account.jsx"
+Type: files; Name: "{app}\nodelang\studio\studio-lm.jsx"
+Type: files; Name: "{app}\nodelang\studio\studio-mobile.jsx"
+Type: files; Name: "{app}\nodelang\studio\studio-params.jsx"
+Type: files; Name: "{app}\nodelang\studio\studio-suite.jsx"
+Type: files; Name: "{app}\nodelang\studio\studio-workshop.jsx"
+Type: files; Name: "{app}\nodelang\studio\workshop-board.jsx"
+Type: files; Name: "{app}\nodelang\studio\compiled\design-canvas.js"
+Type: files; Name: "{app}\nodelang\studio\compiled\shared-data.js"
+Type: files; Name: "{app}\nodelang\studio\compiled\studio-suite.js"
+Type: files; Name: "{app}\nodelang\studio\compiled\param-types.js"
+Type: files; Name: "{app}\nodelang\studio\compiled\studio-params.js"
+Type: files; Name: "{app}\nodelang\studio\compiled\studio-mobile.js"
+Type: files; Name: "{app}\nodelang\studio\compiled\studio-account.js"
+Type: files; Name: "{app}\nodelang\studio\compiled\node-registry.js"
+Type: files; Name: "{app}\nodelang\studio\compiled\brain-model.js"
+Type: files; Name: "{app}\nodelang\studio\compiled\workshop-board.js"
+Type: files; Name: "{app}\nodelang\studio\compiled\studio-workshop.js"
+Type: files; Name: "{app}\nodelang\studio\compiled\studio-lm.js"
+Type: files; Name: "{app}\nodelang\studio\compiled\mount.js"
+Type: files; Name: "{app}\launch_archhub_test.py"
 ; Retired launchers target app/main.py; supported shortcuts use ArchHub.vbs.
 Type: files; Name: "{app}\ArchHub.cmd"
 Type: files; Name: "{app}\ArchHub-silent.cmd"

@@ -417,7 +417,44 @@ def check_artifact(root, pending, context=None, *, compiler_command=None, timeou
             path.unlink(missing_ok=True)
 
 
-def change_context(root, selected, candidate, revision, context, *, patch_scope=None, committed_history=False):
+def renamed_sources(root, revision, selected, candidate, compiler_command=None, timeout=None):
+    before = git(root, "ls-tree", "-r", "--name-only", "-z", revision).decode("utf-8").split("\0")
+    if not any(path in before and candidate.get(path, "") is None for path in selected) or not any(
+            path not in before and candidate.get(path) is not None for path in selected):
+        return {}
+    paths = sorted(set(filter(None, before)) | set(selected))
+    command = list(compiler_command) if compiler_command is not None else _command(root)
+    result = subprocess.run(command + ["source-identities"], input=json.dumps(paths), cwd=root,
+                            env=_environment(compiler_command), capture_output=True, text=True,
+                            encoding="utf-8", timeout=node_timeout(timeout))
+    if result.returncode:
+        raise CompilerFailure("compiler source identity failed: " + result.stderr.strip())
+    identities = json.loads(result.stdout)
+    if set(identities) != set(paths) or any(not isinstance(value, str) for value in identities.values()):
+        raise CompilerFailure("compiler source identity inventory differs")
+    predecessors = {}
+    for path in filter(None, before):
+        identity = identities[path]
+        if identity in predecessors:
+            raise CompilerFailure("ambiguous original source identity: " + identity)
+        predecessors[identity] = path
+    successors = {}
+    renamed = {}
+    for path in paths:
+        present = candidate[path] is not None if path in candidate else path in before
+        if not present:
+            continue
+        identity = identities[path]
+        if identity in successors:
+            raise CompilerFailure("ambiguous candidate source identity: " + identity)
+        successors[identity] = path
+        prior = predecessors.get(identity)
+        if path in selected and prior in selected and prior != path:
+            renamed[path] = prior
+    return renamed
+
+
+def change_context(root, selected, candidate, revision, context, *, patch_scope=None, committed_history=False, renamed=None):
     """Bind intent to real changed paths and repository-owned author history."""
     import difflib
     import re
@@ -425,12 +462,16 @@ def change_context(root, selected, candidate, revision, context, *, patch_scope=
     author = supplied.get("author")
     if not author:
         author = git(root, "var", "GIT_AUTHOR_IDENT").decode("utf-8").split("<", 1)[0].strip()
+    renamed = renamed or {}
     added = removed = tests_removed = 0
     for path in selected:
+        if path in renamed.values():
+            continue
         before = ""
-        present = bool(git(root, "ls-tree", "-z", revision, "--", path))
+        original_path = renamed.get(path, path)
+        present = bool(git(root, "ls-tree", "-z", revision, "--", original_path))
         if present:
-            before = git(root, "show", f"{revision}:{path}").decode("utf-8", errors="replace")
+            before = git(root, "show", f"{revision}:{original_path}").decode("utf-8", errors="replace")
         after = candidate.get(path)
         if path not in candidate:
             target = root / path
@@ -516,9 +557,10 @@ def check_files(root, paths, overlay=None, *, revision="HEAD", context=None, com
                     raise CompilerFailure(f"cannot read owned source {path}: {exc}") from exc
             elif not target.exists():
                 candidate[path] = None
+    renamed = renamed_sources(root, revision, selected, candidate, compiler_command, timeout)
     patch_scope = {}
     prepared_context = change_context(root, selected, candidate, revision, context, patch_scope=patch_scope,
-                                      committed_history=committed_history)
+                                      committed_history=committed_history, renamed=renamed)
     # Source-intent rules must see the same declared files on both revisions.
     # Caller flags/machine overrides are candidate-only, so invalid change
     # metadata cannot establish its own baseline.
@@ -536,7 +578,8 @@ def check_files(root, paths, overlay=None, *, revision="HEAD", context=None, com
 
     # Context/authority findings are about the whole change, even if their
     # display anchor is unchanged line 1. They can never be diff-filtered away.
-    original_intent = Counter(tuple(d[key] for key in ("code", "file", "message"))
+    successors = {before: after for after, before in renamed.items()}
+    original_intent = Counter((d["code"], successors.get(d["file"], d["file"]), d["message"])
                               for d in original["diagnostics"] if d["code"] == "E0102")
     diagnostics = []
     for item in report["diagnostics"]:
@@ -547,7 +590,7 @@ def check_files(root, paths, overlay=None, *, revision="HEAD", context=None, com
             original_intent[intent_key] -= bool(original_intent[intent_key])
         if on_changed_line(item) or context_error:
             diagnostics.append(item)
-    before_counts = Counter((d["file"], d["code"]) for d in original["diagnostics"])
+    before_counts = Counter((successors.get(d["file"], d["file"]), d["code"]) for d in original["diagnostics"])
     after_counts = Counter((d["file"], d["code"]) for d in report["diagnostics"])
     file_regressions = [{"file": path, "code": code, "baseline": before_counts[path, code], "current": count}
                         for (path, code), count in sorted(after_counts.items())
@@ -565,7 +608,7 @@ def check_files(root, paths, overlay=None, *, revision="HEAD", context=None, com
                 owner = re.fullmatch(r'multiple owners of `([^`]+)` \(other: .+:\d+\)', message)
                 if owner is not None:
                     message = 'multiple owners of `%s`' % owner[1]
-            return item['code'], item['language'], item['file'], message
+            return item['code'], item['language'], successors.get(item['file'], item['file']), message
         existing = Counter(identity(item) for item in original["diagnostics"])
         for item in outside:
             key = identity(item)

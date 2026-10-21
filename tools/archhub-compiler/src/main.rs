@@ -12,6 +12,12 @@ use std::{
 
 fn run() -> Result<bool, String> {
     let args: Vec<String> = env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("source-identities") {
+        let paths: Vec<String> = serde_json::from_reader(std::io::stdin()).map_err(|e| e.to_string())?;
+        let identities = paths.iter().map(|file| (file, archhub_compiler::source_identity(file))).collect::<BTreeMap<_, _>>();
+        println!("{}", serde_json::to_string(&identities).map_err(|e| e.to_string())?);
+        return Ok(true);
+    }
     if args.first().map(String::as_str) == Some("conduct") {
         let mut root = None;
         let mut context_path = None;

@@ -113,10 +113,31 @@ pub fn compile(sources: &[(String, String)], context: Option<&Value>) -> Report 
 }
 
 pub fn compile_with_entrypoints(sources: &[(String, String)], context: Option<&Value>, entrypoints: &[String]) -> Report {
-    let (expanded, locations) = expanded_sources(sources);
-    let mut report = analyze_flat(&expanded, entrypoints);
+    let native = sources.iter().map(|(file, text)| (source_identity(file), text.clone())).collect::<Vec<_>>();
+    let entrypoints = entrypoints.iter().map(|file| source_identity(file)).collect::<Vec<_>>();
+    let (expanded, locations) = expanded_sources(&native);
+    let mut report = analyze_flat(&expanded, &entrypoints);
     report.extend(semantics::check(&expanded));
     restore_locations(&mut report, &locations);
+    let mut identities = BTreeSet::new();
+    let collisions = sources.iter().filter_map(|(file, _)| {
+        if identities.insert(source_identity(file)) { return None; }
+        Some(Diagnostic { code: "E0010".into(), file: file.clone(), language: language_name(file).into(),
+            line: 1, column: 1, message: "ambiguous source identity".into(),
+            note: "each native source has one physical owner".into(),
+            help: "remove the duplicate source tree".into() })
+    }).collect();
+    report.extend(collisions);
+    for diagnostic in &mut report.diagnostics {
+        if let Some((physical, _)) = sources.iter().find(|(file, _)| source_identity(file) == diagnostic.file) {
+            diagnostic.file = physical.clone();
+        }
+    }
+    for file in &mut report.files {
+        if let Some((physical, _)) = sources.iter().find(|(path, _)| source_identity(path) == file.file) {
+            file.file = physical.clone();
+        }
+    }
     if let Some(context) = context {
         apply_context(&mut report, context, sources);
     }
@@ -301,6 +322,18 @@ struct Model {
     entrypoints: BTreeSet<String>,
     navigation_routes: BTreeSet<String>,
     diagnostics: Vec<Diagnostic>,
+}
+
+pub fn source_identity(file: &str) -> String {
+    for (area, native) in [("04.DOCS/", "docs/"), ("05.EVIDENCE/", "evidence/")] {
+        if let Some(relative) = file.strip_prefix(area) { return format!("{native}{relative}"); }
+    }
+    for area in ["01.APP/", "02.TESTS/", "03.TOOLS/", "06.CLOUD/"] {
+        if let Some(relative) = file.strip_prefix(area) {
+            if relative.contains('/') || relative == "colleague_setup.py" || relative == "archhub.ico" { return relative.into(); }
+        }
+    }
+    file.into()
 }
 
 pub fn language_name(path: &str) -> &'static str {
@@ -2521,7 +2554,7 @@ fn finish(mut model: Model, files: Vec<SourceFile>) -> Report {
                 .iter()
                 .any(|s| &s.owner == owner && &s.name == name && s.side == "target")
         })
-        .map(|(path, _, _)| path.clone())
+        .map(|(path, _, _)| source_identity(path))
         .collect();
     model
         .diagnostics
@@ -2884,4 +2917,22 @@ pub fn analyze_artifact(pending: &Value, context: &Value) -> Report {
             language: "product".into(),
         }],
     )
+}
+
+#[cfg(test)]
+mod numbered_source_tests {
+    #[test]
+    fn relocation_preserves_diagnostics_and_physical_locations() {
+        let source = "def broken(:\n    pass\n".to_string();
+        let native = super::compile(&[("nodelang/sample.py".into(), source.clone())], None);
+        let moved = super::compile(&[("01.APP/nodelang/sample.py".into(), source)], None);
+        assert!(!native.diagnostics.is_empty());
+        assert_eq!(native.counts, moved.counts);
+        assert!(moved.diagnostics.iter().all(|d| d.file == "01.APP/nodelang/sample.py"));
+        let collision = super::compile(&[("nodelang/sample.py".into(), "value = 1".into()),
+            ("01.APP/nodelang/sample.py".into(), "value = 1".into())], None);
+        assert!(collision.diagnostics.iter().any(|d| d.code == "E0010"));
+        assert_eq!(super::source_identity("01.APP/README.md"), "01.APP/README.md");
+        assert_eq!(super::source_identity("03.TOOLS/tools/pipeline/build.py"), "tools/pipeline/build.py");
+    }
 }

@@ -14,11 +14,11 @@ pub fn repository_authority(root: &Path, revision: &str) -> Result<Value, String
     if revision.starts_with('-') {
         return Err("invalid authority revision".into());
     }
-    let path = "evidence/acompiler-intents.json";
+    let mut path = "evidence/acompiler-intents.json".to_string();
     if !root.join(".git").exists() {
         // Host projects need no Git repository. The policy file is an input to
         // admission, never part of the pending model edit it authorizes.
-        return match fs::read(root.join(path)) {
+        return match fs::read(root.join(&path)) {
             Ok(bytes) => merge_registry(&bytes),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(authority()),
             Err(e) => Err(e.to_string()),
@@ -35,10 +35,21 @@ pub fn repository_authority(root: &Path, revision: &str) -> Result<Value, String
     }
     let commit = String::from_utf8(commit.stdout).map_err(|e| e.to_string())?;
     let revision = commit.trim();
+    let inventory = Command::new("git").arg("-C").arg(root)
+        .args(["ls-tree", "-r", "--name-only", "-z", revision, "--", "evidence", "05.EVIDENCE"])
+        .output().map_err(|e| e.to_string())?;
+    if !inventory.status.success() { return Err("intent authority inventory unavailable".into()); }
+    let inventory = String::from_utf8(inventory.stdout).map_err(|e| e.to_string())?;
+    let resolve = |native: &str| -> Result<String, String> {
+        let matches = inventory.split('\0').filter(|file| crate::source_identity(file) == native).collect::<Vec<_>>();
+        if matches.len() > 1 { return Err("ambiguous authority source identity".into()); }
+        Ok(matches.first().copied().unwrap_or(native).to_string())
+    };
+    path = resolve(&path)?;
     let present = Command::new("git")
         .arg("-C")
         .arg(root)
-        .args(["ls-tree", "-z", revision, "--", path])
+        .args(["ls-tree", "-z", revision, "--", &path])
         .output()
         .map_err(|e| e.to_string())?;
     if !present.status.success() {
@@ -59,9 +70,9 @@ pub fn repository_authority(root: &Path, revision: &str) -> Result<Value, String
     }
     // Released must-pass cases extend the compiled floor. A pending manifest
     // cannot erase or authorize its own regression evidence.
-    let manifest = "evidence/must_pass.json";
+    let manifest = resolve("evidence/must_pass.json")?;
     let present = Command::new("git").arg("-C").arg(root)
-        .args(["ls-tree", "-z", revision, "--", manifest]).output().map_err(|e| e.to_string())?;
+        .args(["ls-tree", "-z", revision, "--", &manifest]).output().map_err(|e| e.to_string())?;
     if !present.status.success() { return Err("must_pass inventory unavailable".into()); }
     if !present.stdout.is_empty() {
         let output = Command::new("git").arg("-C").arg(root)
@@ -266,7 +277,7 @@ pub fn check_with_authority(
                     roots
                         .iter()
                         .filter_map(Value::as_str)
-                        .find(|root| file.starts_with(root))
+                        .find(|root| crate::source_identity(file).starts_with(root))
                 })
             {
                 let fit = &entry.unwrap()["vendor_fits"][root];
@@ -279,7 +290,7 @@ pub fn check_with_authority(
                             !a.is_empty()
                                 && a.iter().all(|p| {
                                     p.as_str()
-                                        .is_some_and(|p| sources.iter().any(|(file, _)| file == p))
+                                        .is_some_and(|p| sources.iter().any(|(file, _)| crate::source_identity(file) == crate::source_identity(p)))
                                 })
                         })
                     });
@@ -334,7 +345,7 @@ pub fn check_with_authority(
             if matches!(
                 node.kind(),
                 "string" | "string_literal" | "template_string" | "jsx_text" | "text" | "attribute_value"
-            ) && !file.starts_with("tests")
+            ) && !crate::source_identity(file).starts_with("tests")
                 && matches!(language, "python" | "javascript" | "typescript" | "html")
             {
                 if let Some(values) = machine["banned_user_text"].as_array() {

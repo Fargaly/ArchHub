@@ -1,0 +1,355 @@
+/* Founder order 2026-09-24: "why is nothing organised or grouped?" -- cards stacked on
+   each other, hard to move, Arrange that moved what he had placed by hand. These courts
+   bind the canvas side of the answer:
+     T1  Arrange all writes with placement 'arrange' for movable cards and keeps pinned cards fixed;
+     T2  Arrange clicked while a save is in flight runs ONCE, after that save answers;
+     T3  Arrange over hand-placed cards only writes nothing and says why;
+     T4  the arranged layout overlaps no card, hand-placed obstacles included;
+     T5  the System-shaped fixture lays out left-to-right by wires, not by frames;
+   plus: a hand drag is a plain move (the owner pins it), no visual frames are drawn,
+   the canvas draws only the user's cards, and the application's own cards are the
+   founder's System view, framed by domain. */
+const {test} = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('./studio_ds_context.cjs');
+
+const root = path.resolve(__dirname, '..');
+const source = fs.readFileSync(path.join(root, 'nodelang/studio/studio-lm.jsx'), 'utf8');
+const tokens = fs.readFileSync(path.join(root, 'nodelang/studio/tokens.jsx'), 'utf8');
+const palette = tokens.slice(tokens.indexOf('window.AH = {'), tokens.indexOf('window.ArchHubTheme ='));
+const LM = new Proxy(Object.fromEntries([...palette.matchAll(/^ {2}(\w+):/gm)].map(m => [m[1], 'token-' + m[1]])), {
+  get:(held, key) => {
+    if (key === 'rad') return {chip:3, xs:3, control:5, sm:5, node:6, md:6, panel:8, lg:8, dialog:10, xl:10, pill:999};
+    if (key === 'sp') return {xs:4, sm:8, md:12, lg:16, xl:24};
+    if (key === 'fs') return {bodySm:{sz:13, ln:18, wt:400}, bodySmStrong:{sz:13, ln:18, wt:500}, caption:{sz:12, ln:16}, label:{sz:11, ln:14, wt:500, letter:'.04em'}, data:{sz:12, ln:16, wt:400}, dataSm:{sz:11, ln:14, wt:400}};
+    if (key === 'icon') return {ui:{size:16, box:20}, category:{size:12, box:20}};
+    if (key === 'shadow') return {flat:'none'};
+    if (key === 'elev') return {e1:'none',e2:'none'};
+    if (key === 'glow') return {warn:'none',accent:'none'};
+    if (key === 'dur') return {fast:120, med:180};
+    if (typeof key === 'string' && !(key in held)) throw new Error('studio-lm.jsx reads an undefined token: ' + key);
+    return held[key];
+  }});
+
+const slice = () => {
+  const start = source.indexOf('const SOCKET_TOP =');
+  const end = source.indexOf('const Socket =', start);
+  assert.ok(start > 0 && end > start, 'the canvas is a slice of the shipped studio-lm.jsx');
+  return source.slice(start, end) + require('./workshop72_node_helpers.cjs').nodePreviewSource(source);
+};
+const shortcutSlice = () => {
+  const start = source.indexOf('const studioShortcut =');
+  const end = source.indexOf('// An ordinary canvas edit', start);
+  assert.ok(start > 0 && end > start, 'the shortcut table is a slice of the shipped studio-lm.jsx');
+  return source.slice(start, end);
+};
+
+function arrange() {
+  const context = vm.createContext({});
+  const text = slice();
+  const start = text.indexOf('const canvasArrangePositions =');
+  const end = text.indexOf('const CANVAS_LAYOUT_COALESCE_MS', start);
+  assert.ok(start > 0 && end > start, 'Arrange is a module-level function');
+  vm.runInContext(text.slice(start, end) + '\nglobalThis.arrange = canvasArrangePositions;', context);
+  return context.arrange;
+}
+
+const SIZE = {w:220, h:110};
+const overlaps = (a, b) => a.x < b.x + SIZE.w && a.x + SIZE.w > b.x && a.y < b.y + SIZE.h && a.y + SIZE.h > b.y;
+
+test('T4: the arranged layout overlaps no card, and hand-placed obstacles are avoided', () => {
+  const place = arrange();
+  // Nine cards stacked on one point, the way the old default grid drew them, and one
+  // hand-placed card sitting right where the block would start.
+  const positions = Object.fromEntries([...Array(9)].map((_, i) => ['c' + i, {x:60, y:92}]));
+  positions.pinned = {x:60, y:92};
+  const ids = Object.keys(positions).filter(id => id !== 'pinned');
+  const sizes = Object.fromEntries(Object.keys(positions).map(id => [id, SIZE]));
+  const next = place(ids, positions, sizes, Object.keys(positions), [], id => (id < 'c5' ? 'Ordered List' : 'Cells'));
+  assert.deepEqual(Object.keys(next).sort(), ids.sort(), 'only the chosen cards are moved; the pinned one is not');
+  const all = {...next, pinned:positions.pinned};
+  const names = Object.keys(all);
+  for (let i = 0; i < names.length; i += 1) for (let j = i + 1; j < names.length; j += 1) {
+    assert.equal(overlaps(all[names[i]], all[names[j]]), false, names[i] + ' overlaps ' + names[j]);
+  }
+});
+
+test('T5: System-shaped arrange ignores old frame labels and makes monotone layers with no overlaps', () => {
+  const place = arrange();
+  const ids = Array.from({length:25}, (_, i) => 'n' + i);
+  const positions = Object.fromEntries(ids.map((id, i) => [id, {x:(i % 5) * 28, y:Math.floor(i / 5) * 28}]));
+  const sizes = Object.fromEntries(ids.map(id => [id, SIZE]));
+  const wires = [];
+  for (let layer = 0; layer < 4; layer += 1) {
+    for (let i = 0; i < 5; i += 1) for (let j = 0; j < 3; j += 1) {
+      wires.push({from:['n' + (layer * 5 + i)], to:['n' + ((layer + 1) * 5 + ((i + j) % 5))]});
+    }
+  }
+  const next = place(ids, positions, sizes, ids, wires, id => id.endsWith('0') || id.endsWith('1') ? 'Frame A' : 'Frame B');
+  for (let i = 0; i < ids.length; i += 1) for (let j = i + 1; j < ids.length; j += 1) {
+    assert.equal(overlaps(next[ids[i]], next[ids[j]]), false, ids[i] + ' overlaps ' + ids[j]);
+  }
+  for (const wire of wires) {
+    assert.ok(next[wire.from[0]].x + SIZE.w < next[wire.to[0]].x,
+      wire.from[0] + ' must be left of ' + wire.to[0]);
+  }
+});
+
+const NODES = () => [
+  {id:'one', cat:'logic', live:true, x:40, y:60, w:220, h:110, title:'One', sub:'node', params:[], ins:[], outs:[],
+    group:'Ordered List', pinned:false},
+  {id:'two', cat:'logic', live:true, x:40, y:60, w:220, h:110, title:'Two', sub:'node', params:[], ins:[], outs:[],
+    group:'Ordered List', pinned:false},
+  {id:'three', cat:'logic', live:true, x:40, y:60, w:220, h:110, title:'Three', sub:'node', params:[], ins:[], outs:[],
+    group:'Ordered List', pinned:false},
+  {id:'mine', cat:'logic', live:true, x:900, y:500, w:220, h:110, title:'Mine', sub:'node', params:[], ins:[], outs:[],
+    group:'Cells', pinned:true},
+];
+// What the application placed on the top level: the owner marks it, the canvas keeps it
+// for the founder's System view. A wire between two of them is theirs too.
+const INTERNALS = [
+  {id:'gm:domain:ui', cat:'logic', live:true, x:60, y:92, w:220, h:110, title:'UI & Design System', sub:'domain',
+    params:[], ins:[], outs:[{id:'o', t:'any'}], group:'UI & Design System', pinned:false, application:true},
+  {id:'app:agent-session:a', cat:'logic', live:true, x:60, y:92, w:220, h:110, title:'Runtime-a', sub:'agent',
+    params:[], ins:[{id:'i', t:'any'}], outs:[], group:'Models & Agents', pinned:false, application:true},
+];
+const MARKED = () => [...NODES().map(node => ({...node, application:false})), ...INTERNALS];
+
+async function mount({hold = null, systemView = false, system = false, nodes = NODES(), wires = []} = {}) {
+  const {JSDOM} = await import('jsdom');
+  const React = require('react');
+  const {createRoot} = require('react-dom/client');
+  const {transformSync} = require('esbuild');
+  const dom = new JSDOM('<div id="root"></div>', {url:'http://127.0.0.1:53913/'});
+  // jsdom lays nothing out; Arrange measures the drawn cards.
+  for (const [name, value] of [['offsetWidth', SIZE.w], ['offsetHeight', SIZE.h]]) {
+    Object.defineProperty(dom.window.HTMLElement.prototype, name, {configurable:true, get() { return value; }});
+  }
+  const oldWindow = global.window, oldDocument = global.document;
+  global.window = dom.window; global.document = dom.window.document;
+  global.IS_REACT_ACT_ENVIRONMENT = true;
+  const saves = [];
+  let snapshot = {graph:{nodes, wires}, canvas:{revision:3, scope:{current:'scope'},
+    authorization:{subject:'founder', session:'s', system_view:systemView}}};
+  dom.window.ARCHHUB_EXISTING_WORKSHOP = {
+    getSnapshot:() => ({topology:snapshot}),
+    moveTopologyNodes:async (positions, expectedRevision, expectedPositions, placement) => {
+      saves.push({positions:JSON.parse(JSON.stringify(positions)), expectedRevision, placement: placement ?? null});
+      if (hold && saves.length === 1) await hold.promise;
+      snapshot = {...snapshot, canvas:{...snapshot.canvas, revision:snapshot.canvas.revision + 1},
+        graph:{...snapshot.graph, nodes:snapshot.graph.nodes.map(node => positions[node.id]
+          ? {...node, ...positions[node.id], pinned:node.pinned || placement !== 'arrange'} : node)}};
+      return {ok:true};
+    },
+    refreshTopologyCanvas:async () => snapshot,
+  };
+const context = vm.createContext({React, LM, window:dom.window, document:dom.window.document,
+    useStudioProjection:() => snapshot, LM_GRAPH:{nodes:[], wires:[]}, studioCanvasScope:() => 'scope',
+    systemAllowed:(canvas, graph) => canvas?.authorization?.system_view === true &&
+      (graph?.nodes || []).some(node => node.application === true),
+    studioCategory:cat => ({col:'token-cat', icon:'+', label:String(cat).toUpperCase()}), WIRE:{},
+    NodeBody:() => null, CanvasToolbar:() => null, FloatingComposer:() => null, CanvasAddBox:() => null, MiniMap:() => null, Socket:() => null,
+    nodeModelRow:() => null, smallBtn:() => ({}), toolBtn:() => ({}), kbd:() => ({}),
+    setTimeout:dom.window.setTimeout.bind(dom.window), clearTimeout:dom.window.clearTimeout.bind(dom.window)});
+  vm.runInContext(transformSync(shortcutSlice() + slice() + '\nglobalThis.NodeCanvas = NodeCanvas;',
+    {loader:'jsx', format:'cjs'}).code, context);
+  const parameterSource = fs.readFileSync(path.join(root,'nodelang/studio/studio-params.jsx'),'utf8');
+  const appParameters = parameterSource.slice(parameterSource.indexOf('function ApplicationNodeParameters('),parameterSource.indexOf('function ApplicationAwareInspector('));
+  context.PM=LM;
+  vm.runInContext(transformSync(appParameters+'\nwindow.ApplicationNodeParameters=ApplicationNodeParameters;',{loader:'jsx'}).code,context);
+  const reactRoot = createRoot(dom.window.document.getElementById('root'));
+  const props = {focusId:null, setFocusId:() => {}, setLibraryOpen:() => {}, userNodes:[],
+    addNodeFromLibrary:() => {}, model:null, system};
+  const draw = async () => { await React.act(async () => reactRoot.render(React.createElement(context.NodeCanvas, props))); };
+  await draw();
+  const doc = dom.window.document;
+  const card = id => doc.querySelector('.lm-node[data-node-id="' + id + '"]');
+  const point = id => ({x:parseFloat(card(id).style.left), y:parseFloat(card(id).style.top)});
+  const fire = (target, type, init) => target.dispatchEvent(new dom.window.MouseEvent(type, {bubbles:true, cancelable:true, ...init}));
+  const region = () => doc.querySelector('[role="region"][aria-label="Workflow canvas"]');
+  return {
+    saves, doc, point, draw,
+    chip: () => {
+      const s = doc.querySelector('[data-app-toast], [role="status"], [role="alert"]');
+      return s ? s.textContent : '';
+    },
+    arrange: async () => { await React.act(async () => { region().dispatchEvent(new dom.window.KeyboardEvent('keydown',
+      {key:'L', ctrlKey:true, shiftKey:true, bubbles:true, cancelable:true})); }); },
+    undo: async () => { await React.act(async () => { region().dispatchEvent(new dom.window.KeyboardEvent('keydown',
+      {key:'R', ctrlKey:true, shiftKey:true, bubbles:true, cancelable:true})); }); },
+    drag: async (id, dx, dy) => {
+      const handle = card(id).children[0];
+      await React.act(async () => { fire(handle, 'mousedown', {button:0, clientX:0, clientY:0}); });
+      await React.act(async () => { fire(doc, 'mousemove', {clientX:dx, clientY:dy}); });
+      await React.act(async () => { fire(doc, 'mouseup', {}); });
+    },
+    // A click on empty canvas clears the selection, as it does for the user.
+    clearSelection: async () => {
+      await React.act(async () => { fire(region(), 'mousedown', {button:0, clientX:5, clientY:5}); });
+      await React.act(async () => { fire(doc, 'mouseup', {}); });
+    },
+    click: async el => { await React.act(async () => { el.dispatchEvent(new dom.window.MouseEvent('click', {bubbles:true})); }); },
+    settle: async ms => { await React.act(async () => { await new Promise(done => dom.window.setTimeout(done, ms)); }); },
+    close: async () => {
+      await React.act(async () => reactRoot.unmount());
+      dom.window.close(); global.window = oldWindow; global.document = oldDocument;
+      delete global.IS_REACT_ACT_ENVIRONMENT;
+    },
+  };
+}
+
+test('T1: Arrange all writes with placement arrange and keeps pinned cards fixed', async () => {
+  const view = await mount();
+  try {
+    await view.arrange();
+    await view.settle(20);
+    assert.equal(view.saves.length, 1, 'one Arrange is one write');
+    assert.equal(view.saves[0].placement, 'arrange');
+    const sent = Object.keys(view.saves[0].positions);
+    assert.ok(!sent.includes('mine'), 'Arrange keeps the pinned card fixed: ' + sent);
+    await view.draw();
+    const cards = ['one', 'two', 'three', 'mine'];
+    for (let i = 0; i < cards.length; i += 1) for (let j = i + 1; j < cards.length; j += 1) {
+      assert.equal(overlaps(view.point(cards[i]), view.point(cards[j])), false, cards[i] + ' overlaps ' + cards[j]);
+    }
+  } finally { await view.close(); }
+});
+
+test('the old positions-only reset is gone: Ctrl+Shift+R writes nothing (Undo is the graph history now)', async () => {
+  const view = await mount();
+  try {
+    await view.arrange();
+    await view.settle(20);
+    assert.equal(view.saves.length, 1);
+    await view.draw();
+    await view.undo();
+    await view.settle(20);
+    assert.equal(view.saves.length, 1, 'no second positions write: ' + view.chip());
+  } finally { await view.close(); }
+});
+
+test('a hand drag is a plain move; Arrange all keeps hand-placed cards fixed', async () => {
+  const view = await mount();
+  try {
+    await view.drag('one', 400, 0);
+    await view.settle(1200);
+    assert.equal(view.saves.length, 1);
+    assert.equal(view.saves[0].placement, null, 'a drag carries no arrange placement');
+    await view.draw();
+    await view.clearSelection();
+    await view.arrange();
+    await view.settle(20);
+    assert.equal(view.saves.length, 2, 'chip: ' + view.chip());
+    const sent = Object.keys(view.saves[1].positions);
+    assert.ok(sent.length && !sent.includes('one') && !sent.includes('mine'), 'Arrange skips pinned cards: ' + sent);
+    assert.match(view.chip(), /pinned card/);
+  } finally { await view.close(); }
+});
+
+test('T2: Arrange clicked while a save is in flight runs once, after that save answers', async () => {
+  const hold = {}; hold.promise = new Promise(resolve => { hold.release = resolve; });
+  const view = await mount({hold});
+  try {
+    await view.drag('one', 400, 0);
+    await view.settle(1200);
+    assert.equal(view.saves.length, 1, 'the drag is out and held open');
+    await view.clearSelection();
+    await view.arrange();
+    await view.arrange();
+    assert.equal(view.saves.length, 1, 'nothing else is written while the save is in flight');
+    assert.match(view.chip(), /Saving positions|Arrange will run after the current save finishes\./);
+    hold.release();
+    await view.settle(50);
+    await view.draw();
+    await view.settle(50);
+    assert.equal(view.saves.length, 2, 'the remembered Arrange ran exactly once');
+    assert.equal(view.saves[1].placement, 'arrange');
+    const sent = Object.keys(view.saves[1].positions);
+    assert.ok(sent.length && !sent.includes('one'), 'it keeps the card the drag just pinned fixed: ' + sent);
+  } finally { await view.close(); }
+});
+
+test('T3: Arrange over hand-placed cards writes nothing and reports the real pinned count', async () => {
+  const nodes = NODES().map(node => ({...node, pinned:true}));
+  const view = await mount({nodes});
+  try {
+    await view.arrange();
+    await view.settle(20);
+    assert.equal(view.saves.length, 0);
+    assert.match(view.chip(), /4 pinned cards/);
+  } finally { await view.close(); }
+});
+
+test('overlapping cards: the canvas says so and offers Arrange; nothing is written until it is clicked, then once', async () => {
+  const view = await mount();
+  try {
+    await view.settle(30);
+    const chip = view.doc.querySelector('[data-overlap-chip]');
+    assert.ok(chip, 'stacked cards are reported');
+    assert.match(chip.textContent, /cards overlap/);
+    assert.equal(view.saves.length, 0, 'no automatic write');
+    const arrange = [...chip.querySelectorAll('button')].find(b => b.textContent.trim() === 'Arrange');
+    await view.click(arrange);
+    await view.settle(30);
+    assert.equal(view.saves.length, 1, 'one Arrange is one write');
+    assert.equal(view.saves[0].placement, 'arrange');
+    const moved = view.saves[0].positions, boxes = Object.entries(moved).map(([id, at]) => ({id, ...at, w:SIZE.w, h:SIZE.h}));
+    for (let a = 0; a < boxes.length; a += 1) for (let b = a + 1; b < boxes.length; b += 1) {
+      const p = boxes[a], q = boxes[b];
+      assert.ok(!(p.x < q.x + q.w && q.x < p.x + p.w && p.y < q.y + q.h && q.y < p.y + p.h), p.id + ' and ' + q.id + ' still overlap');
+    }
+  } finally { await view.close(); }
+});
+
+test('no visual frame elements are drawn; a group is already a node card', async () => {
+  const view = await mount();
+  try {
+    assert.equal(view.doc.querySelectorAll('[data-canvas-frame]').length, 0);
+  } finally { await view.close(); }
+});
+
+test('the canvas draws the user\'s cards; the application\'s open only as the founder\'s System tab, by domain', async () => {
+  const wires = [{id:'w1', from:['gm:domain:ui', 'o'], to:['app:agent-session:a', 'i']}];
+  const buttons = doc => [...doc.querySelectorAll('button')].map(b => b.textContent.trim());
+  const cards = view => [...view.doc.querySelectorAll('.lm-node[data-node-id]')].map(c => c.getAttribute('data-node-id')).sort();
+  const member = await mount({systemView:false, nodes:MARKED(), wires});
+  try {
+    assert.deepEqual(cards(member), ['mine', 'one', 'three', 'two']);
+    assert.equal(member.doc.querySelector('details[data-no-pan] summary'), null,
+      'a wire between hidden cards is not reported as undrawable');
+  } finally { await member.close(); }
+  const founder = await mount({systemView:true, nodes:MARKED(), wires});
+  try {
+    assert.deepEqual(cards(founder), ['mine', 'one', 'three', 'two'], 'the founder\'s session canvas holds his own cards');
+    assert.equal(buttons(founder.doc).some(t => /^(System view|System|My canvas)$/.test(t)), false,
+      'the system canvas is never entered from inside a session canvas');
+  } finally { await founder.close(); }
+  const systemTab = await mount({systemView:true, system:true, nodes:MARKED(), wires});
+  try {
+    await systemTab.settle(30);
+    assert.equal(systemTab.saves.length, 0, 'opening System must not persist its layout');
+    assert.deepEqual(cards(systemTab), ['app:agent-session:a', 'gm:domain:ui'], 'the System tab draws the application\'s parts');
+    assert.equal(systemTab.doc.querySelectorAll('[data-canvas-frame]').length, 0, 'System draws node cards, not frames');
+    assert.equal(systemTab.doc.querySelectorAll('.lm-wires path[stroke="transparent"]').length, 1, 'their wire is drawn with them');
+    await systemTab.arrange();
+    await systemTab.settle(30);
+    assert.equal(systemTab.saves.length, 1, 'explicit Arrange still persists exactly once');
+    assert.equal(systemTab.saves[0].placement, 'arrange');
+  } finally { await systemTab.close(); }
+  const notFounder = await mount({systemView:false, system:true, nodes:MARKED(), wires});
+  try {
+    assert.deepEqual(cards(notFounder), ['mine', 'one', 'three', 'two'], 'without system_view the System view is never drawn');
+  } finally { await notFounder.close(); }
+});
+
+test('an empty canvas says it holds only what the user places', async () => {
+  const view = await mount({nodes:INTERNALS, systemView:true});
+  try {
+    const note = view.doc.querySelector('[data-canvas-state="empty"]');
+    assert.match(note.textContent, /Build your graph/);
+    assert.equal(view.doc.querySelectorAll('.lm-node[data-node-id]').length,0);
+    assert.ok([...note.querySelectorAll('button')].some(button=>button.textContent==='Add node'),'empty canvas retains a visible recovery action');
+  } finally { await view.close(); }
+});

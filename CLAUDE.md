@@ -1,6 +1,6 @@
 # CLAUDE.md — the node-language repository
 
-**Read `04.DOCS/FOUNDER_MANDATES.md` before your first edit.** The founder's
+**Read `docs/FOUNDER_MANDATES.md` before your first edit.** The founder's
 thirty standing mandates live there (carried from the retired 12.PRODUCTION): ALWAYS-UTILIZE-WORKFLOWS,
 SHOW-THE-WORKFLOW, EXHAUSTIVE-DELIVERY, PROTOTYPE-FIRST-NEVER-ASK, ANTI-LIE,
 DEFINITION-OF-SHIPPED, SESSION-CLOSE, ROLLBACK-PROTOCOL, ROMA. A session that
@@ -9,17 +9,17 @@ never opens a file in that repository loads none of them.
 This file exists because that happened. On 2026-09-08 a session worked here for
 hours — the graph, the boot, the courts, the installed app — with the whole
 contract invisible, and wrote no FAILURE_LOG entry, no AgDR and no audit table
-until the founder asked why. `04.DOCS/FAILURE_LOG.md` in this repository is where
+until the founder asked why. `docs/FAILURE_LOG.md` in this repository is where
 the incidents go (its earlier entries were carried from 12.PRODUCTION).
 
 ## The law this repository is measured against
 
-`04.DOCS/SPEC.md` §1 and §3.1. One graph; every part a lens over it, never a separate
+`docs/SPEC.md` §1 and §3.1. One graph; every part a lens over it, never a separate
 product exchanging copied status reports. One persisted record — `Cell{id,
 link0, link1, atom}`. A semantic side table is forbidden; accelerators are
 disposable and deleting one may not change meaning.
 
-`04.DOCS/AUTHORITY.md` and the applicable specification come before product work.
+`docs/AUTHORITY.md` and the applicable specification come before product work.
 
 ## Traps that have cost real hours here
 
@@ -45,7 +45,7 @@ disposable and deleting one may not change meaning.
   resolvable on demand through that archive, and the step is resumable and
   tamper-checked. Blind pruning or deletion stays forbidden.
 - **The court files bound to the scoreboard are named in
-  `05.EVIDENCE/court_bindings.json` AND `05.EVIDENCE/grandmap_bindings.json`.** Run
+  `evidence/court_bindings.json` AND `evidence/grandmap_bindings.json`.** Run
   only the first and 51 files never execute, which reads as a PASS drop.
 - **A court must be shown RED against the code it forbids before it counts.**
   Four courts in this repository were green while the thing they named was

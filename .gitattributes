@@ -2,4 +2,4 @@
 *.png binary
 # Generated diffs and verbatim court output contain intentional format spaces.
 COHMAIN2.patch -text -whitespace
-05.EVIDENCE/cohmain2/*.out text eol=lf -whitespace
+evidence/cohmain2/*.out text eol=lf -whitespace

@@ -1,24 +1,7 @@
 [tool.pyright]
-extraPaths = [".", "01.APP", "02.TESTS", "03.TOOLS", "06.CLOUD"]
+extraPaths = ["."]
 typeCheckingMode = "basic"
 pythonVersion = "3.12"
 
 [tool.pytest.ini_options]
-pythonpath = [".", "01.APP", "02.TESTS", "03.TOOLS", "06.CLOUD"]
-
-[build-system]
-requires = ["setuptools"]
-build-backend = "setuptools.build_meta"
-
-[project]
-name = "archhub"
-dynamic = ["version"]
-requires-python = ">=3.12"
-
-[tool.setuptools]
-packages = ["nodelang", "app", "tools", "tools.pipeline", "cloud_backend"]
-package-dir = {nodelang = "01.APP/nodelang", app = "01.APP/app", tools = "03.TOOLS/tools", cloud_backend = "06.CLOUD/cloud_backend"}
-
-[tool.setuptools.dynamic]
-version = {file = "VERSION"}
-
+pythonpath = ["."]

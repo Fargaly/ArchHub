@@ -1,6 +1,6 @@
 # CLOUD requirements: the server runtime only (Universal Cell cloud gateway,
 # Postgres authority, KMS). Never installed on a desktop; the desktop list is
-# requirements.txt. 01.APP/packaging/cloud/requirements.lock is compiled from this file.
+# requirements.txt. packaging/cloud/requirements.lock is compiled from this file.
 # JOSE verification for RFC 9449 DPoP and OIDC adapters. 1.4.2 fixed
 # GHSA-frfh-8v73-gjg4; the upper bound forces an explicit major-version court.
 joserfc>=1.4.2,<2

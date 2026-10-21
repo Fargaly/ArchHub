@@ -1,0 +1,957 @@
+"""First-run setup for a colleague's machine.
+
+Nobody runs this file by hand. The colleague runs ArchHub-Setup.exe from
+the firm share; it installs into LOCALAPPDATA/ArchHub and leaves a
+Start-menu entry and a Desktop icon, both opening ArchHub.vbs. The FIRST
+time that icon is opened, ArchHub.vbs finds no .archhub-ready marker and
+hands over to ArchHub.bat, which runs this file in a window the person can
+read. Setup writes a marker bound to BUILD_ID and requirements.txt only
+after dependencies and imports succeed. An upgraded build invalidates the
+old marker; later opens validate the private environment before launching.
+
+The founder's laws apply to the people he hands this to: the application
+must open, and anything it needs installs itself or says plainly what is
+missing. Windows trust prompts depend on how the installer was obtained and
+the machine's policy; a firm share alone does not guarantee their absence.
+"""
+from __future__ import annotations
+
+import hashlib
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import shutil
+import stat
+import site
+from pathlib import Path
+
+# (pip name, import probe). What the DESKTOP boot reaches, measured by
+# importing the launcher modules and reading sys.modules -- not a guess. A
+# court holds this list against that measurement, so a dependency added to
+# the app cannot ship without landing here too. Before that court, rpds-py,
+# fastapi and uvicorn were missing and a first launch on a clean machine
+# died on import with no window and no message. Server-only packages
+# (FastAPI, uvicorn, psycopg, boto3, OpenCV) are not the desktop's: they live
+# in requirements-cloud.txt and the desktop boot no longer imports them.
+PACKAGES = (
+    ("PyQt6", "PyQt6"),
+    ("PyQt6-WebEngine", "PyQt6.QtWebEngineWidgets"),
+    ("cryptography", "cryptography"),
+    ("httpx", "httpx"),
+    ("joserfc", "joserfc"),
+    ("rpds-py", "rpds"),
+    ("ezdxf", "ezdxf"),
+    ("numpy", "numpy"),
+    ("psutil", "psutil"),
+    ("keyring", "keyring"),
+    ("mcp", "mcp"),
+    # The Work completion court runs pytest gates with this interpreter.
+    ("pytest", "pytest"),
+) + ((("pywin32", "pythoncom"), ("pywin32", "win32com.client"))
+     if sys.platform == "win32" else ())
+
+
+def _has(module):
+    try:
+        __import__(module)
+        return True
+    except Exception:
+        return False
+
+
+def readiness_identity(root: Path) -> str:
+    """Bind successful setup to the installed build and dependency manifest."""
+    with (root / "BUILD_ID").open("r", encoding="ascii") as stream:
+        raw_build_id = stream.read(257)
+    if len(raw_build_id) > 256:
+        raise ValueError("invalid installed build identity")
+    build_id = raw_build_id.strip()
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", build_id):
+        raise ValueError("invalid installed build identity")
+    with (root / "requirements.txt").open("rb") as stream:
+        requirements = stream.read(65537)
+    if not requirements or len(requirements) > 65536:
+        raise ValueError("invalid installed requirements manifest")
+    return build_id + ":" + hashlib.sha256(requirements).hexdigest()
+
+
+def ready_for_build(root: Path) -> bool:
+    try:
+        if not owned_interpreter(root):
+            return False
+        identity = readiness_identity(root)
+        with (root / ".archhub-ready").open("r", encoding="ascii") as stream:
+            marker = stream.read(257)
+        return len(marker) <= 256 and marker.strip() == "venv-v1:" + identity
+    except (OSError, UnicodeError, ValueError):
+        return False
+
+
+def _write_ready(root: Path, identity: str) -> None:
+    descriptor, name = tempfile.mkstemp(prefix=".archhub-ready-", dir=root)
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="ascii", newline="\n") as stream:
+            stream.write("venv-v1:" + identity + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, root / ".archhub-ready")
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def install_requirements(root: Path, pinned: Path, python=None):
+    """Install the desktop requirements, from the bundled wheelhouse first.
+
+    The installer carries every wheel the desktop needs (wheelhouse/), so a
+    machine behind a firm proxy or with no internet installs offline with
+    --no-index. Only when that fails (an incomplete wheelhouse, or a build
+    without one) does pip reach the package index.
+    """
+    base = [str(python or sys.executable), "-E", "-s", "-m", "pip", "--isolated", "install",
+            "--disable-pip-version-check"]
+    wheelhouse = root / "wheelhouse"
+    if wheelhouse.is_dir() and any(wheelhouse.glob("*.whl")):
+        print("  installing : from the bundled wheelhouse (no internet needed)")
+        result = subprocess.run(
+            base + ["--no-index", "--find-links", str(wheelhouse), "-r", str(pinned)],
+            env=clean_environment())
+        if result.returncode == 0:
+            return result
+        print("  wheelhouse : incomplete for this machine; trying the package index")
+    return subprocess.run(base + ["-r", str(pinned)], env=clean_environment())
+
+
+def clean_environment():
+    env = {key: value for key, value in os.environ.items()
+           if key.upper() not in {"PYTHONPATH", "PYTHONHOME"}}
+    env["PYTHONNOUSERSITE"] = "1"
+    return env
+
+
+def environment_path(root: Path) -> Path:
+    """Reject redirected owned paths before any child interpreter is used."""
+    owned = root / ".venv"
+    for path in (owned, owned / "Scripts", owned / "pyvenv.cfg",
+                 owned / "Scripts/python.exe", owned / "Scripts/pythonw.exe"):
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+            raise ValueError("redirected ArchHub environment")
+    return owned
+
+
+def owned_interpreter(root: Path) -> bool:
+    owned = environment_path(root)
+    config = owned / "pyvenv.cfg"
+    return (config.is_file()
+            and re.search(r"(?im)^include-system-site-packages\s*=\s*false\s*$",
+                          config.read_text(encoding="utf-8")) is not None
+            and (owned / "Scripts/python.exe").is_file()
+            and (owned / "Scripts/pythonw.exe").is_file()
+            and Path(sys.executable).resolve() == (owned / "Scripts/python.exe").resolve()
+            and Path(sys.prefix).resolve() == owned.resolve()
+            and sys.prefix != sys.base_prefix
+            and site.ENABLE_USER_SITE is False)
+
+
+def environment_version(owned: Path):
+    """(major, minor) of the Python that built this environment, or None."""
+    try:
+        text = (owned / "pyvenv.cfg").read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+    match = re.search(r"(?im)^version(?:_info)?\s*=\s*(\d+)\.(\d+)", text)
+    return (int(match.group(1)), int(match.group(2))) if match else None
+
+
+def _discard(path: Path) -> None:
+    """Best effort: a leftover that cannot be removed now is removed next time."""
+    shutil.rmtree(path, ignore_errors=True)
+
+
+def recover_environment_swap(root: Path) -> int:
+    """Finish an interrupted swap: .venv is always the old or the new one, never neither.
+
+    replace_environment moves .venv to .venv.old and then .venv.new to .venv. A kill
+    between those two renames leaves no .venv; the old environment is moved back
+    before anything else runs, so the next setup never discards it as a leftover
+    (review 2026-09-28). Returns 0 when .venv is in place or never existed.
+    """
+    owned = root / ".venv"
+    retired = root / ".venv.old"
+    if owned.exists() or not retired.exists():
+        return 0
+    try:
+        os.replace(retired, owned)
+    except OSError:
+        print("  REFUSED: the previous environment is at .venv.old and could not be restored; close ArchHub and retry.")
+        return 10
+    print("  restored   : the environment an interrupted rebuild moved aside")
+    return 0
+
+
+def replace_environment(root: Path, owned: Path) -> int:
+    """Build this Python's environment beside the old one, prove it, then swap.
+
+    An upgrade from 3.11-3.13 to the 3.14 pin needs a new environment. It is
+    built in .venv.new, its packages installed from the wheelhouse and its boot
+    imports proven there; only then is the old one moved aside and the new one
+    moved in. Until that swap holds, the old environment and its ready marker
+    are untouched, so a failed build, a locked file or a full disk leaves the
+    working installation as it was (review 2026-09-28). Returns 0 on success.
+    """
+    fresh = root / ".venv.new"
+    retired = root / ".venv.old"
+    for leftover in (fresh, retired):
+        if leftover.exists():
+            _discard(leftover)
+            if leftover.exists():
+                print("  REFUSED: a previous environment rebuild is still in use; close ArchHub and retry.")
+                return 8
+    result = subprocess.run([sys.executable, "-E", "-s", "-m", "venv", str(fresh)],
+                            env=clean_environment())
+    status = result.returncode
+    fresh_python = fresh / "Scripts" / "python.exe"
+    if not status and not fresh_python.is_file():
+        status = 8
+    if not status:
+        print("  rebuilding : the private environment for Python %d.%d" % sys.version_info[:2])
+        status = install_requirements(root, root / "requirements.txt", python=fresh_python).returncode
+    if not status:
+        probes = [probe for _name, probe in PACKAGES if probe not in ("ezdxf", "numpy")]
+        status = subprocess.run([str(fresh_python), "-E", "-s", "-c",
+                                 "import " + ", ".join(probes) if probes else "pass"],
+                                env=clean_environment()).returncode
+    if status:
+        print("  REFUSED: the new environment could not be prepared; the current one is kept.")
+        _discard(fresh)
+        return status
+    try:
+        os.replace(owned, retired)
+    except OSError:
+        print("  REFUSED: ArchHub's environment is in use (close ArchHub and retry); it is kept as it was.")
+        _discard(fresh)
+        return 9
+    try:
+        os.replace(fresh, owned)
+    except OSError:
+        try:
+            os.replace(retired, owned)
+        except OSError:
+            print("  REFUSED: the environment swap failed; the previous one is at .venv.old and is restored on the next setup.")
+            return 10
+        print("  REFUSED: the environment swap failed; the current one is kept.")
+        _discard(fresh)
+        return 10
+    # The swap holds: the old build's readiness no longer describes .venv.
+    (root / ".archhub-ready").unlink(missing_ok=True)
+    _discard(retired)
+    return 0
+
+
+def prepare_environment(root: Path, check_only=False):
+    """Return None only inside the validated environment; otherwise child status."""
+    owned = environment_path(root)
+    if owned_interpreter(root):
+        return None
+    if not check_only:
+        status = recover_environment_swap(root)
+        if status:
+            return status
+    if Path(sys.prefix).resolve() == owned.resolve():
+        raise ValueError("invalid ArchHub environment interpreter")
+    # An environment another Python built (an upgrade from 3.11-3.13 to the
+    # 3.14 pin) is rebuilt; reused, its interpreter would refuse itself forever.
+    # A damaged environment (no recorded version) still takes the refusal below.
+    built_by = environment_version(owned) if owned.exists() else None
+    if built_by is not None and built_by != tuple(sys.version_info[:2]):
+        if check_only:
+            return 1
+        status = replace_environment(root, owned)
+        if status:
+            return status
+    if not owned.exists():
+        if check_only:
+            return 1
+        result = subprocess.run([sys.executable, "-E", "-s", "-m", "venv", str(owned)],
+                                env=clean_environment())
+        if result.returncode:
+            return result.returncode
+    environment_path(root)
+    if not all((owned / name).is_file() for name in
+               ("pyvenv.cfg", "Scripts/python.exe", "Scripts/pythonw.exe")):
+        raise ValueError("damaged ArchHub environment; repair is required")
+    # A private flag prevents recursion if the interpreter does not identify as ours.
+    if "--owned-environment" in sys.argv:
+        raise ValueError("ArchHub environment identity mismatch")
+    args = ["--owned-environment"] + (["--check-ready"] if check_only else [])
+    # The child gets this file as it was opened, not root / "colleague_setup.py":
+    # root is resolved, and resolving collapses a junction at or above the
+    # install, so the child could never see the redirect that registration
+    # refuses. os.path.abspath normalises without following links.
+    return subprocess.run([str(owned / "Scripts/python.exe"), "-E", "-s",
+                           os.path.abspath(__file__), *args],
+                          env=clean_environment()).returncode
+
+
+
+# This setup evidence is deliberately separate from runtime broker probes:
+# no listener, COM attachment, host process or assistant session is opened.
+_HOST_SETUP_NAMES = {
+    "revit": "Revit", "autocad": "AutoCAD", "max": "3ds Max",
+    "rhino": "Rhino", "blender": "Blender", "excel": "Excel",
+    "word": "Word", "powerpoint": "PowerPoint", "outlook": "Classic Outlook",
+}
+_HOST_SETUP_EXES = dict(zip(_HOST_SETUP_NAMES, (
+    "Revit.exe", "acad.exe", "3dsmax.exe", "Rhino.exe", "blender.exe",
+    "EXCEL.EXE", "WINWORD.EXE", "POWERPNT.EXE", "OUTLOOK.EXE",
+)))
+
+
+def _setup_app_paths(exe: str) -> list[Path]:
+    """Read only the named executable's Windows App Paths registrations."""
+    if sys.platform != "win32":
+        return []
+    import winreg
+    paths = []
+    key = "Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\" + exe
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        for view in (winreg.KEY_WOW64_64KEY, winreg.KEY_WOW64_32KEY):
+            try:
+                with winreg.OpenKey(hive, key, 0, winreg.KEY_READ | view) as handle:
+                    value, kind = winreg.QueryValueEx(handle, "")
+                if kind in (winreg.REG_SZ, winreg.REG_EXPAND_SZ) and isinstance(value, str):
+                    paths.append(Path(os.path.expandvars(value.strip().strip('"'))))
+            except OSError:
+                continue
+    return paths
+
+
+def _setup_children(directory: Path, limit: int = 32) -> list[Path]:
+    """Bounded single-directory inventory; never descend into host projects."""
+    try:
+        with os.scandir(directory) as entries:
+            paths = []
+            for index, entry in enumerate(entries):
+                if index == limit:
+                    break
+                paths.append(Path(entry.path))
+            return paths
+    except OSError:
+        return []
+
+
+def _setup_host_installations() -> dict[str, list[str]]:
+    """Executable file evidence only; custom or unregistered installs may be missed."""
+    found = {host: set() for host in _HOST_SETUP_NAMES}
+    bases = {Path(value) for key in ("ProgramFiles", "ProgramFiles(x86)")
+             if (value := os.environ.get(key))}
+    for host, exe in _HOST_SETUP_EXES.items():
+        candidates = _setup_app_paths(exe)
+        for base in bases:
+            if host in ("revit", "autocad", "max"):
+                candidates.extend(base / "Autodesk" / f"{_HOST_SETUP_NAMES[host]} {year}" / exe
+                                  for year in range(2018, 2036))
+            elif host == "rhino":
+                candidates.extend(base / f"Rhino {version}" / "System" / exe
+                                  for version in range(5, 11))
+            elif host == "blender":
+                candidates.extend(path / exe for path in _setup_children(base / "Blender Foundation"))
+            else:
+                candidates.extend((base / "Microsoft Office" / "root" / "Office16" / exe,
+                                   base / "Microsoft Office" / "Office16" / exe))
+        for path in candidates:
+            try:
+                if not path.is_file():
+                    continue
+            except OSError:
+                continue
+            if host in ("revit", "autocad", "max"):
+                match = re.search(r"(?:Revit|AutoCAD|3ds Max) (20\d{2})(?:[\\/]|$)", str(path), re.I)
+            elif host in ("rhino", "blender"):
+                match = re.search(r"(?:Rhino|Blender) (\d+(?:\.\d+)*)(?:[\\/]|$)", str(path), re.I)
+            else:
+                match = None
+            found[host].add(match.group(1) if match else "version-unchecked")
+    return {host: sorted(versions) for host, versions in found.items()}
+
+
+def _setup_compiler_candidates(root: Path) -> bool:
+    """Find files, never execute a compiler or imply language-version validation."""
+    candidates = [root / "bin" / "csc" / "csc.exe"]
+    for key in ("ProgramFiles", "ProgramFiles(x86)"):
+        if not (value := os.environ.get(key)):
+            continue
+        base = Path(value)
+        for edition in ("BuildTools", "Community", "Professional", "Enterprise"):
+            candidates.append(base / "Microsoft Visual Studio" / "2022" / edition
+                              / "MSBuild" / "Current" / "Bin" / "Roslyn" / "csc.exe")
+        candidates.extend(sdk / "Roslyn" / "bincore" / "csc.dll"
+                          for sdk in _setup_children(base / "dotnet" / "sdk"))
+    # A framework csc can exist yet support only C# 5. Its presence remains
+    # unverified here; the existing runtime owner must enforce C# >= 7.3.
+    if value := os.environ.get("WINDIR"):
+        candidates.append(Path(value) / "Microsoft.NET" / "Framework64" / "v4.0.30319" / "csc.exe")
+    return any(path.is_file() for path in candidates)
+
+
+def host_installation_readiness(root: Path) -> list[dict]:
+    """Passive setup evidence, never permission or a claim of live execution readiness."""
+    installations = _setup_host_installations()
+    compiler = "candidate-unverified" if _setup_compiler_candidates(root) else "compiler-not-found"
+    com_available = sys.platform == "win32" and _has("pythoncom") and _has("win32com.client")
+    rows = [{"host": "Assistant MCP runtime", "version": "",
+             "host_installation": "not-applicable",
+             "packaged": "importable" if _has("mcp") else "dependency-missing",
+             "deployment": "assistant-registration-unchecked", "compiler": "not-applicable",
+             "detail": "MCP import does not establish assistant registration, a session, or graph access."}]
+    scripts = {"rhino": root / "bridges/rhino/archhub_mcp.py",
+               "blender": root / "bridges/blender/archhub_mcp/__init__.py",
+               "max": root / "bridges/max/max_mcp_startup.py"}
+    for host, label in _HOST_SETUP_NAMES.items():
+        for version in installations.get(host) or ["not-detected"]:
+            row = {"host": label, "version": version,
+                   "host_installation": "executable-found" if version != "not-detected" else "not-detected",
+                   "packaged": "not-packaged", "deployment": "unchecked",
+                   "compiler": compiler if host in ("revit", "autocad") else "not-applicable",
+                   "detail": "No host was opened; authentication and host load state are unchecked."}
+            if host in ("revit", "autocad"):
+                names = ("RevitMCP.dll", "RevitMCPCore.dll") if host == "revit" else ("AcadMCP.dll",)
+                payload = root / "bridges" / host / version
+                if all((payload / name).is_file() for name in names):
+                    row["packaged"] = "payload-files-present-unverified"
+                    row["detail"] = "Payload files exist; release closure, matching host registration and compiler compatibility need verification. A host restart may be needed after deployment."
+                else:
+                    row["detail"] = "This build has no connector payload for this detected host version; installing the host alone does not install its ArchHub connector."
+                if host == "revit" and re.fullmatch(r"20\d{2}", version) and os.environ.get("APPDATA"):
+                    manifest = Path(os.environ["APPDATA"]) / "Autodesk/Revit/Addins" / version / "RevitMCP.addin"
+                    if manifest.is_file():
+                        row["deployment"] = "registration-present-unverified"
+                        row["detail"] += " An existing Revit add-in registration was found; its ownership, version and load state were not verified."
+            elif host in scripts:
+                shipped = scripts[host].is_file()
+                row["packaged"] = "script-packaged" if shipped else "not-packaged"
+                row["deployment"] = "activation-unchecked"
+                row["detail"] = ("The host must explicitly load the ArchHub script; script presence does not establish activation."
+                                 if shipped else "This build does not package an ArchHub script for this host.")
+                if host == "rhino":
+                    row["detail"] += " The packaged script requires Rhino 8 CPython 3."
+                    if version.isdigit() and int(version) < 8:
+                        row["deployment"] = "unsupported-version"
+                elif host == "blender":
+                    row["detail"] += " The packaged add-on declares Blender 3.6 or newer."
+                    if re.fullmatch(r"\d+(?:\.\d+)*", version) and tuple(map(int, version.split("."))) < (3, 6):
+                        row["deployment"] = "unsupported-version"
+                elif re.fullmatch(r"20\d{2}", version) and os.environ.get("LOCALAPPDATA"):
+                    startup = Path(os.environ["LOCALAPPDATA"]) / "Autodesk/3dsMax" / f"{version} - 64bit" / "ENU/scripts/startup/max_mcp_startup.py"
+                    if startup.is_file():
+                        row["deployment"] = "startup-script-present-unverified"
+                        row["detail"] += " A per-user startup script exists; its contents and host load state are unchecked. A host restart may be needed after deployment."
+            else:
+                row["packaged"] = "COM-dependency-importable" if com_available else "pywin32-missing"
+                row["deployment"] = "built-in-COM-adapter"
+                row["detail"] = "Requires the installed Windows desktop Office application and its configured user profile; no separate listener is installed. COM access and sign-in are unchecked."
+                if host == "outlook":
+                    row["detail"] += " New Outlook uses the separate Microsoft Graph connector and its prerequisite/sign-in check."
+            rows.append(row)
+    return rows
+
+
+def print_host_installation_readiness(root: Path) -> None:
+    print("  external hosts: passive installation evidence; no host or assistant was opened")
+    print("  Detection covers App Paths and bounded standard locations; custom installs may be missed.")
+    try:
+        for row in host_installation_readiness(root):
+            print("  {host} {version}: host={host_installation}; payload={packaged}; deployment={deployment}; compiler={compiler}".format(**row))
+            print("    " + row["detail"])
+    except Exception:  # noqa: BLE001 - evidence only; the ready marker must still be written
+        print("  Host installation evidence is unavailable. External connectors are not verified ready.")
+
+
+def register_revit_add_ins(root: Path, *, environment=None, install=None,
+                           detected_years=None) -> list[dict]:
+    """Register the packaged Revit add-in for every Revit year found here.
+
+    The installer carries the add-in compiled per year (installer/
+    build_host_bridges.ps1) and HOST_ARTIFACTS.json naming each year's manifest
+    and digest. For each year both packaged and installed, the existing
+    registration owner (nodelang/host_broker_installation.py) verifies the
+    closure, the host API pins and the custody review, then writes the user's
+    RevitMCP.addin. It never overwrites a different registration, never needs
+    elevation and never starts Revit. Each outcome is printed as it is.
+    """
+    import json
+    env = os.environ if environment is None else environment
+    if install is None:
+        from nodelang.host_broker_installation import install_revit_broker as install
+    index_path = root / "HOST_ARTIFACTS.json"
+    try:
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        print("  revit add-in: this build carries no Revit add-in payload")
+        return []
+    revit = index.get("revit") if isinstance(index, dict) else None
+    if not isinstance(revit, dict):
+        print("  revit add-in: HOST_ARTIFACTS.json is unreadable; nothing registered")
+        return []
+    detected = set(_setup_host_installations().get("revit") or []) if detected_years is None else set(detected_years)
+    outcomes = []
+    for year in sorted(revit):
+        row = revit[year]
+        if year not in detected:
+            outcomes.append({"host_version": year, "status": "host-not-installed"})
+            print("  revit %s   : add-in packaged; Revit %s is not installed here" % (year, year))
+            continue
+        program_files = env.get("ProgramFiles", r"C:\Program Files")
+        result = install(
+            package_root=str(root), manifest_path=str(root / row["manifest"]),
+            expected_manifest_sha256=row["sha256"], host_version=year,
+            host_executable=str(Path(program_files) / "Autodesk" / ("Revit %s" % year) / "Revit.exe"),
+            user_profile_root=env["USERPROFILE"],
+            user_addins_root=str(Path(env["APPDATA"]) / "Autodesk" / "Revit" / "Addins"),
+            machine_addins_root=str(Path(env.get("ProgramData", r"C:\ProgramData")) / "Autodesk" / "Revit" / "Addins"))
+        outcomes.append(result)
+        print("  revit %s   : %s%s" % (year, result["status"],
+                                        (" - " + result["reason"]) if result.get("reason") else
+                                        " (restart Revit %s to load it)" % year if result.get("registered") else ""))
+    return outcomes
+
+
+def register_max_startup(root: Path, *, environment=None, detected_years=None) -> list[dict]:
+    """Place the shipped MaxMCP startup script in each installed 3ds Max version, when reviewed.
+
+    The script (bridges/max/max_mcp_startup.py) signs-checks every caller
+    (host_bridge_auth.py). It is copied only when HOST_ARTIFACTS.json carries
+    the custody review for it and its SHA-256 matches the shipped file; an
+    existing different script is reported and left alone. 3ds Max loads it at
+    its next start. Uninstall removes only byte-identical copies.
+    """
+    import hashlib
+    import json
+    import tempfile
+    from nodelang.client_mcp_installation import RegistrationRefused, _require_plain
+    env = os.environ if environment is None else environment
+    try:
+        index = json.loads((root / "HOST_ARTIFACTS.json").read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return []
+    entry = index.get("max") if isinstance(index, dict) else None
+    shipped = root / "bridges" / "max" / "max_mcp_startup.py"
+    if not isinstance(entry, dict):
+        print("  3ds max    : this build carries no MaxMCP entry; nothing placed")
+        return []
+    activation = entry.get("activation")
+    if not (isinstance(activation, dict) and activation.get("eligibility") == "reviewed-authenticated-broker"):
+        print("  3ds max    : MaxMCP custody is not reviewed for activation; nothing placed")
+        return [{"status": "refused", "reason": "not reviewed for activation"}]
+    try:
+        payload = shipped.read_bytes()
+    except OSError:
+        print("  3ds max    : the shipped MaxMCP script is missing; nothing placed")
+        return [{"status": "refused", "reason": "shipped script missing"}]
+    if hashlib.sha256(payload).hexdigest() != entry.get("sha256"):
+        print("  3ds max    : the shipped MaxMCP script differs from its release pin; nothing placed")
+        return [{"status": "refused", "reason": "shipped script differs from its pin"}]
+    years = sorted(set(_setup_host_installations().get("max") or []) if detected_years is None
+                   else set(detected_years))
+    outcomes = []
+    for year in years:
+        if not re.fullmatch(r"20\d{2}", year):
+            continue
+        folder = Path(env["LOCALAPPDATA"]) / "Autodesk" / "3dsMax" / ("%s - 64bit" % year) / "ENU" / "scripts" / "startup"
+        target = folder / "max_mcp_startup.py"
+        row = {"host_version": year, "path": str(target)}
+        try:
+            _require_plain(folder, "directory", may_be_absent=True)
+            if target.exists():
+                row["status"] = "unchanged" if target.read_bytes() == payload else "refused"
+                if row["status"] == "refused":
+                    row["reason"] = "a different max_mcp_startup.py is already there; left unchanged"
+            else:
+                folder.mkdir(parents=True, exist_ok=True)
+                descriptor, temporary = tempfile.mkstemp(prefix=".archhub-max-", suffix=".tmp", dir=folder)
+                try:
+                    with os.fdopen(descriptor, "wb") as stream:
+                        stream.write(payload)
+                    os.link(temporary, target)  # never replaces a file another writer placed
+                finally:
+                    os.unlink(temporary)
+                row["status"] = "placed_pending_host_restart"
+        except (OSError, RegistrationRefused) as exc:
+            row.update(status="failed", reason="%s: %s" % (type(exc).__name__, exc))
+        outcomes.append(row)
+        print("  3ds max %s : %s%s" % (year, row["status"], (" - " + row["reason"]) if row.get("reason") else ""))
+    return outcomes
+
+
+def register_autocad_add_ins(root: Path, *, environment=None, install=None,
+                             detected_years=None) -> list[dict]:
+    """Register the packaged AutoCAD add-in for every AutoCAD year found here, when reviewed.
+
+    The installer carries AcadMCP compiled per year (installer/
+    build_host_bridges.ps1) and pinned in HOST_ARTIFACTS.json. For the years
+    both packaged and installed, the registration owner
+    (nodelang/autocad_broker_installation.py) verifies the custody review, the
+    closure and the host API pins, then writes this user's
+    ApplicationPlugins/ArchHub.AcadMCP.bundle. It never touches a bundle it did
+    not place, never needs elevation and never starts AutoCAD.
+    """
+    import json
+    env = os.environ if environment is None else environment
+    if install is None:
+        from nodelang.autocad_broker_installation import install_autocad_broker as install
+    try:
+        index = json.loads((root / "HOST_ARTIFACTS.json").read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return []
+    autocad = index.get("autocad") if isinstance(index, dict) else None
+    if not isinstance(autocad, dict) or not autocad:
+        print("  autocad    : this build carries no AutoCAD add-in payload")
+        return []
+    detected = set(_setup_host_installations().get("autocad") or []) if detected_years is None else set(detected_years)
+    outcomes = [{"host_version": year, "status": "host-not-installed"} for year in sorted(autocad) if year not in detected]
+    for row in outcomes:
+        print("  autocad %s : add-in packaged; AutoCAD %s is not installed here" % (row["host_version"], row["host_version"]))
+    selected = {year: autocad[year] for year in sorted(autocad) if year in detected}
+    if selected:
+        results = install(
+            package_root=str(root), rows=selected,
+            program_files=env.get("ProgramFiles", r"C:\Program Files"),
+            user_profile_root=env["USERPROFILE"],
+            user_plugins_root=str(Path(env["APPDATA"]) / "Autodesk" / "ApplicationPlugins"),
+            machine_plugins_root=str(Path(env.get("ProgramData", r"C:\ProgramData")) / "Autodesk" / "ApplicationPlugins"),
+            # nodelang/launcher.py owns this state location (see _launcher_state_root).
+            state_root=str(Path(env.get("ARCHHUB_TEST_STATE_DIR") or Path(env["LOCALAPPDATA"]) / "ArchHub")))
+        for result in results:
+            print("  autocad %s : %s%s" % (result["host_version"], result["status"],
+                                           (" - " + result["reason"]) if result.get("reason") else
+                                           " (restart AutoCAD %s to load it)" % result["host_version"]
+                                           if result.get("registered") else ""))
+        outcomes.extend(results)
+    return outcomes
+
+
+def report_rhino_blender(root: Path, *, detected=None) -> list[dict]:
+    """Say how Rhino and Blender connect: one click from ArchHub, never a copied script.
+
+    Their bridges ship in bridges/rhino and bridges/blender and bind a port only
+    while the host runs them; ArchHub opens the host with its bridge
+    (nodelang/host_brokers.open_host, spoken as "open Rhino" / "open Blender").
+    Nothing is written into a Rhino or Blender profile.
+    """
+    found = _setup_host_installations() if detected is None else detected
+    shipped = {"rhino": ("Rhino", root / "bridges" / "rhino" / "archhub_mcp.py"),
+               "blender": ("Blender", root / "bridges" / "blender" / "archhub_mcp" / "__init__.py")}
+    rows = []
+    for host, (label, script) in shipped.items():
+        for version in found.get(host) or []:
+            status = "one-click-open" if script.is_file() else "bridge-not-shipped"
+            rows.append({"host": host, "version": version, "status": status})
+            print("  %-10s : %s" % ("%s %s" % (host, version),
+                                     'say "open %s" in ArchHub to start it with its bridge' % label
+                                     if status == "one-click-open" else "this build carries no %s bridge" % label))
+    return rows
+
+def _launcher_state_root() -> Path:
+    # nodelang/launcher.py owns this location; a court holds the two equal.
+    return Path(os.environ.get("ARCHHUB_TEST_STATE_DIR")
+                or Path(os.environ["LOCALAPPDATA"]) / "ArchHub")
+
+
+def _assistant_integration(root: Path, identity: str) -> None:
+    """Offer Claude Code registration, record the choice, and say what is true.
+
+    Registration adds one entry to this Windows user's Claude Code MCP list,
+    and only on their yes. It does not start the server, connect a session or
+    prove a host action; the window says so.
+    """
+    import json
+    from nodelang.client_mcp_installation import readiness, register_claude_code
+
+    state = _launcher_state_root()
+    receipt_path = state / "assistant-integration.json"
+    try:
+        previous = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        previous = {}
+    report = readiness(root, state)
+    requested = [argument.split("=", 1)[1] for argument in sys.argv[1:]
+                 if argument.startswith("--assistant=")]
+    choice = "not_asked"
+    if report["claude_code"] in ("ready_to_register", "migration_available"):
+        question = ("  Connect ArchHub tools to Claude Code for this Windows user?"
+                    " It adds one entry to your Claude Code MCP list and"
+                    " changes nothing else. [y/N] ")
+        if report["claude_code"] == "migration_available":
+            # ArchHub's own development-era entries run the source checkout, never
+            # this install: the same yes adds this install's entry and retires them.
+            question = ("  Move Claude Code to this ArchHub install? It adds this install's entry"
+                        " and removes ArchHub's old development entry (%s); nothing else"
+                        " changes. [y/N] " % ", ".join(report["legacy_retire"]))
+        if requested:
+            choice = "accepted" if requested[-1] == "claude-code" else "declined"
+        elif type(previous) is dict and previous.get("choice") == "declined":
+            choice = "declined"
+        elif sys.stdin is not None and sys.stdin.isatty():
+            try:
+                answer = input(question)
+            except (EOFError, KeyboardInterrupt):
+                # No answer is not a no: the choice stays not_asked and the
+                # next run asks again. KeyboardInterrupt is not an Exception,
+                # so letting it out would end setup after .archhub-ready was
+                # written, and the window would say nothing was marked ready.
+                answer = None
+            if answer is not None:
+                choice = "accepted" if answer.strip().lower() in ("y", "yes") else "declined"
+        if choice == "accepted":
+            report = register_claude_code(root, state, consent=True)
+    print("  claude code:", report["claude_code"])
+    if report.get("reason"):
+        suffix = "" if report.get("exit_code") is None else " (exit %d)" % report["exit_code"]
+        print("  reason     : %s%s" % (report["reason"], suffix))
+    if report.get("project_overrides"):
+        print("  override   : %d Claude Code project(s) define their own %s; the user entry"
+              " does not apply in those projects, and nothing was changed there."
+              % (report["project_overrides"], report["server_name"]))
+    if report.get("retired"):
+        print("  retired    : %s (ArchHub development-era entry)" % ", ".join(report["retired"]))
+    unverified = [name for name in report.get("legacy_migration_needed") or ()
+                  if name not in (report.get("legacy_retire") or {})]
+    if unverified:
+        print("  legacy     : %s: kept unchanged" % ", ".join(unverified))
+    elif report.get("legacy_migration_needed"):
+        print("  legacy     : %s: ArchHub development-era entry; accepting the offer retires it"
+              % ", ".join(report["legacy_migration_needed"]))
+    print("  claude app :", report["claude_desktop"])
+    if report["claude_code"] == "registered":
+        print("  note       : entry registered only. Open ArchHub, then start Claude Code to"
+              " use it; a project's own .mcp.json can still override it. Setup does not"
+              " verify host actions.")
+    elif report["claude_code"] == "registered_with_project_overrides":
+        print("  note       : entry registered, but not in effect in the projects above."
+              " Setup does not verify host actions.")
+    elif report["claude_code"] in ("ready_to_register", "migration_available"):
+        print("  later      : \"%s\" -E -s \"%s\" --assistant=claude-code"
+              % (sys.executable, root / "colleague_setup.py"))
+    entry = report.get("entry")
+    receipt = {
+        "schema": "assistant-integration-v1", "build": identity, "client": "claude-code",
+        "choice": choice, "result": report["claude_code"], "server_name": report["server_name"],
+        "entry_sha256": (hashlib.sha256(json.dumps(entry, sort_keys=True, separators=(",", ":"))
+                                        .encode("utf-8")).hexdigest() if entry else None),
+        "exit_code": report.get("exit_code"), "project_overrides": report.get("project_overrides", 0),
+        "legacy_migration_needed": list(report.get("legacy_migration_needed") or ()),
+        # Each retired development-era entry exactly as it was, so it can be restored.
+        "retired": dict(report.get("retired") or {}),
+        "host_execution": "not_verified",
+    }
+    state.mkdir(parents=True, exist_ok=True)
+    descriptor, name = tempfile.mkstemp(prefix=".assistant-integration-", dir=state)
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+            json.dump(receipt, stream, indent=2, sort_keys=True)
+            stream.write("\n")
+        os.replace(temporary, receipt_path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+ASSISTANT_HOOKS_CONSENT = ".assistant-hooks-consent"
+ASSISTANT_HOOKS_CONSENT_TEXT = "connect-assistants-v1"
+
+
+def _assistant_hooks(root: Path) -> list:
+    """Honour the installer's "Connect my AI assistants to ArchHub" choice, once.
+
+    The installer writes the marker only when that option is ticked; the choice is
+    the consent. Unticked means no marker and nothing is written. Each installed
+    assistant gets ArchHub's end-of-turn check through the same consent path as
+    Settings > Assistants > Repair; everything else in its settings is kept.
+    """
+    marker = root / ASSISTANT_HOOKS_CONSENT
+    try:
+        chosen = marker.read_text(encoding="ascii").strip() == ASSISTANT_HOOKS_CONSENT_TEXT
+    except (OSError, UnicodeError):
+        chosen = False
+    if not chosen:
+        print("  assistants : not connected (the setup option was not chosen)")
+        return []
+    from nodelang.assistant_registration import connect_hooks_on_setup
+    results = connect_hooks_on_setup(consent=True)
+    said = {"configured": "end-of-turn check set", "not_installed": "not installed",
+            "registered": "Session Link plugin set",
+            "not_connected": "not connected; use Settings > Assistants > Repair",
+            "conflict": "another ArchHub copy's check is set; left unchanged (review in Settings > Assistants)",
+            "stale": "an old check points at a missing file; left unchanged (review in Settings > Assistants)"}
+    for row in results:
+        print("  %-10s : %s" % (row["client"], said.get(row["state"], row["state"])))
+    if any(row["client"] == "codex" and row["state"] == "configured" for row in results):
+        print("  codex      : approve the new hook in Codex; ArchHub never approves it for you")
+    marker.unlink(missing_ok=True)
+    return results
+
+
+def verify_imports(root: Path) -> list[str]:
+    """Import every required probe in a fresh child of the owned interpreter.
+
+    Returns the probes that do not import there; an empty list means ready.
+    The child starts after install, so .pth wiring (pywin32) is in effect.
+    Any child failure other than a clean report counts every probe missing.
+    """
+    probes = [probe for _pip_name, probe in PACKAGES
+              if probe not in ("ezdxf", "numpy")]  # optional engines
+    script = ("import importlib, sys\n"
+              "bad = []\n"
+              "for name in sys.argv[1:]:\n"
+              "    try:\n"
+              "        importlib.import_module(name)\n"
+              "    except Exception:\n"
+              "        bad.append(name)\n"
+              "print(' '.join(bad))\n"
+              "raise SystemExit(3 if bad else 0)\n")
+    python = environment_path(root) / "Scripts/python.exe"
+    try:
+        result = subprocess.run([str(python), "-E", "-s", "-c", script, *probes],
+                                env=clean_environment(), capture_output=True,
+                                text=True, timeout=300)
+    except (OSError, subprocess.SubprocessError):
+        return probes
+    if result.returncode == 0:
+        return []
+    reported = [name for name in result.stdout.split() if name in probes]
+    return reported if result.returncode == 3 and reported else probes
+
+
+def main():
+    print("ArchHub setup")
+    print("  python     :", sys.version.split()[0])
+    # The bundled wheelhouse is built for 3.14 only (build_release.ps1); any
+    # other interpreter misses it and falls to the package index, which a firm
+    # proxy blocks.
+    if sys.version_info[:2] != (3, 14):
+        print("  REFUSED: ArchHub needs Python 3.14 (its bundled packages are built for it).")
+        print("  Install Python 3.14 from python.org, then run this again.")
+        return 2
+    root = Path(__file__).resolve().parent
+    try:
+        identity = readiness_identity(root)
+    except (OSError, UnicodeError, ValueError):
+        print("  REFUSED: the installed build or requirements manifest is missing or invalid.")
+        print("  Run the ArchHub installer again.")
+        return 5
+    if not (root / "nodelang/launcher.py").is_file():
+        print("  REFUSED: nodelang/launcher.py is missing from this installation.")
+        return 3
+    try:
+        child_status = prepare_environment(root)
+        if child_status is not None:
+            return child_status
+    except (OSError, ValueError):
+        print("  REFUSED: ArchHub's private Python environment needs repair. No shared packages were changed.")
+        return 7
+    missing = [name for name, probe in PACKAGES if not _has(probe)]
+    if missing or not ready_for_build(root):
+        (root / ".archhub-ready").unlink(missing_ok=True)
+        print("  preparing  : dependencies for this installed build")
+        # Apply the shipped version constraints even when old imports work.
+        # Without this, an upgrade silently retained incompatible packages.
+        pinned = root / "requirements.txt"
+        result = install_requirements(root, pinned)
+        if result.returncode != 0:
+            print("  REFUSED: the install did not finish. Nothing was faked;")
+            print("  send this window's text to your ArchHub administrator.")
+            return result.returncode
+    else:
+        print("  packages   : already present")
+    # Prove the boot imports resolve in a NEW process of the environment's
+    # Python, as the application will start. pywin32 (and anything else
+    # wired through a .pth file) only becomes importable in a fresh
+    # interpreter, so checking in this process failed every first open.
+    print("  checking   : ArchHub is finishing setup...")
+    unresolved = verify_imports(root)
+    if unresolved:
+        print("  REFUSED: ArchHub could not finish setup. Missing: %s"
+              % ", ".join(unresolved))
+        print("  send this window text to your ArchHub administrator.")
+        return 4
+    print_host_installation_readiness(root)
+    try:
+        # As opened, not resolved: registration refuses a redirected install path.
+        register_revit_add_ins(Path(os.path.abspath(__file__)).parent)
+    except Exception as exc:  # noqa: BLE001 - evidence only; the build must still become ready
+        print("  revit add-in: not registered (%s)" % type(exc).__name__)
+    try:
+        register_max_startup(Path(os.path.abspath(__file__)).parent)
+    except Exception as exc:  # noqa: BLE001 - evidence only; the build must still become ready
+        print("  3ds max    : not placed (%s)" % type(exc).__name__)
+    try:
+        register_autocad_add_ins(Path(os.path.abspath(__file__)).parent)
+    except Exception as exc:  # noqa: BLE001 - evidence only; the build must still become ready
+        print("  autocad    : not registered (%s)" % type(exc).__name__)
+    try:
+        report_rhino_blender(root)
+    except Exception as exc:  # noqa: BLE001 - evidence only; the build must still become ready
+        print("  rhino/blender: not reported (%s)" % type(exc).__name__)
+    # Existing managed connectors must survive even when the person does not
+    # choose to connect NEW assistants. This also covers a repaired/missing venv.
+    from nodelang.assistant_registration import main as migrate_assistant_connectors
+    try:
+        (root / '.archhub-ready').unlink(missing_ok=True)
+        if migrate_assistant_connectors(['migrate-connectors']) != 0:
+            print('  REFUSED: existing assistant connector migration needs repair; prior-file backups were kept.')
+            return 8
+    except (OSError, ValueError) as refused:
+        print('  REFUSED: existing assistant connector migration: ' + str(refused))
+        return 8
+    try:
+        if readiness_identity(root) != identity:
+            raise ValueError("installed build changed during setup")
+        _write_ready(root, identity)
+    except (OSError, UnicodeError, ValueError):
+        print("  REFUSED: setup could not record this build as ready. Run setup again.")
+        return 6
+    # Offered once the build is ready. A failure here is one line on this
+    # screen, never an application that does not open.
+    try:
+        # As opened, not `root`: root is resolved, and resolving collapses a
+        # junction or symlink at or above the install, so registration could
+        # never see the reparse point it refuses. abspath does not follow links.
+        _assistant_integration(Path(os.path.abspath(__file__)).parent, identity)
+    except Exception as exc:  # noqa: BLE001 - the application must still open
+        print("  assistant  : not connected (%s)" % type(exc).__name__)
+    try:
+        _assistant_hooks(Path(os.path.abspath(__file__)).parent)
+    except Exception as exc:  # noqa: BLE001 - the application must still open
+        print("  assistants : not connected (%s)" % type(exc).__name__)
+    # The installer owns the shortcuts (Start menu + Desktop, both opening
+    # ArchHub.vbs). Writing a second one here put two different ArchHub
+    # entries on the Desktop.
+    #
+    # ArchHub.bat returns success to ArchHub.vbs, which opens the application.
+    # Telling the person to go and double-click something sent colleagues
+    # hunting for an icon while the app was already coming up behind them.
+    print("  ready. ArchHub is opening now.")
+    print("  Next time, open it from the ArchHub icon on your Desktop"
+          " or in the Start menu.")
+    return 0
+
+
+if __name__ == "__main__":
+    if "--check-ready" in sys.argv[1:]:
+        # Checking may use an existing environment, but never creates/repairs one.
+        root = Path(__file__).resolve().parent
+        try:
+            if owned_interpreter(root):
+                status = 0 if ready_for_build(root) else 1
+            else:
+                status = prepare_environment(root, check_only=True)
+        except (OSError, ValueError):
+            status = 1
+        raise SystemExit(status)
+    raise SystemExit(main())

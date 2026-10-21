@@ -200,3 +200,16 @@ def test_kernel_holder_is_waited_out_not_stopped():
     kernel = SimpleNamespace(process=SimpleNamespace(pid=4, started=None), name='System')
     with closed._process_handle(kernel) as (handle, _):
         assert handle is None
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows sharing semantics')
+def test_journal_lease_waits_out_a_brief_write_holder(tmp_path):
+    # Founder machine 2026-10-22: [WinError 32] from the kernel for ~1 s after the 10 GB graph closed.
+    import threading
+    source = journal(tmp_path / 'ArchHub/authority.sqlite3')
+    writer = open(source, 'r+b')
+    threading.Timer(2.0, writer.close).start()
+    started = time.monotonic()
+    with files._closed_source_lease(source) as db:
+        assert db.execute('SELECT COUNT(*) FROM work').fetchone()[0] == 40
+    assert time.monotonic() - started >= 1.5

@@ -27,7 +27,7 @@ _FILE_NAMES = {"graph": "graph.sqlite3", "content": "content.sqlite3"}
 
 
 @contextmanager
-def _closed_source_lease(path):
+def _closed_source_lease(path, *, sharing_wait_seconds: float = 30, sharing_retry_seconds: float = 1):
     """Deny writers/deletion without SQLite's 1-GiB Windows byte-range lock."""
     if os.name == 'nt':
         import ctypes
@@ -37,7 +37,15 @@ def _closed_source_lease(path):
         create.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
                            ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
         create.restype = wintypes.HANDLE
-        handle = create(str(path), 0x80000000, 1, None, 3, 0x80, None)
+        # Founder machine 2026-10-22: right after a 10 GB journal closes, Windows itself
+        # (System, PID 4) keeps it open for writing while it flushes; only that sharing
+        # violation (32) is waited out, every other refusal stays immediate.
+        deadline = time.monotonic() + sharing_wait_seconds
+        while True:
+            handle = create(str(path), 0x80000000, 1, None, 3, 0x80, None)
+            if handle != ctypes.c_void_p(-1).value or ctypes.get_last_error() != 32 or time.monotonic() >= deadline:
+                break
+            time.sleep(sharing_retry_seconds)
         if handle == ctypes.c_void_p(-1).value:
             raise OSError('close ArchHub before preserving its pre-upgrade journal: ' + str(ctypes.WinError(ctypes.get_last_error())))
         close = kernel.CloseHandle

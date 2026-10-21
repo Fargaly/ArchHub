@@ -12,7 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SIDE = ROOT / "nodelang" / "studio" / "atlas-side.jsx"
-CLOUD = ROOT.parent / "12.PRODUCTION" / "cloud_backend" / "cockpit_assets" / "atlas-side.jsx"
+CLOUD = ROOT / "cloud_backend" / "cockpit_assets" / "atlas-side.jsx"
 
 
 def test_the_composer_sends_through_the_relay_and_refreshes_the_list():

@@ -139,10 +139,10 @@ def _legacy_duplicate_execution_graph(store=None, key_provider=None):
 def _production_python_sources() -> tuple[Path, ...]:
     roots = (
         NODE_LANGUAGE / "nodelang",
-        PRODUCT / "12.PRODUCTION" / "cloud_backend",
-        PRODUCT / "12.PRODUCTION" / "app",
-        PRODUCT / "12.PRODUCTION" / "personal-brain-mcp" / "src",
-        PRODUCT / "12.PRODUCTION" / "node_runtime",
+        NODE_LANGUAGE / "cloud_backend",
+        NODE_LANGUAGE / "app",
+        NODE_LANGUAGE / "personal-brain-mcp" / "src",
+        NODE_LANGUAGE / "node_runtime",
     )
     sources: list[Path] = []
     for root in roots:

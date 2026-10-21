@@ -17,7 +17,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 STUDIO = ROOT / "nodelang" / "studio"
-CLOUD = ROOT.parent / "12.PRODUCTION" / "cloud_backend" / "cockpit_assets"
+CLOUD = ROOT / "cloud_backend" / "cockpit_assets"
 # ONE SOURCE (founder, 2026-09-17): every cockpit module lives here, tokens.jsx and param-types.jsx
 # shared with Studio. The cloud tree holds no copy; its build compiles these files.
 ATLAS = ("tokens", "param-types", "cockpit-core", "hub-kit", "atlas-engine", "atlas-runtime",

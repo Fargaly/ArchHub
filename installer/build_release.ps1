@@ -618,7 +618,7 @@ $statusName = if ($candidate) { 'candidate-status.txt' } else { 'build-status.tx
 try {
 if ($candidate) {
     if (@($candidateRoots | Where-Object { Test-Below $output $_ }).Count -eq 0) {
-        throw 'Candidate output must be a new governed WIP directory under 10.PRODUCT or 70.HANDOFFS.'
+        throw 'Candidate output must be a new governed WIP directory under 10.PRODUCT or 70.COMPANY/72.HANDOFFS.'
     }
 }
 Assert-PlainAncestors (Split-Path -Parent $output)

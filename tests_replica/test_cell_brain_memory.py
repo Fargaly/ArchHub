@@ -76,7 +76,7 @@ ORDINARY_SENTENCES = (
     "drawing set at https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz0123456/view",
     "call getBrainMemoryExportSinceClock2Owner after the sync",
     "integrity sha384-oqVuAfXRKap7fdgcCY5uykM6+R9GqQ8K/uxy9rx7HNQlGYl1kPzQho1wx4JwY8wC",
-    "see 70.HANDOFFS/claude-codex-link-20260914/brain-port/sprint1-fixes/MANIFEST.txt",
+    "see 70.COMPANY/72.HANDOFFS/72.25-BRAIN-PORT/sprint1-fixes/MANIFEST.txt",
 )
 
 

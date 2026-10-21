@@ -89,8 +89,8 @@ def test_research_entry_carries_one_source_capture(client):
     control, runtime = client
     control.call("send_message", {"target": "", "message": "prior art: read the hook.",
         "idempotency_key": "court-capture", "category": "research", "refs": [WORK],
-        "capture": {"path": "00.GOVERNANCE/hooks/workspace_roots.py"}})
-    assert runtime.requests[-1][2]["capture"] == {"path": "00.GOVERNANCE/hooks/workspace_roots.py"}
+        "capture": {"path": "00.GOVERNANCE/03.AGENT-HOOKS/workspace_roots.py"}})
+    assert runtime.requests[-1][2]["capture"] == {"path": "00.GOVERNANCE/03.AGENT-HOOKS/workspace_roots.py"}
 
 
 def test_capture_is_refused_outside_one_research_entry_for_one_work(client):

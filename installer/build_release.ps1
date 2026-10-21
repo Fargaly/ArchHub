@@ -162,7 +162,7 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
             'nodelang/launcher.py', 'nodelang/studio/style.css', 'colleague_setup.py', 'requirements.txt',
             'NOTICE', 'packaging/windows/goose-pin.json', 'packaging/windows/stage_goose.py',
             'package.json', 'packaging/compile_studio.cjs',
-            'installer/ArchHub.iss', 'installer/ArchHub.bat', 'installer/ArchHub.vbs',
+            'installer/ArchHub.iss', 'installer/ArchHub.bat', 'installer/ArchHub.vbs', 'installer/README.md',
             'installer/legacy_sweep.iss', 'installer/legacy_doc_files.iss', 'installer/legacy_v1_files.iss', 'installer/host_file_staging.iss',
             'installer/build_release.ps1', 'packaging/windows/Test-SourcePortability.ps1',
             'packaging/windows/publish_release.ps1', 'packaging/windows/check_update_offer.py',

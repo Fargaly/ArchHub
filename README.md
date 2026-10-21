@@ -4,18 +4,17 @@ One visual workspace for architecture, engineering and construction.
 The desktop app brings Studio, Workshop, Brain, connectors and BABOOM together.
 BABOOM is the companion; supported AI providers are engines it can route work to.
 
-| Find | Open |
+| Area | Purpose |
 | --- | --- |
-| Install the Windows app | [Latest release](https://github.com/Fargaly/ArchHub/releases/latest) |
-| Website | [archhub.io](https://archhub.io/) |
-| Documentation | [Getting started](https://archhub.io/docs/getting-started/) |
-| Desktop source | [nodelang](nodelang/) |
-| Website source and exporter | [public_site](public_site/) · [site_export.py](nodelang/site_export.py) |
-| Cockpit and cloud source | [cloud_backend](cloud_backend/) |
-| Contribute | [CONTRIBUTING.md](CONTRIBUTING.md) |
-| Security | [SECURITY.md](SECURITY.md) |
-| Source documentation | [docs/README.md](docs/README.md) |
-| Catalogue reference | [docs/CATALOGUE.md](docs/CATALOGUE.md) |
+| [01.APP](01.APP/README.md) | Desktop packages, native bridges, installer and packaging |
+| [02.TESTS](02.TESTS/README.md) | Python, JavaScript and Workshop checks |
+| [03.TOOLS](03.TOOLS/README.md) | Compiler, pipeline, infrastructure and editor configuration |
+| [04.DOCS](04.DOCS/README.md) | Indexed product and engineering documentation |
+| [05.EVIDENCE](05.EVIDENCE/README.md) | Small versioned policy inputs; generated runs stay out of Git |
+| [06.CLOUD](06.CLOUD/README.md) | Cloud backend and public website source |
+
+[Latest Windows release](https://github.com/Fargaly/ArchHub/releases/latest) · [Website](https://archhub.io/) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md).
+GitHub discovers the release workflow in the platform-required `.github/workflows` folder.
 
 ## Install and update
 

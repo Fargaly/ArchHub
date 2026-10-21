@@ -4,31 +4,31 @@ Goose v1.54.0 - Copyright 2024 Block, Inc. - Apache License 2.0.
 https://github.com/block/goose (redirects to aaif-goose/goose)
 Adopted as a separately packaged, unmodified CLI agent engine over ACP/MCP.
 ArchHub supplies its own adapter, launcher lifecycle and interface.
-See licenses/Goose-Apache-2.0.txt in the install, or packaging/windows/licenses/ in source.
+See licenses/Goose-Apache-2.0.txt in the install, or 01.APP/packaging/windows/licenses/ in source.
 The packaging process must retain upstream binary distribution notices.
 
 Hermes Agent - Copyright (c) 2025 Nous Research - MIT License.
 https://github.com/NousResearch/hermes-agent
 Design attribution: task-to-skill creation/refinement and FTS5 session recall.
 No Hermes executable, auto-execute mode or source code is bundled by this patch.
-See licenses/Hermes-MIT.txt in the install, or packaging/windows/licenses/ in source.
+See licenses/Hermes-MIT.txt in the install, or 01.APP/packaging/windows/licenses/ in source.
 
 ArchHub compiler (ACOMPILER)
 
 Tree-sitter and pinned language grammars are MIT-licensed dependencies.
 All transitive crate versions, source URLs, license declarations and retained
-license texts: tools/archhub-compiler/THIRD_PARTY.md and licenses/.
+license texts: 03.TOOLS/tools/archhub-compiler/THIRD_PARTY.md and licenses/.
 Rustc/Clippy diagnostic, ownership and pass-registry designs (MIT/Apache-2.0)
 are learned and independently implemented; no rustc/Clippy source is copied.
 Ruff and Oxc (MIT), Pyright (MIT), TypeScript (Apache-2.0) are learned from
 official source for bounded lexical, flow, arity and explicit-type checks.
 No external Ruff/Pyright/tsc checker is invoked by the product compiler.
-See tools/archhub-compiler/rules.json for exact learned source provenance.
+See 03.TOOLS/tools/archhub-compiler/rules.json for exact learned source provenance.
 
-ACOMPILER2B: bounded scope, flow and explicit call/type rules are learned from Ruff (MIT), Oxc (MIT), Pyright (MIT), TypeScript (Apache-2.0) and rustc (MIT/Apache-2.0). No checker implementation source copied and no checker executables invoked. Source/license URLs and fallback decision: evidence/acompiler2b-sources.md.
+ACOMPILER2B: bounded scope, flow and explicit call/type rules are learned from Ruff (MIT), Oxc (MIT), Pyright (MIT), TypeScript (Apache-2.0) and rustc (MIT/Apache-2.0). No checker implementation source copied and no checker executables invoked. Source/license URLs and fallback decision: 05.EVIDENCE/acompiler2b-sources.md.
 
 AGENTLINK2 runtime adapter shape
-Source: https://github.com/nexu-io/open-design (docs/agent-adapters.md; apps/daemon/src/runtimes/defs/ and registry.ts)
+Source: https://github.com/nexu-io/open-design (04.DOCS/agent-adapters.md; apps/daemon/src/runtimes/defs/ and registry.ts)
 License: Apache License 2.0; Copyright OpenDesign contributors.
 Adaptation: one declarative CLI definition per runtime and one registry; reused by ArchHub's existing native Work CLI profile and identity resolver. No OpenDesign engine, daemon, UI, store or binaries included.
 Claude Code agent teams: shared-task/message behavior learned from official docs; no source copied.

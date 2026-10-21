@@ -20,6 +20,8 @@ concurrency:
 jobs:
   build:
     runs-on: windows-2025
+    env:
+      PYTHONPATH: "${{ github.workspace }}/selected/01.APP;${{ github.workspace }}/selected/02.TESTS;${{ github.workspace }}/selected/03.TOOLS;${{ github.workspace }}/selected/06.CLOUD"
     outputs:
       build_id: ${{ steps.identity.outputs.build_id }}
       source_revision: ${{ steps.source.outputs.revision }}
@@ -303,10 +305,10 @@ jobs:
           SOURCE_REVISION: ${{ steps.source.outputs.revision }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $probe = 'import sys,runpy;owner=runpy.run_path("selected/nodelang/host_artifact_review.py");owner["load_review"](sys.argv[1],source_revision=sys.argv[2],bridges_root="selected/bridges")'
+          $probe = 'import sys,runpy;owner=runpy.run_path("selected/01.APP/nodelang/host_artifact_review.py");owner["load_review"](sys.argv[1],source_revision=sys.argv[2],bridges_root="selected/01.APP/bridges")'
           python -c $probe $env:BROKER_REVIEW_PATH $env:SOURCE_REVISION
           if ($LASTEXITCODE -ne 0) { throw 'Independent broker review does not decide these source bytes.' }
-          $pin = Get-Content selected/packaging/windows/goose-pin.json -Raw | ConvertFrom-Json
+          $pin = Get-Content selected/01.APP/packaging/windows/goose-pin.json -Raw | ConvertFrom-Json
           $archive = Join-Path $env:RUNNER_TEMP 'goose.zip'
           Invoke-WebRequest -Uri $pin.url -OutFile $archive
           if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -cne $pin.sha256) { throw 'Pinned runtime digest differs.' }
@@ -316,14 +318,14 @@ jobs:
         env:
           BUILD_ID: ${{ steps.identity.outputs.build_id }}
         run: |
-          ./selected/installer/build_release.ps1 `
+          ./selected/01.APP/installer/build_release.ps1 `
             -BuildId $env:BUILD_ID `
             -GooseArchivePath $env:GOOSE_ARCHIVE_PATH -BrokerReviewPath $env:BROKER_REVIEW_PATH `
             -OutputDirectory "$env:GITHUB_WORKSPACE/release-output"
       - name: Prove installed users' updater accepts this build (dry run)
         shell: pwsh
         run: |
-          ./selected/packaging/windows/publish_release.ps1 `
+          ./selected/01.APP/packaging/windows/publish_release.ps1 `
             -ReleaseDirectory "$env:GITHUB_WORKSPACE/release-output" `
             -ExpectedSourceRevision '${{ steps.source.outputs.revision }}' -DryRun
       - name: Retain exact installer and metadata for review
@@ -352,6 +354,8 @@ jobs:
   publish:
     needs: build
     runs-on: windows-2025
+    env:
+      PYTHONPATH: "${{ github.workspace }}/selected/01.APP;${{ github.workspace }}/selected/02.TESTS;${{ github.workspace }}/selected/03.TOOLS;${{ github.workspace }}/selected/06.CLOUD"
     timeout-minutes: 10
     permissions:
       contents: write
@@ -386,6 +390,6 @@ jobs:
           if ($manifest.build_id -cne $env:BUILD_ID) { throw 'Downloaded artifact is not this run''s build.' }
           # One reconciliation and publish path for CI and local builds: bytes,
           # updater readability, newer than live latest, free tag, pushed source.
-          ./selected/packaging/windows/publish_release.ps1 `
+          ./selected/01.APP/packaging/windows/publish_release.ps1 `
             -ReleaseDirectory release-output -ExpectedSourceRevision $env:SOURCE_REVISION `
             -Repository $env:GH_REPO

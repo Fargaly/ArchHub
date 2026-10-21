@@ -1,5 +1,6 @@
 *.py[cod]
 *.pyc
+*.egg-info/
 target/
 /.venv/
 .coverage
@@ -11,26 +12,26 @@ build/
 coverage/
 dist/
 domain_sessions/
-evidence/build_current_evidence.py
-evidence/current-evidence.json
-evidence/junit-*.xml
-evidence/junit-parts/
+05.EVIDENCE/build_current_evidence.py
+05.EVIDENCE/current-evidence.json
+05.EVIDENCE/junit-*.xml
+05.EVIDENCE/junit-parts/
 grand_sweep_ledger.json
 grandmap.session.json
-infrastructure/generated/
+03.TOOLS/infrastructure/generated/
 node_modules/
-/nodelang/studio/compiled/
-packaging/website/offer.json
-public_site/.git/
+/01.APP/nodelang/studio/compiled/
+01.APP/packaging/website/offer.json
+06.CLOUD/public_site/.git/
 self-hosting-map.html
 test-results/
-tests_replica/test_authority_coherence.py
-packaging/website/offer.json
+02.TESTS/tests_replica/test_authority_coherence.py
+01.APP/packaging/website/offer.json
 
 # WSGOV2: generated/private material is never new public source.
 # Ignore rules do not remove files already tracked or clean old history.
-/evidence/
-/node-language/evidence/
+/05.EVIDENCE/
+/node-language/05.EVIDENCE/
 /20.CLIENTS/
 /60.PERSONAL/
 /70.HANDOFFS/
@@ -49,4 +50,4 @@ Financial_Plan.xlsx
 signature_AFargaly*
 
 # Generated website payload; rebuild with nodelang.site_export.
-/public_site/site-export.json
+/06.CLOUD/public_site/*.json

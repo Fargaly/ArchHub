@@ -1,5 +1,0 @@
-*
-!nodelang/
-!packaging/website/httpd.conf
-!packaging/website/offer.json
-nodelang/**/__pycache__/

@@ -1,0 +1,4819 @@
+"""Uniform physical substrate for the universal-cell migration.
+
+This module is intentionally parallel to ``nodelang.core``.  It contains no
+product concepts and assigns no semantic meaning to atom bytes or link
+position.  Higher-level protocols must be represented by connected Cells.
+"""
+from __future__ import annotations
+
+from bisect import bisect_right
+from collections import OrderedDict
+from contextlib import closing, contextmanager
+from dataclasses import dataclass
+import hashlib
+import hmac
+from itertools import groupby
+import os
+from pathlib import Path
+import sqlite3
+from collections.abc import MutableMapping
+from types import MappingProxyType
+import sys
+import threading
+import time
+from typing import Callable, Generator, Iterable, Iterator, Mapping, Protocol
+import uuid
+
+from rpds import HashTrieMap
+
+from . import commit_intent
+
+
+NULL_CELL_ID = "00000000-0000-0000-0000-000000000000"
+
+# The journal connection's SQLite page cache, in KiB. The default (~2 MB)
+# against a multi-GB journal re-read the same pages throughout a reopen: a
+# 256 MB cache cut a fixture reopen's reads by a third (19,567 -> 12,993 ops),
+# with every read identical. It is a cache: bounded, disposable, no meaning.
+JOURNAL_PAGE_CACHE_KIB = 262144
+_JOURNAL_REVISIONS_COLUMNS = frozenset(("revision", "committed_at"))
+_JOURNAL_CELL_VERSION_COLUMNS = frozenset(
+    ("revision", "cell_id", "link0", "link1", "atom")
+)
+_JOURNAL_CURRENT_CELL_COUNT_QUERY = "SELECT COUNT(*) FROM current_cells"
+
+
+@dataclass(frozen=True, slots=True)
+class Cell:
+    """The only persisted semantic record in the V0 kernel."""
+
+    id: str
+    link0: str
+    link1: str
+    atom: bytes
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.atom, bytes):
+            raise TypeError("terminal atom must be opaque bytes")
+
+
+@dataclass(frozen=True, slots=True)
+class Snapshot:
+    """Immutable process view of a committed cell graph."""
+
+    revision: int
+    cells: Mapping[str, Cell]
+
+    @contextmanager
+    def read_scope(self):
+        """Batch pure point reads without changing this immutable snapshot.
+
+        The scope takes only the journal I/O lock. Callers must not acquire
+        store/owner locks or mutate the graph inside it.
+        """
+        if isinstance(self.cells, _LazyHeadCellMap):
+            with self.cells._reader.read_scope():
+                yield self
+        else:
+            yield self
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotTransition:
+    """Current physical snapshot with an optional proven predecessor delta.
+
+    None means proof unavailable; an empty tuple means the supplied revision
+    and digest match the current head. Cache ownership still requires store
+    identity to be checked by the caller.
+    This disposable receipt carries no semantic authority or persisted state.
+    """
+
+    snapshot: Snapshot
+    chain_digest: str
+    changed: tuple[Cell, ...] | None
+
+
+@dataclass(frozen=True, slots=True)
+class ReadOnlyJournalRevision:
+    """A bounded, non-owning view of one durable Cell journal revision.
+
+    This record deliberately says nothing about graph semantics.  It exists
+    for recovery preflights that must inspect a stopped journal without
+    opening ``CellStore`` and therefore without acquiring its owner fence.
+    """
+
+    revision: int
+    revision_count: int
+    latest_revision_change_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class RewriteResult:
+    """Published identities from one generic structural rewrite."""
+
+    root_id: str
+    revision: int
+    bindings: Mapping[str, str]
+    materialized: Mapping[str, str]
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedRewrite:
+    """Unpublished Cells materialized from one generic structural rule."""
+
+    root_id: str
+    expected_revision: int
+    create: tuple[Cell, ...]
+    replace: tuple[Cell, ...]
+    bindings: Mapping[str, str]
+    materialized: Mapping[str, str]
+
+
+@dataclass(frozen=True, slots=True)
+class CommitEvent:
+    """Post-commit notification; the graph revision is already durable."""
+
+    revision: int
+    touched: frozenset[str]
+    # The admitted intent that produced this revision. A reaction that
+    # continues the same causal work resumes it (commit_intent.resume).
+    declaration: commit_intent.CommitDeclaration | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CellHistoryMigrationEvidence:
+    """Exact physical evidence for one quiesced journal migration."""
+
+    source_identity: str
+    destination_identity: str
+    source_revision: int
+    destination_revision: int
+    revision_chain_digest: str
+
+
+class CellKernelError(ValueError):
+    """Base class for rejected physical-kernel operations."""
+
+
+class Conflict(CellKernelError):
+    """The caller attempted to commit against an obsolete revision."""
+
+
+class InvalidCell(CellKernelError):
+    """A cell or commit would violate the physical substrate invariants."""
+
+
+class CommitRefused(InvalidCell):
+    """The commit gate refused a revision with no admitted reason.
+
+    See 01.APP/nodelang/commit_intent.py: operational paths and undeclared commits
+    to a gated store never publish a graph revision.
+    """
+
+
+class ReadOnlyJournalError(CellKernelError):
+    """A durable journal cannot supply a bounded, read-only revision view."""
+
+
+class NoMatch(CellKernelError):
+    """A target graph does not have the supplied physical pattern shape."""
+
+
+class MatchBudgetExceeded(CellKernelError):
+    """Generic graph matching exhausted its explicit work budget."""
+
+
+class DatabaseOwnerConflict(Conflict):
+    """Another live CellStore already owns the durable database."""
+
+
+class CellJournal(Protocol):
+    """Storage-neutral physical journal below the four-field Cell floor."""
+
+    identity: str
+    backend: str
+    local_path: str | None
+    exclusive_owner: bool
+    shared_writers: bool
+    # Capabilities are DECLARED, not probed. Asking an object whether it
+    # answers to a name is choosing behaviour from a string, which the
+    # execution floor may not do (SPEC 4.1) -- so what a journal can do is
+    # part of the contract every journal answers, and a journal that
+    # cannot say is a journal the store will not guess about.
+    supports_lazy_history: bool
+    append_only_fence_present: bool
+
+    def load(
+        self,
+    ) -> tuple[
+        Mapping[str, Cell],
+        int,
+        dict[int, tuple[Cell, ...]],
+        dict[int, tuple[str, ...]],
+    ]: ...
+
+    def append(
+        self,
+        expected_revision: int,
+        next_revision: int,
+        changed: Iterable[Cell],
+    ) -> None: ...
+
+    def close(self) -> None: ...
+
+    def backup_to(self, destination: str | os.PathLike[str]) -> str: ...
+
+    def acquire_runtime_fence(
+        self, resource_id: str
+    ) -> Callable[[], None]: ...
+
+
+class CellHistoryReader(Protocol):
+    """Exact physical history reads bound to one accepted journal head."""
+
+    @property
+    def head_revision(self) -> int: ...
+
+    @property
+    def head_digest(self) -> str: ...
+
+    def revision_cells(self, revision: int) -> tuple[Cell, ...]: ...
+
+    def revisions_touching(self, root: str) -> tuple[int, ...]: ...
+
+    def snapshot_at(self, revision: int) -> Snapshot: ...
+
+    def cells_at(
+        self, revision: int, cell_ids: Iterable[str]
+    ) -> Mapping[str, Cell]: ...
+
+    def created_revision(self, cell_id: str) -> int: ...
+
+    def chain_digest(self, revision: int) -> str: ...
+
+    def version_count(self) -> int: ...
+
+    def advance(self, revision: int, changed: Iterable[Cell]) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class LoadedJournalHead:
+    """One current graph and its same-head physical history reader."""
+
+    cells: Mapping[str, Cell]
+    revision: int
+    revision_chain_digest: str
+    history: CellHistoryReader
+
+
+def _frozen_cells(cells: Mapping[str, Cell]) -> Mapping[str, Cell]:
+    # A lazily read head is already an immutable value; copying it
+    # would materialise the whole graph to publish one snapshot.
+    if isinstance(cells, _LazyHeadCellMap):
+        return cells
+    return MappingProxyType(dict(cells))
+
+
+_MAX_OVERLAY_DEPTH = 32
+
+
+class _OverlayCellMap(Mapping[str, Cell]):
+    """Immutable persistent map used to publish small commits cheaply."""
+
+    __slots__ = ("_cells", "_created_count", "_depth")
+
+    def __init__(self, base: Mapping[str, Cell], delta: Mapping[str, Cell]) -> None:
+        persistent_base = (
+            base._cells
+            if isinstance(base, _OverlayCellMap)
+            else base
+            if isinstance(base, HashTrieMap)
+            else HashTrieMap(base)
+        )
+        self._created_count = sum(1 for key in delta if key not in persistent_base)
+        self._cells = persistent_base.update(delta)
+        self._depth = 1
+
+    def __getitem__(self, key: str) -> Cell:
+        return self._cells[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._cells)
+
+    def __len__(self) -> int:
+        return len(self._cells)
+
+    def __contains__(self, key: object) -> bool:
+        return key in self._cells
+
+    @classmethod
+    def _from_trie(cls, trie: HashTrieMap) -> "_OverlayCellMap":
+        """Wrap an already-built persistent trie (a stepped-back history)."""
+        self = object.__new__(cls)
+        self._cells = trie
+        self._created_count = 0
+        self._depth = 1
+        return self
+
+
+class _LazyHeadCellMap(Mapping[str, Cell]):
+    """The head, read from the journal on demand instead of all at once.
+
+    Opening the founder's graph materialised 5.75 million Cell objects
+    before anything could be served: forty-six seconds of sqlite and
+    twenty of object construction, every start, to answer questions about
+    a few hundred of them. The head lives in the journal; this reads a row
+    when someone asks for it and keeps what it read.
+
+    Commits do not copy it. A commit publishes a new map sharing this
+    reader with a persistent overlay trie, so a published revision stays
+    an immutable value while costing one small update.
+
+    The reader pins the opening revision and bounds its positive/negative
+    caches; an eviction cannot expose later committed bytes to this base.
+    """
+
+    __slots__ = (
+        "_reader", "_overlay", "_base_count", "_created_count", "_removed",
+    )
+
+    def __init__(
+        self,
+        reader: "_HeadRowReader",
+        overlay: "HashTrieMap | None" = None,
+        base_count: int = 0,
+        created_count: int = 0,
+        removed: frozenset[str] = frozenset(),
+    ) -> None:
+        self._reader = reader
+        self._overlay = HashTrieMap() if overlay is None else overlay
+        self._base_count = base_count
+        self._created_count = created_count
+        self._removed = removed
+
+    def with_delta(self, delta: Mapping[str, Cell]) -> "_LazyHeadCellMap":
+        created = sum(1 for key in delta if key not in self)
+        return _LazyHeadCellMap(
+            self._reader,
+            self._overlay.update(delta),
+            self._base_count,
+            self._created_count + created,
+            self._removed - frozenset(delta),
+        )
+
+    def with_step_back(
+        self,
+        restored: Mapping[str, Cell],
+        removed: Iterable[str],
+    ) -> "_LazyHeadCellMap":
+        """The revision below this one, still read on demand.
+
+        Auditing a head walks downwards one revision at a time, and each
+        step differs from the one above by the handful of cells that
+        revision wrote. Lifting the head into a trie to apply that handful
+        read all five and three quarter million rows on the first step:
+        a hundred and fifty seconds, paid on every start whose proof a
+        single gesture had invalidated. A step is now the size of its own
+        change, whatever the graph weighs.
+        """
+        gone = frozenset(removed)
+        overlay = self._overlay.update(restored)
+        for cell_id in gone:
+            overlay = overlay.discard(cell_id)
+        created = sum(
+            1 for key in restored
+            if key not in self._overlay and self._reader.read(key) is None
+        )
+        return _LazyHeadCellMap(
+            self._reader,
+            overlay,
+            self._base_count,
+            self._created_count + created - len(gone),
+            (self._removed | gone) - frozenset(restored),
+        )
+
+    def prefetch_region(
+        self, root_id: str, limit: int = 400_000, depth: int = 8
+    ) -> int:
+        """Warm one root's neighbourhood in a single statement."""
+        return self._reader.prefetch_region(root_id, limit, depth)
+
+    def prefetch(self, cell_ids) -> None:
+        """Warm many cells at once; a no-op for what is already held."""
+        self._reader.prefetch([
+            key for key in cell_ids if key not in self._overlay
+        ])
+
+    def __getitem__(self, key: str) -> Cell:
+        held = self._overlay.get(key)
+        if held is not None:
+            return held
+        if key in self._removed:
+            raise KeyError(key)
+        cell = self._reader.read(key)
+        if cell is None:
+            raise KeyError(key)
+        return cell
+
+    def __contains__(self, key: object) -> bool:
+        if not isinstance(key, str):
+            return False
+        if key in self._overlay:
+            return True
+        if key in self._removed:
+            return False
+        return self._reader.read(key) is not None
+
+    def get(self, key, default=None):
+        held = self._overlay.get(key)
+        if held is not None:
+            return held
+        if key in self._removed:
+            return default
+        cell = self._reader.read(key) if isinstance(key, str) else None
+        return default if cell is None else cell
+
+    def __iter__(self) -> Iterator[str]:
+        seen = set()
+        for key in self._overlay:
+            seen.add(key)
+            yield key
+        for key in self._reader.stream_ids():
+            if key not in seen and key not in self._removed:
+                yield key
+
+    def ids_with_prefix(self, prefix: str) -> Iterator[str]:
+        """Ids starting with `prefix` without streaming the whole head."""
+        seen = set()
+        for key in self._overlay:
+            if key.startswith(prefix):
+                seen.add(key)
+                yield key
+        for key in self._reader.stream_ids_with_prefix(prefix):
+            if key not in seen and key not in self._removed:
+                yield key
+
+    def cells_with_link0(self, link0: str) -> Iterator[Cell]:
+        """Cells whose link0 is `link0` without constructing the whole head."""
+        seen = set()
+        for key, cell in self._overlay.items():
+            if cell.link0 == link0:
+                seen.add(key)
+                yield cell
+        for cell in self._reader.stream_cells_with_link0(link0):
+            if cell.id not in seen and cell.id not in self._removed and cell.id not in self._overlay:
+                yield cell
+
+    def __len__(self) -> int:
+        # ponytail: counting five million rows is an audit's cost, not
+        # every open's. Charged on the first ask and shared after.
+        if self._base_count is None:
+            self._base_count = self._reader.count()
+        return self._base_count + self._created_count
+
+
+class _LoadingHeadMap(MutableMapping):
+    """The replay writes here; reads fall through to the lazy head.
+
+    Not a dict subclass: C-level consumers (dict(), MappingProxyType,
+    set.issubset) read a dict subclass's real entries and never call the
+    overrides, which made a full head look empty while reporting five
+    million entries.
+    """
+
+    __slots__ = ("_head", "_written")
+
+    def __init__(self, head: "_LazyHeadCellMap") -> None:
+        self._head = head
+        self._written: dict[str, Cell] = {}
+
+    def __getitem__(self, key):
+        held = self._written.get(key)
+        if held is not None:
+            return held
+        cell = self._head.get(key)
+        if cell is None:
+            raise KeyError(key)
+        return cell
+
+    def __setitem__(self, key, value) -> None:
+        self._written[key] = value
+
+    def __delitem__(self, key) -> None:
+        del self._written[key]
+
+    def __contains__(self, key) -> bool:
+        return key in self._written or key in self._head
+
+    def get(self, key, default=None):
+        held = self._written.get(key)
+        if held is not None:
+            return held
+        cell = self._head.get(key)
+        return default if cell is None else cell
+
+    def __iter__(self):
+        seen = set(self._written)
+        yield from self._written
+        for key in self._head:
+            if key not in seen:
+                yield key
+
+    def __len__(self) -> int:
+        return len(self._head) + sum(
+            1 for key in self._written if key not in self._head
+        )
+
+    def published(self) -> "_LazyHeadCellMap":
+        """The immutable head this load produced."""
+        return (
+            self._head.with_delta(self._written) if self._written
+            else self._head
+        )
+
+
+class _HeadRowReader:
+    """Revision-pinned journal reads with bounded positive and negative LRUs.
+
+    Eviction is safe because misses read immutable history at base_revision,
+    never the mutable current_cells table. Later writes belong to the overlay.
+
+    The bounds hold one full canvas projection's working set. On the
+    204,870-Cell founder-shape graph a projection reads ~105k distinct Cells
+    (~140k with its interaction binding) and ~7k absent ids; at 64 MB and
+    2048 absent ids the LRU evicted each of them before the next projection
+    came back for it, so the first read after every edit re-ran ~91k SQLite
+    point queries (~1.1 s). Entries stay valid across commits -- the overlay
+    shadows what later revisions wrote -- so a cache that holds the working
+    set turns that rebuild into dictionary reads (~0.4 s). Measured cost:
+    ~125 MB by this accounting, +35-50 MB process RSS.
+    """
+    MAX_CACHE_ENTRIES = 262144
+    MAX_CACHE_BYTES = 256 * 1024 * 1024
+    MAX_MISSING_ENTRIES = 32768
+    MAX_MISSING_BYTES = 4 * 1024 * 1024
+    BATCH_SIZE = 128
+    MAX_REGION_CELLS = 8192
+    MAX_REGION_DEPTH = 8
+    _POINT_SQL = (
+        "SELECT link0, link1, atom FROM cell_versions "
+        "WHERE cell_id = ? AND revision <= ? ORDER BY revision DESC LIMIT 1"
+    )
+    _CURRENT_POINT_SQL = (
+        "SELECT link0, link1, atom, revision FROM current_cells WHERE cell_id = ?"
+    )
+
+    def __init__(self, connection, lock=None, *, base_revision=None, closing=None) -> None:
+        self._connection = connection
+        self._lock = lock if lock is not None else threading.RLock()
+        self._closing = closing if closing is not None else threading.Event()
+        with self._lock:
+            if base_revision is None:
+                base_revision = connection.execute("SELECT MAX(revision) FROM revisions").fetchone()[0]
+        if type(base_revision) is not int or base_revision < 0:
+            raise InvalidCell("head reader requires a nonnegative base revision")
+        self._base_revision = base_revision
+        self._cache = OrderedDict()
+        self._cache_costs = {}
+        self._cache_bytes = 0
+        self._missing = OrderedDict()
+        self._missing_bytes = 0
+
+    @staticmethod
+    def _cell_cost(key, cell):
+        # Count incoming lookup key independently from Cell.id, even if shared.
+        # Entry allowance covers accounting-map entries and integer overhead;
+        # container allocations themselves are added below.
+        return (sys.getsizeof(key) + sys.getsizeof(cell)
+                + sum(sys.getsizeof(value) for value in (cell.id, cell.link0, cell.link1, cell.atom))
+                + 192)
+
+    def _positive_size(self):
+        return self._cache_bytes + sys.getsizeof(self._cache) + sys.getsizeof(self._cache_costs)
+
+    def _negative_size(self):
+        return self._missing_bytes + sys.getsizeof(self._missing)
+
+    def _remember(self, key, cell):
+        self._forget_missing(key)
+        if key in self._cache:
+            self._cache.move_to_end(key)
+            return
+        cost = self._cell_cost(key, cell)
+        if cost + 1024 > self.MAX_CACHE_BYTES:
+            return  # A requested large atom may be returned, never retained here.
+        self._cache[key] = cell
+        self._cache_costs[key] = cost
+        self._cache_bytes += cost
+        while self._cache and (len(self._cache) > self.MAX_CACHE_ENTRIES or self._positive_size() > self.MAX_CACHE_BYTES):
+            oldest, _ = self._cache.popitem(last=False)
+            self._cache_bytes -= self._cache_costs.pop(oldest)
+        if not self._cache:
+            self._cache = OrderedDict()
+            self._cache_costs = {}
+
+    def _forget_missing(self, key):
+        prior = self._missing.pop(key, None)
+        if prior is not None:
+            self._missing_bytes -= prior
+
+    def _remember_missing(self, key):
+        if key in self._missing:
+            self._missing.move_to_end(key)
+            return
+        cost = sys.getsizeof(key) + 96
+        if cost + 512 > self.MAX_MISSING_BYTES:
+            return
+        self._missing[key] = cost
+        self._missing_bytes += cost
+        while self._missing and (len(self._missing) > self.MAX_MISSING_ENTRIES or self._negative_size() > self.MAX_MISSING_BYTES):
+            _, amount = self._missing.popitem(last=False)
+            self._missing_bytes -= amount
+        if not self._missing:
+            self._missing = OrderedDict()
+
+    def hand_over(self, successor: "_HeadRowReader", rewritten) -> None:
+        """Move this reader's cache to the reader that replaces it at a rebase.
+
+        A rebase starts a reader pinned to the new head's revision. Entries
+        for identities no revision between the two bases wrote are the same
+        Cells at the new base, so they move across; everything else is
+        dropped. Afterwards this reader holds nothing: a snapshot that still
+        uses it reads its own base revision from SQLite, as after any
+        eviction. Without this every rebase left a full cache behind for
+        as long as anything referenced an older head.
+        """
+        if successor is self or successor._lock is not self._lock:
+            return
+        with self._lock:
+            moved = OrderedDict(
+                (key, cell) for key, cell in self._cache.items()
+                if key not in rewritten
+            )
+            costs = {key: self._cache_costs[key] for key in moved}
+            missing = OrderedDict(
+                (key, cost) for key, cost in self._missing.items()
+                if key not in rewritten
+            )
+            # The successor was published this commit; anything it already
+            # read is newer than what moves across, so it is kept.
+            for key, cell in successor._cache.items():
+                moved.pop(key, None)
+                costs.pop(key, None)
+            moved.update(successor._cache)
+            costs.update(successor._cache_costs)
+            successor._cache, successor._cache_costs = moved, costs
+            successor._cache_bytes = sum(costs.values())
+            for key in successor._cache:
+                missing.pop(key, None)
+            missing.update(successor._missing)
+            successor._missing = missing
+            successor._missing_bytes = sum(missing.values())
+            while successor._cache and (
+                len(successor._cache) > successor.MAX_CACHE_ENTRIES
+                or successor._positive_size() > successor.MAX_CACHE_BYTES
+            ):
+                oldest, _ = successor._cache.popitem(last=False)
+                successor._cache_bytes -= successor._cache_costs.pop(oldest)
+            while successor._missing and (
+                len(successor._missing) > successor.MAX_MISSING_ENTRIES
+                or successor._negative_size() > successor.MAX_MISSING_BYTES
+            ):
+                _, amount = successor._missing.popitem(last=False)
+                successor._missing_bytes -= amount
+            self._cache = OrderedDict()
+            self._cache_costs = {}
+            self._cache_bytes = 0
+            self._missing = OrderedDict()
+            self._missing_bytes = 0
+
+    def cache_stats(self):
+        with self._lock:
+            return {"base_revision": self._base_revision, "positive_entries": len(self._cache),
+                    "positive_bytes": self._positive_size(), "negative_entries": len(self._missing),
+                    "negative_bytes": self._negative_size()}
+
+    @contextmanager
+    def read_scope(self):
+        """Use one read transaction for a bounded, pure graph traversal."""
+        self._require_open()
+        with self._lock:
+            self._require_open()
+            owns_transaction = not self._connection.in_transaction
+            try:
+                # An interrupted BEGIN can open SQLite's transaction before it
+                # raises. This scope owns that transaction and must release it.
+                if owns_transaction:
+                    self._connection.execute("BEGIN")
+                yield
+                if owns_transaction:
+                    self._connection.commit()
+            except BaseException as error:
+                if owns_transaction:
+                    try:
+                        self._connection.rollback()
+                    except Exception as cleanup_error:
+                        error.add_note("Read transaction cleanup failed: " + type(cleanup_error).__name__)
+                raise
+
+    def _require_open(self):
+        if self._closing.is_set():
+            raise InvalidCell('cell store reader is closing or closed')
+
+    def read(self, cell_id):
+        with self._lock:
+            self._require_open()
+            cell = self._cache.get(cell_id)
+            if cell is not None:
+                self._cache.move_to_end(cell_id)
+                return cell
+            if cell_id in self._missing:
+                self._missing.move_to_end(cell_id)
+                return None
+            # Most requested IDs have not changed since this reader opened.
+            # Use their compact head index; only newer/missing heads require
+            # historical lookup. An old snapshot never accepts newer bytes.
+            head = self._connection.execute(self._CURRENT_POINT_SQL, (cell_id,)).fetchone()
+            row = head[:3] if head is not None and int(head[3]) <= self._base_revision else (
+                self._connection.execute(self._POINT_SQL, (cell_id, self._base_revision)).fetchone()
+            )
+            if row is None:
+                self._remember_missing(cell_id)
+                return None
+            cell = Cell(cell_id, str(row[0]), str(row[1]), bytes(row[2]))
+            self._remember(cell_id, cell)
+            return cell
+
+    def _prefetch_batch(self, batch):
+        with self._lock:
+            self._require_open()
+            wanted = list(dict.fromkeys(key for key in batch if key not in self._cache and key not in self._missing))
+            if not wanted:
+                return
+            resolved = set()
+            placeholders = ",".join("(?)" for _ in wanted)
+            current_sql = (
+                "WITH requested(cell_id) AS (VALUES " + placeholders + ") "
+                "SELECT c.cell_id, c.link0, c.link1, c.atom, c.revision "
+                "FROM requested AS r "
+                "JOIN current_cells AS c ON c.cell_id = r.cell_id"
+            )
+            cursor = self._connection.execute(current_sql, tuple(wanted))
+            try:
+                for cell_id, link0, link1, atom, revision in cursor:
+                    key = str(cell_id)
+                    if int(revision) <= self._base_revision:
+                        resolved.add(key)
+                        self._remember(key, Cell(key, str(link0), str(link1), bytes(atom)))
+            finally:
+                cursor.close()
+
+            remaining = [key for key in wanted if key not in resolved]
+            if remaining:
+                hist_placeholders = ",".join("(?)" for _ in remaining)
+                hist_sql = (
+                    "WITH requested(cell_id) AS (VALUES " + hist_placeholders + ") "
+                    "SELECT v.cell_id, v.link0, v.link1, v.atom FROM requested AS r "
+                    "JOIN cell_versions AS v ON v.cell_id = r.cell_id AND v.revision = "
+                    "(SELECT MAX(newer.revision) FROM cell_versions AS newer "
+                    "WHERE newer.cell_id = r.cell_id AND newer.revision <= ?)"
+                )
+                hist_cursor = self._connection.execute(hist_sql, (*remaining, self._base_revision))
+                try:
+                    for cell_id, link0, link1, atom in hist_cursor:
+                        key = str(cell_id)
+                        resolved.add(key)
+                        self._remember(key, Cell(key, str(link0), str(link1), bytes(atom)))
+                finally:
+                    hist_cursor.close()
+
+            for key in wanted:
+                if key not in resolved:
+                    self._remember_missing(key)
+
+    def prefetch(self, cell_ids):
+        batch = []
+        for key in cell_ids:
+            batch.append(key)
+            if len(batch) == self.BATCH_SIZE:
+                self._prefetch_batch(batch)
+                batch.clear()
+        if batch:
+            self._prefetch_batch(batch)
+
+    def prefetch_region(self, root_id, limit=8192, depth=8):
+        limit = min(self.MAX_REGION_CELLS, max(0, int(limit)))
+        depth = min(self.MAX_REGION_DEPTH, max(0, int(depth)))
+        if not limit:
+            return 0
+        frontier = [(str(root_id), 0)]
+        queued = {str(root_id)}
+        found = 0
+        offset = 0
+        while offset < len(frontier):
+            key, level = frontier[offset]
+            offset += 1
+            cell = self.read(key)
+            if cell is None:
+                continue
+            found += 1
+            if level < depth:
+                for target in (cell.link0, cell.link1):
+                    if target not in queued and len(queued) < limit:
+                        queued.add(target)
+                        frontier.append((target, level + 1))
+        return found
+
+    def forget(self, cell_id):
+        # New commits live in the overlay; this pinned base remains unchanged.
+        with self._lock:
+            self._forget_missing(cell_id)
+
+    @staticmethod
+    def _prefix_upper(prefix):
+        upper = None
+        for index in range(len(prefix) - 1, -1, -1):
+            if ord(prefix[index]) < 0x10FFFF:
+                upper = prefix[:index] + chr(ord(prefix[index]) + 1)
+                break
+        return upper
+
+    def _id_windows(self, prefix="", link0=None):
+        """Bounded keyset windows over current IDs, never history enumeration.
+
+        Cell identities remain durable; changed candidates are individually
+        resolved against pinned history. No cursor/lock survives a yielded row.
+        """
+        upper = self._prefix_upper(prefix)
+        last = None
+        while True:
+            # Keep exactly one lower bound. SQLite may otherwise seek the
+            # prefix and filter every previous page again before applying last.
+            clauses = ["cell_id >= ?" if last is None else "cell_id > ?"]
+            params = [prefix if last is None else last]
+            if upper is not None:
+                clauses.append("cell_id < ?")
+                params.append(upper)
+            if link0 is not None:
+                clauses.append("((revision <= ? AND link0 = ?) OR revision > ?)")
+                params.extend((self._base_revision, link0, self._base_revision))
+            sql = ("SELECT cell_id, revision FROM current_cells WHERE "
+                   + " AND ".join(clauses) + " ORDER BY cell_id LIMIT ?")
+            params.append(self.BATCH_SIZE)
+            with self._lock:
+                self._require_open()
+                cursor = self._connection.execute(sql, params)
+                try:
+                    rows = cursor.fetchmany(self.BATCH_SIZE)
+                finally:
+                    cursor.close()
+            if not rows:
+                return
+            last = str(rows[-1][0])
+            yield from rows
+
+    def stream_ids(self):
+        yield from self.stream_ids_with_prefix("")
+
+    def stream_ids_with_prefix(self, prefix):
+        for cell_id, revision in self._id_windows(prefix):
+            if int(revision) <= self._base_revision:
+                yield str(cell_id)
+                continue
+            with self._lock:
+                self._require_open()
+                exists = self._connection.execute(
+                    "SELECT 1 FROM cell_versions WHERE cell_id = ? AND revision <= ? LIMIT 1",
+                    (cell_id, self._base_revision),
+                ).fetchone()
+            if exists is not None:
+                yield str(cell_id)
+
+    def stream_cells_with_link0(self, link0):
+        for cell_id, _revision in self._id_windows(link0=link0):
+            cell = self.read(str(cell_id))
+            if cell is not None and cell.link0 == link0:
+                yield cell
+
+    def count(self):
+        with self._lock:
+            self._require_open()
+            unchanged = self._connection.execute(
+                "SELECT COUNT(*) FROM current_cells WHERE revision <= ?",
+                (self._base_revision,),
+            ).fetchone()[0]
+            changed = self._connection.execute(
+                "SELECT COUNT(*) FROM current_cells AS c WHERE c.revision > ? "
+                "AND EXISTS (SELECT 1 FROM cell_versions AS v WHERE v.cell_id = c.cell_id AND v.revision <= ?)",
+                (self._base_revision, self._base_revision),
+            ).fetchone()[0]
+            return int(unchanged) + int(changed)
+
+
+def ids_with_prefix(cells: Mapping[str, Cell], prefix: str) -> Iterator[str]:
+    """Ids of `cells` that start with `prefix`.
+
+    A lazy head answers from the journal's primary key; any other mapping is
+    filtered in Python. Boot used to stream all three million ids for every one
+    of these questions (boot-profile.log, 2026-09-05).
+    """
+    inner = getattr(cells, "_head", None)
+    target = inner if isinstance(inner, _LazyHeadCellMap) else cells
+    scoped = getattr(target, "ids_with_prefix", None)
+    if callable(scoped):
+        return scoped(prefix)
+    return (key for key in cells if key.startswith(prefix))
+
+
+def cells_with_link0(cells: Mapping[str, Cell], link0: str) -> Iterator[Cell]:
+    """Cells of `cells` whose link0 is `link0`, without building every Cell."""
+    inner = getattr(cells, "_head", None)
+    target = inner if isinstance(inner, _LazyHeadCellMap) else cells
+    scoped = getattr(target, "cells_with_link0", None)
+    if callable(scoped):
+        return scoped(link0)
+    return (cell for cell in cells.values() if cell.link0 == link0)
+
+
+class _BoundedCandidateCellMap(Mapping[str, Cell]):
+    """Read-only candidate overlay that never scans an external base mapping."""
+
+    __slots__ = ("_base", "_created_count", "_delta")
+
+    def __init__(self, base: Mapping[str, Cell], delta: Mapping[str, Cell]) -> None:
+        self._base = base
+        self._delta = MappingProxyType(dict(delta))
+        self._created_count = sum(1 for key in delta if key not in base)
+
+    @classmethod
+    def _from_parts(
+        cls,
+        base: Mapping[str, Cell],
+        delta: Mapping[str, Cell],
+        created_count: int,
+    ) -> "_BoundedCandidateCellMap":
+        """Stack a delta a caller already holds and has already counted.
+
+        The read overlay for derived interaction cells stacks the same
+        826k-cell delta on every revision; copying and counting it per
+        revision cost seconds per gesture. The caller owns the delta's
+        identity and recomputes the count only when a commit touches one
+        of its ids.
+        """
+        self = object.__new__(cls)
+        self._base = base
+        self._delta = delta
+        self._created_count = int(created_count)
+        return self
+
+    def __getitem__(self, key: str) -> Cell:
+        try:
+            return self._delta[key]
+        except KeyError:
+            return self._base[key]
+
+    def __iter__(self) -> Iterator[str]:
+        yielded: set[str] = set()
+        for key in self._base:
+            yielded.add(key)
+            yield key
+        for key in self._delta:
+            if key not in yielded:
+                yield key
+
+    def __len__(self) -> int:
+        return len(self._base) + self._created_count
+
+    def __contains__(self, key: object) -> bool:
+        return key in self._delta or key in self._base
+
+
+def _compact_cell_map(cells: Mapping[str, Cell]) -> Mapping[str, Cell]:
+    """Materialize one dense immutable view without changing old snapshots."""
+    return MappingProxyType(dict(cells))
+
+
+def dense_read_snapshot(snapshot: Snapshot) -> Snapshot:
+    """Return the already bounded immutable mapping for a dense read."""
+    if type(snapshot) is not Snapshot:
+        raise TypeError("dense read requires an exact Snapshot")
+    return snapshot
+
+
+def overlay_read_snapshot(
+    snapshot: Snapshot,
+    *,
+    create: Iterable[Cell] = (),
+    replace: Iterable[Cell] = (),
+) -> Snapshot:
+    """Project one immutable candidate revision without copying its base graph."""
+    if type(snapshot) is not Snapshot:
+        raise TypeError("overlay read requires an exact Snapshot")
+    created = tuple(create)
+    replaced = tuple(replace)
+    for cell in created + replaced:
+        _validate_cell(cell)
+    create_ids = tuple(cell.id for cell in created)
+    replace_ids = tuple(cell.id for cell in replaced)
+    if (
+        len(create_ids) != len(set(create_ids))
+        or len(replace_ids) != len(set(replace_ids))
+        or any(cell_id in snapshot.cells for cell_id in create_ids)
+        or any(cell_id not in snapshot.cells for cell_id in replace_ids)
+        or set(create_ids).intersection(replace_ids)
+    ):
+        raise InvalidCell("candidate patch has invalid Cell identities")
+    if not created and not replaced:
+        return Snapshot(snapshot.revision + 1, snapshot.cells)
+    delta = {cell.id: cell for cell in created + replaced}
+    cells = (
+        _OverlayCellMap(snapshot.cells, delta)
+        if isinstance(snapshot.cells, (_OverlayCellMap, HashTrieMap))
+        or type(snapshot.cells) in {dict, MappingProxyType}
+        else _BoundedCandidateCellMap(snapshot.cells, delta)
+    )
+    return Snapshot(snapshot.revision + 1, cells)
+
+
+def _validate_cell(cell: Cell) -> None:
+    if type(cell) is not Cell:
+        raise InvalidCell("every persisted semantic record must be a Cell")
+    if not isinstance(cell.id, str) or not cell.id:
+        raise InvalidCell("cell identity must be a non-empty string")
+    if not isinstance(cell.link0, str) or not isinstance(cell.link1, str):
+        raise InvalidCell("physical links must be cell identities")
+    if not isinstance(cell.atom, bytes):
+        raise InvalidCell("terminal atom must be opaque bytes")
+
+
+def revision_chain_digest_step(
+    previous: bytes,
+    revision: int,
+    changed: Iterable[Cell],
+) -> bytes:
+    """Return the canonical digest after one exact physical revision."""
+    if not isinstance(previous, bytes) or len(previous) != 32:
+        raise InvalidCell("Cell revision digest predecessor is invalid")
+    if type(revision) is not int or revision < 0:
+        raise InvalidCell("Cell revision digest number is invalid")
+    by_id: dict[str, Cell] = {}
+    for cell in changed:
+        _validate_cell(cell)
+        if cell.id in by_id:
+            raise InvalidCell("Cell revision contains duplicate identities")
+        by_id[cell.id] = cell
+    if not by_id:
+        raise InvalidCell("Cell revision contains no changed Cells")
+    return _ordered_revision_chain_digest_step(
+        previous, revision, (by_id[cell_id] for cell_id in sorted(by_id))
+    )
+
+
+def _ordered_revision_chain_digest_step(
+    previous: bytes, revision: int, changed: Iterable[Cell]
+) -> bytes:
+    """Consume the canonical digest steps for synchronous callers."""
+    steps = _ordered_revision_chain_digest_steps(previous, revision, changed)
+    while True:
+        try:
+            next(steps)
+        except StopIteration as completed:
+            digest = completed.value
+            break
+    return digest
+
+
+def _ordered_revision_chain_digest_steps(
+    previous: bytes, revision: int, changed: Iterable[Cell]
+) -> Generator[None, None, bytes]:
+    """Hash canonical ordered Cells without retaining a whole revision."""
+    if not isinstance(previous, bytes) or len(previous) != 32:
+        raise InvalidCell("Cell revision digest predecessor is invalid")
+    if type(revision) is not int or revision < 0:
+        raise InvalidCell("Cell revision digest number is invalid")
+    digest = hashlib.sha256()
+    domain = b"ArchHub/universal-cell-revision-chain/v1"
+    digest.update(len(domain).to_bytes(8, "big"))
+    digest.update(domain)
+    digest.update(previous)
+    raw_revision = str(revision).encode("ascii")
+    digest.update(len(raw_revision).to_bytes(8, "big"))
+    digest.update(raw_revision)
+    last_id = None
+    for cell in changed:
+        _validate_cell(cell)
+        if last_id is not None and cell.id <= last_id:
+            raise InvalidCell("Cell revision identities are duplicate or unordered")
+        last_id = cell.id
+        for raw in (
+            cell.id.encode("utf-8"),
+            cell.link0.encode("utf-8"),
+            cell.link1.encode("utf-8"),
+            cell.atom,
+        ):
+            digest.update(len(raw).to_bytes(8, "big"))
+            digest.update(raw)
+        yield None
+    if last_id is None:
+        raise InvalidCell("Cell revision contains no changed Cells")
+    return digest.digest()
+
+
+class InterprocessOwnerFence:
+    """Process-fatal-safe exclusive ownership of one physical resource."""
+
+    _process_guard = threading.Lock()
+    _process_paths: set[str] = set()
+
+    def __init__(self, database_path: str) -> None:
+        self._database_path = os.path.normcase(
+            os.path.realpath(os.path.abspath(database_path))
+        )
+        self._lock_path = self._database_path + ".owner.lock"
+        physical = os.stat(self._database_path) if os.path.isfile(self._database_path) else None
+        self._database_file_id = (physical.st_dev, physical.st_ino) if physical is not None else None
+        self._stream = None
+        self._released = False
+        with self._process_guard:
+            if self._database_path in self._process_paths:
+                # This exact process already holds the fence. Naming the
+                # holder separates a caller bug from a real external owner;
+                # one shared message for both costs hours of misdiagnosis.
+                raise DatabaseOwnerConflict(
+                    "Cell database is already owned by this same process "
+                    "(pid %d): %s" % (os.getpid(), self._database_path)
+                )
+            self._process_paths.add(self._database_path)
+        try:
+            self._stream = open(self._lock_path, "a+b", buffering=0)
+            self._ensure_lock_byte()
+            self._acquire_os_lock()
+        except Exception as exc:
+            self._release_process_path()
+            if self._stream is not None:
+                self._stream.close()
+                self._stream = None
+            if isinstance(exc, DatabaseOwnerConflict):
+                raise
+            raise DatabaseOwnerConflict(
+                "Cell database owner fence could not be taken for %s: %s"
+                % (self._database_path, exc)
+            ) from exc
+
+    def _ensure_lock_byte(self) -> None:
+        self._stream.seek(0, os.SEEK_END)
+        if self._stream.tell() == 0:
+            self._stream.write(b"\0")
+        self._stream.seek(0)
+
+    def _acquire_os_lock(self) -> None:
+        if os.name == "nt":
+            import msvcrt
+
+            try:
+                msvcrt.locking(self._stream.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError as exc:
+                raise DatabaseOwnerConflict(
+                    "Cell database is held by another live process; this "
+                    "process (pid %d) cannot own it. The holder keeps the "
+                    "OS lock on %s until it exits, so a supervisor must "
+                    "either reuse the running owner or stop it first."
+                    % (os.getpid(), self._lock_path)
+                ) from exc
+            return
+        import fcntl
+
+        try:
+            fcntl.flock(
+                self._stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB
+            )
+        except OSError as exc:
+            raise DatabaseOwnerConflict(
+                "Cell database is held by another live process; this "
+                "process (pid %d) cannot own it. The holder keeps the "
+                "OS lock on %s until it exits, so a supervisor must "
+                "either reuse the running owner or stop it first."
+                % (os.getpid(), self._lock_path)
+            ) from exc
+
+    def _release_process_path(self) -> None:
+        with self._process_guard:
+            self._process_paths.discard(self._database_path)
+
+    def close(self) -> None:
+        if self._released:
+            return
+        self._released = True
+        try:
+            if self._stream is not None:
+                if os.name == "nt":
+                    import msvcrt
+
+                    self._stream.seek(0)
+                    msvcrt.locking(self._stream.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(self._stream.fileno(), fcntl.LOCK_UN)
+        finally:
+            if self._stream is not None:
+                self._stream.close()
+                self._stream = None
+            self._release_process_path()
+
+
+class _SqliteJournal:
+    """Durable implementation machinery; rows contain only Cell versions."""
+
+    # Declared, not probed. Asking an object whether it answers to a NAME
+    # is choosing behaviour from a string, which is the one thing the
+    # execution floor may not do (SPEC 4.1); a capability a journal has is
+    # a value it carries.
+    supports_lazy_history = True
+    append_only_fence_present = False
+
+    def __init__(
+        self,
+        path: str | os.PathLike[str],
+        fault_injector: Callable[[str], None] | None,
+        *, progress_handler: Callable[[], int] | None = None,
+        owner_fence: InterprocessOwnerFence | None = None,
+    ) -> None:
+        self._path = os.path.abspath(os.fspath(path))
+        self._fault_injector = fault_injector
+        self._owns_owner_fence = owner_fence is None
+        if owner_fence is not None:
+            if (not isinstance(owner_fence, InterprocessOwnerFence)
+                    or owner_fence._released or owner_fence._stream is None
+                    or (os.stat(self._path).st_dev, os.stat(self._path).st_ino) != owner_fence._database_file_id
+                    or not os.path.samefile(self._path + '.owner.lock', owner_fence._lock_path)):
+                raise InvalidCell("borrowed journal ownership must cover this exact physical file")
+            self._owner_fence = owner_fence
+        else:
+            self._owner_fence = InterprocessOwnerFence(self._path)
+        self._connection = None
+        self._closing = threading.Event()
+        try:
+            self._io_lock = threading.RLock()
+            self._connection = sqlite3.connect(
+                self._path,
+                timeout=30,
+                isolation_level=None,
+                check_same_thread=False,
+            )
+            self._connection.set_progress_handler(progress_handler, 1000)
+            self._connection.execute("PRAGMA journal_mode=WAL")
+            self._connection.execute("PRAGMA synchronous=FULL")
+            self._connection.execute("PRAGMA foreign_keys=ON")
+            if JOURNAL_PAGE_CACHE_KIB > 0:
+                self._connection.execute("PRAGMA cache_size=-%d" % int(JOURNAL_PAGE_CACHE_KIB))
+            self._connection.execute(
+                "CREATE TABLE IF NOT EXISTS revisions ("
+                "revision INTEGER PRIMARY KEY, committed_at REAL NOT NULL)"
+            )
+            self._connection.execute(
+                "CREATE TABLE IF NOT EXISTS cell_versions ("
+                "revision INTEGER NOT NULL, cell_id TEXT NOT NULL, "
+                "link0 TEXT NOT NULL, link1 TEXT NOT NULL, atom BLOB NOT NULL, "
+                "PRIMARY KEY (revision, cell_id), "
+                "FOREIGN KEY (revision) REFERENCES revisions(revision))"
+            )
+            self._connection.execute(
+                "CREATE TABLE IF NOT EXISTS current_cells ("
+                "cell_id TEXT PRIMARY KEY, revision INTEGER NOT NULL, "
+                "link0 TEXT NOT NULL, link1 TEXT NOT NULL, atom BLOB NOT NULL, "
+                "FOREIGN KEY (revision) REFERENCES revisions(revision))"
+            )
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS "
+                "idx_cell_versions_cell_revision "
+                "ON cell_versions(cell_id, revision DESC)"
+            )
+            # current_cells is declared with a TEXT PRIMARY KEY and nothing
+            # else, so COUNT(*) and any full id sweep had to walk the table
+            # itself -- every row, atom blobs and all. Measured on the
+            # founder's graph: COUNT(*) FROM cell_versions is 0.05s over
+            # 4,062,840 rows because it counts through a compact index,
+            # while COUNT(*) FROM current_cells is 11.43s over 3,961,947.
+            # Same question, 200x apart, and the difference was one index.
+            # revision is a small INTEGER, so this covering index is what
+            # every count and id sweep of the head is answered from now
+            # (2026-09-08).
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS "
+                "idx_current_cells_revision "
+                "ON current_cells(revision)"
+            )
+            # A chain checkpoint records the revision-chain digest at one
+            # revision together with how many version rows lie at or before
+            # it. History is append-only, so the prefix a checkpoint covers
+            # cannot change; a later open re-verifies only the suffix and
+            # seeds the chain from the checkpoint. A checkpoint that
+            # disagrees with the rows it claims to cover is refused and the
+            # full stream runs -- a proof cache, never an authority.
+            # ...and it lives BESIDE the journal, not in it: the journal
+            # holds one shape (revisions, cell_versions, current_cells --
+            # SPEC court "everything persisted is one Cell shape"); a proof
+            # cache is derivable, deletable, and never authority, so it
+            # gets its own file. Deleting that file costs one full re-proof
+            # and changes no meaning.
+            self._accelerators().execute(
+                "CREATE TABLE IF NOT EXISTS chain_checkpoints ("
+                "revision INTEGER PRIMARY KEY, chain_digest BLOB NOT NULL, "
+                "prefix_rows INTEGER NOT NULL)"
+            )
+            # Append-only is enforced by the storage layer, not assumed:
+            # no statement may rewrite or remove a version row or a
+            # revision. That is what lets the checkpoint and fingerprint
+            # accelerators trust "same row count, same newest rowid" as
+            # proof that covered rows are unchanged -- an in-place UPDATE
+            # is refused before it can lie to them.
+            #
+            # Whether the fence was ALREADY there when this process arrived
+            # is the fact the accelerators need: a file whose fence was
+            # dropped and rewritten between two opens must not be trusted
+            # just because this open re-created the fence. A brand-new
+            # journal (no revisions yet) has nothing to have been rewritten.
+            existing_triggers = {
+                row[0] for row in self._connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+                )
+            }
+            self.append_only_fence_present = {
+                "cell_versions_append_only_update",
+                "cell_versions_append_only_delete",
+                "revisions_append_only_update",
+                "revisions_append_only_delete",
+            }.issubset(existing_triggers) or (
+                self._connection.execute(
+                    "SELECT COUNT(*) FROM revisions"
+                ).fetchone()[0] == 0
+            )
+            self._connection.execute(
+                "CREATE TRIGGER IF NOT EXISTS cell_versions_append_only_update "
+                "BEFORE UPDATE ON cell_versions BEGIN "
+                "SELECT RAISE(ABORT, 'cell_versions is append-only'); END"
+            )
+            self._connection.execute(
+                "CREATE TRIGGER IF NOT EXISTS cell_versions_append_only_delete "
+                "BEFORE DELETE ON cell_versions BEGIN "
+                "SELECT RAISE(ABORT, 'cell_versions is append-only'); END"
+            )
+            self._connection.execute(
+                "CREATE TRIGGER IF NOT EXISTS revisions_append_only_update "
+                "BEFORE UPDATE ON revisions BEGIN "
+                "SELECT RAISE(ABORT, 'revisions is append-only'); END"
+            )
+            self._connection.execute(
+                "CREATE TRIGGER IF NOT EXISTS revisions_append_only_delete "
+                "BEFORE DELETE ON revisions BEGIN "
+                "SELECT RAISE(ABORT, 'revisions is append-only'); END"
+            )
+            count = self._connection.execute(
+                "SELECT COUNT(*) FROM revisions"
+            ).fetchone()[0]
+            if count == 0:
+                null = Cell(NULL_CELL_ID, NULL_CELL_ID, NULL_CELL_ID, b"")
+                self._connection.execute("BEGIN IMMEDIATE")
+                try:
+                    self._connection.execute(
+                        "INSERT INTO revisions(revision, committed_at) "
+                        "VALUES(0, ?)",
+                        (time.time(),),
+                    )
+                    self._insert_versions(0, (null,))
+                    self._upsert_current(0, (null,))
+                    self._connection.commit()
+                except Exception:
+                    self._connection.rollback()
+                    raise
+            elif self._connection.execute(
+                _JOURNAL_CURRENT_CELL_COUNT_QUERY
+            ).fetchone()[0] == 0:
+                self._connection.execute("BEGIN IMMEDIATE")
+                try:
+                    self._connection.execute(
+                        "INSERT INTO current_cells(cell_id, revision, link0, link1, atom) "
+                        "SELECT versions.cell_id, versions.revision, versions.link0, "
+                        "versions.link1, versions.atom FROM cell_versions AS versions JOIN ("
+                        "SELECT cell_id, MAX(revision) AS revision FROM cell_versions "
+                        "GROUP BY cell_id) AS selected ON selected.cell_id = versions.cell_id "
+                        "AND selected.revision = versions.revision"
+                    )
+                    self._connection.commit()
+                except Exception:
+                    self._connection.rollback()
+                    raise
+        except Exception:
+            if self._connection is not None:
+                self._connection.close()
+                self._connection = None
+            if self._owns_owner_fence:
+                self._owner_fence.close()
+            raise
+
+    def _fault(self, stage: str) -> None:
+        if self._fault_injector is not None:
+            self._fault_injector(stage)
+
+    def _insert_versions(self, revision: int, cells: Iterable[Cell]) -> None:
+        self._connection.executemany(
+            "INSERT INTO cell_versions"
+            "(revision, cell_id, link0, link1, atom) VALUES(?, ?, ?, ?, ?)",
+            (
+                (revision, cell.id, cell.link0, cell.link1, cell.atom)
+                for cell in cells
+            ),
+        )
+
+    def _upsert_current(self, revision: int, cells: Iterable[Cell]) -> None:
+        self._connection.executemany(
+            "INSERT INTO current_cells(cell_id, revision, link0, link1, atom) "
+            "VALUES(?, ?, ?, ?, ?) ON CONFLICT(cell_id) DO UPDATE SET "
+            "revision=excluded.revision, link0=excluded.link0, "
+            "link1=excluded.link1, atom=excluded.atom",
+            (
+                (cell.id, revision, cell.link0, cell.link1, cell.atom)
+                for cell in cells
+            ),
+        )
+
+    def load(self, *args, **kwargs):
+        with self._io_lock:
+            return self._load_unlocked(*args, **kwargs)
+
+    def _load_unlocked(
+        self,
+    ) -> tuple[
+        Mapping[str, Cell],
+        int,
+        dict[int, tuple[Cell, ...]],
+        dict[int, tuple[str, ...]],
+    ]:
+        current: dict[str, Cell] = {}
+        versions: dict[int, tuple[Cell, ...]] = {}
+        changes: dict[int, tuple[str, ...]] = {}
+        revisions = self._connection.execute(
+            "SELECT revision FROM revisions ORDER BY revision"
+        ).fetchall()
+        for (revision,) in revisions:
+            rows = self._connection.execute(
+                "SELECT cell_id, link0, link1, atom FROM cell_versions "
+                "WHERE revision=? ORDER BY cell_id",
+                (revision,),
+            ).fetchall()
+            changed = []
+            for cell_id, link0, link1, atom in rows:
+                cell = Cell(cell_id, link0, link1, bytes(atom))
+                _validate_cell(cell)
+                current[cell_id] = cell
+                changed.append(cell)
+            changes[revision] = tuple(row[0] for row in rows)
+            versions[revision] = tuple(changed)
+            for cell in changed:
+                if cell.link0 not in current or cell.link1 not in current:
+                    raise InvalidCell(
+                        "durable revision %s has dangling incidence" % revision
+                    )
+        if not versions:
+            raise InvalidCell("durable Cell journal has no revisions")
+        latest = max(versions)
+        return MappingProxyType(current), latest, versions, changes
+
+    def load_head(self, *args, **kwargs):
+        with self._io_lock:
+            return self._load_head_unlocked(*args, **kwargs)
+
+    def _load_head_unlocked(self) -> LoadedJournalHead:
+        """Read one same-transaction head and bounded history reader."""
+        self._connection.execute("BEGIN")
+        try:
+            loaded = self._load_head_in_transaction()
+            self._connection.commit()
+            return loaded
+        except Exception:
+            self._connection.rollback()
+            raise
+
+    def _load_head_in_transaction(self) -> LoadedJournalHead:
+        """Validate streamed history and its index without retaining replayed Cells."""
+        if self._connection.execute("SELECT 1 FROM sqlite_master WHERE name='trace_live_proofs'").fetchone():
+            self._validate_partition_checkpoint()
+        revision_count, first_revision, latest = self._connection.execute(
+            "SELECT COUNT(*), MIN(revision), MAX(revision) FROM revisions"
+        ).fetchone()
+        if (
+            type(revision_count) is not int
+            or type(first_revision) is not int
+            or type(latest) is not int
+            or revision_count < 1
+            or first_revision != 0
+            or latest != revision_count - 1
+        ):
+            raise InvalidCell("durable Cell revision history is discontinuous")
+
+        previous = b"\x00" * 32
+        active_revision = -1
+        resume_after = -1
+        checkpoint = self._accelerators().execute(
+            "SELECT revision, chain_digest, prefix_rows FROM chain_checkpoints "
+            "ORDER BY revision DESC LIMIT 1"
+        ).fetchone()
+        if checkpoint is not None:
+            checkpoint_revision, checkpoint_digest, prefix_rows = checkpoint
+            # Native total cardinality minus the indexed delta preserves the
+            # witness without enumerating the already verified prefix.
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cell_versions_revision "
+                "ON cell_versions(revision)"
+            )
+            covered = self._connection.execute(
+                "SELECT (SELECT COUNT(*) FROM cell_versions) - "
+                "(SELECT COUNT(*) FROM cell_versions WHERE revision > ?)",
+                (int(checkpoint_revision),),
+            ).fetchone()[0]
+            # Genesis is the one revision whose content is fixed by the
+            # protocol, so it is re-read on every open regardless of any
+            # checkpoint: a forged genesis under an honest checkpoint would
+            # otherwise pass. Prefix rows beyond genesis are guarded by the
+            # accepted-proof fingerprint the authority layer keeps.
+            genesis_rows = self._connection.execute(
+                "SELECT cell_id, link0, link1, atom FROM cell_versions "
+                "WHERE revision = 0 LIMIT 2"
+            ).fetchall()
+            genesis_honest = [
+                (str(c), str(l0), str(l1), bytes(a))
+                for c, l0, l1, a in genesis_rows
+            ] == [(NULL_CELL_ID, NULL_CELL_ID, NULL_CELL_ID, b"")]
+            fenced = bool(self.append_only_fence_present)
+            if (
+                fenced
+                and genesis_honest
+                and type(checkpoint_revision) is int
+                and 0 <= checkpoint_revision <= latest
+                and isinstance(checkpoint_digest, (bytes, memoryview))
+                and len(bytes(checkpoint_digest)) == 32
+                and int(covered) == int(prefix_rows)
+            ):
+                previous = bytes(checkpoint_digest)
+                active_revision = int(checkpoint_revision)
+                resume_after = int(checkpoint_revision)
+
+        def revision_cells(row_revision, revision_rows):
+            seen = False
+            for _, cell_id, link0, link1, atom, has_link0, has_link1 in revision_rows:
+                cell = Cell(str(cell_id), str(link0), str(link1), bytes(atom))
+                # The ordered digest iterator validates each yielded Cell.
+                if row_revision == 0 and (
+                    seen or cell != Cell(NULL_CELL_ID, NULL_CELL_ID, NULL_CELL_ID, b"")
+                ):
+                    raise InvalidCell("durable Cell genesis revision is invalid")
+                if not has_link0 or not has_link1:
+                    raise InvalidCell(
+                        "durable revision %s has dangling incidence" % row_revision
+                    )
+                seen = True
+                yield cell
+
+        # Both incidence checks use (cell_id, revision DESC). Same-revision
+        # endpoints exist in this transaction even if their rows stream later;
+        # an endpoint created only in a future revision is not admissible.
+        # The primary key supplies canonical order without a temporary sort.
+        rows = self._connection.execute(
+            "SELECT version.revision, version.cell_id, version.link0, version.link1, version.atom, "
+            "EXISTS(SELECT 1 FROM cell_versions AS endpoint "
+            "WHERE endpoint.cell_id=version.link0 AND endpoint.revision<=version.revision), "
+            "EXISTS(SELECT 1 FROM cell_versions AS endpoint "
+            "WHERE endpoint.cell_id=version.link1 AND endpoint.revision<=version.revision) "
+            "FROM cell_versions AS version WHERE version.revision > ? "
+            "ORDER BY version.revision, version.cell_id COLLATE BINARY",
+            (resume_after,),
+        )
+        with closing(rows):
+            for row_revision, revision_rows in groupby(rows, key=lambda row: row[0]):
+                if type(row_revision) is not int:
+                    raise InvalidCell("durable Cell revision is invalid")
+                if row_revision != active_revision + 1:
+                    raise InvalidCell(
+                        "durable Cell revision history is discontinuous"
+                    )
+                active_revision = row_revision
+                previous = _ordered_revision_chain_digest_step(
+                    previous, active_revision, revision_cells(row_revision, revision_rows)
+                )
+        if active_revision != latest:
+            raise InvalidCell("durable Cell journal has no complete head")
+
+        # A suffix range scan plus indexed newer-version probes selects each
+        # touched identity's exact latest version. Compare one row at a time;
+        # no replay population, identity set, or expected/indexed head survives.
+        # With no checkpoint this is the complete canonical head audit.
+        audit_rows = self._connection.execute(
+            "SELECT version.cell_id, version.revision, version.link0, version.link1, version.atom, "
+            "indexed.cell_id, indexed.revision, indexed.link0, indexed.link1, indexed.atom "
+            "FROM cell_versions AS version LEFT JOIN current_cells AS indexed "
+            "ON indexed.cell_id=version.cell_id "
+            "WHERE version.revision > ? AND NOT EXISTS("
+            "SELECT 1 FROM cell_versions AS newer "
+            "WHERE newer.cell_id=version.cell_id AND newer.revision>version.revision)",
+            (resume_after,),
+        )
+        with closing(audit_rows):
+            for row in audit_rows:
+                if row[5] is None or type(row[6]) is not int or (
+                    row[1], str(row[2]), str(row[3]), bytes(row[4])
+                ) != (
+                    row[6], str(row[7]), str(row[8]), bytes(row[9])
+                ):
+                    raise InvalidCell("durable current Cell index is inconsistent")
+
+        # The expected-row audit detects missing, stale, and corrupt rows. Its
+        # converse detects invented index identities/versions. A cold load
+        # checks all index rows; a resumed load retains the trusted-prefix
+        # boundary and checks only rows claiming a newer physical revision.
+        # Neither query groups, sorts, nor compares a head count to itself.
+        extra_sql = "SELECT 1 FROM current_cells AS indexed WHERE "
+        extra_args = ()
+        if resume_after >= 0:
+            extra_sql += "indexed.revision > ? AND "
+            extra_args = (resume_after,)
+        extra_sql += (
+            "NOT EXISTS(SELECT 1 FROM cell_versions AS version "
+            "WHERE version.cell_id=indexed.cell_id AND version.revision=indexed.revision) LIMIT 1"
+        )
+        with closing(self._connection.execute(extra_sql, extra_args)) as extra_rows:
+            if extra_rows.fetchone() is not None:
+                raise InvalidCell("durable current Cell index is inconsistent")
+
+        # Publish only the proof that all revision and index checks completed.
+        # A refused load must not leave a newer checkpoint that could make its
+        # next attempt trust the very suffix whose validation just failed.
+        if latest > resume_after:
+            self._accelerators().execute(
+                "INSERT OR REPLACE INTO chain_checkpoints"
+                "(revision, chain_digest, prefix_rows) VALUES(?, ?, ?)",
+                (
+                    latest,
+                    previous,
+                    int(self._connection.execute(
+                        "SELECT COUNT(*) FROM cell_versions"
+                    ).fetchone()[0]),
+                ),
+            )
+        if self._connection.execute("SELECT 1 FROM sqlite_master WHERE name='trace_live_proofs'").fetchone():
+            self._accelerators().execute('INSERT OR REPLACE INTO partition_checkpoints VALUES(?,?,?)',
+                (latest, previous, int(self._connection.execute(
+                    'SELECT COUNT(*) FROM cell_versions').fetchone()[0])))
+        reader = _HeadRowReader(self._connection, self._io_lock, base_revision=latest,
+                                closing=self._closing)
+        history = _SqliteHistoryReader(self, latest, previous.hex())
+        return LoadedJournalHead(
+            cells=_LazyHeadCellMap(reader, None, None, 0),
+            revision=latest,
+            revision_chain_digest=previous.hex(),
+            history=history,
+        )
+
+    def append(self, *args, **kwargs):
+        with self._io_lock:
+            return self._append_unlocked(*args, **kwargs)
+
+    def _trace_chain_schema(self):
+        """Custody proofs are journal evidence, never disposable accelerators."""
+        self._connection.execute('CREATE TABLE IF NOT EXISTS trace_chain_proofs('
+            'revision INTEGER PRIMARY KEY, digest BLOB NOT NULL)')
+        self._connection.execute('CREATE TABLE IF NOT EXISTS trace_live_proofs('
+            'revision INTEGER PRIMARY KEY, live_rows INTEGER NOT NULL, '
+            'live_sum BLOB NOT NULL, archived_rows INTEGER NOT NULL)')
+        self._connection.execute('CREATE TABLE IF NOT EXISTS trace_set_deltas('
+            'revision INTEGER PRIMARY KEY, delta BLOB NOT NULL)')
+        self._connection.execute('CREATE TABLE IF NOT EXISTS trace_projection_custody('
+            'revision INTEGER NOT NULL,cell_id TEXT NOT NULL,original_hash TEXT NOT NULL,'
+            'live_hash TEXT NOT NULL,PRIMARY KEY(revision,cell_id))')
+        self._connection.execute('CREATE TABLE IF NOT EXISTS trace_snapshot_proofs('
+            'revision INTEGER PRIMARY KEY, fingerprint TEXT NOT NULL, digest TEXT NOT NULL)')
+        self._connection.execute('CREATE TABLE IF NOT EXISTS trace_signed_head_proofs('
+            'revision INTEGER PRIMARY KEY, head_root TEXT NOT NULL, digest TEXT NOT NULL)')
+        for table in ('trace_chain_proofs', 'trace_live_proofs', 'trace_set_deltas', 'trace_projection_custody',
+                      'trace_snapshot_proofs', 'trace_signed_head_proofs'):
+            for action in ('INSERT', 'UPDATE', 'DELETE'):
+                self._connection.execute(f'CREATE TRIGGER IF NOT EXISTS {table}_{action.lower()} '
+                    f'BEFORE {action} ON {table} WHEN trace_custody_write()=0 BEGIN '
+                    "SELECT RAISE(ABORT, 'archive custody is immutable'); END")
+
+    def _prepare_trace_chain(self, through, check):
+        """Retain an unfinished canonical revision across idle slices."""
+        self._trace_chain_schema()
+        row = self._connection.execute('SELECT revision,digest FROM trace_chain_proofs '
+            'ORDER BY revision DESC LIMIT 1').fetchone()
+        start, previous = (row[0] + 1, bytes(row[1])) if row else (0, b'\0' * 32)
+        for revision in range(start, through + 1):
+            check()
+            pending = getattr(self, '_trace_chain_preparation', None)
+            if pending is not None and pending[:2] != (revision, previous):
+                pending[2].close()
+                pending = None
+            if pending is None:
+                def cells(selected_revision=revision):
+                    for cell_id, link0, link1, atom in self._connection.execute(
+                            'SELECT cell_id,link0,link1,atom FROM cell_versions WHERE revision=? ORDER BY cell_id',
+                            (selected_revision,)):
+                        yield Cell(cell_id, link0, link1, bytes(atom))
+                steps = _ordered_revision_chain_digest_steps(previous, revision, cells())
+                self._trace_chain_preparation = (revision, previous, steps)
+            else:
+                steps = pending[2]
+            try:
+                while True:
+                    # The deadline must throw OUTSIDE the generator. Throwing
+                    # from cells() would close it and discard the partial hash.
+                    check()
+                    try:
+                        next(steps)
+                    except StopIteration as completed:
+                        previous = completed.value
+                        break
+            except TimeoutError:
+                raise
+            except BaseException:
+                steps.close()
+                self._trace_chain_preparation = None
+                raise
+            self._trace_chain_preparation = None
+            self._connection.create_function('trace_custody_write', 0, lambda: 1)
+            try:
+                self._connection.execute('INSERT INTO trace_chain_proofs VALUES(?,?)', (revision, previous))
+            finally:
+                self._connection.create_function('trace_custody_write', 0, lambda: 0)
+
+    def _partition_chain_digest(self, through):
+        """Re-prove live bytes against immutable original-chain custody anchors."""
+        from .cell_set_digest import SET_HASH_BYTES, SET_HASH_MODULUS, cell_set_hash
+        previous = b'\0' * 32
+        for revision in range(through + 1):
+            def cells():
+                for c, l0, l1, a in self._connection.execute(
+                        'SELECT cell_id,link0,link1,atom FROM cell_versions '
+                        'WHERE revision=? ORDER BY cell_id', (revision,)):
+                    yield Cell(c, l0, l1, bytes(a))
+            proof = self._connection.execute('SELECT live_rows,live_sum,archived_rows '
+                'FROM trace_live_proofs WHERE revision=?', (revision,)).fetchone()
+            original = self._connection.execute('SELECT digest FROM trace_chain_proofs WHERE revision=?',
+                (revision,)).fetchone()
+            if proof:
+                count, accumulator = 0, 0
+                for cell in cells():
+                    count += 1
+                    accumulator = (accumulator + cell_set_hash(cell)) % SET_HASH_MODULUS
+                if (original is None or proof[0] != count or proof[2] <= 0 or
+                        bytes(proof[1]) != accumulator.to_bytes(SET_HASH_BYTES, 'big')):
+                    raise InvalidCell('archived revision live projection differs from custody proof')
+                previous = bytes(original[0])
+            else:
+                previous = _ordered_revision_chain_digest_step(previous, revision, cells())
+                if original and previous != bytes(original[0]):
+                    raise InvalidCell('archived journal original chain proof differs')
+        return previous
+
+    def _validate_partition_checkpoint(self):
+        # A surviving checkpoint verifies delta entries only, alongside native
+        # B-tree cardinality metadata. Cold Cells are never opened.
+        latest = self._connection.execute('SELECT MAX(revision) FROM revisions').fetchone()[0]
+        count = self._connection.execute('SELECT COUNT(*) FROM cell_versions').fetchone()[0]
+        cache = self._accelerators()
+        cache.execute('CREATE TABLE IF NOT EXISTS partition_checkpoints('
+            'revision INTEGER PRIMARY KEY,chain_digest BLOB NOT NULL,prefix_rows INTEGER NOT NULL)')
+        cache.execute('DELETE FROM partition_checkpoints WHERE revision>?', (latest,))
+        held = cache.execute('SELECT revision,chain_digest,prefix_rows FROM partition_checkpoints '
+            'ORDER BY revision DESC LIMIT 1').fetchone()
+        if held and self.append_only_fence_present:
+            covered = count - self._connection.execute('SELECT COUNT(*) FROM cell_versions WHERE revision>?',
+                (held[0],)).fetchone()[0]
+            if covered == held[2]:
+                # A rollback kernel may have cached the projected chain. Seed
+                # only our proved original prefix; the ordinary loader verifies
+                # every revision/index row in the suffix before advancing it.
+                cache.execute('DELETE FROM chain_checkpoints WHERE revision>?', (held[0],))
+                cache.execute('INSERT OR REPLACE INTO chain_checkpoints VALUES(?,?,?)', held)
+                return
+        digest = self._partition_chain_digest(latest)
+        if self._connection.execute('SELECT 1 FROM current_cells c WHERE NOT EXISTS('
+                'SELECT 1 FROM cell_versions v WHERE v.cell_id=c.cell_id AND v.revision=c.revision '
+                'AND v.link0=c.link0 AND v.link1=c.link1 AND v.atom=c.atom) LIMIT 1').fetchone():
+            raise InvalidCell('partitioned current index differs from live versions')
+        if self._connection.execute('SELECT 1 FROM cell_versions v WHERE NOT EXISTS('
+                'SELECT 1 FROM current_cells c WHERE c.cell_id=v.cell_id) LIMIT 1').fetchone():
+            raise InvalidCell('partitioned current index is incomplete')
+        self._accelerators().execute('INSERT OR REPLACE INTO chain_checkpoints VALUES(?,?,?)',
+            (latest, digest, count))
+        cache.execute('INSERT OR REPLACE INTO partition_checkpoints VALUES(?,?,?)',
+            (latest, digest, count))
+
+    def refuse_archived_creates(self, identifiers):
+        """Retired identity stays reserved, without consulting any cold Cells."""
+        if not identifiers:
+            return
+        if not self._connection.execute("SELECT 1 FROM sqlite_master WHERE name='trace_retired_identities'").fetchone():
+            return
+        for identifier in identifiers:
+            identity = hashlib.sha256(identifier.encode('utf-8')).digest()
+            if self._connection.execute('SELECT 1 FROM trace_retired_identities WHERE identity=?', (identity,)).fetchone():
+                raise InvalidCell("cannot create existing cell %r" % identifier)
+
+    def partition_verified_rows(self, cold, identifiers, check, projections=(), expected_revision=None):
+        """Archive custody exception: exact cold readback before atomic partition.
+
+        The caller owns semantic eligibility and the conversation projection.
+        Only the verified IDs can cross the append-only trigger, only while
+        this transaction is executing. A raw SQLite DELETE still fails closed.
+        """
+        from .cell_set_digest import (SET_HASH_BYTES, SET_HASH_MODULUS,
+            accumulator_remove, cell_set_hash, set_accumulator)
+        identifiers = tuple(dict.fromkeys(identifiers))
+        projections = tuple(sorted(projections, key=lambda item: (item[0], item[2].id)))
+        if len({(revision, new.id) for revision, _old, new in projections}) != len(projections):
+            raise InvalidCell('archive projection repeats a version')
+        if not (identifiers or projections) or len(identifiers) > 256 or len(projections) > 1024:
+            raise InvalidCell('archive partition requires a bounded exact selection')
+        source_version = self._connection.execute('PRAGMA data_version').fetchone()[0]
+        self._prepare_trace_chain(self._connection.execute('SELECT MAX(revision) FROM revisions').fetchone()[0], check)
+        # Recount once per unchanged connection generation, rather than once
+        # per 256-cell transfer. Any external commit or intervening local
+        # write invalidates this witness; reopen still validates checkpoints.
+        count_key = (source_version, self._connection.total_changes)
+        held_count = getattr(self, '_trace_partition_count', None)
+        if held_count is None or held_count[:2] != count_key:
+            prior_count = self._connection.execute('SELECT COUNT(*) FROM cell_versions').fetchone()[0]
+            self._trace_partition_count = (*count_key, prior_count)
+        else:
+            prior_count = held_count[2]
+        versions, deltas, replacements, certificates = {}, {}, {}, []
+        row_hash = lambda row: hashlib.sha256(repr(tuple(row)).encode('utf-8')).hexdigest()
+        for revision, old, new in projections:
+            check()
+            _validate_cell(new)
+            if old is not None and old.id != new.id or new.id in identifiers:
+                raise InvalidCell('archive projection changes identity')
+            actual = self._connection.execute('SELECT revision,cell_id,link0,link1,atom,rowid '
+                'FROM cell_versions WHERE revision=? AND cell_id=?', (revision, new.id)).fetchone()
+            current = self._connection.execute('SELECT revision FROM current_cells WHERE cell_id=?', (new.id,)).fetchone()
+            if (old is None and actual is not None or old is not None and (actual is None or tuple(actual[1:5]) != (old.id, old.link0, old.link1, old.atom)) or current is None or revision >= current[0]):
+                raise InvalidCell('archive projection is not an exact obsolete version')
+            copied = cold.execute('SELECT revision,cell_id,link0,link1,atom,source_rowid '
+                'FROM trace_versions WHERE revision=? AND cell_id=?', (revision, new.id)).fetchone()
+            certificate = self._connection.execute('SELECT original_hash,live_hash FROM trace_projection_custody '
+                'WHERE revision=? AND cell_id=?', (revision, new.id)).fetchone()
+            original_hash = row_hash(copied) if copied else 'absent'
+            if ((old is None and (copied is not None or certificate is not None)) or
+                    (old is not None and (certificate is None and (copied is None or tuple(actual) != tuple(copied)) or
+                    certificate is not None and tuple(certificate) != (original_hash, row_hash(actual))))):
+                raise InvalidCell('archive projection original custody differs')
+            certificates.append((revision, new.id, original_hash))
+            versions.setdefault(revision, []).extend((old,) if old is not None else ())
+            replacements.setdefault(revision, []).append(new)
+            semantic_old = old
+            if old is None:
+                prior_row = self._connection.execute('SELECT revision,link0,link1,atom FROM cell_versions WHERE cell_id=? AND revision<? ORDER BY revision DESC LIMIT 1', (new.id, revision)).fetchone()
+                prior_planned = [(r, cell) for r, _before, cell in projections if r < revision and cell.id == new.id]
+                if prior_planned and (prior_row is None or prior_planned[-1][0] >= prior_row[0]):
+                    semantic_old = prior_planned[-1][1]
+                elif prior_row is not None:
+                    semantic_old = Cell(new.id, prior_row[1], prior_row[2], bytes(prior_row[3]))
+            delta = ((cell_set_hash(semantic_old) if semantic_old is not None else 0) - cell_set_hash(new)) % SET_HASH_MODULUS
+            deltas[revision] = (deltas.get(revision, 0) + delta) % SET_HASH_MODULUS
+            following = self._connection.execute('SELECT MIN(revision) FROM cell_versions WHERE cell_id=? AND revision>?', (new.id, revision)).fetchone()[0]
+            if following is not None:
+                deltas[following] = (deltas.get(following, 0) - delta) % SET_HASH_MODULUS
+        for identifier in identifiers:
+            check()
+            actual = self._connection.execute('SELECT cell_id,revision,link0,link1,atom '
+                'FROM current_cells WHERE cell_id=?', (identifier,)).fetchone()
+            copied = cold.execute('SELECT cell_id,revision,link0,link1,atom FROM trace_current '
+                'WHERE cell_id=?', (identifier,)).fetchone()
+            if actual is None or copied is None or tuple(actual) != tuple(copied):
+                raise InvalidCell('archive partition current readback differs')
+            prior = 0
+            for row in self._connection.execute('SELECT revision,cell_id,link0,link1,atom,rowid '
+                    'FROM cell_versions WHERE cell_id=? ORDER BY revision', (identifier,)):
+                check()
+                if tuple(row) != cold.execute('SELECT revision,cell_id,link0,link1,atom,source_rowid '
+                        'FROM trace_versions WHERE revision=? AND cell_id=?', row[:2]).fetchone():
+                    raise InvalidCell('archive partition historical readback differs')
+                cell = Cell(row[1], row[2], row[3], bytes(row[4]))
+                versions.setdefault(row[0], []).append(cell)
+                contribution = cell_set_hash(cell)
+                deltas[row[0]] = (deltas.get(row[0], 0) + contribution - prior) % SET_HASH_MODULUS
+                prior = contribution
+        if projections:
+            # Invalidate before the durable rewrite: a kill after publication
+            # must never leave a same-rowid fingerprint for the old bytes.
+            for table in ('prefix_fingerprints', 'prefix_chain', 'set_accumulators'):
+                if self._accelerators().execute("SELECT 1 FROM sqlite_master WHERE name=?", (table,)).fetchone():
+                    self._accelerators().execute('DELETE FROM ' + table)
+        inserted_versions = 0
+        self._connection.execute('BEGIN IMMEDIATE')
+        self._connection.create_function('trace_custody_write', 0, lambda: 1)
+        self._connection.create_function('trace_cell_custody', 1, lambda ident: int(ident in identifiers))
+        try:
+            if (self._connection.execute('PRAGMA data_version').fetchone()[0] != source_version or
+                    expected_revision is not None and self._connection.execute('SELECT MAX(revision) FROM revisions').fetchone()[0] != expected_revision):
+                raise TimeoutError('trace source changed before partition')
+            self._connection.execute('CREATE TABLE IF NOT EXISTS trace_retired_identities('
+                'identity BLOB PRIMARY KEY CHECK(length(identity)=32)) WITHOUT ROWID')
+            self._connection.execute('CREATE TRIGGER IF NOT EXISTS trace_retired_identities_insert '
+                'BEFORE INSERT ON trace_retired_identities WHEN trace_custody_write()=0 BEGIN '
+                "SELECT RAISE(ABORT, 'retired identities are immutable'); END")
+            for action in ('UPDATE', 'DELETE'):
+                self._connection.execute('CREATE TRIGGER IF NOT EXISTS trace_retired_identities_' + action.lower() +
+                    ' BEFORE ' + action + ' ON trace_retired_identities BEGIN '
+                    "SELECT RAISE(ABORT, 'retired identities are immutable'); END")
+            self._connection.executemany('INSERT INTO trace_retired_identities VALUES(?)',
+                ((hashlib.sha256(identifier.encode('utf-8')).digest(),) for identifier in identifiers))
+            self._connection.execute('DROP TRIGGER cell_versions_append_only_delete')
+            self._connection.execute('CREATE TRIGGER cell_versions_append_only_delete '
+                'BEFORE DELETE ON cell_versions WHEN trace_cell_custody(OLD.cell_id)=0 BEGIN '
+                "SELECT RAISE(ABORT, 'cell_versions is append-only'); END")
+            if projections:
+                allowed = {(revision, new.id, new.link0, new.link1, new.atom) for revision, old, new in projections if old is not None}
+                self._connection.create_function('trace_projection_write', 5, lambda *row: int(row in allowed))
+                self._connection.execute('DROP TRIGGER cell_versions_append_only_update')
+                self._connection.execute('CREATE TRIGGER cell_versions_append_only_update BEFORE UPDATE ON cell_versions '
+                    'WHEN OLD.rowid<>NEW.rowid OR OLD.revision<>NEW.revision OR OLD.cell_id<>NEW.cell_id '
+                    'OR trace_projection_write(NEW.revision,NEW.cell_id,NEW.link0,NEW.link1,NEW.atom)=0 BEGIN '
+                    "SELECT RAISE(ABORT, 'cell_versions is append-only'); END")
+            for revision, delta in deltas.items():
+                prior_delta = self._connection.execute('SELECT delta FROM trace_set_deltas WHERE revision=?',
+                    (revision,)).fetchone()
+                if prior_delta is None:
+                    self._connection.execute('INSERT INTO trace_set_deltas VALUES(?,?)',
+                        (revision, delta.to_bytes(SET_HASH_BYTES, 'big')))
+                else:
+                    value = (int.from_bytes(prior_delta[0], 'big') + delta) % SET_HASH_MODULUS
+                    self._connection.execute('UPDATE trace_set_deltas SET delta=? WHERE revision=?',
+                        (value.to_bytes(SET_HASH_BYTES, 'big'), revision))
+            for revision, removed in versions.items():
+                check()
+                proof = self._connection.execute('SELECT live_rows,live_sum,archived_rows '
+                    'FROM trace_live_proofs WHERE revision=?', (revision,)).fetchone()
+                if proof is None:
+                    cells = (Cell(c, l0, l1, bytes(a)) for c, l0, l1, a in self._connection.execute(
+                        'SELECT cell_id,link0,link1,atom FROM cell_versions WHERE revision=?', (revision,)))
+                    accumulator = set_accumulator(cells)
+                    count = self._connection.execute('SELECT COUNT(*) FROM cell_versions WHERE revision=?',
+                        (revision,)).fetchone()[0]
+                    archived = 0
+                else:
+                    count, accumulator, archived = proof[0], int.from_bytes(proof[1], 'big'), proof[2]
+                remaining = accumulator_remove(accumulator, removed)
+                added = replacements.get(revision, ())
+                remaining = (remaining + sum(cell_set_hash(cell) for cell in added)) % SET_HASH_MODULUS
+                live_count = count-len(removed)+len(added)
+                if live_count == 0:
+                    # 2230 requires every revision to have a physical row.
+                    # NULL is already in every head: a no-op version preserves
+                    # both the exact live identity count and its semantic hash.
+                    null = Cell(NULL_CELL_ID, NULL_CELL_ID, NULL_CELL_ID, b'')
+                    self._insert_versions(revision, (null,))
+                    inserted_versions += 1
+                    current_null = self._connection.execute('SELECT revision FROM current_cells '
+                        'WHERE cell_id=?', (NULL_CELL_ID,)).fetchone()[0]
+                    if revision > current_null:
+                        self._upsert_current(revision, (null,))
+                    live_count = 1
+                    remaining = (remaining + cell_set_hash(null)) % SET_HASH_MODULUS
+                self._connection.execute('INSERT OR REPLACE INTO trace_live_proofs VALUES(?,?,?,?)',
+                    (revision, live_count, remaining.to_bytes(SET_HASH_BYTES, 'big'), archived+len(removed)+len(added)))
+            self._connection.executemany('DELETE FROM current_cells WHERE cell_id=?', ((i,) for i in identifiers))
+            removed_versions = self._connection.executemany('DELETE FROM cell_versions WHERE cell_id=?', ((i,) for i in identifiers)).rowcount
+            for revision, old, new in projections:
+                check()
+                if old is None:
+                    self._insert_versions(revision, (new,))
+                    inserted_versions += 1
+                else:
+                    self._connection.execute('UPDATE cell_versions SET link0=?,link1=?,atom=? WHERE revision=? AND cell_id=?',
+                        (new.link0, new.link1, new.atom, revision, old.id))
+            for revision, identifier, original_hash in certificates:
+                row = self._connection.execute('SELECT revision,cell_id,link0,link1,atom,rowid FROM cell_versions WHERE revision=? AND cell_id=?', (revision, identifier)).fetchone()
+                self._connection.execute('INSERT OR REPLACE INTO trace_projection_custody VALUES(?,?,?,?)', (revision, identifier, original_hash, row_hash(row)))
+            if projections:
+                self._connection.execute('DROP TRIGGER cell_versions_append_only_update')
+                self._connection.execute('CREATE TRIGGER cell_versions_append_only_update BEFORE UPDATE ON cell_versions BEGIN '
+                    "SELECT RAISE(ABORT, 'cell_versions is append-only'); END")
+            check()
+            self._fault('trace_partition_before_commit')
+            self._connection.commit()
+        except BaseException:
+            self._connection.rollback()
+            raise
+        finally:
+            self._connection.create_function('trace_custody_write', 0, lambda: 0)
+            self._connection.create_function('trace_cell_custody', 1, lambda _ident: 0)
+            self._connection.create_function('trace_projection_write', 5, lambda *_row: 0)
+        self._fault('trace_partition_committed')
+        # Crash before this cache refresh is safe: load detects the row-count
+        # mismatch and re-proves the small live projection from journal seals.
+        latest, digest = self._connection.execute('SELECT revision,digest FROM trace_chain_proofs '
+            'ORDER BY revision DESC LIMIT 1').fetchone()
+        count = prior_count - removed_versions + inserted_versions
+        self._accelerators().execute('INSERT OR REPLACE INTO chain_checkpoints VALUES(?,?,?)',
+            (latest, digest, count))
+        self._accelerators().execute('CREATE TABLE IF NOT EXISTS partition_checkpoints('
+            'revision INTEGER PRIMARY KEY,chain_digest BLOB NOT NULL,prefix_rows INTEGER NOT NULL)')
+        self._accelerators().execute('INSERT OR REPLACE INTO partition_checkpoints VALUES(?,?,?)',
+            (latest, digest, count))
+        self._trace_partition_count = (source_version, self._connection.total_changes, count)
+        if projections:
+            for table in ('prefix_fingerprints', 'prefix_chain', 'set_accumulators'):
+                if self._accelerators().execute("SELECT 1 FROM sqlite_master WHERE name=?", (table,)).fetchone():
+                    self._accelerators().execute('DELETE FROM ' + table)
+        return sum(len(rows) for rows in versions.values())
+
+    def _append_unlocked(
+        self,
+        expected_revision: int,
+        next_revision: int,
+        changed: Iterable[Cell],
+        *, physical_write=None,
+    ) -> None:
+        changed = tuple(changed)
+        committed = False
+        self._connection.execute("BEGIN IMMEDIATE")
+        try:
+            row = self._connection.execute(
+                "SELECT MAX(revision) FROM revisions"
+            ).fetchone()
+            durable_revision = int(row[0])
+            if durable_revision != expected_revision:
+                raise Conflict(
+                    "expected durable revision %s, current revision is %s"
+                    % (expected_revision, durable_revision)
+                )
+            self._connection.execute(
+                "INSERT INTO revisions(revision, committed_at) VALUES(?, ?)",
+                (next_revision, time.time()),
+            )
+            self._insert_versions(next_revision, changed)
+            self._upsert_current(next_revision, changed)
+            if physical_write is not None:
+                physical_write(self._connection)
+            self._fault("before_commit")
+            self._connection.commit()
+            committed = True
+            self._fault("after_commit")
+        except Exception:
+            if not committed:
+                self._connection.rollback()
+            raise
+
+    def _accelerators(self) -> sqlite3.Connection:
+        """The proof-cache sidecar: '<journal>.accelerators'.
+
+        Chain checkpoints and prefix fingerprints are facts a load already
+        proved, kept so the next open can resume instead of re-proving.
+        They hold no meaning the journal does not, so they do not share
+        its file: the journal stays one Cell shape, and this file can be
+        deleted at any time at the price of one full re-proof.
+        """
+        connection = getattr(self, "_accelerator_connection", None)
+        if connection is None:
+            connection = sqlite3.connect(
+                self._path + ".accelerators",
+                timeout=30,
+                isolation_level=None,
+                check_same_thread=False,
+            )
+            connection.execute("PRAGMA journal_mode=WAL")
+            self._accelerator_connection = connection
+        return connection
+
+    def close(self) -> None:
+        # read_scope holds this same lock through transaction cleanup. Refuse
+        # new traversals before waiting for the current one to release it.
+        self._closing.set()
+        with self._io_lock:
+            try:
+                if self._connection is not None:
+                    self._connection.close()
+                    self._connection = None
+                accelerators = getattr(self, "_accelerator_connection", None)
+                if accelerators is not None:
+                    accelerators.close()
+                    self._accelerator_connection = None
+            finally:
+                if self._owns_owner_fence:
+                    self._owner_fence.close()
+
+    @property
+    def path(self) -> str:
+        return self._path
+
+    @property
+    def identity(self) -> str:
+        canonical = os.path.normcase(self._path).encode("utf-8")
+        return "sqlite:sha256:" + hashlib.sha256(canonical).hexdigest()
+
+    @property
+    def backend(self) -> str:
+        return "sqlite"
+
+    @property
+    def local_path(self) -> str:
+        return self._path
+
+    @property
+    def exclusive_owner(self) -> bool:
+        return True
+
+    @property
+    def shared_writers(self) -> bool:
+        return False
+
+    def backup_to(self, *args, **kwargs):
+        with self._io_lock:
+            return self._backup_to_unlocked(*args, **kwargs)
+
+    def _backup_to_unlocked(self, destination: str | os.PathLike[str]) -> str:
+        """Create one transactionally consistent online SQLite backup."""
+        target = os.path.abspath(os.fspath(destination))
+        if target == self._path:
+            raise InvalidCell("Cell backup destination equals its source")
+        if os.path.exists(target):
+            raise InvalidCell("Cell backup destination already exists")
+        parent = os.path.dirname(target)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        backup = sqlite3.connect(target, isolation_level=None)
+        try:
+            self._connection.backup(backup)
+            integrity = backup.execute("PRAGMA integrity_check").fetchone()
+            if integrity is None or integrity[0] != "ok":
+                raise InvalidCell("Cell backup failed SQLite integrity check")
+        finally:
+            backup.close()
+        return target
+
+    def acquire_runtime_fence(
+        self, resource_id: str
+    ) -> Callable[[], None]:
+        """SQLite's process owner fence already covers every graph resource."""
+        if not isinstance(resource_id, str) or not resource_id:
+            raise InvalidCell("runtime fence resource identity is invalid")
+
+        def release() -> None:
+            return None
+
+        return release
+
+
+class _LazyRevisionCellMap(Mapping[str, Cell]):
+    """The graph as it stood at one past revision, read cell by cell.
+
+    Building a past snapshot aggregates every version row in the store (a
+    3M-row join per revision on the founder's graph; 136 revisions at boot).
+    A reader that asks about a handful of cells -- the authority restore reads
+    one relation per revision -- gets each cell's newest version at or below
+    the revision from the (cell_id, revision) index instead.
+    """
+
+    __slots__ = ("_connection", "_lock", "_revision", "_cache", "_missing", "_closing")
+
+    def __init__(self, connection, lock, revision: int, closing=None) -> None:
+        self._connection = connection
+        self._lock = lock
+        self._closing = closing if closing is not None else threading.Event()
+        self._revision = int(revision)
+        self._cache: dict[str, Cell] = {}
+        self._missing: set[str] = set()
+
+    def _read(self, key: str) -> "Cell | None":
+        if self._closing.is_set():
+            raise InvalidCell('cell store reader is closing or closed')
+        held = self._cache.get(key)
+        if held is not None:
+            return held
+        if key in self._missing:
+            return None
+        with self._lock:
+            if self._closing.is_set():
+                raise InvalidCell('cell store reader is closing or closed')
+            row = self._connection.execute(
+                "SELECT link0, link1, atom FROM cell_versions "
+                "WHERE cell_id = ? AND revision <= ? ORDER BY revision DESC LIMIT 1",
+                (key, self._revision),
+            ).fetchone()
+        if row is None:
+            self._missing.add(key)
+            return None
+        cell = Cell(key, str(row[0]), str(row[1]), bytes(row[2]))
+        self._cache[key] = cell
+        return cell
+
+    def __getitem__(self, key: str) -> Cell:
+        cell = self._read(str(key))
+        if cell is None:
+            raise KeyError(key)
+        return cell
+
+    def __contains__(self, key: object) -> bool:
+        return isinstance(key, str) and self._read(key) is not None
+
+    def get(self, key, default=None):
+        cell = self._read(str(key))
+        return default if cell is None else cell
+
+    def __iter__(self) -> Iterator[str]:
+        with self._lock:
+            if self._closing.is_set():
+                raise InvalidCell('cell store reader is closing or closed')
+            rows = self._connection.execute(
+                "SELECT DISTINCT cell_id FROM cell_versions WHERE revision <= ?",
+                (self._revision,),
+            ).fetchall()
+        for (cell_id,) in rows:
+            yield str(cell_id)
+
+    def __len__(self) -> int:
+        with self._lock:
+            if self._closing.is_set():
+                raise InvalidCell('cell store reader is closing or closed')
+            return int(self._connection.execute(
+                "SELECT COUNT(DISTINCT cell_id) FROM cell_versions WHERE revision <= ?",
+                (self._revision,),
+            ).fetchone()[0])
+
+
+class _SqliteHistoryReader:
+    """Exact SQLite history queries capped at one accepted Store head."""
+
+    def __init__(
+        self,
+        journal: _SqliteJournal,
+        head_revision: int,
+        head_digest: str,
+    ) -> None:
+        self._journal = journal
+        self._head_revision = head_revision
+        self._head_digest = head_digest
+
+    @property
+    def head_revision(self) -> int:
+        return self._head_revision
+
+    @property
+    def head_digest(self) -> str:
+        return self._head_digest
+
+    def _admit_revision(self, revision: int) -> int:
+        if (
+            type(revision) is not int
+            or revision < 0
+            or revision > self._head_revision
+        ):
+            raise InvalidCell("unknown revision %r" % revision)
+        return revision
+
+    def cells_written_since(
+        self, revision: int
+    ) -> tuple[tuple[str, str, str], ...]:
+        """Identity and incidence of every cell written above a revision.
+
+        What a memo needs to know is not "did the graph move" -- it always
+        moves -- but "did anything I READ move". The journal already knows
+        exactly what each revision wrote, and the append-only rule means
+        nothing below can change, so this is the whole question in one
+        indexed statement.
+        """
+        return tuple(
+            (str(row[0]), str(row[1]), str(row[2]))
+            for row in self._journal._connection.execute(
+                "SELECT DISTINCT cell_id, link0, link1 FROM cell_versions "
+                "WHERE revision>?",
+                (int(revision),),
+            )
+        )
+
+    def revision_cells(self, revision: int) -> tuple[Cell, ...]:
+        target = self._admit_revision(revision)
+        rows = self._journal._connection.execute(
+            "SELECT cell_id, link0, link1, atom FROM cell_versions "
+            "WHERE revision=? ORDER BY cell_id",
+            (target,),
+        )
+        cells = tuple(
+            Cell(str(cell_id), str(link0), str(link1), bytes(atom))
+            for cell_id, link0, link1, atom in rows
+        )
+        if not cells:
+            raise InvalidCell("unknown revision %r" % revision)
+        for cell in cells:
+            _validate_cell(cell)
+        return cells
+
+    def lazy_snapshot_at(self, revision: int) -> Snapshot:
+        """A past revision read cell by cell; see _LazyRevisionCellMap."""
+        target = self._admit_revision(revision)
+        return Snapshot(target, _LazyRevisionCellMap(
+            self._journal._connection, self._journal._io_lock, target,
+            closing=self._journal._closing
+        ))
+
+    def revisions_touching(self, root: str) -> tuple[int, ...]:
+        """Revisions in which `root` or any cell under `root:` changed.
+
+        One indexed range scan (cell_id, revision) instead of reading every
+        cell of every revision to ask the same question: the authority
+        restore did that for 21,700 revisions and 3M cells on each boot.
+        """
+        head = self.head_revision
+        rows = self._journal._connection.execute(
+            "SELECT DISTINCT revision FROM cell_versions "
+            "WHERE cell_id = ? OR (cell_id >= ? AND cell_id < ?) "
+            "ORDER BY revision",
+            (root, root + ":", root + ";"),
+        ).fetchall()
+        return tuple(int(r[0]) for r in rows if int(r[0]) <= head)
+
+    def snapshot_at(self, revision: int) -> Snapshot:
+        target = self._admit_revision(revision)
+        rows = self._journal._connection.execute(
+            "SELECT versions.cell_id, versions.link0, versions.link1, "
+            "versions.atom FROM cell_versions AS versions JOIN ("
+            "SELECT cell_id, MAX(revision) AS revision FROM cell_versions "
+            "WHERE revision<=? GROUP BY cell_id"
+            ") AS selected ON selected.cell_id=versions.cell_id "
+            "AND selected.revision=versions.revision ORDER BY versions.cell_id",
+            (target,),
+        )
+        cells: dict[str, Cell] = {}
+        for cell_id, link0, link1, atom in rows:
+            cell = Cell(str(cell_id), str(link0), str(link1), bytes(atom))
+            _validate_cell(cell)
+            cells[cell.id] = cell
+        if NULL_CELL_ID not in cells:
+            raise InvalidCell("revision %s has no distinguished null Cell" % target)
+        if any(
+            cell.link0 not in cells or cell.link1 not in cells
+            for cell in cells.values()
+        ):
+            raise InvalidCell("revision %s has dangling incidence" % target)
+        return Snapshot(target, MappingProxyType(cells))
+
+    def snapshot_stepped_back(self, later: Snapshot) -> Snapshot:
+        """The snapshot one revision below one already in hand.
+
+        Building a snapshot from scratch aggregates every version row in
+        the store, so auditing a history downwards paid a full scan per
+        revision -- a graph with six hundred revisions read itself six
+        hundred times to start. Only the cells written at a revision
+        differ across that step, and the store already knows which those
+        are, so the step costs what actually changed.
+
+        A cell written at this revision reverts to its newest version
+        below; a cell first written here is simply gone. The result is
+        checked as a whole, because dropping a cell can leave incidence
+        dangling somewhere that did not change.
+        """
+        target = self._admit_revision(later.revision - 1)
+        changed = [
+            str(row[0])
+            for row in self._journal._connection.execute(
+                "SELECT DISTINCT cell_id FROM cell_versions WHERE revision=?",
+                (later.revision,),
+            )
+        ]
+        # A step down differs from the revision above by the cells that
+        # revision wrote. Copying five million entries to change three
+        # hundred made every audited head cost the whole graph again; a
+        # persistent trie takes the same base and applies the delta. A
+        # dense base is lifted into a trie once (a boot's first step) and
+        # every step below it is then the size of its own change.
+        base = later.cells
+        lazy_base = base if isinstance(base, _LazyHeadCellMap) else None
+        if lazy_base is not None:
+            trie = None
+        elif isinstance(base, _OverlayCellMap):
+            trie = base._cells
+        elif isinstance(base, HashTrieMap):
+            trie = base
+        else:
+            trie = HashTrieMap(base)
+        restored_cells: dict[str, Cell] = {}
+        for start in range(0, len(changed), 500):
+            selected = changed[start:start + 500]
+            placeholders = ",".join("?" for _ in selected)
+            rows = self._journal._connection.execute(
+                "SELECT versions.cell_id, versions.link0, versions.link1, "
+                "versions.atom FROM cell_versions AS versions JOIN ("
+                "SELECT cell_id, MAX(revision) AS revision FROM cell_versions "
+                "WHERE revision<=? AND cell_id IN (" + placeholders + ") "
+                "GROUP BY cell_id"
+                ") AS selected ON selected.cell_id=versions.cell_id "
+                "AND selected.revision=versions.revision",
+                (target, *selected),
+            )
+            for cell_id, link0, link1, atom in rows:
+                cell = Cell(str(cell_id), str(link0), str(link1), bytes(atom))
+                _validate_cell(cell)
+                restored_cells[cell.id] = cell
+        restored = set()
+        for start in range(0, len(changed), 500):
+            selected = changed[start:start + 500]
+            placeholders = ",".join("?" for _ in selected)
+            restored.update(
+                str(row[0])
+                for row in self._journal._connection.execute(
+                    "SELECT DISTINCT cell_id FROM cell_versions "
+                    "WHERE revision<=? AND cell_id IN (" + placeholders + ")",
+                    (target, *selected),
+                )
+            )
+        removed = tuple(
+            cell_id for cell_id in changed if cell_id not in restored
+        )
+        if lazy_base is not None:
+            cells = lazy_base.with_step_back(restored_cells, removed)
+        else:
+            trie = trie.update(restored_cells)
+            for cell_id in removed:
+                trie = trie.discard(cell_id)
+            cells = _OverlayCellMap._from_trie(trie)
+        if NULL_CELL_ID not in cells:
+            raise InvalidCell(
+                "revision %s has no distinguished null Cell" % target
+            )
+        # Incidence can only dangle through what this step touched: a
+        # restored version whose links no longer resolve, or a survivor
+        # pointing at an id first created above. Every cell was checked
+        # against the cells that existed when it was committed, and the
+        # journal is append-only below this revision, so a survivor
+        # cannot reference an id that did not yet exist. The restored
+        # versions are checked here; the removed ids are asserted absent.
+        if any(
+            cell.link0 not in cells or cell.link1 not in cells
+            for cell in restored_cells.values()
+        ):
+            raise InvalidCell("revision %s has dangling incidence" % target)
+        if any(cell_id in cells for cell_id in removed):
+            raise InvalidCell("revision %s retained a later cell" % target)
+        return Snapshot(target, cells)
+
+    def cells_at(
+        self,
+        revision: int,
+        cell_ids: Iterable[str],
+    ) -> Mapping[str, Cell]:
+        target = self._admit_revision(revision)
+        requested = tuple(dict.fromkeys(cell_ids))
+        if not requested:
+            return MappingProxyType({})
+        out: dict[str, Cell] = {}
+        for start in range(0, len(requested), 500):
+            selected_ids = requested[start:start + 500]
+            placeholders = ",".join("?" for _ in selected_ids)
+            rows = self._journal._connection.execute(
+                "SELECT versions.cell_id, versions.link0, versions.link1, "
+                "versions.atom FROM cell_versions AS versions JOIN ("
+                "SELECT cell_id, MAX(revision) AS revision FROM cell_versions "
+                "WHERE revision<=? AND cell_id IN (" + placeholders + ") "
+                "GROUP BY cell_id"
+                ") AS selected ON selected.cell_id=versions.cell_id "
+                "AND selected.revision=versions.revision",
+                (target, *selected_ids),
+            )
+            for cell_id, link0, link1, atom in rows:
+                cell = Cell(str(cell_id), str(link0), str(link1), bytes(atom))
+                _validate_cell(cell)
+                out[cell.id] = cell
+        for cell_id in requested:
+            if cell_id not in out:
+                raise InvalidCell(
+                    "cell %r did not exist at revision %r"
+                    % (cell_id, target)
+                )
+        return MappingProxyType({
+            cell_id: out[cell_id]
+            for cell_id in requested
+        })
+
+    def created_revision(self, cell_id: str) -> int:
+        if not isinstance(cell_id, str) or not cell_id:
+            raise InvalidCell("Cell identity is invalid")
+        row = self._journal._connection.execute(
+            "SELECT MIN(revision) FROM cell_versions "
+            "WHERE cell_id=? AND revision<=?",
+            (cell_id, self._head_revision),
+        ).fetchone()
+        if row is None or row[0] is None:
+            raise InvalidCell("unknown cell %r" % cell_id)
+        return int(row[0])
+
+    def _append_only_fenced(self) -> bool:
+        """Whether the storage layer refuses rewrites of history right now.
+
+        The accelerators trust "same count, same newest rowid" only while
+        an in-place rewrite is impossible. Anyone with raw file access can
+        drop the triggers; then the accelerators must not trust counts,
+        and every proof re-hashes the rows it covers.
+        """
+        return bool(self._journal.append_only_fence_present)
+
+    def accepted_prefix_fingerprint(self, revision: int) -> tuple[int, int, str]:
+        """Count, newest row, and content digest of the versions at or
+        before one revision.
+
+        A caller uses this to decide whether work it already did over that
+        prefix still stands. Counting rows alone would answer yes to a
+        history that was rewritten in place -- same number of rows, same
+        newest row, different content -- so the digest covers what the rows
+        actually say. Reading and hashing them straight from the table is
+        under a second on the founder's graph, against the minutes it takes
+        to rebuild and re-verify the same history as cells.
+        """
+        # "Under a second on the founder's graph" was true at 654 MB; at
+        # 5.27M rows this re-hash was ~17s of every open, twice, re-proving
+        # rows that are append-only. The digest of the rows at or before a
+        # revision is a fixed fact once those rows exist: history is
+        # append-only, so if the row count and the newest rowid for that
+        # revision are unchanged, so is the digest. The triple is stored
+        # durably beside the journal; a stale or foreign record fails the
+        # count/newest gate and the full hash runs (once) and is recorded.
+        # The digest FORMULA is unchanged, so every proof already recorded
+        # by earlier opens still matches.
+        connection = self._journal._connection
+        accelerators = self._journal._accelerators()
+        target = int(revision)
+        accelerators.execute(
+            "CREATE TABLE IF NOT EXISTS prefix_fingerprints ("
+            "revision INTEGER PRIMARY KEY, rows INTEGER NOT NULL, "
+            "newest INTEGER NOT NULL, digest TEXT NOT NULL)"
+        )
+        covered = connection.execute(
+            "SELECT COUNT(*), COALESCE(MAX(rowid), 0) FROM cell_versions "
+            "WHERE revision <= ?",
+            (target,),
+        ).fetchone()
+        rows_now, newest_now = int(covered[0]), int(covered[1])
+        held = accelerators.execute(
+            "SELECT rows, newest, digest FROM prefix_fingerprints "
+            "WHERE revision = ?",
+            (target,),
+        ).fetchone()
+        if (
+            held is not None
+            and self._append_only_fenced()
+            and int(held[0]) == rows_now
+            and int(held[1]) == newest_now
+            and isinstance(held[2], str) and len(held[2]) == 64
+        ):
+            return (rows_now, newest_now, held[2])
+        rows = 0
+        newest = 0
+        content = hashlib.blake2b(digest_size=32)
+        for row in connection.execute(
+            "SELECT rowid, revision, cell_id, link0, link1, atom"
+            " FROM cell_versions WHERE revision <= ? ORDER BY rowid",
+            (target,),
+        ):
+            rows += 1
+            newest = int(row[0])
+            content.update(repr(tuple(row)).encode("utf-8"))
+        digest_hex = content.hexdigest()
+        try:
+            accelerators.execute(
+                "INSERT OR REPLACE INTO prefix_fingerprints"
+                "(revision, rows, newest, digest) VALUES(?, ?, ?, ?)",
+                (target, rows, newest, digest_hex),
+            )
+        except sqlite3.Error:
+            pass
+        return (rows, newest, digest_hex)
+
+    def chained_prefix_fingerprint(self, revision: int) -> tuple[int, int, str]:
+        """Count, newest row, and a CHAINED content digest of the versions at
+        or before one revision: digest(R) = blake2b(digest(R-1) || rows of R).
+
+        The v1 prefix digest folds every row from the start, so recording a
+        proof for a head that moved by eight commits re-hashed 5.28M rows
+        (13-28 s at every boot that followed any work). Chaining by revision
+        costs the rows of the revisions since the last recorded one. Each
+        recorded link is trusted under the same gate as the other proof
+        caches -- fence present, same count and newest rowid for its
+        revision -- and a missing or untrusted link is recomputed from the
+        nearest trusted one below it, or from the start.
+        """
+        connection = self._journal._connection
+        accelerators = self._journal._accelerators()
+        target = int(revision)
+        accelerators.execute(
+            "CREATE TABLE IF NOT EXISTS prefix_chain ("
+            "revision INTEGER PRIMARY KEY, rows INTEGER NOT NULL, "
+            "newest INTEGER NOT NULL, digest TEXT NOT NULL)"
+        )
+        fenced = self._append_only_fenced()
+
+        def covered_at(rev):
+            row = connection.execute(
+                "SELECT COUNT(*), COALESCE(MAX(rowid), 0) FROM cell_versions "
+                "WHERE revision <= ?",
+                (int(rev),),
+            ).fetchone()
+            return int(row[0]), int(row[1])
+
+        rows_now, newest_now = covered_at(target)
+        held = accelerators.execute(
+            "SELECT rows, newest, digest FROM prefix_chain WHERE revision = ?",
+            (target,),
+        ).fetchone()
+        if (
+            held is not None and fenced
+            and int(held[0]) == rows_now and int(held[1]) == newest_now
+            and isinstance(held[2], str) and len(held[2]) == 64
+        ):
+            return (rows_now, newest_now, held[2])
+        start_revision = -1
+        previous = "0" * 64
+        if fenced:
+            links = accelerators.execute(
+                "SELECT revision, rows, newest, digest FROM prefix_chain "
+                "WHERE revision < ? ORDER BY revision DESC LIMIT 64",
+                (target,),
+            ).fetchall()
+            for link_revision, link_rows, link_newest, link_digest in links:
+                link_rows_now, link_newest_now = covered_at(link_revision)
+                if (
+                    link_rows_now == int(link_rows)
+                    and link_newest_now == int(link_newest)
+                    and isinstance(link_digest, str) and len(link_digest) == 64
+                ):
+                    start_revision = int(link_revision)
+                    previous = link_digest
+                    break
+        # Carry the covered count and newest rowid forward link by link:
+        # history is append-only below the target, so the rows at or
+        # before R are the rows at or before R-1 plus the rows of R. Asking
+        # the store to COUNT(rows <= R) for every link made the first chain
+        # over 968 revisions scan 2.5 billion index entries (332 s).
+        link_rows_now, link_newest_now = (
+            covered_at(start_revision) if start_revision >= 0 else (0, 0)
+        )
+        # This derivable cache may be lost without changing meaning. Batch its
+        # links in one FULL-durability transaction instead of fsync per revision.
+        cache_batch = False
+        try:
+            if not accelerators.in_transaction:
+                accelerators.execute("BEGIN")
+                cache_batch = True
+        except sqlite3.Error:
+            cache_batch = False
+        try:
+            for link_revision in range(start_revision + 1, target + 1):
+                content = hashlib.blake2b(digest_size=32)
+                content.update(b"ArchHub/prefix-chain/v2")
+                content.update(previous.encode("ascii"))
+                for row in connection.execute(
+                    "SELECT rowid, revision, cell_id, link0, link1, atom "
+                    "FROM cell_versions WHERE revision = ? ORDER BY rowid",
+                    (link_revision,),
+                ):
+                    content.update(repr(tuple(row)).encode("utf-8"))
+                    link_rows_now += 1
+                    if int(row[0]) > link_newest_now:
+                        link_newest_now = int(row[0])
+                previous = content.hexdigest()
+                if cache_batch:
+                    try:
+                        accelerators.execute(
+                            "INSERT OR REPLACE INTO prefix_chain"
+                            "(revision, rows, newest, digest) VALUES(?, ?, ?, ?)",
+                            (link_revision, link_rows_now, link_newest_now, previous),
+                        )
+                    except sqlite3.Error:
+                        accelerators.rollback()
+                        cache_batch = False
+            if cache_batch:
+                try:
+                    accelerators.commit()
+                except sqlite3.Error:
+                    accelerators.rollback()
+        finally:
+            if cache_batch and accelerators.in_transaction:
+                accelerators.rollback()
+        return (rows_now, newest_now, previous)
+
+    def chain_digest(self, revision: int) -> str:
+        target = self._admit_revision(revision)
+        if target == self._head_revision:
+            return self._head_digest
+        seed = None
+        if self._journal._connection.execute("SELECT 1 FROM sqlite_master WHERE name='trace_chain_proofs'").fetchone():
+            proof = self._journal._connection.execute('SELECT digest FROM trace_chain_proofs WHERE revision=?',
+                (target,)).fetchone()
+            if proof:
+                return bytes(proof[0]).hex()
+            seed = self._journal._connection.execute('SELECT revision,digest FROM trace_chain_proofs '
+                'WHERE revision<? ORDER BY revision DESC LIMIT 1', (target,)).fetchone()
+        checkpoint = self._journal._accelerators().execute('SELECT chain_digest,prefix_rows '
+            'FROM chain_checkpoints WHERE revision=?', (target,)).fetchone()
+        if checkpoint and self._append_only_fenced():
+            count = self._journal._connection.execute('SELECT COUNT(*) FROM cell_versions WHERE revision<=?',
+                (target,)).fetchone()[0]
+            if count == checkpoint[1]:
+                return bytes(checkpoint[0]).hex()
+        previous = bytes(seed[1]) if seed else b"\x00" * 32
+        active_revision = seed[0] if seed else -1
+        rows = self._journal._connection.execute(
+            "SELECT revision, cell_id, link0, link1, atom "
+            "FROM cell_versions WHERE revision>? AND revision<=? ORDER BY revision, cell_id COLLATE BINARY",
+            (active_revision, target),
+        )
+        with closing(rows):
+            for row_revision, revision_rows in groupby(rows, key=lambda row: row[0]):
+                row_revision = int(row_revision)
+                if row_revision != active_revision + 1:
+                    raise InvalidCell("durable Cell revision history is discontinuous")
+                active_revision = row_revision
+                previous = _ordered_revision_chain_digest_step(
+                    previous,
+                    active_revision,
+                    (Cell(str(cell_id), str(link0), str(link1), bytes(atom))
+                        for _, cell_id, link0, link1, atom in revision_rows),
+                )
+        if active_revision != target:
+            raise InvalidCell("unknown revision %r" % target)
+        return previous.hex()
+
+    def version_count(self) -> int:
+        value = self._journal._connection.execute(
+            "SELECT COUNT(*) FROM cell_versions WHERE revision<=?",
+            (self._head_revision,),
+        ).fetchone()[0]
+        return int(value)
+
+    def advance(self, revision: int, changed: Iterable[Cell]) -> None:
+        changed = tuple(changed)
+        if revision != self._head_revision + 1:
+            raise InvalidCell("durable history reader head changed")
+        self._head_digest = revision_chain_digest_step(
+            bytes.fromhex(self._head_digest),
+            revision,
+            changed,
+        ).hex()
+        self._head_revision = revision
+
+
+def open_read_only_cell_journal(
+    path: str | os.PathLike[str],
+    *,
+    timeout: float = 1.0,
+    isolation_level: str | None = None,
+) -> sqlite3.Connection:
+    """Open a physical observer through the journal owner, without an owner lock.
+
+    Recovery copies and ownership probes share this boundary; callers retain
+    their budgets and transactions and must close the returned connection.
+    ``mode=ro`` cannot create a missing journal, and ``query_only`` prohibits
+    writes even when the writable owner remains connected.
+    """
+    connection = sqlite3.connect(
+        Path(path).expanduser().resolve().as_uri() + "?mode=ro",
+        uri=True, timeout=timeout, isolation_level=isolation_level,
+    )
+    try:
+        connection.execute("PRAGMA query_only=ON")
+    except BaseException:
+        connection.close()
+        raise
+    return connection
+
+
+def inspect_read_only_cell_journal(
+    path: str | os.PathLike[str],
+    *,
+    max_revisions: int = 100_000,
+    max_latest_revision_changes: int = 100_000,
+) -> ReadOnlyJournalRevision:
+    """Inspect one durable Cell revision without creating a CellStore owner.
+
+    The SQLite connection is opened with ``mode=ro`` and ``query_only`` before
+    a bounded read transaction.  This is intentionally a physical journal
+    inspection, not a graph restore: callers receive only revision counts and
+    cannot treat it as proof of Work, sessions, or authorization state.
+    """
+    if (
+        type(max_revisions) is not int
+        or max_revisions < 1
+        or type(max_latest_revision_changes) is not int
+        or max_latest_revision_changes < 1
+    ):
+        raise ReadOnlyJournalError("read-only journal inspection budget is invalid")
+    connection = None
+    try:
+        database = Path(path).expanduser().resolve(strict=True)
+        if not database.is_file():
+            raise ReadOnlyJournalError("read-only journal path is not a file")
+        connection = open_read_only_cell_journal(database)
+        connection.execute("BEGIN")
+        revisions_columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(revisions)")
+        }
+        cell_versions_columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(cell_versions)")
+        }
+        if revisions_columns != _JOURNAL_REVISIONS_COLUMNS or (
+            cell_versions_columns != _JOURNAL_CELL_VERSION_COLUMNS
+        ):
+            raise ReadOnlyJournalError("read-only journal schema is unsupported")
+        count, first_revision, latest_revision = connection.execute(
+            "SELECT COUNT(*), MIN(revision), MAX(revision) FROM revisions"
+        ).fetchone()
+        if type(count) is not int or count > max_revisions:
+            raise ReadOnlyJournalError(
+                "read-only journal revision history exceeds the inspection budget"
+            )
+        if (
+            type(first_revision) is not int
+            or type(latest_revision) is not int
+            or count < 1
+            or first_revision != 0
+            or latest_revision != count - 1
+        ):
+            raise ReadOnlyJournalError("read-only journal revision history is invalid")
+        null_count = connection.execute(
+            "SELECT COUNT(*) FROM cell_versions WHERE revision=0 AND cell_id=?",
+            (NULL_CELL_ID,),
+        ).fetchone()[0]
+        latest_changes = connection.execute(
+            "SELECT COUNT(*) FROM cell_versions WHERE revision=?",
+            (latest_revision,),
+        ).fetchone()[0]
+        if (
+            type(latest_changes) is not int
+            or latest_changes > max_latest_revision_changes
+        ):
+            raise ReadOnlyJournalError(
+                "read-only journal latest revision exceeds the inspection budget"
+            )
+        if (
+            type(null_count) is not int
+            or null_count != 1
+            or latest_changes < 1
+        ):
+            raise ReadOnlyJournalError("read-only journal Cell history is invalid")
+        return ReadOnlyJournalRevision(
+            revision=latest_revision,
+            revision_count=count,
+            latest_revision_change_count=latest_changes,
+        )
+    except ReadOnlyJournalError:
+        raise
+    except (OSError, TypeError, ValueError, sqlite3.Error) as exc:
+        raise ReadOnlyJournalError("read-only journal inspection is unavailable") from exc
+    finally:
+        if connection is not None:
+            connection.close()
+
+
+def load_bounded_read_only_cell_snapshot(
+    path: str | os.PathLike[str],
+    *,
+    max_revisions: int = 10_000,
+    max_current_cells: int = 250_000,
+    max_version_cells: int = 500_000,
+) -> Snapshot:
+    """Load one small durable graph without opening a ``CellStore`` owner.
+
+    This is for independent authority artifacts such as a signing graph, never
+    for the main application journal.  Callers must choose explicit caps; an
+    oversized or malformed journal fails closed before Cells are materialized.
+    """
+    if any(
+        type(value) is not int or value < 1
+        for value in (max_revisions, max_current_cells, max_version_cells)
+    ):
+        raise ReadOnlyJournalError("read-only snapshot budget is invalid")
+    connection = None
+    try:
+        database = Path(path).expanduser().resolve(strict=True)
+        if not database.is_file():
+            raise ReadOnlyJournalError("read-only journal path is not a file")
+        connection = open_read_only_cell_journal(database)
+        connection.execute("BEGIN")
+        revisions_columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(revisions)")
+        }
+        cell_versions_columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(cell_versions)")
+        }
+        if revisions_columns != _JOURNAL_REVISIONS_COLUMNS or (
+            cell_versions_columns != _JOURNAL_CELL_VERSION_COLUMNS
+        ):
+            raise ReadOnlyJournalError("read-only journal schema is unsupported")
+        revision_count, first_revision, revision = connection.execute(
+            "SELECT COUNT(*), MIN(revision), MAX(revision) FROM revisions"
+        ).fetchone()
+        version_count = connection.execute(
+            "SELECT COUNT(*) FROM cell_versions"
+        ).fetchone()[0]
+        if (
+            type(revision_count) is not int
+            or type(version_count) is not int
+            or revision_count > max_revisions
+            or version_count > max_version_cells
+        ):
+            raise ReadOnlyJournalError(
+                "read-only snapshot exceeds the inspection budget"
+            )
+        if (
+            type(first_revision) is not int
+            or type(revision) is not int
+            or revision_count < 1
+            or first_revision != 0
+            or revision != revision_count - 1
+        ):
+            raise ReadOnlyJournalError("read-only journal revision history is invalid")
+        current_count = connection.execute(
+            "SELECT COUNT(*) FROM ("
+            "SELECT cell_id, MAX(revision) FROM cell_versions GROUP BY cell_id"
+            ")"
+        ).fetchone()[0]
+        if type(current_count) is not int or current_count > max_current_cells:
+            raise ReadOnlyJournalError(
+                "read-only snapshot exceeds the current-Cell budget"
+            )
+        rows = connection.execute(
+            "SELECT versions.cell_id, versions.link0, versions.link1, versions.atom "
+            "FROM cell_versions AS versions JOIN ("
+            "SELECT cell_id, MAX(revision) AS revision "
+            "FROM cell_versions GROUP BY cell_id"
+            ") AS selected ON selected.cell_id = versions.cell_id "
+            "AND selected.revision = versions.revision ORDER BY versions.cell_id"
+        )
+        cells: dict[str, Cell] = {}
+        for cell_id, link0, link1, atom in rows:
+            cell = Cell(str(cell_id), str(link0), str(link1), bytes(atom))
+            _validate_cell(cell)
+            cells[cell.id] = cell
+        if len(cells) != current_count or NULL_CELL_ID not in cells:
+            raise ReadOnlyJournalError("read-only snapshot Cell set is invalid")
+        if any(
+            cell.link0 not in cells or cell.link1 not in cells
+            for cell in cells.values()
+        ):
+            raise ReadOnlyJournalError("read-only snapshot contains a dangling Cell")
+        return Snapshot(revision, _frozen_cells(cells))
+    except ReadOnlyJournalError:
+        raise
+    except (OSError, TypeError, ValueError, sqlite3.Error) as exc:
+        raise ReadOnlyJournalError("read-only snapshot is unavailable") from exc
+    finally:
+        if connection is not None:
+            connection.close()
+
+
+def read_only_revision_chain_digest(
+    path: str | os.PathLike[str],
+    revision: int,
+    *,
+    max_revision_cells: int = 5_000_000,
+) -> str:
+    """Stream one durable revision-chain digest without opening ``CellStore``.
+
+    The framing is exactly the normal journal digest.  Rows are streamed in
+    primary-key order inside one read-only transaction, keeping memory bounded
+    even when a trusted checkpoint covers many revisions.
+    """
+    if (
+        type(revision) is not int
+        or revision < 0
+        or type(max_revision_cells) is not int
+        or max_revision_cells < 1
+    ):
+        raise ReadOnlyJournalError("read-only digest request is invalid")
+    connection = None
+    try:
+        database = Path(path).expanduser().resolve(strict=True)
+        if not database.is_file():
+            raise ReadOnlyJournalError("read-only journal path is not a file")
+        connection = open_read_only_cell_journal(database)
+        connection.execute("BEGIN")
+        revision_count, first_revision, latest_revision = connection.execute(
+            "SELECT COUNT(*), MIN(revision), MAX(revision) FROM revisions"
+        ).fetchone()
+        if (
+            type(revision_count) is not int
+            or type(first_revision) is not int
+            or type(latest_revision) is not int
+            or revision_count < 1
+            or first_revision != 0
+            or latest_revision != revision_count - 1
+            or revision > latest_revision
+        ):
+            raise ReadOnlyJournalError("read-only journal revision history is invalid")
+        cell_count = connection.execute(
+            "SELECT COUNT(*) FROM cell_versions WHERE revision<=?", (revision,)
+        ).fetchone()[0]
+        if type(cell_count) is not int or cell_count > max_revision_cells:
+            raise ReadOnlyJournalError(
+                "read-only digest exceeds the revision-Cell budget"
+            )
+        previous = b"\x00" * 32
+        current_revision = -1
+        changed: list[Cell] = []
+        rows = connection.execute(
+            "SELECT revision, cell_id, link0, link1, atom FROM cell_versions "
+            "WHERE revision<=? ORDER BY revision, cell_id",
+            (revision,),
+        )
+        for row_revision, cell_id, link0, link1, atom in rows:
+            if type(row_revision) is not int:
+                raise ReadOnlyJournalError("read-only journal revision is invalid")
+            if row_revision != current_revision:
+                if row_revision != current_revision + 1:
+                    raise ReadOnlyJournalError(
+                        "read-only journal revision history is incomplete"
+                    )
+                if current_revision >= 0:
+                    previous = revision_chain_digest_step(
+                        previous,
+                        current_revision,
+                        changed,
+                    )
+                current_revision = row_revision
+                changed = []
+            changed.append(
+                Cell(str(cell_id), str(link0), str(link1), bytes(atom))
+            )
+        if current_revision != revision:
+            raise ReadOnlyJournalError("read-only journal revision is missing")
+        return revision_chain_digest_step(
+            previous,
+            current_revision,
+            changed,
+        ).hex()
+    except ReadOnlyJournalError:
+        raise
+    except InvalidCell as exc:
+        raise ReadOnlyJournalError(
+            "read-only journal Cell history is invalid"
+        ) from exc
+    except (OSError, TypeError, ValueError, sqlite3.Error) as exc:
+        raise ReadOnlyJournalError("read-only digest is unavailable") from exc
+    finally:
+        if connection is not None:
+            connection.close()
+
+
+_RUNTIME_FENCE_LEASE_TOKEN = object()
+
+
+class RuntimeFenceLease:
+    """Opaque, process-local handoff for one already-held runtime fence."""
+
+    __slots__ = (
+        "_store",
+        "_resource_id",
+        "_release",
+        "_consumed",
+        "_released",
+        "_lock",
+    )
+
+    def __init__(
+        self,
+        store: "CellStore",
+        resource_id: str,
+        release: Callable[[], None],
+        *,
+        _token: object,
+    ) -> None:
+        if _token is not _RUNTIME_FENCE_LEASE_TOKEN:
+            raise InvalidCell("runtime fence lease cannot be constructed directly")
+        self._store = store
+        self._resource_id = resource_id
+        self._release = release
+        self._consumed = False
+        self._released = False
+        self._lock = threading.Lock()
+
+    def consume(
+        self,
+        store: "CellStore",
+        resource_id: str,
+    ) -> Callable[[], None]:
+        """Transfer this exact active fence to one runtime owner."""
+        with self._lock:
+            if self._consumed:
+                raise InvalidCell("runtime fence lease was already consumed")
+            if self._released:
+                raise InvalidCell("runtime fence lease was already released")
+            if store is not self._store:
+                raise InvalidCell(
+                    "runtime fence lease belongs to another CellStore"
+                )
+            if resource_id != self._resource_id:
+                raise InvalidCell(
+                    "runtime fence lease belongs to another resource"
+                )
+            self._consumed = True
+            return self.close
+
+    def close(self) -> None:
+        """Release the physical fence once, before or after handoff."""
+        with self._lock:
+            if self._released:
+                return
+            self._released = True
+            release = self._release
+        release()
+
+
+class CellStore:
+    """Transactional Cell authority with immutable snapshots and journaling.
+
+    Commits construct and validate a complete next mapping before one pointer
+    swap publishes it. An optional SQLite journal preserves every committed
+    revision and its incremental revision-chain digest across process restarts.
+    """
+
+    _HISTORICAL_CACHE_SIZE = 2
+    # How far below the head at() walks by deltas before falling back to
+    # one whole-store aggregate; a boot audit reaches the accepted floor,
+    # which is however many revisions the last session committed.
+    _STEP_BACK_LIMIT = 256
+    _COPY_ON_COMMIT_CELL_LIMIT = 100_000
+    # The SQLite head must not retain every Cell written since process boot.
+    # Rebase after 8 MiB of conservatively accounted writes or 8192 overlay
+    # entries. This bounds the current overlay between commits, not caller-held
+    # snapshots, a single in-flight transaction, or the separate reader LRUs.
+    _SQLITE_HEAD_OVERLAY_MAX_BYTES = 8 * 1024 * 1024
+    _SQLITE_HEAD_OVERLAY_MAX_CELLS = 8192
+
+    def __init__(
+        self,
+        database_path: str | os.PathLike[str] | None = None,
+        *,
+        fault_injector: Callable[[str], None] | None = None,
+        journal: CellJournal | None = None,
+    ) -> None:
+        if database_path is not None and journal is not None:
+            raise InvalidCell(
+                "CellStore accepts either database_path or journal, not both"
+            )
+        if journal is not None and fault_injector is not None:
+            raise InvalidCell(
+                "an injected Cell journal owns its own fault boundary"
+            )
+        self._lock = threading.RLock()
+        self._journal: CellJournal | None = journal
+        self._stable_snapshot_depth = 0
+        self._closed = False
+        self._history_reader: CellHistoryReader | None = None
+        if self._journal is None and database_path is not None:
+            self._journal = _SqliteJournal(database_path, fault_injector)
+        if self._journal is None:
+            null = Cell(NULL_CELL_ID, NULL_CELL_ID, NULL_CELL_ID, b"")
+            self._cells: Mapping[str, Cell] = _frozen_cells({NULL_CELL_ID: null})
+            self._revision = 0
+            self._versions: dict[int, tuple[Cell, ...]] = {0: (null,)}
+            self._changes: dict[int, tuple[str, ...]] = {
+                0: (NULL_CELL_ID,),
+            }
+        else:
+            try:
+                journal = self._journal
+                load_head = getattr(journal, "load_head", None)
+                if journal.supports_lazy_history and callable(load_head):
+                    loaded = load_head()
+                    self._validate_loaded_head(loaded)
+                    self._cells = (
+                        loaded.cells.published()
+                        if isinstance(loaded.cells, _LoadingHeadMap)
+                        else loaded.cells
+                    )
+                    self._revision = loaded.revision
+                    self._history_reader = loaded.history
+                    self._versions = {}
+                    self._changes = {}
+                else:
+                    (
+                        self._cells,
+                        self._revision,
+                        self._versions,
+                        self._changes,
+                    ) = self._journal.load()
+            except Exception:
+                self._journal.close()
+                self._journal = None
+                raise
+        self._authority_identity = (
+            self._journal.identity
+            if self._journal is not None
+            else "memory:" + uuid.uuid4().hex
+        )
+        self._historical_snapshots: OrderedDict[int, Snapshot] = OrderedDict()
+        self._dense_snapshot_cache: Snapshot | None = None
+        self._sqlite_head_overlay_bytes = 0
+        self._cell_history_index: dict[str, tuple[tuple[int, Cell], ...]] | None = None
+        # revision -> additive set accumulator of the whole graph at that
+        # revision (see cell_set_digest). Seeded by one full pass the first
+        # time a caller asks; every commit moves it by exactly the cells it
+        # writes; an audit stepping down a revision moves it by the cells
+        # that revision wrote. Bounded: the audit only ever needs the
+        # revision just above the one it is on.
+        self._set_accumulators: OrderedDict[int, int] = OrderedDict()
+        self._fingerprints: dict[tuple[str, frozenset[str]], str] = {}
+        self._fingerprint_dependencies: dict[
+            tuple[str, frozenset[str]], frozenset[str]
+        ] = {}
+        self._fingerprint_compute_counts: dict[
+            tuple[str, frozenset[str]], int
+        ] = {}
+        self._listeners: set[Callable[[CommitEvent], None]] = set()
+        self._listener_failures: list[str] = []
+        self._revision_chain_digests: dict[int, bytes] = {}
+        # Off for stores the caller owns in memory; the application turns it
+        # on for its persistent graph (require_declared_intent).
+        self._requires_declared_intent = False
+
+    def require_declared_intent(self) -> None:
+        """Refuse every later commit that has no closed-set intent.
+
+        One-way for this store object: nothing turns the gate back off.
+        """
+        with self._lock:
+            self._requires_declared_intent = True
+
+    @property
+    def requires_declared_intent(self) -> bool:
+        return self._requires_declared_intent
+
+    def close(self) -> None:
+        with self._lock:
+            if self._stable_snapshot_depth:
+                raise InvalidCell("cannot close during a stable snapshot")
+            self._closed = True
+            if self._journal is not None:
+                self._journal.close()
+                self._journal = None
+
+    @property
+    def database_path(self) -> str | None:
+        """Local SQLite path, or None for memory and remote authorities."""
+        with self._lock:
+            return (
+                self._journal.local_path
+                if self._journal is not None
+                else None
+            )
+
+    @property
+    def authority_identity(self) -> str:
+        """Secret-free stable identity of this physical graph authority."""
+        return self._authority_identity
+
+    @property
+    def durability_backend(self) -> str:
+        """Physical persistence backend without semantic interpretation."""
+        with self._lock:
+            return (
+                self._journal.backend
+                if self._journal is not None
+                else "memory"
+            )
+
+    @property
+    def is_durable(self) -> bool:
+        with self._lock:
+            return self._journal is not None
+
+    @property
+    def has_exclusive_database_owner(self) -> bool:
+        """Whether this live store holds the process-fatal-safe OS fence."""
+        with self._lock:
+            return bool(
+                self._journal is not None
+                and self._journal.exclusive_owner
+            )
+
+    @property
+    def supports_shared_writers(self) -> bool:
+        """Whether durable conflicts can originate in another process."""
+        with self._lock:
+            return bool(
+                self._journal is not None
+                and self._journal.shared_writers
+            )
+
+    def _adopt_journal_state(
+        self,
+        loaded: LoadedJournalHead | tuple[
+                Mapping[str, Cell],
+                int,
+                dict[int, tuple[Cell, ...]],
+                dict[int, tuple[str, ...]],
+            ],
+    ) -> None:
+        if type(loaded) is LoadedJournalHead:
+            self._validate_loaded_head(loaded)
+            cells = loaded.cells
+            revision = loaded.revision
+            versions: dict[int, tuple[Cell, ...]] = {}
+            changes: dict[int, tuple[str, ...]] = {}
+            history_reader: CellHistoryReader | None = loaded.history
+        else:
+            cells, revision, versions, changes = loaded
+            history_reader = None
+        if revision < self._revision:
+            raise InvalidCell("durable Cell authority moved backwards")
+        self._cells = cells
+        self._revision = revision
+        self._sqlite_head_overlay_bytes = 0
+        self._versions = versions
+        self._changes = changes
+        self._history_reader = history_reader
+        self._historical_snapshots.clear()
+        self._dense_snapshot_cache = None
+        self._cell_history_index = None
+        self._fingerprints.clear()
+        self._fingerprint_dependencies.clear()
+        self._fingerprint_compute_counts.clear()
+        self._revision_chain_digests.clear()
+
+    @staticmethod
+    def _validate_loaded_head(loaded: LoadedJournalHead) -> None:
+        if type(loaded) is not LoadedJournalHead:
+            raise InvalidCell("durable journal head shape is invalid")
+        if (
+            type(loaded.revision) is not int
+            or loaded.revision < 0
+            or loaded.history.head_revision != loaded.revision
+            or not hmac.compare_digest(
+                loaded.history.head_digest,
+                loaded.revision_chain_digest,
+            )
+            or not hmac.compare_digest(
+                loaded.history.chain_digest(loaded.revision),
+                loaded.revision_chain_digest,
+            )
+        ):
+            raise InvalidCell("durable journal head evidence is inconsistent")
+
+    def _load_journal_state(
+        self,
+    ) -> LoadedJournalHead | tuple[
+        Mapping[str, Cell],
+        int,
+        dict[int, tuple[Cell, ...]],
+        dict[int, tuple[str, ...]],
+    ]:
+        if self._journal is None:
+            raise InvalidCell("durable Cell journal is unavailable")
+        journal = self._journal
+        load_head = getattr(journal, "load_head", None)
+        if journal.supports_lazy_history and callable(load_head):
+            loaded = load_head()
+            self._validate_loaded_head(loaded)
+            return loaded
+        return self._journal.load()
+
+    def refresh(self) -> int:
+        """Adopt the latest accepted revision from a shared authority."""
+        with self._lock:
+            if self._stable_snapshot_depth:
+                raise InvalidCell("cannot refresh during a stable snapshot")
+            if self._journal is None:
+                return self._revision
+            self._adopt_journal_state(self._load_journal_state())
+            return self._revision
+
+    def acquire_runtime_fence(
+        self, resource_id: str
+    ) -> Callable[[], None]:
+        """Hold one physical runtime fence while graph ownership is active."""
+        if not isinstance(resource_id, str) or not resource_id:
+            raise InvalidCell("runtime fence resource identity is invalid")
+
+        def no_op_release() -> None:
+            return None
+
+        with self._lock:
+            if self._journal is None:
+                return no_op_release
+            if not self._journal.shared_writers:
+                if not self._journal.exclusive_owner:
+                    raise InvalidCell(
+                        "durable authority has no admitted ownership fence"
+                    )
+                return no_op_release
+            acquire = getattr(self._journal, "acquire_runtime_fence", None)
+            if not callable(acquire):
+                raise InvalidCell(
+                    "shared durable authority has no runtime fence"
+                )
+            release = acquire(resource_id)
+            if not callable(release):
+                raise InvalidCell("runtime fence did not return a release")
+            return release
+
+    def prepare_runtime_fence(self, resource_id: str) -> RuntimeFenceLease:
+        """Acquire one physical fence for an exact startup handoff."""
+        return RuntimeFenceLease(
+            self,
+            resource_id,
+            self.acquire_runtime_fence(resource_id),
+            _token=_RUNTIME_FENCE_LEASE_TOKEN,
+        )
+
+    def backup_to(self, destination: str | os.PathLike[str]) -> str:
+        """Invoke the physical backend's explicit recovery operation."""
+        with self._lock:
+            if self._journal is None:
+                raise InvalidCell("an in-memory CellStore has no SQLite backup")
+            return self._journal.backup_to(destination)
+
+    def sqlite_storage(self):
+        """Owner-only physical handle for adapters sharing this SQLite journal.
+
+        Adapters retain this store's lock and never close the shared connection.
+        Semantic graph mutations still pass through commit and its intent gate.
+        """
+        if self._closed or not isinstance(self._journal, _SqliteJournal):
+            raise InvalidCell("shared physical storage requires a live SQLite owner")
+        return self._journal._connection, self._lock
+
+    def partition_archived_cells(self, cold, identifiers, *, check, projections=()):
+        """Transfer an admitted batch without changing original revision identity."""
+        with self._lock:
+            if type(self._journal) is not _SqliteJournal or self._stable_snapshot_depth:
+                raise InvalidCell('archive partition requires the exclusive idle SQLite owner')
+            with self._journal._io_lock:
+                self._journal._trace_chain_schema()
+                self._journal._prepare_trace_chain(self._revision, check)
+                original = self._journal._connection.execute(
+                    'SELECT digest FROM trace_chain_proofs WHERE revision=?', (self._revision,)).fetchone()
+                if original is None or bytes(original[0]).hex() != self._history_reader.head_digest:
+                    raise InvalidCell('archive original chain differs from the authenticated live owner')
+                authority = getattr(self, '_signed_commit_authority', None)
+                if authority is not None:
+                    # A v1 accepted snapshot cannot be reconstructed from a
+                    # live projection. Preserve its already authenticated
+                    # original proof in immutable journal custody, not a cache.
+                    manifest = authority.manifest
+                    found = self.archived_snapshot_proof(manifest.accepted_revision)
+                    if found is None:
+                        from .unified_authority_runtime import _AcceptedSnapshotProof
+                        proof = _AcceptedSnapshotProof(Path(self.database_path).parent)
+                        key = proof.fingerprint(self, manifest.accepted_revision)
+                        self._journal._connection.create_function('trace_custody_write', 0, lambda: 1)
+                        try:
+                            self._journal._connection.execute('INSERT INTO trace_snapshot_proofs VALUES(?,?,?)',
+                                (manifest.accepted_revision, key, manifest.accepted_snapshot_digest))
+                        finally:
+                            self._journal._connection.create_function('trace_custody_write', 0, lambda: 0)
+                    elif found[1] != manifest.accepted_snapshot_digest:
+                        raise InvalidCell('archive accepted-snapshot custody differs')
+                    from .unified_authority import capture_archived_v1_heads
+                    capture_archived_v1_heads(authority, check)
+                count = self._journal.partition_verified_rows(cold, identifiers, check, projections, self._revision)
+                reader = _HeadRowReader(self._journal._connection, self._journal._io_lock,
+                    base_revision=self._revision, closing=self._journal._closing)
+                head = _LazyHeadCellMap(reader, None, None, 0)
+                self._adopt_journal_state(LoadedJournalHead(head, self._revision,
+                    self._history_reader.head_digest, self._history_reader))
+                self._set_accumulators.clear()
+                self._set_accumulator_cover = None
+                return count
+
+    def archived_head_proof(self, revision, head_root):
+        """Authenticated original v1 head digest; no archived Cell access."""
+        with self._lock:
+            if not isinstance(self._journal, _SqliteJournal):
+                return None
+            connection = self._journal._connection
+            if not connection.execute("SELECT 1 FROM sqlite_master WHERE name='trace_signed_head_proofs'").fetchone():
+                return None
+            row = connection.execute('SELECT head_root,digest FROM trace_signed_head_proofs WHERE revision=?',
+                                     (revision,)).fetchone()
+            if row is None:
+                return None
+            if row[0] != head_root:
+                raise InvalidCell('archive signed-head custody identity differs')
+            return row[1]
+
+    def _record_archived_head_proof(self, revision, head_root, digest):
+        """Trusted signer capture only; the caller authenticates before entry."""
+        with self._lock:
+            if not isinstance(self._journal, _SqliteJournal):
+                raise InvalidCell('archive signed-head custody requires a SQLite owner')
+            existing = self.archived_head_proof(revision, head_root)
+            if existing is not None:
+                if existing != digest:
+                    raise InvalidCell('archive signed-head custody digest differs')
+                return
+            connection = self._journal._connection
+            connection.create_function('trace_custody_write', 0, lambda: 1)
+            try:
+                connection.execute('INSERT INTO trace_signed_head_proofs VALUES(?,?,?)',
+                                   (revision, head_root, digest))
+            finally:
+                connection.create_function('trace_custody_write', 0, lambda: 0)
+
+    def archived_snapshot_proof(self, revision):
+        """Original authenticated snapshot certificate, containing no cold Cells."""
+        if not isinstance(self._journal, _SqliteJournal):
+            return None
+        connection = self._journal._connection
+        if not connection.execute("SELECT 1 FROM sqlite_master WHERE name='trace_snapshot_proofs'").fetchone():
+            return None
+        row = connection.execute('SELECT fingerprint,digest FROM trace_snapshot_proofs WHERE revision=?',
+            (revision,)).fetchone()
+        return tuple(row) if row else None
+
+    def _archived_set_delta(self, revision, *, exact=False):
+        """Small per-revision hash deltas retain signed logical history.
+
+        Physical head iteration remains live-only. A signature still commits
+        to archived evidence without opening, loading or hashing its Cells.
+        """
+        from .cell_set_digest import SET_HASH_MODULUS
+        if not isinstance(self._journal, _SqliteJournal):
+            return 0
+        connection = self._journal._connection
+        if not connection.execute("SELECT 1 FROM sqlite_master WHERE name='trace_set_deltas'").fetchone():
+            return 0
+        comparison = '=' if exact else '<='
+        return sum(int.from_bytes(row[0], 'big') for row in connection.execute(
+            'SELECT delta FROM trace_set_deltas WHERE revision' + comparison + '?',
+            (revision,))) % SET_HASH_MODULUS
+
+    def __enter__(self) -> "CellStore":
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        self.close()
+
+    @property
+    def revision(self) -> int:
+        with self._lock:
+            return self._revision
+
+    def read(self, cell_id: str, *, revision: int | None = None) -> Cell:
+        with self._lock:
+            if self._closed:
+                raise InvalidCell('cannot read a closed store')
+            source = self._cells if revision is None else self.at(revision).cells
+            return source[cell_id]
+
+    def snapshot(self) -> Snapshot:
+        with self._lock:
+            if self._closed:
+                raise InvalidCell('cannot read a closed store')
+            return Snapshot(self._revision, self._cells)
+
+    @contextmanager
+    def stable_snapshot(self, *, expected_revision: int | None = None):
+        """Hold an unchanged local head during a bounded external operation.
+
+        This writes no graph revision. Shared journals need a backend-specific
+        transaction boundary and are refused, even when a runtime fence exists.
+        Callers must acquire any authentication broker lock before this guard;
+        no graph mutation, provider call or owner-lock callback belongs inside.
+        """
+        with self._lock:
+            if self._closed:
+                raise InvalidCell("stable snapshot store is closed")
+            if self._journal is not None and (
+                    self._journal.shared_writers or not self._journal.exclusive_owner):
+                raise InvalidCell("stable snapshot requires exclusive graph ownership")
+            if expected_revision is not None and expected_revision != self._revision:
+                raise Conflict("stable snapshot revision changed")
+            self._stable_snapshot_depth += 1
+            try:
+                yield Snapshot(self._revision, self._cells)
+            finally:
+                self._stable_snapshot_depth -= 1
+
+    def snapshot_transition(
+        self,
+        *,
+        previous_revision: int | None = None,
+        previous_digest: str | None = None,
+    ) -> SnapshotTransition:
+        """Capture a head and prove at most one physical revision of change.
+
+        Never request an old digest: a durable history reader may replay the
+        whole prefix for that operation. Unknown/gapped predecessors instead
+        return no proof, so a disposable projection must rebuild.
+        """
+        with self._lock:
+            snapshot = Snapshot(self._revision, self._cells)
+            digest = self.revision_chain_digest()
+            changed = None
+            if (type(previous_revision) is int and previous_revision >= 0
+                    and type(previous_digest) is str):
+                try:
+                    predecessor = bytes.fromhex(previous_digest)
+                except ValueError:
+                    predecessor = b""
+                if len(predecessor) != 32 or len(previous_digest) != 64:
+                    return SnapshotTransition(snapshot, digest, None)
+                if previous_revision == self._revision:
+                    if hmac.compare_digest(predecessor.hex(), digest):
+                        changed = ()
+                elif previous_revision == self._revision - 1:
+                    delta = self._changed_at(self._revision)
+                    calculated = revision_chain_digest_step(
+                        predecessor, self._revision, delta
+                    ).hex()
+                    if hmac.compare_digest(calculated, digest):
+                        changed = delta
+            return SnapshotTransition(snapshot, digest, changed)
+
+    def dense_snapshot(self) -> Snapshot:
+        """Return the current revision in its bounded immutable read mapping.
+
+        Persistent revisions already provide bounded identity lookup, so a
+        dense reader must not copy the complete Cell map. The Store and every
+        previously published Snapshot remain unchanged.
+        """
+        with self._lock:
+            cached = self._dense_snapshot_cache
+            if cached is not None and cached.revision == self._revision:
+                return cached
+            snapshot = dense_read_snapshot(Snapshot(self._revision, self._cells))
+            self._dense_snapshot_cache = snapshot
+            return snapshot
+
+    def accepted_prefix_fingerprint(self, revision: int) -> tuple[int, int, str]:
+        """Ask the history reader for the immutable prefix fingerprint."""
+        with self._lock:
+            if self._closed:
+                raise InvalidCell('cannot read a closed store')
+            reader = self._history_reader
+            counter = getattr(reader, "accepted_prefix_fingerprint", None)
+            if counter is None:
+                return (0, 0, "")
+            return counter(revision)
+
+    def chained_prefix_fingerprint(self, revision: int) -> tuple[int, int, str]:
+        """Ask the history reader for the chained (v2) prefix fingerprint."""
+        with self._lock:
+            if self._closed:
+                raise InvalidCell('cannot read a closed store')
+            reader = self._history_reader
+            counter = getattr(reader, "chained_prefix_fingerprint", None)
+            if counter is None:
+                return (0, 0, "")
+            return counter(revision)
+
+    def at(self, revision: int) -> Snapshot:
+        with self._lock:
+            if self._closed:
+                raise InvalidCell('cannot read a closed store')
+            if revision == self._revision:
+                return Snapshot(self._revision, self._cells)
+            cached = self._historical_snapshots.get(revision)
+            if cached is not None:
+                self._historical_snapshots.move_to_end(revision)
+                return cached
+            if self._history_reader is not None:
+                # Auditing a history walks downwards one revision at a
+                # time. When the revision above is already in hand, the
+                # step below it is a delta, not another whole scan.
+                above = None
+                if revision + 1 == self._revision:
+                    above = Snapshot(self._revision, self._cells)
+                else:
+                    above = self._historical_snapshots.get(revision + 1)
+                step_back = getattr(
+                    self._history_reader, "snapshot_stepped_back", None
+                )
+                if above is not None and isinstance(above.cells, _LazyRevisionCellMap):
+                    # A lazy neighbour cannot be stepped from; read this one lazily too.
+                    snapshot = self._history_reader.lazy_snapshot_at(revision)
+                elif above is not None and step_back is not None:
+                    snapshot = step_back(above)
+                elif (
+                    step_back is not None
+                    and 0 < self._revision - revision <= self._STEP_BACK_LIMIT
+                ):
+                    # No neighbour in hand, but the head is near: walk down
+                    # from it. Each step costs the cells its revision wrote;
+                    # the aggregate query below costs every version row in
+                    # the store (measured 74 s on the founder's graph for a
+                    # floor eight revisions under the head).
+                    cursor = Snapshot(self._revision, self._cells)
+                    for target in range(self._revision - 1, revision - 1, -1):
+                        held = self._historical_snapshots.get(target)
+                        cursor = held if held is not None else step_back(cursor)
+                        self._historical_snapshots[target] = cursor
+                        self._historical_snapshots.move_to_end(target)
+                    snapshot = cursor
+                else:
+                    # Far from the head with no neighbour in hand: a full
+                    # aggregate per revision is what the authority restore paid
+                    # 136 times at boot. Read the revision cell by cell instead.
+                    lazy = getattr(self._history_reader, "lazy_snapshot_at", None)
+                    snapshot = lazy(revision) if callable(lazy) else self._history_reader.snapshot_at(revision)
+                self._historical_snapshots[revision] = snapshot
+                while (
+                    len(self._historical_snapshots)
+                    > self._HISTORICAL_CACHE_SIZE
+                ):
+                    self._historical_snapshots.popitem(last=False)
+                return snapshot
+            if revision not in self._versions:
+                raise InvalidCell("unknown revision %r" % revision)
+            previous_cached_revision = None
+            for candidate in self._historical_snapshots:
+                if candidate < revision and (
+                    previous_cached_revision is None
+                    or candidate > previous_cached_revision
+                ):
+                    previous_cached_revision = candidate
+            if previous_cached_revision is None:
+                reconstructed: dict[str, Cell] = {}
+                start_revision = 0
+            else:
+                previous = self._historical_snapshots[previous_cached_revision]
+                self._historical_snapshots.move_to_end(previous_cached_revision)
+                reconstructed = dict(previous.cells)
+                start_revision = previous_cached_revision + 1
+            touched_since_base: set[str] = set()
+            for current_revision in range(start_revision, revision + 1):
+                try:
+                    changed = self._versions[current_revision]
+                except KeyError as exc:
+                    raise InvalidCell(
+                        "revision history is discontinuous at %r"
+                        % current_revision
+                    ) from exc
+                for cell in changed:
+                    reconstructed[cell.id] = cell
+                    touched_since_base.add(cell.id)
+            frozen = MappingProxyType(reconstructed)
+            for cell_id in touched_since_base:
+                cell = frozen[cell_id]
+                if cell.link0 not in frozen or cell.link1 not in frozen:
+                    raise InvalidCell(
+                        "revision %s has dangling incidence" % revision
+                    )
+            snapshot = Snapshot(revision, frozen)
+            self._historical_snapshots[revision] = snapshot
+            while (
+                len(self._historical_snapshots)
+                > self._HISTORICAL_CACHE_SIZE
+            ):
+                self._historical_snapshots.popitem(last=False)
+            return snapshot
+
+    def revisions(self) -> tuple[int, ...]:
+        """Return every retained immutable revision in journal order."""
+        with self._lock:
+            if self._history_reader is not None:
+                return tuple(range(self._revision + 1))
+            return tuple(sorted(self._versions))
+
+    def revision_changes(self, revision: int) -> tuple[str, ...]:
+        """Return the exact Cell identities changed by one retained revision."""
+        with self._lock:
+            if self._history_reader is not None:
+                return tuple(
+                    cell.id
+                    for cell in self._history_reader.revision_cells(revision)
+                )
+            try:
+                return self._changes[revision]
+            except KeyError as exc:
+                raise InvalidCell("unknown revision %r" % revision) from exc
+
+    def revisions_touching(self, root: str) -> tuple[int, ...]:
+        """Revisions in which `root` or a cell under `root:` changed, ascending."""
+        prefix = root + ":"
+        with self._lock:
+            if self._history_reader is not None:
+                return self._history_reader.revisions_touching(root)
+            return tuple(
+                revision for revision in sorted(self._changes)
+                if any(
+                    cell_id == root or cell_id.startswith(prefix)
+                    for cell_id in self._changes[revision]
+                )
+            )
+
+    def cells_at(
+        self, revision: int, cell_ids: Iterable[str]
+    ) -> Mapping[str, Cell]:
+        """Return selected Cell versions at a revision without a full snapshot."""
+        requested = tuple(dict.fromkeys(cell_ids))
+        with self._lock:
+            if revision == self._revision:
+                try:
+                    return MappingProxyType({
+                        cell_id: self._cells[cell_id]
+                        for cell_id in requested
+                    })
+                except KeyError as exc:
+                    raise InvalidCell("unknown cell %r" % (exc.args[0],)) from exc
+            if self._history_reader is not None:
+                return self._history_reader.cells_at(revision, requested)
+            if revision not in self._versions:
+                raise InvalidCell("unknown revision %r" % revision)
+            if self._cell_history_index is None:
+                history: dict[str, list[tuple[int, Cell]]] = {}
+                for rev in sorted(self._versions):
+                    for cell in self._versions[rev]:
+                        history.setdefault(cell.id, []).append((rev, cell))
+                self._cell_history_index = {
+                    cell_id: tuple(entries)
+                    for cell_id, entries in history.items()
+                }
+            out: dict[str, Cell] = {}
+            for cell_id in requested:
+                entries = self._cell_history_index.get(cell_id)
+                if not entries:
+                    raise InvalidCell("unknown cell %r" % cell_id)
+                revisions = tuple(rev for rev, _cell in entries)
+                index = bisect_right(revisions, revision) - 1
+                if index < 0:
+                    raise InvalidCell(
+                        "cell %r did not exist at revision %r"
+                        % (cell_id, revision)
+                    )
+                out[cell_id] = entries[index][1]
+            return MappingProxyType(out)
+
+    def cell_created_revision(self, cell_id: str) -> int:
+        """Return the immutable journal revision that first created a Cell."""
+        with self._lock:
+            if cell_id not in self._cells:
+                raise InvalidCell("unknown cell %r" % cell_id)
+            if self._history_reader is not None:
+                return self._history_reader.created_revision(cell_id)
+            for revision in sorted(self._versions):
+                if any(
+                    cell.id == cell_id
+                    for cell in self._versions[revision]
+                ):
+                    return revision
+            raise InvalidCell("cell creation revision is missing")
+
+    def retention_stats(self) -> Mapping[str, int]:
+        """Expose bounded physical retention without interpreting the graph."""
+        with self._lock:
+            version_rows = (
+                self._history_reader.version_count()
+                if self._history_reader is not None
+                else sum(
+                    len(changed)
+                    for changed in self._versions.values()
+                )
+            )
+            revision_count = (
+                self._revision + 1
+                if self._history_reader is not None
+                else len(self._versions)
+            )
+            return MappingProxyType({
+                "revision_count": revision_count,
+                "current_cell_count": len(self._cells),
+                "version_cell_count": version_rows,
+                "resident_history_version_cell_count": sum(
+                    len(changed) for changed in self._versions.values()
+                ),
+                "historical_snapshot_count": len(
+                    self._historical_snapshots
+                ),
+                "historical_snapshot_cell_count": sum(
+                    len(snapshot.cells)
+                    for snapshot in self._historical_snapshots.values()
+                ),
+            })
+
+    def revision_chain_digest(self, revision: int | None = None) -> str:
+        """Commit to every changed Cell record from genesis through revision."""
+        with self._lock:
+            target = self._revision if revision is None else revision
+            if self._history_reader is not None:
+                return self._history_reader.chain_digest(target)
+            if target not in self._versions:
+                raise InvalidCell("unknown revision %r" % target)
+            previous = b"\x00" * 32
+            start = 0
+            cached = tuple(
+                value for value in self._revision_chain_digests if value <= target
+            )
+            if cached:
+                last = max(cached)
+                previous = self._revision_chain_digests[last]
+                start = last + 1
+            for current_revision in range(start, target + 1):
+                changed = {
+                    cell.id: cell for cell in self._versions[current_revision]
+                }
+                ordered = tuple(
+                    changed[root_id]
+                    for root_id in self._changes[current_revision]
+                )
+                previous = revision_chain_digest_step(
+                    previous,
+                    current_revision,
+                    ordered,
+                )
+                self._revision_chain_digests[current_revision] = previous
+            return previous.hex()
+
+    def subscribe(
+        self,
+        listener: Callable[[CommitEvent], None],
+    ) -> Callable[[], None]:
+        """Register a post-commit listener and return an idempotent remover."""
+        if not callable(listener):
+            raise TypeError("commit listener must be callable")
+        with self._lock:
+            self._listeners.add(listener)
+
+        def unsubscribe() -> None:
+            with self._lock:
+                self._listeners.discard(listener)
+
+        return unsubscribe
+
+    def listener_failures(self) -> tuple[str, ...]:
+        with self._lock:
+            return tuple(self._listener_failures)
+
+    def commit(
+        self,
+        expected_revision: int,
+        *,
+        create: Iterable[Cell] = (),
+        replace: Iterable[Cell] = (),
+        precommit_guard: Callable[[], None] | None = None,
+        physical_write=None,
+    ) -> int:
+        if physical_write is not None and (not callable(physical_write) or not isinstance(self._journal, _SqliteJournal)):
+            raise InvalidCell("atomic physical writes require a local SQLite owner and callable")
+        created = tuple(create)
+        replaced = tuple(replace)
+        listeners: tuple[Callable[[CommitEvent], None], ...]
+        event: CommitEvent
+        with self._lock:
+            if self._closed:
+                raise InvalidCell("cannot commit to a closed store")
+            if self._stable_snapshot_depth:
+                raise InvalidCell("cannot commit during a stable snapshot")
+            if expected_revision != self._revision:
+                raise Conflict(
+                    "expected revision %s, current revision is %s"
+                    % (expected_revision, self._revision)
+                )
+
+            transform = getattr(self, '_commit_transform', None)
+            if transform is not None and (created or any(
+                    self._cells.get(cell.id) != cell for cell in replaced)):
+                created, replaced = transform(Snapshot(self._revision, self._cells), created, replaced)
+
+            base = self._cells
+            if (
+                isinstance(base, _OverlayCellMap)
+                and base._depth >= _MAX_OVERLAY_DEPTH
+            ):
+                base = _compact_cell_map(base)
+            delta: dict[str, Cell] = {}
+            touched: set[str] = set()
+            named: set[str] = set()
+
+            for cell in created:
+                _validate_cell(cell)
+                if cell.id in base or cell.id in touched:
+                    raise InvalidCell("cannot create existing cell %r" % cell.id)
+                touched.add(cell.id)
+                named.add(cell.id)
+                delta[cell.id] = cell
+
+            if created and isinstance(self._journal, _SqliteJournal):
+                self._journal.refuse_archived_creates(tuple(cell.id for cell in created))
+
+            changed_replacements: list[Cell] = []
+            for cell in replaced:
+                _validate_cell(cell)
+                if cell.id == NULL_CELL_ID:
+                    raise InvalidCell("the distinguished null cell is immutable")
+                if cell.id not in base:
+                    raise InvalidCell("cannot replace missing cell %r" % cell.id)
+                if cell.id in named:
+                    raise InvalidCell("cell %r is changed twice in one commit" % cell.id)
+                named.add(cell.id)
+                # Compare first: an identical version is not a change and
+                # never becomes a revision or a cell_versions row.
+                if base[cell.id] == cell:
+                    continue
+                touched.add(cell.id)
+                delta[cell.id] = cell
+                changed_replacements.append(cell)
+
+            if not named:
+                raise InvalidCell("empty commits are not transactions")
+            if not touched:
+                return self._revision
+            replaced = tuple(changed_replacements)
+            refused = commit_intent.refusal(self._requires_declared_intent)
+            if refused is not None:
+                raise CommitRefused(refused)
+            declaration = commit_intent.current_declaration()
+
+            for cell_id in touched:
+                cell = delta[cell_id]
+                if (
+                    cell.link0 not in delta and cell.link0 not in base
+                ) or (
+                    cell.link1 not in delta and cell.link1 not in base
+                ):
+                    raise InvalidCell("cell %r contains a dangling physical link" % cell.id)
+
+            next_revision = self._revision + 1
+            # The accumulator of the next revision is this one's, less
+            # the versions being replaced, plus every cell being written.
+            # Computed here, from base, so the head digest a signer asks
+            # for after this commit costs the cells this commit wrote.
+            next_accumulator = None
+            held_accumulator = self._set_accumulators.get(self._revision)
+            if held_accumulator is not None:
+                from .cell_set_digest import (
+                    accumulator_add, accumulator_remove,
+                )
+                next_accumulator = accumulator_add(
+                    accumulator_remove(
+                        held_accumulator,
+                        (base[cell.id] for cell in replaced),
+                    ),
+                    delta.values(),
+                )
+            next_overlay_bytes = self._sqlite_head_overlay_bytes
+            sqlite_head = (
+                type(self._journal) is _SqliteJournal
+                and isinstance(base, _LazyHeadCellMap)
+                and base._reader._connection is self._journal._connection
+                and not base._removed
+            )
+            if sqlite_head:
+                # Count just this write, conservatively keeping replaced
+                # overlay versions in the estimate until the next rebase.
+                next_overlay_bytes += sum(
+                    _HeadRowReader._cell_cost(key, cell)
+                    for key, cell in delta.items()
+                )
+                overlay_count = len(base._overlay) + sum(
+                    key not in base._overlay for key in delta
+                )
+                rebase = (
+                    next_overlay_bytes >= self._SQLITE_HEAD_OVERLAY_MAX_BYTES
+                    or overlay_count >= self._SQLITE_HEAD_OVERLAY_MAX_CELLS
+                )
+            else:
+                rebase = False
+            handover = None
+            if rebase:
+                # Every identity written since the old reader's base revision
+                # lives in the overlay being folded, or in this commit.
+                handover = (
+                    base._reader,
+                    frozenset(base._overlay.keys()) | frozenset(delta),
+                )
+                # Allocate the next map before the fallible append, but do not
+                # read or publish it until SQLite confirms durability below.
+                # Its reader is distinct: changing the old reader's revision
+                # would expose new bytes after an older snapshot's cache evicts.
+                # Preserve a known cardinality without scanning the whole head.
+                base_count = (
+                    None if base._base_count is None else
+                    base._base_count + base._created_count + len(created)
+                )
+                published = _LazyHeadCellMap(
+                    _HeadRowReader(self._journal._connection,
+                                   self._journal._io_lock,
+                                   base_revision=next_revision,
+                                   closing=self._journal._closing),
+                    base_count=base_count,
+                )
+                next_overlay_bytes = 0
+            elif isinstance(base, _LazyHeadCellMap):
+                published = base.with_delta(delta)
+            elif len(base) <= self._COPY_ON_COMMIT_CELL_LIMIT:
+                candidate = dict(base)
+                candidate.update(delta)
+                published = MappingProxyType(candidate)
+            else:
+                published = _OverlayCellMap(base, delta)
+            if precommit_guard is not None:
+                if not callable(precommit_guard):
+                    raise TypeError("Cell commit guard must be callable")
+                precommit_guard()
+            snapshot = Snapshot(next_revision, published)
+            if self._journal is not None:
+                try:
+                    physical_options = {} if physical_write is None else {"physical_write": physical_write}
+                    if physical_write is not None and not isinstance(self._journal, _SqliteJournal):
+                        raise InvalidCell("atomic physical writes require a local SQLite owner")
+                    self._journal.append(
+                        expected_revision,
+                        next_revision,
+                        tuple(created) + tuple(replaced),
+                        **physical_options,
+                    )
+                except Conflict:
+                    self._adopt_journal_state(self._load_journal_state())
+                    raise
+            self._cells = published
+            self._revision = next_revision
+            if handover is not None:
+                handover[0].hand_over(published._reader, handover[1])
+            self._sqlite_head_overlay_bytes = next_overlay_bytes
+            self._dense_snapshot_cache = None
+            if next_accumulator is not None:
+                self._remember_set_accumulator(next_revision, next_accumulator)
+                self._record_set_accumulator(
+                    next_revision, next_accumulator,
+                    written=len(created) + len(replaced),
+                )
+            changed = tuple(created) + tuple(replaced)
+            if self._history_reader is not None:
+                self._history_reader.advance(next_revision, changed)
+            else:
+                self._versions[next_revision] = changed
+                self._changes[next_revision] = tuple(sorted(touched))
+            self._cell_history_index = None
+            for cache_key, dependencies in tuple(
+                self._fingerprint_dependencies.items()
+            ):
+                if touched.intersection(dependencies):
+                    self._fingerprints.pop(cache_key, None)
+                    self._fingerprint_dependencies.pop(cache_key, None)
+            event = CommitEvent(
+                next_revision, frozenset(touched), declaration
+            )
+            listeners = tuple(self._listeners)
+
+        for listener in listeners:
+            try:
+                listener(event)
+            except Exception as exc:
+                with self._lock:
+                    self._listener_failures.append(
+                        "%s: %s" % (type(exc).__name__, exc)
+                    )
+                    if len(self._listener_failures) > 100:
+                        del self._listener_failures[:-100]
+        return next_revision
+
+    _SET_ACCUMULATOR_CACHE_SIZE = 8
+
+    def _remember_set_accumulator(self, revision: int, accumulator: int) -> None:
+        self._set_accumulators[revision] = accumulator
+        self._set_accumulators.move_to_end(revision)
+        while len(self._set_accumulators) > self._SET_ACCUMULATOR_CACHE_SIZE:
+            self._set_accumulators.popitem(last=False)
+
+    def _changed_at(self, revision: int) -> tuple[Cell, ...]:
+        """The versions written at one revision, as this store records them."""
+        if self._history_reader is not None:
+            return self._history_reader.revision_cells(revision)
+        held = self._versions.get(revision)
+        if held is None:
+            raise InvalidCell("unknown revision %r" % revision)
+        return tuple(held)
+
+    def set_accumulator(self, snapshot: Snapshot) -> int:
+        """The additive set accumulator of exactly this store snapshot.
+
+        The head revision seeds by one full pass the first time it is asked
+        for, and each commit then moves it by what it wrote. A historical
+        snapshot one below a revision already in hand is derived by
+        undoing that revision -- subtract the versions it wrote, add back
+        the versions those cells held before, which the historical
+        snapshot itself carries. Anything else pays the full pass over the
+        snapshot handed in. Every path is exact for the snapshot given;
+        none trusts a stored number for content it did not hash.
+        """
+        from .cell_set_digest import (
+            SET_HASH_MODULUS, accumulator_add, accumulator_remove, set_accumulator,
+        )
+        with self._lock:
+            revision = snapshot.revision
+            is_current = revision == self._revision
+            if is_current and snapshot.cells is not self._cells:
+                # A foreign mapping claiming the head revision is hashed
+                # for real, never answered from the head's cache.
+                return (set_accumulator(snapshot.cells.values()) + self._archived_set_delta(revision)) % SET_HASH_MODULUS
+            held = self._set_accumulators.get(revision)
+            if held is not None:
+                self._set_accumulators.move_to_end(revision)
+                return held
+            above = self._set_accumulators.get(revision + 1)
+            if above is not None and revision + 1 <= self._revision:
+                written = self._changed_at(revision + 1)
+                restored = tuple(
+                    snapshot.cells[cell.id]
+                    for cell in written
+                    if cell.id in snapshot.cells
+                )
+                accumulator = accumulator_add(
+                    accumulator_remove(above, written), restored
+                )
+                accumulator = (accumulator - self._archived_set_delta(revision + 1, exact=True)) % SET_HASH_MODULUS
+            else:
+                accumulator = self._recorded_set_accumulator(revision)
+                if accumulator is None:
+                    accumulator = (set_accumulator(snapshot.cells.values()) + self._archived_set_delta(revision)) % SET_HASH_MODULUS
+                    self._record_set_accumulator(revision, accumulator)
+            self._remember_set_accumulator(revision, accumulator)
+            return accumulator
+
+    def _recorded_set_accumulator(self, revision: int) -> int | None:
+        """The accumulator a previous process left for this revision.
+
+        Trusted under exactly the gate the other proof caches use: the
+        storage layer refuses rewrites (fence present) and the rows at or
+        before the revision are the same count with the same newest rowid.
+        A raw-file rewrite under an intact fence is outside this model, as
+        it is for the chain checkpoints; deleting the sidecar costs one full
+        pass and changes no meaning.
+        """
+        journal = self._journal
+        if journal is None or not journal.append_only_fence_present:
+            return None
+        try:
+            accelerators = journal._accelerators()
+            accelerators.execute(
+                "CREATE TABLE IF NOT EXISTS set_accumulators ("
+                "revision INTEGER PRIMARY KEY, rows INTEGER NOT NULL, "
+                "newest INTEGER NOT NULL, accumulator BLOB NOT NULL)"
+            )
+            held = accelerators.execute(
+                "SELECT rows, newest, accumulator FROM set_accumulators "
+                "WHERE revision = ?",
+                (int(revision),),
+            ).fetchone()
+            if held is None:
+                return None
+            covered = journal._connection.execute(
+                "SELECT COUNT(*), COALESCE(MAX(rowid), 0) FROM cell_versions "
+                "WHERE revision <= ?",
+                (int(revision),),
+            ).fetchone()
+            if int(held[0]) != int(covered[0]) or int(held[1]) != int(covered[1]):
+                return None
+            raw = bytes(held[2])
+            from .cell_set_digest import SET_HASH_BYTES
+            if len(raw) != SET_HASH_BYTES:
+                return None
+            return int.from_bytes(raw, "big")
+        except sqlite3.Error:
+            return None
+
+    def _record_set_accumulator(
+        self, revision: int, accumulator: int, *, written: int | None = None,
+    ) -> None:
+        """Leave the accumulator for one revision beside the journal.
+
+        The covered-row count and newest rowid gate its reuse. Counting the
+        rows at or before the revision is an index scan over the whole
+        journal -- 0.7 s of every 1.2 s pan on the founder's graph -- so the
+        count is carried forward from the previous record (rows + what this
+        commit wrote; newest = the newest row of this revision, an indexed
+        range) and only a record with no predecessor in hand counts.
+        """
+        journal = self._journal
+        if journal is None:
+            return
+        try:
+            from .cell_set_digest import SET_HASH_BYTES
+            accelerators = journal._accelerators()
+            accelerators.execute(
+                "CREATE TABLE IF NOT EXISTS set_accumulators ("
+                "revision INTEGER PRIMARY KEY, rows INTEGER NOT NULL, "
+                "newest INTEGER NOT NULL, accumulator BLOB NOT NULL)"
+            )
+            held = getattr(self, "_set_accumulator_cover", None)
+            if (
+                written is not None
+                and held is not None
+                and held[0] == int(revision) - 1
+            ):
+                newest_row = journal._connection.execute(
+                    "SELECT COALESCE(MAX(rowid), 0) FROM cell_versions "
+                    "WHERE revision = ?",
+                    (int(revision),),
+                ).fetchone()
+                covered = (held[1] + int(written), max(held[2], int(newest_row[0])))
+            else:
+                counted = journal._connection.execute(
+                    "SELECT COUNT(*), COALESCE(MAX(rowid), 0) FROM cell_versions "
+                    "WHERE revision <= ?",
+                    (int(revision),),
+                ).fetchone()
+                covered = (int(counted[0]), int(counted[1]))
+            self._set_accumulator_cover = (int(revision), covered[0], covered[1])
+            accelerators.execute(
+                "INSERT OR REPLACE INTO set_accumulators"
+                "(revision, rows, newest, accumulator) VALUES(?, ?, ?, ?)",
+                (
+                    int(revision), int(covered[0]), int(covered[1]),
+                    accumulator.to_bytes(SET_HASH_BYTES, "big"),
+                ),
+            )
+        except sqlite3.Error:
+            pass
+
+    def set_accumulator_after(
+        self,
+        base: Snapshot,
+        *,
+        create: Iterable[Cell],
+        replace: Iterable[Cell],
+        blank_atom_roots: Iterable[str] = (),
+    ) -> int:
+        """The accumulator a commit of these cells over 'base' would have.
+
+        'blank_atom_roots' name cells whose atom is taken as empty for the
+        purpose of the digest -- the head's own digest and signature
+        payloads, which cannot contain themselves.
+        """
+        from .cell_set_digest import (
+            accumulator_add, accumulator_remove,
+        )
+        blank = frozenset(blank_atom_roots)
+        created = tuple(create)
+        replaced = tuple(replace)
+        accumulator = self.set_accumulator(base)
+        accumulator = accumulator_remove(
+            accumulator, (base.cells[cell.id] for cell in replaced)
+        )
+        return accumulator_add(
+            accumulator,
+            (
+                Cell(cell.id, cell.link0, cell.link1, b"")
+                if cell.id in blank else cell
+                for cell in (*created, *replaced)
+            ),
+        )
+
+    def fingerprint(
+        self,
+        root_id: str,
+        *,
+        budget: int = 100_000,
+        excluded_roots: Iterable[str] = (),
+    ) -> str:
+        """Hash one reachable cell region without interpreting terminal data."""
+        if budget < 1:
+            raise MatchBudgetExceeded("fingerprint budget must be positive")
+        with self._lock:
+            excluded = frozenset(excluded_roots)
+            if any(
+                not isinstance(root, str) or not root
+                for root in excluded
+            ):
+                raise InvalidCell("fingerprint exclusion root is invalid")
+            if root_id in excluded:
+                raise InvalidCell("fingerprint root cannot exclude itself")
+            cache_key = (root_id, excluded)
+            cached = self._fingerprints.get(cache_key)
+            if cached is not None:
+                return cached
+            if root_id not in self._cells:
+                raise InvalidCell("fingerprint root is missing")
+
+            reachable: set[str] = set()
+            pending = [root_id]
+            steps = 0
+            while pending:
+                cell_id = pending.pop()
+                if cell_id in reachable or cell_id in excluded:
+                    continue
+                steps += 1
+                if steps > budget:
+                    raise MatchBudgetExceeded(
+                        "fingerprint exceeded %s reachable cells" % budget
+                    )
+                cell = self._cells[cell_id]
+                reachable.add(cell_id)
+                pending.append(cell.link0)
+                pending.append(cell.link1)
+
+            digest = hashlib.blake2b(digest_size=32)
+
+            def add_field(data: bytes) -> None:
+                digest.update(len(data).to_bytes(8, "big"))
+                digest.update(data)
+
+            for cell_id in sorted(reachable):
+                cell = self._cells[cell_id]
+                add_field(cell.id.encode("utf-8"))
+                add_field(cell.link0.encode("utf-8"))
+                add_field(cell.link1.encode("utf-8"))
+                add_field(cell.atom)
+
+            value = digest.hexdigest()
+            self._fingerprints[cache_key] = value
+            self._fingerprint_dependencies[cache_key] = frozenset(reachable)
+            self._fingerprint_compute_counts[cache_key] = (
+                self._fingerprint_compute_counts.get(cache_key, 0) + 1
+            )
+            return value
+
+    def fingerprint_computes(self, root_id: str) -> int:
+        with self._lock:
+            return sum(
+                count
+                for (candidate, _excluded), count
+                in self._fingerprint_compute_counts.items()
+                if candidate == root_id
+            )
+
+    def match(
+        self,
+        pattern: Mapping[str, Cell],
+        *,
+        pattern_root: str,
+        target_root: str,
+        variables: Iterable[str] = (),
+        budget: int = 10_000,
+        revision: int | None = None,
+    ) -> dict[str, str]:
+        """Unify a cell graph with a target graph using explicit variables.
+
+        Atom bytes are tested only for exact opaque equality. They are never
+        decoded or interpreted. The matcher knows graph structure, the null
+        identity, and which pattern identities the caller supplied as
+        variables; it knows no protocol or product vocabulary.
+        """
+        if budget < 1:
+            raise MatchBudgetExceeded("match budget must be positive")
+        variable_ids = frozenset(variables)
+        with self._lock:
+            stored_pattern = pattern is self._cells
+            pattern_cells = pattern if stored_pattern else dict(pattern)
+            if not stored_pattern:
+                for cell in pattern_cells.values():
+                    _validate_cell(cell)
+            if pattern_root not in pattern_cells:
+                raise InvalidCell("pattern root is missing")
+            if NULL_CELL_ID not in pattern_cells:
+                raise InvalidCell(
+                    "pattern must contain the distinguished null cell"
+                )
+            if not all(root_id in pattern_cells for root_id in variable_ids):
+                raise InvalidCell("every match variable must be a pattern cell")
+            if NULL_CELL_ID in variable_ids:
+                raise InvalidCell(
+                    "the distinguished null cell cannot be a variable"
+                )
+            if not stored_pattern:
+                for cell in pattern_cells.values():
+                    if cell.id in variable_ids:
+                        continue
+                    if (
+                        cell.link0 not in pattern_cells
+                        or cell.link1 not in pattern_cells
+                    ):
+                        raise InvalidCell(
+                            "pattern cell %r has a dangling link" % cell.id
+                        )
+            target_cells = self._cells if revision is None else self.at(revision).cells
+            if target_root not in target_cells:
+                raise NoMatch("target root is missing")
+
+            bindings: dict[str, str] = {}
+            concrete: dict[str, str] = {}
+            pending = [(pattern_root, target_root)]
+            steps = 0
+
+            while pending:
+                steps += 1
+                if steps > budget:
+                    raise MatchBudgetExceeded(
+                        "graph match exceeded %s visited pairs" % budget
+                    )
+                pattern_id, target_id = pending.pop()
+
+                if pattern_id in variable_ids:
+                    previous = bindings.get(pattern_id)
+                    if previous is not None and previous != target_id:
+                        raise NoMatch("one variable matched two target cells")
+                    bindings[pattern_id] = target_id
+                    continue
+
+                previous = concrete.get(pattern_id)
+                if previous is not None:
+                    if previous != target_id:
+                        raise NoMatch("shared pattern structure was not preserved")
+                    continue
+
+                if pattern_id == NULL_CELL_ID:
+                    if target_id != NULL_CELL_ID:
+                        raise NoMatch("null incidence did not match")
+                    concrete[pattern_id] = target_id
+                    continue
+
+                target_cell = target_cells.get(target_id)
+                if target_cell is None:
+                    raise NoMatch("target incidence is missing")
+                pattern_cell = pattern_cells[pattern_id]
+                if not hmac.compare_digest(pattern_cell.atom, target_cell.atom):
+                    raise NoMatch("opaque terminal atoms differ")
+
+                concrete[pattern_id] = target_id
+                pending.append((pattern_cell.link0, target_cell.link0))
+                pending.append((pattern_cell.link1, target_cell.link1))
+
+            return bindings
+
+    def _prepare_rewrite_locked(
+        self,
+        *,
+        expected_revision: int,
+        pattern_root: str,
+        target_root: str,
+        pattern_variables: Iterable[str],
+        replacement_root: str,
+        replacement_variables: Mapping[str, str],
+        replacement_constants: Mapping[str, str] | None = None,
+        budget: int = 10_000,
+    ) -> PreparedRewrite:
+        """Match one stored graph and materialize an unpublished replacement.
+
+        Both sides of the rule are ordinary cells already in this store. The
+        caller explicitly maps replacement placeholders to pattern variables.
+        All other replacement cells are copied to fresh identities, except the
+        replacement root, which preserves the target root's stable identity.
+        """
+        pattern_variable_ids = frozenset(pattern_variables)
+        replacement_variable_map = dict(replacement_variables)
+        replacement_constant_map = dict(replacement_constants or {})
+        if expected_revision != self._revision:
+            raise Conflict(
+                "expected revision %s, current revision is %s"
+                % (expected_revision, self._revision)
+            )
+        if target_root == NULL_CELL_ID:
+            raise InvalidCell("the distinguished null cell cannot be rewritten")
+        if replacement_root in replacement_variable_map:
+            raise InvalidCell("replacement root cannot be a variable")
+        if replacement_root in replacement_constant_map:
+            raise InvalidCell("replacement root cannot be a constant binding")
+        if set(replacement_variable_map).intersection(replacement_constant_map):
+            raise InvalidCell("replacement placeholder has conflicting bindings")
+        if not set(replacement_variable_map.values()).issubset(pattern_variable_ids):
+            raise InvalidCell(
+                "replacement variables must map to declared pattern variables"
+            )
+        if not all(root_id in self._cells for root_id in replacement_variable_map):
+            raise InvalidCell("replacement variable cell is missing")
+        if not all(root_id in self._cells for root_id in replacement_constant_map):
+            raise InvalidCell("replacement constant placeholder is missing")
+        if not all(
+            root_id in self._cells for root_id in replacement_constant_map.values()
+        ):
+            raise InvalidCell("replacement constant target is missing")
+        if replacement_root not in self._cells:
+            raise InvalidCell("replacement root is missing")
+
+        bindings = self.match(
+            self._cells,
+            pattern_root=pattern_root,
+            target_root=target_root,
+            variables=pattern_variable_ids,
+            budget=budget,
+            revision=expected_revision,
+        )
+
+        concrete_templates: set[str] = set()
+        pending = [replacement_root]
+        steps = 0
+        while pending:
+            steps += 1
+            if steps > budget:
+                raise MatchBudgetExceeded(
+                    "replacement traversal exceeded %s cells" % budget
+                )
+            template_id = pending.pop()
+            if (
+                template_id == NULL_CELL_ID
+                or template_id in replacement_variable_map
+                or template_id in replacement_constant_map
+                or template_id in concrete_templates
+            ):
+                continue
+            template = self._cells.get(template_id)
+            if template is None:
+                raise InvalidCell("replacement contains a dangling link")
+            concrete_templates.add(template_id)
+            pending.append(template.link0)
+            pending.append(template.link1)
+
+        materialized: dict[str, str] = {replacement_root: target_root}
+        occupied = {target_root}
+        for template_id in sorted(concrete_templates):
+            if template_id == replacement_root:
+                continue
+            fresh = str(uuid.uuid4())
+            while fresh in self._cells or fresh in occupied:
+                fresh = str(uuid.uuid4())
+            occupied.add(fresh)
+            materialized[template_id] = fresh
+
+        def translated(template_id: str) -> str:
+            if template_id == NULL_CELL_ID:
+                return NULL_CELL_ID
+            pattern_variable = replacement_variable_map.get(template_id)
+            if pattern_variable is not None:
+                return bindings[pattern_variable]
+            constant_root = replacement_constant_map.get(template_id)
+            if constant_root is not None:
+                return constant_root
+            try:
+                return materialized[template_id]
+            except KeyError as exc:
+                raise InvalidCell(
+                    "replacement reference was not materialized"
+                ) from exc
+
+        created: list[Cell] = []
+        replaced: list[Cell] = []
+        for template_id in sorted(concrete_templates):
+            template = self._cells[template_id]
+            instance = Cell(
+                materialized[template_id],
+                translated(template.link0),
+                translated(template.link1),
+                template.atom,
+            )
+            if template_id == replacement_root:
+                replaced.append(instance)
+            else:
+                created.append(instance)
+
+        return PreparedRewrite(
+            root_id=target_root,
+            expected_revision=expected_revision,
+            create=tuple(created),
+            replace=tuple(replaced),
+            bindings=MappingProxyType(dict(bindings)),
+            materialized=MappingProxyType(dict(materialized)),
+        )
+
+    def prepare_rewrite(
+        self,
+        *,
+        expected_revision: int,
+        pattern_root: str,
+        target_root: str,
+        pattern_variables: Iterable[str],
+        replacement_root: str,
+        replacement_variables: Mapping[str, str],
+        replacement_constants: Mapping[str, str] | None = None,
+        budget: int = 10_000,
+    ) -> PreparedRewrite:
+        """Materialize a rewrite without publishing it, for one atomic set."""
+        with self._lock:
+            return self._prepare_rewrite_locked(
+                expected_revision=expected_revision,
+                pattern_root=pattern_root,
+                target_root=target_root,
+                pattern_variables=pattern_variables,
+                replacement_root=replacement_root,
+                replacement_variables=replacement_variables,
+                replacement_constants=replacement_constants,
+                budget=budget,
+            )
+
+    def rewrite(
+        self,
+        *,
+        expected_revision: int,
+        pattern_root: str,
+        target_root: str,
+        pattern_variables: Iterable[str],
+        replacement_root: str,
+        replacement_variables: Mapping[str, str],
+        replacement_constants: Mapping[str, str] | None = None,
+        budget: int = 10_000,
+    ) -> RewriteResult:
+        """Match one stored graph and atomically publish its replacement."""
+        with self._lock:
+            prepared = self._prepare_rewrite_locked(
+                expected_revision=expected_revision,
+                pattern_root=pattern_root,
+                target_root=target_root,
+                pattern_variables=pattern_variables,
+                replacement_root=replacement_root,
+                replacement_variables=replacement_variables,
+                replacement_constants=replacement_constants,
+                budget=budget,
+            )
+            revision = self.commit(
+                expected_revision,
+                create=prepared.create,
+                replace=prepared.replace,
+            )
+            return RewriteResult(
+                root_id=target_root,
+                revision=revision,
+                bindings=prepared.bindings,
+                materialized=prepared.materialized,
+            )
+
+
+def migrate_cell_history(
+    source: CellStore,
+    destination: CellStore,
+) -> CellHistoryMigrationEvidence:
+    """Copy one quiesced Cell history and prove exact revision equivalence.
+
+    The destination is never promoted here. Callers must keep the source
+    write-frozen, inspect this evidence, run provider restore courts, and only
+    then change the runtime authority pointer.
+    """
+    if source.authority_identity == destination.authority_identity:
+        raise InvalidCell("Cell migration requires distinct authorities")
+    if destination.revision != 0 or set(destination.snapshot().cells) != {
+        NULL_CELL_ID
+    }:
+        raise InvalidCell("Cell migration destination must be at genesis")
+
+    source_revision = source.revision
+    source_digest = source.revision_chain_digest(source_revision)
+    for revision in range(1, source_revision + 1):
+        changed_ids = source.revision_changes(revision)
+        changed = source.cells_at(revision, changed_ids)
+        destination_snapshot = destination.snapshot()
+        create = tuple(
+            changed[cell_id]
+            for cell_id in changed_ids
+            if cell_id not in destination_snapshot.cells
+        )
+        replace = tuple(
+            changed[cell_id]
+            for cell_id in changed_ids
+            if cell_id in destination_snapshot.cells
+        )
+        destination.commit(
+            destination_snapshot.revision,
+            create=create,
+            replace=replace,
+        )
+
+    if source.revision != source_revision:
+        raise Conflict("Cell migration source changed during history copy")
+    destination_digest = destination.revision_chain_digest()
+    if (
+        destination.revision != source_revision
+        or destination_digest != source_digest
+    ):
+        raise InvalidCell("Cell migration history proof does not match")
+    return CellHistoryMigrationEvidence(
+        source_identity=source.authority_identity,
+        destination_identity=destination.authority_identity,
+        source_revision=source_revision,
+        destination_revision=destination.revision,
+        revision_chain_digest=source_digest,
+    )
+
+
+__all__ = [
+    "NULL_CELL_ID",
+    "Cell",
+    "Snapshot",
+    "ReadOnlyJournalRevision",
+    "RewriteResult",
+    "PreparedRewrite",
+    "CommitEvent",
+    "CellHistoryMigrationEvidence",
+    "CellJournal",
+    "CellHistoryReader",
+    "LoadedJournalHead",
+    "RuntimeFenceLease",
+    "InterprocessOwnerFence",
+    "CellStore",
+    "CellKernelError",
+    "Conflict",
+    "InvalidCell",
+    "ReadOnlyJournalError",
+    "NoMatch",
+    "MatchBudgetExceeded",
+    "dense_read_snapshot",
+    "overlay_read_snapshot",
+    "open_read_only_cell_journal",
+    "inspect_read_only_cell_journal",
+    "load_bounded_read_only_cell_snapshot",
+    "read_only_revision_chain_digest",
+    "revision_chain_digest_step",
+    "migrate_cell_history",
+]

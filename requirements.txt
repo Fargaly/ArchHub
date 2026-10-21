@@ -1,4 +1,4 @@
-# DESKTOP requirements: exactly what colleague_setup.py installs on a person's
+# DESKTOP requirements: exactly what 01.APP/nodelang/colleague_setup.py installs on a person's
 # machine (from the installer's bundled wheelhouse, offline). The server
 # packages FastAPI, psycopg, boto3 and OpenCV live in requirements-cloud.txt and
 # are never installed on a desktop. uvicorn and starlette ARE installed, as

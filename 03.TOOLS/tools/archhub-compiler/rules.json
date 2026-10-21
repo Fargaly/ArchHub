@@ -1,0 +1,445 @@
+{
+  "schema_version": 1,
+  "authority": "BRIEF-ACOMPILER.md Addendum 2; DELIVERY-STATUS row 1 HEART and 1b HEART v2; plan.md owned paths",
+  "source_sha256": "6662455cc0f55648d29a95f21278cb6946a1630f370b43bde6f6e4fcf3cb140a",
+  "intents": {
+    "ACOMPILER2B": {
+      "source": "BRIEF-ACOMPILER2B.md; DELIVERY-STATUS.md rows 1b HEART v2, F62, F76",
+      "scope": [
+        "03.TOOLS/tools/archhub-compiler/",
+        "03.TOOLS/tools/pipeline/strict_check.py",
+        "03.TOOLS/tools/pipeline/pre_commit.py",
+        "03.TOOLS/tools/pipeline/record_observation.py",
+        "01.APP/nodelang/enforce.py",
+        "02.TESTS/tests_replica/test_acompiler_gate.py",
+        "02.TESTS/tests_replica/test_enforce.py",
+        "02.TESTS/tests_replica/test_acompiler2b.py",
+        "NOTICE",
+        "READ-PROOF.md",
+        "plan.md",
+        "tasks.json",
+        "notes.md",
+        "PROGRESS.md",
+        "RESULT-ACOMPILER2B.md",
+        "ACOMPILER2B.patch",
+        "ACOMPILER2B.patch.sha256",
+        "05.EVIDENCE/acompiler2b-run.ps1",
+        "05.EVIDENCE/acompiler2b-red.txt",
+        "05.EVIDENCE/acompiler2b-authority-red.txt",
+        "05.EVIDENCE/acompiler2b-rust.txt",
+        "05.EVIDENCE/acompiler2b-python.txt",
+        "05.EVIDENCE/acompiler2b-build.txt",
+        "05.EVIDENCE/acompiler2b-collection.txt",
+        "05.EVIDENCE/acompiler2b-own.json",
+        "05.EVIDENCE/acompiler2b-finish.txt",
+        "05.EVIDENCE/acompiler2b-review.md",
+        "05.EVIDENCE/acompiler2b-zero-idle.txt",
+        "05.EVIDENCE/acompiler2b-enforcer-hook.patch",
+        "05.EVIDENCE/acompiler2b-enforcer-hook.sha256",
+        "05.EVIDENCE/acompiler2b-sources.md",
+        "05.EVIDENCE/acompiler2b-verify.py",
+        "05.EVIDENCE/acompiler2b-tests.json",
+        "03.TOOLS/tools/pipeline/package_compiler.py",
+        "05.EVIDENCE/acompiler2b-package.txt",
+        "05.EVIDENCE/acompiler-package-proof.json",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
+    "ACOMPILER": {
+      "source": "BRIEF-ACOMPILER.md",
+      "scope": [
+        "03.TOOLS/tools/archhub-compiler/",
+        "03.TOOLS/tools/pipeline/",
+        "03.TOOLS/tools/ratchet.py",
+        "01.APP/nodelang/enforce.py",
+        "01.APP/nodelang/application_server.py",
+        "01.APP/nodelang/library_engines.py",
+        "01.APP/nodelang/pipeline_engines.py",
+        "01.APP/nodelang/universal_pipeline.py",
+        "01.APP/nodelang/base_universal_catalogue.py",
+        "01.APP/nodelang/domains/selfext.py",
+        "02.TESTS/tests_domains/test_mods_selfext.py",
+        "02.TESTS/tests_replica/test_the_library_only_offers_what_runs.py",
+        "02.TESTS/tests_replica/test_acompiler_gate.py",
+        "02.TESTS/tests_replica/test_enforce.py",
+        "05.EVIDENCE/acompiler.json",
+        "05.EVIDENCE/acompiler-baseline.json",
+        "01.APP/installer/build_release.ps1",
+        "NOTICE",
+        ".gitignore",
+        "READ-PROOF.md",
+        "plan.md",
+        "tasks.json",
+        "notes.md",
+        "PROGRESS.md",
+        "RESULT-ACOMPILER.md",
+        "ACOMPILER.patch",
+        "ACOMPILER.patch.sha256",
+        "BRIEF-ACOMPILER.md",
+        "01.APP/installer/ArchHub.iss",
+        "01.APP/nodelang/clean_host_execution.py",
+        "01.APP/nodelang/existing_workshop_native_host.py",
+        "01.APP/nodelang/project_work_execution_broker.py",
+        "01.APP/nodelang/application_update.py",
+        "01.APP/nodelang/connector_operation_evidence.py",
+        "05.EVIDENCE/acompiler-test-inventory.json",
+        "05.EVIDENCE/acompiler-governance-hooks.patch",
+        "01.APP/nodelang/terminal_sessions.py",
+        "01.APP/nodelang/social_http_host.py",
+        "05.EVIDENCE/acompiler-build.log",
+        "05.EVIDENCE/acompiler-gate-courts.txt",
+        "05.EVIDENCE/acompiler-gate-final.txt",
+        "05.EVIDENCE/acompiler-gate-final2.txt",
+        "05.EVIDENCE/acompiler-product-courts.txt",
+        "05.EVIDENCE/acompiler-product-final.txt",
+        "05.EVIDENCE/acompiler-rust-courts-lld.log",
+        "05.EVIDENCE/acompiler-rust-courts-rustlld.log",
+        "05.EVIDENCE/acompiler-rust-courts-shortpath.log",
+        "05.EVIDENCE/acompiler-rust-courts.log",
+        "05.EVIDENCE/acompiler-rust-final.txt",
+        "05.EVIDENCE/acompiler-product-final2.txt",
+        "05.EVIDENCE/acompiler-gate-final3.txt",
+        "05.EVIDENCE/acompiler-runtime-build.txt",
+        "05.EVIDENCE/acompiler-own-gate.json",
+        "05.EVIDENCE/acompiler-duplicate-court.json",
+        "05.EVIDENCE/acompiler-current.json",
+        "05.EVIDENCE/acompiler-freeze.json",
+        "05.EVIDENCE/acompiler-review.md",
+        "05.EVIDENCE/acompiler-package-proof.json",
+        "05.EVIDENCE/acompiler-measure.txt",
+        "05.EVIDENCE/acompiler-gate-final4.txt",
+        "05.EVIDENCE/acompiler-product-final3.txt",
+        "05.EVIDENCE/acompiler-product-x.txt",
+        "05.EVIDENCE/acompiler-package.txt",
+        "05.EVIDENCE/acompiler-gate-package-courts.txt",
+        "05.EVIDENCE/acompiler-product-first-failure.txt",
+        "01.APP/nodelang/nodeslib_v2_engines.py",
+        "05.EVIDENCE/acompiler-enforce-final.txt",
+        "04.DOCS/FAILURE_LOG.md"
+      ]
+    },
+    "LANDOLD": {
+      "source": "BRIEF-LANDOLD2.md",
+      "source_sha256": "a7deee8cd71f0a44c74fc0f1d6f98c9ad05dbd0d5755f1529f860cdfc625d166",
+      "scope": [
+        "BRIEF-LANDOLD2.md",
+        "LANDOLD-current-main.patch",
+        "LANDOLD-current-main.patch.sha256",
+        "LANDOLD.patch",
+        "LANDOLD.patch.sha256",
+        "PROGRESS.md",
+        "READ-PROOF.md",
+        "REGISTER.md",
+        "RESULT-LANDOLD.md",
+        "04.DOCS/FAILURE_LOG.md",
+        "05.EVIDENCE/landold/round2-admission-artifact.txt",
+        "05.EVIDENCE/landold/round2-admission-scope.json",
+        "05.EVIDENCE/landold/round2-artifact-paths.json",
+        "05.EVIDENCE/landold/round2-backend-final.txt",
+        "05.EVIDENCE/landold/round2-build-check.txt",
+        "05.EVIDENCE/landold/round2-build.txt",
+        "05.EVIDENCE/landold/round2-built-js-final.txt",
+        "05.EVIDENCE/landold/round2-built-js.txt",
+        "05.EVIDENCE/landold/round2-cleanup.json",
+        "05.EVIDENCE/landold/round2-compiler-courts-final.txt",
+        "05.EVIDENCE/landold/round2-compiler-courts.txt",
+        "05.EVIDENCE/landold/round2-compiler-final.txt",
+        "05.EVIDENCE/landold/round2-compiler-initial.json",
+        "05.EVIDENCE/landold/round2-compiler.txt",
+        "05.EVIDENCE/landold/round2-court-scope.json",
+        "05.EVIDENCE/landold/round2-dead-code.json",
+        "05.EVIDENCE/landold/round2-final-gate-scope.txt",
+        "05.EVIDENCE/landold/round2-final-sources.json",
+        "05.EVIDENCE/landold/round2-freeze.json",
+        "05.EVIDENCE/landold/round2-helper-red.txt",
+        "05.EVIDENCE/landold/round2-patch-check.json",
+        "05.EVIDENCE/landold/round2-ratchet-final.txt",
+        "05.EVIDENCE/landold/round2-ratchet-pre-cleanup.txt",
+        "05.EVIDENCE/landold/round2-review.txt",
+        "05.EVIDENCE/landold/round2-source-fix.txt",
+        "05.EVIDENCE/landold/round2-source-followup.txt",
+        "05.EVIDENCE/landold/round2-source-owners.txt",
+        "05.EVIDENCE/landold/round2-source-red.txt",
+        "05.EVIDENCE/landold/round2-test-inventory.json",
+        "05.EVIDENCE/landold/round2-timer-red.txt",
+        "05.EVIDENCE/landold/round2-zero-idle-final.txt",
+        "01.APP/nodelang/studio/hub-kit.jsx",
+        "01.APP/nodelang/studio/shared-data.jsx",
+        "01.APP/nodelang/studio/studio-lm.jsx",
+        "01.APP/nodelang/studio/studio-params.jsx",
+        "01.APP/nodelang/universal_application.py",
+        "notes.md",
+        "plan.md",
+        "tasks.json",
+        "02.TESTS/tests_js/studio_home3_source.cjs",
+        "02.TESTS/tests_js/studio_home_design.test.cjs",
+        "02.TESTS/tests_js/studio_node_transcript.test.cjs",
+        "02.TESTS/tests_js/studio_parameter_persistence.test.cjs",
+        "02.TESTS/tests_js/studio_runfork2.test.cjs",
+        "02.TESTS/tests_js/studio_session_open_in_place.test.cjs",
+        "02.TESTS/tests_replica/test_board_backend_sweep.py",
+        "03.TOOLS/tools/archhub-compiler/rules.json",
+        "03.TOOLS/tools/archhub-compiler/src/lib.rs",
+        "03.TOOLS/tools/archhub-compiler/tests/diagnostics.rs"
+      ]
+    }
+  },
+  "machine_rules": {
+    "conduct": {
+      "R100": {
+        "source": "inputs/MASTER-REQUESTS-3-MONTHS-2026-10-16.md#R100",
+        "count": 67,
+        "effects": [
+          "screen",
+          "keyboard",
+          "app_close",
+          "heavy_foreground"
+        ],
+        "allowed_presence": [
+          "idle",
+          "away"
+        ],
+        "max_presence_age_seconds": 5,
+        "tool_markers": [
+          "cua",
+          "chrome",
+          "playwright",
+          "screenshot",
+          "computer",
+          "pyautogui",
+          "sendkeys",
+          "keyboard",
+          "mcp__chrome__click",
+          "mcp__chrome__type"
+        ],
+        "command_markers": [
+          "taskkill",
+          "stop-process",
+          "pyautogui",
+          "sendkeys",
+          "pytest",
+            "python -m pytest",
+            "python.exe -m pytest",
+            "python3 -m pytest",
+          "cargo test",
+          "cargo build",
+          "npm run build"
+        ],
+        "source_calls": [
+          "pyautogui.",
+          "keyboard.",
+          "mouse.",
+          "sendkeys",
+          "setforegroundwindow",
+          "closemainwindow",
+          "stop-process",
+          "taskkill",
+          "pkill",
+          "killall"
+        ],
+        "launch_calls": [
+          "subprocess.run",
+          "subprocess.call",
+          "subprocess.popen",
+          "os.system",
+          "execsync",
+          "spawn",
+          "exec_command",
+          "start-process"
+        ],
+        "heavy_commands": [
+          "pytest",
+          "python -m pytest",
+          "python.exe -m pytest",
+          "python3 -m pytest",
+          "cargo test",
+          "cargo build",
+          "npm run build",
+          "taskkill",
+          "stop-process"
+        ],
+        "literal_reference_commands": ["echo", "git grep"],
+        "literal_reference_flags": ["-n", "-i", "-F", "-w", "-l", "-c", "--"],
+        "guard_conditions": [
+          "founder_away()",
+          "idle_or_away()",
+          "founderAway()",
+          "idleOrAway()"
+        ],
+        "pattern": "operation",
+        "message": "Protect the working machine.",
+        "severity": "ERROR",
+        "fix": "Wait for fresh idle/away admission before a foreground effect."
+      },
+      "R104": {
+        "source": "inputs/MASTER-REQUESTS-3-MONTHS-2026-10-16.md#R104",
+        "count": 56,
+        "capabilities": {
+          "codex": [
+            "build",
+            "review",
+            "design"
+          ],
+          "claude": [
+            "coordinate",
+            "review"
+          ],
+          "antigravity": [
+            "review",
+            "design"
+          ],
+          "opencode": [
+            "build",
+            "review"
+          ]
+        },
+        "pattern": "dispatch",
+        "message": "Assign work by capability with independent review.",
+        "severity": "ERROR",
+        "fix": "Choose a registered builder capability and a different capable reviewer."
+      },
+      "R108": {
+        "source": "inputs/MASTER-REQUESTS-3-MONTHS-2026-10-16.md#R108",
+        "count": 45,
+        "banned_text": [
+          "tomorrow",
+          "monday",
+          "tuesday",
+          "wednesday",
+          "thursday",
+          "friday",
+          "saturday",
+          "sunday",
+          "ratchet",
+          "lane",
+          "court",
+          "queued",
+          "ETA",
+          "E010",
+          "handoff",
+          "sha256",
+          "next I will",
+          "next I\u2019ll",
+          "next I'll"
+        ],
+        "pattern": "report",
+        "message": "Show the result in plain English.",
+        "severity": "ERROR",
+        "fix": "Remove process jargon and dates/ETAs from the founder channel."
+      },
+      "R102": {
+        "source": "inputs/MASTER-REQUESTS-3-MONTHS-2026-10-16.md#R102",
+        "count": 43,
+        "requires": [
+          "ledger.next_task",
+          "ledger.owner"
+        ],
+        "pattern": "lane_result",
+        "message": "Keep unfinished work owned and moving.",
+        "severity": "ERROR",
+        "fix": "Record the owned next task in the ledger before returning a result."
+      },
+      "R106": {
+        "tool_markers": [
+          "askuserquestion",
+          "request_user_input",
+          "ask_user"
+        ],
+        "source": "inputs/MASTER-REQUESTS-3-MONTHS-2026-10-16.md#R106",
+        "count": 39,
+        "allowed_reasons": [
+          "intent",
+          "safety"
+        ],
+        "pattern": "question",
+        "message": "The request is the decision.",
+        "severity": "ERROR",
+        "fix": "Resolve implementation details; ask only an intent or safety question."
+      },
+      "R110": {
+        "source": "inputs/MASTER-REQUESTS-3-MONTHS-2026-10-16.md#R110",
+        "count": 21,
+        "must_pass": [
+          "02.TESTS/tests/test_zero_idle_growth.py::test_an_old_graph_opened_by_new_code_does_not_grow_while_idle",
+          "02.TESTS/tests/test_zero_idle_growth.py::test_old_change_records_undo_and_redo_on_an_old_graph_with_new_code"
+        ],
+        "manifest": "05.EVIDENCE/must_pass.json",
+        "pattern": "regression",
+        "message": "Keep every released requirement passing.",
+        "severity": "ERROR",
+        "fix": "Repair the failed/missing must_pass case; a skip is not a pass."
+      }
+    },
+    "banned_user_text": [
+      "Not available yet",
+      "coming soon",
+      "Unversioned build",
+      "facts not read yet"
+    ],
+    "forbidden_frame_elements": [
+      "iframe",
+      "Panel",
+      "Frame",
+      "SidePanel"
+    ],
+    "hand_listed_settings_names": [
+      "SETTINGS54_GROUPS",
+      "SETTINGS_PAGES",
+      "SETTINGS_ROWS"
+    ],
+    "unmodified_vendor_refused": true,
+    "example_as_scope_refused": true,
+    "vendor_product_roots": [
+      "vendor/",
+      "vendored/",
+      "third_party/products/"
+    ]
+  },
+  "deviation": {
+    "minimum_history": 5,
+    "mad_multiplier": 6.0,
+    "cusum_drift": 0.5,
+    "cusum_threshold": 8.0,
+    "minimum_shift_samples": 4,
+    "daily_alert_budget": 5
+  },
+  "notification_policy": "daily_alert_budget limits alerts only; it never changes compiler admission",
+  "learned_sources": [
+    {
+      "url": "https://github.com/astral-sh/ruff",
+      "license": "MIT",
+      "fit": "lexical bindings and undefined references; independent tree-sitter implementation"
+    },
+    {
+      "url": "https://github.com/oxc-project/oxc",
+      "license": "MIT",
+      "fit": "lexical unresolved references and semantic passes; independent tree-sitter implementation"
+    },
+    {
+      "url": "https://github.com/microsoft/pyright",
+      "license": "MIT",
+      "fit": "flow and explicit return contracts; independent bounded type pass"
+    },
+    {
+      "url": "https://github.com/microsoft/TypeScript/blob/v5.9.3/src/compiler/checker.ts",
+      "license": "Apache-2.0",
+      "fit": "checkTypeAssignableTo, hasCorrectArity and getMinArgumentCount learned from pinned source; explicit primitive contracts and arity, no external tsc"
+    },
+    {
+      "url": "https://www.openpolicyagent.org/docs/policy-language",
+      "license": "Apache-2.0",
+      "fit": "declarative typed-event deny predicates in the existing INTENT pass; no copied code"
+    },
+    {
+      "url": "https://github.com/danger/danger-js",
+      "license": "MIT",
+      "fit": "change-set and commit-context admission with actionable diagnostics; no external Danger runtime"
+    },
+    {
+      "url": "https://docs.semgrep.dev/writing-rules/rule-syntax",
+      "license": "learn-only documentation",
+      "fit": "pattern, message, severity and fix fields in compiler policy data; no Semgrep code copied"
+    }
+  ],
+  "intent_registration": "F62/F76 compiler ledger rows are registered by 05.EVIDENCE/acompiler-intents.json; ACOMPILER remains a legacy session-record identity."
+}

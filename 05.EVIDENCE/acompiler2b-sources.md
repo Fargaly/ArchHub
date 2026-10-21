@@ -1,0 +1,23 @@
+# Stage 1b source fit
+WHY: common lexical scopes, declared call contracts, explicit control-flow and uniform diagnostics form one in-process compiler; no external checker can be skipped.
+SOURCES: archhub-prior-art was loaded before implementation. Primary source/license pages verified in this lane:
+- Ruff MIT: https://github.com/astral-sh/ruff/blob/main/crates/ruff_python_semantic/src/model.rs and https://github.com/astral-sh/ruff/blob/main/LICENSE — scope/binding/reference separation. Learn the rule shape; existing independent tree-sitter pass retained.
+- Oxc MIT: https://github.com/oxc-project/oxc/blob/main/crates/oxc_semantic/src/lib.rs and https://github.com/oxc-project/oxc/blob/main/LICENSE — lexical symbol ownership and unresolved references. Learn the shape; retain one existing tree-sitter extraction pipeline.
+- Pyright 1.1.407 MIT: https://github.com/microsoft/pyright/blob/1.1.407/packages/pyright-internal/src/analyzer/checker.ts and https://github.com/microsoft/pyright/blob/main/LICENSE.txt — reachable statement walking, accessed symbols and return contracts. Independently reimplemented bounded passes; no TypeScript executable.
+- TypeScript v5.9.3 Apache-2.0: https://github.com/microsoft/TypeScript/blob/v5.9.3/src/compiler/checker.ts and https://github.com/microsoft/TypeScript/blob/main/LICENSE.txt — hasCorrectArity, getMinArgumentCount and argument assignability. Independent literal/primitive contracts and lexical call ownership, including assigned arrows/lambdas.
+- rustc MIT/Apache: https://rustc-dev-guide.rust-lang.org/diagnostics.html — code, span, note, help and --explain. No rustc implementation copied.
+FIT: extend landed semantics.rs, intent.rs, deviation.rs and the existing compiler crate. F explicitly permits reimplementing specific rules on tree-sitter. This lane retains that landed fallback; Ruff/Oxc crates are not linked and full checker equivalence is not claimed. Cargo.lock remains unchanged. Do not introduce a second AST owner for the same bounded rules.
+DROPPED: checker subprocesses, external TypeScript runtime, complete third-party linter configurations, inferred authority, Gaussian baseline and whole-file-zero on touched legacy files.
+Compared: Ruff/Oxc share symbol scopes; Pyright/TypeScript add declared call/return contracts. ArchHub adds product topology, governed intent scopes, robust per-author change shape and exact pending-value admission.
+
+# Governance hook handoff
+Live source inspected read-only: C:/Users/fargaly/00.ARCHUB/00.GOVERNANCE/hooks/archhub_enforcer.py.
+SHA-256: e65f1800d66339b68ddef52e4cdcebdf38569695524c76193c2a9ac38d4f0d35.
+Only 05.EVIDENCE/acompiler2b-enforcer-hook.patch is delivered; no external governance file was changed.
+717 applies from workspace root after the product patch and `python 03.TOOLS/tools/pipeline/install_hooks.py --root <product>` install the shared pre-commit/commit-msg/post-commit pairing. Existing hooks remain chained. Then `git apply --check` and apply this hook patch. A changed source hash requires reconciliation before applying.
+The patch also removes the retired duplicate banned-text regex and unused JSON import. The compiler AST pass owns that rule. The patch replaces the temporary Ruff subprocess with the shared compiler pre-commit runner; final Intent/Why trailers are mandatory in paired commit-msg. Legacy ratchets use staged owned source only. Patch syntax and actual application were verified against an isolated copy, then that copy was removed.
+
+# Runtime authority and host limits
+Intent records live in 05.EVIDENCE/acompiler-intents.json: schema_version 1 and intents mapping, each source pointer plus nonempty exact-file or trailing-slash scopes. Registered Fnn rows or session ids work without rebuilding. Git admission reads the immutable parent revision; a pending policy edit cannot authorize itself. Host projects without Git read their separate released policy input. Context scope/history cannot replace it.
+Host parameter edits use format host-parameter-edit-v1, one exact program/document/element target, named typed parameters and the selected firm parameter standard (type, min/max, enum). Actual host reference validity, approval and undo remain the adapter's obligations. This lane uses fake physical sinks; opaque legacy physical adapters remain fail-closed. No live Revit/AutoCAD or installed-app proof is claimed.
+The author-history export remains 05.EVIDENCE/acompiler-baseline.json. Recent successful Git/actions are durable in local metadata so omitting the export from a commit does not erase the last admitted observation. Separate notice accounting consumes daily quota on rejected offers without learning rejected actions. Check-only Enforce evaluations do not create behavior samples.

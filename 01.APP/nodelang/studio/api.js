@@ -124,7 +124,7 @@ async function refreshApprovals() {
  const epoch=scopeEpoch,binding=JSON.stringify(workshopBinding());
  const approvals=await workshop('listApprovals');
  if(epoch!==scopeEpoch||binding!==JSON.stringify(workshopBinding()))return state.approvals;
- if(!Array.isArray(approvals))throw Error(approvals?.message||'Approval owner unavailable. Retry the Workshop read.');
+ if(!Array.isArray(approvals))return approvals;  // same contract as refreshTasks: the owner's refusal is the answer, not a throw
  const tasks=state.tasks.map(task=>({...task,approvalId:approvals.findLast(card=>card.work===task.id&&card.status!=='superseded')?.id}));
  publish({approvals,tasks,approvalActionsReady:true});return approvals;
 }

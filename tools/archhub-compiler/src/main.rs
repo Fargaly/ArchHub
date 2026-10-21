@@ -286,7 +286,10 @@ fn run() -> Result<bool, String> {
             pending.insert(file, content);
         }
     }
-    let external = external_entrypoints(&authority)?;
+    // An external entrypoint is one file on the machine with no Git history, so its pin is the
+    // current registration (HEAD), not the replayed revision's: a release replay of older
+    // commits must not demand bytes that the current registration has since replaced.
+    let external = external_entrypoints(&intent::repository_authority(&root, "HEAD")?)?;
     let entrypoints = external.iter().map(|(file, _)| file.clone()).collect::<Vec<_>>();
     for (file, content) in external {
         if pending.insert(file, content).is_some() { return Err("external entrypoint shadows product source".into()); }

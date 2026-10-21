@@ -40,7 +40,7 @@ FILES = ("ArchHub-Setup-0.exe", "release.json", "release-notes.md",
 # Count the same source inventory the build compiler consumes, not an old
 # hand-maintained count that rejects every newly compiled installer.
 _compiler = (ROOT / "packaging/compile_studio.cjs").read_text(encoding="utf-8")
-STUDIO_FILES = len(re.findall(r"'[^']+\.jsx'", _compiler.split("const names = [", 1)[1].split("];", 1)[0]))
+STUDIO_FILES = len(re.findall(r"""["'][^"']+\.jsx?["']""", _compiler.split("const names = [", 1)[1].split("];", 1)[0]))
 _UTC = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
 
 

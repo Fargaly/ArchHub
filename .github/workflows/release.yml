@@ -69,6 +69,17 @@ jobs:
             choco install innosetup --no-progress -y
             if ($LASTEXITCODE -ne 0) { throw 'Inno Setup 6 did not install.' }
           }
+      - name: Supply the runner's Rust toolchain to the ArchHub compiler
+        shell: pwsh
+        run: |
+          # The compiler refuses a build without a supplied Cargo; the runner image carries rustup.
+          $cargoHome = Join-Path $env:USERPROFILE '.cargo'
+          $cargo = Join-Path $cargoHome 'bin/cargo.exe'
+          if (-not (Test-Path -LiteralPath $cargo)) { throw 'The runner Rust toolchain is missing.' }
+          & (Join-Path $cargoHome 'bin/rustup.exe') default stable
+          if ($LASTEXITCODE -ne 0) { throw 'The stable Rust toolchain did not install.' }
+          & $cargo --version
+          "CARGO_HOME=$cargoHome" >> $env:GITHUB_ENV
       - name: Assign immutable build identity
         id: identity
         shell: pwsh

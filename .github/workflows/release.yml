@@ -79,7 +79,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'The stable Rust toolchain did not install.' }
           & $cargo --version
           "CARGO_HOME=$cargoHome" >> $env:GITHUB_ENV
-          # The registered CLAUDE-BRAIN entrypoint (evidence/acompiler-intents.json) is an absolute
+          # The registered CLAUDE-BRAIN entrypoint (05.EVIDENCE/acompiler-intents.json) is an absolute
           # path on the founder machine; place the exact bytes there. The compiler re-checks its hash.
           $entry = 'C:\Users\fargaly\00.ARCHUB\70.COMPANY\72.HANDOFFS\72.99-CLAUDE-BRAIN-MOD\ARCHHUB-BRAIN\brain_entry.py'
           New-Item -ItemType Directory -Force -Path (Split-Path $entry) | Out-Null

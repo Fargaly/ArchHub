@@ -1,0 +1,5 @@
+*
+!01.APP/nodelang/
+!03.TOOLS/packaging/website/httpd.conf
+!03.TOOLS/packaging/website/offer.json
+01.APP/nodelang/**/__pycache__/

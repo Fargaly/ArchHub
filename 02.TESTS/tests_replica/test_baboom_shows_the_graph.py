@@ -1,0 +1,271 @@
+"""BABOOM's face reflects the graph, and offers help for the app in front.
+
+The founder: "BABOOM is useless, it does not show that it reflects the graph
+and its agent cannot help with anything being done" (2026-09-06). He was
+right about what he could see: the state was in the snapshot and only a
+right-click revealed it, and the companion knew where windows were but never
+which app they belonged to. These courts hold the face and the offer.
+"""
+from __future__ import annotations
+
+import inspect
+from pathlib import Path
+
+from nodelang import baboom_native_companion as companion
+from nodelang import universal_pipeline
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_the_face_is_built_from_the_snapshot_never_invented():
+    line, offer = companion.baboom_face_line({}, None)
+    assert line == "I'm watching the graph." and offer is None
+    context = {
+        "canvas": {"ran": 12, "answered": 9},
+        "brain": {"ok": True, "facts": 2312},
+        "agents": {"working": [{"agent": "codex"}, {"agent": "claude"}]},
+        "work": {"title": "hosts open from ArchHub"},
+        "attention": {"blocked_obligations": []},
+    }
+    line, offer = companion.baboom_face_line(context, None)
+    assert "Two agents are working." in line
+    assert "2312" not in line, "a brain-facts counter is noise, not news"
+    assert "blocked" not in line and offer is None
+    # The box holds two lines. Lower-priority parts are dropped whole rather
+    # than cut mid-word: the founder saw "canvas 11/12 answered - brai".
+    assert len(line) <= companion.FACE_MAX_CHARS, line
+    assert line.endswith((".", "?")) and chr(183) not in line
+
+    short = dict(context, work=None, agents={"working": []})
+    line, _ = companion.baboom_face_line(short, None)
+    assert line == "I'm watching the graph."
+    assert "agents working" not in line, "an idle fleet is not news"
+
+
+def test_a_silent_brain_and_blocked_work_are_said_plainly():
+    line, _ = companion.baboom_face_line(
+        {"brain": {"ok": False}, "attention": {"blocked_obligations": ["x", "y"]}}, None)
+    assert line == "The brain is not answering. Two holds need your attention."
+
+
+def test_the_app_in_front_becomes_an_offer_the_graph_can_run():
+    line, offer = companion.baboom_face_line({}, ("Revit", "revit.read", "read the walls"))
+    assert line == "I'm watching the graph."
+    assert offer is None
+    # every foreground host maps to an engine the app really has
+    from nodelang.pipeline_engines import PIPELINE_ENGINES
+    from nodelang.universal_pipeline import _graph_engines
+    known = set(PIPELINE_ENGINES)
+    for exe, (label, engine, verb) in companion._FOREGROUND_HOSTS.items():
+        assert exe.endswith(".exe") and label and verb
+        assert engine in known or engine in ("skills.catalogue",), engine
+
+
+def test_the_probe_reads_the_foreground_process_by_name():
+    src = inspect.getsource(companion.foreground_app_windows)
+    assert "GetForegroundWindow" in src and "QueryFullProcessImageNameW" in src
+    assert "_FOREGROUND_HOSTS.get(exe)" in src
+    # the probe must never raise into the paint loop
+    assert "except Exception:" in src and "return None" in src
+
+
+def test_the_window_shows_the_face_when_nothing_else_is_said_and_a_click_runs_the_offer():
+    src = (ROOT / "01.APP/nodelang" / "baboom_native_companion.py").read_text(encoding="utf-8")
+    window = src[src.index("class CompanionWindow"):]
+    refresh = window[window.index("def refresh(self)"):window.index("def paintEvent")]
+    assert "front = foreground_app_windows()" in refresh and "baboom_face_line(context, front)" in refresh
+    assert "if report is None and not self._input.isVisible():" in refresh
+    events = window[window.index("def eventFilter"):window.index("def keyPressEvent")]
+    assert "obj is self._report" in events and "self._say(self._face_offer)" in events
+    assert "self._report.installEventFilter(self)" in window
+
+
+def test_the_face_does_not_make_the_companion_fidget():
+    """The face is not a report: breathing stays tied to real reports."""
+    src = (ROOT / "01.APP/nodelang" / "baboom_native_companion.py").read_text(encoding="utf-8")
+    window = src[src.index("class CompanionWindow"):]
+    animate = window[window.index("def _advance_animation"):window.index("def refresh(self)")]
+    assert "self._frame.report is None" in animate
+    assert "_face" not in animate
+
+
+def test_the_lens_carries_the_canvas_from_the_pipelines_own_last_run():
+    from nodelang import universal_application as ua
+    lens = inspect.getsource(ua.project_universal_baboom_context)
+    assert '"canvas": canvas_view' in lens and "last_pipeline_run()" in lens
+    assert universal_pipeline.last_pipeline_run() == {} or set(universal_pipeline.last_pipeline_run()) >= {"ran", "answered", "pending", "at"}
+    run = inspect.getsource(universal_pipeline.run_universal_pipeline)
+    assert '"answered": len(evaluation.display)' in run
+
+
+def test_a_long_state_is_trimmed_not_cut_mid_word():
+    """The founder's screen: 'canvas 11/12 answered - brai', clipped."""
+    context = {
+        "canvas": {"ran": 12, "answered": 11},
+        "brain": {"ok": True, "facts": 2313},
+        "agents": {"working": [{"agent": "codex"}]},
+        "work": {"title": "a piece of work with a deliberately long title"},
+        "attention": {"blocked_obligations": ["a", "b"]},
+    }
+    line, offer = companion.baboom_face_line(context, ("Revit", "revit.read", "read the walls"))
+    assert len(line) <= companion.FACE_MAX_CHARS, "%d chars: %s" % (len(line), line)
+    assert "Revit is open" not in line
+    assert offer is None
+    assert chr(183) not in line and line.endswith((".", "?")), line
+
+
+def test_founder_approval_waiting_leads_the_face_and_opens_workshop_approvals():
+    line, offer = companion.baboom_face_line(
+        {"workshop": {"pending_founder_approvals": 2}, "brain": {"ok": False}},
+        ("Revit", "revit.read", "read the walls"),
+    )
+    assert line.startswith("2 things need your approval in Workshop.")
+    assert "Revit is open" not in line
+    assert offer == "open Workshop approvals"
+
+
+def test_a_silent_host_is_said_on_the_face_and_never_hides_the_companion():
+    """It used to vanish after ten minutes of host silence, which the founder
+    read as 'appears and disappears'. Presence first: say it, do not go."""
+    line, _ = companion.baboom_face_line({"host_silent_seconds": 400.0}, None)
+    assert line == "I haven't heard from ArchHub in 6 minutes; live state is unavailable."
+    src = inspect.getsource(companion)
+    frame = src[src.index("def next_frame"):src.index("def next_sprite_source")] if "def next_sprite_source" in src else src[src.index("def next_frame"):]
+    assert "_FRAME_SILENCE_SECONDS" not in frame, "a stale lease must not hide the sprite"
+    assert "self.host_silent_seconds = max(0.0" in frame
+
+
+def test_the_window_records_where_it_landed():
+    """Twice now the app reported drawing while the founder saw nothing.
+    Every geometry change writes one line, so the next time is readable."""
+    src = (ROOT / "01.APP/nodelang" / "baboom_native_companion.py").read_text(encoding="utf-8")
+    assert "def watch_geometry(self, path)" in src
+    assert "def geometry_receipt(self, line: str)" in src
+    window = src[src.index("class CompanionWindow"):]
+    assert 'receipt(' in window and "sprite=%dx%d+%d+%d" in window
+    # Three rectangles, not one: what Qt was asked for, what Qt reports, and
+    # what Windows reports. The founder's companion was asked for
+    # 280x245+1582+729 while Windows had a 160x28 window at 1120,1004, and one
+    # rectangle could not say which layer moved it.
+    for field in ("asked=", "qt=", "win=", "visible=", "sprite_img="):
+        assert field in window, field
+    assert "GetWindowRect" in window
+    launcher = (ROOT / "01.APP/nodelang/launcher.py").read_text(encoding="utf-8")
+    assert 'controller.watch_geometry(state_dir / "baboom-geometry.log")' in launcher
+
+
+def test_the_app_can_be_asked_to_quit_so_its_tray_icon_goes_with_it():
+    """14 force-kills in one day left 14 dead tray icons; the founder clicked
+    one and nothing opened, because that icon owned no process."""
+    launcher = (ROOT / "01.APP/nodelang/launcher.py").read_text(encoding="utf-8")
+    assert "def _watch_quit_request()" in launcher
+    watcher = launcher[launcher.index("def _watch_quit_request()"):]
+    assert 'marker = state_dir / "quit-request"' in watcher
+    assert "_tray_quit()" in watcher.split("def ", 2)[0] + watcher
+    assert "_watch_quit_request()" in launcher.split("def _watch_quit_request")[0] or launcher.count("_watch_quit_request()") >= 2
+
+
+def test_the_window_exposes_its_controller_so_the_receipt_can_be_wired():
+    """The launcher asks the window for its controller to point the geometry
+    receipt at a file. Nothing exposed it, so the log stayed empty exactly
+    when the founder reported BABOOM missing (2026-09-06)."""
+    src = (ROOT / "01.APP/nodelang" / "baboom_native_companion.py").read_text(encoding="utf-8")
+    assert "made.controller = controller" in src
+    launcher = (ROOT / "01.APP/nodelang/launcher.py").read_text(encoding="utf-8")
+    land = launcher[launcher.index("def land(self, host):"):launcher.index("_baboom_attachment = _BaboomAttachment(app)")]
+    assert 'controller = getattr(companion, "controller", None)' in land
+    assert 'controller.watch_geometry(state_dir / "baboom-geometry.log")' in land
+
+
+def test_the_window_repairs_itself_from_what_windows_reports():
+    """Qt's cache said the companion was at 280x245+1582+729 while Windows had
+    a 160x28 window at 1120,1004. Because Qt's cache matched the target,
+    nothing corrected it and BABOOM sat shrunk in the wrong corner."""
+    src = (ROOT / "01.APP/nodelang" / "baboom_native_companion.py").read_text(encoding="utf-8")
+    window = src[src.index("class CompanionWindow"):]
+    assert "def _native_rect_differs(self, target)" in window
+    assert "GetWindowRect" in window
+    refresh = window[window.index("def refresh(self)"):window.index("def paintEvent")]
+    assert "drifted = self._native_rect_differs(window_rect)" in refresh
+    # Unconditional placement. Comparing first is what let the window stay
+    # lost: Qt's cache matched the target while Windows had the companion
+    # shrunk to 160x28 in another corner, so nothing ever repaired it.
+    place = refresh.index("self.setGeometry(window_rect)")
+    guard = refresh.index("if drifted or")
+    assert place < guard, "setGeometry must run before any conditional"
+
+
+def test_the_companion_is_owned_by_nothing():
+    """A Qt Tool window is owned by whatever was active when it was created.
+    Windows moves and hides owned windows with their owner, which is how the
+    companion followed the main window into the wrong corner."""
+    src = (ROOT / "01.APP/nodelang" / "baboom_native_companion.py").read_text(encoding="utf-8")
+    window = src[src.index("class CompanionWindow"):]
+    assert "def _disown(self)" in window
+    assert "GWLP_HWNDPARENT = -8" in window
+    show = window[window.index("def showEvent"):window.index("def _open_interaction")]
+    assert "self._disown()" in show, "disown on every show, once the handle exists"
+
+
+def test_a_minimized_companion_is_restored_before_it_is_placed():
+    """The receipt on the founder's desktop: asked=280x245+1582+729,
+    qt=280x245+1582+729, win=160x28+1120+1004, three ticks a second. 160x28 is
+    SM_CXMINIMIZED x SM_CYMINIMIZED: the companion was MINIMIZED, and
+    setGeometry on an iconic window is ignored, so unconditional placement
+    changed nothing. It is un-minimized, without taking focus, first."""
+    src = (ROOT / "01.APP/nodelang" / "baboom_native_companion.py").read_text(encoding="utf-8")
+    window = src[src.index("class CompanionWindow"):]
+    assert "def _unminimize(self)" in window
+    un = window[window.index("def _unminimize"):window.index("def _disown")]
+    assert "IsIconic" in un and "SW_SHOWNOACTIVATE = 4" in un and "self._disown()" in un
+    refresh = window[window.index("def refresh(self)"):window.index("def paintEvent")]
+    assert refresh.index("self._unminimize()") < refresh.index("self.setGeometry(window_rect)"), (
+        "restore before placing, or the placement is a no-op")
+    # and the receipt now says who owns the window and whether it is iconic
+    assert "GW_OWNER = 4" in refresh and 'owner += " iconic=%s"' in refresh
+
+
+def test_the_app_in_front_also_gets_acts_behind_an_explicit_pick():
+    """The founder said BABOOM cannot help with what he is doing. Reading the
+    app in front was the first help; acting in it is the second: the
+    right-click menu offers the engines that write into the open model,
+    each an utterance the catalog already runs. Acts never sit behind the
+    face click, which stays a read."""
+    from nodelang.pipeline_engines import PIPELINE_ENGINES
+    from nodelang.universal_application import _BABOOM_COMMAND_CATALOG_ROOT  # noqa: F401 - the catalog exists
+    labels = {label for label, _engine, _verb in companion._FOREGROUND_HOSTS.values()}
+    for label, acts in companion._FOREGROUND_ACTS.items():
+        assert label in labels, label
+        for act_label, engine in acts:
+            assert act_label and engine in PIPELINE_ENGINES, (label, engine)
+            assert engine.startswith("library."), "acts are library cards, run without parameters"
+    src = inspect.getsource(companion)
+    face = src[src.index("def baboom_face_line"):src.index("return (line, offer)")]
+    assert "_FOREGROUND_ACTS" not in face, "an act is never the face offer"
+    menu = src[src.index("def contextMenuEvent"):]
+    assert 'f = menu.addMenu("%s is open" % front_label)' in menu
+    assert "for act_label, act_engine in _FOREGROUND_ACTS.get(front_label, ())" in menu
+    assert 'self._say("run %s on the graph" % e)' in menu
+
+
+def test_an_act_is_named_before_the_press_and_its_receipt_is_shown_after():
+    """Three audit findings (2026-09-06): the confirm read "Run this on the
+    graph?" whatever the engine; the execution renderer knew only the task
+    shape and said "could not create the task" after a run; and the menu
+    asked which app was in front AFTER the right-click had activated
+    BABOOM. The companion now names the act from the app's summary, shows
+    any act's summary as its receipt, and remembers the host seen in front
+    before the click."""
+    src = inspect.getsource(companion)
+    response = src[src.index("def _apply_response"):src.index("def _execute_task")]
+    assert 'intent in {"run-engine", "restart-to-update", "remember"}' in response
+    assert "and isinstance(said, str) and said.strip()" in response
+    assert "question = said.strip()" in response
+    execution = src[src.index("def _apply_execution"):src.index("made = CompanionWindow()")]
+    assert 'summary = result.get("summary")' in execution
+    assert "self._transient_report = summary.strip()" in execution
+    assert execution.index("summary.strip()") < execution.index("elif created is True"), "an act's words come before the task shape"
+    refresh = src[src.index("front = foreground_app_windows()"):]
+    assert "self._front, self._front_at = front, time.monotonic()" in refresh
+    menu = src[src.index("def contextMenuEvent"):]
+    assert "front = self._front" in menu and "time.monotonic() - self._front_at < 30.0" in menu

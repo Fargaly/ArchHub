@@ -8,14 +8,17 @@ BABOOM is the companion; supported AI providers are engines it can route work to
 | --- | --- |
 | Install the Windows app | [Latest release](https://github.com/Fargaly/ArchHub/releases/latest) |
 | Website | [archhub.io](https://archhub.io/) |
-| Documentation | [Getting started](https://archhub.io/docs/getting-started/) |
-| Desktop source | [nodelang](nodelang/) |
-| Website source and exporter | [public_site](public_site/) · [site_export.py](nodelang/site_export.py) |
-| Cockpit and cloud source | [cloud_backend](cloud_backend/) |
+| Documentation | [Getting started](https://archhub.io/04.DOCS/getting-started/) |
+| Desktop source | [nodelang](01.APP/nodelang/) |
+| Website source and exporter | [public_site](06.CLOUD/public_site/) · [site_export.py](01.APP/nodelang/site_export.py) |
+| Cockpit and cloud source | [cloud_backend](06.CLOUD/cloud_backend/) |
+| Tests | [02.TESTS](02.TESTS/) |
+| Build, installer and compiler tools | [03.TOOLS](03.TOOLS/) |
+| Evidence | [05.EVIDENCE](05.EVIDENCE/) |
 | Contribute | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | Security | [SECURITY.md](SECURITY.md) |
-| Source documentation | [docs/README.md](docs/README.md) |
-| Catalogue reference | [docs/CATALOGUE.md](docs/CATALOGUE.md) |
+| Source documentation | [04.DOCS/README.md](04.DOCS/README.md) |
+| Catalogue reference | [04.DOCS/CATALOGUE.md](04.DOCS/CATALOGUE.md) |
 
 ## Install and update
 

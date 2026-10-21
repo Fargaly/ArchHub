@@ -1,7 +1,7 @@
 [tool.pyright]
-extraPaths = ["."]
+extraPaths = ["01.APP", "02.TESTS", "03.TOOLS", "06.CLOUD"]
 typeCheckingMode = "basic"
 pythonVersion = "3.12"
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
+pythonpath = ["01.APP", "02.TESTS", "03.TOOLS", "06.CLOUD"]

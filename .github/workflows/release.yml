@@ -80,6 +80,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'The stable Rust toolchain did not install.' }
           & $cargo --version
           "CARGO_HOME=$cargoHome" >> $env:GITHUB_ENV
+          # Without it the compiler defaults RUSTUP_HOME to a repo-relative folder with no toolchain.
+          "RUSTUP_HOME=$(Join-Path $env:USERPROFILE '.rustup')" >> $env:GITHUB_ENV
       - name: Assign immutable build identity
         id: identity
         shell: pwsh

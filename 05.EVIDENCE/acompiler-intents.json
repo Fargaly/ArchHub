@@ -7724,7 +7724,7 @@
         {
           "name": "CLAUDE-BRAIN",
           "source": "C:/Users/fargaly/00.ARCHUB/70.COMPANY/72.HANDOFFS/72.99-CLAUDE-BRAIN-MOD/ARCHHUB-BRAIN/brain_entry.py",
-          "blob_oid": "c3f96b3e16741ae119a0f38f1ca4a2e22139ebd3"
+          "blob_oid": "8bf28318d11d80b04d921b8678fd5d00c1147074"
         }
       ]
     },
@@ -7738,6 +7738,14 @@
         "tests_replica/test_the_local_cockpit_is_the_cloud_cockpit.py",
         "tests_replica/test_the_sidebar_is_a_conversation.py",
         "evidence/acompiler-intents.json"
+      ]
+    },
+    "SWITCHFIX": {
+      "source": "Founder 2026-10-21: \"كسم التيستس عملت له تيست على سيشن تانية وجربت تشوفه شغال ولا لا؟ لانه فيه مشاكل كتير\" (test the Switch on a real session; it has many problems). Observed in his session 2026-10-20: \"gemini/gemini-4-argon failed: This reasoning effort requires a supported OpenRouter route.\" The bridge sends the session effort to Gemini; the router admits it for OpenRouter only.",
+      "scope": [
+        "01.APP/nodelang/model_session_bridge.py",
+        "01.APP/nodelang/model_router.py",
+        "02.TESTS/tests_replica/test_model_session_bridge.py"
       ]
     }
   }

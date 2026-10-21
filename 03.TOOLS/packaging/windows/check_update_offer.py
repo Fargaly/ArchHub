@@ -29,8 +29,10 @@ import urllib.parse
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+# Installed app: nodelang sits beside packaging/. Repository (REPOCLEAN3): it sits in 01.APP/.
+for candidate in (ROOT, Path(__file__).resolve().parents[3] / "01.APP"):
+    if (candidate / "nodelang").is_dir() and str(candidate) not in sys.path:
+        sys.path.insert(0, str(candidate))
 
 from nodelang import quiet_update as qu  # noqa: E402
 

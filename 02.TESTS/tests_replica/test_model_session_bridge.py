@@ -66,6 +66,29 @@ class BridgeTests(unittest.TestCase):
                 bridge.answer({'brain': 'ollama/tiny', 'messages': [], 'tools': [TOOL]}, workspace=PRODUCT,
                               chat=lambda *a, **k: {'text': '', 'tool_calls': [call]})
 
+    def test_session_effort_reaches_openrouter_only(self):
+        # Founder 2026-10-20 on Gemini: "This reasoning effort requires a supported OpenRouter route."
+        seen = {}
+        def chat(route, messages, **kwargs):
+            seen[route] = kwargs.get('reasoning_effort')
+            return {'text': 'ok', 'tool_calls': []}
+        for route in ('google-api/gemini-2.5-flash', 'openrouter/vendor/tool:free'):
+            bridge.answer({'brain': route, 'messages': [{'role': 'user', 'content': 'hi'}], 'tools': [],
+                           'session': {'effort': 'high', 'cwd': str(PRODUCT), 'access': 'full'}},
+                          workspace=PRODUCT, chat=chat, secrets_loader=lambda _: '')
+        self.assertIsNone(seen['google-api/gemini-2.5-flash'])
+        self.assertEqual(seen['openrouter/vendor/tool:free'], 'high')
+
+    def test_free_pick_catalogue_miss_is_not_called_a_classifier(self):
+        # Founder's real-session run 2026-10-21: gemma-4-31b-it:free refused as "a safety classifier" when the
+        # live tool catalogue simply could not be read.
+        with patch.object(router, '_openrouter_free_tool_catalogue_models', return_value=((), 'unavailable')):
+            with self.assertRaises(router.ModelRouteRefused) as refused:
+                router.route_chat('openrouter/google/gemma-4-31b-it:free', [{'role': 'user', 'content': 'hi'}],
+                                  tools=[TOOL], free_only=True, cloud_session=None, opener=lambda *a, **k: self.fail('sent'))
+        self.assertEqual(refused.exception.reason_code, 'tool_catalogue_unavailable')
+        self.assertNotIn('classifier', str(refused.exception))
+
     def test_copilot_uses_same_broker_and_medium_effort(self):
         command = local_cli_chat_command('copilot', 'copilot.exe')
         self.assertIn('--silent', command)

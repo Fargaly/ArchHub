@@ -114,8 +114,8 @@ def answer(request, *, workspace, chat=None, secrets_loader=None):
     result = (chat or router.route_chat)(
         route, messages, tools=tools if destination.family != "local-cli" else None,
         free_only=destination.family == "openrouter" and not paid,
-        # the session's effort where the provider takes one (OpenRouter, Gemini); others are sent none
-        reasoning_effort=effort if destination.family in ("openrouter", "google") else None,
+        # the session's effort only where route_chat admits one (OpenRouter); Gemini refuses it (model_router:2530)
+        reasoning_effort=effort if destination.family == "openrouter" else None,
         max_tokens=4096, timeout=value / 1000,
         response_byte_limit=1024 * 1024, **extra,
     )

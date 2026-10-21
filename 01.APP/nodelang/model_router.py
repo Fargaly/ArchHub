@@ -125,6 +125,9 @@ _ROTATION_BLOCKED_MODEL_MARKERS = (
 _OPENROUTER_NON_CHAT_FREE_MESSAGE = (
     "This model is a safety classifier, not a chat model; pick another free model."
 )
+_OPENROUTER_TOOL_CATALOGUE_MISS_MESSAGE = (
+    "OpenRouter did not list this model among its free tool-capable models right now; try again or pick another brain."
+)
 _LOCAL_NON_CHAT_MODEL_MARKERS = (
     "embed",
     "embedding",
@@ -2508,6 +2511,12 @@ def route_chat(
             )
         )
         if destination.family == "openrouter" and explicit_free and not allowed_openrouter_pick:
+            # A catalogue miss is not a classifier: say which it was (founder saw the classifier text on gemma).
+            if tool_turn and not _openrouter_free_model_blocked(destination.model):
+                raise ModelRouteRefused(
+                    _OPENROUTER_TOOL_CATALOGUE_MISS_MESSAGE,
+                    reason_code="tool_catalogue_unavailable",
+                )
             raise ModelRouteRefused(
                 _OPENROUTER_NON_CHAT_FREE_MESSAGE,
                 reason_code="non_chat_model",

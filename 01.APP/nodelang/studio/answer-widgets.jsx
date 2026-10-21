@@ -134,7 +134,7 @@
     }
     function handleAnswerwidgetsjsx4() {
       return u.show('Contest decision', {
-        title: c.title
+        id: c.id, title: c.title
       });
     }
     const ACTIONS = {

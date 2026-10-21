@@ -28,6 +28,34 @@ class WorkshopAPI:
         self.message_limit = message_limit
         self.route = route
 
+    def listApprovals(self):
+        from .social_approval import list_reviews
+        return list_reviews(self)
+
+    def postponeApproval(self, id):
+        from .social_approval import change_review
+        return change_review(self, id, "postponeApproval")
+
+    def resumeApproval(self, id):
+        from .social_approval import change_review
+        return change_review(self, id, "resumeApproval")
+
+    def contestDecision(self, id, reason):
+        from .social_approval import change_review
+        return change_review(self, id, "contestDecision", reason)
+
+    def refreshApproval(self, id):
+        from .social_approval import change_review
+        return change_review(self, id, "refreshApproval")
+
+    def reviewProofRow(self, id, index, decision):
+        from .social_approval import change_review
+        return change_review(self, id, "reviewProofRow", index, decision)
+
+    def setApprovalRubric(self, id, item, checked):
+        from .social_approval import change_review
+        return change_review(self, id, "setApprovalRubric", item, checked)
+
     def admit(self):
         from .existing_workshop_conversation import _admit
         self.guard()
@@ -571,4 +599,6 @@ FUNCTIONS = FUNCTIONS | frozenset({"getAgentSurface","setAgentProfile","setTaskP
     "checkpointTask","restoreTaskCheckpoint","openTaskGraph","setIntakeRule","setOnboarding",
     "reviewBrainLink","setSourceEvidence","setLearningLayer","setGraphMetadata","getGraphMetadata",
     "setPinnedOutput","setNodeRunPolicy","verifyOutputStamp","refreshOfficeAwareness"})
+FUNCTIONS = FUNCTIONS | frozenset({"listApprovals", "postponeApproval", "resumeApproval", "contestDecision",
+    "refreshApproval", "reviewProofRow", "setApprovalRubric"})
 # WIRE-agents end.

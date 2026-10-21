@@ -644,6 +644,8 @@ def grant_permission(
     permission = read_permission(snapshot, protocol, request_root)
     if permission.lifecycle_root != protocol.states["requested"]:
         raise InvalidCell("only a requested permission can be granted")
+    from .social_approval import require_review_admission
+    require_review_admission(snapshot, request_root)
     if permission.adapter_root not in catalog.adapter_roots:
         raise InvalidCell("permission adapter is outside the allowlist")
     consent_broker.consume(
@@ -711,6 +713,8 @@ def authorize_adapter_invocation(
     permission = read_permission(snapshot, protocol, request_root)
     if permission.lifecycle_root != protocol.states["granted"]:
         raise InvalidCell("adapter permission is not granted")
+    from .social_approval import require_review_admission
+    require_review_admission(snapshot, request_root)
     if permission.adapter_root != adapter_root or permission.user_root != user_root:
         raise InvalidCell("adapter permission identity does not match")
     for value, granted, admitted, label in (

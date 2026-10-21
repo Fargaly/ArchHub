@@ -656,7 +656,7 @@
         api,
         n,
         u
-      }, event)}>{n.read ? '✓' : '●'} {n.text}</button>))}{s.approvals.filter(c => ['pending', 'postponed', 'stale', 'refused'].includes(c.status)).map(c => <Btn key={c.id} onClick={event => executeAction("appShell.Review.50", {
+      }, event)}>{n.read ? '✓' : '●'} {n.text}</button>))}{s.approvals.filter(c => ['pending', 'postponed', 'stale', 'refused', 'contested'].includes(c.status)).map(c => <Btn key={c.id} onClick={event => executeAction("appShell.Review.50", {
         c,
         u
       }, event)}>Review · {c.title}</Btn>)}</div>;else if (k === 'Schedule') body = <><label className="grid">Every day at<input aria-label="Schedule time" type="time" value={text || '08:00'} onChange={e => setText(e.target.value)} /></label><Btn p onClick={event => executeAction("appShell.AddSchedule.51", {
@@ -1033,7 +1033,7 @@
     saved,
     text
   }, event) {
-    const handler = () => saved(() => api.contestDecision(m.title, text));
+    const handler = () => saved(() => api.contestDecision(m.id, text));
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
   }
   function appShellSave22({

@@ -119,11 +119,20 @@ async function workshop(fn,args=[]) {
  const response=await request('/api/universal/workshop',{action:'data-api',function:fn,args,...binding,request_id:window.crypto.randomUUID()});
  return response.result;
 }
+const approvalActions=['postponeApproval','resumeApproval','contestDecision','refreshApproval','reviewProofRow','setApprovalRubric'];
+async function refreshApprovals() {
+ const epoch=scopeEpoch,binding=JSON.stringify(workshopBinding());
+ const approvals=await workshop('listApprovals');
+ if(epoch!==scopeEpoch||binding!==JSON.stringify(workshopBinding()))return state.approvals;
+ if(!Array.isArray(approvals))throw Error(approvals?.message||'Approval owner unavailable. Retry the Workshop read.');
+ const tasks=state.tasks.map(task=>({...task,approvalId:approvals.findLast(card=>card.work===task.id&&card.status!=='superseded')?.id}));
+ publish({approvals,tasks,approvalActionsReady:true});return approvals;
+}
 async function refreshTasks() {
  const epoch=scopeEpoch,binding=JSON.stringify(workshopBinding());
  const tasks=await workshop('listTasks');if(!Array.isArray(tasks))return tasks;
  if(epoch!==scopeEpoch||binding!==JSON.stringify(workshopBinding()))return state.tasks;
- publish({tasks:tasks.map(t=>({...t,messages:t.messages||[],steps:t.steps||[],reviews:t.reviews||[],queuedMessages:t.queuedMessages||[]}))});return state.tasks;
+ publish({tasks:tasks.map(t=>({...t,messages:t.messages||[],steps:t.steps||[],reviews:t.reviews||[],queuedMessages:t.queuedMessages||[]}))});await refreshApprovals();return state.tasks;
 }
 function projectProviders() {
  const roster=new Map(providerRoster.map(p=>[p.id,p]));
@@ -229,6 +238,7 @@ const unfinishedActions={...api};
 api.supportsAction=(name,mode)=>!(name==='approve'&&mode&&mode!=='once')&&typeof api[name]==='function'&&api[name]!==unfinishedActions[name];
 const boundAction=api.supportsAction;
 api.supportsAction=(name,mode)=>boundAction(name,mode)&&
+ (!approvalActions.includes(name)||state.approvalActionsReady===true&&!state.nativeApproval)&&
  (!['startVoiceInput','stopVoiceInput'].includes(name)||typeof window.ARCHHUB_VOICE_START==='function'&&typeof window.ARCHHUB_VOICE_STOP==='function')&&
  (name!=='speak'||typeof window.speechSynthesis?.speak==='function'&&typeof window.SpeechSynthesisUtterance==='function');
 window.addEventListener('archhub:capabilities',()=>publish());
@@ -349,8 +359,8 @@ Object.assign(api,{
   if(specs.length!==2)return unavailable('addNodeParameter','Property form changed');
   return mutate(()=>interaction(b.control,{event_facts:[{input:specs[0].input,value:input.label},{input:specs[1].input,value:String(input.value??'')}]}));
  },
- async approve(id){const card=state.approvals.find(c=>c.id===id);if(!card?.delegation||!card?.input_digest||!card?.work)return unavailable('approve','No reviewed model delegation');const binding=workshopBinding();const body={...binding,work:card.work,delegation:card.delegation,input_digest:card.input_digest};const inspected=await request('/api/universal/workshop-model-approval?'+new URLSearchParams(body));if(inspected.expired||inspected.input_digest!==card.input_digest)return {ok:false,status:'stale',message:'Review changed; refresh before approving.'};const result=await request('/api/universal/workshop-model-approval',{...body,revision:inspected.revision});await refreshTasks();return result;},
- async selectGraph(id){scopeEpoch++;workingAgents=[];publish({tasks:[]});await request('/api/universal/graph-open',{root:id});await commands.load();project();await refreshGraphs();await refreshTasks();await refreshAgents();return state.graph;},
+ async approve(id){const card=state.approvals.find(c=>c.id===id);if(card?.approvalKind==='social'){const result=await request('/api/universal/social-approve',{delegation:card.delegation,input_digest:card.input_digest,decision:'approve'});await refreshApprovals();return result;}if(!card?.delegation||!card?.input_digest||!card?.work)return unavailable('approve','No reviewed model delegation');const binding=workshopBinding();const body={...binding,work:card.work,delegation:card.delegation,input_digest:card.input_digest};const inspected=await request('/api/universal/workshop-model-approval?'+new URLSearchParams(body));if(inspected.expired||inspected.input_digest!==card.input_digest)return {ok:false,status:'stale',message:'Review changed; refresh before approving.'};const result=await request('/api/universal/workshop-model-approval',{...body,revision:inspected.revision});await refreshTasks();return result;},
+ async selectGraph(id){scopeEpoch++;workingAgents=[];publish({tasks:[],approvals:[],approvalActionsReady:false});await request('/api/universal/graph-open',{root:id});await commands.load();project();await refreshGraphs();await refreshTasks();await refreshAgents();return state.graph;},
  async selectWorkspace(id){return api.selectGraph(id);},
  getUsageSummary:()=>({'Usage':'Usage is unavailable.'}),
  async setConnection(id,values){if(values.connected===false)return request('/api/universal/social-connection',{provider:id,action:'cancel'});if(values.connected===true)return request('/api/universal/social-connection',{provider:id,action:'start'});return unavailable('setConnection','No sign-in action requested');},
@@ -369,6 +379,13 @@ Object.assign(api,{
 });
 for(const fn of ['setTaskStatus','reassignTask','setTaskDelegate','queueTaskMessage','settleQueuedMessage','steerTask','addTaskReview','resolveTaskReview']) {
  api[fn]=async(...args)=>{const result=await workshop(fn,args);if(result?.ok===false)return result;await refreshTasks();return result;};
+}
+for(const name of approvalActions) {
+ api[name]=async(...args)=>{
+  const result=await workshop(name,args);
+  if(!result?.id||result.ok===false)throw Error(result?.message||result?.error||'Approval action was not confirmed. Retry the Workshop read.');
+  await refreshApprovals();return result;
+ };
 }
 // APP-AGENTS: the existing authenticated owner dispatches these physical adapters.
 for(const fn of ['getAgentChannel','installAgentChannel','previewAgentChannel','repairAgentChannel','listAgentSessions','getDesktopCompanion']) {

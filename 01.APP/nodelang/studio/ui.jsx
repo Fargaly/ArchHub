@@ -276,7 +276,7 @@
           api,
           id,
           u
-        }, event)}>Resume review</Btn>}</div> : c.status === 'stale' || c.status === 'refused' ? <div className="row spread"><span>{c.status === 'refused' ? 'The program is disconnected. Reconnect, then review again.' : 'The content changed after this review.'}</span>{api.supportsAction?.('refreshApproval') !== false && <Btn p onClick={event => executeAction("sharedUI.ReviewLatest.12", {
+        }, event)}>Resume review</Btn>}</div> : ['stale', 'refused', 'contested', 'superseded'].includes(c.status) ? <div className="row spread"><span>{c.status === 'contested' ? 'Another review was requested.' : c.status === 'superseded' ? 'A newer review is available.' : c.status === 'refused' ? 'The program is disconnected. Reconnect, then review again.' : 'The content changed after this review.'}</span>{api.supportsAction?.('refreshApproval') !== false && <Btn p onClick={event => executeAction("sharedUI.ReviewLatest.12", {
           api,
           id,
           u

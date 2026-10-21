@@ -704,7 +704,7 @@ test('ensureDependency: posts existing Settings owner command and publishes conf
  assert.equal(api.getSnapshot().dependencies[0].state,'Ready');
 });
 
-for(const name of ["runValuation", "setApprovalRubric", "correctAnswerSource", "setResearchReview", "stampOutput", "runSpecialNode", "setTranscriptPass", "setDesktopProgram", "offerDesktopAction", "prepareDesktopAction", "settleTimesheet", "postponeApproval", "resumeApproval", "contestDecision", "setScheduleResponsibility", "reviewScheduledWork", "runResearchNode", "importHostSkill", "inspectConnectorBundle", "configureConnectorBundle", "installConnectorBundle", "setHostSkillEnabled", "auditHostSkill", "refreshApproval", "addDimension", "setCompanionState", "reviewProofRow", "exposeSettingsPage", "setWatcherView", "signInProvider", "setProviderModel", "editWall", "addMark", "addComment", "proposeWatcherEdit", "discardWatcherChanges", "setWatcherHost", "disconnectSecret", "changePlan", "readNotification"])test(name+': remains hidden without an executing owner',async()=>{
+for(const name of ["runValuation", "correctAnswerSource", "setResearchReview", "stampOutput", "runSpecialNode", "setTranscriptPass", "setDesktopProgram", "offerDesktopAction", "prepareDesktopAction", "settleTimesheet", "setScheduleResponsibility", "reviewScheduledWork", "runResearchNode", "importHostSkill", "inspectConnectorBundle", "configureConnectorBundle", "installConnectorBundle", "setHostSkillEnabled", "auditHostSkill", "addDimension", "setCompanionState", "exposeSettingsPage", "setWatcherView", "signInProvider", "setProviderModel", "editWall", "addMark", "addComment", "proposeWatcherEdit", "discardWatcherChanges", "setWatcherHost", "disconnectSecret", "changePlan", "readNotification"])test(name+': remains hidden without an executing owner',async()=>{
  const {api,calls}=await buttonsAdapter();const count=calls.length;assert.equal(api.supportsAction(name),false);
  const result=await api[name]();assert.equal(result.ok,false);assert.equal(result.status,'not_connected');assert.equal(calls.length,count);
 });
@@ -741,4 +741,97 @@ test('Talk Stop handles native rejection without falsely clearing listening',asy
  const h=dialogHarness();let listening=true;
  await h.handlers['appShell.Control.88']({api:h.api,u:h.u,listening,setListening:()=>listening=false,talk:()=>assert.fail('already listening')},{});
  assert.equal(listening,true);assert.deepEqual(h.errors,['Native stop refused']);
+});
+
+
+// APPROVALS: execute the adapter against an answering owner; no source-text proof.
+async function approvalAdapter() {
+ const card={id:'decision-1',delegation:'decision-1',work:'work-1',input_digest:'d'.repeat(64),
+  title:'Reviewed request',approvalKind:'social',kind:'qc',status:'pending',rows:[{element:'post',before:'Not executed',after:'Exact request'}],rubric:{}};
+ let latest=globalThis.structuredClone(card),failure=null;
+ const methods=[];
+ const rig=await adapter({signed_in:false},{
+  '/api/universal/canvas':{root:'canvas',nodes:[],wires:[],workshop_scope:{root:'canvas',workshops:[{root:'workshop',is_general:true}]}},
+  '/api/universal/workshop':body=>{
+   if(body.function==='listTasks')return {result:[]};
+   if(body.function==='listApprovals')return {result:[globalThis.structuredClone(latest)]};
+   methods.push(body);
+   if(failure)return {result:{ok:false,error:failure}};
+   if(body.function==='postponeApproval')latest.status='postponed';
+   if(body.function==='resumeApproval')latest.status='pending';
+   if(body.function==='contestDecision')latest.status='contested';
+   if(body.function==='reviewProofRow')latest.rows[body.args[1]].decision=body.args[2];
+   if(body.function==='setApprovalRubric')latest.rubric[body.args[1]]=body.args[2];
+   if(body.function==='refreshApproval')latest={...card,id:'decision-2',delegation:'decision-2'};
+   return {result:globalThis.structuredClone(latest)};
+  }
+ });
+ await rig.api.listTasks();
+ return {...rig,methods,refuse:message=>failure=message};
+}
+for(const [name,args,status] of [
+ ['postponeApproval',['decision-1'],'postponed'],
+ ['resumeApproval',['decision-1'],'pending'],
+ ['contestDecision',['decision-1','Recheck the exact source'],'contested'],
+ ['refreshApproval',['decision-1'],'pending'],
+ ['reviewProofRow',['decision-1',0,'Reject'],'pending'],
+ ['setApprovalRubric',['decision-1','Target and revision match',false],'pending']
+])test('APPROVALS '+name+': executes the Workshop owner and reads back its state',async()=>{
+ const {api,methods}=await approvalAdapter();
+ assert.equal(api.supportsAction(name),true);
+ const result=await api[name](...args);
+ const call=methods.find(row=>row.function===name);
+ assert.equal(call.action,'data-api');assert.equal(call.root,'workshop');assert.equal(call.scope,'canvas');
+ assert.deepEqual(call.args,args);
+ assert.equal(result.status,status);
+ const saved=api.getSnapshot().approvals.find(row=>row.id===result.id);
+ assert.equal(saved.status,status);
+ if(name==='reviewProofRow')assert.equal(saved.rows[0].decision,'Reject');
+ if(name==='setApprovalRubric')assert.equal(saved.rubric['Target and revision match'],false);
+ if(name==='refreshApproval')assert.equal(saved.id,'decision-2');
+});
+
+test('APPROVALS owner refusal preserves the confirmed projection',async()=>{
+ const {api,requests,refuse}=await approvalAdapter();
+ const before=api.getSnapshot().approvals;
+ refuse("The exact request changed. Refresh its review.");
+ await assert.rejects(()=>api.postponeApproval("decision-1"),/exact request changed/);
+ assert.deepEqual(api.getSnapshot().approvals,before);
+ // A new adapter owner failure is exercised with no Workshop binding.
+ const absent=await adapter({signed_in:false});
+ assert.equal(absent.api.supportsAction('postponeApproval'),false);
+ await assert.rejects(()=>absent.api.postponeApproval('decision-1'),/not confirmed|unavailable/);
+ assert.deepEqual(api.getSnapshot().approvals,before);
+ assert.ok(requests.some(row=>row.body?.function==='listApprovals'));
+});
+
+
+test('APPROVALS rendered shared card buttons execute the exact review identity',async()=>{
+ const rig=await approvalAdapter(),api=rig.api,studio=path.resolve(__dirname,'../../01.APP/nodelang/studio'),babel={};
+ vm.runInNewContext(fs.readFileSync(path.join(studio,'vendor/babel.js'),'utf8'),babel);
+ const handlers={};
+ const u={act:fn=>fn(),show(){}};
+ const React={createContext:()=>({}),useContext:()=>u,useSyncExternalStore:()=>({...api.getSnapshot(),files:[],watcher:{view:''}}),
+  useState:value=>[value,()=>{}],createElement:(type,props,...children)=>({type,props:props||{},children}),Fragment:'fragment'};
+ const window={ArchHubAPI:api,AH:{},AH_DS:{},UI:{},
+  registerActions:(names,functions)=>{for(const [name,key]of Object.entries(names))handlers[name]=functions[key];},
+  executeAction:(name,...args)=>handlers[name](...args)};
+ const context=vm.createContext({window,React,console});
+ vm.runInContext(babel.Babel.transform(fs.readFileSync(path.join(studio,'ui.jsx'),'utf8'),{presets:['react']}).code,context);
+ const button=(tree,label)=>nodes(tree).find(n=>text(n)===label&&typeof n.props?.onClick==='function');
+ let tree=window.UI.ApprovalCard({id:'decision-1'});
+ assert.ok(button(tree,'Postpone'));
+ await button(tree,'Reject row 1').props.onClick({});
+ assert.equal(api.getSnapshot().approvals[0].rows[0].decision,'Reject');
+ await button(tree,'Accept row 1').props.onClick({});
+ await button(tree,'Postpone').props.onClick({});
+ tree=window.UI.ApprovalCard({id:'decision-1'});
+ assert.ok(button(tree,'Resume review'));
+ await button(tree,'Resume review').props.onClick({});
+ assert.equal(api.getSnapshot().approvals[0].status,'pending');
+ await api.contestDecision('decision-1','Review this decision');
+ tree=window.UI.ApprovalCard({id:'decision-1'});
+ assert.ok(button(tree,'Review latest'));
+ await button(tree,'Review latest').props.onClick({});
+ assert.equal(api.getSnapshot().approvals[0].id,'decision-2');
 });

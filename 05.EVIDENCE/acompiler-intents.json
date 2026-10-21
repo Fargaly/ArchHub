@@ -7718,7 +7718,16 @@
         "tools/real_app_check/designwire.mjs",
         "tools/real_app_check/designwire.py",
         "tools/real_app_check/real_app_check.py",
-        "tools/rollback-rehearsal-ci/rollback-rehearsal.ps1"
+        "tools/rollback-rehearsal-ci/rollback-rehearsal.ps1",
+        "01.APP/nodelang/cell_adapters.py",
+        "01.APP/nodelang/social_approval.py",
+        "01.APP/nodelang/studio/answer-widgets.jsx",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/app.jsx",
+        "01.APP/nodelang/studio/ui.jsx",
+        "01.APP/nodelang/workshop_api.py",
+        "02.TESTS/tests_js/newapp_account.test.cjs",
+        "02.TESTS/tests_replica/test_approval_actions.py"
       ],
       "external_entrypoints": [
         {

@@ -538,7 +538,7 @@ def _closed_profile_candidates(profile):
     return candidates, selected
 
 
-def preserve_closed_application_journals(profile, build, *, keep_count=3, max_bytes=10 * 1024**3,
+def preserve_closed_application_journals(profile, build, *, keep_count=3, max_bytes=32 * 1024**3,
                                         progress=None, close_writers=False):
     profile = Path(profile).resolve()
     with _installer_backup_lease(profile), ExitStack() as closing_profile:
@@ -555,7 +555,7 @@ def preserve_closed_application_journals(profile, build, *, keep_count=3, max_by
                                                     max_bytes=max_bytes, progress=progress)
 
 
-def _preserve_closed_application_journals(profile, build, *, keep_count=3, max_bytes=10 * 1024**3,
+def _preserve_closed_application_journals(profile, build, *, keep_count=3, max_bytes=32 * 1024**3,
                                         progress=None):
     """Installer-only, before replacing files: retain verified pre-upgrade bytes.
 

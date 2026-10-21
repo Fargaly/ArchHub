@@ -6,6 +6,7 @@ builder calls this preflight before it creates or packages any output.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -58,8 +59,35 @@ def registration_context(root, parent, commit, paths, context):
     return {**context, 'intent': 'ACOMPILER2B'}
 
 
+def compiler_identity(root):
+    """Digest of everything that decides a commit's verdict: compiler source, rules, registry and this pipeline."""
+    digest = hashlib.sha256()
+    listing = strict_check.git(root, "ls-files", "-z", "--", "tools/archhub-compiler", "tools/pipeline",
+                               "tools/ratchet.py", "evidence/acompiler-intents.json").decode()
+    for path in sorted(p for p in listing.split("\0") if p):
+        digest.update(path.encode() + b"\0" + strict_check.git(root, "show", f"HEAD:{path}"))
+    return digest.hexdigest()
+
+
+def admitted_record(root):
+    """Per-machine record of commits this compiler identity already admitted; lives in the compiler's ignored build dir."""
+    path = root / "tools" / "archhub-compiler" / "target" / "admitted.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return path, data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return path, {}
+
+
 def admit_sequence(root, base):
-    """Replay immutable landed changes with their own authority and metrics."""
+    """Replay immutable landed changes with their own authority and metrics.
+
+    A commit's verdict depends only on the commit, its parent and the compiler identity, so a commit
+    this exact compiler already admitted is not replayed; a changed compiler replays everything.
+    """
+    identity = compiler_identity(root)
+    record_path, admitted = admitted_record(root)
     head = strict_check.git(root, "rev-parse", "HEAD").decode().strip()
     strict_check.git(root, "merge-base", "--is-ancestor", base, head)
     if strict_check.git(root, "diff", "--name-only", head, "--").strip():
@@ -69,6 +97,9 @@ def admit_sequence(root, base):
         raise ValueError("release tree contains uncommitted source files")
     commits = strict_check.git(root, "rev-list", "--reverse", "--first-parent", f"{base}..{head}").decode().splitlines()
     for commit in commits:
+        if admitted.get(commit) == identity:
+            print(f"ACOMPILER COMMIT {commit}: PASS (admitted by this compiler before)", flush=True)
+            continue
         parent = strict_check.git(root, "rev-parse", f"{commit}^").decode().strip()
         paths = strict_check.git(root, "diff", "--no-renames", "--name-only", "-z", parent, commit, "--").decode().split("\0")
         paths = sorted(path for path in paths if path)
@@ -96,6 +127,8 @@ def admit_sequence(root, base):
         print(f"ACOMPILER COMMIT {commit}: {'PASS' if result['ok'] else 'FAIL'}", flush=True)
         if not result["ok"]:
             return 1
+        admitted[commit] = identity
+        record_path.write_text(json.dumps(admitted, indent=1, sort_keys=True), encoding="utf-8")
     return 0
 
 

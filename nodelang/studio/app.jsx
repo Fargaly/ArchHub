@@ -447,8 +447,9 @@
       [listening, setListening] = React.useState(false),
       [voiceError, setVoiceError] = React.useState('');
     const ref = React.useRef(),
-      recognizer = React.useRef();
+      voiceGeneration = React.useRef(0);
     React.useLayoutEffect(() => {
+      voiceGeneration.current++;
       const el = ref.current;
       if (!el) return;
       const f = el.querySelector('input:not([type=file]),textarea,button,select');
@@ -468,7 +469,8 @@
       el.addEventListener('keydown', handler);
       return () => {
         el.removeEventListener('keydown', handler);
-        recognizer.current?.stop();
+        voiceGeneration.current++;
+        if (m.kind === 'Talk' && api.supportsAction('stopVoiceInput')) void u.act(api.stopVoiceInput);
       };
     }, [m.kind]);
     const saved = async fn => {
@@ -808,16 +810,18 @@
       }, event)}>Sign in with your browser</Btn><Btn onClick={event => executeAction("appShell.ContinueAndSignInLater.87", {
         close
       }, event)}>Continue and sign in later</Btn></>;else if (k === 'Talk') {
-      const talk = () => api.startVoiceInput({
-        language: s.settings.find(r => r.id === 'BABOOM.Language')?.value === 'Arabic' ? 'ar-AE' : 'en-US',
-        onTranscript: setText,
-        onStatus: setListening,
-        onError: setVoiceError
-      });
-      body = <><p>Speak one sentence. Review it before sending.</p>{api.supportsAction?.('stopVoiceInput') !== false && <Btn onClick={event => executeAction("appShell.Control.88", {
+      const talk = () => {
+        const generation = voiceGeneration.current;
+        return api.startVoiceInput({
+          onTranscript: value => { if (generation === voiceGeneration.current) setText(value); },
+          onStatus: value => { if (generation === voiceGeneration.current) setListening(value); },
+          onError: value => { if (generation === voiceGeneration.current) setVoiceError(value); }
+        });
+      };
+      body = <><p>Speak one sentence using your Windows speech language. Review it before sending.</p>{api.supportsAction?.('stopVoiceInput') !== false && <Btn onClick={event => executeAction("appShell.Control.88", {
           api,
           listening,
-          setListening,
+          u,
           talk
         }, event)}>{listening ? 'Stop listening' : '🎙 Start talking'}</Btn>}{voiceError && <p role="status" className="muted">{voiceError}</p>}<textarea aria-label="Spoken sentence" rows={3} value={text} onChange={e => setText(e.target.value)} /><div className="flex"><Btn p disabled={!text.trim()} onClick={event => executeAction("appShell.UseSentence.89", {
             close,
@@ -1606,10 +1610,10 @@
   function appShellControl88({
     api,
     listening,
-    setListening,
+    u,
     talk
   }, event) {
-    const handler = () => listening ? (api.stopVoiceInput(), setListening(false)) : talk();
+    const handler = () => listening ? u.act(api.stopVoiceInput) : talk();
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
   }
   function appShellUseSentence89({

@@ -19,7 +19,7 @@ class SettingsOwner:
               'setBilling', 'refreshBilling', 'prepareCheckout', 'completeCheckout',
               'retryPayment', 'downgradeBilling', 'manageDependency', 'checkDependencies',
               'acceptOfficeInvitation', 'declineOfficeInvitation', 'archiveActivity',
-              'readOperations', 'setWorkspaceRules', 'setSettingsScope', 'setGraphWorkspaces',
+              'readOperations', 'setWorkspaceRules', 'setSettingsScope', 'setGraphWorkspaces', 'ensureDependency',
               'selectDevice', 'grantAccess', 'backUpNow', 'rollBack')
 
     def __init__(self, store, *, cloud=None, dependencies=None, content=None, authentication_context=None,
@@ -395,6 +395,15 @@ class SettingsOwner:
 
     def manageDependency(self, id, action):
         return self.dependencies.manage(id, action)
+
+    def ensureDependency(self, id):
+        rows = self.dependencies.check()
+        row = next((row for row in rows if row['id'] == id), None)
+        if row is None:
+            raise ValueError('Choose a listed dependency.')
+        if row['state'] in ('Ready', 'Update ready'):
+            return {'dependencies': rows}
+        return self.manageDependency(id, 'Repair' if row['state'] == 'Needs repair' else 'Install')
 
 
 def cloud_call(method, path, body=None, *, timeout_seconds=15):

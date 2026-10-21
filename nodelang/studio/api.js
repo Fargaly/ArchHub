@@ -227,6 +227,40 @@ const api={};
 for(const name of exportedNames)api[name]=()=>unavailable(name);
 const unfinishedActions={...api};
 api.supportsAction=(name,mode)=>!(name==='approve'&&mode&&mode!=='once')&&typeof api[name]==='function'&&api[name]!==unfinishedActions[name];
+const boundAction=api.supportsAction;
+api.supportsAction=(name,mode)=>boundAction(name,mode)&&
+ (!['startVoiceInput','stopVoiceInput'].includes(name)||typeof window.ARCHHUB_VOICE_START==='function'&&typeof window.ARCHHUB_VOICE_STOP==='function')&&
+ (name!=='speak'||typeof window.speechSynthesis?.speak==='function'&&typeof window.SpeechSynthesisUtterance==='function');
+window.addEventListener('archhub:capabilities',()=>publish());
+let voiceCapture=null;
+api.startVoiceInput=async(options={})=>{
+ if(!api.supportsAction('startVoiceInput'))throw Error('Open the desktop Studio to use Windows speech input.');
+ if(voiceCapture)throw Error('Finish the current voice capture first.');
+ const capture={};voiceCapture=capture;
+ const listen=async()=>{
+  options.onStatus?.(true);
+  const result=await window.ARCHHUB_VOICE_START();
+  if(result.ok!==true)throw Error(result.error||'Windows speech input did not complete.');
+  if(!result.cancelled)options.onTranscript?.(result.text);
+  return result;
+ };
+ try{return await listen().catch(failure=>{options.onError?.(failure.message);return {ok:false,error:failure.message};});}
+ finally{if(voiceCapture===capture)voiceCapture=null;options.onStatus?.(false);}
+};
+api.stopVoiceInput=()=>{
+ if(!api.supportsAction('stopVoiceInput'))throw Error('Open the desktop Studio to stop Windows speech input.');
+ return window.ARCHHUB_VOICE_STOP();
+};
+api.speak=text=>{
+ if(!api.supportsAction('speak'))throw Error('Speech output is unavailable in this window.');
+ if(typeof text!=='string'||!text.trim()||text.length>32000)throw Error('Choose 1–32000 characters to read aloud.');
+ return new Promise((resolve,reject)=>{
+  const utterance=new window.SpeechSynthesisUtterance(text);
+  utterance.onend=()=>resolve({ok:true});
+  utterance.onerror=event=>reject(Error('Speech output failed: '+event.error));
+  window.speechSynthesis.speak(utterance);
+ });
+};
 Object.assign(api,{
  async signIn(enabled=true){
   const result=await request(enabled?'/api/universal/cloud-signin':'/api/universal/cloud-signout',enabled?{method:'google'}:{});
@@ -634,7 +668,7 @@ async function settingsAction(functionName, args=[]) {
  }
  return result;
 }
-for(const functionName of ['updateProfile','invitePerson','selectFirm','setTeamAccess','setBilling','refreshBilling','prepareCheckout','completeCheckout','retryPayment','downgradeBilling','manageDependency','checkDependencies','acceptOfficeInvitation','declineOfficeInvitation','archiveActivity','setWorkspaceRules','selectDevice','grantAccess','backUpNow','rollBack']) {
+for(const functionName of ['updateProfile','invitePerson','selectFirm','setTeamAccess','setBilling','refreshBilling','prepareCheckout','completeCheckout','retryPayment','downgradeBilling','manageDependency','ensureDependency','checkDependencies','acceptOfficeInvitation','declineOfficeInvitation','archiveActivity','setWorkspaceRules','selectDevice','grantAccess','backUpNow','rollBack']) {
  api[functionName]=(...args)=>settingsAction(functionName,args);
 }
 api.refreshSettingsOperations=()=>settingsAction('readOperations',[state.graph.id]);

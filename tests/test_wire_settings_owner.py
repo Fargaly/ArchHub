@@ -261,3 +261,184 @@ def test_existing_cloud_profile_is_used_without_overwriting_local_account_prefer
     owner.updateProfile({'name': 'Chosen local name'})
     assert owner.read()['profile']['name'] == 'Chosen local name'
     assert owner.read()['profile']['firm'] == 'Existing office'
+
+
+"""BUTTONS owner checks: one isolated fixture, no installed app or live state."""
+import threading
+import time
+from types import SimpleNamespace
+
+from PyQt6.QtCore import QCoreApplication, QObject, QUrl
+
+from nodelang.baboom_native_voice import BaboomVoiceInput, BaboomVoiceCancelled
+from nodelang.window_commands import WindowCommands
+
+
+@pytest.fixture
+def bridge():
+    app = QCoreApplication.instance() or QCoreApplication([])
+    page = QObject()
+    navigation = []
+    view = SimpleNamespace(page=lambda: page, url=lambda: QUrl('http://127.0.0.1:1234/studio'),
+                           urlChanged=SimpleNamespace(connect=navigation.append), navigation=navigation)
+    commands = WindowCommands(view, None, lambda: None, 'http://127.0.0.1:1234')
+    yield commands, app, view
+    commands.stopVoice()
+    if commands._voice_worker:
+        commands._voice_worker.join(1)
+
+
+def wait_result(app, results):
+    end = time.monotonic() + 2
+    while not results and time.monotonic() < end:
+        app.processEvents()
+        time.sleep(.001)
+    assert results
+    return results[0]
+
+
+def test_startVoiceInput_uses_existing_capture_and_returns_normalized_text(bridge):
+    commands, app, _ = bridge
+    entered = threading.Event()
+    class Backend:
+        def capture_once(self, **kwargs):
+            entered.set()
+            return '  review   the plan '
+    commands._voice_input = BaboomVoiceInput(backend_factory=Backend)
+    results = []
+    commands.voiceFinished.connect(lambda key, data: results.append((key, data)))
+    assert commands.startVoice('capture-one')['ok']
+    assert entered.wait(1)
+    key, result = wait_result(app, results)
+    assert key == 'capture-one'
+    assert result == {'ok': True, 'text': 'review the plan'}
+
+
+def test_stopVoiceInput_cancels_the_same_capture_and_refuses_overlap(bridge):
+    commands, app, _ = bridge
+    entered = threading.Event()
+    class Backend:
+        def capture_once(self, *, cancel, timeout_seconds):
+            entered.set()
+            assert cancel.wait(1)
+            raise BaboomVoiceCancelled('Voice capture was cancelled')
+    commands._voice_input = BaboomVoiceInput(backend_factory=Backend)
+    results = []
+    commands.voiceFinished.connect(lambda key, data: results.append(data))
+    assert commands.startVoice('capture-two')['ok']
+    assert entered.wait(1)
+    assert commands.startVoice('overlap')['ok'] is False
+    assert commands.stopVoice()['ok']
+    assert wait_result(app, results) == {'ok': True, 'cancelled': True}
+
+
+def test_voice_refuses_other_origins_without_opening_microphone(bridge):
+    commands, _, view = bridge
+    view.url = lambda: QUrl('https://example.com/studio')
+    assert commands.startVoice('capture-three')['ok'] is False
+    assert commands.stopVoice()['ok'] is False
+    assert commands._voice_worker is None
+
+
+def test_ensureDependency_dispatches_existing_manager_and_preserves_failure():
+    calls = []
+    class Dependencies:
+        def check(self):
+            return [{'id': 'codex', 'state': 'Not installed'}]
+        def manage(self, identity, action):
+            calls.append((identity, action))
+            return {'dependencies': [{'id': identity, 'state': 'Ready'}]}
+    owner = SettingsOwner(None, dependencies=Dependencies())
+    result = owner.dispatch('ensureDependency', ['codex'])
+    assert result['dependencies'][0]['state'] == 'Ready'
+    assert calls == [('codex', 'Install')]
+    with pytest.raises(ValueError):
+        owner.dispatch('ensureDependency', ['unknown'])
+    assert len(calls) == 1
+    owner.dependencies.check = lambda: [{'id': 'codex', 'state': 'Ready'}]
+    assert owner.dispatch('ensureDependency', ['codex'])['dependencies'][0]['state'] == 'Ready'
+    assert len(calls) == 1
+    owner.dependencies.check = lambda: [{'id': 'codex', 'state': 'Needs repair'}]
+    def refuse(*args):
+        raise ValueError('Package manager refused')
+    owner.dependencies.manage = refuse
+    with pytest.raises(ValueError, match='Package manager refused'):
+        owner.dispatch('ensureDependency', ['codex'])
+
+
+def test_navigation_cancels_native_capture_even_after_origin_changes(bridge):
+    commands, app, view = bridge
+    entered = threading.Event()
+    class Backend:
+        def capture_once(self, *, cancel, timeout_seconds):
+            entered.set()
+            assert cancel.wait(1)
+            raise BaboomVoiceCancelled('Voice capture was cancelled')
+    commands._voice_input = BaboomVoiceInput(backend_factory=Backend)
+    results = []
+    commands.voiceFinished.connect(lambda key, data: results.append(data))
+    assert commands.startVoice('navigate')['ok']
+    assert entered.wait(1)
+    view.url = lambda: QUrl('https://example.com/')
+    for callback in view.navigation:
+        callback(view.url())
+    assert wait_result(app, results) == {'ok': True, 'cancelled': True}
+
+
+def test_ensureDependency_runs_existing_manager_and_confirms_inventory(tmp_path, monkeypatch):
+    import json
+    import psutil
+    from nodelang.managed_dependencies import ManagedDependencies
+    monkeypatch.setattr(psutil, 'process_iter', lambda *args: [])
+    installed = tmp_path / 'INVENTORY.json'
+    installed.write_text('{}', encoding='utf-8')
+    calls = []
+    def run(args):
+        calls.append(args)
+        if args[0] == 'root':
+            return str(tmp_path)
+        if args[0] == 'ls':
+            return json.dumps({'dependencies': json.loads(installed.read_text(encoding='utf-8'))})
+        if args[0] == 'view':
+            return json.dumps('1.0.0')
+        assert args == ['install', '--global', '@openai/codex@latest']
+        installed.write_text(json.dumps({'@openai/codex': {'version': '1.0.0'}}), encoding='utf-8')
+        return ''
+    def find(executable):
+        return executable == 'codex' and '@openai/codex' in json.loads(installed.read_text(encoding='utf-8'))
+    manager = ManagedDependencies(run=run, find=find)
+    owner = SettingsOwner(None, dependencies=manager)
+    result = owner.dispatch('ensureDependency', ['codex'])
+    row = next(row for row in result['dependencies'] if row['id'] == 'codex')
+    assert row['state'] == 'Ready'
+    assert row['version'] == '1.0.0'
+    assert ['install', '--global', '@openai/codex@latest'] in calls
+    calls.clear()
+    owner.dispatch('ensureDependency', ['codex'])
+    assert not any(args[0] == 'install' for args in calls)
+
+
+def test_voice_bridge_settles_native_receipts_and_cancels_on_pagehide():
+    import json
+    import subprocess
+    from nodelang.window_commands import VOICE_BRIDGE
+    script = """
+const vm=require('node:vm'),assert=require('node:assert/strict');
+let finished,stopped=0;const events=new Map();
+const desktopWindow={voiceFinished:{connect:fn=>finished=fn},
+ startVoice(id,reply){reply({ok:true});queueMicrotask(()=>finished(id,{ok:true,text:'native text'}));},
+ stopVoice(reply){stopped++;reply({ok:true});}};
+const window={crypto:require('node:crypto').webcrypto,addEventListener:(name,fn)=>events.set(name,fn),dispatchEvent(){}};
+const context={channel:{objects:{desktopWindow}},window,crypto:window.crypto,Event:class{},console};
+vm.runInNewContext(BRIDGE,context);
+(async()=>{
+ const result=await window.ARCHHUB_VOICE_START();assert.equal(result.text,'native text');
+ assert.equal((await window.ARCHHUB_VOICE_STOP()).ok,true);events.get('pagehide')();assert.equal(stopped,2);
+ desktopWindow.startVoice=(_id,reply)=>reply({ok:false,error:'Capture refused'});
+ await assert.rejects(window.ARCHHUB_VOICE_START(),/Capture refused/);
+ console.log('VOICE_BRIDGE_PROTOCOL_PASS');
+})().catch(failure=>{console.error(failure);process.exitCode=1;});
+""".replace('BRIDGE', json.dumps(VOICE_BRIDGE), 1)
+    result = subprocess.run(['node', '-e', script], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'VOICE_BRIDGE_PROTOCOL_PASS' in result.stdout

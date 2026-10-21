@@ -37,9 +37,10 @@ test('unfinished controls use actual adapter availability without invoking an ac
  assert.equal(api.supportsAction('setProviderEnabled'),true);
  assert.equal(api.supportsAction('missing-action'),false);
  assert.equal(api.supportsAction('archiveActivity'),true);
+ assert.equal(api.supportsAction('ensureDependency'),true);
  assert.equal(api.supportsAction('decline'),false);
  assert.equal(api.supportsAction('approve','session'),false);
- for(const name of ['runValuation','setApprovalRubric','correctAnswerSource','setResearchReview','stampOutput','runSpecialNode','setTranscriptPass','startVoiceInput','stopVoiceInput','speak','setDesktopProgram','offerDesktopAction','prepareDesktopAction','settleTimesheet','postponeApproval','resumeApproval','contestDecision','setScheduleResponsibility','reviewScheduledWork','runResearchNode','importHostSkill','inspectConnectorBundle','configureConnectorBundle','installConnectorBundle','setHostSkillEnabled','auditHostSkill','refreshApproval','addDimension','setCompanionState','ensureDependency','reviewProofRow','exposeSettingsPage','setWatcherView','signInProvider','setProviderModel','editWall','addMark','addComment','proposeWatcherEdit','discardWatcherChanges','setWatcherHost','disconnectSecret','changePlan','readNotification'])assert.equal(api.supportsAction(name),false,name);
+ for(const name of ['runValuation','setApprovalRubric','correctAnswerSource','setResearchReview','stampOutput','runSpecialNode','setTranscriptPass','startVoiceInput','stopVoiceInput','speak','setDesktopProgram','offerDesktopAction','prepareDesktopAction','settleTimesheet','postponeApproval','resumeApproval','contestDecision','setScheduleResponsibility','reviewScheduledWork','runResearchNode','importHostSkill','inspectConnectorBundle','configureConnectorBundle','installConnectorBundle','setHostSkillEnabled','auditHostSkill','refreshApproval','addDimension','setCompanionState','reviewProofRow','exposeSettingsPage','setWatcherView','signInProvider','setProviderModel','editWall','addMark','addComment','proposeWatcherEdit','discardWatcherChanges','setWatcherHost','disconnectSecret','changePlan','readNotification'])assert.equal(api.supportsAction(name),false,name);
  assert.equal(requests.length,count);
 });
 
@@ -636,4 +637,108 @@ test('WIRE-rest boot failure renders its actual error and retry reloads only onc
   const retry=boot.querySelector('button');retry.click();retry.click();
   assert.equal(reloads,1);assert.equal(retry.disabled,true);
  }finally{dom.window.close();}
+});
+
+
+
+
+async function buttonsAdapter(extra={}){
+ const calls=[],events=new Map(),canvas={root:'graph',scope:{current:'graph'},nodes:[],wires:[],catalog:[],workshops:[{root:'workshop'}]};
+ const window={structuredClone:globalThis.structuredClone,crypto:require('node:crypto').webcrypto,
+  ARCHHUB_BOOT:{token:'fixture',csrf:'fixture'},document:{hidden:true,addEventListener(){}},
+  addEventListener:(name,fn)=>events.set(name,fn),dispatchEvent(){},...extra};
+ window.ArchHubStudioAuthority={create:({get})=>({load:()=>get('/api/universal/canvas')})};
+ const fetch=async(url,options={})=>{
+  const body=options.body?JSON.parse(options.body):null;calls.push({url,body});
+  const data=url==='/api/universal/canvas'?canvas:url==='/api/universal/settings-action'?
+   {ok:true,result:{dependencies:[{id:body.args[0],state:'Ready'}]}}:{ok:true,result:[]};
+  return {ok:true,status:200,json:async()=>data};
+ };
+ const context={window,document:window.document,fetch,CustomEvent:class{},
+  setTimeout,clearTimeout,setInterval,clearInterval,URLSearchParams,AbortSignal:globalThis.AbortSignal,console};
+ vm.createContext(context);vm.runInContext(fs.readFileSync(path.resolve(__dirname,'../nodelang/studio/api.js'),'utf8'),context);
+ await window.ArchHubAPI.ready;await new Promise(resolve=>require('node:timers').setImmediate(resolve));
+ return {api:window.ArchHubAPI,calls,window,events};
+}
+test('startVoiceInput: native capture delivers reviewed text and completes listening',async()=>{
+ let finish,starts=0;const statuses=[],transcripts=[];
+ const {api}=await buttonsAdapter({ARCHHUB_VOICE_START:()=>{starts++;return new Promise(resolve=>finish=resolve);},ARCHHUB_VOICE_STOP:async()=>({ok:true})});
+ assert.equal(api.supportsAction('startVoiceInput'),true);
+ const pending=api.startVoiceInput({onStatus:v=>statuses.push(v),onTranscript:v=>transcripts.push(v)});
+ assert.equal(starts,1);assert.deepEqual(statuses,[true]);
+ await assert.rejects(api.startVoiceInput(),/Finish the current/);
+ finish({ok:true,text:'review the plan'});assert.equal((await pending).ok,true);
+ assert.deepEqual(transcripts,['review the plan']);assert.deepEqual(statuses,[true,false]);
+});
+test('stopVoiceInput: cancelling native capture sends no transcript',async()=>{
+ let finish,stops=0;const transcripts=[],statuses=[];
+ const {api}=await buttonsAdapter({ARCHHUB_VOICE_START:()=>new Promise(resolve=>finish=resolve),ARCHHUB_VOICE_STOP:async()=>{stops++;finish({ok:true,cancelled:true});return {ok:true};}});
+ const capture=api.startVoiceInput({onTranscript:v=>transcripts.push(v),onStatus:v=>statuses.push(v)});
+ await api.stopVoiceInput();await capture;assert.equal(stops,1);assert.deepEqual(transcripts,[]);assert.deepEqual(statuses,[true,false]);
+});
+test('voice errors close listening and permit retry without claiming a transcript',async()=>{
+ const errors=[],statuses=[];let attempts=0;
+ const {api}=await buttonsAdapter({ARCHHUB_VOICE_START:async()=>{attempts++;throw Error('Windows recognizer unavailable');},ARCHHUB_VOICE_STOP:async()=>({ok:true})});
+ for(let i=0;i<2;i++)assert.equal((await api.startVoiceInput({onStatus:v=>statuses.push(v),onError:v=>errors.push(v)})).ok,false);
+ assert.equal(attempts,2);assert.deepEqual(errors,['Windows recognizer unavailable','Windows recognizer unavailable']);assert.deepEqual(statuses,[true,false,true,false]);
+});
+test('speech availability follows host capability without weakening the bound-action guard',async()=>{
+ const {api,window,events}=await buttonsAdapter();let notices=0;api.subscribe(()=>notices++);
+ for(const name of ['startVoiceInput','stopVoiceInput','speak'])assert.equal(api.supportsAction(name),false);
+ window.ARCHHUB_VOICE_START=async()=>({ok:true,text:'one'});window.ARCHHUB_VOICE_STOP=async()=>({ok:true});
+ events.get('archhub:capabilities')();assert.ok(notices>0);assert.equal(api.supportsAction('startVoiceInput'),true);
+ assert.equal(api.supportsAction('invented'),false);assert.equal(api.supportsAction('approve','session'),false);
+});
+test('speak: invokes platform synthesis and reports completion only on its completion event',async()=>{
+ let utterance;const {api}=await buttonsAdapter({SpeechSynthesisUtterance:class{constructor(text){this.text=text;}},speechSynthesis:{speak:value=>{utterance=value;}}});
+ assert.equal(api.supportsAction('speak'),true);let done=false;
+ const speaking=api.speak('review the plan').then(()=>done=true);await Promise.resolve();
+ assert.equal(utterance.text,'review the plan');assert.equal(done,false);utterance.onend();await speaking;assert.equal(done,true);
+ const failed=api.speak('retry');utterance.onerror({error:'audio-busy'});await assert.rejects(failed,/audio-busy/);
+ assert.throws(()=>api.speak(''),/characters/);
+});
+test('ensureDependency: posts existing Settings owner command and publishes confirmed inventory',async()=>{
+ const {api,calls}=await buttonsAdapter();assert.equal(api.supportsAction('ensureDependency'),true);
+ await api.ensureDependency('codex');const call=calls.find(x=>x.body?.function==='ensureDependency');
+ assert.deepEqual(call,{url:'/api/universal/settings-action',body:{function:'ensureDependency',args:['codex']}});
+ assert.equal(api.getSnapshot().dependencies[0].state,'Ready');
+});
+
+for(const name of ["runValuation", "setApprovalRubric", "correctAnswerSource", "setResearchReview", "stampOutput", "runSpecialNode", "setTranscriptPass", "setDesktopProgram", "offerDesktopAction", "prepareDesktopAction", "settleTimesheet", "postponeApproval", "resumeApproval", "contestDecision", "setScheduleResponsibility", "reviewScheduledWork", "runResearchNode", "importHostSkill", "inspectConnectorBundle", "configureConnectorBundle", "installConnectorBundle", "setHostSkillEnabled", "auditHostSkill", "refreshApproval", "addDimension", "setCompanionState", "reviewProofRow", "exposeSettingsPage", "setWatcherView", "signInProvider", "setProviderModel", "editWall", "addMark", "addComment", "proposeWatcherEdit", "discardWatcherChanges", "setWatcherHost", "disconnectSecret", "changePlan", "readNotification"])test(name+': remains hidden without an executing owner',async()=>{
+ const {api,calls}=await buttonsAdapter();const count=calls.length;assert.equal(api.supportsAction(name),false);
+ const result=await api[name]();assert.equal(result.ok,false);assert.equal(result.status,'not_connected');assert.equal(calls.length,count);
+});
+
+function dialogHarness(){
+ const studio=path.resolve(__dirname,'../nodelang/studio'),babel={};
+ vm.runInNewContext(fs.readFileSync(path.join(studio,'vendor/babel.js'),'utf8'),babel);
+ let slots=[],cursor=0,effect,cleanup,callbacks,stops=0;const writes=[],errors=[],handlers={};
+ const api={supportsAction:()=>true,startVoiceInput:options=>{callbacks=options;options.onStatus(true);return Promise.resolve({ok:true});},stopVoiceInput:async()=>{stops++;throw Error('Native stop refused');}};
+ const u={act:fn=>Promise.resolve().then(fn).catch(failure=>{errors.push(failure.message);return null;})};
+ const element={querySelector:()=>null,addEventListener(){},removeEventListener(){}};
+ const React={Component:class{},Fragment:'fragment',useState(value){const i=cursor++;if(!(i in slots))slots[i]=value;return [slots[i],next=>{slots[i]=next;writes.push([i,next]);}];},
+  useRef(value){const i=cursor++;if(!(i in slots))slots[i]={current:value};return slots[i];},useLayoutEffect:fn=>effect=fn,
+  createElement(type,props,...children){if(props?.ref)props.ref.current=element;return {type,props:props||{},children};}};
+ const window={UI:{api,useData:()=>({}),useApp:()=>u,A:{},Btn:'Btn'},ReactDOM:{createRoot:()=>({render(){}})},
+  registerActions:(names,functions)=>{for(const [name,key]of Object.entries(names))handlers[name]=functions[key];},
+  executeAction:(name,scope,event)=>handlers[name](scope,event)};
+ const source=fs.readFileSync(path.join(studio,'app.jsx'),'utf8').replace('window.ReactDOM.createRoot','window.BUTTONS_DIALOG = Dialog; window.ReactDOM.createRoot');
+ const context=vm.createContext({window,React,document:{getElementById:()=>null},console});
+ vm.runInContext(babel.Babel.transform(source,{presets:['react'],sourceType:'script'}).code,context);
+ const render=kind=>{cursor=0;const tree=window.BUTTONS_DIALOG({modal:{kind},close(){}});cleanup=effect();return tree;};
+ return {render,api,handlers,window,writes,errors,u,get callbacks(){return callbacks;},get stops(){return stops;},cleanup:()=>cleanup()};
+}
+function nodes(tree){return tree&&typeof tree==='object'?[tree,...(tree.children||[]).flatMap(child=>Array.isArray(child)?child.flatMap(nodes):nodes(child))]:[];}
+function text(tree){return tree&&typeof tree==='object'?(tree.children||[]).map(child=>Array.isArray(child)?child.map(text).join(''):text(child)).join(''):String(tree??'');}
+test('Talk close cancels capture and late callbacks cannot edit a replacement dialog',async()=>{
+ const h=dialogHarness();const tree=h.render('Talk');const start=nodes(tree).find(n=>n.type==='Btn'&&text(n).includes('Start talking'));
+ assert.ok(start);await start.props.onClick({});const callbacks=h.callbacks;assert.ok(callbacks);
+ h.cleanup();h.render('Other dialog');const writes=h.writes.length;
+ callbacks.onTranscript('late transcript');callbacks.onStatus(false);callbacks.onError('late error');
+ await new Promise(resolve=>require('node:timers').setImmediate(resolve));assert.equal(h.writes.length,writes);assert.equal(h.stops,1);assert.deepEqual(h.errors,['Native stop refused']);
+});
+test('Talk Stop handles native rejection without falsely clearing listening',async()=>{
+ const h=dialogHarness();let listening=true;
+ await h.handlers['appShell.Control.88']({api:h.api,u:h.u,listening,setListening:()=>listening=false,talk:()=>assert.fail('already listening')},{});
+ assert.equal(listening,true);assert.deepEqual(h.errors,['Native stop refused']);
 });

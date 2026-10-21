@@ -152,7 +152,10 @@ def _process_handle(holder):
     kernel.GetProcessTimes.argtypes = (wintypes.HANDLE, *(ctypes.POINTER(wintypes.FILETIME),) * 4)
     handle = kernel.OpenProcess(0x1000 | 0x100000 | 1, False, holder.process.pid)
     if not handle:
-        if ctypes.get_last_error() == 87:
+        # 87: already gone. PID 4 is the Windows kernel (cache flush of a just-closed
+        # file, founder machine 2026-10-22); never an ArchHub process, so never stopped:
+        # the next attempt's busy wait outlasts it.
+        if ctypes.get_last_error() == 87 or holder.process.pid == 4:
             yield None, kernel
             return
         raise OSError('Cannot stop journal holder: ' + _holder_names([holder]))
@@ -275,7 +278,7 @@ def closed_profile(profile, candidates, lease, report):
                 live = holders.list() if holders else []
                 if attempt == 2 or not live:
                     raise OSError('Cannot close SQLite journals: %s; holders: %s' % (error, _holder_names(live))) from error
-                report('Retrying journal clean close: ' + _holder_names(live))
+                report('Retrying journal clean close (%s): %s' % (error, _holder_names(live)))
             except BaseException:
                 leases.close()
                 raise

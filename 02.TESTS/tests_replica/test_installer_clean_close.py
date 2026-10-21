@@ -189,3 +189,14 @@ def test_python_command_arguments_cannot_impersonate_an_archhub_helper(tmp_path)
     code = "import runpy,sys;sys.path.insert(0,sys.argv.pop(1));runpy.run_module('nodelang.clean_coordination_service',run_name='__main__')"
     assert _python_role(app, [executable, '-I', '-c', code, str(app)]) == 'helper'
     assert _python_role(app, [executable, '-I', '-c', code, str(tmp_path)]) == ''
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows process access semantics')
+def test_kernel_holder_is_waited_out_not_stopped():
+    # Founder machine 2026-10-22: three installs refused with "Cannot stop journal holder:
+    # System (PID 4)" right after the 10 GB graph closed; the kernel is never stopped.
+    from types import SimpleNamespace
+    from nodelang import installer_closed_profile as closed
+    kernel = SimpleNamespace(process=SimpleNamespace(pid=4, started=None), name='System')
+    with closed._process_handle(kernel) as (handle, _):
+        assert handle is None

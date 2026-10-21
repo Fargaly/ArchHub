@@ -899,7 +899,7 @@ LIBRARY_ITEM_ENGINES.update({
     "tool_workshop": {"engine": "tool.workshop",
                       "params": {"tool": "workshop", "stale_claim_after_idle_minutes": "30",
                                  "archive_after_idle_days": "20", "tick_cadence_minutes": 5,
-                                 "backup_count": 3, "backup_budget_bytes": 10737418240,
+                                 "backup_count": 3, "backup_budget_bytes": 34359738368,
                                  "recovery_timeout_seconds": 30,
                                  "instance_retry_ms": 500,
                                  "preflight_database_ms": 1000,

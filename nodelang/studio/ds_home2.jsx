@@ -48,7 +48,7 @@
     const reviewContext = pending[0]?.target || reviewTask?.project || s.graph.name;
     const [showTemplates, setShowTemplates] = React.useState(false);
     const openTask = t => { u.setTask(t.id); u.go('workshop'); };
-    return <main className="page home-page" data-screen="home">
+    return <main className="page home-page" data-screen="home" data-home-page="">
       <div className="home-content">
         <header className="home-intro">
           <div className="eyebrow">Your workspace · {s.profile.firm}</div>

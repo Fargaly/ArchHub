@@ -1444,7 +1444,7 @@ def _prepare_pipeline_after_home(held):
     view.page().runJavaScript("""(() => {
       const root = document.getElementById('root');
       if (!root?.children.length) return false;
-      const home = [...document.querySelectorAll('[data-home-page],[data-home-tools]')]
+      const home = [...document.querySelectorAll('[data-home-page],[data-home-tools],[data-screen="home"]')]
         .some(element => element.getBoundingClientRect().width > 0);
       const onboarding = document.querySelector('[data-studio-screen="onboarding"]');
       const explicitGraph = window.ARCHHUB_BOOT?.open_graph && window.ARCHHUB_LIVE?.graph;

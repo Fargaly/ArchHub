@@ -31,7 +31,7 @@ _ORDER = ("uncertain", "started", "unavailable", "replied")
 
 
 def project_injection_delivery(events, *, addressed=False):
-    """Receipts distinguish submitted injection, recipient read, and recipient reply."""
+    """Application receipts and reader cursors distinguish delivery from submission."""
     delivery = []
     for recipient, records in events.items():
         if "native-control" in records:

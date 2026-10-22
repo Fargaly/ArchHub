@@ -72,8 +72,9 @@ def test_app_send_injects_existing_public_message_without_recipient_polling(room
     assert len(native.turns) == 1, 'ordinary ticks must not replay injection'
     pending = owner.shared_agent_mail('pending', {'context':{'threadId':'codex-fixture'}}, peer=peer())
     assert pending['pending'][0]['id'] == note['message_id'], 'submission is not acknowledgement'
-    owner.shared_agent_mail('read', {'since':note['sequence'] - 1,
+    owner.shared_agent_mail('read', {'since':note['sequence'],
         'context':{'threadId':'codex-fixture'}}, peer=peer())
+    delivery.tick()
     assert not owner.shared_agent_mail('pending', {'context':{'threadId':'codex-fixture'}}, peer=peer())['pending']
 
 
@@ -152,6 +153,7 @@ def test_only_addressed_recipient_read_or_reply_confirms_delivery(room):
     assert [row['id'] for row in pending['pending']] == [note['message_id']]
     owner.shared_agent_mail('send', {'to':'claude', 'text':'Received and answering', 'reply_to':note['message_id'],
         'context':{'threadId':'codex-fixture'}}, peer=peer())
+    mail.WorkshopInjection(owner, None).tick()
     assert not owner.shared_agent_mail('pending', {'context':{'threadId':'codex-fixture'}}, peer=peer())['pending']
     page = owner.shared_agent_mail('read', {'since':0, 'context':{'gemini/sessionID':'other-fixture'}}, peer=peer())
     assert next(row for row in page['messages'] if row['id']==note['message_id'])['state'] == 'answered'
@@ -264,11 +266,13 @@ def test_coordinator_title_resolves_717_when_native_uuid_does_not_start_with_717
     native = NativeFixture()
     native.discover = lambda **kw: {'status':'ok','recipients':[{'app':'claude','id':native_id,'title':'717 coordinator (live)'}]}
     delivery = mail.WorkshopInjection(owner, native)
+    owner.workshop_injection = delivery
     note = send(owner, to='717', text='Coordinator must see this')
     delivery.tick()
     assert len(native.turns)==1 and native.turns[0][0]['id']==native_id
     assert note['message_id'] in [row['id'] for row in owner.shared_agent_mail('pending', {'context':context}, peer=peer())['pending']]
-    owner.shared_agent_mail('read', {'since':0,'context':context}, peer=peer())
+    owner.shared_agent_mail('read', {'since':note['sequence'],'context':context}, peer=peer())
+    delivery.tick()
     assert not owner.shared_agent_mail('pending', {'context':context}, peer=peer())['pending']
 
 
@@ -302,13 +306,16 @@ def test_public_room_projection_contains_unattached_mailbox_notes_and_real_state
     api = SimpleNamespace(root=mail.ROOM, history=lambda:history)
     page = WorkshopAPI.listWorkshopMessages(api)
     assert next(row for row in page['messages'] if row['id']==note['message_id'])['state'] == 'pending'
-    owner.shared_agent_mail('read', {'since':0,'context':{'threadId':'codex-fixture'}}, peer=peer())
+    owner.workshop_injection = mail.WorkshopInjection(owner, None)
+    owner.shared_agent_mail('read', {'since':note['sequence'],'context':{'threadId':'codex-fixture'}}, peer=peer())
+    owner.workshop_injection.tick()
     page = WorkshopAPI.listWorkshopMessages(api)
     assert next(row for row in page['messages'] if row['id']==note['message_id'])['state'] == 'delivered'
     pending = send(owner, to='gemini', text='Pending message in the shared room')
     answered = send(owner, text='Answered message in the shared room')
     owner.shared_agent_mail('send', {'to':'claude', 'text':'Visible reply from Codex',
         'reply_to':answered['message_id'], 'context':{'threadId':'codex-fixture'}}, peer=peer())
+    owner.workshop_injection.tick()
     page = WorkshopAPI.listWorkshopMessages(api)
     assert next(row for row in page['messages'] if row['id']==pending['message_id'])['state'] == 'pending'
     assert next(row for row in page['messages'] if row['id']==answered['message_id'])['state'] == 'answered'
@@ -322,13 +329,17 @@ def test_reminder_to_a_read_but_unanswered_message_returns_on_next_tool(room):
     declare(owner, context)
     note = send(owner, to='gemini')
     delivery = mail.WorkshopInjection(owner, None, reminder_minutes=1, escalation_minutes=2)
+    owner.workshop_injection = delivery
     started = time.time()
     delivery.tick(now=started)
-    owner.shared_agent_mail('read', {'since':0,'context':context}, peer=peer())
+    owner.shared_agent_mail('read', {'since':note['sequence'],'context':context}, peer=peer())
+    delivery.tick(now=started)
     assert not owner.shared_agent_mail('pending', {'context':context}, peer=peer())['pending']
     delivery.tick(now=started + 61)
     assert note['message_id'] in [row['id'] for row in owner.shared_agent_mail('pending', {'context':context}, peer=peer())['pending']]
-    owner.shared_agent_mail('read', {'since':0,'context':context}, peer=peer())
+    reminder = owner.shared_agent_mail('pending', {'context':context}, peer=peer())['pending'][0]
+    owner.shared_agent_mail('read', {'since':reminder['delivery_sequence'],'context':context}, peer=peer())
+    delivery.tick(now=started+61)
     assert not owner.shared_agent_mail('pending', {'context':context}, peer=peer())['pending']
 
 
@@ -354,11 +365,11 @@ def test_unrelated_history_is_not_materialized_into_every_tool_result(room, monk
                 content='To unrelated-agent:\nUnrelated history', idempotency_key='history:'+str(index))
     note = send(owner)
     parsed = []
-    original = history._message
-    def counted(row):
+    original = ConversationHistoryStore._message
+    def counted(self, row):
         parsed.append(row['id'])
-        return original(row)
-    monkeypatch.setattr(history, '_message', counted)
+        return original(self, row)
+    monkeypatch.setattr(ConversationHistoryStore, '_message', counted)
     page = owner.shared_agent_mail('pending', {'context':context}, peer=peer())
     assert [row['id'] for row in page['pending']] == [note['message_id']]
     assert len(parsed) <= 20, 'unrelated history must be filtered before payload materialization'
@@ -413,16 +424,16 @@ def test_escalation_append_failure_does_not_mark_it_escalated(room, monkeypatch)
     started = time.time()
     delivery.tick(now=started)
     delivery.tick(now=started + 61)
-    append = history.append
-    def refused(*args, **kw):
+    append = ConversationHistoryStore.append
+    def refused(self, *args, **kw):
         if kw.get('author') == 'Workshop coordination':
             raise OSError('fixture append interrupted')
-        return append(*args, **kw)
-    monkeypatch.setattr(history, 'append', refused)
+        return append(self, *args, **kw)
+    monkeypatch.setattr(ConversationHistoryStore, 'append', refused)
     with pytest.raises(OSError, match='fixture append interrupted'):
         delivery.tick(now=started + 121)
     assert all('escalated' not in event for event in mail.delivery_events(history, {'id':note['message_id']}).values())
-    monkeypatch.setattr(history, 'append', append)
+    monkeypatch.setattr(ConversationHistoryStore, 'append', append)
     delivery.tick(now=started + 122)
     assert history._db.execute("SELECT count(*) FROM messages WHERE author='Workshop coordination' AND reply_to=?",
         (note['message_id'],)).fetchone()[0] == 1

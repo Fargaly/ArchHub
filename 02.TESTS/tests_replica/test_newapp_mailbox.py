@@ -11,7 +11,14 @@ import pytest
 
 from nodelang.conversation_history import ConversationHistoryStore
 from nodelang.application_machine_transport import MachinePipePeer
-from nodelang.workshop_mailbox import call, _identity, read_declarations
+from nodelang.workshop_mailbox import call as external_call, _identity, read_declarations
+
+
+def application_call(method, body, context, *, database, peer=None, account=None):
+    from nodelang.persistence import application_content_path
+    path = application_content_path(database) or database
+    with ConversationHistoryStore(path, instance_id="mailbox-test", create=False) as history:
+        return external_call(method, body, context, database=database, peer=peer, account=account, history=history)
 
 
 @pytest.fixture
@@ -39,8 +46,8 @@ def test_session_identity_survives_connector_restart():
 
 def test_redeclare_replaces_the_session_row(database):
     body = {"task": "Integration", "paths": [os.getcwd()], "status": "working", "request_id": "NEWAPP"}
-    first = call("declare", body, {"threadId": "same-session"}, database=database, peer=peer())
-    second = call("declare", body, {"threadId": "same-session"}, database=database, peer=peer(os.getppid()))
+    first = application_call("declare", body, {"threadId": "same-session"}, database=database, peer=peer())
+    second = application_call("declare", body, {"threadId": "same-session"}, database=database, peer=peer(os.getppid()))
     assert first["declaration"]["root"] == second["declaration"]["root"]
     with sqlite3.connect(database) as connection:
         assert connection.execute("select count(*) from workshop_declarations").fetchone()[0] == 1
@@ -49,11 +56,11 @@ def test_redeclare_replaces_the_session_row(database):
 
 def test_explicit_retry_key_is_exactly_once(database):
     body = {"to": "*", "text": "One deliberate message", "idempotency_key": "request-1"}
-    first = call("send", body, {"threadId": "retry-session"}, database=database, peer=peer())
-    second = call("send", body, {"threadId": "retry-session"}, database=database, peer=peer())
+    first = application_call("send", body, {"threadId": "retry-session"}, database=database, peer=peer())
+    second = application_call("send", body, {"threadId": "retry-session"}, database=database, peer=peer())
     assert first["message_id"] == second["message_id"]
     with pytest.raises(ValueError):
-        call("send", {**body, "text": "Different effect"}, {"threadId": "retry-session"}, database=database, peer=peer())
+        application_call("send", {**body, "text": "Different effect"}, {"threadId": "retry-session"}, database=database, peer=peer())
 
 
 def test_unqualified_callers_remain_distinct():
@@ -61,7 +68,7 @@ def test_unqualified_callers_remain_distinct():
 
 
 def test_derived_fields_are_not_parameter_sockets(database):
-    call("declare", {"task": "Test", "paths": [os.getcwd()], "status": "working", "request_id": "NEWAPP"},
+    application_call("declare", {"task": "Test", "paths": [os.getcwd()], "status": "working", "request_id": "NEWAPP"},
          {"threadId": "socket-session"}, database=database, peer=peer())
     with sqlite3.connect(database) as connection:
         row = read_declarations(connection)[0]
@@ -72,12 +79,12 @@ def test_derived_fields_are_not_parameter_sockets(database):
 def test_rate_budget_survives_connector_restart_and_allows_a_retry(database):
     context = {"threadId": "bounded-session"}
     for index in range(30):
-        call("send", {"to": "*", "text": str(index), "idempotency_key": str(index)},
+        application_call("send", {"to": "*", "text": str(index), "idempotency_key": str(index)},
              context, database=database, peer=peer())
     with pytest.raises(ValueError, match="30 messages"):
-        call("send", {"to": "*", "text": "31", "idempotency_key": "31"},
+        application_call("send", {"to": "*", "text": "31", "idempotency_key": "31"},
              context, database=database, peer=peer(os.getppid()))
-    retry = call("send", {"to": "*", "text": "29", "idempotency_key": "29"},
+    retry = application_call("send", {"to": "*", "text": "29", "idempotency_key": "29"},
                  context, database=database, peer=peer(os.getppid()))
     assert retry["sequence"] == 30
 
@@ -85,6 +92,7 @@ def test_rate_budget_survives_connector_restart_and_allows_a_retry(database):
 def test_pipe_metadata_cannot_select_a_session_identity(database):
     from nodelang.installed_workshop_coordination import dispatch_mailbox
     owner = SimpleNamespace(universal_store=SimpleNamespace(database_path=database))
+    owner.shared_agent_mail = lambda method, body, **kw: application_call(method, body, {}, database=database, **kw)
     result = dispatch_mailbox(owner, {"method": "POST", "path": "/api/universal/agent-mail/send",
         "session": {}, "body": {"to": "*", "text": "Observed peer", "context": {"threadId": "spoofed"}}}, peer())
     assert result["sender_key"] == _identity({}, peer())[0]["sender_key"]
@@ -126,7 +134,8 @@ def test_graph_database_routes_to_its_conversation_store(tmp_path):
     with ConversationHistoryStore(content, instance_id="mailbox-test", connection=connection) as history:
         history.ensure_conversation("app:workshop")
     connection.close()
-    sent = call("send", {"to": "founder", "text": "hello"}, {"threadId": "graph-session"}, database=graph, peer=peer())
+    sent = application_call("send", {"to": "founder", "text": "hello"}, {"threadId": "graph-session"}, database=graph, peer=peer())
+    assert external_call("read", {"since":0}, {}, database=graph, peer=peer())["messages"][0]["id"] == sent["message_id"]
     assert sent["message_id"]
     rows = sqlite3.connect(content).execute("SELECT content FROM messages").fetchall()
     assert rows == [("To founder:\nhello",)]
@@ -134,13 +143,13 @@ def test_graph_database_routes_to_its_conversation_store(tmp_path):
 
 def test_account_attribution_scopes_mailbox_retries(database):
     body = {"to": "*", "text": "A deliberate message", "idempotency_key": "one-retry"}
-    first = call("send", body, {}, database=database, peer=peer(), account="first@example.test")
-    second = call("send", body, {}, database=database, peer=peer(), account="second@example.test")
+    first = application_call("send", body, {}, database=database, peer=peer(), account="first@example.test")
+    second = application_call("send", body, {}, database=database, peer=peer(), account="second@example.test")
     assert first['message_id'] != second['message_id']
     assert first['sender_key'] != second['sender_key']
     assert first['sender_label'].endswith(' / first@example.test')
     assert second['sender_label'].endswith(' / second@example.test')
-    page = call('read', {'since': 0}, {}, database=database, peer=peer())
+    page = application_call('read', {'since': 0}, {}, database=database, peer=peer())
     assert {first['sender_label'], second['sender_label']} <= {row['label'] for row in page['peers']}
 
 
@@ -151,8 +160,9 @@ def test_closed_app_mailbox_uses_existing_profile_after_connection_refusal(datab
         port = reserved.getsockname()[1]
         monkeypatch.setenv('ARCHHUB_COORDINATION_ENDPOINT', 'http://127.0.0.1:%d/coordination' % port)
         monkeypatch.setattr(workshop_mailbox, 'profile_database', lambda: database)
-        answer = call('send', {'to': '*', 'text': 'no listener fallback', 'idempotency_key': 'fallback'}, {})
-        assert answer['message_id']
+        with pytest.raises(ValueError, match='application is unavailable'):
+            external_call('send', {'to': '*', 'text': 'no listener fallback', 'idempotency_key': 'fallback'}, {})
+        assert external_call('read', {'since':0}, {})['messages'] == []
 
 
 def test_http_refusal_is_never_replayed_to_the_profile(monkeypatch):
@@ -163,13 +173,13 @@ def test_http_refusal_is_never_replayed_to_the_profile(monkeypatch):
     monkeypatch.setattr(workshop_mailbox, 'build_opener', lambda *_args: RefusingOwner())
     monkeypatch.setattr(workshop_mailbox, 'profile_database', lambda: pytest.fail('refused send was replayed'))
     with pytest.raises(HTTPError):
-        call('send', {'to': '*', 'text': 'one attempt', 'idempotency_key': 'one-attempt'}, {})
+        external_call('send', {'to': '*', 'text': 'one attempt', 'idempotency_key': 'one-attempt'}, {})
 
 
 def test_pending_to_verified_account_keeps_one_native_declaration(database):
     body = {'task': 'One current task', 'paths': [os.getcwd()], 'status': 'working', 'request_id': 'NOKEY'}
-    pending = call('declare', body, {'threadId': 'same-native'}, database=database, peer=peer())
-    verified = call('declare', body, {'threadId': 'same-native'}, database=database,
+    pending = application_call('declare', body, {'threadId': 'same-native'}, database=database, peer=peer())
+    verified = application_call('declare', body, {'threadId': 'same-native'}, database=database,
         peer=peer(), account='owner@example.test')
     assert pending['declaration']['root'] == verified['declaration']['root']
     with sqlite3.connect(database) as connection:
@@ -189,5 +199,6 @@ def test_a_fixture_profile_never_reaches_the_live_desktop(tmp_path, monkeypatch)
     def never(*_args, **_kwargs):
         raise AssertionError("the fixture profile reached the live desktop")
     monkeypatch.setattr(mailbox, "build_opener", never)
-    sent = call("send", {"to": "founder", "text": "fixture only"}, {"threadId": "fixture-session"}, peer=peer())
-    assert sqlite3.connect(content).execute("SELECT count(*) FROM messages WHERE id=?", (sent["message_id"],)).fetchone()[0] == 1
+    with pytest.raises(ValueError, match='application is unavailable'):
+        external_call("send", {"to": "founder", "text": "fixture only"}, {"threadId": "fixture-session"}, peer=peer())
+    assert external_call('read', {'since':0}, {}, peer=peer())['messages'] == []

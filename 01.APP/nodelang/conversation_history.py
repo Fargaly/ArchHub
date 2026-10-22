@@ -33,6 +33,8 @@ _CONTENT_DIGEST_COLUMN = "content_digest TEXT CHECK(content_digest IS NULL OR le
 _CANONICAL_FIELDS = ("id", "conversation_id", "sequence", "author", "content", "category",
                      "recipients", "refs", "evidence", "reply_to", "created_at", "idempotency_key")
 _MAX_OUTPUT = 16 * 1024 * 1024
+WORKSHOP_CURSOR_SCHEMA = ("CREATE TABLE workshop_delivery_cursors("
+    "session TEXT PRIMARY KEY,record TEXT NOT NULL CHECK(json_valid(record))) STRICT")
 
 
 def _text(value, label, maximum=512):
@@ -189,9 +191,10 @@ class ConversationHistoryStore(ConversationPageProtection):
             listed = self._db.execute("PRAGMA database_list").fetchone()
             if listed is not None and listed[2]:
                 self._database_uri = Path(listed[2]).as_uri()
+            self._db.execute("PRAGMA busy_timeout=%d" % (busy_timeout_seconds * 1000))
             self._db.execute("PRAGMA foreign_keys=ON")
             self._db.execute("PRAGMA cache_size=-2048")
-            with self._transaction(write=True):
+            with self._transaction(write=create):
                 objects = self._schema_objects()
                 app_id = self._db.execute("PRAGMA application_id").fetchone()[0]
                 version = self._db.execute("PRAGMA user_version").fetchone()[0]
@@ -643,6 +646,7 @@ class ConversationHistoryStore(ConversationPageProtection):
                     or normalized(actual["sql"]) not in accepted[name]):
                 raise ValueError("unsupported retention source schema: " + name)
         migration_tables = {
+            "workshop_delivery_cursors": WORKSHOP_CURSOR_SCHEMA,
             "migration_staging": "CREATE TABLE migration_staging(singleton INTEGER PRIMARY KEY CHECK(singleton=1), ticket_digest TEXT NOT NULL, destination TEXT NOT NULL, stage_id TEXT NOT NULL)",
             "migration_publications": "CREATE TABLE migration_publications(conversation_id TEXT PRIMARY KEY REFERENCES conversations(id), application_root TEXT NOT NULL, instance_id TEXT NOT NULL, binding_root TEXT NOT NULL, manifest_digest TEXT NOT NULL, stage_id TEXT NOT NULL, source_authority TEXT NOT NULL, source_revision INTEGER NOT NULL, source_digest TEXT NOT NULL, imported_count INTEGER NOT NULL)",
         }

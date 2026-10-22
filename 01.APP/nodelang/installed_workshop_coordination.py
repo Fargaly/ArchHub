@@ -235,7 +235,6 @@ def dispatch_mailbox(owner, request, peer):
     """The authenticated pipe and stdio adapter share one file-backed room."""
     from .application_machine_transport import MachinePipePeer
     from .cell_authorization import AuthorizationDenied
-    from .workshop_mailbox import call
 
     route = (request.get("method"), request.get("path"))
     if route not in MAILBOX_ROUTES or type(peer) is not MachinePipePeer:
@@ -245,6 +244,6 @@ def dispatch_mailbox(owner, request, peer):
     body = request.get("body")
     if type(body) is not dict:
         raise ValueError("shared message arguments are invalid")
-    return call(route[1].rsplit("/", 1)[-1],
+    return owner.shared_agent_mail(route[1].rsplit("/", 1)[-1],
                 {key: value for key, value in body.items() if key != "context"},
-                {}, database=owner.universal_store.database_path, peer=peer)
+                peer=peer)

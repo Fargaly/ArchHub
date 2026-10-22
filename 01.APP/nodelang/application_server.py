@@ -14300,7 +14300,8 @@ class ApplicationServer(WorkspaceRootsOwner):
 
     def shared_agent_mail(self, method, body, *, peer=None, account=None):
         """Trusted application caller, same sink/table; no request back into itself."""
-        from .workshop_mailbox import call
+        import sqlite3
+        from .workshop_mailbox import call, application_history
         with self.mutation_lock:
             self.conversation_content._require_live_owner()
             history = self.conversation_content._history
@@ -14311,13 +14312,22 @@ class ApplicationServer(WorkspaceRootsOwner):
                     binding = read_content_binding(snapshot, registry.deliberation_protocol,
                         application_root=registry.application_root, space_root=registry.workshop_root)
                 history = self.conversation_content._history_for(binding)
-            result = call(method, {key: value for key, value in body.items() if key != "context"},
-                body.get("context", {}), database=self.universal_store.database_path,
-                history=history, peer=peer, account=account)
-            injection = getattr(self, "workshop_injection", None)
-            if injection is not None and method in ("send", "declare"):
+        try:
+            with application_history(history, read_only=method in ("read", "pending")) as selected:
+                result = call(method, {key: value for key, value in body.items() if key != "context"},
+                    body.get("context", {}), database=self.universal_store.database_path,
+                    history=selected, peer=peer, account=account)
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc).lower() and "busy" not in str(exc).lower():
+                raise
+            raise ValueError("Workshop store is locked; request failed within its bounded wait") from exc
+        injection = getattr(self, "workshop_injection", None)
+        if injection is not None:
+            if method == "read":
+                injection.observe_read(result)
+            if method in ("read", "send", "declare"):
                 injection.wake()
-            return result
+        return result
 
     def _dispatch_verified_machine_route(self, request):
         """Only the authenticated, decoded local pipe calls this wrapper."""
@@ -14338,7 +14348,7 @@ class ApplicationServer(WorkspaceRootsOwner):
                 with self.mutation_lock:
                     if self.universal_checkpoint_guard is not None:
                         self.universal_checkpoint_guard.require_healthy()
-                    return dispatch_mailbox(self, request, _verified_machine_pipe_peer(request))
+                return dispatch_mailbox(self, request, _verified_machine_pipe_peer(request))
             session = request.get("session") if type(request) is dict else None
             unbound_enrollment = (
                 type(session) is dict and not session

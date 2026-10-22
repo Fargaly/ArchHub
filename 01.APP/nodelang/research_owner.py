@@ -110,6 +110,9 @@ class ResearchOwner:
         return self.api.root + ':answer-sources:' + hashlib.sha256(message.encode()).hexdigest()
 
     def sources(self, message, evidence, works):
+        from .workshop_mailbox import ROUTING_EVIDENCE
+        if evidence and evidence[0] == ROUTING_EVIDENCE:
+            evidence = ()
         cell = self.api.admit().cells.get(self._citation_root(message))
         if cell:
             if cell.link0 not in works or cell.link1 != self.api.binding.subject_root:

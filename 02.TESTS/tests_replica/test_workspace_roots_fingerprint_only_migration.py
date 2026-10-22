@@ -13,13 +13,27 @@ RED on 8c0d3101: test_first_enrollment_on_the_old_graph... raises InvalidCell.
 Uses fake ncrypt only (old_schema_world); the key store is never opened.
 """
 import uuid
+import threading
 
 import pytest
 
 from nodelang import workspace_roots_catalogue as roots
 from tests_replica.test_workspace_roots_window_approval import (  # noqa: F401
-    _active, _register,
+    _active,
     _the_key_store_is_never_opened_by_a_graph_court, old_schema_world)
+
+
+def _register(world, name):
+    # This is the retained historical graph API; normal Settings no longer signs in a window.
+    folder = world["tmp"] / name
+    folder.mkdir(exist_ok=True)
+    key = world["key"]
+    return roots.owner_change(world["authority"], world["catalogue"],
+        {"action": "register", "id": name, "path": str(folder), "privacy": "private",
+         "profile": "client", "writers": ["claude"]},
+        caller=world["caller"], operation_id=str(uuid.uuid4()), lock=threading.RLock(),
+        signer_factory=lambda pinned: key, fingerprint_of=key.fingerprint, verifier=key,
+        admission={"principal": world["settings_principal"]}, **world["files"])
 
 
 def _enrollment(world):

@@ -206,8 +206,10 @@ class SettingsOwner:
     def _roots(self):
         if self.workspace_roots is not None:
             return self.workspace_roots()
-        from .workspace_roots_catalogue import forward_workspace_settings
-        result = forward_workspace_settings({'action': 'list'})
+        from .workspace_roots_catalogue import forward_workspace_settings, settings_principal
+        route = getattr(self.runtime, '_clean_workspace_roots', None)
+        result = (route({'action': 'list'}, admission={'principal': settings_principal()})
+                  if route is not None else forward_workspace_settings({'action': 'list'}))
         return [*([{**result['built_in'], 'root_id': result['built_in']['id']}]
                   if result.get('built_in') else []), *result.get('roots', [])]
 

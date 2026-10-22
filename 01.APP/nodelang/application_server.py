@@ -1254,7 +1254,10 @@ def _site_tutorial_asset(path):
         raise FileNotFoundError('tutorial screenshot not found') from exc
 
 
-class _CleanAuthorityHttpServer:
+from .workspace_roots_owner import WorkspaceRootsOwner
+
+
+class _CleanAuthorityHttpServer(WorkspaceRootsOwner):
     """Bounded clean-graph browser consumer without a second store."""
 
     def __init__(
@@ -1440,21 +1443,6 @@ class _CleanAuthorityHttpServer:
                 "nodes": [], "wires": [], "catalog": [], "selected": [],
                 "warmup": self._boot_status()}
 
-    def _check_workspace_roots(self):
-        from .workspace_roots_catalogue import (
-            boot_check,
-            find_workspace_root_catalogue,
-        )
-        try:
-            catalogue = find_workspace_root_catalogue(
-                self.clean_authority, caller=self.clean_caller
-            )
-            self.workspace_roots_boot = boot_check(
-                self.clean_authority, catalogue, caller=self.clean_caller
-            )
-        except Exception as exc:  # noqa: BLE001 - a failed check is never a match
-            self.workspace_roots_boot = "unverifiable: " + type(exc).__name__
-
     @staticmethod
     def _probe_hosts() -> list:
         from .pipeline_engines import probe_connectors
@@ -1480,196 +1468,6 @@ class _CleanAuthorityHttpServer:
             return None
         from .host_enable import annotate_host_rows
         return annotate_host_rows(self.clean_authority, value)
-
-    def _clean_workspace_roots(self, body, admission=None):
-        """The owner's Workspaces settings: list, register, unregister, republish.
-
-        The browser session only admits the request. The approval is the
-        owner's key: the projection a change produces is signed (Windows asks
-        the owner) before anything commits -- see owner_change. `admission` is the
-        verified settings principal the host proved (clean_coordination_host passes
-        it); it is trusted internal context, never read from `body`, and the first
-        enrollment refuses without it.
-        """
-        import uuid as _uuid
-
-        from .workspace_roots_catalogue import (
-            WorkspaceRootRefused,
-            APP_KEY_ID,
-            APP_WRITTEN,
-            KEY_ID,
-            app_signing_components,
-            find_workspace_root_catalogue,
-            install_workspace_root_catalogue,
-            NO_WINDOW,
-            owner_change,
-            roots_view,
-        )
-        if type(body) is not dict:
-            raise WorkspaceRootRefused("workspace-roots request is invalid")
-        if self.clean_workspace_root is None:
-            # This server's own root could not be resolved at start: refuse every
-            # workspace-roots request before any read or change; never adopt a
-            # root resolved later from a changed map or environment.
-            raise WorkspaceRootRefused(
-                "this ArchHub workspace root was not resolved at start; restart ArchHub")
-        request = {key: value for key, value in body.items() if key != "command_id"}
-        action = request.get("action")
-        if action == "browse":
-            # Browse is the desktop window's own folder dialog. The graph's owner
-            # runs without a visible window: a dialog opened here would never be
-            # seen, so it is refused instead of opened.
-            if set(request) != {"action"}:
-                raise WorkspaceRootRefused("workspace-roots request is invalid")
-            raise WorkspaceRootRefused(NO_WINDOW.replace("approve this change",
-                                                         "choose a folder"))
-        boot = self.workspace_roots_boot
-        if action == "prepare":
-            # The change the desktop window will ask the owner to approve.
-            change = request.get("change")
-            action = change.get("action") if type(change) is dict else None
-            if action not in ("register", "unregister", "republish", "update-writers"):
-                raise WorkspaceRootRefused("only a change can be prepared for approval")
-        if action in ("register", "unregister", "update-writers") and boot not in ("match", "missing"):
-            raise WorkspaceRootRefused(
-                "the workspace-roots registry does not match the graph (%s); "
-                "republish it before changing roots" % boot
-            )
-        with self._mutation_lock:
-            catalogue = find_workspace_root_catalogue(
-                self.clean_authority, caller=self.clean_caller
-            )
-            if catalogue is None and action in ("register", "unregister", "republish", "update-writers", "set-own-agents-write"):
-                catalogue = install_workspace_root_catalogue(
-                    self.clean_authority,
-                    operation_id=str(_uuid.uuid4()),
-                    caller=self.clean_caller,
-                )
-        if catalogue is None:
-            if action != "list" or set(request) != {"action"}:
-                raise WorkspaceRootRefused("workspace-roots request is invalid")
-            view = roots_view(self.clean_authority.store.revision, (), None, boot,
-                              built_in=self.clean_workspace_root)
-        else:
-            if action in ("grant-private-root", "revoke-private-root", "set-own-agents-write"):
-                from .private_root_grants import record_grant_event
-                receipt_dir = self.private_root_grants.path.parent
-                try:
-                    self._clean_private_grant(request, action, admission)
-                except Exception as exc:
-                    record_grant_event("owner", "refused", "%s: %s" % (type(exc).__name__, exc),
-                                       request, directory=receipt_dir)
-                    raise
-                record_grant_event("owner", "ok", self._last_private_grant_event.get("message", ""),
-                                   request, directory=receipt_dir)
-                request = {"action": "list"}
-            if admission is None:
-                admission = {"principal": "archhub-browser-workspace-settings"}
-            signer_factory = fingerprint_of = change_verifier = None
-            signing_key_id = None
-            app_writes_here = (
-                action in ("register", "unregister", "update-writers", "republish")
-                and request.get("action") != "prepare"
-                and request.get("signature") is None
-                and not any(key in request for key in (
-                    "public_blob", "key_check", "admission_ticket"))
-            )
-            if app_writes_here:
-                signer_factory, fingerprint_of, change_verifier = app_signing_components()
-                signing_key_id = APP_KEY_ID
-            view = owner_change(
-                self.clean_authority,
-                catalogue,
-                request,
-                caller=self.clean_caller,
-                admission=admission,
-                operation_id=body.get("command_id") or str(_uuid.uuid4()),
-                lock=self._mutation_lock,
-                built_in=self.clean_workspace_root,
-                signer_factory=signer_factory,
-                fingerprint_of=fingerprint_of,
-                verifier=change_verifier,
-                signing_key_id=signing_key_id or KEY_ID,
-                pin_mode=APP_WRITTEN,
-                allow_key_migration=True,
-            )
-            if "prepared" in view:
-                return view
-            if action != "list":
-                self.workspace_roots_boot = view["projection"]
-        grant_store = getattr(self, "private_root_grants", None)
-        from .workspace_roots_catalogue import private_grant_settings_view
-        return {**view, "boot": self.workspace_roots_boot,
-                **private_grant_settings_view(grant_store),
-                "last_private_grant_event": getattr(self, "_last_private_grant_event", None)}
-
-    def _clean_private_grant(self, request, action, admission):
-        """Grant or revoke one private-root consent (Settings admission only)."""
-        from .workspace_roots_catalogue import (
-            SETTINGS_IDENTITY, WorkspaceRootRefused, root_bound_registration)
-        if action == "set-own-agents-write":
-            if set(request) != {"action", "enabled"} or type(request["enabled"]) is not bool:
-                raise WorkspaceRootRefused("Own agents write without asking must be on or off")
-            vendor, session = SETTINGS_IDENTITY
-            expected = "agent-session.%s" % hashlib.sha256(
-                (vendor.lower() + "\0" + session).encode("utf-8")).hexdigest()
-            if not isinstance(admission, dict) or admission.get("principal") != expected:
-                raise WorkspaceRootRefused("Only this instance owner's Settings can change this default.")
-            self.private_root_grants.set_own_agents_write_without_asking(request["enabled"])
-            self._last_private_grant_event = {"action": action,
-                "message": "Own agents write without asking is " + ("on." if request["enabled"] else "off.")}
-            return
-        allowed = {"action", "id", "runtime", "session_id", "operations", "expires_at"}
-        if set(request) - allowed or not {"id", "runtime", "session_id"} <= set(request):
-            raise WorkspaceRootRefused("workspace-roots request is invalid")
-        principal = admission.get("principal") if isinstance(admission, dict) else None
-        vendor, session = SETTINGS_IDENTITY
-        expected_principal = "agent-session.%s" % hashlib.sha256(
-            (vendor.lower() + "\0" + session).encode("utf-8")
-        ).hexdigest()
-        if principal != expected_principal:
-            raise WorkspaceRootRefused(
-                "the authenticated workspace-roots settings admission is required; "
-                "nothing was changed")
-        root_id = str(request["id"]).strip()
-        runtime = str(request["runtime"]).strip().lower()
-        session_id = str(request["session_id"]).strip()
-        try:
-            _container, digest, registration = root_bound_registration(
-                "workspace-roots/%s/__grant__" % root_id, runtime=runtime)
-        except InvalidCell as exc:
-            raise WorkspaceRootRefused(str(exc)) from exc
-        if registration.get("privacy") != "private":
-            raise WorkspaceRootRefused("only a private workspace root uses local grants")
-        with self._mutation_lock:
-            event = {"action": action, "root_id": root_id, "runtime": runtime,
-                     "session_id": session_id, "issued_at": time.time()}
-            if action == "grant-private-root":
-                grant_path = self.private_root_grants.path
-                pattern = grant_path.stem + ".unverifiable-*.json"
-                before = set(grant_path.parent.glob(pattern))
-                previous_hash = hashlib.sha256(grant_path.read_bytes()).hexdigest() if grant_path.exists() else None
-                grant = self.private_root_grants.grant(
-                    root_id=root_id,
-                    runtime=runtime,
-                    session_id=session_id,
-                    root_digest=digest,
-                    operations=request.get("operations"),
-                    expires_at=request.get("expires_at"),
-                    replace_unverifiable=True,
-                )
-                event.update(issued_at=grant["issued_at"], expires_at=grant["expires_at"],
-                             message="Agent access granted.")
-                set_aside = set(grant_path.parent.glob(pattern)) - before
-                matching = [path for path in set_aside
-                            if hashlib.sha256(path.read_bytes()).hexdigest() == previous_hash]
-                if matching:
-                    event["message"] = "unverifiable document set aside as " + sorted(matching)[-1].name
-            else:
-                self.private_root_grants.revoke(
-                    root_id=root_id, runtime=runtime, session_id=session_id)
-                event["message"] = "Agent access revoked."
-            self._last_private_grant_event = event
 
     def _clean_sign_in(self):
         """Mint one bounded browser session for an explicit same-origin POST.
@@ -5803,7 +5601,7 @@ class NativeWorkDelivery:
         self._drain()
 
 
-class ApplicationServer:
+class ApplicationServer(WorkspaceRootsOwner):
     @classmethod
     def from_unified_authority(
         cls,
@@ -6557,6 +6355,16 @@ class ApplicationServer:
             self.universal_store, self.universal_registry,
         )
         self.mutation_lock = threading.RLock()
+        from .workspace_roots_catalogue import ApplicationWorkspaceAuthority
+        self._workspace_roots_binding = ApplicationWorkspaceAuthority(self.universal_store, self.universal_registry)
+        from .workspace_roots_catalogue import built_in_path
+        try:
+            self.clean_workspace_root = str(self.universal_workspace_root) if universal_workspace_root is not None else built_in_path()
+        except Exception:  # noqa: BLE001 - unresolved roots stay visible as a refusal
+            self.clean_workspace_root = None
+        self._mutation_lock = self.mutation_lock
+        self.workspace_roots_boot = "checking"
+        self._check_workspace_roots()
         # Build BABOOM native frames outside the graph lock (revision-checked).
         self._native_frame_outside_lock = True
         # Same for the machine Workshop read (GET /api/universal/workshop)
@@ -8112,11 +7920,8 @@ class ApplicationServer:
                         ):
                             return
                     if self.path == '/api/universal/workspace-roots':
-                        # The desktop's Studio is served here, but the workspace
-                        # roots live in the graph the clean owner holds: the
-                        # request is its to answer (owner-only, like Hosts).
                         from .workspace_roots_catalogue import (
-                            approve_in_this_window, normalized_picked_folder)
+                            settings_principal, normalized_picked_folder)
                         from .private_root_grants import record_grant_event
                         body = self._body(max_bytes=8192)
                         if binding.subject_root != owner.universal_registry.authorization.subject_root:
@@ -8129,19 +7934,15 @@ class ApplicationServer:
                         if body == {'action': 'browse'} and picker is not None:
                             # Browse opens THIS window's own folder dialog (the
                             # desktop's Qt thread), like pick-file; it only
-                            # fills the path in, and Add still takes his key.
+                            # fills the path in; registration uses the same owner.
                             chosen = picker('Choose a folder for ArchHub to govern')
                             self._json(200, {'ok': True, 'path': normalized_picked_folder(chosen)})
                             return
-                        # Add / Remove / Republish are approved by the owner's key in
-                        # THIS window (the prompt needs a visible window; the graph's
-                        # owner runs without one); the owner verifies before commit.
-                        handle = getattr(owner, 'native_window_handle', None)
                         receipt = isinstance(body, dict) and body.get('action') in (
                             'grant-private-root', 'revoke-private-root')
                         try:
-                            answer = approve_in_this_window(
-                                body, window_handle=handle() if callable(handle) else handle)
+                            answer = owner._clean_workspace_roots(
+                                body, admission={'principal': settings_principal()})
                         except Exception as exc:
                             if receipt:
                                 record_grant_event('desktop', 'refused',

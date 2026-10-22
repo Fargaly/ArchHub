@@ -124,6 +124,111 @@ class WorkspaceRootCatalogue:
     key_definition: str
 
 
+
+class ApplicationWorkspaceAuthority:
+    """Workspace catalogue binding to the desktop's existing journal/account.
+
+    The old catalogue's signed-command API is not a normal desktop owner. These
+    records use the same CellStore persistence as SettingsOwner, without opening
+    another store or binding a signed commit authority.
+    """
+
+    def __init__(self, store, registry):
+        self.store = store
+        self.registry = registry
+        self.root = registry.application_root + ":workspace-roots"
+
+    def read(self):
+        snapshot = self.store.snapshot()
+        held = snapshot.cells.get(self.root)
+        if held is None:
+            return self._legacy_state(snapshot)
+        index = json.loads(bytes(held.atom))
+        roots = [json.loads(bytes(snapshot.cells[root].atom)) for root in index["roots"]]
+        return {**index, "roots": roots}
+
+    def _legacy_state(self, snapshot):
+        """Decode existing catalogue data in this journal; never adopt or sign it."""
+        empty = {"roots": [], "key": None, "installed": False}
+        if self.store.database_path is None:
+            return empty
+        from .persistence import _application_generation_directory
+        from . import unified_authority as unified
+        from .cell_protocols import read_relation
+        generation = _application_generation_directory(self.store.database_path)
+        if generation is None:
+            return empty
+        metadata = generation / "bootstrap.json"
+        if not metadata.is_file():
+            metadata = generation / "adoption.json"
+        if not metadata.is_file():
+            return empty
+        # Historical metadata is an optional index, never startup admission.
+        if metadata.stat().st_size > 16384:
+            raise WorkspaceRootRefused("historical workspace catalogue index exceeds 16 KiB")
+        try:
+            manifest = unified.BootstrapManifest.from_json(metadata.read_text(encoding="utf-8"))
+        except (ValueError, InvalidCell):
+            return empty
+        if manifest.protocol_root not in snapshot.cells or manifest.catalogue_root not in snapshot.cells:
+            return empty
+        legacy = unified._resolve_protocol(self.store, manifest, None)
+        names = unified._catalogue_names_from_snapshot(legacy, snapshot)
+        definitions = {name: names.get(name, ()) for name in (ROOT_DEFINITION, KEY_DEFINITION)}
+        if not any(definitions.values()):
+            return empty
+        if any(len(found) != 1 for found in definitions.values()):
+            raise WorkspaceRootRefused("historical workspace catalogue is incomplete or duplicated")
+        governance = [m.participant_id for m in read_relation(snapshot, manifest.application_root)
+                      if m.role_id == legacy.role("composition")
+                      and unified._optional_label(legacy, snapshot, m.participant_id) == COMPOSITION]
+        if len(governance) != 1:
+            raise WorkspaceRootRefused("historical workspace catalogue requires one Governance composition")
+        state = {"roots": [], "key": None, "installed": True}
+        for member in read_relation(snapshot, governance[0]):
+            if member.role_id != legacy.role("composition"):
+                continue
+            projection = unified.validate_composition(legacy, snapshot, member.participant_id)
+            if projection.protocol_root != legacy.shape("instance"):
+                continue
+            instance = unified._project_instance(legacy, snapshot, member.participant_id)
+            values = {"instance": member.participant_id, **dict(instance["values"])}
+            if instance["definition"] == definitions[ROOT_DEFINITION][0]:
+                state["roots"].append(values)
+            elif instance["definition"] == definitions[KEY_DEFINITION][0]:
+                if state["key"] is not None:
+                    raise WorkspaceRootRefused("the graph holds more than one workspace-roots signing key")
+                state["key"] = values
+        return state
+
+    def save(self, state):
+        from .universal_cell import Cell
+        snapshot = self.store.snapshot()
+        actor = self.registry.authorization.subject_root
+        cells = []
+        for values in state["roots"]:
+            root = self.root + ":" + values["root_id"]
+            cells.append(Cell(root, self.root, actor, canonical({**values, "instance": root})))
+        index = {**state, "roots": [cell.id for cell in cells]}
+        cells.append(Cell(self.root, self.registry.application_root, actor, canonical(index)))
+        if any(len(cell.atom) > 65536 for cell in cells):
+            raise WorkspaceRootRefused("workspace root record exceeds 64 KiB; nothing was changed")
+        create = tuple(cell for cell in cells if cell.id not in snapshot.cells)
+        replace = tuple(cell for cell in cells if cell.id in snapshot.cells and snapshot.cells[cell.id] != cell)
+        if create or replace:
+            self.store.commit(snapshot.revision, create=create, replace=replace)
+
+    def revise(self, root_id, values):
+        state = self.read()
+        matches = [root for root in state["roots"] if root["root_id"] == root_id]
+        if len(matches) != 1:
+            raise WorkspaceRootRefused("no such workspace root")
+        if matches[0]["state"] == "unregistered":
+            raise WorkspaceRootRefused("that workspace root is already unregistered")
+        matches[0].update(values)
+        self.save(state)
+
+
 def _subcommand(operation_id: str, label: str) -> str:
     try:
         namespace = uuid.UUID(operation_id)
@@ -177,6 +282,9 @@ def install_workspace_root_catalogue(
     caller: CallerCommandCapability,
 ) -> WorkspaceRootCatalogue:
     """Publish the two definitions once; later calls answer from the head."""
+    if isinstance(authority, ApplicationWorkspaceAuthority):
+        authority.save({**authority.read(), "installed": True})
+        return WorkspaceRootCatalogue(authority.root, authority.root + ":key")
     root_definition = _publish(
         authority,
         ROOT_DEFINITION,
@@ -239,6 +347,9 @@ def install_workspace_root_catalogue(
 
 def find_workspace_root_catalogue(authority, *, caller):
     """The published catalogue, or None. Never commits (safe at boot)."""
+    if isinstance(authority, ApplicationWorkspaceAuthority):
+        return (WorkspaceRootCatalogue(authority.root, authority.root + ":key")
+                if authority.read()["installed"] else None)
     root = published_definition_named(authority, ROOT_DEFINITION, caller=caller)
     key = published_definition_named(authority, KEY_DEFINITION, caller=caller)
     if root is None or key is None:
@@ -260,6 +371,8 @@ def _enrolling_actor(caller) -> str:
 
 
 def _key_record(authority, catalogue, *, caller):
+    if isinstance(authority, ApplicationWorkspaceAuthority):
+        return authority.read()["key"]
     governance = _governance(authority, caller)
     projection = read_contained_scope(
         authority, governance, scope_root=governance, caller=caller
@@ -281,6 +394,10 @@ def _key_record(authority, catalogue, *, caller):
 
 def read_state(authority, catalogue, *, caller):
     """(revision, roots, pin): every root instance (any state) and the pinned key."""
+    if isinstance(authority, ApplicationWorkspaceAuthority):
+        state = authority.read()
+        roots = tuple(sorted(state["roots"], key=lambda root: root["root_id"]))
+        return authority.store.revision, roots, (state["key"] or {}).get("fingerprint")
     governance = _governance(authority, caller)
     projection = read_contained_scope(
         authority, governance, scope_root=governance, caller=caller
@@ -536,6 +653,14 @@ def pin_signing_key(authority, catalogue, fingerprint, *, caller, operation_id,
     if key_id not in (KEY_ID, APP_KEY_ID):
         raise InvalidCell("workspace-roots key id is invalid; use the app Settings writer")
     existing = _key_record(authority, catalogue, caller=caller)
+    if isinstance(authority, ApplicationWorkspaceAuthority):
+        if existing is not None and existing["fingerprint"] != fingerprint and not allow_repin:
+            raise InvalidCell("a different workspace-roots signing key is already pinned")
+        state = authority.read()
+        state["key"] = {"key_id": key_id, "fingerprint": fingerprint, "mode": mode,
+                        "enrolled_by": enrolled_by, "enrolled_at": enrolled_at}
+        authority.save(state)
+        return fingerprint
     if existing is not None:
         if existing["fingerprint"] != fingerprint and not allow_repin:
             raise InvalidCell("a different workspace-roots signing key is already pinned")
@@ -577,6 +702,13 @@ def read_enrollment(authority, catalogue, *, caller):
     None when nothing is pinned. A pin written before this record existed reads back
     with mode 'legacy' and empty actor/time -- still visible, just not attributed.
     """
+    if isinstance(authority, ApplicationWorkspaceAuthority):
+        record = authority.read()["key"]
+        if (not record or type(record.get("fingerprint")) is not str
+                or not _FINGERPRINT.match(record["fingerprint"])):
+            return None
+        return {"fingerprint": record["fingerprint"], "mode": record.get("mode") or "legacy",
+                "enrolled_by": record.get("enrolled_by") or "", "enrolled_at": record.get("enrolled_at") or ""}
     governance = _governance(authority, caller)
     projection = read_contained_scope(
         authority, governance, scope_root=governance, caller=caller)
@@ -603,6 +735,8 @@ def update_root_writers(authority, catalogue, root_id, writers, *, caller, opera
     if matches[0].get("state") == "unregistered":
         raise WorkspaceRootRefused("that workspace root is removed; add it again in Settings > Workspaces")
     normalized = _normalize_writers(writers)
+    if isinstance(authority, ApplicationWorkspaceAuthority):
+        return authority.revise(root_id, {"writers": normalized})
     return revise_instance(
         authority,
         matches[0]["instance"],
@@ -620,6 +754,10 @@ def register_root(authority, catalogue, values, *, caller, operation_id):
         raise InvalidCell("no workspace-roots signing key is pinned yet")
     if any(root.get("root_id") == values["root_id"] for root in roots):
         raise WorkspaceRootRefused("that workspace root id is already used")
+    if isinstance(authority, ApplicationWorkspaceAuthority):
+        state = authority.read()
+        state["roots"].append(dict(values))
+        return authority.save(state)
     return instantiate_definition(
         authority,
         catalogue.root_definition,
@@ -638,6 +776,8 @@ def unregister_root(authority, catalogue, root_id, *, caller, operation_id):
         raise WorkspaceRootRefused("no such workspace root")
     if matches[0].get("state") == "unregistered":
         return None
+    if isinstance(authority, ApplicationWorkspaceAuthority):
+        return authority.revise(root_id, {"state": "unregistered"})
     return revise_instance(
         authority,
         matches[0]["instance"],
@@ -1205,7 +1345,7 @@ ROOT_PATH_PREFIX = "workspace-roots/"
 
 
 def read_registered_roots(verifier=None, *, snapshot_path=None, pin_path=None,
-                          last_good_path=None):
+                          last_good_path=None, registry_state=None):
     """(roots by id, pin) from the hooks' projection, or InvalidCell.
 
     The same trust as the hooks: the pin file names the key and carries its public
@@ -1236,7 +1376,7 @@ def read_registered_roots(verifier=None, *, snapshot_path=None, pin_path=None,
                                 document["signature"], verifier)):
         raise InvalidCell("the workspace-roots registry does not verify")
     _refuse_rollback(signed, blob, verifier, last_good_path)
-    _require_graph_current(signed)
+    _require_graph_current(signed, registry_state=registry_state)
     roots = {}
     for entry in signed["roots"]:
         if type(entry) is not dict or type(entry.get("id")) is not str or entry["id"] in roots:
@@ -1274,8 +1414,11 @@ def current_registry_state(authority, *, caller) -> dict:
         revision, roots, pin = authority.store.snapshot().revision, (), None
     else:
         revision, roots, pin = read_state(authority, catalogue, caller=caller)
-    return {"graph_id": authority.manifest.graph_id, "revision": revision,
-            "registry_digest": registry_digest(snapshot_body(roots, pin))}
+    key_id = (_key_record(authority, catalogue, caller=caller) or {}).get("key_id", KEY_ID) if catalogue else KEY_ID
+    graph_id = (authority.registry.application_root if isinstance(authority, ApplicationWorkspaceAuthority)
+                else authority.manifest.graph_id)
+    return {"graph_id": graph_id, "revision": revision,
+            "registry_digest": registry_digest(snapshot_body(roots, pin, key_id=key_id))}
 
 
 FIRST_ENROLLMENT_ADMISSION_PURPOSE = "archhub.workspace-roots.first-enrollment-admission/v1"
@@ -1444,11 +1587,11 @@ def verified_graph_state() -> dict:
     return answer
 
 
-def _require_graph_current(signed):
+def _require_graph_current(signed, *, registry_state=None):
     """The signed files must be the graph's CURRENT projection: a root the graph
     revoked is refused even while stale files still verify. Unavailable = refused."""
     try:
-        statement = verified_graph_state()
+        statement = verified_graph_state() if registry_state is None else registry_state
     except InvalidCell as exc:
         raise InvalidCell("the graph's current workspace-roots state is unavailable: %s" % exc) from exc
     except Exception as exc:  # noqa: BLE001 - doubt is a refusal
@@ -1512,7 +1655,7 @@ def root_bound_admission(path, *, runtime=None, verifier=None, snapshot_path=Non
 
 
 def root_bound_registration(path, *, runtime=None, verifier=None, snapshot_path=None,
-                            pin_path=None, last_good_path=None):
+                            pin_path=None, last_good_path=None, registry_state=None):
     """("workspace-root:<id>", digest) for a write path inside a registered root.
 
     path is "workspace-roots/<id>/<path inside the root>". The root must be in the
@@ -1526,7 +1669,8 @@ def root_bound_registration(path, *, runtime=None, verifier=None, snapshot_path=
             or any(part in ("", ".", "..") for part in parts[2:])):
         raise InvalidCell("workspace-root write path is invalid")
     roots, pin = read_registered_roots(verifier, snapshot_path=snapshot_path,
-                                       pin_path=pin_path, last_good_path=last_good_path)
+                                       pin_path=pin_path, last_good_path=last_good_path,
+                                       registry_state=registry_state)
     entry = roots.get(parts[1])
     if entry is None:
         raise InvalidCell("%s is not a registered workspace root" % parts[1])
@@ -1547,7 +1691,7 @@ def root_bound_registration(path, *, runtime=None, verifier=None, snapshot_path=
 _last_session_refusal = None
 
 
-def private_grant_settings_view(grant_store) -> dict:
+def private_grant_settings_view(grant_store, *, registry_state=None, session_reader=None) -> dict:
     """Read active consent and canonical sessions through the existing machine pipe."""
     from .private_root_grants import DEFAULT_OPERATIONS
     from .application_machine_transport import (
@@ -1560,7 +1704,8 @@ def private_grant_settings_view(grant_store) -> dict:
                 continue
             try:
                 _, digest, registration = root_bound_registration(
-                    "workspace-roots/%s/__grant__" % grant["root_id"], runtime=grant["runtime"])
+                    "workspace-roots/%s/__grant__" % grant["root_id"], runtime=grant["runtime"],
+                    **({"registry_state": registry_state} if registry_state is not None else {}))
             except InvalidCell:
                 continue
             if registration.get("privacy") == "private" and digest == grant["root_digest"]:
@@ -1568,9 +1713,12 @@ def private_grant_settings_view(grant_store) -> dict:
     try:
         if grant_store is None:
             raise InvalidCell("private-root grant store is unavailable")
-        client = UniversalRuntimeClient(default_runtime_descriptor_path(), grant_store.provider)
-        sessions = client.request("GET", "/api/universal/private-root-grant",
-                                  {"action": "list-sessions"})
+        if session_reader is not None:
+            sessions = session_reader()
+        else:
+            client = UniversalRuntimeClient(default_runtime_descriptor_path(), grant_store.provider)
+            sessions = client.request("GET", "/api/universal/private-root-grant",
+                                      {"action": "list-sessions"})
     except (InvalidCell, OSError, RuntimeError, ValueError) as exc:
         sessions = {"status": "unavailable", "sessions": [], "reason": str(exc)}
         global _last_session_refusal

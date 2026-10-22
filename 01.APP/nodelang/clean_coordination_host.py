@@ -40,7 +40,11 @@ class CleanCoordinationHost:
                         admission={'principal': settings_principal()})
                 elif (request['method'], request['path']) == ('GET', '/api/universal/workspace-roots-state'):
                     from .workspace_roots_catalogue import current_registry_state
-                    result = current_registry_state(self.owner.clean_authority, caller=self.owner.clean_caller)
+                    from contextlib import nullcontext
+                    with getattr(self.owner, "_mutation_lock", nullcontext()):
+                        result = current_registry_state(
+                            getattr(self.owner, "workspace_roots_authority", None) or self.owner.clean_authority,
+                            caller=getattr(self.owner, "workspace_roots_caller", None) or self.owner.clean_caller)
                 else:
                     result = self.owner.dispatch_universal_machine_route(request)
             return {**result, 'account': account}

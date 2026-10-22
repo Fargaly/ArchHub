@@ -75,11 +75,7 @@
     message
   }) {
     const u = useApp(),
-      rows = message.sources || [{
-        sourceId: 'Nile Tower · P03',
-        excerpt: 'Reviewed project context',
-        status: 'Included'
-      }];
+      rows = message.sources || [];
     return <details style={{
       marginTop: 10
     }}><summary>Sources</summary>{rows.length === 0 && <p className="muted">This message has no attributed sources.</p>}{rows.map((r, i) => <div className="row" key={i} style={{
@@ -114,8 +110,15 @@
       u = useApp(),
       n = s.graph.nodes.find(n => n.id === id);
     if (!n) return null;
-    const kind = n.kind;
-    return <div className="grid">{kind === 'Fuzzy score' && <Card style={{
+    const kind = n.kind, research = !!n.params.research_run;
+    const results = Array.isArray(n.output) ? n.output : [n.output];
+    return <div className="grid">{research && <Card style={{padding:16}}><h3>Result review</h3>{results.map((row,index)=>{
+      const item=String(row && typeof row==='object' ? row.id??row.element??index : index);
+      return <label className="row spread" key={item}><span>{item}</span><select aria-label={'Review result '+item}
+        value={n.review?.items?.[item]||'needs-review'} onChange={event=>executeAction('setResearchReview',u,id,{item,state:event.target.value})}>
+        {['needs-review','included','excluded'].map(state=><option key={state}>{state}</option>)}
+      </select></label>;
+    })}</Card>}{kind === 'Fuzzy score' && <Card style={{
         padding: 16
       }}><h3>Stakeholder fusion</h3><Table rows={n.fuzzyEvidence || []} columns={['criterion', 'stakeholder', 'rating', 'client', 'fusion', 'fused']} /></Card>}{kind === 'Provenance stamp' && <Card style={{
         padding: 16
@@ -130,7 +133,7 @@
         }}>Choose {r.element}</Btn>))}<Btn sm onClick={() => {
           executeAction("ui.close", u);
           executeAction("ui.go", u, 'canvas');
-        }}>Correct selector</Btn></Card>}{/Recall-settings/.test(kind) && <Card style={{
+        }}>Correct selector</Btn></Card>}{(/Recall-settings/.test(kind) || research) && <Card style={{
         padding: 16
       }}><h3>Last successful preset</h3><Table rows={n.successfulPresets || []} />{api.supportsAction?.('setResearchReview') !== false && <Btn p onClick={() => executeAction("setResearchReview", u, id, {
           usePreset: true

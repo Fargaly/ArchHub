@@ -77,11 +77,13 @@ async function request(path,body=undefined,readRetry=true,signal=undefined) {
 function rows(node){return node?.properties||node?.params||[];}
 function nodeDto(n) {
  const params=Object.fromEntries(rows(n).map(p=>[p.label,p.value]));
+ const research=JSON.parse(params.research_run||'{}');
  const schema=rows(n).map(p=>({key:p.label,label:p.display_label||p.label,type:p.editor||'text',group:'Parameters',unit:p.unit||'',options:p.constraints?.options||[],editable:p.editable===true,relation:p.relation,owner:p.owner||n.id}));
  const ports=(n.ports||[]).map(p=>({id:p.id,name:p.name||p.label||p.id,type:p.value_type||'any'}));
  return {id:n.id,title:n.label||n.title||n.id,kind:params.element?'UI element':n.kind||n.engine||n.assembly||'Node',x:n.x||0,y:n.y||0,status:n.status||'',
  params,defaults:Object.fromEntries(rows(n).filter(p=>p.default!==undefined).map(p=>[p.label,p.default])),parameterSchema:schema,inputs:ports.filter((_,i)=>['target','in'].includes(n.ports[i].side)),outputs:ports.filter((_,i)=>['source','out'].includes(n.ports[i].side)),
- children:(n.members||[]).map(r=>r.id||r),parent:n.group||null,pinned:n.pinned===true||params.pinned==='true',frozen:n.frozen===true||params.frozen==='true',output:n.output||n.result||[],application:n.application===true,
+ children:(n.members||[]).map(r=>r.id||r),parent:n.group||null,pinned:n.pinned===true||params.pinned==='true',frozen:n.frozen===true||params.frozen==='true',output:research.output??n.output??n.result??[],application:n.application===true,
+ review:JSON.parse(params.research_review||'{"items":{}}'),successfulPresets:research.preset?[research.preset]:[],
  portVisibility:JSON.parse(params.port_visibility||'{}'),parameterPresentation:JSON.parse(params.parameter_presentation||'{}')};
 }
 function settingDto(n,p) {
@@ -125,6 +127,7 @@ const desktopActions=['setDesktopProgram','offerDesktopAction','prepareDesktopAc
 const watcherActions=['setWatcherHost','setWatcherView','addDimension','editWall','addMark','addComment','proposeWatcherEdit','discardWatcherChanges'];
 const hostSkillActions=['importHostSkill','inspectConnectorBundle','configureConnectorBundle','installConnectorBundle','setHostSkillEnabled','auditHostSkill'];
 const approvalActions=['postponeApproval','resumeApproval','contestDecision','refreshApproval','reviewProofRow','setApprovalRubric'];
+const researchActions=['runValuation','runResearchNode','setResearchReview','correctAnswerSource'];
 async function refreshApprovals() {
  const epoch=scopeEpoch,binding=JSON.stringify(workshopBinding());
  const approvals=await workshop('listApprovals');
@@ -243,6 +246,7 @@ const unfinishedActions={...api};
 api.supportsAction=(name,mode)=>!(name==='approve'&&mode&&mode!=='once')&&typeof api[name]==='function'&&api[name]!==unfinishedActions[name];
 const boundAction=api.supportsAction;
 api.supportsAction=(name,mode)=>boundAction(name,mode)&&
+ (!researchActions.includes(name)||!!workshopBinding()&&!state.nativeApproval)&&
  (!approvalActions.includes(name)||state.approvalActionsReady===true&&!state.nativeApproval)&&
  (!desktopActions.includes(name)||state.desktopReady===true&&!state.nativeApproval)&&
  (!watcherActions.includes(name)||state.watcherReady===true&&!state.nativeApproval)&&
@@ -908,6 +912,18 @@ api.updateGraph=(id,values)=>Object.keys(values).every(key=>['name','pinned','do
 api.getDecisionState=id=>state.graph.nodes.find(node=>node.id===id)?.output?.decision??null;
 api.readHostAvailability=async()=>request('/api/universal/hosts');
 // WIRE-rest end
+for(const name of researchActions)api[name]=async(...args)=>{
+ if(!api.supportsAction(name))throw Error('Open the graph Workshop before running this research action.');
+ const epoch=scopeEpoch,binding=JSON.stringify(workshopBinding()),identity=state.profile.id;
+ const result=await workshop(name,args);
+ if(!result||result.ok===false||!result.id)throw Error(result?.message||result?.error||'Research owner did not confirm this action.');
+ if(epoch!==scopeEpoch||binding!==JSON.stringify(workshopBinding())||identity!==state.profile.id)return result;
+ await commands.load();
+ if(epoch!==scopeEpoch||binding!==JSON.stringify(workshopBinding())||identity!==state.profile.id)return result;
+ project();
+ if(name==='correctAnswerSource')await refreshTasks();
+ return result;
+};
 // Other contract operations have no verified backend owner: the fallback is a visible plain state.
 // WIRE-projects
 async function refreshProjectData() {
@@ -1162,6 +1178,13 @@ api.ready.then(()=>{
  window.addEventListener('pagehide',()=>window.clearInterval(timer),{once:true});
 }).catch(error=>notice(error.message));
 // WIRE-projects end
+const runRegisteredNode=api.runNode;
+api.runNode=id=>{
+ const engine=state.graph.nodes.find(node=>node.id===id)?.params.engine;
+ if(engine==='research.weighted')return api.runValuation(id);
+ if(['text.ops','math.expression','math.series'].includes(engine))return api.runResearchNode(id);
+ return runRegisteredNode(id);
+};
 api.ready.then(refreshSettingsControls).catch(error=>publish({connectionNotice:error.message}));
 window.ArchHubAPI=Object.freeze(api);
 })();

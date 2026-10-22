@@ -704,7 +704,8 @@ test('ensureDependency: posts existing Settings owner command and publishes conf
  assert.equal(api.getSnapshot().dependencies[0].state,'Ready');
 });
 
-for(const name of ["runValuation", "correctAnswerSource", "setResearchReview", "stampOutput", "runSpecialNode", "setTranscriptPass", "settleTimesheet", "runResearchNode", "signInProvider", "changePlan"])test(name+': remains hidden without an executing owner',async()=>{
+// runValuation, correctAnswerSource, setResearchReview and runResearchNode have owners now (RESEARCHNODES; proven in research_actions.test.cjs).
+for(const name of ["stampOutput", "runSpecialNode", "setTranscriptPass", "settleTimesheet", "signInProvider", "changePlan"])test(name+': remains hidden without an executing owner',async()=>{
  const {api,calls}=await buttonsAdapter();const count=calls.length;assert.equal(api.supportsAction(name),false);
  const result=await api[name]();assert.equal(result.ok,false);assert.equal(result.status,'not_connected');assert.equal(calls.length,count);
 });

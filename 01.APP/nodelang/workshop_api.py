@@ -32,6 +32,26 @@ class WorkshopAPI:
         from .desktop_owner import DesktopOwner
         return DesktopOwner(self).read()
 
+    def readResearchState(self):
+        from .research_owner import ResearchOwner
+        return ResearchOwner(self).read()
+
+    def runValuation(self, id):
+        from .research_owner import ResearchOwner
+        return ResearchOwner(self).run(id,valuation=True)
+
+    def runResearchNode(self, id):
+        from .research_owner import ResearchOwner
+        return ResearchOwner(self).run(id)
+
+    def setResearchReview(self, id, values):
+        from .research_owner import ResearchOwner
+        return ResearchOwner(self).review(id,values)
+
+    def correctAnswerSource(self, message, index, values):
+        from .research_owner import ResearchOwner
+        return ResearchOwner(self).correct(message,index,values)
+
     def setDesktopProgram(self, program):
         from .desktop_owner import DesktopOwner
         return DesktopOwner(self).set_program(program)
@@ -238,7 +258,10 @@ class WorkshopAPI:
                     selected[row["id"]] = row
                     frontier.append(row["id"])
         truncated = truncated or bool(frontier)
+        from .research_owner import ResearchOwner
+        research = ResearchOwner(self)
         return [{"id":row["id"],"who":row["author"],"text":row["content"],
+            **research.sources(row['id'],row.get('evidence',[]),row.get('refs',[task])),
             "reply_to":row["reply_to"],"sequence":row["sequence"],
             "created_at":row["created_at"],"state":"stored"}
             for row in sorted(selected.values(),key=lambda item:item["sequence"])], truncated
@@ -758,3 +781,4 @@ FUNCTIONS = FUNCTIONS | frozenset({"readDesktop", "setDesktopProgram", "offerDes
     "setScheduleResponsibility", "reviewScheduledWork", "decideDesktopAction"})
 
 FUNCTIONS = FUNCTIONS | frozenset({"listNotifications", "readNotification"})
+FUNCTIONS = FUNCTIONS | frozenset({'readResearchState','runValuation','runResearchNode','setResearchReview','correctAnswerSource'})

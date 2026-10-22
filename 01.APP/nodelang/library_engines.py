@@ -25,6 +25,8 @@ into it rather than keeping a second copy that will drift.
 from __future__ import annotations
 
 from typing import Mapping
+import json
+import math
 
 from .stem_graph_evaluation import (
     as_list,
@@ -607,7 +609,46 @@ def save_skill(params: Mapping[str, object], feeds: Mapping[str, object]):
     return {"out": str(destination)}, "%s - %d chars" % (name, len(document))
 
 
+def weighted_valuation(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Weighted min/max normalization of actual wired rows, with typed criteria."""
+    criteria = feeds.get('criteria', params.get('criteria', []))
+    if isinstance(criteria, str):
+        criteria = json.loads(criteria)
+    if type(criteria) is not list or not criteria:
+        raise ValueError('Criteria must be a nonempty list of field, weight and direction records')
+    for criterion in criteria:
+        if (type(criterion) is not dict or set(criterion) != {'field','weight','direction'}
+                or type(criterion['field']) is not str or not criterion['field'].strip()
+                or type(criterion['weight']) not in (int,float)
+                or not math.isfinite(criterion['weight']) or criterion['weight'] < 0
+                or criterion['direction'] not in ('minimize','maximize')):
+            raise ValueError('Each criterion needs a field, finite nonnegative weight and minimize/maximize direction')
+    total = sum(c['weight'] for c in criteria)
+    if not math.isfinite(total) or total <= 0 or len({c['field'] for c in criteria}) != len(criteria):
+        raise ValueError('Criteria must be unique and have a positive finite total weight')
+    rows = _rows(feeds)
+    if not rows:
+        return {'out':[]}, _EMPTY_LIST
+    columns = []
+    for criterion in criteria:
+        values = [row.get(criterion['field']) if type(row) is dict else None for row in rows]
+        if any(type(value) not in (int,float) or not math.isfinite(value) for value in values):
+            raise ValueError('Every selected row must contain finite numeric criterion values')
+        low, high = min(values), max(values)
+        width = high - low
+        if not math.isfinite(width):
+            raise ValueError('Criterion range exceeds finite numeric limits')
+        normalized = [(value-low)/width if width else 1.0 for value in values]
+        if criterion['direction'] == 'minimize' and width:
+            normalized = [1-value for value in normalized]
+        columns.append([value * (criterion['weight']/total) for value in normalized])
+    scored = [{**row,'score':sum(column[index] for column in columns)} for index,row in enumerate(rows)]
+    scored.sort(key=lambda row:row['score'], reverse=True)
+    return {'out':[{**row,'rank':index+1} for index,row in enumerate(scored)]}, 'Scored %d linked rows' % len(rows)
+
+
 LIBRARY_ENGINES = {
+    'research.weighted': weighted_valuation,
     "library.filter_field": filter_field,
     "library.filter_compare": filter_compare,
     "library.filter_rule": filter_rule,
@@ -1398,6 +1439,7 @@ LIBRARY_ITEMS_WITHOUT_ENGINE.pop("o_term", None)
 # (universal_pipeline._ensure_pipeline_node_interfaces mints them), so what
 # the library says a card does is what can be wired to it.
 ENGINE_SOCKETS = {
+    'research.weighted': {'source':('out',), 'target':('in','criteria')},
     "tool.workshop": {"source": ("out",), "target": (
         "tool", "stale_claim_after_idle_minutes", "archive_after_idle_days",
         "tick_cadence_minutes", "backup_count", "backup_budget_bytes", "recovery_timeout_seconds", "instance_retry_ms", "preflight_database_ms", "broker_start_ms", "refusal_poll_ms", "quit_watchdog_ms", "account_http_ms", "session_minimum_validity_seconds", "session_poll_ms", "worker_join_ms", "host_stop_ms", "host_cancel_ms", "mutation_poll_ms", "desktop_refresh_ms", "archive_step_ms", "cloud_shutdown_ms", "update_shutdown_ms", "export_release_ms", "toast_visible_ms", "voice_hold_ms", "model_request_ms", "model_cli_request_ms", "keep_running_in_tray",
@@ -1999,6 +2041,9 @@ def library_item_ports(item: str, engine: str, title: str = "") -> dict:
     """Projected port metadata: id, type and cardinality for the library card."""
     sockets = engine_sockets(engine)
     interfaces = _base_catalogue_interfaces().get((str(title or "").casefold(), str(engine or "")), {})
+    if engine == 'research.weighted':
+        interfaces = {'in':{'type':'list','direction':'input'},'criteria':{'type':'list','direction':'input'},
+                      'out':{'type':'list','direction':'output'}}
     return _interface_ports(interfaces, sockets)
 
 
@@ -2080,3 +2125,5 @@ ENGINE_SOCKETS["archhub.enforce"] = {
     "target": ("pending", *_enforce_defaults()),
 }
 LIBRARY_PRESENTATION = LIBRARY_PRESENTATION + (("enforce", (("archhub_enforce", "Enforce", "Check pending writes; correct compiler diagnostics before approval"),)),)
+LIBRARY_ITEM_ENGINES['research_valuation'] = {'engine':'research.weighted','params':{'criteria':'[]'}}
+LIBRARY_PRESENTATION = LIBRARY_PRESENTATION + (('logic', (('research_valuation','Weighted valuation','Score wired rows using explicit numeric criteria and weights'),)),)

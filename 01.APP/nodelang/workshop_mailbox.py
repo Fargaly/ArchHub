@@ -176,7 +176,10 @@ def call(method, body, context, *, database=None, peer=None):
     if method not in required or type(body) is not dict or not required[method] <= set(body) or set(body) - required[method] - optional[method]:
         raise ValueError("Workshop mailbox arguments are invalid")
     identity, runtime, peer = _identity(context, peer)
+    from .persistence import application_content_path
     path = Path(database) if database is not None else profile_database()
+    # The graph file may keep its messages in the sibling conversation store.
+    path = application_content_path(path) or path
     # Never create another database when the selected profile is missing.
     with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=rw", uri=True, isolation_level=None)) as connection:
         row = connection.execute("SELECT instance_id FROM history_identity WHERE singleton=1").fetchone()

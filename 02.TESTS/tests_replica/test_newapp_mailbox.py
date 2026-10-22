@@ -109,3 +109,18 @@ def test_trusted_application_turns_keep_separate_session_rows(database):
             "status": "working", "request_id": "NEWAPP", "context": {"archhub/sessionID": session}})
     with sqlite3.connect(database) as connection:
         assert connection.execute("select count(*) from workshop_declarations").fetchone()[0] == 2
+
+
+def test_graph_database_routes_to_its_conversation_store(tmp_path):
+    """The installed app passes the graph file; messages live in the sibling conversation store."""
+    graph = tmp_path / "archhub-test.universal.sqlite3"
+    sqlite3.connect(graph).execute("CREATE TABLE cells(id INTEGER PRIMARY KEY)").connection.close()
+    content = tmp_path / "archhub-test.universal.sqlite3.conversations.sqlite3"
+    connection = sqlite3.connect(content, isolation_level=None)
+    with ConversationHistoryStore(content, instance_id="mailbox-test", connection=connection) as history:
+        history.ensure_conversation("app:workshop")
+    connection.close()
+    sent = call("send", {"to": "founder", "text": "hello"}, {"threadId": "graph-session"}, database=graph, peer=peer())
+    assert sent["message_id"]
+    rows = sqlite3.connect(content).execute("SELECT content FROM messages").fetchall()
+    assert rows == [("To founder:\nhello",)]

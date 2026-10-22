@@ -8118,6 +8118,22 @@
         "02.TESTS/tests_replica/test_updatequiet.py",
         "03.TOOLS/installer/ArchHub.iss"
       ]
+    },
+    "WSRECEIPTS": {
+      "source": "Founder WSRECEIPTS: only the application writes Workshop delivery receipts; external fallback read-only and send/declare refused without application; reader since cursors batched in the existing conversation database, injection/store waits outside mutation_lock with bounded busy timeout; 60,000-row concurrent host and locked-store courts. Patch-only isolated lane; 717 lands/builds/installs; no installer, live profile, screen design or Session Link transport changes.",
+      "scope": [
+        "01.APP/nodelang/workshop_mailbox.py",
+        "01.APP/nodelang/workshop_delivery_state.py",
+        "01.APP/nodelang/conversation_history.py",
+        "01.APP/nodelang/application_server.py",
+        "01.APP/nodelang/installed_workshop_coordination.py",
+        "01.APP/nodelang/research_owner.py",
+        "02.TESTS/tests_replica/test_newapp_mailbox.py",
+        "02.TESTS/tests_replica/test_wsinject.py",
+        "02.TESTS/tests_replica/test_wsreceipts.py",
+        "04.DOCS/DECISIONS.md",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

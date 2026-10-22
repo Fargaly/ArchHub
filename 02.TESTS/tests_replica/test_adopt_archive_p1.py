@@ -311,3 +311,13 @@ def test_fresh_graph_binding_does_not_reset_old_obsolete_trace_age(tmp_path, mon
         assert old.id not in store.snapshot().cells
         assert store.read(control.id) == control
         assert archive.read_trace_archive(cold_path, room)['cells'][0]['atom'] == old.atom
+
+
+def test_workshop_mailbox_table_does_not_block_trace_archive(tmp_path):
+    # The founder's store: the Workshop mailbox added workshop_declarations to the
+    # conversations file, and idle archival stopped at "unknown retention source schema objects".
+    with ConversationHistoryStore(tmp_path / 'content.sqlite3', instance_id='mailbox-presence') as history:
+        with history._transaction(write=True):
+            history._db.execute("CREATE TABLE IF NOT EXISTS workshop_declarations("
+                                "root TEXT PRIMARY KEY,record TEXT NOT NULL CHECK(json_valid(record))) STRICT")
+        history.initialize_trace_maintenance()

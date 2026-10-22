@@ -166,6 +166,21 @@ def isolated_environment(profile):
     return env
 
 
+def _prepare_opencode_dependencies(opencode, *, env, cwd, version_timeout=15, install_timeout=90):
+    version = _run([opencode, "--version"], env=env, cwd=cwd, timeout=version_timeout).strip()
+    if not re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?", version):
+        raise QualificationRefused("OpenCode did not report an exact dependency version")
+    npm = shutil.which("npm.cmd" if os.name == "nt" else "npm", path=env.get("PATH"))
+    if not npm:
+        raise QualificationRefused("npm unavailable for isolated OpenCode dependency preparation")
+    config = Path(env["OPENCODE_CONFIG_DIR"])
+    config.mkdir(parents=True, exist_ok=True)
+    (config / "package.json").write_text(json.dumps({"dependencies":{"@opencode-ai/plugin":version}}), encoding="utf-8")
+    # OpenCode awaits its unbounded background installer before loading plugins.
+    _run([npm, "install", "--ignore-scripts", "--no-audit", "--no-fund",
+          "--fetch-retries=0", "--fetch-timeout=30000"], env=env, cwd=config, timeout=install_timeout)
+
+
 def _claude_auth(env, original_home):
     if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
         env["CLAUDE_CODE_OAUTH_TOKEN"] = os.environ["CLAUDE_CODE_OAUTH_TOKEN"]
@@ -282,7 +297,7 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
         "runner.close=native.close;runner.idle=native.idle;runner.reconcile=native.reconcile;\n"+
         "export const ArchHub = createOpenCodeGovernance({gateRunner:runner"+
         ",trustedDirectories:" + json.dumps([str(profile / 'rules')]) + "});\n", encoding="utf-8")
-    env["OPENCODE_CONFIG_DIR"] = str(profile / "opencode-config")
+    env["OPENCODE_CONFIG_DIR"] = str(profile / "opencode")
     env["OPENCODE_CONFIG_CONTENT"] = json.dumps({"plugin":[loader.as_uri()],
         "mcp":{"archhub_agent_coordination":mcp}, "share":"disabled", "autoupdate":False})
     from nodelang.application_server import ApplicationServer
@@ -315,6 +330,7 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
                 listener.bind(("127.0.0.1", 0))
                 port = listener.getsockname()[1]
             address = "http://127.0.0.1:" + str(port)
+            _prepare_opencode_dependencies(oc, env=env, cwd=fixture)
             server = subprocess.Popen([oc, "serve", "--hostname", "127.0.0.1", "--port", str(port)],
                 cwd=fixture, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))

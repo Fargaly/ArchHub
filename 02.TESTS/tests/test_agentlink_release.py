@@ -147,3 +147,42 @@ $acompilerInputs=@()
         capture_output=True, encoding="utf-8", errors="replace", timeout=30)
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == [True, False, False, False]
+
+
+@pytest.mark.parametrize("version", ["1.18.34", "1.18.21"])
+def test_isolated_opencode_dependencies_complete_before_bootstrap(tmp_path, monkeypatch, version):
+    from tools.real_app_check import agentlink_release as gate
+    env = gate.isolated_environment(tmp_path)
+    env["OPENCODE_CONFIG_DIR"] = str(tmp_path / "opencode")
+    monkeypatch.setattr(gate.shutil, "which", lambda *_args, **_kwargs: "npm-fixture")
+    calls = []
+    def run(command, **options):
+        calls.append((command, options))
+        if command[-1] == "--version":
+            return version + "\n"
+        config = options["cwd"]
+        assert config == tmp_path / "opencode"
+        assert json.loads((config / "package.json").read_text())["dependencies"] == {"@opencode-ai/plugin":version}
+        assert options["env"] is env
+        assert options["timeout"] == 90
+        assert "--ignore-scripts" in command
+        assert "--fetch-retries=0" in command
+        return "installed"
+    monkeypatch.setattr(gate, "_run", run)
+    gate._prepare_opencode_dependencies("opencode-fixture", env=env, cwd=tmp_path)
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("failure", ["version", "npm", "install"])
+def test_dependency_preparation_failure_never_reaches_bootstrap(tmp_path, monkeypatch, failure):
+    from tools.real_app_check import agentlink_release as gate
+    env = gate.isolated_environment(tmp_path)
+    env["OPENCODE_CONFIG_DIR"] = str(tmp_path / "opencode")
+    monkeypatch.setattr(gate.shutil, "which", lambda *_args, **_kwargs: None if failure == "npm" else "npm-fixture")
+    def run(command, **_options):
+        if command[-1] == "--version":
+            return "untrusted-version" if failure == "version" else "1.18.34\n"
+        raise gate.QualificationRefused("dependency install failed")
+    monkeypatch.setattr(gate, "_run", run)
+    with pytest.raises(gate.QualificationRefused):
+        gate._prepare_opencode_dependencies("opencode-fixture", env=env, cwd=tmp_path)

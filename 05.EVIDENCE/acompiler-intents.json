@@ -1,6 +1,19 @@
 {
   "schema_version": 1,
   "intents": {
+    "RESEARCHNODES": {
+      "source": "Founder RESEARCHNODES: five real graph persisted research actions on 673bce34 plus SETTINGS; typed weighted rows, item review/preset, registered executors, retained message citation revisions. Isolated fixtures only, unknown kinds refuse; no canonical writes or installation.",
+      "scope": [
+        "01.APP/nodelang/research_owner.py",
+        "01.APP/nodelang/library_engines.py",
+        "01.APP/nodelang/workshop_api.py",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/review-states.jsx",
+        "02.TESTS/tests_replica/test_research_actions.py",
+        "02.TESTS/tests_js/research_actions.test.cjs",
+        "02.TESTS/tests_js/newapp_account.test.cjs"
+      ]
+    },
     "AGENTLINK": {
       "source": "Founder AGENTLINK BUILD NOW in BRIEF-AGENTLINK.md: finish the researched one Workshop channel, six provider adapters, design-named backend API, real-process release refusal; appended failed MCP/outside-cwd evidence; backend clone only, no UI, no install.",
       "scope": [

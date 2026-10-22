@@ -683,6 +683,10 @@ def migrate_graph_source(store, source_path):
     source_digest = _sqlite_legacy_source_digest(source)
     with closing(sqlite3.connect(source.as_uri() + '?mode=ro', uri=True, isolation_level=None)) as old:
         old.execute('BEGIN')
+        # A history-only store (BABOOM's authority.sqlite3 keeps cell_versions/revisions, no
+        # current_cells) is not a graph to import; it stays untouched where it is.
+        if not old.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='current_cells'").fetchone():
+            return {'state': 'not_a_graph', 'backup_path': None}
         if old.execute('PRAGMA quick_check').fetchone()[0] != 'ok':
             raise ValueError('retired graph integrity check failed')
         creates = []

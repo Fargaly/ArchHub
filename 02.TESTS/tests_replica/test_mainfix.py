@@ -454,3 +454,20 @@ def _assert_foreground_interrupts_inventory(server, monkeypatch):
     assert result['status'] == 'family-deferred'
     assert rows() == before and store.revision == revision
     print('MAINFIX_SQL operation_budget_interrupt_deferred=True inventory_rolled_back=True')
+
+
+def test_history_only_store_is_skipped_not_imported(tmp_path):
+    # Founder machine 2026-10-22: every normal start crashed with "no such table: current_cells"
+    # on BABOOM/authority.sqlite3 (cell_versions + revisions only, July data).
+    import hashlib, sqlite3
+    history = tmp_path / 'ArchHub' / 'BABOOM' / 'authority.sqlite3'
+    history.parent.mkdir(parents=True)
+    with sqlite3.connect(history) as db:
+        db.execute('CREATE TABLE cell_versions (cell_id TEXT, atom BLOB)')
+        db.execute('CREATE TABLE revisions (id INTEGER PRIMARY KEY)')
+        db.execute("INSERT INTO cell_versions VALUES ('app:old', x'00')")
+    before = hashlib.sha256(history.read_bytes()).hexdigest()
+    with CellStore(tmp_path / 'selected.sqlite3') as store:
+        assert persistence.migrate_graph_source(store, history)['state'] == 'not_a_graph'
+        assert 'app:old' not in store.snapshot().cells
+    assert hashlib.sha256(history.read_bytes()).hexdigest() == before

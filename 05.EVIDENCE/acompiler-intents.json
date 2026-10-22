@@ -1,6 +1,20 @@
 {
   "schema_version": 1,
   "intents": {
+    "WSOWNER": {
+      "source": "Founder WSOWNER / F98: desktop ApplicationServer answers Workspaces itself over the existing keyless coordination surface and in-process route; one shared implementation with retired consumer; same journal/account, retained registration and private grant boundaries, no new process, coordination key, admission ticket or manifest. Patch-only isolated lane; 717 lands/builds/installs.",
+      "scope": [
+        "01.APP/nodelang/application_server.py",
+        "01.APP/nodelang/clean_coordination_host.py",
+        "01.APP/nodelang/settings_owner.py",
+        "01.APP/nodelang/workspace_roots_catalogue.py",
+        "01.APP/nodelang/workspace_roots_owner.py",
+        "02.TESTS/tests_replica/test_nokey.py",
+        "02.TESTS/tests_replica/test_workspace_roots_fingerprint_only_migration.py",
+        "04.DOCS/DECISIONS.md",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
     "NOKEY": {
       "source": "Founder NOKEY 2026-10-22: delete signed-owner key/adoption prerequisites blocking normal desktop coordination; account identity from cloud_session, same existing CellStore, Workshop message and actual broker round trips; delete replaced code and update affected courts. Settings -> Workspaces forwarding moves to the same keyless owner route (717). Design, installer and live data excluded.",
       "scope": [

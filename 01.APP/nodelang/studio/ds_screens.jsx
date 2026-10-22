@@ -99,7 +99,9 @@
       if (requestState === 'loaded' || requestState === 'empty')
         setRequestState(s.graph.nodes.length ? 'loaded' : 'empty');
     }, [s.graph.nodes.length]);
-    const visible = s.graph.nodes.filter(n => (n.parent || null) === parent),
+    // A node whose group is not a node at this level is drawn here, never dropped.
+    const atLevel = n => (n.parent || null) === parent || (parent === null && !s.graph.nodes.some(x => x.id === n.parent));
+    const visible = s.graph.nodes.filter(atLevel),
       node = s.graph.nodes.find(n => n.id === (pinnedInspector || selected.at(-1))),
       wire = s.graph.wires.find(w => w.id === wireId);
     React.useEffect(() => {

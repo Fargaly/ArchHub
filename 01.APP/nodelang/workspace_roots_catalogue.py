@@ -1432,6 +1432,9 @@ def forward_workspace_settings(body) -> dict:
     except InvalidCell:
         raise
     except Exception as exc:  # noqa: BLE001 - the owner is not reachable
+        if body == {"action": "list"}:
+            # Listing must never break a screen: no reachable owner = no roots yet.
+            return {"roots": [], "built_in": None}
         raise WorkspaceRootRefused(
             "the ArchHub graph owner is not answering (%s); start ArchHub's graph service"
             % type(exc).__name__) from exc

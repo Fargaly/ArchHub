@@ -182,12 +182,16 @@ def _prepare_adoption_statement(relationship_broker, store, identity_protocol,
         authorization_protocol, policy_root, authentication_broker,
         authentication_context, request, application_root, owner_root, now)
     key_id, key_version = relationship_broker.current_key_reference()
+    # The digest walks the whole graph (minutes at founder scale): the validity window
+    # starts after it, or the statement is already expired when it is issued.
+    source_digest = snapshot_digest(head.snapshot)
+    issued_at = time.time()
     statement = AuthorityAdoptionAuthorization(2, request_id, application_root,
         owner_root, tenant, identity_protocol.root_id, authorization_protocol.root_id,
         policy_root, _request_digest(request), head.snapshot.revision,
-        snapshot_digest(head.snapshot), head.chain_digest,
-        hashlib.sha256(successor_public_key).hexdigest(), *successor_binding, now,
-        now + lifetime_seconds, key_id, key_version)
+        source_digest, head.chain_digest,
+        hashlib.sha256(successor_public_key).hexdigest(), *successor_binding, issued_at,
+        issued_at + lifetime_seconds, key_id, key_version)
     _fresh(store, statement)
     _verify_successor_binding(statement, successor_key_provider, successor_key_id)
     return statement

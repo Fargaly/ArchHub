@@ -1130,7 +1130,7 @@ api.saveResearchDecision=async values=>{
  return projectResearch(row);
 };
 const refreshBeforeOps=api.refreshProjects;
-api.refreshProjects=async()=>{await refreshBeforeOps();await refreshProjectState();await api.refreshFiles();await api.refreshMods();await api.refreshLibraryPorts();await api.refreshMcpServers();return api.refreshCommunity();};
+api.refreshProjects=()=>refreshBeforeOps().then(function(r){[function(){return refreshProjectState();},function(){return api.refreshFiles();},function(){return api.refreshMods();},function(){return api.refreshLibraryPorts();},function(){return api.refreshMcpServers();},function(){return api.refreshCommunity();}].reduce(function(p,f){return p.then(f).catch(function(e){console.warn('background refresh',e);});},Promise.resolve());return r;});
 api.ready=(async()=>{
  // The native Qt owner supplies one reviewed payload and the existing bound decision bridge.
  if(window.ARCHHUB_NATIVE_APPROVAL){

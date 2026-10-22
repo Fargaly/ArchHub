@@ -34,7 +34,8 @@ const emptyWatcher=window.structuredClone(state.watcher);
 const exportedNames = ["moveNodes", "runValuation", "selectFirm", "acceptOfficeInvitation", "declineOfficeInvitation", "getUsageSummary", "setBilling", "prepareCheckout", "completeCheckout", "retryPayment", "downgradeBilling", "refreshBilling", "createCommunityGroup", "issueCommunityInvite", "revokeCommunityInvite", "verifyCommunityInvite", "joinCommunityGroup", "setMarketplace", "installMarketplaceItem", "proposeMarketplaceListing", "setProjectCharge", "proposeProjectCharge", "resolveTaskReview", "setApprovalRubric", "verifyOutputStamp", "setNodeRunPolicy", "contextLabel", "setGraphThumbnail", "setIntakeRule", "reviewBrainLink", "setOnboarding", "correctAnswerSource", "setResearchReview", "stampOutput", "runSpecialNode", "setTranscriptPass", "getDecisionState", "setDecisionState", "setRefine", "compareRefine", "setAnswerWidget", "startVoiceInput", "stopVoiceInput", "speak", "addCompatibleNode", "setPromotedParameter", "setPortVisibility", "compatibleNodes", "setDesktopProgram", "offerDesktopAction", "prepareDesktopAction", "setMeeting", "joinMeeting", "startMeetingTranscript", "stopMeetingTranscript", "readMeetingTranscript", "setMeetingActionOwner", "createMeetingTask", "proposeMeetingSummary", "setTaskPlanMode", "addTaskReview", "refreshOfficeAwareness", "settleTimesheet", "setSettingsScope", "openTemplateGraph", "addTemplateNode", "addComposerAttachment", "removeComposerAttachment", "manageDependency", "getCapabilityParameters", "setCapabilityParameter", "setCapabilityEnabled", "setLearningLayer", "postponeApproval", "resumeApproval", "contestDecision", "setScheduleResponsibility", "reviewScheduledWork", "getHealthHistory", "runResearchNode", "editSlide", "addSlide", "removeSlide", "reorderSlide", "setPrototype", "rebaselinePrototype", "checkVerdictPattern", "steerTask", "refreshModelRoster", "setMultipleNodeParameters", "runToHere", "setPinnedOutput", "setWireVisibility", "setSourceEvidence", "importHostSkill", "inspectConnectorBundle", "configureConnectorBundle", "installConnectorBundle", "setHostSkillEnabled", "auditHostSkill", "setAgentProfile", "setNodeFlags", "checkpointTask", "restoreTaskCheckpoint", "queueTaskMessage", "settleQueuedMessage", "setTaskDelegate", "getNodeOutput", "reviewModel", "updateReviewIssue", "subscribeCommunity", "reviewCommunityPattern", "proposeCommunityShare", "addInterfaceElement", "updateGraph", "removeGraph", "saveGraphVersion", "restoreGraphVersion", "setAccountSeats", "transferOwnership", "checkWatcherSource", "readYoutubeData", "refreshApproval", "setGraphWorkspaces", "discoverMcpTools", "reconnectMcp", "importMcpTool", "inspectMod", "retryMod", "installMod", "removeMod", "shareMod", "dismissSuggestion", "proposeMemory", "checkFeedback", "readResearchSource", "checkResearchLicense", "saveResearchDecision", "importRecipe", "exportRecipe", "getSocial", "saveSocialDraft", "proposeSocialDraft", "discardSocialDraft", "replySocialMessage", "readSocialMessage", "triageSocialInbox", "setSocialGroupRule", "updateOfficePage", "setSocialDigest", "generateSocialDigest", "readContentSource", "prepareTutorial", "setLearning", "runLearning", "distilLearning", "addGraph", "selectGraph", "openTaskGraph", "setAccountPlan", "setTeamAccess", "selectDevice", "setWorkspaceRules", "setModelSource", "checkModelRouting", "setWatcherDimension", "setWatcherOptions", "addDimension", "removeDimension", "getNodeParameters", "addNodeParameter", "setCompanionState", "getDocs", "getKnowledgeGraph", "getSnapshot", "subscribe", "ensureDependency", "checkDependencies", "reviewProofRow", "exposeSettingsPage", "selectWorkspace", "selectFile", "setWatcherView", "listWorkspaces", "addWorkspace", "removeWorkspace", "listProviders", "setProviderEnabled", "signInProvider", "setProviderModel", "listAgentsWorking", "getSettings", "setSetting", "resetSetting", "resetPage", "sendToBaboom", "listTasks", "setTaskStatus", "approve", "decline", "stopEverything", "reassignTask", "startTemplate", "getGraph", "addNode", "moveNode", "setNodeParam", "resetNodeParam", "renameNode", "deleteNode", "forkNode", "arrangeGraph", "groupNodes", "ungroupNode", "connectSockets", "insertConvert", "setWireRule", "deleteWire", "runNode", "undo", "redo", "addSchedule", "setScheduleEnabled", "setScheduleTime", "removeSchedule", "editMemory", "forgetMemory", "remember", "setConnection", "checkConnection", "editWall", "addMark", "addComment", "proposeWatcherEdit", "discardWatcherChanges", "setWatcherHost", "updateProfile", "signIn", "syncAccount", "addFile", "removeFile", "disconnectSecret", "setModEnabled", "importFlow", "saveSkill", "sendFeedback", "changePlan", "invitePerson", "grantAccess", "installUpdate", "windowAction", "backUpNow", "rollBack", "archiveActivity", "readNotification", "exportData", "traceNode"];
 
 const listeners=new Set();
-let canvas=null, session=null, commands=null, renewing=null, scopeEpoch=0;
+let canvas=null, session=null, commands=null, renewing=null, scopeEpoch=0, restoreGraph=true;
+let graphNavigation=Promise.resolve();
 let refreshTimer=null, refreshInFlight=false, ready=false, accountSignInPending=false;
 let providerRoster=[], workingAgents=[];
 let controlsGeneration=0, notificationGeneration=0;
@@ -57,7 +58,7 @@ async function signIn() {
  const response=await fetch('/api/universal/session',{method:'POST',headers:{'Content-Type':'application/json','X-ArchHub-Sign-In':'1',
  ...(descriptor?.canvas_key?{'X-ArchHub-Canvas-Key':descriptor.canvas_key}:{})},body:'{}'});
  const data=await response.json();if(!response.ok||!data.token||!data.csrf)throw Error(data.error||'Reopen ArchHub from its launcher.');
- session={token:data.token,csrf:data.csrf};window.__archhubSession=session;
+ session={...session,token:data.token,csrf:data.csrf};window.__archhubSession=session;
  try {sessionStorage.setItem('archhub.studio.session',JSON.stringify(session));} catch { notice('Browser session storage is unavailable. This window remains signed in.'); }
 }
 async function request(path,body=undefined,readRetry=true,signal=undefined) {
@@ -97,6 +98,7 @@ function settingDto(n,p) {
 function project() {
  if(!canvas)return;
  const nodes=canvas.nodes.map(nodeDto),settings=canvas.nodes.flatMap(n=>rows(n).map(p=>settingDto(n,p)));
+ if(Number.isFinite(canvas.viewport?.zoom)&&!settings.some(r=>r.page==='Appearance'&&r.label==='Zoom percentage'))settings.push({id:'Appearance.Zoom percentage',label:'Zoom percentage',page:'Appearance',group:'Canvas',type:'number',value:Math.round(canvas.viewport.zoom*100),owner:canvas.root,key:'zoom',editable:true});
  const catalogue=(canvas.catalog||[]).map(c=>({id:c.id,name:c.name,family:c.category||'Get',input:'any',output:'any',description:c.description||'',definition:c.id,revision:c.revision_root,descriptor:c.descriptor}));
  for(const mod of state.mods.filter(m=>m.enabled&&m.status!=='Ready for review'))for(const node of mod.nodes||[])catalogue.push({id:'mod:'+mod.id+':'+node.id,name:node.title,family:node.category||'Change',description:node.summary,modId:mod.id,itemId:node.id});
  const root=canvas.scope?.current||canvas.root;
@@ -108,7 +110,7 @@ function project() {
  // A local browser-session lease is transport authority, never account sign-in.
  const profile={...state.profile};
  const graphs=state.graphs.some(g=>g.id===graph.id)?state.graphs.map(g=>g.id===graph.id?{...g,...graph}:g):[...state.graphs,graph];
- publish({profile,graph,graphs,settings,runtimeParameters:copy(canvas.runtime_parameters||{}),catalogue,capabilities:catalogue.map(c=>({...c,nodeKind:c.name,page:'System graph',params:{},defaults:{},enabled:true})),
+ publish({profile,graph,graphs,settings,canvasPolicy:copy(canvas.interaction_policy||{}),runtimeParameters:copy(canvas.runtime_parameters||{}),catalogue,capabilities:catalogue.map(c=>({...c,nodeKind:c.name,page:'System graph',params:{},defaults:{},enabled:true})),
  docs:[...(canvas.documentation?.tutorials||[]).map(d=>({id:d.id,category:d.id.startsWith('tutorial-')?'Tutorial':'Guide',title:d.title,summary:d.description||'',steps:String(d.text||'').split(/\n+/).map(line=>line.trim()).filter(Boolean),route:({'getting-started':'home','composer-canvas':'canvas','brain':'brain','connectors':'watcher','account-web':'settings/Account'})[d.id]||'canvas',bookSource:'ArchHub documentation'})),...(canvas.documentation?.nodes||[]).map(d=>({id:d.id,category:d.category,title:d.title,summary:d.detail||'',steps:[],route:'canvas'}))],
  sync:'Local session'});
  if(state.social?.research?.length)publish({docs:[...state.docs,...state.social.research.map(researchDoc)]});
@@ -172,7 +174,7 @@ async function refreshAccount() {
 }
 async function refreshGraphs(){
  const data=await request('/api/universal/graphs?screen=home');
- publish({graphs:(data.graphs||[]).map(g=>({...g,name:g.title||g.name||'Graph'}))});
+ publish({graphs:(data.graphs||[]).map(g=>({...g,name:g.title||g.name||'Graph'})),currentGraph:data.current_graph});
  return copy(state.graphs);
 }
 function projectUpdate(data) {
@@ -239,6 +241,17 @@ async function nodeProperty(id,key,value) {
  if(binding){const spec=binding.event_facts?.find(f=>f.source==='submitted');if(!spec)return unavailable('setNodeParam','No submitted-value binding');result=await interaction(binding.control,{event_facts:[{input:spec.input,value:typeof value==='string'?value:JSON.stringify(value)}]});}
  else result=await request('/api/universal/set-property',{relation:p.relation,value:typeof value==='string'?value:JSON.stringify(value)});
  await commands.load();project();return state.graph.nodes.find(n=>n.id===id)||result;
+}
+function rememberGraph(id) {
+ if(id===state.graphs[0]?.id||id===session?.lastGraphId)return;
+ session={...session,lastGraphId:id};
+ try {sessionStorage.setItem('archhub.studio.session',JSON.stringify(session));}
+ catch {notice('The last graph could not be saved for this browser session.');}
+}
+function openGraph(id) {
+ const opened=graphNavigation.then(()=>request('/api/universal/graph-open',{root:id}));
+ graphNavigation=opened.catch(()=>{});
+ return opened;
 }
 const api={};
 for(const name of exportedNames)api[name]=()=>unavailable(name);
@@ -327,9 +340,16 @@ Object.assign(api,{
  contextLabel:id=>state.files.find(x=>x.id===id)?.name||state.graph.nodes.find(x=>x.id===id)?.title||id,
  compatibleNodes:()=>[],getDecisionState:()=>null,
  async sendToBaboom(text,options={}){if(options.scope&&options.scope!==state.graph.id)return unavailable('sendToBaboom','Node-scoped requests are not exposed by the Workshop owner');const admitted=Object.fromEntries(['provider','taskId'].filter(k=>typeof options[k]==='string'&&options[k]).map(k=>[k,options[k]]));const task=await workshop('sendToBaboom',[text,admitted]);if(task?.ok===false)return task;await refreshTasks();return task;},
- async setSetting(id,value){const row=state.settings.find(r=>r.id===id);if(!row)return unavailable('setSetting');return nodeProperty(row.owner,row.key,value);},
+ async setSetting(id,value){
+  const row=state.settings.find(r=>r.id===id);if(!row)return unavailable('setSetting');
+  if(id==='Appearance.Zoom percentage'){
+   if(!Number.isFinite(Number(value))||Number(value)<=0)throw Error('Enter a positive zoom percentage.');
+   return mutate(()=>request('/api/universal/gesture',{viewport:{...canvas.viewport,zoom:Number(value)/100},expected_scope:canvas.scope?.current||canvas.root}));
+  }
+  return nodeProperty(row.owner,row.key,value);
+ },
  async resetSetting(id){const row=state.settings.find(r=>r.id===id);return row&&row.default!==undefined?api.setSetting(id,row.default):unavailable('resetSetting','Backend default unavailable');},
- async resetPage(page){for(const row of state.settings.filter(r=>r.page===page)) {const result=await api.resetSetting(row.id);if(result?.ok===false)return result;}return {ok:true};},
+ async resetPage(page){for(const row of state.settings.filter(r=>r.page===page&&(r.id!=='Appearance.Zoom percentage'||r.default!==undefined))) {const result=await api.resetSetting(row.id);if(result?.ok===false)return result;}return {ok:true};},
  setNodeParam:nodeProperty,
  resetNodeParam(id,key){const node=state.graph.nodes.find(n=>n.id===id);return node&&Object.hasOwn(node.defaults,key)?nodeProperty(id,key,node.defaults[key]):unavailable('resetNodeParam','Backend default unavailable');},
  async renameNode(id,title){return nodeProperty(id,'title',title);},
@@ -373,7 +393,7 @@ Object.assign(api,{
   return mutate(()=>interaction(b.control,{event_facts:[{input:specs[0].input,value:input.label},{input:specs[1].input,value:String(input.value??'')}]}));
  },
  async approve(id){const card=state.approvals.find(c=>c.id===id);if(card?.approvalKind==='social'){const result=await request('/api/universal/social-approve',{delegation:card.delegation,input_digest:card.input_digest,decision:'approve'});await refreshApprovals();return result;}if(!card?.delegation||!card?.input_digest||!card?.work)return unavailable('approve','No reviewed model delegation');const binding=workshopBinding();const body={...binding,work:card.work,delegation:card.delegation,input_digest:card.input_digest};const inspected=await request('/api/universal/workshop-model-approval?'+new URLSearchParams(body));if(inspected.expired||inspected.input_digest!==card.input_digest)return {ok:false,status:'stale',message:'Review changed; refresh before approving.'};const result=await request('/api/universal/workshop-model-approval',{...body,revision:inspected.revision});await refreshTasks();return result;},
-  async selectGraph(id){scopeEpoch++;workingAgents=[];publish({tasks:[],approvals:[],approvalActionsReady:false,desktopReady:false,desktop:{program:"",stage:"",taskId:null,offers:[]},watcherReady:false,watcher:copy(emptyWatcher),hostSkillsReady:false,hostSkills:[],connectorBundle:null});await request('/api/universal/graph-open',{root:id});await commands.load();project();await refreshGraphs();await refreshTasks();await refreshAgents();return state.graph;},
+  async selectGraph(id){scopeEpoch++;restoreGraph=false;workingAgents=[];publish({tasks:[],approvals:[],approvalActionsReady:false,desktopReady:false,desktop:{program:"",stage:"",taskId:null,offers:[]},watcherReady:false,watcher:copy(emptyWatcher),hostSkillsReady:false,hostSkills:[],connectorBundle:null});await openGraph(id);await commands.load();project();await refreshGraphs();rememberGraph(id);await refreshTasks();await refreshAgents();return state.graph;},
  async selectWorkspace(id){return api.selectGraph(id);},
  getUsageSummary:()=>({'Usage':'Usage is unavailable.'}),
  async setConnection(id,values){if(values.connected===false)return request('/api/universal/social-connection',{provider:id,action:'cancel'});if(values.connected===true)return request('/api/universal/social-connection',{provider:id,action:'start'});return unavailable('setConnection','No sign-in action requested');},
@@ -1032,7 +1052,20 @@ Object.assign(api,{
   const response=task.messages.filter(m=>m.role!=='user').map(m=>m.text||m.content||'').join('\n');
   publish({feedback:state.feedback.map(f=>f.id===id?{...f,status:task.status,response}:f)});return task;
  },
- async refreshProjects(){await commands.load();project();return refreshProjectData();},
+ async refreshProjects(){
+  const epoch=scopeEpoch;
+  await refreshGraphs();
+  if(epoch!==scopeEpoch)return state.graph;
+  const saved=restoreGraph&&state.graphs.find(g=>g.id===session?.lastGraphId);
+  const graph=saved||state.graphs.find(g=>g.id===state.currentGraph);
+  restoreGraph=false;
+  if(graph&&graph.id!==(canvas?.scope?.current||canvas?.root)){
+   await openGraph(graph.id);
+   if(epoch!==scopeEpoch)return state.graph;
+  }
+  await commands.load();if(epoch!==scopeEpoch)return state.graph;
+  project();if(graph)rememberGraph(graph.id);return refreshProjectData();
+ },
  async tickSchedules(){const result=await request('/api/universal/canvas-op',{op:'scheduler_tick',args:[]});await commands.load();project();return result.result;},
 });
 // WIRE-projects end
@@ -1149,7 +1182,8 @@ api.ready=(async()=>{
   publish({nativeApproval:true,approvals:[card]});return state;
  }
  session=window.ARCHHUB_BOOT;
- if(!session){try{session=JSON.parse(sessionStorage.getItem('archhub.studio.session')||'null');}catch { notice('The saved browser session could not be read. Reconnecting this window.'); }}
+ try {const saved=typeof sessionStorage==='undefined'?null:JSON.parse(sessionStorage.getItem('archhub.studio.session')||'null');session=session?{...session,lastGraphId:saved?.lastGraphId}:saved;}
+ catch {notice('The saved browser session could not be read. Reconnecting this window.');}
  if(!session?.token||!session?.csrf)await signIn();else window.__archhubSession=session;
  commands=window.ArchHubStudioAuthority.create({get:path=>request(path),post:(path,body)=>request(path,body)});
  await commands.load();project();

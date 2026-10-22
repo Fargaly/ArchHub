@@ -66,15 +66,14 @@
   }) {
     const s = useData(),
       u = useApp();
+    const zoomRow = s.settings.find(r => r.page === 'Appearance' && (r.label === 'Zoom percentage' || r.key === 'Zoom percentage'))
+      || s.settings.find(r => r.id === 'Appearance.Zoom percentage');
+    const zoomMin = Number(s.canvasPolicy?.zoom_min ?? .1), zoomMax = Number(s.canvasPolicy?.zoom_max ?? 4);
     const [selected, setSelected] = React.useState(u.selectedNodeId && s.graph.nodes.some(n => n.id === u.selectedNodeId) ? [u.selectedNodeId] : []),
       [wireId, setWireId] = React.useState(null),
       [tab, setTab] = React.useState('Parameters'),
       [parent, setParent] = React.useState(null),
-      [zoom, setZoom] = React.useState((s.settings.find(r => r.id === 'Appearance.Zoom percentage')?.value || 80) / 100),
-      [pan, setPan] = React.useState({
-        x: 0,
-        y: 0
-      }),
+      [viewport, setViewport] = React.useState({zoom: Math.max(zoomMin, Math.min(zoomMax, (zoomRow?.value || 80) / 100)), pan: {x: 0, y: 0}}),
       [draft, setDraft] = React.useState(null),
       [marquee, setMarquee] = React.useState(null),
       [from, setFrom] = React.useState(null),
@@ -82,9 +81,43 @@
       [pinnedInspector, setPinnedInspector] = React.useState(null);
     const area = React.useRef(),
       world = React.useRef(),
-      gesture = React.useRef(null);
+      gesture = React.useRef(null),
+      view = React.useRef(viewport),
+      space = React.useRef(false),
+      touches = React.useRef(new Map()),
+      zoomWrites = React.useRef(Promise.resolve()),
+      pendingZoomWrites = React.useRef(0);
+    const {zoom, pan} = viewport;
     const [requestState, setRequestState] = React.useState('waiting');
     const [requestError, setRequestError] = React.useState('');
+    const zoomSetting = zoomRow?.value;
+    const zoomSaveDelay = Number(s.canvasPolicy?.viewport_commit_debounce_ms ?? 140);
+    const updateView = next => { view.current = next; setViewport(next); };
+    const setPan = next => updateView({...view.current, pan: typeof next === 'function' ? next(view.current.pan) : next});
+    const zoomAt = (value, client = null) => {
+      const bounds = area.current?.getBoundingClientRect();
+      if (!bounds) return;
+      const old = view.current, next = Math.max(zoomMin, Math.min(zoomMax, value));
+      const x = client ? client.x - bounds.left : bounds.width / 2,
+        y = client ? client.y - bounds.top : bounds.height / 2;
+      updateView({zoom: next, pan: {x: x - (x - old.pan.x) * next / old.zoom, y: y - (y - old.pan.y) * next / old.zoom}});
+    };
+    React.useEffect(() => {
+      if (pendingZoomWrites.current || !Number.isFinite(Number(zoomSetting))) return;
+      zoomAt(Number(zoomSetting) / 100);
+    }, [zoomSetting, requestState]);
+    React.useEffect(() => {
+      const percent = Math.round(zoom * 100);
+      if (!['loaded','empty'].includes(requestState) || zoomSetting === undefined || percent === Number(zoomSetting)) return;
+      const timer = setTimeout(() => {
+        pendingZoomWrites.current++;
+        zoomWrites.current = zoomWrites.current.then(() => u.act(() => api.setSetting(zoomRow.id, percent)))
+          .finally(() => { pendingZoomWrites.current--; });
+        // u.act reports failures; a refused save must not poison the next gesture.
+        zoomWrites.current = zoomWrites.current.catch(() => {});
+      }, zoomSaveDelay);
+      return () => clearTimeout(timer);
+    }, [zoom, zoomSetting, zoomRow?.id, zoomSaveDelay, requestState]);
     const reload = () => {
       setRequestState('waiting');
       return api.refreshProjects().then(() => {
@@ -106,7 +139,14 @@
       wire = s.graph.wires.find(w => w.id === wireId);
     React.useEffect(() => {
       const listener = e => {
-        if (e.target.matches('input,textarea,select')) return;
+        if (e.target.closest('input,textarea,select,[contenteditable="true"],[role="textbox"]')) return;
+        if (area.current?.contains(e.target)) {
+          if (e.key === ' ') { e.preventDefault(); space.current = true; }
+          if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomAt(view.current.zoom * 1.2); }
+          if (e.key === '-') { e.preventDefault(); zoomAt(view.current.zoom / 1.2); }
+          if (e.key === '0') { e.preventDefault(); e.ctrlKey ? fit() : zoomAt(1); }
+          if (e.shiftKey && (e.code === 'Digit1' || e.key === '1')) { e.preventDefault(); fit(); }
+        }
         if (e.ctrlKey && e.key.toLowerCase() === 'g') {
           e.preventDefault();
           group();
@@ -126,7 +166,15 @@
         }
       };
       window.addEventListener('keydown', listener);
-      return () => window.removeEventListener('keydown', listener);
+      const releaseSpace = () => { space.current = false; };
+      const keyup = e => { if (e.key === ' ') releaseSpace(); };
+      window.addEventListener('keyup', keyup);
+      window.addEventListener('blur', releaseSpace);
+      return () => {
+        window.removeEventListener('keydown', listener);
+        window.removeEventListener('keyup', keyup);
+        window.removeEventListener('blur', releaseSpace);
+      };
     });
     React.useLayoutEffect(() => {
       if (!world.current) return;
@@ -145,7 +193,7 @@
         a: pos(w.from, 'out', w.fromPort),
         b: pos(w.to, 'in', w.toPort)
       })).filter(p => p.a && p.b));
-    }, [s.revision, parent, zoom, draft]);
+    }, [s.revision, parent, draft, requestState]);
     React.useEffect(() => u.setSelectedNodeId(selected.at(-1) || null), [selected.join(',')]);
     const group = async () => {
       const g = await u.act(() => api.groupNodes(selected));
@@ -260,11 +308,24 @@
       e.currentTarget.setPointerCapture(e.pointerId);
     };
     const move = e => {
+      if (e.pointerType === 'touch' && touches.current.has(e.pointerId)) {
+        touches.current.set(e.pointerId, {x: e.clientX, y: e.clientY});
+        if (touches.current.size === 2 && gesture.current?.kind === 'pinch') {
+          const [a,b] = [...touches.current.values()], g = gesture.current,
+            midpoint = {x: (a.x+b.x)/2, y: (a.y+b.y)/2}, distance = Math.hypot(a.x-b.x,a.y-b.y);
+          zoomAt(view.current.zoom * distance / g.distance, g.midpoint);
+          setPan(p => ({x: p.x + midpoint.x - g.midpoint.x, y: p.y + midpoint.y - g.midpoint.y}));
+          g.distance = Math.max(1, distance); g.midpoint = midpoint;
+          return;
+        }
+      }
       const g = gesture.current;
       if (g?.kind === 'node') {
+        if (!g.dragging && Math.hypot(e.clientX - g.sx, e.clientY - g.sy) < 4) return;
+        g.dragging = true;
         const dx = (e.clientX - g.sx) / zoom,
           dy = (e.clientY - g.sy) / zoom;
-        setDraft({
+        g.draft = {
           id: g.id,
           x: g.x + dx,
           y: g.y + dy,
@@ -272,7 +333,8 @@
             x: n.x + dx,
             y: n.y + dy
           }]))
-        });
+        };
+        setDraft(g.draft);
       }
       if (g?.kind === 'marquee') {
         g.box = {
@@ -288,9 +350,10 @@
         y: g.y + e.clientY - g.sy
       });
     };
-    const end = () => {
+    const end = e => {
+      if (e?.pointerType === 'touch') touches.current.delete(e.pointerId);
       const g = gesture.current;
-      if (g?.kind === 'node' && draft) u.act(() => api.moveNodes(draft.positions));
+      if (g?.kind === 'node' && g.dragging && g.draft) u.act(() => api.moveNodes(g.draft.positions));
       if (g?.kind === 'marquee' && g.box) {
         const box = g.box;
         setSelected(visible.filter(n => {
@@ -303,16 +366,44 @@
       setMarquee(null);
     };
     const fit = () => {
-      const w = area.current?.clientWidth || 1000,
-        h = area.current?.clientHeight || 600;
-      const maxX = Math.max(...visible.map(n => n.x + 260), 300),
-        maxY = Math.max(...visible.map(n => n.y + 240), 300);
-      setZoom(Math.min(1, (w - 60) / maxX, (h - 80) / maxY));
-      setPan({
-        x: 10,
-        y: 10
+      if (!visible.length || !area.current) return;
+      const w = area.current.clientWidth, h = area.current.clientHeight;
+      const boxes = [...world.current.querySelectorAll('[data-graph-node]')].map(el => {
+        const n = visible.find(n => n.id === el.dataset.graphNode);
+        return {x: n.x, y: n.y, w: el.offsetWidth || el.getBoundingClientRect().width / view.current.zoom || 250,
+          h: el.offsetHeight || el.getBoundingClientRect().height / view.current.zoom || 240};
       });
+      if (!boxes.length) return;
+      const minX = Math.min(...boxes.map(b => b.x)), minY = Math.min(...boxes.map(b => b.y)),
+        width = Math.max(...boxes.map(b => b.x+b.w)) - minX,
+        height = Math.max(...boxes.map(b => b.y+b.h)) - minY,
+        z = Math.max(zoomMin, Math.min(zoomMax, Number(s.canvasPolicy?.zoom_fit_max ?? 1.25), (w-60) / Math.max(1,width), (h-60) / Math.max(1,height)));
+      updateView({zoom: z, pan: {x: (w-width*z)/2-minX*z, y: (h-height*z)/2-minY*z}});
     };
+    React.useEffect(() => {
+      const el = area.current;
+      if (!el) return;
+      const wheel = e => {
+        if (e.target.closest('input,textarea,select,[contenteditable="true"]')) return;
+        e.preventDefault();
+        const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? el.clientHeight : 1,
+          dx = e.deltaX * unit, dy = e.deltaY * unit;
+        // shortcut: Chromium pinch is Ctrl+pixel-wheel without a held Ctrl key; track physical keys separately.
+        const pinch = e.ctrlKey && !physicalCtrl.current && e.deltaMode === 0;
+        if ((e.ctrlKey || e.shiftKey) && !pinch) setPan(p => ({x:p.x-dx,y:p.y-dy}));
+        else zoomAt(view.current.zoom * Math.exp(-dy * .002), {x:e.clientX,y:e.clientY});
+      };
+      el.addEventListener('wheel', wheel, {passive:false});
+      return () => el.removeEventListener('wheel', wheel);
+    }, [requestState]);
+    const physicalCtrl = React.useRef(false);
+    React.useEffect(() => {
+      const down = e => { if (e.key === 'Control') physicalCtrl.current = true; },
+        up = e => { if (e.key === 'Control') physicalCtrl.current = false; },
+        blur = () => { physicalCtrl.current = false; };
+      window.addEventListener('keydown', down); window.addEventListener('keyup', up); window.addEventListener('blur', blur);
+      return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); window.removeEventListener('blur', blur); };
+    }, []);
     const openNode = n => {
       if (n.kind.toLowerCase().includes('meeting')) u.go('meetings');else if (n.kind === 'Watch program') u.act(() => api.windowAction('hide'));else if (n.kind === 'Present') u.go('present');else if (['Community', 'Community group', 'Marketplace listing', 'Project charge'].includes(n.kind)) u.go('community');else if (n.kind === 'Interface studio' || n.kind === 'UI element') u.go('interface');else if (n.kind.startsWith('TBP ')) u.go('model-review');else if (n.kind === 'Theme') u.go('settings/Appearance');else if (n.kind === 'Graph link') {
         if (n.params.targetGraph) u.act(() => api.selectGraph(n.params.targetGraph));else u.show('Graphs');
@@ -340,7 +431,32 @@
         gridTemplateColumns: (u.libraryOpen ? '248px ' : '') + 'minmax(0,1fr) 340px',
         minHeight: 0
       }}>{u.libraryOpen && <window.UI.LibraryShelf onClose={() => u.setLibraryOpen(false)} />}
-   <div ref={area} className="node-canvas" title="Drag to pan · Shift-drag to select" onPointerDown={e => {
+   <div ref={area} className="node-canvas" tabIndex={0} aria-label="Graph canvas" style={{touchAction:'none'}} title="Wheel to zoom · Middle or Space-drag to pan · Shift-drag to select · Double-click to fit" onPointerDownCapture={e => {
+          if (e.target.closest('input,textarea,select,[contenteditable="true"]')) return;
+          area.current.focus({preventScroll:true});
+          if (e.pointerType === 'touch') {
+            touches.current.set(e.pointerId, {x:e.clientX,y:e.clientY});
+            if (touches.current.size === 2) {
+              const [a,b] = [...touches.current.values()];
+              gesture.current = {kind:'pinch',distance:Math.max(1,Math.hypot(a.x-b.x,a.y-b.y)),midpoint:{x:(a.x+b.x)/2,y:(a.y+b.y)/2}};
+              setDraft(null);
+              e.currentTarget.setPointerCapture(e.pointerId); e.stopPropagation(); e.preventDefault(); return;
+            }
+          }
+          if (e.button === 1 || (e.button === 0 && space.current)) {
+            e.preventDefault(); e.stopPropagation();
+            gesture.current = {kind:'pan',sx:e.clientX,sy:e.clientY,x:view.current.pan.x,y:view.current.pan.y};
+            e.currentTarget.setPointerCapture(e.pointerId);
+          }
+        }} onPointerUpCapture={e => {
+          if (e.pointerType === 'touch') {
+            touches.current.delete(e.pointerId);
+            if (gesture.current?.kind === 'pinch') gesture.current = null;
+          }
+        }} onDoubleClick={e => {
+          if (e.target === e.currentTarget || e.target === world.current) fit();
+        }} onAuxClick={e => { if (e.button === 1) e.preventDefault(); }} onPointerDown={e => {
+          if (e.button !== 0 || touches.current.size > 1) return;
           if (e.target === e.currentTarget || e.target === world.current) {
             setSelected([]);
             setWireId(null);
@@ -354,16 +470,10 @@
             e.currentTarget.setPointerCapture(e.pointerId);
           }
         }} onPointerMove={move} onPointerUp={end} onPointerCancel={() => {
+          touches.current.clear();
           gesture.current = null;
           setDraft(null);
-        }} onWheel={e => {
-          if (e.ctrlKey) {
-            e.preventDefault();
-            setZoom(z => Math.max(.2, Math.min(2, z + (e.deltaY < 0 ? .05 : -.05))));
-          } else setPan(p => ({
-            x: p.x - e.deltaX,
-            y: p.y - e.deltaY
-          }));
+          setMarquee(null);
         }} onDragOver={e => e.preventDefault()} onDrop={e => {
           e.preventDefault();
           const name = e.dataTransfer.getData('node');
@@ -480,7 +590,7 @@
             })}
     </div>
     {from && <Chip c={A.warn}>Choose an input socket to connect</Chip>}
-    <div className="canvas-toolbar"><Btn sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {setZoom}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {setZoom}, event)} title="Reset zoom">{Math.round(zoom * 100)}%</button><Btn sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {setZoom}, event)}>+</Btn><Btn sm ghost onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</Btn></div>
+    <div className="canvas-toolbar"><Btn sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom">{Math.round(zoom * 100)}%</button><Btn sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><Btn sm ghost onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</Btn></div>
     <div style={{
             position: 'absolute',
             bottom: 20,
@@ -650,16 +760,16 @@ function projectsdsscreensjsxRun19({api,n,u}, event) {
   const handler = () => u.act(() => api.runNode(n.id));
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }
-function projectsdsscreensjsxZoomOut20({setZoom}, event) {
-  const handler = () => setZoom(z => Math.max(.2, z - .1));
+function projectsdsscreensjsxZoomOut20({zoomAt,view}, event) {
+  const handler = () => zoomAt(view.current.zoom / 1.2);
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }
-function projectsdsscreensjsxResetZoom21({setZoom}, event) {
-  const handler = () => setZoom(1);
+function projectsdsscreensjsxResetZoom21({zoomAt}, event) {
+  const handler = () => zoomAt(1);
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }
-function projectsdsscreensjsxZoomIn22({setZoom}, event) {
-  const handler = () => setZoom(z => Math.min(2, z + .1));
+function projectsdsscreensjsxZoomIn22({zoomAt,view}, event) {
+  const handler = () => zoomAt(view.current.zoom * 1.2);
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }
 function projectsdsscreensjsxFit23({fit}, event) {

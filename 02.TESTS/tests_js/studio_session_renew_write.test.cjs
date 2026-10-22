@@ -16,8 +16,8 @@ test('a refused write is never replayed; the session is renewed for the next att
     return json(200, {ok: true});
   };
   global.window = g;
-  delete require.cache[require.resolve('../01.APP/nodelang/studio/studio-authority.js')];
-  require('../01.APP/nodelang/studio/studio-authority.js');
+  delete require.cache[require.resolve('../../01.APP/nodelang/studio/studio-authority.js')];
+  require('../../01.APP/nodelang/studio/studio-authority.js');
   try { await g.ArchHubStudioAuthority.boot({canvas_key: 'k'}); } catch (_) {}
   token = 'lapsed'; posts = 0; const before = signIns;
   const r = await g.fetch('/api/universal/run-graph', {method: 'POST', headers: {'X-ArchHub-Session': 'stale'}, body: '{}'});

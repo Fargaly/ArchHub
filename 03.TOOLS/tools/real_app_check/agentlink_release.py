@@ -18,6 +18,7 @@ import re
 from pathlib import Path
 import shutil
 import socket
+import threading
 import stat
 import subprocess
 import sys
@@ -80,10 +81,20 @@ def read_messages(output):
     messages = []
     def collect(value):
         if isinstance(value, str):
-            try:
-                collect(json.loads(value))
-            except ValueError:
-                return
+            # A tool result may carry several JSON blocks joined into one string (the read
+            # page, then the pending injected messages); decode every block, not only the first.
+            decoder, index = json.JSONDecoder(), 0
+            while index < len(value):
+                while index < len(value) and value[index].isspace():
+                    index += 1
+                if index >= len(value):
+                    return
+                try:
+                    block, index = decoder.raw_decode(value, index)
+                except ValueError:
+                    return
+                collect(block)
+            return
         elif isinstance(value, list):
             for item in value:
                 collect(item)
@@ -311,7 +322,7 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
     from nodelang.application_server import ApplicationServer
     from nodelang.persistence import application_database_path
     from nodelang.cell_secret_keys import WindowsDpapiSigningKeyProvider
-    app = server = server_job = None
+    app = server = server_job = coordination = None
     checks = {name:False for name in ("exchange", "overlap", "opencode")}
     evidence = {"schema":"archhub-agentlink-qualification/v1", "nonce":nonce,
         "source_sha256":source_digest(root), "profile":str(profile), "checks":checks,
@@ -334,6 +345,19 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
                 universal_workspace_root=fixture, universal_state_path=application_database_path(profile),
                 enable_universal_cloud_gateway=False, enable_brain_cloud_sync=False,
                 enable_machine_projection_prewarm=False, live_watch=False).start()
+            # WSRECEIPTS: agent processes write only through the running application, so the
+            # isolated application serves its own coordination surface on an ephemeral port and
+            # every agent in this profile is pointed at it (never the founder's 8474).
+            from nodelang.clean_coordination_host import CleanCoordinationHost
+            from nodelang.clean_coordination_service import build_bound_service
+            coordination = build_bound_service(CleanCoordinationHost(app), port=0)
+            threading.Thread(target=coordination.serve_forever, name="AGENTLINK coordination surface",
+                             daemon=True).start()
+            endpoint = "http://127.0.0.1:%d/coordination" % coordination.server_address[1]
+            env["ARCHHUB_COORDINATION_ENDPOINT"] = os.environ["ARCHHUB_COORDINATION_ENDPOINT"] = endpoint
+            mcp["environment"]["ARCHHUB_COORDINATION_ENDPOINT"] = endpoint
+            env["OPENCODE_CONFIG_CONTENT"] = json.dumps({"plugin":[loader.as_uri()],
+                "mcp":{"archhub_agent_coordination":mcp}, "share":"disabled", "autoupdate":False})
             with socket.socket() as listener:
                 listener.bind(("127.0.0.1", 0))
                 port = listener.getsockname()[1]
@@ -425,7 +449,8 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
                 request_message=note["id"], opencode_tools=tools)
             cc_mcp = json.dumps({"mcpServers":{"archhub_agent_coordination":{
                 "command":sys.executable, "args":["-m", "nodelang.native_agent_mcp"],
-                "env":{"PYTHONPATH":str(source), "PYTHONUTF8":"1"}}}})
+                "env":{"PYTHONPATH":str(source), "PYTHONUTF8":"1",
+                       "ARCHHUB_COORDINATION_ENDPOINT":endpoint}}}})
             # Two ordered prompts: the free Goose model read the room before it declared
             # (builds 27 and 28), so its read never held the overlap notice its own
             # declaration creates. The declaration must settle before the read starts.
@@ -488,6 +513,9 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
             if server.poll() is None:
                 server.terminate()
             server.wait(timeout=stop_wait)
+        if coordination is not None:
+            coordination.shutdown()
+            coordination.server_close()
         if app is not None:
             app.close()
         # This exact newly-created directory belongs solely to this invocation.

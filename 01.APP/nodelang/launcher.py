@@ -703,8 +703,8 @@ def _boot_unsampled():
             print('  coordination: bound signed owner', flush=True)
     except Exception as refused:
         server._coordination_surface_error = type(refused).__name__
-        print("  coordination: unavailable (%s); account sign-in is independent of transport key recovery" %
-              type(refused).__name__, flush=True)
+        print("  coordination: unavailable (%s: %s); account sign-in is independent of transport key recovery" %
+              (type(refused).__name__, str(refused)[:200]), flush=True)
     # Chat through a signed-in local assistant (model route local-cli/<name>)
     # runs through this same broker's host process, never a second runner.
     from nodelang import model_router as _model_router
@@ -1928,9 +1928,9 @@ def _keep_attaching():
                 retryable = isinstance(refusal, (MachineNotSent, ConnectionRefusedError)) or (
                     isinstance(refusal, MachineNoResponse)
                     and host is not None and not host.enrollment_sent)
-                print("  BABOOM     : %s (attempt %d, %s)" % (
+                print("  BABOOM     : %s (attempt %d, %s: %s)" % (
                     "waiting for runtime" if retryable else "attachment refused",
-                    attempt + 1, type(refusal).__name__), flush=True)
+                    attempt + 1, type(refusal).__name__, str(refusal)[:200]), flush=True)
                 if retryable:
                     continue
                 return

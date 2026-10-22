@@ -704,9 +704,124 @@ test('ensureDependency: posts existing Settings owner command and publishes conf
  assert.equal(api.getSnapshot().dependencies[0].state,'Ready');
 });
 
-for(const name of ["runValuation", "correctAnswerSource", "setResearchReview", "stampOutput", "runSpecialNode", "setTranscriptPass", "setDesktopProgram", "offerDesktopAction", "prepareDesktopAction", "settleTimesheet", "setScheduleResponsibility", "reviewScheduledWork", "runResearchNode", "importHostSkill", "inspectConnectorBundle", "configureConnectorBundle", "installConnectorBundle", "setHostSkillEnabled", "auditHostSkill", "setCompanionState", "exposeSettingsPage", "signInProvider", "setProviderModel", "disconnectSecret", "changePlan", "readNotification"])test(name+': remains hidden without an executing owner',async()=>{
+for(const name of ["runValuation", "correctAnswerSource", "setResearchReview", "stampOutput", "runSpecialNode", "setTranscriptPass", "setDesktopProgram", "offerDesktopAction", "prepareDesktopAction", "settleTimesheet", "setScheduleResponsibility", "reviewScheduledWork", "runResearchNode", "setCompanionState", "exposeSettingsPage", "signInProvider", "setProviderModel", "disconnectSecret", "changePlan", "readNotification"])test(name+': remains hidden without an executing owner',async()=>{
  const {api,calls}=await buttonsAdapter();const count=calls.length;assert.equal(api.supportsAction(name),false);
  const result=await api[name]();assert.equal(result.ok,false);assert.equal(result.status,'not_connected');assert.equal(calls.length,count);
+});
+
+async function hostskillsAdapter() {
+ const row={id:'skill',name:'Dimensions',host:'Revit',format:'SKILL.md',enabled:false,scripts:[],network:false,audit:'Needs access review',description:'Check dimensions'};
+ const bundle={id:'bundle',name:'Measure',description:'Local package',tools:[{name:'measure'}],config:[{key:'precision',label:'Precision',type:'number',value:2}],status:'Ready for review',installed:false};
+ let fail=false,owner=true,cards=[];
+ const methods=[];
+ const rig=await adapter({signed_in:false},{
+  '/api/universal/canvas':{root:'canvas',nodes:[],wires:[],workshop_scope:{root:'canvas',workshops:[{root:'workshop',is_general:true}]}},
+  '/api/universal/workshop':body=>{
+   if(body.function==='listTasks')return {result:[]};
+   if(body.function==='listApprovals')return {result:globalThis.structuredClone(cards)};
+   if(body.function==='readWatcher')return {result:{ok:false}};
+   if(body.function==='readHostSkills')return {result:owner?{owner:'host-owner',hostSkills:[{...row}],connectorBundles:[{...bundle}],connectorBundle:{...bundle}}:{ok:false}};
+   methods.push(body);
+   if(fail)return {ok:false,error:'Exact digest changed'};
+   if(body.function==='importHostSkill')return {result:{...row}};
+   if(body.function==='inspectConnectorBundle')return {result:{...bundle}};
+   if(body.function==='configureConnectorBundle'){bundle.config=[{...bundle.config[0],value:body.args[2]}];return {result:{...bundle}};}
+   if(body.function==='auditHostSkill'){row.audit='Access findings recorded';return {result:{...row}};}
+   if(body.function==='setHostSkillEnabled'&&!body.args[1]){row.enabled=false;return {result:{...row}};}
+   if(['installConnectorBundle','setHostSkillEnabled'].includes(body.function)){
+    cards=[{id:'package-review',approvalKind:'hostskills',input_digest:'sealed-digest',status:'pending',rows:[],action:body.function}];return {result:{...cards[0]}};
+   }
+   if(body.function==='decideHostSkill'){
+    cards[0].status=body.args[2]==='approve'?'approved':'declined';
+    if(body.args[2]==='approve'){if(cards[0].action==='installConnectorBundle'){bundle.installed=true;bundle.status='Installed';}else row.enabled=true;}
+    return {result:{...cards[0]}};
+   }
+   return {result:{ok:false}};
+  }
+ });
+ rig.window.btoa=value=>Buffer.from(value,'binary').toString('base64');
+ await rig.api.listTasks();
+ return {...rig,methods,refuse:()=>fail=true,loseOwner:()=>owner=false};
+}
+
+for(const [name,args] of [
+ ['importHostSkill',[{host:'Revit',text:'---\nname: dimensions\n---\nInstructions'}]],
+ ['inspectConnectorBundle',[{name:'fixture.json',base64:'e30='}]],
+ ['configureConnectorBundle',['precision',4]],['installConnectorBundle',[]],
+ ['setHostSkillEnabled',['skill',true]],['auditHostSkill',['skill']]
+])test('HOSTSKILLS '+name+' executes owner and publishes confirmed graph projection',async()=>{
+ const rig=await hostskillsAdapter();assert.equal(rig.api.supportsAction(name),true);
+ const result=await rig.api[name](...args),call=rig.methods.find(r=>r.function===name);
+ assert.ok(result.id);assert.equal(call.root,'workshop');assert.equal(call.scope,'canvas');
+ const expected=name==='configureConnectorBundle'?['bundle',...args]:name==='installConnectorBundle'?['bundle']:args;
+ assert.deepEqual(globalThis.structuredClone(call.args),expected);
+ if(name==='setHostSkillEnabled')assert.equal(rig.api.getSnapshot().hostSkills[0].enabled,false);
+ if(name==='installConnectorBundle')assert.equal(rig.api.getSnapshot().connectorBundle.installed,false);
+});
+
+test('HOSTSKILLS one approval activates once and stale refusal preserves confirmed projection',async()=>{
+ const rig=await hostskillsAdapter();await rig.api.installConnectorBundle();
+ assert.equal(rig.api.getSnapshot().approvals.length,1);assert.equal(rig.api.supportsAction('decline'),true);
+ await rig.api.approve('package-review');
+ assert.equal(rig.api.getSnapshot().connectorBundle.installed,true);
+ const call=rig.methods.find(r=>r.function==='decideHostSkill');
+ assert.deepEqual(globalThis.structuredClone(call.args),['package-review','sealed-digest','approve']);
+ const before=globalThis.structuredClone(rig.api.getSnapshot().hostSkills);
+ rig.refuse();await assert.rejects(()=>rig.api.auditHostSkill('skill'),/digest changed/);
+ assert.deepEqual(globalThis.structuredClone(rig.api.getSnapshot().hostSkills),before);
+});
+
+test('HOSTSKILLS unavailable owner hides all six and a local file preserves upload bytes',async()=>{
+ const rig=await hostskillsAdapter(),bytes=Buffer.from('{"name":"measure"}');
+ await rig.api.inspectConnectorBundle({name:'fixture.json',arrayBuffer:async()=>bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength)});
+ const call=rig.methods.find(r=>r.function==='inspectConnectorBundle');
+ assert.equal(Buffer.from(call.args[0].base64,'base64').toString(),bytes.toString());
+ rig.loseOwner();await rig.api.readHostSkills();const count=rig.methods.length;
+ for(const name of ['importHostSkill','inspectConnectorBundle','configureConnectorBundle','installConnectorBundle','setHostSkillEnabled','auditHostSkill']){
+  assert.equal(rig.api.supportsAction(name),false);await assert.rejects(()=>rig.api[name](),/owner unavailable/);
+ }
+ assert.equal(rig.methods.length,count);
+});
+
+test('HOSTSKILLS existing rendered controls invoke package owner actions',async()=>{
+ const rig=await hostskillsAdapter(),{JSDOM}=require('jsdom');
+ const dom=new JSDOM('<div id="root"></div>',{runScripts:'outside-only',pretendToBeVisual:true}),w=dom.window;
+ const studio=path.join(__dirname,'../../01.APP/nodelang/studio');
+ for(const vendor of ['react.js','react-dom.js','babel.js'])w.eval(fs.readFileSync(path.join(studio,'vendor',vendor),'utf8'));
+ const R=w.React,opened=[],u={act:fn=>fn(),show:(name,data)=>opened.push({name,data})};
+ w.AHIcon=()=>null;w.ArchHubAPI=rig.api;
+ const element=tag=>({children,...props})=>R.createElement(tag,props,children);
+ w.UI={api:rig.api,A:{},D:{Toggle:({label,checked,onCheckedChange})=>R.createElement('button',{'aria-label':label,onClick:()=>onCheckedChange(!checked)})},
+  useData:()=>R.useSyncExternalStore(rig.api.subscribe,rig.api.getSnapshot),useApp:()=>u,
+  Btn:({p,sm,ghost,...props})=>R.createElement('button',props),Card:element('section'),Chip:element('span')};
+ w.eval(w.Babel.transform(fs.readFileSync(path.join(studio,'agent-states.jsx'),'utf8'),{presets:['react']}).code);
+ const root=w.ReactDOM.createRoot(w.document.getElementById('root'));
+ const settle=()=>new Promise(resolve=>setTimeout(resolve,30));
+ const render=async(component,props={})=>{root.render(R.createElement(component,props));await settle();};
+ const click=async label=>{const button=[...w.document.querySelectorAll('button')].find(b=>b.textContent===label||b.getAttribute('aria-label')===label);assert.ok(button,label);button.click();await settle();};
+ try{
+  await render(w.UI.HostSkills);await click('Import skill');assert.equal(opened.at(-1).name,'Import skill');
+  await click('Enable skill Dimensions');assert.ok(rig.methods.find(m=>m.function==='setHostSkillEnabled'));
+  await render(w.UI.HostSkill,{id:'skill'});await click('Review access');assert.equal(rig.api.getSnapshot().hostSkills[0].audit,'Access findings recorded');
+  await render(w.UI.ConnectorBundle);
+  assert.ok(w.document.querySelector('[aria-label="Precision"]'));
+  const input=w.document.querySelector('[aria-label="Choose connector bundle"]'),bytes=Buffer.from('{}');
+  Object.defineProperty(input,'files',{configurable:true,value:[{name:'fixture.json',arrayBuffer:async()=>bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength)}]});
+  input.dispatchEvent(new w.Event('change',{bubbles:true}));await settle();
+  assert.ok(rig.methods.find(m=>m.function==='inspectConnectorBundle'));
+  await click('Install reviewed bundle');assert.ok(rig.methods.find(m=>m.function==='installConnectorBundle'));
+  assert.equal(rig.api.getSnapshot().connectorBundle.installed,false);
+ }finally{root.unmount();dom.window.close();}
+});
+
+test('HOSTSKILLS a graph switch during local file read refuses before upload',async()=>{
+ const rig=await hostskillsAdapter();let release;
+ const reading=new Promise(resolve=>release=resolve);
+ const pending=rig.api.inspectConnectorBundle({name:'fixture.json',arrayBuffer:()=>reading});
+ await rig.api.selectGraph('another-graph');
+ release(new ArrayBuffer(0));
+ await assert.rejects(()=>pending,/graph changed/);
+ assert.equal(rig.methods.filter(m=>m.function==='inspectConnectorBundle').length,0);
 });
 
 function dialogHarness(){

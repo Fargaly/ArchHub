@@ -41,6 +41,18 @@ def _delegation(api, root):
     from .universal_cell import InvalidCell
     if type(root) is not str:
         raise InvalidCell("Approval requires its exact delegation identity")
+    from .host_skill_owner import PREFIX as HOST_PREFIX, HostSkillOwner
+    if root.startswith(HOST_PREFIX):
+        from types import SimpleNamespace
+        owner = HostSkillOwner(api)
+        package, _, proposal = owner._proposal(root)
+        card = owner.card(root)
+        lifecycle = "requested" if card["status"] in {"pending", "postponed"} else "granted" if card["status"] == "approved" else "revoked"
+        delegation = SimpleNamespace(root_id=root, permission_root=root, work_root=package,
+            input_digest=proposal["input_digest"], expires_at=float("inf"))
+        permission = SimpleNamespace(lifecycle_root=api.owner.universal_registry.adapter_protocol.states[lifecycle],
+            user_root=api.binding.subject_root)
+        return api.admit(), "hostskills", delegation, permission, {"interfaces":{"title":{"value":card["title"]}}}
     from .watcher_owner import PREFIX, approval_context
     if root.startswith(PREFIX):
         return approval_context(api, root)
@@ -88,6 +100,9 @@ def _material(api, kind, delegation):
 
 
 def approval_card(api, root):
+    from .host_skill_owner import PREFIX as HOST_PREFIX, HostSkillOwner
+    if type(root) is str and root.startswith(HOST_PREFIX):
+        return HostSkillOwner(api).card(root)
     from .watcher_owner import PREFIX, WatcherOwner
     if type(root) is str and root.startswith(PREFIX):
         return WatcherOwner(api).card(root)
@@ -171,6 +186,11 @@ def change_review(api, root, action, *args):
             raise InvalidCell("Review the successor decision instead")
         card["status"] = "contested"
         return _save_review(api, delegation, card, action, reason.strip())
+    if action == "refreshApproval" and kind == "hostskills":
+        from .host_skill_owner import HostSkillOwner
+        owner = HostSkillOwner(api)
+        package, _, proposal = owner._proposal(root)
+        return owner.request(package, proposal["action"])
     if action == "refreshApproval" and kind == "watcher":
         raise InvalidCell("Discard the source-bound Watcher draft and read its source before proposing a fresh edit")
     if action == "refreshApproval":
@@ -263,7 +283,8 @@ def list_reviews(api):
             except (InvalidCell, AuthorizationDenied):
                 continue
     from .watcher_owner import WatcherOwner
-    return cards + WatcherOwner(api).reviews()
+    from .host_skill_owner import HostSkillOwner
+    return cards + WatcherOwner(api).reviews() + HostSkillOwner(api).reviews()
 
 
 def _social_providers(registry) -> dict:

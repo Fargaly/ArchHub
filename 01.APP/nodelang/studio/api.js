@@ -121,6 +121,7 @@ async function workshop(fn,args=[]) {
  return response.result;
 }
 const watcherActions=['setWatcherHost','setWatcherView','addDimension','editWall','addMark','addComment','proposeWatcherEdit','discardWatcherChanges'];
+const hostSkillActions=['importHostSkill','inspectConnectorBundle','configureConnectorBundle','installConnectorBundle','setHostSkillEnabled','auditHostSkill'];
 const approvalActions=['postponeApproval','resumeApproval','contestDecision','refreshApproval','reviewProofRow','setApprovalRubric'];
 async function refreshApprovals() {
  const epoch=scopeEpoch,binding=JSON.stringify(workshopBinding());
@@ -134,7 +135,7 @@ async function refreshTasks() {
  const epoch=scopeEpoch,binding=JSON.stringify(workshopBinding());
  const tasks=await workshop('listTasks');if(!Array.isArray(tasks))return tasks;
  if(epoch!==scopeEpoch||binding!==JSON.stringify(workshopBinding()))return state.tasks;
- publish({tasks:tasks.map(t=>({...t,messages:t.messages||[],steps:t.steps||[],reviews:t.reviews||[],queuedMessages:t.queuedMessages||[]}))});await refreshApprovals();await refreshWatcher();return state.tasks;
+ publish({tasks:tasks.map(t=>({...t,messages:t.messages||[],steps:t.steps||[],reviews:t.reviews||[],queuedMessages:t.queuedMessages||[]}))});await refreshApprovals();await refreshWatcher();await refreshHostSkills();return state.tasks;
 }
 function projectProviders() {
  const roster=new Map(providerRoster.map(p=>[p.id,p]));
@@ -242,7 +243,8 @@ const boundAction=api.supportsAction;
 api.supportsAction=(name,mode)=>boundAction(name,mode)&&
  (!approvalActions.includes(name)||state.approvalActionsReady===true&&!state.nativeApproval)&&
  (!watcherActions.includes(name)||state.watcherReady===true&&!state.nativeApproval)&&
- (name!=='decline'||state.nativeApproval||state.approvals.some(card=>card.approvalKind==='watcher'&&card.status==='pending'))&&
+ (!hostSkillActions.includes(name)||state.hostSkillsReady===true&&!state.nativeApproval)&&
+ (name!=='decline'||state.nativeApproval||state.approvals.some(card=>['watcher','hostskills'].includes(card.approvalKind)&&card.status==='pending'))&&
  (!['startVoiceInput','stopVoiceInput'].includes(name)||typeof window.ARCHHUB_VOICE_START==='function'&&typeof window.ARCHHUB_VOICE_STOP==='function')&&
  (name!=='speak'||typeof window.speechSynthesis?.speak==='function'&&typeof window.SpeechSynthesisUtterance==='function');
 window.addEventListener('archhub:capabilities',()=>publish());
@@ -364,7 +366,7 @@ Object.assign(api,{
   return mutate(()=>interaction(b.control,{event_facts:[{input:specs[0].input,value:input.label},{input:specs[1].input,value:String(input.value??'')}]}));
  },
  async approve(id){const card=state.approvals.find(c=>c.id===id);if(card?.approvalKind==='social'){const result=await request('/api/universal/social-approve',{delegation:card.delegation,input_digest:card.input_digest,decision:'approve'});await refreshApprovals();return result;}if(!card?.delegation||!card?.input_digest||!card?.work)return unavailable('approve','No reviewed model delegation');const binding=workshopBinding();const body={...binding,work:card.work,delegation:card.delegation,input_digest:card.input_digest};const inspected=await request('/api/universal/workshop-model-approval?'+new URLSearchParams(body));if(inspected.expired||inspected.input_digest!==card.input_digest)return {ok:false,status:'stale',message:'Review changed; refresh before approving.'};const result=await request('/api/universal/workshop-model-approval',{...body,revision:inspected.revision});await refreshTasks();return result;},
- async selectGraph(id){scopeEpoch++;workingAgents=[];publish({tasks:[],approvals:[],approvalActionsReady:false,watcherReady:false,watcher:copy(emptyWatcher)});await request('/api/universal/graph-open',{root:id});await commands.load();project();await refreshGraphs();await refreshTasks();await refreshAgents();return state.graph;},
+  async selectGraph(id){scopeEpoch++;workingAgents=[];publish({tasks:[],approvals:[],approvalActionsReady:false,watcherReady:false,watcher:copy(emptyWatcher),hostSkillsReady:false,hostSkills:[],connectorBundle:null});await request('/api/universal/graph-open',{root:id});await commands.load();project();await refreshGraphs();await refreshTasks();await refreshAgents();return state.graph;},
  async selectWorkspace(id){return api.selectGraph(id);},
  getUsageSummary:()=>({'Usage':'Usage is unavailable.'}),
  async setConnection(id,values){if(values.connected===false)return request('/api/universal/social-connection',{provider:id,action:'cancel'});if(values.connected===true)return request('/api/universal/social-connection',{provider:id,action:'start'});return unavailable('setConnection','No sign-in action requested');},
@@ -412,9 +414,45 @@ for(const name of watcherActions) {
   return result;
  };
 }
+async function refreshHostSkills() {
+ const epoch=scopeEpoch,binding=JSON.stringify(workshopBinding());
+ try {
+  const result=await workshop('readHostSkills');
+  if(epoch!==scopeEpoch||binding!==JSON.stringify(workshopBinding()))return null;
+  if(!result?.owner||!Array.isArray(result.hostSkills)||!Array.isArray(result.connectorBundles))throw Error('Host package owner unavailable');
+  const selected=result.connectorBundles.find(row=>row.id===state.connectorBundle?.id)||result.connectorBundle;
+  publish({hostSkills:result.hostSkills,connectorBundle:selected,hostSkillsReady:true});return result;
+ } catch(error) {
+  if(epoch===scopeEpoch&&binding===JSON.stringify(workshopBinding()))publish({hostSkillsReady:false,hostSkills:[],connectorBundle:null});
+  return null;
+ }
+}
+api.readHostSkills=refreshHostSkills;
+for(const name of hostSkillActions)api[name]=async(...args)=>{
+ if(!api.supportsAction(name))throw Error('Host package owner unavailable; reopen its graph and retry.');
+ const epoch=scopeEpoch,binding=JSON.stringify(workshopBinding());
+ if(name==='inspectConnectorBundle'&&typeof args[0]?.arrayBuffer==='function'){
+  const file=args[0],bytes=new window.Uint8Array(await file.arrayBuffer());
+  if(bytes.length>262144)throw Error('Choose a package smaller than 256 KiB.');
+  args=[{name:file.name,base64:window.btoa(Array.from(bytes,b=>String.fromCharCode(b)).join(''))}];
+ }
+ if(epoch!==scopeEpoch||binding!==JSON.stringify(workshopBinding()))throw Error('The graph changed while reading the package. Choose it again in the intended graph.');
+ if(name==='configureConnectorBundle')args=[state.connectorBundle?.id,...args];
+ if(name==='installConnectorBundle'&&!args.length)args=[state.connectorBundle?.id];
+ const result=await workshop(name,args);
+ if(!result?.id||result.ok===false)throw Error(result?.error||result?.message||'Host package action was not confirmed.');
+ if(epoch!==scopeEpoch||binding!==JSON.stringify(workshopBinding()))return result;
+ if(name==='inspectConnectorBundle')publish({connectorBundle:result});
+ await refreshHostSkills();await refreshApprovals();return result;
+};
 const approveDelegation=api.approve;
 api.approve=async(id,...args)=>{
  const card=state.approvals.find(c=>c.id===id);
+ if(card?.approvalKind==='hostskills'){
+  const result=await workshop('decideHostSkill',[id,card.input_digest,'approve']);
+  if(result?.status!=='approved')throw Error(result?.error||'Package activation was not confirmed.');
+  await refreshHostSkills();await refreshApprovals();return result;
+ }
  if(card?.approvalKind!=='watcher')return approveDelegation(id,...args);
  const result=await workshop('decideWatcherEdit',[id,card.input_digest,'approve']);
  if(result?.status!=='approved')throw Error(result?.error||result?.message||'Host write was not confirmed.');
@@ -422,6 +460,11 @@ api.approve=async(id,...args)=>{
 };
 api.decline=async id=>{
  const card=state.approvals.find(c=>c.id===id);
+ if(card?.approvalKind==='hostskills'){
+  const result=await workshop('decideHostSkill',[id,card.input_digest,'deny']);
+  if(result?.status!=='declined')throw Error(result?.error||'Package decline was not confirmed.');
+  await refreshHostSkills();await refreshApprovals();return result;
+ }
  if(card?.approvalKind!=='watcher')throw Error('Choose the exact Watcher proposal to decline.');
  const result=await workshop('decideWatcherEdit',[id,card.input_digest,'deny']);
  if(result?.status!=='declined')throw Error(result?.error||result?.message||'Discard was not confirmed.');
@@ -731,7 +774,7 @@ for(const functionName of ['updateProfile','invitePerson','selectFirm','setTeamA
 }
 api.refreshSettingsOperations=()=>settingsAction('readOperations',[state.graph.id]);
 api.setGraphWorkspaces=ids=>settingsAction('setGraphWorkspaces',[state.graph.id,ids]);
-api.setSettingsScope=async scope=>{const result=await settingsAction('setSettingsScope',[scope,state.activeWorkspace||state.graph.workspaceIds?.[0]||'',state.graph.id]);scopeEpoch++;await commands.load();project();await api.refreshSettingsOperations();return result;};
+api.setSettingsScope=async scope=>{const result=await settingsAction('setSettingsScope',[scope,state.activeWorkspace||state.graph.workspaceIds?.[0]||'',state.graph.id]);scopeEpoch++;publish({hostSkillsReady:false,hostSkills:[],connectorBundle:null});await commands.load();project();await api.refreshSettingsOperations();await refreshHostSkills();return result;};
 const settingsListWorkspaces=api.listWorkspaces;
 api.listWorkspaces=async()=>{await settingsListWorkspaces();if(state.profile.signedIn)await api.refreshSettingsOperations();return copy(state.workspaces);};
 const settingsSelectGraph=api.selectGraph;

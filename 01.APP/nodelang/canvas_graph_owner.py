@@ -736,6 +736,12 @@ class CanvasOwner:
             results.append({'id': schedule, 'result': result})
         return results
 
+    def import_host_package(self, name, digest):
+        """Import an inert package node; only its approval owner activates its value."""
+        made = self.import_recipe({'nodes':[{'engine':'data.constant', 'title':name,
+            'params':{'value':'', 'frozen':'true', 'host_package_digest':digest}}], 'wires':[]})
+        return {'id':made['nodes'][0]}
+
     def save_skill(self, name):
         from uuid import uuid4
         from .cell_brain_skills import mint_skill

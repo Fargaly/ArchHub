@@ -28,6 +28,38 @@ class WorkshopAPI:
         self.message_limit = message_limit
         self.route = route
 
+    def readHostSkills(self):
+        from .host_skill_owner import HostSkillOwner
+        return HostSkillOwner(self).read()
+
+    def importHostSkill(self, value):
+        from .host_skill_owner import HostSkillOwner
+        return HostSkillOwner(self).import_skill(value)
+
+    def inspectConnectorBundle(self, value):
+        from .host_skill_owner import HostSkillOwner
+        return HostSkillOwner(self).inspect(value)
+
+    def configureConnectorBundle(self, root, key, value):
+        from .host_skill_owner import HostSkillOwner
+        return HostSkillOwner(self).configure(root, key, value)
+
+    def installConnectorBundle(self, root):
+        from .host_skill_owner import HostSkillOwner
+        return HostSkillOwner(self).request(root, "install")
+
+    def setHostSkillEnabled(self, root, enabled):
+        from .host_skill_owner import HostSkillOwner
+        return HostSkillOwner(self).set_enabled(root, enabled)
+
+    def auditHostSkill(self, root):
+        from .host_skill_owner import HostSkillOwner
+        return HostSkillOwner(self).audit(root)
+
+    def decideHostSkill(self, root, digest, decision):
+        from .host_skill_owner import HostSkillOwner
+        return HostSkillOwner(self).decide(root, digest, decision)
+
     def readWatcher(self):
         from .watcher_owner import WatcherOwner
         return WatcherOwner(self).read()
@@ -645,3 +677,5 @@ FUNCTIONS = FUNCTIONS | frozenset({"listApprovals", "postponeApproval", "resumeA
 
 FUNCTIONS = FUNCTIONS | frozenset({"readWatcher", "setWatcherHost", "setWatcherView", "editWall",
     "addDimension", "addMark", "addComment", "proposeWatcherEdit", "discardWatcherChanges", "decideWatcherEdit"})
+FUNCTIONS = FUNCTIONS | frozenset({"readHostSkills", "importHostSkill", "inspectConnectorBundle",
+    "configureConnectorBundle", "installConnectorBundle", "setHostSkillEnabled", "auditHostSkill", "decideHostSkill"})

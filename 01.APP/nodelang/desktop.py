@@ -60,43 +60,19 @@ def create_social_execution_arguments():
 
 
 def bind_coordination_surface(server, state_directory):
-    """Attach the old coordination API to this owner's very same CellStore.
-
-    There is no second opener or ApplicationServer. Transport keys secure
-    commands; cloud_session remains the source of signed-in account identity.
-    """
+    """Attach local coordination to the desktop's existing application owner."""
     import threading
     from urllib.parse import urlsplit
-    from .persistence import selected_application_generation, _application_generation_directory
-    if not selected_application_generation(server.universal_state_path):
-        return None
-    from .runtime_caller_capability import WindowsDpapiCallerKeyStore
     from .clean_coordination_host import CleanCoordinationHost
     from .clean_coordination_service import build_bound_service
-    from .clean_office_adapter import invoke as office
-    from .clean_revit_adapter import invoke as revit
-    from .clean_model_adapter import CleanModelAdapter
-    database = Path(server.universal_state_path)
-    generation = _application_generation_directory(database)
-    authority = getattr(server.universal_store, '_signed_commit_authority', None)
-    if authority is None:
-        raise ValueError('selected application has no bound signed commit owner')
-    adapters = {'revit': revit, 'word': office, 'excel': office, 'powerpoint': office,
-                'model': CleanModelAdapter(server.model_execution_broker)}
-    def reach_host(operation, arguments):
-        host = str(operation).split('.', 1)[0]
-        if host not in adapters:
-            raise ValueError('this runtime declares no adapter for ' + host)
-        return adapters[host](operation, arguments)
-    from . import commit_intent
-    with commit_intent.declare(commit_intent.MIGRATION, actor='app:archhub',
-            reason='install changed coordination catalogue in the one application owner'):
-        graph_host = CleanCoordinationHost(authority,
-            WindowsDpapiCallerKeyStore(WindowsDpapiCallerKeyStore.default_path()),
-            host_invoker=reach_host, runtime_root=generation.parent.parent)
+    existing = getattr(server, '_coordination_surface', None)
+    if existing is not None:
+        return existing
+    graph_host = CleanCoordinationHost(server)
     endpoint = os.environ.get('ARCHHUB_COORDINATION_ENDPOINT', 'http://127.0.0.1:8474/coordination')
     parsed = urlsplit(endpoint)
-    if parsed.hostname != '127.0.0.1' or parsed.scheme != 'http' or parsed.path != '/coordination':
+    if (parsed.hostname != '127.0.0.1' or parsed.scheme != 'http' or parsed.path != '/coordination'
+            or parsed.username is not None or parsed.password is not None or parsed.query or parsed.fragment):
         raise ValueError('coordination endpoint must be a declared loopback endpoint')
     service = build_bound_service(graph_host, port=parsed.port if parsed.port is not None else 8474)
     server._coordination_surface = service

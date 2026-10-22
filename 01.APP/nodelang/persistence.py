@@ -596,46 +596,6 @@ def bind_selected_application_authority(store, key_provider):
     return authority
 
 
-def finalize_application_adoption(store, key_provider, *, check=lambda: None):
-    """Finish signed-owner anchoring after idle archival, never on the boot path.
-
-    The existing bootstrap hashes its source snapshot. Deferring that explicit
-    work until traces are cold keeps adoption itself independent of journal
-    size while preserving the original receipts and the coordination owner.
-    """
-    if not selected_application_generation(store.database_path):
-        return None
-    generation = _application_generation_directory(store.database_path)
-    if (generation / 'bootstrap.json').is_file() or (generation / 'adoption.json').is_file():
-        return bind_selected_application_authority(store, key_provider)
-    if 'app:authorization-protocol:root' not in store.snapshot().cells:
-        return None
-    from .authority_adoption import adopt_application_authority
-    from .unified_authority import bind_signed_commit_owner
-    from .unified_authority_runtime import _atomic_text
-    connection, lock = store.sqlite_storage()
-    def idle_progress():
-        try:
-            check()
-            return 0
-        except TimeoutError:
-            return 1
-    # The existing anchor walks the remaining graph. Yield its SQL work to
-    # user activity too; holding the owner lock confines cancellation to this
-    # maintenance operation, never a concurrent foreground query.
-    with lock, store._journal._io_lock:
-        check()
-        connection.set_progress_handler(idle_progress, 1000)
-        try:
-            authority = adopt_application_authority(store, key_provider,
-                source_history_digest=store.revision_chain_digest())
-        finally:
-            connection.set_progress_handler(None, 0)
-        _atomic_text(generation / 'adoption.json', authority.manifest.to_json())
-        bind_signed_commit_owner(authority)
-    return authority
-
-
 def legacy_application_sources(state_directory):
     """Known retired stores within the declared profile; never a fallback head."""
     root = Path(state_directory).resolve()

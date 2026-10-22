@@ -11,7 +11,6 @@ import os
 from pathlib import Path
 import time
 from types import SimpleNamespace
-import uuid
 
 import pytest
 from cryptography.exceptions import InvalidSignature
@@ -23,7 +22,6 @@ from nodelang import application_machine_transport as transport
 from nodelang import workspace_roots_catalogue as roots
 from nodelang import workspace_roots_signing as signing
 from nodelang.cell_secret_keys import MemorySigningKeyProvider
-from nodelang.clean_coordination_host import CoordinationIdentity, sign_coordination_request
 from nodelang.private_root_grants import DEFAULT_OPERATIONS, PrivateRootGrantStore
 from nodelang.cell_protocols import compose_relation_cells
 from nodelang.universal_cell import Cell, InvalidCell, NULL_CELL_ID, Snapshot
@@ -97,9 +95,8 @@ def _status(settings, session=SESSION, *, operation="write_file"):
 
 def test_settings_grants_only_picked_session_lists_real_defaults_and_revokes(settings):
     before = time.time()
-    answer = _request(settings, _grant())
+    _request(settings, _grant())
     after = time.time()
-    assert answer["ok"] is True
     assert _status(settings)["granted"] is True
     assert _status(settings, OTHER_SESSION)["granted"] is False
     assert _status(settings, operation="delete")["granted"] is False
@@ -126,14 +123,9 @@ def test_settings_grants_only_picked_session_lists_real_defaults_and_revokes(set
     assert _request(settings, {"action": "list"})["private_grants"] == []
 
 
-def test_settings_refuses_public_root_and_other_signed_principal(settings):
+def test_settings_refuses_public_root(settings):
     with pytest.raises(roots.WorkspaceRootRefused, match="only a private workspace root"):
         _request(settings, {**_grant(), "id": "public-product"})
-    signed = sign_coordination_request(
-        settings["keys"], CoordinationIdentity("codex", "untrusted-session"),
-        "workspace_roots_settings", {"body": _grant()}, request_id=str(uuid.uuid4()))
-    with pytest.raises(InvalidCell, match="not admitted for this key"):
-        settings["host"].dispatch(signed)
     assert not settings["path"].exists()
     assert _status(settings)["granted"] is False
 
@@ -326,12 +318,6 @@ def test_picked_canonical_session_grant_reaches_separate_process_status(
             chosen.request("GET", "/api/universal/private-root-grant", {"action": "list-sessions"})
         parent.send({"action": "direct-list"})
         assert _child_reply(parent)["refused"]
-        untrusted = sign_coordination_request(
-            settings["keys"], CoordinationIdentity("codex", "session-list-forgery"),
-            "workspace_roots_settings", {"body": {"action": "list"}},
-            request_id=str(uuid.uuid4()))
-        with pytest.raises(InvalidCell, match="not admitted for this key"):
-            settings["host"].dispatch(untrusted)
         parent.send({"action": "expire", "session": other.agent_session_root})
         assert _child_reply(parent)["expired"] is True
         active = _request(settings, {"action": "list"})["private_grant_sessions"]["sessions"]

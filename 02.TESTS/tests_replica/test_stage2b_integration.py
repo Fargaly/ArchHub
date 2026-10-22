@@ -14,7 +14,7 @@ def test_workshop_library_inputs_use_the_same_typed_settings_contract():
     params = dict(LIBRARY_ITEM_ENGINES['tool_workshop']['params'])
     result, _ = tool_settings(params, {'backup_count': 7, 'keep_running_in_tray': True})
     assert result['out']['backup_count'] == 7
-    assert result['out']['backup_budget_bytes'] == 10 * 1024**3
+    assert result['out']['backup_budget_bytes'] == params['backup_budget_bytes']
     assert result['out']['keep_running_in_tray'] is True
     assert set(params) <= set(engine_sockets('tool.workshop')['target'])
     with pytest.raises(ValueError, match='backup_count'):
@@ -212,17 +212,16 @@ def test_selected_authority_and_desktop_coordination_use_the_same_live_store(tmp
         assert saved_cells == {root: (cell.link0, cell.link1, cell.atom) for root, cell in original_cells.items()}
         surface = desktop.bind_coordination_surface(server, tmp_path)
         assert surface is not None
-        assert surface.coordination_host.authority.store is server.universal_store
+        assert surface.coordination_host.store is server.universal_store
         assert server.conversation_content._path == database
         with urlopen('http://127.0.0.1:%d/health' % surface.server_address[1], timeout=3) as answer:
-            assert json.load(answer)['graph_id'] == location.generation_root.name
+            assert json.load(answer)['graph_id'] == server.universal_store.authority_identity
     finally:
         server.close()
     server = ApplicationServer(universal_state_path=database, universal_key_provider=provider,
         enable_machine_transport=False, enable_universal_cloud_gateway=False, live_watch=False)
     try:
-        from nodelang.unified_authority import audit_authority_history
         assert dict(server.universal_store.at(original_revision).cells) == original_cells
-        audit_authority_history(server.universal_store._signed_commit_authority)
+        assert getattr(server.universal_store, '_signed_commit_authority', None) is None
     finally:
         server.close()

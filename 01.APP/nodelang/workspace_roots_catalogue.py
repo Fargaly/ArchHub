@@ -1246,8 +1246,6 @@ def read_registered_roots(verifier=None, *, snapshot_path=None, pin_path=None,
 
 
 REGISTRY_DIGEST_SCHEMA = "archhub.workspace-roots.registry-digest/v1"
-STATE_PURPOSE = "archhub.workspace-roots-state/v1"
-ISSUER_IDENTITY = ("archhub", "cde-permit-issuer")
 # The desktop's Settings -> Workspaces reaches the graph's owner under its own key,
 # which is admitted for exactly one method (workspace_roots_settings).
 SETTINGS_IDENTITY = ("archhub", "workspace-roots-settings")
@@ -1255,7 +1253,6 @@ SETTINGS_IDENTITY = ("archhub", "workspace-roots-settings")
 SETTINGS_TIMEOUT_SECONDS = 660.0
 COORDINATION_ENDPOINT = "http://127.0.0.1:8474/coordination"
 _NONCE = re.compile(r"^[0-9a-f]{32}$")
-_STATEMENT_FIELDS = {"purpose", "graph_id", "request_id", "nonce", "revision", "registry_digest"}
 
 
 def registry_digest(body) -> str:
@@ -1263,29 +1260,22 @@ def registry_digest(body) -> str:
     return hashlib.sha256(canonical({"schema": REGISTRY_DIGEST_SCHEMA, "body": body})).hexdigest()
 
 
-def current_registry_statement(authority, *, caller, request_id, parameters) -> dict:
+def settings_principal() -> str:
+    """The admission the owner's workspace-roots route expects from this user's Settings."""
+    vendor, session = SETTINGS_IDENTITY
+    return "agent-session.%s" % hashlib.sha256((vendor.lower() + "\0" + session).encode("utf-8")).hexdigest()
+
+
+def current_registry_state(authority, *, caller) -> dict:
     """The graph owner's answer: revision and registry digest from ONE contained-scope
-    read, bound to the request's id and nonce and signed with the instance's own
-    authority key. Reads only; commits nothing."""
-    if type(parameters) is not dict or set(parameters) != {"nonce"} or not _NONCE.match(
-            str(parameters.get("nonce"))):
-        raise InvalidCell("workspace-roots state takes exactly one fresh nonce")
+    read. Reads only; commits nothing; no key."""
     catalogue = find_workspace_root_catalogue(authority, caller=caller)
     if catalogue is None:
         revision, roots, pin = authority.store.snapshot().revision, (), None
     else:
         revision, roots, pin = read_state(authority, catalogue, caller=caller)
-    statement = {
-        "purpose": STATE_PURPOSE,
-        "graph_id": authority.manifest.graph_id,
-        "request_id": request_id,
-        "nonce": parameters["nonce"],
-        "revision": revision,
-        "registry_digest": registry_digest(snapshot_body(roots, pin)),
-    }
-    signature = authority.key_provider.sign(authority.manifest.key_id,
-                                            authority.manifest.key_version, canonical(statement))
-    return {"statement": statement, "signature": signature}
+    return {"graph_id": authority.manifest.graph_id, "revision": revision,
+            "registry_digest": registry_digest(snapshot_body(roots, pin))}
 
 
 FIRST_ENROLLMENT_ADMISSION_PURPOSE = "archhub.workspace-roots.first-enrollment-admission/v1"
@@ -1350,36 +1340,9 @@ def verify_first_enrollment_admission(authority, ticket, *, principal, key_finge
     return hmac.compare_digest(str(expected), str(ticket.get("signature")))
 
 
-@dataclass(frozen=True, slots=True)
-class CanonicalInstance:
-    graph_id: str
-    key_id: str
-    key_version: int
-    key_fingerprint: str
-
-
-def canonical_instance(root=None) -> CanonicalInstance:
-    """The selected generation's public bootstrap facts (no secret, no graph open)."""
-    base = Path(root) if root is not None else (
-        Path(os.environ.get("LOCALAPPDATA") or str(Path.home())) / "ArchHub" / "unified-authority")
-    generation = (base / "CURRENT").read_text(encoding="ascii").strip()
-    # An adopted (migrated) generation carries adoption.json, as bind_selected_application_authority reads.
-    manifest_path = base / "generations" / generation / "bootstrap.json"
-    if not manifest_path.is_file():
-        manifest_path = manifest_path.with_name("adoption.json")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if manifest.get("graph_id") != generation:
-        raise InvalidCell("the selected authority generation is inconsistent")
-    return CanonicalInstance(manifest["graph_id"], manifest["key_id"], int(manifest["key_version"]),
-                             manifest["key_fingerprint"])
-
-
 def _default_graph_context():
     import urllib.error
     import urllib.request
-
-    from .cell_secret_keys import WindowsDpapiSigningKeyProvider
-    from .runtime_caller_capability import WindowsDpapiCallerKeyStore
 
     endpoint = os.environ.get("ARCHHUB_COORDINATION_ENDPOINT", "").strip() or COORDINATION_ENDPOINT
 
@@ -1405,9 +1368,6 @@ def _default_graph_context():
     return {
         "transport": transport,
         "settings_transport": lambda payload: transport(payload, SETTINGS_TIMEOUT_SECONDS),
-        "key_store": WindowsDpapiCallerKeyStore(WindowsDpapiCallerKeyStore.default_path()),
-        "provider": WindowsDpapiSigningKeyProvider(WindowsDpapiSigningKeyProvider.default_path()),
-        "instance": canonical_instance(),
     }
 
 
@@ -1417,18 +1377,15 @@ graph_context = _default_graph_context
 
 def forward_workspace_settings(body) -> dict:
     """Settings -> Workspaces from a process that does not own the graph (the
-    desktop's application server): the request goes to the graph's owner, signed
-    with the settings key, and the owner answers it with the same function its
-    own canvas route uses. Nothing is decided here."""
-    from .clean_coordination_host import CoordinationIdentity, sign_coordination_request
+    desktop's application server): the request goes to the graph's owner as the
+    owner's own workspace-roots route, and the owner answers it with the same
+    function its own canvas route uses. Nothing is decided here; no key."""
     if type(body) is not dict:
         raise WorkspaceRootRefused("workspace-roots request is invalid")
     try:
         context = graph_context()
-        request = sign_coordination_request(
-            context["key_store"], CoordinationIdentity(*SETTINGS_IDENTITY),
-            "workspace_roots_settings", {"body": body})
-        answer = (context.get("settings_transport") or context["transport"])(request.to_payload())
+        answer = (context.get("settings_transport") or context["transport"])(
+            {"method": "POST", "path": "/api/universal/workspace-roots", "body": body})
     except InvalidCell:
         raise
     except Exception as exc:  # noqa: BLE001 - the owner is not reachable
@@ -1438,10 +1395,10 @@ def forward_workspace_settings(body) -> dict:
         raise WorkspaceRootRefused(
             "the ArchHub graph owner is not answering (%s); start ArchHub's graph service"
             % type(exc).__name__) from exc
-    if type(answer) is not dict or answer.get("ok") is not True:
+    if type(answer) is not dict or answer.get("ok") is False:
         error = answer.get("error") if type(answer) is dict else None
         raise WorkspaceRootRefused(str(error or "the graph owner refused the workspace-roots request"))
-    return {key: value for key, value in answer.items() if key != "ok"}
+    return {key: value for key, value in answer.items() if key not in ("ok", "account")}
 
 
 NO_WINDOW = "Open the ArchHub window to approve this change"
@@ -1477,36 +1434,14 @@ def approve_in_this_window(body, *, window_handle, forward=None, signer_factory=
 
 
 def verified_graph_state() -> dict:
-    """Ask the canonical instance, with a fresh nonce, for its current registry
-    digest; accept only a statement it signed for exactly this request."""
-    import secrets
-
-    from .clean_coordination_host import CoordinationIdentity, sign_coordination_request
-
+    """Ask the graph's owner for its current registry digest. The owner is this
+    user's own desktop on loopback; the OS already separates other users."""
     context = graph_context()
-    instance = context["instance"]
-    nonce = secrets.token_hex(16)
-    request = sign_coordination_request(context["key_store"], CoordinationIdentity(*ISSUER_IDENTITY),
-                                        "workspace_roots_state", {"nonce": nonce})
-    answer = context["transport"](request.to_payload())
-    if type(answer) is not dict or answer.get("ok") is not True:
+    answer = context["transport"]({"method": "GET", "path": "/api/universal/workspace-roots-state", "body": {}})
+    if (type(answer) is not dict or answer.get("ok") is False
+            or type(answer.get("revision")) is not int or type(answer.get("registry_digest")) is not str):
         raise InvalidCell("the graph's owner refused the workspace-roots state")
-    statement, signature = answer.get("statement"), answer.get("signature")
-    if (type(statement) is not dict or set(statement) != _STATEMENT_FIELDS
-            or type(signature) is not str
-            or statement["purpose"] != STATE_PURPOSE
-            or statement["graph_id"] != instance.graph_id
-            or statement["request_id"] != request.request_id
-            or statement["nonce"] != nonce
-            or type(statement["revision"]) is not int
-            or type(statement["registry_digest"]) is not str):
-        raise InvalidCell("the workspace-roots state is not this instance's answer to this request")
-    provider = context["provider"]
-    if (provider.key_fingerprint(instance.key_id, instance.key_version) != instance.key_fingerprint
-            or not provider.verify(instance.key_id, instance.key_version, canonical(statement),
-                                   signature)):
-        raise InvalidCell("the workspace-roots state is not signed by the canonical instance")
-    return statement
+    return answer
 
 
 def _require_graph_current(signed):
@@ -1683,7 +1618,8 @@ __all__ = [
     "install_workspace_root_catalogue",
     "owner_change",
     "pin_signing_key",
-    "current_registry_statement",
+    "current_registry_state",
+    "settings_principal",
     "read_registered_roots",
     "read_enrollment",
     "OWNER_OPENED",

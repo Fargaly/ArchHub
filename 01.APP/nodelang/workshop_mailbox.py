@@ -3,13 +3,17 @@
 Local stdio clients and the application use the same selected profile and
 conversation rows. This does not start a service, open a graph or grant Work.
 """
-from contextlib import closing
+from contextlib import closing, nullcontext
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import json
 import os
 from pathlib import Path
 import sqlite3
+import errno
+from urllib.error import URLError
+from urllib.parse import urlsplit
+from urllib.request import ProxyHandler, Request, build_opener
 from uuid import uuid4
 
 from .agent_declarations import SESSION_KEYS, _alive, _lineage, canonical_path, overlaps
@@ -18,6 +22,7 @@ from .conversation_history import ConversationHistoryStore
 
 ROOM = "app:workshop"
 CATEGORY = ROOM + ":category:note"
+MAX_MAILBOX_RESPONSE_BYTES = 512 * 1024
 
 
 def _text(value, label, maximum):
@@ -71,7 +76,7 @@ def read_declarations(connection, *, include_archived=False):
     return [row for row in rows if include_archived or row["current"]]
 
 
-def _declare(history, body, context, identity, runtime, peer):
+def _declare(history, body, context, identity, runtime, peer, native_session):
     task = _text(body["task"], "task", 1024)
     request = _text(body["request_id"], "request id", 256)
     if any(char in task + request for char in "\r\n") or body["status"] not in ("working", "blocked", "done"):
@@ -81,7 +86,7 @@ def _declare(history, body, context, identity, runtime, peer):
     paths = sorted({canonical_path(value, peer.cwd) for value in body["paths"]})
     if sum(len(value.encode()) for value in paths) > 16384:
         raise ValueError("Declaration paths exceed their byte budget")
-    root = ROOM + ":declaration:" + sha256(identity["sender_key"].encode()).hexdigest()
+    root = ROOM + ":declaration:" + sha256(native_session.encode()).hexdigest()
     row = {"root": root, "agent": identity["sender_label"], "session": identity["sender_key"],
            "task": task.strip(), "request_id": request.strip(), "paths": paths, "status": body["status"],
            "runtime": runtime, "app": runtime, "native_session_id": next(iter(context.values()), None),
@@ -169,27 +174,61 @@ def _read(history, body, identity):
     return result
 
 
-def call(method, body, context, *, database=None, peer=None):
+def call(method, body, context, *, database=None, peer=None, history=None, account=None,
+         timeout_seconds: float = 30.0):
     required = {"send": {"to", "text"}, "read": {"since"},
                 "declare": {"task", "paths", "status", "request_id"}}
     optional = {"send": {"reply_to", "idempotency_key"}, "read": {"declarations_after", "include_archived"}, "declare": set()}
     if method not in required or type(body) is not dict or not required[method] <= set(body) or set(body) - required[method] - optional[method]:
         raise ValueError("Workshop mailbox arguments are invalid")
     identity, runtime, peer = _identity(context, peer)
-    from .persistence import application_content_path
+    native_session = identity["sender_key"]
+    if database is None and history is None:
+        endpoint = os.environ.get('ARCHHUB_COORDINATION_ENDPOINT', 'http://127.0.0.1:8474/coordination')
+        parsed = urlsplit(endpoint)
+        if (parsed.scheme != 'http' or parsed.hostname != '127.0.0.1' or parsed.path != '/coordination'
+                or parsed.username is not None or parsed.password is not None or parsed.query or parsed.fragment):
+            raise ValueError('coordination endpoint must be a declared loopback endpoint')
+        payload = {'method': 'GET' if method == 'read' else 'POST',
+            'path': '/api/universal/agent-mail/' + method,
+            'body': {**body, 'context': context}}
+        request = Request(endpoint, data=json.dumps(payload).encode('utf-8'),
+            headers={'Content-Type': 'application/json'})
+        try:
+            with build_opener(ProxyHandler({})).open(request, timeout=timeout_seconds) as response:
+                raw = response.read(MAX_MAILBOX_RESPONSE_BYTES + 1)
+                if len(raw) > MAX_MAILBOX_RESPONSE_BYTES:
+                    raise ValueError('Workshop response exceeds its byte budget')
+                result = json.loads(raw)
+                if type(result) is not dict:
+                    raise ValueError('Workshop response must be an object')
+                return result
+        except URLError as refused:
+            # Only no listener proves no send occurred; never replay an uncertain send.
+            if getattr(refused.reason, 'errno', None) not in (errno.ECONNREFUSED, 10061):
+                raise
+    if account is not None:
+        account = _text(account, "application account", 256)
+        key = "agent:session:" + sha256((account + "\0" + identity["sender_key"]).encode()).hexdigest()
+        label = identity["sender_label"] + " / " + account
+        identity = {"sender_key": key, "sender_label": label, "sender": label + " [" + key + "]"}
     path = Path(database) if database is not None else profile_database()
-    # The graph file may keep its messages in the sibling conversation store.
-    path = application_content_path(path) or path
+    if history is None:
+        from .persistence import application_content_path
+        # The graph file may keep its messages in the sibling conversation store.
+        path = application_content_path(path) or path
     # Never create another database when the selected profile is missing.
-    with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=rw", uri=True, isolation_level=None)) as connection:
+    with (closing(sqlite3.connect(path.resolve().as_uri() + "?mode=rw", uri=True, isolation_level=None))
+            if history is None else nullcontext(history._db)) as connection:
         row = connection.execute("SELECT instance_id FROM history_identity WHERE singleton=1").fetchone()
         if row is None:
             raise ValueError("The selected profile has no Workshop conversation binding")
-        with ConversationHistoryStore(path, instance_id=row[0], create=False, connection=connection) as history:
+        with (ConversationHistoryStore(path, instance_id=row[0], create=False, connection=connection)
+                if history is None else nullcontext(history)) as history:
             if method == "read":
                 return _read(history, body, identity)
             if method == "declare":
-                return _declare(history, body, context, identity, runtime, peer)
+                return _declare(history, body, context, identity, runtime, peer, native_session)
             target, text = _text(body["to"], "recipient", 512), _text(body["text"], "message", 65536)
             if any(char in target for char in "\r\n"):
                 raise ValueError("Recipient must be one line")

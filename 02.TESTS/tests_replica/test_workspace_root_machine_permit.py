@@ -11,6 +11,9 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+
+from nodelang.universal_cell import InvalidCell
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -18,11 +21,7 @@ import pytest
 import nodelang.application_server as application_server_module
 from nodelang import workspace_roots_catalogue as roots
 from nodelang import workspace_roots_signing as signing
-from nodelang.clean_coordination_host import (
-    CleanCoordinationHost,
-    CoordinationIdentity,
-    sign_coordination_request,
-)
+from nodelang.clean_coordination_host import CleanCoordinationHost
 from nodelang.application_machine_transport import MachineTransportError, UniversalRuntimeClient
 from nodelang.application_server import ApplicationServer
 from nodelang.cell_cde_authority import read_cde_write_permit
@@ -87,22 +86,25 @@ def _clean_settings_owner(tmp_path, provider, grant_path):
             operation_id=str(uuid.uuid4()),
             caller=built.caller,
         )
-    host = CleanCoordinationHost(
-        built.location.authority, key_store, runtime_root=root
+    # The owner's own coordination surface; Settings asks it as this user. No key.
+    # The clean HTTP owner exposes its graph as clean_authority; the host reads the
+    # same four facts the desktop owner carries.
+    owner = SimpleNamespace(
+        universal_store=server.clean_authority.store,
+        universal_registry=SimpleNamespace(authorization=SimpleNamespace(
+            subject_root=built.caller.actor_root)),
+        clean_authority=server.clean_authority,
+        clean_caller=server.clean_caller,
+        _clean_workspace_roots=server._clean_workspace_roots,
+        dispatch_universal_machine_route=lambda request: (_ for _ in ()).throw(
+            InvalidCell("the clean settings owner serves only workspace roots")),
     )
-    host.bind_workspace_settings(server.clean_authority, server._clean_workspace_roots)
-    return server, host, key_store
+    host = CleanCoordinationHost(owner)
+    return server, host, None
 
 
-def _settings_request(host, key_store, body):
-    identity = CoordinationIdentity(*roots.SETTINGS_IDENTITY)
-    return host.dispatch(sign_coordination_request(
-        key_store,
-        identity,
-        "workspace_roots_settings",
-        {"body": body},
-        request_id=str(uuid.uuid4()),
-    ))
+def _settings_request(host, _keys, body):
+    return host.dispatch({"method": "POST", "path": "/api/universal/workspace-roots", "body": body})
 
 
 def _container(grant):

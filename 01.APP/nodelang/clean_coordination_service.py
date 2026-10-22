@@ -2,25 +2,20 @@
 
 from __future__ import annotations
 
-import os
-import time
 from http.server import BaseHTTPRequestHandler
 import json
+import psutil
 from typing import Type
 
-from .cell_secret_keys import WindowsDpapiSigningKeyProvider
 from .http_server import ThreadingHTTPServer
-from .clean_coordination_host import (
-    CleanCoordinationHost,
-    SignedCoordinationRequest,
-)
-from .runtime_caller_capability import WindowsDpapiCallerKeyStore
+from .clean_coordination_host import CleanCoordinationHost
+from .cell_authorization import AuthorizationDenied
 from .runtime_activity import RuntimeClosing
-from .unified_authority_runtime import open_current_authority
 from .universal_cell import InvalidCell
 
 
-MAX_REQUEST_BYTES = 64 * 1024
+# A valid 64 KiB mailbox record can expand sixfold in a JSON envelope.
+MAX_REQUEST_BYTES = 512 * 1024
 
 
 class _CoordinationServer(ThreadingHTTPServer):
@@ -30,6 +25,12 @@ class _CoordinationServer(ThreadingHTTPServer):
     def __init__(self, address, handler, host: CleanCoordinationHost):
         self.coordination_host = host
         super().__init__(address, handler)
+
+    def shutdown(self, *, timeout_seconds: float = 30.0):
+        self.coordination_host.begin_shutdown()
+        super().shutdown()
+        if not self.coordination_host.activity.wait_for_idle(timeout_seconds):
+            raise TimeoutError('coordination requests have not settled; application owner stays open')
 
 
 class CleanCoordinationRequestHandler(BaseHTTPRequestHandler):
@@ -66,6 +67,20 @@ class CleanCoordinationRequestHandler(BaseHTTPRequestHandler):
         }:
             self._write(403, {"ok": False, "error": "host denied"})
             return False
+        from .application_machine_transport import MachinePipePeer, _observe_machine_process
+        try:
+            pid = next((row.pid for row in psutil.net_connections(kind='tcp4')
+                if tuple(row.laddr) == self.client_address
+                and tuple(row.raddr) == self.server.server_address and row.pid), None)
+            if pid is None:
+                raise PermissionError('local caller process is unavailable')
+            process = psutil.Process(pid)
+            if process.username() != psutil.Process().username():
+                raise PermissionError('local caller belongs to another user')
+            self.coordination_peer = _observe_machine_process(pid) or MachinePipePeer(pid, process.create_time())
+        except (psutil.Error, OSError) as refused:
+            self._write(403, {"ok": False, "error": str(refused)})
+            return False
         return True
 
     def do_GET(self) -> None:  # noqa: N802
@@ -74,11 +89,11 @@ class CleanCoordinationRequestHandler(BaseHTTPRequestHandler):
             return
         if not self._admit_local_request():
             return
-        authority = self.server.coordination_host.authority
+        graph_host = self.server.coordination_host
         self._write(200, {
             "ok": True,
-            "graph_id": authority.manifest.graph_id,
-            "revision": authority.store.revision,
+            "graph_id": graph_host.store.authority_identity,
+            "revision": graph_host.store.revision,
         })
 
     def do_POST(self) -> None:  # noqa: N802
@@ -96,86 +111,21 @@ class CleanCoordinationRequestHandler(BaseHTTPRequestHandler):
             return
         try:
             payload = json.loads(self.rfile.read(size).decode("utf-8"))
-            request = SignedCoordinationRequest.from_payload(payload)
-            result = self.server.coordination_host.dispatch(request)
+            json.dumps(payload, allow_nan=False)
+            result = self.server.coordination_host.dispatch(payload, peer=self.coordination_peer)
         except RuntimeClosing as exc:
             self._write(503, {"ok":False, "error":str(exc)})
             return
-        except (InvalidCell, UnicodeError, json.JSONDecodeError) as exc:
+        except AuthorizationDenied as exc:
+            self._write(403, {"ok": False, "error": str(exc)})
+            return
+        except (InvalidCell, ValueError, UnicodeError) as exc:
             self._write(400, {"ok": False, "error": str(exc)})
             return
         except Exception:
             self._write(500, {"ok": False, "error": "coordination failed closed"})
             return
         self._write(200, result)
-
-
-def _service_boot_note(line: str, runtime_root=None) -> None:
-    try:
-        from pathlib import Path as _Path
-        root = (
-            _Path(runtime_root)
-            if runtime_root
-            else _Path(os.environ.get("LOCALAPPDATA", "")) / "ArchHub" / "unified-authority"
-        )
-        if root.is_dir():
-            with (root / "boot-timing.log").open("a", encoding="utf-8") as log:
-                log.write(time.strftime("%Y-%m-%d %H:%M:%S") + "  boot phase: " + line + chr(10))
-    except Exception:
-        pass
-
-
-def build_service(
-    host: str = "127.0.0.1",
-    *,
-    port: int,
-    handler: Type[CleanCoordinationRequestHandler] = (
-        CleanCoordinationRequestHandler
-    ),
-    runtime_root,
-) -> tuple[_CoordinationServer, object]:
-    if host != "127.0.0.1" or type(port) is not int or not 1024 <= port <= 65535:
-        raise InvalidCell("clean coordination bind address is invalid")
-    provider = WindowsDpapiSigningKeyProvider(
-        WindowsDpapiSigningKeyProvider.default_path()
-    )
-    # The root is REQUIRED, with no default here. A library that defaults
-    # to the founder's live generation makes owning production the thing
-    # that happens when a caller says nothing -- and the owner fence cannot
-    # help, because a court that acquires a free live lock, asserts, and
-    # exits was a perfectly legitimate owner for its whole short life, and
-    # took the founder's service down when it left. Only the entry point
-    # below is allowed to name the live graph.
-    # The port is required for the same reason the root is, and the pair
-    # is worse than either alone: a caller who says nothing would take its
-    # own graph and the founder's port. During any restart window that
-    # binds 8474 successfully, backed by a throwaway fixture, and every
-    # agent reaching it enrols against a temp directory and is told ok.
-    _opening = time.monotonic()
-    location = open_current_authority(runtime_root, provider)
-    _service_boot_note(
-        "open_current_authority %.1fs" % (time.monotonic() - _opening),
-        runtime_root,
-    )
-    try:
-        _binding = time.monotonic()
-        key_store = WindowsDpapiCallerKeyStore(
-            WindowsDpapiCallerKeyStore.default_path()
-        )
-        graph_host = CleanCoordinationHost(
-            location.authority,
-            key_store,
-            runtime_root=runtime_root,
-        )
-        service = build_bound_service(graph_host, host, port, handler=handler)
-        _service_boot_note(
-            "bind coordination %.1fs" % (time.monotonic() - _binding),
-            runtime_root,
-        )
-    except Exception:
-        location.authority.store.close()
-        raise
-    return service, location
 
 
 def build_bound_service(
@@ -212,4 +162,4 @@ if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
 
 
-__all__ = ["CleanCoordinationRequestHandler", "MAX_REQUEST_BYTES", "build_bound_service", "build_service"]
+__all__ = ["CleanCoordinationRequestHandler", "MAX_REQUEST_BYTES", "build_bound_service"]

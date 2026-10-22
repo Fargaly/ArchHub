@@ -1,4 +1,4 @@
-"""RESUME5: real finalized owner survives a 2230 rollback and re-upgrade."""
+"""RESUME5: an explicitly bound historical owner survives rollback and re-upgrade."""
 import pytest
 import sqlite3
 
@@ -9,7 +9,7 @@ from nodelang.conversation_history import ConversationHistoryStore
 from nodelang.unified_authority import audit_authority_history, _current_head_member, _single_member
 from nodelang.universal_cell import Cell, CellStore, InvalidCell, NULL_CELL_ID
 from tests_replica.test_adopt_review_kernel import _rollback_kernel
-from tests_replica.test_adopt_signed_archive import _old_family, _partition
+from tests_replica.test_adopt_signed_archive import _old_family, _partition, _anchor_historical_owner
 from tests_replica import test_ogboot_upgrade_selection as profile_owner
 from tests_replica.test_ogboot_upgrade_selection import _closed_backup, _prepare
 
@@ -19,7 +19,7 @@ def isolated_profile(tmp_path, monkeypatch):
     return profile_owner.isolated_profile.__wrapped__(tmp_path, monkeypatch)
 
 
-def test_finalize_2230_save_reupgrade(isolated_profile, tmp_path, monkeypatch):
+def test_historical_signed_owner_2230_save_reupgrade(isolated_profile, tmp_path, monkeypatch):
     root = isolated_profile / 'ArchHub'
     root.mkdir()
     source = isolated_profile / 'ArchHub-Test/archhub-test.universal.sqlite3'
@@ -39,7 +39,7 @@ def test_finalize_2230_save_reupgrade(isolated_profile, tmp_path, monkeypatch):
         with ConversationHistoryStore(chosen, instance_id=history_id, store=store) as history:
             history.initialize_trace_maintenance()
             _partition(store, history, archive.trace_archive_path(chosen), cells, sessions)
-            authority = persistence.finalize_application_adoption(store, keys)
+            authority = _anchor_historical_owner(store, keys)
             assert authority is store._signed_commit_authority
             signed_revision = store.revision
     # This is the extracted shipping kernel, not a fake unsigned writer.
@@ -59,6 +59,8 @@ def test_finalize_2230_save_reupgrade(isolated_profile, tmp_path, monkeypatch):
     server = ApplicationServer(universal_state_path=chosen, **kwargs)
     try:
         store = server.universal_store
+        assert getattr(store, '_signed_commit_authority', None) is None
+        persistence.bind_selected_application_authority(store, keys)
         assert store.revision > signed_revision + 3
         for number in range(3):
             assert store.read('work:2230-resume5:' + str(number)).atom == b'2230 edit retained'
@@ -82,6 +84,7 @@ def test_finalize_2230_save_reupgrade(isolated_profile, tmp_path, monkeypatch):
     try:
         assert server.universal_store.read('work:resume5-after').atom == b'new signed save'
         assert server.universal_store.read('work:second-rollback:1').atom == b'second legacy save'
+        persistence.bind_selected_application_authority(server.universal_store, keys)
         audit_authority_history(server.universal_store._signed_commit_authority)
         authority = server.universal_store._signed_commit_authority
         snapshot = server.universal_store.snapshot()
@@ -99,7 +102,7 @@ def test_finalize_2230_save_reupgrade(isolated_profile, tmp_path, monkeypatch):
         with pytest.raises(InvalidCell, match='immutable signed head records'):
             persistence.bind_selected_application_authority(damaged, keys)
     assert opened_cold == []
-    print('ADOPT_RESUME5_ROLLBACK kernel=e41d56aa finalize=real unsigned_edits=5 bridges=2 reupgrade=PASS signed_save=PASS tamper=REFUSED archived_boot_reads=0')
+    print('ADOPT_RESUME5_ROLLBACK kernel=e41d56aa historical_owner=explicit unsigned_edits=5 bridges=2 reupgrade=PASS signed_save=PASS tamper=REFUSED archived_boot_reads=0')
 
 
 def test_partitioned_historical_suffix_uses_original_chain(tmp_path):

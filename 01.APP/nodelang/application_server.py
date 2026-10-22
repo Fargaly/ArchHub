@@ -128,7 +128,7 @@ from .laws_relation import (append_stage, attach_payload, build_aead_stage,
                              set_relation_parameter)
 from .map_import import resolve_map_path
 from .persistence import (export_subgraph, load_snapshot, legacy_application_sources,
-                           migrate_graph_source, migrate_local_truths, bind_selected_application_authority,
+                           migrate_graph_source, migrate_local_truths,
                            registry_from_store, save_snapshot,
                            save_snapshot_cooperative)
 from .ui_runtime import activate_ui, edit_ui_binding, project_document
@@ -6301,11 +6301,6 @@ class ApplicationServer:
                     universal_key_provider = WindowsDpapiSigningKeyProvider(
                         WindowsDpapiSigningKeyProvider.default_path()
                     )
-                try:
-                    bind_selected_application_authority(universal_store, universal_key_provider)
-                except Exception:
-                    universal_store.close()
-                    raise
                 if migrate_legacy_sources:
                     local_root = Path(legacy_state_directory).resolve()
                     try:
@@ -14499,11 +14494,22 @@ class ApplicationServer:
             self._release_runtime_ownership()
             return self._prove_runtime_backend_state("released")
 
-    def shared_agent_mail(self, method, body):
+    def shared_agent_mail(self, method, body, *, peer=None, account=None):
         """Trusted application caller, same sink/table; no request back into itself."""
         from .workshop_mailbox import call
-        return call(method, {key: value for key, value in body.items() if key != "context"},
-                    body.get("context", {}), database=self.universal_store.database_path)
+        with self.mutation_lock:
+            self.conversation_content._require_live_owner()
+            history = self.conversation_content._history
+            if history is None:
+                from .conversation_content import read_content_binding
+                registry = self.universal_registry
+                with self.universal_store.stable_snapshot() as snapshot:
+                    binding = read_content_binding(snapshot, registry.deliberation_protocol,
+                        application_root=registry.application_root, space_root=registry.workshop_root)
+                history = self.conversation_content._history_for(binding)
+            return call(method, {key: value for key, value in body.items() if key != "context"},
+                body.get("context", {}), database=self.universal_store.database_path,
+                history=history, peer=peer, account=account)
 
     def _dispatch_verified_machine_route(self, request):
         """Only the authenticated, decoded local pipe calls this wrapper."""
@@ -20775,6 +20781,11 @@ class ApplicationServer:
         """
         if self._close_completed:
             return None
+        coordination = getattr(self, '_coordination_surface', None)
+        if coordination is not None:
+            coordination.shutdown()
+            coordination.server_close()
+            self._coordination_surface = None
         for name in ('_snapshot_stop', '_live_stop', '_projection_prewarm_stop'):
             event = getattr(self, name, None)
             if event is not None:
@@ -20786,11 +20797,6 @@ class ApplicationServer:
         app_brain.unbind(getattr(self, 'universal_store', None))
         from app.secrets_store import unbind_settings_owner
         unbind_settings_owner(getattr(self, 'universal_store', None))
-        coordination = getattr(self, '_coordination_surface', None)
-        if coordination is not None:
-            coordination.shutdown()
-            coordination.server_close()
-            self._coordination_surface = None
         if recovery_directory is not None:
             from .application_recovery_close import preflight_recovery_close
             preflight_recovery_close(self, recovery_directory,

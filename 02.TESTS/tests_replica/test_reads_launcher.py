@@ -11,6 +11,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 INJECTION = r'''
 import faulthandler, json, os, socket, threading, time
+os.environ['ARCHHUB_COORDINATION_ENDPOINT'] = 'http://127.0.0.1:0/coordination'
 from pathlib import Path
 from types import SimpleNamespace
 from nodelang import application_server, model_catalogue, goose_runtime
@@ -92,7 +93,7 @@ def test_fresh_desktop_reads_and_first_send(tmp_path, rig_env, fake_provider):
         INJECTION + (FAKE_PROVIDER if fake_provider else ''), encoding='utf-8')
     env = isolated_env(dict(os.environ), profile, cdp_port=free_port(), lock_port=free_port())
     env.pop('OPENROUTER_API_KEY', None)
-    env.update(PYTHONPATH=str(injection) + os.pathsep + str(ROOT),
+    env.update(PYTHONPATH=os.pathsep.join(map(str, (injection, ROOT / '01.APP', ROOT / '03.TOOLS'))),
         ARCHHUB_GRAND_MAP_PATH=str(ROOT / "01.APP/nodelang/data/public_runtime_map.json"),
         ARCHHUB_TEST_NO_OPEN='1', QT_QPA_PLATFORM='offscreen')
     if rig_env:
@@ -102,7 +103,7 @@ import hashlib, json, os
 from nodelang.cell_secret_keys import WindowsDpapiSigningKeyProvider
 from nodelang.runtime_caller_capability import WindowsDpapiCallerKeyStore
 from nodelang.clean_runtime_bootstrap import provision_clean_runtime
-spec=Path('docs/SPEC.md').read_bytes()
+spec=Path('04.DOCS/SPEC.md').read_bytes()
 gm=json.dumps([{'key':'workspace-root','title':'Workspace Root','nodes':[],'wires':[],'cross':[]}],sort_keys=True,separators=(',',':')).encode()
 provision_clean_runtime(Path(os.environ['LOCALAPPDATA'])/'ArchHub/unified-authority', WindowsDpapiSigningKeyProvider(WindowsDpapiSigningKeyProvider.default_path()), WindowsDpapiCallerKeyStore(WindowsDpapiCallerKeyStore.default_path()), caller_key_id='founder.bootstrap', specification_source=spec, specification_sha256=hashlib.sha256(spec).hexdigest(), grand_map_source=gm, grand_map_sha256=hashlib.sha256(gm).hexdigest())
 """

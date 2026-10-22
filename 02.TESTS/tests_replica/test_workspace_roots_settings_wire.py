@@ -6,7 +6,7 @@ owner and dropped the owner's reason. An HTTP status with a JSON refusal is an
 answer; only a missing or unreadable answer is "not answering".
 
 A real CleanCoordinationRequestHandler on an ephemeral loopback port and the real
-production transport (_default_graph_context); nothing live is reachable."""
+production transport (_default_graph_context); nothing live is reachable; no key."""
 from __future__ import annotations
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -16,8 +16,6 @@ import pytest
 
 from nodelang import workspace_roots_catalogue as roots
 from nodelang.clean_coordination_service import build_bound_service
-from nodelang.clean_coordination_host import CoordinationIdentity
-from nodelang.runtime_caller_capability import WindowsDpapiCallerKeyStore
 from tests_replica.test_workspace_roots_graph_current import graph  # noqa: F401
 
 REFUSAL = "the workspace-roots signing key is refused: signing key unavailable: 0x80090022"
@@ -33,9 +31,6 @@ def _serve(server):
 def wire(graph, tmp_path, monkeypatch):
     """The production graph context, pointed at a real service over the fixture graph."""
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
-    monkeypatch.setattr(WindowsDpapiCallerKeyStore, "default_path",
-                        staticmethod(lambda: graph["keys"].path))
-    monkeypatch.setattr(roots, "canonical_instance", lambda root=None: graph["context"]["instance"])
     monkeypatch.setattr(roots, "graph_context", roots._default_graph_context)
     servers = []
 
@@ -50,9 +45,9 @@ def wire(graph, tmp_path, monkeypatch):
 
 def test_an_owner_refusal_over_http_reaches_the_window_with_its_reason(graph, wire):
     def refuse(body, *, admission):
-        assert admission == {"principal": CoordinationIdentity(*roots.SETTINGS_IDENTITY).normalized().key_id}
+        assert admission == {"principal": roots.settings_principal()}
         raise roots.WorkspaceRootRefused(REFUSAL)
-    graph["host"].bind_workspace_settings(graph["authority"], refuse)
+    graph["owner"]._clean_workspace_roots = refuse
     wire(build_bound_service(graph["host"], port=0))
     with pytest.raises(roots.WorkspaceRootRefused) as refused:
         roots.forward_workspace_settings({"action": "prepare", "change": {"action": "register"}})
@@ -62,12 +57,19 @@ def test_an_owner_refusal_over_http_reaches_the_window_with_its_reason(graph, wi
 
 def test_an_answer_over_http_still_comes_back(graph, wire):
     def answer(body, *, admission):
-        assert admission == {"principal": CoordinationIdentity(*roots.SETTINGS_IDENTITY).normalized().key_id}
+        assert admission == {"principal": roots.settings_principal()}
         return {"prepared": {"needs_key": True}}
-    graph["host"].bind_workspace_settings(graph["authority"], answer)
+    graph["owner"]._clean_workspace_roots = answer
     wire(build_bound_service(graph["host"], port=0))
     assert roots.forward_workspace_settings(
         {"action": "prepare", "change": {"action": "register"}}) == {"prepared": {"needs_key": True}}
+
+
+def test_the_state_over_http_is_the_owners_digest(graph, wire):
+    wire(build_bound_service(graph["host"], port=0))
+    state = roots.verified_graph_state()
+    assert state["graph_id"] == graph["authority"].manifest.graph_id
+    assert type(state["revision"]) is int and type(state["registry_digest"]) is str
 
 
 class _NotJson(BaseHTTPRequestHandler):
@@ -84,17 +86,4 @@ class _NotJson(BaseHTTPRequestHandler):
 def test_a_status_without_an_owner_answer_is_still_not_answering(graph, wire):
     wire(ThreadingHTTPServer(("127.0.0.1", 0), _NotJson))
     with pytest.raises(roots.WorkspaceRootRefused, match=r"not answering \(HTTPError\)"):
-        roots.forward_workspace_settings({"action": "list"})
-
-
-def test_canonical_instance_reads_an_adopted_generation(tmp_path):
-    # The founder's selected generation is adopted: adoption.json, no bootstrap.json.
-    # Settings -> Workspaces failed with "graph owner is not answering (FileNotFoundError)".
-    import json
-    generation = tmp_path / "generations" / "gen-adopted"
-    generation.mkdir(parents=True)
-    (tmp_path / "CURRENT").write_text("gen-adopted", encoding="ascii")
-    (generation / "adoption.json").write_text(json.dumps({
-        "graph_id": "gen-adopted", "key_id": "k", "key_version": 1, "key_fingerprint": "f"}), encoding="utf-8")
-    instance = roots.canonical_instance(tmp_path)
-    assert instance.graph_id == "gen-adopted"
+        roots.forward_workspace_settings({"action": "register"})

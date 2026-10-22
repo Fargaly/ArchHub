@@ -1,6 +1,9 @@
 """Behavioral checks for the shared-profile mailbox, without a desktop runtime."""
 import os
 import sqlite3
+import threading
+import socket
+from urllib.error import HTTPError
 from types import SimpleNamespace
 
 import psutil
@@ -103,10 +106,13 @@ def test_native_parent_keeps_a_short_lived_declaration_current(monkeypatch):
 
 def test_trusted_application_turns_keep_separate_session_rows(database):
     from nodelang.application_server import ApplicationServer
-    owner = SimpleNamespace(universal_store=SimpleNamespace(database_path=database))
-    for session in ("turn-A", "turn-B"):
-        ApplicationServer.shared_agent_mail(owner, "declare", {"task": "Test", "paths": [os.getcwd()],
-            "status": "working", "request_id": "NEWAPP", "context": {"archhub/sessionID": session}})
+    with ConversationHistoryStore(database, instance_id="mailbox-test", create=False) as history:
+        owner = SimpleNamespace(universal_store=SimpleNamespace(database_path=database),
+            mutation_lock=threading.RLock(), conversation_content=SimpleNamespace(
+                _history=history, _require_live_owner=lambda: None))
+        for session in ("turn-A", "turn-B"):
+            ApplicationServer.shared_agent_mail(owner, "declare", {"task": "Test", "paths": [os.getcwd()],
+                "status": "working", "request_id": "NEWAPP", "context": {"archhub/sessionID": session}})
     with sqlite3.connect(database) as connection:
         assert connection.execute("select count(*) from workshop_declarations").fetchone()[0] == 2
 
@@ -124,3 +130,47 @@ def test_graph_database_routes_to_its_conversation_store(tmp_path):
     assert sent["message_id"]
     rows = sqlite3.connect(content).execute("SELECT content FROM messages").fetchall()
     assert rows == [("To founder:\nhello",)]
+
+
+def test_account_attribution_scopes_mailbox_retries(database):
+    body = {"to": "*", "text": "A deliberate message", "idempotency_key": "one-retry"}
+    first = call("send", body, {}, database=database, peer=peer(), account="first@example.test")
+    second = call("send", body, {}, database=database, peer=peer(), account="second@example.test")
+    assert first['message_id'] != second['message_id']
+    assert first['sender_key'] != second['sender_key']
+    assert first['sender_label'].endswith(' / first@example.test')
+    assert second['sender_label'].endswith(' / second@example.test')
+    page = call('read', {'since': 0}, {}, database=database, peer=peer())
+    assert {first['sender_label'], second['sender_label']} <= {row['label'] for row in page['peers']}
+
+
+def test_closed_app_mailbox_uses_existing_profile_after_connection_refusal(database, monkeypatch):
+    from nodelang import workshop_mailbox
+    with socket.socket() as reserved:
+        reserved.bind(('127.0.0.1', 0))
+        port = reserved.getsockname()[1]
+        monkeypatch.setenv('ARCHHUB_COORDINATION_ENDPOINT', 'http://127.0.0.1:%d/coordination' % port)
+        monkeypatch.setattr(workshop_mailbox, 'profile_database', lambda: database)
+        answer = call('send', {'to': '*', 'text': 'no listener fallback', 'idempotency_key': 'fallback'}, {})
+        assert answer['message_id']
+
+
+def test_http_refusal_is_never_replayed_to_the_profile(monkeypatch):
+    from nodelang import workshop_mailbox
+    class RefusingOwner:
+        def open(self, *_args, **_kwargs):
+            raise HTTPError('http://127.0.0.1/coordination', 403, 'refused', {}, None)
+    monkeypatch.setattr(workshop_mailbox, 'build_opener', lambda *_args: RefusingOwner())
+    monkeypatch.setattr(workshop_mailbox, 'profile_database', lambda: pytest.fail('refused send was replayed'))
+    with pytest.raises(HTTPError):
+        call('send', {'to': '*', 'text': 'one attempt', 'idempotency_key': 'one-attempt'}, {})
+
+
+def test_pending_to_verified_account_keeps_one_native_declaration(database):
+    body = {'task': 'One current task', 'paths': [os.getcwd()], 'status': 'working', 'request_id': 'NOKEY'}
+    pending = call('declare', body, {'threadId': 'same-native'}, database=database, peer=peer())
+    verified = call('declare', body, {'threadId': 'same-native'}, database=database,
+        peer=peer(), account='owner@example.test')
+    assert pending['declaration']['root'] == verified['declaration']['root']
+    with sqlite3.connect(database) as connection:
+        assert connection.execute('SELECT COUNT(*) FROM workshop_declarations').fetchone()[0] == 1

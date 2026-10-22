@@ -278,10 +278,10 @@ def test_real_application_receipts_survive_new_generation_and_server_reopen(isol
         assert [row for row in migrated[table] if row[0] <= revision] == expected[table]
     original_ids = {row[0] for row in expected["current_cells"]}
     assert [row for row in migrated["current_cells"] if row[0] in original_ids] == expected["current_cells"]
-    # Boot adopts the physical journal; the existing idle owner anchors its
-    # signed authority after archival. Emulate that phase on this small fixture.
+    # Historical signed data remains explicitly verifiable without binding it at boot.
+    from tests_replica.test_adopt_signed_archive import _anchor_historical_owner
     with CellStore(chosen) as background_store:
-        persistence.finalize_application_adoption(background_store, keys)
+        _anchor_historical_owner(background_store, keys)
     assert (generation / "adoption.json").is_file()
     assert _bytes(preserved) == before
     assert manifest.read_bytes() == manifest_before
@@ -290,7 +290,8 @@ def test_real_application_receipts_survive_new_generation_and_server_reopen(isol
     assert (generation / "migration.json").is_file()
     reopened = ApplicationServer(universal_state_path=chosen, **kwargs)
     try:
-        assert reopened.universal_store._signed_commit_authority.store is reopened.universal_store
+        authority = persistence.bind_selected_application_authority(reopened.universal_store, keys)
+        assert authority.store is reopened.universal_store
         assert _verify_application_agent_receipts(reopened.universal_store,
             reopened.universal_registry.authorization, reopened.universal_registry.agent_body) == evidence
     finally:
@@ -319,7 +320,7 @@ def test_real_application_receipts_survive_new_generation_and_server_reopen(isol
             open_unified_authority(check, adopted_manifest, keys)
         assert getattr(check, "_signed_commit_authority", None) is None
 
-def test_migrated_selected_profile_binds_signed_owner_for_coordination(isolated_profile, tmp_path, monkeypatch):
+def test_migrated_selected_profile_binds_coordination_without_signed_owner(isolated_profile, tmp_path, monkeypatch):
     from nodelang.application_server import ApplicationServer
     from nodelang.cell_secret_keys import MemorySigningKeyProvider
     from nodelang import clean_coordination_service, desktop
@@ -342,17 +343,9 @@ def test_migrated_selected_profile_binds_signed_owner_for_coordination(isolated_
     chosen = _prepare(root, key_provider=keys)
     assert chosen != stale and chosen == legacy
     assert persistence.selected_application_generation(chosen)
-    # Signed coordination is the post-archival background phase, never boot's
-    # full-graph adoption work. Preserve the same actual signed-owner court.
-    with CellStore(chosen) as background_store:
-        persistence.finalize_application_adoption(background_store, keys)
     reopened = ApplicationServer(universal_state_path=chosen, **kwargs)
     try:
-        authority = getattr(reopened.universal_store, "_signed_commit_authority", None)
-        assert authority is not None, "migrated selected profile has no bound signed commit owner; coordination cannot attach"
-        assert authority.store is reopened.universal_store
-        # Only the physical socket service is replaced. Authority binding,
-        # coordination graph host and catalogue installation remain real.
+        assert getattr(reopened.universal_store, '_signed_commit_authority', None) is None
         services = []
 
         def no_socket_service(host, **_kwargs):
@@ -364,6 +357,7 @@ def test_migrated_selected_profile_binds_signed_owner_for_coordination(isolated_
         monkeypatch.setattr(clean_coordination_service, "build_bound_service", no_socket_service)
         assert desktop.bind_coordination_surface(reopened, root) is services[0]
         assert reopened._coordination_surface is services[0]
+        assert services[0].graph_host.store is reopened.universal_store
         reopened._coordination_thread.join(timeout=1)
         assert not reopened._coordination_thread.is_alive()
     finally:

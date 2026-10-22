@@ -700,10 +700,10 @@ def _boot_unsampled():
     from nodelang.desktop import bind_coordination_surface
     try:
         if bind_coordination_surface(server, state_dir) is not None:
-            print('  coordination: bound signed owner', flush=True)
+            print('  coordination: bound application owner', flush=True)
     except Exception as refused:
         server._coordination_surface_error = type(refused).__name__
-        print("  coordination: unavailable (%s: %s); account sign-in is independent of transport key recovery" %
+        print("  coordination: unavailable (%s: %s)" %
               (type(refused).__name__, str(refused)[:200]), flush=True)
     # Chat through a signed-in local assistant (model route local-cli/<name>)
     # runs through this same broker's host process, never a second runner.
@@ -2222,15 +2222,6 @@ def _maintain_legacy_conversations():
                         progress.update(label='Compacting archived trace space', background=True, **event)
                         if _boot_surface is not None:
                             _boot_surface.progress.migration(progress)
-                    from nodelang.persistence import finalize_application_adoption
-                    idle_check()
-                    registry = server.universal_registry
-                    authority = finalize_application_adoption(server.universal_store,
-                        registry.authorization.relationship_broker._key_provider,
-                        check=idle_check)
-                    if authority is not None and getattr(server, '_coordination_surface', None) is None:
-                        from nodelang.desktop import bind_coordination_surface
-                        bind_coordination_surface(server, state_dir)
                     result = {**result, **compact_trace_journal(server.universal_store,
                         check=idle_check, on_progress=compact_progress)}
         _trace_retention_cursor = result['next_cursor']

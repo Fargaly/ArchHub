@@ -23,6 +23,18 @@ from tests_replica import test_ogboot_upgrade_selection as upgrade
 isolated_profile = upgrade.isolated_profile
 
 
+def _anchor_historical_owner(store, keys):
+    """Create an old signed-history fixture explicitly, never through startup."""
+    from nodelang.authority_adoption import adopt_application_authority
+    from nodelang.unified_authority import bind_signed_commit_owner
+    authority = adopt_application_authority(store, keys,
+        source_history_digest=store.revision_chain_digest())
+    generation = persistence._application_generation_directory(store.database_path)
+    (generation / 'adoption.json').write_text(authority.manifest.to_json(), encoding='utf-8')
+    bind_signed_commit_owner(authority)
+    return authority
+
+
 def _old_family(store, session, monkeypatch):
     import nodelang.universal_cell as kernel
     old = time.time() - 40 * 86400
@@ -90,7 +102,7 @@ def test_recurrent_archive_keeps_signed_head_and_reopens_without_cold_reads(isol
             history.initialize_trace_maintenance()
             cold = archive.trace_archive_path(chosen)
             _partition(store, history, cold, first, first_sessions)
-            authority = persistence.finalize_application_adoption(store, keys)
+            authority = _anchor_historical_owner(store, keys)
             assert authority is store._signed_commit_authority
             second, second_sessions = _old_family(store,
                 "app:workshop:signed-review-after", monkeypatch)
@@ -110,7 +122,8 @@ def test_recurrent_archive_keeps_signed_head_and_reopens_without_cold_reads(isol
         observing.setattr(sqlite3, "connect", observed)
         reopened = ApplicationServer(universal_state_path=chosen, **kwargs)
         try:
-            assert reopened.universal_store._signed_commit_authority.store is reopened.universal_store
+            authority = persistence.bind_selected_application_authority(reopened.universal_store, keys)
+            assert authority.store is reopened.universal_store
             assert _verify_application_agent_receipts(reopened.universal_store,
                 reopened.universal_registry.authorization, reopened.universal_registry.agent_body) == receipts
             assert reopened.universal_store.read(saved.id) == saved

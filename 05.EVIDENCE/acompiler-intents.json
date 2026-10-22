@@ -7950,6 +7950,18 @@
         "02.TESTS/tests_replica/test_watcher_actions.py",
         "02.TESTS/tests_js/newapp_account.test.cjs"
       ]
+    },
+    "HOSTSKILLS": {
+      "source": "Founder HOSTSKILLS six existing actions, local fixture bundles, graph-native package registration, exact-digest one approval, no script execution, canonical writes or installation.",
+      "scope": [
+        "01.APP/nodelang/host_skill_owner.py",
+        "01.APP/nodelang/canvas_graph_owner.py",
+        "01.APP/nodelang/workshop_api.py",
+        "01.APP/nodelang/social_approval.py",
+        "01.APP/nodelang/studio/api.js",
+        "02.TESTS/tests_replica/test_host_skill_actions.py",
+        "02.TESTS/tests_js/newapp_account.test.cjs"
+      ]
     }
   }
 }

@@ -8075,6 +8075,33 @@
         "02.TESTS/tests_js/studio_canvaslook.test.cjs",
         "02.TESTS/tests_js/studio_canvasfeel.test.cjs"
       ]
+    },
+    "WSINJECT": {
+      "source": "Founder WSINJECT 2026-10-22: Session Link is the core of Workshop; directly inject addressed public notes into existing native sessions, pending content plus MCP notifications for every other connector, once-only reminder and coordinator escalation, visible per-message delivery state. Isolated lane patch and targeted courts; 717 lands and installs. No second channel/store/schema, installer, live profiles, WSOWNER or CANVASFEEL changes.",
+      "scope": [
+        "01.APP/nodelang/agent_runtime_registry.py",
+        "01.APP/nodelang/application_server.py",
+        "01.APP/nodelang/installed_workshop_coordination.py",
+        "01.APP/nodelang/native_agent_mcp.py",
+        "01.APP/nodelang/session_link/ask.mjs",
+        "01.APP/nodelang/session_link/bridge.mjs",
+        "01.APP/nodelang/session_link/native.mjs",
+        "01.APP/nodelang/session_link/opencode-plugin.mjs",
+        "01.APP/nodelang/session_link/worker.mjs",
+        "01.APP/nodelang/session_link_transport.py",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/ds_workshop3.jsx",
+        "01.APP/nodelang/workshop_api.py",
+        "01.APP/nodelang/workshop_delivery_state.py",
+        "01.APP/nodelang/workshop_mailbox.py",
+        "02.TESTS/tests/session_link_workshop_delivery.mjs",
+        "02.TESTS/tests/session_link_wsinject.mjs",
+        "02.TESTS/tests_js/studio_wsinject.test.cjs",
+        "02.TESTS/tests_replica/test_wsinject.py",
+        "04.DOCS/CLEAN-COORDINATION-ENDPOINT.md",
+        "04.DOCS/DECISIONS.md",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

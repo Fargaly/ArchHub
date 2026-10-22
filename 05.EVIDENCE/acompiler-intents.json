@@ -28,7 +28,12 @@
         "02.TESTS/tests_replica/test_workspace_roots_graph_current.py",
         "02.TESTS/tests_replica/test_workspace_roots_settings_forward.py",
         "02.TESTS/tests_replica/test_workspace_roots_settings_wire.py",
-        "04.DOCS/CLEAN-COORDINATION-ENDPOINT.md"
+        "04.DOCS/CLEAN-COORDINATION-ENDPOINT.md",
+        "04.DOCS/DECISIONS.md",
+        "01.APP/nodelang/clean_agent_coordination.py",
+        "01.APP/nodelang/clean_model_adapter.py",
+        "02.TESTS/tests_replica/test_clean_agent_coordination.py",
+        "02.TESTS/tests_replica/test_workshop_clean_archive.py"
       ]
     },
     "RESEARCHNODES": {

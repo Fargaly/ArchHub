@@ -226,7 +226,8 @@ class WorkshopInjection:
     """Application-owned delivery of existing public room rows, with durable receipts."""
     def __init__(self, owner, transport, *, reminder_minutes: float = 5.0,
                  escalation_minutes: float = 10.0, tick_seconds: float = 1.0,
-                 injection_timeout_seconds: float = 10.0, coordinator_title: str = "717 coordinator (live)"):
+                 injection_timeout_seconds: float = 10.0, coordinator_title: str = "717 coordinator (live)",
+                 backfill_minutes: float = 10.0):
         values = (reminder_minutes, escalation_minutes, tick_seconds, injection_timeout_seconds)
         if (any(type(value) not in (int, float) or not math.isfinite(value) or value <= 0 for value in values)
                 or escalation_minutes <= reminder_minutes):
@@ -242,6 +243,9 @@ class WorkshopInjection:
         self._stop, self._wake = threading.Event(), threading.Event()
         self._thread = None
         self._cursor, self._pending = 0, {}
+        # Build 31 (2026-10-23): the first boot injected the whole room backlog, with reminders and
+        # escalations, into every live session. Older notes stay readable; only recent ones are injected.
+        self.backfill_seconds = float(backfill_minutes) * 60
         self._settled = set()
         self._tick_lock = threading.Lock()
         self.last_error = None
@@ -314,6 +318,7 @@ class WorkshopInjection:
                 self._tick(history, now)
 
     def _tick(self, history, now):
+        cutoff = datetime.fromtimestamp(now - self.backfill_seconds, timezone.utc).isoformat()
         with history._transaction():
             rows = history._db.execute("SELECT * FROM messages WHERE conversation_id=? AND public=1 "
                 "AND category=? AND sequence>? ORDER BY sequence LIMIT 128", (ROOM, CATEGORY, self._cursor)).fetchall()
@@ -321,7 +326,8 @@ class WorkshopInjection:
                 "AND category=? ORDER BY sequence DESC LIMIT 128", (ROOM, CATEGORY)).fetchall()
             for raw in [*rows, *latest]:
                 message = history._message(raw)
-                if agent_addressed(message) and message["id"] not in self._settled:
+                if (agent_addressed(message) and message["id"] not in self._settled
+                        and str(message.get("created_at") or "") >= cutoff):
                     self._pending[message["id"]] = message["sequence"]
             declarations = read_declarations(history._db, include_archived=True)
         # Replies are new room notes even when their parent already escalated/settled.

@@ -476,3 +476,24 @@ def test_running_application_http_send_reaches_codex_bridge_without_read(owner, 
         process.wait(timeout=5)
         process.stdout.close()
         process.stderr.close()
+
+
+def test_old_room_notes_are_readable_but_never_injected(room):
+    """Build 31 replayed hours of room backlog, with reminders, into every live session."""
+    from datetime import datetime, timedelta, timezone
+    owner, history = room
+    declare(owner, {'threadId':'codex-fixture'})
+    old = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    declared = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+    with history._transaction(write=True):
+        # The live agents had declared hours before the backlog notes were written.
+        history._db.execute("UPDATE workshop_declarations SET record=json_set(record,'$.updated_at',?)", (declared,))
+        history.append(mail.ROOM, author='Fixture sender', category=mail.CATEGORY,
+            content='To codex:\nTwo hours old', idempotency_key='stale-note', created_at=old)
+    native = NativeFixture()
+    delivery = mail.WorkshopInjection(owner, native)
+    delivery.tick()
+    assert native.turns == []
+    note = send(owner)
+    delivery.tick()
+    assert len(native.turns) == 1 and note['message_id'] in native.turns[0][1]

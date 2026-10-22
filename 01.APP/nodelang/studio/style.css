@@ -75,3 +75,26 @@ button{transition:background .14s,color .14s,box-shadow .14s}button:hover{filter
 
 /* The companion uses the same composer in a constrained, two-row toolbar. */
 .pet-bubble>form{grid-template-columns:minmax(0,1fr);min-width:0;max-width:100%}.pet-bubble .composer-scope{min-width:0;max-width:100%}.pet-bubble .composer-scope>.tab-button{min-width:0;max-width:calc(100% - 38px);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.pet-bubble .composer-input{min-width:0;max-width:100%}.pet-bubble .composer-tools{display:grid;grid-template-columns:repeat(5,28px) minmax(0,1fr) 30px 30px;gap:4px;min-width:0}.pet-bubble .composer-tools>.fill{display:none}.pet-bubble .composer-tools>select{grid-column:1/7;grid-row:2;min-width:0;width:100%;max-width:100%}.pet-bubble .composer-tools>button{width:28px!important;min-width:0!important;padding:0!important}.pet-bubble .composer-tools>button:nth-last-child(2){grid-column:7;grid-row:2;width:30px!important}.pet-bubble .composer-tools>button:last-child{grid-column:8;grid-row:2;width:30px!important}
+/* CANVASLOOK: plate 4.3/4.5/4.7/5.3, projected from the existing graph theme. */
+[data-screen="canvas"] .node-canvas{background:var(--canvas-bg);background-image:radial-gradient(var(--canvas-line) 1px,transparent 1px);background-size:24px 24px;isolation:isolate}
+[data-screen="canvas"] [data-graph-node]{isolation:isolate}
+[data-screen="canvas"] .canvas-port-row{position:relative;height:22px;display:flex;align-items:center;padding:0 12px;font-size:12px}
+[data-screen="canvas"] .canvas-card-param{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;border-top:1px solid var(--canvas-line-soft);padding:4px 10px;font-size:12px;color:var(--canvas-muted)}
+[data-screen="canvas"] .canvas-card-param>span:last-child{text-align:right;font-family:var(--mono,monospace);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+[data-screen="canvas"] .canvas-node-menu{opacity:0;cursor:pointer}
+[data-screen="canvas"] [data-ds-node]:hover .canvas-node-menu,[data-screen="canvas"] [data-ds-node]:focus-within .canvas-node-menu{opacity:1}
+[data-screen="canvas"] .canvas-members{display:flex;flex-wrap:wrap;gap:6px;padding-top:4px}
+[data-screen="canvas"] .canvas-member{display:inline-flex;align-items:center;gap:6px;max-width:100%;height:24px;padding:0 8px 0 4px;border-radius:6px;border:1px solid var(--canvas-line);background:var(--canvas-soft);color:var(--canvas-ink);font-size:12px;cursor:pointer}
+[data-screen="canvas"] .canvas-member>span{display:grid;place-items:center;width:16px;height:16px;border-radius:4px;font-size:10px;font-weight:600}
+[data-screen="canvas"] .canvas-toolbar{bottom:92px;left:16px;gap:2px;padding:3px;border:1px solid var(--canvas-line);border-radius:5px;background:var(--canvas-panel);box-shadow:none;font-size:11px}
+[data-screen="canvas"] .library-shelf{background:var(--canvas-panel);border-color:var(--canvas-line);padding:10px 8px;gap:10px}
+[data-screen="canvas"] .library-shelf .listbutton{border-radius:5px}
+[data-screen="canvas"] .library-shelf input{background:var(--canvas-soft);border-color:var(--canvas-line);border-radius:5px}
+[data-screen="canvas"] .family-chips button{border-color:var(--canvas-line);color:var(--canvas-ink);font-size:12px;padding:3px 8px}
+[data-screen="canvas"] .family-chips button[aria-pressed=true]{background:var(--canvas-accent-dim);border-color:var(--canvas-accent-dim);color:var(--canvas-accent)}
+[data-screen="canvas"] .shelf-node{min-height:32px;padding:6px 10px}
+[data-screen="canvas"] .shelf-node:hover{background:var(--canvas-hover)}
+[data-screen="canvas"] .shelf-tabs .tab-button{font-size:12px}
+[data-screen="canvas"] .shelf-footer{border-color:var(--canvas-line)}
+[data-screen="canvas"] .shelf-node-copy{display:grid;gap:3px;min-width:0}
+[data-screen="canvas"] .shelf-node-copy small{color:var(--canvas-muted);font-size:11px;line-height:1.4}

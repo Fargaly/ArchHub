@@ -15,9 +15,10 @@
     SettingControl
   } = window.UI;
   const curve = (a, b) => `M${a.x} ${a.y} C${(a.x + b.x) / 2} ${a.y},${(a.x + b.x) / 2} ${b.y},${b.x} ${b.y}`;
+  const isGroup = n => n.children?.length > 0 || n.kind === 'Group' || n.kind === 'Workshop';
   const typeColor = t => ({
     elements: A.accent,
-    text: A.cyan,
+    text: A.inkSoft,
     number: A.warn,
     boolean: A.purple,
     file: A.ok,
@@ -25,42 +26,6 @@
     any: A.inkSoft,
     view: A.cyan
   })[t] || A.accent;
-  function NodeProperties({
-    node,
-    socket,
-    openNode
-  }) {
-    const u = useApp(),
-      meta = api.getNodeParameters(node).filter(p => !node.parameterPresentation?.[p.key]?.hidden).sort((a, b) => (node.parameterPresentation?.[a.key]?.order ?? 0) - (node.parameterPresentation?.[b.key]?.order ?? 0)),
-      groups = [...new Set(meta.map(p => p.group))];
-    const [changed, setChanged] = React.useState(false);
-    return <div className="node-properties"><div className="spread" style={{
-        margin: '8px 0 12px'
-      }}><span className="label">PROPERTIES</span><button className="icon-button" aria-label="Node actions" title="Node actions" onClick={event => executeAction("projects.ds_screens.NodeActions.1", {node,openNode,u}, event)}><window.AHIcon name="more" /></button></div><label className="parameter-row"><span>Name</span><input aria-label="Node name" value={node.title} onChange={e => u.act(() => api.renameNode(node.id, e.target.value))} /></label><div className="spread" style={{
-        padding: '12px 0',
-        fontSize: 12
-      }}><span>Changed only</span><D.Toggle label="Changed only" checked={changed} onCheckedChange={setChanged} /></div>{groups.map(group => <section key={group} className="parameter-group"><h3>{group}</h3>{meta.filter(p => p.group === group && (!changed || node.params[p.key] !== node.defaults[p.key])).map(p => {
-          const value = node.params[p.key],
-            dirty = JSON.stringify(value) !== JSON.stringify(node.defaults[p.key]);
-          return <div key={p.key} className="parameter-row" data-parameter={p.key}><label htmlFor={'param-' + node.id + '-' + p.key}>{dirty && <i className="changed-dot" />}{p.label}</label><div className="param-editor">{p.type === 'boolean' ? <span className="spread"><span className="mono muted">{value ? 'Yes' : 'No'}</span><D.Toggle label={p.label} checked={value} onCheckedChange={v => u.act(() => api.setNodeParam(node.id, p.key, v))} /></span> : p.options ? <select id={'param-' + node.id + '-' + p.key} aria-label={p.label} value={value} onChange={e => u.act(() => api.setNodeParam(node.id, p.key, e.target.value))}>{p.options.map(o => <option key={o} value={o}>{p.optionLabels?.[o] || o}</option>)}</select> : <div className="flex" style={{
-                gap: 3
-              }}><input id={'param-' + node.id + '-' + p.key} aria-label={p.label} type={p.type === 'number' ? 'number' : p.type === 'color' ? 'color' : 'text'} value={value} step={p.unit === 'mm' ? 100 : 1} onChange={e => u.act(() => api.setNodeParam(node.id, p.key, p.type === 'number' ? Number(e.target.value) : e.target.value))} /> {p.type === 'path' && <label className="icon-button" title={'Choose ' + p.label} aria-label={'Choose ' + p.label}><window.AHIcon name="folder" size={15} /><input className="sr-only" aria-label={'Browse ' + p.label} type="file" onChange={e => {
-                    const f = e.target.files?.[0];
-                    if (f) u.act(() => api.setNodeParam(node.id, p.key, f.name));
-                    e.target.value = '';
-                  }} /></label>}{p.unit && <span className="mono muted unit">{p.unit}</span>}</div>}</div><div className="flex parameter-socket-group" style={{
-              gap: 2
-            }}>{dirty && <button className="icon-button reset-param" aria-label={'Reset ' + p.label} title={'Reset ' + p.label} onClick={event => executeAction("projects.ds_screens.UActApiResetNodeParamNode.2", {api,node,p,u}, event)}><window.AHIcon name="undo" size={12} /></button>}{socket(node, {
-                id: p.key,
-                name: p.label,
-                type: p.type === 'number' ? 'number' : p.type === 'boolean' ? 'boolean' : p.type === 'path' ? 'file' : 'text'
-              }, 'in')}</div></div>;
-        })}</section>)}<window.UI.NodeRunPolicy id={node.id} /><button className="listbutton flex muted" onClick={event => executeAction("projects.ds_screens.AddParameter.3", {node,u}, event)}><window.AHIcon name="plus" size={14} />Add parameter</button><div className="spread" style={{
-        paddingTop: 18
-      }}><span className="muted mono" style={{
-          fontSize: 11
-        }}>{node.status}</span><Btn p sm onClick={event => executeAction("projects.ds_screens.Run.4", {api,node,u}, event)}>Run</Btn></div></div>;
-  }
   function Canvas({
     embedded = false
   }) {
@@ -71,14 +36,14 @@
     const zoomMin = Number(s.canvasPolicy?.zoom_min ?? .1), zoomMax = Number(s.canvasPolicy?.zoom_max ?? 4);
     const [selected, setSelected] = React.useState(u.selectedNodeId && s.graph.nodes.some(n => n.id === u.selectedNodeId) ? [u.selectedNodeId] : []),
       [wireId, setWireId] = React.useState(null),
-      [tab, setTab] = React.useState('Parameters'),
       [parent, setParent] = React.useState(null),
       [viewport, setViewport] = React.useState({zoom: Math.max(zoomMin, Math.min(zoomMax, (zoomRow?.value || 80) / 100)), pan: {x: 0, y: 0}}),
       [draft, setDraft] = React.useState(null),
       [marquee, setMarquee] = React.useState(null),
       [from, setFrom] = React.useState(null),
       [paths, setPaths] = React.useState([]),
-      [pinnedInspector, setPinnedInspector] = React.useState(null);
+      [layout, setLayout] = React.useState({scope: null, positions: {}}),
+      [wireTab, setWireTab] = React.useState('Rules');
     const area = React.useRef(),
       world = React.useRef(),
       gesture = React.useRef(null),
@@ -87,6 +52,7 @@
       touches = React.useRef(new Map()),
       zoomWrites = React.useRef(Promise.resolve()),
       pendingZoomWrites = React.useRef(0);
+    const fittedScope = React.useRef(null), clipId = 'canvas-wires-' + React.useId().replace(/[^a-zA-Z0-9-]/g, '');
     const {zoom, pan} = viewport;
     const [requestState, setRequestState] = React.useState('waiting');
     const [requestError, setRequestError] = React.useState('');
@@ -127,16 +93,38 @@
         setRequestState('error');
       });
     };
-    React.useEffect(() => { reload(); }, []);
+    React.useEffect(() => { reload(); u.setLibraryOpen?.(true); }, []);
     React.useEffect(() => {
       if (requestState === 'loaded' || requestState === 'empty')
         setRequestState(s.graph.nodes.length ? 'loaded' : 'empty');
     }, [s.graph.nodes.length]);
     // A node whose group is not a node at this level is drawn here, never dropped.
     const atLevel = n => (n.parent || null) === parent || (parent === null && !s.graph.nodes.some(x => x.id === n.parent));
-    const visible = s.graph.nodes.filter(atLevel),
-      node = s.graph.nodes.find(n => n.id === (pinnedInspector || selected.at(-1))),
+    const scope = s.graph.id + ':' + (parent || ''), sourceNodes = s.graph.nodes.filter(atLevel);
+    const visible = sourceNodes.map(n => ({...n, ...(layout.scope === scope ? layout.positions[n.id] : {})})),
+      node = s.graph.nodes.find(n => n.id === selected.at(-1)),
       wire = s.graph.wires.find(w => w.id === wireId);
+    React.useLayoutEffect(() => {
+      if (requestState !== 'loaded' || !world.current) return;
+      const boxes = [], positions = {}, minX = Math.min(...sourceNodes.map(n => n.x), 0),
+        rowWidth = Math.max(760, Math.ceil(Math.sqrt(sourceNodes.length)) * 310), prior = layout.scope === scope ? layout.positions : {};
+      for (const n of sourceNodes) {
+        const previous = prior[n.id], unchanged = previous?.sourceX === n.x && previous?.sourceY === n.y;
+        const el = world.current.querySelector('[data-graph-node="' + n.id + '"]'),
+          box = {x:unchanged ? previous.x : n.x, y:unchanged ? previous.y : n.y, w:(el?.offsetWidth || el?.getBoundingClientRect().width / view.current.zoom || 224) + (isGroup(n) ? 10 : 0),
+            h:(el?.offsetHeight || el?.getBoundingClientRect().height / view.current.zoom || 160) + (isGroup(n) ? 10 : 0)};
+        let hit;
+        while ((hit = boxes.find(b => box.x < b.x+b.w+36 && box.x+box.w+36 > b.x && box.y < b.y+b.h+48 && box.y+box.h+48 > b.y))) {
+          box.x = hit.x + hit.w + 36;
+          if (box.x + box.w > minX + rowWidth) {
+            box.x = minX;
+            box.y = Math.max(box.y, hit.y+hit.h) + 64;
+          }
+        }
+        positions[n.id] = {x:box.x,y:box.y,w:box.w,h:box.h,sourceX:n.x,sourceY:n.y}; boxes.push(box);
+      }
+      setLayout(old => old.scope === scope && JSON.stringify(old.positions) === JSON.stringify(positions) ? old : {scope,positions});
+    }, [requestState, scope, s.graph.nodes]);
     React.useEffect(() => {
       const listener = e => {
         if (e.target.closest('input,textarea,select,[contenteditable="true"],[role="textbox"]')) return;
@@ -155,7 +143,7 @@
           e.preventDefault();
           remove();
         }
-        if (e.key === 'Enter' && node?.children) setParent(node.id);
+        if (e.key === 'Enter' && node && isGroup(node)) setParent(node.id);
         if (e.key === 'Escape') {
           setFrom(null);
           if (parent) setParent(null);
@@ -193,7 +181,7 @@
         a: pos(w.from, 'out', w.fromPort),
         b: pos(w.to, 'in', w.toPort)
       })).filter(p => p.a && p.b));
-    }, [s.revision, parent, draft, requestState]);
+    }, [s.revision, parent, draft, requestState, layout]);
     React.useEffect(() => u.setSelectedNodeId(selected.at(-1) || null), [selected.join(',')]);
     const group = async () => {
       const g = await u.act(() => api.groupNodes(selected));
@@ -284,7 +272,7 @@
           e.stopPropagation();
           arm();
         }
-      }}><D.Socket t={p.type} size={10} filled={s.graph.wires.some(w => side === 'out' ? w.from === n.id && w.fromPort === p.id : w.to === n.id && w.toPort === p.id)} /></span>;
+      }}><D.Socket t={p.type} list={p.list} size={10} filled={s.graph.wires.some(w => side === 'out' ? w.from === n.id && w.fromPort === p.id : w.to === n.id && w.toPort === p.id)} /></span>;
     };
     const startNode = (e, n) => {
       if (e.button !== 0 || e.target.closest('button,input,select,[data-endpoint]')) return;
@@ -293,7 +281,7 @@
       setSelected(e.shiftKey ? [...new Set([...selected, n.id])] : selected.includes(n.id) ? selected : [n.id]);
       const moving = selected.includes(n.id) ? selected : [n.id];
       gesture.current = {
-        nodes: s.graph.nodes.filter(x => moving.includes(x.id)).map(x => ({
+        nodes: visible.filter(x => moving.includes(x.id)).map(x => ({
           id: x.id,
           x: x.x,
           y: x.y
@@ -370,8 +358,8 @@
       const w = area.current.clientWidth, h = area.current.clientHeight;
       const boxes = [...world.current.querySelectorAll('[data-graph-node]')].map(el => {
         const n = visible.find(n => n.id === el.dataset.graphNode);
-        return {x: n.x, y: n.y, w: el.offsetWidth || el.getBoundingClientRect().width / view.current.zoom || 250,
-          h: el.offsetHeight || el.getBoundingClientRect().height / view.current.zoom || 240};
+        return {x: n.x, y: n.y, w: n.w || el.offsetWidth || el.getBoundingClientRect().width / view.current.zoom || 224,
+          h: n.h || el.offsetHeight || el.getBoundingClientRect().height / view.current.zoom || 160};
       });
       if (!boxes.length) return;
       const minX = Math.min(...boxes.map(b => b.x)), minY = Math.min(...boxes.map(b => b.y)),
@@ -380,6 +368,11 @@
         z = Math.max(zoomMin, Math.min(zoomMax, Number(s.canvasPolicy?.zoom_fit_max ?? 1.25), (w-60) / Math.max(1,width), (h-60) / Math.max(1,height)));
       updateView({zoom: z, pan: {x: (w-width*z)/2-minX*z, y: (h-height*z)/2-minY*z}});
     };
+    React.useEffect(() => {
+      if (requestState !== 'loaded' || layout.scope !== scope || fittedScope.current === scope) return;
+      fittedScope.current = scope;
+      fit();
+    }, [requestState, scope, layout]);
     React.useEffect(() => {
       const el = area.current;
       if (!el) return;
@@ -409,7 +402,7 @@
         if (n.params.targetGraph) u.act(() => api.selectGraph(n.params.targetGraph));else u.show('Graphs');
       } else if (n.kind === 'Agent') u.show('Agent', {
         id: n.params.provider
-      });else if (n.kind === 'Research') u.go('xray');else if (n.kind === 'History') u.go('receipts');else if (['Remember', 'Recall'].includes(n.kind)) u.go('brain');else if (['Social media', 'Read video', 'Read mail', 'Read file', 'Tutorial', 'Digest'].includes(n.kind)) u.go('social');else if (n.kind === 'X-RAY') u.go('xray');else if (['Account access', 'Billing & usage', 'Office invitations'].includes(n.kind)) u.go('access');else if (n.kind === 'Model routing') u.go('routing');else if (n.kind === 'Workshop') u.go('workshop');else if (n.kind === 'BABOOM') u.go('baboom');else if (n.kind === 'Watcher') u.go('watcher');else if (n.children) {
+      });else if (n.kind === 'Research') u.go('xray');else if (n.kind === 'History') u.go('receipts');else if (['Remember', 'Recall'].includes(n.kind)) u.go('brain');else if (['Social media', 'Read video', 'Read mail', 'Read file', 'Tutorial', 'Digest'].includes(n.kind)) u.go('social');else if (n.kind === 'X-RAY') u.go('xray');else if (['Account access', 'Billing & usage', 'Office invitations'].includes(n.kind)) u.go('access');else if (n.kind === 'Model routing') u.go('routing');else if (n.kind === 'Workshop') u.go('workshop');else if (n.kind === 'BABOOM') u.go('baboom');else if (n.kind === 'Watcher') u.go('watcher');else if (isGroup(n)) {
         setParent(n.id);
         setSelected([]);
       } else u.show('Node', {
@@ -419,16 +412,26 @@
     const body = <div data-screen="canvas" style={{
       display: 'grid',
       gridTemplateRows: '50px minmax(0,1fr)',
-      minHeight: 0
+      minHeight: 0,
+      '--canvas-bg': A.bgCanvas,
+      '--canvas-panel': A.bgPanel,
+      '--canvas-soft': A.bgSoft,
+      '--canvas-hover': A.bgHover,
+      '--canvas-line': A.line,
+      '--canvas-line-soft': A.lineSoft,
+      '--canvas-ink': A.ink,
+      '--canvas-muted': A.inkSoft,
+      '--canvas-accent': A.accent,
+      '--canvas-accent-dim': A.accentDim
     }}>
   <div className="spread" style={{
         padding: '0 18px',
         borderBottom: '1px solid ' + A.lineSoft,
-        background: '#0f0f13'
-      }}><div className="flex"><button className="button-reset muted" onClick={event => executeAction("projects.ds_screens.NavigateHome.5", {u}, event)}>{s.graph.name} ›</button>{parent ? <Btn sm ghost onClick={event => executeAction("projects.ds_screens.Parent.6", {parent,s,setParent,setSelected}, event)}>← Parent</Btn> : <button className="button-reset flex" title="Graphs" aria-label="Graphs" onClick={event => executeAction("projects.ds_screens.Graphs.7", {u}, event)}>{s.graph.name}<window.AHIcon name="more" size={16} /></button>}<Chip>{visible.length} nodes</Chip><Btn sm ghost onClick={event => executeAction("projects.ds_screens.Workspaces.8", {u}, event)}>Workspaces · {s.workspaces.length}</Btn></div><div className="flex"><button className="icon-button" aria-label="Toggle Library" title="Library" aria-expanded={u.libraryOpen} onClick={event => executeAction("projects.ds_screens.ToggleLibrary.9", {u}, event)}><window.AHIcon name="library" /></button><select aria-label="Wire visibility" value={s.graph.wireVisibility || 'Visible'} onChange={e => u.act(() => api.setWireVisibility(e.target.value))}>{['Visible', 'Faint', 'Hidden'].map(x => <option key={x}>{x}</option>)}</select><Btn sm title="Group · Ctrl G" onClick={event => executeAction("projects.ds_screens.Group.10", {group}, event)} disabled={selected.length < 2}>Group</Btn><Btn sm onClick={event => executeAction("projects.ds_screens.Undo.11", {api,u}, event)} title="Undo · Ctrl Z">↶</Btn><Btn sm onClick={event => executeAction("projects.ds_screens.Redo.12", {api,u}, event)} title="Redo · Ctrl Shift Z">↷</Btn><Btn sm onClick={event => executeAction("projects.ds_screens.Arrange.13", {api,u}, event)}>Arrange</Btn><Btn sm onClick={event => executeAction("projects.ds_screens.SaveSkill.14", {u}, event)}>Save skill</Btn><Btn p sm onClick={event => executeAction("projects.ds_screens.Run.15", {api,u}, event)}>▶ Run</Btn></div></div>
+        background: A.bg
+      }}><div className="flex"><button className="button-reset muted" onClick={event => executeAction("projects.ds_screens.NavigateHome.5", {u}, event)}>{s.graph.name} ›</button>{parent ? <Btn variant="controls" sm ghost onClick={event => executeAction("projects.ds_screens.Parent.6", {parent,s,setParent,setSelected}, event)}>← Parent</Btn> : <button className="button-reset flex" title="Graphs" aria-label="Graphs" onClick={event => executeAction("projects.ds_screens.Graphs.7", {u}, event)}>{s.graph.name}<window.AHIcon name="more" size={16} /></button>}<Chip>{visible.length} nodes</Chip><Btn variant="controls" sm ghost onClick={event => executeAction("projects.ds_screens.Workspaces.8", {u}, event)}>Workspaces · {s.workspaces.length}</Btn></div><div className="flex"><button className="icon-button" aria-label="Toggle Library" title="Library" aria-expanded={u.libraryOpen} onClick={event => executeAction("projects.ds_screens.ToggleLibrary.9", {u}, event)}><window.AHIcon name="library" /></button><select aria-label="Wire visibility" value={s.graph.wireVisibility || 'Visible'} onChange={e => u.act(() => api.setWireVisibility(e.target.value))}>{['Visible', 'Faint', 'Hidden'].map(x => <option key={x}>{x}</option>)}</select><Btn variant="controls" sm title="Group · Ctrl G" onClick={event => executeAction("projects.ds_screens.Group.10", {group}, event)} disabled={selected.length < 2}>Group</Btn><Btn variant="controls" sm onClick={event => executeAction("projects.ds_screens.Undo.11", {api,u}, event)} title="Undo · Ctrl Z">↶</Btn><Btn variant="controls" sm onClick={event => executeAction("projects.ds_screens.Redo.12", {api,u}, event)} title="Redo · Ctrl Shift Z">↷</Btn><Btn variant="controls" sm onClick={event => executeAction("projects.ds_screens.Arrange.13", {api,u}, event)}>Arrange</Btn><Btn variant="controls" sm onClick={event => executeAction("projects.ds_screens.SaveSkill.14", {u}, event)}>Save skill</Btn><Btn variant="controls" p sm onClick={event => executeAction("projects.ds_screens.Run.15", {api,u}, event)}>▶ Run</Btn></div></div>
   <div style={{
         display: 'grid',
-        gridTemplateColumns: (u.libraryOpen ? '248px ' : '') + 'minmax(0,1fr) 340px',
+        gridTemplateColumns: (u.libraryOpen ? '248px ' : '') + 'minmax(0,1fr)' + (wire ? ' 320px' : ''),
         minHeight: 0
       }}>{u.libraryOpen && <window.UI.LibraryShelf onClose={() => u.setLibraryOpen(false)} />}
    <div ref={area} className="node-canvas" tabIndex={0} aria-label="Graph canvas" style={{touchAction:'none'}} title="Wheel to zoom · Middle or Space-drag to pan · Shift-drag to select · Double-click to fit" onPointerDownCapture={e => {
@@ -483,7 +486,6 @@
               x: (e.clientX - r.left - pan.x) / zoom,
               y: (e.clientY - r.top - pan.y) / zoom
             }));
-            u.setLibraryOpen(false);
           }
         }} onContextMenu={e => {
           e.preventDefault();
@@ -513,12 +515,16 @@
      <svg className={visible.some(n => n.status === 'Running') ? 'running-wires' : ''} width="2000" height="1600" style={{
               position: 'absolute',
               inset: 0,
+              overflow: 'visible',
               pointerEvents: 'none'
-            }}>{paths.map(({
+            }}><defs><clipPath id={clipId} clipPathUnits="userSpaceOnUse"><path clipRule="evenodd" d={'M-100000 -100000H100000V100000H-100000Z '+visible.map(n=>{
+              const p=draft?.positions?.[n.id] || n, b=layout.positions[n.id];
+              return `M${p.x-3} ${p.y-3}h${(b?.w || 224)+6}v${(b?.h || 160)+6}h-${(b?.w || 224)+6}Z`;
+            }).join(' ')} /></clipPath></defs><g clipPath={`url(#${clipId})`}>{paths.map(({
                 w,
                 a,
                 b
-              }) => <g key={w.id}><path d={curve(a, b)} stroke="transparent" strokeWidth="18" fill="none" style={{
+              }) => <g key={w.id}><path d={curve(a, b)} stroke="transparent" strokeWidth="16" fill="none" style={{
                   pointerEvents: 'stroke',
                   cursor: 'pointer'
                 }} role="button" tabIndex={0} aria-label={'Inspect wire ' + w.id} onClick={e => {
@@ -530,102 +536,56 @@
                     setWireId(w.id);
                     setSelected([]);
                   }
-                }} /><path d={curve(a, b)} stroke={wireId === w.id ? A.ink : typeColor(w.type)} strokeWidth={wireId === w.id ? 4 : 2} opacity={s.graph.wireVisibility === 'Hidden' || s.graph.nodes.find(n => n.id === w.from)?.portVisibility?.[w.fromPort] === 'Hidden' ? 0 : s.graph.wireVisibility === 'Faint' || s.graph.nodes.find(n => n.id === w.from)?.portVisibility?.[w.fromPort] === 'Faint' ? .2 : 1} fill="none" /></g>)}</svg>
+                }} />{wireId === w.id && s.graph.wireVisibility !== 'Hidden' && <path d={curve(a,b)} stroke={A.ink} strokeWidth="8" opacity=".22" fill="none" />}<path d={curve(a, b)} stroke={typeColor(w.type)} strokeWidth="2" strokeLinecap="round" strokeDasharray={w.type === 'event' ? '6 2' : undefined} opacity={s.graph.wireVisibility === 'Hidden' || s.graph.nodes.find(n => n.id === w.from)?.portVisibility?.[w.fromPort] === 'Hidden' ? 0 : s.graph.wireVisibility === 'Faint' || s.graph.nodes.find(n => n.id === w.from)?.portVisibility?.[w.fromPort] === 'Faint' ? .2 : .9} fill="none" /></g>)}</g></svg>
      {visible.map(n => {
-              const position = draft?.positions?.[n.id] || (draft?.id === n.id ? draft : n);
-              return <div key={n.id} data-graph-node={n.id} style={{
-                position: 'absolute',
-                opacity: n.frozen ? .5 : 1,
-                left: position.x,
-                top: position.y
-              }} onDoubleClick={() => openNode(n)}>
-      <D.Node w={250} glyph={n.children ? '◎' : n.kind === 'Watcher' ? '◉' : n.kind === 'Workshop' ? '◎' : n.kind === 'Level' ? '#' : '⬡'} gc={typeColor(n.outputs[0]?.type)} title={n.title} sub={n.children ? `Group · ${n.children.length} nodes` : n.kind} selected={selected.includes(n.id)} foot={(n.status.startsWith('Error') ? '⚠ ' : n.status.startsWith('Warning') ? '△ ' : n.previewOff ? '◌ ' : 'ⓘ ') + (n.status.startsWith('Error') || n.status.startsWith('Warning') ? n.status : n.previewOff ? 'Preview off' : n.status) + (n.elapsedMs ? ' · ' + n.elapsedMs + ' ms' : '')} footc={n.status === 'Done' ? A.ok : n.status.includes('approval') ? A.warn : A.inkSoft} style={{
-                  borderRadius: 12,
-                  background: 'linear-gradient(180deg,#1c1c22,#17171c)',
-                  boxShadow: '0 8px 24px #0007'
-                }} headerProps={{
-                  className: 'node-header',
-                  onPointerDown: e => startNode(e, n),
-                  title: n.children ? n.children.map(id => s.graph.nodes.find(x => x.id === id)?.title).join(' → ') : n.title,
-                  onPointerMove: move,
-                  onPointerUp: end,
-                  onPointerCancel: () => {
-                    gesture.current = null;
-                    setDraft(null);
-                  }
-                }} headerEnd={<button className="button-reset" aria-label={n.title + ' menu'} onClick={event => executeAction("projects.ds_screens.NodeMenu.16", {n,openNode,setSelected,u}, event)}>⋯</button>}>
-       <div style={{
-                    padding: '4px 14px 10px'
-                  }}>{Object.entries(n.params).filter((_, i) => i < 3).map(([k, v]) => <div className="spread" key={k} style={{
-                      fontSize: 12,
-                      minHeight: 30
-                    }}><span className="flex">{socket(n, {
-                          id: k,
-                          name: k,
-                          type: typeof v === 'number' ? 'number' : typeof v === 'boolean' ? 'boolean' : 'text'
-                        }, 'in')}<span className="muted">{k}</span></span><button className="button-reset" style={{
-                        background: '#24242b',
-                        borderRadius: 5,
-                        padding: '2px 8px'
-                      }} onClick={event => executeAction("projects.ds_screens.SetSelectedNId.17", {n,setSelected}, event)}>{String(v)}</button></div>)}</div>
-       <div className="spread" style={{
-                    borderTop: '1px solid ' + A.line,
-                    padding: '6px 0',
-                    alignItems: 'start'
-                  }}><div>{n.inputs.map(p => <div key={p.id} className="flex" style={{
-                        gap: 2,
-                        fontSize: 12,
-                        marginLeft: -11
-                      }}>{socket(n, p, 'in')}{p.name}</div>)}</div><div>{n.outputs.map(p => <div key={p.id} className="flex" style={{
-                        gap: 2,
-                        fontSize: 12,
-                        marginRight: -11,
-                        justifyContent: 'end'
-                      }}>{p.name}{socket(n, p, 'out')}</div>)}</div></div>
-       <div className="flex" style={{
-                    padding: '6px 12px'
-                  }}><Btn sm ghost onClick={event => executeAction("projects.ds_screens.Open.18", {n,openNode}, event)}>Open</Btn><Btn sm ghost onClick={event => executeAction("projects.ds_screens.Run.19", {api,n,u}, event)}>Run</Btn></div>
-      </D.Node>
-     </div>;
-            })}
+       const position = draft?.positions?.[n.id] || (draft?.id === n.id ? draft : n), grouped = isGroup(n),
+         category = s.catalogue?.find(c => c.id === n.kind || c.name === n.kind || c.descriptor?.engine === n.kind),
+         categoryName = (category?.family || n.kind).toLowerCase(),
+         [categoryColor, categoryIcon] = ({get:[A.cyan,'folder'],host:[A.cyan,'folder'],input:[A.blue,'code'],trigger:[A.cyan,'clock'],
+           change:[A.warn,'edit'],shape:[A.warn,'group'],transform:[A.warn,'edit'],document:[A.accent,'docs'],
+           decide:[A.purple,'brain'],logic:[A.purple,'code'],ai:[A.purple,'brain'],agent:[A.purple,'user'],
+           see:[A.ok,'eye'],watch:[A.ok,'eye'],check:[A.ok,'check'],send:[A.ok,'send'],output:[A.ok,'export']})[categoryName] || [A.blue,'canvas'],
+         color = grouped ? A.purple : categoryColor,
+         members = (n.children || []).map(id => s.graph.nodes.find(x => x.id === id)).filter(Boolean),
+         state = n.frozen ? 'Disabled' : n.previewOff ? 'Preview off' : n.status || 'Idle', stateColor = /error|fail|refus/i.test(state) ? A.err : /approval|wait|warning|changed/i.test(state) ? A.warn : /running/i.test(state) ? A.accent : /done|ran/i.test(state) ? A.ok : A.inkSoft;
+       return <div key={n.id} data-graph-node={n.id} style={{position:'absolute',width:224,opacity:n.frozen ? .5 : 1,left:position.x,top:position.y}} onDoubleClick={() => openNode(n)}>
+         <D.Node w={224} glyph={<window.AHIcon name={grouped ? 'group' : categoryIcon} size={12} />} gc={color}
+           title={n.title} sub={grouped ? `group · ${members.length} members` : category?.name || n.kind}
+           stacked={grouped} edge={!n.inputs.length && n.outputs.length ? 'l' : n.inputs.length && !n.outputs.length ? 'r' : undefined}
+           selected={selected.includes(n.id)} run={/running/i.test(state)} dashed={n.frozen}
+           foot={state + (n.elapsedMs ? ' · ' + n.elapsedMs + ' ms' : '')} footc={stateColor}
+           ins={n.inputs} outs={n.outputs} renderPort={(p,i,side) => <div className="canvas-port-row" style={{justifyContent:side === 'out' ? 'flex-end' : undefined}}><span style={{position:'absolute',[side === 'in' ? 'left' : 'right']:-11,top:0}}>{socket(n,p,side)}</span>{p.name}</div>}
+           headerProps={{className:'node-header',onPointerDown:e=>startNode(e,n),onPointerMove:move,onPointerUp:end,
+             onPointerCancel:()=>{gesture.current=null;setDraft(null);}}}
+           headerEnd={<button className="button-reset canvas-node-menu" aria-label={n.title+' menu'} title={n.title+' actions'} onClick={event=>executeAction('projects.ds_screens.NodeMenu.16',{n,openNode,setSelected,u},event)}>⋯</button>}
+           chip={grouped && <div className="canvas-members">{members.map(m=><button key={m.id} data-group-member={m.id} className="canvas-member" title={'Open '+m.title} onClick={event=>executeAction('projects.controls.activate',{handler:()=>{setParent(n.id);setSelected([m.id]);}},event)}><span style={{background:color,color:A.onFill}}>{m.title.slice(0,1)}</span>{m.title}</button>)}</div>}>
+           {!grouped && Object.entries(n.params).slice(0,3).map(([k,v])=><div className="canvas-card-param" key={k}><span>{k}</span><span>{typeof v === 'object' ? JSON.stringify(v) : String(v)}</span></div>)}
+         </D.Node>
+       </div>;
+     })}
     </div>
     {from && <Chip c={A.warn}>Choose an input socket to connect</Chip>}
-    <div className="canvas-toolbar"><Btn sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom">{Math.round(zoom * 100)}%</button><Btn sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><Btn sm ghost onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</Btn></div>
+    <div className="canvas-toolbar"><Btn variant="controls" sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom">{Math.round(zoom * 100)}%</button><Btn variant="controls" sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><Btn variant="controls" sm ghost onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</Btn></div>
     <div style={{
             position: 'absolute',
             bottom: 20,
             left: '50%',
             transform: 'translateX(-50%)'
-          }}><Btn onClick={event => executeAction("projects.ds_screens.AddANodeCtrlK.24", {u}, event)}>/ Add a node · Ctrl K</Btn></div>
+          }}><Btn variant="controls" onClick={event => executeAction("projects.ds_screens.AddANodeCtrlK.24", {u}, event)}>/ Add a node · Ctrl K</Btn></div>
    </div>
-   {node || wire ? <aside className="pane inspector" style={{
-          borderLeft: '1px solid ' + A.line,
-          padding: 16
-        }}><div className="spread"><div><h2 style={{
-                fontSize: 16
-              }}>{wire ? 'Wire' : node.title}</h2><p className="muted mono" style={{
-                fontSize: 10,
-                marginTop: 4
-              }}>{wire ? wire.type : node.kind}</p></div><button className="icon-button" title={pinnedInspector ? 'Unpin properties' : 'Pin properties'} aria-label={pinnedInspector ? 'Unpin properties' : 'Pin properties'} onClick={event => executeAction("projects.ds_screens.SetPinnedInspectorPinnedInspectorNullNodeId.25", {node,pinnedInspector,setPinnedInspector}, event)}><window.AHIcon name="pin" size={15} /></button><Btn sm ghost aria-label="Close properties" onClick={event => executeAction("projects.ds_screens.CloseProperties.26", {setPinnedInspector,setSelected,setWireId}, event)}>×</Btn></div>
-    {wire ? <div className="grid" style={{
-            marginTop: 16
-          }}><div className="flex">{['Rules', 'Data'].map(t => <button className="tab-button" key={t} aria-pressed={tab === t} onClick={event => executeAction("projects.ds_screens.SetTabT.27", {setTab,t}, event)}>{t}</button>)}</div><label className="grid">Pass when<input aria-label="Wire rule" value={wire.rule} onChange={e => u.act(() => api.setWireRule(wire.id, e.target.value))} /></label>{tab === 'Data' && <window.UI.Table rows={[{
-              from: s.graph.nodes.find(n => n.id === wire.from)?.title,
-              to: s.graph.nodes.find(n => n.id === wire.to)?.title,
-              type: wire.type
-            }]} />}<Btn danger sm onClick={event => executeAction("projects.ds_screens.DeleteWire.28", {api,u,wire}, event)}>Delete wire…</Btn></div> : <>{selected.length > 1 && <window.UI.MixedProperties ids={selected} />}<NodeProperties key={node.id} node={node} socket={socket} openNode={openNode} />{node.children && <window.UI.CompositeParameters id={node.id} />}<details style={{
-              marginTop: 16
-            }}><summary>Results &amp; ports</summary><div className="grid" style={{
-                paddingTop: 14
-              }}><window.UI.Table rows={node.output || []} /><Btn sm onClick={event => executeAction("projects.ds_screens.Export.29", {node,u}, event)}>Export</Btn>{[...node.inputs, ...node.outputs].map(p => <div className="flex" key={p.id}>{socket(node, p, node.outputs.includes(p) ? 'out' : 'in')}{p.name} · {p.type}</div>)}</div></details></>}
-   </aside> : <aside className="pane inspector" style={{
-          padding: 18
-        }}><window.UI.GraphProperties /></aside>}
+   {wire && <aside className="pane inspector" style={{borderLeft:'1px solid '+A.line,padding:16}} aria-label="Wire">
+     <div className="spread"><h2>Wire</h2><Btn variant="controls" sm ghost aria-label="Close wire" onClick={event=>executeAction('projects.controls.activate',{handler:()=>setWireId(null)},event)}>×</Btn></div>
+     <div className="grid" style={{marginTop:16}}><div className="flex">{['Rules','Data'].map(t=><button className="tab-button" key={t} aria-pressed={wireTab===t} onClick={event=>executeAction('projects.ds_screens.SetTabT.27',{setTab:setWireTab,t},event)}>{t}</button>)}</div>
+       <label className="grid">Pass when<input aria-label="Wire rule" value={wire.rule || ''} onChange={e=>u.act(()=>api.setWireRule(wire.id,e.target.value))} /></label>
+       {wireTab==='Data' && <window.UI.Table rows={[{from:s.graph.nodes.find(n=>n.id===wire.from)?.title,to:s.graph.nodes.find(n=>n.id===wire.to)?.title,type:wire.type}]} />}
+       <Btn variant="controls" danger sm onClick={event=>executeAction('projects.ds_screens.DeleteWire.28',{api,u,wire},event)}>Delete wire…</Btn>
+     </div></aside>}
+
   </div>
  </div>;
     return <>
       {requestState === 'waiting' && <div role="status">Loading your graph…</div>}
-      {requestState === 'error' && <div role="alert">{requestError}<Btn onClick={event => executeAction('projects.controls.activate', {handler:reload}, event)}>Retry loading graph</Btn></div>}
+      {requestState === 'error' && <div role="alert">{requestError}<Btn variant="controls" onClick={event => executeAction('projects.controls.activate', {handler:reload}, event)}>Retry loading graph</Btn></div>}
       {requestState === 'empty' && <><p className="muted">Add a node from the Library to start this graph.</p>{body}</>}
       {requestState === 'loaded' && <>{body}</>}
     </>;
@@ -659,32 +619,6 @@
   window.UI.SystemGraph = SystemGraph;
 
 // WIRE-projects: each rendered callback is registered with its executable owner.
-function projectsdsscreensjsxNodeActions1({node,openNode,u}, event) {
-  const handler = () => u.show('Node menu', {
-          id: node.id,
-          open: () => openNode(node)
-        });
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-function projectsdsscreensjsxUActApiResetNodeParamNode2({api,node,p,u}, event) {
-  const handler = () => u.act(() => api.resetNodeParam(node.id, p.key));
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-function projectsdsscreensjsxAddParameter3({node,u}, event) {
-  const handler = () => u.show('Add parameter', {
-        id: node.id
-      });
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-function projectsdsscreensjsxRun4({api,node,u}, event) {
-  const handler = async () => {
-          const t = await u.act(() => api.runNode(node.id));
-          if (t?.approvalId) u.show('Approve', {
-            id: t.approvalId
-          });
-        };
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
 function projectsdsscreensjsxNavigateHome5({u}, event) {
   const handler = () => u.go('home');
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
@@ -748,18 +682,6 @@ function projectsdsscreensjsxNodeMenu16({n,openNode,setSelected,u}, event) {
                 };
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }
-function projectsdsscreensjsxSetSelectedNId17({n,setSelected}, event) {
-  const handler = () => setSelected([n.id]);
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-function projectsdsscreensjsxOpen18({n,openNode}, event) {
-  const handler = () => openNode(n);
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-function projectsdsscreensjsxRun19({api,n,u}, event) {
-  const handler = () => u.act(() => api.runNode(n.id));
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
 function projectsdsscreensjsxZoomOut20({zoomAt,view}, event) {
   const handler = () => zoomAt(view.current.zoom / 1.2);
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
@@ -780,28 +702,12 @@ function projectsdsscreensjsxAddANodeCtrlK24({u}, event) {
   const handler = () => u.show('Search');
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }
-function projectsdsscreensjsxSetPinnedInspectorPinnedInspectorNullNodeId25({node,pinnedInspector,setPinnedInspector}, event) {
-  const handler = () => setPinnedInspector(pinnedInspector ? null : node?.id);
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-function projectsdsscreensjsxCloseProperties26({setPinnedInspector,setSelected,setWireId}, event) {
-  const handler = () => {
-              setPinnedInspector(null);
-              setSelected([]);
-              setWireId(null);
-            };
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
 function projectsdsscreensjsxSetTabT27({setTab,t}, event) {
   const handler = () => setTab(t);
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }
 function projectsdsscreensjsxDeleteWire28({api,u,wire}, event) {
   const handler = () => u.confirm('Delete this wire?', () => api.deleteWire(wire.id));
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-function projectsdsscreensjsxExport29({node,u}, event) {
-  const handler = () => u.download('Results', node.id);
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }
 function projectsdsscreensjsxSettings30({u}, event) {
@@ -817,10 +723,6 @@ function projectsdsscreensjsxOpen32({p,u}, event) {
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }
 const PROJECT_ACTIONS = {
-  "projects.ds_screens.NodeActions.1": "projectsdsscreensjsxNodeActions1",
-  "projects.ds_screens.UActApiResetNodeParamNode.2": "projectsdsscreensjsxUActApiResetNodeParamNode2",
-  "projects.ds_screens.AddParameter.3": "projectsdsscreensjsxAddParameter3",
-  "projects.ds_screens.Run.4": "projectsdsscreensjsxRun4",
   "projects.ds_screens.NavigateHome.5": "projectsdsscreensjsxNavigateHome5",
   "projects.ds_screens.Parent.6": "projectsdsscreensjsxParent6",
   "projects.ds_screens.Graphs.7": "projectsdsscreensjsxGraphs7",
@@ -833,22 +735,16 @@ const PROJECT_ACTIONS = {
   "projects.ds_screens.SaveSkill.14": "projectsdsscreensjsxSaveSkill14",
   "projects.ds_screens.Run.15": "projectsdsscreensjsxRun15",
   "projects.ds_screens.NodeMenu.16": "projectsdsscreensjsxNodeMenu16",
-  "projects.ds_screens.SetSelectedNId.17": "projectsdsscreensjsxSetSelectedNId17",
-  "projects.ds_screens.Open.18": "projectsdsscreensjsxOpen18",
-  "projects.ds_screens.Run.19": "projectsdsscreensjsxRun19",
   "projects.ds_screens.ZoomOut.20": "projectsdsscreensjsxZoomOut20",
   "projects.ds_screens.ResetZoom.21": "projectsdsscreensjsxResetZoom21",
   "projects.ds_screens.ZoomIn.22": "projectsdsscreensjsxZoomIn22",
   "projects.ds_screens.Fit.23": "projectsdsscreensjsxFit23",
   "projects.ds_screens.AddANodeCtrlK.24": "projectsdsscreensjsxAddANodeCtrlK24",
-  "projects.ds_screens.SetPinnedInspectorPinnedInspectorNullNodeId.25": "projectsdsscreensjsxSetPinnedInspectorPinnedInspectorNullNodeId25",
-  "projects.ds_screens.CloseProperties.26": "projectsdsscreensjsxCloseProperties26",
   "projects.ds_screens.SetTabT.27": "projectsdsscreensjsxSetTabT27",
   "projects.ds_screens.DeleteWire.28": "projectsdsscreensjsxDeleteWire28",
-  "projects.ds_screens.Export.29": "projectsdsscreensjsxExport29",
   "projects.ds_screens.Settings.30": "projectsdsscreensjsxSettings30",
   "projects.ds_screens.OpenParameters.31": "projectsdsscreensjsxOpenParameters31",
   "projects.ds_screens.Open.32": "projectsdsscreensjsxOpen32"
 };
-window.registerActions(PROJECT_ACTIONS, {projectsdsscreensjsxNodeActions1,projectsdsscreensjsxUActApiResetNodeParamNode2,projectsdsscreensjsxAddParameter3,projectsdsscreensjsxRun4,projectsdsscreensjsxNavigateHome5,projectsdsscreensjsxParent6,projectsdsscreensjsxGraphs7,projectsdsscreensjsxWorkspaces8,projectsdsscreensjsxToggleLibrary9,projectsdsscreensjsxGroup10,projectsdsscreensjsxUndo11,projectsdsscreensjsxRedo12,projectsdsscreensjsxArrange13,projectsdsscreensjsxSaveSkill14,projectsdsscreensjsxRun15,projectsdsscreensjsxNodeMenu16,projectsdsscreensjsxSetSelectedNId17,projectsdsscreensjsxOpen18,projectsdsscreensjsxRun19,projectsdsscreensjsxZoomOut20,projectsdsscreensjsxResetZoom21,projectsdsscreensjsxZoomIn22,projectsdsscreensjsxFit23,projectsdsscreensjsxAddANodeCtrlK24,projectsdsscreensjsxSetPinnedInspectorPinnedInspectorNullNodeId25,projectsdsscreensjsxCloseProperties26,projectsdsscreensjsxSetTabT27,projectsdsscreensjsxDeleteWire28,projectsdsscreensjsxExport29,projectsdsscreensjsxSettings30,projectsdsscreensjsxOpenParameters31,projectsdsscreensjsxOpen32});
+window.registerActions(PROJECT_ACTIONS, {projectsdsscreensjsxNavigateHome5,projectsdsscreensjsxParent6,projectsdsscreensjsxGraphs7,projectsdsscreensjsxWorkspaces8,projectsdsscreensjsxToggleLibrary9,projectsdsscreensjsxGroup10,projectsdsscreensjsxUndo11,projectsdsscreensjsxRedo12,projectsdsscreensjsxArrange13,projectsdsscreensjsxSaveSkill14,projectsdsscreensjsxRun15,projectsdsscreensjsxNodeMenu16,projectsdsscreensjsxZoomOut20,projectsdsscreensjsxResetZoom21,projectsdsscreensjsxZoomIn22,projectsdsscreensjsxFit23,projectsdsscreensjsxAddANodeCtrlK24,projectsdsscreensjsxSetTabT27,projectsdsscreensjsxDeleteWire28,projectsdsscreensjsxSettings30,projectsdsscreensjsxOpenParameters31,projectsdsscreensjsxOpen32});
 })();

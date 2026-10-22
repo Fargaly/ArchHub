@@ -28,7 +28,8 @@ async function mount(t) {
   }};
   const app={libraryOpen:false,selectedNodeId:null,setSelectedNodeId(){},act:f=>Promise.resolve(f()),show(){},go(){}};
   const Btn=({children,onClick,title,disabled,...p})=>h('button',{'aria-label':p['aria-label'],disabled,title,onClick},children);
-  const Node=({children,title,headerProps,selected})=>h('article',{'data-selected':String(selected)},h('header',headerProps,title),children);
+  const Node=({children,title,headerProps,selected,ins=[],outs=[],renderPort})=>h('article',{'data-selected':String(selected)},h('header',headerProps,title),
+    ...ins.map((p,i)=>renderPort?.(p,i,'in')),...outs.map((p,i)=>renderPort?.(p,i,'out')),children);
   w.UI={A:{accent:'#f90',line:'#333'},D:{Node,Socket:()=>null,Toggle:()=>null},api,useData:()=>R.useSyncExternalStore(f=>{listeners.add(f);return()=>listeners.delete(f);},()=>snapshot),useApp:()=>app,Btn,Chip:({children})=>h('span',null,children),
     GraphProperties:()=>null,NodeRunPolicy:()=>null,MixedProperties:()=>null,Table:()=>null};
   w.AHIcon=()=>null;

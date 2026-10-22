@@ -52,7 +52,9 @@
         "tests_replica/test_native_contact.py",
         "tests_replica/test_opencode_native_custody.py",
         "tests_replica/test_session_link_config.py",
-        "tools/real_app_check/agentlink_release.py"
+        "tools/real_app_check/agentlink_release.py",
+        "02.TESTS/tests/test_agentlink_release.py",
+        "03.TOOLS/tools/real_app_check/agentlink_release.py"
       ]
     },
     "AGENTDECLARE": {

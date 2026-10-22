@@ -102,6 +102,11 @@ def _declaration(history, identity, runtime=None):
     return {"runtime":runtime, "session":identity["sender_key"], "agent":identity["sender_label"]}
 
 
+def _is_broadcast(message):
+    header = message.get("content", "").partition("\n")[0]
+    return header.startswith("To ") and "*" in [part.strip() for part in header[3:].rstrip(":").split(",")]
+
+
 def _recipient_rows(message, declarations):
     """Runtime mentions broadcast; shortened native IDs must resolve uniquely."""
     targets = [value.strip().casefold() for value in message["content"].split("\n", 1)[0][3:-1].split(",")]
@@ -111,7 +116,9 @@ def _recipient_rows(message, declarations):
     if ambiguous:
         message = {**message, "content":"To " + ", ".join(target for target in targets if target not in ambiguous)
             + ":\n" + message["content"].partition("\n")[2]}
-    return [row for row in declarations if row.get("current") and _addressed(message,
+    author = str(message.get("author") or "")
+    return [row for row in declarations if row.get("current")
+        and "[" + row["session"] + "]" not in author and _addressed(message,
         {"sender":row["agent"] + " [" + row["session"] + "]", "sender_label":row["agent"],
          "sender_key":row["session"]}, row)]
 
@@ -423,6 +430,8 @@ class WorkshopInjection:
                     else:
                         if message["idempotency_key"].startswith("workshop-escalation:"):
                             continue  # A coordinator follow-up is delivered, never recursively escalated.
+                        if _is_broadcast(message):
+                            continue  # A note to everyone asks no one in particular; it is never reminded or escalated.
                         age = now - datetime.fromisoformat(events["attempt"]["created_at"]).timestamp()
                         if age >= self.escalation_seconds and "reminder" in events:
                             digest = sha256((message["id"] + recipient["session"]).encode()).hexdigest()

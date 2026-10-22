@@ -497,3 +497,21 @@ def test_old_room_notes_are_readable_but_never_injected(room):
     note = send(owner)
     delivery.tick()
     assert len(native.turns) == 1 and note['message_id'] in native.turns[0][1]
+
+
+
+def test_a_broadcast_is_never_injected_back_into_its_sender():
+    """717's 'To *' status came back into 717's own session with Follow-up reminders."""
+    sender = {"agent":"Claude Code / ArchHub / session-a", "session":"agent:session:a", "current":True}
+    other = {"agent":"Codex / lane / session-b", "session":"agent:session:b", "current":True}
+    note = {"category":mail.CATEGORY, "author":"Claude Code / ArchHub / session-a / ahmed [agent:session:a]", "content":"To *:\nBuild installed"}
+    sessions = [row["session"] for row in mail._recipient_rows(note, [sender, other])]
+    assert "agent:session:a" not in sessions and "agent:session:b" in sessions
+
+
+
+def test_a_broadcast_is_delivered_once_never_reminded():
+    """Each 'To *' status produced a reminder per agent and an escalation per agent to 717."""
+    assert mail._is_broadcast({"content":"To *:\nBuild installed"})
+    assert mail._is_broadcast({"content":"To 717, *:\nBoth"})
+    assert not mail._is_broadcast({"content":"To codex:\nPlease reply"})

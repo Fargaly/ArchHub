@@ -37,6 +37,7 @@ const listeners=new Set();
 let canvas=null, session=null, commands=null, renewing=null, scopeEpoch=0;
 let refreshTimer=null, refreshInFlight=false, ready=false, accountSignInPending=false;
 let providerRoster=[], workingAgents=[];
+let controlsGeneration=0, notificationGeneration=0;
 let updateGeneration=0, updateActionPending=false;
 // Same bounded five-second cadence as the existing studio Tool Hub, paused while hidden.
 const ownerRefreshMs=5000;
@@ -136,12 +137,12 @@ async function refreshTasks() {
  const epoch=scopeEpoch,binding=JSON.stringify(workshopBinding());
  const tasks=await workshop('listTasks');if(!Array.isArray(tasks))return tasks;
  if(epoch!==scopeEpoch||binding!==JSON.stringify(workshopBinding()))return state.tasks;
- publish({tasks:tasks.map(t=>({...t,messages:t.messages||[],steps:t.steps||[],reviews:t.reviews||[],queuedMessages:t.queuedMessages||[]}))});await refreshApprovals();await refreshWatcher();await refreshHostSkills();await refreshDesktop();return state.tasks;
+ publish({tasks:tasks.map(t=>({...t,messages:t.messages||[],steps:t.steps||[],reviews:t.reviews||[],queuedMessages:t.queuedMessages||[]}))});await refreshApprovals();await refreshWatcher();await refreshHostSkills();await refreshDesktop();await refreshNotifications();return state.tasks;
 }
 function projectProviders() {
  const roster=new Map(providerRoster.map(p=>[p.id,p]));
  for(const a of workingAgents)roster.set(a.id,{...roster.get(a.id),...a});
- publish({providers:[...roster.values()]});
+ publish({providers:[...roster.values()].map(p=>({...p,model:state.providerPreferences?.[p.id]||p.model,models:state.providerModels?.[p.id]||[]}))});
 }
 async function refreshAgents() {
  const epoch=scopeEpoch,binding=JSON.stringify(workshopBinding());
@@ -207,7 +208,7 @@ async function refreshLive() {
  if(!ready||document.hidden||refreshInFlight||listeners.size===0)return;
  refreshInFlight=true;
  try {
-  for(const refresh of [refreshApplicationUpdate,refreshAccount,refreshTasks,refreshAgents]){
+  for(const refresh of [refreshApplicationUpdate,refreshAccount,refreshTasks,refreshAgents,refreshSettingsControls]){
    try{await refresh();}catch(error){publish({connectionNotice:error.message});}
   }
  }
@@ -744,6 +745,34 @@ api.importMeetingTranscript=async()=>{
 };
 api.refreshSocialMemory=refreshBrain;
 api.setSourceReadSeconds=seconds=>socialOperation('set_source_read_seconds',[seconds]);
+async function refreshSettingsControls(){
+ const result=await settingsAction('readControls');projectProviders();return result;
+}
+async function refreshNotifications(){
+ const epoch=scopeEpoch,binding=JSON.stringify(workshopBinding()),generation=notificationGeneration;
+ const result=await workshop('listNotifications');
+ if(generation===notificationGeneration&&epoch===scopeEpoch&&binding===JSON.stringify(workshopBinding())&&Array.isArray(result?.notifications))publish({notifications:result.notifications});
+ return result;
+}
+api.readNotification=async id=>{
+ notificationGeneration++;
+ const epoch=scopeEpoch,binding=JSON.stringify(workshopBinding());
+ const result=await workshop('readNotification',[id]);
+ if(!result?.receipt||!Array.isArray(result.notifications))throw Error('Notification read was not confirmed. Refresh and retry.');
+ if(epoch===scopeEpoch&&binding===JSON.stringify(workshopBinding()))publish({notifications:result.notifications});
+ return result;
+};
+api.refreshSettingsControls=refreshSettingsControls;
+api.exposeSettingsPage=async page=>{
+ const epoch=scopeEpoch;
+ const result=await settingsAction('exposeSettingsPage',[page]);
+ if(epoch!==scopeEpoch)throw Error('The graph changed. Open Settings again.');
+ await commands.load();project();
+ return state.graph.nodes.find(n=>n.id===result.id)||result;
+};
+api.setProviderModel=async(id,model)=>{const result=await settingsAction('setProviderModel',[id,model]);projectProviders();return result;};
+api.disconnectSecret=async id=>{const result=await settingsAction('disconnectSecret',[id]);await refreshSocialConnections();return result;};
+api.setCompanionState=values=>settingsAction('setCompanionState',[values]);
 async function refreshSocialConnections(){
  const data=await request('/api/universal/social-connections');
  if(!Array.isArray(data.items))throw Error('The connection owner did not return accounts. Open Connections and retry.');
@@ -785,17 +814,20 @@ api.refreshSocialState=async()=>{const result=await refreshBeforeSocialConnectio
 async function settingsAction(functionName, args=[]) {
  const identity=state.profile.id;
  const graph=state.graph.id;
+ const generation=functionName==='readControls'?controlsGeneration:++controlsGeneration;
  const response=await request('/api/universal/settings-action',{function:functionName,args});
  const result=response.result;
  if(identity!==state.profile.id)throw Error('Your account changed while this action ran. Refresh the page before retrying.');
  if(!result||typeof result!=='object'||Array.isArray(result)||result.ok===false)throw Error(result?.error||result?.message||'Settings owner did not confirm the action. Refresh and retry.');
+ if(functionName==='readControls'&&generation!==controlsGeneration)return result;
  if(['readOperations','setGraphWorkspaces'].includes(functionName)&&graph!==state.graph.id)throw Error('The graph changed while Settings ran. Refresh Settings before retrying.');
  const values={};
- for(const key of ['firms','activeFirm','people','billing','dependencies','officeInvitations','settingsScope','activeWorkspace','devices','activeDevice','backups'])if(Object.hasOwn(result,key))values[key]=result[key];
+ for(const key of ['firms','activeFirm','people','billing','dependencies','officeInvitations','settingsScope','activeWorkspace','devices','activeDevice','backups','companion','secrets','providerPreferences','providerModels','controlErrors'])if(Object.hasOwn(result,key))values[key]=result[key];
  if(result.workspacePolicies)values.workspaces=state.workspaces.map(row=>({...row,...result.workspacePolicies[row.id]}));
  if(result.workspaceIds)values.graph={...state.graph,workspaceIds:result.workspaceIds};
  if(result.profile){settingsProfile={...settingsProfile,...Object.fromEntries(Object.entries(result.profile).filter(([key])=>['name','firm','plan'].includes(key)))};values.profile={...state.profile,...settingsProfile};}
  publish(values);
+ if(result.controlErrors&&Object.keys(result.controlErrors).length)notice(Object.values(result.controlErrors).join(' '));
  if(result.message)notice(result.message);
  if(result.open_url){
   const url=new URL(result.open_url);
@@ -1130,5 +1162,6 @@ api.ready.then(()=>{
  window.addEventListener('pagehide',()=>window.clearInterval(timer),{once:true});
 }).catch(error=>notice(error.message));
 // WIRE-projects end
+api.ready.then(refreshSettingsControls).catch(error=>publish({connectionNotice:error.message}));
 window.ArchHubAPI=Object.freeze(api);
 })();

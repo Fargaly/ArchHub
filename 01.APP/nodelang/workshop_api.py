@@ -243,6 +243,52 @@ class WorkshopAPI:
             "created_at":row["created_at"],"state":"stored"}
             for row in sorted(selected.values(),key=lambda item:item["sequence"])], truncated
 
+    def _notification_root(self, id):
+        return self.root + ':notification:' + hashlib.sha256(
+            (self.binding.subject_root + ':' + id).encode()).hexdigest()
+
+    def listNotifications(self):
+        snapshot = self.admit()
+        notifications = []
+        seen = set()
+        for work in sorted(self._works(), key=lambda row: row['root']):
+            messages, _truncated = self._messages(work['root'])
+            for message in messages:
+                if message['who'] == self.binding.subject_root or message['id'] in seen:
+                    continue
+                seen.add(message['id'])
+                root = self._notification_root(message['id'])
+                receipt = snapshot.cells.get(root)
+                notifications.append({'id': message['id'], 'text': message['text'], 'taskId': work['root'],
+                    'read': bool(receipt and receipt.link0 == work['root'] and
+                                 receipt.link1 == self.binding.subject_root and json.loads(receipt.atom).get('read'))})
+        return {'notifications': notifications}
+
+    def readNotification(self, id):
+        from .universal_application import _view_session_for_context, _commit_universal_user_change
+        if type(id) is not str:
+            raise InvalidCell('Choose an existing notification.')
+        matches = [row for row in self.listNotifications()['notifications'] if row['id'] == id]
+        if len(matches) != 1:
+            raise InvalidCell('Notification is outside this account or no longer available.')
+        row = matches[0]
+        store, registry = self.owner.universal_store, self.owner.universal_registry
+        snapshot = self.admit()
+        root = self._notification_root(id)
+        cell = Cell(root, row['taskId'], self.binding.subject_root,
+                    json.dumps({'message': id, 'read': True}).encode())
+        if snapshot.cells.get(root) != cell:
+            exists = root in snapshot.cells
+            patch = prepare_append_relation_members(snapshot, row['taskId'],
+                () if exists else ((registry.roles['member'], root),))
+            view, context = _view_session_for_context(registry, self.binding.context)
+            self.guard()
+            _commit_universal_user_change(store, registry, view, context, snapshot,
+                route=self.route, command_name='catalog.configure', authorization_scope_root=self.root,
+                create=(*patch.create, *((cell,) if not exists else ())),
+                replace=(*patch.replace, *((cell,) if exists else ())))
+        return {**self.listNotifications(), 'receipt': root}
+
     def listAgentsWorking(self):
         from .agent_declarations import declarations
         self.admit()
@@ -710,3 +756,5 @@ FUNCTIONS = FUNCTIONS | frozenset({"readHostSkills", "importHostSkill", "inspect
 
 FUNCTIONS = FUNCTIONS | frozenset({"readDesktop", "setDesktopProgram", "offerDesktopAction", "prepareDesktopAction",
     "setScheduleResponsibility", "reviewScheduledWork", "decideDesktopAction"})
+
+FUNCTIONS = FUNCTIONS | frozenset({"listNotifications", "readNotification"})

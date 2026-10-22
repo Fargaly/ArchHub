@@ -6576,7 +6576,9 @@ class ApplicationServer:
         # The reused Session Link transport is optional; absent, sends are unchanged.
         self.native_work_delivery = NativeWorkDelivery(self, session_link_transport)
         from .app_agents import AgentsAPI
-        self.app_agents = AgentsAPI(transport=session_link_transport)
+        from .settings_owner import SettingsOwner
+        self.app_agents = AgentsAPI(transport=session_link_transport, settings=SettingsOwner(
+            universal_store, runtime=self, authentication_context=universal_registry.authorization.subject_root))
         self._cloud_relay_enabled = bool(enable_cloud_relay)
         self._cloud_relay_transport = session_link_transport
         self._cloud_relay_appdata = None  # cloud_relay's canonical account locator; explicit fixtures may override.
@@ -12916,7 +12918,9 @@ class ApplicationServer:
             except Exception:
                 return ""
             if current["source"] == "graph":
-                return str(current["value"])
+                from .settings_owner import SettingsOwner
+                return SettingsOwner(store, runtime=self, authentication_context=registry.authorization.subject_root).providerModel(
+                    str(current["value"]))
         try:
             return self._agent_model_path().read_text(encoding="utf-8").strip()[:200]
         except (OSError, ValueError):

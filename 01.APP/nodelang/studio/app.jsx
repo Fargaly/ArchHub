@@ -779,7 +779,7 @@
         text
       }, event)}>Save skill</Btn></>;else if (k === 'Agent') {
       const p = s.providers.find(p => p.id === m.id);
-      body = p ? <div className="grid"><window.UI.Providers /><window.UI.AgentProfile id={p.id} /><label className="grid">Model{api.supportsAction?.('setProviderModel') !== false && <select aria-label="Provider model" value={p.model} onChange={e => u.act(() => api.setProviderModel(p.id, e.target.value))}>{[...new Set([p.model, 'Best free model', 'Claude · your plan', 'Codex · your plan'])].map(x => <option key={x}>{x}</option>)}</select>}</label><Btn onClick={event => executeAction("appShell.AgentSettings.81", {
+      body = p ? <div className="grid"><window.UI.Providers /><window.UI.AgentProfile id={p.id} /><label className="grid">Model{api.supportsAction?.('setProviderModel') !== false && <select aria-label="Provider model" value={p.model} onChange={e => u.act(() => api.setProviderModel(p.id, e.target.value))}>{[...new Set([p.model, ...(p.models||[])])].map(x => <option key={x}>{x}</option>)}</select>}</label><Btn onClick={event => executeAction("appShell.AgentSettings.81", {
           u
         }, event)}>Agent settings</Btn></div> : <Empty>No agent selected.</Empty>;
     } else if (k === 'Teammate') {

@@ -29,12 +29,13 @@ def _label(value, limit=256):
 
 
 class AgentsAPI:
-    def __init__(self, *, transport, companion=None, environment=None, registration=None):
+    def __init__(self, *, transport, companion=None, environment=None, registration=None, settings=None):
         if registration is None:
             from . import assistant_registration as registration
         self.registration = registration
         self.transport = transport
         self.companion = companion
+        self.settings = settings
         self.environment = dict(os.environ if environment is None else environment)
 
     def getAgentChannel(self, id):
@@ -100,17 +101,18 @@ class AgentsAPI:
             "completeApps": [app for app in discovered.get("complete_apps", []) if app in APPS]}
 
     def getDesktopCompanion(self, *, now=None):
+        preferences = {"companion": self.settings.companionState()} if self.settings is not None else {}
         host = self.companion
         if host is None:
             raise RuntimeError("The native companion owner has not been bound to this view")
         if not host.running:
-            return {"status": "not_running", "message": "Desktop companion is stopped."}
+            return {**preferences, "status": "not_running", "message": "Desktop companion is stopped."}
         frame = host.latest_snapshot
         if frame is None:
-            return {"status": "awaiting_frame", "message": "Waiting for the native companion's first frame."}
+            return {**preferences, "status": "awaiting_frame", "message": "Waiting for the native companion's first frame."}
         now = time.time() if now is None else now
         current = now < min(frame.presence_expires_at, frame.frame_expires_at)
-        return {"status": "current" if current else "expired", "revision": frame.revision,
+        return {**preferences, "status": "current" if current else "expired", "revision": frame.revision,
                 "message": _label(frame.directive.get("compact_message"), 4000) if current else
                            "The native companion frame expired; waiting for its owner.",
                 "motion": _label(frame.directive.get("motion")) if current else "idle"}

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import math
 from pathlib import Path
 import re
 import uuid
@@ -20,7 +21,8 @@ class SettingsOwner:
               'retryPayment', 'downgradeBilling', 'manageDependency', 'checkDependencies',
               'acceptOfficeInvitation', 'declineOfficeInvitation', 'archiveActivity',
               'readOperations', 'setWorkspaceRules', 'setSettingsScope', 'setGraphWorkspaces', 'ensureDependency',
-              'selectDevice', 'grantAccess', 'backUpNow', 'rollBack')
+              'selectDevice', 'grantAccess', 'backUpNow', 'rollBack',
+              'readControls', 'exposeSettingsPage', 'setProviderModel', 'disconnectSecret', 'setCompanionState')
 
     def __init__(self, store, *, cloud=None, dependencies=None, content=None, authentication_context=None,
                  workspace_roots=None, runtime=None):
@@ -66,6 +68,140 @@ class SettingsOwner:
             raise InvalidCell('Settings exceed 64 KiB. Shorten workspace rules and retry.')
         self.store.commit(snapshot.revision, **{'replace' if cell.id in snapshot.cells else 'create': (cell,)})
         return values
+
+    def _subject(self):
+        if self.runtime is None or self.authentication_context is None:
+            raise InvalidCell('Reopen Settings through the application owner.')
+        return self.runtime.universal_registry.authorization.subject_root
+
+    def _control_preferences(self):
+        return self._preferences(self._subject())
+
+    @staticmethod
+    def _provider_id(route):
+        from .model_router import resolve_model_route, _CLI_ROUTE_NAME
+        destination = resolve_model_route(route)
+        if destination.family == 'local-cli':
+            assistant = destination.model.split('/', 1)[0]
+            return next((id for id, name in _CLI_ROUTE_NAME.items() if name == assistant), '')
+        return destination.family
+
+    def _provider_models(self):
+        payload = self.runtime._project_model_discovery('/api/universal/models')
+        if payload.get('ok') is False:
+            raise InvalidCell('Model catalogue unavailable. Refresh Agents and retry.')
+        result = {}
+        for group in payload.get('groups', []):
+            for item in group.get('items', []):
+                route = item.get('routed') or item.get('route')
+                if not route:
+                    continue
+                try:
+                    provider = self._provider_id(route)
+                except ValueError:
+                    continue
+                if provider and route not in result.setdefault(provider, []):
+                    result[provider].append(route)
+        return result
+
+    def providerModel(self, route):
+        if not route:
+            return route
+        try:
+            provider = self._provider_id(route)
+        except ValueError:
+            return route
+        return self._control_preferences().get('providerPreferences', {}).get(provider, route)
+
+    def setProviderModel(self, id, model):
+        self._subject()
+        if type(id) is not str or type(model) is not str or model not in self._provider_models().get(id, []):
+            raise InvalidCell('Choose a current model belonging to this provider.')
+        held = self._control_preferences().get('providerPreferences', {})
+        self._save(self._subject(), {'providerPreferences': {**held, id: model}})
+        return {'providerPreferences': self._control_preferences()['providerPreferences']}
+
+    def _secrets(self):
+        from .model_router import list_social_credentials
+        return [{'id': row['vault_entry'], 'name': row.get('display_name') or row['account_id'],
+                 'status': 'Connected', 'vault_entry': row['vault_entry'], 'provider': row['provider'],
+                 'account_id': row['account_id']} for row in list_social_credentials()['items']]
+
+    def disconnectSecret(self, id):
+        from .model_router import revoke_social_credential
+        self._subject()
+        matches = [row for row in self._secrets() if row['id'] == id]
+        if type(id) is not str or len(matches) != 1:
+            raise InvalidCell('Choose an existing connected account, then retry.')
+        row = matches[0]
+        def guard():
+            self.runtime.require_universal_http_route('POST', '/api/universal/social-credential-remove',
+                authentication_context=self.authentication_context, revalidate=True)
+        result = revoke_social_credential({key: row[key] for key in ('vault_entry', 'provider', 'account_id')},
+                                        before_replace=guard)
+        remaining = self._secrets()
+        if result.get('ok') is not True or result.get('state') not in {'removed', 'absent'} or any(
+                item['id'] == id for item in remaining):
+            raise InvalidCell('Disconnect was not confirmed. Refresh connected accounts before retrying.')
+        held = self._control_preferences().get('disconnectedAccounts', {})
+        self._save(self._subject(), {'disconnectedAccounts': {**held, id: {
+            key: result[key] for key in ('vault_entry', 'provider', 'account_id', 'state', 'provider_token_revoked')}}})
+        return {**result, 'secrets': remaining}
+
+    def companionState(self):
+        return {'mode': 'idle', 'x': None, 'y': None, 'pinned': False,
+                **self._control_preferences().get('companion', {})}
+
+    def setCompanionState(self, values):
+        if (type(values) is not dict or not values or set(values) - {'mode', 'x', 'y', 'pinned'}
+                or ('mode' in values and (type(values['mode']) is not str or
+                    values['mode'] not in {'idle', 'listening', 'thinking', 'speaking', 'done'}))
+                or ('pinned' in values and type(values['pinned']) is not bool)
+                or (('x' in values) != ('y' in values))
+                or any(type(values[key]) not in (int, float) or not math.isfinite(values[key])
+                       or not -100000 <= values[key] <= 100000 for key in ('x', 'y') if key in values)):
+            raise InvalidCell('Use a companion mode, a finite x/y position and an on/off pin.')
+        self._save(self._subject(), {'companion': {**self.companionState(), **values}})
+        return {'companion': self.companionState()}
+
+    def readControls(self):
+        from .model_router import ProviderCredentialError
+        result = {'companion': self.companionState(),
+                  'providerPreferences': self._control_preferences().get('providerPreferences', {}),
+                  'controlErrors': {}}
+        try:
+            result['secrets'] = self._secrets()
+        except ProviderCredentialError:
+            result['secrets'] = []
+            result['controlErrors']['secrets'] = 'Connected account custody is unavailable. Refresh Connections.'
+        try:
+            result['providerModels'] = self._provider_models()
+        except InvalidCell:
+            result['providerModels'] = {}
+            result['controlErrors']['providerModels'] = 'Model catalogue unavailable. Refresh Agents.'
+        return result
+
+    @staticmethod
+    def _setting_page(parameter):
+        kind = (parameter.get('setting') or {}).get('kind', 'property')
+        return ('Appearance' if kind == 'theme' else 'BABOOM' if kind == 'baboom' else
+                'Agents' if 'model' in kind or kind == 'generation' else
+                'Library & Mods' if kind.startswith('mod') else 'System graph')
+
+    def exposeSettingsPage(self, page):
+        from .canvas_graph_owner import CanvasOwner
+        from .universal_application import select_universal_root
+        self._subject()
+        canvas = CanvasOwner(self.store, self.runtime.universal_registry, self.authentication_context).canvas()
+        matches = [node for node in canvas['nodes'] if node.get('application') and any(
+            self._setting_page(parameter) == page for parameter in node.get('properties', node.get('params', [])))]
+        if not matches:
+            raise InvalidCell('This page has no application node in the current scope. Open its graph first.')
+        # Multiple parameters may share a page; focus its first existing application owner, never a copy.
+        node = matches[0]
+        select_universal_root(self.store, self.runtime.universal_registry, node['id'],
+                              authentication_context=self.authentication_context)
+        return {'id': node['id'], 'page': page, 'revision': self.store.revision}
 
     def _roots(self):
         if self.workspace_roots is not None:

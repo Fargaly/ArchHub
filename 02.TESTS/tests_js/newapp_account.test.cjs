@@ -40,7 +40,7 @@ test('unfinished controls use actual adapter availability without invoking an ac
  assert.equal(api.supportsAction('ensureDependency'),true);
  assert.equal(api.supportsAction('decline'),false);
  assert.equal(api.supportsAction('approve','session'),false);
- for(const name of ['runValuation','setApprovalRubric','correctAnswerSource','setResearchReview','stampOutput','runSpecialNode','setTranscriptPass','startVoiceInput','stopVoiceInput','speak','setDesktopProgram','offerDesktopAction','prepareDesktopAction','settleTimesheet','postponeApproval','resumeApproval','contestDecision','setScheduleResponsibility','reviewScheduledWork','runResearchNode','importHostSkill','inspectConnectorBundle','configureConnectorBundle','installConnectorBundle','setHostSkillEnabled','auditHostSkill','refreshApproval','addDimension','setCompanionState','reviewProofRow','exposeSettingsPage','setWatcherView','signInProvider','setProviderModel','editWall','addMark','addComment','proposeWatcherEdit','discardWatcherChanges','setWatcherHost','disconnectSecret','changePlan','readNotification'])assert.equal(api.supportsAction(name),false,name);
+ for(const name of ['runValuation','setApprovalRubric','correctAnswerSource','setResearchReview','stampOutput','runSpecialNode','setTranscriptPass','startVoiceInput','stopVoiceInput','speak','setDesktopProgram','offerDesktopAction','prepareDesktopAction','settleTimesheet','postponeApproval','resumeApproval','contestDecision','setScheduleResponsibility','reviewScheduledWork','runResearchNode','importHostSkill','inspectConnectorBundle','configureConnectorBundle','installConnectorBundle','setHostSkillEnabled','auditHostSkill','refreshApproval','addDimension','reviewProofRow','setWatcherView','signInProvider','editWall','addMark','addComment','proposeWatcherEdit','discardWatcherChanges','setWatcherHost','changePlan'])assert.equal(api.supportsAction(name),false,name);
  assert.equal(requests.length,count);
 });
 
@@ -642,7 +642,7 @@ test('WIRE-rest boot failure renders its actual error and retry reloads only onc
 
 
 
-async function buttonsAdapter(extra={}){
+async function buttonsAdapter(extra={},replies={}){
  const calls=[],events=new Map(),canvas={root:'graph',scope:{current:'graph'},nodes:[],wires:[],catalog:[],workshops:[{root:'workshop'}]};
  const window={structuredClone:globalThis.structuredClone,crypto:require('node:crypto').webcrypto,
   ARCHHUB_BOOT:{token:'fixture',csrf:'fixture'},document:{hidden:true,addEventListener(){}},
@@ -650,7 +650,7 @@ async function buttonsAdapter(extra={}){
  window.ArchHubStudioAuthority={create:({get})=>({load:()=>get('/api/universal/canvas')})};
  const fetch=async(url,options={})=>{
   const body=options.body?JSON.parse(options.body):null;calls.push({url,body});
-  const data=url==='/api/universal/canvas'?canvas:url==='/api/universal/settings-action'?
+  const data=Object.hasOwn(replies,url)?await replies[url](body):url==='/api/universal/canvas'?canvas:url==='/api/universal/settings-action'?
    {ok:true,result:{dependencies:[{id:body.args[0],state:'Ready'}]}}:{ok:true,result:[]};
   return {ok:true,status:200,json:async()=>data};
  };
@@ -704,7 +704,7 @@ test('ensureDependency: posts existing Settings owner command and publishes conf
  assert.equal(api.getSnapshot().dependencies[0].state,'Ready');
 });
 
-for(const name of ["runValuation", "correctAnswerSource", "setResearchReview", "stampOutput", "runSpecialNode", "setTranscriptPass", "settleTimesheet", "runResearchNode", "setCompanionState", "exposeSettingsPage", "signInProvider", "setProviderModel", "disconnectSecret", "changePlan", "readNotification"])test(name+': remains hidden without an executing owner',async()=>{
+for(const name of ["runValuation", "correctAnswerSource", "setResearchReview", "stampOutput", "runSpecialNode", "setTranscriptPass", "settleTimesheet", "runResearchNode", "signInProvider", "changePlan"])test(name+': remains hidden without an executing owner',async()=>{
  const {api,calls}=await buttonsAdapter();const count=calls.length;assert.equal(api.supportsAction(name),false);
  const result=await api[name]();assert.equal(result.ok,false);assert.equal(result.status,'not_connected');assert.equal(calls.length,count);
 });
@@ -1164,4 +1164,56 @@ test('DESKTOP rendered schedule responsibility saves partial changes and opens t
  assert.deepEqual(globalThis.structuredClone(shown),[['Approve',{id:'schedule-card'}]]);
  rig.loseOwner();await rig.api.readDesktop();tree=window.UI.ScheduleResponsibility({id:'schedule-1'});
  assert.equal(nodes(tree).some(n=>n.type==='Btn'||n.type==='input'||n.type==='select'||n.type==='Toggle'),false);
+});
+
+for(const [name,args,result,key,expected] of [
+ ['setProviderModel',['ollama','ollama/model'],{providerPreferences:{ollama:'ollama/model'}},'providerPreferences',{ollama:'ollama/model'}],
+ ['disconnectSecret',['social-entry'],{ok:true,state:'removed',provider_token_revoked:false,secrets:[]},'secrets',[]],
+ ['setCompanionState',[{mode:'listening',x:20,y:30,pinned:true}],{companion:{mode:'listening',x:20,y:30,pinned:true}},'companion',{mode:'listening',x:20,y:30,pinned:true}],
+ ['exposeSettingsPage',['Appearance'],{id:'owner-node',page:'Appearance'},null,null],
+])test('SETTINGS '+name+': executes the existing Settings owner and publishes readback',async()=>{
+ const {api,calls}=await buttonsAdapter({}, {
+  '/api/universal/settings-action':body=>({ok:true,result:body.function==='readControls'?{companion:{mode:'idle'},secrets:[],providerPreferences:{},providerModels:{}}:result}),
+  '/api/universal/social-connections':()=>({items:[]})
+ });
+ assert.equal(api.supportsAction(name),true);assert.equal(api.supportsAction('signInProvider'),false);
+ calls.length=0;const answer=await api[name](...args);
+ const command=calls.find(c=>c.body?.function===name);
+ assert.deepEqual(command,{url:'/api/universal/settings-action',body:{function:name,args}});
+ assert.equal(answer.id||answer.state||answer.companion?.mode||answer.providerPreferences?.ollama,
+  result.id||result.state||result.companion?.mode||result.providerPreferences?.ollama);
+ if(key)assert.deepEqual(JSON.parse(JSON.stringify(api.getSnapshot()[key])),expected);
+ if(name==='exposeSettingsPage')assert.ok(calls.some(c=>c.url==='/api/universal/canvas'));
+});
+
+test('SETTINGS readNotification: binds Workshop source and uses durable receipt readback',async()=>{
+ const {api,calls}=await buttonsAdapter({}, {
+  '/api/universal/settings-action':()=>({ok:true,result:{secrets:[],providerPreferences:{},providerModels:{},companion:{mode:'idle'}}}),
+  '/api/universal/workshop':body=>({ok:true,result:body.function==='readNotification'?{receipt:'receipt-node',notifications:[{id:'message',read:true}]}:[]})
+ });
+ assert.equal(api.supportsAction('readNotification'),true);calls.length=0;
+ await api.readNotification('message');const command=calls.find(c=>c.body?.function==='readNotification');
+ assert.equal(command.url,'/api/universal/workshop');assert.deepEqual(command.body.args,['message']);
+ assert.equal(command.body.root,'workshop');assert.equal(command.body.scope,'graph');
+ assert.equal(api.getSnapshot().notifications[0].read,true);
+});
+
+test('SETTINGS refusal preserves confirmed companion state',async()=>{
+ let refused=false;
+ const {api}=await buttonsAdapter({}, {'/api/universal/settings-action':body=>({ok:true,result:
+  body.function==='readControls'?{companion:{mode:'idle',pinned:false},secrets:[],providerPreferences:{},providerModels:{}}:
+  refused?{ok:false,message:'Position refused'}:{companion:{mode:'idle',pinned:true}}})});
+ await api.setCompanionState({pinned:true});refused=true;
+ await assert.rejects(api.setCompanionState({pinned:false}),/Position refused/);
+ assert.equal(api.getSnapshot().companion.pinned,true);
+});
+
+test('SETTINGS slow control read cannot overwrite a confirmed companion write',async()=>{
+ let release,delay=false;
+ const initial={companion:{mode:'idle',pinned:false},secrets:[],providerPreferences:{},providerModels:{}};
+ const {api}=await buttonsAdapter({}, {'/api/universal/settings-action':async body=>({ok:true,result:
+  body.function==='readControls'?(delay?await new Promise(resolve=>release=()=>resolve(initial)):initial):{companion:{mode:'idle',pinned:true}}})});
+ delay=true;const read=api.refreshSettingsControls();await Promise.resolve();
+ await api.setCompanionState({pinned:true});release();await read;
+ assert.equal(api.getSnapshot().companion.pinned,true);
 });

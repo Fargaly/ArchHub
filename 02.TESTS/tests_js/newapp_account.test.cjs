@@ -704,7 +704,7 @@ test('ensureDependency: posts existing Settings owner command and publishes conf
  assert.equal(api.getSnapshot().dependencies[0].state,'Ready');
 });
 
-for(const name of ["runValuation", "correctAnswerSource", "setResearchReview", "stampOutput", "runSpecialNode", "setTranscriptPass", "setDesktopProgram", "offerDesktopAction", "prepareDesktopAction", "settleTimesheet", "setScheduleResponsibility", "reviewScheduledWork", "runResearchNode", "importHostSkill", "inspectConnectorBundle", "configureConnectorBundle", "installConnectorBundle", "setHostSkillEnabled", "auditHostSkill", "addDimension", "setCompanionState", "exposeSettingsPage", "setWatcherView", "signInProvider", "setProviderModel", "editWall", "addMark", "addComment", "proposeWatcherEdit", "discardWatcherChanges", "setWatcherHost", "disconnectSecret", "changePlan", "readNotification"])test(name+': remains hidden without an executing owner',async()=>{
+for(const name of ["runValuation", "correctAnswerSource", "setResearchReview", "stampOutput", "runSpecialNode", "setTranscriptPass", "setDesktopProgram", "offerDesktopAction", "prepareDesktopAction", "settleTimesheet", "setScheduleResponsibility", "reviewScheduledWork", "runResearchNode", "importHostSkill", "inspectConnectorBundle", "configureConnectorBundle", "installConnectorBundle", "setHostSkillEnabled", "auditHostSkill", "setCompanionState", "exposeSettingsPage", "signInProvider", "setProviderModel", "disconnectSecret", "changePlan", "readNotification"])test(name+': remains hidden without an executing owner',async()=>{
  const {api,calls}=await buttonsAdapter();const count=calls.length;assert.equal(api.supportsAction(name),false);
  const result=await api[name]();assert.equal(result.ok,false);assert.equal(result.status,'not_connected');assert.equal(calls.length,count);
 });
@@ -807,7 +807,7 @@ test('APPROVALS owner refusal preserves the confirmed projection',async()=>{
 
 
 test('APPROVALS rendered shared card buttons execute the exact review identity',async()=>{
- const rig=await approvalAdapter(),api=rig.api,studio=path.resolve(__dirname,'../nodelang/studio'),babel={};
+ const rig=await approvalAdapter(),api=rig.api,studio=path.resolve(__dirname,'../../01.APP/nodelang/studio'),babel={};
  vm.runInNewContext(fs.readFileSync(path.join(studio,'vendor/babel.js'),'utf8'),babel);
  const handlers={};
  const u={act:fn=>fn(),show(){}};
@@ -834,4 +834,118 @@ test('APPROVALS rendered shared card buttons execute the exact review identity',
  assert.ok(button(tree,'Review latest'));
  await button(tree,'Review latest').props.onClick({});
  assert.equal(api.getSnapshot().approvals[0].id,'decision-2');
+});
+
+
+// WATCHER: answering owner, durable-state projection and actual rendered gestures.
+async function watcherAdapter() {
+ const held={owner:'watcher-owner',host:'Revit',view:'Level 1',views:['Level 1','Level 2'],elementId:'unique-wall',elementLabel:'Wall',sourceRevision:'r1',
+  wallY:510,pendingY:530,marks:[],comments:[],dimensions:[],lengthMm:12900,thicknessMm:200,geometry:{outline:[],walls:[[120,510,980,510]],doors:[],tags:[]},status:'loaded'};
+ let failure=null,cards=[],writes=0,readOwner=true;
+ const methods=[];
+ const rig=await adapter({signed_in:false},{
+  '/api/universal/canvas':{root:'canvas',nodes:[],wires:[],workshop_scope:{root:'canvas',workshops:[{root:'workshop',is_general:true}]}},
+  '/api/universal/workshop':body=>{
+   if(body.function==='listTasks')return {result:[]};
+   if(body.function==='listApprovals')return {result:globalThis.structuredClone(cards)};
+   if(body.function==='readWatcher')return {result:readOwner?globalThis.structuredClone(held):{ok:false,error:'Watcher owner unavailable'}};
+   methods.push(body);if(failure)return {result:{ok:false,error:failure}};
+   const args=body.args;
+   if(body.function==='setWatcherHost')held.host=args[0];
+   if(body.function==='setWatcherView')held.view=args[0];
+   if(body.function==='editWall')held.pendingY=args[0];
+   if(body.function==='addDimension')held.dimensions.push({...args[0],id:'dimension',valueMm:1500});
+   if(body.function==='addMark')held.marks.push({...args[0],id:'mark'});
+   if(body.function==='addComment')held.comments.push({...args[0],id:'comment'});
+   if(body.function==='discardWatcherChanges')held.pendingY=held.wallY;
+   if(body.function==='proposeWatcherEdit'){
+    if(!cards.length)cards=[{id:'proposal',approvalKind:'watcher',input_digest:'digest',status:'pending',rows:[]}];
+    return {result:globalThis.structuredClone(cards[0])};
+   }
+   if(body.function==='decideWatcherEdit'){
+    if(args[2]==='approve'){writes++;held.wallY=held.pendingY;cards[0].status='approved';}
+    else cards[0].status='declined';
+    return {result:globalThis.structuredClone(cards[0])};
+   }
+   return {result:globalThis.structuredClone(held)};
+  }
+ });
+ await rig.api.listTasks();
+ return {...rig,methods,writes:()=>writes,refuse:value=>failure=value,loseOwner:()=>readOwner=false};
+}
+for(const [name,args] of [
+ ['setWatcherHost',['AutoCAD']],['setWatcherView',['Level 2']],
+ ['addDimension',[{from:{x:0,y:0},to:{x:100,y:0}}]],['editWall',[540]],
+ ['addMark',[{tool:'Mark',points:[{x:0,y:0},{x:10,y:10}]}]],
+ ['addComment',[{text:'Keep clear',x:1,y:2,element:'unique-wall'}]],
+ ['proposeWatcherEdit',[]],['discardWatcherChanges',[]]
+])test('WATCHER '+name+' executes the admitted owner and reads confirmed state',async()=>{
+ const rig=await watcherAdapter();assert.equal(rig.api.supportsAction(name),true);
+ const result=await rig.api[name](...args),call=rig.methods.find(row=>row.function===name);
+ assert.deepEqual(globalThis.structuredClone(call.args),args);assert.equal(call.root,'workshop');assert.equal(call.scope,'canvas');
+ if(name==='proposeWatcherEdit')assert.equal(rig.api.getSnapshot().approvals[0].id,result.id);
+ else assert.deepEqual(rig.api.getSnapshot().watcher.owner,result.owner);
+ assert.equal(rig.writes(),0);
+});
+
+test('WATCHER owner refusal preserves projection; approve is the only host effect',async()=>{
+ const rig=await watcherAdapter(),before=globalThis.structuredClone(rig.api.getSnapshot().watcher);
+ rig.refuse('Source revision changed');await assert.rejects(()=>rig.api.editWall(560),/Source revision changed/);
+ assert.deepEqual(globalThis.structuredClone(rig.api.getSnapshot().watcher),before);assert.equal(rig.writes(),0);
+ rig.refuse(null);const card=await rig.api.proposeWatcherEdit();assert.equal(rig.writes(),0);
+ await rig.api.approve(card.id);assert.equal(rig.writes(),1);assert.equal(rig.api.getSnapshot().watcher.wallY,530);
+});
+
+test('WATCHER rendered tools persist gestures and open the exact approval',async()=>{
+ const rig=await watcherAdapter(),{JSDOM}=require('jsdom');
+ const dom=new JSDOM('<div id="root"></div>',{runScripts:'outside-only',pretendToBeVisual:true}),win=dom.window;
+ const studio=path.join(__dirname,'../../01.APP/nodelang/studio');
+ for(const vendor of ['react.js','react-dom.js','babel.js'])win.eval(fs.readFileSync(path.join(studio,'vendor',vendor),'utf8'));
+ win.AHIcon=()=>null;
+ const R=win.React,opened=[],element=tag=>({children,...props})=>R.createElement(tag,props,children);
+ win.DOMPoint=class{constructor(x,y){this.x=x;this.y=y;}matrixTransform(){return this;}};
+ win.SVGElement.prototype.getScreenCTM=()=>({inverse:()=>({})});win.SVGElement.prototype.setPointerCapture=()=>{};
+ win.UI={bindActions:(names,handlers)=>(id,...args)=>handlers[names[id]](...args),api:rig.api,useData:()=>R.useSyncExternalStore(rig.api.subscribe,rig.api.getSnapshot),useApp:()=>({show:(name,data)=>opened.push({name,data}),go:()=>{}}),
+  useAction:()=>{const [state,setState]=R.useState('idle');return {state,run:async fn=>{setState('waiting');try{return await fn();}finally{setState('idle');}}};},
+  ActionStatus:()=>null,Btn:({p,sm,ghost,...props})=>R.createElement('button',props),Card:element('section'),Heading:element('header')};
+ win.eval(win.Babel.transform(fs.readFileSync(path.join(studio,'answer-widgets.jsx'),'utf8'),{presets:['react']}).code);
+ win.eval(win.Babel.transform(fs.readFileSync(path.join(studio,'ds_watch_edit.jsx'),'utf8'),{presets:['react']}).code);
+ const root=win.ReactDOM.createRoot(win.document.getElementById('root'));
+ const settle=()=>new Promise(resolve=>setTimeout(resolve,30));
+ root.render(R.createElement(win.UI.Watcher));await settle();
+ const button=label=>[...win.document.querySelectorAll('button')].find(b=>b.textContent===label||b.getAttribute('aria-label')===label);
+ const click=async label=>{assert.ok(button(label),label);button(label).click();await settle();};
+ const gesture=async()=>{const svg=win.document.querySelector('svg');for(const [type,x,y] of [['pointerdown',120,510],['pointermove',150,520],['pointerup',220,530]]){svg.dispatchEvent(new win.MouseEvent(type,{bubbles:true,button:0,clientX:x,clientY:y}));await settle();}};
+ try{
+  await click('AutoCAD');assert.equal(rig.api.getSnapshot().watcher.host,'AutoCAD');
+  const select=win.document.querySelector('select');select.value='Level 2';select.dispatchEvent(new win.Event('change',{bubbles:true}));await settle();
+  assert.equal(rig.api.getSnapshot().watcher.view,'Level 2');
+  await click('Dimension · D');await gesture();assert.equal(rig.api.getSnapshot().watcher.dimensions.length,1);
+  await click('Mark · M');await gesture();assert.equal(rig.api.getSnapshot().watcher.marks.length,1);
+  await click('Comment · C');await gesture();assert.equal(opened.at(-1).name,'Add comment');assert.equal(opened.at(-1).data.element,'unique-wall');
+  const registrations={};
+  win.registerActions=(names,handlers)=>{for(const [name,key] of Object.entries(names))registrations[name]=handlers[key];};
+  const actualDOM=win.ReactDOM;win.ReactDOM={createRoot:()=>({render(){}})};
+  win.eval(win.Babel.transform(fs.readFileSync(path.join(studio,'app.jsx'),'utf8'),{presets:['react']}).code);
+  win.ReactDOM=actualDOM;
+  await registrations['appShell.AddComment.77']({api:rig.api,m:opened.at(-1).data,saved:fn=>fn(),text:'Keep clear'});
+  assert.equal(rig.api.getSnapshot().watcher.comments[0].text,'Keep clear');
+
+  await click('Edit · E');await gesture();assert.equal(rig.api.getSnapshot().watcher.pendingY,550);
+  await click('Apply to AutoCAD');assert.equal(opened.at(-1).name,'Approve');assert.equal(opened.at(-1).data.id,'proposal');assert.equal(rig.writes(),0);
+  await click('Discard changes');assert.equal(rig.api.getSnapshot().watcher.pendingY,510);
+  rig.refuse('Source revision changed');await click('AutoCAD');assert.match(win.document.querySelector('[role=alert]').textContent,/Source revision changed/);
+  rig.refuse(null);await click('Retry action');assert.equal(win.document.querySelector('[role=alert]'),null);assert.match(win.document.body.textContent,/Watcher saved/);
+ }finally{root.unmount();dom.window.close();}
+});
+
+
+test('WATCHER losing the graph owner clears source geometry and private annotations',async()=>{
+ const rig=await watcherAdapter();
+ await rig.api.addComment({text:'Private',x:120,y:510,element:'unique-wall'});
+ rig.loseOwner();await rig.api.selectGraph('another-graph');
+ const state=rig.api.getSnapshot().watcher;
+ assert.equal(rig.api.supportsAction('editWall'),false);
+ assert.equal(state.host,'');assert.equal(state.elementId,undefined);
+ assert.equal(state.comments.length,0);assert.equal(state.marks.length,0);assert.equal(state.dimensions.length,0);
 });

@@ -45,6 +45,123 @@ MAX_PLUGIN_ABSENT = (
 RHINO_URL = "http://127.0.0.1:9879"
 
 
+def _watcher_script(host, request):
+    """Typed offset/read operations; all supplied text becomes a quoted C# literal."""
+    source = request.get("source", {})
+    element = source.get("element", {})
+    write = request["action"] == "write"
+    element_id = json.dumps(element.get("id") or request.get("element") or "")
+    document = json.dumps(source.get("document") or request.get("document") or "")
+    revision = json.dumps(element.get("revision", ""))
+    view = json.dumps(source.get("view") or request.get("view") or "")
+    offset = json.dumps(request.get("offsetMm", 0.0), allow_nan=False)
+    header = "// WATCHER_REQUEST " + json.dumps(request, allow_nan=False) + "\n"
+    if host == "Revit":
+        return header + """
+string wanted = %s, document = %s, viewName = %s;
+string docId = Doc.ProjectInformation.UniqueId + "|" + Doc.PathName + "|" + Doc.Title;
+if (document != "" && docId != document) throw new Exception("Source document changed");
+var views = new Autodesk.Revit.DB.FilteredElementCollector(Doc).OfClass(typeof(Autodesk.Revit.DB.View))
+    .Cast<Autodesk.Revit.DB.View>().Where(v => !v.IsTemplate && v.ViewType == Autodesk.Revit.DB.ViewType.FloorPlan)
+    .GroupBy(v => v.Name).Where(g => g.Count() == 1).Select(g => g.First()).ToList();
+if (viewName == "") viewName = Doc.ActiveView.Name;
+var selectedView = views.SingleOrDefault(v => v.Name == viewName);
+if (selectedView == null) throw new Exception("Choose an available floor plan view");
+var ids = UIDoc.Selection.GetElementIds();
+var wall = (wanted != "" ? Doc.GetElement(wanted) : ids.Count == 1 ? Doc.GetElement(ids.First()) : null) as Autodesk.Revit.DB.Wall;
+if (wall != null && !new Autodesk.Revit.DB.FilteredElementCollector(Doc, selectedView.Id).ToElementIds().Contains(wall.Id))
+    throw new Exception("Selected element is outside this view");
+if (%s) {
+    if (wall == null || wall.VersionGuid.ToString() != %s) throw new Exception("Source revision changed");
+    Autodesk.Revit.DB.ElementTransformUtils.MoveElement(Doc, wall.Id, new Autodesk.Revit.DB.XYZ(0, %s / 304.8, 0));
+}
+object element = null;
+if (wall != null) {
+    var location = wall.Location as Autodesk.Revit.DB.LocationCurve;
+    if (location == null || !(location.Curve is Autodesk.Revit.DB.Line)) throw new Exception("Choose a straight wall");
+    var a = location.Curve.GetEndPoint(0); var b = location.Curve.GetEndPoint(1);
+    element = new Dictionary<string, object> {
+        {"id",wall.UniqueId}, {"label",wall.Name}, {"revision",wall.VersionGuid.ToString()},
+        {"start",new double[]{a.X*304.8/15.0,a.Y*304.8/15.0}},
+        {"end",new double[]{b.X*304.8/15.0,b.Y*304.8/15.0}},
+        {"lengthMm",location.Curve.Length*304.8}, {"thicknessMm",wall.Width*304.8}
+    };
+}
+result = new Dictionary<string, object> {{"document",docId},
+    {"view",viewName},{"views",views.Select(v=>v.Name).ToArray()},{"element",element}};
+""" % (element_id, document, view, "true" if write else "false", revision, offset)
+    return header + """
+var Db = Doc.Database; var Ed = Doc.Editor;
+string wanted = %s, document = %s, viewName = %s;
+string docId = Db.FingerprintGuid.ToString() + "|" + Doc.Name;
+if (document != "" && docId != document) throw new Exception("Source document changed");
+var tr = Db.TransactionManager.TopTransaction;
+var layouts = (Autodesk.AutoCAD.DatabaseServices.DBDictionary)tr.GetObject(Db.LayoutDictionaryId, Autodesk.AutoCAD.DatabaseServices.OpenMode.ForRead);
+var views = new List<string>();
+foreach (Autodesk.AutoCAD.DatabaseServices.DBDictionaryEntry item in layouts) views.Add(item.Key);
+if (viewName == "") viewName = Autodesk.AutoCAD.DatabaseServices.LayoutManager.Current.CurrentLayout;
+if (!views.Contains(viewName)) throw new Exception("Source view changed");
+Autodesk.AutoCAD.DatabaseServices.ObjectId id = Autodesk.AutoCAD.DatabaseServices.ObjectId.Null;
+if (wanted != "") id = Db.GetObjectId(false, new Autodesk.AutoCAD.DatabaseServices.Handle(Convert.ToInt64(wanted,16)),0);
+else {
+    var selection = Ed.SelectImplied();
+    if (selection.Status == Autodesk.AutoCAD.EditorInput.PromptStatus.OK && selection.Value.Count == 1)
+        id = selection.Value.GetObjectIds()[0];
+}
+var line = id.IsNull ? null : tr.GetObject(id,Autodesk.AutoCAD.DatabaseServices.OpenMode.ForRead) as Autodesk.AutoCAD.DatabaseServices.Line;
+if (line != null) {
+    var block = (Autodesk.AutoCAD.DatabaseServices.BlockTableRecord)tr.GetObject(line.OwnerId,Autodesk.AutoCAD.DatabaseServices.OpenMode.ForRead);
+    if (!block.IsLayout || ((Autodesk.AutoCAD.DatabaseServices.Layout)tr.GetObject(block.LayoutId,Autodesk.AutoCAD.DatabaseServices.OpenMode.ForRead)).LayoutName != viewName)
+        throw new Exception("Selected element is outside this view");
+}
+Func<Autodesk.AutoCAD.DatabaseServices.Line,string> version = l => string.Join("|",
+    new double[]{l.StartPoint.X,l.StartPoint.Y,l.StartPoint.Z,l.EndPoint.X,l.EndPoint.Y,l.EndPoint.Z,l.Thickness}
+        .Select(v => v.ToString("R",System.Globalization.CultureInfo.InvariantCulture)));
+// Geometry units must be explicit; guessing INSUNITS would corrupt the edit distance.
+if (Db.Insunits != Autodesk.AutoCAD.DatabaseServices.UnitsValue.Millimeters) throw new Exception("AutoCAD Watcher requires drawing units in millimetres");
+if (%s) {
+    if (line == null || version(line) != %s) throw new Exception("Source revision changed");
+    line.UpgradeOpen();
+    line.TransformBy(Autodesk.AutoCAD.Geometry.Matrix3d.Displacement(new Autodesk.AutoCAD.Geometry.Vector3d(0,%s,0)));
+}
+object element = null;
+if (line != null) element = new Dictionary<string,object> {
+    {"id",line.Handle.ToString()}, {"label","Line " + line.Handle.ToString()}, {"revision",version(line)},
+    {"start",new double[]{line.StartPoint.X/15.0,line.StartPoint.Y/15.0}},
+    {"end",new double[]{line.EndPoint.X/15.0,line.EndPoint.Y/15.0}},
+    {"lengthMm",line.Length}, {"thicknessMm",line.Thickness}
+};
+result = new Dictionary<string,object> {{"document",docId},
+    {"view",viewName},{"views",views.ToArray()},{"element",element}};
+""" % (element_id, document, view, "true" if write else "false", revision, offset)
+
+
+def _watcher_call(host, request, *, instance=None, timeout_seconds: float = 30.0):
+    from .clean_revit_adapter import broker_call, broker_sessions
+    from .universal_cell import InvalidCell
+    if host not in {"Revit", "AutoCAD"}:
+        raise InvalidCell("Watcher supports Revit walls and AutoCAD lines")
+    service = "revit" if host == "Revit" else "acad"
+    rows = [row for row in broker_sessions(service) if instance is None or row["port"] == instance]
+    if len(rows) != 1:
+        raise InvalidCell("Choose exactly one available source host session")
+    answer = broker_call(service, "/exec", {"code":_watcher_script(host, request),
+        "transaction_name":"ArchHub Watcher " + request["action"]}, port=rows[0]["port"], timeout=timeout_seconds)
+    if answer.get("status") != "ok" or type(answer.get("result")) is not dict:
+        raise InvalidCell("Watcher source refused: " + str(answer.get("error") or "No geometry readback"))
+    return {**answer["result"], "host":host, "instance":rows[0]["port"]}
+
+
+def watcher_read(host, *, instance=None, view=None, document=None, element=None):
+    return _watcher_call(host, {"action":"read", "view":view, "document":document,
+        "element":element}, instance=instance)
+
+
+def watcher_write(payload):
+    source = payload["source"]
+    return _watcher_call(source["host"], {"action":"write", **payload}, instance=source["instance"])
+
+
 def _max_plugin_installed() -> bool:
     """True when a 3ds Max startup folder of this user loads MaxMCP."""
     base = Path(os.environ.get("LOCALAPPDATA", "")) / "Autodesk" / "3dsMax"

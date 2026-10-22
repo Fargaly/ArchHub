@@ -28,6 +28,46 @@ class WorkshopAPI:
         self.message_limit = message_limit
         self.route = route
 
+    def readWatcher(self):
+        from .watcher_owner import WatcherOwner
+        return WatcherOwner(self).read()
+
+    def setWatcherHost(self, host):
+        from .watcher_owner import WatcherOwner
+        return WatcherOwner(self).set_host(host)
+
+    def setWatcherView(self, view):
+        from .watcher_owner import WatcherOwner
+        return WatcherOwner(self).set_view(view)
+
+    def editWall(self, y):
+        from .watcher_owner import WatcherOwner
+        return WatcherOwner(self).edit(y)
+
+    def addDimension(self, values):
+        from .watcher_owner import WatcherOwner
+        return WatcherOwner(self).annotate("dimension", values)
+
+    def addMark(self, values):
+        from .watcher_owner import WatcherOwner
+        return WatcherOwner(self).annotate("mark", values)
+
+    def addComment(self, values):
+        from .watcher_owner import WatcherOwner
+        return WatcherOwner(self).annotate("comment", values)
+
+    def proposeWatcherEdit(self):
+        from .watcher_owner import WatcherOwner
+        return WatcherOwner(self).propose()
+
+    def discardWatcherChanges(self):
+        from .watcher_owner import WatcherOwner
+        return WatcherOwner(self).discard()
+
+    def decideWatcherEdit(self, root, digest, decision):
+        from .social_approval import decide_watcher
+        return decide_watcher(self, root, digest, decision)
+
     def listApprovals(self):
         from .social_approval import list_reviews
         return list_reviews(self)
@@ -602,3 +642,6 @@ FUNCTIONS = FUNCTIONS | frozenset({"getAgentSurface","setAgentProfile","setTaskP
 FUNCTIONS = FUNCTIONS | frozenset({"listApprovals", "postponeApproval", "resumeApproval", "contestDecision",
     "refreshApproval", "reviewProofRow", "setApprovalRubric"})
 # WIRE-agents end.
+
+FUNCTIONS = FUNCTIONS | frozenset({"readWatcher", "setWatcherHost", "setWatcherView", "editWall",
+    "addDimension", "addMark", "addComment", "proposeWatcherEdit", "discardWatcherChanges", "decideWatcherEdit"})

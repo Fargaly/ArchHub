@@ -41,6 +41,9 @@ def _delegation(api, root):
     from .universal_cell import InvalidCell
     if type(root) is not str:
         raise InvalidCell("Approval requires its exact delegation identity")
+    from .watcher_owner import PREFIX, approval_context
+    if root.startswith(PREFIX):
+        return approval_context(api, root)
     snapshot = api.admit()
     registry = api.owner.universal_registry
     if root.startswith(DELEGATION_PREFIX):
@@ -85,6 +88,9 @@ def _material(api, kind, delegation):
 
 
 def approval_card(api, root):
+    from .watcher_owner import PREFIX, WatcherOwner
+    if type(root) is str and root.startswith(PREFIX):
+        return WatcherOwner(api).card(root)
     from .cell_authorization import AuthorizationDenied
     from .universal_cell import InvalidCell
     snapshot, kind, delegation, permission, work = _delegation(api, root)
@@ -165,6 +171,8 @@ def change_review(api, root, action, *args):
             raise InvalidCell("Review the successor decision instead")
         card["status"] = "contested"
         return _save_review(api, delegation, card, action, reason.strip())
+    if action == "refreshApproval" and kind == "watcher":
+        raise InvalidCell("Discard the source-bound Watcher draft and read its source before proposing a fresh edit")
     if action == "refreshApproval":
         if card.get("successor"):
             return approval_card(api, card["successor"])
@@ -254,7 +262,8 @@ def list_reviews(api):
                 cards.append(approval_card(api, member.participant_id))
             except (InvalidCell, AuthorizationDenied):
                 continue
-    return cards
+    from .watcher_owner import WatcherOwner
+    return cards + WatcherOwner(api).reviews()
 
 
 def _social_providers(registry) -> dict:
@@ -409,3 +418,12 @@ def decide(server, binding, body) -> dict:
                          delegation.permission_root, server.adapter_consent_broker, gesture,
                          expected_revision=snapshot.revision)
         return {**answer, "decision": "approved", "revision": store.revision}
+
+
+def decide_watcher(api, root, digest, decision):
+    """The same authenticated approval owner admits the one Watcher effect gesture."""
+    from .watcher_owner import WatcherOwner
+    snapshot, _, delegation, _, _ = _delegation(api, root)
+    if decision == "approve":
+        require_review_admission(snapshot, delegation.permission_root)
+    return WatcherOwner(api).decide(root, digest, decision)

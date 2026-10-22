@@ -272,7 +272,7 @@
               u
             }, event)}>Reject row {i + 1}</Btn>}</div></div>)}</div>}
   {decisionError && <p role="alert">{decisionError}</p>}
-  {s.nativeApproval && c.status === 'refused' ? <p role="alert">This review is closed. Request a fresh review before trying again.</p> : c.status === 'postponed' ? <div className="row spread"><span>Saved for later review.</span>{api.supportsAction?.('resumeApproval') !== false && <Btn p onClick={event => executeAction("sharedUI.ResumeReview.11", {
+  {['executing','unconfirmed'].includes(c.status) ? <p role="alert">Host outcome is unconfirmed. Inspect the source before another edit; this request will not replay.</p> : s.nativeApproval && c.status === 'refused' ? <p role="alert">This review is closed. Request a fresh review before trying again.</p> : c.status === 'postponed' ? <div className="row spread"><span>Saved for later review.</span>{api.supportsAction?.('resumeApproval') !== false && <Btn p onClick={event => executeAction("sharedUI.ResumeReview.11", {
           api,
           id,
           u
@@ -303,7 +303,7 @@
             u
           }, event)}>Not sure</Btn></>}</div> : <div className="spread row"><span style={{
           color: c.status === 'approved' ? A.ok : A.inkSoft
-        }}>{c.status === 'approved' ? s.nativeApproval ? 'Approval recorded' : c.kind === 'qc' ? 'Review recorded' : c.kind === 'memory' ? 'Memory updated' : c.kind === 'meeting-summary' ? 'Summary sent' : c.kind === 'community' ? 'Pattern shared' : 'Applied and checked' : 'Nothing changed'}</span>{c.status === 'approved' && !s.nativeApproval && <Btn sm onClick={event => executeAction("sharedUI.Undo.19", {
+        }}>{c.status === 'approved' ? s.nativeApproval ? 'Approval recorded' : c.kind === 'qc' ? 'Review recorded' : c.kind === 'memory' ? 'Memory updated' : c.kind === 'meeting-summary' ? 'Summary sent' : c.kind === 'community' ? 'Pattern shared' : 'Applied and checked' : 'Nothing changed'}</span>{c.status === 'approved' && !s.nativeApproval && c.approvalKind !== 'watcher' && <Btn sm onClick={event => executeAction("sharedUI.Undo.19", {
           api,
           u
         }, event)}>Undo</Btn>}</div>}

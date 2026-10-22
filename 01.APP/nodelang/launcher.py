@@ -473,6 +473,7 @@ try:
     from nodelang.quiet_update import apply_staged as _apply_staged, begin_update_boot
     _staged = begin_update_boot(state_dir, Path(__file__).resolve().parents[1])
     if _staged.get("rolled_back"):
+        print("  update     : %s" % _staged.get("reason"), flush=True)
         try:
             _instance_lock.close()
             _update_preboot_process.Popen(["wscript.exe", str(Path(__file__).resolve().parents[1] / "ArchHub.vbs")],
@@ -1482,7 +1483,7 @@ _update_boot = {"pending": _staged.get("status") == "awaiting_boot", "checks": 0
 
 
 def _acknowledge_update_surface():
-    """Acknowledge after the saved graph and Studio have actually mounted.
+    """Acknowledge when this build reaches the Studio.
 
     Build 20261022-1528 was rolled back by this poll: the window had reached the
     Studio but the graph page took longer than two minutes, which is a slow
@@ -1507,7 +1508,7 @@ def _acknowledge_update_surface():
                 from nodelang.quiet_update import confirm_applied
                 # File restoration waits for the same final close as every update.
                 result = confirm_applied(state_dir, Path(__file__).resolve().parents[1], rollback=False)
-                print("  update     : %s" % result.get("reason"), flush=True)
+                print("  update     : build %s: %s" % (result.get("build_id"), result.get("reason")), flush=True)
                 if not result.get("confirmed"):
                     _update_rollback_requested.set()
             import threading as _ack_threading
@@ -2399,6 +2400,7 @@ def _finish_application_shutdown():
                 rolled = rollback_staged(state_dir, Path(__file__).resolve().parents[1])
                 if not rolled.get("rolled_back"):
                     raise ValueError(rolled.get("reason", "previous build could not be restored"))
+                print("  update     : %s" % rolled.get("reason"), flush=True)
             else:
                 arm_update(state_dir, Path(__file__).resolve().parents[1], state_path,
                     content_path if content_path is not None and content_path.is_file() else None,

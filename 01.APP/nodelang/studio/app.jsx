@@ -324,11 +324,12 @@
             show
           }, event)}>⬡</button><button className="button-reset muted" onClick={event => executeAction("appShell.ArchHub.2", {
             go
-          }, event)}>ArchHub</button><span className="muted">›</span><span>{routeNames[route] || route.split('/').at(-1)}</span><span className="fill" />{(s.update.available || s.update.updatedTo || s.update.state === 'failed') && <button className="icon-button update-badge" title={s.update.available ? 'Update available' : s.update.updatedTo ? 'Update installed' : 'Update needs attention'} aria-label={s.update.available ? 'Update available' : s.update.updatedTo ? 'Update installed' : 'Update needs attention'} onClick={event => executeAction("appShell.Control.3", {
+          }, event)}>ArchHub</button><span className="muted">›</span><span>{routeNames[route] || route.split('/').at(-1)}</span><span className="fill" />{(s.update.available || s.update.updatedTo || s.update.state === 'failed') && <button className={(s.update.available ? 'button-reset' : 'icon-button') + ' update-badge'} title={s.update.available ? `${s.update.installed} → ${s.update.next}. Unsent text is lost; your saved graphs and settings stay with you.` : s.update.updatedTo ? 'Update installed' : 'Update needs attention'} aria-label={s.update.available ? 'Update available' : s.update.updatedTo ? 'Update installed' : 'Update needs attention'} onClick={event => executeAction("appShell.Control.3", {
+            act,
+            api,
             go,
-            s,
-            show
-          }, event)}><window.AHIcon name="update" /><i /></button>}<button className="button-reset muted" onClick={event => executeAction("appShell.Control.4", {
+            s
+          }, event)}>{s.update.available ? 'Relaunch to update' : <window.AHIcon name="update" />}<i /></button>}<button className="button-reset muted" onClick={event => executeAction("appShell.Control.4", {
             show
           }, event)}>{s.workspaces.find(w => w.id === s.activeWorkspace)?.name || 'Add workspace'} ▾</button><button className="button-reset muted" style={{
             padding: '0 14px'
@@ -906,11 +907,12 @@
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
   }
   function appShellControl3({
+    act,
+    api,
     go,
-    s,
-    show
+    s
   }, event) {
-    const handler = () => s.update.available ? show('Update') : go('settings/Updates & About');
+    const handler = () => s.update.available ? act(api.installUpdate) : go('settings/Updates & About');
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
   }
   function appShellControl4({

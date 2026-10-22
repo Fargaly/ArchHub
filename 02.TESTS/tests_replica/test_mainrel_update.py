@@ -76,5 +76,5 @@ def test_desktop_shutdown_uses_one_recovery_owner_only_after_close(tmp_path, mon
     assert actions == (['quiesce', 'close'] if close_refused else ['quiesce', 'close', 'arm'])
     assert len(armed) == (0 if close_refused else 1)
     if armed:
-        assert armed[0] == ((tmp_path, source.parent, tmp_path / 'authority.sqlite3', None),
+        assert armed[0] == ((tmp_path, source.parents[1], tmp_path / 'authority.sqlite3', None),
                             {'expected_build': 'new'})

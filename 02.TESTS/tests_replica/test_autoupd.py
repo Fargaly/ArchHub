@@ -215,7 +215,7 @@ def test_catalogue_settings_write_through_the_existing_graph_property_owner():
     app.apply_universal_canvas_gesture(store, registry, roots=[root], focus_root=root)
     canvas = app.project_universal_canvas(store, registry)
     rows = {row['label']: row for row in canvas['properties'] if row['label'].startswith('update_')}
-    assert set(rows) == {'update_check_interval_minutes','update_auto_apply_on_quit','update_preview_channel'}
+    assert set(rows) == {'update_check_interval_minutes','update_auto_apply_on_quit','update_preview_channel','update_shutdown_ms'}
     for key, value in [('update_check_interval_minutes','7'),('update_auto_apply_on_quit','false'),('update_preview_channel','true')]:
         app.edit_universal_property(store, registry, rows[key]['relation'], value)
     assert app.read_universal_update_policy(store.snapshot(), registry) == dict(
@@ -335,11 +335,11 @@ def test_real_build_reader_reconciles_final_compiled_inventory(tmp_path):
     script.write_text('''param([string]$Root)
 $ErrorActionPreference = 'Stop'
 $tokens = $null; $errors = $null
-$ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $Root 'installer/build_release.ps1'), [ref]$tokens, [ref]$errors)
+$ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $Root '03.TOOLS/installer/build_release.ps1'), [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw 'Release build PowerShell syntax is invalid.' }
 $functions = $ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in @('Assert-PlainAncestors','Read-StudioBuild')}, $true)
 foreach ($function in $functions) { . ([scriptblock]::Create($function.Extent.Text)) }
-$selectedRoot = $Root; $utf8 = [Text.UTF8Encoding]::new($false, $true)
+$selectedRoot = Join-Path $Root '01.APP'; $utf8 = [Text.UTF8Encoding]::new($false, $true)
 $plainDirectories = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 $result = Read-StudioBuild
 Write-Output $result.Files
@@ -399,8 +399,9 @@ Read-StudioBuild
 
 @pytest.mark.parametrize("page_ready,studio_mounted,checks,verdict", [
     (True, False, 0, "confirm"),        # the graph page reported: confirmed at once
-    (False, True, 59, "wait"),          # two minutes in, still waiting
-    (False, True, 149, "wait"),         # just under five minutes, still waiting
+    (False, False, 0, "wait"),         # a new process still has time to reach Studio
+    (False, True, 59, "confirm"),       # R11: the booted Studio confirms without waiting for the graph
+    (False, True, 149, "confirm"),      # slow graph hydration is not a failed install
     (False, True, 150, "confirm"),      # the window reached the Studio: a slow graph page is not a failed install
     (False, False, 150, "rollback"),    # never reached the Studio: restore the previous build
 ])

@@ -95,7 +95,7 @@ def test_three_installs_replace_pin_with_real_size_accounting(tmp_path, monkeypa
         db.close()
         if number == 2:
             Path(str(source) + '.adoption.json').write_text('{}')
-        completed = files.preserve_closed_application_journals(tmp_path, f'install-{number}')
+        completed = files.preserve_closed_application_journals(tmp_path, f'install-{number}', keep_count=1)
         assert len(completed) == 1
         receipts = list(files.installer_backup_directory(tmp_path, source).glob('*-closed'))
         assert len(receipts) == 1
@@ -221,8 +221,8 @@ def test_quiet_updater_waits_for_setup_and_preserves_verbatim_refusal(tmp_path):
     app, state = staged_app(tmp_path)
     refusal = 'Setup refused: Installer backup over budget: 123 + 456 bytes exceeds 789 bytes; saved work was kept'
     def refuse(args, **options):
-        assert '/SILENT' in args
-        assert '/VERYSILENT' not in args
+        assert '/VERYSILENT' in args
+        assert '/SILENT' not in args
         assert options['timeout'] is None
         log = next(arg.removeprefix('/LOG=') for arg in args if arg.startswith('/LOG='))
         Path(log).write_text('2026-10-18 ArchHub Setup refused: ' + refusal + '\n', encoding='utf-8')

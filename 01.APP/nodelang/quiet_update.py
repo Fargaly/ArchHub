@@ -232,6 +232,9 @@ def _locked(state_dir):
 
 
 def _marker(updates, data):
+    # Runtime projections must not leave a stale "awaiting_boot" beside phase.
+    data = {key: value for key, value in data.items() if key not in
+            ("staged", "status", "installed_build_id", "installer", "reason", "bytes_verified")}
     fd, name = tempfile.mkstemp(prefix=".marker-", suffix=".tmp", dir=updates)
     temporary = Path(name)
     try:
@@ -350,7 +353,7 @@ def _rollback(updates, app, data, reason):
             for path in (app / root).rglob("*.pyc"):
                 _plain(path)
                 path.unlink()
-    _marker(updates, {**data, "phase": "rolled_back"})
+    _marker(updates, {**data, "phase": "rolled_back", "rollback_reason": reason})
     return {"staged": False, "confirmed": False, "rolled_back": True, "status": "rolled_back",
             "build_id": previous["build_id"], "reason": reason + "; previous build restored"}
 
@@ -374,8 +377,11 @@ def _status(updates, app_dir, *, verify_confirmed=False):
     if phase not in ("staged", "applying", "awaiting_boot", "confirmed", "rolled_back"):
         raise ValueError("staged phase invalid")
     if phase == "rolled_back":
+        reason = " ".join(str(data.get("rollback_reason") or "").split())[:512]
         return {**data, "staged": False, "retained": True, "status": phase,
-                "reason": "Previous build restored after a failed update; waiting for a newer release."}
+                "reason": "Previous build restored after a failed update; "
+                          + (reason + "; " if reason else "")
+                          + "waiting for a newer release."}
     target = updates / ASSET_NAME
     current = installed_build_id(app_dir)
     if phase == "applying":
@@ -527,10 +533,10 @@ def apply_staged(state_dir: Path, app_dir: Path, runner=subprocess.run, *, befor
             attempted_build = data["build_id"]
             # Setup may hash/copy several large closed journals. Wait for its
             # real exit rather than killing it on an arbitrary 600s deadline.
-            options = {"timeout": None}
+            options = {"timeout": None, "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
             setup_log = updates / 'setup.log'
             setup_log.unlink(missing_ok=True)
-            result = runner([data["installer"], "/SILENT", "/NORESTART",
+            result = runner([data["installer"], "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
                              "/NOCLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS",
                              "/SP-", "/LOG=" + str(setup_log), "/DIR=" + str(app_dir)], **options)
             if getattr(result, "returncode", 1) != 0 or not _installed_matches_target(app_dir, data):
@@ -571,6 +577,12 @@ def begin_update_boot(state_dir: Path, app_dir: Path) -> dict:
     try:
         with _locked(state_dir) as updates:
             data = _status(updates, app_dir)
+            # Setup wrote BUILD_ID after copying; the owner may have exited
+            # before recording its result. Let the matching new app prove boot.
+            if (data.get("status") == "applying" and data.get("bytes_verified")
+                    and _installed_matches_target(app_dir, data)):
+                _marker(updates, {**data, "phase": "awaiting_boot", "boot_started": True})
+                return {**data, "status": "awaiting_boot", "boot_started": True}
             if data.get("previous") and (data.get("status") == "applying" or (
                     data.get("status") == "awaiting_boot" and data.get("boot_started"))):
                 return _rollback(updates, app_dir, data, "previous update boot did not confirm")
@@ -585,12 +597,10 @@ def begin_update_boot(state_dir: Path, app_dir: Path) -> dict:
 def boot_acknowledgment(page_ready, studio_mounted, checks, *, limit=150) -> str:
     """The new build's fate after boot: "confirm", "wait" or "rollback".
 
-    The page reporting its graph confirms at once. Until ``limit`` polls (2 s each,
-    five minutes) the answer is wait. At the limit, a build whose window already
-    reached the Studio is confirmed: a slow graph page is not a failed install.
-    Only a build that never reached the Studio is rolled back.
+    The booted Studio confirms at once; graph hydration is not install health.
+    Only a build that never reached the Studio by ``limit`` polls rolls back.
     """
-    if page_ready:
+    if page_ready or studio_mounted:
         return "confirm"
     if checks < limit:
         return "wait"
@@ -603,7 +613,8 @@ def confirm_applied(state_dir: Path, app_dir: Path, *, rollback=True) -> dict:
         with _locked(state_dir) as updates:
             data = _status(updates, app_dir, verify_confirmed=True)
             if (not data["staged"] or data["installed_build_id"] != data["build_id"]
-                    or data["status"] not in ("awaiting_boot", "confirmed")):
+                    or not data.get("bytes_verified")
+                    or data["status"] not in ("applying", "awaiting_boot", "confirmed")):
                 if rollback and data.get("status") == "awaiting_boot":
                     return _rollback(updates, app_dir, data, "installed BUILD_ID does not match staged build")
                 return {**data, "confirmed": False, "reason": "installed BUILD_ID does not match staged build"}

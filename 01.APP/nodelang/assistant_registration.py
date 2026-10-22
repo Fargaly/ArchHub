@@ -249,7 +249,7 @@ def codex_readiness(install_root, state_root, environment=None) -> dict:
             return dict(report, state="migration_available",
                         reason="ArchHub's development-era start of this server gives it no "
                                "CODEX_THREAD_ID, so Codex cannot start it; Replace writes this install's entry")
-        return dict(report, state="conflict")
+        return dict(report, state="conflict", reason="Unknown or unmanaged entry; left untouched")
     if report["legacy_migration_needed"]:
         return dict(report, state="legacy_migration_required")
     return dict(report, state="ready_to_register", config_exists=True)

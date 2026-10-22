@@ -184,24 +184,24 @@ test('a read that never answers times out and Read status can recover',async()=>
   }finally{v.close();}
 });
 
-test('up to date draws no notice; a ready build opens its approved update review',async()=>{
+test('up to date draws no notice; a ready build shows one relaunch notification',async()=>{
   let current=status('idle');const v=await mount({get:()=>current});
   try{
     assert.equal(v.doc.querySelector('[aria-label="Update available"]'),null);
     current=status('ready');v.push();
     await v.settle(()=>!!v.doc.querySelector('[aria-label="Update available"]'),'ready badge appears');
-    assert.equal(v.doc.querySelector('[role="dialog"]'),null);
-    await v.click(v.doc.querySelector('[aria-label="Update available"]'));
-    await v.settle(()=>!!v.button('Restart and update'),'review opens');
-    assert.match(v.doc.querySelector('[role="dialog"]').textContent,/installed-build.*next-build/);
-    assert.match(v.doc.querySelector('[role="dialog"]').textContent,/Unsent text is lost/);
+    assert.equal(!!v.doc.querySelector('[role="dialog"]'),false);
+    const notice=v.doc.querySelector('[aria-label="Update available"]');
+    assert.equal(notice.textContent,'Relaunch to update');
+    assert.match(notice.title,/installed-build.*next-build/);
+    assert.match(notice.title,/Unsent text is lost/);
   }finally{v.close();}
 });
 
 test('one review action restarts once, with no second confirmation',async()=>{
   const v=await mount({get:()=>status('ready'),post:()=>status('restarting')});
   try{
-    await v.click(v.doc.querySelector('[aria-label="Update available"]'));
+    await v.settings();await v.click(v.button('Update'));
     await v.settle(()=>!!v.button('Restart and update'),'review opens');
     await v.click(v.button('Restart and update'));
     await v.settle(()=>v.api.getSnapshot().update.state==='restarting','restart requested');
@@ -210,10 +210,27 @@ test('one review action restarts once, with no second confirmation',async()=>{
   }finally{v.close();}
 });
 
+test('R11 ready notification applies with ONE button and no review dialog',async()=>{
+  const pending=deferred(),v=await mount({get:()=>status('ready'),post:()=>pending.promise});
+  try{
+    const update=v.doc.querySelector('[aria-label="Update available"]');
+    assert.equal(update.textContent.trim(),'Relaunch to update');
+    update.click();update.click();
+    await v.settle(()=>v.posts.length===1,'one click requests the update');
+    assert.equal(!!v.doc.querySelector('[role="dialog"]'),false,
+      v.doc.querySelector('[role="dialog"]')?.textContent.slice(0,300));
+    assert.deepEqual(v.posts,[{action:'reload'}]);
+    pending.resolve(status('restarting'));
+    await v.settle(()=>v.api.getSnapshot().update.state==='restarting','owner accepted restart');
+    await v.settle(()=>!v.doc.querySelector('[aria-label="Update available"]'),'ready notification disappears during restart');
+    assert.equal(!!v.doc.querySelector('[aria-label="Update available"]'),false);
+  }finally{pending.resolve(status('restarting'));v.close();}
+});
+
 test('a refused restart reports its reason and recovers only after Read status',async()=>{
   const v=await mount({get:()=>status('ready'),post:()=>({ok:false,error:'A Workshop job is running'})});
   try{
-    await v.click(v.doc.querySelector('[aria-label="Update available"]'));
+    await v.settings();await v.click(v.button('Update'));
     await v.settle(()=>!!v.button('Restart and update'),'review opens');
     await v.click(v.button('Restart and update'));
     await v.settle(()=>/Workshop job is running/.test(v.doc.body.textContent),'refusal visible');

@@ -79,7 +79,7 @@ def test_apply_runs_the_staged_installer_silently_and_retains_its_receipt(tmp_pa
         return _Done()
     out = qu.apply_staged(tmp_path / "state", app, runner=runner)
     assert out["applied"] and out["build_id"] == "new"
-    assert calls and calls[0][1:] == ["/SILENT", "/NORESTART", "/NOCLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS", "/SP-", "/LOG=" + str(updates / "setup.log"), "/DIR=" + str(app)]
+    assert calls and calls[0][1:] == ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/NOCLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS", "/SP-", "/LOG=" + str(updates / "setup.log"), "/DIR=" + str(app)]
     assert (updates / qu.ASSET_NAME).is_file() and qu.staged_update(tmp_path / "state", app)["status"] == "awaiting_boot"
 
 

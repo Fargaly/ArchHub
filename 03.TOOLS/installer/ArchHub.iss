@@ -473,7 +473,7 @@ begin
   Result := False;
   PythonPage.Clear;
   PythonPage.Add(PythonUrl, PythonFile, PythonSha256);
-  PythonPage.Show;
+  if not WizardSilent() then PythonPage.Show;
   try
     try
       PythonPage.Download;
@@ -601,7 +601,7 @@ begin
       DeleteFile(ExpandConstant('{app}\.assistant-hooks-consent'));
     BackupProgress.SetText('Updating recognised assistant connections', 'Unrecognised settings are left untouched.');
     ConnectorWarnings := '';
-    BackupProgress.Show();
+    if not WizardSilent() then BackupProgress.Show();
     try
       if not ExecAndLogOutput(FindPython(), '-u -E -s -B -m nodelang.assistant_registration migrate-connectors',
           ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ConnectorCode, @OnConnectorLog) then
@@ -612,7 +612,7 @@ begin
       BackupProgress.Hide();
     end;
     if ConnectorWarnings <> '' then
-      SuppressibleMsgBox(ConnectorWarnings, mbInformation, MB_OK, IDOK);
+      Log(ConnectorWarnings);
 
   end;
 end;
@@ -651,7 +651,7 @@ begin
     BackupProgress := CreateOutputMarqueeProgressPage('Checking assistant connections',
       'Checking existing entries before replacing application files');
     ConnectorWarnings := '';
-    BackupProgress.Show();
+    if not WizardSilent() then BackupProgress.Show();
     BackupProgress.Animate();
     try
       if not ExecAndLogOutput(FindPython(), '-u -E -s -B -m nodelang.assistant_registration preflight-connectors', ConnectorTemp, SW_HIDE, ewWaitUntilTerminated, BackupCode, @OnConnectorLog) then
@@ -662,7 +662,7 @@ begin
       BackupProgress.Hide();
     end;
     if ConnectorWarnings <> '' then
-      SuppressibleMsgBox(ConnectorWarnings, mbInformation, MB_OK, IDOK);
+      Log(ConnectorWarnings);
   end;
   if Result = '' then
   begin
@@ -673,7 +673,7 @@ begin
     BackupProgress := CreateOutputMarqueeProgressPage('Preserving your saved work',
       'Closing ArchHub journal holders, checking SQLite and preserving saved work');
     BackupFailure := '';
-    BackupProgress.Show();
+    if not WizardSilent() then BackupProgress.Show();
     BackupProgress.Animate();
     try
       if not ExecAndLogOutput(FindPython(), '-u "' + ExpandConstant('{tmp}\application_recovery_files.py') +

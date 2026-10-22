@@ -85,3 +85,16 @@ def test_a_status_without_an_owner_answer_is_still_not_answering(graph, wire):
     wire(ThreadingHTTPServer(("127.0.0.1", 0), _NotJson))
     with pytest.raises(roots.WorkspaceRootRefused, match=r"not answering \(HTTPError\)"):
         roots.forward_workspace_settings({"action": "list"})
+
+
+def test_canonical_instance_reads_an_adopted_generation(tmp_path):
+    # The founder's selected generation is adopted: adoption.json, no bootstrap.json.
+    # Settings -> Workspaces failed with "graph owner is not answering (FileNotFoundError)".
+    import json
+    generation = tmp_path / "generations" / "gen-adopted"
+    generation.mkdir(parents=True)
+    (tmp_path / "CURRENT").write_text("gen-adopted", encoding="ascii")
+    (generation / "adoption.json").write_text(json.dumps({
+        "graph_id": "gen-adopted", "key_id": "k", "key_version": 1, "key_fingerprint": "f"}), encoding="utf-8")
+    instance = roots.canonical_instance(tmp_path)
+    assert instance.graph_id == "gen-adopted"

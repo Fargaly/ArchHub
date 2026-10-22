@@ -1363,8 +1363,11 @@ def canonical_instance(root=None) -> CanonicalInstance:
     base = Path(root) if root is not None else (
         Path(os.environ.get("LOCALAPPDATA") or str(Path.home())) / "ArchHub" / "unified-authority")
     generation = (base / "CURRENT").read_text(encoding="ascii").strip()
-    manifest = json.loads((base / "generations" / generation / "bootstrap.json").read_text(
-        encoding="utf-8"))
+    # An adopted (migrated) generation carries adoption.json, as bind_selected_application_authority reads.
+    manifest_path = base / "generations" / generation / "bootstrap.json"
+    if not manifest_path.is_file():
+        manifest_path = manifest_path.with_name("adoption.json")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if manifest.get("graph_id") != generation:
         raise InvalidCell("the selected authority generation is inconsistent")
     return CanonicalInstance(manifest["graph_id"], manifest["key_id"], int(manifest["key_version"]),

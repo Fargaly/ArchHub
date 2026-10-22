@@ -11,7 +11,7 @@ from .cell_protocols import prepare_append_relation_members
 from .universal_cell import Cell, InvalidCell
 
 
-FUNCTIONS = frozenset({"listAgentsWorking", "listTasks", "sendToBaboom", "setTaskStatus",
+FUNCTIONS = frozenset({"listAgentsWorking", "listTasks", "listWorkshopMessages", "sendToBaboom", "setTaskStatus",
     "reassignTask", "setTaskDelegate", "queueTaskMessage", "settleQueuedMessage",
     "steerTask", "addTaskReview", "resolveTaskReview"})
 LABELS = {"claude":"Claude", "codex":"Codex", "antigravity":"Antigravity",
@@ -260,10 +260,12 @@ class WorkshopAPI:
         truncated = truncated or bool(frontier)
         from .research_owner import ResearchOwner
         research = ResearchOwner(self)
+        from .workshop_mailbox import delivery_events
+        from .workshop_delivery_state import project_injection_delivery
         return [{"id":row["id"],"who":row["author"],"text":row["content"],
             **research.sources(row['id'],row.get('evidence',[]),row.get('refs',[task])),
             "reply_to":row["reply_to"],"sequence":row["sequence"],
-            "created_at":row["created_at"],"state":"stored"}
+            "created_at":row["created_at"], **project_injection_delivery(delivery_events(history, row))}
             for row in sorted(selected.values(),key=lambda item:item["sequence"])], truncated
 
     def _notification_root(self, id):
@@ -367,6 +369,22 @@ class WorkshopAPI:
 
     def listTasks(self):
         return [self._task(row) for row in self._works()]
+
+    def listWorkshopMessages(self, before=None):
+        """The existing public room, including notes that have no Work reference."""
+        from .workshop_mailbox import CATEGORY, agent_addressed, delivery_events
+        from .workshop_delivery_state import project_injection_delivery
+        if before is not None and (type(before) is not int or before < 1):
+            raise InvalidCell("Workshop message cursor is invalid")
+        history = self.history()
+        rows, more = history._collect(history._db.execute("SELECT * FROM messages WHERE conversation_id=? "
+            "AND category=? AND public=1 AND (? IS NULL OR sequence<?) ORDER BY sequence DESC LIMIT 101",
+            (self.root, CATEGORY, before, before)), 100, 180000)
+        messages = [{"id":row["id"], "who":row["author"], "text":row["content"],
+            "reply_to":row["reply_to"], "sequence":row["sequence"], "created_at":row["created_at"],
+            **project_injection_delivery(delivery_events(history, row), addressed=agent_addressed(row))}
+            for row in reversed(rows)]
+        return {"messages":messages, "more":more, "next_before":rows[-1]["sequence"] if rows else None}
 
     def _append(self, task, text, *, key, reply_to=None):
         self._work(task)

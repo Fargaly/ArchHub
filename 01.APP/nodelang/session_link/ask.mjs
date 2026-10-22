@@ -40,7 +40,7 @@ export async function ask(app,session,text,permissionMode='prompting',{expected,
   if(!page.messages.some(row=>row.id===mailboxMessage.message_id&&row.sequence===mailboxMessage.sequence&&
      (!mailboxMessage.work_root||row.refs?.includes(mailboxMessage.work_root))))throw new Error('Workshop source is not public and readable; private content is never copied');
   note={...mailboxMessage,sender_label:'founder'};
- }else note=callMailbox('send',{to:target.id,text});
+ }else note=callMailbox('send',{to:target.id,text,...(app!=='claude'?{native_control:{app,id:target.id,...(model?{model}:{})}}:{})});
  const pointer=`Application task in Workshop, message ${note.message_id}. Use MCP read(since=${note.sequence-1}) to read it. Declare task/paths/status with request_id=${note.work_root||note.message_id}. Reply ONLY with MCP send(to=${JSON.stringify(note.sender_label)}, reply_to=${JSON.stringify(note.message_id)}, text=your_result). Keep the declaration current. No Session Link answer or peer reply.`;
  let controlError=null;
  // Claude follows the Workshop record in its plugin; other apps retain native wakeup.
@@ -52,8 +52,6 @@ export async function ask(app,session,text,permissionMode='prompting',{expected,
  void dispatch().catch(error=>{controlError=error;});
  let since=note.sequence;
  const deadline=Date.now()+span(180);
- let followups=0,nextFollowup=Date.now()+span(45);
- const ownFollowups=new Set();
  const pollWait=span(1);
  while(Date.now()<deadline){
   let page=callMailbox('read',{since,include_archived:true}),declarations=[...(page.declarations||[])];
@@ -69,16 +67,11 @@ export async function ask(app,session,text,permissionMode='prompting',{expected,
   }
   const senders=new Set(declarations.filter(row=>row.app===app&&row.native_session_id===target.id&&targetGeneration!==null&&
    row.process_lineage?.some(process=>process.pid===targetPid&&process.created_at===targetGeneration)).map(row=>row.agent+' ['+row.session+']'));
-  const reply=messages.find(row=>row.reply_to===note.message_id&&senders.has(row.author));
+  const peerReply=row=>row.reply_to===note.message_id&&row.category==='app:workshop:category:note';
+  const reply=messages.find(row=>peerReply(row)&&senders.has(row.author));
   if(reply)return {status:'replied',id:reply.id,text:reply.content.replace(/^To [^\n]+:\n/,''),mailbox_message:note.message_id};
   if(controlError)return {status:'uncertain',reason:'native_control_failed',mailbox_message:note.message_id};
-  if(targetGeneration===null&&messages.some(row=>row.reply_to===note.message_id&&!ownFollowups.has(row.id)&&row.author!==note.sender_label))return {status:'uncertain',reason:'recipient_identity_unverified',mailbox_message:note.message_id};
-  if(Date.now()>=nextFollowup&&followups<3){
-   const followup=callMailbox('send',{to:target.id,reply_to:note.message_id,text:
-    'Follow-up '+(++followups)+': awaiting your Workshop reply on this existing task. Continue it or report the exact blocker here. This is not a new task or authorization to repeat an uncertain effect.'});
-   ownFollowups.add(followup.message_id);
-   nextFollowup=Date.now()+span(45);
-  }
+  if(targetGeneration===null&&messages.some(row=>peerReply(row)&&row.author!==note.sender_label))return {status:'uncertain',reason:'recipient_identity_unverified',mailbox_message:note.message_id};
   await new Promise(resolve=>setTimeout(resolve,pollWait));
  }
  throw new Error('No Workshop reply confirmed in 180 seconds; task may have run; do not resend automatically.');

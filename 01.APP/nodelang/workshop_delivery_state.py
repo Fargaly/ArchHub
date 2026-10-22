@@ -28,6 +28,26 @@ BROADCAST = "workshop-broadcast:"
 RELAYED_REPLY = "Session Link relayed reply from "
 STATES = ("stored", "started", "replied", "unavailable", "uncertain")
 _ORDER = ("uncertain", "started", "unavailable", "replied")
+
+
+def project_injection_delivery(events, *, addressed=False):
+    """Receipts distinguish submitted injection, recipient read, and recipient reply."""
+    delivery = []
+    for recipient, records in events.items():
+        if "native-control" in records:
+            continue
+        latest = next(reversed(records.values()))
+        state = "answered" if "answered" in records else "delivered" if "delivered" in records else "pending"
+        delivery.append({"recipient":recipient, "label":latest["label"], "state":state,
+            "via":"session-link" if any(row.get("via") == "session-link" for row in records.values()) else "mcp",
+            "reminded":"reminder" in records, "escalated":"escalated" in records,
+            **({"reply_message_id":records["answered"]["reply_message_id"]} if "answered" in records else {})})
+    if any(not row["recipient"].startswith("address:") for row in delivery):
+        delivery = [row for row in delivery if not row["recipient"].startswith("address:")]
+    states = {row["state"] for row in delivery}
+    state = next((value for value in ("pending", "delivered", "answered") if value in states),
+        "pending" if addressed else "stored")
+    return {"state":state, "delivery":delivery}
 _REASON = re.compile(r"\(([^()]{1,200})\)\. ")
 # The relay's own header names the recipient as it was bound (application_server _settle).
 _RELAY_LABEL = re.compile(r"\ASession Link relayed reply from (.{1,200}) \((?:claude|codex|opencode|antigravity|antigravity-ide) "

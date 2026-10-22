@@ -2,7 +2,7 @@
 import readline from 'node:readline';
 import {catalog} from './bridge.mjs';
 import {ask} from './ask.mjs';
-import {setAttachment,attachmentCall} from './native.mjs';
+import {setAttachment,attachmentCall,injectWorkshop} from './native.mjs';
 process.env.SESSION_LINK_PRODUCT_WORKER='1';
 let active=false,dispatched=false,finished=false;
 function emit(value){const encoded=JSON.stringify(value);if(Buffer.byteLength(encoded)>1048576)throw new Error('Oversized worker result');process.stdout.write(encoded+'\n');}
@@ -31,6 +31,10 @@ input.on('line',async line=>{
    const projection=all=>{const rows=['claude','codex','opencode','antigravity','antigravity-ide'].flatMap(app=>(all[app]||[]).map(s=>({...s,app})));return {status:'ok',recipients:rows.slice(0,128),providers:all.adapterStatus||{},complete_apps:rows.length>128?[]:all.complete_apps||[],truncated:rows.length>128};};
    const all=await catalog({apps:r.apps,onProgress:all=>{if(snapshots++<16)emit({event:'discovery_snapshot',...projection(all)});}});
    terminal({event:'result',...projection(all)});
+  }else if(r.operation==='inject'){
+   if(r.attachment)throw new Error('Public Workshop injection cannot borrow a Work attachment');
+   const result=await injectWorkshop(r.recipient,r.text,r.message_id,{model:r.model,onDispatch:()=>{dispatched=true;emit({event:'dispatch_attempted'});}});
+   terminal({event:'result',...result,dispatch_attempted:dispatched,work_authority:false,execution_verified:false});
   }else if(r.operation==='request'){
    const e=r.recipient;
    if(!e||typeof e.id!=='string'||typeof e.app!=='string')throw new Error('Invalid recipient');

@@ -59,7 +59,7 @@ export function assertTargetHostLoaded(row,callerHost){
 }
 // requestId is the logical request's identity at its origin (an ask id, a
 // Session Link message id); every route below carries it to the wire.
-export async function postCodex(threadId,prompt,{requestId}={}){
+export async function postCodex(threadId,prompt,{requestId,workshopInjection=false}={}){
  const identity=typeof requestId==='string'&&requestId?{messageId:requestId}:{};
  if(admittedAttachment){if(threadId!==admittedAttachment.destination)throw new Error('Attachment destination mismatch');return await attachmentCall('attachment-post',{text:prompt,...identity});}
  if(process.env.CODEX_APP_TOOLS_PIPE_PATH&&process.env.CODEX_THREAD_ID){
@@ -69,7 +69,7 @@ export async function postCodex(threadId,prompt,{requestId}={}){
   return await nativeCall('send_message_to_thread',{threadId,prompt,...(typeof row.hostId==='string'&&row.hostId?{hostId:row.hostId}:{})},
    process.env.CODEX_THREAD_ID,identity.messageId?{requestId:identity.messageId}:{});
  }
- if(process.env.SESSION_LINK_PRODUCT_WORKER==='1')throw new Error('Admitted native Codex app context unavailable; another caller context will not be borrowed');
+ if(process.env.SESSION_LINK_PRODUCT_WORKER==='1'&&!workshopInjection)throw new Error('Admitted native Codex app context unavailable; another caller context will not be borrowed');
  const dir=path.join(stateDir(),'connections');
  for(const name of fs.readdirSync(dir).filter(n=>n.endsWith('.runtime.json'))){
   let config,token;
@@ -80,6 +80,32 @@ export async function postCodex(threadId,prompt,{requestId}={}){
   if(capabilities.postCodex)return await call({operation:'post-codex',threadId,text:prompt,...identity});
  }
  throw new Error('No active bridge supports terminal-to-Codex delivery; connect from a current Codex Desktop task');
+}
+
+export async function injectWorkshop(recipient,text,messageId,{onDispatch=()=>{},model}={}){
+ if(!recipient||!['claude','codex','opencode'].includes(recipient.app)||typeof recipient.id!=='string'||!recipient.id||
+    typeof text!=='string'||!text.trim()||text.length>32000||typeof messageId!=='string'||!messageId)
+  throw new Error('Invalid Workshop injection');
+ const {validateModel}=await import('./opencode-model.mjs');
+ validateModel(model);
+ if(model!==undefined&&recipient.app!=='opencode')throw new Error('Explicit model selection is OpenCode-only');
+ const {catalog}=await import('./bridge.mjs');
+ const all=await catalog({apps:[recipient.app],workshopInjection:true});
+ const matches=(all[recipient.app]||[]).filter(row=>row.id===recipient.id);
+ if(matches.length!==1)throw new Error('Target must resolve to exactly one live session; not injected');
+ const target=matches[0];
+ if(recipient.app==='codex'){onDispatch();await postCodex(target.id,text,{requestId:messageId,workshopInjection:true});}
+ else if(recipient.app==='claude'){
+  const {PeerEndpoint}=await import('./vendor/src/peer-protocol.mjs');
+  // No peer reply endpoint: the recipient answers in the existing Workshop.
+  await new PeerEndpoint({name:'Workshop'}).send(target.socket,text,{msgId:messageId,permissionMode:'prompting',beforeSend:onDispatch});
+ }else{
+  const {pluginRpc}=await import('./extra-apps.mjs');
+  onDispatch();
+  const result=await pluginRpc({operation:'inject',id:target.id,directory:target.cwd,text,messageId,...(model?{model}:{})},target.runtimeId);
+  return {status:result.status};
+ }
+ return {status:'injected'};
 }
 // The caller's host is where the calling Codex task runs. The app hands it to
 // its own tools server as CODEX_APP_TOOLS_CALLER_HOST_ID; a saved link carries

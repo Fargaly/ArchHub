@@ -53,8 +53,12 @@ def mailbox_label(peer, context):
     from .agent_declarations import SESSION_KEYS
     runtime = SESSION_KEYS.get(
         next(iter(context), "")) or _observed_runtime(peer)
+    connector = str(context.get("archhub/sessionID") or "").split(":", 2)
+    if len(connector) == 3 and connector[0] == "mcp":
+        runtime = connector[1]
     host = RUNTIMES.get(runtime, {}).get("label", {"goose":"Goose", "antigravity":"Antigravity",
-        "antigravity-ide":"Antigravity"}.get(runtime, "Agent"))
+        "antigravity-ide":"Antigravity", "cursor":"Cursor", "copilot":"VS Code Copilot",
+        "vscode-copilot":"VS Code Copilot", "grok":"Grok Bot", "grok-bot":"Grok Bot"}.get(runtime, "Agent"))
     project = (Path(peer.cwd).name if peer.cwd else "Session")
     project = project.replace("\n", " ").replace("\r", " ").replace("[", "(").replace("]", ")")
     project = project.encode("utf-8")[:48].decode("utf-8", errors="ignore")

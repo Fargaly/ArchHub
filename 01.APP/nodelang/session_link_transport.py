@@ -225,6 +225,19 @@ class SessionLinkTransport:
                            "text": text, "permission_mode": permission_mode,
                            **({"mailbox_message":mailbox_message} if mailbox_message else {})}, budget, cancel_event)
 
+    def inject(self, recipient, text, *, message_id, timeout_seconds: float = 10.0, cancel_event=None, model=None):
+        """One-way public Workshop notification; never waits for or executes a reply."""
+        if (type(recipient) is not dict or set(recipient) != {"app", "id"}
+                or recipient["app"] not in {"claude", "codex", "opencode"}
+                or type(recipient["id"]) is not str or not recipient["id"]
+                or type(text) is not str or not text.strip() or len(text) > 32000
+                or type(message_id) is not str or not message_id):
+            raise ValueError("Invalid public Workshop injection")
+        if model is not None and recipient["app"] != "opencode":
+            raise ValueError("Explicit model selection is OpenCode-only")
+        return self._call({"operation":"inject", "recipient":recipient, "text":text,
+            "message_id":message_id, **({"model":model} if model is not None else {})}, self._budget(timeout_seconds), cancel_event)
+
     def _call(self, payload, budget, cancel_event):
         request_id = str(uuid.uuid4())
         base = {"request_id": request_id, "external_cancelled": False,
@@ -347,7 +360,8 @@ class SessionLinkTransport:
                 frames = [json.loads(line) for line in output.decode("utf8").splitlines()]
                 results = [r for r in frames if isinstance(r, dict) and r.get("event") == "result"]
                 if len(results) != 1 or results[0].get("status") not in {
-                        "ok", "replied", "held", "not_sent", "uncertain", "cancelled_wait"}:
+                        "ok", "replied", "held", "not_sent", "uncertain", "cancelled_wait",
+                        *(('injected', 'queued') if payload["operation"] == "inject" else ())}:
                     raise ValueError("bad result")
                 result = results[0]
                 if result['status']=='held':

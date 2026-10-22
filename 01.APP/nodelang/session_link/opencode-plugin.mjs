@@ -117,6 +117,21 @@ export function createSessionLinkPlugin({stateDirectory}){
   try{const r=JSON.parse(buffer.slice(0,buffer.indexOf('\n')));if(r.token!==peer.peerToken)throw new Error('Unauthenticated request');let result;
    if(r.operation==='list'){const rows=[];for(const [cwd,c] of clients){const list=unwrap(await c.session.list({query:{directory:cwd}}));for(const s of list)rows.push({app:'opencode',id:s.id,title:s.title,cwd:s.directory||cwd,runtimeId:process.pid});}result=[...new Map(rows.map(x=>[x.id,x])).values()];}
    else if(r.operation==='capabilities')result={per_request_free_model:1};
+   else if(r.operation==='inject'){
+    const model=validateModel(r.model);
+    if(typeof r.messageId!=='string'||!r.messageId||r.messageId.length>512||typeof r.text!=='string'||!r.text.trim()||r.text.length>32000)throw new Error('Invalid Workshop injection');
+    const c=clients.get(r.directory);if(!c)throw new Error('Workspace is not attached to this OpenCode process');
+    const target=unwrap(await c.session.get({path:{id:r.id},query:{directory:r.directory}}));
+    if(target.id!==r.id||target.directory!==r.directory)throw new Error('Session/workspace mismatch');
+    const key='workshop:'+r.id+':'+r.messageId;
+    if(!seen.has(key)){
+     seen.add(key);if(seen.size>2000)seen.delete(seen.values().next().value);
+     void enqueue({id:r.id,directory:r.directory,text:r.text,model}).catch(()=>{
+      process.stderr.write('Workshop injection did not complete; its public message remains pending.\n');
+     });
+    }
+    result={status:'queued'};
+   }
    else if(r.operation==='send'){
    const model=validateModel(r.model);
     result=await enqueue({id:r.id,directory:r.directory,text:r.text,model});

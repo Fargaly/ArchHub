@@ -10372,6 +10372,9 @@ class ApplicationServer(WorkspaceRootsOwner):
                 after_response=self._after_universal_machine_response,
             )
         self.thread = None
+        from .workshop_mailbox import WorkshopInjection
+        self.workshop_injection = WorkshopInjection(self, session_link_transport)
+        self.workshop_injection.start()
         self._live_stop = threading.Event()
         self._live_thread = None
         if live_watch and legacy_runtime_enabled:
@@ -14308,9 +14311,13 @@ class ApplicationServer(WorkspaceRootsOwner):
                     binding = read_content_binding(snapshot, registry.deliberation_protocol,
                         application_root=registry.application_root, space_root=registry.workshop_root)
                 history = self.conversation_content._history_for(binding)
-            return call(method, {key: value for key, value in body.items() if key != "context"},
+            result = call(method, {key: value for key, value in body.items() if key != "context"},
                 body.get("context", {}), database=self.universal_store.database_path,
                 history=history, peer=peer, account=account)
+            injection = getattr(self, "workshop_injection", None)
+            if injection is not None and method in ("send", "declare"):
+                injection.wake()
+            return result
 
     def _dispatch_verified_machine_route(self, request):
         """Only the authenticated, decoded local pipe calls this wrapper."""
@@ -20612,6 +20619,9 @@ class ApplicationServer(WorkspaceRootsOwner):
         terminals = getattr(self, 'terminal_sessions', None)
         if terminals is not None:
             terminals.close()
+        injection = getattr(self, 'workshop_injection', None)
+        if injection is not None:
+            injection.close()
         delivery = getattr(self, 'native_work_delivery', None)
         if delivery is not None:
             delivery.close()

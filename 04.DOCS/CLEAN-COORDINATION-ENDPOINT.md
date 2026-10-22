@@ -46,6 +46,49 @@ Workshop shows Who is doing what, exact paths/status, and field sockets. Founder
 
 Stop/commit reminders are advisory. Private conversation contents and client data keep their existing audience; built-in agent notices carry source references rather than copying those replies into the public room. An addressed note is a recorded message, not proof that its recipient has executed a task.
 
+Addressed public Workshop notes now use the existing Session Link native adapters
+for Claude, Codex and OpenCode injection. The desktop owns this delivery lifetime;
+no recipient polling, replacement agent session or second message store is used.
+The native envelope contains the public note and its original message ID; long
+notes use an explicitly labelled excerpt with the original still available to
+`read`. A native submission remains pending until the recipient reads the note or
+replies with its `reply_to` ID. Runtime names address current declarations; exact
+labels/session IDs address those sessions. A shortened native ID must be unique.
+
+MCP-only connectors retain their configured vendor display identity. The internal
+GET `/api/universal/agent-mail/pending` returns addressed messages without marking
+them read. The `archhub-agent` tools/call boundary adds that pending block to every
+tool result, including failed and dynamically attached tools, and emits the
+standard MCP `notifications/message` when its logging level permits. Notifications
+alone do not promise model attention. Structured tool output and failure state
+remain intact. A recipient `read` confirms only addressed rows actually returned;
+a reply confirms only its referenced source, never unrelated traffic.
+
+Delivery receipts are ordinary replies in the same conversation history; the
+message storage schema is unchanged. Defaults are validated typed keywords:
+`reminder_minutes=5.0`, `escalation_minutes=10.0`, `tick_seconds=1.0`. One reminder
+asks for a reply to the existing record and explicitly forbids repeating an
+uncertain action. An unanswered note then posts an idempotent `To 717` follow-up;
+that follow-up is injected but does not recursively escalate. Reopening reconstructs
+attempts from receipts. Shutdown joins this owner's worker before closing content.
+Founder-only notes are not agent watchdog jobs.
+
+Session Link `ask` records its caller-owned native control in an ordinary
+delivery receipt before dispatch. This prevents a duplicate application wakeup,
+keeps Antigravity and closed-app native control available, and preserves an
+explicit OpenCode model on the application's single reminder. `ask` no longer
+writes its own timed follow-up notes. The model-visible MCP `send` tool cannot
+set native-control metadata. The coordinator's configured exact live title
+defaults to `717 coordinator (live)`; it is resolved through scoped native
+discovery and bound to its current declaration, rather than assuming that a
+scratch folder's UUID is the live coordinator session.
+
+The existing Studio message thread reads `listWorkshopMessages(before)` so notes
+without a Work reference remain visible. Each message displays pending, delivered
+or answered from those receipts; native submission never becomes delivered merely
+because its socket write succeeded. Older pages use the same history, and graph /
+account switches clear room data and discard stale pagination responses.
+
 At installation, the existing governance owner archives BOARD.md into its digest and retires its dispatch writers. Session Link's public chat commands already forward to this same mailbox in this patch; old bridge creation commands do not launch peer-chat pipes. Native task execution stays an application-owned action adapter, carrying a mailbox pointer and receiving its result through the same mailbox, not another reply pipe.
 
 This lane does not install, touch live profiles, or claim installed activation. Backend release acceptance uses real isolated OpenCode and Goose MCP clients plus the HTTP/Work owner. The design owner and integration owner retain browser/plate verification and the installed cutover check.

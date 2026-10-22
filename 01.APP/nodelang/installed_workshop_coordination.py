@@ -204,6 +204,7 @@ __all__ = ["InstalledWorkshopCoordinationClient", "InstalledWorkshopInboxReader"
 
 
 MAILBOX_ROUTES = frozenset({
+    ("GET", "/api/universal/agent-mail/pending"),
     ("POST", "/api/universal/agent-mail/send"),
     ("GET", "/api/universal/agent-mail/read"),
     ("POST", "/api/universal/agent-mail/declare"),

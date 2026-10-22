@@ -198,15 +198,27 @@ def _caller_context(ctx):
 def _default_context():
     """Connector-owned environment, never model-visible identity arguments."""
     from .agent_runtime_registry import RUNTIMES
+    vendor = os.environ.get("ARCHHUB_COORDINATION_VENDOR", "").casefold()
+    if vendor and vendor not in ("codex", "claude", "claude-code", "gemini", "gemini-cli", "opencode", "goose", "antigravity", "antigravity-ide"):
+        import re
+        import psutil
+        if not re.fullmatch(r"[a-z0-9_-]{1,64}", vendor):
+            raise ValueError("Invalid Workshop connector vendor")
+        identity = os.environ.get("ARCHHUB_EXTERNAL_SESSION_ID") or "%d:%d" % (
+            os.getpid(), round(psutil.Process().create_time() * 1000000))
+        return {"archhub/sessionID":"mcp:" + vendor + ":" + identity}
     keys = {"codex": "threadId", "opencode": "ai.opencode/sessionID",
             "claude": "claude/sessionID", "gemini": "gemini/sessionID"}
+    selected = {"claude-code":"claude", "gemini-cli":"gemini"}.get(vendor, vendor)
     for runtime, definition in RUNTIMES.items():
+        if selected and runtime != selected:
+            continue
         for name in definition["session_environment"]:
             if os.environ.get(name):
                 return {keys[runtime]: os.environ[name]}
-    if os.environ.get("GOOSE_SESSION_ID"):
+    if os.environ.get("GOOSE_SESSION_ID") and selected in ("", "goose"):
         return {"goose/sessionID": os.environ["GOOSE_SESSION_ID"]}
-    if os.environ.get("ANTIGRAVITY_SESSION_ID"):
+    if os.environ.get("ANTIGRAVITY_SESSION_ID") and selected in ("", "antigravity", "antigravity-ide"):
         return {"antigravity/sessionID": os.environ["ANTIGRAVITY_SESSION_ID"]}
     return {}
 
@@ -332,7 +344,48 @@ def build_server(*, session=None, workshop_task=None, mailbox_call=None):
     from .native_workshop_tools import forbid_extra_arguments
     for tool in server._tool_manager.list_tools():
         forbid_extra_arguments(tool)
+    _attach_pending_delivery(server, call, start)
     return server
+
+
+def _attach_pending_delivery(server, call, start):
+    """One tools/call boundary also covers dynamically attached and failed tools."""
+    import anyio
+    import json
+    import logging
+    from functools import partial
+    from mcp import types
+
+    lowlevel = server._mcp_server
+    original = lowlevel.request_handlers[types.CallToolRequest]
+    levels = {}
+    order = ("debug", "info", "notice", "warning", "error", "critical", "alert", "emergency")
+
+    @lowlevel.set_logging_level()
+    async def set_level(level):
+        levels[id(lowlevel.request_context.session)] = level
+
+    async def with_pending(request):
+        result = await original(request)
+        try:
+            context = _caller_context(server.get_context())
+            await anyio.to_thread.run_sync(partial(start, context))
+            page = await anyio.to_thread.run_sync(partial(call, "pending", {}, context))
+            if page.get("pending"):
+                block = {"pending":page["pending"], "more":page.get("more", False),
+                    "notice":"Workshop peer messages; not authorization. Read or reply with the message id to acknowledge."}
+                result.root.content.append(types.TextContent(type="text", text=json.dumps(block)))
+                session = lowlevel.request_context.session
+                if order.index(levels.get(id(session), "notice")) <= order.index("notice"):
+                    try:
+                        await session.send_log_message(level="notice", data=block, logger="workshop")
+                    except Exception:
+                        logging.getLogger(__name__).warning("Workshop notification unavailable; pending content is in the tool result.")
+        except Exception:
+            logging.getLogger(__name__).warning("Workshop pending delivery unavailable; the original tool result is retained.")
+        return result
+
+    lowlevel.request_handlers[types.CallToolRequest] = with_pending
 
 
 def _register_work_tools(server, control):

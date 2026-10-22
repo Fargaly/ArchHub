@@ -108,7 +108,7 @@ export async function delegateInstance(config,instanceId,ttlSeconds=300){
  if(status.id!==config.id||status.pid!==config.pid||status.codex!==config.codex)throw new Error('Selected connection changed');
  return await rpc(config,{operation:'delegate-instance',instance_id:instanceId,ttl_seconds:ttlSeconds});
 }
-export async function catalog({apps,onProgress}={}){
+export async function catalog({apps,onProgress,workshopInjection=false}={}){
   if(apps!==undefined && (!Array.isArray(apps)||!apps.length||apps.length>5||
     apps.some(app=>!['claude','codex','opencode','antigravity','antigravity-ide'].includes(app))))
     throw new Error('Invalid discovery app scope');
@@ -143,8 +143,8 @@ export async function catalog({apps,onProgress}={}){
   // Outside a Codex task only a live bridge holds the app pipe. An empty Codex
   // list must say why, so callers never read "no bridge" as "no live task".
   let reason='No live Session Link bridge holds Codex app context; run connect or resume --current once from a Codex Desktop task';
-  if(process.env.SESSION_LINK_PRODUCT_WORKER==='1')reason='Admitted native Codex app context unavailable';
-  else for(const config of configs().filter(c=>alive(c.pid))){try{return await rpc(config,{operation:'list'});}catch(e){reason=`Live bridge ${config.id} could not list Codex tasks: ${e.message}`;}}
+  if(process.env.SESSION_LINK_PRODUCT_WORKER==='1'&&!workshopInjection)reason='Admitted native Codex app context unavailable';
+  else for(const config of configs().filter(c=>alive(c.pid))){try{return await rpc(config,{operation:'list',apps});}catch(e){reason=`Live bridge ${config.id} could not list Codex tasks: ${e.message}`;}}
   const extra=await discoverExtra({apps});
   return {...extra,claude:claudes(),codex:[],adapterStatus:{...extra.adapterStatus,codex:{status:'unavailable',reason}}};
 }
@@ -316,7 +316,7 @@ async function serve(binding){
           if(current.cwd!==b.codex.cwd)throw new Error('Bound Codex workspace changed');
           result={...attachments.issue(r.instance_id,r.ttl_seconds),control,pid:process.pid};
         }
-        else if(r.operation==='post-codex'){if(typeof r.text!=='string'||!r.text.trim()||r.text.length>34000)throw new Error('Invalid text');const all=await catalog();const row=exact(all.codex,r.threadId,'Codex');rate();const messageId=requestIdentity(r);await nativeCall(...boundSendCall({...b,codex:{...b.codex,id:r.threadId}},row,r.text,messageId));log('delivered',{messageId,direction:'terminal-to-codex'});result={submitted:true,messageId};}
+        else if(r.operation==='post-codex'){if(typeof r.text!=='string'||!r.text.trim()||r.text.length>34000)throw new Error('Invalid text');const all=await catalog({apps:['codex']});const row=exact(all.codex,r.threadId,'Codex');rate();const messageId=requestIdentity(r);await nativeCall(...boundSendCall({...b,codex:{...b.codex,id:r.threadId}},row,r.text,messageId));log('delivered',{messageId,direction:'terminal-to-codex'});result={submitted:true,messageId};}
         else if(r.operation==='resume-catalog'){
           if(!process.env.CODEX_APP_TOOLS_PIPE_PATH||!process.env.CODEX_THREAD_ID)
             throw new Error('required_endpoint_discovery_unavailable');
@@ -325,7 +325,7 @@ async function serve(binding){
             throw new Error('Invalid resume discovery scope');
           result=await resumeCatalog(r.apps.map(app=>({id:b.id,claude:{app}})));
         }
-        else if(r.operation==='list')result=await catalog();
+        else if(r.operation==='list')result=await catalog({apps:r.apps});
         else if(r.operation==='connect')result=await connect(r);
         else if(r.operation==='reply'){if(typeof r.text!=='string'||!r.text.trim()||r.text.length>32000)throw new Error('Invalid text');const messageId=requestIdentity(r);rate();const row=exact((await catalog()).codex,b.codex.id,'Codex');await nativeCall(...boundSendCall(b,row,`[Local shell relay for ${b.claude.app}: ${b.claude.title}; link ${b.id}; caller agent identity not independently verified]\n${r.text}`,messageId));forwarded++;log('delivered',{messageId,direction:'shell-reply-to-codex'});result={delivered:true,messageId};}
         else if(r.operation==='send'||r.operation==='send-model'){if(typeof r.text!=='string'||!r.text.trim()||r.text.length>32000)throw new Error('Invalid text');rate();

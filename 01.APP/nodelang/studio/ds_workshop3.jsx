@@ -89,13 +89,20 @@
             fontSize: 15,
             lineHeight: '24px',
             whiteSpace: 'pre-wrap'
-          }}>{m.text}</p><window.UI.TurnUsage message={m} /><window.UI.AnswerWidget message={m} />{m.who !== 'You' && <window.UI.AnswerSources message={m} />}{m.rule && <Chip c={A.purple}>Your rule: {m.rule}</Chip>}</div></div>)}</div>;
+          }}>{m.text}</p>{['pending', 'delivered', 'answered'].includes(m.state) && <span role="status" data-delivery-state={m.state} className="muted">{m.state === 'answered' ? 'Answered' : m.state === 'delivered' ? 'Delivered' : 'Pending'}{m.delivery?.some(row => row.escalated) ? ' · Coordinator notified' : ''}</span>}<window.UI.TurnUsage message={m} /><window.UI.AnswerWidget message={m} />{m.who !== 'You' && <window.UI.AnswerSources message={m} />}{m.rule && <Chip c={A.purple}>Your rule: {m.rule}</Chip>}</div></div>)}</div>;
   }
   function Win() {
     const s = useData(),
       u = useApp();
     const [query, setQuery] = React.useState('');
+    const roomScope = JSON.stringify([s.graph.id, s.profile.email, s.profile.signedIn, s.workshopMessagesScope]);
+    const currentScope = React.useRef(roomScope);
+    currentScope.current = roomScope;
+    const [older, setOlder] = React.useState({scope: roomScope, messages: [], before: null, more: true});
+    const previous = older.scope === roomScope ? older : {messages: [], before: null, more: true};
     const task = s.tasks.find(t => t.id === u.task) || s.tasks[0];
+    const roomMessages = [...new Map([...previous.messages, ...(s.workshopMessages || [])].map(message => [message.id, message])).values()]
+      .filter(message => !task?.messages.some(item => item.id === message.id));
     const list = s.tasks.filter(t => !query || `${t.title} ${t.status}`.toLowerCase().includes(query.toLowerCase()));
     return <div data-screen="workshop" style={{
       display: 'grid',
@@ -150,7 +157,7 @@
           borderBottom: '1px solid ' + A.lineSoft
         }}><div><h1 style={{
               fontSize: 22
-            }}>{task?.title || 'What should the agents do?'}</h1><p className="muted" style={{
+            }}>{task?.title || (roomMessages.length ? 'Workshop room' : 'What should the agents do?')}</h1><p className="muted" style={{
               fontSize: 12
             }}>One room · {s.graph.name}</p></div><div className="flex">{task && <Chip c={color(task.status)}>{task.status}</Chip>}<Btn sm onClick={async () => {
               if(!task){executeAction("ui.go",u,"canvas");return;}
@@ -164,11 +171,14 @@
             margin: '0 auto',
             display: 'grid',
             gap: 22
-          }}>{task ? <><button className="listbutton spread" onClick={() => executeAction("ui.show", u, 'Task details', {
+          }}>{(previous.before ? previous.more : s.workshopMessagesMore) && <Btn sm ghost onClick={async () => {
+              const page = await executeAction("listWorkshopMessages", u, previous.before || s.workshopMessagesBefore);
+              if (currentScope.current === roomScope && Array.isArray(page?.messages)) setOlder({scope: roomScope, messages: [...page.messages, ...previous.messages], before: page.next_before, more: page.more});
+            }}>Older messages</Btn>}{roomMessages.length > 0 && <Messages task={{messages: roomMessages}} />}{task ? <><button className="listbutton spread" onClick={() => executeAction("ui.show", u, 'Task details', {
                 id: task.id
               })}><span>Owner: {task.humanOwner || s.profile.name || 'Unassigned'} · {s.providers.find(p => p.id === task.owner)?.name}</span><span className="muted">Steps &amp; checkpoints →</span></button><Messages task={task} />{task.approvalId && <div style={{
                 marginLeft: 46
-              }}><ApprovalCard id={task.approvalId} /></div>}{task.status === 'STOPPED' && <Btn onClick={() => executeAction("reassignTask", u, task.id)}>Continue with another agent</Btn>}{task.status === 'DONE' && <div className="flex"><Btn onClick={() => executeAction("ui.go", u, 'watcher')}>Open result</Btn><Btn onClick={() => executeAction("ui.schedule", u, task.title)}>Repeat this</Btn></div>}</> : <Empty>Create a task to begin.</Empty>}</div></div>
+              }}><ApprovalCard id={task.approvalId} /></div>}{task.status === 'STOPPED' && <Btn onClick={() => executeAction("reassignTask", u, task.id)}>Continue with another agent</Btn>}{task.status === 'DONE' && <div className="flex"><Btn onClick={() => executeAction("ui.go", u, 'watcher')}>Open result</Btn><Btn onClick={() => executeAction("ui.schedule", u, task.title)}>Repeat this</Btn></div>}</> : roomMessages.length === 0 && <Empty>Create a task to begin.</Empty>}</div></div>
    <div style={{
           padding: '12px 30px 22px'
         }}><div style={{

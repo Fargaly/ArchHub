@@ -298,6 +298,13 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
         "export const ArchHub = createOpenCodeGovernance({gateRunner:runner"+
         ",trustedDirectories:" + json.dumps([str(profile / 'rules')]) + "});\n", encoding="utf-8")
     env["OPENCODE_CONFIG_DIR"] = str(profile / "opencode")
+    # OpenCode fetches ripgrep 15.1.0 from GitHub into the fresh profile on the
+    # first glob; build 26 lost that download and every glob refused. Reuse the
+    # copy OpenCode already cached for this account instead of the network.
+    cached_rg = Path(original_home, ".cache/opencode/bin/rg.exe")
+    if cached_rg.is_file():
+        (profile / "opencode/bin").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(cached_rg, profile / "opencode/bin/rg.exe")
     env["OPENCODE_CONFIG_CONTENT"] = json.dumps({"plugin":[loader.as_uri()],
         "mcp":{"archhub_agent_coordination":mcp}, "share":"disabled", "autoupdate":False})
     from nodelang.application_server import ApplicationServer

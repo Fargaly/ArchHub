@@ -174,3 +174,20 @@ def test_pending_to_verified_account_keeps_one_native_declaration(database):
     assert pending['declaration']['root'] == verified['declaration']['root']
     with sqlite3.connect(database) as connection:
         assert connection.execute('SELECT COUNT(*) FROM workshop_declarations').fetchone()[0] == 1
+
+def test_a_fixture_profile_never_reaches_the_live_desktop(tmp_path, monkeypatch):
+    """ARCHHUB_TEST_STATE_DIR selects a fixture profile; its mailbox must not post to 8474."""
+    import nodelang.workshop_mailbox as mailbox
+    content = tmp_path / "PROFILE.sqlite3"
+    connection = sqlite3.connect(content, isolation_level=None)
+    with ConversationHistoryStore(content, instance_id="mailbox-test", connection=connection) as history:
+        history.ensure_conversation("app:workshop")
+    connection.close()
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(tmp_path))
+    monkeypatch.delenv("ARCHHUB_COORDINATION_ENDPOINT", raising=False)
+    monkeypatch.setattr(mailbox, "profile_database", lambda: content)
+    def never(*_args, **_kwargs):
+        raise AssertionError("the fixture profile reached the live desktop")
+    monkeypatch.setattr(mailbox, "build_opener", never)
+    sent = call("send", {"to": "founder", "text": "fixture only"}, {"threadId": "fixture-session"}, peer=peer())
+    assert sqlite3.connect(content).execute("SELECT count(*) FROM messages WHERE id=?", (sent["message_id"],)).fetchone()[0] == 1

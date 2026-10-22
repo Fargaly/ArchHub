@@ -497,7 +497,11 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
         raise ValueError("Workshop mailbox arguments are invalid")
     identity, runtime, peer = _identity(context, peer)
     native_session = identity["sender_key"]
-    if database is None and history is None:
+    # A fixture profile (ARCHHUB_TEST_STATE_DIR) never reaches the live desktop on 8474
+    # unless it names its own endpoint: the release gate posted its nonce into the
+    # founder's Workshop twice (builds 24 and 25) and refused itself.
+    live_app = os.environ.get('ARCHHUB_COORDINATION_ENDPOINT') or not os.environ.get('ARCHHUB_TEST_STATE_DIR')
+    if database is None and history is None and live_app:
         endpoint = os.environ.get('ARCHHUB_COORDINATION_ENDPOINT', 'http://127.0.0.1:8474/coordination')
         parsed = urlsplit(endpoint)
         if (parsed.scheme != 'http' or parsed.hostname != '127.0.0.1' or parsed.path != '/coordination'

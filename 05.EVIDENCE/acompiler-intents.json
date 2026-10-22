@@ -7936,6 +7936,20 @@
         "tools/serve_governance.py",
         "tools/serve_grandmap.py"
       ]
+    },
+    "WATCHER": {
+      "source": "Founder WATCHER lane: eight real graph-persisted actions, one existing APPROVALS owner, source element/revision binding, fixture-only host writes; scratch clone at faf9ccf4; no canonical writes, install or live hosts.",
+      "scope": [
+        "01.APP/nodelang/watcher_owner.py",
+        "01.APP/nodelang/host_brokers.py",
+        "01.APP/nodelang/workshop_api.py",
+        "01.APP/nodelang/social_approval.py",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/ds_watch_edit.jsx",
+        "01.APP/nodelang/studio/ui.jsx",
+        "02.TESTS/tests_replica/test_watcher_actions.py",
+        "02.TESTS/tests_js/newapp_account.test.cjs"
+      ]
     }
   }
 }

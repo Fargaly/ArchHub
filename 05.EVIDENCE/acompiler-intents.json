@@ -8065,6 +8065,16 @@
         "02.TESTS/tests_js/studio_session_renew_write.test.cjs",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "CANVASLOOK": {
+      "source": "Founder CANVASLOOK F101 round 2: match approved canvas plates 5.1, 5.3, 4.3, 4.1, 4.5, 4.7; preserve CANVASFEEL round-1 interactions; visible usable Library; no overlapping cards on open; fitted on load; no Properties panel, new colors, storage/API, installer or live-data changes. Builder delivers isolated patch to 717 for main/updater.",
+      "scope": [
+        "01.APP/nodelang/studio/ds_screens.jsx",
+        "01.APP/nodelang/studio/ds_library.jsx",
+        "01.APP/nodelang/studio/style.css",
+        "02.TESTS/tests_js/studio_canvaslook.test.cjs",
+        "02.TESTS/tests_js/studio_canvasfeel.test.cjs"
+      ]
     }
   }
 }

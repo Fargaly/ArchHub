@@ -8041,6 +8041,16 @@
         "02.TESTS/tests/test_settings_actions.py",
         "02.TESTS/tests_js/newapp_account.test.cjs"
       ]
+    },
+    "CANVASFEEL": {
+      "source": "Founder F101: the canvas is the user working space; fix zoom, pan, selection, fit, zoom settings and last admitted graph. Explicit CANVASFEEL lane brief; 717 owns landing and updater installation.",
+      "scope": [
+        "01.APP/nodelang/studio/ds_screens.jsx",
+        "01.APP/nodelang/studio/api.js",
+        "02.TESTS/tests_js/studio_canvasfeel.test.cjs",
+        "02.TESTS/tests_js/studio_session_renew_write.test.cjs",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

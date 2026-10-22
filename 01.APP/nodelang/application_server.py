@@ -12418,7 +12418,8 @@ class ApplicationServer:
         if entry.credential_mode == "device-proof":
             if (
                 type(custody_root) is not str
-                or tuple(entry.device_custody_roots) != (custody_root,)
+                # One registered device of several (a reinstall re-registers) still re-proves.
+                or custody_root not in entry.device_custody_roots
             ):
                 return None
         elif entry.credential_mode == "machine-transport":

@@ -7141,3 +7141,31 @@ def test_machine_transport_is_authenticated_replay_safe_and_cell_backed(tmp_path
     with pytest.raises(MachineTransportError, match="not active"):
         UniversalRuntimeClient(descriptor_path, provider).request(
             "GET", "/api/universal/runtime-backend")
+
+
+def test_device_proof_reconnect_reuses_its_session_when_more_than_one_device_is_registered():
+    # The founder's BABOOM after reinstalls: two registered devices, so the exact
+    # single-root check minted a new session and enrollment refused with
+    # "runtime Agent Session identity is already bound differently".
+    entry = SimpleNamespace(
+        root_id="catalog:baboom",
+        control_root="control:baboom",
+        credential_mode="device-proof",
+        device_custody_roots=("device:old", "device:current"),
+    )
+    session = SimpleNamespace(root_id="session:baboom", state_root="active")
+    server = object.__new__(ApplicationServer)
+    server._bound_machine_agent_session_identity = lambda **_kwargs: session
+
+    assert server._continuable_machine_agent_session(
+        entry=entry,
+        runtime="baboom",
+        external_session_fingerprint="b" * 64,
+        custody_root="device:current",
+    ) is session
+    assert server._continuable_machine_agent_session(
+        entry=entry,
+        runtime="baboom",
+        external_session_fingerprint="b" * 64,
+        custody_root="device:unregistered",
+    ) is None

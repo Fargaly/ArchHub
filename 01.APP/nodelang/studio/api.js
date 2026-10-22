@@ -120,6 +120,7 @@ async function workshop(fn,args=[]) {
  const response=await request('/api/universal/workshop',{action:'data-api',function:fn,args,...binding,request_id:window.crypto.randomUUID()});
  return response.result;
 }
+const desktopActions=['setDesktopProgram','offerDesktopAction','prepareDesktopAction','setScheduleResponsibility','reviewScheduledWork'];
 const watcherActions=['setWatcherHost','setWatcherView','addDimension','editWall','addMark','addComment','proposeWatcherEdit','discardWatcherChanges'];
 const hostSkillActions=['importHostSkill','inspectConnectorBundle','configureConnectorBundle','installConnectorBundle','setHostSkillEnabled','auditHostSkill'];
 const approvalActions=['postponeApproval','resumeApproval','contestDecision','refreshApproval','reviewProofRow','setApprovalRubric'];
@@ -135,7 +136,7 @@ async function refreshTasks() {
  const epoch=scopeEpoch,binding=JSON.stringify(workshopBinding());
  const tasks=await workshop('listTasks');if(!Array.isArray(tasks))return tasks;
  if(epoch!==scopeEpoch||binding!==JSON.stringify(workshopBinding()))return state.tasks;
- publish({tasks:tasks.map(t=>({...t,messages:t.messages||[],steps:t.steps||[],reviews:t.reviews||[],queuedMessages:t.queuedMessages||[]}))});await refreshApprovals();await refreshWatcher();await refreshHostSkills();return state.tasks;
+ publish({tasks:tasks.map(t=>({...t,messages:t.messages||[],steps:t.steps||[],reviews:t.reviews||[],queuedMessages:t.queuedMessages||[]}))});await refreshApprovals();await refreshWatcher();await refreshHostSkills();await refreshDesktop();return state.tasks;
 }
 function projectProviders() {
  const roster=new Map(providerRoster.map(p=>[p.id,p]));
@@ -242,9 +243,10 @@ api.supportsAction=(name,mode)=>!(name==='approve'&&mode&&mode!=='once')&&typeof
 const boundAction=api.supportsAction;
 api.supportsAction=(name,mode)=>boundAction(name,mode)&&
  (!approvalActions.includes(name)||state.approvalActionsReady===true&&!state.nativeApproval)&&
+ (!desktopActions.includes(name)||state.desktopReady===true&&!state.nativeApproval)&&
  (!watcherActions.includes(name)||state.watcherReady===true&&!state.nativeApproval)&&
  (!hostSkillActions.includes(name)||state.hostSkillsReady===true&&!state.nativeApproval)&&
- (name!=='decline'||state.nativeApproval||state.approvals.some(card=>['watcher','hostskills'].includes(card.approvalKind)&&card.status==='pending'))&&
+ (name!=='decline'||state.nativeApproval||state.approvals.some(card=>['watcher','hostskills','desktop','schedule'].includes(card.approvalKind)&&card.status==='pending'))&&
  (!['startVoiceInput','stopVoiceInput'].includes(name)||typeof window.ARCHHUB_VOICE_START==='function'&&typeof window.ARCHHUB_VOICE_STOP==='function')&&
  (name!=='speak'||typeof window.speechSynthesis?.speak==='function'&&typeof window.SpeechSynthesisUtterance==='function');
 window.addEventListener('archhub:capabilities',()=>publish());
@@ -366,7 +368,7 @@ Object.assign(api,{
   return mutate(()=>interaction(b.control,{event_facts:[{input:specs[0].input,value:input.label},{input:specs[1].input,value:String(input.value??'')}]}));
  },
  async approve(id){const card=state.approvals.find(c=>c.id===id);if(card?.approvalKind==='social'){const result=await request('/api/universal/social-approve',{delegation:card.delegation,input_digest:card.input_digest,decision:'approve'});await refreshApprovals();return result;}if(!card?.delegation||!card?.input_digest||!card?.work)return unavailable('approve','No reviewed model delegation');const binding=workshopBinding();const body={...binding,work:card.work,delegation:card.delegation,input_digest:card.input_digest};const inspected=await request('/api/universal/workshop-model-approval?'+new URLSearchParams(body));if(inspected.expired||inspected.input_digest!==card.input_digest)return {ok:false,status:'stale',message:'Review changed; refresh before approving.'};const result=await request('/api/universal/workshop-model-approval',{...body,revision:inspected.revision});await refreshTasks();return result;},
-  async selectGraph(id){scopeEpoch++;workingAgents=[];publish({tasks:[],approvals:[],approvalActionsReady:false,watcherReady:false,watcher:copy(emptyWatcher),hostSkillsReady:false,hostSkills:[],connectorBundle:null});await request('/api/universal/graph-open',{root:id});await commands.load();project();await refreshGraphs();await refreshTasks();await refreshAgents();return state.graph;},
+  async selectGraph(id){scopeEpoch++;workingAgents=[];publish({tasks:[],approvals:[],approvalActionsReady:false,desktopReady:false,desktop:{program:"",stage:"",taskId:null,offers:[]},watcherReady:false,watcher:copy(emptyWatcher),hostSkillsReady:false,hostSkills:[],connectorBundle:null});await request('/api/universal/graph-open',{root:id});await commands.load();project();await refreshGraphs();await refreshTasks();await refreshAgents();return state.graph;},
  async selectWorkspace(id){return api.selectGraph(id);},
  getUsageSummary:()=>({'Usage':'Usage is unavailable.'}),
  async setConnection(id,values){if(values.connected===false)return request('/api/universal/social-connection',{provider:id,action:'cancel'});if(values.connected===true)return request('/api/universal/social-connection',{provider:id,action:'start'});return unavailable('setConnection','No sign-in action requested');},
@@ -414,6 +416,28 @@ for(const name of watcherActions) {
   return result;
  };
 }
+async function refreshDesktop() {
+ const epoch=scopeEpoch,binding=JSON.stringify(workshopBinding());
+ try {
+  const result=await workshop('readDesktop');
+  if(epoch!==scopeEpoch||binding!==JSON.stringify(workshopBinding()))return null;
+  if(!result?.owner||!Array.isArray(result.schedules)||!Array.isArray(result.offers))throw Error('Desktop owner unavailable');
+  const {schedules,...desktop}=result;
+  publish({desktop,schedules,desktopReady:true});return result;
+ } catch(error) {
+  if(epoch===scopeEpoch&&binding===JSON.stringify(workshopBinding()))publish({desktopReady:false,desktop:{program:'',stage:'',taskId:null,offers:[]}});
+  return null;
+ }
+}
+api.readDesktop=refreshDesktop;
+for(const name of desktopActions)api[name]=async(...args)=>{
+ if(!api.supportsAction(name))throw Error('Desktop and schedule owner unavailable; reopen the graph and retry.');
+ const epoch=scopeEpoch,binding=JSON.stringify(workshopBinding());
+ const result=await workshop(name,args);
+ if(result?.ok===false||!(result?.owner||result?.id))throw Error(result?.error||result?.message||'Desktop action was not confirmed.');
+ if(epoch!==scopeEpoch||binding!==JSON.stringify(workshopBinding()))return result;
+ await refreshDesktop();await refreshApprovals();return result;
+};
 async function refreshHostSkills() {
  const epoch=scopeEpoch,binding=JSON.stringify(workshopBinding());
  try {
@@ -448,6 +472,12 @@ for(const name of hostSkillActions)api[name]=async(...args)=>{
 const approveDelegation=api.approve;
 api.approve=async(id,...args)=>{
  const card=state.approvals.find(c=>c.id===id);
+ if(['desktop','schedule'].includes(card?.approvalKind)){
+  const result=await workshop('decideDesktopAction',[id,card.input_digest,'approve']);
+  if(result?.status!=='approved')throw Error(result?.error||'Desktop result was not confirmed.');
+  await refreshDesktop();await refreshWatcher();await refreshApprovals();return result;
+ }
+
  if(card?.approvalKind==='hostskills'){
   const result=await workshop('decideHostSkill',[id,card.input_digest,'approve']);
   if(result?.status!=='approved')throw Error(result?.error||'Package activation was not confirmed.');
@@ -460,6 +490,12 @@ api.approve=async(id,...args)=>{
 };
 api.decline=async id=>{
  const card=state.approvals.find(c=>c.id===id);
+ if(['desktop','schedule'].includes(card?.approvalKind)){
+  const result=await workshop('decideDesktopAction',[id,card.input_digest,'deny']);
+  if(result?.status!=='declined')throw Error(result?.error||'Desktop decline was not confirmed.');
+  await refreshDesktop();await refreshApprovals();return result;
+ }
+
  if(card?.approvalKind==='hostskills'){
   const result=await workshop('decideHostSkill',[id,card.input_digest,'deny']);
   if(result?.status!=='declined')throw Error(result?.error||'Package decline was not confirmed.');

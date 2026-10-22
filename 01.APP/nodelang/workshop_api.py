@@ -28,6 +28,34 @@ class WorkshopAPI:
         self.message_limit = message_limit
         self.route = route
 
+    def readDesktop(self):
+        from .desktop_owner import DesktopOwner
+        return DesktopOwner(self).read()
+
+    def setDesktopProgram(self, program):
+        from .desktop_owner import DesktopOwner
+        return DesktopOwner(self).set_program(program)
+
+    def offerDesktopAction(self):
+        from .desktop_owner import DesktopOwner
+        return DesktopOwner(self).offer()
+
+    def prepareDesktopAction(self):
+        from .desktop_owner import DesktopOwner
+        return DesktopOwner(self).prepare()
+
+    def setScheduleResponsibility(self, root, values):
+        from .desktop_owner import DesktopOwner
+        return DesktopOwner(self).responsibility(root, values)
+
+    def reviewScheduledWork(self, root):
+        from .desktop_owner import DesktopOwner
+        return DesktopOwner(self).review_schedule(root)
+
+    def decideDesktopAction(self, root, digest, decision):
+        from .social_approval import decide_desktop
+        return decide_desktop(self, root, digest, decision)
+
     def readHostSkills(self):
         from .host_skill_owner import HostSkillOwner
         return HostSkillOwner(self).read()
@@ -679,3 +707,6 @@ FUNCTIONS = FUNCTIONS | frozenset({"readWatcher", "setWatcherHost", "setWatcherV
     "addDimension", "addMark", "addComment", "proposeWatcherEdit", "discardWatcherChanges", "decideWatcherEdit"})
 FUNCTIONS = FUNCTIONS | frozenset({"readHostSkills", "importHostSkill", "inspectConnectorBundle",
     "configureConnectorBundle", "installConnectorBundle", "setHostSkillEnabled", "auditHostSkill", "decideHostSkill"})
+
+FUNCTIONS = FUNCTIONS | frozenset({"readDesktop", "setDesktopProgram", "offerDesktopAction", "prepareDesktopAction",
+    "setScheduleResponsibility", "reviewScheduledWork", "decideDesktopAction"})

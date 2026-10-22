@@ -41,6 +41,9 @@ def _delegation(api, root):
     from .universal_cell import InvalidCell
     if type(root) is not str:
         raise InvalidCell("Approval requires its exact delegation identity")
+    from .desktop_owner import PREFIX as DESKTOP_PREFIX, approval_context as desktop_context
+    if root.startswith(DESKTOP_PREFIX):
+        return desktop_context(api, root)
     from .host_skill_owner import PREFIX as HOST_PREFIX, HostSkillOwner
     if root.startswith(HOST_PREFIX):
         from types import SimpleNamespace
@@ -100,6 +103,9 @@ def _material(api, kind, delegation):
 
 
 def approval_card(api, root):
+    from .desktop_owner import PREFIX as DESKTOP_PREFIX, DesktopOwner
+    if type(root) is str and root.startswith(DESKTOP_PREFIX):
+        return DesktopOwner(api).card(root)
     from .host_skill_owner import PREFIX as HOST_PREFIX, HostSkillOwner
     if type(root) is str and root.startswith(HOST_PREFIX):
         return HostSkillOwner(api).card(root)
@@ -191,6 +197,8 @@ def change_review(api, root, action, *args):
         owner = HostSkillOwner(api)
         package, _, proposal = owner._proposal(root)
         return owner.request(package, proposal["action"])
+    if action == "refreshApproval" and kind in {"desktop", "schedule"}:
+        raise InvalidCell("Decide this review and prepare a fresh source-bound plan or scheduled run")
     if action == "refreshApproval" and kind == "watcher":
         raise InvalidCell("Discard the source-bound Watcher draft and read its source before proposing a fresh edit")
     if action == "refreshApproval":
@@ -284,7 +292,8 @@ def list_reviews(api):
                 continue
     from .watcher_owner import WatcherOwner
     from .host_skill_owner import HostSkillOwner
-    return cards + WatcherOwner(api).reviews() + HostSkillOwner(api).reviews()
+    from .desktop_owner import DesktopOwner
+    return cards + WatcherOwner(api).reviews() + HostSkillOwner(api).reviews() + DesktopOwner(api).reviews()
 
 
 def _social_providers(registry) -> dict:
@@ -448,3 +457,12 @@ def decide_watcher(api, root, digest, decision):
     if decision == "approve":
         require_review_admission(snapshot, delegation.permission_root)
     return WatcherOwner(api).decide(root, digest, decision)
+
+
+def decide_desktop(api, root, digest, decision):
+    """One authenticated review admission path for desktop and scheduled outcomes."""
+    from .desktop_owner import DesktopOwner
+    snapshot, _, delegation, _, _ = _delegation(api, root)
+    if decision == 'approve':
+        require_review_admission(snapshot, delegation.permission_root)
+    return DesktopOwner(api).decide(root, digest, decision)

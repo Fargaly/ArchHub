@@ -67,9 +67,9 @@
       r = s.schedules.find(t => t.id === id);
     return r ? <div className="grid" style={{
       marginTop: 16
-    }}><label className="grid">Operation{api.supportsAction?.('setScheduleResponsibility') !== false && <select aria-label={'Scheduled operation ' + r.title} value={r.operation || 'Workflow'} onChange={e => executeAction("setScheduleResponsibility", u, id, {
+    }}>{r.lastResult && <p role="status">Last run: {r.lastResult.status}{r.lastResult.error ? " · " + r.lastResult.error : ""}</p>}<label className="grid">Operation{api.supportsAction?.('setScheduleResponsibility') !== false && <select aria-label={'Scheduled operation ' + r.title} value={r.operation || 'Workflow'} onChange={e => executeAction("setScheduleResponsibility", u, id, {
           operation: e.target.value
-        })}>{['Workflow', 'Brain reindex', 'Batch job', 'Requests evidence audit'].map(x => <option key={x}>{x}</option>)}</select>}</label><label className="grid">Responsibility{api.supportsAction?.('setScheduleResponsibility') !== false && <input aria-label={'Responsibility ' + r.title} value={r.responsibility || ''} onChange={e => executeAction("setScheduleResponsibility", u, id, {
+        })}>{['Workflow'].map(x => <option key={x}>{x}</option>)}</select>}</label><label className="grid">Responsibility{api.supportsAction?.('setScheduleResponsibility') !== false && <input aria-label={'Responsibility ' + r.title} value={r.responsibility || ''} onChange={e => executeAction("setScheduleResponsibility", u, id, {
           responsibility: e.target.value
         })} />}</label><div className="spread"><span>Self-review after each run</span>{api.supportsAction?.('setScheduleResponsibility') !== false && <D.Toggle label={'Self-review ' + r.title} checked={r.selfReview !== false} onCheckedChange={v => executeAction("setScheduleResponsibility", u, id, {
           selfReview: v

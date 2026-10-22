@@ -704,7 +704,7 @@ test('ensureDependency: posts existing Settings owner command and publishes conf
  assert.equal(api.getSnapshot().dependencies[0].state,'Ready');
 });
 
-for(const name of ["runValuation", "correctAnswerSource", "setResearchReview", "stampOutput", "runSpecialNode", "setTranscriptPass", "setDesktopProgram", "offerDesktopAction", "prepareDesktopAction", "settleTimesheet", "setScheduleResponsibility", "reviewScheduledWork", "runResearchNode", "setCompanionState", "exposeSettingsPage", "signInProvider", "setProviderModel", "disconnectSecret", "changePlan", "readNotification"])test(name+': remains hidden without an executing owner',async()=>{
+for(const name of ["runValuation", "correctAnswerSource", "setResearchReview", "stampOutput", "runSpecialNode", "setTranscriptPass", "settleTimesheet", "runResearchNode", "setCompanionState", "exposeSettingsPage", "signInProvider", "setProviderModel", "disconnectSecret", "changePlan", "readNotification"])test(name+': remains hidden without an executing owner',async()=>{
  const {api,calls}=await buttonsAdapter();const count=calls.length;assert.equal(api.supportsAction(name),false);
  const result=await api[name]();assert.equal(result.ok,false);assert.equal(result.status,'not_connected');assert.equal(calls.length,count);
 });
@@ -1063,4 +1063,105 @@ test('WATCHER losing the graph owner clears source geometry and private annotati
  assert.equal(rig.api.supportsAction('editWall'),false);
  assert.equal(state.host,'');assert.equal(state.elementId,undefined);
  assert.equal(state.comments.length,0);assert.equal(state.marks.length,0);assert.equal(state.dimensions.length,0);
+});
+
+// DESKTOP: owner answers first; every control uses the same scoped Workshop.
+async function desktopAdapter(){
+ const held={owner:'desktop-owner',program:'',stage:'Watching',instance:null,offers:[],proposal:null,taskId:null,
+  schedules:[{id:'schedule-1',title:'Daily',operation:'Workflow',responsibility:'',selfReview:true,owner:'account-1'}]};
+ let cards=[],failure=null,owner=true,writes=0;const methods=[];
+ const rig=await adapter({signed_in:false},{
+  '/api/universal/canvas':{root:'canvas',nodes:[],wires:[],workshop_scope:{root:'canvas',workshops:[{root:'workshop',is_general:true}]}},
+  '/api/universal/workshop':body=>{
+   if(body.function==='listTasks')return {result:[]};
+   if(body.function==='listApprovals')return {result:globalThis.structuredClone(cards)};
+   if(body.function==='readDesktop')return {result:owner?globalThis.structuredClone(held):{ok:false,error:'Owner unavailable'}};
+   if(!['setDesktopProgram','offerDesktopAction','prepareDesktopAction','setScheduleResponsibility','reviewScheduledWork','decideDesktopAction'].includes(body.function))return {result:[]};
+   methods.push(body);if(failure)return {result:{ok:false,error:failure}};
+   const args=body.args;
+   if(body.function==='setDesktopProgram')Object.assign(held,{program:args[0],instance:48884});
+   if(body.function==='offerDesktopAction')Object.assign(held,{stage:'Offering',offers:[{action:'read',title:'Read selected geometry',payload:{source:{element:{id:'wall-1',label:'Wall 1'}}}}]});
+   if(body.function==='setScheduleResponsibility'){Object.assign(held.schedules[0],args[1]);return {result:globalThis.structuredClone(held.schedules[0])};}
+   if(['prepareDesktopAction','reviewScheduledWork'].includes(body.function)){
+    const kind=body.function==='prepareDesktopAction'?'desktop':'schedule',id=kind+'-card';
+    if(!cards.some(c=>c.id===id))cards.push({id,approvalKind:kind,input_digest:'exact-'+kind,status:'pending',rows:[]});
+    if(kind==='desktop')Object.assign(held,{stage:'Needs OK',taskId:id});
+    return {result:globalThis.structuredClone(cards.find(c=>c.id===id))};
+   }
+   if(body.function==='decideDesktopAction'){
+    const card=cards.find(c=>c.id===args[0]);assert.equal(args[1],card.input_digest);
+    if(args[2]==='approve'){if(card.approvalKind==='desktop')writes++;card.status='approved';held.stage='Applied';}
+    else card.status='declined';return {result:globalThis.structuredClone(card)};
+   }
+   return {result:globalThis.structuredClone(held)};
+  }});
+ await rig.api.listTasks();
+ return {...rig,methods,writes:()=>writes,refuse:v=>failure=v,loseOwner:()=>owner=false};
+}
+for(const [name,args] of [['setDesktopProgram',['Revit']],['offerDesktopAction',[]],['prepareDesktopAction',[]],
+ ['setScheduleResponsibility',['schedule-1',{responsibility:'Review output',selfReview:false}]],['reviewScheduledWork',['schedule-1']]])
+ test('DESKTOP '+name+' dispatches the exact scoped owner and reads back',async()=>{
+  const rig=await desktopAdapter();assert.equal(rig.api.supportsAction(name),true);
+  await rig.api[name](...args);const call=rig.methods.find(r=>r.function===name);
+  assert.equal(call.action,'data-api');assert.equal(call.root,'workshop');assert.equal(call.scope,'canvas');
+  assert.deepEqual(call.args,args);assert.equal(rig.writes(),0);
+  if(name==='setScheduleResponsibility')assert.equal(rig.api.getSnapshot().schedules[0].responsibility,'Review output');
+ });
+test('DESKTOP approval and denial use one card digest; schedule review never replays a run',async()=>{
+ const rig=await desktopAdapter(),card=await rig.api.prepareDesktopAction();assert.equal(rig.writes(),0);
+ assert.equal((await rig.api.prepareDesktopAction()).id,card.id);
+ await rig.api.approve(card.id);assert.equal(rig.writes(),1);
+ const review=await rig.api.reviewScheduledWork('schedule-1');await rig.api.approve(review.id);assert.equal(rig.writes(),1);
+ const other=await desktopAdapter(),declined=await other.api.prepareDesktopAction();await other.api.decline(declined.id);assert.equal(other.writes(),0);
+});
+test('DESKTOP missing owner and backend refusal preserve confirmed state',async()=>{
+ const rig=await desktopAdapter(),before=globalThis.structuredClone(rig.api.getSnapshot().desktop);
+ rig.refuse('Source changed');await assert.rejects(()=>rig.api.offerDesktopAction(),/Source changed/);
+ assert.deepEqual(globalThis.structuredClone(rig.api.getSnapshot().desktop),before);
+ rig.loseOwner();await rig.api.readDesktop();assert.equal(rig.api.supportsAction('prepareDesktopAction'),false);
+ await assert.rejects(()=>rig.api.prepareDesktopAction(),/unavailable/);
+ assert.equal(rig.api.getSnapshot().desktop.program,'');
+});
+test('DESKTOP rendered existing scene exposes the three owner-bound controls and opens its exact approval',async()=>{
+ const rig=await desktopAdapter(),studio=path.resolve(__dirname,'../../01.APP/nodelang/studio'),babel={};
+ vm.runInNewContext(fs.readFileSync(path.join(studio,'vendor/babel.js'),'utf8'),babel);
+ const shown=[],u={go(){},show:(...args)=>shown.push(args)};
+ const React={useState:v=>[v,()=>{}],createElement:(type,props,...children)=>({type,props:props||{},children}),Fragment:'fragment'};
+ const window={UI:{api:rig.api,useApp:()=>u,useData:()=>rig.api.getSnapshot(),useAction:()=>({run:fn=>fn()}),
+  Heading:'Heading',Empty:'Empty',Btn:'Btn',Card:'Card',Chip:'Chip',bindActions:(map,handlers)=>(id,...args)=>handlers[map[id]](...args),ActionStatus:'ActionStatus'}};
+ const context=vm.createContext({window,React,console});
+ vm.runInContext(babel.Babel.transform(fs.readFileSync(path.join(studio,'desktop.jsx'),'utf8'),{presets:['react']}).code,context);
+ let tree=window.UI.DesktopScene();const select=nodes(tree).find(n=>n.props?.['aria-label']==='Working in');assert.ok(select);
+ await select.props.onChange({target:{value:'Revit'}});
+ tree=window.UI.DesktopScene();await nodes(tree).find(n=>n.type==='Btn'&&text(n)==='Suggest').props.onClick();
+ tree=window.UI.DesktopScene();await nodes(tree).find(n=>n.type==='Btn'&&text(n)==='Prepare the change').props.onClick();
+ assert.deepEqual(globalThis.structuredClone(shown),[['Approve',{id:'desktop-card'}]]);assert.equal(rig.writes(),0);
+});
+
+for(const name of ['setDesktopProgram','offerDesktopAction','prepareDesktopAction','setScheduleResponsibility','reviewScheduledWork'])
+ test('DESKTOP '+name+' stays hidden until its owner answers',async()=>{
+  const {api,requests}=await adapter({signed_in:false});const calls=()=>requests.filter(row=>row.body?.function===name).length,count=calls();
+  assert.equal(api.supportsAction(name),false);
+  await assert.rejects(()=>api[name](),/unavailable/);assert.equal(calls(),count);
+ });
+
+test('DESKTOP rendered schedule responsibility saves partial changes and opens the finished-run card',async()=>{
+ const rig=await desktopAdapter(),studio=path.resolve(__dirname,'../../01.APP/nodelang/studio'),babel={};
+ vm.runInNewContext(fs.readFileSync(path.join(studio,'vendor/babel.js'),'utf8'),babel);
+ const shown=[],u={show:(...args)=>shown.push(args)};
+ const React={createElement:(type,props,...children)=>({type,props:props||{},children}),Fragment:'fragment'};
+ const window={ArchHubAPI:{executeAction:(name,user,...args)=>name==='ui.show'?user.show(...args):rig.api[name](...args)},
+  UI:{api:rig.api,useApp:()=>u,useData:()=>rig.api.getSnapshot(),D:{Toggle:'Toggle'},Btn:'Btn',Card:'Card',Chip:'Chip',Heading:'Heading',Table:'Table'}};
+ const context=vm.createContext({window,React,console});
+ vm.runInContext(babel.Babel.transform(fs.readFileSync(path.join(studio,'workflow-states.jsx'),'utf8'),{presets:['react']}).code,context);
+ let tree=window.UI.ScheduleResponsibility({id:'schedule-1'});
+ await nodes(tree).find(n=>n.props?.['aria-label']==='Responsibility Daily').props.onChange({target:{value:'Check the actual output'}});
+ tree=window.UI.ScheduleResponsibility({id:'schedule-1'});
+ await nodes(tree).find(n=>n.type==='Toggle').props.onCheckedChange(false);
+ assert.equal(rig.api.getSnapshot().schedules[0].responsibility,'Check the actual output');
+ assert.equal(rig.api.getSnapshot().schedules[0].selfReview,false);
+ await nodes(tree).find(n=>n.type==='Btn'&&text(n)==='Review lesson').props.onClick();
+ assert.deepEqual(globalThis.structuredClone(shown),[['Approve',{id:'schedule-card'}]]);
+ rig.loseOwner();await rig.api.readDesktop();tree=window.UI.ScheduleResponsibility({id:'schedule-1'});
+ assert.equal(nodes(tree).some(n=>n.type==='Btn'||n.type==='input'||n.type==='select'||n.type==='Toggle'),false);
 });

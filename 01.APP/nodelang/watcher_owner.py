@@ -209,6 +209,14 @@ class WatcherOwner:
         source = self._source(state)
         if state["proposal"]:
             return self.card(state["proposal"])
+        from .desktop_owner import DesktopOwner
+        desktop = DesktopOwner(self.api)
+        root = desktop._state()['proposal']
+        if root:
+            plan = desktop.proposal(root)
+            if (plan['status'] in {'pending', 'executing', 'unconfirmed'} and plan['payload']['action'] == 'move'
+                    and plan['payload']['payload']['source'] == source):
+                raise InvalidCell('This offset already has a desktop approval; decide that card first')
         if state["pendingY"] is None:
             raise InvalidCell("Edit a source wall or line before proposing a change")
         payload = {"source":source, "offsetMm":(state["pendingY"]-source["element"]["start"][1])*SCALE_MM}

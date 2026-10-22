@@ -579,6 +579,7 @@ class CanvasOwner:
         return {"id": created, "target": target, "time": time, "enabled": True}
 
     def _schedule(self, canvas, schedule):
+        self._node(canvas, schedule)
         rows = self._rows(canvas, schedule)
         if (rows.get("engine") or {}).get("value") != SCHEDULE_ENGINE:
             raise CanvasRefused("that is not a schedule node")
@@ -698,6 +699,11 @@ class CanvasOwner:
                  if w['source'] in indexes and w['target'] in indexes]
         return {'nodes': nodes, 'wires': wires}
 
+    def _schedule_responsibility(self, rows):
+        identity = self.registry.authorization.broker.resolve(self.context)
+        return {'owner':identity.subject_root, 'operation':'Workflow', 'responsibility':'', 'selfReview':True,
+                **json.loads(rows.get('responsibility', {}).get('value', '{}'))}
+
     def project_schedules(self):
         canvas, result = self.canvas(), []
         for node in canvas['nodes']:
@@ -705,18 +711,25 @@ class CanvasOwner:
             if rows.get('engine', {}).get('value') == SCHEDULE_ENGINE:
                 result.append({'id': node['id'], 'title': node['label'],
                                'time': rows.get('time', {}).get('value', ''),
-                               'enabled': rows.get('enabled', {}).get('value') == 'true'})
+                               'enabled': rows.get('enabled', {}).get('value') == 'true',
+                               **self._schedule_responsibility(rows),
+                               'lastResult':json.loads(rows.get('last_result', {}).get('value', 'null'))})
         return result
 
-    def tick_schedules(self, now, run, lock=None):
+    def tick_schedules(self, now, run, lock=None, *, review=None):
         """Run through the caller's admitted pipeline; never mark pending work done."""
         from contextlib import nullcontext
         lock = lock or nullcontext()
         results = []
         with lock:
+            scope = self.canvas()['scope']['current']
             due = self.due_schedules(now)
+        def require_scope():
+            if self.canvas()['scope']['current'] != scope:
+                raise CanvasRefused('The graph changed during its scheduled run; return to the original graph to reconcile its outcome')
         for schedule in due:
             with lock:
+                require_scope()
                 if schedule not in self.due_schedules(now):
                     continue
                 canvas = self.canvas()
@@ -728,11 +741,31 @@ class CanvasOwner:
                     for root in self._upstream(canvas, target)))
                 # Persist before effects: a timeout or restart must never replay uncertain work.
                 self.set_property(schedule, 'last_attempt', now.strftime('%Y-%m-%d'))
-            result = run(targets)
+                rows = self._rows(None, schedule)
+                responsibility = self._schedule_responsibility(rows)
+                self.set_property(schedule, 'responsibility', json.dumps(responsibility))
+                run_record = {'id':now.isoformat(), 'targets':targets, 'responsibility':responsibility}
+                self.set_property(schedule, 'last_result', json.dumps({**run_record, 'status':'unconfirmed'}))
+            try:
+                result = run(targets)
+            except Exception as failure:
+                with lock:
+                    require_scope()
+                    self.set_property(schedule, 'last_result', json.dumps({**run_record,
+                        'status':'unconfirmed', 'error':str(failure)}))
+                raise
+            finished = not result.get('pending') and result.get('ok') is not False and bool(result.get('ran'))
+            with lock:
+                require_scope()
+                self.set_property(schedule, 'last_result', json.dumps({**run_record,
+                    'status':'complete' if finished else 'needs-attention', 'result':result}))
             if result.get('pending') or result.get('ok') is False or not result.get('ran'):
                 raise CanvasRefused('scheduled run needs attention; review its result, then re-enable the schedule: %s' % json.dumps(result))
             with lock:
+                require_scope()
                 self.mark_schedule_ran(schedule, now)
+                if review is not None and responsibility.get('selfReview') is True:
+                    review(schedule)
             results.append({'id': schedule, 'result': result})
         return results
 

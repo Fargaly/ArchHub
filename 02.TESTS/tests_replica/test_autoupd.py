@@ -395,3 +395,16 @@ Read-StudioBuild
     expected = {'extra':'inventory differs', 'duplicate':'duplicate Studio output',
                 'escape':'Invalid or duplicate', 'hash':'does not match its manifest'}
     assert expected[damage] in result.stderr
+
+
+@pytest.mark.parametrize("page_ready,studio_mounted,checks,verdict", [
+    (True, False, 0, "confirm"),        # the graph page reported: confirmed at once
+    (False, True, 59, "wait"),          # two minutes in, still waiting
+    (False, True, 149, "wait"),         # just under five minutes, still waiting
+    (False, True, 150, "confirm"),      # the window reached the Studio: a slow graph page is not a failed install
+    (False, False, 150, "rollback"),    # never reached the Studio: restore the previous build
+])
+def test_boot_acknowledgment_confirms_a_mounted_studio_and_rolls_back_only_a_dead_window(
+        page_ready, studio_mounted, checks, verdict):
+    assert qu.boot_acknowledgment(page_ready, studio_mounted, checks) == verdict
+

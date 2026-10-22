@@ -1482,18 +1482,27 @@ _update_boot = {"pending": _staged.get("status") == "awaiting_boot", "checks": 0
 
 
 def _acknowledge_update_surface():
-    """Acknowledge after the saved graph and Studio have actually mounted."""
+    """Acknowledge after the saved graph and Studio have actually mounted.
+
+    Build 20261022-1528 was rolled back by this poll: the window had reached the
+    Studio but the graph page took longer than two minutes, which is a slow
+    canvas, not a failed install. The decision now lives in quiet_update.
+    """
     if not _update_boot["pending"]:
         return
-    if _update_boot["checks"] >= 60:
-        _update_boot["pending"] = False
-        _update_rollback_requested.set()
-        return
-    _update_boot["checks"] += 1
-
+    from nodelang.quiet_update import boot_acknowledgment
     def observed(ready):
-        if ready:
-            _update_boot["pending"] = False
+        verdict = boot_acknowledgment(bool(ready), _booted["done"], _update_boot["checks"])
+        if verdict == "wait":
+            _update_boot["checks"] += 1
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(2000, _acknowledge_update_surface)
+            return
+        _update_boot["pending"] = False
+        if verdict == "rollback":
+            _update_rollback_requested.set()
+            return
+        if True:
             def confirm():
                 from nodelang.quiet_update import confirm_applied
                 # File restoration waits for the same final close as every update.
@@ -1503,9 +1512,6 @@ def _acknowledge_update_surface():
                     _update_rollback_requested.set()
             import threading as _ack_threading
             _ack_threading.Thread(target=confirm, name="archhub-update-boot-ack", daemon=True).start()
-        else:
-            from PyQt6.QtCore import QTimer
-            QTimer.singleShot(2000, _acknowledge_update_surface)
 
     view.page().runJavaScript(
         "Boolean(window.ARCHHUB_LIVE && window.ARCHHUB_LIVE.graph && "

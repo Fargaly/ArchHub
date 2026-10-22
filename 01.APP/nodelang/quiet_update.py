@@ -582,6 +582,21 @@ def begin_update_boot(state_dir: Path, app_dir: Path) -> dict:
         return {**_failure(exc), "status": "applying"}
 
 
+def boot_acknowledgment(page_ready, studio_mounted, checks, *, limit=150) -> str:
+    """The new build's fate after boot: "confirm", "wait" or "rollback".
+
+    The page reporting its graph confirms at once. Until ``limit`` polls (2 s each,
+    five minutes) the answer is wait. At the limit, a build whose window already
+    reached the Studio is confirmed: a slow graph page is not a failed install.
+    Only a build that never reached the Studio is rolled back.
+    """
+    if page_ready:
+        return "confirm"
+    if checks < limit:
+        return "wait"
+    return "confirm" if studio_mounted else "rollback"
+
+
 def confirm_applied(state_dir: Path, app_dir: Path, *, rollback=True) -> dict:
     """Call only after successful boot. Confirmed package remains as evidence."""
     try:
@@ -647,7 +662,7 @@ def main(argv=None):
     return 0
 
 
-__all__ = ["apply_staged", "installed_build_id", "read_latest_release", "stage_if_newer",
+__all__ = ["apply_staged", "boot_acknowledgment", "installed_build_id", "read_latest_release", "stage_if_newer",
            "staged_update", "confirm_applied", "begin_update_boot", "rollback_staged", "recover_failed_launch", "ASSET_NAME"]
 
 

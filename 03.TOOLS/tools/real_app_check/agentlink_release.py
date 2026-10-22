@@ -200,7 +200,7 @@ def _claude_auth(env, original_home):
 _GOOSE_MODEL = "dots-studio/dots-3-note-preview:free"
 
 
-def _goose_turn(executable, prompt, *, env, cwd):
+def _goose_turn(executable, prompts, *, env, cwd):
     from nodelang.goose_adapter import AcpTransport, workshop_mcp_server
     from nodelang.session_link_transport import _OwnedProcessJob
     process = subprocess.Popen([executable, "acp"], env=env, cwd=cwd, stdin=subprocess.PIPE,
@@ -223,11 +223,12 @@ def _goose_turn(executable, prompt, *, env, cwd):
         session = created.get("sessionId")
         if not session:
             raise QualificationRefused("Actual Goose did not create a native ACP session")
-        result = transport.request("session/prompt", {"sessionId":session,
-            "prompt":[{"type":"text","text":prompt}]}, deadline=deadline,
-            update=lambda value:updates.append({"type":"goose_acp","params":value}))
-        if result.get("stopReason") != "end_turn":
-            raise QualificationRefused("Actual Goose did not complete its native turn")
+        for prompt in prompts:
+            result = transport.request("session/prompt", {"sessionId":session,
+                "prompt":[{"type":"text","text":prompt}]}, deadline=deadline,
+                update=lambda value:updates.append({"type":"goose_acp","params":value}))
+            if result.get("stopReason") != "end_turn":
+                raise QualificationRefused("Actual Goose did not complete its native turn")
         return "\n".join(json.dumps(row) for row in updates), session, process.pid
     finally:
         transport.close()
@@ -425,18 +426,22 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
             cc_mcp = json.dumps({"mcpServers":{"archhub_agent_coordination":{
                 "command":sys.executable, "args":["-m", "nodelang.native_agent_mcp"],
                 "env":{"PYTHONPATH":str(source), "PYTHONUTF8":"1"}}}})
-            prompt = ("Use only the Workshop MCP declare/read/send tools. Declare task='Release peer reply proof', "
-                "paths=[" + json.dumps(str(first)) + "],status='working',request_id='AGENTLINK-RELEASE'. "
+            # Two ordered prompts: the free Goose model read the room before it declared
+            # (builds 27 and 28), so its read never held the overlap notice its own
+            # declaration creates. The declaration must settle before the read starts.
+            declare_prompt = ("Use only the Workshop MCP declare tool. Declare task='Release peer reply proof', "
+                "paths=[" + json.dumps(str(first)) + "],status='working',request_id='AGENTLINK-RELEASE'. Then stop.")
+            prompt = ("Use only the Workshop MCP read/send tools. "
                 "Read since=0. Find request message " + note["id"] + " with nonce " + nonce +
                 ". Read the overlap notice that references both your declaration and OpenCode's. "
                 "Send(to='OpenCode',reply_to='" + note["id"] + "',text='AGENTLINK-REPLY " + nonce +
                 "'). Finish with the exact overlap message id. Do not mark your declaration done yet.")
             if peer == "claude":
-                answer = _run([cc, "-p", prompt, "--output-format", "stream-json", "--verbose",
+                answer = _run([cc, "-p", declare_prompt + " " + prompt, "--output-format", "stream-json", "--verbose",
                     "--strict-mcp-config", "--mcp-config", cc_mcp, "--permission-mode", "acceptEdits",
                     "--allowedTools", "mcp__archhub_agent_coordination__declare,mcp__archhub_agent_coordination__read,mcp__archhub_agent_coordination__send"], env=env, cwd=fixture)
             else:
-                answer, peer_session, peer_pid = _goose_turn(cc, prompt, env=env, cwd=fixture)
+                answer, peer_session, peer_pid = _goose_turn(cc, [declare_prompt, prompt], env=env, cwd=fixture)
                 evidence.update(peer_session=peer_session, peer_pid=peer_pid,
                     peer_provider="openrouter", peer_model=_GOOSE_MODEL)
             page = app.shared_agent_mail("read", {"since":0, "include_archived":True})

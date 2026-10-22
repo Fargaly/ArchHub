@@ -2258,6 +2258,24 @@ def _read_agent_session(
     return session
 
 
+def read_agent_session_links(
+    snapshot: Snapshot, protocol: AgentBodyProtocol, session_root: str
+) -> tuple[str, str, str]:
+    """(body, subject, view session) one session is bound to, without re-validating it.
+
+    Reading back an existing body checks every historical runtime session; a
+    full read_agent_session per member re-walks the whole session registry,
+    which grows with every launch. Full validation runs when a session is used.
+    """
+    members = read_relation(snapshot, session_root, budget=RELATION_BUDGET)
+    if len(members) > 1_024:
+        raise InvalidCell("agent session exceeds its member limit")
+    return tuple(
+        _one(members, protocol.role(role), role.replace("-", " ")).participant_id
+        for role in ("session-body", "session-subject", "session-view-session")
+    )
+
+
 def read_agent_session(
     snapshot: Snapshot,
     protocol: AgentBodyProtocol,

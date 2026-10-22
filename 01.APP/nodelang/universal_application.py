@@ -203,6 +203,7 @@ from .cell_agent_body import (
     open_agent_body_protocol,
     read_agent_body,
     read_agent_session,
+    read_agent_session_links,
 )
 from .cell_agent_body_catalog import (
     AgentBodyCatalogEntry,
@@ -9294,13 +9295,9 @@ def _ensure_baboom_application_agent_body_variant(
                 or not member.participant_id.startswith("app:agent-session:runtime:")
             ):
                 raise InvalidCell("%s control has an undeclared member" % label)
-            session = read_agent_session(
-                snapshot,
-                protocol,
-                authorization.protocol,
-                member.participant_id,
-            )
-            if session.body_root != body.root_id:
+            if read_agent_session_links(
+                snapshot, protocol, member.participant_id
+            )[0] != body.root_id:
                 raise InvalidCell("%s runtime session body drifted" % label)
         return body
 
@@ -9590,17 +9587,9 @@ def _ensure_baboom_execution_capability_control(
                 raise InvalidCell(
                     "BABOOM action capability control has an undeclared member"
                 )
-            session = read_agent_session(
-                snapshot,
-                protocol,
-                authorization.protocol,
-                member.participant_id,
-            )
-            if (
-                session.body_root != baboom_body.root_id
-                or session.subject_root != authorization.subject_root
-                or session.view_session_root != view_session.root_id
-            ):
+            if read_agent_session_links(
+                snapshot, protocol, member.participant_id
+            ) != (baboom_body.root_id, authorization.subject_root, view_session.root_id):
                 raise InvalidCell("BABOOM action capability session drifted")
     else:
         control = compose_relation_cells(

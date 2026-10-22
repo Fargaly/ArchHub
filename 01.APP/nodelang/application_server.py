@@ -9757,8 +9757,14 @@ class ApplicationServer:
                                     'X-ArchHub-CSRF': self.headers.get('X-ArchHub-CSRF', '')})
                             with urlopen(request) as response:
                                 return json.load(response)
-                        result = ScheduleCanvasOwner(owner.universal_store, owner.universal_registry,
-                            binding.context).tick_schedules(datetime.now(), scheduled_run, owner.mutation_lock)
+                        from .workshop_api import WorkshopAPI
+                        from .desktop_owner import DesktopOwner
+                        schedule_ops = ScheduleCanvasOwner(owner.universal_store, owner.universal_registry, binding.context)
+                        schedule_api = WorkshopAPI(owner, binding, owner.universal_registry.workshop_root,
+                            schedule_ops.canvas()['scope']['current'], guard=lambda: self._browser_session_binding(unsafe=True),
+                            request_id='scheduled-review', route=self.path)
+                        result = schedule_ops.tick_schedules(datetime.now(), scheduled_run, owner.mutation_lock,
+                            review=DesktopOwner(schedule_api).review_schedule)
                         self._json(200, {'ok': True, 'result': result})
                         return
                     # WIRE-projects end

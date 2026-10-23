@@ -8192,6 +8192,19 @@
         "02.TESTS/tests_js/wsadd.test.cjs",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "APPSTABLE": {
+      "source": "Founder APPSTABLE 2026-10-23: what worked before works again on his installed app. Restore existing provider state, Team two-column layout and saved Workshop ownership; no Canvas, workspace-controls, secrets-toast, installer or live-profile changes. Patch-only builder; 717 lands/builds/installs and verifies.",
+      "scope": [
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/ds_colleagues.jsx",
+        "01.APP/nodelang/studio/ds_workshop3.jsx",
+        "01.APP/nodelang/workshop_api.py",
+        "02.TESTS/tests_js/appstable.test.cjs",
+        "02.TESTS/tests_js/appstable_render.cjs",
+        "02.TESTS/tests_replica/test_appstable.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

@@ -501,7 +501,41 @@ def stage_if_newer(state_dir: Path, app_dir: Path, opener=urllib.request.urlopen
             partial.unlink(missing_ok=True)
 
 
-def apply_staged(state_dir: Path, app_dir: Path, runner=subprocess.run, *, before_apply=None) -> dict:
+def stop_runtime_processes(app_dir: Path, *, process_iter=None, wait_seconds: float = 5.0) -> list:
+    """Stop processes whose executable lives under <app>/runtime before the installer replaces it.
+
+    Build 20261023-0423 rolled back: a leftover BABOOM goose.exe held runtime/goose/goose.exe,
+    the silent installer's replace failed (code 5), and /SUPPRESSMSGBOXES answered Abort.
+    """
+    import psutil
+    root = (Path(app_dir) / "runtime").resolve()
+    stopped = []
+    for process in (process_iter or psutil.process_iter)(["pid", "exe"]):
+        try:
+            exe = process.info.get("exe")
+            if exe and Path(exe).resolve().is_relative_to(root):
+                process.terminate()
+                stopped.append(process)
+        except (psutil.Error, OSError, ValueError):
+            continue
+    if stopped:
+        _gone, alive = psutil.wait_procs(stopped, timeout=wait_seconds)
+        refused = []
+        for process in alive:
+            try:
+                process.kill()
+            except psutil.NoSuchProcess:
+                continue  # it exited between the wait and the kill
+            except psutil.Error as error:
+                refused.append("%d (%s)" % (process.pid, type(error).__name__))
+        if refused:
+            # Better to refuse the update than let the silent installer abort mid-replace.
+            raise OSError("runtime processes could not be stopped: " + ", ".join(refused))
+    return [process.pid for process in stopped]
+
+
+def apply_staged(state_dir: Path, app_dir: Path, runner=subprocess.run, *, before_apply=None,
+                 stop_runtime=stop_runtime_processes) -> dict:
     """Call before_apply() under staging ownership, then attempt once; retain package.
 
     The trusted callback raises to refuse recovery admission. It must not call
@@ -536,6 +570,8 @@ def apply_staged(state_dir: Path, app_dir: Path, runner=subprocess.run, *, befor
             options = {"timeout": None, "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
             setup_log = updates / 'setup.log'
             setup_log.unlink(missing_ok=True)
+            if stop_runtime is not None:
+                stop_runtime(Path(app_dir))
             result = runner([data["installer"], "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
                              "/NOCLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS",
                              "/SP-", "/LOG=" + str(setup_log), "/DIR=" + str(app_dir)], **options)

@@ -424,3 +424,28 @@ def test_boot_confirmation_waits_out_a_busy_update_lock(monkeypatch):
     monkeypatch.setattr(quiet_update, "confirm_applied",
                         lambda *a, **k: {"confirmed": False, "reason": "installed BUILD_ID does not match staged build"})
     assert not quiet_update.confirm_when_free("state", "app", sleep=slept.append)["confirmed"]
+
+
+
+def test_installer_runs_only_after_runtime_processes_are_stopped(tmp_path):
+    """Build 33 rolled back because a leftover goose.exe locked runtime/goose/goose.exe."""
+    from nodelang import quiet_update
+    runtime = tmp_path / "app" / "runtime" / "goose"
+    runtime.mkdir(parents=True)
+    events = []
+    class Proc:
+        def __init__(self, pid, exe):
+            self.pid, self.info = pid, {"pid": pid, "exe": exe}
+        def terminate(self):
+            events.append(("terminate", self.pid))
+        def kill(self):
+            events.append(("kill", self.pid))
+    import psutil
+    original = psutil.wait_procs
+    psutil.wait_procs = lambda procs, timeout: (procs, [])
+    try:
+        stopped = quiet_update.stop_runtime_processes(tmp_path / "app", process_iter=lambda attrs: [
+            Proc(1, str(runtime / "goose.exe")), Proc(2, str(tmp_path / "elsewhere.exe")), Proc(3, None)])
+    finally:
+        psutil.wait_procs = original
+    assert stopped == [1] and events == [("terminate", 1)]

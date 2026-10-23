@@ -8251,6 +8251,18 @@
         "05.EVIDENCE/acompiler-intents.json",
         "04.DOCS/DECISIONS.md"
       ]
+    },
+    "ALWAYSON": {
+      "source": "Founder ALWAYSON: agents cannot reach each other or the application; closing must keep the app running in the tray. Default tray ON, bounded concurrent Workshop sends, fixture provider answers. Patch-only lane; no installed app, installer, live data or credentials; 717 owns landing and installation.",
+      "scope": [
+        "01.APP/nodelang/launcher.py",
+        "01.APP/nodelang/library_engines.py",
+        "01.APP/nodelang/workshop_mailbox.py",
+        "02.TESTS/tests_replica/test_alwayson.py",
+        "02.TESTS/tests_replica/test_instfix_desktop.py",
+        "02.TESTS/tests_replica/test_stage2b_integration.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

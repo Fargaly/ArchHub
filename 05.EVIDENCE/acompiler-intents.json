@@ -8276,6 +8276,14 @@
         "01.APP/nodelang/universal_pipeline.py",
         "03.TOOLS/tools/archhub-compiler/src/main.rs"
       ]
+    },
+    "BOOTLIMIT": {
+      "source": "Founder BOOTLIMIT: canvas phase deadline 300 s only; retain fatal watchdog and all other phase deadlines; 120 s responsive Qt court red/green and bounded hang exit. Patch-only lane; installed app, live data, installer and BOOTSCALE excluded.",
+      "scope": [
+        "01.APP/nodelang/launcher.py",
+        "02.TESTS/tests_replica/test_boot_is_measured.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

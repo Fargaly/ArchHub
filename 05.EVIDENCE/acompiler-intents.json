@@ -8233,6 +8233,15 @@
         "02.TESTS/tests_replica/test_native_owner_recovery_is_actionable.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "BOOT38": {
+      "source": "Founder BOOT38 / To 717: build 38 must open; inspect shipped bundle and launcher readiness; reuse Home metadata before expensive graph; accept a visibly painted Canvas; built-bundle red/green court under 10s, no watchdog deadline change. Isolated patch only; no live data, installed app, installer, Workshop-lock lane or Outlook.",
+      "scope": [
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/launcher.py",
+        "02.TESTS/tests_js/studio_boot38.test.cjs",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

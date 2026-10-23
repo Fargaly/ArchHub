@@ -266,7 +266,7 @@ def _pipeline_port_name(node, interface_root, side, wire_root):
     ):
         raise InvalidCell("wire %s has no executable %s interface contract" % (wire_root, side))
     if sum(1 for candidate in ports
-           if candidate.get("side") == side and candidate.get("name") == name) != 1:
+           if candidate.get("side") == side and candidate.get("mode") == "connection" and candidate.get("name") == name) != 1:
         raise InvalidCell("wire %s has an ambiguous %s interface name" % (wire_root, side))
     return name
 

@@ -3509,6 +3509,7 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/social-surface", "edit"),
     # WIRE-social end
     ("POST", "/api/universal/canvas-op", "edit"),
+    ("POST", "/api/universal/mods", "edit"),
     # Editing a connection's parameter, including the first edit that has
     # to declare the row: the same capability the inspector already holds
     # for a node's parameter, because a wire is a node.
@@ -3673,6 +3674,7 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
 )
 _NEWAPP_HTTP_ROUTE_KEYS = frozenset({
     "POST /api/universal/canvas-op",
+    "POST /api/universal/mods",
     "POST /api/universal/settings-action",
     "POST /api/universal/social-surface",
 })
@@ -15762,6 +15764,7 @@ def restore_universal_application(
         expected_active_route_keys - post_20260923_route_keys,
         (expected_active_route_keys - post_20260923_route_keys) | _NEWAPP_HTTP_ROUTE_KEYS,
     )
+    released_route_sets += tuple(routes - {"POST /api/universal/mods"} for routes in released_route_sets)
     website_revision_route_keys = tuple(
         {"GET %s" % path for path in paths}
         for paths in WEBSITE_DEFINITION_REVISIONS

@@ -10,6 +10,16 @@ use std::{
     process::{Command, ExitCode},
 };
 
+fn source_context(path: &str) -> Result<serde_json::Value, String> {
+    let context: serde_json::Value = serde_json::from_slice(
+        &fs::read(path).map_err(|e| e.to_string())?
+    ).map_err(|e| e.to_string())?;
+    if context["intent"].as_str().map(str::trim) == Some("SELFEXT-RUNTIME") {
+        return Err("SELFEXT-RUNTIME is reserved for self-extension artifact checks; use a registered product intent for commit/session gates".into());
+    }
+    Ok(context)
+}
+
 fn run() -> Result<bool, String> {
     let args: Vec<String> = env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("source-identities") {
@@ -35,9 +45,7 @@ fn run() -> Result<bool, String> {
             }
             i += 1;
         }
-        let context: serde_json::Value = serde_json::from_slice(
-            &fs::read(context_path.ok_or("conduct requires --context")?).map_err(|e| e.to_string())?
-        ).map_err(|e| e.to_string())?;
+        let context = source_context(context_path.ok_or("conduct requires --context")?)?;
         if !context["conduct_events"].as_array().is_some_and(|a| !a.is_empty()) {
             return Err("conduct requires nonempty conduct_events".into());
         }
@@ -301,13 +309,7 @@ fn run() -> Result<bool, String> {
         if pending.insert(file, content).is_some() { return Err("external entrypoint shadows product source".into()); }
     }
     let sources = pending.into_iter().collect::<Vec<_>>();
-    let context: Option<serde_json::Value> = context
-        .map(|path| {
-            fs::read(path)
-                .map_err(|e| e.to_string())
-                .and_then(|b| serde_json::from_slice(&b).map_err(|e| e.to_string()))
-        })
-        .transpose()?;
+    let context = context.as_deref().map(source_context).transpose()?;
     let mut report = compile_with_entrypoints(&sources, None, &entrypoints);
     for (file, message) in failures {
         let language = language_name(&file).to_string();

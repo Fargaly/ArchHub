@@ -3,6 +3,10 @@
   "authority": "BRIEF-ACOMPILER.md Addendum 2; DELIVERY-STATUS row 1 HEART and 1b HEART v2; plan.md owned paths",
   "source_sha256": "6662455cc0f55648d29a95f21278cb6946a1630f370b43bde6f6e4fcf3cb140a",
   "intents": {
+    "SELFEXT-RUNTIME": {
+      "source": "Founder EXTINSTALL: admit validated pure self-extension graphs through the existing install action, exact approval, court and readback. Runtime identity grants no product source or host-edit scope.",
+      "scope": ["10.PRODUCT/11.ARCHHUB-APP"]
+    },
     "ACOMPILER2B": {
       "source": "BRIEF-ACOMPILER2B.md; DELIVERY-STATUS.md rows 1b HEART v2, F62, F76",
       "scope": [

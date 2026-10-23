@@ -1383,8 +1383,8 @@ def _selfext_pending(store, domain, effect):
             raise ValueError("rollback has an unsupported baseline signature")
     else:
         raise ValueError("self-extension action has no type rule")
-    # Export source evidence, never turn an arbitrary prose intent into an
-    # authorised compiler identity. Rust still needs a trusted session registry.
+    # Runtime graph admission uses the released identity, never proposal prose
+    # as authority. The exact proposal remains bound into approval and readback.
     from ..enforce import pending_digest
     proposal_node = store.nodes[str(domain["proposal"])]
     validate_node(store.nodes, proposal_node)
@@ -1406,6 +1406,7 @@ def _selfext_pending(store, domain, effect):
               "intent": proposal["intent"], "scope": [target],
               "semantic_revision_sha256": pending_digest({"proposal": proposal, "requirements": requirements, "generated": records})}
     return {"kind": "model", "format": "archhub-graph-v1", "target": target,
+            "intent": "SELFEXT-RUNTIME", "author": proposal["requested_by"], "why": proposal["intent"],
             "content": copy.deepcopy(change), "graph": {"root": generated, "manifest": manifest, "records": records},
             "intent_source": source}
 

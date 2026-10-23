@@ -2733,14 +2733,10 @@ pub fn analyze_artifact(pending: &Value, context: &Value) -> Report {
         match pending["kind"].as_str() {
             Some("model") if pending["format"] == "archhub-graph-v1" => {
                 let action = content["action"].as_str().unwrap_or("");
-                let reference = if action == "attach_subgraph" {
-                    "manifest"
-                } else {
-                    "baseline"
-                };
                 if !["attach_subgraph", "restore_baseline"].contains(&action)
                     || !content["subgraph"].as_str().is_some_and(|s| !s.is_empty())
-                    || !content[reference].as_str().is_some_and(|s| !s.is_empty())
+                    || (action == "attach_subgraph" && !content["manifest"].as_str().is_some_and(|s| !s.is_empty()))
+                    || (action == "restore_baseline" && content.get("baseline").is_none())
                 {
                     emit("E0009","graph effect requires a supported action and exact subgraph/manifest or baseline references");
                 }

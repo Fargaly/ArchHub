@@ -6,10 +6,10 @@ const path=require('node:path');
 
 async function adapter(account, responses={}){
  const requests=[],events=new Map();
- const window={ARCHHUB_AUTHORITY:{},structuredClone:globalThis.structuredClone,ARCHHUB_BOOT:{token:'local-lease',csrf:'csrf'},
+ const window={ARCHHUB_AUTHORITY:{},structuredClone:globalThis.structuredClone,ARCHHUB_BOOT:{home_load_ms:60000,token:'local-lease',csrf:'csrf'},
   Uint8Array:globalThis.Uint8Array,dispatchEvent(e){events.get(e.type)?.(e);},addEventListener(name,fn){events.set(name,fn);},AH:{inkSoft:'#888'},crypto:require('node:crypto')};
  window.ArchHubStudioAuthority={create:({get})=>({load:()=>get('/api/universal/canvas')})};
- const context={window,document:{hidden:true,addEventListener(){}},
+ const context={window,setTimeout,clearTimeout,document:{hidden:true,addEventListener(){}},
   CustomEvent:class {},sessionStorage:{getItem(){return null;}},URLSearchParams,TextEncoder:globalThis.TextEncoder,AbortSignal:globalThis.AbortSignal,console,
   fetch:async(url,options)=>{
    requests.push({url,body:options.body&&JSON.parse(options.body)});
@@ -454,10 +454,10 @@ test('office seat draft does not change billing while typing and requests confir
 });
 
 async function adapter(canvasSource={root:'g',nodes:[],wires:[]}) {
- const requests=[],w={structuredClone:globalThis.structuredClone,ARCHHUB_BOOT:{token:'lease',csrf:'csrf'},addEventListener(){},dispatchEvent(){},AH:{},crypto:require('node:crypto')};
+ const requests=[],w={structuredClone:globalThis.structuredClone,ARCHHUB_BOOT:{home_load_ms:60000,token:'lease',csrf:'csrf'},addEventListener(){},dispatchEvent(){},AH:{},crypto:require('node:crypto')};
  let fail=false;
  w.ArchHubStudioAuthority={create:({get})=>({load:()=>get('/api/universal/canvas')})};
- vm.runInNewContext(fs.readFileSync(path.join(studio,'api.js'),'utf8'),{window:w,document:{hidden:true,addEventListener(){}},CustomEvent:class{},URLSearchParams,AbortSignal:globalThis.AbortSignal,console,
+ vm.runInNewContext(fs.readFileSync(path.join(studio,'api.js'),'utf8'),{window:w,setTimeout,clearTimeout,document:{hidden:true,addEventListener(){}},CustomEvent:class{},URLSearchParams,AbortSignal:globalThis.AbortSignal,console,
   fetch:async(url,options)=>{
    const body=options.body&&JSON.parse(options.body);requests.push({url,body});let result={ok:true};
    if(url==='/api/universal/canvas')result=canvasSource;
@@ -645,7 +645,7 @@ test('WIRE-rest boot failure renders its actual error and retry reloads only onc
 async function buttonsAdapter(extra={},replies={}){
  const calls=[],events=new Map(),canvas={root:'graph',scope:{current:'graph'},nodes:[],wires:[],catalog:[],workshops:[{root:'workshop'}]};
  const window={structuredClone:globalThis.structuredClone,crypto:require('node:crypto').webcrypto,
-  ARCHHUB_BOOT:{token:'fixture',csrf:'fixture'},document:{hidden:true,addEventListener(){}},
+  ARCHHUB_BOOT:{home_load_ms:60000,token:'fixture',csrf:'fixture'},document:{hidden:true,addEventListener(){}},
   addEventListener:(name,fn)=>events.set(name,fn),dispatchEvent(){},...extra};
  window.ArchHubStudioAuthority={create:({get})=>({load:()=>get('/api/universal/canvas')})};
  const fetch=async(url,options={})=>{

@@ -945,6 +945,7 @@ LIBRARY_ITEM_ENGINES.update({
                                  "instance_retry_ms": 500,
                                  "preflight_database_ms": 1000,
                                  "broker_start_ms": 60000,
+                                 "home_load_ms": 290000,
                                  "refusal_poll_ms": 200,
                                  "quit_watchdog_ms": 3000,
                                  "account_http_ms": 25000,
@@ -1443,7 +1444,7 @@ ENGINE_SOCKETS = {
     "tool.workshop": {"source": ("out",), "target": (
         "tool", "stale_claim_after_idle_minutes", "archive_after_idle_days",
         "tick_cadence_minutes", "backup_count", "backup_budget_bytes", "recovery_timeout_seconds", "instance_retry_ms", "preflight_database_ms", "broker_start_ms", "refusal_poll_ms", "quit_watchdog_ms", "account_http_ms", "session_minimum_validity_seconds", "session_poll_ms", "worker_join_ms", "host_stop_ms", "host_cancel_ms", "mutation_poll_ms", "desktop_refresh_ms", "archive_step_ms", "cloud_shutdown_ms", "update_shutdown_ms", "export_release_ms", "toast_visible_ms", "voice_hold_ms", "model_request_ms", "model_cli_request_ms", "keep_running_in_tray",
-        "update_check_interval_minutes", "update_auto_apply_on_quit", "update_preview_channel", "backup_location")},
+        "home_load_ms", "update_check_interval_minutes", "update_auto_apply_on_quit", "update_preview_channel", "backup_location")},
     "data.constant": {"source": ("value",), "target": ()},
     "data.list": {"source": ("value",), "target": ()},
     "input.parameter": {"source": ("value",), "target": ()},

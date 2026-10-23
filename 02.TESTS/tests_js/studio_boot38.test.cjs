@@ -38,7 +38,7 @@ for(const empty of [true,false])test('BOOT38 built loader paints '+(empty?'empty
   if(!file.startsWith(path.resolve(studio)+path.sep)||!fs.existsSync(file)||!fs.statSync(file).isFile()){res.writeHead(404);res.end();return;}
   const raw=fs.readFileSync(file);
   res.writeHead(200,{'Content-Type':file.endsWith('.html')?'text/html':file.endsWith('.css')?'text/css':file.endsWith('.json')?'application/json':'text/javascript'});
-  return res.end(file.endsWith('studio.html')?raw.toString('utf8').replace('/*__ARCHHUB_BOOT__*/ null',JSON.stringify({token:'fixture',csrf:'fixture',first_run:empty})):raw);
+  return res.end(file.endsWith('studio.html')?raw.toString('utf8').replace('/*__ARCHHUB_BOOT__*/ null',JSON.stringify({token:'fixture',csrf:'fixture',first_run:empty,home_load_ms:60000})):raw);
  });
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
  let browser;

@@ -3182,11 +3182,15 @@ class _CleanAuthorityHttpServer(WorkspaceRootsOwner):
 
     def _clean_studio_page(self):
         """Use the chosen Studio presentation with this same graph authority."""
+        from .universal_application import _application_setting_default
         page = self._clean_studio_asset("studio.html").decode("utf-8")
         marker = "/*__ARCHHUB_AUTHORITY__*/ null"
         if page.count(marker) != 1:
             raise InvalidCell("Studio authority bootstrap marker is invalid")
-        return page.replace(marker, json.dumps({"canvas_key": self.clean_canvas_key}), 1)
+        page = page.replace(marker, json.dumps({"canvas_key": self.clean_canvas_key}), 1)
+        return page.replace('/*__ARCHHUB_BOOT__*/ null', json.dumps({
+            'home_load_ms': _application_setting_default('home_load_ms'),
+        }), 1)
 
     def _clean_page(self):
         """Serve the page. Pure: no graph write, no session, no cookie.
@@ -5698,6 +5702,7 @@ class ApplicationServer(WorkspaceRootsOwner):
                  enable_machine_transport=False,
                  enable_universal_cloud_gateway=False,
                  enable_brain_cloud_sync=False,
+                 enable_workshop_injection=True,
                   enable_cloud_relay=False,
                  cloud_resource_origin=None,
                  cloud_tls_certificate_file=None,
@@ -7286,6 +7291,11 @@ class ApplicationServer(WorkspaceRootsOwner):
                         resolved.suffix == '.html'
                         and studio_binding is not None
                     ):
+                        from .universal_application import (
+                            _APPLICATION_SETTING_SPECS, _application_setting_default,
+                            _workshop_board_int_param,
+                        )
+                        home_bounds = _APPLICATION_SETTING_SPECS['home_load_ms'][1]
                         raw = raw.replace(
                             b'/*__ARCHHUB_BOOT__*/ null',
                             json.dumps({
@@ -7294,6 +7304,10 @@ class ApplicationServer(WorkspaceRootsOwner):
                                 # The launcher's saved-graph check, so the Studio
                                 # mounts its onboarding on a new installation only.
                                 'first_run': owner.studio_first_run is True,
+                                'home_load_ms': _workshop_board_int_param(
+                                    owner.universal_store.snapshot(), owner.universal_registry,
+                                    'home_load_ms', default=_application_setting_default('home_load_ms'),
+                                    lower=home_bounds['min'], upper=home_bounds['max']),
                             }).encode('utf-8'),
                         )
                     kind = (
@@ -10386,7 +10400,8 @@ class ApplicationServer(WorkspaceRootsOwner):
         self.thread = None
         from .workshop_mailbox import WorkshopInjection
         self.workshop_injection = WorkshopInjection(self, session_link_transport)
-        self.workshop_injection.start()
+        if enable_workshop_injection:
+            self.workshop_injection.start()
         self._live_stop = threading.Event()
         self._live_thread = None
         if live_watch and legacy_runtime_enabled:

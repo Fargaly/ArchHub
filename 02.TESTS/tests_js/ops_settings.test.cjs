@@ -3,7 +3,7 @@ const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 async function adapter(serve){
  const calls=[],notices=[];
  const canvas={root:'graph',scope:{current:'graph'},nodes:[],wires:[],catalog:[],workshops:[]};
- const window={structuredClone:globalThis.structuredClone,crypto:require('node:crypto').webcrypto,ARCHHUB_BOOT:{token:'local',csrf:'local'},
+ const window={structuredClone:globalThis.structuredClone,crypto:require('node:crypto').webcrypto,ARCHHUB_BOOT:{home_load_ms:60000,token:'local',csrf:'local'},
   document:{hidden:true,addEventListener(){}},addEventListener(){},dispatchEvent(event){notices.push(event.detail.message);},
   ArchHubStudioAuthority:{create:({get})=>({load:()=>get('/api/universal/canvas')})}};
  const fetch=async(url,options={})=>{

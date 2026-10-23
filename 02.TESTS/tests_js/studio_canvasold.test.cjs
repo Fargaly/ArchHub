@@ -146,7 +146,7 @@ async function navigation({delayCanvas=async()=>{}}={}) {
  const vm=require('node:vm'),calls=[],stored={},root='root';let current='user';
  const snapshot=()=>({root,revision:1,scope:{current},nodes:[],wires:[],catalog:[]});
  const window={structuredClone:globalThis.structuredClone,crypto:require('node:crypto').webcrypto,
-  ARCHHUB_BOOT:{token:'fixture',csrf:'fixture'},document:{hidden:true,addEventListener(){}},addEventListener(){},dispatchEvent(){},
+  ARCHHUB_BOOT:{home_load_ms:60000,token:'fixture',csrf:'fixture'},document:{hidden:true,addEventListener(){}},addEventListener(){},dispatchEvent(){},
   ArchHubStudioAuthority:{create:({get})=>({load:()=>get('/api/universal/canvas')})}};
  const fetch=async(url,options={})=>{
   const body=options.body?JSON.parse(options.body):null;calls.push({url,body});let data={ok:true,result:[],mods:{rows:[]}};

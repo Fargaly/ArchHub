@@ -52,7 +52,7 @@ async function mount(server,{holdBootDelay=false}={}) {
   Object.defineProperty(win.document,'hidden',{value:true});
   win.structuredClone=globalThis.structuredClone;
   win.crypto.randomUUID=require('node:crypto').randomUUID;
-  win.ARCHHUB_BOOT={token:'isolated-session',csrf:'isolated-csrf'};
+  win.ARCHHUB_BOOT={home_load_ms:60000,token:'isolated-session',csrf:'isolated-csrf'};
   win.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});
   win.AbortSignal.timeout=ms=>{
     assert.equal(ms,15000);

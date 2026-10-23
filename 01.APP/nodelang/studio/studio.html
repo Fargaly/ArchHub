@@ -19,7 +19,7 @@
   const manifest=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(await readAsset('compiled/manifest.json',32768)));
   const css=await readAsset('style.css',1048576);
   if(await hash(css)!==manifest.inputs?.stylesheet?.sha256)throw Error('Studio stylesheet build is stale.');
-  let sourceTotal=0,outputTotal=0;
+  let sourceTotal=0,outputTotal=0,readyFailure;
   const names=["tokens.jsx", "ds/index.jsx", "api.js", "icons.jsx", "ui.jsx", "answer-widgets.jsx", "ds_home2.jsx", "ds_workshop3.jsx", "ds_screens.jsx", "ds_library.jsx", "ds_colleagues.jsx", "ds_baboom.jsx", "ds_settings3.jsx", "watcher-controls.jsx", "ds_watch_edit.jsx", "ds_firstrun.jsx", "surfaces.jsx", "integration-states.jsx", "project-tools.jsx", "community-tools.jsx", "agent-states.jsx", "research-surfaces.jsx", "dependencies.jsx", "workflow-states.jsx", "decision-results.jsx", "review-states.jsx", "canvas-states.jsx", "desktop.jsx", "meetings.jsx", "social.jsx", "research.jsx", "xray.jsx", "access.jsx", "account-tools.jsx", "routing.jsx", "brain.jsx", "docs.jsx", "companion.jsx", "context-menus.jsx", "app.jsx"];
   if(manifest.format!==1||manifest.files?.length!==names.length)throw Error('Studio build is invalid.');
   for(let i=0;i<names.length;i++){
@@ -33,10 +33,14 @@
    const sha=await hash(bytes);
    if(sha!==file.source_sha256||bytes.byteLength!==file.source_bytes)throw Error('Studio build is stale.');
    await new Promise((resolve,reject)=>{const tag=document.createElement('script');tag.src='/studio/compiled/'+file.output;tag.integrity=file.integrity;tag.crossOrigin='anonymous';tag.onload=resolve;tag.onerror=()=>reject(Error('Studio compiled asset failed verification.'));document.body.appendChild(tag);});
-   if(file.source==='api.js')await window.ArchHubAPI.ready;
+   // Observe failure immediately; data must not hold the remaining UI scripts.
+   if(file.source==='api.js')window.ArchHubAPI.ready.catch(error=>{readyFailure=error;});
   }
+  if(readyFailure)throw readyFailure;
+  await window.ArchHubAPI.ready;
   boot.remove();
  })().catch((bootFailure) => {
+  document.body.prepend(boot);
   boot.setAttribute('role','alert');
   const message=document.createElement('p');
   message.textContent=bootFailure.message || 'Could not open ArchHub.';

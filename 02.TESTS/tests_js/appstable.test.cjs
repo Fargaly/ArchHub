@@ -11,7 +11,7 @@ async function providers(rows) {
   const window = {structuredClone, AH:{inkSoft:'#999'},
     ARCHHUB_NATIVE_APPROVAL:{binding:'review', approval:{rows:[]}},
     dispatchEvent:() => {}, addEventListener:() => {}};
-  const context = vm.createContext({window, console, CustomEvent:class {},
+  const context = vm.createContext({window, console, setTimeout, clearTimeout, CustomEvent:class {},
     document:{hidden:true,addEventListener:() => {}},
     fetch:async () => ({ok:true,status:200,json:async () => ({providers:rows})})});
   vm.runInContext(fs.readFileSync(path.join(root, '01.APP/nodelang/studio/api.js'), 'utf8'), context);
@@ -50,11 +50,11 @@ test('explicit owner status and disabled state remain authoritative', async () =
 test('the existing refresh cadence updates a changed provider connection', async () => {
   let state='keyed';
   const timers=[];
-  const window={structuredClone,AH:{inkSoft:'#999'},ARCHHUB_BOOT:{token:'fixture',csrf:'fixture'},
+  const window={structuredClone,AH:{inkSoft:'#999'},ARCHHUB_BOOT:{home_load_ms:60000,token:'fixture',csrf:'fixture'},
     addEventListener:() => {},dispatchEvent:() => {},clearInterval:() => {},
     setInterval:fn => {timers.push(fn);return timers.length;},
     ArchHubStudioAuthority:{create:({get}) => ({load:() => get('/api/universal/canvas')})}};
-  const context=vm.createContext({window,console,CustomEvent:class {},
+  const context=vm.createContext({window,console,setTimeout,clearTimeout,CustomEvent:class {},
     document:{hidden:false,addEventListener:() => {}},
     fetch:async url => ({ok:true,status:200,json:async () =>
       url==='/api/universal/providers'?{providers:[{id:'openai',name:'OpenAI',state}]}:

@@ -6,7 +6,7 @@ const read=name=>fs.readFileSync(path.join(base,name),'utf8');
 const pause=()=>new Promise(resolve=>setTimeout(resolve,5));
 async function mount(name,props={},server=()=>({ok:true,result:[]})){
  const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost/',runScripts:'outside-only'}),w=dom.window,posts=[];
- Object.defineProperty(w.document,'hidden',{value:true});w.structuredClone=globalThis.structuredClone;w.ARCHHUB_BOOT={token:'fixture',csrf:'fixture'};
+ Object.defineProperty(w.document,'hidden',{value:true});w.structuredClone=globalThis.structuredClone;w.ARCHHUB_BOOT={home_load_ms:60000,token:'fixture',csrf:'fixture'};
  w.fetch=async(url,options={})=>{
   const body=options.body?JSON.parse(options.body):null;if(body)posts.push({url,body});
   let data={ok:true};

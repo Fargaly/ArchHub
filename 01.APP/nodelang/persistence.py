@@ -51,8 +51,9 @@ class _MigrationProgress:
         self.stage, self.last_report = stage, now
         percent = int(100 * completed / total) if total else None
         label = 'Updating your data' + (' (%d%%)' % percent if percent is not None else '')
-        print('  migration  : %s â€” %s%s' % (label, stage,
-            ' %d/%d' % (completed, total) if total else ''), flush=True)
+        if changed or total is not None:
+            print('  migration  : %s â€” %s%s' % (label, stage,
+                ' %d/%d' % (completed, total) if total else ''), flush=True)
         if self.on_progress is not None:
             self.on_progress({'label': label, 'stage': stage, 'percent': percent,
                 'completed': completed, 'total': total, 'stall_seconds': self.stall_seconds})

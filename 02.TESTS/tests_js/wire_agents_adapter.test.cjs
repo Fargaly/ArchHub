@@ -3,7 +3,7 @@ const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 async function adapter(canvas,serve=()=>({ok:true,result:[]})){
  const calls=[],listeners=new Map();
  const window={structuredClone:globalThis.structuredClone,crypto:require('node:crypto').webcrypto,
-  ARCHHUB_BOOT:{token:'fixture',csrf:'fixture'},document:{hidden:true,addEventListener(){}},
+  ARCHHUB_BOOT:{home_load_ms:60000,token:'fixture',csrf:'fixture'},document:{hidden:true,addEventListener(){}},
   addEventListener(name,fn){listeners.set(name,fn);},dispatchEvent(){},
   ArchHubStudioAuthority:{create:({get})=>({load:()=>get('/api/universal/canvas')})}};
  const fetch=async(url,options={})=>{

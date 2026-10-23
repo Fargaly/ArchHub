@@ -20350,6 +20350,7 @@ _APPLICATION_SETTING_SPECS = {
     "instance_retry_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
     "preflight_database_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
     "broker_start_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "home_load_ms": ("number", {"min": 1000, "max": 300000, "step": 1000}),
     "refusal_poll_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
     "quit_watchdog_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
     "account_http_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),

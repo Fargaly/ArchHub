@@ -76,10 +76,10 @@ test('RESEARCHNODES refusal retains confirmed graph output',async()=>{
 
 async function adapter(account, responses={}){
  const requests=[],events=new Map();
- const window={ARCHHUB_AUTHORITY:{},structuredClone:globalThis.structuredClone,ARCHHUB_BOOT:{token:'local-lease',csrf:'csrf'},
+ const window={ARCHHUB_AUTHORITY:{},structuredClone:globalThis.structuredClone,ARCHHUB_BOOT:{home_load_ms:60000,token:'local-lease',csrf:'csrf'},
   Uint8Array:globalThis.Uint8Array,dispatchEvent(e){events.get(e.type)?.(e);},addEventListener(name,fn){events.set(name,fn);},AH:{inkSoft:'#888'},crypto:require('node:crypto')};
  window.ArchHubStudioAuthority={create:({get})=>({load:()=>get('/api/universal/canvas')})};
- const context={window,document:{hidden:true,addEventListener(){}},
+ const context={window,setTimeout,clearTimeout,document:{hidden:true,addEventListener(){}},
   CustomEvent:class {},sessionStorage:{getItem(){return null;}},URLSearchParams,TextEncoder:globalThis.TextEncoder,AbortSignal:globalThis.AbortSignal,console,
   fetch:async(url,options)=>{
    requests.push({url,body:options.body&&JSON.parse(options.body)});

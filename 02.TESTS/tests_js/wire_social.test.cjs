@@ -61,7 +61,7 @@ test('actual adapter sends graph operations and rejects failed writes without op
  const posts=[],events=[];
  const canvas={root:'fixture-graph',nodes:[],wires:[],scope:{current:'fixture-graph'},workshop_scope:{workshops:[{root:'fixture-workshop',is_general:true}]}};
  let saved={social:{office:{name:''},drafts:[],inbox:[],groups:[],digest:{},research:[],tutorials:[]},presentation:{slides:[]},meeting:{transcript:[]}},refuse=false;
- const w={ARCHHUB_BOOT:{token:'fixture-session',csrf:'fixture-csrf'},structuredClone,
+ const w={ARCHHUB_BOOT:{home_load_ms:60000,token:'fixture-session',csrf:'fixture-csrf'},structuredClone,
   addEventListener(){},dispatchEvent:e=>events.push(e),crypto:require('node:crypto').webcrypto,
   Uint8Array,setInterval(){throw Error('No background timer without subscribers');},clearInterval(){}};
  w.ArchHubStudioAuthority={create:({get})=>({load:()=>get('/api/universal/canvas')})};
@@ -82,7 +82,7 @@ test('actual adapter sends graph operations and rejects failed writes without op
   if(url==='/api/universal/providers')data={ok:true,providers:[]};
   return {ok:true,status:200,json:async()=>data};
  };
- const context=vm.createContext({window:w,document:{hidden:false,addEventListener(){}},fetch,TextEncoder,URLSearchParams,AbortSignal,CustomEvent:class{constructor(type,options){this.type=type;this.detail=options.detail;}},sessionStorage:{getItem(){return null},setItem(){}},console});
+ const context=vm.createContext({window:w,setTimeout,clearTimeout,document:{hidden:false,addEventListener(){}},fetch,TextEncoder,URLSearchParams,AbortSignal,CustomEvent:class{constructor(type,options){this.type=type;this.detail=options.detail;}},sessionStorage:{getItem(){return null},setItem(){}},console});
  vm.runInContext(read('api.js'),context,{filename:'api.js'});
  const api=w.ArchHubAPI;await api.ready;await new Promise(resolve=>setImmediate(resolve));
  const draft=await api.saveSocialDraft({platform:'LinkedIn',text:'User draft'});

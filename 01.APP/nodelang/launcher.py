@@ -675,7 +675,8 @@ def _boot_unsampled():
             legacy_state_directory=state_dir,
             pipeline_effect_engines=PIPELINE_ENGINES,
             enable_machine_transport=True,
-            enable_brain_cloud_sync=True,
+            enable_brain_cloud_sync=False,
+            enable_workshop_injection=False,
             machine_descriptor_path=descriptor_path,
             machine_pointer_path=_machine_pointer,
             machine_key_provider=machine_key_provider,
@@ -1411,6 +1412,16 @@ _off_the_qt_thread(lambda: _record_startup_pipeline_intent(server, first_boot=fi
 
 
 def _prepare_pipeline():
+    try:
+        server.workshop_injection.start()
+    except Exception as refusal:
+        print("  workshop   : injection not started -- %s" % refusal, flush=True)
+    try:
+        if server.universal_store is not None and server.universal_registry is not None:
+            from nodelang import brain_cloud_runner
+            brain_cloud_runner.start()
+    except Exception as refusal:
+        print("  brain      : cloud sync not started -- %s" % refusal, flush=True)
     print("  pipeline   : preparing optional canvas content", flush=True)
     try:
         _initialize_startup_pipeline(server, first_boot=first_boot)
@@ -1459,8 +1470,8 @@ def _prepare_pipeline_after_home(held):
     })()""", observed)
 
 if os.environ.get("ARCHHUB_TEST_NO_OPEN"):
-    _off_the_qt_thread(_prepare_pipeline)
     _boot_phase(1, finished=True)
+    _off_the_qt_thread(_prepare_pipeline)
     try:
         while True:
             time.sleep(_launcher_seconds('session_poll_ms'))

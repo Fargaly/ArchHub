@@ -87,6 +87,7 @@ def tool_settings(params: Mapping[str, object], feeds: Mapping[str, object]):
             'instance_retry_ms': params.get('instance_retry_ms'),
             'preflight_database_ms': params.get('preflight_database_ms'),
             'broker_start_ms': params.get('broker_start_ms'),
+            'home_load_ms': params.get('home_load_ms'),
             'refusal_poll_ms': params.get('refusal_poll_ms'),
             'quit_watchdog_ms': params.get('quit_watchdog_ms'),
             'account_http_ms': params.get('account_http_ms'),

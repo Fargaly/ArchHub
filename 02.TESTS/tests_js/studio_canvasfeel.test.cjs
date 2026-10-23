@@ -134,7 +134,7 @@ async function adapter({current='mine',graphs=[{id:'system'},{id:'mine'}],refuse
   let viewport={zoom:.8,pan_x:12,pan_y:24};
   const canvas=()=>({root,scope:{current:root},nodes:[],wires:[],catalog:[],viewport});
   const sessionStorage={getItem:key=>stored[key]||null,setItem:(key,value)=>{stored[key]=value;}};
-  const window={structuredClone:globalThis.structuredClone,crypto:require('node:crypto').webcrypto,ARCHHUB_BOOT:{token:'fixture',csrf:'fixture'},
+  const window={structuredClone:globalThis.structuredClone,crypto:require('node:crypto').webcrypto,ARCHHUB_BOOT:{home_load_ms:60000,token:'fixture',csrf:'fixture'},
     document:{hidden:true,addEventListener(){}},addEventListener(){},dispatchEvent(){},
     ArchHubStudioAuthority:{create:({get})=>({load:()=>get('/api/universal/canvas')})}};
   const fetch=async(url,options={})=>{

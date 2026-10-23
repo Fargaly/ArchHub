@@ -1214,8 +1214,19 @@ api.ready=(async()=>{
  catch {notice('The saved browser session could not be read. Reconnecting this window.');}
  if(!session?.token||!session?.csrf)await signIn();else window.__archhubSession=session;
  commands=window.ArchHubStudioAuthority.create({get:path=>request(path),post:(path,body)=>request(path,body)});
- await commands.load({home:true});project();
- publish({learning:{...state.learning,layer:'Host'}});
+ publish({connectionNotice:'Opening saved graph…'});
+ const homeLoadMs=Number.isFinite(session.home_load_ms)&&session.home_load_ms>0?session.home_load_ms:290000;
+ let homeTimeout;
+ try{
+  await Promise.race([commands.load({home:true}),new Promise((_,reject)=>{
+   homeTimeout=setTimeout(()=>{
+    const error=Error(`Home load timed out after ${homeLoadMs/1000} seconds. Retry opening ArchHub.`);
+    console.error(error.message);reject(error);
+   },homeLoadMs);
+  })]);
+ }finally{clearTimeout(homeTimeout);}
+ project();
+ publish({learning:{...state.learning,layer:'Host'},connectionNotice:''});
  ready=true;watchRefresh();
  // Account/network discovery must not hold the usable graph behind its timeout.
  void (async()=>{

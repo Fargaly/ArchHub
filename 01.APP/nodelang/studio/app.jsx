@@ -602,7 +602,7 @@
         s,
         saved,
         text
-      }, event)}>Save</Btn></>;else if (k === 'My secrets') body = <><p className="muted">Your connected accounts are protected. No secret values are shown or copied.</p>{s.secrets.map(x => <div className="spread row" key={x.id}><div><h3>{x.name}</h3><p className="muted">{x.status}</p></div>{api.supportsAction?.('disconnectSecret') !== false && <Btn sm onClick={event => executeAction("appShell.Disconnect.37", {
+      }, event)}>Save</Btn></>;else if (k === 'My secrets') body = <><p className="muted">Your connected accounts are protected. No secret values are shown or copied.</p>{s.secrets.map(x => <div className="spread row" key={x.id}><div><h3>{x.name}</h3><p className="muted">{x.status}</p></div>{x.disconnectable !== false && api.supportsAction?.('disconnectSecret') !== false && <Btn sm onClick={event => executeAction("appShell.Disconnect.37", {
           api,
           u,
           x

@@ -75,9 +75,10 @@
     const s = useData(),
       u = useApp();
     const [filter, setFilter] = React.useState('All');
+    const connections = [...s.connections, ...s.secrets.filter(c => c.disconnectable === false).map(c => ({id: 'credential:' + c.id, name: c.name, connected: true, credential: true}))];
     const group = c => ['Revit', 'AutoCAD', 'Rhino', '3ds Max', 'Office'].includes(c.name) ? 'Programs' : ['Instagram', 'Facebook', 'WhatsApp Business', 'LinkedIn', 'X', 'TikTok', 'YouTube'].includes(c.name) ? 'Social' : 'Work apps';
     const {runAction, actionState, retryAction} = window.UI.useRegisteredActions(WIRE_DS_SETTINGS3_JSX_ACTIONS, {ConnectionsAction0: (g, event) => (() => setFilter(g))(event),
-ConnectionsAction1: (c, event) => (() => c.connected ? u.show('Connection', {
+ConnectionsAction1: (c, event) => (() => c.credential ? u.show('My secrets') : c.connected ? u.show('Connection', {
               id: c.id
             }) : u.show('Connect', {
               id: c.id
@@ -88,7 +89,7 @@ ConnectionsAction1: (c, event) => (() => c.connected ? u.show('Connection', {
           padding: '14px 16px 8px',
           fontSize: 11,
           color: A.inkSoft
-        }}><span>PROGRAM OR ACCOUNT</span><span /></div>{s.connections.filter(c => filter === 'All' || group(c) === filter).map((c, i) => <div key={c.id} style={{
+        }}><span>PROGRAM OR ACCOUNT</span><span /></div>{connections.filter(c => filter === 'All' || group(c) === filter).map((c, i) => <div key={c.id} style={{
           display: 'grid',
           gridTemplateColumns: '1fr 130px',
           alignItems: 'center',
@@ -105,9 +106,9 @@ ConnectionsAction1: (c, event) => (() => c.connected ? u.show('Connection', {
               fontWeight: 800
             }}>{c.name[0]}</span><div><h3>{c.name}</h3><span className="muted" style={{
                 fontSize: 12
-              }}>{c.connected ? 'Connected to your account' : 'Not connected'}{c.checked ? ' · checked' : ''}</span></div></div><div style={{
+              }}>{c.credential ? 'Saved in Windows Credential Manager' : c.connected ? 'Connected to your account' : 'Not connected'}{c.checked ? ' · checked' : ''}</span></div></div><div style={{
             justifySelf: 'end'
-          }}><Btn sm onClick={event => runAction('settings.ds_settings3.ConnectionsAction1', c, event)}>{c.connected ? 'Open' : 'Connect'}</Btn></div></div>)}</Card></div></>;
+          }}><Btn sm onClick={event => runAction('settings.ds_settings3.ConnectionsAction1', c, event)}>{c.credential ? 'Details' : c.connected ? 'Open' : 'Connect'}</Btn></div></div>)}</Card></div></>;
   }
   function WorkspaceRows() {
     const s = useData(),

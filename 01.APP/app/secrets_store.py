@@ -1,6 +1,6 @@
 """Secure storage for API keys and small settings."""
 from __future__ import annotations
-import base64, importlib.util, json, os, tempfile, threading
+import base64, hashlib, importlib.util, json, os, re, tempfile, threading
 from pathlib import Path
 
 SERVICE = "ArchHub"
@@ -238,6 +238,115 @@ def _file_delete(provider: str) -> None:
         save_setting("known_providers", known)
 
 
+def credential_names() -> list[str]:
+    """Names only, from the existing Settings index; never enumerate the vault."""
+    if os_store_refused():
+        return sorted(_MEMORY_KEYS)
+    names = load_setting("known_providers") or []
+    if (type(names) is not list or len(names) > 4096 or any(
+            type(name) is not str or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}", name)
+            for name in names)):
+        raise OSError("known_providers index is unreadable")
+    return sorted(set(names))
+
+
+def credential_backend():
+    """Accept only the app's Windows OS vault, never a plaintext keyring plugin."""
+    kr = _try_keyring()
+    if kr is not None:
+        from keyring.backends.Windows import WinVaultKeyring
+        if type(kr.get_keyring()) is not WinVaultKeyring:
+            raise OSError("Windows Credential Manager is unavailable")
+    return kr
+
+
+def load_credential(name: str) -> str | None:
+    """Read one named OS item, with no aliases, environment or metadata fragments."""
+    if type(name) is not str or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}", name):
+        raise ValueError("invalid credential name")
+    if os_store_refused():
+        return _MEMORY_KEYS.get(name)
+    kr = credential_backend()
+    return kr.get_password(SERVICE, name) if kr is not None else None
+
+
+def archive_legacy_credentials() -> None:
+    """Move non-DPAPI bytes once, without decoding, into the existing Backups owner."""
+    from nodelang.model_router import _credential_file_bytes
+    from nodelang.application_recovery_files import backup_location
+    if os_store_refused():
+        return
+    if os.name != 'nt':
+        raise OSError("legacy credential archival requires Windows")
+    with _SAVE_LOCK, _exclusive_secrets_file():
+        raw = _credential_file_bytes(SECRETS_FILE)
+        if raw is None or raw.startswith(_DPAPI_MARK):
+            return
+        digest = hashlib.sha256(raw).hexdigest()
+        directory = Path(backup_location(APP_DIR.parent)['directory'])
+        if directory != APP_DIR / 'backups':
+            raise OSError("secrets.dat archive requires the existing local app Backups folder")
+        archive = directory / ('secrets-legacy-' + digest + '.dat')
+        receipt = archive.with_suffix('.sha256')
+        # Validate every ancestor before mkdir or any archive/receipt write.
+        existing = _credential_file_bytes(archive)
+        previous_receipt = _credential_file_bytes(receipt)
+        if existing is not None:
+            raise OSError("secrets.dat archive already exists; original preserved")
+        directory.mkdir(parents=True, exist_ok=True)
+        _replace_bytes(receipt, (digest + "\n").encode('ascii'), expected=previous_receipt)
+        if _credential_file_bytes(SECRETS_FILE) != raw:
+            raise OSError("secrets.dat changed; original preserved")
+        # Windows rename refuses an existing destination; never overwrite an archive.
+        os.rename(SECRETS_FILE, archive)
+        if _credential_file_bytes(archive) != raw:
+            raise OSError("secrets.dat archive could not be confirmed")
+
+
+def mutate_credential(name, mutate, *, before_replace=None, unconfirmed="save_unconfirmed"):
+    """Mutate one OS item and its existing names index; preserve legacy peers."""
+    from nodelang.model_router import ProviderCredentialError
+    with _SAVE_LOCK, _exclusive_secrets_file():
+        kr = credential_backend()
+        if kr is None:
+            raise OSError("Windows Credential Manager is unavailable")
+        if before_replace is not None:
+            before_replace()
+        archive_legacy_credentials()
+        raw, legacy = _read_file_state()
+        current = kr.get_password(SERVICE, name)
+        previous = current if current is not None else legacy.get(name)
+        entries = {} if previous is None else {name: previous}
+        if not mutate(entries):
+            return False
+        if set(entries) - {name}:
+            raise ValueError("credential mutation changed another item")
+        value = entries.get(name)
+        known = _updated_provider_index(name, remove=value is None)
+        if before_replace is not None:
+            before_replace()
+        # Register before adding: a failed write remains a named, repairable item.
+        if value is not None:
+            save_setting("known_providers", known)
+        if kr.get_password(SERVICE, name) != current:
+            raise ProviderCredentialError("secure_store_changed")
+        if before_replace is not None:
+            before_replace()
+        if value is None:
+            if current is not None:
+                kr.delete_password(SERVICE, name)
+        else:
+            kr.set_password(SERVICE, name, value)
+        if kr.get_password(SERVICE, name) != value:
+            raise ProviderCredentialError(unconfirmed)
+        if name in legacy:
+            del legacy[name]
+            _write_file(legacy, expected=raw)
+        if value is None:
+            save_setting("known_providers", known)
+        return True
+
+
 def _session_secret(reference: str, value=_UNCHECKED):
     """One session backend, fresh reads and the existing cross-process lock."""
     prefixes = ("archhub-account-session:v1:", "archhub-account-session:v0:")
@@ -261,6 +370,10 @@ def _session_secret(reference: str, value=_UNCHECKED):
             backend = keyring.get_keyring()
             if type(backend) is not WinVaultKeyring:
                 raise OSError("account session requires Windows Credential Manager")
+        if backend is not None and value is _UNCHECKED:
+            current = backend.get_password(SERVICE, reference)
+            if current is not None:
+                return current
         with _exclusive_secrets_file():
             raw, cached = _read_file_state()
             if backend is None:

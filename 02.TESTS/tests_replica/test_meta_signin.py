@@ -169,6 +169,12 @@ def test_local_social_credential_listing_returns_identity_not_token(monkeypatch)
 
     class Store:
         SECRETS_FILE = r"C:\Users\fargaly\AppData\Roaming\ArchHub\secrets.dat"
+        def archive_legacy_credentials(self):
+            return None
+        def credential_names(self):
+            return []
+        def load_credential(self, name):
+            return None
         def _dpapi(self, data, protect):
             return data
 
@@ -198,17 +204,18 @@ def test_local_social_credential_listing_returns_identity_not_token(monkeypatch)
 def test_settings_offers_meta_sign_in_and_the_page_never_holds_the_token():
     from pathlib import Path
     studio = Path(signin.__file__).resolve().parent / "studio"
-    page = (studio / "studio-lm.jsx").read_text(encoding="utf-8")
+    page = (studio / "ds_settings3.jsx").read_text(encoding="utf-8")
+    dialogs = (studio / "app.jsx").read_text(encoding="utf-8")
     transport = (studio / "studio-existing-workshop.js").read_text(encoding="utf-8")
-    assert "const SettingsConnections =" in page and "window.SocialConnections = SettingsConnections" in page
+    assert "function Connections()" in page and "window.UI.Connections = Connections" in page
     assert "get('/api/universal/social-meta-app')" in transport
     assert "saveMetaApp" not in transport
     assert "post('/api/universal/social-meta-signin', {})" in transport
     assert "get('/api/universal/social-meta-signin')" in transport
     assert "post('/api/universal/social-meta-finish', {page_id})" in transport, "finish sends no token"
     assert "result.account_binding !== 'provider-verified'" in transport
-    assert "Use {account.name || account.display_name}" in page
-    user_settings = page[page.index("const SocialProviderConnection"):page.index("const SettingsConnections")]
+    assert "<h2>{c?.name}</h2>" in dialogs
+    user_settings = dialogs[dialogs.index("} else if (k === 'Connection'"):dialogs.index("} else if (k === 'Sign in'")]
     assert "APP ID" not in user_settings and "APP SECRET" not in user_settings
     assert "Save Meta app" not in user_settings and "Meta app" not in user_settings
 

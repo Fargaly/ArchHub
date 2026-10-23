@@ -722,14 +722,37 @@ def _mutate_protected_entries(mutate, *, before_replace=None, not_admitted="save
                 pass
 
 
+def _mutate_credential(name, mutate, *, before_replace=None, not_admitted="save_not_admitted",
+                       unconfirmed="save_unconfirmed"):
+    from app.secrets_store import os_store_refused
+    errors = {} if (not_admitted, unconfirmed) == ("save_not_admitted", "save_unconfirmed") else {
+        "not_admitted": not_admitted, "unconfirmed": unconfirmed}
+    if os_store_refused():
+        return _mutate_protected_entries(mutate, before_replace=before_replace, **errors)
+    try:
+        store = _application_secrets_store()
+        if store.credential_backend() is None:
+            return _mutate_protected_entries(mutate, before_replace=before_replace, **errors)
+        def guard():
+            if before_replace is not None:
+                try:
+                    before_replace()
+                except Exception:
+                    raise ProviderCredentialError(not_admitted) from None
+        return store.mutate_credential(name, mutate, before_replace=guard, unconfirmed=unconfirmed)
+    except ProviderCredentialError:
+        raise
+    except Exception:
+        raise ProviderCredentialError(unconfirmed) from None
+
+
 def save_provider_key(body, *, before_replace=None):
     """Physical save only; caller holds current browser/owner/policy admission.
 
-    Use the existing store's DPAPI primitive, not a user-configurable keyring
-    backend that might store plaintext. Only secrets.dat changes; no graph,
-    settings registry, credential alias, provider call, or worker is created.
-    The trusted owner's callback rechecks admission immediately before replacing
-    the protected file; it is never taken from the request body.
+    Use the app's Windows Credential Manager backend and names index, or its
+    existing DPAPI fallback when that backend is absent. The trusted owner's
+    callback rechecks admission immediately before mutation; it never comes
+    from the request body. No provider call or worker is created.
     """
     if before_replace is not None and not callable(before_replace):
         raise TypeError("before_replace must be callable")
@@ -747,7 +770,7 @@ def save_provider_key(body, *, before_replace=None):
         entries[provider] = key
         return True
 
-    _mutate_protected_entries(put, before_replace=before_replace)
+    _mutate_credential(provider, put, before_replace=before_replace)
     return {"ok": True, "provider": provider, "state": "keyed", "source": "secrets store"}
 
 
@@ -758,6 +781,9 @@ def founder_secrets_key(name: str) -> str:
     try:
         with _CREDENTIAL_LOCK:
             store = _application_secrets_store()
+            current = store.load_api_key(name)
+            if current:
+                return str(current)
             raw = _credential_file_bytes(Path(store.SECRETS_FILE))
             if raw is not None and raw.startswith(_CREDENTIAL_DPAPI_MARK):
                 protected = _protected_credential_entries(store, raw).get(name)
@@ -793,7 +819,7 @@ def _secrets_listing_loader():
             return ""
         try:
             with _CREDENTIAL_LOCK:
-                return protected.get(name) or str(store.load_api_key(name) or "")
+                return str(store.load_api_key(name) or "") or protected.get(name, "")
         except Exception:
             return ""
     return load
@@ -2848,10 +2874,9 @@ __all__ = [
 
 
 def protected_credential_entry(name: str) -> str:
-    """One entry of this runtime's DPAPI-protected secrets.dat and nothing else.
+    """One named entry from the app OS store, then its protected legacy file.
 
-    No environment variable, keyring backend, credential alias or legacy
-    obfuscated file is consulted, and no provider_meta breadcrumb is written.
+    No environment, credential alias, obfuscated bytes or metadata breadcrumb.
     """
     if type(name) is not str or not name:
         raise ProviderCredentialError("secure_store_unavailable")
@@ -2860,8 +2885,13 @@ def protected_credential_entry(name: str) -> str:
         path = Path(store.SECRETS_FILE)
         if path.name != "secrets.dat" or path.parent != Path(store.APP_DIR):
             raise ProviderCredentialError("secure_store_invalid")
-        raw = _credential_file_bytes(path)
-        value = _protected_credential_entries(store, raw).get(name)
+        try:
+            value = store.load_credential(name)
+        except Exception:
+            raise ProviderCredentialError("secure_store_unavailable") from None
+        if value is None:
+            raw = _credential_file_bytes(path)
+            value = _protected_credential_entries(store, raw).get(name)
     if type(value) is not str or not value:
         raise ProviderCredentialError("secure_store_unavailable")
     return value
@@ -2898,7 +2928,7 @@ def save_linkedin_app(body, *, before_replace=None):
         entries[_LINKEDIN_APP_ENTRY] = value
         return True
 
-    _mutate_protected_entries(put, before_replace=before_replace)
+    _mutate_credential(_LINKEDIN_APP_ENTRY, put, before_replace=before_replace)
     return {"ok": True, "state": "saved", "client_id": client_id, "source": "secrets store"}
 
 
@@ -2959,7 +2989,7 @@ def save_meta_app(body, *, before_replace=None):
         entries[_META_APP_ENTRY] = value
         return True
 
-    _mutate_protected_entries(put, before_replace=before_replace)
+    _mutate_credential(_META_APP_ENTRY, put, before_replace=before_replace)
     public_id = "app_id" if app_shape else "client_id"
     return {"ok": True, "state": "saved", public_id: app_id, "source": "secrets store"}
 
@@ -3043,10 +3073,10 @@ def _social_record(value):
 def save_social_credential(body, *, before_replace=None, verified=False):
     """Enroll one social account record in the protected store.
 
-    The physical protocol is save_provider_key's: the existing DPAPI primitive on
-    this runtime's secrets.dat, _CREDENTIAL_LOCK, refusal of an observed outside
-    change, the trusted owner's before_replace recheck immediately before
-    replacement, and confirmation afterwards. Nothing here asks the provider. With
+    The physical protocol is save_provider_key's: the app's Windows OS store
+    with a names-only index, or the existing protected-file fallback, under the
+    credential mutex. The owner's before_replace recheck precedes mutation and
+    the saved value is confirmed afterwards. Nothing here asks the provider. With
     verified=False the account id is the operator's declaration and the record is
     format 1 (operator-declared). verified=True is passed only by the LinkedIn
     sign-in, whose account id LinkedIn itself returned (/v2/userinfo sub); that
@@ -3055,7 +3085,7 @@ def save_social_credential(body, *, before_replace=None, verified=False):
     report the same binding. A name already holding a non-social credential is
     refused, and an existing record is replaced only for the same provider account
     (token rotation); a declared rotation of a verified account is recorded as
-    declared. No graph, settings index, alias or worker changes.
+    declared. Only the credential and its existing names index change.
     """
     from .social_connectors import _VAULT_ENTRY
 
@@ -3094,7 +3124,7 @@ def save_social_credential(body, *, before_replace=None, verified=False):
         entries[name] = value
         return True
 
-    _mutate_protected_entries(put, before_replace=before_replace)
+    _mutate_credential(name, put, before_replace=before_replace)
     return {"ok": True, "vault_entry": name, "provider": provider, "account_id": account_id,
             # provider-verified only when the provider itself named this account
             # (social_linkedin_signin: /v2/userinfo sub); it is the stored record's binding.
@@ -3138,7 +3168,7 @@ def revoke_social_credential(body, *, before_replace=None):
         entries.pop(name)
         return True
 
-    removed = _mutate_protected_entries(remove, before_replace=before_replace,
+    removed = _mutate_credential(name, remove, before_replace=before_replace,
                                         not_admitted="removal_not_admitted", unconfirmed="removal_unconfirmed")
     return {"ok": True, "vault_entry": name, "provider": provider, "account_id": account_id,
             "state": "removed" if removed else "absent", "provider_token_revoked": False,
@@ -3146,30 +3176,49 @@ def revoke_social_credential(body, *, before_replace=None):
 
 
 def list_social_credentials():
-    """List stored social account identities without returning provider tokens."""
+    """Project named OS accounts and legacy protected social identities; never tokens."""
+    store = _application_secrets_store()
+    issues = []
+    entries = {}
     try:
-        with _CREDENTIAL_LOCK:
-            store = _application_secrets_store()
-            raw = _credential_file_bytes(Path(store.SECRETS_FILE))
-            entries = _protected_credential_entries(store, raw)
-    except ProviderCredentialError:
-        raise
+        store.archive_legacy_credentials()
+        raw = _credential_file_bytes(Path(store.SECRETS_FILE))
+        entries = _protected_credential_entries(store, raw)
     except Exception:
-        raise ProviderCredentialError("secure_store_unavailable") from None
-    items = []
-    for name, value in entries.items():
-        if not isinstance(name, str) or not name.startswith(_SOCIAL_ENTRY_PREFIX):
+        issues.append({"item": "secrets.dat", "message": "secrets.dat could not be read or archived; existing bytes preserved."})
+    try:
+        names = set(store.credential_names()) | set(entries)
+    except Exception:
+        names = set(entries)
+        issues.append({"item": "known_providers", "message": "known_providers index could not be read."})
+    items, stored_items = [], []
+    for name in sorted(names):
+        if (name.startswith("archhub-account-session:")
+                or name in ("archhub-host-bridge", "linkedin-app", "meta-app")):
             continue
-        record = _social_record(value)
-        if record is None:
+        try:
+            value = store.load_credential(name)
+            if value is None:
+                value = entries.get(name)
+            if not isinstance(value, str) or not value:
+                raise ValueError
+            if not name.startswith(_SOCIAL_ENTRY_PREFIX):
+                stored_items.append({"vault_entry": name, "display_name": name,
+                                     "provider": name, "account_id": name, "disconnectable": False})
+                continue
+            record = _social_record(value)
+            if record is None:
+                raise ValueError
+        except Exception:
+            issues.append({"item": name, "message": name + " could not be read. Refresh Connections."})
             continue
         items.append({
-            "provider": record["provider"],
-            "account_id": record["account_id"],
-            "vault_entry": name,
-            "account_binding": record["account_binding"],
+            "provider": record["provider"], "account_id": record["account_id"],
+            "vault_entry": name, "account_binding": record["account_binding"],
             **({"display_name": record["display_name"]} if "display_name" in record else {}),
+            # Existing graph references remain stable; Windows protects both backends.
             "vault_reference": "dpapi://ArchHub/" + name,
         })
     items.sort(key=lambda item: (item["provider"], item["vault_entry"], item["account_id"]))
-    return {"ok": True, "items": items, "source": "secrets store"}
+    return {"ok": True, "items": items, "stored_items": stored_items,
+            "issues": issues, "source": "secrets store"}

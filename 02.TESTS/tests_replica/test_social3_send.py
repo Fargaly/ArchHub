@@ -141,7 +141,9 @@ def test_new_networks_reuse_verified_custody_and_preserve_display_name(provider,
                                         "token": "fake-provider-bearer", "display_name": "@founder"}, verified=True)
     record = model_router._social_record(entries[name])
     assert record["display_name"] == "@founder"
-    monkeypatch.setattr(model_router, "_application_secrets_store", lambda: SimpleNamespace(SECRETS_FILE="unused-fake"))
+    monkeypatch.setattr(model_router, "_application_secrets_store", lambda: SimpleNamespace(
+        SECRETS_FILE="unused-fake", archive_legacy_credentials=lambda: None,
+        credential_names=lambda: [], load_credential=lambda name: None))
     monkeypatch.setattr(model_router, "_credential_file_bytes", lambda path: b"")
     monkeypatch.setattr(model_router, "_protected_credential_entries", lambda store, raw: entries)
     listing = model_router.list_social_credentials()

@@ -9,8 +9,8 @@ Operator-declared identity is not provider-verified identity, and
 social_account_binding reports which one a record is, from the record itself.
 The resolver checks provider and account_id against the same record
 whose token it returns, so replacement between the verifier and the resolver can
-never dispatch another account's credential. No environment variable, keyring,
-alias or legacy fallback is consulted, and nothing resolved is written anywhere.
+never dispatch another account's credential. No environment variable, credential
+alias or unprotected legacy fallback is consulted, and nothing resolved is written anywhere.
 """
 from __future__ import annotations
 

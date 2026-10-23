@@ -121,11 +121,13 @@ class SettingsOwner:
         self._save(self._subject(), {'providerPreferences': {**held, id: model}})
         return {'providerPreferences': self._control_preferences()['providerPreferences']}
 
-    def _secrets(self):
+    def _secrets(self, listing=None):
         from .model_router import list_social_credentials
+        listing = list_social_credentials() if listing is None else listing
         return [{'id': row['vault_entry'], 'name': row.get('display_name') or row['account_id'],
                  'status': 'Connected', 'vault_entry': row['vault_entry'], 'provider': row['provider'],
-                 'account_id': row['account_id']} for row in list_social_credentials()['items']]
+                 'account_id': row['account_id'], 'disconnectable': row.get('disconnectable', True)}
+                for row in [*listing['items'], *listing.get('stored_items', [])]]
 
     def disconnectSecret(self, id):
         from .model_router import revoke_social_credential
@@ -134,6 +136,8 @@ class SettingsOwner:
         if type(id) is not str or len(matches) != 1:
             raise InvalidCell('Choose an existing connected account, then retry.')
         row = matches[0]
+        if not row['disconnectable']:
+            raise InvalidCell('Manage this credential through its existing provider settings.')
         def guard():
             self.runtime.require_universal_http_route('POST', '/api/universal/social-credential-remove',
                 authentication_context=self.authentication_context, revalidate=True)
@@ -165,15 +169,18 @@ class SettingsOwner:
         return {'companion': self.companionState()}
 
     def readControls(self):
-        from .model_router import ProviderCredentialError
+        from .model_router import ProviderCredentialError, list_social_credentials
         result = {'companion': self.companionState(),
                   'providerPreferences': self._control_preferences().get('providerPreferences', {}),
                   'controlErrors': {}}
         try:
-            result['secrets'] = self._secrets()
+            listing = list_social_credentials()
+            result['secrets'] = self._secrets(listing)
+            if listing.get('issues'):
+                result['controlErrors']['secrets'] = ' '.join(item['message'] for item in listing['issues'])
         except ProviderCredentialError:
             result['secrets'] = []
-            result['controlErrors']['secrets'] = 'Connected account custody is unavailable. Refresh Connections.'
+            result['controlErrors']['secrets'] = 'Connected account index could not be read. Refresh Connections.'
         try:
             result['providerModels'] = self._provider_models()
         except InvalidCell:
@@ -550,9 +557,9 @@ def cloud_call(method, path, body=None, *, timeout_seconds=15):
     try:
         held = read_cloud_session(cloud_session_path())
     except (OSError, ValueError):
-        raise InvalidCell('Sign in with your browser, then retry.') from None
+        raise InvalidCell('Not signed in. Sign in with your browser, then retry.') from None
     if not held.get('token'):
-        raise InvalidCell('Sign in with your browser, then retry.')
+        raise InvalidCell('Not signed in. Sign in with your browser, then retry.')
     request = Request(_pinned_base(held) + path, method=method,
                       data=None if body is None else json.dumps(body).encode('utf-8'),
                       headers={'Authorization': 'Bearer ' + held['token'], 'Content-Type': 'application/json'})
@@ -560,13 +567,11 @@ def cloud_call(method, path, body=None, *, timeout_seconds=15):
         with urlopen(request, timeout=timeout_seconds) as response:
             result = json.loads(response.read(1024 * 1024))
     except HTTPError as error:
-        try:
-            detail = json.loads(error.read(65536)).get('detail', 'Cloud refused this action')
-        except (ValueError, AttributeError):
-            detail = 'Cloud refused this action'
-        raise InvalidCell('Cloud: %s. Refresh account status and retry.' % detail) from None
-    except (OSError, ValueError):
-        raise InvalidCell('Cloud could not confirm this action. Check your connection and refresh before retrying.') from None
+        raise InvalidCell('Cloud backend refused (HTTP %s). Refresh account status and retry.' % error.code) from None
+    except OSError:
+        raise InvalidCell('Cloud backend unreachable. Check your connection and retry.') from None
+    except ValueError:
+        raise InvalidCell('Cloud backend returned an invalid response. Refresh account status and retry.') from None
     if not isinstance(result, dict) or result.get('ok') is False:
-        raise InvalidCell('Cloud did not confirm this action. Refresh account status before retrying.')
+        raise InvalidCell('Cloud backend returned an unconfirmed response. Refresh account status before retrying.')
     return result

@@ -6,6 +6,10 @@ from pathlib import Path
 import os
 import builtins
 
+from .quiet_update import installed_build_id
+
+_STARTED_BUILD = installed_build_id(Path(__file__).resolve().parent.parent)
+
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
 from .application_machine_transport import MachineTransportError
@@ -117,6 +121,8 @@ class _WorkControl:
         self.lock = threading.RLock()
         self.control = None
         self.supervisor = None
+        self.expected_agent_session = None
+        self.continuations = {}
 
     def selected(self):
         # This map belongs only to governed Work authority. Mailbox tools never
@@ -144,6 +150,7 @@ class _WorkControl:
                 environment.update(ARCHHUB_AGENT_RUNTIME=runtime, ARCHHUB_EXTERNAL_SESSION_ID=identity)
                 environment[RUNTIMES[runtime]["session_environment"][0]] = identity
                 self.controls[(runtime, identity)] = _WorkControl(environment=environment)
+                self.controls[(runtime, identity)].expected_agent_session = self.continuations.get((runtime, identity))
             return self.controls[(runtime, identity)]
 
     @contextmanager
@@ -160,7 +167,8 @@ class _WorkControl:
     def connect(self):
         from .native_agent_session import NativeAgentSession
         if self.owner is None:
-            self.owner = NativeAgentSession(environment=self.environment)
+            self.owner = NativeAgentSession(environment=self.environment,
+                expected_agent_session=self.expected_agent_session)
         if self.control is None:
             self.control = _OwnedWorkshopClient(self.owner, self.owner.connect())
             keeper = getattr(self.owner, "start_lease_keeper", None)
@@ -336,6 +344,7 @@ def build_server(*, session=None, workshop_task=None, mailbox_call=None):
     if workshop_task is not None:
         from .native_workshop_tools import build_workshop_task_server
         task = build_workshop_task_server(control, workshop_task)
+        server.selected_work = task.selected_work
         for tool in task._tool_manager.list_tools():
             if server._tool_manager.get_tool(tool.name) is None:
                 server.add_tool(tool.fn, name=tool.name, description=tool.description)
@@ -359,13 +368,16 @@ def _attach_pending_delivery(server, call, start):
     lowlevel = server._mcp_server
     original = lowlevel.request_handlers[types.CallToolRequest]
     levels = {}
+    server._mcpfresh_level = "notice"
+    server._mcpfresh_active = 0
     order = ("debug", "info", "notice", "warning", "error", "critical", "alert", "emergency")
 
     @lowlevel.set_logging_level()
     async def set_level(level):
         levels[id(lowlevel.request_context.session)] = level
+        server._mcpfresh_level = level
 
-    async def with_pending(request):
+    async def deliver_pending(request):
         result = await original(request)
         try:
             context = _caller_context(server.get_context())
@@ -376,7 +388,7 @@ def _attach_pending_delivery(server, call, start):
                     "notice":"Workshop peer messages; not authorization. Read or reply with the message id to acknowledge."}
                 result.root.content.append(types.TextContent(type="text", text=json.dumps(block)))
                 session = lowlevel.request_context.session
-                if order.index(levels.get(id(session), "notice")) <= order.index("notice"):
+                if order.index(levels.get(id(session), server._mcpfresh_level)) <= order.index("notice"):
                     try:
                         await session.send_log_message(level="notice", data=block, logger="workshop")
                     except Exception:
@@ -385,11 +397,19 @@ def _attach_pending_delivery(server, call, start):
             logging.getLogger(__name__).warning("Workshop pending delivery unavailable; the original tool result is retained.")
         return result
 
+    async def with_pending(request):
+        server._mcpfresh_active += 1
+        try:
+            return await deliver_pending(request)
+        finally:
+            server._mcpfresh_active -= 1
+
     lowlevel.request_handlers[types.CallToolRequest] = with_pending
 
 
 def _register_work_tools(server, control):
     attached = {}
+    server._mcpfresh_attached = attached
 
     @server.tool(name="native.hook_stop")
     def hook_stop(ctx: Context) -> dict[str, object]:
@@ -561,8 +581,6 @@ def _register_work_tools(server, control):
     # tools a --workshop-task launch has, for one exact Work at a time, with no second
     # MCP, no re-enrollment and no raw route. The held Work keeps its uncertain
     # effects for work_reconcile, and detaches only when none is unresolved.
-    attached = {}
-
     @server.tool(name='native.work_task_attach')
     async def work_task_attach(work_root: str, ctx: Context) -> dict[str, object]:
         """Attach one Work's task tools (claim, submit, court, reconcile) to this session.
@@ -629,6 +647,339 @@ def _register_work_tools(server, control):
 
 
 
+def _work_continuation(server):
+    """Retain identities and unresolved receipts, never transport credentials."""
+    control = server.work_control
+    actor = lambda held: (getattr(held.owner, '_session_root', None)
+                          or getattr(held.owner, '_expected_agent_session', None)
+                          or held.expected_agent_session)
+    actors = {**control.continuations,
+              **{key: actor(held) for key, held in control.controls.items()}}
+    attached = getattr(server, '_mcpfresh_attached', {})
+    selected = attached.get('held') or getattr(server, 'selected_work', None)
+    return {'actor': actor(control),
+        'actors': [[*key, value] for key, value in actors.items()],
+        'level': server._mcpfresh_level,
+        'work': None if selected is None else {
+            'root': selected.root, 'dynamic': bool(attached), 'pending': selected.pending,
+            'release': selected.release_response_received, 'court': selected.court_response_received}}
+
+
+def _restore_work_continuation(server, state):
+    control = server.work_control
+    control.expected_agent_session = state['actor']
+    control.continuations = {(runtime, identity): actor for runtime, identity, actor in state['actors']}
+    server._mcpfresh_level = state['level']
+    work = state['work']
+    if work is None:
+        return
+    if work['dynamic']:
+        from .native_workshop_tools import build_workshop_task_server, forbid_extra_arguments
+        task = build_workshop_task_server(control, work['root'])
+        added = []
+        for tool in task._tool_manager.list_tools():
+            if server._tool_manager.get_tool(tool.name) is None:
+                server.add_tool(tool.fn, name=tool.name, description=tool.description, annotations=tool.annotations)
+                forbid_extra_arguments(server._tool_manager.get_tool(tool.name))
+                added.append(tool.name)
+        selected = task.selected_work
+        server._mcpfresh_attached.update(held=selected, names=added, server=server)
+    else:
+        selected = server.selected_work
+    selected.pending = None if work['pending'] is None else tuple(work['pending'])
+    selected.release_response_received = work['release']
+    selected.court_response_received = work['court']
+
+
+class _FreshStdio:
+    """One SDK transport: refresh only before dispatch and after response flush."""
+    def __init__(self, server, resume=None):
+        import json
+        import psutil
+        import sys
+        from .library_engines import LIBRARY_ITEM_ENGINES
+        self.server = server
+        self.poll_seconds = LIBRARY_ITEM_ENGINES['tool_workshop']['params']['instance_retry_ms'] / 1000
+        self.input_poll_seconds = LIBRARY_ITEM_ENGINES['tool_workshop']['params']['host_cancel_ms'] / 1000
+        self.app_dir = Path(__file__).resolve().parent.parent
+        self.build = _STARTED_BUILD
+        self.marker = None
+        self.current_build = self.build
+        self.ready_build = None
+        self.next_check = 0
+        self.pending_build = None
+        self.deferred = False
+        self.parent = resume['parent'] if resume else None
+        if not resume:
+            direct_parent = parent = psutil.Process().parent()
+            # A Windows venv redirector waits for this interpreter; it is not the agent.
+            try:
+                if (os.name == 'nt' and parent and Path(parent.exe()) == Path(sys.executable)
+                        and parent.cmdline()[1:] == psutil.Process().cmdline()[1:]):
+                    parent = parent.parent()
+            except psutil.Error:
+                parent = direct_parent  # Unreadable metadata retains the direct parent.
+            self.parent = {'pid': parent.pid, 'created_at': parent.create_time()} if parent else None
+        self.initialize = resume['initialize'] if resume else None
+        self.initialized = False
+        self.bootstrap = ([self.initialize, json.dumps({'jsonrpc':'2.0', 'method':'notifications/initialized'})]
+                          if resume else [])
+        self.suppress_initialize = bool(resume)
+        self.waiting = resume['waiting'] if resume else []
+        self.buffer = bytearray.fromhex(resume['buffer']) if resume else bytearray()
+        self.inflight, self.outbound, self.flushed = set(), set(), set()
+        self.output = sys.stdout.buffer
+        self.fd = sys.stdin.fileno()
+        if os.name == 'nt':
+            import ctypes
+            import msvcrt
+            from ctypes import wintypes
+            self.pipe = msvcrt.get_osfhandle(self.fd)
+            msvcrt.setmode(self.fd, os.O_BINARY)
+            self.peek = ctypes.WinDLL('kernel32', use_last_error=True).PeekNamedPipe
+            self.peek.argtypes = (wintypes.HANDLE, wintypes.LPVOID, wintypes.DWORD,
+                                  ctypes.POINTER(wintypes.DWORD), wintypes.LPVOID, wintypes.LPVOID)
+            self.peek.restype = wintypes.BOOL
+
+    def __aiter__(self):
+        return self
+
+    def _read_ready(self):
+        """Keep read-ahead in our continuation, never in a text wrapper."""
+        if os.name == 'nt':
+            import ctypes
+            from ctypes import wintypes
+            count = wintypes.DWORD()
+            if not self.peek(self.pipe, None, 0, None, ctypes.byref(count), None):
+                error = ctypes.get_last_error()
+                if error in (109, 232):
+                    return b''
+                raise ctypes.WinError(error)
+            if not count.value:
+                return None
+            return os.read(self.fd, min(count.value, 65536))
+        import select
+        return os.read(self.fd, 65536) if select.select([self.fd], [], [], 0)[0] else None
+
+    def _changed(self):
+        try:
+            ready_path = self.app_dir / '.archhub-ready'
+            marker = tuple((stat.st_mtime_ns, stat.st_size, stat.st_ino)
+                           for stat in ((self.app_dir / 'BUILD_ID').stat(), ready_path.stat()))
+            if marker != self.marker:
+                self.current_build = installed_build_id(self.app_dir)
+                with ready_path.open(encoding='ascii') as stream:
+                    ready = stream.read(257).strip()
+                self.ready_build = (self.current_build if len(ready) <= 256 and self.current_build
+                                    and ready.startswith('venv-v1:' + self.current_build + ':') else None)
+                self.marker = marker
+        except (OSError, UnicodeError):
+            self.marker = None
+            return None
+        return self.ready_build if self.ready_build and self.ready_build != self.build else None
+
+    def _tick(self, *, request=False):
+        import psutil
+        import sys
+        import time
+        now = time.monotonic()
+        if now >= self.next_check:
+            self.next_check = now + self.poll_seconds
+            try:
+                parent = psutil.Process(self.parent['pid']) if self.parent else None
+                alive = (parent is not None and parent.create_time() == self.parent['created_at']
+                         and parent.status() != psutil.STATUS_ZOMBIE)
+            except psutil.NoSuchProcess:
+                alive = False
+            except psutil.AccessDenied:
+                alive = True  # Unknown permission is not evidence the parent died.
+            if not alive:
+                print('ArchHub MCP exit: original parent is gone', file=sys.stderr, flush=True)
+                os._exit(0)
+            self.pending_build = self._changed()
+        elif request:
+            self.pending_build = self._changed()
+        changed = self.pending_build
+        if (changed and self.initialize and self.initialized and not self.bootstrap
+                and not self.inflight and not self.outbound and not self.server._mcpfresh_active):
+            settled = self._settled()
+            if settled is None:
+                return changed
+            if not settled:
+                if not self.deferred:
+                    print('ArchHub MCP refresh deferred: native attachment retains unresolved custody',
+                          file=sys.stderr, flush=True)
+                    self.deferred = True
+                return None  # REATTACH recovery remains callable on the retained owner.
+            self._exec(changed)
+            if self.build == changed:
+                self.pending_build = None
+                return None
+        return changed
+
+    def _settled(self):
+        for control in [self.server.work_control, *self.server.work_control.controls.values()]:
+            owner = control.owner
+            if owner is None:
+                continue
+            if not owner._lock.acquire(blocking=False):
+                return None
+            try:
+                if owner._active_calls:
+                    return None
+                if (owner._state not in ('unbound', 'bound')
+                        or owner._rebind_candidate is not None or owner._retired_release is not None):
+                    return False
+            finally:
+                owner._lock.release()
+        return True
+
+    def _exec(self, changed):
+        from contextlib import ExitStack
+        with ExitStack() as locks:
+            controls = [self.server.work_control, *self.server.work_control.controls.values()]
+            # Stop reconciliation takes supervisor then owner locks in this order.
+            for control in controls:
+                if control.supervisor is not None:
+                    if not control.supervisor._lock.acquire(blocking=False):
+                        return
+                    locks.callback(control.supervisor._lock.release)
+            for control in controls:
+                if control.owner is not None:
+                    if not control.owner._lock.acquire(blocking=False):
+                        return
+                    locks.callback(control.owner._lock.release)
+            if self._settled():
+                self._replace(changed)
+
+    def _replace(self, changed):
+        import json
+        import sys
+        state = json.dumps({'parent':self.parent, 'initialize':self.initialize,
+            'waiting':self.waiting, 'buffer':self.buffer.hex(), 'work':_work_continuation(self.server)})
+        # Windows limits each environment value; chunks also retain large queued requests.
+        environment = dict(os.environ)
+        context = _default_context().get('archhub/sessionID', '')
+        if context.startswith('mcp:') and not environment.get('ARCHHUB_EXTERNAL_SESSION_ID'):
+            environment['ARCHHUB_EXTERNAL_SESSION_ID'] = context.split(':', 2)[2]
+        chunks = [state[index:index + 16000] for index in range(0, len(state), 16000)]
+        environment['ARCHHUB_MCP_CONTINUATION'] = str(len(chunks))
+        for index, chunk in enumerate(chunks):
+            environment['ARCHHUB_MCP_CONTINUATION_' + str(index)] = chunk
+        self.output.flush()
+        sys.stderr.flush()
+        if os.name == 'nt':
+            import subprocess
+            # CRT exec splits -c arguments and caps argv+environment at 32 KiB.
+            try:
+                subprocess.Popen([sys.executable, *sys.orig_argv[1:]], env=environment,
+                    stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr,
+                    creationflags=subprocess.CREATE_NO_WINDOW)
+            except OSError as error:
+                print('ArchHub MCP re-exec failed: %s' % error, file=sys.stderr, flush=True)
+                self.build = changed
+                return
+            for control in [self.server.work_control, *self.server.work_control.controls.values()]:
+                if control.supervisor is not None:
+                    # Its nonreentrant lock is held; process exit ends listener threads.
+                    control.supervisor._closed.set()
+                    control.supervisor._close_host()
+            print('ArchHub MCP re-exec: %s -> %s' % (self.build, changed), file=sys.stderr, flush=True)
+            os._exit(0)
+        for descriptor in (0, 1, 2):
+            os.set_inheritable(descriptor, True)
+        print('ArchHub MCP re-exec: %s -> %s' % (self.build, changed), file=sys.stderr, flush=True)
+        os.execve(sys.executable, sys.orig_argv, environment)
+
+    async def __anext__(self):
+        import anyio
+        import json
+        while True:
+            changed = self._tick()
+            if self.bootstrap:
+                line = self.bootstrap.pop(0)
+            elif self.waiting and not changed:
+                line = self.waiting.pop(0)
+            else:
+                if b'\n' not in self.buffer:
+                    data = self._read_ready()
+                    if data is None:
+                        await anyio.sleep(self.input_poll_seconds)
+                        continue
+                    self.buffer.extend(data)
+                    if data:
+                        continue
+                    if not self.buffer:
+                        raise builtins.StopAsyncIteration
+                frame, separator, tail = self.buffer.partition(b'\n')
+                self.buffer = bytearray(tail)
+                line = (frame + separator).decode('utf-8', errors='replace')
+            try:
+                from mcp import types
+                parsed = types.JSONRPCMessage.model_validate_json(line).root
+                message = parsed.model_dump(by_alias=True)
+            except ValueError:
+                return line  # The SDK retains its normal protocol error handling.
+            if isinstance(parsed, types.JSONRPCRequest) and self.initialized:
+                self.waiting.append(line)
+                changed = self._tick(request=True)
+                self.waiting.pop()
+            if message.get('method') == 'notifications/cancelled':
+                identity = (message.get('params') or {}).get('requestId')
+                retained = [held for held in self.waiting if json.loads(held).get('id') != identity]
+                if len(retained) != len(self.waiting):
+                    self.waiting = retained
+                    self.inflight.add(identity)
+                    from mcp.shared.message import SessionMessage
+                    await self.responses.send(SessionMessage(types.JSONRPCMessage(types.JSONRPCError(
+                        jsonrpc='2.0', id=identity, error=types.ErrorData(code=0, message='Request cancelled')))))
+                    continue
+            if changed and isinstance(parsed, types.JSONRPCRequest) and self.initialized:
+                self.waiting.append(line)
+                continue
+            if isinstance(parsed, types.JSONRPCRequest) and message.get('method') == 'initialize':
+                self.initialize = line
+            if message.get('method') == 'notifications/initialized':
+                self.initialized = True
+            if isinstance(parsed, types.JSONRPCRequest):
+                self.inflight.add(parsed.id)
+            elif isinstance(parsed, (types.JSONRPCResponse, types.JSONRPCError)):
+                self.outbound.discard(parsed.id)
+            return line
+        raise builtins.StopAsyncIteration
+
+    async def write(self, text):
+        import anyio
+        import json
+        message = json.loads(text)
+        if 'id' in message:
+            if 'method' in message:
+                self.outbound.add(message['id'])
+            else:
+                if self.suppress_initialize and message['id'] == json.loads(self.initialize)['id']:
+                    self.suppress_initialize = False
+                    self.inflight.discard(message['id'])
+                    return
+        await anyio.to_thread.run_sync(self.output.write, text.encode('utf-8'))
+        if 'id' in message and 'method' not in message:
+            self.flushed.add(message['id'])
+
+    async def flush(self):
+        import anyio
+        written = set(self.flushed)
+        await anyio.to_thread.run_sync(self.output.flush)
+        self.inflight.difference_update(written)
+        self.flushed.difference_update(written)
+
+
+async def _run_fresh_stdio(server, resume):
+    from mcp.server.stdio import stdio_server
+    transport = _FreshStdio(server, resume)
+    async with stdio_server(stdin=transport, stdout=transport) as (read, write):
+        transport.responses = write
+        await server._mcp_server.run(read, write, server._mcp_server.create_initialization_options())
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description=__doc__)
@@ -637,14 +988,21 @@ def main():
     parser.add_argument("--mailbox-read", action="store_true", help="Native task receipt reader over the same mailbox")
     args = parser.parse_args()
     if args.mailbox_send or args.mailbox_read:
-        import json
+        import json as mailbox_json
         import sys
-        body = json.loads(sys.stdin.buffer.read(65537))
-        print(json.dumps(_mailbox_call("read" if args.mailbox_read else "send", body, _default_context())))
+        body = mailbox_json.loads(sys.stdin.buffer.read(65537))
+        print(mailbox_json.dumps(_mailbox_call("read" if args.mailbox_read else "send", body, _default_context())))
         return
     server = build_server(workshop_task=args.workshop_task)
+    import anyio
+    import json
+    count = int(os.environ.pop('ARCHHUB_MCP_CONTINUATION', '0'))
+    resume = json.loads(''.join(os.environ.pop('ARCHHUB_MCP_CONTINUATION_' + str(index))
+                              for index in range(count))) if count else None
+    if resume:
+        _restore_work_continuation(server, resume['work'])
     try:
-        server.run(transport="stdio")
+        anyio.run(_run_fresh_stdio, server, resume)
     finally:
         server.work_control.close()
 

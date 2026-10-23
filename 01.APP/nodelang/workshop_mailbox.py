@@ -133,7 +133,7 @@ def _recipient_rows(message, declarations):
          "sender_key":row["session"]}, row)]
 
 
-def _can_ack(history, message, identity, declaration):
+def _can_ack(history, message, identity, declaration, declarations):
     if "[" + identity["sender_key"] + "]" in message.get("author", "") or message.get("author") == identity.get("sender"):
         return False
     events = delivery_events(history, message)
@@ -146,7 +146,7 @@ def _can_ack(history, message, identity, declaration):
     if not _addressed(message, identity, declaration):
         return False
     return any(row["session"] == identity["sender_key"] for row in
-        _recipient_rows(message, read_declarations(history._db)))
+        _recipient_rows(message, declarations))
 
 
 def _delivery_receipt(history, message, recipient, event, *, now=None, **details):
@@ -193,6 +193,7 @@ def _routing(message):
 
 def _pending(history, identity, runtime):
     declaration = _declaration(history, identity, runtime)
+    declarations = read_declarations(history._db)
     pending, size = [], 0
     since = 0
     if history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_delivery_cursors'").fetchone():
@@ -219,13 +220,13 @@ def _pending(history, identity, runtime):
     with closing(cursor):
         for raw in cursor:
             message = history._message(raw)
-            if not _can_ack(history, message, identity, declaration):
+            if not _can_ack(history, message, identity, declaration, declarations):
                 continue
             all_events = delivery_events(history, message)
             routed = {key for key, records in all_events.items() if "addressed" in records}
             if routed and identity["sender_key"] not in routed:
                 continue
-            if not routed and not _can_ack(history, message, identity, declaration):
+            if not routed and not _can_ack(history, message, identity, declaration, declarations):
                 continue
             events = all_events.get(identity["sender_key"], {})
             if "answered" in events or ("delivered" in events
@@ -343,25 +344,27 @@ class WorkshopInjection:
                 "AND category=? AND sequence>? ORDER BY sequence LIMIT 128", (ROOM, CATEGORY, self._cursor)).fetchall()
             latest = history._db.execute("SELECT * FROM messages WHERE conversation_id=? AND public=1 "
                 "AND category=? ORDER BY sequence DESC LIMIT 128", (ROOM, CATEGORY)).fetchall()
-            for raw in [*rows, *latest]:
-                message = history._message(raw)
-                if (agent_addressed(message) and message["id"] not in self._settled
-                        and str(message.get("created_at") or "") >= cutoff):
-                    self._pending[message["id"]] = message["sequence"]
-            declarations = read_declarations(history._db, include_archived=True)
+        for raw in [*rows, *latest]:
+            message = history._message(raw)
+            if (agent_addressed(message) and message["id"] not in self._settled
+                    and str(message.get("created_at") or "") >= cutoff):
+                self._pending[message["id"]] = message["sequence"]
+        # Process liveness probes must not keep SQLite readers blocking a sender's COMMIT.
+        declarations = read_declarations(history._db, include_archived=True)
         # Replies are new room notes even when their parent already escalated/settled.
-        with history._transaction(write=True):
-            for raw in [*rows, *latest]:
-                if raw["reply_to"] is None:
-                    continue
-                reply = history._message(raw)
-                parent = history.get(ROOM, reply["reply_to"], principal=DELIVERY_AUTHOR)
-                label, separator, session = reply["author"].removesuffix("]").rpartition(" [")
-                if parent and separator:
-                    identity = {"sender":reply["author"], "sender_key":session, "sender_label":label}
-                    declaration = _declaration(history, identity)
-                    if (_can_ack(history, parent, identity, declaration)
-                            and "answered" not in delivery_events(history, parent).get(session, {})):
+        for raw in [*rows, *latest]:
+            if raw["reply_to"] is None:
+                continue
+            reply = history._message(raw)
+            parent = history.get(ROOM, reply["reply_to"], principal=DELIVERY_AUTHOR)
+            label, separator, session = reply["author"].removesuffix("]").rpartition(" [")
+            if parent and separator:
+                identity = {"sender":reply["author"], "sender_key":session, "sender_label":label}
+                declaration = _declaration(history, identity)
+                if _can_ack(history, parent, identity, declaration, declarations):
+                    with history._transaction(write=True):
+                        if "answered" in delivery_events(history, parent).get(session, {}):
+                            continue
                         _delivery_receipt(history, parent, {"session":session, "agent":label},
                             "answered", reply_message_id=reply["id"])
         if rows:
@@ -561,7 +564,7 @@ def _declare(history, body, context, identity, runtime, peer, native_session):
     expired = []
     if history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_declarations'").fetchone():
         for record, in history._db.execute("SELECT record FROM workshop_declarations "
-                                          "WHERE json_extract(record,'$.updated_at')<?", (cutoff,)):
+                                          "WHERE json_extract(record,'$.updated_at')<?", (cutoff,)).fetchall():
             archived = json.loads(record)
             if not _session_alive(archived):
                 expired.append(archived["root"])
@@ -608,8 +611,8 @@ def _read(history, body, identity, runtime=None):
         messages, more = history._collect(cursor, 100, 180000)
         from .installed_workshop_coordination import _recent_mailbox_peers
         peers = _recent_mailbox_peers(history, ROOM)
-        declarations = read_declarations(history._db, include_archived=body.get("include_archived", False))
         read_cursor = min(since, history._head(ROOM))
+    declarations = read_declarations(history._db, include_archived=body.get("include_archived", False))
     result = {**identity, "read_cursor":read_cursor, "messages": [], "peers": peers, "more": more, "next_since": since,
               "declarations": [], "declaration_total": len(declarations),
               "working_count": sum(row["current"] and row["status"] == "working" for row in declarations),
@@ -740,11 +743,12 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
                     (ROOM, identity["sender"], cutoff, retry_key)).fetchall()
                 if len(rows) >= 30:
                     raise ValueError("Mailbox permits 30 messages per minute per peer")
+            declarations = read_declarations(history._db)
             with history._transaction(write=True):
                 routing = {"recipients":[{key: row.get(key) for key in
                     ("session", "agent", "runtime", "native_session_id")} for row in _recipient_rows(
                         {"content":"To " + target + ":\n" + text, "category":CATEGORY,
-                         "author":identity["sender"]}, read_declarations(history._db))],
+                         "author":identity["sender"]}, declarations)],
                     "native_control":control}
                 encoded = json.dumps(routing, ensure_ascii=True)
                 prior = history._db.execute("SELECT evidence FROM messages WHERE conversation_id=? AND idempotency_key=?",

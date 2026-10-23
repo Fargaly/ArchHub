@@ -963,7 +963,7 @@ LIBRARY_ITEM_ENGINES.update({
                                  "voice_hold_ms": 300,
                                  "model_request_ms": 90000,
                                  "model_cli_request_ms": 240000,
-                                 "keep_running_in_tray": False,
+                                 "keep_running_in_tray": True,
                                  "update_check_interval_minutes": 30, "update_auto_apply_on_quit": True,
                                  "update_preview_channel": False, "backup_location": "auto"}},
     "tool_brain": {"engine": "tool.brain",

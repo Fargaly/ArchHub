@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.parametrize("keep_running", [False, True])
-def test_window_x_quits_by_default_and_only_hides_when_opted_in(keep_running):
+def test_window_x_follows_tray_setting_and_explicit_opt_out(keep_running):
     from PyQt6.QtWidgets import QApplication, QMainWindow
     from PyQt6.QtGui import QCloseEvent
     application = QApplication.instance() or QApplication([])
@@ -41,21 +41,21 @@ def test_tray_toggle_is_the_same_graph_property_read_by_the_launcher():
     from nodelang.universal_cell import InvalidCell
     store, registry = app.build_universal_application(resolve_map_path())
     initial = store.revision
-    assert app.read_universal_keep_running_in_tray(store.snapshot(), registry) is False
+    assert app.read_universal_keep_running_in_tray(store.snapshot(), registry) is True
     assert store.revision == initial
     root = app._system_tool_canvas_root("tool_workshop")
     app.apply_universal_canvas_gesture(store, registry, roots=[root], focus_root=root)
     canvas = app.project_universal_canvas(store, registry)
     row = next(item for item in canvas["properties"] if item["label"] == "keep_running_in_tray")
-    assert row["value"] is False and row["editor"] == "boolean"
-    app.edit_universal_property(store, registry, row["relation"], "true")
-    assert app.read_universal_keep_running_in_tray(store.snapshot(), registry) is True
+    assert row["value"] is True and row["editor"] == "boolean"
+    app.edit_universal_property(store, registry, row["relation"], "false")
+    assert app.read_universal_keep_running_in_tray(store.snapshot(), registry) is False
     changed = store.revision
     with pytest.raises(InvalidCell):
         app.edit_universal_property(store, registry, row["relation"], "yes")
     assert store.revision == changed
-    app.edit_universal_property(store, registry, row["relation"], "false")
-    assert app.read_universal_keep_running_in_tray(store.snapshot(), registry) is False
+    app.edit_universal_property(store, registry, row["relation"], "true")
+    assert app.read_universal_keep_running_in_tray(store.snapshot(), registry) is True
     timing = next(item for item in canvas['properties'] if item['label'] == 'toast_visible_ms')
     assert timing['value'] == app._application_setting_default('toast_visible_ms')
     app.edit_universal_property(store, registry, timing['relation'], '4500')
@@ -78,7 +78,7 @@ def test_workshop_runtime_uses_typed_defaults_and_wired_feed_precedence():
     from nodelang.universal_application import _application_setting_default
     result, _ = tool_settings({'tool': 'workshop'}, {})
     settings = result['out']
-    assert settings['keep_running_in_tray'] is False
+    assert settings['keep_running_in_tray'] is True
     for name in ('stale_claim_after_idle_minutes', 'archive_after_idle_days'):
         assert type(settings[name]) is int
         assert settings[name] == _application_setting_default(name)

@@ -3,7 +3,7 @@
 This is the sole installed Qt entry. Normal state is selected beneath
 %LOCALAPPDATA%/ArchHub. Historical stores are migration inputs only.
 Explicit fixture runs select ARCHHUB_TEST_STATE_DIR and never publish the
-machine's active pointer. Closing quits by default; Settings can keep it in the tray.
+machine's active pointer. Closing keeps it in the tray by default; Quit exits.
 """
 import faulthandler
 import contextlib
@@ -867,7 +867,7 @@ def _refuse_boot_without_living(refusal, *, quit_event=None, notice_seconds=45.0
     _exit_process(1)
 
 def _hide_in_tray_if_enabled(widget):
-    """Only an explicit graph setting and a live tray can keep the app open."""
+    """The graph's tray setting defaults on; an explicit Quit still exits."""
     tray = getattr(widget, "_tray", None)
     owner = globals().get("server")
     if (getattr(widget, "quitting", False) or owner is None
@@ -975,7 +975,7 @@ if not os.environ.get("ARCHHUB_TEST_NO_OPEN"):
             return False, 0
 
     class _ArchHubWindow(QMainWindow):
-        """Closing any ArchHub top-level window quits the desktop process."""
+        """Closing hides to the tray; explicit Quit closes the desktop process."""
         quitting = False
 
         def closeEvent(self, event):

@@ -122,7 +122,7 @@ def test_backup_graph_parameters_restart_and_final_close_publish_one_database(tm
     server = boot()
     try:
         store, registry = server.universal_store, server.universal_registry
-        assert app.read_universal_keep_running_in_tray(store.snapshot(), registry) is False
+        assert app.read_universal_keep_running_in_tray(store.snapshot(), registry) is True
         root = app._system_tool_canvas_root('tool_workshop')
         with commit_intent.declare(commit_intent.USER_ACTION, actor='app:archhub', reason='fixture changes Settings'):
             app.apply_universal_canvas_gesture(store, registry, roots=[root], focus_root=root)
@@ -130,14 +130,14 @@ def test_backup_graph_parameters_restart_and_final_close_publish_one_database(tm
                 relation, _ = app._workshop_board_property_root(root, key)
                 app.edit_universal_property(store, registry, relation, str(value))
             relation, _ = app._workshop_board_property_root(root, 'keep_running_in_tray')
-            app.edit_universal_property(store, registry, relation, 'true')
-        assert app.read_universal_keep_running_in_tray(store.snapshot(), registry) is True
+            app.edit_universal_property(store, registry, relation, 'false')
+        assert app.read_universal_keep_running_in_tray(store.snapshot(), registry) is False
         assert backup_policy(store.snapshot(), registry) == {'keep_count':5,'max_bytes':128 * 1024**2}
         assert backup_policy(store.snapshot()) == backup_policy(store.snapshot(), registry)
         canvas = app.project_universal_canvas(store, registry)
         params = next(node['params'] for node in canvas['nodes'] if node['id'] == root)
         assert next(row['value'] for row in params if row['label'] == 'backup_count') == 5
-        assert next(row['value'] for row in params if row['label'] == 'keep_running_in_tray') is True
+        assert next(row['value'] for row in params if row['label'] == 'keep_running_in_tray') is False
         with pytest.raises(InvalidCell):
             with commit_intent.declare(commit_intent.USER_ACTION, actor='app:archhub', reason='fixture invalid Settings'):
                 relation, _ = app._workshop_board_property_root(root, 'backup_count')
@@ -149,7 +149,7 @@ def test_backup_graph_parameters_restart_and_final_close_publish_one_database(tm
     server = boot()
     try:
         assert backup_policy(server.universal_store.snapshot(), server.universal_registry)['keep_count'] == 5
-        assert app.read_universal_keep_running_in_tray(server.universal_store.snapshot(), server.universal_registry) is True
+        assert app.read_universal_keep_running_in_tray(server.universal_store.snapshot(), server.universal_registry) is False
         assert server.conversation_content._path == graph
         from nodelang import application_recovery_files
         def fail_preservation(*args, **kwargs):

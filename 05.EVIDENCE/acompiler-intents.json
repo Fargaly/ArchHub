@@ -8284,6 +8284,34 @@
         "02.TESTS/tests_replica/test_boot_is_measured.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "BOOTSCALE": {
+      "source": "Founder BOOTSCALE / To 717: startup shell and deferred services on founder-scale fixture. Second review: rebase b6332743, preserve BOOTLIMIT 300s canvas watchdog; numeric Home deadline fallback and clean-canvas bootstrap; Home default canvas budget minus margin and cap300000ms. Keep existing Retry and blank/frozen exit. Isolated patch only; no installed app, installer or live data writes.",
+      "scope": [
+        "01.APP/nodelang/pipeline_engines.py",
+        "02.TESTS/tests_js/appstable.test.cjs",
+        "02.TESTS/tests_js/newapp_account.test.cjs",
+        "02.TESTS/tests_js/ops_settings.test.cjs",
+        "02.TESTS/tests_js/research_actions.test.cjs",
+        "02.TESTS/tests_js/studio_canvasfeel.test.cjs",
+        "02.TESTS/tests_js/studio_canvasold.test.cjs",
+        "02.TESTS/tests_js/studio_update_notice.test.cjs",
+        "02.TESTS/tests_js/wire_agents_adapter.test.cjs",
+        "02.TESTS/tests_js/wire_agents.test.cjs",
+        "02.TESTS/tests_js/wire_settings.test.cjs",
+        "02.TESTS/tests_js/wire_social.test.cjs",
+        "01.APP/nodelang/library_engines.py",
+        "01.APP/nodelang/universal_application.py",
+        "02.TESTS/tests_js/studio_boot38.test.cjs",
+        "01.APP/nodelang/launcher.py",
+        "01.APP/nodelang/application_server.py",
+        "01.APP/nodelang/persistence.py",
+        "01.APP/nodelang/studio/studio.html",
+        "01.APP/nodelang/studio/api.js",
+        "02.TESTS/tests_replica/test_bootscale.py",
+        "02.TESTS/tests_js/studio_bootscale.test.cjs",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

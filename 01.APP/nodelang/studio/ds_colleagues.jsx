@@ -38,14 +38,9 @@
       u = useApp();
     return <div data-screen="colleagues" style={{
       display: 'grid',
-      gridTemplateColumns: '340px 1fr',
+      gridTemplateColumns: '340px minmax(0,1fr)',
       minHeight: 0
-    }}><section aria-label="Action result" aria-live="polite">
-      {wire.status === 'waiting' && <p role="status">Waiting for the owner…</p>}
-      {wire.status === 'empty' && <p>No saved content in this graph.</p>}
-      {wire.status === 'loaded' && <p role="status">{wire.result?.title || wire.result?.message || wire.result?.status || wire.result?.phase || wire.result?.id || ''}</p>}
-      {wire.status === 'error' && <div role="alert"><p>{wire.message}</p><Btn onClick={() => dispatch("wire.ds_colleagues.retry",wire.retry)}>Retry</Btn></div>}
-    </section><aside className="pane" style={{
+    }}><aside className="pane" style={{
         padding: 18
       }}><Heading title={s.profile.firm || "Team"} /><div className="label" style={{
           marginBottom: 14
@@ -59,7 +54,12 @@
           id: p.id
         }))(event))}><Av id={p.name} /><span><b>{p.name}</b><p className="muted" style={{
               fontSize: 12
-            }}>{p.task}</p></span></button>)}</aside><main className="page"><Heading title={s.meeting.title} sub="People and agents finish work in the same room"><Btn p onClick={event => dispatch("wire.ds_colleagues.3", () => (() => u.go('meetings'))(event))}>Meetings</Btn><Btn onClick={event => dispatch("wire.ds_colleagues.4", () => (() => u.show('New task'))(event))}>New task</Btn></Heading><div style={{
+            }}>{p.task}</p></span></button>)}</aside><main className="page"><section aria-label="Action result" aria-live="polite">
+      {wire.status === 'waiting' && <p role="status">Loading team…</p>}
+      {wire.status === 'empty' && <p>No saved content in this graph.</p>}
+      {wire.status === 'loaded' && <p role="status">{wire.result?.title || wire.result?.message || wire.result?.status || wire.result?.phase || wire.result?.id || ''}</p>}
+      {wire.status === 'error' && <div role="alert"><p>{wire.message}</p><Btn onClick={() => dispatch("wire.ds_colleagues.retry",wire.retry)}>Retry</Btn></div>}
+    </section><Heading title={s.meeting.title} sub="People and agents finish work in the same room"><Btn p onClick={event => dispatch("wire.ds_colleagues.3", () => (() => u.go('meetings'))(event))}>Meetings</Btn><Btn onClick={event => dispatch("wire.ds_colleagues.4", () => (() => u.show('New task'))(event))}>New task</Btn></Heading><div style={{
           maxWidth: 800
         }}><Card style={{
             padding: 20,
@@ -90,7 +90,7 @@
     return <Card style={{
       padding: 16
     }}><section aria-label="Action result" aria-live="polite">
-      {wire.status === 'waiting' && <p role="status">Waiting for the owner…</p>}
+      {wire.status === 'waiting' && <p role="status">Loading learned rules…</p>}
       {wire.status === 'empty' && <p>No saved content in this graph.</p>}
       {wire.status === 'loaded' && <p role="status">{wire.result?.title || wire.result?.message || wire.result?.status || wire.result?.phase || wire.result?.id || ''}</p>}
       {wire.status === 'error' && <div role="alert"><p>{wire.message}</p><Btn onClick={() => dispatch("wire.ds_colleagues.retry",wire.retry)}>Retry</Btn></div>}

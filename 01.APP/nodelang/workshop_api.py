@@ -334,11 +334,32 @@ class WorkshopAPI:
         options = self._options(task)
         state = str(row["operational"]["current_state_label"]).casefold()
         status = STATES[state]
-        active = [item for item in declarations(self.owner) if item["request_id"] == task]
+        known = [item for item in declarations(self.owner, include_archived=True) if item["request_id"] == task]
+        active = [item for item in known if item.get("current")]
         if state == "open" and any(item["status"] == "working" for item in active):
             status = "WIP"
         owners = {item["app"] for item in active}
+        previous = {item["app"] for item in known}
         owner = next(iter(owners)) if len(owners) == 1 else options.get("delegate")
+        if owner is None:
+            from .cell_agent_body import read_agent_session
+            from .universal_application import _agent_body_catalog_entry_for_session
+            claim = next((event for event in reversed(row["operational"].get("history", []))
+                          if event["event_label"].casefold() == "claim"), None)
+            recorded = set()
+            if claim:
+                snapshot, registry = self.admit(), self.owner.universal_registry
+                for root in claim["context"]:
+                    if not root.startswith("app:agent-session:runtime:"):
+                        continue
+                    try:
+                        session = read_agent_session(snapshot, registry.agent_body.protocol,
+                                                     registry.authorization.protocol, root)
+                        recorded.add(_agent_body_catalog_entry_for_session(snapshot, registry, session).runtime)
+                    except (InvalidCell, AuthorizationDenied):
+                        continue  # An unavailable old session must not hide the task.
+            owner = (next(iter(recorded)) if len(recorded) == 1 else
+                     next(iter(previous)) if not recorded and len(previous) == 1 else None)
         interfaces = row["interfaces"]
         messages, messages_truncated = self._messages(task)
         delivery = options.get("delivery", {"state":"unassigned"})

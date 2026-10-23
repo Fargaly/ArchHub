@@ -39,7 +39,7 @@
       gap: 12,
       alignItems: 'center',
       padding: '10px 12px'
-    }}><Av id={task.owner} size={30} /><div style={{
+    }}><Av id={task.owner || 'Unassigned'} size={30} /><div style={{
         minWidth: 0,
         display: 'grid',
         gap: 3
@@ -176,7 +176,7 @@
               if (currentScope.current === roomScope && Array.isArray(page?.messages)) setOlder({scope: roomScope, messages: [...page.messages, ...previous.messages], before: page.next_before, more: page.more});
             }}>Older messages</Btn>}{roomMessages.length > 0 && <Messages task={{messages: roomMessages}} />}{task ? <><button className="listbutton spread" onClick={() => executeAction("ui.show", u, 'Task details', {
                 id: task.id
-              })}><span>Owner: {task.humanOwner || s.profile.name || 'Unassigned'} · {s.providers.find(p => p.id === task.owner)?.name}</span><span className="muted">Steps &amp; checkpoints →</span></button><Messages task={task} />{task.approvalId && <div style={{
+              })}><span>Owner: {task.humanOwner || s.providers.find(p => p.id === task.owner)?.name || task.owner || 'Unassigned'}</span><span className="muted">Steps &amp; checkpoints →</span></button><Messages task={task} />{task.approvalId && <div style={{
                 marginLeft: 46
               }}><ApprovalCard id={task.approvalId} /></div>}{task.status === 'STOPPED' && <Btn onClick={() => executeAction("reassignTask", u, task.id)}>Continue with another agent</Btn>}{task.status === 'DONE' && <div className="flex"><Btn onClick={() => executeAction("ui.go", u, 'watcher')}>Open result</Btn><Btn onClick={() => executeAction("ui.schedule", u, task.title)}>Repeat this</Btn></div>}</> : roomMessages.length === 0 && <Empty>Create a task to begin.</Empty>}</div></div>
    <div style={{

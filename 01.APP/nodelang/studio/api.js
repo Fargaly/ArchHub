@@ -151,12 +151,21 @@ function projectProviders() {
  for(const a of workingAgents)roster.set(a.id,{...roster.get(a.id),...a});
  publish({providers:[...roster.values()].map(p=>({...p,model:state.providerPreferences?.[p.id]||p.model,models:state.providerModels?.[p.id]||[]}))});
 }
+function providerDto(p) {
+ const presence=p.status||p.presence||({keyed:'Available · connected',running:'Available · runtime running',
+  'no key':'Not connected · connect in Settings → Connections','key invalid':'Credential invalid · reconnect in Settings → Connections',
+  'not running':'Runtime stopped · start it in Settings → Dependencies',checking:'Checking local runtime…',
+  installed:'Installed · authentication not checked','not installed':'Not installed · manage in Settings → Dependencies',
+  'keyed, not routed':'Connected; no direct route · choose OpenRouter in Settings → Agents'})[p.state]||'Status not reported · refresh Settings → Agents';
+ return {...p,id:p.id||p.provider||p.app,name:p.name||p.label||p.id||p.provider||p.app,
+  ini:p.ini||(p.name||p.id||p.provider||p.app||'').slice(0,1),col:p.col||window.AH?.inkSoft,
+  presence,model:p.model||'Unavailable'};
+}
 async function refreshAgents() {
  const epoch=scopeEpoch,binding=JSON.stringify(workshopBinding());
  const agents=await workshop('listAgentsWorking');if(!Array.isArray(agents))return agents;
  if(epoch!==scopeEpoch||binding!==JSON.stringify(workshopBinding()))return state.providers;
- workingAgents=agents.map(a=>({...a,id:a.id||a.provider||a.app,name:a.name||a.provider||a.app,ini:(a.name||a.provider||'?').slice(0,1),
- col:a.col||window.AH?.inkSoft,presence:a.status||a.presence||'Unavailable',model:a.model||'Unavailable',enabled:a.enabled===true,signedIn:a.signedIn??null}));
+ workingAgents=agents.map(a=>({...providerDto(a),enabled:a.enabled===true,signedIn:a.signedIn??null}));
  projectProviders();return state.providers;
 }
 async function refreshAccount() {
@@ -216,7 +225,7 @@ async function refreshLive() {
  if(!ready||document.hidden||refreshInFlight||listeners.size===0)return;
  refreshInFlight=true;
  try {
-  for(const refresh of [refreshApplicationUpdate,refreshAccount,refreshTasks,refreshAgents,refreshSettingsControls]){
+  for(const refresh of [refreshApplicationUpdate,refreshAccount,api.listProviders,refreshTasks,refreshAgents,refreshSettingsControls]){
    try{await refresh();}catch(error){publish({connectionNotice:error.message});}
   }
  }
@@ -334,7 +343,7 @@ Object.assign(api,{
  getSnapshot:()=>state,subscribe(fn){listeners.add(fn);watchRefresh();return()=>{listeners.delete(fn);if(listeners.size===0)stopRefresh();};},
  listTasks:refreshTasks,listAgentsWorking:refreshAgents,
  async listWorkshopMessages(before){const epoch=scopeEpoch,binding=JSON.stringify(workshopBinding());const page=await workshop('listWorkshopMessages',[before??null]);return epoch===scopeEpoch&&binding===JSON.stringify(workshopBinding())?page:null;},
- async listProviders(){const d=await request('/api/universal/providers');const providers=(d.providers||[]).map(p=>({...p,id:p.id||p.provider,name:p.name||p.label||p.id,ini:(p.name||p.id||'?').slice(0,1),col:window.AH?.inkSoft,presence:p.status||'Unavailable',model:p.model||'Unavailable'}));providerRoster=providers;projectProviders();return state.providers;},
+ async listProviders(){const d=await request('/api/universal/providers');providerRoster=(d.providers||[]).map(providerDto);projectProviders();return state.providers;},
  getSettings:async()=>copy(state.settings),getGraph:async()=>copy(state.graph),
  getNodeParameters:id=>copy(state.graph.nodes.find(n=>n.id===id)?.parameterSchema||[]),
  getCapabilityParameters:id=>copy(state.capabilities.find(c=>c.id===id)?.parameterSchema||[]),

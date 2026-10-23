@@ -8216,6 +8216,14 @@
         "01.APP/nodelang/studio/style.css",
         "02.TESTS/tests_js/studio_canvasold.test.cjs"
       ]
+    },
+    "WSNOREPLY": {
+      "source": "Founder WSNOREPLY / R102: nag only real asks. Deliver explicit line-anchored no-reply notes and reply_to acknowledgements once without reminder or escalation; never inject a note back to its author, including the 717 coordinator fallback. Keep real-ask five/ten-minute follow-up, delivery, backfill and receipts. Isolated patch-only lane; no live data, installed app, installer, API flags, stores or NLP classifiers.",
+      "scope": [
+        "01.APP/nodelang/workshop_mailbox.py",
+        "02.TESTS/tests_replica/test_wsnoreply.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

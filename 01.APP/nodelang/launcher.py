@@ -1093,7 +1093,11 @@ def _migration_progress(status):
 def _boot_phase(index, finished=False):
     from nodelang.clean_boot_surface import BOOT_PHASES
     label = BOOT_PHASES[index]
-    (_finish_boot_phase if finished else _start_boot_phase)(label)
+    if finished:
+        _finish_boot_phase(label)
+    else:
+        # Large saved graphs can take several minutes to paint the canvas.
+        _start_boot_phase(label, timeout_seconds=300.0 if index == 1 else 90.0)
     if _boot_surface is not None:
         (_boot_surface.progress.finish if finished else _boot_surface.progress.begin)(label)
 

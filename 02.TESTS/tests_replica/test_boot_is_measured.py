@@ -196,3 +196,99 @@ def test_saved_graph_without_install_intent_is_never_seeded(tmp_path, monkeypatc
         revision = store.revision
         functions["_initialize_startup_pipeline"](owner, first_boot=False)
         assert store.revision == revision and functions["_startup_pipeline_state"](owner) is None
+
+
+def _canvas_watchdog_script(body):
+    source = (ROOT / "01.APP/nodelang/launcher.py").read_text(encoding="utf-8")
+    prefix = source[:source.index("\ndef _require_complete_local_update")]
+    phase = next(node for node in ast.parse(source).body
+                 if isinstance(node, ast.FunctionDef) and node.name == "_boot_phase")
+    return ("__file__ = " + repr(str(ROOT / "01.APP/nodelang/launcher.py")) + "\n"
+            + prefix + "\n" + ast.unparse(phase) + "\n"
+            + "from PyQt6.QtCore import QCoreApplication, QTimer, Qt\n"
+            + "from nodelang.clean_boot_surface import BootProgress\n"
+            + "from types import SimpleNamespace\n"
+            + "app = QCoreApplication([])\n"
+            + "_boot_surface = SimpleNamespace(progress=BootProgress())\n"
+            + body)
+
+
+def test_canvas_phase_allows_120_seconds_with_responsive_qt_loop(tmp_path):
+    script = _canvas_watchdog_script('''
+ticks = []
+timer = QTimer()
+timer.setTimerType(Qt.TimerType.PreciseTimer)
+timer.setInterval(100)
+timer.timeout.connect(lambda: ticks.append(time.monotonic()))
+timer.start()
+started = time.monotonic()
+_boot_phase(1)
+completion = QTimer()
+completion.setTimerType(Qt.TimerType.PreciseTimer)
+completion.setSingleShot(True)
+def finish():
+    elapsed = time.monotonic() - started
+    _boot_phase(1, finished=True)
+    assert elapsed >= 120 and len(ticks) >= 100
+    assert _boot_deadline is None
+    assert _boot_surface.progress.payload()['phases'][-1]['seconds'] >= 120
+    print('CANVAS_COMPLETE elapsed=%.3f ticks=%d' % (elapsed, len(ticks)), flush=True)
+    app.quit()
+completion.timeout.connect(finish)
+completion.start(120000)
+app.exec()
+''')
+    result = subprocess.run([sys.executable, "-B", "-c", script],
+                            env=dict(os.environ, ARCHHUB_TEST_STATE_DIR=str(tmp_path)),
+                            capture_output=True, timeout=140, text=True)
+    log = (tmp_path / "launcher.log").read_text(encoding="utf-8")
+    print(log)
+    assert result.returncode == 0 and "CANVAS_COMPLETE" in log, log + result.stderr
+
+
+def test_canvas_phase_hang_still_exits_with_injected_deadline(tmp_path):
+    script = _canvas_watchdog_script('''
+start_phase = _start_boot_phase
+def _start_boot_phase(label, **kwargs):
+    start_phase(label, timeout_seconds=0.2)
+_boot_phase(1)
+QTimer.singleShot(0, lambda: time.sleep(10))
+app.exec()
+''')
+    result = subprocess.run([sys.executable, "-B", "-c", script],
+                            env=dict(os.environ, ARCHHUB_TEST_STATE_DIR=str(tmp_path)),
+                            capture_output=True, timeout=5, text=True)
+    log = (tmp_path / "launcher.log").read_text(encoding="utf-8")
+    print(log)
+    assert result.returncode == 1 and "stand the canvas surface" in log and "Timeout" in log, log
+
+
+def test_phase_deadlines_progress_and_finish_are_preserved():
+    from nodelang.clean_boot_surface import BOOT_PHASES, BootProgress
+    tree = ast.parse((ROOT / "01.APP/nodelang/launcher.py").read_text(encoding="utf-8"))
+    names = {"_start_boot_phase", "_finish_boot_phase", "_arm_boot_watchdog", "_boot_phase"}
+    functions = [node for node in tree.body if getattr(node, "name", None) in names]
+    alarms, cancelled = [], []
+    progress = BootProgress()
+    namespace = {"time": SimpleNamespace(monotonic=lambda: 10), "_log": None,
+                 "_boot_deadline": None, "_boot_surface": SimpleNamespace(progress=progress),
+                 "faulthandler": SimpleNamespace(
+                     dump_traceback_later=lambda seconds, **kwargs: alarms.append((seconds, kwargs)),
+                     cancel_dump_traceback_later=lambda: cancelled.append(True))}
+    exec(compile(ast.Module(body=functions, type_ignores=[]), "nodelang/launcher.py", "exec"), namespace)
+    namespace["_start_boot_phase"]("prepare desktop")
+    assert alarms[-1][0] == 90
+    for index, seconds in enumerate((90, 300)):
+        namespace["_boot_phase"](index)
+        assert alarms[-1] == (seconds, {"file": None, "exit": True})
+        namespace["_boot_phase"](index, finished=True)
+        assert namespace["_boot_deadline"] is None
+    assert len(cancelled) == 2
+    assert [phase['label'] for phase in progress.payload()['phases']] == list(BOOT_PHASES)
+    assert all(phase['seconds'] is not None for phase in progress.payload()['phases'])
+    namespace['_boot_surface'] = None
+    namespace['_boot_phase'](1)
+    assert alarms[-1][0] == 300
+    namespace['_boot_phase'](1, finished=True)
+    namespace['_start_boot_phase']('explicit court', timeout_seconds=0.1)
+    assert abs(alarms[-1][0] - 0.1) < 0.001

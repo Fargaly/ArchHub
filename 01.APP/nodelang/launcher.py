@@ -1447,9 +1447,11 @@ def _prepare_pipeline_after_home(held):
       if (!root?.children.length) return false;
       const home = [...document.querySelectorAll('[data-home-page],[data-home-tools],[data-screen="home"]')]
         .some(element => element.getBoundingClientRect().width > 0);
+      const canvas = [...document.querySelectorAll('[data-screen="canvas"] .node-canvas')]
+        .some(element => { const box = element.getBoundingClientRect(); return box.width > 0 && box.height > 0; });
       const onboarding = document.querySelector('[data-studio-screen="onboarding"]');
       const explicitGraph = window.ARCHHUB_BOOT?.open_graph && window.ARCHHUB_LIVE?.graph;
-      return Boolean((home && document.querySelectorAll('button').length > 5) || onboarding || explicitGraph);
+      return Boolean((home && document.querySelectorAll('button').length > 5) || canvas || onboarding || explicitGraph);
     })()""", observed)
 
 if os.environ.get("ARCHHUB_TEST_NO_OPEN"):

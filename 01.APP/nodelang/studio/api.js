@@ -1214,7 +1214,7 @@ api.ready=(async()=>{
  catch {notice('The saved browser session could not be read. Reconnecting this window.');}
  if(!session?.token||!session?.csrf)await signIn();else window.__archhubSession=session;
  commands=window.ArchHubStudioAuthority.create({get:path=>request(path),post:(path,body)=>request(path,body)});
- await commands.load();project();
+ await commands.load({home:true});project();
  publish({learning:{...state.learning,layer:'Host'}});
  ready=true;watchRefresh();
  // Account/network discovery must not hold the usable graph behind its timeout.

@@ -8263,6 +8263,19 @@
         "02.TESTS/tests_replica/test_stage2b_integration.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "EXTINSTALL": {
+      "source": "Founder relayed by 717: self-extension install fails E0100; fix own problems. BRIEF-EXTINSTALL.md. Isolated patch only; live app, installer, launcher, mailbox, conversation_history and native_agent_mcp excluded.",
+      "scope": [
+        "01.APP/nodelang/domains/selfext.py",
+        "03.TOOLS/tools/archhub-compiler/rules.json",
+        "02.TESTS/tests_domains/test_extinstall.py",
+        "05.EVIDENCE/acompiler-intents.json",
+        "03.TOOLS/tools/archhub-compiler/src/lib.rs",
+        "01.APP/nodelang/universal_application.py",
+        "01.APP/nodelang/universal_pipeline.py",
+        "03.TOOLS/tools/archhub-compiler/src/main.rs"
+      ]
     }
   }
 }

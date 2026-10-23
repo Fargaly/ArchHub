@@ -8242,6 +8242,15 @@
         "02.TESTS/tests_js/studio_boot38.test.cjs",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "MCPFRESH": {
+      "source": "Founder MCPFRESH: running connectors adopt installed BUILD_ID changes on the same stdio pipes without replay; reap connectors after original agent parent loss. Patch-only isolated lane, no native_agent_session.py/workshop_mailbox.py edits, live data, app, installer or new daemon. Retain uncertain owner custody for REATTACH rather than retry enrollment.",
+      "scope": [
+        "01.APP/nodelang/native_agent_mcp.py",
+        "02.TESTS/tests_replica/test_mcpfresh.py",
+        "05.EVIDENCE/acompiler-intents.json",
+        "04.DOCS/DECISIONS.md"
+      ]
     }
   }
 }

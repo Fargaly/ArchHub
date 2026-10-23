@@ -1,6 +1,7 @@
 """Secure storage for API keys and small settings."""
 from __future__ import annotations
 import base64, hashlib, importlib.util, json, os, re, tempfile, threading
+from contextlib import contextmanager, ExitStack
 from pathlib import Path
 
 SERVICE = "ArchHub"
@@ -270,8 +271,61 @@ def load_credential(name: str) -> str | None:
     return kr.get_password(SERVICE, name) if kr is not None else None
 
 
+@contextmanager
+def _archive_file(path, *, create=False):
+    """Hold one plain Windows file against replacement; delete by its held handle."""
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+        wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+    kernel.CreateFileW.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel.CloseHandle.restype = wintypes.BOOL
+    kernel.GetFileInformationByHandleEx.argtypes = (wintypes.HANDLE, ctypes.c_int,
+        wintypes.LPVOID, wintypes.DWORD)
+    kernel.GetFileInformationByHandleEx.restype = wintypes.BOOL
+    kernel.SetFileInformationByHandle.argtypes = (wintypes.HANDLE, ctypes.c_int,
+        wintypes.LPVOID, wintypes.DWORD)
+    kernel.SetFileInformationByHandle.restype = wintypes.BOOL
+    # READ + DELETE, optional WRITE; no sharing, CREATE_NEW/OPEN_EXISTING, OPEN_REPARSE_POINT.
+    handle = kernel.CreateFileW(str(path), 0x80010000 | (0x40000000 if create else 0),
+        0, None, 1 if create else 3, 0x00200000, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    def remove():
+        disposition = ctypes.c_ubyte(1)
+        if not kernel.SetFileInformationByHandle(handle, 4, ctypes.byref(disposition),
+                                                ctypes.sizeof(disposition)):
+            raise ctypes.WinError(ctypes.get_last_error())
+    stream = descriptor = None
+    yielded = False
+    try:
+        attributes = (wintypes.DWORD * 2)()
+        if not kernel.GetFileInformationByHandleEx(handle, 9, attributes, ctypes.sizeof(attributes)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        if attributes[0] & 0x400:
+            raise OSError('secrets.dat archive file is a reparse point; original preserved')
+        descriptor = msvcrt.open_osfhandle(handle, os.O_BINARY | (os.O_RDWR if create else os.O_RDONLY))
+        stream = os.fdopen(descriptor, 'r+b' if create else 'rb')
+        yielded = True
+        yield stream, remove
+    finally:
+        try:
+            if create and not yielded:
+                remove()
+        finally:
+            if stream is not None:
+                stream.close()
+            elif descriptor is not None:
+                os.close(descriptor)
+            else:
+                kernel.CloseHandle(handle)
+
+
 def archive_legacy_credentials() -> None:
-    """Move non-DPAPI bytes once, without decoding, into the existing Backups owner."""
+    """Archive non-DPAPI bytes once into the managed Backups destination."""
     from nodelang.model_router import _credential_file_bytes
     from nodelang.application_recovery_files import backup_location
     if os_store_refused():
@@ -284,23 +338,34 @@ def archive_legacy_credentials() -> None:
             return
         digest = hashlib.sha256(raw).hexdigest()
         directory = Path(backup_location(APP_DIR.parent)['directory'])
-        if directory != APP_DIR / 'backups':
-            raise OSError("secrets.dat archive requires the existing local app Backups folder")
         archive = directory / ('secrets-legacy-' + digest + '.dat')
         receipt = archive.with_suffix('.sha256')
         # Validate every ancestor before mkdir or any archive/receipt write.
         existing = _credential_file_bytes(archive)
         previous_receipt = _credential_file_bytes(receipt)
-        if existing is not None:
+        if existing is not None or previous_receipt is not None:
             raise OSError("secrets.dat archive already exists; original preserved")
         directory.mkdir(parents=True, exist_ok=True)
-        _replace_bytes(receipt, (digest + "\n").encode('ascii'), expected=previous_receipt)
-        if _credential_file_bytes(SECRETS_FILE) != raw:
-            raise OSError("secrets.dat changed; original preserved")
-        # Windows rename refuses an existing destination; never overwrite an archive.
-        os.rename(SECRETS_FILE, archive)
-        if _credential_file_bytes(archive) != raw:
-            raise OSError("secrets.dat archive could not be confirmed")
+        with _archive_file(SECRETS_FILE) as (source, remove_source), ExitStack() as files:
+            if source.read(len(raw) + 1) != raw:
+                raise OSError("secrets.dat changed; original preserved")
+            created = []
+            try:
+                # Exclusive copies work across volumes; keep all handles through confirmation.
+                for target, payload in ((archive, raw), (receipt, (digest + "\n").encode('ascii'))):
+                    stream, remove = files.enter_context(_archive_file(target, create=True))
+                    created.append(remove)
+                    stream.write(payload)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                    stream.seek(0)
+                    if stream.read(len(payload) + 1) != payload:
+                        raise OSError("secrets.dat archive could not be confirmed; original preserved")
+                remove_source()
+            except Exception:
+                for remove in reversed(created):
+                    remove()
+                raise
 
 
 def mutate_credential(name, mutate, *, before_replace=None, unconfirmed="save_unconfirmed"):

@@ -181,9 +181,11 @@
       const n = await act(() => api.exposeSettingsPage(page));
       if (n) go('canvas');
     };
-    const pickWorkspace = () => act(() => api.addWorkspace()).then(result => {
-      if (result) setToast('Workspace registered');
-    });
+    const pickWorkspace = async () => {
+      const result = await api.addWorkspace();
+      setToast(result.message);
+      return result;
+    };
     const pickFlow = () => flowInput.current?.click();
     const pickFile = () => act(async () => { const file = await api.addFile(); if (file) return api.addComposerAttachment(file.id); return null; });
     const value = {

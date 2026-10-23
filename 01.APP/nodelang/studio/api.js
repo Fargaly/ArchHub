@@ -411,7 +411,7 @@ Object.assign(api,{
   return updateAction('reload');
  },
  async listWorkspaces(){const data=await request('/api/universal/workspace-roots',{action:'list'});const roots=[...(data.built_in?[{...data.built_in,root_id:data.built_in.id,builtIn:true}]:[]),...(data.roots||[])];const workspaces=roots.map(w=>({id:w.root_id,name:w.label||w.root_id,folder:w.path,canvas:w.canvas||'',builtIn:w.builtIn===true,removable:w.removable!==false,privacy:w.privacy}));publish({workspaces});return workspaces;},
- async addWorkspace(input={}){let path=input.folder;if(!path){const picked=await request('/api/universal/workspace-roots',{action:'browse'});path=picked.path;if(!path)return null;}const result=await request('/api/universal/workspace-roots',{action:'register',path,privacy:'private',profile:'client'});await api.listWorkspaces();return result;},
+ async addWorkspace(input={}){let path=input.folder;if(!path){const picked=await request('/api/universal/workspace-roots',{action:'browse'});path=picked.path;if(!path)return {cancelled:true,message:'Folder selection cancelled'};}const result=await request('/api/universal/workspace-roots',{action:'register',path,privacy:'private',profile:'client'});await api.listWorkspaces();return {...result,message:'Workspace registered'};},
  async removeWorkspace(id){const result=await request('/api/universal/workspace-roots',{action:'unregister',id});await api.listWorkspaces();return result;},
 });
 for(const fn of ['setTaskStatus','reassignTask','setTaskDelegate','queueTaskMessage','settleQueuedMessage','steerTask','addTaskReview','resolveTaskReview']) {

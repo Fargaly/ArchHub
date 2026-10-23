@@ -1548,8 +1548,11 @@ def _pick_file(title, name_filter):
 # Settings -> Workspaces "Browse": the same window-owned dialog, for a folder.
 def _pick_folder(title):
     from PyQt6.QtWidgets import QFileDialog
-    return _ask_on_gui_thread(
-        lambda: QFileDialog.getExistingDirectory(window, title, ""), 600) or ""
+    chosen = _ask_on_gui_thread(
+        lambda: QFileDialog.getExistingDirectory(window, title, ""), 600)
+    if chosen is None:
+        raise TimeoutError('Folder picker timed out; try choosing the folder again.')
+    return chosen
 import threading
 server.native_file_picker = _pick_file
 server.native_folder_picker = _pick_folder

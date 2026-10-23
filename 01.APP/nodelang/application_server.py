@@ -7935,8 +7935,16 @@ class ApplicationServer(WorkspaceRootsOwner):
                             # Browse opens THIS window's own folder dialog (the
                             # desktop's Qt thread), like pick-file; it only
                             # fills the path in; registration uses the same owner.
-                            chosen = picker('Choose a folder for ArchHub to govern')
-                            self._json(200, {'ok': True, 'path': normalized_picked_folder(chosen)})
+                            print('  workspace browse: opened', flush=True)
+                            try:
+                                chosen = normalized_picked_folder(picker('Choose a folder for ArchHub to govern'))
+                            except Exception as exc:
+                                print('  workspace browse: refused: ' + str(exc), flush=True)
+                                raise
+                            message = 'Folder selected' if chosen else 'Folder selection cancelled'
+                            print('  workspace browse: ' + ('selected' if chosen else 'cancelled'), flush=True)
+                            self._json(200, {'ok': True, 'path': chosen, 'cancelled': not bool(chosen),
+                                             'message': message})
                             return
                         receipt = isinstance(body, dict) and body.get('action') in (
                             'grant-private-root', 'revoke-private-root')
@@ -7944,10 +7952,14 @@ class ApplicationServer(WorkspaceRootsOwner):
                             answer = owner._clean_workspace_roots(
                                 body, admission={'principal': settings_principal()})
                         except Exception as exc:
+                            if isinstance(body, dict) and body.get('action') in ('browse', 'register'):
+                                print('  workspace %s: refused: %s' % (body['action'], exc), flush=True)
                             if receipt:
                                 record_grant_event('desktop', 'refused',
                                                    '%s: %s' % (type(exc).__name__, exc), body)
                             raise
+                        if isinstance(body, dict) and body.get('action') == 'register':
+                            print('  workspace register: completed', flush=True)
                         if receipt:
                             event = answer.get('last_private_grant_event') or {}
                             record_grant_event('desktop', 'ok', event.get('message', ''), body)

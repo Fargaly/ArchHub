@@ -8205,6 +8205,17 @@
         "02.TESTS/tests_replica/test_appstable.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "CANVASOLD": {
+      "source": "Founder CANVASOLD: restore historical canvas renderer; full-height canvas/floating composer/full-height library; actual typed sockets and wires; system application graph grouped in Settings; keep CANVASFEEL gestures. Isolated patch;717 lands/builds/installs. No storage, installer, live-profile, Workshop or Workspaces implementation change. 717 resume: saved single/group drag; plain box selection, Shift add/Ctrl remove; Escape and empty click clear. Keep unexposed parameters as widgets; backend interface generation is outside this lane.",
+      "scope": [
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/app.jsx",
+        "01.APP/nodelang/studio/ds_screens.jsx",
+        "01.APP/nodelang/studio/ds_settings3.jsx",
+        "01.APP/nodelang/studio/style.css",
+        "02.TESTS/tests_js/studio_canvasold.test.cjs"
+      ]
     }
   }
 }

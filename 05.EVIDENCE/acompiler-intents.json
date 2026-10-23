@@ -170,7 +170,7 @@
       ]
     },
     "OPENWS": {
-      "source": "F62 Founder 2026-10-18 OPENWS: own account agents in registered workspaces never wait for grants; permission system stays. Why: وكسم البريميشنز وقفل الشغل ده حاجة انا قلت متتكررش مليون مرة ; مبقولش نمسح البيرميشن سيستم",
+      "source": "F62 Founder 2026-10-18 OPENWS: own account agents in registered workspaces never wait for grants; permission system stays. Why: \u0648\u0643\u0633\u0645 \u0627\u0644\u0628\u0631\u064a\u0645\u064a\u0634\u0646\u0632 \u0648\u0642\u0641\u0644 \u0627\u0644\u0634\u063a\u0644 \u062f\u0647 \u062d\u0627\u062c\u0629 \u0627\u0646\u0627 \u0642\u0644\u062a \u0645\u062a\u062a\u0643\u0631\u0631\u0634 \u0645\u0644\u064a\u0648\u0646 \u0645\u0631\u0629 ; \u0645\u0628\u0642\u0648\u0644\u0634 \u0646\u0645\u0633\u062d \u0627\u0644\u0628\u064a\u0631\u0645\u064a\u0634\u0646 \u0633\u064a\u0633\u062a\u0645",
       "scope": [
         "nodelang/private_root_grants.py",
         "nodelang/workspace_roots_catalogue.py",
@@ -4498,7 +4498,7 @@
       ]
     },
     "PATHFIX": {
-      "source": "Founder 2026-10-20: \"موضوع البوينترز ده السيشن اللي ظبطت الووركسبيس مظبتهوش ليه جوة كل الفايلز\" (fix every pointer the workspace move left stale, in all files). Path-string rewrites only; no behaviour change.",
+      "source": "Founder 2026-10-20: \"\u0645\u0648\u0636\u0648\u0639 \u0627\u0644\u0628\u0648\u064a\u0646\u062a\u0631\u0632 \u062f\u0647 \u0627\u0644\u0633\u064a\u0634\u0646 \u0627\u0644\u0644\u064a \u0638\u0628\u0637\u062a \u0627\u0644\u0648\u0648\u0631\u0643\u0633\u0628\u064a\u0633 \u0645\u0638\u0628\u062a\u0647\u0648\u0634 \u0644\u064a\u0647 \u062c\u0648\u0629 \u0643\u0644 \u0627\u0644\u0641\u0627\u064a\u0644\u0632\" (fix every pointer the workspace move left stale, in all files). Path-string rewrites only; no behaviour change.",
       "scope": [
         "installer/build_release.ps1",
         "tests_replica/test_baboom_single_authority.py",
@@ -4510,7 +4510,7 @@
       ]
     },
     "SWITCHFIX": {
-      "source": "Founder 2026-10-21: \"كسم التيستس عملت له تيست على سيشن تانية وجربت تشوفه شغال ولا لا؟ لانه فيه مشاكل كتير\" (test the Switch on a real session; it has many problems). Observed in his session 2026-10-20: \"gemini/gemini-4-argon failed: This reasoning effort requires a supported OpenRouter route.\" The bridge sends the session effort to Gemini; the router admits it for OpenRouter only.",
+      "source": "Founder 2026-10-21: \"\u0643\u0633\u0645 \u0627\u0644\u062a\u064a\u0633\u062a\u0633 \u0639\u0645\u0644\u062a \u0644\u0647 \u062a\u064a\u0633\u062a \u0639\u0644\u0649 \u0633\u064a\u0634\u0646 \u062a\u0627\u0646\u064a\u0629 \u0648\u062c\u0631\u0628\u062a \u062a\u0634\u0648\u0641\u0647 \u0634\u063a\u0627\u0644 \u0648\u0644\u0627 \u0644\u0627\u061f \u0644\u0627\u0646\u0647 \u0641\u064a\u0647 \u0645\u0634\u0627\u0643\u0644 \u0643\u062a\u064a\u0631\" (test the Switch on a real session; it has many problems). Observed in his session 2026-10-20: \"gemini/gemini-4-argon failed: This reasoning effort requires a supported OpenRouter route.\" The bridge sends the session effort to Gemini; the router admits it for OpenRouter only.",
       "scope": [
         "nodelang/model_session_bridge.py",
         "nodelang/model_router.py",
@@ -8149,6 +8149,34 @@
         "02.TESTS/tests_replica/test_social3_send.py",
         "05.EVIDENCE/acompiler-intents.json",
         "02.TESTS/tests_js/accountstore_connections.test.cjs"
+      ]
+    },
+    "USERSIM": {
+      "source": "Founder USERSIM: installed-app release check with 8+ editable personas derived from real jobs, generated scale-only profile, free-only action/critic loop, per-step screenshots, frozen window BROKEN for every job, existing release gate after mechanical qualification. Patch-only lane;717 owns landing/build/install. Missing native/old-build proof remains refused and explicitly open.",
+      "scope": [
+        "03.TOOLS/tools/real_app_check/usersim.py",
+        "03.TOOLS/tools/real_app_check/usersim.mjs",
+        "03.TOOLS/tools/real_app_check/USERSIM-PERSONAS.json",
+        "03.TOOLS/tools/real_app_check/harness.mjs",
+        "03.TOOLS/tools/real_app_check/README.md",
+        "03.TOOLS/installer/build_release.ps1",
+        "02.TESTS/tests/test_usersim.py",
+        "04.DOCS/DECISIONS.md",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
+    "USERSIMRETURN1": {
+      "source": "717 RETURN1 / founder USERSIM: change only installed persona release policy and actor reliability. Always refuse sampled hung windows or observed app exits; otherwise refuse only a core job DONE in the saved last-installed report becoming BROKEN. Other BROKEN/CONFUSING and unattempted UNREACHED jobs are advisory. Type real keystrokes into focused text fields with readback. Keep baseline beside evidence, replay the four requested courts, rebase90624b71, return patch plus SHA to717; no app feature/profile/main/install changes.",
+      "scope": [
+        "03.TOOLS/tools/real_app_check/usersim.py",
+        "03.TOOLS/tools/real_app_check/usersim.mjs",
+        "03.TOOLS/tools/real_app_check/USERSIM-PERSONAS.json",
+        "03.TOOLS/tools/real_app_check/harness.mjs",
+        "03.TOOLS/tools/real_app_check/README.md",
+        "03.TOOLS/installer/build_release.ps1",
+        "02.TESTS/tests/test_usersim.py",
+        "04.DOCS/DECISIONS.md",
+        "05.EVIDENCE/acompiler-intents.json"
       ]
     }
   }

@@ -10,9 +10,7 @@
     useApp,
     Btn,
 
-    Chip,
-
-    SettingControl
+    Chip
   } = window.UI;
   const curve = (a, b) => `M${a.x} ${a.y} C${(a.x + b.x) / 2} ${a.y},${(a.x + b.x) / 2} ${b.y},${b.x} ${b.y}`;
   const isGroup = n => n.children?.length > 0 || n.kind === 'Group' || n.kind === 'Workshop';
@@ -26,6 +24,59 @@
     any: A.inkSoft,
     view: A.cyan
   })[t] || A.accent;
+  function measureWires(world, wires, zoom = 1) {
+    if (!world) return [];
+    const bounds=world.getBoundingClientRect(), sockets=new Map([...world.querySelectorAll('[data-port-key]')].map(el=>{
+      const r=el.getBoundingClientRect();return [el.dataset.portKey,{x:(r.left+r.width/2-bounds.left)/zoom,y:(r.top+r.height/2-bounds.top)/zoom}];
+    }));
+    return wires.map(w=>({w,a:sockets.get(`${w.from}:out:${w.fromPort}`),b:sockets.get(`${w.to}:in:${w.toPort}`)})).filter(p=>p.a&&p.b);
+  }
+  function GraphWires({paths,selectedId,onSelect,visibility='Visible',nodes=[]}) {
+    return <>{paths.map(({w,a,b})=>{
+      const portVisibility=nodes.find(n=>n.id===w.from)?.portVisibility?.[w.fromPort],
+        opacity=visibility==='Hidden'||portVisibility==='Hidden' ? 0 : visibility==='Faint'||portVisibility==='Faint' ? .2 : .9;
+      return <g key={w.id}>{onSelect && <path d={curve(a,b)} stroke="transparent" strokeWidth="16" fill="none" style={{pointerEvents:'stroke',cursor:'pointer'}} role="button" tabIndex={0} aria-label={'Inspect wire '+w.id}
+        onClick={e=>{e.stopPropagation();onSelect(w.id);}} onKeyDown={e=>{if(e.key==='Enter')onSelect(w.id);}} />}
+        {selectedId===w.id && visibility!=='Hidden' && <path d={curve(a,b)} stroke={A.ink} strokeWidth="8" opacity=".22" fill="none" />}
+        <path data-graph-wire={w.id} d={curve(a,b)} stroke={typeColor(w.type)} strokeWidth="2" strokeLinecap="round" strokeDasharray={w.type==='event'?'6 2':undefined} opacity={opacity} fill="none" />
+      </g>;
+    })}</>;
+  }
+  // e6e4a367 studio-lm.jsx NodeRenderer: category header, role edge and parameter body.
+  function NodeRenderer({n, catalogue = [], selected, headerProps, headerEnd, renderPort, members, onMember}) {
+    const u = useApp();
+    const exact = catalogue.find(c=>c.id===n.definition||c.id===n.assembly||c.name===n.assembly||c.id===n.kind||c.name===n.kind),
+      engines=catalogue.filter(c=>c.descriptor?.engine===n.kind), category=exact||(engines.length===1 ? engines[0] : null),
+      family = (n.category || category?.family || n.kind).toLowerCase(), grouped = isGroup(n),
+      [color, icon] = grouped ? [A.purple,'group'] : ({
+        get:[A.cyan,'folder'],host:[A.cyan,'folder'],read:[A.cyan,'folder'],input:[A.blue,'code'],trigger:[A.cyan,'clock'],
+        change:[A.warn,'edit'],shape:[A.warn,'group'],filter:[A.warn,'group'],transform:[A.warn,'edit'],document:[A.accent,'docs'],compose:[A.accent,'docs'],annotate:[A.accent,'edit'],
+        decide:[A.purple,'brain'],logic:[A.purple,'code'],ai:[A.purple,'brain'],agent:[A.purple,'user'],
+        see:[A.ok,'eye'],watch:[A.ok,'eye'],watcher:[A.ok,'eye'],check:[A.ok,'check'],send:[A.ok,'send'],output:[A.ok,'export']})[family] || [A.blue,'canvas'],
+      state = n.frozen ? 'Disabled' : n.previewOff ? 'Preview off' : n.status || 'Idle',
+      stateColor = /error|fail|refus/i.test(state) ? A.err : /approval|wait|warning|changed/i.test(state) ? A.warn : /running/i.test(state) ? A.accent : /done|ran/i.test(state) ? A.ok : A.inkSoft;
+    return <D.Node className="lm-node" data-category={family} w={224} glyph={<window.AHIcon name={icon} size={12} />} gc={color}
+      title={n.title} sub={grouped ? `group · ${(members || []).length} members` : category?.name || n.assembly || n.kind}
+      style={{borderTop:'2px solid '+color}} stacked={grouped}
+      edge={!n.inputs.length && n.outputs.length ? 'l' : n.inputs.length && !n.outputs.length ? 'r' : undefined}
+      selected={selected} run={/running/i.test(state)} dashed={n.frozen}
+      foot={state + (n.elapsedMs ? ' · ' + n.elapsedMs + ' ms' : '')} footc={stateColor}
+      ins={n.inputs} outs={n.outputs} renderPort={renderPort}
+      headerProps={{...headerProps,style:{borderTop:'2px solid '+color,borderBottom:'1px solid '+A.lineSoft,...headerProps?.style}}}
+      headerEnd={headerEnd} chip={grouped && <div className="canvas-members">{(members || []).map(m=><button key={m.id} data-group-member={m.id} className="canvas-member" title={'Open '+m.title} onClick={event=>executeAction('projects.controls.activate',{handler:()=>onMember?.(m)},event)}><span style={{background:color,color:A.onFill}}>{m.title.slice(0,1)}</span>{m.title}</button>)}</div>}>
+      {!grouped && Object.entries(n.params).map(([key,value])=>{
+        const p=n.parameterSchema?.find(p=>p.key===key), label=n.title+' '+key,
+          save=v=>u.act(()=>api.setNodeParam(n.id,key,v));
+        return <div className="canvas-card-param" data-parameter={key} key={key}><span>{key}{p?.unit ? ' · '+p.unit : ''}</span>
+          {p?.editable && ['string','number','boolean'].includes(typeof value) ? p.type==='boolean'
+            ? <D.Toggle label={label} checked={value} onCheckedChange={save} />
+            : p.options?.length ? <select aria-label={label} value={value} onChange={e=>save(e.target.value)}>{p.options.map(v=><option key={v}>{v}</option>)}</select>
+            : <input aria-label={label} type={p.type==='number'?'number':'text'} min={p.min} max={p.max} step={p.step} value={value} style={{width:96,minWidth:0}} onChange={e=>{if(p.type!=='number'||Number.isFinite(e.target.valueAsNumber))save(p.type==='number'?e.target.valueAsNumber:e.target.value);}} />
+            : <span title={typeof value==='object'?JSON.stringify(value):String(value)}>{typeof value==='object'?JSON.stringify(value):String(value)}</span>}
+        </div>;
+      })}
+    </D.Node>;
+  }
   function Canvas({
     embedded = false
   }) {
@@ -86,7 +137,7 @@
     }, [zoom, zoomSetting, zoomRow?.id, zoomSaveDelay, requestState]);
     const reload = () => {
       setRequestState('waiting');
-      return api.refreshProjects().then(() => {
+      return api.refreshProjects({userCanvas:true}).then(()=>api.refreshLibraryPorts?.()).then(() => {
         setRequestState(api.getSnapshot().graph.nodes.length ? 'loaded' : 'empty');
       }).catch(error => {
         setRequestError(error.message);
@@ -99,29 +150,20 @@
         setRequestState(s.graph.nodes.length ? 'loaded' : 'empty');
     }, [s.graph.nodes.length]);
     // A node whose group is not a node at this level is drawn here, never dropped.
-    const atLevel = n => (n.parent || null) === parent || (parent === null && !s.graph.nodes.some(x => x.id === n.parent));
+    const atLevel = n => s.graph.id!==s.graphs?.[0]?.id && !n.application && ((n.parent || null) === parent || (parent === null && !s.graph.nodes.some(x => x.id === n.parent)));
     const scope = s.graph.id + ':' + (parent || ''), sourceNodes = s.graph.nodes.filter(atLevel);
     const visible = sourceNodes.map(n => ({...n, ...(layout.scope === scope ? layout.positions[n.id] : {})})),
       node = s.graph.nodes.find(n => n.id === selected.at(-1)),
       wire = s.graph.wires.find(w => w.id === wireId);
     React.useLayoutEffect(() => {
       if (requestState !== 'loaded' || !world.current) return;
-      const boxes = [], positions = {}, minX = Math.min(...sourceNodes.map(n => n.x), 0),
-        rowWidth = Math.max(760, Math.ceil(Math.sqrt(sourceNodes.length)) * 310), prior = layout.scope === scope ? layout.positions : {};
+      const positions = {};
       for (const n of sourceNodes) {
-        const previous = prior[n.id], unchanged = previous?.sourceX === n.x && previous?.sourceY === n.y;
         const el = world.current.querySelector('[data-graph-node="' + n.id + '"]'),
-          box = {x:unchanged ? previous.x : n.x, y:unchanged ? previous.y : n.y, w:(el?.offsetWidth || el?.getBoundingClientRect().width / view.current.zoom || 224) + (isGroup(n) ? 10 : 0),
+          box = {x:n.x, y:n.y, w:(el?.offsetWidth || el?.getBoundingClientRect().width / view.current.zoom || 224) + (isGroup(n) ? 10 : 0),
             h:(el?.offsetHeight || el?.getBoundingClientRect().height / view.current.zoom || 160) + (isGroup(n) ? 10 : 0)};
-        let hit;
-        while ((hit = boxes.find(b => box.x < b.x+b.w+36 && box.x+box.w+36 > b.x && box.y < b.y+b.h+48 && box.y+box.h+48 > b.y))) {
-          box.x = hit.x + hit.w + 36;
-          if (box.x + box.w > minX + rowWidth) {
-            box.x = minX;
-            box.y = Math.max(box.y, hit.y+hit.h) + 64;
-          }
-        }
-        positions[n.id] = {x:box.x,y:box.y,w:box.w,h:box.h,sourceX:n.x,sourceY:n.y}; boxes.push(box);
+        // Saved user positions are authoritative; only Arrange may repack them.
+        positions[n.id] = box;
       }
       setLayout(old => old.scope === scope && JSON.stringify(old.positions) === JSON.stringify(positions) ? old : {scope,positions});
     }, [requestState, scope, s.graph.nodes]);
@@ -146,6 +188,8 @@
         if (e.key === 'Enter' && node && isGroup(node)) setParent(node.id);
         if (e.key === 'Escape') {
           setFrom(null);
+          setSelected([]);
+          setWireId(null);
           if (parent) setParent(null);
         }
         if (e.ctrlKey && e.key.toLowerCase() === 'a') {
@@ -165,22 +209,7 @@
       };
     });
     React.useLayoutEffect(() => {
-      if (!world.current) return;
-      const pos = (id, side, port) => {
-        const el = world.current.querySelector(`[data-port-key="${id}:${side}:${port}"]`);
-        if (!el) return null;
-        const r = el.getBoundingClientRect(),
-          w = world.current.getBoundingClientRect();
-        return {
-          x: (r.left + r.width / 2 - w.left) / zoom,
-          y: (r.top + r.height / 2 - w.top) / zoom
-        };
-      };
-      setPaths(s.graph.wires.map(w => ({
-        w,
-        a: pos(w.from, 'out', w.fromPort),
-        b: pos(w.to, 'in', w.toPort)
-      })).filter(p => p.a && p.b));
+      setPaths(measureWires(world.current,s.graph.wires,zoom));
     }, [s.revision, parent, draft, requestState, layout]);
     React.useEffect(() => u.setSelectedNodeId(selected.at(-1) || null), [selected.join(',')]);
     const group = async () => {
@@ -198,6 +227,16 @@
       }
       const out = a.side === 'out' ? a : b,
         input = a.side === 'in' ? a : b;
+      const outputPort = s.graph.nodes.find(n=>n.id===out.id)?.outputs.find(p=>p.id===out.port),
+        inputPort = s.graph.nodes.find(n=>n.id===input.id)?.inputs.find(p=>p.id===input.port);
+      if (!outputPort || !inputPort || outputPort.connectable === false || inputPort.connectable === false || outputPort.read_only || inputPort.read_only) { setFrom(null); return; }
+      if (outputPort.type !== inputPort.type && outputPort.type !== 'any' && inputPort.type !== 'any') {
+        u.show('Type mismatch', {text:outputPort.type+' cannot connect to '+inputPort.type}); setFrom(null); return;
+      }
+      const choices = outputPort.connect_choices;
+      if (Array.isArray(choices) && !choices.some(p=>p.id===input.id && p.interface===input.port)) {
+        u.show('Type mismatch', {text:'These sockets do not share an admitted contract.'}); setFrom(null); return;
+      }
       const result = await u.act(() => api.connectSockets({
         from: out.id,
         to: input.id,
@@ -214,9 +253,10 @@
         port: p.id
       };
       const arm = () => {
+        if (p.connectable === false || p.read_only) return;
         if (from) connect(from, endpoint);else setFrom(endpoint);
       };
-      return <span data-port-key={`${n.id}:${side}:${p.id}`} data-endpoint={JSON.stringify(endpoint)} className="socket" onContextMenu={e => {
+      return <span data-port-key={`${n.id}:${side}:${p.id}`} data-endpoint={JSON.stringify(endpoint)} className="socket" data-port-type={p.type} data-port-list={p.list || undefined} title={`${p.name} · ${p.type}${p.list ? " list" : ""}${p.unit ? " · "+p.unit : ""}`} onContextMenu={e => {
         e.preventDefault();
         e.stopPropagation();
         u.show('Port menu', {
@@ -227,13 +267,14 @@
             y: e.clientY
           }
         });
-      }} role="button" tabIndex={0} aria-label={`${n.title} ${side} ${p.name}`} aria-pressed={from?.id === n.id && from?.side === side && from?.port === p.id} style={{
+      }} role="button" tabIndex={0} aria-disabled={p.connectable === false || p.read_only || undefined} aria-label={`${n.title} ${side} ${p.name}`} aria-pressed={from?.id === n.id && from?.side === side && from?.port === p.id} style={{
         display: 'inline-grid',
         placeItems: 'center',
         width: 22,
         height: 22
       }} onPointerDown={e => {
         e.stopPropagation();
+        if (p.connectable === false || p.read_only) return;
         gesture.current = {
           kind: 'wire',
           sx: e.clientX,
@@ -275,11 +316,12 @@
       }}><D.Socket t={p.type} list={p.list} size={10} filled={s.graph.wires.some(w => side === 'out' ? w.from === n.id && w.fromPort === p.id : w.to === n.id && w.toPort === p.id)} /></span>;
     };
     const startNode = (e, n) => {
-      if (e.button !== 0 || e.target.closest('button,input,select,[data-endpoint]')) return;
+      if (e.button !== 0 || e.target.closest('button,input,textarea,select,[contenteditable="true"],[data-endpoint]')) return;
       e.stopPropagation();
       setWireId(null);
-      setSelected(e.shiftKey ? [...new Set([...selected, n.id])] : selected.includes(n.id) ? selected : [n.id]);
-      const moving = selected.includes(n.id) ? selected : [n.id];
+      if (e.ctrlKey) { setSelected(selected.filter(id=>id!==n.id)); return; }
+      const moving = e.shiftKey ? [...new Set([...selected, n.id])] : selected.includes(n.id) ? selected : [n.id];
+      setSelected(moving);
       gesture.current = {
         nodes: visible.filter(x => moving.includes(x.id)).map(x => ({
           id: x.id,
@@ -341,16 +383,18 @@
     const end = e => {
       if (e?.pointerType === 'touch') touches.current.delete(e.pointerId);
       const g = gesture.current;
-      if (g?.kind === 'node' && g.dragging && g.draft) u.act(() => api.moveNodes(g.draft.positions));
-      if (g?.kind === 'marquee' && g.box) {
-        const box = g.box;
-        setSelected(visible.filter(n => {
+      if (!g) return;
+      if (g?.kind === 'node' && g.dragging && g.draft) {
+        Promise.resolve(u.act(() => api.moveNodes(g.draft.positions))).finally(()=>setDraft(held=>held===g.draft ? null : held));
+      } else setDraft(null);
+      if (g?.kind === 'marquee') {
+        const box = g.box, inside = box ? visible.filter(n => {
           const r = world.current.querySelector('[data-graph-node="' + n.id + '"]')?.getBoundingClientRect();
           return r && r.right >= box.left && r.left <= box.right && r.bottom >= box.top && r.top <= box.bottom;
-        }).map(n => n.id));
+        }).map(n => n.id) : [];
+        setSelected(g.remove ? g.selected.filter(id=>!inside.includes(id)) : g.add ? [...new Set([...g.selected,...inside])] : inside);
       }
       gesture.current = null;
-      setDraft(null);
       setMarquee(null);
     };
     const fit = () => {
@@ -369,10 +413,10 @@
       updateView({zoom: z, pan: {x: (w-width*z)/2-minX*z, y: (h-height*z)/2-minY*z}});
     };
     React.useEffect(() => {
-      if (requestState !== 'loaded' || layout.scope !== scope || fittedScope.current === scope) return;
-      fittedScope.current = scope;
+      if (requestState !== 'loaded' || layout.scope !== scope || fittedScope.current === scope+':'+u.libraryOpen) return;
+      fittedScope.current = scope+':'+u.libraryOpen;
       fit();
-    }, [requestState, scope, layout]);
+    }, [requestState, scope, layout, u.libraryOpen]);
     React.useEffect(() => {
       const el = area.current;
       if (!el) return;
@@ -411,7 +455,8 @@
     };
     const body = <div data-screen="canvas" style={{
       display: 'grid',
-      gridTemplateRows: '50px minmax(0,1fr)',
+      gridTemplateRows: 'minmax(0,1fr)',
+      position: 'relative',
       minHeight: 0,
       '--canvas-bg': A.bgCanvas,
       '--canvas-panel': A.bgPanel,
@@ -425,16 +470,16 @@
       '--canvas-accent-dim': A.accentDim
     }}>
   <div className="spread" style={{
-        padding: '0 18px',
-        borderBottom: '1px solid ' + A.lineSoft,
-        background: A.bg
+        position:'absolute',top:12,left:u.libraryOpen ? 264 : 16,right:16,zIndex:12,
+        padding: '6px 12px',borderRadius:6,border:'1px solid '+A.lineSoft,
+        background: A.bgPanel
       }}><div className="flex"><button className="button-reset muted" onClick={event => executeAction("projects.ds_screens.NavigateHome.5", {u}, event)}>{s.graph.name} ›</button>{parent ? <Btn variant="controls" sm ghost onClick={event => executeAction("projects.ds_screens.Parent.6", {parent,s,setParent,setSelected}, event)}>← Parent</Btn> : <button className="button-reset flex" title="Graphs" aria-label="Graphs" onClick={event => executeAction("projects.ds_screens.Graphs.7", {u}, event)}>{s.graph.name}<window.AHIcon name="more" size={16} /></button>}<Chip>{visible.length} nodes</Chip><Btn variant="controls" sm ghost onClick={event => executeAction("projects.ds_screens.Workspaces.8", {u}, event)}>Workspaces · {s.workspaces.length}</Btn></div><div className="flex"><button className="icon-button" aria-label="Toggle Library" title="Library" aria-expanded={u.libraryOpen} onClick={event => executeAction("projects.ds_screens.ToggleLibrary.9", {u}, event)}><window.AHIcon name="library" /></button><select aria-label="Wire visibility" value={s.graph.wireVisibility || 'Visible'} onChange={e => u.act(() => api.setWireVisibility(e.target.value))}>{['Visible', 'Faint', 'Hidden'].map(x => <option key={x}>{x}</option>)}</select><Btn variant="controls" sm title="Group · Ctrl G" onClick={event => executeAction("projects.ds_screens.Group.10", {group}, event)} disabled={selected.length < 2}>Group</Btn><Btn variant="controls" sm onClick={event => executeAction("projects.ds_screens.Undo.11", {api,u}, event)} title="Undo · Ctrl Z">↶</Btn><Btn variant="controls" sm onClick={event => executeAction("projects.ds_screens.Redo.12", {api,u}, event)} title="Redo · Ctrl Shift Z">↷</Btn><Btn variant="controls" sm onClick={event => executeAction("projects.ds_screens.Arrange.13", {api,u}, event)}>Arrange</Btn><Btn variant="controls" sm onClick={event => executeAction("projects.ds_screens.SaveSkill.14", {u}, event)}>Save skill</Btn><Btn variant="controls" p sm onClick={event => executeAction("projects.ds_screens.Run.15", {api,u}, event)}>▶ Run</Btn></div></div>
   <div style={{
         display: 'grid',
         gridTemplateColumns: (u.libraryOpen ? '248px ' : '') + 'minmax(0,1fr)' + (wire ? ' 320px' : ''),
         minHeight: 0
       }}>{u.libraryOpen && <window.UI.LibraryShelf onClose={() => u.setLibraryOpen(false)} />}
-   <div ref={area} className="node-canvas" tabIndex={0} aria-label="Graph canvas" style={{touchAction:'none'}} title="Wheel to zoom · Middle or Space-drag to pan · Shift-drag to select · Double-click to fit" onPointerDownCapture={e => {
+   <div ref={area} className="node-canvas" tabIndex={0} aria-label="Graph canvas" style={{touchAction:'none',userSelect:'none'}} title="Drag to select · Shift adds · Ctrl removes · Middle or Space-drag to pan · Wheel to zoom · Double-click to fit" onPointerDownCapture={e => {
           if (e.target.closest('input,textarea,select,[contenteditable="true"]')) return;
           area.current.focus({preventScroll:true});
           if (e.pointerType === 'touch') {
@@ -461,10 +506,10 @@
         }} onAuxClick={e => { if (e.button === 1) e.preventDefault(); }} onPointerDown={e => {
           if (e.button !== 0 || touches.current.size > 1) return;
           if (e.target === e.currentTarget || e.target === world.current) {
-            setSelected([]);
             setWireId(null);
             gesture.current = {
-              kind: e.shiftKey ? 'marquee' : 'pan',
+              kind: 'marquee',
+              selected, add:e.shiftKey, remove:e.ctrlKey,
               sx: e.clientX,
               sy: e.clientY,
               x: pan.x,
@@ -519,48 +564,18 @@
               pointerEvents: 'none'
             }}><defs><clipPath id={clipId} clipPathUnits="userSpaceOnUse"><path clipRule="evenodd" d={'M-100000 -100000H100000V100000H-100000Z '+visible.map(n=>{
               const p=draft?.positions?.[n.id] || n, b=layout.positions[n.id];
-              return `M${p.x-3} ${p.y-3}h${(b?.w || 224)+6}v${(b?.h || 160)+6}h-${(b?.w || 224)+6}Z`;
-            }).join(' ')} /></clipPath></defs><g clipPath={`url(#${clipId})`}>{paths.map(({
-                w,
-                a,
-                b
-              }) => <g key={w.id}><path d={curve(a, b)} stroke="transparent" strokeWidth="16" fill="none" style={{
-                  pointerEvents: 'stroke',
-                  cursor: 'pointer'
-                }} role="button" tabIndex={0} aria-label={'Inspect wire ' + w.id} onClick={e => {
-                  e.stopPropagation();
-                  setWireId(w.id);
-                  setSelected([]);
-                }} onKeyDown={e => {
-                  if (e.key === 'Enter') {
-                    setWireId(w.id);
-                    setSelected([]);
-                  }
-                }} />{wireId === w.id && s.graph.wireVisibility !== 'Hidden' && <path d={curve(a,b)} stroke={A.ink} strokeWidth="8" opacity=".22" fill="none" />}<path d={curve(a, b)} stroke={typeColor(w.type)} strokeWidth="2" strokeLinecap="round" strokeDasharray={w.type === 'event' ? '6 2' : undefined} opacity={s.graph.wireVisibility === 'Hidden' || s.graph.nodes.find(n => n.id === w.from)?.portVisibility?.[w.fromPort] === 'Hidden' ? 0 : s.graph.wireVisibility === 'Faint' || s.graph.nodes.find(n => n.id === w.from)?.portVisibility?.[w.fromPort] === 'Faint' ? .2 : .9} fill="none" /></g>)}</g></svg>
+              return `M${p.x+6} ${p.y+6}h${(b?.w || 224)-12}v${(b?.h || 160)-12}h-${(b?.w || 224)-12}Z`;
+            }).join(' ')} /></clipPath></defs><g clipPath={`url(#${clipId})`}><GraphWires paths={paths} selectedId={wireId} onSelect={id=>{setWireId(id);setSelected([]);}} visibility={s.graph.wireVisibility} nodes={s.graph.nodes} /></g></svg>
      {visible.map(n => {
-       const position = draft?.positions?.[n.id] || (draft?.id === n.id ? draft : n), grouped = isGroup(n),
-         category = s.catalogue?.find(c => c.id === n.kind || c.name === n.kind || c.descriptor?.engine === n.kind),
-         categoryName = (category?.family || n.kind).toLowerCase(),
-         [categoryColor, categoryIcon] = ({get:[A.cyan,'folder'],host:[A.cyan,'folder'],input:[A.blue,'code'],trigger:[A.cyan,'clock'],
-           change:[A.warn,'edit'],shape:[A.warn,'group'],transform:[A.warn,'edit'],document:[A.accent,'docs'],
-           decide:[A.purple,'brain'],logic:[A.purple,'code'],ai:[A.purple,'brain'],agent:[A.purple,'user'],
-           see:[A.ok,'eye'],watch:[A.ok,'eye'],check:[A.ok,'check'],send:[A.ok,'send'],output:[A.ok,'export']})[categoryName] || [A.blue,'canvas'],
-         color = grouped ? A.purple : categoryColor,
-         members = (n.children || []).map(id => s.graph.nodes.find(x => x.id === id)).filter(Boolean),
-         state = n.frozen ? 'Disabled' : n.previewOff ? 'Preview off' : n.status || 'Idle', stateColor = /error|fail|refus/i.test(state) ? A.err : /approval|wait|warning|changed/i.test(state) ? A.warn : /running/i.test(state) ? A.accent : /done|ran/i.test(state) ? A.ok : A.inkSoft;
-       return <div key={n.id} data-graph-node={n.id} style={{position:'absolute',width:224,opacity:n.frozen ? .5 : 1,left:position.x,top:position.y}} onDoubleClick={() => openNode(n)}>
-         <D.Node w={224} glyph={<window.AHIcon name={grouped ? 'group' : categoryIcon} size={12} />} gc={color}
-           title={n.title} sub={grouped ? `group · ${members.length} members` : category?.name || n.kind}
-           stacked={grouped} edge={!n.inputs.length && n.outputs.length ? 'l' : n.inputs.length && !n.outputs.length ? 'r' : undefined}
-           selected={selected.includes(n.id)} run={/running/i.test(state)} dashed={n.frozen}
-           foot={state + (n.elapsedMs ? ' · ' + n.elapsedMs + ' ms' : '')} footc={stateColor}
-           ins={n.inputs} outs={n.outputs} renderPort={(p,i,side) => <div className="canvas-port-row" style={{justifyContent:side === 'out' ? 'flex-end' : undefined}}><span style={{position:'absolute',[side === 'in' ? 'left' : 'right']:-11,top:0}}>{socket(n,p,side)}</span>{p.name}</div>}
+       const position = draft?.positions?.[n.id] || (draft?.id === n.id ? draft : n),
+         members = (n.children || []).map(id => s.graph.nodes.find(x => x.id === id)).filter(Boolean);
+       return <div key={n.id} data-graph-node={n.id} onPointerDown={e=>startNode(e,n)} style={{position:'absolute',width:224,opacity:n.frozen ? .5 : 1,left:position.x,top:position.y}} onDoubleClick={() => openNode(n)}>
+         <NodeRenderer n={n} catalogue={s.catalogue} selected={selected.includes(n.id)} members={members}
+           onMember={m=>{setParent(n.id);setSelected([m.id]);}}
+           renderPort={(p,i,side)=><div className="canvas-port-row" style={{justifyContent:side === 'out' ? 'flex-end' : undefined}}><span style={{position:'absolute',[side === 'in' ? 'left' : 'right']:-11,top:0}}>{socket(n,p,side)}</span><span title={p.type}>{p.name}{p.unit ? ' · '+p.unit : ''}</span></div>}
            headerProps={{className:'node-header',onPointerDown:e=>startNode(e,n),onPointerMove:move,onPointerUp:end,
              onPointerCancel:()=>{gesture.current=null;setDraft(null);}}}
-           headerEnd={<button className="button-reset canvas-node-menu" aria-label={n.title+' menu'} title={n.title+' actions'} onClick={event=>executeAction('projects.ds_screens.NodeMenu.16',{n,openNode,setSelected,u},event)}>⋯</button>}
-           chip={grouped && <div className="canvas-members">{members.map(m=><button key={m.id} data-group-member={m.id} className="canvas-member" title={'Open '+m.title} onClick={event=>executeAction('projects.controls.activate',{handler:()=>{setParent(n.id);setSelected([m.id]);}},event)}><span style={{background:color,color:A.onFill}}>{m.title.slice(0,1)}</span>{m.title}</button>)}</div>}>
-           {!grouped && Object.entries(n.params).slice(0,3).map(([k,v])=><div className="canvas-card-param" key={k}><span>{k}</span><span>{typeof v === 'object' ? JSON.stringify(v) : String(v)}</span></div>)}
-         </D.Node>
+           headerEnd={<button className="button-reset canvas-node-menu" aria-label={n.title+' menu'} title={n.title+' actions'} onClick={event=>executeAction('projects.ds_screens.NodeMenu.16',{n,openNode,setSelected,u},event)}>⋯</button>} />
        </div>;
      })}
     </div>
@@ -568,9 +583,8 @@
     <div className="canvas-toolbar"><Btn variant="controls" sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom">{Math.round(zoom * 100)}%</button><Btn variant="controls" sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><Btn variant="controls" sm ghost onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</Btn></div>
     <div style={{
             position: 'absolute',
-            bottom: 20,
-            left: '50%',
-            transform: 'translateX(-50%)'
+            top: 70,
+            left: 16
           }}><Btn variant="controls" onClick={event => executeAction("projects.ds_screens.AddANodeCtrlK.24", {u}, event)}>/ Add a node · Ctrl K</Btn></div>
    </div>
    {wire && <aside className="pane inspector" style={{borderLeft:'1px solid '+A.line,padding:16}} aria-label="Wire">
@@ -586,34 +600,42 @@
     return <>
       {requestState === 'waiting' && <div role="status">Loading your graph…</div>}
       {requestState === 'error' && <div role="alert">{requestError}<Btn variant="controls" onClick={event => executeAction('projects.controls.activate', {handler:reload}, event)}>Retry loading graph</Btn></div>}
-      {requestState === 'empty' && <><p className="muted">Add a node from the Library to start this graph.</p>{body}</>}
+      {requestState === 'empty' && <>{body}</>}
       {requestState === 'loaded' && <>{body}</>}
     </>;
   }
   function SystemGraph() {
-    const s = useData(),
-      u = useApp();
-    const [page, setPage] = React.useState('BABOOM');
-    return <div data-screen="system" style={{
-      display: 'grid',
-      gridTemplateRows: '50px 1fr',
-      minHeight: 0
-    }}><div className="spread" style={{
-        padding: '0 20px',
-        borderBottom: '1px solid ' + A.line
-      }}><div className="flex"><Btn sm ghost onClick={event => executeAction("projects.ds_screens.Settings.30", {u}, event)}>← Settings</Btn><h2>System graph</h2><Chip>{s.pages.length} nodes</Chip></div><Btn sm onClick={event => executeAction("projects.ds_screens.OpenParameters.31", {page,u}, event)}>Open parameters</Btn></div><div className="node-canvas scroll" style={{
-        padding: 30,
-        overflow: 'auto'
-      }}><div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(3, minmax(240px,1fr))',
-          gap: 30,
-          alignItems: 'start'
-        }}>{s.pages.map(p => <D.Node key={p} title={p} glyph="⬡" gc={A.purple} sub="Application node" selected={page === p} w="100%" foot={s.settings.filter(r => r.page === p).length + ' parameters'} headerProps={{
-            onClick: () => setPage(p)
-          }} headerEnd={<Btn sm ghost onClick={event => executeAction("projects.ds_screens.Open.32", {p,u}, event)}>Open</Btn>}><div style={{
-              padding: 12
-            }}>{s.settings.filter(r => r.page === p).slice(0, 3).map(row => <SettingControl key={row.id} row={row} />)}</div></D.Node>)}</div></div></div>;
+    const s = useData(), u = useApp(), world=React.useRef(), [paths,setPaths]=React.useState([]), [load,setLoad] = React.useState('waiting'), [error,setError] = React.useState(''), [attempt,setAttempt]=React.useState(0);
+    const root = s.graphs?.[0]?.id;
+    React.useEffect(()=>{
+      let active=true;
+      if (!root) { setLoad('empty'); return; }
+      setLoad('waiting');
+      Promise.resolve(s.graph.id===root ? null : api.selectGraph(root)).then(()=>api.refreshLibraryPorts?.()).then(()=>{if(active)setLoad(api.getSnapshot().graph.nodes.some(n=>n.application)?'loaded':'empty');})
+        .catch(e=>{if(active){setError(e.message);setLoad('error');}});
+      return ()=>{active=false;};
+    },[root,attempt]);
+    const nodes = s.graph.nodes.filter(n=>n.application), groups = [...new Set(nodes.map(n=>n.frame||n.category||'System'))];
+    React.useLayoutEffect(()=>{
+      const measure=()=>setPaths(measureWires(world.current,s.graph.wires));
+      measure();
+      const observer=new window.ResizeObserver(measure);if(world.current)observer.observe(world.current);
+      return ()=>observer.disconnect();
+    },[s.revision,load]);
+    return <div data-screen="system" className="system-graph scroll" style={{minHeight:0,padding:24,overflow:'auto'}}>
+      <div className="spread"><h2>System graph</h2><Chip>{nodes.length} nodes</Chip></div>
+      {load==='waiting' && <p role="status">Loading the system graph…</p>}
+      {load==='error' && <p role="alert">{error}<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(n=>n+1)},event)}>Retry loading system graph</Btn></p>}
+      {load==='empty' && <p>No system graph is available.</p>}
+      {load==='loaded' && <div ref={world} style={{position:'relative'}}><svg data-system-wires="" width="100%" height="100%" style={{position:'absolute',inset:0,overflow:'visible',pointerEvents:'none'}}><GraphWires paths={paths} nodes={nodes} /></svg>
+      {groups.map(group=><section key={group} data-system-group={group} style={{marginTop:24}}><h3 style={{marginBottom:12}}>{group}</h3><div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(224px,1fr))',gap:28,alignItems:'start'}}>
+        {nodes.filter(n=>(n.frame||n.category||'System')===group).map(n=><div key={n.id} data-graph-node={n.id} style={{position:'relative',zIndex:1}}>
+          <NodeRenderer n={n} catalogue={s.catalogue} headerProps={{className:'node-header'}}
+            headerEnd={<Btn sm ghost onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.show('Node',{id:n.id})},event)}>Open</Btn>}
+            renderPort={(p,i,side)=><div className="canvas-port-row" style={{position:'relative',height:22,display:'flex',alignItems:'center',justifyContent:side==='out'?'flex-end':undefined,padding:'0 12px',fontSize:12}}><span data-port-key={`${n.id}:${side}:${p.id}`} style={{position:'absolute',[side==='in'?'left':'right']:-6}}><D.Socket t={p.type} list={p.list} /></span>{p.name}{p.unit ? ' · '+p.unit : ''}</div>} />
+        </div>)}
+      </div></section>)}</div>}
+    </div>;
   }
   window.UI.Canvas = Canvas;
   window.UI.SystemGraph = SystemGraph;

@@ -262,6 +262,7 @@ SettingsAction24: (event) => (() => u.go('docs'))(event)});
             fontSize: 12
           }}>Changed only</span>{full && <><span className="fill" /><span>Show advanced</span><D.Toggle label="Show advanced" checked={u.advanced} onCheckedChange={u.setAdvanced} /></>}</div>
    <div className="grid">
+    {actual === 'System graph' && <window.UI.SystemGraph />}
     {actual === 'Account' && <Account />}<window.UI.CapabilityRows page={actual} />
     {actual === 'Connections' && <Connections />}
     {actual === 'BABOOM' && <Providers />}{actual === 'Agents' && <Card style={{

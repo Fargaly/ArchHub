@@ -98,3 +98,13 @@ button{transition:background .14s,color .14s,box-shadow .14s}button:hover{filter
 [data-screen="canvas"] .shelf-footer{border-color:var(--canvas-line)}
 [data-screen="canvas"] .shelf-node-copy{display:grid;gap:3px;min-width:0}
 [data-screen="canvas"] .shelf-node-copy small{color:var(--canvas-muted);font-size:11px;line-height:1.4}
+
+/* CANVASOLD: the graph owns the viewport; controls and composer float over it. */
+ .canvas-composer{position:absolute;z-index:14;bottom:16px;left:calc((100% + var(--canvas-library-width,0px))/2);transform:translateX(-50%);width:min(860px,calc(100% - var(--canvas-library-width,0px) - 48px));padding:0;background:none;border:0;pointer-events:none}
+.canvas-composer form{pointer-events:auto}
+[data-screen="canvas"] .canvas-toolbar{bottom:16px;z-index:15}
+.system-graph .canvas-card-param{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;padding:4px 10px;border-top:1px solid var(--line);font-size:12px}
+.system-graph .canvas-card-param>span:last-child{text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.screen-with-composer{position:relative}
+.canvas-status{position:absolute;bottom:4px;left:calc(var(--canvas-library-width,0px) + 16px);z-index:12;display:flex;gap:12px;max-width:calc(100% - 280px);font-size:10px;color:var(--muted);pointer-events:auto}

@@ -62,6 +62,7 @@ async function signIn() {
  try {sessionStorage.setItem('archhub.studio.session',JSON.stringify(session));} catch { notice('Browser session storage is unavailable. This window remains signed in.'); }
 }
 async function request(path,body=undefined,readRetry=true,signal=undefined) {
+ const requestEpoch=scopeEpoch;
  if(path==='/api/universal/interaction'&&body&&!window.ARCHHUB_AUTHORITY){const keys=['interaction','control','event','revision','event_facts'];if(body.control==='app:control:canvas:remove-member')keys.push('membership','expected_scope','command_id');body=Object.fromEntries(keys.filter(k=>Object.hasOwn(body,k)).map(k=>[k,body[k]]));}
  const response=await fetch(path,{method:body===undefined?'GET':'POST',cache:'no-store',signal,headers:{'Content-Type':'application/json',
  'X-ArchHub-Session':session?.token||'','X-ArchHub-CSRF':session?.csrf||''},...(body===undefined?{}:{body:JSON.stringify(body)})});
@@ -72,18 +73,29 @@ async function request(path,body=undefined,readRetry=true,signal=undefined) {
    if(body===undefined)return request(path,undefined,false,signal);}
  }
  if(!response.ok||data.ok===false){const error=Error(data.error||data.reason||'The backend refused this action.');error.status=response.status;error.response=data;throw error;}
- const result=normalise(data);if(result?.root&&Array.isArray(result.nodes))canvas=result;
+ const result=normalise(data);if(result?.root&&Array.isArray(result.nodes)&&requestEpoch===scopeEpoch)canvas=result;
  return result;
 }
 function rows(node){return node?.properties||node?.params||[];}
 function nodeDto(n) {
  const params=Object.fromEntries(rows(n).map(p=>[p.label,p.value]));
  const research=JSON.parse(params.research_run||'{}');
- const schema=rows(n).map(p=>({key:p.label,label:p.display_label||p.label,type:p.editor||'text',group:'Parameters',unit:p.unit||'',options:p.constraints?.options||[],editable:p.editable===true,relation:p.relation,owner:p.owner||n.id}));
- const ports=(n.ports||[]).map(p=>({id:p.id,name:p.name||p.label||p.id,type:p.value_type||'any'}));
- return {id:n.id,title:n.label||n.title||n.id,kind:params.element?'UI element':n.kind||n.engine||n.assembly||'Node',x:n.x||0,y:n.y||0,status:n.status||'',
+ const schema=rows(n).map(p=>({key:p.label,label:p.display_label||p.label,type:p.editor||'text',group:'Parameters',unit:p.unit||'',min:p.constraints?.minimum??p.constraints?.min,max:p.constraints?.maximum??p.constraints?.max,step:p.constraints?.step,options:p.constraints?.options||[],editable:p.editable===true,relation:p.relation,owner:p.owner||n.id}));
+ const assembly=typeof n.assembly==='object' && n.assembly ? n.assembly : {name:n.assembly},
+  definition=(canvas.catalog||[]).find(c=>c.id===(n.definition||assembly.definition)||c.name===assembly.name||c.name===n.kind),
+  library=(state.libraryPorts||[]).filter(item=>item.engine===(params.engine||n.engine)),
+  item=library.find(item=>item.title===(n.label||n.title))||(library.length===1 ? library[0] : null);
+ const ports=(n.ports||[]).map(p=>{
+  const name=p.name||p.label||p.id, parameter=rows(n).find(row=>row.label===name),
+   declared=definition?.interface_contract?.[name]||{}, metadata=definition?.parameters?.[name]||{},
+   logical=item?.ports?.[p.side]?.find(port=>port.id===name);
+  return {...p,name,type:p.value_type||p.logical_type||declared.type||(logical?.type==='unknown' ? undefined : logical?.type)||parameter?.type||metadata.type||'any',
+   list:p.list??p.multiple??declared.multiple??((p.cardinality||logical?.cardinality)==='many'),unit:p.unit||parameter?.unit||metadata.unit||''};
+ });
+ return {id:n.id,title:n.label||n.title||n.id,kind:params.element?'UI element':n.kind||n.engine||assembly.name||'Node',x:n.x||0,y:n.y||0,status:n.status||'',
  params,defaults:Object.fromEntries(rows(n).filter(p=>p.default!==undefined).map(p=>[p.label,p.default])),parameterSchema:schema,inputs:ports.filter((_,i)=>['target','in'].includes(n.ports[i].side)),outputs:ports.filter((_,i)=>['source','out'].includes(n.ports[i].side)),
- children:(n.members||[]).map(r=>r.id||r),parent:n.group||null,pinned:n.pinned===true||params.pinned==='true',frozen:n.frozen===true||params.frozen==='true',output:research.output??n.output??n.result??[],application:n.application===true,
+ definition:n.definition||assembly.definition,assembly:assembly.name,category:n.category||definition?.category||item?.cat||n.kind||'Node',icon:n.icon,colorToken:n.color_token,frame:n.group||'',
+ children:(n.members||[]).map(r=>r.id||r),parent:(canvas.nodes||[]).some(row=>row.id===n.group)?n.group:null,pinned:n.pinned===true||params.pinned==='true',frozen:n.frozen===true||params.frozen==='true',output:research.output??n.output??n.result??[],application:n.application===true,
  review:JSON.parse(params.research_review||'{"items":{}}'),successfulPresets:research.preset?[research.preset]:[],
  portVisibility:JSON.parse(params.port_visibility||'{}'),parameterPresentation:JSON.parse(params.parameter_presentation||'{}')};
 }
@@ -104,6 +116,7 @@ function project() {
  const root=canvas.scope?.current||canvas.root;
  const graph={...state.graph,id:root,name:canvas.scope?.current_label||'Graph',nodes,wires:(canvas.wires||[]).map(w=>({id:w.id,from:w.source||w.from,to:w.target||w.to,fromPort:w.source_interface||w.fromPort,toPort:w.target_interface||w.toPort,type:w.value_type||'any',rule:w.label||''}))};
  // WIRE-projects: the evaluator's condition parameter is the UI's wire rule.
+ for(const wire of graph.wires)wire.type=nodes.find(n=>n.id===wire.from)?.outputs.find(p=>p.id===wire.fromPort)?.type||wire.type;
  const conditions=new Map((canvas.wires||[]).map(w=>[w.id,(w.params||[]).find(p=>p.label==='condition')?.value||'']));
  for(const wire of graph.wires)wire.rule=conditions.get(wire.id);
  // WIRE-projects end
@@ -185,7 +198,8 @@ async function refreshAccount() {
  return copy(state.profile);
 }
 async function refreshGraphs(){
- const data=await request('/api/universal/graphs?screen=home');
+  const epoch=scopeEpoch, data=await request('/api/universal/graphs?screen=home');
+  if(epoch!==scopeEpoch)return copy(state.graphs);
  publish({graphs:(data.graphs||[]).map(g=>({...g,name:g.title||g.name||'Graph'})),currentGraph:data.current_graph});
  return copy(state.graphs);
 }
@@ -406,7 +420,7 @@ Object.assign(api,{
   return mutate(()=>interaction(b.control,{event_facts:[{input:specs[0].input,value:input.label},{input:specs[1].input,value:String(input.value??'')}]}));
  },
  async approve(id){const card=state.approvals.find(c=>c.id===id);if(card?.approvalKind==='social'){const result=await request('/api/universal/social-approve',{delegation:card.delegation,input_digest:card.input_digest,decision:'approve'});await refreshApprovals();return result;}if(!card?.delegation||!card?.input_digest||!card?.work)return unavailable('approve','No reviewed model delegation');const binding=workshopBinding();const body={...binding,work:card.work,delegation:card.delegation,input_digest:card.input_digest};const inspected=await request('/api/universal/workshop-model-approval?'+new URLSearchParams(body));if(inspected.expired||inspected.input_digest!==card.input_digest)return {ok:false,status:'stale',message:'Review changed; refresh before approving.'};const result=await request('/api/universal/workshop-model-approval',{...body,revision:inspected.revision});await refreshTasks();return result;},
-  async selectGraph(id){scopeEpoch++;restoreGraph=false;workingAgents=[];publish({tasks:[],workshopMessages:[],workshopMessagesMore:false,workshopMessagesBefore:null,workshopMessagesScope:null,approvals:[],approvalActionsReady:false,desktopReady:false,desktop:{program:"",stage:"",taskId:null,offers:[]},watcherReady:false,watcher:copy(emptyWatcher),hostSkillsReady:false,hostSkills:[],connectorBundle:null});await openGraph(id);await commands.load();project();await refreshGraphs();rememberGraph(id);await refreshTasks();await refreshAgents();return state.graph;},
+  async selectGraph(id){const epoch=++scopeEpoch;restoreGraph=false;workingAgents=[];publish({tasks:[],workshopMessages:[],workshopMessagesMore:false,workshopMessagesBefore:null,workshopMessagesScope:null,approvals:[],approvalActionsReady:false,desktopReady:false,desktop:{program:"",stage:"",taskId:null,offers:[]},watcherReady:false,watcher:copy(emptyWatcher),hostSkillsReady:false,hostSkills:[],connectorBundle:null});await openGraph(id);if(epoch!==scopeEpoch)return state.graph;await commands.load();if(epoch!==scopeEpoch)return state.graph;project();await refreshGraphs();if(epoch!==scopeEpoch)return state.graph;rememberGraph(id);await refreshTasks();if(epoch!==scopeEpoch)return state.graph;await refreshAgents();return state.graph;},
  async selectWorkspace(id){return api.selectGraph(id);},
  getUsageSummary:()=>({'Usage':'Usage is unavailable.'}),
  async setConnection(id,values){if(values.connected===false)return request('/api/universal/social-connection',{provider:id,action:'cancel'});if(values.connected===true)return request('/api/universal/social-connection',{provider:id,action:'start'});return unavailable('setConnection','No sign-in action requested');},
@@ -1066,14 +1080,14 @@ Object.assign(api,{
   const response=task.messages.filter(m=>m.role!=='user').map(m=>m.text||m.content||'').join('\n');
   publish({feedback:state.feedback.map(f=>f.id===id?{...f,status:task.status,response}:f)});return task;
  },
- async refreshProjects(){
-  const epoch=scopeEpoch;
+ async refreshProjects({userCanvas=false}={}){
+  const epoch=userCanvas ? ++scopeEpoch : scopeEpoch;
   await refreshGraphs();
   if(epoch!==scopeEpoch)return state.graph;
-  const saved=restoreGraph&&state.graphs.find(g=>g.id===session?.lastGraphId);
+  const saved=(userCanvas||restoreGraph||(canvas?.scope?.current||canvas?.root)===state.graphs[0]?.id)&&state.graphs.find(g=>g.id===session?.lastGraphId);
   const graph=saved||state.graphs.find(g=>g.id===state.currentGraph);
   restoreGraph=false;
-  if(graph&&graph.id!==(canvas?.scope?.current||canvas?.root)){
+  if(graph&&(userCanvas||graph.id!==(canvas?.scope?.current||canvas?.root))){
    await openGraph(graph.id);
    if(epoch!==scopeEpoch)return state.graph;
   }
@@ -1095,7 +1109,7 @@ api.setPortVisibility=(id,port,value)=>canvasOperation('set_port_visibility',[id
 api.setPromotedParameter=(id,key,values)=>canvasOperation('set_promoted_parameter',[id,key,values]);
 api.refreshMods=async()=>{const result=await request('/api/universal/mods',{action:'state'});publish({mods:result.mods.rows});project();return result.mods.rows;};
 api.importModNode=(id,item)=>canvasOperation('import_mod_node',[id,item]);
-api.refreshLibraryPorts=async()=>{const libraryPorts=await canvasOperation('library_ports',[]);publish({libraryPorts});return libraryPorts;};
+api.refreshLibraryPorts=async()=>{const libraryPorts=await canvasOperation('library_ports',[]);publish({libraryPorts});project();return libraryPorts;};
 api.compatibleNodes=endpoint=>{
  const node=state.graph.nodes.find(n=>n.id===endpoint?.id);
  const port=(endpoint?.side==='out'?node?.outputs:node?.inputs)?.find(p=>p.id===endpoint.port);
@@ -1177,7 +1191,7 @@ api.saveResearchDecision=async values=>{
  return projectResearch(row);
 };
 const refreshBeforeOps=api.refreshProjects;
-api.refreshProjects=()=>refreshBeforeOps().then(function(r){[function(){return refreshProjectState();},function(){return api.refreshFiles();},function(){return api.refreshMods();},function(){return api.refreshLibraryPorts();},function(){return api.refreshMcpServers();},function(){return api.refreshCommunity();}].reduce(function(p,f){return p.then(f).catch(function(e){console.warn('background refresh',e);});},Promise.resolve());return r;});
+api.refreshProjects=(options)=>refreshBeforeOps(options).then(function(r){[function(){return refreshProjectState();},function(){return api.refreshFiles();},function(){return api.refreshMods();},function(){return api.refreshLibraryPorts();},function(){return api.refreshMcpServers();},function(){return api.refreshCommunity();}].reduce(function(p,f){return p.then(f).catch(function(e){console.warn('background refresh',e);});},Promise.resolve());return r;});
 api.ready=(async()=>{
  // The native Qt owner supplies one reviewed payload and the existing bound decision bridge.
  if(window.ARCHHUB_NATIVE_APPROVAL){

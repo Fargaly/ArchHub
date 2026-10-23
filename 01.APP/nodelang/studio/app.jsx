@@ -98,6 +98,7 @@
       return () => window.removeEventListener("archhub:notice", notice);
     }, []);
     const go = r => {
+      if (r === 'system') r = 'settings/System graph';
       if (r === 'baboom') {
         setCompanion(true);
         setModal(null);
@@ -272,7 +273,7 @@
       document.title = 'ArchHub · ' + (routeNames[route] || route.split('/').at(-1));
     }, [route]);
     const rail = [['home', 'Home', 'home'], ['workshop', 'Workshop', 'workshop'], ['canvas', 'Canvas', 'canvas'], ['docs', 'Docs', 'docs']];
-    const screen = route === 'meetings' ? <window.UI.Meetings /> : route === 'dependencies' ? <window.UI.Dependencies /> : route === 'present' ? <window.UI.Present /> : route === 'community' ? <window.UI.Community /> : route === 'model-review' ? <window.UI.ModelReview /> : route === 'interface' ? <window.UI.InterfaceStudio /> : route === 'social' ? <window.UI.Social /> : route === 'xray' ? <window.UI.Xray /> : route === 'access' ? <window.UI.Access /> : route === 'routing' ? <window.UI.Routing /> : route === 'home' ? <window.UI.Home /> : route === 'workshop' ? <window.UI.Workshop /> : route === 'canvas' ? <window.UI.Canvas /> : route === 'system' ? <window.UI.SystemGraph /> : route === 'colleagues' ? <window.UI.Colleagues /> : route === 'brain' ? <window.UI.Brain /> : route === 'watcher' ? <window.UI.Watcher /> : route === 'first-run' ? <window.UI.FirstRun /> : route === 'runs' ? <window.UI.Runs /> : route === 'receipts' ? <window.UI.Receipts /> : route === 'docs' ? <window.UI.Docs /> : route === 'feedback' ? <window.UI.Feedback /> : route === 'automations' ? <window.UI.Automations /> : route.startsWith('settings/') ? <window.UI.Settings key={route} page={route.slice(9)} /> : <window.UI.Settings key={route} page={{
+    const screen = route === 'meetings' ? <window.UI.Meetings /> : route === 'dependencies' ? <window.UI.Dependencies /> : route === 'present' ? <window.UI.Present /> : route === 'community' ? <window.UI.Community /> : route === 'model-review' ? <window.UI.ModelReview /> : route === 'interface' ? <window.UI.InterfaceStudio /> : route === 'social' ? <window.UI.Social /> : route === 'xray' ? <window.UI.Xray /> : route === 'access' ? <window.UI.Access /> : route === 'routing' ? <window.UI.Routing /> : route === 'home' ? <window.UI.Home /> : route === 'workshop' ? <window.UI.Workshop /> : route === 'canvas' ? <window.UI.Canvas /> : route === 'system' ? <window.UI.Settings page="System graph" /> : route === 'colleagues' ? <window.UI.Colleagues /> : route === 'brain' ? <window.UI.Brain /> : route === 'watcher' ? <window.UI.Watcher /> : route === 'first-run' ? <window.UI.FirstRun /> : route === 'runs' ? <window.UI.Runs /> : route === 'receipts' ? <window.UI.Receipts /> : route === 'docs' ? <window.UI.Docs /> : route === 'feedback' ? <window.UI.Feedback /> : route === 'automations' ? <window.UI.Automations /> : route.startsWith('settings/') ? <window.UI.Settings key={route} page={route.slice(9)} /> : <window.UI.Settings key={route} page={{
       account: 'Account',
       connections: 'Connections',
       hooks: 'Hooks',
@@ -310,7 +311,7 @@
   {s.app.quit || s.app.hidden ? <window.UI.DesktopScene /> : <div className="app-window" style={{
         height: '100%',
         display: 'grid',
-        gridTemplateRows: '36px minmax(0,1fr) 22px'
+        gridTemplateRows: route === 'canvas' ? '36px minmax(0,1fr)' : '36px minmax(0,1fr) 22px'
       }}>
    <header className="flex" style={{
           height: 36,
@@ -393,8 +394,8 @@
               fontWeight: 700,
               fontSize: 12,
               flex: 'none'
-            }}>{s.profile.name.split(' ').map(n => n[0]).join('').slice(0, 2)}</button></nav><div className={'screen-with-composer ' + (!['home', 'canvas'].includes(route) ? 'has-local-composer' : '')}>{screen}{['home', 'canvas'].includes(route) && <div className="global-composer"><window.UI.Composer compact /></div>}</div></div>
-   <footer className="flex" style={{
+            }}>{s.profile.name.split(' ').map(n => n[0]).join('').slice(0, 2)}</button></nav><div className={'screen-with-composer ' + (route !== 'home' ? 'has-local-composer' : '')} style={{'--canvas-library-width':libraryOpen ? '248px' : '0px'}}>{screen}{route === 'canvas' && <div className="canvas-status" role="status"><span>{s.connectionNotice || '● Local session'}</span><span>{s.tasks.filter(t=>t.status==='WIP').length} running · {s.approvals.filter(c=>c.status==='pending').length} wait for you</span>{agentLoad.status==='error' && <button className="button-reset" onClick={event=>executeAction('appShell.RetryWorkshop',{reloadWorkshop},event)}>Retry Workshop connection</button>}</div>}{['home','canvas'].includes(route) && <div className={'global-composer'+(route==='canvas'?' canvas-composer':'')}><window.UI.Composer compact /></div>}</div></div>
+   {route !== 'canvas' && <footer className="flex" style={{
           fontSize: 11,
           gap: 16,
           padding: '0 14px',
@@ -416,7 +417,7 @@
             show
           }, event)}>Ctrl K</button><button className="button-reset muted" onClick={event => executeAction("appShell.Receipts.16", {
             go
-          }, event)}>Receipts</button></footer>
+          }, event)}>Receipts</button></footer>}
   </div>}
   <window.UI.BaboomSprite open={companion} setOpen={setCompanion} />
   {toast && <div role="alert" className="flex" style={{

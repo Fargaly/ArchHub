@@ -589,6 +589,12 @@ Push-Location $selectedRoot
 try {
     & $compilerPython -m tools.real_app_check.agentlink_release --profile-parent $selectedRoot --output $agentLinkEvidence
     if ($LASTEXITCODE -ne 0) { throw "AGENTLINK refused release: real message, overlap or OpenCode write proof failed." }
+    # RETURN 1: refuse observed hangs/exits and installed DONE -> candidate BROKEN regressions only.
+    $userSimEvidence = Join-Path $selectedRoot (Get-RepositoryPath ("evidence/USERSIM-RELEASE-" + $BuildId.ToUpperInvariant()))
+    # The runner retains usersim-baseline.json beside these per-build reports.
+    & $compilerPython -m tools.real_app_check.usersim --out $userSimEvidence --expected-build $BuildId
+    if ($LASTEXITCODE -eq 1) { throw 'USERSIM refused release: observed app hang/exit or regression from an installed DONE job; inspect samples and screenshots.' }
+    if ($LASTEXITCODE -ne 0) { Write-Warning 'USERSIM actor/runner UNREACHED; no app regression proved. See the release report.' }
 } finally { Pop-Location; $env:PYTHONPATH = $priorPythonPath }
 $isCandidate = -not [string]::IsNullOrEmpty($LocalCandidateManifest)
 if ($isCandidate -ne (-not [string]::IsNullOrEmpty($LocalCandidateManifestSha256))) {

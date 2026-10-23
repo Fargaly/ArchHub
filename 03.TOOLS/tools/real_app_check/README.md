@@ -1,5 +1,34 @@
 # Real-app check
 
+## Persona qualification (USERSIM, WIP)
+
+`python -B 03.TOOLS/tools/real_app_check/usersim.py --app <installed-directory> --out <empty-evidence-directory>`
+runs the editable nodes in `USERSIM-PERSONAS.json` through the installed Studio with real CDP input,
+using the existing hidden desktop and Job lifecycle. Persona and fresh critic turns use the existing
+model router with `free_only=True`. Per-action screenshots, expected/observed text, console errors,
+latency, model usage and native window responsiveness are recorded. A frozen window makes every job
+BROKEN. RETURN 1 refuses only observed hangs/exits or a core job DONE in the saved installed baseline
+becoming BROKEN. Existing failures, incomplete coverage and CONFUSING remain advisory.
+A job without an attempted action is UNREACHED; text jobs require focused-input keystrokes and readback.
+The runner stores the installed baseline beside its evidence; `--baseline` selects that saved report.
+
+This candidate is NOT accepted for landing: clean-PC installation, tray updates, disposable Revit
+parameter/restart evidence, founder journal scale, Work Board publication and live interview button
+remain open. Its native adapter explicitly refuses unsupported actions. Eleven synthetic mailbox
+readers are load generators, not eleven real model-agent sessions. The report must disclose that gap.
+Exact historical builds must be independently identified; a run against another installed build does
+not prove build 1726 or reproduce build 29. No source overlay qualifies as an installed build.
+
+`--interview <persona-id> --out <report-folder> --question <text>` uses only the saved persona trace.
+The HTML report can display recorded memory; it does not currently implement a live interview button.
+Actor memory uses the last eight steps; critics receive every action/outcome with explicitly labelled
+observation excerpts and the final screenshot. Full observations remain in the recorded trace.
+CLI interviews have a Job-owned 45-second bound and preserve free-provider errors, not a success placeholder.
+`--expected-build` reports a BUILD_ID mismatch as an advisory qualification gap. The pre-build
+integration observes the installed version; it cannot claim candidate-byte qualification before installation.
+717 owns candidate installation and rerunning against the saved installed baseline. Runner/actor errors
+exit 2 (advisory); proven refusal exits 1. Output must be new/empty; stale PASS is never reused.
+
 The founder's rule: no ArchHub task is handed over or accepted without real-app evidence. That means
 the installed build, run isolated on a hidden Windows desktop, with one screenshot per step showing
 what was asked, what the real window did, and the screenshot. Courts are review evidence, never done

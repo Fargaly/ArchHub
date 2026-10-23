@@ -1,5 +1,26 @@
 # Decision log
 
+## D-012 USERSIM: persona runs on the built app refuse a release only on a freeze or a lost job
+Request: F106 (USERSIM), founder 2026-10-22 "عاوز تيستات بتختبر الابليكيشن فعلا" (I want tests that actually test the application), after build 29 passed every court and froze in his hands.
+Prior art: MiroFish -> personas with backstory and memory, a report agent and interviews (AGPL, mechanics only, no code); UXAgent -> a browser connector that turns the live page into actions and records a trace; OpenFlow -> a fresh-context critic re-checks each claim against a written bar.
+Replaces: mechanical button traversal as user-job acceptance in the release; mechanical courts stay. No product runtime, store or channel is added.
+
+Founder: “I want tests that actually test the application.” Learn persona memory/interviews from
+MiroFish (AGPL, mechanics only), live browser interaction from UXAgent (2025 papers), fresh critics
+from OpenFlow (MIT), and screenshot/action evidence from Playwright. Extend `real_app_check`'s
+existing hidden desktop/Job; keep AGENTLINK. This replaces using mechanical button traversal as
+user-job acceptance, without removing mechanical checks or adding a product runtime/store/channel.
+
+Budgets: free-only persona/critic routing, BelowNormal, <=1800 seconds, 60k synthetic messages,
+eleven load-reader processes, >=25GiB disk and >=8GiB free commit; retain <1GB lane output.
+Installed measurements and exact artifacts belong to RESULT-USERSIM.md. Native clean-PC install,
+tray update, Revit readback, journal scale, Work Board/interview integration and historical builds
+remain open. RETURN 1 supersedes the all-core-proof refusal: observed hang/exit always refuses;
+only installed-baseline DONE -> candidate BROKEN core jobs otherwise refuse. Other BROKEN, CONFUSING,
+UNREACHED and qualification gaps are reported, not blocking. The installed report is retained beside
+the evidence; actor typing uses the existing CDP runner with focus/value readback. Candidate-byte
+acceptance remains distinct from this pre-build observation of the installed version.
+
 ## D-NEWAPP-YAML Complete the delivered recipe parser dependency
 Request: NEWAPP RESUME 6/8, "every button working" and "what works stays". The delivered recipe owner imports yaml; its real import check failed with ModuleNotFoundError. Retain that owner and pin PyYAML 6.0.3 in the existing offline desktop requirements.
 Prior art: ComfyUI uses serialized workflows; Grasshopper uses saved graph definitions. For YAML parsing, PyYAML safe_load retains the delivered owner; replacing it with ruamel.yaml would add migration work without a requested round-trip editing feature. No parser, installer, or store is duplicated.

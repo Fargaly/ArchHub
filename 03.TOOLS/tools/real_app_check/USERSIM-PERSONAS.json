@@ -1,0 +1,253 @@
+{
+  "version": 3,
+  "nodes": [
+    {
+      "id": "usersim-revit",
+      "role": "Revit architect",
+      "backstory": "I change building information in Revit 2027 and expect the graph to reach my model.",
+      "job": "connectors",
+      "core": true,
+      "goals": [
+        "Open Revit 2027 from ArchHub and push a parameter from a graph; see the changed value read back from Revit."
+      ],
+      "params": {
+        "patience_seconds": {
+          "type": "number",
+          "value": 150
+        },
+        "max_actions": {
+          "type": "number",
+          "value": 12
+        }
+      },
+      "engine": "usersim.persona",
+      "interfaces": {
+        "patience_seconds": {
+          "direction": "input",
+          "type": "number"
+        },
+        "max_actions": {
+          "direction": "input",
+          "type": "number"
+        }
+      }
+    },
+    {
+      "id": "usersim-workshop",
+      "role": "Project lead",
+      "backstory": "I coordinate work with Codex in a crowded Workshop; I need a reply in the same thread.",
+      "job": "workshop",
+      "core": true,
+      "goals": [
+        "Send Codex a Workshop message asking for a reply, then open the reply as a thread."
+      ],
+      "params": {
+        "patience_seconds": {
+          "type": "number",
+          "value": 150
+        },
+        "max_actions": {
+          "type": "number",
+          "value": 12
+        }
+      },
+      "engine": "usersim.persona",
+      "interfaces": {
+        "patience_seconds": {
+          "direction": "input",
+          "type": "number"
+        },
+        "max_actions": {
+          "direction": "input",
+          "type": "number"
+        }
+      }
+    },
+    {
+      "id": "usersim-workspaces",
+      "role": "Workspace owner",
+      "backstory": "I add a project folder in Settings without knowing internal permissions or keys.",
+      "job": "workspaces",
+      "core": true,
+      "goals": [
+        "Open Settings, Workspaces, browse a disposable folder and add it; see it remain registered after reopening."
+      ],
+      "params": {
+        "patience_seconds": {
+          "type": "number",
+          "value": 120
+        },
+        "max_actions": {
+          "type": "number",
+          "value": 12
+        }
+      },
+      "engine": "usersim.persona",
+      "interfaces": {
+        "patience_seconds": {
+          "direction": "input",
+          "type": "number"
+        },
+        "max_actions": {
+          "direction": "input",
+          "type": "number"
+        }
+      }
+    },
+    {
+      "id": "usersim-canvas",
+      "role": "Graph author",
+      "backstory": "I return to my last graph and work by dragging and wiring, not by calling APIs.",
+      "job": "canvas",
+      "core": true,
+      "goals": [
+        "Open the last graph, zoom, drag a library node onto the canvas and wire a compatible socket."
+      ],
+      "params": {
+        "patience_seconds": {
+          "type": "number",
+          "value": 150
+        },
+        "max_actions": {
+          "type": "number",
+          "value": 16
+        }
+      },
+      "engine": "usersim.persona",
+      "interfaces": {
+        "patience_seconds": {
+          "direction": "input",
+          "type": "number"
+        },
+        "max_actions": {
+          "direction": "input",
+          "type": "number"
+        }
+      }
+    },
+    {
+      "id": "usersim-baboom",
+      "role": "Busy architect",
+      "backstory": "I ask BABOOM for a small task and judge the visible result, not its promise.",
+      "job": "router",
+      "core": true,
+      "goals": [
+        "Ask BABOOM to create a graph with a useful library node and see the resulting graph."
+      ],
+      "params": {
+        "patience_seconds": {
+          "type": "number",
+          "value": 150
+        },
+        "max_actions": {
+          "type": "number",
+          "value": 12
+        }
+      },
+      "engine": "usersim.persona",
+      "interfaces": {
+        "patience_seconds": {
+          "direction": "input",
+          "type": "number"
+        },
+        "max_actions": {
+          "direction": "input",
+          "type": "number"
+        }
+      }
+    },
+    {
+      "id": "usersim-update",
+      "role": "Returning user",
+      "backstory": "I update from the tray and expect the app to return with my graph available.",
+      "job": "update",
+      "core": true,
+      "goals": [
+        "Use the tray update action in the isolated installation; reopen and verify the installed build and saved graph."
+      ],
+      "params": {
+        "patience_seconds": {
+          "type": "number",
+          "value": 120
+        },
+        "max_actions": {
+          "type": "number",
+          "value": 10
+        }
+      },
+      "engine": "usersim.persona",
+      "interfaces": {
+        "patience_seconds": {
+          "direction": "input",
+          "type": "number"
+        },
+        "max_actions": {
+          "direction": "input",
+          "type": "number"
+        }
+      }
+    },
+    {
+      "id": "usersim-first-run",
+      "role": "New customer",
+      "backstory": "I have never used ArchHub; I need to install on a clean PC and connect my agents without developer knowledge.",
+      "job": "install",
+      "core": true,
+      "goals": [
+        "Install on a clean disposable Windows environment, finish first run, connect an agent and complete one task."
+      ],
+      "params": {
+        "patience_seconds": {
+          "type": "number",
+          "value": 150
+        },
+        "max_actions": {
+          "type": "number",
+          "value": 12
+        }
+      },
+      "engine": "usersim.persona",
+      "interfaces": {
+        "patience_seconds": {
+          "direction": "input",
+          "type": "number"
+        },
+        "max_actions": {
+          "direction": "input",
+          "type": "number"
+        }
+      }
+    },
+    {
+      "id": "usersim-profile",
+      "role": "Returning graph author",
+      "backstory": "I reopen my last graph while a large Workshop and eleven colleagues are active; the window must remain usable.",
+      "job": "profiling",
+      "core": true,
+      "goals": [
+        "Open the last graph on the canvas and zoom it while the app remains responsive under the generated large Workshop and eleven external readers."
+      ],
+      "params": {
+        "patience_seconds": {
+          "type": "number",
+          "value": 120
+        },
+        "max_actions": {
+          "type": "number",
+          "value": 12
+        }
+      },
+      "engine": "usersim.persona",
+      "interfaces": {
+        "patience_seconds": {
+          "direction": "input",
+          "type": "number"
+        },
+        "max_actions": {
+          "direction": "input",
+          "type": "number"
+        }
+      }
+    }
+  ]
+}

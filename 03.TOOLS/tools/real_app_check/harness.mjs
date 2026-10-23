@@ -26,7 +26,12 @@ ws.addEventListener('message', event => {
   if (m.method === 'Network.responseReceived' && m.params.response.status >= 400)
     failed.push(m.params.response.status + ' ' + m.params.response.url.replace(/^https?:\/\/[^/]+/, '').slice(0, 90));
 });
-const cdp = (method, params = {}) => new Promise(resolve => { const i = ++id; waiting.set(i, resolve); ws.send(JSON.stringify({ id: i, method, params })); });
+const cdp = (method, params = {}, timeoutMs = 10000) => new Promise((resolve, reject) => {
+  const i = ++id;
+  const timer = setTimeout(() => { waiting.delete(i); reject(new Error('CDP timed out: ' + method)); }, timeoutMs);
+  waiting.set(i, message => { clearTimeout(timer); message.error ? reject(new Error(message.error.message)) : resolve(message); });
+  ws.send(JSON.stringify({ id: i, method, params }));
+});
 const js = async expression => {
   const r = await cdp('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
   if (r.result?.exceptionDetails) throw new Error((r.result.exceptionDetails.exception?.description || r.result.exceptionDetails.text || 'page error').slice(0, 300));

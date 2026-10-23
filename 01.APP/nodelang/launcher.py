@@ -1505,9 +1505,9 @@ def _acknowledge_update_surface():
             return
         if True:
             def confirm():
-                from nodelang.quiet_update import confirm_applied
+                from nodelang.quiet_update import confirm_when_free
                 # File restoration waits for the same final close as every update.
-                result = confirm_applied(state_dir, Path(__file__).resolve().parents[1], rollback=False)
+                result = confirm_when_free(state_dir, Path(__file__).resolve().parents[1])
                 print("  update     : build %s: %s" % (result.get("build_id"), result.get("reason")), flush=True)
                 if not result.get("confirmed"):
                     _update_rollback_requested.set()

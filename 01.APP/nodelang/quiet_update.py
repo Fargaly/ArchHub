@@ -637,6 +637,23 @@ def confirm_applied(state_dir: Path, app_dir: Path, *, rollback=True) -> dict:
         return _failure(exc, confirmed=False)
 
 
+def confirm_when_free(state_dir: Path, app_dir: Path, *, attempts: int = 30, wait_seconds: float = 1.0,
+                      sleep=time.sleep) -> dict:
+    """Confirm a booted build; a busy update lock (the boot-time update check) is waited out, never a failure.
+
+    Build 20261023-0221 quit itself at every boot: its confirmation met the background
+    update check holding the same lock, read "update operation busy" as a failed boot and
+    rolled back.
+    """
+    result = {}
+    for _ in range(attempts):
+        result = confirm_applied(state_dir, app_dir, rollback=False)
+        if result.get("confirmed") or "update operation busy" not in str(result.get("reason", "")):
+            return result
+        sleep(wait_seconds)
+    return result
+
+
 def recover_failed_launch(state_dir: Path, app_dir: Path, *, socket_factory=None) -> dict:
     """Emergency entry uses stdlib only, before setup or application imports.
 

@@ -409,3 +409,18 @@ def test_boot_acknowledgment_confirms_a_mounted_studio_and_rolls_back_only_a_dea
         page_ready, studio_mounted, checks, verdict):
     assert qu.boot_acknowledgment(page_ready, studio_mounted, checks) == verdict
 
+
+
+
+def test_boot_confirmation_waits_out_a_busy_update_lock(monkeypatch):
+    """Build 31 rolled itself back because its confirmation met the boot-time update check."""
+    from nodelang import quiet_update
+    answers = iter([{"confirmed": False, "reason": "update operation busy"}] * 3
+                   + [{"confirmed": True, "reason": "successful boot acknowledged"}])
+    monkeypatch.setattr(quiet_update, "confirm_applied", lambda *a, **k: next(answers))
+    slept = []
+    result = quiet_update.confirm_when_free("state", "app", sleep=slept.append)
+    assert result["confirmed"] and len(slept) == 3
+    monkeypatch.setattr(quiet_update, "confirm_applied",
+                        lambda *a, **k: {"confirmed": False, "reason": "installed BUILD_ID does not match staged build"})
+    assert not quiet_update.confirm_when_free("state", "app", sleep=slept.append)["confirmed"]

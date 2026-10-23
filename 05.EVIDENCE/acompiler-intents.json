@@ -8134,6 +8134,22 @@
         "04.DOCS/DECISIONS.md",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "ACCOUNTSTORE": {
+      "source": "Founder ACCOUNTSTORE / F109, R28/F26: connected accounts read the app Windows Credential Manager by name; archive non-DPAPI legacy bytes once with hash in existing local Backups; item-specific failures; cloud distinguishes no sign-in, unreachable backend and refused HTTP status. Fixture-only patch lane; 717 lands/builds/installs and verifies. Existing social binding, save/revoke admission and OS-store security retained. No live credentials or installer access.",
+      "scope": [
+        "01.APP/app/secrets_store.py",
+        "01.APP/nodelang/model_router.py",
+        "01.APP/nodelang/settings_owner.py",
+        "01.APP/nodelang/social_custody.py",
+        "01.APP/nodelang/studio/app.jsx",
+        "01.APP/nodelang/studio/ds_settings3.jsx",
+        "02.TESTS/tests_replica/test_accountstore.py",
+        "02.TESTS/tests_replica/test_meta_signin.py",
+        "02.TESTS/tests_replica/test_social3_send.py",
+        "05.EVIDENCE/acompiler-intents.json",
+        "02.TESTS/tests_js/accountstore_connections.test.cjs"
+      ]
     }
   }
 }

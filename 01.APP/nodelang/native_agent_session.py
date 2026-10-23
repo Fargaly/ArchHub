@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import hashlib
 import json
+import logging
 import math
 import ntpath
 import os
@@ -173,7 +174,7 @@ def resolve_native_agent_identity(environment=None) -> NativeAgentIdentity:
 
 
 class NativeAgentSession:
-    """Own one client; an uncertain enrollment is never repeated by this object.
+    """Own one client; uncertain enrollment is never repeated on the same owner.
 
     Explicit constructor dependencies support isolated signed-descriptor tests.
     Production defaults require existing installed descriptor and DPAPI custody.
@@ -839,6 +840,49 @@ class NativeAgentSession:
             raise MachineTransportError("native agent client or owner binding changed")
         return client
 
+    def _recover_after_owner_restart(self, expected_owner=None):
+        """Retire only a dead owner's uncertain attachment, never its requests."""
+        if (self._state != "uncertain" or self._active_calls
+                or self._retired_release is not None or self._descriptor is None):
+            return
+        attempt = self._rebind_candidate or self
+        failed = attempt._descriptor
+        if failed is None:
+            return
+        # Keep retirement serialized with connect/tools; discovery sleeps at most 0.35s.
+        # Only discovery backs off. An enrollment or tool request is never retried.
+        for delay in (0.0, 0.05, 0.1, 0.2):
+            if delay:
+                time.sleep(delay)
+            try:
+                current = self._read_owner()
+                break
+            except (OSError, ValueError, MachineTransportError):
+                if delay == 0.2:
+                    return
+        if (current.runtime_id == failed.runtime_id
+                or self._instance_identity(current) != self._instance_identity(failed)
+                or self._instance_identity(current) != self._instance_identity(self._descriptor)):
+            return
+        if expected_owner is not None and self._owner_fingerprint(current) != expected_owner:
+            raise MachineTransportError("Native connection owner does not match expected owner")
+        self._check_identity()
+        if attempt is not self:
+            self.recover_rebind_owner(expected_failed_owner=self._owner_fingerprint(failed),
+                expected_current_owner=self._owner_fingerprint(current))
+            self._continue_after_owner_change()
+        else:
+            self._require_retired_owner_process(failed)
+            if self._read_owner() != current:
+                raise MachineTransportError("Current owner changed during attempt retirement")
+            if self._hook_rebind_guard is not None:
+                self._hook_rebind_guard()
+            self._client, self._descriptor, self._state = None, None, "unbound"
+            self._aimed_owner = None
+            self.connect(expected_owner=self._owner_fingerprint(current))
+        if self._state == "bound" and self._descriptor == current:
+            logging.getLogger(__name__).info("Native agent reattach after retired runtime %s", failed.runtime_id)
+
     def _continue_after_owner_change(self):
         """Continue the same actor on a restarted owner before a tool call runs.
 
@@ -848,10 +892,10 @@ class NativeAgentSession:
         hand (live 717, 2026-09-30). Here the owner runs that exact conditional
         continuation itself, once per new owner: same actor, same instance,
         never a new enrollment. The tool call runs afterwards; nothing is
-        replayed. Anything uncertain (a retained attempt, an active call, an
-        unexpired lease on the same owner, a different instance) is left to the
-        explicit recovery tools, and a refusal leaves the attempt retained
-        exactly as a manual rebind would.
+        replayed. A retained attempt is retired first only after its owner is
+        proven gone. An active call, uncertainty on the same owner, or another
+        instance stays with the explicit recovery tools; a refusal retains the
+        attempt exactly as a manual rebind would.
 
         The idle lease keeper enters through bound_client too, so after a
         restart the continuation may happen on the keeper thread with no tool
@@ -879,18 +923,19 @@ class NativeAgentSession:
                           expected_new_owner=target)
 
     def require_client(self) -> UniversalRuntimeClient:
-        """Return the same guarded client without performing enrollment."""
+        """Return the guarded client, recovering a proven retired owner first."""
         with self.bound_client() as client:
             return client
 
     @contextmanager
     def bound_client(self):
-        """Hold instance then client locks through a tool call; never enroll.
+        """Hold instance then client locks through a tool call; never replay it.
 
         Callers must enter this before taking the client request lock, so Work
         and Workshop adapters share one lock order with connect().
         """
         with self._lock:
+            self._recover_after_owner_restart()
             if self._client is None:
                 raise MachineTransportError("native agent attachment has no bound client")
             self._continue_after_owner_change()
@@ -944,6 +989,7 @@ class NativeAgentSession:
 
     def connect(self, *, expected_owner=None) -> UniversalRuntimeClient:
         with self._lock:
+            self._recover_after_owner_restart(expected_owner)
             if self._state == "bound":
                 if expected_owner is not None and self._owner_fingerprint(self._descriptor) != expected_owner:
                     raise MachineTransportError("Native connection owner does not match expected owner")
@@ -995,9 +1041,8 @@ class NativeAgentSession:
                     self._state = "bound"
                     return client
             except BaseException:
-                # Keep even a partially populated client; never hide lost-reply
-                # uncertainty by replacing it with another enrollment attempt.
-                self._state = "uncertain"
+                # No client means no enrollment was sent; retain all other uncertainty.
+                self._state = "unbound" if self._client is None else "uncertain"
                 raise
 
 

@@ -30,7 +30,7 @@ import pytest
 from nodelang.application_machine_transport import MachineTransportError, UniversalRuntimeClient
 from nodelang.installed_workshop_coordination import InstalledWorkshopCoordinationClient
 from nodelang.native_agent_session import NativeAgentSession
-from tests_replica.test_native_inbox_recovery import KEY, World, _fingerprints, _messages, _stale, _start
+from tests_replica.test_native_inbox_recovery import KEY, World, _fingerprints, _messages, _stale, _start, _work_note
 
 EXTERNAL = "court-717"
 
@@ -170,8 +170,7 @@ def test_an_expired_receipt_is_classified_and_the_same_actor_continues(world, mo
     final = owner.owner_status()
     assert final["agent_session"] == actor and final["recovery_required"] is False
     # The admitted tool succeeds ...
-    assert control.call("send_message", {"target": actor, "message": "after recovery",
-                                         "idempotency_key": "court-a2"})["ok"] is True
+    assert _work_note(control, actor, "after recovery", "court-a2")["ok"] is True
     # ... the control refusal stays denied, and nothing ran twice.
     with pytest.raises(MachineTransportError, match="custody changed"):
         recover()
@@ -243,7 +242,7 @@ def test_unresolved_and_truncated_permits_stay_and_block_the_next_execution(worl
     with pytest.raises(MachineTransportError, match="effect reconciliation"):
         owner.rebind_owner(expected_old_owner=pinned, expected_new_owner=current)
     with pytest.raises(MachineTransportError):
-        control.call("send_message", {"target": actor, "message": "x", "idempotency_key": "court-p1"})
+        _work_note(control, actor, "x", "court-p1")
     again = owner.inspect_enrollment(expected_owner=current, projection="effects")["effects"]
     assert again["truncated"] is True and again["pending_permits"] == page["pending_permits"]
 
@@ -303,8 +302,7 @@ def test_an_attempt_that_never_left_the_process_is_named_and_settled(world, monk
         "bound", "not-sent", "native.owner_rebind")
     owner.rebind_owner(expected_old_owner=pinned, expected_new_owner=current)
     assert owner.owner_status()["agent_session"] == actor
-    assert control.call("send_message", {"target": actor, "message": "back",
-                                         "idempotency_key": "court-n1"})["ok"] is True
+    assert _work_note(control, actor, "back", "court-n1")["ok"] is True
     with pytest.raises(MachineTransportError, match="custody changed"):
         owner.recover_rebind_owner(expected_failed_owner=current, expected_current_owner=current)
     # The unsent attempt never reached the application.
@@ -312,7 +310,6 @@ def test_an_attempt_that_never_left_the_process_is_named_and_settled(world, monk
 
 
 def test_a_restarted_process_keeps_the_exact_actor_without_session_link(world):
-    from nodelang import native_agent_mcp as mcp
     owner, control = world.owner(EXTERNAL)
     actor = owner.owner_status()["agent_session"]
     world.send(actor, "kept across the handoff", "court-h1")
@@ -324,23 +321,21 @@ def test_a_restarted_process_keeps_the_exact_actor_without_session_link(world):
     fresh = NativeAgentSession(environment={"CLAUDE_CODE_SESSION_ID": EXTERNAL},
                                descriptor_path=world.root / "runtime.json", key_provider=KEY,
                                client_factory=_counting(calls), expected_agent_session=actor)
-    server, activate = mcp.build_recovery_server(fresh)
-    tools = lambda: {tool.name: tool for tool in server._tool_manager.list_tools()}
-
     # The unresolved permit keeps the continuation refused before enrollment.
-    first = activate()
-    assert (first["status"], first["reason"]) == ("recovery_required", "existing_owner_recovery_unconfirmed")
-    assert fresh.state == "uncertain" and calls == [actor]
-    tools()["native.owner_settle_effect"].fn(expected_owner=current, permit=permit, settlement="reconciled")
-    reopened = tools()["native.connection_recover"].fn(expected_owner=current)
+    with pytest.raises(MachineTransportError, match="effect reconciliation"):
+        fresh.connect()
+    assert fresh.owner_status()["state"] == "uncertain" and calls == [actor]
+    settled = fresh.settle_effect(expected_owner=current, permit=permit, settlement="reconciled")
+    assert settled["already_settled"] is False
+    assert fresh.settle_effect(expected_owner=current, permit=permit, settlement="reconciled")["already_settled"] is True
+    reopened = fresh.recover_connection(expected_owner=current)
     assert (reopened["state"], reopened["connection_outcome"]) == ("unbound", "not-enrolled")
 
-    assert activate()["status"] == "tools_available"
+    assert fresh.connect().agent_session_root == actor
     status = fresh.owner_status()
     assert status["agent_session"] == actor and status["recovery_required"] is False and fresh._continued
     with fresh.bound_client() as client:
-        sent = InstalledWorkshopCoordinationClient(client).call(
-            "send_message", {"target": actor, "message": "after the handoff", "idempotency_key": "court-h2"})
+        sent = _work_note(fresh, actor, "after the handoff", "court-h2")
     assert sent["ok"] is True
     # Only conditional continuations of the exact actor, never a plain enrollment.
     assert calls == [actor, actor] and _live_capabilities(world, actor) == 1
@@ -354,9 +349,11 @@ def test_a_restarted_process_keeps_the_exact_actor_without_session_link(world):
                                  descriptor_path=world.root / "runtime.json", key_provider=KEY,
                                  client_factory=_counting(foreign_calls),
                                  expected_agent_session="app:agent-session:runtime:" + "0" * 32)
-    _, foreign_activate = mcp.build_recovery_server(foreign)
-    assert foreign_activate()["status"] == "recovery_required"
-    assert foreign_calls == [] and _live_capabilities(world, actor) == 1
+    with pytest.raises(MachineTransportError, match="identity mismatched"):
+        foreign.connect()
+    assert foreign.owner_status()["state"] == "uncertain"
+    assert foreign_calls == [foreign._expected_agent_session] and _live_capabilities(world, actor) == 1
+    assert _live_capabilities(world, foreign._expected_agent_session) == 0
 
 
 def _receipt(world, permit_root):
@@ -398,8 +395,7 @@ def test_an_application_restart_needs_no_manual_step_for_the_same_actor(world):
     for n in range(2):
         world.restart()
         # No owner_rebind, no recover: the next ordinary tool call just works.
-        sent = control.call("send_message", {"target": actor, "message": "after restart %d" % n,
-                                             "idempotency_key": "court-auto-%d" % n})
+        sent = _work_note(control, actor, "after restart %d" % n, "court-auto-%d" % n)
         assert sent["ok"] is True
         status = owner.owner_status()
         assert (status["state"], status["agent_session"], status["recovery_required"]) == (
@@ -422,10 +418,10 @@ def test_an_automatic_continuation_is_refused_by_a_pending_permit_and_not_retrie
     world.restart()
     # A write goes through the bound owner (a read may use the read-only inbox path).
     with pytest.raises(MachineTransportError, match="effect reconciliation"):
-        control.call("send_message", {"target": actor, "message": "blocked", "idempotency_key": "court-blk-1"})
+        _work_note(control, actor, "blocked", "court-blk-1")
     sent = list(world.bind_calls)
     status = owner.owner_status()
     assert status["state"] == "uncertain" and status["rebind_pending"] is True
     with pytest.raises(MachineTransportError):
-        control.call("send_message", {"target": actor, "message": "blocked", "idempotency_key": "court-blk-2"})
+        _work_note(control, actor, "blocked", "court-blk-2")
     assert world.bind_calls == sent  # no second automatic attempt on the same owner

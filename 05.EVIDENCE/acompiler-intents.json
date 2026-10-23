@@ -8178,6 +8178,20 @@
         "04.DOCS/DECISIONS.md",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "WSADD": {
+      "source": "Founder WSADD / request WSADD, To 717: native folder picker registers and refreshes Workspaces; cancellation and exact refusals visible and logged; archive legacy raw bytes into existing backup_location managed directory including external volumes, never overwrite, hash receipt and preserve original on failure. Isolated fixture patch only; no installer, canvas or live credential access.",
+      "scope": [
+        "01.APP/app/secrets_store.py",
+        "01.APP/nodelang/workspace_roots_owner.py",
+        "01.APP/nodelang/application_server.py",
+        "01.APP/nodelang/launcher.py",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/app.jsx",
+        "02.TESTS/tests_replica/test_wsadd.py",
+        "02.TESTS/tests_js/wsadd.test.cjs",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

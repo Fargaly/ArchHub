@@ -8224,6 +8224,15 @@
         "02.TESTS/tests_replica/test_wsnoreply.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "REATTACH": {
+      "source": "Founder REATTACH via 717: after app restart or update the next call in the running Claude/Codex session attaches automatically. Retire uncertain attachment only after verified different runtime on same instance and old owner process death; never replay old requests; same runtime remains refused. Isolated patch only, no live data/app/install/settings. 717 Workshop approval8c5baba0: existing recovery court retired sends use existing _work_note POST route after exact main4FAIL proof; preserve assertion predicates and every case. 717 approval4fbc9eaa: removed factory court uses real connect/settle_effect/recover_connection; only obsolete statuses become exceptions/state and zero-bind becomes one refused bind with zero new capability. Keep exact actor, once-only settlement, retained message/no-replay invariants.",
+      "scope": [
+        "01.APP/nodelang/native_agent_session.py",
+        "02.TESTS/tests_replica/test_native_reattach.py",
+        "02.TESTS/tests_replica/test_native_owner_recovery_is_actionable.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

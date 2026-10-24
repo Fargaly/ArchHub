@@ -8383,6 +8383,23 @@
         "NOTICE",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "SESSIONLINK2": {
+      "source": "Founder SESSIONLINK2 via 717: ask saved sessions L1 search/L2 exact transcript/L3 explicit one-question resume, 180 seconds total, free models only, timeout/nonzero/empty are named failures; REVIEW 1 restores native Codex app/bridge, Claude peer and OpenCode plugin delivery and live ask fallbacks exactly as main; draft protection applies only to a visible-composer typing path (none exists here). Held asks retain original Workshop custody/reason and existing reminder/escalation. Isolated source patch only; no installed/live data/desktop effects.",
+      "scope": [
+        "01.APP/nodelang/session_link/ask.mjs",
+        "01.APP/nodelang/session_link/dormant.mjs",
+        "01.APP/nodelang/session_link/worker.mjs",
+        "01.APP/nodelang/session_link/session-link.ps1",
+        "01.APP/nodelang/session_link/README.md",
+        "01.APP/nodelang/session_link/agent-skill.md",
+        "01.APP/nodelang/session_link_transport.py",
+        "01.APP/nodelang/workshop_mailbox.py",
+        "02.TESTS/tests/session_link_dormant.test.mjs",
+        "02.TESTS/tests/session_link_wsinject.mjs",
+        "02.TESTS/tests_replica/test_sessionlink2.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

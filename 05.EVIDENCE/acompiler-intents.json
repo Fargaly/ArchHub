@@ -8329,6 +8329,12 @@
       "scope": [
         "05.EVIDENCE/acompiler.json"
       ]
+    },
+    "GOVHANDOFF": {
+      "source": "Founder 2026-10-24 ACOMPILER stop-handoff courts must run: 05.EVIDENCE/acompiler-governance-hooks.patch rebased onto the live 00.GOVERNANCE/03.AGENT-HOOKS sources after e48ec2ac moved the fixture from 00.GOVERNANCE/hooks and the governance hooks changed (2026-10-16 enforcer, 2026-10-20 stop gate).",
+      "scope": [
+        "05.EVIDENCE/acompiler-governance-hooks.patch"
+      ]
     }
   }
 }

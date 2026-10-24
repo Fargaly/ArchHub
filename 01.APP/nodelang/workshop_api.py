@@ -13,7 +13,7 @@ from .universal_cell import Cell, InvalidCell
 
 FUNCTIONS = frozenset({"listAgentsWorking", "listTasks", "listWorkshopMessages", "sendToBaboom", "setTaskStatus",
     "reassignTask", "setTaskDelegate", "queueTaskMessage", "settleQueuedMessage",
-    "steerTask", "addTaskReview", "resolveTaskReview"})
+    "steerTask", "addTaskReview", "resolveTaskReview", "setTaskActivity"})
 LABELS = {"claude":"Claude", "codex":"Codex", "antigravity":"Antigravity",
           "antigravity-ide":"Antigravity", "gemini":"Gemini", "opencode":"OpenCode",
           "goose":"Goose", "baboom":"BABOOM"}
@@ -334,7 +334,8 @@ class WorkshopAPI:
         options = self._options(task)
         state = str(row["operational"]["current_state_label"]).casefold()
         status = STATES[state]
-        known = [item for item in declarations(self.owner, include_archived=True) if item["request_id"] == task]
+        external_key = row['interfaces'].get('external-key', {}).get('value')
+        known = [item for item in declarations(self.owner, include_archived=True) if item["request_id"] in (task, external_key)]
         active = [item for item in known if item.get("current")]
         if state == "open" and any(item["status"] == "working" for item in active):
             status = "WIP"
@@ -376,6 +377,36 @@ class WorkshopAPI:
                 if item["id"] in states and states[item["id"]]["state"] != "stored"), None)
             if latest:
                 delivery = latest
+        from .workshop_activity import observer_for
+        reader = observer_for(self.owner)
+        activity = None
+        if reader is not None:
+            config = options.get('activity')
+            if config is None:
+                paths = {reader.relative(path) for item in known for path in item.get('paths', [])}
+                config = {'owns':[('**' if not path else path + '/**') if (reader.root / path).is_dir() else path
+                                  for path in paths if path is not None]}
+            def emit(identity, text):
+                self.history().append(self.root, author='Workshop observation', content=text,
+                    category=self.owner.universal_registry.workshop_category_roots['note'],
+                    refs=(task,), idempotency_key='activity-handoff:' + identity)
+            activity = reader.project(task, reader.ledger_config(external_key, config), emit=emit,
+                declared_sessions={(item.get('app'), item.get('native_session_id')) for item in active},
+                conflicting_sessions={(item.get('app'), item.get('native_session_id'))
+                    for item in declarations(self.owner) if item.get('request_id') not in (task, external_key)})
+            if activity['stale']:
+                for item in active:
+                    if not item.get('agent') or not item.get('native_session_id'):
+                        continue
+                    identity = hashlib.sha256(json.dumps([task, reader.ledger_stamp,
+                        config.get('updated_at'), item['native_session_id']]).encode()).hexdigest()
+                    self.history().append(self.root, author='Workshop observation',
+                        content='To ' + item['agent'] + ':\nRe-verify row status on ' + task + '; owned files changed after its ledger update.',
+                        category=self.owner.universal_registry.workshop_category_roots['note'],
+                        refs=(task,), idempotency_key='activity-stale:' + identity)
+            unobserved = any(item.get('app') not in ('codex','claude','opencode') for item in active)
+            if activity['ownership'] == 'known' and not unobserved and state in ('open', 'claimed'):
+                status = 'WIP' if any(item['state'] in ('working', 'tool_ended') for item in activity['sessions']) else 'PLANNED'
         return {"id":task, "title":interfaces["title"]["value"], "owner":owner,
             "status":status, "messages":messages, "messagesTruncated":messages_truncated,
             "messagesContinuation":({"tool":"read","arguments":{"since":0},"work_root":task}
@@ -383,13 +414,32 @@ class WorkshopAPI:
             "sources":[], "usage":None, "reviews":options.get("reviews", []),
             "queuedMessages":[item for item in options.get("queuedMessages", []) if item["state"] == "queued"], "delegate":options.get("delegate"),
             "blocked":state == "blocked" or any(item["status"] == "blocked" for item in active),
-            "declarations":active, "delivery":delivery,
+            "declarations":active, "delivery":delivery, "activity":activity,
             # WIRE-agents: restore only saved task parameters; never claim Work completion.
             "planMode":options.get("planMode"), "checkpoints":options.get("checkpoints",[]),
             "revision":self.owner.universal_store.revision}
 
     def listTasks(self):
+        from .workshop_activity import observer_for
+        reader = observer_for(self.owner)
+        if reader is not None:
+            reader.poll()
+            from .agent_declarations import declarations
+            reader.poll_opencode(getattr(self.owner, '_cloud_relay_transport', None),
+                [row['native_session_id'] for row in declarations(self.owner)
+                 if row.get('app') == 'opencode' and type(row.get('native_session_id')) is str])
         return [self._task(row) for row in self._works()]
+
+    def setTaskActivity(self, task, values):
+        """Keep ledger ownership/install facts in this Work's existing parameters."""
+        from .workshop_activity import ownership
+        try:
+            activity = ownership(values)
+        except ValueError as exc:
+            raise InvalidCell(str(exc)) from exc
+        options = self._options(task)
+        self._save(task, {**options, 'activity':activity})
+        return self._task(self._work(task))
 
     def listWorkshopMessages(self, before=None):
         """The existing public room, including notes that have no Work reference."""

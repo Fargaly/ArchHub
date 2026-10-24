@@ -225,6 +225,15 @@ class SessionLinkTransport:
                            "text": text, "permission_mode": permission_mode,
                            **({"mailbox_message":mailbox_message} if mailbox_message else {})}, budget, cancel_event)
 
+    def activity(self, session, root):
+        """Read an existing OpenCode session; never send a prompt or claim Work."""
+        import re
+        if type(session) is not str or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', session):
+            raise ValueError('Invalid OpenCode observation identity')
+        if self._attachment is not None:
+            return {'status':'not_sent', 'reason':'activity_requires_public_reader'}
+        return self._call({'operation':'activity', 'session':session, 'root':str(Path(root).resolve())}, 3.0, None)
+
     def inject(self, recipient, text, *, message_id, timeout_seconds: float = 10.0, cancel_event=None, model=None):
         """One-way public Workshop notification; never waits for or executes a reply."""
         if (type(recipient) is not dict or set(recipient) != {"app", "id"}
@@ -324,7 +333,7 @@ class SessionLinkTransport:
                 elif time.monotonic() >= deadline:
                     stop_reason = "timeout"
                 if stop_reason:
-                    if payload['operation']=='discover':
+                    if payload['operation'] in ('discover', 'activity'):
                         # No native message was sent. Close this one owned helper
                         # tree immediately; a blocked inventory must not add grace time.
                         job.close()

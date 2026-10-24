@@ -51,7 +51,16 @@
         }}>{task.title}</div><div style={{
           fontSize: 12.5,
           color: color(task.status)
-        }}>{task.status === 'IN REVIEW' ? 'Waits for your OK' : task.status}</div>{task.status === 'WIP' && steps.length > 0 && <span role="progressbar" aria-label={task.title + ' steps'} aria-valuemin={0} aria-valuenow={completed} aria-valuemax={steps.length} style={{
+        }}>{task.status === 'IN REVIEW' ? 'Waits for your OK' : task.status}</div>{task.activity && <div data-agent-activity role="status" style={{fontSize:11, overflowWrap:'anywhere'}}>
+          {task.activity.sessions.map(row => <div key={row.provider + ':' + row.session} title={row.session}>
+            {row.provider} · {row.tool} · {row.associated === false ? 'Current file unknown' + (row.file ? ' (last observed: ' + row.file + ')' : '') : row.file} · {row.state === 'turn_ended' ? 'Turn ended' : row.state === 'tool_ended' ? 'Tool ended' : row.state === 'unassociated' ? 'Activity unassociated' : 'Working'}
+            {row.association_conflict && <span> · File and session association disagree</span>}
+          </div>)}
+          {task.activity.ownership === 'unknown' && <span>Activity unknown · no owned files</span>}
+          {task.activity.touched_after_install && <strong data-touched-after-install style={{color:A.warn}}>Touched after install</strong>}
+          {task.activity.stale && <span> · Re-verify row status</span>}
+          {(task.activity.limited || task.activity.unavailable) && <span> · Observation incomplete</span>}
+        </div>}{task.status === 'WIP' && steps.length > 0 && <span role="progressbar" aria-label={task.title + ' steps'} aria-valuemin={0} aria-valuenow={completed} aria-valuemax={steps.length} style={{
           height: 3,
           background: '#2a2a31',
           borderRadius: 2

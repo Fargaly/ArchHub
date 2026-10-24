@@ -4,6 +4,39 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import {PeerEndpoint} from './vendor/src/peer-protocol.mjs';
 import {validateModel,promptSelectedModel,modelReceipt} from './opencode-model.mjs';
+const MESSAGE_READ_BOUND=64;
+async function readOpenCodeMessages(client, sessionId, directory, timeout=10000) {
+ const response=await client.session.messages({path:{id:sessionId},query:{directory,limit:MESSAGE_READ_BOUND},signal:AbortSignal.timeout(timeout)});
+ if(response?.error)throw new Error('OpenCode turn read rejected');
+ const rows=response?.data??response;
+ if(!Array.isArray(rows)||rows.length>MESSAGE_READ_BOUND)throw new Error('OpenCode message count bound');
+ if(Buffer.byteLength(JSON.stringify(rows),'utf8')>2*1024*1024)throw new Error('OpenCode message byte bound');
+ return rows;
+}
+// Same bounded Session Link reader, projecting tool metadata only, never text parts.
+export async function collectOpenCodeActivity(client,{sessionId,directory,root}) {
+ const relative=path.relative(path.resolve(root),path.resolve(directory));
+ if(relative==='..'||relative.startsWith('..'+path.sep)||path.isAbsolute(relative)||
+    [...path.resolve(directory).split(path.sep),...path.resolve(root).split(path.sep)].some(p=>/^(20\.CLIENTS|60\.PERSONAL)$/i.test(p)))throw new Error('OpenCode workspace outside activity scope');
+ const rows=await readOpenCodeMessages(client,sessionId,directory,2000), events=[];
+ for(const row of rows){
+  if(row?.info?.sessionID!==sessionId||row.info.role!=='assistant'||!Array.isArray(row.parts))continue;
+  for(const part of row.parts.slice(0,256)){
+   if(part?.type!=='tool'||part.sessionID!==sessionId||part.messageID!==row.info.id||
+      !/^[A-Za-z_][A-Za-z0-9_.:-]{0,79}$/.test(part.tool||''))continue;
+   const input=part.state?.input, raw=input?.filePath||input?.file_path||input?.path;
+   if(typeof raw!=='string'||raw.length>4096||/[\x00-\x1f]/.test(raw))continue;
+   const absolute=path.resolve(directory,raw), file=path.relative(path.resolve(root),absolute).split(path.sep).join('/');
+   if(!file||file==='..'||file.startsWith('../')||path.isAbsolute(file)||
+      absolute.split(path.sep).some(p=>/^(20\.CLIENTS|60\.PERSONAL)$/i.test(p)))continue;
+   const stamp=part.state?.time?.end||part.state?.time?.start||row.info.time?.created;
+   if(!Number.isFinite(stamp))continue;
+   const state=row.info.time?.completed&&row.info.finish==='stop'?'turn_ended':part.state.status==='running'?'working':'tool_ended';
+   events.push({provider:'opencode',session:sessionId,tool:part.tool,file,state,at:stamp/1000});
+  }
+ }
+ return events.slice(-128);
+}
 // A prompt may produce several assistant messages before its final response.
 // Only public text from that exact completed turn may cross the transport.
 export async function collectOpenCodeTurn(client, {sessionId, directory, reply, model}) {
@@ -12,10 +45,12 @@ export async function collectOpenCodeTurn(client, {sessionId, directory, reply, 
  if (!final || final.role !== 'assistant' || final.sessionID !== sessionId ||
      typeof final.id !== 'string' || typeof final.parentID !== 'string') fail('final identity unavailable');
  let response;
- try {response = await client.session.messages({path:{id:sessionId}, query:{directory, limit:64}, signal:AbortSignal.timeout(10000)});}
- catch (_) {fail('turn read failed');}
+ try {response = await readOpenCodeMessages(client,sessionId,directory);}
+ catch (error) {fail(error.message==='OpenCode turn read rejected'?'turn read rejected':
+  error.message==='OpenCode message count bound'?'message count bound':
+  error.message==='OpenCode message byte bound'?'message byte bound':'turn read failed');}
  if (response?.error) fail('turn read rejected');
- const rows = response?.data ?? response;
+ const rows = response;
  if (!Array.isArray(rows) || rows.length > 64) fail('message count bound');
  if (Buffer.byteLength(JSON.stringify(rows), 'utf8') > 2*1024*1024) fail('message byte bound');
  const unique = new Map();
@@ -117,6 +152,12 @@ export function createSessionLinkPlugin({stateDirectory}){
   try{const r=JSON.parse(buffer.slice(0,buffer.indexOf('\n')));if(r.token!==peer.peerToken)throw new Error('Unauthenticated request');let result;
    if(r.operation==='list'){const rows=[];for(const [cwd,c] of clients){const list=unwrap(await c.session.list({query:{directory:cwd}}));for(const s of list)rows.push({app:'opencode',id:s.id,title:s.title,cwd:s.directory||cwd,runtimeId:process.pid});}result=[...new Map(rows.map(x=>[x.id,x])).values()];}
    else if(r.operation==='capabilities')result={per_request_free_model:1};
+   else if(r.operation==='activity'){
+    const c=clients.get(r.directory);if(!c)throw new Error('Workspace is not attached to this OpenCode process');
+    const target=unwrap(await c.session.get({path:{id:r.id},query:{directory:r.directory}}));
+    if(target.id!==r.id||target.directory!==r.directory)throw new Error('Session/workspace mismatch');
+    result=await collectOpenCodeActivity(c,{sessionId:r.id,directory:r.directory,root:r.root});
+   }
    else if(r.operation==='inject'){
     const model=validateModel(r.model);
     if(typeof r.messageId!=='string'||!r.messageId||r.messageId.length>512||typeof r.text!=='string'||!r.text.trim()||r.text.length>32000)throw new Error('Invalid Workshop injection');

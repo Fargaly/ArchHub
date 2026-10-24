@@ -36,7 +36,7 @@ const exportedNames = ["moveNodes", "runValuation", "selectFirm", "acceptOfficeI
 const listeners=new Set();
 let canvas=null, session=null, commands=null, renewing=null, scopeEpoch=0, restoreGraph=true;
 let graphNavigation=Promise.resolve();
-let refreshTimer=null, refreshInFlight=false, ready=false, accountSignInPending=false;
+let refreshTimer=null, refreshInFlight=false, taskRefreshInFlight=null, ready=false, accountSignInPending=false;
 let providerRoster=[], workingAgents=[];
 let controlsGeneration=0, notificationGeneration=0;
 let updateGeneration=0, updateActionPending=false;
@@ -151,13 +151,15 @@ async function refreshApprovals() {
  const tasks=state.tasks.map(task=>({...task,approvalId:approvals.findLast(card=>card.work===task.id&&card.status!=='superseded')?.id}));
  publish({approvals,tasks,approvalActionsReady:true});return approvals;
 }
-async function refreshTasks() {
+async function refreshTasks(details=true) {
  const epoch=scopeEpoch,binding=JSON.stringify(workshopBinding());
  const tasks=await workshop('listTasks');if(!Array.isArray(tasks))return tasks;
  const room=await workshop('listWorkshopMessages');
  if(epoch!==scopeEpoch||binding!==JSON.stringify(workshopBinding()))return state.tasks;
  publish({tasks:tasks.map(t=>({...t,messages:t.messages||[],steps:t.steps||[],reviews:t.reviews||[],queuedMessages:t.queuedMessages||[]})),
-   workshopMessages:room.messages||[],workshopMessagesMore:room.more===true,workshopMessagesBefore:room.next_before,workshopMessagesScope:binding});await refreshApprovals();await refreshWatcher();await refreshHostSkills();await refreshDesktop();await refreshNotifications();return state.tasks;
+   workshopMessages:room.messages||[],workshopMessagesMore:room.more===true,workshopMessagesBefore:room.next_before,workshopMessagesScope:binding});
+ if(details){await refreshApprovals();await refreshWatcher();await refreshHostSkills();await refreshDesktop();await refreshNotifications();}
+ return state.tasks;
 }
 function projectProviders() {
  const roster=new Map(providerRoster.map(p=>[p.id,p]));
@@ -236,14 +238,19 @@ window.addEventListener('archhub:update-ready',()=>{
  refreshApplicationUpdate().catch(error=>notice(error.message));
 });
 async function refreshLive() {
- if(!ready||document.hidden||refreshInFlight||listeners.size===0)return;
+ if(!ready||document.hidden||listeners.size===0)return state.tasks;
+ // The same timer refreshes rows even while account/provider discovery is slow.
+ if(!taskRefreshInFlight)taskRefreshInFlight=refreshTasks(false).catch(error=>publish({connectionNotice:error.message})).finally(()=>{taskRefreshInFlight=null;});
+ if(refreshInFlight){await taskRefreshInFlight;return state.tasks;}
  refreshInFlight=true;
  try {
-  for(const refresh of [refreshApplicationUpdate,refreshAccount,api.listProviders,refreshTasks,refreshAgents,refreshSettingsControls]){
+  await taskRefreshInFlight;
+  for(const refresh of [refreshAgents,refreshApplicationUpdate,refreshAccount,api.listProviders,refreshSettingsControls,refreshApprovals,refreshWatcher,refreshHostSkills,refreshDesktop,refreshNotifications]){
    try{await refresh();}catch(error){publish({connectionNotice:error.message});}
   }
  }
  finally{refreshInFlight=false;}
+ return state.tasks;
 }
 function stopRefresh(){if(refreshTimer!==null){window.clearInterval(refreshTimer);refreshTimer=null;}}
 function watchRefresh(){stopRefresh();if(ready&&listeners.size&&!document.hidden)refreshTimer=window.setInterval(refreshLive,ownerRefreshMs);}
@@ -356,6 +363,7 @@ Object.assign(api,{
  },
  getSnapshot:()=>state,subscribe(fn){listeners.add(fn);watchRefresh();return()=>{listeners.delete(fn);if(listeners.size===0)stopRefresh();};},
  listTasks:refreshTasks,listAgentsWorking:refreshAgents,
+ async setTaskActivity(id,values){const result=await workshop('setTaskActivity',[id,values]);await refreshTasks();return result;},
  async listWorkshopMessages(before){const epoch=scopeEpoch,binding=JSON.stringify(workshopBinding());const page=await workshop('listWorkshopMessages',[before??null]);return epoch===scopeEpoch&&binding===JSON.stringify(workshopBinding())?page:null;},
  async listProviders(){const d=await request('/api/universal/providers');providerRoster=(d.providers||[]).map(providerDto);projectProviders();return state.providers;},
  getSettings:async()=>copy(state.settings),getGraph:async()=>copy(state.graph),

@@ -31,6 +31,15 @@ input.on('line',async line=>{
    const projection=all=>{const rows=['claude','codex','opencode','antigravity','antigravity-ide'].flatMap(app=>(all[app]||[]).map(s=>({...s,app})));return {status:'ok',recipients:rows.slice(0,128),providers:all.adapterStatus||{},complete_apps:rows.length>128?[]:all.complete_apps||[],truncated:rows.length>128};};
    const all=await catalog({apps:r.apps,onProgress:all=>{if(snapshots++<16)emit({event:'discovery_snapshot',...projection(all)});}});
    terminal({event:'result',...projection(all)});
+  }else if(r.operation==='activity'){
+   const {pluginRpc}=await import('./extra-apps.mjs');
+   if(r.attachment||typeof r.session!=='string'||typeof r.root!=='string')throw new Error('Invalid activity scope');
+   const all=await catalog({apps:['opencode']});
+   const targets=(all.opencode||[]).filter(row=>row.id===r.session);
+   if(targets.length!==1)throw new Error('Exact OpenCode session unavailable');
+   const target=targets[0];
+   const events=await pluginRpc({operation:'activity',id:target.id,directory:target.cwd,root:r.root},target.runtimeId);
+   terminal({event:'result',status:'ok',events,work_authority:false,execution_verified:false});
   }else if(r.operation==='inject'){
    if(r.attachment)throw new Error('Public Workshop injection cannot borrow a Work attachment');
    const result=await injectWorkshop(r.recipient,r.text,r.message_id,{model:r.model,onDispatch:()=>{dispatched=true;emit({event:'dispatch_attempted'});}});

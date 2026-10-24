@@ -8419,6 +8419,16 @@
         "04.DOCS/DECISIONS.md",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "GOOSEROUTE": {
+      "source": "Founder GOOSEROUTE: reuse FREEROUTE2 walker for release Goose paired reply and final OpenCode ACK; explicitly free models only, unchanged proofs and total deadlines, first route at least120s; isolated patch, one bounded provider probe; no builds/installed/live data.",
+      "scope": [
+        "03.TOOLS/tools/real_app_check/agentlink_release.py",
+        "01.APP/nodelang/goose_adapter.py",
+        "02.TESTS/tests/test_agentlink_release.py",
+        "04.DOCS/DECISIONS.md",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

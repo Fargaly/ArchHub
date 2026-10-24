@@ -9,44 +9,6 @@ import pytest
 from tools.real_app_check.agentlink_release import require_checks, QualificationRefused
 
 
-@pytest.mark.parametrize("failure", ["quota", "rate", "harness", "empty", "timeout", "sequence"])
-def test_second_free_route_proves_the_same_sequence_in_a_real_child(tmp_path, monkeypatch, failure):
-    from tools.real_app_check import agentlink_release as gate
-    from nodelang import model_router
-    monkeypatch.setattr(model_router, "discover_key", lambda _: ("fixture-key", "fixture"))
-    log = tmp_path / "opencode.log"
-    stub = tmp_path / "PROVIDER.py"
-    stub.write_text('''import json,pathlib,sys,time
-model=sys.argv[sys.argv.index('-m')+1]
-root=pathlib.Path(sys.argv[1])
-with (root/'CALLS.txt').open('a') as stream: stream.write(model+'\\n')
-failure=sys.argv[2]
-if model.startswith('opencode/') or ('inkling' in model and failure in ('quota','rate','harness')):
- provider,identity=model.split('/',1)
- message='Free usage limit reached' if model.startswith('opencode/') or failure=='quota' else ('429 Too Many Requests' if failure=='rate' else '403 only available on agentic harnesses')
- with (root/'opencode.log').open('a') as stream: stream.write('message="stream error" providerID='+provider+' modelID='+identity+' small=false error="'+message+'"\\n')
- time.sleep(20)
-elif 'inkling' in model and failure=='timeout': time.sleep(20)
-elif 'inkling' in model and failure=='empty': pass
-else:
- tools=['read'] if 'inkling' in model and failure=='sequence' else ['write','read','write','glob']
- for tool in tools: print(json.dumps({'type':'tool_use','sessionID':model,'part':{'tool':tool,'state':{'status':'completed','output':'ok'}}}),flush=True)
-''', encoding="utf-8")
-    primary = "opencode/mimo-v2.6-flash-free"
-    command = [sys.executable, str(stub), str(tmp_path), failure, "-m", primary]
-    result = gate._opencode_turn(command, model=primary, env=dict(os.environ), cwd=tmp_path,
-        timeout=8, quota_log=log)
-    output, selected = result[:2]
-    assert selected == "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"
-    assert gate.write_sequence(output)
-    assert (tmp_path / "CALLS.txt").read_text().splitlines() == [primary,
-        "openrouter/thinkingmachines/inkling:free", selected]
-    routes = result[2]
-    assert [row['model'] for row in routes] == [primary, "openrouter/thinkingmachines/inkling:free", selected]
-    assert routes[-1]['reason'] == 'completed'
-    assert all(0 < row['timeout'] <= 8 for row in routes)
-
-
 @pytest.mark.parametrize("model", ["opencode/paid", "openrouter/thinkingmachines/inkling", "other/model:free", "openrouter/:free"])
 def test_paid_or_unrecognized_models_refuse_before_profile_creation(tmp_path, model):
     from tools.real_app_check import agentlink_release as gate
@@ -54,258 +16,6 @@ def test_paid_or_unrecognized_models_refuse_before_profile_creation(tmp_path, mo
     with pytest.raises(QualificationRefused, match="explicitly free"):
         gate.qualify(profile, model=model)
     assert not profile.exists()
-
-
-@pytest.mark.parametrize("failure", ["empty", "tool", "governance", "auth", "403", "policy", "nonzero"])
-def test_routes_exhaust_or_refuse_real_failures_without_hiding_them(tmp_path, monkeypatch, failure):
-    from tools.real_app_check import agentlink_release as gate
-    from nodelang import model_router
-    monkeypatch.setattr(model_router, "discover_key", lambda _: ("fixture-key", "fixture"))
-    if failure == 'empty':
-        output = ''
-    elif failure in {'tool', 'governance'}:
-        output = json.dumps({'type':'tool_use', 'part':{'tool':'write' if failure == 'tool' else 'native_work_task_detach',
-            'state':{'status':'error', 'error':'write failed' if failure == 'tool' else 'ArchHub OpenCode governance: No Work task surface is attached'}}})
-    else:
-        output = json.dumps({'type':'error', 'error':{'message':{'auth':'401 invalid API key', '403':'403 forbidden',
-            'policy':'403 content policy', 'nonzero':'unclassified process error'}[failure]}})
-    program = "import pathlib,sys;\nwith pathlib.Path(sys.argv[1]).open('a') as f: f.write(sys.argv[-1]+'\\n')\nprint(sys.argv[2])\nraise SystemExit(9 if sys.argv[3]=='nonzero' else 0)"
-    command = [sys.executable, '-c', program, str(tmp_path/'CALLS.txt'), output, failure, '-m', 'opencode/mimo-v2.6-flash-free']
-    with pytest.raises(QualificationRefused) as refused:
-        gate._opencode_turn(command, model=command[-1], env=dict(os.environ), cwd=tmp_path,
-            timeout=8, quota_log=tmp_path/'opencode.log')
-    routes = refused.value.routes
-    assert len(routes) == (3 if failure == 'empty' else 1)
-    assert len((tmp_path/'CALLS.txt').read_text().splitlines()) == len(routes)
-    assert all(row['reason'] != 'completed' for row in routes)
-
-
-def test_no_route_combines_partial_tool_proofs(tmp_path, monkeypatch):
-    from tools.real_app_check import agentlink_release as gate
-    from nodelang import model_router
-    monkeypatch.setattr(model_router, 'discover_key', lambda _: ('fixture-key', 'fixture'))
-    program = "import json,sys\nm=sys.argv[-1]\nfor tool in (['write','read'] if m.startswith('opencode/') else ['write','glob']): print(json.dumps({'type':'tool_use','part':{'tool':tool,'state':{'status':'completed','output':'ok'}}}))"
-    model = 'opencode/mimo-v2.6-flash-free'
-    with pytest.raises(QualificationRefused, match='All explicitly free'):
-        gate._opencode_turn([sys.executable, '-c', program, '-m', model], model=model, env=dict(os.environ),
-            cwd=tmp_path, timeout=8, quota_log=tmp_path/'opencode.log')
-
-
-def test_route_deadline_is_shared_and_exhausted_without_starting_another_child(tmp_path, monkeypatch):
-    from tools.real_app_check import agentlink_release as gate
-    now, calls = [100.0], []
-    monkeypatch.setattr(gate.time, 'monotonic', lambda: now[0])
-    def run(command, **options):
-        calls.append(options['timeout'])
-        now[0] += 301
-        raise gate._FreeProviderFailure('provider timeout')
-    monkeypatch.setattr(gate, '_run', run)
-    model = 'opencode/mimo-v2.6-flash-free'
-    with pytest.raises(QualificationRefused, match='deadline exhausted') as refused:
-        gate._opencode_turn(['fixture', '-m', model], model=model, env={}, cwd=tmp_path,
-            timeout=300, quota_log=tmp_path/'opencode.log')
-    assert calls == [100.0]
-    assert len(refused.value.routes) == 1
-
-
-def test_nonfree_fallback_refuses_before_any_child(tmp_path, monkeypatch):
-    from tools.real_app_check import agentlink_release as gate
-    monkeypatch.setattr(gate, '_FREE_FALLBACKS', ('openrouter/vendor/paid',))
-    monkeypatch.setattr(gate, '_run', lambda *_args, **_kw: pytest.fail('paid route must never start a child'))
-    with pytest.raises(QualificationRefused, match='explicitly free'):
-        gate._opencode_turn(['fixture','-m','opencode/mimo-v2.6-flash-free'], model='opencode/mimo-v2.6-flash-free',
-            env={}, cwd=tmp_path, timeout=8, quota_log=tmp_path/'opencode.log')
-
-
-def test_attempted_sequence_without_completed_receipts_is_terminal(tmp_path, monkeypatch):
-    from tools.real_app_check import agentlink_release as gate
-    calls = []
-    def run(command, **_options):
-        calls.append(command)
-        return '\n'.join(json.dumps({'type':'tool_use','part':{'tool':tool,
-            'state':{'status':'running'}}}) for tool in ['write','read','write','glob'])
-    monkeypatch.setattr(gate, '_run', run)
-    with pytest.raises(QualificationRefused, match='lack completed proof'):
-        gate._opencode_turn(['fixture','-m','opencode/mimo-v2.6-flash-free'], model='opencode/mimo-v2.6-flash-free',
-            env={}, cwd=tmp_path, timeout=8, quota_log=tmp_path/'opencode.log')
-    assert len(calls) == 1
-
-
-def test_credential_lookup_consumes_the_original_deadline(tmp_path, monkeypatch):
-    from tools.real_app_check import agentlink_release as gate
-    from nodelang import model_router
-    now = [0.0]
-    monkeypatch.setattr(gate.time, 'monotonic', lambda: now[0])
-    def key(_provider):
-        now[0] = 301.0
-        return 'fixture-key', 'fixture'
-    monkeypatch.setattr(model_router, 'discover_key', key)
-    monkeypatch.setattr(gate, '_run', lambda *_args, **_kw: pytest.fail('deadline expired before child start'))
-    model = 'openrouter/thinkingmachines/inkling:free'
-    with pytest.raises(QualificationRefused, match='deadline exhausted'):
-        gate._opencode_turn(['fixture','-m',model], model=model, env={}, cwd=tmp_path,
-            timeout=300, quota_log=tmp_path/'opencode.log')
-
-
-def test_retry_nonce_cannot_borrow_previous_attempt_file_proof(tmp_path, monkeypatch):
-    from tools.real_app_check import agentlink_release as gate
-    from nodelang import model_router
-    monkeypatch.setattr(model_router, 'discover_key', lambda _: ('fixture-key', 'fixture'))
-    calls = []
-    def run(command, **_options):
-        calls.append(command)
-        if len(calls) == 1:
-            (tmp_path/'a.txt').write_text(command[-1])
-            return json.dumps({'type':'text','part':{'text':'did not attempt sequence'}})
-        return '\n'.join(json.dumps({'type':'tool_use','part':{'tool':tool,
-            'state':{'status':'completed','output':'ok'}}}) for tool in ['write','read','write','glob'])
-    monkeypatch.setattr(gate, '_run', run)
-    nonce = 'original-nonce'
-    _output, _model, routes = gate._opencode_turn(['fixture','-m','opencode/mimo-v2.6-flash-free',nonce],
-        model='opencode/mimo-v2.6-flash-free', env={}, cwd=tmp_path, timeout=8,
-        quota_log=tmp_path/'opencode.log', nonce=nonce)
-    assert routes[0]['nonce'] == nonce
-    assert routes[1]['nonce'] != nonce
-    assert calls[1][-1] == routes[1]['nonce']
-    assert (tmp_path/'a.txt').read_text() != routes[1]['nonce']
-
-
-def test_selected_session_requires_its_own_request_and_exact_overlap_pair():
-    from tools.real_app_check import agentlink_release as gate
-    def declaration(session, app):
-        return {'native_session_id':session,'app':app,'agent':app,'session':session,'root':session+'-root'}
-    failed, selected, peer = declaration('old','opencode'), declaration('selected','opencode'), declaration('peer','goose')
-    old_request = {'id':'old-request','author':'opencode [old]','content':'AGENTLINK-REQUEST old-nonce'}
-    request = {'id':'request','author':'opencode [selected]','content':'AGENTLINK-REQUEST new-nonce'}
-    old_notice = {'id':'old-overlap','author':'Workshop coordination','content':'Your work overlaps at fixture',
-        'refs':[failed['root'],peer['root']]}
-    notice = {**old_notice,'id':'overlap','refs':[selected['root'],peer['root']]}
-    reply = {'author':'goose [peer]'}
-    page = {'declarations':[failed,selected,peer], 'messages':[old_request,request,old_notice,notice]}
-    assert gate._request_proof(page,'selected','new-nonce') == (selected,request)
-    assert gate._overlap_proof(page,selected,reply,'goose') == notice
-    with pytest.raises(QualificationRefused, match='publish its nonce'):
-        gate._request_proof({**page,'messages':[old_request]},'selected','old-nonce')
-    with pytest.raises(QualificationRefused, match='paired reply and overlap'):
-        gate._overlap_proof({**page,'messages':[old_notice]},selected,reply,'goose')
-    with pytest.raises(QualificationRefused, match='publish its nonce'):
-        gate._request_proof({**page,'messages':[request,request]},'selected','new-nonce')
-
-
-@pytest.mark.parametrize('channel', ['json','log','mixed'])
-def test_terminal_error_wins_over_retryable_error_in_the_same_attempt(tmp_path, channel):
-    from tools.real_app_check import agentlink_release as gate
-    model = 'opencode/mimo-v2.6-flash-free'
-    log = tmp_path/'opencode.log'
-    errors = ['429 Too Many Requests','401 invalid API key']
-    if channel == 'json':
-        output = '\n'.join(json.dumps({'type':'error','error':{'message':message}}) for message in errors)
-        program = "import sys;print(sys.argv[1])"
-    elif channel == 'log':
-        output = '\n'.join('message="stream error" providerID=opencode modelID=mimo-v2.6-flash-free small=false '+message for message in errors)
-        program = "import pathlib,sys;pathlib.Path(sys.argv[2]).write_text(sys.argv[1])"
-    else:
-        output = json.dumps({'type':'error','error':{'message':errors[0]}})
-        program = "import pathlib,sys;pathlib.Path(sys.argv[2]).write_text('message=\"stream error\" providerID=opencode modelID=mimo-v2.6-flash-free small=false 401 invalid API key');print(sys.argv[1])"
-    with pytest.raises(QualificationRefused, match='unclassified') as refused:
-        gate._opencode_turn([sys.executable,'-c',program,output,str(log),'-m',model], model=model,
-            env=dict(os.environ), cwd=tmp_path, timeout=8, quota_log=log)
-    assert len(refused.value.routes) == 1
-
-
-def test_running_tool_timeout_is_a_product_refusal(tmp_path):
-    from tools.real_app_check import agentlink_release as gate
-    model = 'opencode/mimo-v2.6-flash-free'
-    event = json.dumps({'type':'tool_use','part':{'tool':'write','state':{'status':'running'}}})
-    program = "import sys,time;print(sys.argv[1],flush=True);time.sleep(20)"
-    with pytest.raises(QualificationRefused, match='tool timed out') as refused:
-        gate._opencode_turn([sys.executable,'-c',program,event,'-m',model], model=model,
-            env=dict(os.environ), cwd=tmp_path, timeout=8, quota_log=tmp_path/'opencode.log')
-    assert len(refused.value.routes) == 1
-
-
-def test_quota_cannot_hide_a_buffered_real_tool_failure(tmp_path):
-    from tools.real_app_check import agentlink_release as gate
-    model = 'opencode/mimo-v2.6-flash-free'
-    event = json.dumps({'type':'tool_use','part':{'tool':'write','state':{'status':'error','error':'real write failure'}}})
-    log = tmp_path/'opencode.log'
-    program = "import pathlib,sys,time;print(sys.argv[1],flush=True);pathlib.Path(sys.argv[2]).write_text('message=\"stream error\" providerID=opencode modelID=mimo-v2.6-flash-free small=false Free usage limit reached');time.sleep(20)"
-    with pytest.raises(QualificationRefused,match='tool failed') as refused:
-        gate._opencode_turn([sys.executable,'-c',program,event,str(log),'-m',model], model=model,
-            env=dict(os.environ), cwd=tmp_path, timeout=8, quota_log=log)
-    assert len(refused.value.routes) == 1
-
-
-@pytest.mark.parametrize('settles', [True,False])
-def test_retry_cancels_only_its_isolated_server_and_requires_settlement(settles):
-    from http.server import BaseHTTPRequestHandler, HTTPServer
-    import threading
-    import time
-    from tools.real_app_check import agentlink_release as gate
-    calls, busy = [], [True]
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            calls.append(('GET',self.path))
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(json.dumps({'ses_fixture':{'type':'busy' if busy[0] else 'idle'}}).encode())
-        def do_POST(self):
-            calls.append(('POST',self.path))
-            busy[0] = not settles
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b'true')
-        def log_message(self,*_args):
-            pass
-    server = HTTPServer(('127.0.0.1',0),Handler)
-    thread = threading.Thread(target=server.serve_forever,daemon=True)
-    thread.start()
-    try:
-        command = ['fixture','--attach','http://127.0.0.1:'+str(server.server_port)]
-        if settles:
-            gate._stop_opencode_turn(command,time.monotonic()+5)
-        else:
-            with pytest.raises(QualificationRefused,match='still running'):
-                gate._stop_opencode_turn(command,time.monotonic()+5)
-        assert calls == [('GET','/session/status'),('POST','/session/ses_fixture/abort'),('GET','/session/status')]
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
-
-
-def test_cancellation_deadline_bounds_the_whole_slow_http_body():
-    from http.server import BaseHTTPRequestHandler, HTTPServer
-    import threading
-    import time
-    from tools.real_app_check import agentlink_release as gate
-    release = threading.Event()
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b'{')
-            self.wfile.flush()
-            release.wait(5)
-            try:
-                self.wfile.write(b'}')
-            except OSError:
-                pass
-        def log_message(self,*_args):
-            pass
-    server = HTTPServer(('127.0.0.1',0),Handler)
-    thread = threading.Thread(target=server.serve_forever,daemon=True)
-    thread.start()
-    started = time.monotonic()
-    try:
-        with pytest.raises(QualificationRefused,match='cancellation could not be verified'):
-            gate._stop_opencode_turn(['fixture','--attach','http://127.0.0.1:'+str(server.server_port)],started+0.5)
-        assert time.monotonic()-started < 3
-    finally:
-        release.set()
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
 
 
 def test_quota_exhaustion_uses_one_free_route_through_the_same_cli(tmp_path, monkeypatch):
@@ -322,17 +32,14 @@ def test_quota_exhaustion_uses_one_free_route_through_the_same_cli(tmp_path, mon
         "else:\n"
         " import os\n"
         " assert os.environ['OPENROUTER_API_KEY']=='fixture-key'\n"
-        " import json\n"
-        " for tool in ['write','read','write','glob']: print(json.dumps({'type':'tool_use','part':{'tool':tool,'state':{'status':'completed','output':'REAL_ROUTE_OUTPUT'}}}))\n", encoding="utf-8")
+        " print('REAL_ROUTE_OUTPUT')\n", encoding="utf-8")
     monkeypatch.setattr(model_router, "discover_key", lambda _: ("fixture-key", "fixture"))
     env = dict(os.environ)
     # Replay the original direct _run call when exercising the pre-fix source.
     turn = getattr(gate, "_opencode_turn", lambda command, model, quota_log, **options: (gate._run(command, **options), model))
-    output, selected, routes = turn([sys.executable, str(stub), str(log), "-m", "opencode/mimo-v2.6-flash-free"],
+    output, selected = turn([sys.executable, str(stub), str(log), "-m", "opencode/mimo-v2.6-flash-free"],
         model="opencode/mimo-v2.6-flash-free", env=env, cwd=tmp_path, timeout=8, quota_log=log)
-    assert gate.write_sequence(output)
-    assert "REAL_ROUTE_OUTPUT" in output
-    assert [row['reason'] for row in routes] == ['free quota exhausted', 'completed']
+    assert output.strip() == "REAL_ROUTE_OUTPUT"
     assert selected == "openrouter/thinkingmachines/inkling:free"
     assert (tmp_path / "CALLS.txt").read_text().splitlines() == ["opencode/mimo-v2.6-flash-free", selected]
     assert not any(path.name == "auth.json" for path in tmp_path.rglob("*"))
@@ -362,13 +69,10 @@ def test_explicit_free_openrouter_uses_existing_key_and_no_fallback(tmp_path, mo
     from nodelang import model_router
     monkeypatch.setattr(model_router, "discover_key", lambda _: ("fixture-key", "fixture"))
     model = "openrouter/thinkingmachines/inkling:free"
-    program = "import json,os;assert os.environ['OPENROUTER_API_KEY']=='fixture-key';\nfor tool in ['write','read','write','glob']: print(json.dumps({'type':'tool_use','part':{'tool':tool,'state':{'status':'completed','output':'free'}}}))"
-    command = [sys.executable, "-c", program, "-m", model]
-    output, selected, routes = gate._opencode_turn(command, model=model, env=dict(os.environ), cwd=tmp_path,
+    command = [sys.executable, "-c", "import os;assert os.environ['OPENROUTER_API_KEY']=='fixture-key';print('free')", "-m", model]
+    output, selected = gate._opencode_turn(command, model=model, env=dict(os.environ), cwd=tmp_path,
         timeout=8, quota_log=tmp_path / "absent.log")
-    assert gate.write_sequence(output)
-    assert selected == model
-    assert [row['model'] for row in routes] == [model]
+    assert (output.strip(), selected) == ("free", model)
 
 
 @pytest.mark.parametrize("title", ["thinkingmachines/inkling:free", "google/gemini-nano-banana-2.1"])

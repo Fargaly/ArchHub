@@ -326,7 +326,8 @@ function Read-CandidateManifest([string]$Path) {
 }
 
 function Assert-CandidateBudget {
-    if ($candidateClock.Elapsed.TotalSeconds -gt 180) { throw 'Source snapshot copy/verification exceeded 180 seconds.' }
+    # Measured 567 files / 21.5 MB: 289.41s inventory, copy and three rehashes; 1.25x rounded up to a minute.
+    if ($candidateClock.Elapsed.TotalSeconds -gt 420) { throw 'Source snapshot copy/verification exceeded 420 seconds.' }
 }
 
 function Read-CandidateFile($Row, [string]$Path, [string]$Destination, [switch]$CollectDigest) {

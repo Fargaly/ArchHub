@@ -11,7 +11,9 @@ import argparse
 import base64
 from contextlib import contextmanager
 import hashlib
+import gzip
 import inspect
+import io
 import json
 import os
 import re
@@ -22,6 +24,7 @@ import threading
 import stat
 import subprocess
 import sys
+import tarfile
 import time
 from uuid import uuid4
 
@@ -30,9 +33,29 @@ class QualificationRefused(RuntimeError):
     pass
 
 
+class _FreeQuotaReached(QualificationRefused):
+    pass
+
+
+def _require_free_model(model):
+    if not re.fullmatch(r"(?:opencode/[A-Za-z0-9_.-]+-free|openrouter/[A-Za-z0-9_.-]+/[A-Za-z0-9_.:-]+:free)", model):
+        raise QualificationRefused("Qualification requires an explicitly free OpenCode or OpenRouter model")
+
+
+def _free_stream_models(streams, model):
+    models = sorted({provider + "/" + identity for provider, identity in re.findall(
+        r"message=stream providerID=(\S+) modelID=(\S+)", streams)})
+    if model not in models:
+        raise QualificationRefused("Selected free model has no isolated server stream evidence")
+    for identity in models:
+        _require_free_model(identity)
+    return models
+
+
 def source_digest(root):
     source = Path(root) / "01.APP" if Path(root, "01.APP").is_dir() else Path(root)
-    paths = [Path(__file__).resolve(), *Path(source, "nodelang").rglob("*.py"),
+    paths = [Path(__file__).resolve(), Path(__file__).with_name("agentlink_dependencies.cjs").resolve(),
+             *Path(source, "nodelang").rglob("*.py"),
              *Path(source, "nodelang/session_link").rglob("*.mjs")]
     digest = hashlib.sha256()
     for path in sorted(paths):
@@ -115,16 +138,40 @@ def write_sequence(output):
     return len(names) >= 4 and names[:3] == ["write", "read", "write"] and names[3] in {"glob", "list"}
 
 
-def _run(command, *, env, cwd, timeout=150):
+def _run(command, *, env, cwd, timeout=150, quota_log=None, quota_model=None):
     from nodelang.session_link_transport import _OwnedProcessJob
     process = None
     job = None
+    offset = quota_log.stat().st_size if quota_log is not None and quota_log.is_file() else 0
+    def quota_exhausted():
+        if quota_log is None or not quota_log.is_file():
+            return False
+        with quota_log.open("rb") as stream:
+            stream.seek(offset)
+            lines = stream.read().decode("utf-8", errors="replace").splitlines()
+        return any(all(token in line for token in (
+            'message="stream error"', "providerID=opencode ", "modelID=" + quota_model.removeprefix("opencode/") + " ",
+            "small=false ", "Free usage limit reached")) for line in lines)
     try:
         process = subprocess.Popen(command, env=env, cwd=cwd, stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8", errors="replace",
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         job = _OwnedProcessJob(process)
-        stdout, stderr = process.communicate(timeout=timeout)
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(command, timeout)
+            try:
+                stdout, stderr = process.communicate(timeout=min(1, remaining) if quota_log is not None else remaining)
+                if quota_exhausted():
+                    raise _FreeQuotaReached("Free usage limit reached")
+                break
+            except subprocess.TimeoutExpired:
+                if quota_exhausted():
+                    raise _FreeQuotaReached("Free usage limit reached")
+                if time.monotonic() >= deadline:
+                    raise
     except subprocess.TimeoutExpired as exc:
         raw = exc.stdout or b""
         _log_tools(raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else raw)
@@ -144,6 +191,27 @@ def _run(command, *, env, cwd, timeout=150):
         print("PROVIDER ERROR", detail[:1600], flush=True)
         raise QualificationRefused("Provider returned nonzero exit " + str(process.returncode))
     return stdout
+
+
+def _opencode_turn(command, *, model, env, cwd, timeout, quota_log):
+    _require_free_model(model)
+    from nodelang.model_router import discover_key
+    if model.startswith("openrouter/"):
+        env["OPENROUTER_API_KEY"], _ = discover_key("openrouter")
+    deadline = time.monotonic() + timeout
+    try:
+        return _run(command, env=env, cwd=cwd, timeout=timeout,
+            quota_log=quota_log if model.startswith("opencode/") else None, quota_model=model), model
+    except _FreeQuotaReached:
+        fallback = "openrouter/thinkingmachines/inkling:free"
+        _require_free_model(fallback)
+        env["OPENROUTER_API_KEY"], _ = discover_key("openrouter")
+        if not env["OPENROUTER_API_KEY"]:
+            raise QualificationRefused("Free OpenRouter authentication unavailable to isolated child")
+        command = list(command)
+        command[command.index("-m") + 1] = fallback
+        print("OPENCODE FREE ROUTE: " + model + " quota exhausted; " + fallback, flush=True)
+        return _run(command, env=env, cwd=cwd, timeout=deadline-time.monotonic()), fallback
 
 
 def _log_tools(output):
@@ -177,7 +245,51 @@ def isolated_environment(profile):
     return env
 
 
-def _prepare_opencode_dependencies(opencode, *, env, cwd, version_timeout=15, install_timeout=90):
+def _extract_opencode_dependencies(staging, config, version):
+    plan = json.loads((staging / "manifest.json").read_text(encoding="utf-8"))
+    locked = {"": {"dependencies": {"@opencode-ai/plugin": version}}}
+    remaining, entries = 128 * 1024 * 1024, 0
+    for row in plan:
+        manifest = row["manifest"]
+        target = config / row["relative"]
+        archive = staging / row["archive"]
+        if not target.resolve().is_relative_to(config.resolve()) or archive.parent != staging:
+            raise QualificationRefused("Cached dependency escaped its isolated profile")
+        blob = archive.read_bytes()
+        integrity = "sha512-" + base64.b64encode(hashlib.sha512(blob).digest()).decode()
+        if integrity != manifest["dist"]["integrity"]:
+            raise QualificationRefused("Cached dependency integrity mismatch")
+        with gzip.GzipFile(fileobj=io.BytesIO(blob)) as compressed:
+            raw = compressed.read(remaining + 1)
+        remaining -= len(raw)
+        if remaining < 0:
+            raise QualificationRefused("Cached dependency decompression exceeds qualification budget")
+        with tarfile.open(fileobj=io.BytesIO(raw), mode="r:") as package:
+            for member in package:
+                entries += 1
+                relative = Path(member.name.removeprefix("package/"))
+                if (entries > 20000 or not 0 <= member.size <= 16 * 1024 * 1024 or member.issparse() or
+                    not member.name.startswith("package/") or "\\" in member.name or ":" in member.name or
+                    relative.is_absolute() or ".." in relative.parts or not (member.isfile() or member.isdir())):
+                    raise QualificationRefused("Unsafe cached dependency archive entry")
+                destination = target / relative
+                if member.isdir():
+                    destination.mkdir(parents=True, exist_ok=True)
+                else:
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    with package.extractfile(member) as source, destination.open("xb") as output:
+                        shutil.copyfileobj(source, output, 1024 * 1024)
+        installed = json.loads((target / "package.json").read_text(encoding="utf-8"))
+        if any(installed.get(key, {}) != manifest.get(key, {}) for key in (
+            "name", "version", "dependencies", "optionalDependencies", "peerDependencies", "peerDependenciesMeta")):
+            raise QualificationRefused("Cached dependency identity differs from its manifest")
+        locked[Path(row["relative"]).as_posix()] = {
+            "version": manifest["version"], "integrity": integrity, "dependencies": manifest.get("dependencies", {})}
+    (config / "package-lock.json").write_text(json.dumps({
+        "lockfileVersion": 3, "requires": True, "packages": locked}) + "\n", encoding="utf-8")
+
+
+def _prepare_opencode_dependencies(opencode, *, env, cwd, cache=None, version_timeout=15, install_timeout=90):
     version = _run([opencode, "--version"], env=env, cwd=cwd, timeout=version_timeout).strip()
     if not re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?", version):
         raise QualificationRefused("OpenCode did not report an exact dependency version")
@@ -187,6 +299,27 @@ def _prepare_opencode_dependencies(opencode, *, env, cwd, version_timeout=15, in
     config = Path(env["OPENCODE_CONFIG_DIR"])
     config.mkdir(parents=True, exist_ok=True)
     (config / "package.json").write_text(json.dumps({"dependencies":{"@opencode-ai/plugin":version}}), encoding="utf-8")
+    cache = cache or os.environ.get("npm_config_cache")
+    node = shutil.which("node", path=env.get("PATH"))
+    npm_root = Path(npm).resolve().parent / "node_modules/npm"
+    if cache and node and (npm_root / "node_modules/cacache").is_dir():
+        staging = config / "DEPENDENCIES"
+        try:
+            prepared = _run([node, "--max-old-space-size=256", str(Path(__file__).with_name("agentlink_dependencies.cjs")),
+                str(npm_root), str(Path(cache) / "_cacache"), str(staging), version],
+                env=env, cwd=cwd, timeout=install_timeout).strip()
+            if prepared == "LOCAL_DEPENDENCIES_VERIFIED":
+                _extract_opencode_dependencies(staging, config, version)
+        except (tarfile.TarError, EOFError) as exc:
+            raise QualificationRefused("Invalid cached dependency archive") from exc
+        finally:
+            if staging.is_dir():
+                shutil.rmtree(staging)
+        if prepared == "LOCAL_DEPENDENCIES_VERIFIED":
+            print("OPENCODE DEPENDENCIES: exact-version local cache verified", flush=True)
+            return
+        if prepared != "LOCAL_DEPENDENCIES_ABSENT":
+            raise QualificationRefused("Unrecognized local dependency preparation result")
     # OpenCode awaits its unbounded background installer before loading plugins.
     _run([npm, "install", "--ignore-scripts", "--no-audit", "--no-fund",
           "--fetch-retries=0", "--fetch-timeout=30000"], env=env, cwd=config, timeout=install_timeout)
@@ -269,10 +402,12 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
     profile = Path(profile).resolve()
     if profile.exists():
         raise QualificationRefused("Qualification profile must be fresh; no stale receipt reuse")
-    if not model.startswith("opencode/") or not model.endswith("-free"):
-        raise QualificationRefused("Qualification requires an explicitly free OpenCode model")
+    _require_free_model(model)
     original_home = os.environ.get("USERPROFILE", str(Path.home()))
     original_appdata = os.environ.get("APPDATA", "")
+    original_cache = os.environ.get("npm_config_cache") or str(
+        Path(os.environ.get("LOCALAPPDATA", original_home), "npm-cache") if os.name == "nt"
+        else Path(original_home, ".npm"))
     oc = _executable(opencode, Path(original_appdata, "npm/node_modules/opencode-ai/bin/opencode.exe"))
     cc = (_executable(claude, Path(original_home, ".local/bin/claude.exe")) if peer == "claude" else
           _executable(goose, Path(os.environ.get("LOCALAPPDATA", ""), "ArchHub/runtime/goose/goose.exe")))
@@ -283,11 +418,12 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
     env = isolated_environment(profile)
     env["PYTHONPATH"] = str(source)
     env["CLAUDE_CONFIG_DIR"] = str(profile / "claude")
+    from nodelang.model_router import discover_key
+    # The attached CLI uses the server's environment, including on quota fallback.
+    env["OPENROUTER_API_KEY"], _ = discover_key("openrouter")
     if peer == "claude":
         _claude_auth(env, original_home)
     else:
-        from nodelang.model_router import discover_key
-        env["OPENROUTER_API_KEY"], _ = discover_key("openrouter")
         env.update(GOOSE_PATH_ROOT=str(profile/"goose"), GOOSE_PROVIDER="openrouter",
             GOOSE_MODEL=_GOOSE_MODEL, GOOSE_MODE="approve",
             OPENROUTER_PARAMETERS=json.dumps({"max_tokens":4096}))
@@ -317,7 +453,7 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
     if cached_rg.is_file():
         (profile / "opencode/bin").mkdir(parents=True, exist_ok=True)
         shutil.copy2(cached_rg, profile / "opencode/bin/rg.exe")
-    env["OPENCODE_CONFIG_CONTENT"] = json.dumps({"plugin":[loader.as_uri()],
+    env["OPENCODE_CONFIG_CONTENT"] = json.dumps({"plugin":[loader.as_uri()], "model":model, "small_model":model,
         "mcp":{"archhub_agent_coordination":mcp}, "share":"disabled", "autoupdate":False})
     from nodelang.application_server import ApplicationServer
     from nodelang.persistence import application_database_path
@@ -344,7 +480,8 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
                 machine_descriptor_path=local / "active-universal-runtime.json",
                 universal_workspace_root=fixture, universal_state_path=application_database_path(profile),
                 enable_universal_cloud_gateway=False, enable_brain_cloud_sync=False,
-                enable_machine_projection_prewarm=False, live_watch=False).start()
+                enable_machine_projection_prewarm=False, live_watch=False)
+            app.start()
             # WSRECEIPTS: agent processes write only through the running application, so the
             # isolated application serves its own coordination surface on an ephemeral port and
             # every agent in this profile is pointed at it (never the founder's 8474).
@@ -356,13 +493,13 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
             endpoint = "http://127.0.0.1:%d/coordination" % coordination.server_address[1]
             env["ARCHHUB_COORDINATION_ENDPOINT"] = os.environ["ARCHHUB_COORDINATION_ENDPOINT"] = endpoint
             mcp["environment"]["ARCHHUB_COORDINATION_ENDPOINT"] = endpoint
-            env["OPENCODE_CONFIG_CONTENT"] = json.dumps({"plugin":[loader.as_uri()],
+            env["OPENCODE_CONFIG_CONTENT"] = json.dumps({"plugin":[loader.as_uri()], "model":model, "small_model":model,
                 "mcp":{"archhub_agent_coordination":mcp}, "share":"disabled", "autoupdate":False})
             with socket.socket() as listener:
                 listener.bind(("127.0.0.1", 0))
                 port = listener.getsockname()[1]
             address = "http://127.0.0.1:" + str(port)
-            _prepare_opencode_dependencies(oc, env=env, cwd=fixture)
+            _prepare_opencode_dependencies(oc, env=env, cwd=fixture, cache=original_cache)
             server = subprocess.Popen([oc, "serve", "--hostname", "127.0.0.1", "--port", str(port)],
                 cwd=fixture, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
@@ -394,8 +531,12 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
                 "After that failed MCP call, read a.txt and write recovered.txt with exact bytes '"+nonce+
                 "'. Continue even if the MCP tool fails. Then send(to='"+peer.title()+"',text='AGENTLINK-REQUEST " + nonce +
                 "'). Keep declaration working for the paired reader. Do not use a shell to fake MCP calls. Stop.")
-            output = _run([oc, "run", "--attach", address, "--format", "json", "-m", model, request],
-                          env=env, cwd=fixture, timeout=initial_turn_timeout)
+            requested_model = model
+            output, model = _opencode_turn([oc, "run", "--attach", address, "--format", "json", "-m", model, request],
+                model=model, env=env, cwd=fixture, timeout=initial_turn_timeout,
+                quota_log=profile / "opencode/log/opencode.log")
+            evidence.update(opencode_requested_model=requested_model, opencode_model=model,
+                opencode_route_reason="free quota exhausted" if model != requested_model else "requested free model")
             events = [json.loads(line) for line in output.splitlines() if line.startswith("{")]
             _log_tools(output)
             session = next((row.get("sessionID") for row in events if row.get("sessionID")), None)
@@ -499,6 +640,8 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
                 declarations=[{key:row[key] for key in ("session", "app", "pid", "created_at", "process_lineage")}
                               for row in page["declarations"]],
                 fixture_sha256=hashlib.sha256(first.read_bytes()).hexdigest())
+            streams = (profile / "opencode/log/opencode.log").read_text(encoding="utf-8")
+            evidence.update(opencode_stream_models=_free_stream_models(streams, model), opencode_small_model=requested_model)
             if source_digest(root) != evidence["source_sha256"]:
                 raise QualificationRefused("Candidate source changed during qualification; rerun the final artifact")
             if inject_failure:

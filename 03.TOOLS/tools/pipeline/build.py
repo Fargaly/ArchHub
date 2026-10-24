@@ -125,11 +125,11 @@ def admit_sequence(root, base):
             print(f"ACOMPILER COMMIT {commit}: PASS (admitted by this compiler before)", flush=True)
             continue
         overlay = {}
+        blobs = strict_check.revision_blobs(root, commit, paths)
         for path in paths:
-            present = strict_check.git(root, "ls-tree", "-z", commit, "--", path)
+            raw = blobs[path]
             overlay[path] = None
-            if present:
-                raw = strict_check.git(root, "show", f"{commit}:{path}")
+            if raw is not None:
                 try:
                     overlay[path] = raw.decode("utf-8")
                 except UnicodeError:

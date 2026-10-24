@@ -113,14 +113,66 @@ def node_timeout(value=None):
     return float(node_parameter("compiler_timeout") if value is None else value)
 
 
-def git(root, *args):
+def git(root, *args, input=None):
     try:
-        result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, timeout=node_timeout())
+        result = subprocess.run(["git", "-C", str(root), *args], input=input, capture_output=True, timeout=node_timeout())
     except (OSError, subprocess.SubprocessError) as exc:
         raise CompilerFailure(f"cannot establish changed-file scope: {exc}") from exc
     if result.returncode:
         raise CompilerFailure(result.stderr.decode("utf-8", errors="replace").strip())
     return result.stdout
+
+
+def revision_blobs(root, revision, paths):
+    """Bytes of each path at an immutable revision, or the index when revision is None.
+
+    One listing and one batch read replace a Git spawn pair per path. The answer is
+    the per-path ``ls-tree``/``ls-files --stage`` then ``show`` pair's: absent is
+    None, and anything but a plain listed blob or a plain absent path (directory,
+    gitlink, conflict, pathspec-magic name) takes exactly that pair.
+    """
+    listing = git(root, "ls-tree", "-r", "-z", revision) if revision else git(root, "ls-files", "--stage", "-z")
+    plain, special, directories = {}, set(), set()
+    for row in filter(None, listing.split(b"\0")):
+        meta, _, name = row.partition(b"\t")
+        name = name.decode("utf-8", "surrogateescape")
+        fields = meta.decode("ascii").split()
+        mode, oid, ok = (fields[0], fields[2], fields[1] == "blob") if revision else (fields[0], fields[1], fields[2] == "0")
+        if ok and mode != "160000" and name not in special:
+            plain[name] = oid
+        else:
+            special.add(name)
+            plain.pop(name, None)
+        parts = name.split("/")
+        directories.update("/".join(parts[:end]) for end in range(1, len(parts)))
+    def per_path(path):
+        present = git(root, "ls-tree", "-z", revision, "--", path) if revision else git(root, "ls-files", "--stage", "-z", "--", path)
+        return git(root, "show", f"{revision}:{path}" if revision else f":{path}") if present else None
+    result, wanted = {}, {}
+    for path in paths:
+        if path.startswith(":") or path in special or path in directories or (
+                revision is None and any(char in path for char in "*?[\\")):
+            result[path] = per_path(path)
+        elif path in plain:
+            wanted[path] = plain[path]
+        else:
+            result[path] = None
+    oids = sorted(set(wanted.values()))
+    data = git(root, "cat-file", "--batch", input="".join(oid + "\n" for oid in oids).encode("ascii")) if oids else b""
+    blobs, at = {}, 0
+    while at < len(data):
+        end = data.index(b"\n", at)
+        header = data[at:end].decode("ascii", "replace").split()
+        if len(header) != 3 or header[1] != "blob":
+            raise CompilerFailure("cannot read revision blob: " + " ".join(header))
+        size = int(header[2])
+        blobs[header[0]] = data[end + 1:end + 1 + size]
+        at = end + 2 + size
+    for path, oid in wanted.items():
+        if oid not in blobs:
+            raise CompilerFailure(f"cannot read revision blob: {path}")
+        result[path] = blobs[oid]
+    return result
 
 
 def normalize(root, path):
@@ -527,14 +579,13 @@ def change_context(root, selected, candidate, revision, context, *, patch_scope=
         author = git(root, "var", "GIT_AUTHOR_IDENT").decode("utf-8").split("<", 1)[0].strip()
     renamed = renamed or {}
     added = removed = tests_removed = 0
+    originals = revision_blobs(root, revision, [renamed.get(path, path) for path in selected if path not in renamed.values()])
     for path in selected:
         if path in renamed.values():
             continue
-        before = ""
         original_path = renamed.get(path, path)
-        present = bool(git(root, "ls-tree", "-z", revision, "--", original_path))
-        if present:
-            before = git(root, "show", f"{revision}:{original_path}").decode("utf-8", errors="replace")
+        present = originals[original_path] is not None
+        before = originals[original_path].decode("utf-8", errors="replace") if present else ""
         after = candidate.get(path)
         if path not in candidate:
             target = root / path
@@ -719,12 +770,12 @@ def check_changed(root, *, files=None, session_record=None, base=None, commit=No
         # Read immutable commit/index blobs after selection. A concurrent edit
         # cannot substitute unstaged bytes for the tree admission certifies.
         overlay = {}
+        blobs = revision_blobs(root, commit, paths)
         for path in paths:
-            present = git(root, "ls-tree", "-z", commit, "--", path) if commit else git(root, "ls-files", "--stage", "-z", "--", path)
-            if not present:
+            raw = blobs[path]
+            if raw is None:
                 overlay[path] = None
                 continue
-            raw = git(root, "show", f"{commit}:{path}" if commit else f":{path}")
             try:
                 overlay[path] = raw.decode("utf-8")
             except UnicodeError as exc:

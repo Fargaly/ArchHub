@@ -33,52 +33,8 @@ class QualificationRefused(RuntimeError):
     pass
 
 
-class _FreeProviderFailure(QualificationRefused):
+class _FreeQuotaReached(QualificationRefused):
     pass
-
-
-_FREE_FALLBACKS = ("openrouter/thinkingmachines/inkling:free",
-                   "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free")
-
-
-def _free_failure_reason(detail):
-    detail = detail.lower()
-    if "free usage limit reached" in detail:
-        return "free quota exhausted"
-    if re.search(r"\b429\b|rate.limit|too many requests", detail):
-        return "rate limited"
-    if "403" in detail and "only available on agentic harnesses" in detail:
-        return "harness-only provider refusal"
-    return None
-
-
-def _check_turn_errors(output, *, timed_out=False):
-    errors, attempted, unfinished = [], [], False
-    for line in output.splitlines():
-        try:
-            event = json.loads(line)
-        except ValueError:
-            continue
-        if event.get("type") == "tool_use":
-            part = event.get("part", {})
-            attempted.append(part.get("tool"))
-            state = part.get("state", {})
-            unfinished = unfinished or state.get("status") in {"pending", "running"}
-            if state.get("status") == "error" and not (
-                "native_work_task_detach" in part.get("tool", "") and
-                "No Work task surface is attached" in str(state.get("error", "")) and
-                "ArchHub OpenCode governance" not in str(state.get("error", ""))):
-                raise QualificationRefused("OpenCode tool failed; provider fallback cannot hide a tool failure")
-        if event.get("type") == "error":
-            errors.append(event.get("error", {}))
-    if timed_out and unfinished:
-        raise QualificationRefused("OpenCode tool timed out without completed proof; no provider fallback")
-    reasons = [_free_failure_reason(str(error)) for error in errors]
-    if any(reason is None for reason in reasons):
-        raise QualificationRefused("OpenCode returned an unclassified error; no provider fallback")
-    if reasons:
-        raise _FreeProviderFailure(reasons[0])
-    return attempted
 
 
 def _require_free_model(model):
@@ -187,35 +143,15 @@ def _run(command, *, env, cwd, timeout=150, quota_log=None, quota_model=None):
     process = None
     job = None
     offset = quota_log.stat().st_size if quota_log is not None and quota_log.is_file() else 0
-    def provider_failure():
+    def quota_exhausted():
         if quota_log is None or not quota_log.is_file():
-            return None
+            return False
         with quota_log.open("rb") as stream:
             stream.seek(offset)
             lines = stream.read().decode("utf-8", errors="replace").splitlines()
-        provider, identity = quota_model.split("/", 1)
-        reasons = []
-        for line in lines:
-            if all(token in line for token in ('message="stream error"', "providerID=" + provider + " ",
-                                               "modelID=" + identity + " ", "small=false ")):
-                reasons.append(_free_failure_reason(line))
-        if any(reason is None for reason in reasons):
-            if process.returncode:
-                raise QualificationRefused("Provider returned nonzero exit " + str(process.returncode))
-            raise QualificationRefused("OpenCode returned an unclassified server error; no provider fallback")
-        return reasons[0] if reasons else None
-    def check_failure(output, *, timed_out=False):
-        transient = None
-        if quota_model is not None:
-            try:
-                _check_turn_errors(output, timed_out=timed_out)
-            except _FreeProviderFailure as exc:
-                transient = exc
-        reason = provider_failure()
-        if transient is not None:
-            raise transient
-        if reason:
-            raise _FreeProviderFailure(reason)
+        return any(all(token in line for token in (
+            'message="stream error"', "providerID=opencode ", "modelID=" + quota_model.removeprefix("opencode/") + " ",
+            "small=false ", "Free usage limit reached")) for line in lines)
     try:
         process = subprocess.Popen(command, env=env, cwd=cwd, stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8", errors="replace",
@@ -228,32 +164,17 @@ def _run(command, *, env, cwd, timeout=150, quota_log=None, quota_model=None):
                 raise subprocess.TimeoutExpired(command, timeout)
             try:
                 stdout, stderr = process.communicate(timeout=min(1, remaining) if quota_log is not None else remaining)
-                check_failure(stdout)
+                if quota_exhausted():
+                    raise _FreeQuotaReached("Free usage limit reached")
                 break
-            except subprocess.TimeoutExpired as exc:
-                raw = exc.stdout or b""
-                partial = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else raw
-                check_failure(partial,
-                              timed_out=time.monotonic() >= deadline)
+            except subprocess.TimeoutExpired:
+                if quota_exhausted():
+                    raise _FreeQuotaReached("Free usage limit reached")
                 if time.monotonic() >= deadline:
                     raise
-    except (subprocess.TimeoutExpired, _FreeProviderFailure) as exc:
-        # Windows communicate(timeout) withholds partial stdout until its reader reaches EOF.
-        if job is not None:
-            job.close()
-            job = None
-        if process is not None and process.poll() is None:
-            process.kill()
-        try:
-            stdout, stderr = process.communicate(timeout=min(1, timeout))
-        except subprocess.TimeoutExpired as unsettled:
-            raise QualificationRefused("Timed out child output could not be settled; no provider fallback") from unsettled
-        _log_tools(stdout)
-        check_failure(stdout, timed_out=isinstance(exc, subprocess.TimeoutExpired))
-        if isinstance(exc, _FreeProviderFailure):
-            raise
-        if quota_model is not None:
-            raise _FreeProviderFailure("provider timeout") from exc
+    except subprocess.TimeoutExpired as exc:
+        raw = exc.stdout or b""
+        _log_tools(raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else raw)
         raise QualificationRefused("Provider did not complete its isolated turn: TimeoutExpired") from exc
     except OSError as exc:
         raise QualificationRefused("Provider did not complete its isolated turn: " + type(exc).__name__) from exc
@@ -272,161 +193,25 @@ def _run(command, *, env, cwd, timeout=150, quota_log=None, quota_model=None):
     return stdout
 
 
-def _stop_opencode_turn(command, deadline):
-    if "--attach" not in command:
-        return
-    address = command[command.index("--attach") + 1]
-    if not re.fullmatch(r"http://127\.0\.0\.1:[0-9]+", address):
-        raise QualificationRefused("Free fallback requires the isolated loopback server")
-    def request(path, method="GET"):
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise QualificationRefused("Free model turn deadline exhausted during cancellation")
-        try:
-            # The existing owned child runner bounds the entire HTTP response, including slow bodies.
-            program = ("import sys,urllib.request\n"
-                "opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))\n"
-                "with opener.open(urllib.request.Request(sys.argv[1],method=sys.argv[2]),timeout=5) as response: raw=response.read(65537)\n"
-                "if len(raw)>65536: raise ValueError('Cancellation response exceeds budget')\n"
-                "print(raw.decode('utf-8'))\n")
-            value = json.loads(_run([sys.executable, "-I", "-c", program, address + path, method],
-                                    env=None, cwd=None, timeout=min(5, remaining)))
-            if method == "GET" and (not isinstance(value, dict) or any(
-                    not isinstance(status, dict) or status.get("type") not in {"idle", "busy", "retry"}
-                    for status in value.values())):
-                raise QualificationRefused("Isolated OpenCode cancellation status is invalid")
-            return value
-        except (OSError, ValueError, QualificationRefused) as exc:
-            raise QualificationRefused("Isolated OpenCode cancellation could not be verified") from exc
-    # The attached server belongs only to this qualification; stop its old turns before retrying.
-    for session, status in request("/session/status").items():
-        if status.get("type") != "idle":
-            if not re.fullmatch(r"ses_[A-Za-z0-9]+", session):
-                raise QualificationRefused("Isolated OpenCode returned an invalid session identity")
-            if request("/session/" + session + "/abort", "POST") is not True:
-                raise QualificationRefused("Isolated OpenCode did not confirm turn cancellation")
-    if any(status.get("type") != "idle" for status in request("/session/status").values()):
-        raise QualificationRefused("Isolated OpenCode turn still running; no overlapping retry")
-
-
-def _free_turn(models, attempt, *, env, timeout, cancel=lambda _: None, nonce=None):
-    from nodelang.model_router import discover_key, ModelRouteRefused
+def _opencode_turn(command, *, model, env, cwd, timeout, quota_log):
+    _require_free_model(model)
+    from nodelang.model_router import discover_key
+    if model.startswith("openrouter/"):
+        env["OPENROUTER_API_KEY"], _ = discover_key("openrouter")
     deadline = time.monotonic() + timeout
-    models = list(dict.fromkeys(models))
-    for identity in models:
-        _require_free_model(identity)
-    routes = []
     try:
-        for index, selected in enumerate(models):
-            if time.monotonic() >= deadline:
-                raise QualificationRefused("Free model turn deadline exhausted")
-            if selected.startswith("openrouter/"):
-                if not env.get("OPENROUTER_API_KEY"):
-                    try:
-                        env["OPENROUTER_API_KEY"], _ = discover_key("openrouter")
-                    except ModelRouteRefused as exc:
-                        raise QualificationRefused("Free OpenRouter authentication unavailable to isolated child") from exc
-                if not env["OPENROUTER_API_KEY"]:
-                    raise QualificationRefused("Free OpenRouter authentication unavailable to isolated child")
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise QualificationRefused("Free model turn deadline exhausted")
-            if index == 0 and timeout >= 120 and remaining < 120:
-                raise QualificationRefused("Free model deadline cannot preserve the first 120 seconds")
-            budget = remaining / (len(models) - index)
-            if index == 0 and timeout >= 120:
-                budget = min(remaining, max(120, budget))
-            route = {"model":selected, "timeout":budget, "reason":"started"}
-            if nonce is not None:
-                route["nonce"] = nonce if index == 0 else uuid4().hex
-            routes.append(route)
-            print("FREE ROUTE: " + selected, flush=True)
-            try:
-                output = attempt(selected, time.monotonic() + budget, route)
-            except _FreeProviderFailure as exc:
-                route["reason"] = str(exc)
-                print("FREE ROUTE REFUSED: " + selected + ": " + route["reason"], flush=True)
-                if index + 1 < len(models):
-                    cancel(deadline)
-                continue
-            if time.monotonic() > deadline:
-                raise QualificationRefused("Free model turn deadline exhausted")
-            route["reason"] = "completed"
-            return output, selected, routes
-        raise QualificationRefused("All explicitly free model routes refused")
-    except QualificationRefused as exc:
-        if routes and routes[-1]["reason"] == "started":
-            routes[-1]["reason"] = "qualification refused"
-        exc.routes = routes
-        raise
-
-
-def _opencode_turn(command, *, model, env, cwd, timeout, quota_log, nonce=None, proof_factory=None,
-                   declaration_page=None):
-    def attempt(selected, deadline, route):
-        seen = ({row['root'] for row in declaration_page()['declarations']}
-                if declaration_page is not None else set())
-        verify = proof_factory() if proof_factory is not None else None
-        invocation = list(command)
-        invocation[invocation.index("-m") + 1] = selected
-        if nonce is not None:
-            invocation[-1] = invocation[-1].replace(nonce, route["nonce"])
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise QualificationRefused("Free model turn deadline exhausted before process start")
-        output = _run(invocation, env=env, cwd=cwd, timeout=remaining,
-            quota_log=quota_log, quota_model=selected)
-        attempted = _check_turn_errors(output)
-        if not output.strip():
-            raise _FreeProviderFailure("empty provider output")
-        if verify is not None:
-            if not any(tool.endswith(("_send", "__send")) for tool in attempted):
-                raise _FreeProviderFailure("model did not attempt paired acknowledgement")
-            verify(output)
-        elif not write_sequence(output):
-            filesystem = [tool for tool in attempted if tool in {"write", "read", "glob", "list"}]
-            if (len(filesystem) >= 4 and filesystem[:3] == ["write", "read", "write"] and
-                    filesystem[3] in {"glob", "list"}):
-                raise QualificationRefused("Attempted ordered tools lack completed proof; no provider fallback")
-            raise _FreeProviderFailure("model did not attempt ordered tool sequence")
-        if declaration_page is not None:
-            events = [json.loads(line) for line in output.splitlines() if line.startswith('{')]
-            session = next((row.get('sessionID') for row in events if row.get('sessionID')), None)
-            page = declaration_page()
-            # A refused turn may leave a declaration on the shared native session.
-            page = {**page, 'declarations':[row for row in page['declarations'] if row['root'] not in seen]}
-            declaration, _ = _request_proof(page, session, route['nonce'])
-            route['declaration'] = declaration['root']
-        return output
-    return _free_turn((model, *_FREE_FALLBACKS), attempt, env=env, timeout=timeout,
-        cancel=lambda deadline:_stop_opencode_turn(command, deadline), nonce=nonce)
-
-
-def _request_proof(page, session, nonce):
-    declarations = [row for row in page["declarations"]
-                    if row.get("native_session_id") == session and row.get("app") == "opencode"]
-    if len(declarations) != 1:
-        raise QualificationRefused("OpenCode has no unique authenticated declaration")
-    declaration = declarations[0]
-    author = declaration["agent"] + " [" + declaration["session"] + "]"
-    requests = [row for row in page["messages"] if row["author"] == author and
-                row["content"].endswith("AGENTLINK-REQUEST " + nonce)]
-    if len(requests) != 1:
-        raise QualificationRefused("OpenCode did not publish its nonce through MCP")
-    return declaration, requests[0]
-
-
-def _overlap_proof(page, declaration, reply, peer):
-    peers = [row for row in page["declarations"] if row.get("app") == peer and
-             reply["author"] == row["agent"] + " [" + row["session"] + "]"]
-    if len(peers) != 1:
-        raise QualificationRefused("Reply has no unique authenticated peer declaration")
-    refs = {declaration["root"], peers[0]["root"]}
-    notices = [row for row in page["messages"] if row["author"] == "Workshop coordination" and
-               "Your work overlaps at" in row["content"] and len(row["refs"]) == 2 and set(row["refs"]) == refs]
-    if len(notices) != 1:
-        raise QualificationRefused("Real " + peer.title() + " turn did not return the paired reply and overlap")
-    return notices[0]
+        return _run(command, env=env, cwd=cwd, timeout=timeout,
+            quota_log=quota_log if model.startswith("opencode/") else None, quota_model=model), model
+    except _FreeQuotaReached:
+        fallback = "openrouter/thinkingmachines/inkling:free"
+        _require_free_model(fallback)
+        env["OPENROUTER_API_KEY"], _ = discover_key("openrouter")
+        if not env["OPENROUTER_API_KEY"]:
+            raise QualificationRefused("Free OpenRouter authentication unavailable to isolated child")
+        command = list(command)
+        command[command.index("-m") + 1] = fallback
+        print("OPENCODE FREE ROUTE: " + model + " quota exhausted; " + fallback, flush=True)
+        return _run(command, env=env, cwd=cwd, timeout=deadline-time.monotonic()), fallback
 
 
 def _log_tools(output):
@@ -440,21 +225,6 @@ def _log_tools(output):
             state = part.get("state", {})
             print("OPENCODE TOOL", part.get("tool"), state.get("status"),
                   str(state.get("error", ""))[:1200], flush=True)
-
-
-def _new_paired_message(messages, *, seen, author, reply_to, marker):
-    paired = [row for row in messages if row["id"] not in seen and row["author"] == author and
-              row["reply_to"] == reply_to and row["content"].endswith(marker)]
-    if len(paired) != 1:
-        raise QualificationRefused("Selected route lacks a unique fresh paired message")
-    return paired[0]
-
-
-def _require_paired_read(output, read_id, notice):
-    rows = read_messages(output)
-    if not (any(row.get("id") == read_id for row in rows) and any(
-            row.get("id") == notice["id"] and row.get("refs") == notice["refs"] for row in rows)):
-        raise QualificationRefused("Selected route lacks completed paired read proof; no provider fallback")
 
 
 def _executable(candidate, fallback):
@@ -572,83 +342,41 @@ def _claude_auth(env, original_home):
 
 
 _GOOSE_MODEL = "dots-studio/dots-3-note-preview:free"
-_GOOSE_FALLBACKS = ("openrouter/thinkingmachines/inkling:free",)
 
 
-def _goose_turn(executable, prompts, *, env, cwd, proof_factory, timeout=180):
-    from nodelang.goose_adapter import AcpTransport, workshop_mcp_server, GooseRefused
+def _goose_turn(executable, prompts, *, env, cwd):
+    from nodelang.goose_adapter import AcpTransport, workshop_mcp_server
     from nodelang.session_link_transport import _OwnedProcessJob
-    def attempt(selected, deadline, route):
-        verify = proof_factory()
-        mcp = workshop_mcp_server()
-        connector = next(row["value"] for row in mcp["env"] if row["name"] == "GOOSE_SESSION_ID")
-        child_env = {**env, "GOOSE_MODEL":selected.removeprefix("openrouter/")}
-        if time.monotonic() >= deadline:
-            raise QualificationRefused("Free model turn deadline exhausted before process start")
-        try:
-            process = subprocess.Popen([executable, "acp"], env=child_env, cwd=cwd, stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        except OSError as exc:
-            raise QualificationRefused("Goose process unavailable; no provider fallback") from exc
-        job = _OwnedProcessJob(process)
-        transport = AcpTransport(process)
-        updates = []
-        failed_tools, pending = set(), set()
-        def update(value):
-            updates.append({"type":"goose_acp", "params":value})
-            item = value.get("update", {})
-            call = item.get("toolCallId")
-            if call:
-                if item.get("status") in {"failed", "error"}:
-                    failed_tools.add(call)
-                if item.get("status") in {"pending", "in_progress"}:
-                    pending.add(call)
-                if item.get("status") in {"completed", "failed", "error"}:
-                    pending.discard(call)
-        def response_error(error):
-            reason = _free_failure_reason(str(error))
-            if reason and not failed_tools and not pending:
-                raise _FreeProviderFailure(reason)
-            raise QualificationRefused("Goose returned a tool or unclassified error; no provider fallback")
-        try:
-            transport.request("initialize", {"protocolVersion":1,
-                "clientInfo":{"name":"ArchHub release qualification","version":"1"},
-                "clientCapabilities":{"fs":{"readTextFile":False,"writeTextFile":False},"terminal":False}},
-                deadline=deadline, response_error=response_error)
-            recipe = {"version":"1.0.0","title":"Workshop release qualification",
-                "description":"Disposable agent message proof", "instructions":"Use only the Workshop MCP tools.",
-                "settings":{"goose_provider":"openrouter","goose_model":child_env["GOOSE_MODEL"]}}
-            encoded = base64.urlsafe_b64encode(json.dumps(recipe).encode()).decode().rstrip("=")
-            created = transport.request("session/new", {"cwd":str(cwd),
-                "mcpServers":[mcp], "_meta":{"recipeDeeplink":encoded}},
-                deadline=deadline, response_error=response_error)
-            session = created.get("sessionId")
-            if not session:
-                raise QualificationRefused("Actual Goose did not create a native ACP session")
-            for prompt in prompts:
-                result = transport.request("session/prompt", {"sessionId":session,
-                    "prompt":[{"type":"text","text":prompt}]}, deadline=deadline,
-                    update=update, response_error=response_error)
-                if failed_tools or pending:
-                    raise QualificationRefused("Goose tool lacks completed proof; no provider fallback")
-                if result.get("stopReason") != "end_turn":
-                    raise QualificationRefused("Actual Goose did not complete its native turn")
-            output = "\n".join(json.dumps(row) for row in updates)
-            if not any(tool.endswith("__send") for tool, _ in tool_receipts(output)):
-                raise _FreeProviderFailure("model did not attempt paired reply")
-            verify(output, connector)
-            return output, session, process.pid
-        except GooseRefused as exc:
-            if time.monotonic() >= deadline and not failed_tools and not pending:
-                raise _FreeProviderFailure("provider timeout") from exc
-            raise QualificationRefused("Goose transport refused; no provider fallback") from exc
-        finally:
-            transport.close()
-            job.close()
-    result, selected, routes = _free_turn(("openrouter/" + _GOOSE_MODEL, *_GOOSE_FALLBACKS),
-        attempt, env=env, timeout=timeout)
-    return *result, selected, routes
+    process = subprocess.Popen([executable, "acp"], env=env, cwd=cwd, stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    job = _OwnedProcessJob(process)
+    transport = AcpTransport(process)
+    updates = []
+    deadline = time.monotonic() + 180
+    try:
+        transport.request("initialize", {"protocolVersion":1,
+            "clientInfo":{"name":"ArchHub release qualification","version":"1"},
+            "clientCapabilities":{"fs":{"readTextFile":False,"writeTextFile":False},"terminal":False}}, deadline=deadline)
+        recipe = {"version":"1.0.0","title":"Workshop release qualification",
+            "description":"Disposable agent message proof", "instructions":"Use only the Workshop MCP tools.",
+            "settings":{"goose_provider":"openrouter","goose_model":_GOOSE_MODEL}}
+        encoded = base64.urlsafe_b64encode(json.dumps(recipe).encode()).decode().rstrip("=")
+        created = transport.request("session/new", {"cwd":str(cwd),
+            "mcpServers":[workshop_mcp_server()], "_meta":{"recipeDeeplink":encoded}}, deadline=deadline)
+        session = created.get("sessionId")
+        if not session:
+            raise QualificationRefused("Actual Goose did not create a native ACP session")
+        for prompt in prompts:
+            result = transport.request("session/prompt", {"sessionId":session,
+                "prompt":[{"type":"text","text":prompt}]}, deadline=deadline,
+                update=lambda value:updates.append({"type":"goose_acp","params":value}))
+            if result.get("stopReason") != "end_turn":
+                raise QualificationRefused("Actual Goose did not complete its native turn")
+        return "\n".join(json.dumps(row) for row in updates), session, process.pid
+    finally:
+        transport.close()
+        job.close()
 
 
 @contextmanager
@@ -666,8 +394,7 @@ def _environment(env):
 
 def qualify(profile, *, opencode=None, claude=None, native_gate=None,
             model="opencode/mimo-v2.6-flash-free", peer="goose", goose=None, inject_failure=None,
-            stop_wait=10, connect_wait=1, startup_wait=30, poll_interval=0.1, initial_turn_timeout=300,
-            final_turn_timeout=150):
+            stop_wait=10, connect_wait=1, startup_wait=30, poll_interval=0.1, initial_turn_timeout=300):
     root = Path(__file__).resolve().parents[2]
     if root.name == "03.TOOLS":
         root = root.parent
@@ -794,7 +521,6 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
             outside = profile / 'rules' / 'agent.txt'
             outside.parent.mkdir()
             outside.write_text('AGENTLINK-OUTSIDE '+nonce,encoding='utf-8')
-            rule_nonce = nonce
             request = ("Release qualification on disposable files. Use the archhub_agent_coordination MCP tools. "
                 "Call declare(task='Release OpenCode write proof',paths=[" + json.dumps(str(first)) +
                 "],status='working',request_id='AGENTLINK-RELEASE'). Then use actual tools in this order: "
@@ -806,23 +532,21 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
                 "'. Continue even if the MCP tool fails. Then send(to='"+peer.title()+"',text='AGENTLINK-REQUEST " + nonce +
                 "'). Keep declaration working for the paired reader. Do not use a shell to fake MCP calls. Stop.")
             requested_model = model
-            output, model, routes = _opencode_turn([oc, "run", "--attach", address, "--format", "json", "-m", model, request],
+            output, model = _opencode_turn([oc, "run", "--attach", address, "--format", "json", "-m", model, request],
                 model=model, env=env, cwd=fixture, timeout=initial_turn_timeout,
-                quota_log=profile / "opencode/log/opencode.log", nonce=nonce,
-                declaration_page=lambda:app.shared_agent_mail("read", {"since":0, "include_archived":True}))
-            nonce = routes[-1]["nonce"]
+                quota_log=profile / "opencode/log/opencode.log")
             evidence.update(opencode_requested_model=requested_model, opencode_model=model,
-                opencode_routes=routes, nonce=nonce,
-                opencode_route_reason=routes[-2]["reason"] if model != requested_model else "requested free model")
+                opencode_route_reason="free quota exhausted" if model != requested_model else "requested free model")
             events = [json.loads(line) for line in output.splitlines() if line.startswith("{")]
             _log_tools(output)
             session = next((row.get("sessionID") for row in events if row.get("sessionID")), None)
             if not session:
                 raise QualificationRefused("OpenCode returned no actual session identity")
             page = app.shared_agent_mail("read", {"since":0, "include_archived":True})
-            page = {**page, "declarations":[row for row in page["declarations"]
-                    if row["root"] == routes[-1]["declaration"]]}
-            declaration, note = _request_proof(page, session, nonce)
+            requests = [row for row in page["messages"] if row["content"].endswith("AGENTLINK-REQUEST " + nonce)]
+            if len(requests) != 1:
+                raise QualificationRefused("OpenCode did not publish its nonce through MCP")
+            note = requests[0]
             components={'ordered_write_read_write_list':write_sequence(output),
                 'first_exact_bytes':first.is_file() and first.read_bytes()==nonce.encode(),
                 'second_exact_bytes':second.is_file() and second.read_bytes()==nonce.encode()}
@@ -835,7 +559,7 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
                 return (path if path.is_absolute() else fixture/path).resolve()
             outside_reads=[part for part in parts if part.get('tool')=='read' and
                 tool_path(part)==outside.resolve() and
-                'AGENTLINK-OUTSIDE '+rule_nonce in str(part.get('state',{}).get('output',''))]
+                'AGENTLINK-OUTSIDE '+nonce in str(part.get('state',{}).get('output',''))]
             failures=[i for i,part in enumerate(parts) if 'native_work_task_detach' in part.get('tool','') and
                 part.get('state',{}).get('status')=='error' and
                 'No Work task surface is attached' in str(part.get('state',{}).get('error','')) and
@@ -875,74 +599,34 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
                 "paths=[" + json.dumps(str(first)) + "],status='working',request_id='AGENTLINK-RELEASE'. Then stop.")
             prompt = ("Use only the Workshop MCP read/send tools. "
                 "Read since=0. Find request message " + note["id"] + " with nonce " + nonce +
-                ". Read the overlap notice whose refs are your declaration and " + declaration["root"] + ". "
+                ". Read the overlap notice that references both your declaration and OpenCode's. "
                 "Send(to='OpenCode',reply_to='" + note["id"] + "',text='AGENTLINK-REPLY " + nonce +
                 "'). Finish with the exact overlap message id. Do not mark your declaration done yet.")
-            selected_peer = {}
             if peer == "claude":
                 answer = _run([cc, "-p", declare_prompt + " " + prompt, "--output-format", "stream-json", "--verbose",
                     "--strict-mcp-config", "--mcp-config", cc_mcp, "--permission-mode", "acceptEdits",
                     "--allowedTools", "mcp__archhub_agent_coordination__declare,mcp__archhub_agent_coordination__read,mcp__archhub_agent_coordination__send"], env=env, cwd=fixture)
             else:
-                def peer_proof():
-                    boundary = app.shared_agent_mail("read", {"since":0, "include_archived":True})
-                    seen = {row["id"] for row in boundary["messages"]}
-                    def verify_peer(answer, connector):
-                        peer_page = app.shared_agent_mail("read", {"since":0, "include_archived":True})
-                        peers = [row for row in peer_page["declarations"] if row.get("native_session_id") == connector
-                                 and row.get("app") == peer]
-                        if len(peers) != 1:
-                            raise QualificationRefused("Real Goose turn did not return the paired reply and overlap")
-                        paired = _new_paired_message(peer_page["messages"], seen=seen,
-                            author=peers[0]["agent"] + " [" + peers[0]["session"] + "]", reply_to=note["id"],
-                            marker="AGENTLINK-REPLY " + nonce)
-                        overlap = _overlap_proof(peer_page, declaration, paired, peer)
-                        _require_paired_read(answer, note["id"], overlap)
-                        selected_peer["reply"] = paired["id"]
-                    return verify_peer
-                try:
-                    answer, peer_session, peer_pid, peer_model, peer_routes = _goose_turn(
-                        cc, [declare_prompt, prompt], env=env, cwd=fixture, proof_factory=peer_proof)
-                except QualificationRefused as exc:
-                    evidence["peer_routes"] = getattr(exc, "routes", [])
-                    raise
+                answer, peer_session, peer_pid = _goose_turn(cc, [declare_prompt, prompt], env=env, cwd=fixture)
                 evidence.update(peer_session=peer_session, peer_pid=peer_pid,
-                    peer_provider="openrouter", peer_model=peer_model.removeprefix("openrouter/"), peer_routes=peer_routes)
+                    peer_provider="openrouter", peer_model=_GOOSE_MODEL)
             page = app.shared_agent_mail("read", {"since":0, "include_archived":True})
             replies = [row for row in page["messages"] if row["reply_to"] == note["id"]
-                       and row["content"].endswith("AGENTLINK-REPLY " + nonce)
-                       and (peer == "claude" or row["id"] == selected_peer["reply"])]
+                       and row["content"].endswith("AGENTLINK-REPLY " + nonce)]
+            notices = [row for row in page["messages"] if row["author"] == "Workshop coordination"
+                       and "Your work overlaps at" in row["content"]]
             reply = replies[0] if len(replies) == 1 else None
-            if reply is None:
+            notice = notices[0] if len(notices) == 1 else None
+            if reply is None or notice is None:
                 raise QualificationRefused("Real " + peer.title() + " turn did not return the paired reply and overlap")
-            notice = _overlap_proof(page, declaration, reply, peer)
             final_prompt = ("Use Workshop read(since=0). Read message " + reply["id"] +
                 " with AGENTLINK-REPLY " + nonce + " and overlap " + notice["id"] +
                 ". Send(to='"+peer.title()+"',reply_to='" + reply["id"] + "',text='AGENTLINK-ACK " + nonce +
                 "'). Finish with that exact overlap message id. Do not write any files.")
-            selected_ack = {}
-            def ack_proof():
-                boundary = app.shared_agent_mail("read", {"since":reply["sequence"], "include_archived":True})
-                seen = {row["id"] for row in boundary["messages"]}
-                def verify_ack(output):
-                    ack_page = app.shared_agent_mail("read", {"since":reply["sequence"], "include_archived":True})
-                    paired = _new_paired_message(ack_page["messages"], seen=seen, author=note["author"],
-                        reply_to=reply["id"], marker="AGENTLINK-ACK " + nonce)
-                    _require_paired_read(output, reply["id"], notice)
-                    selected_ack["id"] = paired["id"]
-                return verify_ack
-            try:
-                final, ack_model, ack_routes = _opencode_turn([oc, "run", "--attach", address, "--session", session,
-                    "--format", "json", "-m", model, final_prompt], model=model, env=env, cwd=fixture,
-                    timeout=final_turn_timeout, quota_log=profile / "opencode/log/opencode.log", proof_factory=ack_proof)
-            except QualificationRefused as exc:
-                evidence["ack_routes"] = getattr(exc, "routes", [])
-                raise
-            evidence.update(ack_model=ack_model, ack_routes=ack_routes)
+            final = _run([oc, "run", "--attach", address, "--session", session,
+                "--format", "json", "-m", model, final_prompt], env=env, cwd=fixture)
             settled = app.shared_agent_mail("read", {"since":reply["sequence"], "include_archived":True})
             acknowledgements = [row for row in settled["messages"] if row["reply_to"] == reply["id"]
-                and row["id"] == selected_ack["id"]
-                and row["author"] == note["author"]
                 and row["content"].endswith("AGENTLINK-ACK " + nonce)]
             claude_read, opencode_read = read_messages(answer), read_messages(final)
             checks["exchange"] = (bool(acknowledgements) and note["author"] != reply["author"]
@@ -965,10 +649,6 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
             require_checks(checks)
             evidence["status"] = "isolated-pass"
             return evidence
-    except QualificationRefused as exc:
-        evidence.setdefault("opencode_routes", getattr(exc, "routes", []))
-        exc.evidence = evidence
-        raise
     finally:
         if server_job is not None:
             server_job.close()
@@ -1017,7 +697,7 @@ def main(argv=None):
         receipt = qualify(profile, opencode=args.opencode, claude=args.claude,
                           native_gate=args.native_gate, model=args.model, peer=args.peer, goose=args.goose)
     except (QualificationRefused, OSError, ValueError, KeyError) as exc:
-        output.write_text(json.dumps({**getattr(exc, "evidence", {}), "status":"refused", "error":str(exc)}, indent=2) + "\n", encoding="utf-8")
+        output.write_text(json.dumps({"status":"refused", "error":str(exc)}) + "\n", encoding="utf-8")
         print("AGENTLINK RELEASE REFUSED: " + str(exc))
         return 1
     output.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")

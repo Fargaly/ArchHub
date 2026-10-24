@@ -8335,6 +8335,14 @@
       "scope": [
         "05.EVIDENCE/acompiler-governance-hooks.patch"
       ]
+    },
+    "GITBATCH": {
+      "source": "Founder 2026-10-23 whole app shipped as the update: release build 42 admission spent ~5-15 min per commit spawning git ls-tree/show per changed file (CPU ~2%). One ls-tree listing plus one cat-file --batch read per revision replaces the per-path pairs, same answers; courts prove equivalence and constant spawns.",
+      "scope": [
+        "03.TOOLS/tools/pipeline/build.py",
+        "03.TOOLS/tools/pipeline/strict_check.py",
+        "02.TESTS/tests_replica/test_gitbatch.py"
+      ]
     }
   }
 }

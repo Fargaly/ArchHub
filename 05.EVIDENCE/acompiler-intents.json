@@ -8354,6 +8354,18 @@
         "04.DOCS/DECISIONS.md",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "CLOUD404": {
+      "source": "Founder CLOUD404: keep real signed-in account and billing state when the deployed optional invitation route is absent; explicit feature-unavailable notice, no raw 404. Existing protected session and pin retained. Patch-only lane, installed files/live data/deployment excluded.",
+      "scope": [
+        "01.APP/nodelang/settings_owner.py",
+        "01.APP/nodelang/studio/account-tools.jsx",
+        "02.TESTS/tests_replica/test_cloud404.py",
+        "02.TESTS/tests_js/cloud404.test.cjs",
+        "05.EVIDENCE/acompiler-intents.json",
+        "01.APP/nodelang/studio/api.js",
+        "02.TESTS/tests_js/newapp_account.test.cjs"
+      ]
     }
   }
 }

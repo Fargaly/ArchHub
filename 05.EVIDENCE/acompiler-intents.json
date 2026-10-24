@@ -8343,6 +8343,17 @@
         "03.TOOLS/tools/pipeline/strict_check.py",
         "02.TESTS/tests_replica/test_gitbatch.py"
       ]
+    },
+    "RELFLAKE": {
+      "source": "Founder RELFLAKE: release gates stop failing on slow machine without weakening any proof; exact-version integrity-checked local dependencies, unchanged fallback and real proofs, measured snapshot timing with TOCTOU retained. Patch-only isolated lane.",
+      "scope": [
+        "03.TOOLS/tools/real_app_check/agentlink_release.py",
+        "03.TOOLS/tools/real_app_check/agentlink_dependencies.cjs",
+        "03.TOOLS/installer/build_release.ps1",
+        "02.TESTS/tests/test_agentlink_release.py",
+        "04.DOCS/DECISIONS.md",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

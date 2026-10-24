@@ -110,12 +110,29 @@ def _is_broadcast(message):
 
 def _asks_for_reply(message):
     body = message.get("content", "").partition("\n")[2]
-    if re.search(r"(?im)^[ \t]*no reply (?:needed|required)[.!]?[ \t\r]*$", body):
+    unquoted = "\n".join(line for line in body.splitlines() if not line.lstrip().startswith(">"))
+    # Only an unquoted, unconditional sentence can waive the reply obligation.
+    if re.search(
+            r"(?:^|[.!?؟]\s+)[ \t]*no reply (?:needed|required)"
+            r"(?![ \t]*[.!]?\s*(?:unless|if|until)\b)[ \t]*(?:[.!](?=\s|$)|$)",
+            unquoted, flags=re.IGNORECASE | re.MULTILINE):
         return False
-    # A reply reference alone can also carry a new ask; exempt only whole-body acknowledgements.
-    return not (message.get("reply_to") and re.fullmatch(
-        r"(?:ack(?:nowledged)?|received|noted|understood|thanks?|thank you|got it|done|confirmed)[.!]*",
-        body.strip(), flags=re.IGNORECASE))
+    # shortcut: lexical requests; add a replay court and marker for each missed ask.
+    return "?" in body or "؟" in body or bool(re.search(
+        r"\b(?:please|kindly)\b|\blet[ \t]+me[ \t]+know\b|\byour[ \t]+task[ \t]*:|"
+        r"من[ \t]+فضلك|لو[ \t]+سمحت|\bممكن\b|\b(?:can|could|would|will)[ \t]+you\b|"
+        r"\bdone when[ \t]*(?::(?![ \t]*(?:satisfied|met|complete[ds]?|done|passed)\b)|$)|"
+        r"(?:^|[.!;]\s+)[ \t]*(?:[-*]\s+)?"
+        r"(?:(?:then|now|also|next|and|so|ثم|وبعدين)[ \t]+)*(?:"
+        r"(?:reply|answer|confirm|acknowledge|review|check|send|provide|"
+        r"verify|run|fix|land|install|build|test|update|deliver|merge|re-run|rerun|tell|"
+        r"make[ \t]+sure|ship|publish|push|release|راجع|ابعت|نزّ?ل|شغّ?ل|صلّ?ح|اعمل|شوف|قول)\b"
+        r"(?![ \t]+(?:#?\d+[ \t]+)?(?:(?:is|was|has|had|pending|underway|in[ \t]+progress)\b|"
+        r"(?:passed|failed)\b[ \t]*(?:[.!:;,]|$|\d|(?:all|on|at|in|with|for|across|during|after|before|because|due|and)\b)|"
+        r"(?:verdict|status|result|evidence)[ \t]*:|"
+        r"(?:complete[ds]?|finished|done|received|running)\b[ \t]*(?:[.!:;,]|$|(?:on|at|in|with|for|across)\b)))|"
+        r"(?:I[ \t]+)?need\b(?![ \t]*:?[ \t]*(?:none|nothing)\b))",
+        body, flags=re.IGNORECASE | re.MULTILINE))
 
 
 def _recipient_rows(message, declarations):

@@ -395,7 +395,7 @@ def test_explicit_native_controller_is_not_replayed_and_model_survives_reminder(
     native = NativeFixture()
     model = {'providerID':'openrouter','modelID':'qwen/qwen3.8-27b:free'}
     delivery = mail.WorkshopInjection(owner, native, reminder_minutes=1, escalation_minutes=2)
-    owner.shared_agent_mail('send', {'to':'selected-target','text':'Explicitly selected free model',
+    owner.shared_agent_mail('send', {'to':'selected-target','text':'Please use the explicitly selected free model',
         'native_control':{'app':'opencode','id':'selected-target','model':model},
         'context':{'claude/sessionID':'source'}}, peer=peer())
     started = time.time()

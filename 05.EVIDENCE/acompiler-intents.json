@@ -8400,6 +8400,16 @@
         "02.TESTS/tests_replica/test_sessionlink2.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "WSASKONLY": {
+      "source": "Founder WSASKONLY / Review 1: chase real addressed asks, including imperative assignments and Arabic requests. Only an unquoted standalone unconditional no-reply sentence opts out; quoted, mentioned or conditional (unless/if/until) phrases never suppress real asks. Status, progress and verdict notes are delivered once; recipient verdict replies close assignments. Preserve one reminder and one escalation. Isolated patch lane; installed app and live Workshop writes excluded.",
+      "scope": [
+        "01.APP/nodelang/workshop_mailbox.py",
+        "02.TESTS/tests_replica/test_wsaskonly.py",
+        "02.TESTS/tests_replica/test_wsnoreply.py",
+        "02.TESTS/tests_replica/test_wsinject.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

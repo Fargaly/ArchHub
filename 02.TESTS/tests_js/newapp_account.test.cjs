@@ -4,6 +4,31 @@ const vm=require('node:vm');
 const fs=require('node:fs');
 const path=require('node:path');
 
+test('CLOUD404 account and control availability survive both refresh orders and recover',async()=>{
+ const account={signed_in:true,email:'court-user@example.test',user_id:'court-user'};
+ const message='Signed in. Office invitations unavailable until the cloud service is updated.';
+ let accountErrors={officeInvitations:message},controlErrors={secrets:'Connected account unavailable'};
+ const {api}=await adapter(account,{'/api/universal/settings-action':body=>({ok:true,result:
+  body.function==='read'?{profile:{plan:'Personal'},officeInvitations:[],controlErrors:accountErrors}:{controlErrors}})});
+ await new Promise(resolve=>globalThis.setImmediate(resolve));
+ await api.refreshSettingsAccount();await api.refreshSettingsControls();
+ assert.equal(api.getSnapshot().profile.signedIn,true);
+ assert.equal(api.getSnapshot().profile.plan,'Personal');
+ assert.equal(api.getSnapshot().controlErrors.officeInvitations,message);
+ assert.equal(api.getSnapshot().controlErrors.secrets,'Connected account unavailable');
+ await api.refreshSettingsAccount();
+ assert.equal(api.getSnapshot().controlErrors.secrets,'Connected account unavailable');
+ controlErrors={};await api.refreshSettingsControls();
+ assert.equal(api.getSnapshot().controlErrors.secrets,undefined);
+ assert.equal(api.getSnapshot().controlErrors.officeInvitations,message);
+ controlErrors={providerModels:'Model catalogue unavailable'};await api.refreshSettingsControls();
+ accountErrors={};await api.refreshSettingsAccount();
+ assert.equal(api.getSnapshot().controlErrors.officeInvitations,undefined);
+ assert.equal(api.getSnapshot().controlErrors.providerModels,'Model catalogue unavailable');
+ account.signed_in=false;account.email='';await api.syncAccount();
+ assert.deepEqual(JSON.parse(JSON.stringify(api.getSnapshot().controlErrors)),{});
+});
+
 async function adapter(account, responses={}){
  const requests=[],events=new Map();
  const window={ARCHHUB_AUTHORITY:{},structuredClone:globalThis.structuredClone,ARCHHUB_BOOT:{home_load_ms:60000,token:'local-lease',csrf:'csrf'},

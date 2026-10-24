@@ -874,7 +874,12 @@ async function settingsAction(functionName, args=[]) {
  if(functionName==='readControls'&&generation!==controlsGeneration)return result;
  if(['readOperations','setGraphWorkspaces'].includes(functionName)&&graph!==state.graph.id)throw Error('The graph changed while Settings ran. Refresh Settings before retrying.');
  const values={};
- for(const key of ['firms','activeFirm','people','billing','dependencies','officeInvitations','settingsScope','activeWorkspace','devices','activeDevice','backups','companion','secrets','providerPreferences','providerModels','controlErrors'])if(Object.hasOwn(result,key))values[key]=result[key];
+ for(const key of ['firms','activeFirm','people','billing','dependencies','officeInvitations','settingsScope','activeWorkspace','devices','activeDevice','backups','companion','secrets','providerPreferences','providerModels'])if(Object.hasOwn(result,key))values[key]=result[key];
+ if(result.controlErrors){
+  values.controlErrors={...state.controlErrors};
+  for(const key of functionName==='read'?['officeInvitations']:['secrets','providerModels'])delete values.controlErrors[key];
+  Object.assign(values.controlErrors,result.controlErrors);
+ }
  if(result.workspacePolicies)values.workspaces=state.workspaces.map(row=>({...row,...result.workspacePolicies[row.id]}));
  if(result.workspaceIds)values.graph={...state.graph,workspaceIds:result.workspaceIds};
  if(result.profile){settingsProfile={...settingsProfile,...Object.fromEntries(Object.entries(result.profile).filter(([key])=>['name','firm','plan'].includes(key)))};values.profile={...state.profile,...settingsProfile};}
@@ -923,7 +928,7 @@ refreshAccount=async()=>{
  const profile=await settingsAccountRefresh();
  if(profile.id!==settingsAccountIdentity){
   settingsAccountIdentity=profile.id;settingsProfile={};
-  publish({profile:{...state.profile,firm:'',plan:''},firms:[],activeFirm:'',people:[],officeInvitations:[],settingsScope:'User',activeWorkspace:'',activeDevice:'',devices:[],backups:[],workspaces:[],graph:{...state.graph,workspaceIds:[]},billing:{status:'',requestedPlan:'',cycle:'',checkout:null,invoices:[],plans:[]}});
+  publish({profile:{...state.profile,firm:'',plan:''},firms:[],activeFirm:'',people:[],officeInvitations:[],controlErrors:{},settingsScope:'User',activeWorkspace:'',activeDevice:'',devices:[],backups:[],workspaces:[],graph:{...state.graph,workspaceIds:[]},billing:{status:'',requestedPlan:'',cycle:'',checkout:null,invoices:[],plans:[]}});
   if(profile.signedIn)await api.refreshSettingsAccount();
  }else if(profile.signedIn){publish({profile:{...state.profile,...settingsProfile}});}
  return copy(state.profile);

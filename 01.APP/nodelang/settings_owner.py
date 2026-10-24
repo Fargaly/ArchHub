@@ -15,6 +15,10 @@ from .universal_cell import Cell, NULL_CELL_ID, InvalidCell
 from .cell_accounts import upsert_account, ensure_accounts
 
 
+class CloudRouteUnavailable(InvalidCell):
+    """The pinned cloud does not serve a requested feature."""
+
+
 class SettingsOwner:
     PUBLIC = ('read', 'updateProfile', 'invitePerson', 'selectFirm', 'setTeamAccess',
               'setBilling', 'refreshBilling', 'prepareCheckout', 'completeCheckout',
@@ -410,14 +414,21 @@ class SettingsOwner:
         detail = self.cloud('GET', '/v1/companies/' + quote(active['id'], safe='')) if active else {}
         profile = {key: me[field] for key, field in (('name', 'full_name'), ('firm', 'firm_name'))
                    if isinstance(me.get(field), str) and me[field].strip()}
+        billing = self._billing(me, prefs)
+        errors = {}
+        try:
+            invitations = self.cloud('GET', '/v1/companies/invites/mine').get('invitations', [])
+        except CloudRouteUnavailable:
+            invitations = []
+            errors['officeInvitations'] = 'Signed in. Office invitations unavailable until the cloud service is updated.'
         return {'profile': {**profile, **prefs.get('profile', {}), 'plan': {'solo':'Personal','studio':'Office','firm':'Team','trial':'Personal'}.get(me['plan'], me['plan'])},
                 'firms': companies, 'activeFirm': active['id'] if active else '',
                 'people': [{'id': m['user_id'], 'name': m.get('full_name') or m['email'],
                             'email': m['email'], 'accessRole': {'owner': 'Owner', 'admin': 'Administrator',
                             'member': 'Member', 'viewer': 'Viewer'}[m['role']],
                             'expires': m.get('access_until') or ''} for m in detail.get('members', [])],
-                'billing': self._billing(me, prefs),
-                'officeInvitations': self.cloud('GET', '/v1/companies/invites/mine').get('invitations', [])}
+                'billing': billing, 'controlErrors': errors,
+                'officeInvitations': invitations}
 
     def updateProfile(self, values):
         if type(values) is not dict or not values or set(values) - {'name', 'firm'}:
@@ -567,6 +578,8 @@ def cloud_call(method, path, body=None, *, timeout_seconds=15):
         with urlopen(request, timeout=timeout_seconds) as response:
             result = json.loads(response.read(1024 * 1024))
     except HTTPError as error:
+        if error.code == 404 and method == 'GET' and path == '/v1/companies/invites/mine':
+            raise CloudRouteUnavailable('Cloud feature unavailable. Update the cloud service and retry.') from None
         raise InvalidCell('Cloud backend refused (HTTP %s). Refresh account status and retry.' % error.code) from None
     except OSError:
         raise InvalidCell('Cloud backend unreachable. Check your connection and retry.') from None

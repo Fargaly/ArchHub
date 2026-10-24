@@ -8366,6 +8366,23 @@
         "01.APP/nodelang/studio/api.js",
         "02.TESTS/tests_js/newapp_account.test.cjs"
       ]
+    },
+    "AGENTTRAIL": {
+      "source": "Founder AGENTTRAIL via 717/c91e: adapt AgentTrail local runtime log/file observation into the existing Work Board and Workshop; row-owned globs, touched-after-install flag, honest turn states and handoffs; metadata only, ignore client/personal paths. Isolated patch, no install or live profile changes.",
+      "scope": [
+        "01.APP/nodelang/workshop_activity.py",
+        "01.APP/nodelang/workshop_api.py",
+        "01.APP/nodelang/studio/ds_workshop3.jsx",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/session_link/opencode-plugin.mjs",
+        "01.APP/nodelang/session_link/worker.mjs",
+        "01.APP/nodelang/session_link_transport.py",
+        "02.TESTS/tests_replica/test_agenttrail.py",
+        "02.TESTS/tests_js/studio_agenttrail.test.cjs",
+        "02.TESTS/tests_js/opencode_agenttrail.test.mjs",
+        "NOTICE",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

@@ -119,12 +119,13 @@ class AcpTransport:
         except queue.Full:
             raise GooseRefused("The managed Goose connection closed; the request was not replayed.") from None
 
-    def request(self, method, params, *, deadline, update=lambda _: None, stopped=lambda: False):
+    def request(self, method, params, *, deadline, update=lambda _: None, stopped=lambda: False,
+                response_error=lambda _: None):
         self.sequence += 1
         request_id = self.sequence
         tool_identities = {}
         self.send({"id": request_id, "method": method, "params": params})
-        while True:
+        while not self.closed:
             if stopped():
                 raise GooseRefused("Stopped by you")
             remaining = deadline - time.monotonic()
@@ -165,6 +166,7 @@ class AcpTransport:
             if message.get("id") != request_id:
                 raise GooseRefused("Goose returned an unexpected response identity.")
             if "error" in message:
+                response_error(message["error"])
                 # Provider diagnostics may contain credentials. Only the typed
                 # failure crosses into the face, never the provider's raw text.
                 raise GooseResponseRefused("Goose could not complete this request. No action was approved.")
@@ -172,6 +174,7 @@ class AcpTransport:
             if not isinstance(result, dict):
                 raise GooseRefused("Goose returned an invalid response.")
             return result
+        raise GooseRefused("The managed Goose connection is closed.")
 
     def close(self):
         if self.closed:

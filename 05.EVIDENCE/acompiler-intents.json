@@ -8410,6 +8410,15 @@
         "02.TESTS/tests_replica/test_wsinject.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "FREEROUTE2": {
+      "source": "Founder FREEROUTE2: the release agent check tries the ordered explicitly free inkling and nemotron routes only on classified provider failure or model non-attempt, within the unchanged turn deadline, with all exchange/overlap/native/file proofs required and route evidence. Isolated patch-only lane; no installed app, live data or running release changes.",
+      "scope": [
+        "03.TOOLS/tools/real_app_check/agentlink_release.py",
+        "02.TESTS/tests/test_agentlink_release.py",
+        "04.DOCS/DECISIONS.md",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

@@ -11,9 +11,12 @@ const capture=record=>fs.appendFileSync(transcript,JSON.stringify(record)+'\n');
 let stop;
 if(mode==='opencode'){
  const {createSessionLinkPlugin}=await import('../../01.APP/nodelang/session_link/opencode-plugin.mjs');
+ const reply={info:{id:'answer',parentID:'question',role:'assistant',sessionID:session,time:{created:2}},
+  parts:[{id:'text',messageID:'answer',sessionID:session,type:'text',text:'Fixture answer'}]};
  const client={session:{list:async()=>({data:[{id:session,directory,title:'OpenCode fixture'}]}),
   get:async()=>({data:{id:session,directory}}),status:async()=>({data:{[session]:{type:'idle'}}}),
-  prompt:async request=>{capture({text:request.body.parts[0].text});return await new Promise(()=>{});}}};
+  messages:async()=>({data:[{info:{id:'question',role:'user',sessionID:session,time:{created:1}},parts:[]},reply]}),
+  prompt:async request=>{capture({text:request.body.parts[0].text});return {data:reply};}}};
  await createSessionLinkPlugin({stateDirectory:directory})({client,directory});
  const state=globalThis[Symbol.for('archhub.session-link.opencodeserver')];
  stop=()=>{state.peer.stop();state.server.close();};

@@ -24,6 +24,7 @@ from uuid import uuid4
 from .agent_declarations import SESSION_KEYS, _alive, _lineage, canonical_path, overlaps
 from .agent_runtime_registry import mailbox_label, observed_runtime_process
 from .conversation_history import ConversationHistoryStore, WORKSHOP_CURSOR_SCHEMA
+from .session_link_transport import public_delivery_reason
 
 ROOM = "app:workshop"
 CATEGORY = ROOM + ":category:note"
@@ -486,7 +487,9 @@ class WorkshopInjection:
                     cancel_event=self._stop, **({"model":control["model"]} if control and control.get("model") else {}))
                 with history._transaction(write=True):
                     _delivery_receipt(history, message, recipient, action + "-outcome", now=now,
-                        via="session-link", status=outcome.get("status", "uncertain"))
+                        via="session-link", status=outcome.get("status", "uncertain"),
+                        delivery_reason=public_delivery_reason(outcome.get("delivery_reason", "")),
+                        dispatch_attempted=outcome.get("dispatch_attempted") is True)
                 return  # Yield after one native effect so new notes can pre-empt historical backfill.
             if settled:
                 self._pending.pop(message["id"], None)

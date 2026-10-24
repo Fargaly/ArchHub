@@ -49,7 +49,7 @@ input.on('line',async line=>{
    if(!e||typeof e.id!=='string'||typeof e.app!=='string')throw new Error('Invalid recipient');
    const reply=await ask(e.app,e.selector||e.id,r.text,r.permission_mode||'prompting',{expected:e,mailboxMessage:r.mailbox_message,onDispatch:()=>{dispatched=true;emit({event:'dispatch_attempted'});}});
    if(reply.status==='uncertain'){terminal({event:'result',status:'uncertain',dispatch_attempted:dispatched,reason:reply.reason,external_cancelled:false});return;}
-   if(reply.status==='held'){terminal({event:'result',status:'held',dispatch_attempted:dispatched,delivery_status:reply.delivery_status,delivery_reason:reply.delivery_reason});return;}
+   if(reply.status==='held'){terminal({event:'result',status:'held',dispatch_attempted:dispatched,delivery_status:reply.delivery_status,delivery_reason:reply.delivery_reason,mailbox_message:reply.mailbox_message});return;}
    if(typeof reply.text!=='string'||reply.text.length>32000)throw new Error('Reply text limit');
    terminal({event:'result',status:'replied',dispatch_attempted:dispatched,recipient:e,reply,work_authority:false,execution_verified:false});
   }else throw new Error('Invalid operation');

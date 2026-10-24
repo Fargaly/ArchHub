@@ -44,3 +44,8 @@ For persistent links substitute `--antigravity`, `--antigravity-ide`, or `--open
 Antigravity's internal session API requires a model configuration: Session Link reads and reuses the latest native user configuration in memory, including existing permission gates. It refuses unconfigured or busy sessions. A native API may change after an app update. Never substitute another model or loosen permissions to make delivery pass.
 
 For restarting a stale connection, disconnect only its exact ID then reconnect from a current Codex Desktop task to inherit the current app pipe. Do not automatically resend a timed-out message: delivery may be uncertain. No tokens are to be printed or put in message files. Code and protocol evidence are under the same local transport directory.
+## Saved-session questions
+
+Use `ask-dormant --file QUESTION.txt` for read-only Claude/Codex transcript evidence, optionally `--app APP --session EXACT_UUID` for one session. Only explicit `--wake --model EXACT_INSTALLED_LOCAL_MODEL` resumes it once; no paid/default/cloud model, automatic wake, pull or retry. One 180-second deadline covers all stages. A failure has a named reason and no answer text.
+
+Workshop delivery uses the existing application APIs and peer sockets; live ask keeps its native wake. No visible composer is typed into or cleared. Held real asks retain their reason and original Workshop message and still receive the existing reminder/escalation. Do not use the desktop to force delivery or automatically repeat an uncertain submitted action.

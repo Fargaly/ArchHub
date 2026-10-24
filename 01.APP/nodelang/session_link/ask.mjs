@@ -8,6 +8,8 @@ import {catalog} from './bridge.mjs';
 import {readMessage} from './paths.mjs';
 import {validateModel} from './opencode-model.mjs';
 import {interrupt} from './interrupt.mjs';
+import {askDormant,runDormantCommand} from './dormant.mjs';
+export {askDormant,runDormantCommand};
 const args=process.argv.slice(2),opt=n=>{const i=args.indexOf('--'+n);return i<0?undefined:args[i+1];};
 const validate=text=>{if(typeof text!=='string'||!text.trim()||text.length>32000)throw new Error('Text must contain 1–32000 characters');return text;};
 const span=(units,scale=1000)=>units*scale;
@@ -77,7 +79,11 @@ export async function ask(app,session,text,permissionMode='prompting',{expected,
  throw new Error('No Workshop reply confirmed in 180 seconds; task may have run; do not resend automatically.');
 }
 async function runCli(){
- if(args[0]==='interrupt')console.log(JSON.stringify(await interrupt(opt('app'),opt('session'),opt('reason'),{permissionMode:opt('permission-mode')??'prompting'})));
+ if(args[0]==='ask-dormant'){
+  const result=await askDormant(opt('app'),opt('session'),await readMessage(args),{level:args.includes('--wake')?'wake':opt('session')?'read':'search',model:opt('model')});
+  process.stdout.write(JSON.stringify(result)+'\n',()=>process.exit(result.status==='failed'?1:0));
+ }
+ else if(args[0]==='interrupt')console.log(JSON.stringify(await interrupt(opt('app'),opt('session'),opt('reason'),{permissionMode:opt('permission-mode')??'prompting'})));
  else if(args[0]==='ask')console.log(JSON.stringify(await ask(opt('app'),opt('session'),await readMessage(args),opt('permission-mode')??'prompting')));
  else if(args[0]==='send')console.log(JSON.stringify(mailboxSend(opt('session')||'*',await readMessage(args))));
  else if(args[0]==='answer'){await readMessage(args);throw new Error('Replies use MCP send(reply_to=the Workshop message id); no peer reply endpoint.');}

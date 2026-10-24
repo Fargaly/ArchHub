@@ -7,6 +7,7 @@ is not execution/completion evidence. There is no retry, service, or model spawn
 from __future__ import annotations
 
 import json
+import errno
 import math
 import os
 from pathlib import Path
@@ -378,7 +379,9 @@ class SessionLinkTransport:
                     result={'event':'result','status':'held',
                         'dispatch_attempted':result.get('dispatch_attempted') is True,
                         'delivery_status':code if code in {'held','refused','rejected','denied','expired','dropped'} else 'held',
-                        'delivery_reason':public_delivery_reason(result.get('delivery_reason'))}
+                        'delivery_reason':public_delivery_reason(result.get('delivery_reason')),
+                        **({'mailbox_message':result['mailbox_message']} if type(result.get('mailbox_message')) is str
+                            and 0 < len(result['mailbox_message']) <= 512 else {})}
                 if payload["operation"] == "request" and result["status"] == "replied":
                     if result.get("recipient") != payload["recipient"] or not isinstance(result.get("reply", {}).get("text"), str):
                         raise ValueError("reply recipient mismatch")
@@ -431,3 +434,114 @@ class SessionLinkTransport:
 
     def __exit__(self, *_):
         self.close()
+
+
+def run_dormant_command(request):
+    """One stdin question, bounded output, existing owned-process Job; no shell."""
+    if (type(request) is not dict or set(request) != {"command", "args", "text", "env", "timeoutMs"}
+            or type(request["command"]) is not str or not request["command"]
+            or type(request["args"]) is not list or len(request["args"]) > 64
+            or any(type(arg) is not str or len(arg) > 8192 for arg in request["args"])
+            or type(request["text"]) is not str or not request["text"].strip() or len(request["text"]) > 32000
+            or type(request["env"]) is not dict or any(type(key) is not str or type(value) is not str
+                for key, value in request["env"].items())
+            or type(request["timeoutMs"]) is not int or not 1 <= request["timeoutMs"] <= 180000):
+        return {"code": None, "stdout": "", "reason": "wake_input_invalid"}
+    if os.name == "nt" and not request["command"].lower().endswith(".exe"):
+        return {"code": None, "stdout": "", "reason": "wake_runtime_unavailable"}
+    deadline = time.monotonic() + request["timeoutMs"] / 1000
+    process = None
+    job = None
+    readers = []
+    output = bytearray()
+    overflow = threading.Event()
+    write_failed = threading.Event()
+
+    def stop_tree():
+        if job is not None:
+            job.close()
+        if process is not None:
+            if os.name != "nt":
+                import signal
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except OSError as error:
+                    if error.errno != errno.ESRCH:
+                        raise
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=max(0, deadline - time.monotonic()))
+
+    try:
+        process = subprocess.Popen([request["command"], *request["args"]],
+            env={**os.environ, **request["env"]}, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0),
+            start_new_session=os.name != "nt")
+        job = _OwnedProcessJob(process)
+
+        def drain(stream, capture):
+            size = 0
+            while True:
+                chunk = stream.read1(4096)
+                if not chunk:
+                    return
+                size += len(chunk)
+                if size > 65536:
+                    overflow.set()
+                    stop_tree()
+                    return
+                if capture:
+                    output.extend(chunk)
+
+        def question():
+            try:
+                process.stdin.write(request["text"].encode("utf-8"))
+                process.stdin.close()
+            except (OSError, ValueError):
+                write_failed.set()
+
+        for stream, capture in ((process.stdout, True), (process.stderr, False)):
+            reader = threading.Thread(target=drain, args=(stream, capture), daemon=True)
+            reader.start()
+            readers.append(reader)
+        writer = threading.Thread(target=question, daemon=True)
+        writer.start()
+        readers.append(writer)
+        try:
+            process.wait(timeout=max(0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            return {"code": None, "stdout": "", "timedOut": True}
+        stop_tree()
+        for reader in readers:
+            reader.join(timeout=max(0, deadline - time.monotonic()))
+        if any(reader.is_alive() for reader in readers):
+            return {"code": None, "stdout": "", "reason": "wake_output_incomplete"}
+        if overflow.is_set():
+            return {"code": None, "stdout": "", "reason": "wake_output_limit"}
+        if write_failed.is_set() and process.returncode == 0:
+            return {"code": None, "stdout": "", "reason": "wake_stdin_failed"}
+        return {"code": process.returncode, "stdout": output.decode("utf-8"), "timedOut": False}
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return {"code": None, "stdout": "", "reason": "wake_runtime_unavailable"}
+    finally:
+        stop_tree()
+        if process is not None:
+            for reader in readers:
+                reader.join(timeout=max(0, deadline - time.monotonic()))
+            for stream in (process.stdin, process.stdout, process.stderr):
+                stream.close()
+
+
+if __name__ == "__main__":
+    if sys.argv[1:] != ["--dormant-wake"]:
+        raise SystemExit("Use Session Link ask-dormant")
+    # Hold through process exit: children inherit custody before Popen can run them.
+    if os.name == "nt":
+        from types import SimpleNamespace
+        _runner_job = _OwnedProcessJob(SimpleNamespace(_handle=-1))
+    raw = sys.stdin.buffer.read(131073)
+    try:
+        payload = json.loads(raw) if len(raw) <= 131072 else None
+        print(json.dumps(run_dormant_command(payload)))
+    except (ValueError, UnicodeError):
+        print(json.dumps({"code": None, "stdout": "", "reason": "wake_input_invalid"}))

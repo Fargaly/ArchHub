@@ -8323,6 +8323,12 @@
         "02.TESTS/tests_replica/test_acompiler_gate.py",
         "04.DOCS/DECISIONS.md"
       ]
+    },
+    "RELBASE": {
+      "source": "Founder 2026-10-23 whole app shipped as the update: release admission base advances to the last fully admitted, published release revision (MAINREL precedent 0460bab7, fb5d85b5, db4e971b). Build 39 build-20261023-1543-1036fcc5 admitted every commit through 1036fcc5 (69 PASS, RATCHET PASS).",
+      "scope": [
+        "05.EVIDENCE/acompiler.json"
+      ]
     }
   }
 }

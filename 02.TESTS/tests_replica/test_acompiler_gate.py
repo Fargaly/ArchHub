@@ -23,7 +23,7 @@ def run_git(root, *args):
 
 
 @pytest.fixture
-def repository(tmp_path):
+def repository(tmp_path, monkeypatch):
     root = tmp_path / "repo"
     root.mkdir()
     run_git(root, "init", "-q")
@@ -35,6 +35,8 @@ def repository(tmp_path):
     (root / "nodelang" / "old.py").write_text("old = 'legacy'\n", encoding="utf-8")
     run_git(root, "add", ".")
     run_git(root, "commit", "-qm", "base")
+    # These replay courts replace admission; no real compiler is required.
+    monkeypatch.setattr(build, "compiler_identity", lambda root: "court-compiler")
     return root
 
 
@@ -814,6 +816,7 @@ def test_real_compiler_changed_line_admission(repository):
 
 
 def test_node_build_options_change_command_and_child_environment(repository, tmp_path, monkeypatch):
+    monkeypatch.setattr(strict_check, "idle_or_away", lambda: True)
     options = {"jobs": 3, "rustflags": "-C target-feature=+crt-static"}
     monkeypatch.setenv("RUSTFLAGS", "inherited-invalid-flags")
     monkeypatch.setenv("CARGO_ENCODED_RUSTFLAGS", "inherited-encoded-flags")
@@ -824,9 +827,18 @@ def test_node_build_options_change_command_and_child_environment(repository, tmp
     original_is_file = Path.is_file
     monkeypatch.setenv("CARGO_HOME", str(cargo_home))
     monkeypatch.setattr(Path, "is_file", lambda path: path == cargo or original_is_file(path))
+    builds = []
+    real_run = subprocess.run
+    def run(command, **kwargs):
+        if command[0] != str(cargo):
+            return real_run(command, **kwargs)
+        builds.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout=json.dumps({"reason": "compiler-artifact",
+            "target": {"name": "archhub-compiler"}, "executable": sys.executable}))
+    monkeypatch.setattr(strict_check.subprocess, "run", run)
     command = strict_check._command(repository, options)
-    assert command[0] == str(cargo)
-    assert command[command.index("--jobs") + 1] == "3"
+    assert command == [sys.executable]
+    assert builds[0][builds[0].index("--jobs") + 1] == "3"
     payload = json.dumps(report())
     child = fake_compiler(tmp_path, source="import os\nassert os.environ['RUSTFLAGS'] == '-C target-feature=+crt-static'\nprint(" + repr(payload) + ")\n")
     result = strict_check.scan_model(repository, compiler_command=child, build_options=options)

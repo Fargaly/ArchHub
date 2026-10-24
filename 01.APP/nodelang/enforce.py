@@ -19,7 +19,7 @@ def catalogue_entry():
         "rule_set": {"type": "text", "editor": "text", "default": "product-v1"},
         "repo_root": {"type": "text", "editor": "text", "default": ""},
         "max_attempts": {"type": "integer", "editor": "number", "default": 3},
-        "compiler_timeout": {"type": "number", "editor": "number", "default": 240},
+        "compiler_timeout": {"type": "number", "editor": "number", "default": 600},
         "compiler_rustflags": {"type": "text", "editor": "text", "default": "-C target-feature=+crt-static"},
         "compiler_jobs": {"type": "integer", "editor": "number", "default": 2},
         "post_limit": {"type": "integer", "editor": "number", "default": 3000},

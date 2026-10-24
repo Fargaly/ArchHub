@@ -60,13 +60,24 @@ def registration_context(root, parent, commit, paths, context):
 
 
 def compiler_identity(root):
-    """Digest of everything that decides a commit's verdict: compiler source, rules, registry and this pipeline."""
+    """Compiler bytes and pipeline; intent data is keyed per resolved request."""
     digest = hashlib.sha256()
+    digest.update(Path(strict_check._command(root)[0]).read_bytes())
     listing = strict_check.git(root, "ls-files", "-z", "--", "tools/archhub-compiler", "tools/pipeline",
-                               "tools/ratchet.py", "evidence/acompiler-intents.json", "03.TOOLS/tools/archhub-compiler", "03.TOOLS/tools/pipeline", "03.TOOLS/tools/ratchet.py", "05.EVIDENCE/acompiler-intents.json").decode()
+                               "tools/ratchet.py", "03.TOOLS/tools/archhub-compiler", "03.TOOLS/tools/pipeline", "03.TOOLS/tools/ratchet.py").decode()
     for path in sorted(p for p in listing.split("\0") if p):
         digest.update(path.encode() + b"\0" + strict_check.git(root, "show", f"HEAD:{path}"))
     return digest.hexdigest()
+
+
+def admission_identity(identity, registry, context):
+    """Track resolved current authority and every HEAD-pinned external input."""
+    intent = context.get("intent")
+    authority = {key: value for key, value in registry.items() if key != "intents"}
+    authority["intents"] = {intent: registry.get("intents", {}).get(intent)} if intent else {}
+    authority["external_entrypoints"] = {key: entry["external_entrypoints"]
+        for key, entry in registry.get("intents", {}).items() if "external_entrypoints" in entry}
+    return strict_check.source_digest({"compiler": identity, "authority": authority})
 
 
 def admitted_record(root):
@@ -83,8 +94,8 @@ def admitted_record(root):
 def admit_sequence(root, base):
     """Replay immutable landed changes with their own authority and metrics.
 
-    A commit's verdict depends only on the commit, its parent and the compiler identity, so a commit
-    this exact compiler already admitted is not replayed; a changed compiler replays everything.
+    Parent authority is immutable; resolved current entries and every HEAD-pinned
+    external input also affect admission. Unrelated registrations preserve hits.
     """
     identity = compiler_identity(root)
     record_path, admitted = admitted_record(root)
@@ -96,13 +107,23 @@ def admit_sequence(root, base):
     if any(path and Path(path).suffix.lower() not in strict_check.NON_CODE for path in untracked):
         raise ValueError("release tree contains uncommitted source files")
     commits = strict_check.git(root, "rev-list", "--reverse", "--first-parent", f"{base}..{head}").decode().splitlines()
+    registry_paths = strict_check.git(root, "ls-tree", "-r", "--name-only", head, "--",
+                                      "evidence/acompiler-intents.json", "05.EVIDENCE/acompiler-intents.json").decode().splitlines()
+    if len(registry_paths) > 1:
+        raise ValueError("ambiguous intent registry")
+    registry = json.loads(strict_check.git(root, "show", f"{head}:{registry_paths[0]}")) if registry_paths else {}
     for commit in commits:
-        if admitted.get(commit) == identity:
-            print(f"ACOMPILER COMMIT {commit}: PASS (admitted by this compiler before)", flush=True)
-            continue
         parent = strict_check.git(root, "rev-parse", f"{commit}^").decode().strip()
         paths = strict_check.git(root, "diff", "--no-renames", "--name-only", "-z", parent, commit, "--").decode().split("\0")
         paths = sorted(path for path in paths if path)
+        message = strict_check.git(root, "show", "-s", "--format=%B", commit).decode("utf-8")
+        author = strict_check.git(root, "show", "-s", "--format=%an", commit).decode("utf-8").strip()
+        recorded = release_context(message, author)
+        context = registration_context(root, parent, commit, paths, recorded)
+        commit_identity = admission_identity(identity, registry, context)
+        if admitted.get(commit) == commit_identity:
+            print(f"ACOMPILER COMMIT {commit}: PASS (admitted by this compiler before)", flush=True)
+            continue
         overlay = {}
         for path in paths:
             present = strict_check.git(root, "ls-tree", "-z", commit, "--", path)
@@ -115,10 +136,6 @@ def admit_sequence(root, base):
                     if Path(path).suffix.lower() not in strict_check.NON_CODE:
                         raise
                     overlay[path] = ""  # Non-executable asset, never substitute today's bytes.
-        message = strict_check.git(root, "show", "-s", "--format=%B", commit).decode("utf-8")
-        author = strict_check.git(root, "show", "-s", "--format=%an", commit).decode("utf-8").strip()
-        recorded = release_context(message, author)
-        context = registration_context(root, parent, commit, paths, recorded)
         if context.get('intent') != recorded.get('intent'):
             print(f"ACOMPILER REGISTRATION {commit}: ACOMPILER2B (declared {recorded.get('intent')})", flush=True)
         result = strict_check.check_files(root, paths, overlay=overlay, revision=parent, context=context,
@@ -127,7 +144,7 @@ def admit_sequence(root, base):
         print(f"ACOMPILER COMMIT {commit}: {'PASS' if result['ok'] else 'FAIL'}", flush=True)
         if not result["ok"]:
             return 1
-        admitted[commit] = identity
+        admitted[commit] = commit_identity
         record_path.write_text(json.dumps(admitted, indent=1, sort_keys=True), encoding="utf-8")
     return 0
 

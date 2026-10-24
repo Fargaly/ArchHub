@@ -177,6 +177,23 @@ def compiler_options(options=None):
     return values
 
 
+def idle_or_away():
+    """Use BABOOM's input-age reader, as the launcher does; unknown is active."""
+    import math
+    try:
+        app = PRODUCT_ROOT / "01.APP" if (PRODUCT_ROOT / "01.APP").is_dir() else PRODUCT_ROOT
+        if str(app) not in sys.path:
+            sys.path.insert(0, str(app))
+        from nodelang.baboom_native_companion import desktop_input_idle_seconds
+        age = desktop_input_idle_seconds()
+        return math.isfinite(age) and age >= 2.0
+    except (ImportError, OSError, AttributeError, TypeError, ValueError):
+        return False
+
+
+_BUILT_COMPILERS = {}
+
+
 def _command(root, options=None):
     # The product owns its compiler. A target project cannot replace admission
     # by placing a different executable/crate in the directory being checked.
@@ -191,7 +208,43 @@ def _command(root, options=None):
     if not cargo.is_file():
         raise CompilerFailure(f"missing supplied Cargo toolchain: {cargo}")
     options = compiler_options(options)
-    return [str(cargo), "run", "--quiet", "--release", "--locked", "--jobs", str(options["jobs"]), "--manifest-path", str(manifest), "--"]
+    env = _environment(options=options)
+    crate = manifest.parent
+    target = Path(env.get("CARGO_TARGET_DIR", str(crate / "target")))
+    if not target.is_absolute():
+        target = Path(root).resolve() / target
+    inputs = [manifest, crate / "Cargo.lock", crate / "rules.json", *sorted((crate / "src").rglob("*"))]
+    inputs += [crate / "build.rs"]
+    directories = {crate, *crate.parents, Path(root).resolve(), *Path(root).resolve().parents}
+    inputs += [directory / name for directory in directories for name in ("rust-toolchain.toml", "rust-toolchain")]
+    inputs += [directory / ".cargo" / name for directory in directories
+               for name in ("config", "config.toml")]
+    inputs += [cargo_home / name for name in ("config", "config.toml")]
+    fingerprint = source_digest({str(path): hashlib.sha256(path.read_bytes()).hexdigest()
+                                 for path in inputs if path.is_file()})
+    key = (str(target), fingerprint, tuple(sorted(env.items())))
+    prepared = _BUILT_COMPILERS.get(key)
+    if prepared and prepared[0].is_file() and hashlib.sha256(prepared[0].read_bytes()).hexdigest() == prepared[1]:
+        return [str(prepared[0])]
+    if idle_or_away():
+        try:
+            # Cold compilation must not consume or inherit the executable scan deadline.
+            result = subprocess.run([str(cargo), "build", "--quiet", "--release", "--locked", "--jobs", str(options["jobs"]),
+                "--manifest-path", str(manifest), "--target-dir", str(target), "--message-format=json"],
+                cwd=root, env=env, capture_output=True, text=True, encoding="utf-8", check=True)
+            artifacts = [json.loads(line) for line in result.stdout.splitlines()]
+            executables = {item["executable"] for item in artifacts if item.get("reason") == "compiler-artifact"
+                           and item.get("target", {}).get("name") == "archhub-compiler" and item.get("executable")}
+            if len(executables) != 1:
+                raise CompilerFailure("compiler build did not identify exactly one executable")
+            executable = Path(executables.pop())
+            _BUILT_COMPILERS[key] = executable, hashlib.sha256(executable.read_bytes()).hexdigest()
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            detail = getattr(exc, "stderr", None) or str(exc)
+            raise CompilerFailure(f"compiler build failed: {detail}") from exc
+        return [str(executable)]
+    else:
+        return [str(cargo), "run", "--quiet", "--release", "--locked", "--jobs", str(options["jobs"]), "--manifest-path", str(manifest), "--"]
 
 
 def rust_root(owner):
@@ -331,12 +384,16 @@ def scan_model(root, *, overlay=None, revision=None, context=None, compiler_comm
                 context_temporary = Path(stream.name)
                 json.dump(context, stream, ensure_ascii=False)
             command += ["--context", str(context_temporary)]
-        result = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True,
-                                encoding="utf-8", errors="strict", timeout=timeout)
+        # Inherited pipe writers can outlive the compiler and defeat its deadline.
+        with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as output, tempfile.TemporaryFile(mode="w+", encoding="utf-8") as errors:
+            result = subprocess.run(command, cwd=root, env=env, stdout=output, stderr=errors, timeout=timeout)
+            output.seek(0)
+            errors.seek(0)
+            stdout, stderr = output.read(), errors.read()
         if result.returncode:
-            raise CompilerFailure(f"compiler exited {result.returncode}: {result.stderr.strip() or result.stdout.strip()}")
+            raise CompilerFailure(f"compiler exited {result.returncode}: {stderr.strip() or stdout.strip()}")
         try:
-            report = json.loads(result.stdout)
+            report = json.loads(stdout)
         except ValueError as exc:
             raise CompilerFailure("compiler returned invalid JSON") from exc
         return _validate_report(report, root)

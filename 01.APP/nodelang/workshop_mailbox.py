@@ -6,6 +6,7 @@ conversation rows. This does not start a service, open a graph or grant Work.
 from contextlib import closing, contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
+from http.client import HTTPException
 import json
 import os
 from pathlib import Path
@@ -16,14 +17,14 @@ import math
 import re
 import threading
 import time
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import ProxyHandler, Request, build_opener
 from uuid import uuid4
 
 from .agent_declarations import SESSION_KEYS, _alive, _lineage, canonical_path, overlaps
 from .agent_runtime_registry import mailbox_label, observed_runtime_process
-from .conversation_history import ConversationHistoryStore, WORKSHOP_CURSOR_SCHEMA
+from .conversation_history import ConversationHistoryStore, WORKSHOP_CURSOR_SCHEMA, WORKSHOP_SEND_SCHEMA, WORKSHOP_SEND_INDEXES
 from .session_link_transport import public_delivery_reason
 
 ROOM = "app:workshop"
@@ -151,20 +152,33 @@ def _recipient_rows(message, declarations):
          "sender_key":row["session"]}, row)]
 
 
-def _can_ack(history, message, identity, declaration, declarations):
+def _reply_recipients(history, message, identity, declaration, declarations):
     if "[" + identity["sender_key"] + "]" in message.get("author", "") or message.get("author") == identity.get("sender"):
-        return False
+        return []
     events = delivery_events(history, message)
-    routed = {key for key, records in events.items() if "addressed" in records}
-    if routed:
-        return identity["sender_key"] in routed
+    recipients = [{"session":key, "agent":records["addressed"]["label"], **records["addressed"]}
+        for key, records in events.items() if "addressed" in records]
     routing = _routing(message)
-    if routing and routing["recipients"]:
-        return any(row["session"] == identity["sender_key"] for row in routing["recipients"])
-    if not _addressed(message, identity, declaration):
-        return False
-    return any(row["session"] == identity["sender_key"] for row in
-        _recipient_rows(message, declarations))
+    if not recipients:
+        recipients = routing["recipients"] if routing and routing["recipients"] else _recipient_rows(message, declarations)
+    matched = []
+    for recipient in recipients:
+        bound = next((row for row in declarations if row["session"] == recipient["session"]), {})
+        native = recipient.get("native_session_id") or bound.get("native_session_id")
+        if (recipient["session"] == identity["sender_key"] or native
+                and native == declaration.get("native_session_id")
+                and (recipient.get("runtime") or bound.get("runtime")) == declaration.get("runtime")):
+            matched.append(recipient)
+    return matched
+
+
+def _can_ack(history, message, identity, declaration, declarations):
+    return bool(_reply_recipients(history, message, identity, declaration, declarations))
+
+
+def _reply_binding(history, reply, identity):
+    sender = (_routing(reply) or {}).get("sender", {})
+    return sender if sender.get("session") == identity["sender_key"] else _declaration(history, identity)
 
 
 def _delivery_receipt(history, message, recipient, event, *, now=None, **details):
@@ -356,6 +370,22 @@ class WorkshopInjection:
                 self._tick(history, now)
 
     def _tick(self, history, now):
+        if history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_send_queue'").fetchone():
+            rows = history._db.execute("SELECT record FROM workshop_send_queue "
+                "WHERE json_valid(record) AND json_extract(record,'$.result') IS NULL AND json_extract(record,'$.error') IS NULL LIMIT 32").fetchall()
+            if rows:
+                from .cloud_session import signed_in_cloud_account
+                pending = object()
+                account = signed_in_cloud_account(pending=pending)
+                if account is not pending:
+                    for record, in rows:
+                        queued = json.loads(record)
+                        try:
+                            _queued_send(history, queued["body"], queued["identity"], account, queued=queued)
+                        except ValueError as error:
+                            with history._transaction(write=True):
+                                history._db.execute("DELETE FROM workshop_send_queue WHERE key=?", (queued["key"],))
+                            logging.getLogger(__name__).warning("Workshop queued send refused: %s", error)
         cutoff = datetime.fromtimestamp(now - self.backfill_seconds, timezone.utc).isoformat()
         with history._transaction():
             rows = history._db.execute("SELECT * FROM messages WHERE conversation_id=? AND public=1 "
@@ -378,12 +408,12 @@ class WorkshopInjection:
             label, separator, session = reply["author"].removesuffix("]").rpartition(" [")
             if parent and separator:
                 identity = {"sender":reply["author"], "sender_key":session, "sender_label":label}
-                declaration = _declaration(history, identity)
-                if _can_ack(history, parent, identity, declaration, declarations):
+                declaration = _reply_binding(history, reply, identity)
+                for recipient in _reply_recipients(history, parent, identity, declaration, declarations):
                     with history._transaction(write=True):
-                        if "answered" in delivery_events(history, parent).get(session, {}):
+                        if "answered" in delivery_events(history, parent).get(recipient["session"], {}):
                             continue
-                        _delivery_receipt(history, parent, {"session":session, "agent":label},
+                        _delivery_receipt(history, parent, recipient,
                             "answered", reply_message_id=reply["id"])
         if rows:
             self._cursor = rows[-1]["sequence"]
@@ -449,12 +479,17 @@ class WorkshopInjection:
                         _delivery_receipt(history, message, recipient, "attempt",
                             now=datetime.fromisoformat(control["created_at"]).timestamp(), via="session-link", status="caller-owned")
                         events = delivery_events(history, message).get(recipient["session"], {})
-                    reply = history._db.execute("SELECT id FROM messages WHERE conversation_id=? AND reply_to=? "
-                        "AND category=? AND author=? ORDER BY sequence LIMIT 1",
-                        (ROOM, message["id"], CATEGORY, recipient["agent"] + " [" + recipient["session"] + "]")).fetchone()
-                    if reply and "answered" not in events:
-                        _delivery_receipt(history, message, recipient, "answered", now=now, reply_message_id=reply[0])
-                        continue
+                    if "answered" not in events:
+                        replies = history._db.execute("SELECT * FROM messages WHERE conversation_id=? AND reply_to=? "
+                            "AND category=? ORDER BY sequence", (ROOM, message["id"], CATEGORY)).fetchall()
+                        for raw in replies:
+                            label, separator, session = raw["author"].removesuffix("]").rpartition(" [")
+                            identity = {"sender":raw["author"], "sender_key":session, "sender_label":label}
+                            if separator and any(row["session"] == recipient["session"] for row in _reply_recipients(
+                                    history, message, identity, _reply_binding(history, history._message(raw), identity), declarations)):
+                                _delivery_receipt(history, message, recipient, "answered", now=now, reply_message_id=raw["id"])
+                                events = delivery_events(history, message).get(recipient["session"], {})
+                                break
                     if "answered" in events:
                         continue
                     if "escalated" in events:
@@ -538,10 +573,13 @@ def _identity(context, peer):
     return {"sender_key": key, "sender_label": label, "sender": label + " [" + key + "]"}, runtime, peer
 
 
+def _profile_root():
+    return Path(os.environ.get("ARCHHUB_TEST_STATE_DIR") or (Path(os.environ["LOCALAPPDATA"]) / "ArchHub"))
+
+
 def profile_database():
     from .persistence import application_database_path
-    root = Path(os.environ.get("ARCHHUB_TEST_STATE_DIR") or (Path(os.environ["LOCALAPPDATA"]) / "ArchHub"))
-    return application_database_path(root)
+    return application_database_path(_profile_root())
 
 
 def _session_alive(row):
@@ -678,6 +716,7 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
     if method not in required or type(body) is not dict or not required[method] <= set(body) or set(body) - required[method] - optional[method]:
         raise ValueError("Workshop mailbox arguments are invalid")
     identity, runtime, peer = _identity(context, peer)
+    raw_identity = identity
     native_session = identity["sender_key"]
     # A fixture profile (ARCHHUB_TEST_STATE_DIR) never reaches the live desktop on 8474
     # unless it names its own endpoint: the release gate posted its nonce into the
@@ -689,23 +728,41 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
         if (parsed.scheme != 'http' or parsed.hostname != '127.0.0.1' or parsed.path != '/coordination'
                 or parsed.username is not None or parsed.password is not None or parsed.query or parsed.fragment):
             raise ValueError('coordination endpoint must be a declared loopback endpoint')
+        if method == 'send':
+            body = {**body, 'idempotency_key': body.get('idempotency_key', uuid4().hex)}
         payload = {'method': 'GET' if method in ('read', 'pending') else 'POST',
             'path': '/api/universal/agent-mail/' + method,
             'body': {**body, 'context': context}}
         request = Request(endpoint, data=json.dumps(payload).encode('utf-8'),
             headers={'Content-Type': 'application/json'})
-        try:
-            with build_opener(ProxyHandler({})).open(request, timeout=timeout_seconds) as response:
-                raw = response.read(MAX_MAILBOX_RESPONSE_BYTES + 1)
-                if len(raw) > MAX_MAILBOX_RESPONSE_BYTES:
-                    raise ValueError('Workshop response exceeds its byte budget')
-                result = json.loads(raw)
-                if type(result) is not dict:
-                    raise ValueError('Workshop response must be an object')
-                return result
-        except URLError as refused:
-            # Only no listener proves no send occurred; never replay an uncertain send.
-            if getattr(refused.reason, 'errno', None) not in (errno.ECONNREFUSED, 10061):
+        deadline, delay, retained = time.monotonic() + timeout_seconds, 0.1, False
+        while True:
+            try:
+                with build_opener(ProxyHandler({})).open(request, timeout=max(0.001, deadline - time.monotonic())) as response:
+                    raw = response.read(MAX_MAILBOX_RESPONSE_BYTES + 1)
+                    if len(raw) > MAX_MAILBOX_RESPONSE_BYTES:
+                        raise ValueError('Workshop response exceeds its byte budget')
+                    result = json.loads(raw)
+                    if type(result) is not dict:
+                        raise ValueError('Workshop response must be an object')
+                    return result
+            except (URLError, HTTPException, ConnectionError, TimeoutError) as refused:
+                retryable = not isinstance(refused, HTTPError) or refused.code in (502, 503, 504)
+                if method == 'send' and retryable:
+                    _retain_send(body, raw_identity, store_busy_timeout_seconds)
+                    retained = True
+                elif retained and isinstance(refused, HTTPError):
+                    _retain_send(body, raw_identity, store_busy_timeout_seconds, error='HTTP ' + str(refused.code))
+                remaining = deadline - time.monotonic()
+                if method == 'send' and retryable and remaining > delay:
+                    # The durable room row is the queue; reuse its key if the commit's ACK was lost.
+                    time.sleep(delay)
+                    delay = min(delay * 2, 1.0)
+                    continue
+                if method == 'send' and retryable and retained:
+                    raise ValueError('Workshop application is unavailable; send retained in its durable queue') from refused
+                if isinstance(refused, URLError) and getattr(refused.reason, 'errno', None) in (errno.ECONNREFUSED, 10061):
+                    break
                 raise
     if account is not None:
         account = _text(account, "application account", 256)
@@ -734,51 +791,203 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
                 return _pending(history, identity, runtime)
             if method == "declare":
                 return _declare(history, body, context, identity, runtime, peer, native_session)
-            target, text = _text(body["to"], "recipient", 512), _text(body["text"], "message", 65536)
-            if any(char in target for char in "\r\n"):
-                raise ValueError("Recipient must be one line")
-            control = body.get("native_control")
-            if control is not None:
-                if (type(control) is not dict or not {"app", "id"} <= set(control)
-                        or set(control) - {"app", "id", "model"}
-                        or control["app"] not in ("codex", "opencode", "antigravity", "antigravity-ide")
-                        or control["id"] != target):
-                    raise ValueError("Native control must name its exact Session Link target")
-                if "model" in control:
-                    model = control["model"]
-                    if (control["app"] != "opencode" or type(model) is not dict
-                            or set(model) != {"providerID", "modelID"} or model["providerID"] != "openrouter"):
-                        raise ValueError("Invalid explicit native model")
-                    _text(model["modelID"], "native model id", 256)
-            reply = body.get("reply_to")
-            if reply is not None:
-                _text(reply, "reply reference", 512)
-            retry_key = _text(body.get("idempotency_key", uuid4().hex), "retry key", 256)
-            retry_key = sha256((identity["sender_key"] + ":" + retry_key).encode()).hexdigest()
-            def rate_limit():
-                cutoff = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
-                rows = history._db.execute("SELECT 1 FROM (SELECT created_at,idempotency_key FROM messages "
-                    "WHERE conversation_id=? AND author=? ORDER BY sequence DESC LIMIT 31) "
-                    "WHERE created_at>=? AND idempotency_key<>? LIMIT 30",
-                    (ROOM, identity["sender"], cutoff, retry_key)).fetchall()
-                if len(rows) >= 30:
-                    raise ValueError("Mailbox permits 30 messages per minute per peer")
-            declarations = read_declarations(history._db)
-            with history._transaction(write=True):
-                routing = {"recipients":[{key: row.get(key) for key in
-                    ("session", "agent", "runtime", "native_session_id")} for row in _recipient_rows(
-                        {"content":"To " + target + ":\n" + text, "category":CATEGORY,
-                         "author":identity["sender"]}, declarations)],
-                    "native_control":control}
-                encoded = json.dumps(routing, ensure_ascii=True)
-                prior = history._db.execute("SELECT evidence FROM messages WHERE conversation_id=? AND idempotency_key=?",
-                    (ROOM, retry_key)).fetchone()
-                evidence = json.loads(prior[0]) if prior else [ROUTING_EVIDENCE, *(encoded[i:i+512] for i in range(0, len(encoded), 512))]
-                if prior and (_routing({"evidence":evidence}) or {}).get("native_control") != control:
-                    raise ValueError("idempotency conflict")
-                message = history.append(ROOM, author=identity["sender"], content="To " + target + ":\n" + text,
-                    category=CATEGORY, recipients=(), reply_to=reply,
-                    evidence=evidence,
-                    reply_principal=identity["sender"],
-                    idempotency_key=retry_key, before_commit=rate_limit)
-                return {**identity, "to": target, "text": text, "message_id": message["id"], "sequence": message["sequence"]}
+            body = {**body, 'idempotency_key': body.get('idempotency_key', uuid4().hex)}
+            try:
+                return _queued_send(history, body, raw_identity, account)
+            except ValueError as error:
+                _fail_send(history, body, raw_identity, str(error), account=account)
+                raise
+
+
+def _queue_account(history):
+    from .cloud_session import cloud_session_path
+    actual = history._db.execute('PRAGMA database_list').fetchone()[2]
+    if not actual or not Path(actual).resolve().is_relative_to(_profile_root().resolve()):
+        return None
+    path = cloud_session_path()
+    if not path.exists():
+        return None
+    # Continuity guard only: the existing keyring reference is not a credential.
+    metadata = json.loads(path.read_text(encoding='utf-8'))
+    if not isinstance(metadata, dict):
+        raise ValueError('invalid queued-send account metadata')
+    reference = metadata.get('token_ref')
+    return _text(reference, 'account session reference', 256) if reference is not None else None
+
+
+def _queue_send(history, body, identity, account=None):
+    _validate_send(body)
+    request_key = sha256((identity['sender_key'] + ':' + body['idempotency_key']).encode()).hexdigest()
+    session = _queue_account(history)
+    key = sha256((request_key + '\0' + (session or account or '')).encode()).hexdigest()
+    digest = sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
+    with history._transaction(write=True):
+        if not history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_send_committed'").fetchone():
+            history._db.execute(WORKSHOP_SEND_SCHEMA.replace('CREATE TABLE ', 'CREATE TABLE IF NOT EXISTS ', 1))
+            for statement in WORKSHOP_SEND_INDEXES:
+                history._db.execute(statement.replace('CREATE INDEX ', 'CREATE INDEX IF NOT EXISTS ', 1))
+        candidates = [json.loads(row[0]) for row in history._db.execute("SELECT record FROM workshop_send_queue "
+            "WHERE json_valid(record) AND json_extract(record,'$.request_key')=? AND json_extract(record,'$.account_session') IS ?",
+            (request_key, session))]
+        for row in history._db.execute("SELECT id,sequence,refs FROM messages WHERE conversation_id=? "
+                "AND json_valid(refs) AND json_extract(refs,'$[0]')=? AND json_extract(refs,'$[1]')=?",
+                (ROOM, request_key, 'session:' + (session or ''))):
+            record = json.loads(''.join(part.split(':', 1)[1] for part in json.loads(row['refs'])[2:]))
+            claim = history._db.execute("SELECT content FROM messages WHERE conversation_id=? AND idempotency_key=?",
+                (ROOM, 'workshop-send-account:' + row['id'])).fetchone()
+            if claim:
+                record['account'] = json.loads(claim[0])['account']
+            record.update(request_key=request_key, account_session=session,
+                result={'message_id': row['id'], 'sequence': row['sequence']})
+            candidates.append(record)
+        compatible = [row for row in candidates if account is None or row.get('account') in (None, account)]
+        if account is None and session is None and len(compatible) > 1:
+            raise ValueError('queued send account is ambiguous until verification completes')
+        record = next((row for row in compatible if row['key'] == key), None)
+        if record is None and len(compatible) == 1:
+            record = compatible[0]
+        if record is None and compatible:
+            raise ValueError('queued send account is ambiguous until verification completes')
+        if record is not None:
+            if record['digest'] != digest:
+                raise ValueError('idempotency conflict')
+            return record
+        pending = history._db.execute("SELECT count(*) FROM workshop_send_queue").fetchone()[0]
+        if pending >= 128:
+            raise ValueError('WORKSHOP_PENDING_SEND_LIMIT: Workshop permits 128 pending sends globally')
+        record = {'key': key, 'request_key': request_key, 'digest': digest, 'body': body,
+            'identity': identity, 'account_session': session, 'account': account}
+        history._db.execute('INSERT INTO workshop_send_queue VALUES(?,?)', (key, json.dumps(record)))
+        return record
+
+
+def _fail_send(history, body, identity, error, *, account=None):
+    if not history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_send_queue'").fetchone():
+        return
+    if not isinstance(body.get('idempotency_key'), str):
+        return
+    if 'account is ambiguous' in error:
+        return
+    key = sha256((identity['sender_key'] + ':' + body['idempotency_key']).encode()).hexdigest()
+    with history._transaction(write=True):
+        history._db.execute("DELETE FROM workshop_send_queue "
+            "WHERE json_valid(record) AND json_extract(record,'$.request_key')=? AND json_extract(record,'$.result') IS NULL "
+            "AND json_extract(record,'$.digest')=? AND json_extract(record,'$.account_session') IS ? "
+            "AND (? IS NULL OR json_extract(record,'$.account') IS NULL OR json_extract(record,'$.account')=?)",
+            (key, sha256(json.dumps(body, sort_keys=True).encode()).hexdigest(), _queue_account(history), account, account))
+
+
+def _retain_send(body, identity, busy_timeout, *, error=None):
+    from .persistence import application_content_path
+    path = profile_database()
+    path = application_content_path(path) or path
+    # Open only the selected existing conversation store, never a replacement database.
+    with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=rw', uri=True,
+            isolation_level=None, timeout=busy_timeout)) as connection:
+        instance = connection.execute('SELECT instance_id FROM history_identity WHERE singleton=1').fetchone()
+        if instance is None:
+            raise ValueError('The selected profile has no Workshop conversation binding')
+        with ConversationHistoryStore(path, instance_id=instance[0], create=False, connection=connection) as history:
+            if error is None:
+                _queue_send(history, body, identity)
+            else:
+                _fail_send(history, body, identity, error)
+
+
+def _queued_send(history, body, identity, account, *, queued=None):
+    body = {**body, 'idempotency_key': body.get('idempotency_key', uuid4().hex)}
+    queued = queued or _queue_send(history, body, identity, account)
+    with history._transaction(write=True):
+        if queued['account_session'] != _queue_account(history):
+            raise ValueError('queued send belongs to another application account session')
+        row = history._db.execute('SELECT record FROM workshop_send_queue WHERE key=?',
+            (queued['key'],)).fetchone()
+        if row is not None:
+            queued = json.loads(row[0])
+        else:
+            queued = _queue_send(history, body, identity, account)
+        if queued.get('account') is not None and account is not None and account != queued['account']:
+            raise ValueError('queued send belongs to another application account')
+        if queued['account_session'] != _queue_account(history):
+            raise ValueError('queued send belongs to another application account session')
+        if 'result' in queued:
+            if queued.get('account') is None and account is not None:
+                history.append(ROOM, author=DELIVERY_AUTHOR, category=DELIVERY_CATEGORY,
+                    content=json.dumps({'event': 'send-account-verified', 'account': account}),
+                    reply_to=queued['result']['message_id'],
+                    idempotency_key='workshop-send-account:' + queued['result']['message_id'])
+            history._db.execute('DELETE FROM workshop_send_queue WHERE key=?', (queued['key'],))
+            return {**queued['sender'], **queued['result'], 'to': body['to'], 'text': body['text']}
+        if 'error' in queued:
+            raise ValueError(queued['error'])
+        sender = identity
+        if account is not None:
+            account = _text(account, 'application account', 256)
+            key = 'agent:session:' + sha256((account + '\0' + identity['sender_key']).encode()).hexdigest()
+            label = identity['sender_label'] + ' / ' + account
+            sender = {'sender_key': key, 'sender_label': label, 'sender': label + ' [' + key + ']'}
+        metadata = {'key': queued['key'], 'digest': queued['digest'], 'account': account, 'sender': sender}
+        encoded = json.dumps(metadata, ensure_ascii=True)
+        result = _send(history, body, sender, queued=(queued['request_key'],
+            'session:' + (queued['account_session'] or ''),
+            *(str(i) + ':' + encoded[i:i+480] for i in range(0, len(encoded), 480))))
+        history._db.execute('DELETE FROM workshop_send_queue WHERE key=?', (queued['key'],))
+        return result
+
+
+def _validate_send(body):
+    target, text = _text(body["to"], "recipient", 512), _text(body["text"], "message", 65536)
+    if any(char in target for char in "\r\n"):
+        raise ValueError("Recipient must be one line")
+    control = body.get("native_control")
+    if control is not None:
+        if (type(control) is not dict or not {"app", "id"} <= set(control)
+                or set(control) - {"app", "id", "model"}
+                or control["app"] not in ("codex", "opencode", "antigravity", "antigravity-ide")
+                or control["id"] != target):
+            raise ValueError("Native control must name its exact Session Link target")
+        if "model" in control:
+            model = control["model"]
+            if (control["app"] != "opencode" or type(model) is not dict
+                    or set(model) != {"providerID", "modelID"} or model["providerID"] != "openrouter"):
+                raise ValueError("Invalid explicit native model")
+            _text(model["modelID"], "native model id", 256)
+    reply = body.get("reply_to")
+    if reply is not None:
+        _text(reply, "reply reference", 512)
+    retry_key = _text(body.get("idempotency_key", uuid4().hex), "retry key", 256)
+    return target, text, control, reply, retry_key
+
+
+def _send(history, body, identity, *, queued=()):
+    target, text, control, reply, retry_key = _validate_send(body)
+    retry_key = sha256((identity["sender_key"] + ":" + retry_key).encode()).hexdigest()
+    def rate_limit():
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+        rows = history._db.execute("SELECT 1 FROM (SELECT created_at,idempotency_key FROM messages "
+            "WHERE conversation_id=? AND author=? ORDER BY sequence DESC LIMIT 31) "
+            "WHERE created_at>=? AND idempotency_key<>? LIMIT 30",
+            (ROOM, identity["sender"], cutoff, retry_key)).fetchall()
+        if len(rows) >= 30:
+            raise ValueError("Mailbox permits 30 messages per minute per peer")
+    declarations = read_declarations(history._db)
+    with history._transaction(write=True):
+        routing = {"recipients":[{key: row.get(key) for key in
+            ("session", "agent", "runtime", "native_session_id")} for row in _recipient_rows(
+                {"content":"To " + target + ":\n" + text, "category":CATEGORY,
+                 "author":identity["sender"]}, declarations)],
+            "native_control":control,
+            "sender": {key: value for key, value in _declaration(history, identity).items()
+                if key in ("session", "runtime", "native_session_id")}}
+        encoded = json.dumps(routing, ensure_ascii=True)
+        prior = history._db.execute("SELECT evidence FROM messages WHERE conversation_id=? AND idempotency_key=?",
+            (ROOM, retry_key)).fetchone()
+        evidence = json.loads(prior[0]) if prior else [ROUTING_EVIDENCE, *(encoded[i:i+512] for i in range(0, len(encoded), 512))]
+        if prior and (_routing({"evidence":evidence}) or {}).get("native_control") != control:
+            raise ValueError("idempotency conflict")
+        message = history.append(ROOM, author=identity["sender"], content="To " + target + ":\n" + text,
+            category=CATEGORY, recipients=(), reply_to=reply, refs=queued,
+            evidence=evidence,
+            reply_principal=identity["sender"],
+            idempotency_key=retry_key, before_commit=rate_limit)
+        return {**identity, "to": target, "text": text, "message_id": message["id"], "sequence": message["sequence"]}

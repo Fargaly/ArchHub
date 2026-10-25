@@ -35,6 +35,14 @@ _CANONICAL_FIELDS = ("id", "conversation_id", "sequence", "author", "content", "
 _MAX_OUTPUT = 16 * 1024 * 1024
 WORKSHOP_CURSOR_SCHEMA = ("CREATE TABLE workshop_delivery_cursors("
     "session TEXT PRIMARY KEY,record TEXT NOT NULL CHECK(json_valid(record))) STRICT")
+WORKSHOP_SEND_SCHEMA = ("CREATE TABLE workshop_send_queue("
+    "key TEXT PRIMARY KEY,record TEXT NOT NULL CHECK(json_valid(record))) STRICT")
+WORKSHOP_SEND_INDEXES = (
+    "CREATE INDEX workshop_send_request ON workshop_send_queue(json_extract(record,'$.request_key'),json_extract(record,'$.account_session')) WHERE json_valid(record)",
+    "CREATE INDEX workshop_send_pending ON workshop_send_queue(json_extract(record,'$.result')) WHERE json_valid(record) AND json_extract(record,'$.result') IS NULL AND json_extract(record,'$.error') IS NULL",
+    "CREATE INDEX workshop_reply_to ON messages(conversation_id,reply_to,category,sequence) WHERE reply_to IS NOT NULL",
+    "CREATE INDEX workshop_send_committed ON messages(conversation_id,json_extract(refs,'$[0]'),json_extract(refs,'$[1]')) WHERE json_valid(refs)",
+)
 
 
 def _text(value, label, maximum=512):
@@ -647,11 +655,13 @@ class ConversationHistoryStore(ConversationPageProtection):
                 raise ValueError("unsupported retention source schema: " + name)
         migration_tables = {
             "workshop_delivery_cursors": WORKSHOP_CURSOR_SCHEMA,
+            "workshop_send_queue": WORKSHOP_SEND_SCHEMA,
             "migration_staging": "CREATE TABLE migration_staging(singleton INTEGER PRIMARY KEY CHECK(singleton=1), ticket_digest TEXT NOT NULL, destination TEXT NOT NULL, stage_id TEXT NOT NULL)",
             "migration_publications": "CREATE TABLE migration_publications(conversation_id TEXT PRIMARY KEY REFERENCES conversations(id), application_root TEXT NOT NULL, instance_id TEXT NOT NULL, binding_root TEXT NOT NULL, manifest_digest TEXT NOT NULL, stage_id TEXT NOT NULL, source_authority TEXT NOT NULL, source_revision INTEGER NOT NULL, source_digest TEXT NOT NULL, imported_count INTEGER NOT NULL)",
         }
         migration_tables.update({statement.split()[2].split('(', 1)[0]: statement
                                 for statement in self._trace_schema_statements()})
+        migration_tables.update({statement.split()[2]: statement for statement in WORKSHOP_SEND_INDEXES})
         for name, expected in migration_tables.items():
             actual = declarations.get(name)
             expected_type = ('trigger' if expected.startswith('CREATE TRIGGER ') else

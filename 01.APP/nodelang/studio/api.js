@@ -45,6 +45,7 @@ let updateReadsPending=0, updateReadFailures=0, updateReadAfter=0;
 const ownerRefreshMs=5000;
 const defaults=new Map(), parameterWrites=new Map();
 let insertionPoint={scope:null,x:240};
+const insertionReservations=new Set();
 const copy=value=>window.structuredClone(value);
 function publish(values={}) { state={...state,...values,revision:state.revision+1};listeners.forEach(fn=>fn()); }
 function notice(message) { window.dispatchEvent(new CustomEvent('archhub:notice',{detail:{message}})); }
@@ -418,21 +419,43 @@ Object.assign(api,{
  async renameNode(id,title){return nodeProperty(id,'title',title);},
  async addNode(name,position={}){
   const scope=scopeEpoch+':'+state.graph.id;
-  let {x,y=200}=position;
+  let {x,y=200}=position, reservation;
   if(x===undefined){
+   const detail={reserved:[...insertionReservations].filter(point=>point.scope===scope),point:null,error:null};
+   window.dispatchEvent(new CustomEvent('archhub:canvas-insertion',{detail}));
+   if(detail.point){
+    ({x,y}=detail.point);reservation={...detail.point,scope};insertionReservations.add(reservation);
+   }else{
    x=insertionPoint.scope===scope?insertionPoint.x:240;
    for(const existing of state.graph.nodes)x=Math.max(x,existing.x+280);
    insertionPoint={scope,x:x+280};
+   }
   }
+  try{
+  const create=async()=>{
   const modEntry=state.catalogue.find(c=>c.modId&&(c.id===name||c.name===name));
   if(modEntry){const made=await canvasOperation('import_mod_node',[modEntry.modId,modEntry.itemId]);await api.moveNode(made.id,{x,y});return state.graph.nodes.find(n=>n.id===made.id)||made;}
   const entry=(canvas.catalog||[]).find(c=>c.id===name||c.name===name);
   if(!entry)return unavailable('addNode','Definition unavailable');
-  if(entry.revision_root){await mutate(()=>commands.create({definition:entry.id,definition_revision:entry.revision_root,x,y}));return state.graph.nodes.find(n=>n.id===canvas.selected);}
+  if(entry.revision_root){const result=await mutate(()=>commands.create({definition:entry.id,definition_revision:entry.revision_root,x,y}));return state.graph.nodes.find(n=>n.id===result.selected);}
   // Legacy catalogue entries use their actual engine/item descriptor, never a guessed operation.
   const engine=entry.descriptor?.engine,item=entry.descriptor?.item;
-  if(!engine){const result=await interaction(entry.id,{event_facts:[{source:'canvas-point-x',value:x},{source:'canvas-point-y',value:y}]});if(result?.ok===false)return result;await commands.load();project();return state.graph.nodes.find(n=>n.id===canvas.selected)||result;}
+  if(!engine){const result=await interaction(entry.id,{event_facts:[{source:'canvas-point-x',value:x},{source:'canvas-point-y',value:y}]});if(result?.ok===false)return result;await commands.load();project();return state.graph.nodes.find(n=>n.id===result.selected)||result;}
   const result=await request('/api/universal/node-create',{title:entry.name,engine,item,x,y});await commands.load();project();return state.graph.nodes.find(n=>n.id===result.root)||result;
+  };
+  const made=await create();
+  if(reservation && made?.id && !document.hidden && window.requestAnimationFrame){
+   // Wait for React to commit the real card before validating its variable height.
+   await new Promise(resolve=>{const timer=setTimeout(resolve,Number(state.canvasPolicy?.viewport_commit_debounce_ms??140));window.requestAnimationFrame(()=>window.requestAnimationFrame(()=>{clearTimeout(timer);resolve();}));});
+   if(scope!==scopeEpoch+':'+state.graph.id || document.hidden)return made;
+   const detail={reserved:[...insertionReservations].filter(point=>point!==reservation&&point.scope===scope),nodeId:made.id,point:null,error:null};
+   window.dispatchEvent(new CustomEvent('archhub:canvas-insertion',{detail}));
+   if(detail.point && (detail.point.x!==x || detail.point.y!==y))await api.moveNode(made.id,{x:detail.point.x,y:detail.point.y});
+   if(detail.point)reservation=Object.assign(reservation,detail.point);
+  }
+  if(made?.id && reservation?.offscreen)notice('Added off-screen — '+reservation.offscreen);
+  return state.graph.nodes.find(n=>n.id===made?.id)||made;
+  }finally{if(reservation)insertionReservations.delete(reservation);}
  },
  moveNode:(id,position)=>mutate(()=>commands.move(id,position)),
  moveNodes:positions=>mutate(()=>commands.moveMany(positions)),

@@ -156,6 +156,45 @@
       node = s.graph.nodes.find(n => n.id === selected.at(-1)),
       wire = s.graph.wires.find(w => w.id === wireId);
     React.useLayoutEffect(() => {
+      const place = event => {
+        if (!area.current || !world.current || !['loaded','empty'].includes(requestState)) return;
+        const {zoom:z,pan:p} = view.current, rect = area.current.getBoundingClientRect(),
+          left = (8-p.x)/z, top = (8-p.y)/z, right = (rect.width-8-p.x)/z, bottom = (rect.height-8-p.y)/z;
+        const boxes = [...world.current.querySelectorAll('[data-graph-node]')].map(el => {
+          const r = el.getBoundingClientRect();
+          return {id:el.dataset.graphNode,x:(r.left-rect.left-p.x)/z,y:(r.top-rect.top-p.y)/z,w:r.width/z,h:r.height/z};
+        });
+        const overlays = [...area.current.closest('[data-screen="canvas"]').querySelectorAll('[data-canvas-overlay]')].map(el=>{
+          const r=el.getBoundingClientRect();return {x:(r.left-rect.left-p.x)/z,y:(r.top-rect.top-p.y)/z,w:r.width/z,h:r.height/z};
+        });
+        const made = boxes.find(b=>b.id===event.detail.nodeId), w = made?.w || 224,
+          h = made?.h || Math.max(160,...boxes.map(b=>b.h)),
+          unrendered = api.getSnapshot().graph.nodes.filter(atLevel).filter(n=>!boxes.some(b=>b.id===n.id))
+            .map(n=>({x:n.x,y:n.y,w:224,h})),
+          occupied = [...boxes.filter(b=>b.id!==event.detail.nodeId),...unrendered,...overlays,...event.detail.reserved],
+          picked = boxes.find(b=>b.id===selected.at(-1)), center = {x:(left+right-w)/2,y:(top+bottom-h)/2};
+        const clear = c=>!occupied.some(b=>c.x<b.x+b.w+16 && c.x+w+16>b.x && c.y<b.y+b.h+16 && c.y+h+16>b.y);
+        const free = c=>c.x>=left && c.y>=top && c.x+w<=right && c.y+h<=bottom && clear(c);
+        let point = [made,picked && {x:picked.x+Math.max(280,picked.w+36),y:picked.y},center].find(c=>c&&free(c));
+        // Search obstacle edges lazily; keep the STUDIOFIX 280px adjacent offset.
+        const xs = new Set([left,center.x,right-w]), ys = new Set([top,center.y,bottom-h]);
+        for (const b of occupied) { xs.add(b.x+b.w+16); xs.add(b.x-w-16); ys.add(b.y+b.h+16); ys.add(b.y-h-16); }
+        if (!point) outer: for (const y of ys) for (const x of xs) if (free({x,y})) { point={x,y};break outer; }
+        if (!point) {
+          // A full view must still add; obstacle edges contain the nearest free point.
+          let distance = Infinity;
+          for (const y of ys) for (const x of xs) {
+            const d=(x-center.x)**2+(y-center.y)**2;
+            if (d<distance && clear({x,y})) { point={x,y};distance=d; }
+          }
+        }
+        const offscreen = [point.x<left && 'left',point.x+w>right && 'right',point.y<top && 'above',point.y+h>bottom && 'below'].filter(Boolean).join(' and ');
+        event.detail.point = {...point,w,h,offscreen};
+      };
+      window.addEventListener('archhub:canvas-insertion',place);
+      return () => window.removeEventListener('archhub:canvas-insertion',place);
+    });
+    React.useLayoutEffect(() => {
       if (requestState !== 'loaded' || !world.current) return;
       const positions = {}, points = new Map(), prior = layout.scope === scope ? layout.positions : {},
         minX = Math.min(...sourceNodes.map(n => n.x), 0), rowWidth = Math.max(760, Math.ceil(Math.sqrt(sourceNodes.length)) * 310);
@@ -486,7 +525,7 @@
       '--canvas-accent': A.accent,
       '--canvas-accent-dim': A.accentDim
     }}>
-  <div className="spread" style={{
+  <div data-canvas-overlay="" className="spread" style={{
         position:'absolute',top:12,left:u.libraryOpen ? 264 : 16,right:16,zIndex:12,
         padding: '6px 12px',borderRadius:6,border:'1px solid '+A.lineSoft,
         background: A.bgPanel
@@ -597,8 +636,8 @@
      })}
     </div>
     {from && <Chip c={A.warn}>Choose an input socket to connect</Chip>}
-    <div className="canvas-toolbar"><Btn variant="controls" sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom">{Math.round(zoom * 100)}%</button><Btn variant="controls" sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><Btn variant="controls" sm ghost onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</Btn></div>
-    <div style={{
+    <div data-canvas-overlay="" className="canvas-toolbar"><Btn variant="controls" sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom">{Math.round(zoom * 100)}%</button><Btn variant="controls" sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><Btn variant="controls" sm ghost onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</Btn></div>
+    <div data-canvas-overlay="" style={{
             position: 'absolute',
             top: 70,
             left: 16

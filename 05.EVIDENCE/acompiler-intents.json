@@ -8458,6 +8458,14 @@
         "02.TESTS/tests_replica/test_wsreply.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "FOOTERRETRY": {
+      "source": "Founder FOOTERRETRY: the footer never keeps a stale one-shot error; bounded retry after failed update-status read, neutral boot timeout, next successful read clears its own transient notice. Isolated source patch only; installed app, live data, endpoint and design excluded.",
+      "scope": [
+        "01.APP/nodelang/studio/api.js",
+        "02.TESTS/tests_js/studio_footerretry.test.cjs",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

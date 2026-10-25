@@ -152,7 +152,7 @@ def _recipient_rows(message, declarations):
          "sender_key":row["session"]}, row)]
 
 
-def _reply_recipients(history, message, identity, declaration, declarations):
+def _reply_recipients(history, message, identity, declaration, declarations, reply=None):
     if "[" + identity["sender_key"] + "]" in message.get("author", "") or message.get("author") == identity.get("sender"):
         return []
     events = delivery_events(history, message)
@@ -161,11 +161,22 @@ def _reply_recipients(history, message, identity, declaration, declarations):
     routing = _routing(message)
     if not recipients:
         recipients = routing["recipients"] if routing and routing["recipients"] else _recipient_rows(message, declarations)
+    reply_targets = set()
+    if reply is not None and reply.get("reply_to") == message["id"] and agent_addressed(reply):
+        reply_targets = {target.strip().casefold() for target in reply["content"].split("\n", 1)[0][3:-1].split(",")}
+        reply_targets.update(str(value).casefold() for value in
+            (identity["sender_key"], declaration.get("native_session_id")) if value)
+        if not recipients and agent_addressed(message):
+            target = message["content"].split("\n", 1)[0][3:-1]
+            recipients = [{"session":"address:" + target.casefold(), "agent":target}]
     matched = []
     for recipient in recipients:
         bound = next((row for row in declarations if row["session"] == recipient["session"]), {})
         native = recipient.get("native_session_id") or bound.get("native_session_id")
-        if (recipient["session"] == identity["sender_key"] or native
+        # Address-only threads can be answered by another connection in that same thread.
+        if (not native and recipient["session"].startswith("address:")
+                and recipient["session"][8:] in reply_targets
+                or recipient["session"] == identity["sender_key"] or native
                 and native == declaration.get("native_session_id")
                 and (recipient.get("runtime") or bound.get("runtime")) == declaration.get("runtime")):
             matched.append(recipient)
@@ -409,7 +420,7 @@ class WorkshopInjection:
             if parent and separator:
                 identity = {"sender":reply["author"], "sender_key":session, "sender_label":label}
                 declaration = _reply_binding(history, reply, identity)
-                for recipient in _reply_recipients(history, parent, identity, declaration, declarations):
+                for recipient in _reply_recipients(history, parent, identity, declaration, declarations, reply):
                     with history._transaction(write=True):
                         if "answered" in delivery_events(history, parent).get(recipient["session"], {}):
                             continue
@@ -486,7 +497,7 @@ class WorkshopInjection:
                             label, separator, session = raw["author"].removesuffix("]").rpartition(" [")
                             identity = {"sender":raw["author"], "sender_key":session, "sender_label":label}
                             if separator and any(row["session"] == recipient["session"] for row in _reply_recipients(
-                                    history, message, identity, _reply_binding(history, history._message(raw), identity), declarations)):
+                                    history, message, identity, _reply_binding(history, history._message(raw), identity), declarations, history._message(raw))):
                                 _delivery_receipt(history, message, recipient, "answered", now=now, reply_message_id=raw["id"])
                                 events = delivery_events(history, message).get(recipient["session"], {})
                                 break

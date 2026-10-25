@@ -439,3 +439,115 @@ def test_send_started_before_quit_survives_restart_exactly_once(room, monkeypatc
         server.shutdown()
         server.server_close()
         serving.join(5)
+
+
+@pytest.mark.parametrize('reply_count', [1, 2])
+@pytest.mark.parametrize('before_first_tick', [False, True])
+def test_undeclared_codex_same_address_reply_closes_ask(room, monkeypatch, reply_count, before_first_tick):
+    from dataclasses import replace
+
+    owner, history = room
+    address = '01a084cd-0000-4000-8000-000000000001'
+    # Match build 57: OS connection keys, no declarations or native session metadata.
+    monkeypatch.setattr(mail, 'mailbox_label', lambda *_: ('Codex', None))
+    asker = replace(peer(), pid=90744)
+    ask = owner.shared_agent_mail('send', {'to': address, 'text': 'Can you confirm the patch SHA?'}, peer=asker)
+    worker = mail.WorkshopInjection(owner, None, backfill_minutes=30.0)
+    now = datetime.fromisoformat(message(history, ask)['created_at']).timestamp()
+    if not before_first_tick:
+        worker.tick(now=now)
+    replies = []
+    for pid in (155620, 170276)[:reply_count]:
+        replies.append(owner.shared_agent_mail('send', {'to': address, 'text': 'Final verdict: ACCEPT.',
+            'reply_to': ask['message_id']}, peer=replace(peer(), pid=pid)))
+        routing = mail._routing(message(history, replies[-1]))
+        assert routing['sender'] == {'runtime': None, 'session': replies[-1]['sender_key']}
+        assert not routing['recipients']
+    # Restart at timer boundaries so receipt closure must be durable.
+    for offset in (1, 301, 601, 602):
+        mail.WorkshopInjection(owner, None, backfill_minutes=30.0).tick(now=now + offset)
+    events = mail.delivery_events(history, message(history, ask))
+    assert events['address:' + address]['answered']['reply_message_id'] in {r['message_id'] for r in replies}
+    assert all('reminder' not in row and 'escalated' not in row for row in events.values())
+    assert history._db.execute("SELECT count(*) FROM messages WHERE reply_to=? AND author='Workshop coordination'",
+        (ask['message_id'],)).fetchone()[0] == 0
+
+
+@pytest.mark.parametrize('variant', ['different-address', 'asker', 'no-parent', 'quoted-address', 'broadcast'])
+def test_address_reply_spoof_keeps_one_reminder_and_escalation(room, monkeypatch, variant):
+    from dataclasses import replace
+
+    owner, history = room
+    address = '01a084cd-0000-4000-8000-000000000001'
+    monkeypatch.setattr(mail, 'mailbox_label', lambda *_: ('Codex', None))
+    asker = replace(peer(), pid=90744)
+    ask = owner.shared_agent_mail('send', {'to': address, 'text': 'Can you confirm the SHA?'}, peer=asker)
+    worker = mail.WorkshopInjection(owner, None, backfill_minutes=30.0)
+    now = datetime.fromisoformat(message(history, ask)['created_at']).timestamp()
+    worker.tick(now=now)
+    target = ('other-task' if variant in ('different-address', 'quoted-address') else
+        '*' if variant == 'broadcast' else address)
+    body = {'to': target, 'text': 'Final verdict: ACCEPT.'}
+    if variant != 'no-parent':
+        body['reply_to'] = ask['message_id']
+    if variant == 'quoted-address':
+        body['text'] += '\n> To ' + address + ': '
+    owner.shared_agent_mail('send', body, peer=asker if variant == 'asker' else replace(peer(), pid=155620))
+    for offset in (1, 301, 601, 602, 1200):
+        mail.WorkshopInjection(owner, None, backfill_minutes=30.0).tick(now=now + offset)
+    events = mail.delivery_events(history, message(history, ask))
+    assert not any('answered' in row for row in events.values())
+    assert sum('reminder' in row for row in events.values()) == 1
+    assert sum('escalated' in row for row in events.values()) == 1
+    assert history._db.execute("SELECT count(*) FROM messages WHERE reply_to=? AND author='Workshop coordination'",
+        (ask['message_id'],)).fetchone()[0] == 1
+
+
+
+def test_address_reply_does_not_grant_ack_authority(room, monkeypatch):
+    from dataclasses import replace
+
+    owner, history = room
+    monkeypatch.setattr(mail, 'mailbox_label', lambda *_: ('Codex', None))
+    address = '01a084cd-0000-4000-8000-000000000001'
+    ask = send(owner, to=address, text='Can you confirm the SHA?')
+    reply = owner.shared_agent_mail('send', {'to': address, 'text': 'Done.',
+        'reply_to': ask['message_id']}, peer=replace(peer(), pid=155620))
+    identity = {key: reply[key] for key in ('sender', 'sender_key', 'sender_label')}
+    assert not mail._can_ack(history, message(history, ask), identity, mail._declaration(history, identity), [])
+
+
+def test_same_address_reply_cannot_claim_a_declared_native_session(room):
+    owner, history = room
+    context = {'threadId': '01a084cd-original'}
+    declare(owner, context)
+    ask = send(owner, to=context['threadId'], text='Can you confirm the SHA?')
+    worker, now = start(owner, history, ask, NativeFixture())
+    owner.shared_agent_mail('send', {'to': context['threadId'], 'text': 'Done.',
+        'reply_to': ask['message_id'], 'context': {'threadId': 'unrelated-native'}}, peer=peer())
+    for offset in (1, 301, 601, 602):
+        worker.tick(now=now + offset)
+    events = mail.delivery_events(history, message(history, ask))
+    assert not any('answered' in row for row in events.values())
+    assert sum('reminder' in row for row in events.values()) == 1
+    assert sum('escalated' in row for row in events.values()) == 1
+
+
+def test_address_reply_parent_lookup_beyond_recent_tail(room, monkeypatch):
+    from dataclasses import replace
+
+    owner, history = room
+    monkeypatch.setattr(mail, 'mailbox_label', lambda *_: ('Codex', None))
+    address = '01a084cd-0000-4000-8000-000000000001'
+    ask = send(owner, to=address, text='Can you confirm the SHA?')
+    worker, now = start(owner, history, ask, None)
+    reply = owner.shared_agent_mail('send', {'to': address, 'text': 'Done.',
+        'reply_to': ask['message_id']}, peer=replace(peer(), pid=155620))
+    for number in range(130):
+        history.append(mail.ROOM, author='fixture', content='To founder:\nProgress.', category=mail.CATEGORY,
+            idempotency_key='busy-room-' + str(number))
+    # Force recovery via the parent's indexed reply lookup, independently of the tail pass.
+    worker._cursor = history._head(mail.ROOM)
+    worker.tick(now=now + 1)
+    events = mail.delivery_events(history, message(history, ask))
+    assert events['address:' + address]['answered']['reply_message_id'] == reply['message_id']

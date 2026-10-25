@@ -8429,6 +8429,16 @@
         "04.DOCS/DECISIONS.md",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "WSREPLY": {
+      "source": "Founder WSASKONLY RUN 4 / WSREPLY: reply_to closes an ask from the addressed current connection or any connection bound to its native session/address; a send crossing updater quit/restart is durably present exactly once with its idempotency key. Reuse existing conversation queue and receipt owner. Patch only; 717 independently reviews and lands; no installed app, live writes or footer edits.",
+      "scope": [
+        "01.APP/nodelang/conversation_history.py",
+        "01.APP/nodelang/workshop_mailbox.py",
+        "01.APP/nodelang/session_link/native.mjs",
+        "02.TESTS/tests_replica/test_wsreply.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

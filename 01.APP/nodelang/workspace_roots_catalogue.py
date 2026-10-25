@@ -1057,7 +1057,7 @@ def write_projection(body: dict, signature: str, blob, *, snapshot_path=None, pi
 def verify_projection(body: dict, verifier, *, snapshot_path=None, pin_path=None) -> str:
     """"match", "missing", "unsigned", "unpinned" or "mismatch": do the hooks' files
     project this graph state? Anything but "match" (or "missing" before the first
-    registration) is shown as a banner and refuses owner changes until republished.
+    registration) is repaired from the graph by the application owner when possible.
     The signature is checked with the pin's own public blob: the key store is never
     opened (verifier.verify_blob is BCrypt only)."""
     snapshot_path = snapshot_path or default_snapshot_path()

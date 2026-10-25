@@ -28,6 +28,9 @@ def browser(owner, monkeypatch):
     monkeypatch.setattr(roots, 'default_pin_path', lambda: home / 'workspace-roots.pin')
     monkeypatch.setattr(roots, 'default_last_good_path', lambda: home / 'last-good.json')
     key = _Key()
+    key_path = home / 'workspace-roots.app-key.dpapi'
+    key_path.touch()  # The court signer below substitutes for an existing app key.
+    monkeypatch.setattr(roots, 'default_app_key_path', lambda: key_path)
     monkeypatch.setattr(roots, 'app_signing_components', lambda: (lambda pinned: key, key.fingerprint, key))
     server.workspace_roots_boot = 'missing'
     server.start()
@@ -78,6 +81,92 @@ def test_cancel_and_refusal_are_explicit_and_logged(browser, capsys):
     assert 'workspace browse: cancelled' in output
     assert 'workspace register: refused: ' + answer['error'] in output
     assert post({'action': 'list'})[1]['roots'] == []
+
+
+def test_desktop_repairs_projection_from_graph_and_retries(browser, monkeypatch):
+    server, root, post = browser
+    home = root / "REGISTRY"
+    expected_receipts = 0
+    for index, damage in enumerate(("missing-pin", "foreign-pin", "unsigned", "mismatch")):
+        folder = root / ("CLIENT" + str(index))
+        folder.mkdir()
+        root_id = "client" + str(index)
+        status, added = post({"action": "register", "id": root_id,
+            "path": str(folder), "privacy": "private"})
+        assert status == 200, added
+        catalogue = roots.find_workspace_root_catalogue(server.workspace_roots_authority,
+            caller=server.workspace_roots_caller)
+        before = roots.read_state(server.workspace_roots_authority, catalogue,
+            caller=server.workspace_roots_caller)
+        document = json.loads((home / "workspace-roots.json").read_text())
+        if damage == "missing-pin":
+            (home / "workspace-roots.pin").unlink()
+        elif damage == "foreign-pin":
+            (home / "workspace-roots.pin").write_text(json.dumps(roots.pin_document(_Key().public_blob())))
+        elif damage == "unsigned":
+            document["signature"] = "0" * 128
+            (home / "workspace-roots.json").write_text(json.dumps(document))
+        else:
+            body = {key: value for key, value in document.items() if key != "signature"}
+            body["roots"] = []
+            factory, _fingerprint, verifier = roots.app_signing_components()
+            roots.write_projection(body, factory(body["key_fingerprint"]).sign(roots.canonical(body)),
+                verifier.public_blob())
+        assert roots.boot_check(server.workspace_roots_authority, catalogue,
+            caller=server.workspace_roots_caller) == {
+                "missing-pin": "unpinned", "foreign-pin": "unpinned",
+                "unsigned": "unsigned", "mismatch": "mismatch"}[damage]
+        server._check_workspace_roots()
+        assert server.workspace_roots_boot == "match", damage
+        assert roots.read_state(server.workspace_roots_authority, catalogue,
+            caller=server.workspace_roots_caller) == before
+        repaired = json.loads((home / "workspace-roots.json").read_text())
+        assert [entry["id"] for entry in repaired["roots"]] == [root_id]
+        expected_receipts += 1
+        # Damage after startup must be repaired for every owner change action too.
+        (home / "workspace-roots.pin").unlink()
+        action = ("register", "update-writers", "unregister", "unregister")[index]
+        change = {"action": action, "id": root_id}
+        if action == "register":
+            other = root / "OTHER"
+            other.mkdir()
+            change.update(id="other", path=str(other), privacy="private")
+        elif action == "update-writers":
+            change["writers"] = ["codex"]
+        status, answer = post(change)
+        assert status == 200, answer
+        assert answer["projection"] == answer["boot"] == "match"
+        expected_receipts += 1
+        receipts = [json.loads(line) for line in (home / "private-grant-events.log").read_text().splitlines()]
+        assert len(receipts) == expected_receipts
+        assert all(line["outcome"] == "ok" for line in receipts)
+        server._check_workspace_roots()
+        assert len((home / "private-grant-events.log").read_text().splitlines()) == expected_receipts
+        if action == "register":
+            assert post({"action": "unregister", "id": "other"})[0] == 200
+        if action != "unregister":
+            assert post({"action": "unregister", "id": root_id})[0] == 200
+        assert folder.is_dir()
+    folder = root / "FAILED"
+    folder.mkdir()
+    assert post({"action": "register", "id": "failed", "path": str(folder), "privacy": "private"})[0] == 200
+    before = server.universal_store.revision
+    (home / "workspace-roots.pin").unlink()
+    original = roots.write_projection
+
+    def denied(*args, **kwargs):
+        raise PermissionError("registry folder is read-only")
+
+    monkeypatch.setattr(roots, "write_projection", denied)
+    server._check_workspace_roots()
+    status, answer = post({"action": "unregister", "id": "failed"})
+    assert status == 400
+    assert "registry folder is read-only" in answer["error"]
+    assert "republish it" not in answer["error"]
+    assert server.universal_store.revision == before
+    monkeypatch.setattr(roots, "write_projection", original)
+    status, answer = post({"action": "unregister", "id": "failed"})
+    assert status == 200, answer
 
 
 def test_refused_browser_never_opens_picker(browser):

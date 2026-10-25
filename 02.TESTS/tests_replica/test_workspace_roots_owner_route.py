@@ -290,21 +290,56 @@ def test_legacy_owner_decline_flag_is_not_used_by_silent_app_write(runtime):
     assert (home / "workspace-roots.json").exists() and (home / "workspace-roots.pin").exists()
 
 
-def test_a_mismatched_registry_refuses_changes_until_republished(runtime):
-    server, built, home, tmp_path = runtime
+def test_a_mismatched_registry_repairs_before_changes(runtime):
+    server, _built, home, tmp_path = runtime
     for name in ("client-a", "client-b"):
         (tmp_path / name).mkdir()
     assert _register(server, tmp_path / "client-a")[0] == 200
     (home / "workspace-roots.json").unlink()
     server._check_workspace_roots()
-    assert server.workspace_roots_boot == "mismatch"
-    status, body = _register(server, tmp_path / "client-b", root_id="client-b")
-    assert status == 403 and "republish" in body["error"]
-    status, view = _post(server, {"action": "list"})
-    assert status == 200 and view["boot"] == "mismatch" and view["projection"] == "mismatch"
-    status, view = _change(server, {"action": "republish"})
-    assert status == 200 and view["projection"] == "match" and view["boot"] == "match"
-    assert _register(server, tmp_path / "client-b", root_id="client-b")[0] == 200
+    assert server.workspace_roots_boot == "match"
+    status, view = _register(server, tmp_path / "client-b", root_id="client-b")
+    assert status == 200, view
+    assert view["projection"] == "match"
+
+
+
+def test_automatic_repair_with_missing_app_key_refuses_without_repinning(runtime):
+    server, _built, home, tmp_path = runtime
+    folder = tmp_path / "CLIENT"
+    folder.mkdir()
+    assert _register(server, folder)[0] == 200
+    key_path = roots.default_app_key_path()
+    assert key_path.exists()
+    key_path.unlink()
+    catalogue = roots.find_workspace_root_catalogue(
+        server.workspace_roots_authority, caller=server.workspace_roots_caller)
+    before = roots.read_state(server.workspace_roots_authority, catalogue,
+                              caller=server.workspace_roots_caller)
+    snapshot = home / "workspace-roots.json"
+    pin = home / "workspace-roots.pin"
+    # A signed projection with missing content diverges from the authoritative graph.
+    snapshot.unlink()
+    pin_before = pin.read_bytes()
+    server._check_workspace_roots()
+    assert not key_path.exists(), "automatic repair minted a replacement signing key"
+    assert pin.read_bytes() == pin_before
+    assert not snapshot.exists()
+    assert "missing" in server._workspace_roots_repair_error.lower()
+    assert "key" in server._workspace_roots_repair_error.lower()
+    for change in ({"action": "register", "id": "other", "path": str(folder), "privacy": "private"},
+                   {"action": "unregister", "id": "client-a"},
+                   {"action": "update-writers", "id": "client-a", "writers": ["codex"]}):
+        status, answer = _post(server, change)
+        assert status == 403, answer
+        assert "missing" in answer["error"].lower() and "key" in answer["error"].lower()
+        assert "republish it" not in answer["error"]
+        assert not key_path.exists()
+        assert pin.read_bytes() == pin_before
+        assert roots.read_state(server.workspace_roots_authority, catalogue,
+                                caller=server.workspace_roots_caller) == before
+    receipts = [json.loads(line) for line in (home / "private-grant-events.log").read_text().splitlines()]
+    assert all(row["outcome"] == "refused" for row in receipts)
 
 
 def test_legacy_cng_substitute_key_is_not_consulted_by_app_write(runtime, monkeypatch):

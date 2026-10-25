@@ -19,19 +19,57 @@ class WorkspaceRootsOwner:
         return self.clean_caller
 
     def _check_workspace_roots(self):
+        import uuid
+
+        from .private_root_grants import record_grant_event
         from .workspace_roots_catalogue import (
+            APP_KEY_ID,
+            APP_WRITTEN,
+            app_signing_components,
             boot_check,
+            default_app_key_path,
+            default_snapshot_path,
             find_workspace_root_catalogue,
+            owner_change,
         )
+        self._workspace_roots_repair_error = None
         try:
-            catalogue = find_workspace_root_catalogue(
-                self.workspace_roots_authority, caller=self.workspace_roots_caller
-            )
-            self.workspace_roots_boot = boot_check(
-                self.workspace_roots_authority, catalogue, caller=self.workspace_roots_caller
-            )
+            with self._mutation_lock:
+                catalogue = find_workspace_root_catalogue(
+                    self.workspace_roots_authority, caller=self.workspace_roots_caller
+                )
+                self.workspace_roots_boot = boot_check(
+                    self.workspace_roots_authority, catalogue, caller=self.workspace_roots_caller
+                )
+                if self.clean_workspace_root is not None and catalogue is not None and self.workspace_roots_boot in (
+                        "unpinned", "unsigned", "mismatch"):
+                    try:
+                        if not default_app_key_path().exists():
+                            raise InvalidCell("the app signing key is missing")
+                        signer, fingerprint, verifier = app_signing_components()
+                        view = owner_change(
+                            self.workspace_roots_authority, catalogue, {"action": "republish"},
+                            caller=self.workspace_roots_caller, operation_id=str(uuid.uuid4()),
+                            admission={"principal": "archhub-browser-workspace-settings"},
+                            lock=self._mutation_lock, built_in=self.clean_workspace_root,
+                            signer_factory=signer, fingerprint_of=fingerprint, verifier=verifier,
+                            signing_key_id=APP_KEY_ID, pin_mode=APP_WRITTEN,
+                            allow_key_migration=True,
+                        )
+                        if view["projection"] != "match":
+                            raise InvalidCell("the repaired workspace registry could not be verified")
+                    except Exception as exc:  # noqa: BLE001 - preserve the repair cause for Settings
+                        self._workspace_roots_repair_error = str(exc)
+                        record_grant_event("workspace-roots-repair", "refused", str(exc),
+                                           directory=default_snapshot_path().parent)
+                    else:
+                        self.workspace_roots_boot = "match"
+                        record_grant_event("workspace-roots-repair", "ok",
+                                           "Workspace registry restored from the graph.",
+                                           directory=default_snapshot_path().parent)
         except Exception as exc:  # noqa: BLE001 - a failed check is never a match
             self.workspace_roots_boot = "unverifiable: " + type(exc).__name__
+            self._workspace_roots_repair_error = str(exc)
 
     def _clean_workspace_roots(self, body, admission=None):
         """The owner's Workspaces settings: list, register, unregister, republish.
@@ -77,17 +115,19 @@ class WorkspaceRootsOwner:
                 raise WorkspaceRootRefused("workspace-roots request is invalid")
             raise WorkspaceRootRefused(NO_WINDOW.replace("approve this change",
                                                          "choose a folder"))
-        boot = self.workspace_roots_boot
         if action == "prepare":
             # The change the desktop window will ask the owner to approve.
             change = request.get("change")
             action = change.get("action") if type(change) is dict else None
             if action not in ("register", "unregister", "republish", "update-writers"):
                 raise WorkspaceRootRefused("only a change can be prepared for approval")
+        if action in ("register", "unregister", "update-writers"):
+            self._check_workspace_roots()
+        boot = self.workspace_roots_boot
         if action in ("register", "unregister", "update-writers") and boot not in ("match", "missing"):
             raise WorkspaceRootRefused(
-                "the workspace-roots registry does not match the graph (%s); "
-                "republish it before changing roots" % boot
+                "ArchHub could not restore the workspace registry: %s" % (
+                    self._workspace_roots_repair_error or boot)
             )
         with self._mutation_lock:
             catalogue = find_workspace_root_catalogue(

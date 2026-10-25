@@ -8642,6 +8642,33 @@
         "02.TESTS/tests_replica/test_wsadd.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "DESIGNMATCH": {
+      "source": "Founder DESIGNMATCH RUN 2: wire Home, Workshop, Settings Connections and Canvas to EXISTING real Workshop tasks/agents/conversation store, workflow/template nodes, host bridges and accounts/credential names. Prove authenticated real server routes with app-produced synthetic fixture; no sample-data proxy. Preserve working behavior and approved tokens. No installed app, live data, founder screen, approved-design or workspace-roots owner writes (ROOTSREPUB owns republish). Review 2 RUN 3: fix Workshop room Work visibility across selected project roots, project declared display identity/model, and repair template composition membership/socket scheduling in existing owners. No waiver or second evaluator.",
+      "scope": [
+        "01.APP/nodelang/agent_declarations.py",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/studio-authority.js",
+        "02.TESTS/tests_replica/test_designmatch.py",
+        "01.APP/nodelang/studio/app.jsx",
+        "01.APP/nodelang/studio/style.css",
+        "01.APP/nodelang/studio/tokens.jsx",
+        "01.APP/nodelang/studio/ui.jsx",
+        "01.APP/nodelang/studio/ds_home2.jsx",
+        "01.APP/nodelang/studio/ds_screens.jsx",
+        "01.APP/nodelang/studio/ds_workshop3.jsx",
+        "01.APP/nodelang/studio/ds_settings3.jsx",
+        "02.TESTS/tests_js/studio_designmatch.test.cjs",
+        "05.EVIDENCE/acompiler-intents.json",
+        "02.TESTS/tests_js/studio_canvasold.test.cjs",
+        "02.TESTS/tests_js/studio_canvaslook.test.cjs",
+        "01.APP/nodelang/workshop_api.py",
+        "01.APP/nodelang/universal_application.py",
+        "01.APP/nodelang/canvas_graph_owner.py",
+        "01.APP/nodelang/universal_pipeline.py",
+        "01.APP/nodelang/workshop_mailbox.py",
+        "01.APP/nodelang/native_agent_mcp.py"
+      ]
     }
   }
 }

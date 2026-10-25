@@ -4,6 +4,7 @@
   const WIRE_DS_SETTINGS3_JSX_ACTIONS = {
   "settings.ds_settings3.ConnectionsAction0": "ConnectionsAction0",
   "settings.ds_settings3.ConnectionsAction1": "ConnectionsAction1",
+  "settings.ds_settings3.ConnectionsAction2": "ConnectionsAction2",
   "settings.ds_settings3.WorkspaceRowsAction0": "WorkspaceRowsAction0",
   "settings.ds_settings3.WorkspaceRowsAction1": "WorkspaceRowsAction1",
   "settings.ds_settings3.WorkspaceRowsAction2": "WorkspaceRowsAction2",
@@ -75,21 +76,34 @@
     const s = useData(),
       u = useApp();
     const [filter, setFilter] = React.useState('All');
-    const connections = [...s.connections, ...s.secrets.filter(c => c.disconnectable === false).map(c => ({id: 'credential:' + c.id, name: c.name, connected: true, credential: true}))];
-    const group = c => ['Revit', 'AutoCAD', 'Rhino', '3ds Max', 'Office'].includes(c.name) ? 'Programs' : ['Instagram', 'Facebook', 'WhatsApp Business', 'LinkedIn', 'X', 'TikTok', 'YouTube'].includes(c.name) ? 'Social' : 'Work apps';
+    const [attempt, setAttempt] = React.useState(0), [load, setLoad] = React.useState({status:'waiting'});
+    React.useEffect(()=>{
+      let current=true;
+      setLoad({status:'waiting'});
+      Promise.allSettled([api.refreshSocialConnections,api.readHostAvailability,api.refreshSettingsControls].map(read=>read())).then(results=>{
+        if(!current)return;
+        const errors=results.filter(r=>r.status==='rejected').map(r=>r.reason.message);
+        setLoad({status:errors.length?'error':'loaded',message:errors.join(' ')});
+      });
+      return()=>{current=false;};
+    },[s.profile?.id,attempt]);
+    const connections = [...(s.hosts||[]).map(c=>({...c,id:'host:'+c.id,host:true,connected:['connected','listening'].includes(c.state)})), ...s.connections,
+      ...s.secrets.filter(c=>!s.connections.some(row=>row.vault_entry===c.vault_entry&&c.vault_entry)).map(c=>({...c,id:'credential:'+c.id,credential:true}))];
+    const status=load.status==='loaded'&&!connections.length?'empty':load.status;
+    const group = c => c.host || ['Revit', 'AutoCAD', 'Rhino', '3ds Max', 'Office'].includes(c.name) ? 'Programs' : ['Instagram', 'Facebook', 'WhatsApp Business', 'LinkedIn', 'X', 'TikTok', 'YouTube'].includes(c.name) ? 'Social' : 'Work apps';
     const {runAction, actionState, retryAction} = window.UI.useRegisteredActions(WIRE_DS_SETTINGS3_JSX_ACTIONS, {ConnectionsAction0: (g, event) => (() => setFilter(g))(event),
-ConnectionsAction1: (c, event) => (() => c.credential ? u.show('My secrets') : c.connected ? u.show('Connection', {
+ConnectionsAction1: (c, event) => (() => c.host ? u.go(c.connected?'watcher':'settings/Dependencies') : c.credential ? u.show('My secrets') : c.connected ? u.show('Connection', {
               id: c.id
             }) : u.show('Connect', {
               id: c.id
-            }))(event)});
-    return <><window.UI.RegisteredActionStatus state={actionState} retry={retryAction} /><div className="grid"><div className="flex">{['All', 'Programs', 'Social', 'Work apps'].map(g => <Btn sm ghost key={g} aria-pressed={filter === g} onClick={event => runAction('settings.ds_settings3.ConnectionsAction0', g, event)}>{g}</Btn>)}</div><Card><div style={{
+            }))(event),ConnectionsAction2:()=>setAttempt(value=>value+1)});
+    return <><window.UI.RegisteredActionStatus state={actionState} retry={retryAction} /><div className="grid">{status==='waiting'&&<p role="status">Reading programs and accounts…</p>}{s.hostsProbing&&status!=='waiting'&&<p role="status">Checking programs…</p>}{s.hostError&&<p role="alert">{s.hostError}</p>}{status==='error'&&<div role="alert">{load.message}<Btn sm onClick={event=>runAction('settings.ds_settings3.ConnectionsAction2',event)}>Retry Connections</Btn></div>}<div className="flex">{['All', 'Programs', 'Social', 'Work apps'].map(g => <Btn sm ghost key={g} aria-pressed={filter === g} onClick={event => runAction('settings.ds_settings3.ConnectionsAction0', g, event)}>{g}</Btn>)}</div><Card>{status==='loaded'&&<div style={{
           display: 'grid',
           gridTemplateColumns: '1fr 130px',
           padding: '14px 16px 8px',
           fontSize: 11,
           color: A.inkSoft
-        }}><span>PROGRAM OR ACCOUNT</span><span /></div>{connections.filter(c => filter === 'All' || group(c) === filter).map((c, i) => <div key={c.id} style={{
+        }}><span>PROGRAM OR ACCOUNT</span><span /></div>}{connections.filter(c => filter === 'All' || group(c) === filter).map((c, i) => <div key={c.id} style={{
           display: 'grid',
           gridTemplateColumns: '1fr 130px',
           alignItems: 'center',
@@ -106,9 +120,9 @@ ConnectionsAction1: (c, event) => (() => c.credential ? u.show('My secrets') : c
               fontWeight: 800
             }}>{c.name[0]}</span><div><h3>{c.name}</h3><span className="muted" style={{
                 fontSize: 12
-              }}>{c.credential ? 'Saved in Windows Credential Manager' : c.connected ? 'Connected to your account' : 'Not connected'}{c.checked ? ' · checked' : ''}</span></div></div><div style={{
+              }}>{c.host ? c.detail||c.state : c.credential ? 'Saved in Windows Credential Manager' : c.connected ? c.display_name||'Connected to your account' : c.blocker||'Connect this account to use it'}{c.checked ? ' · checked' : ''}</span></div></div><div style={{
             justifySelf: 'end'
-          }}><Btn sm onClick={event => runAction('settings.ds_settings3.ConnectionsAction1', c, event)}>{c.credential ? 'Details' : c.connected ? 'Open' : 'Connect'}</Btn></div></div>)}</Card></div></>;
+          }}><Btn sm onClick={event => runAction('settings.ds_settings3.ConnectionsAction1', c, event)}>{c.credential ? 'Details' : c.connected ? 'Open' : c.host?'Manage':'Connect'}</Btn></div></div>)}</Card>{status==='empty'&&<Empty>Connect an account or start a program with its ArchHub bridge, then refresh Connections.</Empty>}</div></>;
   }
   function WorkspaceRows() {
     const s = useData(),
@@ -256,7 +270,7 @@ SettingsAction24: (event) => (() => u.go('docs'))(event)});
         }[actual] || 'Your preferences for ' + actual.toLowerCase() + '.'}><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction2', event)}>{actual === 'System graph' ? 'Open graph' : actual === 'BABOOM' ? 'Open BABOOM' : 'Open'}</Btn><Btn sm ghost onClick={event => runAction('settings.ds_settings3.SettingsAction3', event)}>Reset</Btn></Heading>
    <div className="flex settings-scope" style={{
           marginBottom: 14
-        }}><label className="flex muted">Scope<select aria-label="Settings scope" value={s.settingsScope} onChange={e => u.act(() => api.setSettingsScope(e.target.value))}><option>User</option><option>Workspace</option></select></label><span className="fill" /><span className="muted">{s.settingsScope === 'Workspace' ? s.workspaces.find(w => w.id === s.activeWorkspace)?.name : 'Your account'}</span></div><div className="settings-health"><span className="status-dot" /><span>{actual === 'Connections' ? s.connections.filter(c => c.connected).length + ' accounts and programs connected' : actual === 'BABOOM' ? s.providers.filter(p => p.enabled && p.signedIn).length + ' providers ready' : actual === 'Account' ? s.profile.firm + ' · ' + s.workspaces.length + ' workspace' : actual === 'Updates & About' ? s.update.available ? 'An update is ready' : s.update.detail || 'Update status unavailable' : 'Available backend preferences'}</span></div><div className="flex settings-filter" style={{
+        }}><label className="flex muted">Scope<select aria-label="Settings scope" value={s.settingsScope} onChange={e => u.act(() => api.setSettingsScope(e.target.value))}><option>User</option><option>Workspace</option></select></label><span className="fill" /><span className="muted">{s.settingsScope === 'Workspace' ? s.workspaces.find(w => w.id === s.activeWorkspace)?.name : 'Your account'}</span></div><div className="settings-health"><span className="status-dot" /><span>{actual === 'Connections' ? (s.connections.filter(c => c.connected).length+(s.hosts||[]).filter(c=>['connected','listening'].includes(c.state)).length) + ' accounts and programs connected' : actual === 'BABOOM' ? s.providers.filter(p => p.enabled && p.signedIn).length + ' providers ready' : actual === 'Account' ? s.profile.firm + ' · ' + s.workspaces.length + ' workspace' : actual === 'Updates & About' ? s.update.available ? 'An update is ready' : s.update.detail || 'Update status unavailable' : 'Available backend preferences'}</span></div><div className="flex settings-filter" style={{
           marginBottom: 14
         }}><D.Toggle label="Changed only" checked={changed} onCheckedChange={setChanged} /><span className="muted" style={{
             fontSize: 12

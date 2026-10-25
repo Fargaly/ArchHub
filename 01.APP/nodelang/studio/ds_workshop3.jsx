@@ -153,7 +153,7 @@
                 fontSize: 12
               }}>{p.name}</b></span><span className="muted" style={{
               fontSize: 11
-            }}>{p.presence || (p.sessions?.length ? 'Session discovered' : 'Signed in')}</span></button>)}<Btn sm ghost onClick={() => executeAction("ui.go", u, 'colleagues')}>Team &amp; meetings</Btn></Card>
+            }}>{p.sessions?.map(session=>session.task).filter(Boolean).join(' · ') || p.presence || (p.sessions?.length ? 'Session discovered' : 'Signed in')}</span></button>)}<Btn sm ghost onClick={() => executeAction("ui.go", u, 'colleagues')}>Team &amp; meetings</Btn></Card>
   </aside>
   <main style={{
         display: 'grid',

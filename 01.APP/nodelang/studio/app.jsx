@@ -74,6 +74,12 @@
         agentLoadGeneration.current++;
       };
     }, [s.graph.id, s.profile.id]);
+    React.useEffect(()=>{
+      if(!s.graph.id||typeof api.readHostAvailability!=='function')return;
+      let active=true;
+      api.readHostAvailability().catch(error=>{if(active)setToast(error.message);});
+      return()=>{active=false;};
+    },[s.graph.id,s.profile.id]);
     // WIRE-agents end.
     const theme = s.settings.find(r => r.id === 'Appearance.Theme')?.value || 'Dark',
       accent = s.settings.find(r => r.id === 'Appearance.Accent colour')?.value || '#d97757';
@@ -337,7 +343,7 @@
             s
           }, event)}>{s.update.available ? 'Relaunch to update' : <window.AHIcon name="update" />}<i /></button>}<button className="button-reset muted" onClick={event => executeAction("appShell.Control.4", {
             show
-          }, event)}>{s.workspaces.find(w => w.id === s.activeWorkspace)?.name || 'Add workspace'} ▾</button><button className="button-reset muted" style={{
+          }, event)}>{s.workspaces.find(w => w.id === s.activeWorkspace)?.name || s.workspaces.find(w => w.builtIn)?.name || 'Add workspace'} ▾</button><button className="button-reset muted" style={{
             padding: '0 14px'
           }} onClick={event => executeAction("appShell.SearchCtrlK.5", {
             show
@@ -397,7 +403,7 @@
               fontWeight: 700,
               fontSize: 12,
               flex: 'none'
-            }}>{s.profile.name.split(' ').map(n => n[0]).join('').slice(0, 2)}</button></nav><div className={'screen-with-composer ' + (route !== 'home' ? 'has-local-composer' : '')} style={{'--canvas-library-width':libraryOpen ? '248px' : '0px'}}>{screen}{route === 'canvas' && <div className="canvas-status" role="status"><span>{s.connectionNotice || '● Local session'}</span><span>{s.tasks.filter(t=>t.status==='WIP').length} running · {s.approvals.filter(c=>c.status==='pending').length} wait for you</span>{agentLoad.status==='error' && <button className="button-reset" onClick={event=>executeAction('appShell.RetryWorkshop',{reloadWorkshop},event)}>Retry Workshop connection</button>}</div>}{['home','canvas'].includes(route) && <div className={'global-composer'+(route==='canvas'?' canvas-composer':'')}><window.UI.Composer compact /></div>}</div></div>
+            }}>{s.profile.name.split(' ').map(n => n[0]).join('').slice(0, 2)}</button></nav><div className={'screen-with-composer ' + (route !== 'home' ? 'has-local-composer' : '')} style={{'--canvas-library-width':libraryOpen ? '248px' : '0px'}}>{screen}{route === 'canvas' && <div className="canvas-status" role="status"><span>{s.connectionNotice || '● Local session'}</span><span>{(s.tasks.filter(t=>t.status==='WIP').length+(s.declaredTasks||[]).length)} running · {s.approvals.filter(c=>c.status==='pending').length} wait for you</span>{agentLoad.status==='error' && <button className="button-reset" onClick={event=>executeAction('appShell.RetryWorkshop',{reloadWorkshop},event)}>Retry Workshop connection</button>}</div>}{['home','canvas'].includes(route) && <div className={'global-composer'+(route==='canvas'?' canvas-composer':'')}><window.UI.Composer compact /></div>}</div></div>
    {route !== 'canvas' && <footer className="flex" style={{
           fontSize: 11,
           gap: 16,
@@ -411,12 +417,12 @@
           {agentLoad.status === 'waiting' && <span role="status">Loading Workshop settings…</span>}
           {agentLoad.status === 'error' && <span role="alert">{agentLoad.message}<Btn aria-label="Retry Workshop connection" onClick={event => executeAction("appShell.RetryWorkshop", {reloadWorkshop}, event)}>Retry</Btn></span>}
           {agentLoad.status === 'empty' && <span role="status">Select a graph for Workshop settings.</span>}
-          {agentLoad.status === 'loaded' && <span aria-label="Workshop settings ready" title="Workshop settings ready">✓</span>}
+          {agentLoad.status === 'loaded' && <span className="sr-only" aria-label="Workshop settings ready" title="Workshop settings ready">✓</span>}
           <button className="button-reset muted" onClick={event => executeAction("appShell.Control.13", {
             go
-          }, event)}>{s.files.find(f => f.id === s.activeFile)?.name || 'No program connected'}</button><button className="button-reset muted" onClick={event => executeAction("appShell.RunningWaitForYou.14", {
+            }, event)}>{(s.hosts||[]).filter(h=>h.state==='connected'||h.state==='listening').map(h=>h.name+(h.detail?' · '+h.detail:'')).join(' · ') || s.files.find(f => f.id === s.activeFile)?.name || (s.hostsProbing?'Checking programs…':'Open Connections to connect a program')}</button><button className="button-reset muted" onClick={event => executeAction("appShell.RunningWaitForYou.14", {
             go
-          }, event)}>{s.tasks.filter(t => t.status === 'WIP').length} running · {s.approvals.filter(c => c.status === 'pending').length} wait for you</button><span className="fill" /><button className="button-reset muted" onClick={event => executeAction("appShell.CtrlK.15", {
+          }, event)}>{(s.tasks.filter(t => t.status === 'WIP').length+(s.declaredTasks||[]).length)} running · {s.approvals.filter(c => c.status === 'pending').length} wait for you</button><span className="fill" /><button className="button-reset muted" onClick={event => executeAction("appShell.CtrlK.15", {
             show
           }, event)}>Ctrl K</button><button className="button-reset muted" onClick={event => executeAction("appShell.Receipts.16", {
             go

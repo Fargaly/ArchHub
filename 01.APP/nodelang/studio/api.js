@@ -66,7 +66,19 @@ async function signIn() {
 }
 async function request(path,body=undefined,readRetry=true,signal=undefined) {
  const requestEpoch=scopeEpoch;
- if(path==='/api/universal/interaction'&&body&&!window.ARCHHUB_AUTHORITY){const keys=['interaction','control','event','revision','event_facts'];if(body.control==='app:control:canvas:remove-member')keys.push('membership','expected_scope','command_id');body=Object.fromEntries(keys.filter(k=>Object.hasOwn(body,k)).map(k=>[k,body[k]]));}
+ let acknowledgementMode='';
+ if(path==='/api/universal/interaction'&&body&&!window.ARCHHUB_AUTHORITY){
+  const keys=['interaction','control','event','revision'];
+  if(Array.isArray(body.event_facts)&&body.event_facts.length)keys.push('event_facts');
+  // Scope entry must carry the acknowledgement mode named by its current lease.
+  const held=(canvas?.interaction_projection?.bindings||[]).filter(b=>b.control===body.control);
+  if(held.length===1&&typeof body.projection_mode==='string'&&[held[0].projection_mode,held[0].acknowledgement_mode].includes(body.projection_mode)){
+   acknowledgementMode=held[0].acknowledgement_mode||'';
+   if(acknowledgementMode){body={...body,projection_mode:acknowledgementMode};keys.push('projection_mode');}
+  }
+  if(body.control==='app:control:canvas:remove-member')keys.push('membership','expected_scope','command_id');
+  body=Object.fromEntries(keys.filter(k=>Object.hasOwn(body,k)).map(k=>[k,body[k]]));
+ }
  const response=await fetch(path,{method:body===undefined?'GET':'POST',cache:'no-store',signal,headers:{'Content-Type':'application/json',
  'X-ArchHub-Session':session?.token||'','X-ArchHub-CSRF':session?.csrf||''},...(body===undefined?{}:{body:JSON.stringify(body)})});
  const data=await response.json();
@@ -76,6 +88,12 @@ async function request(path,body=undefined,readRetry=true,signal=undefined) {
    if(body===undefined)return request(path,undefined,false,signal);}
  }
  if(!response.ok||data.ok===false){const error=Error(data.error||data.reason||'The backend refused this action.');error.status=response.status;error.response=data;throw error;}
+ if(acknowledgementMode&&body.control!=='app:control:canvas:remove-member'&&!Array.isArray(data.nodes)){
+  if(data.projection_mode!==acknowledgementMode||!Number.isInteger(data.committed_revision))throw Error('The canvas acknowledgement needs reconciliation. Refresh and retry.');
+  const latest=await request('/api/universal/canvas');
+  if(!Number.isInteger(latest.revision)||latest.revision<data.committed_revision)throw Error('The change is not visible in the refreshed canvas.');
+  return latest;
+ }
  const result=normalise(data);if(result?.root&&Array.isArray(result.nodes)&&requestEpoch===scopeEpoch)canvas=result;
  return result;
 }
@@ -161,13 +179,18 @@ async function refreshTasks(details=true) {
  if(epoch!==scopeEpoch||binding!==JSON.stringify(workshopBinding()))return state.tasks;
  publish({tasks:tasks.map(t=>({...t,messages:t.messages||[],steps:t.steps||[],reviews:t.reviews||[],queuedMessages:t.queuedMessages||[]})),
    workshopMessages:room.messages||[],workshopMessagesMore:room.more===true,workshopMessagesBefore:room.next_before,workshopMessagesScope:binding});
+ projectProviders();
  if(details){await refreshApprovals();await refreshWatcher();await refreshHostSkills();await refreshDesktop();await refreshNotifications();}
  return state.tasks;
 }
 function projectProviders() {
  const roster=new Map(providerRoster.map(p=>[p.id,p]));
  for(const a of workingAgents)roster.set(a.id,{...roster.get(a.id),...a});
- publish({providers:[...roster.values()].map(p=>({...p,model:state.providerPreferences?.[p.id]||p.model,models:state.providerModels?.[p.id]||[]}))});
+ const providers=[...roster.values()].map(p=>({...p,model:state.providerPreferences?.[p.id]||p.model,models:state.providerModels?.[p.id]||[]}));
+ const assigned=new Set(state.tasks.flatMap(t=>(t.declarations||[]).map(d=>d.root)));
+ const declaredTasks=[...new Map(providers.flatMap(p=>(p.sessions||[]).filter(d=>d.status==='working'&&!assigned.has(d.root))
+  .map(d=>[d.request_id,{id:d.root,title:d.task,owner:p.id,status:'WIP',declaration:true}]))).values()];
+ publish({providers,declaredTasks});
 }
 function providerDto(p) {
  const presence=p.status||p.presence||({keyed:'Available · connected',running:'Available · runtime running',
@@ -188,7 +211,7 @@ async function refreshAgents() {
 }
 async function refreshAccount() {
  const account=await request('/api/universal/cloud-session');
- if((state.profile.email||'')!==(account.email||'')||state.profile.signedIn!==(account.signed_in===true)){scopeEpoch++;publish({workshopMessages:[],workshopMessagesMore:false,workshopMessagesBefore:null,workshopMessagesScope:null});}
+ if((state.profile.email||'')!==(account.email||'')||state.profile.signedIn!==(account.signed_in===true)){scopeEpoch++;workingAgents=[];publish({tasks:[],declaredTasks:[],workshopMessages:[],workshopMessagesMore:false,workshopMessagesBefore:null,workshopMessagesScope:null});}
  let attempt=null;
  if(accountSignInPending){
   attempt=await request('/api/universal/cloud-signin');
@@ -258,7 +281,7 @@ async function refreshLive() {
  refreshInFlight=true;
  try {
   await taskRefreshInFlight;
-  for(const refresh of [refreshAgents,()=>refreshApplicationUpdate(true),refreshAccount,api.listProviders,refreshSettingsControls,refreshApprovals,refreshWatcher,refreshHostSkills,refreshDesktop,refreshNotifications]){
+  for(const refresh of [refreshAgents,...(Array.isArray(state.hosts)?[api.readHostAvailability]:[]),()=>refreshApplicationUpdate(true),refreshAccount,api.listProviders,refreshSettingsControls,refreshApprovals,refreshWatcher,refreshHostSkills,refreshDesktop,refreshNotifications]){
    try{await refresh();}catch(error){publish({connectionNotice:error.message});}
   }
  }
@@ -485,7 +508,7 @@ Object.assign(api,{
   return mutate(()=>interaction(b.control,{event_facts:[{input:specs[0].input,value:input.label},{input:specs[1].input,value:String(input.value??'')}]}));
  },
  async approve(id){const card=state.approvals.find(c=>c.id===id);if(card?.approvalKind==='social'){const result=await request('/api/universal/social-approve',{delegation:card.delegation,input_digest:card.input_digest,decision:'approve'});await refreshApprovals();return result;}if(!card?.delegation||!card?.input_digest||!card?.work)return unavailable('approve','No reviewed model delegation');const binding=workshopBinding();const body={...binding,work:card.work,delegation:card.delegation,input_digest:card.input_digest};const inspected=await request('/api/universal/workshop-model-approval?'+new URLSearchParams(body));if(inspected.expired||inspected.input_digest!==card.input_digest)return {ok:false,status:'stale',message:'Review changed; refresh before approving.'};const result=await request('/api/universal/workshop-model-approval',{...body,revision:inspected.revision});await refreshTasks();return result;},
-  async selectGraph(id){const epoch=++scopeEpoch;restoreGraph=false;workingAgents=[];publish({tasks:[],workshopMessages:[],workshopMessagesMore:false,workshopMessagesBefore:null,workshopMessagesScope:null,approvals:[],approvalActionsReady:false,desktopReady:false,desktop:{program:"",stage:"",taskId:null,offers:[]},watcherReady:false,watcher:copy(emptyWatcher),hostSkillsReady:false,hostSkills:[],connectorBundle:null});await openGraph(id);if(epoch!==scopeEpoch)return state.graph;await commands.load();if(epoch!==scopeEpoch)return state.graph;project();await refreshGraphs();if(epoch!==scopeEpoch)return state.graph;rememberGraph(id);await refreshTasks();if(epoch!==scopeEpoch)return state.graph;await refreshAgents();return state.graph;},
+  async selectGraph(id){const epoch=++scopeEpoch;restoreGraph=false;workingAgents=[];publish({tasks:[],declaredTasks:[],workshopMessages:[],workshopMessagesMore:false,workshopMessagesBefore:null,workshopMessagesScope:null,approvals:[],approvalActionsReady:false,desktopReady:false,desktop:{program:"",stage:"",taskId:null,offers:[]},watcherReady:false,watcher:copy(emptyWatcher),hostSkillsReady:false,hostSkills:[],connectorBundle:null});await openGraph(id);if(epoch!==scopeEpoch)return state.graph;await commands.load();if(epoch!==scopeEpoch)return state.graph;project();await refreshGraphs();if(epoch!==scopeEpoch)return state.graph;rememberGraph(id);await refreshTasks();if(epoch!==scopeEpoch)return state.graph;await refreshAgents();return state.graph;},
  async selectWorkspace(id){return api.selectGraph(id);},
  getUsageSummary:()=>({'Usage':'Usage is unavailable.'}),
  async setConnection(id,values){if(values.connected===false)return request('/api/universal/social-connection',{provider:id,action:'cancel'});if(values.connected===true)return request('/api/universal/social-connection',{provider:id,action:'start'});return unavailable('setConnection','No sign-in action requested');},
@@ -498,7 +521,7 @@ Object.assign(api,{
   if(state.update.restartRefusal)throw Error(state.update.restartRefusal);
   return updateAction('reload');
  },
- async listWorkspaces(){const data=await request('/api/universal/workspace-roots',{action:'list'});const roots=[...(data.built_in?[{...data.built_in,root_id:data.built_in.id,builtIn:true}]:[]),...(data.roots||[])];const workspaces=roots.map(w=>({id:w.root_id,name:w.label||w.root_id,folder:w.path,canvas:w.canvas||'',builtIn:w.builtIn===true,removable:w.removable!==false,privacy:w.privacy}));publish({workspaces});return workspaces;},
+ async listWorkspaces(){const data=await request('/api/universal/workspace-roots',{action:'list'});const roots=[...(data.built_in?[{...data.built_in,root_id:data.built_in.id,builtIn:true}]:[]),...(data.roots||[])];const workspaces=roots.map(w=>({id:w.root_id,name:w.label||(w.builtIn?'ArchHub':w.root_id),folder:w.path,canvas:w.canvas||'',builtIn:w.builtIn===true,removable:w.removable!==false,privacy:w.privacy}));publish({workspaces});return workspaces;},
  async addWorkspace(input={}){let path=input.folder;if(!path){const picked=await request('/api/universal/workspace-roots',{action:'browse'});path=picked.path;if(!path)return {cancelled:true,message:'Folder selection cancelled'};}const result=await request('/api/universal/workspace-roots',{action:'register',path,privacy:'private',profile:'client'});await api.listWorkspaces();return {...result,message:'Workspace registered'};},
  async removeWorkspace(id){const result=await request('/api/universal/workspace-roots',{action:'unregister',id});await api.listWorkspaces();return result;},
 });
@@ -891,8 +914,10 @@ api.setProviderModel=async(id,model)=>{const result=await settingsAction('setPro
 api.disconnectSecret=async id=>{const result=await settingsAction('disconnectSecret',[id]);await refreshSocialConnections();return result;};
 api.setCompanionState=values=>settingsAction('setCompanionState',[values]);
 async function refreshSocialConnections(){
+ const identity=state.profile.id,epoch=scopeEpoch;
  const data=await request('/api/universal/social-connections');
  if(!Array.isArray(data.items))throw Error('The connection owner did not return accounts. Open Connections and retry.');
+ if(identity!==state.profile.id||epoch!==scopeEpoch)return state.connections;
  const connections=data.items.map(row=>({...row,id:row.provider,connected:row.state==='connected'}));
  publish({connections});return connections;
 }
@@ -1028,7 +1053,12 @@ for(const operationName of ['createCommunityGroup','issueCommunityInvite','revok
 const restUpdateGraph=api.updateGraph;
 api.updateGraph=(id,values)=>Object.keys(values).every(key=>['name','pinned','documentation','customProperties','courtStatus','thumbnail'].includes(key))?restUpdateGraph(id,values):restCommand('updateGraph',[id,values]);
 api.getDecisionState=id=>state.graph.nodes.find(node=>node.id===id)?.output?.decision??null;
-api.readHostAvailability=async()=>request('/api/universal/hosts');
+api.readHostAvailability=async()=>{
+ const data=await request('/api/universal/hosts');
+ const hosts=data.connectors||data.hosts;
+ publish({hosts:Array.isArray(hosts)?hosts:[],hostsProbing:data.probing===true,
+  hostError:Array.isArray(hosts)?'':'Program status is unavailable. Refresh Connections and retry.'});return data;
+};
 // WIRE-rest end
 for(const name of researchActions)api[name]=async(...args)=>{
  if(!api.supportsAction(name))throw Error('Open the graph Workshop before running this research action.');
@@ -1045,13 +1075,15 @@ for(const name of researchActions)api[name]=async(...args)=>{
 // Other contract operations have no verified backend owner: the fallback is a visible plain state.
 // WIRE-projects
 async function refreshProjectData() {
- const [schedules,templates]=await Promise.all([
-  canvasOperation('project_schedules',[]),canvasOperation('list_skills',[])]);
- if(!Array.isArray(schedules)||!Array.isArray(templates))throw Error('The project owner returned an invalid schedule or template list. Refresh the graph and retry.');
+ const [schedules,skills,library]=await Promise.all([
+  canvasOperation('project_schedules',[]),canvasOperation('list_skills',[]),request('/api/universal/node-library?templates=1').catch(error=>({error:error.message}))]);
+ if(!Array.isArray(schedules)||!Array.isArray(skills))throw Error('The project owner returned an invalid schedule or template list. Refresh the graph and retry.');
+ const valid=Array.isArray(library.templates)&&library.templates.every(t=>Array.isArray(t.children));
+ const templates=[...(valid?library.templates.map(t=>({...t,runs:t.run_count,chain:t.children.map(n=>n.title),library:true})):[]),...skills];
  await refreshTasks();
  const feedback=state.tasks.filter(t=>t.title.startsWith('Feedback: ')).map(t=>({id:t.id,text:t.title.slice('Feedback: '.length),status:t.status,
   response:t.messages.filter(m=>m.role!=='user').map(m=>m.text||m.content||'').join('\n')}));
- publish({schedules,templates,feedback});
+ publish({schedules,templates,feedback,templateError:valid?'':library.error||'Templates could not be read. Retry All templates.'});
  return {schedules,templates};
 }
 const projectExport=api.exportData;
@@ -1098,7 +1130,7 @@ Object.assign(api,{
    const node=state.graph.nodes.find(n=>n.id===target||n.title===target);
    const skill=state.templates.find(t=>t.id===target||t.title===target);
    if(node)roots=node.id;
-   else if(skill){const opened=await api.openTemplateGraph(skill.id);const outgoing=new Set(skill.recipe.wires.map(pair=>pair[0]));roots=opened.nodes.filter((id,index)=>!outgoing.has(index));}
+   else if(skill){const opened=await api.openTemplateGraph(skill.id);if(skill.library){await api.ungroupNode(opened.root);const outgoing=new Set(state.graph.wires.filter(w=>opened.nodes.includes(w.to)).map(w=>w.from));roots=opened.nodes.filter(id=>!outgoing.has(id));}else{const outgoing=new Set(skill.recipe.wires.map(pair=>pair[0]));roots=opened.nodes.filter((id,index)=>!outgoing.has(index));}}
    else throw Error('Choose the node or saved skill to repeat on the canvas, then add its schedule.');
   }
   const result=await canvasOperation('add_schedule',[roots,time]);await refreshProjectData();return result;
@@ -1109,8 +1141,12 @@ Object.assign(api,{
  importRecipe:yaml=>canvasOperation('import_recipe',[yaml]),
  importFlow:flow=>canvasOperation('import_recipe',[flow]),
  async saveSkill(name){const result=await canvasOperation('save_skill',[name]);await refreshProjectData();return result;},
- openTemplateGraph:id=>canvasOperation('open_skill',[id]),
- async startTemplate(id){const opened=await api.openTemplateGraph(id);return projectRunResult(await mutate(()=>request('/api/universal/run-graph',{roots:opened.nodes})));},
+ async openTemplateGraph(id){
+  if(!state.templates.some(t=>t.id===id&&t.library))return canvasOperation('open_skill',[id]);
+  const opened=await mutate(()=>request('/api/universal/node-create',{template:id,expected_scope:state.graph.id}));
+  return {...opened,nodes:opened.children};
+ },
+ async startTemplate(id){const parent=state.graph.id;const opened=await api.openTemplateGraph(id);if(opened.root){scopeEpoch++;publish({declaredTasks:[]});await mutate(()=>commands.open(opened.root));}const runEpoch=scopeEpoch;const raw=await mutate(()=>request('/api/universal/run-graph',{roots:opened.nodes}));const result=scopeEpoch===runEpoch?projectRunResult(raw):raw;if(opened.root&&scopeEpoch===runEpoch&&state.graph.id===opened.root){scopeEpoch++;publish({declaredTasks:[]});await mutate(()=>commands.open(parent));}await refreshProjectData();return result;},
  async exportRecipe(){return {name:'Recipe.yaml',type:'application/yaml',content:JSON.stringify(await canvasOperation('export_recipe',[]),null,2)};},
  async exportData(name,id){
   if(name==='Recipe')return api.exportRecipe();
@@ -1189,7 +1225,7 @@ api.compatibleNodes=endpoint=>{
 };
 api.addCompatibleNode=(endpoint,item,position)=>canvasOperation('add_compatible_node',[endpoint,item,position]);
 api.insertConvert=wire=>canvasOperation('insert_convert',[typeof wire==='string'?wire:wire?.id||wire]);
-api.addTemplateNode=async id=>{const opened=await api.openTemplateGraph(id);return mutate(()=>commands.composition('group',opened.nodes));};
+api.addTemplateNode=async id=>{const opened=await api.openTemplateGraph(id);return opened.root?state.graph.nodes.find(n=>n.id===opened.root)||opened:mutate(()=>commands.composition('group',opened.nodes));};
 api.prepareMod=(name,description)=>socialWork('Prepare a reviewed ArchHub mod package using the existing supported stream engines. Do not install or claim completion before validation.\n'+JSON.stringify({name,description}));
 api.refreshFiles=async()=>{const files=await canvasOperation('project_files',[]);publish({files});return files;};
 api.addFile=async(_name,kind='Project file')=>{

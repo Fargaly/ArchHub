@@ -39,9 +39,15 @@ def _lineage(peer):
 def declarations(owner, *, include_archived=False):
     """Read the same typed declaration rows used with the UI closed."""
     from .workshop_mailbox import read_declarations
-    connection, lock = owner.universal_store.sqlite_storage()
-    with lock:
-        return read_declarations(connection, include_archived=include_archived)
+    from .conversation_content import read_content_binding
+    with owner.mutation_lock:
+        owner.conversation_content._require_live_owner()
+        registry = owner.universal_registry
+        binding = read_content_binding(owner.universal_store.snapshot(), registry.deliberation_protocol,
+            application_root=registry.application_root, space_root=registry.workshop_root)
+        history = owner.conversation_content._history_for(binding)
+    with history._transaction():
+        return read_declarations(history._db, include_archived=include_archived)
 
 
 def canonical_path(value, cwd):

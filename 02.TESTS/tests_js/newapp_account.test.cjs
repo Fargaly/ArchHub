@@ -81,7 +81,7 @@ test('unfinished controls and modal launchers are omitted from the rendered desi
  for(const name of ['vendor/react.js','vendor/react-dom.js','vendor/babel.js'])w.eval(fs.readFileSync(path.join(studio,name),'utf8'));
  for(const name of ['tokens.jsx','ds/index.jsx','icons.jsx','ui.jsx','ds_baboom.jsx','ds_settings3.jsx','workflow-states.jsx','agent-states.jsx','answer-widgets.jsx'])w.eval(w.Babel.transform(fs.readFileSync(path.join(studio,name),'utf8'),{presets:['react']}).code);
  const root=w.ReactDOM.createRoot(w.document.getElementById('root'));
- const render=(component,props={})=>w.ReactDOM.flushSync(()=>root.render(w.React.createElement(w.UI.Ctx.Provider,{value:{act:fn=>fn()}},w.React.createElement(component,props))));
+ const render=(component,props={})=>w.ReactDOM.flushSync(()=>root.render(w.React.createElement(w.UI.Ctx.Provider,{value:{act:fn=>fn(),composerDraft:{text:'',revision:0},setComposerDraft(){}}},w.React.createElement(component,props))));
  try{
   render(w.UI.Providers);
   assert.equal(w.document.querySelector('[aria-label="Codex signed in"]'),null);
@@ -1263,11 +1263,12 @@ test('STUDIOTESTS rapid parameter edits serialize writes and retain the latest v
  let release,active=0,peak=0;const held=new Promise(resolve=>release=resolve);
  const property={label:'value',value:'initial',relation:'rel',editable:true};
  const canvas={root:'g',nodes:[{id:'n',label:'Number',properties:[property],ports:[]}],wires:[]};
- const {api}=await adapter({signed_in:false},{'/api/universal/canvas':canvas,'/api/universal/set-property':async body=>{active++;peak=Math.max(peak,active);if(body.value==='first')await held;property.value=body.value;active--;return {ok:true};}});
- const first=api.setNodeParam('n','value','first'),last=api.setNodeParam('n','value','final');
- await new Promise(resolve=>setImmediate(resolve));release();await Promise.all([first,last]);
+ const {api,requests}=await adapter({signed_in:false},{'/api/universal/canvas':canvas,'/api/universal/set-property':async body=>{active++;peak=Math.max(peak,active);if(body.value==='first')await held;property.value=body.value;active--;return {ok:true};}});
+ const first=api.setNodeParam('n','value','first'),middle=api.setNodeParam('n','value','middle'),last=api.setNodeParam('n','value','final');
+ await new Promise(resolve=>setImmediate(resolve));release();await Promise.all([first,middle,last]);
  assert.equal(peak,1,'parameter writes must not overlap');
  assert.equal(property.value,'final','the latest confirmed edit must survive');
+ assert.deepEqual(requests.filter(r=>r.url==='/api/universal/set-property').map(r=>r.body.value),['first','final'],'pending edits coalesce to the latest value');
 });
 
 test('STUDIOTESTS stop-all posts once and preserves state after refusal',async()=>{
@@ -1295,12 +1296,62 @@ test('STUDIOTESTS latest node result survives the current canvas projection',asy
  assert.equal(api.getSnapshot().graph.nodes[0].output,'3 walls built');
 });
 
-test('STUDIOTESTS collapsed group projects member-owned boundary ports',async()=>{
- const out={id:'member-out',name:'out',owner:'member-a',owner_label:'Member',side:'source',mode:'connection',connectable:true};
- const input={id:'member-in',name:'in',owner:'member-a',owner_label:'Member',side:'target',mode:'connection',connectable:true};
- const canvas={root:'g',nodes:[{id:'group-a',label:'Group',composition:true,properties:[],ports:[],member_ports:[out,input]}],wires:[]};
+// Clean ApplicationServer projects declared group ports; member ports belong to the entered scope.
+// clean_visual_projection.py::project_clean_visual_canvas, application_server.py::_clean_connect.
+test('STUDIOTESTS collapsed group projects declared ports and preserves member identities',async()=>{
+ const port=(name,side)=>({id:'decl:group-a:'+name,name,side,mode:'declared',connectable:true,read_only:false,value_type:'number',connect_route:'direct'});
+ const canvas={root:'g',nodes:[{id:'group-a',label:'Group',composition:true,members:[{id:'member-a',title:'Member'}],properties:[],ports:[port('out','source'),port('in','target')]}],wires:[]};
  const {api}=await adapter({signed_in:false},{'/api/universal/canvas':canvas});
  const group=api.getSnapshot().graph.nodes[0];
- assert.deepEqual(JSON.parse(JSON.stringify(group.outputs.map(p=>[p.id,p.name,p.owner]))),[['member-out','Member · out','member-a']]);
- assert.deepEqual(JSON.parse(JSON.stringify(group.inputs.map(p=>[p.id,p.name,p.owner]))),[['member-in','Member · in','member-a']]);
+ assert.deepEqual(JSON.parse(JSON.stringify(group.outputs.map(p=>[p.id,p.name,p.type,p.connect_route]))),[['decl:group-a:out','out','number','direct']]);
+ assert.deepEqual(JSON.parse(JSON.stringify(group.inputs.map(p=>[p.id,p.name,p.type,p.connect_route]))),[['decl:group-a:in','in','number','direct']]);
+ assert.deepEqual([...group.children],['member-a']);
+ canvas.nodes=[{id:'member-a',label:'Member',properties:[],ports:[{...port('out','source'),id:'decl:member-a:out'}]}];
+ const entered=await adapter({signed_in:false},{'/api/universal/canvas':canvas});
+ assert.equal(entered.api.getSnapshot().graph.nodes[0].outputs[0].id,'decl:member-a:out');
+});
+
+
+test('STUDIOFIX concurrent insertions reserve different points and explicit drop coordinates survive',async()=>{
+ let release,began,next=0;const held=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>began=resolve);
+ const canvas={root:'g',nodes:[],wires:[],catalog:[{id:'def',name:'Number',descriptor:{engine:'data.constant'}}]};
+ const {api,requests}=await adapter({signed_in:false},{'/api/universal/canvas':canvas,'/api/universal/node-create':async body=>{
+  const id='node-'+next++;if(id==='node-0'){began();await held;}
+  canvas.nodes.push({id,label:'Number',x:body.x,y:body.y,properties:[],ports:[]});return {ok:true,root:id};
+ }});
+ const first=api.addNode('def');await ready;const second=api.addNode('def');release();await Promise.all([first,second]);
+ const points=requests.filter(r=>r.url==='/api/universal/node-create').map(r=>r.body.x);
+ assert.equal(new Set(points).size,2);
+ await api.addNode('def',{x:-20,y:55});
+ assert.deepEqual(requests.filter(r=>r.url==='/api/universal/node-create').at(-1).body,{title:'Number',engine:'data.constant',x:-20,y:55});
+});
+
+test('STUDIOFIX a refused parameter write does not poison a later explicit edit or another key',async()=>{
+ let refuse=true;
+ const props=['value','other'].map(label=>({label,value:'initial',relation:label,editable:true}));
+ const canvas={root:'g',nodes:[{id:'n',label:'Number',properties:props,ports:[]}],wires:[]};
+ const {api}=await adapter({signed_in:false},{'/api/universal/canvas':canvas,'/api/universal/set-property':body=>{
+  if(refuse&&body.relation==='value')return {ok:false,error:'Parameter refused'};
+  props.find(p=>p.relation===body.relation).value=body.value;return {ok:true};
+ }});
+ await assert.rejects(api.setNodeParam('n','value','bad'),/Parameter refused/);
+ await api.setNodeParam('n','other','independent');refuse=false;await api.setNodeParam('n','value','recovered');
+ assert.deepEqual(props.map(p=>p.value),['recovered','independent']);
+});
+
+for(const final of ['newest','first'])test('STUDIOFIX queued '+final+' edit survives a failed in-flight parameter write',async()=>{
+ let release;const held=new Promise(resolve=>release=resolve);
+ const property={label:'value',value:'initial',relation:'rel',editable:true};
+ const canvas={root:'g',nodes:[{id:'n',label:'Number',properties:[property],ports:[]}],wires:[]};
+ let attempts=0;
+ const {api,requests}=await adapter({signed_in:false},{'/api/universal/canvas':canvas,'/api/universal/set-property':async body=>{
+  if(++attempts===1){await held;return {ok:false,error:'First write refused'};}
+  property.value=body.value;return {ok:true};
+ }});
+ const first=api.setNodeParam('n','value','first'),middle=api.setNodeParam('n','value','middle'),last=api.setNodeParam('n','value',final);
+ const settled=Promise.allSettled([first,middle,last]);
+ await new Promise(resolve=>setImmediate(resolve));release();const results=await settled;
+ assert.deepEqual(requests.filter(r=>r.url==='/api/universal/set-property').map(r=>r.body.value),['first',final],'newest edit must still reach the owner after failure');
+ assert.equal(property.value,final);
+ assert.equal(results.at(-1).status,'fulfilled','queued caller must not receive the older write failure');
 });

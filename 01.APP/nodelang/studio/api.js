@@ -43,7 +43,8 @@ let updateGeneration=0, updateActionPending=false;
 let updateReadsPending=0, updateReadFailures=0, updateReadAfter=0;
 // Same bounded five-second cadence as the existing studio Tool Hub, paused while hidden.
 const ownerRefreshMs=5000;
-const defaults=new Map();
+const defaults=new Map(), parameterWrites=new Map();
+let insertionPoint={scope:null,x:240};
 const copy=value=>window.structuredClone(value);
 function publish(values={}) { state={...state,...values,revision:state.revision+1};listeners.forEach(fn=>fn()); }
 function notice(message) { window.dispatchEvent(new CustomEvent('archhub:notice',{detail:{message}})); }
@@ -276,15 +277,31 @@ function interaction(control,extra={}) {
  const b=bindings[0];return request('/api/universal/interaction',{interaction:b.interaction,control:b.control,event:b.event,
  expected_scope:canvas.scope?.current||canvas.root,revision:canvas.revision,command_id:window.crypto.randomUUID(),...extra});
 }
-async function nodeProperty(id,key,value) {
+function nodeProperty(id,key,value) {
+ const epoch=scopeEpoch,address=JSON.stringify([epoch,id,key]),pending=parameterWrites.get(address);
+ if(pending){pending.value=value;return pending.promise;}
+ const write={value};parameterWrites.set(address,write);
+ write.promise=(async()=>{
+ let result;
+ do {
+ const submitted=write.value;delete write.value;value=submitted;
+ try {
+ if(epoch!==scopeEpoch)throw Error('The graph changed before this parameter was saved.');
  const n=canvas.nodes.find(n=>n.id===id),p=rows(n).find(p=>p.label===key);
  if(!p?.editable)return unavailable('setNodeParam','This parameter has no editable owner');
  if(p.setting?.kind==='baboom'){const preferences={value:rows(n).find(r=>r.setting?.key==='start_with_archhub')?.value,shows_as:rows(n).find(r=>r.setting?.key==='shows_as')?.value};preferences[p.setting.key==='shows_as'?'shows_as':'value']=value;value=JSON.stringify(preferences);}
  const binding=(canvas.interaction_projection?.bindings||[]).find(b=>b.control===p.relation);
- let result;
  if(binding){const spec=binding.event_facts?.find(f=>f.source==='submitted');if(!spec)return unavailable('setNodeParam','No submitted-value binding');result=await interaction(binding.control,{event_facts:[{input:spec.input,value:typeof value==='string'?value:JSON.stringify(value)}]});}
  else result=await request('/api/universal/set-property',{relation:p.relation,value:typeof value==='string'?value:JSON.stringify(value)});
- await commands.load();project();return state.graph.nodes.find(n=>n.id===id)||result;
+ await commands.load();
+ if(epoch!==scopeEpoch)throw Error('The graph changed while this parameter was saved.');
+ project();result=state.graph.nodes.find(n=>n.id===id)||result;
+ if(Object.is(write.value,submitted))delete write.value;
+ }catch(error){if(epoch!==scopeEpoch||!Object.hasOwn(write,'value'))throw error;}
+ }while(Object.hasOwn(write,'value'));
+ return result;
+ })().finally(()=>parameterWrites.delete(address));
+ return write.promise;
 }
 function rememberGraph(id) {
  if(id===state.graphs[0]?.id||id===session?.lastGraphId)return;
@@ -400,9 +417,15 @@ Object.assign(api,{
  resetNodeParam(id,key){const node=state.graph.nodes.find(n=>n.id===id);return node&&Object.hasOwn(node.defaults,key)?nodeProperty(id,key,node.defaults[key]):unavailable('resetNodeParam','Backend default unavailable');},
  async renameNode(id,title){return nodeProperty(id,'title',title);},
  async addNode(name,position={}){
-  const {x=240,y=200}=position;
+  const scope=scopeEpoch+':'+state.graph.id;
+  let {x,y=200}=position;
+  if(x===undefined){
+   x=insertionPoint.scope===scope?insertionPoint.x:240;
+   for(const existing of state.graph.nodes)x=Math.max(x,existing.x+280);
+   insertionPoint={scope,x:x+280};
+  }
   const modEntry=state.catalogue.find(c=>c.modId&&(c.id===name||c.name===name));
-  if(modEntry){const made=await canvasOperation('import_mod_node',[modEntry.modId,modEntry.itemId]);if(position.x!==undefined||position.y!==undefined)await api.moveNode(made.id,{x,y});return state.graph.nodes.find(n=>n.id===made.id)||made;}
+  if(modEntry){const made=await canvasOperation('import_mod_node',[modEntry.modId,modEntry.itemId]);await api.moveNode(made.id,{x,y});return state.graph.nodes.find(n=>n.id===made.id)||made;}
   const entry=(canvas.catalog||[]).find(c=>c.id===name||c.name===name);
   if(!entry)return unavailable('addNode','Definition unavailable');
   if(entry.revision_root){await mutate(()=>commands.create({definition:entry.id,definition_revision:entry.revision_root,x,y}));return state.graph.nodes.find(n=>n.id===canvas.selected);}

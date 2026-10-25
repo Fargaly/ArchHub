@@ -157,13 +157,30 @@
       wire = s.graph.wires.find(w => w.id === wireId);
     React.useLayoutEffect(() => {
       if (requestState !== 'loaded' || !world.current) return;
-      const positions = {};
+      const positions = {}, points = new Map(), prior = layout.scope === scope ? layout.positions : {},
+        minX = Math.min(...sourceNodes.map(n => n.x), 0), rowWidth = Math.max(760, Math.ceil(Math.sqrt(sourceNodes.length)) * 310);
       for (const n of sourceNodes) {
-        const el = world.current.querySelector('[data-graph-node="' + n.id + '"]'),
-          box = {x:n.x, y:n.y, w:(el?.offsetWidth || el?.getBoundingClientRect().width / view.current.zoom || 224) + (isGroup(n) ? 10 : 0),
-            h:(el?.offsetHeight || el?.getBoundingClientRect().height / view.current.zoom || 160) + (isGroup(n) ? 10 : 0)};
-        // Saved user positions are authoritative; only Arrange may repack them.
-        positions[n.id] = box;
+        const point = JSON.stringify([n.x,n.y]);points.set(point,(points.get(point)||0)+1);
+      }
+      const boxes = sourceNodes.map(n => {
+        const previous = prior[n.id], unchanged = previous?.sourceX === n.x && previous?.sourceY === n.y,
+          el = world.current.querySelector('[data-graph-node="' + n.id + '"]');
+        return {id:n.id,x:unchanged ? previous.x : n.x,y:unchanged ? previous.y : n.y,sourceX:n.x,sourceY:n.y,
+          w:(el?.offsetWidth || el?.getBoundingClientRect().width / view.current.zoom || 224) + (isGroup(n) ? 10 : 0),
+          h:(el?.offsetHeight || el?.getBoundingClientRect().height / view.current.zoom || 160) + (isGroup(n) ? 10 : 0),
+          stacked:points.get(JSON.stringify([n.x,n.y])) > 1};
+      }), occupied = boxes.filter(box => !box.stacked);
+      for (const box of boxes) {
+        // CANVASLOOK display repair only for coincident defaults; distinct saved positions stay authoritative.
+        if (box.stacked) {
+          let hit;
+          while ((hit = occupied.find(b => box.x < b.x+b.w+36 && box.x+box.w+36 > b.x && box.y < b.y+b.h+48 && box.y+box.h+48 > b.y))) {
+            box.x = hit.x+hit.w+36;
+            if (box.x+box.w > minX+rowWidth) { box.x=minX;box.y=Math.max(box.y,hit.y+hit.h)+64; }
+          }
+          occupied.push(box);
+        }
+        positions[box.id] = box;
       }
       setLayout(old => old.scope === scope && JSON.stringify(old.positions) === JSON.stringify(positions) ? old : {scope,positions});
     }, [requestState, scope, s.graph.nodes]);

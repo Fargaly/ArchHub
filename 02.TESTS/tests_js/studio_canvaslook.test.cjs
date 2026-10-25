@@ -120,3 +120,12 @@ test('saving a drag keeps untouched cards at their repaired display positions',a
   assert.deepEqual(after.g1,before.g1);assert.deepEqual(after.g2,before.g2);
   assert.equal((await page.evaluate(()=>window.fixtureCalls)).filter(c=>c.action==='move').length,1);
 });
+
+
+test('STUDIOFIX distinct saved coordinates stay authoritative even when intentionally overlapping',async t=>{
+ const graph=fixture();graph.nodes=graph.nodes.filter(n=>!n.children.length).slice(0,2).map((n,i)=>({...n,parent:null,x:20+i*80,y:40+i*10}));graph.wires=[];
+ const page=await mount(t,graph);
+ const positions=await page.locator('[data-graph-node]').evaluateAll(els=>els.map(el=>[el.style.left,el.style.top]));
+ assert.deepEqual(positions,[['20px','40px'],['100px','50px']]);
+ assert.deepEqual(await page.evaluate(()=>window.fixtureCalls),[]);
+});

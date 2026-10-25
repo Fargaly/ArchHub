@@ -293,7 +293,7 @@ test('all update entry points lead to the same review with one restart control',
   }finally{v.close();}
 });
 
-test('STUDIOTESTS a late successful send preserves a newer unsent Composer draft',async()=>{
+for(const draft of ['New unsent draft','First request',null])test(draft === 'New unsent draft' ? 'STUDIOTESTS a late successful send preserves a newer unsent Composer draft' : draft === null ? 'STUDIOFIX a successful send clears only its unchanged draft' : 'STUDIOFIX a retyped identical draft survives a late send and navigation',async()=>{
  const pending=deferred(),sends=[];
  const v=await mount({get:()=>status('idle'),workshop:body=>{
   if(body.function==='sendToBaboom'){sends.push(body);return pending.promise;}
@@ -306,11 +306,15 @@ test('STUDIOTESTS a late successful send preserves a newer unsent Composer draft
   const type=text=>{Object.getOwnPropertyDescriptor(v.win.HTMLTextAreaElement.prototype,'value').set.call(message,text);message.dispatchEvent(new v.win.Event('input',{bubbles:true}));message.dispatchEvent(new v.win.Event('change',{bubbles:true}));};
   type('First request');await v.settle(()=>!v.doc.querySelector('[aria-label="Send ↵"]').disabled,'first draft is ready');
   const form=message.closest('form');form.dispatchEvent(new v.win.Event('submit',{bubbles:true,cancelable:true}));form.dispatchEvent(new v.win.Event('submit',{bubbles:true,cancelable:true}));
-  await v.settle(()=>sends.length===1,'one admitted send');type('New unsent draft');await pause();
+  await v.settle(()=>sends.length===1,'one admitted send');
+  if(draft!==null){type('Intervening edit');await pause();type(draft);await pause();}
   pending.resolve({ok:true,result:{id:'task-a',title:'First request'}});
   await v.settle(()=>v.doc.title.includes('Workshop'),'successful send opened its confirmed task');
   assert.equal(sends.length,1);
-  assert.equal(v.doc.querySelector('textarea[aria-label="Message"]').value,'New unsent draft','late receipt must not erase newer text');
+  assert.equal(v.doc.querySelector('textarea[aria-label="Message"]').value,'','Home text must not leak into a task reply');
+  await v.click(v.doc.querySelector('[aria-label="Home"]'));
+  await v.settle(()=>v.doc.title.includes('Home'),'return to the sending surface');
+  assert.equal(v.doc.querySelector('textarea[aria-label="Message"]').value,draft??'','late receipt clears only its submitted draft; newer Home edits survive navigation');
  }finally{pending.resolve({ok:true,result:{id:'task-a'}});v.close();}
 });
 
@@ -321,7 +325,79 @@ test('STUDIOTESTS Undo and Redo ignore editable targets and use the current grap
   const key=(target,shiftKey=false)=>target.dispatchEvent(new v.win.KeyboardEvent('keydown',{key:'z',ctrlKey:true,shiftKey,bubbles:true,cancelable:true}));
   for(const tag of ['input','textarea','select']){const field=v.doc.createElement(tag);v.doc.body.append(field);key(field);key(field,true);field.remove();}
   const editable=v.doc.createElement('div');editable.contentEditable='true';v.doc.body.append(editable);key(editable);key(editable,true);editable.remove();
+  for(const value of ['true','','plaintext-only']){const editable=v.doc.createElement('div'),child=v.doc.createElement('span');editable.setAttribute('contenteditable',value);editable.append(child);v.doc.body.append(editable);key(child);key(child,true);editable.remove();}
   await pause();assert.equal(undo,0,'editing must not undo the graph');assert.equal(redo,0,'editing must not redo the graph');
   key(v.doc.body);key(v.doc.body,true);await pause();assert.equal(undo,1);assert.equal(redo,1);
  }finally{v.close();}
+});
+
+test('STUDIOFIX an auxiliary Composer edits and sends without replacing the primary draft',async()=>{
+ const sends=[],v=await mount({get:()=>status('idle'),workshop:body=>{
+  if(body.function==='sendToBaboom'){sends.push(body);return {ok:true,result:{id:'task-aux',title:'Auxiliary request'}};}
+  if(body.function==='getAgentSurface')return {ok:true,result:{agentProfiles:{},learning:{layers:{}}}};
+  if(body.function==='getGraphMetadata')return {ok:true,result:{}};
+  return {ok:true,result:[]};
+ }});
+ try{
+  await v.click(v.doc.querySelector('[aria-label="Workshop"]'));await v.settle(()=>!!v.button('New task'),'Workshop opens');
+  const primary=v.doc.querySelector('textarea[aria-label="Message"]');
+  const type=(field,text)=>{Object.getOwnPropertyDescriptor(v.win.HTMLTextAreaElement.prototype,'value').set.call(field,text);field.dispatchEvent(new v.win.Event('input',{bubbles:true}));field.dispatchEvent(new v.win.Event('change',{bubbles:true}));};
+  type(primary,'Primary unsent draft');await pause();await v.click(v.button('New task'));
+  const auxiliary=v.doc.querySelector('[role="dialog"] textarea[aria-label="Message"]');assert.ok(auxiliary);
+  assert.equal(auxiliary.value,'','a new task owns its own empty draft');
+  type(auxiliary,'Auxiliary request');await pause();assert.equal(primary.value,'Primary unsent draft');
+  auxiliary.closest('form').dispatchEvent(new v.win.Event('submit',{bubbles:true,cancelable:true}));
+  await v.settle(()=>sends.length===1&&!v.doc.querySelector('[role="dialog"]'),'auxiliary send confirmed');
+  assert.equal(v.doc.querySelector('textarea[aria-label="Message"]').value,'Primary unsent draft');
+ }finally{v.close();}
+});
+
+test('STUDIOFIX Home and Workshop reply drafts are separate across navigation',async()=>{
+ const v=await mount({get:()=>status('idle'),workshop:body=>{
+  if(body.function==='getAgentSurface')return {ok:true,result:{agentProfiles:{},learning:{layers:{}}}};
+  if(body.function==='getGraphMetadata')return {ok:true,result:{}};
+  return {ok:true,result:[]};
+ }});
+ const message=()=>v.doc.querySelector('textarea[aria-label="Message"]');
+ const type=async text=>{const field=message();Object.getOwnPropertyDescriptor(v.win.HTMLTextAreaElement.prototype,'value').set.call(field,text);field.dispatchEvent(new v.win.Event('input',{bubbles:true}));field.dispatchEvent(new v.win.Event('change',{bubbles:true}));await pause();};
+ try{
+  await type('Home draft');
+  await v.click(v.doc.querySelector('[aria-label="Workshop"]'));
+  await v.settle(()=>v.doc.title.includes('Workshop'),'Workshop opens');
+  assert.equal(message().value,'','Workshop has its own draft');
+  await type('Reply draft');
+  await v.click(v.doc.querySelector('[aria-label="Home"]'));
+  await v.settle(()=>v.doc.title.includes('Home'),'Home opens');
+  assert.equal(message().value,'Home draft');
+  await v.click(v.doc.querySelector('[aria-label="Workshop"]'));
+  await v.settle(()=>v.doc.title.includes('Workshop'),'Workshop reopens');
+  assert.equal(message().value,'Reply draft');
+ }finally{v.close();}
+});
+
+test('STUDIOFIX task replies own separate drafts and late replies preserve newer text',async()=>{
+ const pending=deferred(),tasks=[{id:'task-a',title:'Task A',status:'WIP'},{id:'task-b',title:'Task B',status:'WIP'}];
+ const v=await mount({get:()=>status('idle'),workshop:body=>{
+  if(body.function==='listTasks')return {ok:true,result:tasks};
+  if(body.function==='sendToBaboom')return pending.promise;
+  if(body.function==='getAgentSurface')return {ok:true,result:{agentProfiles:{},learning:{layers:{}}}};
+  if(body.function==='getGraphMetadata')return {ok:true,result:{}};
+  return {ok:true,result:[]};
+ }});
+ const message=()=>v.doc.querySelector('textarea[aria-label="Message"]');
+ const type=async text=>{const field=message();Object.getOwnPropertyDescriptor(v.win.HTMLTextAreaElement.prototype,'value').set.call(field,text);field.dispatchEvent(new v.win.Event('input',{bubbles:true}));field.dispatchEvent(new v.win.Event('change',{bubbles:true}));await pause();};
+ const select=async title=>{await v.click([...v.doc.querySelectorAll('button.listbutton')].find(b=>b.textContent.includes(title)));};
+ try{
+  await v.click(v.doc.querySelector('[aria-label="Workshop"]'));
+  await v.settle(()=>!!message(),'Workshop opens');
+  await type('A reply');
+  message().closest('form').dispatchEvent(new v.win.Event('submit',{bubbles:true,cancelable:true}));
+  await pause();await type('A newer reply');
+  await select('Task B');assert.equal(message().value,'','task B owns a separate draft');
+  await type('B reply');
+  pending.resolve({ok:true,result:tasks[0]});
+  await v.settle(()=>!v.doc.querySelector('[aria-label="Send ↵"]').disabled,'late task send completed');
+  await select('Task A');assert.equal(message().value,'A newer reply','late task receipt must preserve newer text');
+  await select('Task B');assert.equal(message().value,'B reply');
+ }finally{pending.resolve({ok:true,result:tasks[0]});v.close();}
 });

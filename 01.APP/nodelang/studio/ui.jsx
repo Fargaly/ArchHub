@@ -141,8 +141,14 @@
   }) {
     const s = useData(),
       u = useApp();
-    const [text, setText] = React.useState(''),
-      [provider, setProvider] = React.useState(''),
+    const [localDraft,setLocalDraft] = React.useState({text:'',revision:0});
+    const draftKey = JSON.stringify([u.route,taskId || '']);
+    const {text,revision} = onSent ? localDraft : u.composerDraft[draftKey] || {text:'',revision:0},
+      setDraft = onSent ? setLocalDraft : update => u.setComposerDraft(current => ({
+        ...current,[draftKey]:update(current[draftKey] || {text:'',revision:0})
+      }));
+    const setText = value => setDraft(current => ({text:typeof value === 'function' ? value(current.text) : value,revision:current.revision+1}));
+    const [provider, setProvider] = React.useState(''),
       [sending, setSending] = React.useState(false),
       [contextOpen, setContextOpen] = React.useState(false);
     const pending = React.useRef(false);
@@ -157,7 +163,7 @@
           provider
         }));
         if (t) {
-          setText('');
+          setDraft(current => current.revision === revision ? {text:'',revision:current.revision+1} : current);
           u.setTask(t.id);
           onSent?.(t);
           if (!taskId && !onSent) u.go('workshop');

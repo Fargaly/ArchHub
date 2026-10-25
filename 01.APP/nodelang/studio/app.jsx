@@ -20,6 +20,7 @@
     const s = useData();
     const [route, setRoute] = React.useState('home'),
       [task, setTask] = React.useState(''),
+      [composerDraft, setComposerDraft] = React.useState({}),
       [modal, setModal] = React.useState(null),
       [toast, setToast] = React.useState(''),
       [advanced, setAdvanced] = React.useState(false),
@@ -192,6 +193,8 @@
     const value = {
       selectedNodeId,
       setSelectedNodeId,
+      composerDraft,
+      setComposerDraft,
       companion,
       setCompanion,
       libraryOpen,
@@ -253,7 +256,7 @@
           e.preventDefault();
           show('Search');
         }
-        if (e.ctrlKey && e.key.toLowerCase() === 'z' && !e.target.matches('input,textarea')) {
+        if (e.ctrlKey && e.key.toLowerCase() === 'z' && !e.target.isContentEditable && e.target.contentEditable !== 'true' && !e.target.closest('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"]')) {
           e.preventDefault();
           act(e.shiftKey ? api.redo : api.undo);
         }

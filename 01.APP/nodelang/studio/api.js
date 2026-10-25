@@ -40,6 +40,7 @@ let refreshTimer=null, refreshInFlight=false, taskRefreshInFlight=null, ready=fa
 let providerRoster=[], workingAgents=[];
 let controlsGeneration=0, notificationGeneration=0;
 let updateGeneration=0, updateActionPending=false;
+let updateReadsPending=0, updateReadFailures=0, updateReadAfter=0;
 // Same bounded five-second cadence as the existing studio Tool Hub, paused while hidden.
 const ownerRefreshMs=5000;
 const defaults=new Map();
@@ -212,16 +213,25 @@ function projectUpdate(data) {
   detail:data.detail||'Update status unavailable',updatedFrom:data.updated_from||'',updatedTo:data.updated_to||''};
  publish({update});return copy(update);
 }
-async function refreshApplicationUpdate() {
- if(updateActionPending)return copy(state.update);
+async function refreshApplicationUpdate(background=false) {
+ if(updateActionPending||(background&&(document.hidden||updateReadsPending||Date.now()<updateReadAfter)))return copy(state.update);
+ updateReadsPending++;
  const generation=++updateGeneration;
  try{
   const data=await request('/api/universal/application-update',undefined,true,AbortSignal.timeout(15000));
-  return generation===updateGeneration?projectUpdate(data):copy(state.update);
+  if(generation!==updateGeneration)return copy(state.update);
+  updateReadFailures=0;updateReadAfter=0;
+  if(state.connectionNotice==='Checking for updates…')publish({connectionNotice:''});
+  return projectUpdate(data);
  }catch(error){
   if(generation!==updateGeneration)return copy(state.update);
-  projectUpdate({state:'failed',current_build:state.update.installed,detail:error.message});throw error;
- }
+  const delay=[5000,15000,60000,300000][Math.min(updateReadFailures++,3)];
+  updateReadAfter=Date.now()+delay;
+  projectUpdate({state:'failed',current_build:state.update.installed,detail:error.message});
+  if(!state.connectionNotice||state.connectionNotice==='Checking for updates…')publish({connectionNotice:'Checking for updates…'});
+  if(!background)throw error;
+  return copy(state.update);
+ }finally{updateReadsPending--;}
 }
 async function updateAction(action) {
  if(updateActionPending)throw Error('An update action is already in progress. Read status before trying again.');
@@ -235,7 +245,8 @@ async function updateAction(action) {
  }finally{updateActionPending=false;}
 }
 window.addEventListener('archhub:update-ready',()=>{
- refreshApplicationUpdate().catch(error=>notice(error.message));
+ // Read failures belong to the retrying status owner, not a permanent toast.
+ refreshApplicationUpdate().catch(error=>console.warn('Update status read will retry',error));
 });
 async function refreshLive() {
  if(!ready||document.hidden||listeners.size===0)return state.tasks;
@@ -245,7 +256,7 @@ async function refreshLive() {
  refreshInFlight=true;
  try {
   await taskRefreshInFlight;
-  for(const refresh of [refreshAgents,refreshApplicationUpdate,refreshAccount,api.listProviders,refreshSettingsControls,refreshApprovals,refreshWatcher,refreshHostSkills,refreshDesktop,refreshNotifications]){
+  for(const refresh of [refreshAgents,()=>refreshApplicationUpdate(true),refreshAccount,api.listProviders,refreshSettingsControls,refreshApprovals,refreshWatcher,refreshHostSkills,refreshDesktop,refreshNotifications]){
    try{await refresh();}catch(error){publish({connectionNotice:error.message});}
   }
  }
@@ -1244,7 +1255,7 @@ api.ready=(async()=>{
  // Account/network discovery must not hold the usable graph behind its timeout.
  void (async()=>{
   for(const refresh of [refreshApplicationUpdate,refreshAccount,refreshGraphs,api.listWorkspaces,api.listProviders,refreshTasks,refreshAgents]){
-   try{await refresh();}catch(error){publish({connectionNotice:error.message});}
+   try{await refresh();}catch(error){if(refresh!==refreshApplicationUpdate)publish({connectionNotice:error.message});}
   }
  })();
  return state;

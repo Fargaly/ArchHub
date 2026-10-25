@@ -8623,6 +8623,15 @@
         "02.TESTS/tests_js/studio_group_member_wiring.test.cjs",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "NODEPLACE": {
+      "source": "Founder NODEPLACE: A node added without drop coordinates is inside the visible canvas and does not overlap an existing node. Use current viewport centre or beside selection; preserve explicit drops, STUDIOFIX reservation, all creation branches. Review 1: full views still add at the nearest free spot, notify off-screen direction, never create-then-delete or change pan/zoom; screenshots opt-in in test temp only. Isolated patch only; installed app/live data/redesign out of scope.",
+      "scope": [
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/ds_screens.jsx",
+        "02.TESTS/tests_js/studio_nodeplace.test.cjs",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

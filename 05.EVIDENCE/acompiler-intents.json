@@ -8440,6 +8440,16 @@
         "05.EVIDENCE/acompiler-intents.json",
         "04.DOCS/DECISIONS.md"
       ]
+    },
+    "SKILLSYNC": {
+      "source": "Founder SKILLSYNC: one versioned skill source; regenerate Claude native plugin, Codex and OpenCode derived copies from existing governance installer; stale hashes refuse existing gate. Fixture homes only, no skill-content or installed app edits.",
+      "scope": [
+        "03.TOOLS/tools/agent_skill_sync.py",
+        "02.TESTS/tests_replica/test_agent_skill_sync.py",
+        "00.GOVERNANCE/02.INSTRUCTIONS/gen_contracts.py",
+        "00.GOVERNANCE/02.INSTRUCTIONS/test_gen_contracts.py",
+        "00.GOVERNANCE/03.AGENT-HOOKS/product-hooks/pre-commit"
+      ]
     }
   }
 }

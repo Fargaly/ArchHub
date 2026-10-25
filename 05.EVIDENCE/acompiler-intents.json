@@ -8632,6 +8632,16 @@
         "02.TESTS/tests_js/studio_nodeplace.test.cjs",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "ROOTSREPUB": {
+      "source": "Founder ROOTSREPUB: repair unpinned/unsigned/mismatch workspace projections automatically from authoritative graph at startup and before owner changes; reuse app signer and republish, one receipt, plain real failure cause. Isolated patch only; installed app and live data excluded.",
+      "scope": [
+        "01.APP/nodelang/workspace_roots_owner.py",
+        "01.APP/nodelang/workspace_roots_catalogue.py",
+        "02.TESTS/tests_replica/test_workspace_roots_owner_route.py",
+        "02.TESTS/tests_replica/test_wsadd.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

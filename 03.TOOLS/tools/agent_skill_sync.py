@@ -119,6 +119,8 @@ def _inputs(source, home):
     _plain(source)
     _plain(home)
     manifest = _json(source / '.claude-plugin/plugin.json', boundary=source)
+    if not re.fullmatch(r'\d+\.\d+\.\d+(?:-skills\.[0-9a-f]{64})?', manifest['version']):
+        raise SkillSyncRefused('source plugin requires a numeric semantic version')
     market = _json(source.parent / '.claude-plugin/marketplace.json', boundary=source.parent)
     name, marketplace = manifest['name'], market['name']
     if not all(re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)*', value) for value in (name, marketplace)):
@@ -175,7 +177,7 @@ def _differences(expected, actual, path):
             if expected.get(name) != actual.get(name)]
 
 
-def check(source, home, *, claude_executable=None):
+def check(source, home, *, claude_executable=None, _deferred=()):
     source, home, manifest, market, tree, digest, names, records, targets = _inputs(source, home)
     problems = []
     skipped = []
@@ -194,6 +196,8 @@ def check(source, home, *, claude_executable=None):
             problems.append('native plugin version differs: ' + str(path))
         problems.extend(_differences(tree, _tree(path / 'skills', boundary=path), path / 'skills'))
     for skill, target in targets:
+        if str(target) in _deferred:
+            continue
         if target.exists() and not _owned(target, manifest['name'] + '@' + market):
             if _adoptable(source, skill, target):
                 problems.append('legacy skill requires adoption: ' + str(target))
@@ -205,12 +209,59 @@ def check(source, home, *, claude_executable=None):
         problems.extend(_differences(expected, _contents(target), target))
     if problems:
         raise SkillSyncRefused('stale agent skills; run governance regeneration:\n' + '\n'.join(problems))
-    return {'sha256': digest, 'skills': len(names), 'targets': len(targets) - len(skipped),
-            'version': manifest['version'], 'skipped': skipped, 'native_skipped': native_skipped}
+    return {'sha256': digest, 'skills': len(names), 'targets': len(targets) - len(skipped) - len(_deferred),
+            'version': manifest['version'], 'skipped': skipped, 'native_skipped': native_skipped,
+            'deferred': list(_deferred)}
+
+
+def _in_use(error):
+    return os.name == 'nt' and (isinstance(error, PermissionError)
+                              or getattr(error, 'winerror', None) in (5, 32, 33))
+
+
+def _replace_skill(source, target, archive, expected, owner):
+    """Archive before replacement; Windows watchers may forbid directory rename."""
+    in_place = False
+    if target.exists():
+        try:
+            target.rename(archive)
+        except OSError as error:
+            if not _in_use(error):
+                raise
+            before = _tree(target)
+            archive.mkdir()
+            for name in before:
+                output = archive / name
+                output.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(target / name, output)
+            if _tree(archive) != before:
+                raise SkillSyncRefused('skill archive differs: ' + str(archive))
+            # Probe without truncating anything before the first in-place write.
+            for name in before:
+                with (target / name).open('r+b'):
+                    pass
+            if not expected:
+                raise error
+            for name in before.keys() - expected.keys() - {OWNERSHIP_MARKER}:
+                (target / name).unlink()
+            in_place = True
+    if expected:
+        if in_place:
+            for name in expected:
+                output = target / name
+                if output.is_dir():
+                    for directory in sorted(output.rglob('*'), reverse=True):
+                        directory.rmdir()
+                    output.rmdir()
+                output.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source / name, output)
+        else:
+            shutil.copytree(source, target)
+        (target / OWNERSHIP_MARKER).write_text(owner, encoding='utf-8')
 
 
 def synchronize(source, home, *, claude_executable=None, runner=subprocess.run):
-    source, home, manifest, market, tree, digest, names, records, targets = _inputs(source, home)
+    source, home, manifest, market, tree, digest, _names, records, targets = _inputs(source, home)
     plugin_stale = (not records or not manifest['version'].endswith('-skills.' + digest)
                     or any(record['version'] != manifest['version']
                            or _tree(Path(record['installPath']) / 'skills', boundary=Path(record['installPath'])) != tree
@@ -253,25 +304,29 @@ def synchronize(source, home, *, claude_executable=None, runner=subprocess.run):
                 or _tree(Path(record['installPath']) / 'skills', boundary=Path(record['installPath'])) != tree
                 for record in after[7]):
             raise SkillSyncRefused('native plugin update did not publish the current skill bytes')
+    deferred = []
     for skill, target in targets:
-        adopt = False
-        if target.exists() and not _owned(target, manifest['name'] + '@' + market):
-            adopt = _adoptable(source, skill, target)
-            if not adopt:
+        try:
+            adopt = False
+            if target.exists() and not _owned(target, manifest['name'] + '@' + market):
+                adopt = _adoptable(source, skill, target)
+                if not adopt:
+                    continue
+            expected = {key[len(skill) + 1:]: value for key, value in tree.items() if key.startswith(skill + '/')}
+            if not adopt and _contents(target) == expected:
                 continue
-        expected = {key[len(skill) + 1:]: value for key, value in tree.items() if key.startswith(skill + '/')}
-        if not adopt and _contents(target) == expected:
-            continue
-        _plain(target)
-        if target.exists():
+            _plain(target)
             archive = home / '.archhub/skill-archive' / target.parent.parent.name.lstrip('.')
             _plain(archive)
             archive.mkdir(parents=True, exist_ok=True)
-            target.rename(archive / (skill + '-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')))
-        if skill in names:
-            shutil.copytree(source / 'skills' / skill, target)
-            (target / OWNERSHIP_MARKER).write_text(manifest['name'] + '@' + market, encoding='utf-8')
-    return check(source, home, claude_executable=executable)
+            archive /= skill + '-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
+            _replace_skill(source / 'skills' / skill, target, archive, expected, manifest['name'] + '@' + market)
+        except OSError as error:
+            if not _in_use(error):
+                raise
+            deferred.append(str(target))
+            print('SKILLSYNC WARNING: skill in use; retry next commit: ' + str(target) + ': ' + str(error))
+    return check(source, home, claude_executable=executable, _deferred=deferred)
 
 
 def main(argv=None):
@@ -282,7 +337,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         result = check(args.source, args.home) if args.check else synchronize(args.source, args.home)
-        print('SKILLSYNC PASS ' + json.dumps(result, sort_keys=True))
+        print(('SKILLSYNC DEFERRED ' if result['deferred'] else 'SKILLSYNC PASS ') + json.dumps(result, sort_keys=True))
         return 0
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
         print('SKILLSYNC REFUSED: ' + str(error))

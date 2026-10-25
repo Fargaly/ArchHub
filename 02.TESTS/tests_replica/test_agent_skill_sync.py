@@ -5,6 +5,79 @@ from pathlib import Path
 import pytest
 
 from tools import agent_skill_sync as sync
+from contextlib import contextmanager
+
+
+@contextmanager
+def held_windows_handle(path, *, directory=False):
+    """Hold a real watcher-style handle without delete sharing."""
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                  wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+    kernel.CreateFileW.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+    handle = kernel.CreateFileW(str(path), 0x80000000, 3 if directory else 1,
+                                None, 3, 0x02000000 if directory else 0x80, None)
+    if handle == wintypes.HANDLE(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        yield
+    finally:
+        kernel.CloseHandle(handle)
+
+
+@pytest.mark.skipif(__import__('os').name != 'nt', reason='real Windows handles')
+@pytest.mark.parametrize('legacy', [False, True])
+def test_held_directory_archives_by_copy_and_updates_in_place(installation, legacy):
+    source, home, native, _calls = installation
+    sync.synchronize(source, home, claude_executable=Path('claude.exe').absolute(), runner=native)
+    target = home / '.agents/skills/sample'
+    if legacy:
+        (target / sync.OWNERSHIP_MARKER).unlink()
+    (target / 'SKILL.md').write_bytes(b'---\nname: sample\n---\nstale held directory')
+    (target / 'obsolete.txt').write_bytes(b'preserve me')
+    before = sync._tree(target)
+    with held_windows_handle(target, directory=True):
+        result = sync.synchronize(source, home, claude_executable=Path('claude.exe').absolute(), runner=native)
+        assert not result['deferred']
+        assert sync._contents(target) == sync._tree(source / 'skills/sample')
+    assert any(sync._tree(a) == before for a in
+               (home / '.archhub/skill-archive/agents').glob('sample-*'))
+
+
+@pytest.mark.skipif(__import__('os').name != 'nt', reason='real Windows handles')
+def test_locked_file_warns_once_continues_other_skills_and_retries(installation, capsys):
+    source, home, native, _calls = installation
+    sync.synchronize(source, home, claude_executable=Path('claude.exe').absolute(), runner=native)
+    target = home / '.agents/skills/sample'
+    (target / 'SKILL.md').write_bytes(b'stale locked file')
+    other = home / '.codex/skills/sample/SKILL.md'
+    other.write_bytes(b'stale other runtime')
+    before = sync._tree(target)
+    capsys.readouterr()
+    with held_windows_handle(target / 'SKILL.md'):
+        result = sync.synchronize(source, home, claude_executable=Path('claude.exe').absolute(), runner=native)
+        assert result['deferred'] == [str(target)]
+        assert sync._tree(target) == before
+        assert other.read_bytes() == (source / 'skills/sample/SKILL.md').read_bytes()
+        output = capsys.readouterr().out
+        assert output.count('SKILLSYNC WARNING: skill in use; retry next commit:') == 1
+        assert str(target) in output and 'SKILLSYNC REFUSED' not in output
+    assert any(sync._tree(a) == before for a in
+               (home / '.archhub/skill-archive/agents').glob('sample-*'))
+    assert not sync.synchronize(source, home, claude_executable=Path('claude.exe').absolute(), runner=native)['deferred']
+    assert sync._contents(target) == sync._tree(source / 'skills/sample')
+
+
+def test_malformed_source_version_refused_without_claude(installation, monkeypatch):
+    source, home, _native, _calls = installation
+    metadata = source / '.claude-plugin/plugin.json'
+    metadata.write_text(json.dumps({'name': 'archhub', 'version': 'invalid'}))
+    monkeypatch.setattr(sync.shutil, 'which', lambda _name: None)
+    with pytest.raises(sync.SkillSyncRefused, match='numeric semantic version'):
+        sync.synchronize(source, home)
 
 
 @pytest.fixture

@@ -9,6 +9,67 @@ import pytest
 from tools.real_app_check.agentlink_release import require_checks, QualificationRefused
 
 
+@pytest.mark.parametrize('selector', [
+    'openrouter/auto', 'vendor/auto', 'openrouter/auto-beta',
+    'vendor/router', 'vendor/best', 'vendor/free-router',
+    'vendor/free_router', 'vendor/free.router', 'auto/model',
+    'router/model', 'best/model', 'openrouter/free',
+    'vendor/automatic', 'vendor/auto-router',
+    'vendor/autorouter', 'vendor/freerouter', 'vendor/AUTO',
+    'openrouter/pareto-code', 'openrouter/fusion', 'openrouter/fusion-flash',
+    'openrouter/bodybuilder', 'nvidia/switchyard', 'typesafe/jev-router',
+    'openrouter/autopilot', 'openrouter/smart', 'openrouter/selector',
+    'openrouter/dynamic', 'openrouter/fastest', 'openrouter/cheapest',
+    'openrouter/a-u-t-o', 'openrouter/owl-alpha', 'vendor/unknown',
+])
+def test_freesel_refuses_selectors_before_any_attempt(tmp_path, monkeypatch, selector):
+    from tools.real_app_check import agentlink_release as gate
+    model = 'openrouter/' + selector + ':free'
+    monkeypatch.setattr(gate.subprocess, 'Popen', lambda *_a, **_k: pytest.fail('selector child'))
+    attempt = lambda *_a: pytest.fail('selector attempt')
+    for models in ((model, *gate._FREE_FALLBACKS), (gate._FREE_FALLBACKS[0], model)):
+        with pytest.raises(QualificationRefused, match='release free-model allow-list'):
+            gate._free_turn(models, attempt, env={}, timeout=150)
+    with pytest.raises(QualificationRefused, match='release free-model allow-list'):
+        gate.qualify(tmp_path / 'PROFILE', model=model)
+    assert not (tmp_path / 'PROFILE').exists()
+    with pytest.raises(QualificationRefused, match='release free-model allow-list'):
+        gate._free_stream_models('message=stream providerID=openrouter modelID=' + selector + ':free', model)
+
+
+@pytest.mark.parametrize('selector', ['auto-free', 'router-free', 'best-free', 'free-router-free', 'smart-free', 'unknown-free'])
+def test_freesel_refuses_opencode_selectors(selector):
+    from tools.real_app_check import agentlink_release as gate
+    with pytest.raises(QualificationRefused, match='release free-model allow-list'):
+        gate._require_free_model('opencode/' + selector)
+
+
+@pytest.mark.parametrize('pool', ['_FREE_FALLBACKS', '_GOOSE_FALLBACKS'])
+def test_freesel_refuses_selector_fallback_before_process(tmp_path, monkeypatch, pool):
+    from tools.real_app_check import agentlink_release as gate
+    monkeypatch.setattr(gate, pool, ('openrouter/openrouter/autopilot:free',))
+    monkeypatch.setattr(gate.subprocess, 'Popen', lambda *_a, **_k: pytest.fail('selector child'))
+    with pytest.raises(QualificationRefused, match='release free-model allow-list'):
+        if pool == '_GOOSE_FALLBACKS':
+            gate._goose_turn('fixture', ['reply'], env={}, cwd=tmp_path, proof_factory=lambda: None)
+        else:
+            gate._opencode_turn(['fixture', '-m', 'opencode/mimo-v2.6-flash-free'],
+                model='opencode/mimo-v2.6-flash-free', env={}, cwd=tmp_path, timeout=150,
+                quota_log=tmp_path / 'opencode.log')
+
+
+def test_freesel_keeps_explicit_free_identities():
+    from tools.real_app_check import agentlink_release as gate
+    models = (*gate._FREE_FALLBACKS, *gate._GOOSE_FALLBACKS,
+        'openrouter/' + gate._GOOSE_MODEL, 'opencode/mimo-v2.6-flash-free')
+    assert gate._RELEASE_FREE_MODELS == frozenset(models)
+    for model in models:
+        gate._require_free_model(model)
+        provider, identity = model.split('/', 1)
+        assert gate._free_stream_models(
+            f'message=stream providerID={provider} modelID={identity}', model) == [model]
+
+
 @pytest.mark.parametrize('variant', ['nitro', 'floor', 'online', 'free'])
 def test_free_route_rejects_stacked_model_variants(variant):
     from tools.real_app_check import agentlink_release as gate

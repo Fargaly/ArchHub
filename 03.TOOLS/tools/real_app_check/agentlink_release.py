@@ -84,6 +84,8 @@ def _check_turn_errors(output, *, timed_out=False):
 def _require_free_model(model):
     if not re.fullmatch(r"(?:opencode/[A-Za-z0-9_.-]+-free|openrouter/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+:free)", model):
         raise QualificationRefused("Qualification requires an explicitly free OpenCode or OpenRouter model")
+    if model not in _RELEASE_FREE_MODELS:
+        raise QualificationRefused("Qualification model is not in the release free-model allow-list; add the id to _RELEASE_FREE_MODELS deliberately after review")
 
 
 def _free_stream_models(streams, model):
@@ -593,6 +595,8 @@ def _claude_auth(env, original_home):
 
 _GOOSE_MODEL = "dots-studio/dots-3-note-preview:free"
 _GOOSE_FALLBACKS = ("openrouter/thinkingmachines/inkling:free",)
+_RELEASE_FREE_MODELS = frozenset((*_FREE_FALLBACKS, *_GOOSE_FALLBACKS,
+    "openrouter/" + _GOOSE_MODEL, "opencode/mimo-v2.6-flash-free"))
 
 
 def _goose_turn(executable, prompts, *, env, cwd, proof_factory, timeout=180):

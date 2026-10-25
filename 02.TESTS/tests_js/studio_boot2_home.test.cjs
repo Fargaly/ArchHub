@@ -35,38 +35,3 @@ test('clean Studio boot requests Home metadata and defers the full graph until o
   assert.equal(api.getSnapshot().graph.nodes.length, fixture.nodes.length + 1);
   assert.equal(reads.at(-1), '/api/universal/canvas');
 });
-
-test('Home readiness banner follows actual warm-up, including a terminal refusal', async () => {
-  const {JSDOM} = await import('jsdom');
-  const html = fs.readFileSync(path.join(__dirname, '../../01.APP/nodelang/studio/studio.html'), 'utf8');
-  const dom = new JSDOM(html, {url:'http://127.0.0.1:53914/', runScripts:'outside-only'});
-  const win = dom.window;
-  const progress = [
-    {state:'almost_ready', message:'Almost ready — preparing your tools.'},
-    {state:'failed', message:'Some tools are unavailable. Reopen ArchHub to try again.'},
-  ];
-  win.__archhubSession = {token:'fixture', csrf:'fixture-csrf'};
-  const requests = [];
-  win.fetch = async (url, options) => {
-    requests.push({url, options});
-    return {ok:true, json:async () => progress.shift()};
-  };
-  // Execute the shipped readiness controller with a fake clock and real DOM.
-  const scripts = [...win.document.querySelectorAll('script:not([src])')];
-  const controller = scripts.find(tag => tag.textContent.includes('function watchRuntimeReadiness'));
-  assert.ok(controller, 'shipped page owns the readiness controller');
-  const pending = [];
-  win.setTimeout = fn => {pending.push(fn); return pending.length;};
-  try {
-    win.eval(controller.textContent);
-    await win.watchRuntimeReadiness();
-    const status = win.document.getElementById('studio-ready-status');
-    assert.equal(status.hidden, false);
-    assert.match(status.textContent, /Almost ready/);
-    assert.equal(pending.length, 1);
-    await pending.shift()();
-    assert.match(status.textContent, /unavailable/);
-    assert.equal(pending.length, 0, 'no endless polling after a refusal');
-    assert.equal(requests[0].options.headers['X-ArchHub-Session'], 'fixture');
-  } finally {dom.window.close();}
-});

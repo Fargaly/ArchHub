@@ -10,7 +10,7 @@ function harness(){
  dependencies:[{id:'codex',name:'Codex',group:'Agents',version:'1',availableVersion:'2',state:'Update ready',diskMb:2,ramMb:3,description:'Managed CLI',usedBy:['BABOOM'],logs:['Inventory read'],integrity:'npm inventory'},{id:'opencode',name:'OpenCode',group:'Agents',version:'',state:'Not installed',diskMb:0,ramMb:0,usedBy:[],logs:[]}],
  workspaces:[{id:'one',name:'First root',folder:'C:/FIRST'},{id:'two',name:'Second root',folder:'C:/SECOND'}],graph:{workspaceIds:[]},files:[],backups:[{id:'copy',name:'Cloud copy'}],
  people:[{id:'person',name:'Person',accessRole:'Member'}],devices:[{id:'device',name:'Office device',status:'Online'}],activeDevice:'device',connections:[{id:'revit',name:'Revit',connected:false},{id:'notion',name:'Notion',connected:true}],
- pages:['Account','Connections','Brain','Advanced'],settings:[],capabilities:[],providers:[],tasks:[],brain:[],receipts:[],update:{state:'idle',detail:'Up to date'}};
+ secrets:[],pages:['Account','Connections','Brain','Advanced'],settings:[],capabilities:[],providers:[],tasks:[],brain:[],receipts:[],update:{state:'idle',detail:'Up to date'}};
  const api=new Proxy({subscribe(){},getSnapshot:()=>state,getUsageSummary:()=>({'Remaining messages':7}),getCapabilityParameters:()=>[],getCapabilityState:()=>null},{get:(target,key)=>target[key]||((...args)=>{calls.push(['api',key,...args]);return Promise.resolve({ok:true,message:'Owner confirmed'});})});
  const app={advanced:false,setAdvanced(){},act:fn=>fn(),go:r=>calls.push(['go',r]),show:(...args)=>calls.push(['show',...args]),pickWorkspace:()=>calls.push(['pickWorkspace']),confirm:(...args)=>calls.push(['confirm',...args]),download:(...args)=>calls.push(['download',...args]),schedule:id=>calls.push(['schedule',id]),setTask:id=>calls.push(['setTask',id])};
  const React={Fragment:'fragment',createContext:()=>({}),useContext:()=>app,useSyncExternalStore:()=>state,
@@ -68,7 +68,7 @@ test('profile adapter posts the exact owner command and cannot overwrite account
  const h=await apiHarness(()=>({profile:{name:'Saved User',firm:'Saved Firm',id:'forged-account',signedIn:true,isFounder:true}}));
  await h.api.updateProfile({name:'Saved User',firm:'Saved Firm'});
  const p=h.api.getSnapshot().profile;assert.equal(p.name,'Saved User');assert.equal(p.signedIn,false);assert.equal(p.id,'');assert.equal(p.isFounder,false);
- assert.deepEqual(JSON.parse(JSON.stringify(h.calls.find(([url])=>url==='/api/universal/settings-action'))),['/api/universal/settings-action',{function:'updateProfile',args:[{name:'Saved User',firm:'Saved Firm'}]}]);
+ assert.deepEqual(JSON.parse(JSON.stringify(h.calls.find(([url,body])=>url==='/api/universal/settings-action'&&body.function==='updateProfile'))),['/api/universal/settings-action',{function:'updateProfile',args:[{name:'Saved User',firm:'Saved Firm'}]}]);
 });
 
 test('rejected profile changes preserve the confirmed snapshot',async()=>{
@@ -79,7 +79,7 @@ test('rejected profile changes preserve the confirmed snapshot',async()=>{
 test('billing refresh only publishes a real owner response',async()=>{
  const h=await apiHarness(body=>({billing:{status:'studio',requestedPlan:'Office',cycle:'Annual',invoices:[],remainingMessages:42}}));
  await h.api.refreshBilling();assert.equal(h.api.getSnapshot().billing.status,'studio');assert.equal(h.api.getUsageSummary()['Remaining messages'],42);
- assert.deepEqual(JSON.parse(JSON.stringify(h.calls.find(([url])=>url==='/api/universal/settings-action'))),['/api/universal/settings-action',{function:'refreshBilling',args:[]}]);
+ assert.deepEqual(JSON.parse(JSON.stringify(h.calls.find(([url,body])=>url==='/api/universal/settings-action'&&body.function==='refreshBilling'))),['/api/universal/settings-action',{function:'refreshBilling',args:[]}]);
 });
 
 test('account refresh preserves saved display fields and clears them on account change',async()=>{

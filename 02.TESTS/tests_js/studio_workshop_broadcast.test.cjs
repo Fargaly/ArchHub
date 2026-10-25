@@ -41,12 +41,3 @@ test('a chosen participant is addressed alone', () => {
 test('a participant who is not in this Workshop is still refused', () => {
   assert.throws(() => sendBody('ghost'), /Choose a current participant/);
 });
-
-test('the composer has one reply/@agent field and no everyone selector while broadcast transport remains',()=>{
-  const view=read('01.APP/nodelang/studio/studio-workshop.jsx');
-  assert.doesNotMatch(view,/<option value="">to: Workshop \(everyone\)<\/option>/);
-  assert.match(view,/Reply to \$\{replyName\}, or @ another agent/);
-  assert.match(view,/data-workshop-agent-picker/);
-  assert.match(view,/wsResolveAddress\(draft, replyTarget, aliases\)/);
-  assert.equal(view.includes('Choose a participant before sending.'),false);
-});

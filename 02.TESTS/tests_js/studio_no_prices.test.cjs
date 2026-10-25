@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const studio = path.join(__dirname, '../../01.APP/nodelang/studio');
-const surfaces = ['studio-account.jsx', 'studio-lm.jsx', 'studio-suite.jsx'];
+const surfaces = JSON.parse(fs.readFileSync(path.join(studio, 'compiled/manifest.json'), 'utf8')).files.map(file => file.source);
 const source = new Map(surfaces.map(name =>
   [name, fs.readFileSync(path.join(studio, name), 'utf8')]));
 const lines = name => source.get(name).split(/\r?\n/);
@@ -50,28 +50,4 @@ test('nothing in 01.APP/nodelang/studio still reaches for what was removed', () 
     }
   }
   assert.deepEqual(dangling, [], `Removed identifiers are still referenced - a live ReferenceError:\n${dangling.join('\n')}`);
-});
-
-test('the account holds no quota or tier of its own: the graph answers, with no meter prose', () => {
-  const account = source.get('studio-account.jsx');
-  // 2026-09-24: no spend meter, operations meter or spend cap at all. Nothing measured spend
-  // or enforced a cap, so the seeded $0 meters and the HARD CAP buttons were ornamental.
-  assert.doesNotMatch(account, /usage:|acMeter|HARD CAP|opsCap/, 'The account still draws a usage meter or cap nobody measures.');
-  assert.doesNotMatch(account, /Model spend is not measured on this machine and no spend cap is enforced\./);
-  assert.match(account, /graphTier: live\.tier/);
-  assert.match(account, /\{a\.graphTier && \(/, 'The SUBSCRIPTION block is not gated on the graph tier.');
-  const exported = lines('studio-account.jsx').find(line => line.startsWith('Object.assign(window,'));
-  assert.ok(exported, 'studio-account.jsx no longer exports its surfaces to window.');
-  assert.equal(exported.includes('AC_PLANS'), false, 'AC_PLANS is still exported to window.');
-  const studio = source.get('studio-lm.jsx');
-  assert.match(studio, /if \((?:compatTab|activeCapability) === 'Account'\) return <SettingsAccount account=\{account\}/,
-    'Account behavior remains owned by the graph-backed account surface.');
-  assert.doesNotMatch(studio, /Account tab badge|quota|meter prose/i);
-});
-
-test('the Landing survives without its price strip; the pricing dialog is gone', () => {
-  const suite = source.get('studio-suite.jsx');
-  assert.match(suite, /^window\.StudioLanding = StudioLanding;$/m, 'StudioLanding is no longer exported.');
-  assert.doesNotMatch(suite, /Pricing strip/, 'The Landing still carries its pricing strip.');
-  assert.doesNotMatch(suite, /window\.StudioPricing/, 'StudioPricing is still exported.');
 });

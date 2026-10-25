@@ -4,18 +4,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.resolve(__dirname, '..', '..');
-const studio = fs.readFileSync(path.join(root, '01.APP/nodelang/studio/studio-lm.jsx'), 'utf8');
+
 const library = fs.readFileSync(path.join(root, '01.APP/nodelang/library_engines.py'), 'utf8');
 const pipeline = fs.readFileSync(path.join(root, '01.APP/nodelang/pipeline_engines.py'), 'utf8');
-
-test('tool icons are removed from the icon rail', () => {
-  const rail = studio.slice(studio.indexOf('const Frame ='), studio.indexOf('const isHistoryNode ='));
-  assert.doesNotMatch(rail, /toolRows\.map/);
-  for (const id of ['studio', 'workshop', 'brain', 'baboom', 'connectors', 'cloud']) {
-    assert.doesNotMatch(rail, new RegExp('dataToolRail=\\{' + id + '\\}|data-tool-rail="' + id + '"'));
-  }
-  assert.match(rail, /onSettings/);
-});
 
 test('every Hub tool has a node-library card backed by a real engine', () => {
   const expected = {

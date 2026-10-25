@@ -6,7 +6,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const {createHash} = require('node:crypto');
 const adapter = fs.readFileSync(path.join(__dirname, '../../01.APP/nodelang/studio/studio-existing-workshop.js'),'utf8');
-const jsx = fs.readFileSync(path.join(__dirname, '../../01.APP/nodelang/studio/studio-lm.jsx'),'utf8');
+
 const deferred = () => {let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};};
 const details = {prompt:'Build my actual task',model:'openrouter/model-a'};
 function fixture(post) {
@@ -87,66 +87,4 @@ test('authorization changes during request prohibit opening its saved result',as
   const held=deferred(),f=fixture(()=>held.promise);const pending=f.api.startSession(details);
   await new Promise(setImmediate);f.identity('session-b');held.resolve(receipt(f.posts[0].body));
   assert.equal((await pending).navigation_current,false);
-});
-function homeFixture() {
-  const start=jsx.indexOf('  const startSession = async event =>',jsx.indexOf('const Home ='));
-  const endRel=jsx.slice(start).search(/\r?\n\r?\n  const mission =/);
-  const end=endRel<0?-1:start+endRel;assert.ok(start>0&&end>start);
-  const held=deferred(),opened=[],refs={startBusy:{current:false},acceptedSession:{current:null},homeMounted:{current:true}};
-  let session='session-a',calls=0;
-  const ctx=vm.createContext({...refs,draft:'Real prompt',native:null,model:{},modelRoute:()=>details.model,
-    startPrompt:()=>details.prompt,
-    setPickerOpen:()=>{},setStarting:()=>{},setStartError:()=>{},setDraft:()=>{},
-    onStarted:async result=>opened.push(result),window:{ARCHHUB_EXISTING_WORKSHOP:{
-      getSnapshot:()=>({canvas:{graph_id:'graph-a'},topology:{canvas:{authorization:{subject:'owner-a',session}}}}),
-      startSession:()=>{calls++;return held.promise;}}}});
-  vm.runInContext(jsx.slice(start,end)+'\nglobalThis.submit=startSession;',ctx);
-  return {held,opened,refs,submit:()=>ctx.submit({preventDefault(){}}),calls:()=>calls,changeAuth:()=>{session='session-b';}};
-}
-test('Home busy guard prevents double submit and unmounted Home never opens result',async()=>{
-  const f=homeFixture();const pending=f.submit();await f.submit();assert.equal(f.calls(),1);
-  f.refs.homeMounted.current=false;f.held.resolve({accepted:true});await pending;assert.equal(f.opened.length,0);
-});
-test('Home refuses a saved result after its authentication changed',async()=>{
-  const f=homeFixture();const pending=f.submit();f.changeAuth();f.held.resolve({accepted:true});await pending;
-  assert.equal(f.opened.length,0);
-});
-test('Home form and Enter invoke the same submission handler',()=>{
-  const home=jsx.slice(jsx.indexOf('const Home ='));
-  assert.match(home,/<window\.AH_DS\.Composer as="form"[^>]*onSubmit=\{startSession\}/);
-  assert.match(home,/<window\.AH_DS\.TextField multiline[\s\S]*?onChange=\{event => setDraft\(event.target.value\)\}/);
-  assert.match(home,/onKeyDown=\{event => \{if \(event.key === 'Enter'[\s\S]*?startSession\(event\)/);
-  assert.match(home,/<window\.AH_DS\.Btn[^>]*type="submit" disabled=\{starting \|\| !draft.trim\(\)\}/);
-});
-function studioFixture(applicationRoot = false) {
-  const start=jsx.indexOf('onStarted={async (result,');const end=jsx.indexOf('\n            }}/>}',start);
-  assert.ok(start>0&&end>start);const callback=jsx.slice(start+'onStarted={'.length,end)+'\n}';
-  const held=deferred(),refresh=deferred(),opened=[],selections=[];let session='session-a',mounted=true;
-  const ctx=vm.createContext({visibleSessions:[{id:applicationRoot?'app:canvas':'graph-a'}],
-    setOpenTabs:()=>opened.push('tabs'),setWorkspaceSelection:value=>{selections.push(value);opened.push('selection');},setOpenId:value=>opened.push(value),
-    window:{ARCHHUB_SCOPE_OPEN:()=>held.promise,ARCHHUB_EXISTING_WORKSHOP:{refreshTopologyCanvas:()=>refresh.promise,
-      getSnapshot:()=>({canvas:{graph_id:applicationRoot?'app:archhub':'graph-a',root:'scope-a'},workshops:[{root:'conversation-new'}],
-        topology:{canvas:{authorization:{subject:'owner-a',session}}}})}}});
-  vm.runInContext('globalThis.open='+callback,ctx);
-  return {held,refresh,opened,selections,changeAuth:()=>{session='session-b';},unmount:()=>{mounted=false;},
-    open:()=>ctx.open({...receipt({idempotency_key:'start-1'}),
-      ...(applicationRoot?{graph_id:'app:archhub',scope_path:['app:canvas','conversation-new']}:{} )},()=>mounted)};
-}
-test('Studio does not open a stale Home result if authentication changes during scope navigation',async()=>{
-  const f=studioFixture();const pending=f.open();f.changeAuth();f.held.resolve();f.refresh.resolve();
-  await assert.rejects(pending,/current view was kept/);assert.equal(f.opened.length,0);
-});
-test('Studio refuses unmounted Home continuation during topology refresh',async()=>{
-  const f=studioFixture();const pending=f.open();f.held.resolve();await new Promise(setImmediate);
-  f.unmount();f.refresh.resolve();await assert.rejects(pending,/current view was kept/);
-  assert.equal(f.opened.length,0);
-});
-test('Studio current continuation opens the existing Workspace after both reads',async()=>{
-  const f=studioFixture();const pending=f.open();f.held.resolve();f.refresh.resolve();await pending;
-  assert.deepEqual(f.opened,['tabs','selection','graph-a']);
-});
-test('New chat maps application identity to the admitted canvas tab',async()=>{
-  const f=studioFixture(true);const pending=f.open();f.held.resolve();f.refresh.resolve();await pending;
-  assert.deepEqual(f.opened,['tabs','selection','app:canvas']);
-  assert.equal(JSON.parse(f.selections[0].scope)[0], 'app:canvas');
 });

@@ -19,8 +19,8 @@ test('an expired browser session is renewed once and the refused call is retried
     return json(200, {ok: true, value: 42});
   };
   global.window = g; global.Headers = Headers;
-  delete require.cache[require.resolve('../01.APP/nodelang/studio/studio-authority.js')];
-  require('../01.APP/nodelang/studio/studio-authority.js');
+  delete require.cache[require.resolve('../../01.APP/nodelang/studio/studio-authority.js')];
+  require('../../01.APP/nodelang/studio/studio-authority.js');
   const A = g.ArchHubStudioAuthority;
   // Simulate boot far enough to install the fetch wrapper: boot may throw later on missing canvas pieces.
   try { await A.boot({canvas_key: 'k'}); } catch (_) {}
@@ -37,4 +37,3 @@ test('an expired browser session is renewed once and the refused call is retried
   };
   assert.ok(nonSession);
 });
-

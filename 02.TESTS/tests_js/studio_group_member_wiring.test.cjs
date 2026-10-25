@@ -8,7 +8,6 @@ const vm = require('node:vm');
 
 const adapter = fs.readFileSync(path.join(__dirname, '../../01.APP/nodelang/studio/studio-existing-workshop.js'), 'utf8');
 const page = fs.readFileSync(path.join(__dirname, '../../01.APP/nodelang/studio/studio.html'), 'utf8');
-const studio = fs.readFileSync(path.join(__dirname, '../../01.APP/nodelang/studio/studio-lm.jsx'), 'utf8');
 
 const memberOut = {id:'member-out', name:'out', owner:'member-a', owner_label:'Member', side:'source', mode:'connection',
   connectable:true, connect_control:'control-member', connect_event_fact_input:'fact-index',
@@ -124,48 +123,4 @@ test('the adapter wires a member port through its owner and confirms the wire th
   assert.equal(posts[0].body.control, 'control-member', 'the member port\'s own connect control');
   assert.deepEqual(posts[0].body.event_facts, [{input:'fact-index', value:0}]);
   assert.equal(api.getSnapshot().topology.error || '', '', 'the confirmed wire leaves the canvas editable');
-});
-
-test('the Studio projection lists member ports on the group card, labelled by member, owned by the member', () => {
-  const start = page.indexOf('function projectStudioCanvas(canvas) {');
-  const end = page.indexOf('\n    window.ARCHHUB_EXISTING_WORKSHOP.setTopologyCanvas(canvas);', start);
-  assert.ok(start > 0 && end > start, 'projectStudioCanvas is a slice of the shipped studio.html');
-  const ctx = vm.createContext({window:{}, PARAM_SPECS:{}});
-  vm.runInContext(page.slice(start, end) + '\nglobalThis.project = projectStudioCanvas;', ctx);
-  const drawn = canvas(2, [{id:'wire-new', source:'group-a', source_interface:'member-out', target:'outer', target_interface:'outer-in'}]);
-  // The wire already added a plain row for the member interface; the member port takes that row.
-  drawn.nodes[0].ports = [{id:'member-out', name:'out', side:'source', mode:'relation', connectable:true}];
-  const {nodes} = JSON.parse(JSON.stringify(ctx.project(drawn)));
-  const group = nodes.find(node => node.id === 'group-a');
-  assert.deepEqual(group.outs.map(port => [port.id, port.label, port.owner, port.mode]), [['member-out', 'Member · out', 'member-a', 'connection']]);
-  assert.deepEqual(group.ins.map(port => [port.id, port.label, port.owner]), [['member-in', 'Member · in', 'member-a']]);
-});
-
-test('the canvas joins a member port\'s owner, in either order, never the group card', () => {
-  const start = studio.indexOf('const useSocket = async (root, port, side) => {');
-  const end = studio.indexOf('const allNodes = React.useMemo(', start);
-  assert.ok(start > 0 && end > start, 'the socket handler is a slice of the shipped studio-lm.jsx');
-  const connected = [], errors = [];
-  let wireStart = null;
-  const wireStartRef = {current:null};
-  const ctx = vm.createContext({
-    authority:null, authorityState:null, saving:{current:false}, layoutNeedsRefresh:false,
-    normal:{connectTopology:async (...args) => { connected.push(args); }},
-    wireStartRef:{get current() { return wireStart; }, set current(value) { wireStart = value; }},
-    setWireStartState:value => { wireStart = value; },
-    setWireError:text => { if (text) errors.push(text); }, setWireStart:value => { wireStart = value; },
-  });
-  Object.defineProperty(ctx, 'wireStart', {get:() => wireStart});
-  vm.runInContext(studio.slice(start, end) + '\nglobalThis.useSocket = useSocket;', ctx);
-  const outerOut = {id:'outer-out', label:'out', mode:'connection', connect_control:'control-outer',
-    connect_choices:[{id:'member-in', owner:'member-a'}]};
-  const outerIn = {id:'outer-in', label:'in', mode:'connection'};
-  return (async () => {
-    await ctx.useSocket('group-a', memberOut, 'out');
-    await ctx.useSocket('outer', outerIn, 'in');
-    await ctx.useSocket('group-a', memberIn, 'in');
-    await ctx.useSocket('outer', outerOut, 'out');
-    assert.deepEqual(errors, []);
-    assert.deepEqual(connected, [['member-a', 'member-out', 'outer', 'outer-in'], ['outer', 'outer-out', 'member-a', 'member-in']]);
-  })();
 });

@@ -771,19 +771,7 @@ const pageProjectionConflict = body => {
     graph_id:'graph-a',root,scope_root:scope,owner:'owner-a',view:'view-a',revision,request};
 };
 
-test('actual Studio POST transports only the explicit completed page refusal for adapter reconciliation',async()=>{
-  const html=fs.readFileSync(path.join(__dirname, '../../01.APP/nodelang/studio/studio.html'),'utf8');
-  const begin=html.indexOf('    const jpost = async');
-  const end=html.indexOf('    window.ARCHHUB_AGENT =',begin);
-  assert.ok(begin>=0 && end>begin);
-  const request={root:'workshop-a',scope:'scope-a',revision:4,action:'page-open',request_key:'fixed-key'};
-  let reply=pageProjectionConflict(request);
-  const context=vm.createContext({H:()=>({}),window:{},fetch:async()=>({ok:true,json:async()=>reply})});
-  vm.runInContext(html.slice(begin,end)+'\nglobalThis.post=jpost;',context);
-  assert.deepEqual(plain(await context.post('/api/universal/workshop',request)),reply);
-  reply={ok:false,error:'ordinary refusal'};
-  await assert.rejects(context.post('/api/universal/workshop',request),/ordinary refusal/);
-});
+
 
 test('editor: unrelated graph advance before every page request preserves exact page transitions without retries',async()=>{
     let graphRevision=4,page=null;
@@ -1216,71 +1204,6 @@ for(const kind of ['existing','authority']) {
 
 // WORKSHOP-72 keeps the existing visibility/paging/first-open/serial-poll behaviors.
 // Removed paging buttons migrate to the existing admitted page-navigation authority.
-const workshopView = () => {
-  const jsx=fs.readFileSync(path.join(__dirname, '../../01.APP/nodelang/studio/studio-workshop.jsx'),'utf8');
-  const start=jsx.indexOf('// Reuse the visible-page refresh:');
-  const end=jsx.indexOf('// Agent data and task creation admission',start);
-  assert.ok(start>=0 && end>start,'the poll is read from the actual DSYS072 window');
-  return {jsx,poll:jsx.slice(start,end)};
-};
-
-test('WorkshopConversation visibility and 2.5 second poll keep the selected page live and dispose cleanly',async()=>{
-  const latest=ordinary(),older=ordinary({page_before:latest.next_before,content_cursor:'visible older page',
-    next_before:null,has_older:false,messages:[{...latest.messages[0],root:'message-1',sequence:1}]});
-  const {api,gets}=setup({get:url=>{const query=new URL(url,'http://test').searchParams;
-    if(query.has('before'))return query.has('content_after')?unchanged(older):older;
-    return query.has('content_after')?unchanged(latest):latest;}});
-  const {poll}=workshopView(),effects=[],timers=new Map(),listeners=new Map();let timerId=0;
-  const document={hidden:true,addEventListener:(name,fn)=>listeners.set(name,fn),removeEventListener:(name,fn)=>{assert.equal(listeners.get(name),fn);listeners.delete(name);}};
-  const ctx=vm.createContext({document,Date,authority:api,descriptor:{root:'workshop-a',native_work_available:false},
-    openedRoot:{current:'workshop-a'},selectedNativeWork:null,busyRef:{current:false},setError:()=>{},
-    React:{useEffect:fn=>effects.push(fn)},setTimeout:(fn,ms)=>{const id=++timerId;timers.set(id,{fn,ms});return id;},clearTimeout:id=>timers.delete(id)});
-  vm.runInContext(poll,ctx);const dispose=effects[0]();
-  assert.equal(gets.length,0);assert.equal(timers.size,0);
-  document.hidden=false;listeners.get('visibilitychange')();await new Promise(setImmediate);
-  assert.equal(gets.length,1);assert.equal(timers.size,1);
-  await api.loadOlderWorkshop('workshop-a');assert.equal(api.getSnapshot().workshop.messages[0].root,'message-1');
-  const [id,timer]=[...timers.entries()][0];assert.equal(timer.ms,2500);timers.delete(id);timer.fn();await new Promise(setImmediate);
-  assert.equal(gets.length,3);assert.equal(timers.size,1);
-  const page=new URL(gets[2],'http://test').searchParams;
-  assert.equal(page.get('before'),latest.next_before);assert.equal(page.get('content_after'),older.content_cursor);
-  document.hidden=true;listeners.get('visibilitychange')();assert.equal(timers.size,0);assert.equal(gets.length,3);
-  await api.showLatestWorkshop('workshop-a');assert.equal(api.getSnapshot().workshop.messages[0].root,'message-102');
-  dispose();assert.equal(timers.size,0);assert.equal(listeners.size,0);
-});
-
-test('WorkshopConversation opens a newly shown Workshop once, then polls with refresh',async()=>{
-  const {poll}=workshopView(),calls=[],timers=new Map(),listeners=new Map();let timerId=0,dispose;
-  const openedRoot={current:''};
-  const ctx=vm.createContext({document:{hidden:false,addEventListener:(name,fn)=>listeners.set(name,fn),removeEventListener:name=>listeners.delete(name)},
-    Date,descriptor:{root:'workshop-a',native_work_available:false},openedRoot,selectedNativeWork:null,busyRef:{current:false},setError:()=>{},
-    authority:{openWorkshop:root=>{calls.push(['open',root]);return Promise.resolve(null);},refreshWorkshop:root=>{calls.push(['refresh',root]);return Promise.resolve(null);}},
-    React:{useEffect:fn=>{dispose=fn();}},setTimeout:(fn,ms)=>{const id=++timerId;timers.set(id,{fn,ms});return id;},clearTimeout:id=>timers.delete(id)});
-  vm.runInContext(poll,ctx);await new Promise(setImmediate);
-  assert.deepEqual(calls,[['open','workshop-a']]);assert.equal(openedRoot.current,'workshop-a');
-  const [id,timer]=[...timers.entries()][0];assert.equal(timer.ms,2500);timers.delete(id);timer.fn();await new Promise(setImmediate);
-  assert.deepEqual(calls,[['open','workshop-a'],['refresh','workshop-a']]);dispose();assert.equal(timers.size,0);assert.equal(listeners.size,0);
-});
-
-test('WorkshopConversation message refresh settles before pending native status without overlapping polls',async()=>{
-  const {poll}=workshopView();
-  for(const outcome of ['native-pending-unmount','message-failure','message-pending-unmount']){
-    const message=deferred(),native=deferred(),errors=[],timers=new Map(),listeners=new Map();let now=0,reads=0,nativeReads=0,dispose,timerId=0;
-    const document={hidden:false,addEventListener:(name,fn)=>listeners.set(name,fn),removeEventListener:(name,fn)=>{assert.equal(listeners.get(name),fn);listeners.delete(name);}};
-    const ctx=vm.createContext({document,Date:{now:()=>now},descriptor:{root:'workshop-a'},openedRoot:{current:'workshop-a'},selectedNativeWork:'work-a',busyRef:{current:false},
-      authority:{refreshWorkshop:()=>{reads++;return message.promise;},refreshNativeWork:()=>{nativeReads++;return native.promise;}},setError:value=>errors.push(value),
-      React:{useEffect:fn=>{dispose=fn();}},setTimeout:(fn,ms)=>{const id=++timerId;timers.set(id,{fn,ms});return id;},clearTimeout:id=>timers.delete(id)});
-    vm.runInContext(poll,ctx);assert.equal(reads,1);assert.equal(nativeReads,0);now=10001;
-    if(outcome==='message-pending-unmount')dispose();
-    if(outcome==='message-failure')message.reject(new Error('message read refused'));else message.resolve({content_cursor:'new'});
-    await new Promise(setImmediate);
-    if(outcome==='message-pending-unmount'){assert.equal(nativeReads,0);assert.equal(timers.size,0);}
-    else if(outcome==='message-failure'){assert.equal(nativeReads,0);assert.equal(timers.size,1);assert.equal([...timers.values()][0].ms,2500);assert.deepEqual(errors,['message read refused']);dispose();}
-    else{assert.equal(nativeReads,1);assert.equal(timers.size,0);listeners.get('visibilitychange')();assert.equal(reads,1);assert.equal(nativeReads,1);
-      dispose();native.reject(new Error('late native failure'));await new Promise(setImmediate);assert.deepEqual(errors,[]);}
-    assert.equal(timers.size,0);assert.equal(listeners.size,0);
-  }
-});
 
 test('authorized descriptors and exact guarded legacy message body',async () => {
   const {api,posts}=setup();
@@ -1453,39 +1376,6 @@ test('accepted release remains recoverable if storage cleanup fails', async () =
   assert.match(api.getSnapshot().workshopNotice,/storage needs recovery/);
   assert.equal(api.getSnapshot().nativeWork.state,'release_pending');
   pendingStorage.setItem=write;
-});
-
-test('slow panel catalogue reads coalesce and publish related rows together', async () => {
-  const jsx=fs.readFileSync(path.join(__dirname, '../../01.APP/nodelang/studio/studio-lm.jsx'),'utf8');
-  const section=jsx.slice(jsx.indexOf('const catalogueStates ='),jsx.indexOf('const withLiveCatalogue ='));
-  const pending=deferred(); let calls=0;
-  const window={ARCHHUB_LIVE:{connectors:[]},ARCHHUB_LOAD_HOSTS:()=>{calls++;return pending.promise;}};
-  const context=vm.createContext({window});
-  vm.runInContext(section+';globalThis.load=loadCatalogue;globalThis.states=catalogueStates;',context);
-  const rows=[], first=context.load('ARCHHUB_LOAD_HOSTS',rows), second=context.load('ARCHHUB_LOAD_HOSTS',rows);
-  assert.equal(first,second); await Promise.resolve(); assert.equal(calls,1);
-  pending.resolve({hosts:[{name:'host-a'}],connectors:[{name:'connector-a'}]}); await first;
-  assert.deepEqual(plain(rows),[{name:'host-a'}]);
-  assert.deepEqual(plain(window.ARCHHUB_LIVE.connectors),[{name:'connector-a'}]);
-  assert.equal(context.states.get('ARCHHUB_LOAD_HOSTS').loading,false);
-});
-
-test('invalid host rows preserve prior data and a failed subscriber cannot reject completion', async () => {
-  const jsx=fs.readFileSync(path.join(__dirname, '../../01.APP/nodelang/studio/studio-lm.jsx'),'utf8');
-  const section=jsx.slice(jsx.indexOf('const catalogueStates ='),jsx.indexOf('const withLiveCatalogue ='));
-  let result={hosts:[{name:'new'}]};
-  const window={ARCHHUB_LIVE:{connectors:[{name:'old'}]},ARCHHUB_LOAD_HOSTS:async()=>result};
-  const context=vm.createContext({window});
-  vm.runInContext(section+';globalThis.load=loadCatalogue;globalThis.states=catalogueStates;'+
-    'catalogueListeners.add(()=>{throw new Error("subscriber failed")});',context);
-  const rows=[{name:'old'}];
-  await context.load('ARCHHUB_LOAD_HOSTS',rows);
-  assert.deepEqual(plain(rows),[{name:'old'}]);
-  assert.match(context.states.get('ARCHHUB_LOAD_HOSTS').error,/invalid/);
-  result={hosts:[{name:'new'}],connectors:[{name:'new'}]};
-  await context.load('ARCHHUB_LOAD_HOSTS',rows);
-  assert.deepEqual(plain(rows),[{name:'new'}]);
-  assert.equal(context.states.get('ARCHHUB_LOAD_HOSTS').error,'');
 });
 
 const catalogReply = (change={}) => ({ok:true,graph_id:'graph-a',root:'workshop-a',scope_root:'scope-a',

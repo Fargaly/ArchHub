@@ -39,7 +39,7 @@ async function desktop(run) {
   }
 }
 
-test('desktop browser: cold rail Skills renders the admitted catalogue', {skip:!enabled}, async () => {
+test('desktop browser: cold rail Skills renders the admitted catalogue', {skip:!enabled && 'Requires isolated LAZYBOOT_HTTP_URL browser fixture'}, async () => {
   await desktop(async ({page, requests}) => {
     assert.equal(requests.filter(row => row.url === '/api/universal/skills').length, 0, 'Home leaves Skills cold');
     await page.locator('[data-rail-panel="Library"]').click();
@@ -55,7 +55,7 @@ test('desktop browser: cold rail Skills renders the admitted catalogue', {skip:!
   });
 });
 
-test('desktop browser: Hub, status, Hosts and About share one total', {skip:!enabled}, async () => {
+test('desktop browser: Hub, status, Hosts and About share one total', {skip:!enabled && 'Requires isolated LAZYBOOT_HTTP_URL browser fixture'}, async () => {
   await desktop(async ({page}) => {
     const hosts = report.hosts.connectors.filter(row => !!row.drive);
     const ratio = hosts.filter(row => ['connected', 'listening'].includes(row.state)).length + '/' + hosts.length;
@@ -80,7 +80,7 @@ test('desktop browser: Hub, status, Hosts and About share one total', {skip:!ena
   });
 });
 
-test('desktop browser: group created after lazy boot renders chips and permits real pointer drag-out', {skip:!enabled}, async () => {
+test('desktop browser: group created after lazy boot renders chips and permits real pointer drag-out', {skip:!enabled && 'Requires isolated LAZYBOOT_HTTP_URL browser fixture'}, async () => {
   await desktop(async ({page}) => {
     const graph = report.graphs.graphs.find(row => row.id === report.graphs.current_graph);
     await page.locator('[data-home-page] button').filter({has:page.getByText(graph.title, {exact:true})}).click();

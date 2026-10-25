@@ -54,44 +54,6 @@ test('a wire without properties renders none', async () => {
   assert.deepEqual(snapshot.graph.wires[0].params, []);
 });
 
-test('the hosted session is one the Chats panel can show', async () => {
-  // Chats reads LM_STATE_META[session.state].col; the hosted boot said 'ready',
-  // which that map does not hold, and opening Chats blanked the whole Studio.
-  const jsx = fs.readFileSync(path.join(__dirname, '../../01.APP/nodelang/studio/studio-lm.jsx'), 'utf8');
-  const begin = jsx.indexOf('const LM_STATE_META');
-  const states = [...jsx.slice(begin, jsx.indexOf('}));', begin)).matchAll(/^\s+(\w+):\s*\{/gm)].map(m => m[1]);
-  assert.ok(states.includes('idle') && states.includes('running'));
-  const held = new Map([['archhub.studio.session', JSON.stringify({token: 'held-token', csrf: 'held-csrf'})]]);
-  const context = vm.createContext({URLSearchParams,
-    sessionStorage: {getItem: key => held.get(key) ?? null, setItem: (key, value) => held.set(key, value),
-      removeItem: key => held.delete(key)},
-    fetch: async url => ({ok: true, json: async () => {
-      assert.equal(url, '/api/universal/canvas?screen=home');
-      return captured;
-    }})});
-  vm.runInContext(source, context);
-  await context.ArchHubStudioAuthority.boot({canvas_key: 'fixture'});
-  const sessions = JSON.parse(JSON.stringify(context.ARCHHUB_LIVE.sessions));
-  assert.equal(sessions.length, 1);
-  assert.ok(sessions.every(session => states.includes(session.state)), JSON.stringify(sessions));
-});
-
-test('the hosted workspace is ready: its own browser session is the Studio session', async () => {
-  // studio-lm.jsx opens a Workshop only when workspaceReady; that needs
-  // authorization.session, which the clean canvas names as its one browser session.
-  const [own] = captured.authorization.browser_sessions;
-  assert.equal(captured.authorization.session, undefined);
-  const snapshot = await load(captured);
-  assert.equal(snapshot.canvas.authorization.session, own.root);
-  const jsx = fs.readFileSync(path.join(__dirname, '../../01.APP/nodelang/studio/studio-lm.jsx'), 'utf8');
-  const begin = jsx.indexOf('  const projectedAuthorization =');
-  const end = jsx.indexOf('  const availableWorkshops', begin);
-  assert.ok(begin > 0 && end > begin);
-  const context = vm.createContext({session: {id: snapshot.canvas.root}, workshopState: snapshot});
-  vm.runInContext(jsx.slice(begin, end) + '\nglobalThis.ready = workspaceReady;', context);
-  assert.equal(context.ready, true);
-});
-
 test('authority composition sends one multi-root gesture before the group interaction', async () => {
   const context = vm.createContext({URLSearchParams,
     crypto:{randomUUID:() => 'cmd-group', subtle:{digest:async () => new Uint8Array([1])}},

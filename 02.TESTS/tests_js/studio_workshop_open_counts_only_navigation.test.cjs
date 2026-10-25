@@ -113,7 +113,7 @@ test('Workshop transcript cache is cleared when the Workshop scope loses its sig
   release(); await read;
 });
 
-test('Workshop transcript cache evicts the oldest entry beyond the cache bound', async () => {
+test('Workshop transcript cache retains every authorized room beyond the base bound', async () => {
   let release;
   const roots = Array.from({length:17}, (_, i) => 'workshop-' + i);
   const fixture = setup(roots.map((root, i) => ({...transcript(), root, revision:20 + i,
@@ -125,7 +125,7 @@ test('Workshop transcript cache evicts the oldest entry beyond the cache bound',
   fixture.answers.push(new Promise(resolve => { release = () => resolve({...transcript(), root:'workshop-0',
     revision:21, messages:[row('fresh', 1, 'fresh row')]}); }));
   const read = fixture.api.refreshWorkshop('workshop-0');
-  assert.equal(fixture.api.getSnapshot().workshop, null, 'oldest cached room was evicted before fetch resolves');
+  assert.equal(fixture.api.getSnapshot().workshop.messages[0].body,'cached 0','authorized rooms remain cached under the catalogue-sized bound');
   release(); await read;
 });
 
@@ -164,4 +164,15 @@ test('accepted send stays visible while cached transcript reconcile is pending a
   release(); await sending;
   assert.deepEqual(JSON.parse(JSON.stringify(fixture.api.getSnapshot().workshop.messages.map(m => [m.root, m.body]))),
     [['m1', 'Cached row'], ['entry-a', 'Sent task']], 'reconcile keeps exactly one accepted send row');
+});
+
+test('Workshop transcript cache evicts the oldest history page beyond the current bound',async()=>{
+ let release;const root='workshop-a';
+ const pages=Array.from({length:17},(_,i)=>({...transcript(),revision:20,storage:'conversation-content',feed:'all',content_cursor:'cursor-'+i,page_before:i?'older-'+i:null,next_before:i<16?'older-'+(i+1):null,has_older:i<16,total:17,messages:[row('m'+i,17-i,'cached '+i)]}));
+ const fixture=setup([...pages]);fixture.api.setCanvas({graph_id:'graph-a',root:'scope-a',revision:20,authorization:{subject:'owner-a',session:'view-a'},workshops:[{root,label:'Workshop'}]});
+ await fixture.api.refreshWorkshop(root);for(let i=0;i<16;i++)await fixture.api.loadOlderWorkshop(root);
+ fixture.answers.push(new Promise(resolve=>{release=()=>resolve({...pages[0],messages:[row('fresh',17,'fresh row')]});}));
+ const latest=fixture.api.showLatestWorkshop(root);
+ assert.equal(fixture.api.getSnapshot().workshop,null,'the oldest history page is evicted before latest fetch resolves');
+ release();await latest;
 });

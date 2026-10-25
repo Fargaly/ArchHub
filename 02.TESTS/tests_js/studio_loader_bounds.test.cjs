@@ -8,17 +8,17 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const root = path.join(__dirname, '..');
+const root = path.join(__dirname, '..', '..');
 const read = rel => fs.readFileSync(path.join(root, rel), 'utf8');
 const num = text => Function('"use strict"; return (' + text + ');')();
 
 const loader = read('01.APP/nodelang/studio/studio.html');
 const compiler = read('03.TOOLS/packaging/compile_studio.cjs');
 
-const loaderSourceBound = num(loader.match(/file\.source_bytes > (\d+)/)[1]);
-const loaderAssetBound = num(loader.match(/await asset\(file\.source, (\d+)\)/)[1]);
-const loaderOutputBound = num(loader.match(/file\.bytes > (\d+)/)[1]);
-const [, loaderSourceTotal, loaderOutputTotal] = loader.match(/sourceBytes > (\d+) \|\| outputBytes > (\d+)/).map(Number);
+const loaderSourceBound = num(loader.match(/file\.source_bytes\s*>\s*(\d+)/)[1]);
+const loaderAssetBound = num(loader.match(/await readAsset\(file\.source,\s*(\d+)\)/)[1]);
+const loaderOutputBound = num(loader.match(/file\.bytes\s*>\s*(\d+)/)[1]);
+const [, loaderSourceTotal, loaderOutputTotal] = loader.match(/sourceTotal\s*>\s*(\d+)\|\|outputTotal\s*>\s*(\d+)/).map(Number);
 const compilerSourceBound = num(compiler.match(/readFile\(path\.join\(studio, source\), ([0-9 *]+)\)/)[1]);
 const compilerSourceTotal = num(compiler.match(/sum \+ file\.source_bytes, 0\) <= ([0-9 *]+),/)[1]);
 const compilerOutputBound = num(compiler.match(/readFile\(path\.join\(output, source\.output\), ([0-9 *]+)\)/)[1]);

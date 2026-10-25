@@ -1,3 +1,4 @@
+const {setImmediate}=require('node:timers');
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const vm=require('node:vm');
@@ -266,7 +267,9 @@ test('workspace picker registers the absolute native path and re-reads the catal
 
 test('cancelled native folder selection never registers a workspace',async()=>{
  const {api,requests}=await adapter({signed_in:false},{'/api/universal/workspace-roots':{ok:true,path:'',roots:[]}});
- assert.equal(await api.addWorkspace(),null);
+ const cancelled=await api.addWorkspace();
+ assert.equal(cancelled.cancelled,true);
+ assert.equal(cancelled.message,'Folder selection cancelled');
  assert.equal(requests.some(r=>r.body?.action==='register'),false);
 });
 
@@ -444,13 +447,15 @@ test('registered graph control keeps the current screen on refusal and opens aft
   assert.deepEqual(accepted,[['go','canvas']]);
  }finally{await s.close();}
 });
-test('Library uses the catalogue identity and closes only after the owner confirms',async()=>{
+test('Library uses the catalogue identity and stays open until explicitly closed',async()=>{
  const s=await screen('ds_library.jsx',{catalogue:[{id:'definition-id',name:'Readable label',family:'Get',description:'Reads data'}],templates:[],runs:[],graph:{name:'Graph'},mods:[]},`{addNode:async id=>{if(id!=='definition-id')throw Error('Wrong catalogue identity');return refused?{ok:false}:{id:'made'};}}`);
  try{
   const rejected=await s.evaluate(`(async()=>{let closed=0;window.readClosed=()=>closed;render(UI.LibraryShelf,{onClose:()=>closed++});await click(document.querySelector('[aria-label="Add Readable label"]'));return closed;})()`);
   assert.equal(rejected,0);
   const accepted=await s.evaluate(`(async()=>{refused=false;await click(document.querySelector('[aria-label="Add Readable label"]'));return readClosed();})()`);
-  assert.equal(accepted,1);
+  assert.equal(accepted,0,'CANVASLOOK keeps the shelf beside the canvas after a confirmed add');
+  const closed=await s.evaluate(`(async()=>{await click(document.querySelector('[aria-label="Close Library"]'));return readClosed();})()`);
+  assert.equal(closed,1);
  }finally{await s.close();}
 });
 test('DS forwards a native button callback exactly once',async()=>{
@@ -1242,4 +1247,60 @@ test('SETTINGS slow control read cannot overwrite a confirmed companion write',a
  delay=true;const read=api.refreshSettingsControls();await Promise.resolve();
  await api.setCompanionState({pinned:true});release();await read;
  assert.equal(api.getSnapshot().companion.pinned,true);
+});
+
+// Migrated behavior contracts from the retired StudioLM tests, against the current owner.
+test('STUDIOTESTS default library insertion avoids existing and newly created nodes',async()=>{
+ const canvas={root:'g',nodes:[{id:'existing',label:'Existing',x:240,y:200,properties:[],ports:[]}],wires:[],catalog:[{id:'def',name:'Number',descriptor:{engine:'data.constant'}}]};
+ const {api,requests}=await adapter({signed_in:false},{'/api/universal/canvas':canvas,'/api/universal/node-create':body=>{const id='new-'+canvas.nodes.length;canvas.nodes.push({id,label:'Number',x:body.x,y:body.y,properties:[],ports:[]});return {ok:true,root:id};}});
+ await api.addNode('def');await api.addNode('def');
+ const points=[[240,200],...requests.filter(r=>r.url==='/api/universal/node-create').map(r=>[r.body.x,r.body.y])];
+ assert.equal(points.length,3,'both real owner creates were reached');
+ assert.equal(new Set(points.map(p=>p.join(','))).size,3,'default insertion points must not overlap');
+});
+
+test('STUDIOTESTS rapid parameter edits serialize writes and retain the latest value',async()=>{
+ let release,active=0,peak=0;const held=new Promise(resolve=>release=resolve);
+ const property={label:'value',value:'initial',relation:'rel',editable:true};
+ const canvas={root:'g',nodes:[{id:'n',label:'Number',properties:[property],ports:[]}],wires:[]};
+ const {api}=await adapter({signed_in:false},{'/api/universal/canvas':canvas,'/api/universal/set-property':async body=>{active++;peak=Math.max(peak,active);if(body.value==='first')await held;property.value=body.value;active--;return {ok:true};}});
+ const first=api.setNodeParam('n','value','first'),last=api.setNodeParam('n','value','final');
+ await new Promise(resolve=>setImmediate(resolve));release();await Promise.all([first,last]);
+ assert.equal(peak,1,'parameter writes must not overlap');
+ assert.equal(property.value,'final','the latest confirmed edit must survive');
+});
+
+test('STUDIOTESTS stop-all posts once and preserves state after refusal',async()=>{
+ let refused=true;const {api,requests}=await adapter({signed_in:false},{'/stop-all':()=>refused?{ok:false,error:'Stop refused'}:{ok:true,stopped:true}});
+ const stopped=api.getSnapshot().app.stopped;
+ await assert.rejects(api.stopEverything(),/Stop refused/);
+ assert.equal(api.getSnapshot().app.stopped,stopped,'refusal cannot fabricate a new stopped state');
+ assert.equal(requests.filter(r=>r.url==='/stop-all').length,1);
+ refused=false;await api.stopEverything();assert.equal(api.getSnapshot().app.stopped,true);
+ assert.equal(requests.filter(r=>r.url==='/stop-all').length,2,'one mutation per explicit call');
+});
+
+test('STUDIOTESTS host availability returns only the server catalogue and retains empty and refused reads',async()=>{
+ let response={hosts:[{id:'host-a',name:'Revit'}]};
+ const {api,requests}=await adapter({signed_in:false},{'/api/universal/hosts':()=>response});
+ assert.deepEqual(JSON.parse(JSON.stringify(await api.readHostAvailability())),response);
+ response={hosts:[]};assert.deepEqual(JSON.parse(JSON.stringify(await api.readHostAvailability())),response);
+ response={ok:false,error:'Host catalogue unavailable'};await assert.rejects(api.readHostAvailability(),/Host catalogue unavailable/);
+ assert.equal(requests.filter(r=>r.url==='/api/universal/hosts').length,3);
+});
+
+test('STUDIOTESTS latest node result survives the current canvas projection',async()=>{
+ const canvas={root:'g',nodes:[{id:'runner',label:'Runner',properties:[],ports:[],result:'3 walls built'}],wires:[]};
+ const {api}=await adapter({signed_in:false},{'/api/universal/canvas':canvas});
+ assert.equal(api.getSnapshot().graph.nodes[0].output,'3 walls built');
+});
+
+test('STUDIOTESTS collapsed group projects member-owned boundary ports',async()=>{
+ const out={id:'member-out',name:'out',owner:'member-a',owner_label:'Member',side:'source',mode:'connection',connectable:true};
+ const input={id:'member-in',name:'in',owner:'member-a',owner_label:'Member',side:'target',mode:'connection',connectable:true};
+ const canvas={root:'g',nodes:[{id:'group-a',label:'Group',composition:true,properties:[],ports:[],member_ports:[out,input]}],wires:[]};
+ const {api}=await adapter({signed_in:false},{'/api/universal/canvas':canvas});
+ const group=api.getSnapshot().graph.nodes[0];
+ assert.deepEqual(JSON.parse(JSON.stringify(group.outputs.map(p=>[p.id,p.name,p.owner]))),[['member-out','Member · out','member-a']]);
+ assert.deepEqual(JSON.parse(JSON.stringify(group.inputs.map(p=>[p.id,p.name,p.owner]))),[['member-in','Member · in','member-a']]);
 });

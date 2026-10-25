@@ -66,6 +66,7 @@ async function mount(server,{holdBootDelay=false}={}) {
       const body=JSON.parse(options.body);
       data=server.workshop?await server.workshop(body):{ok:true,result:[]};
     }
+    if(url==='/api/universal/gesture'&&server.gesture)data=await server.gesture(JSON.parse(options.body));
     if(url===UPDATE){
       const body=options.body&&JSON.parse(options.body);
       if(body)posts.push(body);else gets.push(url);
@@ -79,7 +80,7 @@ async function mount(server,{holdBootDelay=false}={}) {
     }
     return {ok:data.ok!==false,status:data.ok===false?409:200,json:async()=>plain(data)};
   };
-  win.ArchHubStudioAuthority={create:({get})=>({load:()=>get('/api/universal/canvas')})};
+  win.ArchHubStudioAuthority={create:({get,post})=>({load:()=>get('/api/universal/canvas'),undo:()=>post('/api/universal/gesture',{undo:true}),redo:()=>post('/api/universal/gesture',{redo:true})})};
   win.eval(read('01.APP/nodelang/studio/vendor/react.js'));
   win.eval(read('01.APP/nodelang/studio/vendor/react-dom.js'));
   const manifest=JSON.parse(read('01.APP/nodelang/studio/compiled/manifest.json'));
@@ -290,4 +291,37 @@ test('all update entry points lead to the same review with one restart control',
     await v.settle(()=>v.posts.length===1,'one lifecycle mutation');
     assert.deepEqual(v.posts,[{action:'reload'}]);
   }finally{v.close();}
+});
+
+test('STUDIOTESTS a late successful send preserves a newer unsent Composer draft',async()=>{
+ const pending=deferred(),sends=[];
+ const v=await mount({get:()=>status('idle'),workshop:body=>{
+  if(body.function==='sendToBaboom'){sends.push(body);return pending.promise;}
+  if(body.function==='getAgentSurface')return {ok:true,result:{agentProfiles:{},learning:{layers:{}}}};
+  if(body.function==='getGraphMetadata')return {ok:true,result:{}};
+  return {ok:true,result:[]};
+ }});
+ try{
+  const message=v.doc.querySelector('textarea[aria-label="Message"]');
+  const type=text=>{Object.getOwnPropertyDescriptor(v.win.HTMLTextAreaElement.prototype,'value').set.call(message,text);message.dispatchEvent(new v.win.Event('input',{bubbles:true}));message.dispatchEvent(new v.win.Event('change',{bubbles:true}));};
+  type('First request');await v.settle(()=>!v.doc.querySelector('[aria-label="Send ↵"]').disabled,'first draft is ready');
+  const form=message.closest('form');form.dispatchEvent(new v.win.Event('submit',{bubbles:true,cancelable:true}));form.dispatchEvent(new v.win.Event('submit',{bubbles:true,cancelable:true}));
+  await v.settle(()=>sends.length===1,'one admitted send');type('New unsent draft');await pause();
+  pending.resolve({ok:true,result:{id:'task-a',title:'First request'}});
+  await v.settle(()=>v.doc.title.includes('Workshop'),'successful send opened its confirmed task');
+  assert.equal(sends.length,1);
+  assert.equal(v.doc.querySelector('textarea[aria-label="Message"]').value,'New unsent draft','late receipt must not erase newer text');
+ }finally{pending.resolve({ok:true,result:{id:'task-a'}});v.close();}
+});
+
+test('STUDIOTESTS Undo and Redo ignore editable targets and use the current graph owner',async()=>{
+ let undo=0,redo=0;const v=await mount({get:()=>status('idle'),gesture:body=>{if(body.undo)undo++;if(body.redo)redo++;return {ok:true};}});
+ try{
+  await pause();
+  const key=(target,shiftKey=false)=>target.dispatchEvent(new v.win.KeyboardEvent('keydown',{key:'z',ctrlKey:true,shiftKey,bubbles:true,cancelable:true}));
+  for(const tag of ['input','textarea','select']){const field=v.doc.createElement(tag);v.doc.body.append(field);key(field);key(field,true);field.remove();}
+  const editable=v.doc.createElement('div');editable.contentEditable='true';v.doc.body.append(editable);key(editable);key(editable,true);editable.remove();
+  await pause();assert.equal(undo,0,'editing must not undo the graph');assert.equal(redo,0,'editing must not redo the graph');
+  key(v.doc.body);key(v.doc.body,true);await pause();assert.equal(undo,1);assert.equal(redo,1);
+ }finally{v.close();}
 });

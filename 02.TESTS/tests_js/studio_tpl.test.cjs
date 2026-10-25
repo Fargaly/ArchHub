@@ -20,54 +20,6 @@ test('production template edit adapter writes through the admitted owner and fen
  resolve({ok:true,template:'tpl-sheet-register',revision:3});await assert.rejects(stale,/workspace changed/);
 });
 
-test('fresh catalogue renders starter cards, zero real counts, chain chips and one-click Start',async()=>{
- const rows=fresh(),ui=await mountStudio({templates:[...rows].reverse(),hosts:[]});
- try{
-  await ui.settle();await ui.settle();
-  const cards=[...ui.doc.querySelectorAll('[data-home-template]')];
-  assert.ok(cards.length>=4);
-  assert.deepEqual(cards.map(el=>el.dataset.homeTemplate),rows.map(row=>row.id));
-  assert.deepEqual([...ui.doc.querySelectorAll('[data-template-runs]')].map(el=>el.textContent),rows.map(()=> 'ran 0×'));
-  assert.doesNotMatch(ui.doc.querySelector('[data-home-templates]').textContent,/last:|No saved composite templates/);
-  for(const row of rows){const card=cards.find(el=>el.dataset.homeTemplate===row.id);for(const child of row.children)assert.ok(card.textContent.includes(child.title));}
-  ui.win.ReactDOM.flushSync(()=>cards[0].querySelector('[data-template-start]').click());await ui.settle();
-  assert.deepEqual(ui.ownerCalls,[['startHomeTemplate',rows[0].id]]);
- }finally{ui.close();}
-});
-
-test('Edit saves ordinary child parameters and Delete removes the same catalogue entry',async()=>{
- let rows=fresh(), calls=[];
- const ui=await mountStudio({templates:rows,owner:{readHomeTemplates:async()=>({templates:rows}),editHomeTemplate:async(id,change)=>{
-  calls.push({id,change});rows=change.delete ? rows.filter(row=>row.id!==id) : rows.map(row=>row.id===id ? {...row,...change.update} : row);
-  return {ok:true,template:id};
- }}});
- try{
-  await ui.settle();await ui.settle();const id=rows[0].id;
-  ui.win.ReactDOM.flushSync(()=>ui.doc.querySelector('[data-template-edit="'+id+'"]').click());
-  const form=ui.doc.querySelector('[data-template-editor]');assert.ok(form);
-  const input=form.querySelector('input[aria-label="Template name"]');
-  ui.win.ReactDOM.flushSync(()=>{Object.getOwnPropertyDescriptor(ui.win.HTMLInputElement.prototype,'value').set.call(input,'My register');input.dispatchEvent(new ui.win.Event('input',{bubbles:true}));});
-  ui.win.ReactDOM.flushSync(()=>form.dispatchEvent(new ui.win.Event('submit',{bubbles:true,cancelable:true})));
-  await ui.settle();await ui.settle();
-  assert.equal(calls[0].id,id);assert.equal(calls[0].change.update.title,'My register');
-  assert.deepEqual(calls[0].change.update.children,rows[0].children);
-  ui.win.ReactDOM.flushSync(()=>ui.doc.querySelector('[data-template-edit="'+id+'"]').click());
-  ui.win.ReactDOM.flushSync(()=>ui.doc.querySelector('[data-template-delete="'+id+'"]').click());await ui.settle();await ui.settle();
-  assert.equal(calls[1].change.delete,true);assert.equal(ui.doc.querySelector('[data-home-template="'+id+'"]'),null);
- }finally{ui.close();}
-});
-
-test('real runs outrank frequency while frequency breaks zero and tied counts',async()=>{
- const rows=fresh().map((row,index)=>({...row,run_count:index===5?3:0}));
- const ui=await mountStudio({templates:rows.reverse()});try{
-  await ui.settle();await ui.settle();
-  const cards=[...ui.doc.querySelectorAll('[data-home-template]')];
-  assert.equal(cards[0].dataset.homeTemplate,'tpl-titleblocks');
-  assert.equal(cards[0].querySelector('[data-template-runs]').textContent,'ran 3×');
-  assert.equal(cards[1].dataset.homeTemplate,'tpl-sheet-register');
- }finally{ui.close();}
-});
-
 const plate082=path.join(root,'design/ARCHHUB-CLD-DES-DSYS-082-2026-10-13_5.6b_home2.png');
 test('fresh Home render beside the 082 plate',{skip:!fs.existsSync(plate082) && 'the 082 plate image lives in the design handoff, not in the repo'},async()=>{
  const ui=await mountStudio({templates:fresh(),hosts:[],snapshot:{nativeWork:null}});

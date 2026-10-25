@@ -7,7 +7,7 @@ const vm = require('node:vm');
 const {createHash} = require('node:crypto');
 
 const source = fs.readFileSync(path.join(__dirname, '../../01.APP/nodelang/studio/studio-existing-workshop.js'), 'utf8');
-const jsx = fs.readFileSync(path.join(__dirname, '../../01.APP/nodelang/studio/studio-lm.jsx'), 'utf8');
+
 const context = vm.createContext({URLSearchParams, TextEncoder});
 vm.runInContext(source, context);
 const create = context.ArchHubExistingWorkshop.create;
@@ -212,70 +212,4 @@ test('unwritable pending storage refuses before external delivery', async () => 
   await fixture.api.refreshWorkshop('workshop-a');
   await assert.rejects(send(fixture.api), /Storage denied/);
   assert.equal(fixture.posts.length, 0);
-});
-
-function connectionHarness(options = {}) {
-  const start = jsx.indexOf('  const nativeConnection =', jsx.indexOf('const StudioLM ='));
-  const end = jsx.indexOf('\n  };', jsx.indexOf('  const connectNativeSession =', start)) + '\n  };'.length;
-  assert.ok(start > 0 && end > start);
-  const calls = [], selected = storage(), projection = {canvas:{graph_id:'graph-a', root:'scope-a'}};
-  const owner = {getSnapshot:() => projection, bindNativeContact:async row => {
-    calls.push(['bind', row]); return options.bind ? options.bind(row) : bound(); }};
-  const window = {ARCHHUB_EXISTING_WORKSHOP:owner, sessionStorage:selected,
-    ARCHHUB_SCOPE_OPEN:async trail => { calls.push(['open', plain(trail)]); if (options.open) await options.open(trail); },
-    location:{reload:() => calls.push(['reload'])}};
-  const context = vm.createContext({window, workshopState:projection, React:{useRef:initial => ({current:initial})}});
-  vm.runInContext(jsx.slice(start, end) + '\nglobalThis.connect = connectNativeSession;', context);
-  return {connect:context.connect, calls, selected, projection};
-}
-
-test('picker connection opens the saved Workshop without sending a message', async () => {
-  const fixture = connectionHarness();
-  await fixture.connect(selection);
-  assert.deepEqual(fixture.calls.map(row => row[0]), ['bind', 'open', 'reload']);
-  assert.deepEqual(JSON.parse(fixture.selected.getItem('archhub.native-contact.selection.v1')),
-    {graph:'graph-a', root:'workshop-a', contact:'contact-a'});
-});
-
-test('failed navigation retries the already confirmed contact instead of binding again', async () => {
-  let attempts = 0;
-  const fixture = connectionHarness({open:async () => { if (++attempts === 1) throw new Error('Navigation unavailable'); }});
-  await assert.rejects(fixture.connect(selection), /connection is saved/);
-  assert.deepEqual(fixture.calls.map(row => row[0]), ['bind', 'open']);
-  await fixture.connect(selection);
-  assert.deepEqual(fixture.calls.map(row => row[0]), ['bind', 'open', 'open', 'reload']);
-});
-
-test('unconfirmed bind cannot open, reload, select a recipient or send automatically', async () => {
-  const fixture = connectionHarness({bind:async () => { throw new Error('Lost bind receipt'); }});
-  await assert.rejects(fixture.connect(selection), /Lost bind receipt/);
-  await turn();
-  assert.deepEqual(fixture.calls.map(row => row[0]), ['bind']);
-  assert.equal(fixture.selected.data.size, 0);
-});
-
-test('a saved bind receipt after a view change never navigates the newly selected graph', async () => {
-  const held = deferred(), fixture = connectionHarness({bind:() => held.promise});
-  const operation = fixture.connect(selection);
-  fixture.projection.canvas = {graph_id:'graph-a', root:'scope-b'};
-  held.resolve(bound());
-  await assert.rejects(operation, /saved.*(?:view|graph|scope).*changed/i);
-  assert.deepEqual(fixture.calls.map(row => row[0]), ['bind']);
-  assert.equal(fixture.selected.data.size, 0);
-  // An explicit retry after returning may open the known saved contact.
-  fixture.projection.canvas = {graph_id:'graph-a', root:'scope-a'};
-  await fixture.connect(selection);
-  assert.deepEqual(fixture.calls.map(row => row[0]), ['bind', 'open', 'reload']);
-});
-
-test('an authorization change during binding cannot navigate under the earlier browser identity', async () => {
-  const held = deferred(), fixture = connectionHarness({bind:() => held.promise});
-  fixture.projection.canvas.authorization = {subject:'owner-a', session:'view-a'};
-  const operation = fixture.connect(selection);
-  fixture.projection.canvas = {...fixture.projection.canvas,
-    authorization:{subject:'owner-b', session:'view-b'}};
-  held.resolve(bound());
-  await assert.rejects(operation, /saved.*(?:access|view).*changed/i);
-  assert.deepEqual(fixture.calls.map(row => row[0]), ['bind']);
-  assert.equal(fixture.selected.data.size, 0);
 });

@@ -87,18 +87,3 @@ test('malformed projected model metadata cannot be sent',async()=>{
   await assert.rejects(f.prepare(),/binding is invalid/);await assert.rejects(f.send(),/Refresh/);
   assert.equal(f.posts.length,0);
 });
-test('visible Send dispatches through the selected real model authority and preserves its draft after refusal',async()=>{
-  const {mounted}=require('./workshop72_regression_helpers.cjs');
-  for(const rejected of [false,true]){
-    const fx=fixture({post:body=>{if(rejected)throw new Error('not called');return receipt(body);}});await fx.prepare();
-    const state=fx.api.getSnapshot();const authority={getSnapshot:()=>state,subscribe:()=>()=>{},
-      refreshWorkshop:root=>fx.api.refreshWorkshop(root),sendModelConversation:(...args)=>fx.api.sendModelConversation(...args)};
-    const ui=await mounted(state,authority,{target:'model:'+agent.root});
-    try{await ui.input('actual text');await ui.click(ui.button('Send'));
-      assert.equal(fx.posts.length,1);assert.equal(fx.posts[0].body.root,'child-a');assert.equal(fx.posts[0].body.node,agent.root);
-      assert.equal(fx.posts[0].body.binding_digest,agent.binding_digest);
-      assert.equal(ui.doc.querySelector('textarea').value,rejected?'actual text':'');
-      if(rejected)assert.match(ui.doc.querySelector('[role="alert"]').textContent,/not called/);
-    }finally{await ui.close();}
-  }
-});

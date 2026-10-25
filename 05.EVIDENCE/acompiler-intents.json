@@ -8607,6 +8607,22 @@
         "02.TESTS/tests_js/studio_workshop_open_counts_only_navigation.test.cjs",
         "02.TESTS/tests_js/wire_settings.test.cjs"
       ]
+    },
+    "STUDIOFIX": {
+      "source": "Founder STUDIOFIX: fix the seven real Studio failures on b3ee3479: nonstacking library insertion, serialized/coalesced same-parameter edits, collapsed group test aligned to the active clean canvas contract, overlap repair consistent with accepted design, late-send draft preservation, editable-focus Undo/Redo. Patch-only isolated lane; no installed app, live data, or visual redesign.",
+      "scope": [
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/app.jsx",
+        "01.APP/nodelang/studio/ui.jsx",
+        "01.APP/nodelang/studio/ds_screens.jsx",
+        "01.APP/nodelang/studio/studio-authority.js",
+        "02.TESTS/tests_js/newapp_account.test.cjs",
+        "02.TESTS/tests_js/studio_update_notice.test.cjs",
+        "02.TESTS/tests_js/studio_canvaslook.test.cjs",
+        "02.TESTS/tests_js/studio_canvasold.test.cjs",
+        "02.TESTS/tests_js/studio_group_member_wiring.test.cjs",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

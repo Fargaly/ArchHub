@@ -8450,6 +8450,14 @@
         "00.GOVERNANCE/02.INSTRUCTIONS/test_gen_contracts.py",
         "00.GOVERNANCE/03.AGENT-HOOKS/product-hooks/pre-commit"
       ]
+    },
+    "WSREPLY2": {
+      "source": "Founder WSASKONLY RUN10 / WSREPLY2: an exact reply_to from another Codex connection addressed To the same unresolved task/thread address closes the ask; different-address and asker replies must not close it. Retain declared native/session binding, acknowledgement authority, classifier and durable send queue. Isolated source patch; 717 reviews and lands. No live store, installed app or footer writes.",
+      "scope": [
+        "01.APP/nodelang/workshop_mailbox.py",
+        "02.TESTS/tests_replica/test_wsreply.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

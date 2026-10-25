@@ -8466,6 +8466,15 @@
         "02.TESTS/tests_js/studio_footerretry.test.cjs",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "FREESEL": {
+      "source": "Founder FREESEL Review 1 via 717: replace selector deny-pattern with one explicit frozen allow-list of _FREE_FALLBACKS, _GOOSE_FALLBACKS, _GOOSE_MODEL and opencode/mimo-v2.6-flash-free; refuse every unlisted id before processes with deliberate-add guidance; keep suffix/variant refusals, routes, deadlines and proofs. Source patch and courts only; no builds, installed app or provider calls.",
+      "scope": [
+        "03.TOOLS/tools/real_app_check/agentlink_release.py",
+        "02.TESTS/tests/test_agentlink_release.py",
+        "04.DOCS/DECISIONS.md",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

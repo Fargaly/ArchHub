@@ -17,6 +17,7 @@ import math
 import re
 import threading
 import time
+import unicodedata
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import ProxyHandler, Request, build_opener
@@ -623,6 +624,27 @@ def _declare(history, body, context, identity, runtime, peer, native_session):
     paths = sorted({canonical_path(value, peer.cwd) for value in body["paths"]})
     if sum(len(value.encode()) for value in paths) > 16384:
         raise ValueError("Declaration paths exceed their byte budget")
+    metadata = {key: _text(body[key], key, 256).strip()
+                for key in ("display_name", "model") if key in body}
+    if any(char in value for value in metadata.values() for char in "\r\n"):
+        raise ValueError("Declaration display metadata must be one line")
+    if "display_name" in metadata:
+        # Compare system-label lookalikes only; preserve the user's stored display name.
+        skeleton = "".join(char for char in unicodedata.normalize("NFKC", metadata["display_name"])
+                           if unicodedata.category(char) != "Cf" and not char.isspace())
+        skeleton = skeleton.translate(str.maketrans({
+            "А": "A", "а": "a", "В": "B", "в": "b", "С": "C", "с": "c",
+            "Е": "E", "е": "e", "Н": "H", "н": "h", "һ": "h", "Һ": "H", "І": "I", "і": "i",
+            "Ј": "J", "ј": "j", "К": "K", "к": "k", "М": "M", "м": "m",
+            "О": "O", "о": "o", "Р": "P", "р": "p", "Ѕ": "S", "ѕ": "s",
+            "Т": "T", "т": "t", "У": "Y", "у": "y", "ԁ": "d", "Ԁ": "D", "ԝ": "w", "Ԝ": "W",
+            "Α": "A", "α": "a", "Β": "B", "β": "b", "Ε": "E", "ε": "e",
+            "Η": "H", "η": "h", "Ι": "I", "ι": "i", "Κ": "K", "κ": "k", "Μ": "M", "μ": "m",
+            "Ν": "N", "ν": "n", "Ο": "O", "ο": "o", "Ρ": "P", "ρ": "p", "Τ": "T",
+            "τ": "t", "Υ": "Y", "υ": "u", "Ϲ": "C", "ϲ": "c",
+        })).casefold()
+        if skeleton in {"you", "baboom", "workshopcoordination", "archhub"}:
+            raise ValueError("Declaration display name is reserved")
     root = ROOM + ":declaration:" + sha256(native_session.encode()).hexdigest()
     row = {"root": root, "agent": identity["sender_label"], "session": identity["sender_key"],
            "task": task.strip(), "request_id": request.strip(), "paths": paths, "status": body["status"],
@@ -642,6 +664,8 @@ def _declare(history, body, context, identity, runtime, peer, native_session):
                             "root TEXT PRIMARY KEY,record TEXT NOT NULL CHECK(json_valid(record))) STRICT")
         previous = history._db.execute("SELECT record FROM workshop_declarations WHERE root=?", (root,)).fetchone()
         old = json.loads(previous[0]) if previous else None
+        row.update({key: old[key] for key in ("display_name", "model") if old and key in old})
+        row.update(metadata)
         changed = old is None or any(old.get(key) != value for key, value in row.items())
         row.update(version=(old["version"] if old else 0) + int(changed),
                    updated_at=datetime.now(timezone.utc).isoformat())
@@ -723,7 +747,7 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
         raise ValueError("Workshop store lock wait must be between zero and two seconds")
     required = {"send": {"to", "text"}, "read": {"since"}, "pending": set(),
                 "declare": {"task", "paths", "status", "request_id"}}
-    optional = {"send": {"reply_to", "idempotency_key", "native_control"}, "read": {"declarations_after", "include_archived"}, "declare": set(), "pending":set()}
+    optional = {"send": {"reply_to", "idempotency_key", "native_control"}, "read": {"declarations_after", "include_archived"}, "declare": {"display_name", "model"}, "pending":set()}
     if method not in required or type(body) is not dict or not required[method] <= set(body) or set(body) - required[method] - optional[method]:
         raise ValueError("Workshop mailbox arguments are invalid")
     identity, runtime, peer = _identity(context, peer)

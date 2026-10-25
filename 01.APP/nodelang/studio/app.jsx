@@ -381,7 +381,7 @@
             }} onClick={event => executeAction("appShell.Control.10", {
               go,
               r
-            }, event)} badge={r === 'workshop' ? s.approvals.filter(c => c.status === 'pending').length : undefined} style={{
+            }, event)} badge={r === 'workshop' ? s.tasks.filter(t => !['DONE','ARCHIVED'].includes(t.status)).length + (s.declaredTasks || []).length : undefined} style={{
               width: 64,
               height: 58,
               flex: 'none'

@@ -78,19 +78,19 @@
       gap: 18
     }}>{task.messages.map(m => <div key={m.id} style={{
         display: 'grid',
-        gridTemplateColumns: m.who === 'You' ? '1fr' : '32px 1fr',
+        gridTemplateColumns: Boolean(m.sender_key) && m.sender_key === m.viewer_key ? '1fr' : '32px 1fr',
         gap: 14
-      }}>{m.who !== 'You' && <Av id={m.who === 'BABOOM' ? 'goose' : window.ArchHubAPI.getSnapshot().providers.find(p => p.name === m.who)?.id || 'claude'} size={32} />}<div style={{
+      }}>{(!m.sender_key || m.sender_key !== m.viewer_key) && <Av id={m.provider || window.ArchHubAPI.getSnapshot().providers.find(p => p.name === m.who)?.id || 'claude'} size={32} />}<div style={{
           display: 'grid',
           gap: 8,
-          ...(m.who === 'You' ? {
+          ...(Boolean(m.sender_key) && m.sender_key === m.viewer_key ? {
             justifySelf: 'end',
             maxWidth: 560,
             padding: '12px 16px',
             borderRadius: '14px 14px 4px 14px',
             background: '#24242b'
           } : {})
-        }}>{m.who !== 'You' && <div className="flex"><b style={{
+        }}>{(!m.sender_key || m.sender_key !== m.viewer_key) && <div className="flex"><b style={{
               fontSize: 15
             }}>{m.who}</b><span className="muted" style={{
               fontSize: 12
@@ -98,7 +98,7 @@
             fontSize: 15,
             lineHeight: '24px',
             whiteSpace: 'pre-wrap'
-          }}>{m.text}</p>{['pending', 'delivered', 'answered'].includes(m.state) && <span role="status" data-delivery-state={m.state} className="muted">{m.state === 'answered' ? 'Answered' : m.state === 'delivered' ? 'Delivered' : 'Pending'}{m.delivery?.some(row => row.escalated) ? ' · Coordinator notified' : ''}</span>}<window.UI.TurnUsage message={m} /><window.UI.AnswerWidget message={m} />{m.who !== 'You' && <window.UI.AnswerSources message={m} />}{m.rule && <Chip c={A.purple}>Your rule: {m.rule}</Chip>}</div></div>)}</div>;
+          }}>{m.text}</p>{['pending', 'delivered', 'answered'].includes(m.state) && <span role="status" data-delivery-state={m.state} className="muted">{m.state === 'answered' ? 'Answered' : m.state === 'delivered' ? 'Delivered' : 'Pending'}{m.delivery?.some(row => row.escalated) ? ' · Coordinator notified' : ''}</span>}<window.UI.TurnUsage message={m} /><window.UI.AnswerWidget message={m} />{(!m.sender_key || m.sender_key !== m.viewer_key) && <window.UI.AnswerSources message={m} />}{m.rule && <Chip c={A.purple}>Your rule: {m.rule}</Chip>}</div></div>)}</div>;
   }
   function Win() {
     const s = useData(),

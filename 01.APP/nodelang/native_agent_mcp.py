@@ -293,16 +293,19 @@ def build_server(*, session=None, workshop_task=None, mailbox_call=None):
                 logging.getLogger(__name__).warning("Workshop declaration unavailable; message tools remain usable.")
 
     @server.tool(name="declare")
-    def declare(task: str, paths: list[str], status: str, request_id: str, ctx: Context) -> dict[str, object]:
+    def declare(task: str, paths: list[str], status: str, request_id: str, ctx: Context,
+                display_name: str = "", model: str = "") -> dict[str, object]:
         """Keep your Workshop node current: plain task, exact paths/hosts, founder request id,
         and working/blocked/done. Call at start and whenever scope or status changes.
         Overlaps post a shared coordination thread; they never lock anyone's work.
+        Supply your display_name and actual model for the Workshop message header.
         Send new findings/decisions/proposals with send(to='founder', text=plain_language).
         """
         context = _caller_context(ctx)
         retire_bootstrap(context)
         result = call("declare", {"task": task, "paths": paths, "status": status,
-                      "request_id": request_id}, context)
+                      "request_id": request_id, **({"display_name": display_name} if display_name else {}),
+                      **({"model": model} if model else {})}, context)
         declared.add(tuple(context.items()))
         return result
 

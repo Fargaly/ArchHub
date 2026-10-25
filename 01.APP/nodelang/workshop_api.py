@@ -21,6 +21,17 @@ STATES = {"open":"PLANNED", "claimed":"WIP", "blocked":"PLANNED",
           "review":"IN REVIEW", "complete":"DONE", "cancelled":"ARCHIVED"}
 
 
+def _message_identity(author, declared, subject_root):
+    row = next((item for item in declared
+                if author.endswith(" [" + item["session"] + "]")), None)
+    if row is None:
+        return {"who": "You" if author == subject_root else author, "author": author,
+                "sender_key": author, "viewer_key": subject_root}
+    return {"who": row.get("display_name") or LABELS.get(row["app"], row["agent"].split(" / ", 1)[0]),
+            "model": row.get("model"), "provider": row["app"], "author": author,
+            "sender_key": row["session"], "viewer_key": subject_root}
+
+
 class WorkshopAPI:
     def __init__(self, owner, binding, root, scope, *, guard, request_id, route, message_limit=1000):
         self.owner, self.binding, self.root, self.scope = owner, binding, root, scope
@@ -224,7 +235,8 @@ class WorkshopAPI:
         from .workshop_work_creation import _work_scope
         self.admit()
         rows = project_universal_governed_work(self.owner.universal_store,
-            self.owner.universal_registry, authentication_context=self.binding.context)
+            self.owner.universal_registry, authentication_context=self.binding.context,
+            workshop_root=self.root)
         snapshot = self.admit()
         return [row for row in rows if _work_scope(snapshot, self.owner.universal_registry,
                                                    row["root"]) == self.root]
@@ -262,7 +274,9 @@ class WorkshopAPI:
         research = ResearchOwner(self)
         from .workshop_mailbox import delivery_events
         from .workshop_delivery_state import project_injection_delivery
-        return [{"id":row["id"],"who":row["author"],"text":row["content"],
+        from .agent_declarations import declarations
+        declared = declarations(self.owner, include_archived=True)
+        return [{"id":row["id"], **_message_identity(row["author"], declared, self.binding.subject_root), "text":row["content"],
             **research.sources(row['id'],row.get('evidence',[]),row.get('refs',[task])),
             "reply_to":row["reply_to"],"sequence":row["sequence"],
             "created_at":row["created_at"], **project_injection_delivery(delivery_events(history, row))}
@@ -451,7 +465,9 @@ class WorkshopAPI:
         rows, more = history._collect(history._db.execute("SELECT * FROM messages WHERE conversation_id=? "
             "AND category=? AND public=1 AND (? IS NULL OR sequence<?) ORDER BY sequence DESC LIMIT 101",
             (self.root, CATEGORY, before, before)), 100, 180000)
-        messages = [{"id":row["id"], "who":row["author"], "text":row["content"],
+        from .agent_declarations import declarations
+        declared = declarations(self.owner, include_archived=True)
+        messages = [{"id":row["id"], **_message_identity(row["author"], declared, self.binding.subject_root), "text":row["content"],
             "reply_to":row["reply_to"], "sequence":row["sequence"], "created_at":row["created_at"],
             **project_injection_delivery(delivery_events(history, row), addressed=agent_addressed(row))}
             for row in reversed(rows)]

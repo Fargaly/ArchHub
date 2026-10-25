@@ -241,7 +241,7 @@
           e.preventDefault();
           remove();
         }
-        if (e.key === 'Enter' && node && isGroup(node)) setParent(node.id);
+        if (e.key === 'Enter' && node && isGroup(node)) openNode(node);
         if (e.key === 'Escape') {
           setFrom(null);
           setSelected([]);
@@ -503,7 +503,8 @@
       } else if (n.kind === 'Agent') u.show('Agent', {
         id: n.params.provider
       });else if (n.kind === 'Research') u.go('xray');else if (n.kind === 'History') u.go('receipts');else if (['Remember', 'Recall'].includes(n.kind)) u.go('brain');else if (['Social media', 'Read video', 'Read mail', 'Read file', 'Tutorial', 'Digest'].includes(n.kind)) u.go('social');else if (n.kind === 'X-RAY') u.go('xray');else if (['Account access', 'Billing & usage', 'Office invitations'].includes(n.kind)) u.go('access');else if (n.kind === 'Model routing') u.go('routing');else if (n.kind === 'Workshop') u.go('workshop');else if (n.kind === 'BABOOM') u.go('baboom');else if (n.kind === 'Watcher') u.go('watcher');else if (isGroup(n)) {
-        setParent(n.id);
+        if (n.children.some(id => s.graph.nodes.some(row => row.id === id))) setParent(n.id);
+        else { setParent(null); u.act(() => api.selectGraph(n.id)); }
         setSelected([]);
       } else u.show('Node', {
         id: n.id
@@ -624,10 +625,10 @@
             }).join(' ')} /></clipPath></defs><g clipPath={`url(#${clipId})`}><GraphWires paths={paths} selectedId={wireId} onSelect={id=>{setWireId(id);setSelected([]);}} visibility={s.graph.wireVisibility} nodes={s.graph.nodes} /></g></svg>
      {visible.map(n => {
        const position = draft?.positions?.[n.id] || (draft?.id === n.id ? draft : n),
-         members = (n.children || []).map(id => s.graph.nodes.find(x => x.id === id)).filter(Boolean);
+         members = (n.children || []).map(id => s.graph.nodes.find(x => x.id === id) || n.members?.find(m => m.id === id)).filter(Boolean);
        return <div key={n.id} data-graph-node={n.id} onPointerDown={e=>startNode(e,n)} style={{position:'absolute',width:224,opacity:n.frozen ? .5 : 1,left:position.x,top:position.y}} onDoubleClick={() => openNode(n)}>
          <NodeRenderer n={n} catalogue={s.catalogue} selected={selected.includes(n.id)} members={members}
-           onMember={m=>{setParent(n.id);setSelected([m.id]);}}
+           onMember={m=>{if (s.graph.nodes.some(row => row.id === m.id)) {setParent(n.id);setSelected([m.id]);} else {setParent(null);u.act(async()=>{await api.selectGraph(n.id);setSelected([m.id]);});}}}
            renderPort={(p,i,side)=><div className="canvas-port-row" style={{justifyContent:side === 'out' ? 'flex-end' : undefined}}><span style={{position:'absolute',[side === 'in' ? 'left' : 'right']:-11,top:0}}>{socket(n,p,side)}</span><span title={p.type}>{p.name}{p.unit ? ' · '+p.unit : ''}</span></div>}
            headerProps={{className:'node-header',onPointerDown:e=>startNode(e,n),onPointerMove:move,onPointerUp:end,
              onPointerCancel:()=>{gesture.current=null;setDraft(null);}}}

@@ -66,6 +66,7 @@ async function signIn() {
 }
 async function request(path,body=undefined,readRetry=true,signal=undefined) {
  const requestEpoch=scopeEpoch;
+ if(path==='/api/universal/focus'&&!window.ARCHHUB_AUTHORITY){path='/api/universal/gesture';body={expected_scope:body.expected_scope,roots:body.selected_roots,focus:body.primary_root};}
  let acknowledgementMode='';
  if(path==='/api/universal/interaction'&&body&&!window.ARCHHUB_AUTHORITY){
   const keys=['interaction','control','event','revision'];
@@ -116,7 +117,7 @@ function nodeDto(n) {
  return {id:n.id,title:n.label||n.title||n.id,kind:params.element?'UI element':n.kind||n.engine||assembly.name||'Node',x:n.x||0,y:n.y||0,status:n.status||'',
  params,defaults:Object.fromEntries(rows(n).filter(p=>p.default!==undefined).map(p=>[p.label,p.default])),parameterSchema:schema,inputs:ports.filter((_,i)=>['target','in'].includes(n.ports[i].side)),outputs:ports.filter((_,i)=>['source','out'].includes(n.ports[i].side)),
  definition:n.definition||assembly.definition,assembly:assembly.name,category:n.category||definition?.category||item?.cat||n.kind||'Node',icon:n.icon,colorToken:n.color_token,frame:n.group||'',
- children:(n.members||[]).map(r=>r.id||r),parent:(canvas.nodes||[]).some(row=>row.id===n.group)?n.group:null,pinned:n.pinned===true||params.pinned==='true',frozen:n.frozen===true||params.frozen==='true',output:research.output??n.output??n.result??[],application:n.application===true,
+ members:n.members||[],children:(n.members||[]).map(r=>r.id||r),parent:(canvas.nodes||[]).some(row=>row.id===n.group)?n.group:null,pinned:n.pinned===true||params.pinned==='true',frozen:n.frozen===true||params.frozen==='true',output:research.output??n.output??n.result??[],application:n.application===true,
  review:JSON.parse(params.research_review||'{"items":{}}'),successfulPresets:research.preset?[research.preset]:[],
  portVisibility:JSON.parse(params.port_visibility||'{}'),parameterPresentation:JSON.parse(params.parameter_presentation||'{}')};
 }
@@ -328,7 +329,7 @@ function nodeProperty(id,key,value) {
  return write.promise;
 }
 function rememberGraph(id) {
- if(id===state.graphs[0]?.id||id===session?.lastGraphId)return;
+ if(id===state.graphs[0]?.id||id===session?.lastGraphId||!state.graphs.some(g=>g.id===id))return;
  session={...session,lastGraphId:id};
  try {sessionStorage.setItem('archhub.studio.session',JSON.stringify(session));}
  catch {notice('The last graph could not be saved for this browser session.');}
@@ -508,7 +509,7 @@ Object.assign(api,{
   return mutate(()=>interaction(b.control,{event_facts:[{input:specs[0].input,value:input.label},{input:specs[1].input,value:String(input.value??'')}]}));
  },
  async approve(id){const card=state.approvals.find(c=>c.id===id);if(card?.approvalKind==='social'){const result=await request('/api/universal/social-approve',{delegation:card.delegation,input_digest:card.input_digest,decision:'approve'});await refreshApprovals();return result;}if(!card?.delegation||!card?.input_digest||!card?.work)return unavailable('approve','No reviewed model delegation');const binding=workshopBinding();const body={...binding,work:card.work,delegation:card.delegation,input_digest:card.input_digest};const inspected=await request('/api/universal/workshop-model-approval?'+new URLSearchParams(body));if(inspected.expired||inspected.input_digest!==card.input_digest)return {ok:false,status:'stale',message:'Review changed; refresh before approving.'};const result=await request('/api/universal/workshop-model-approval',{...body,revision:inspected.revision});await refreshTasks();return result;},
-  async selectGraph(id){const epoch=++scopeEpoch;restoreGraph=false;workingAgents=[];publish({tasks:[],declaredTasks:[],workshopMessages:[],workshopMessagesMore:false,workshopMessagesBefore:null,workshopMessagesScope:null,approvals:[],approvalActionsReady:false,desktopReady:false,desktop:{program:"",stage:"",taskId:null,offers:[]},watcherReady:false,watcher:copy(emptyWatcher),hostSkillsReady:false,hostSkills:[],connectorBundle:null});await openGraph(id);if(epoch!==scopeEpoch)return state.graph;await commands.load();if(epoch!==scopeEpoch)return state.graph;project();await refreshGraphs();if(epoch!==scopeEpoch)return state.graph;rememberGraph(id);await refreshTasks();if(epoch!==scopeEpoch)return state.graph;await refreshAgents();return state.graph;},
+  async selectGraph(id){const epoch=++scopeEpoch;restoreGraph=false;workingAgents=[];publish({tasks:[],declaredTasks:[],workshopMessages:[],workshopMessagesMore:false,workshopMessagesBefore:null,workshopMessagesScope:null,approvals:[],approvalActionsReady:false,desktopReady:false,desktop:{program:"",stage:"",taskId:null,offers:[]},watcherReady:false,watcher:copy(emptyWatcher),hostSkillsReady:false,hostSkills:[],connectorBundle:null});await (state.graph.nodes.some(n=>n.id===id&&n.children.length) ? commands.select(id).then(()=>commands.open(id)) : openGraph(id));if(epoch!==scopeEpoch)return state.graph;await commands.load();if(epoch!==scopeEpoch)return state.graph;project();await refreshGraphs();if(epoch!==scopeEpoch)return state.graph;rememberGraph(id);await refreshTasks();if(epoch!==scopeEpoch)return state.graph;await refreshAgents();return state.graph;},
  async selectWorkspace(id){return api.selectGraph(id);},
  getUsageSummary:()=>({'Usage':'Usage is unavailable.'}),
  async setConnection(id,values){if(values.connected===false)return request('/api/universal/social-connection',{provider:id,action:'cancel'});if(values.connected===true)return request('/api/universal/social-connection',{provider:id,action:'start'});return unavailable('setConnection','No sign-in action requested');},
@@ -1129,8 +1130,8 @@ Object.assign(api,{
   else{
    const node=state.graph.nodes.find(n=>n.id===target||n.title===target);
    const skill=state.templates.find(t=>t.id===target||t.title===target);
-   if(node)roots=node.id;
-   else if(skill){const opened=await api.openTemplateGraph(skill.id);if(skill.library){await api.ungroupNode(opened.root);const outgoing=new Set(state.graph.wires.filter(w=>opened.nodes.includes(w.to)).map(w=>w.from));roots=opened.nodes.filter(id=>!outgoing.has(id));}else{const outgoing=new Set(skill.recipe.wires.map(pair=>pair[0]));roots=opened.nodes.filter((id,index)=>!outgoing.has(index));}}
+   if(skill){const opened=await api.openTemplateGraph(skill.id);if(skill.library){await api.ungroupNode(opened.root);const outgoing=new Set(state.graph.wires.filter(w=>opened.nodes.includes(w.to)).map(w=>w.from));roots=opened.nodes.filter(id=>!outgoing.has(id));}else{const outgoing=new Set(skill.recipe.wires.map(pair=>pair[0]));roots=opened.nodes.filter((id,index)=>!outgoing.has(index));}}
+   else if(node)roots=node.id;
    else throw Error('Choose the node or saved skill to repeat on the canvas, then add its schedule.');
   }
   const result=await canvasOperation('add_schedule',[roots,time]);await refreshProjectData();return result;

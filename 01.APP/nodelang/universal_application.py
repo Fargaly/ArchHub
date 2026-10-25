@@ -18200,32 +18200,39 @@ def _scope_canvas_interface_roots(
     relation_roots: tuple[str, ...],
     selected_root: str,
 ) -> frozenset[str]:
-    """Return exact interface identities referenced by one bounded scope."""
-    admitted = {selected_root}
-    endpoint_roles = {
-        registry.roles["source"],
-        registry.roles["target"],
-    }
-    for relation_root in relation_roots:
-        admitted.update(
-            member.participant_id
-            for member in read_relation(
-                snapshot, relation_root, budget=_SCOPE_MEMBER_LIMIT
+    """Return referenced endpoints and every visible node's own sockets."""
+    with snapshot.read_scope():
+        from .library_engines import ENGINE_SOCKETS
+        admitted = {selected_root}
+        interface_role = registry.assembly_protocol.role("interface")
+        socket_names = {side: {name for sockets in ENGINE_SOCKETS.values()
+                              for name in sockets[side]} for side in ("source", "target")}
+        for owner_root in visible_roots:
+            admitted.update(member.participant_id for member in
+                (_relation_members_or_none(snapshot, owner_root) or ())
+                if member.role_id == interface_role)
+            # Pipeline socket identities are minted by universal_pipeline's existing owner.
+            token = owner_root.rsplit(":", 1)[-1]
+            for side, default in (("source", "out"), ("target", "in")):
+                base = "app:pipeline-interface:%s:%s" % (token, side)
+                for root in (base, *(base + ":" + name for name in socket_names[side] - {default})):
+                    if root in snapshot.cells:
+                        interface = _project_canvas_interface(snapshot, registry.assembly_protocol, root)
+                        if interface is not None and interface["owner"] == owner_root:
+                            admitted.add(root)
+        endpoint_roles = {
+            registry.roles["source"],
+            registry.roles["target"],
+        }
+        for relation_root in relation_roots:
+            admitted.update(
+                member.participant_id
+                for member in read_relation(
+                    snapshot, relation_root, budget=_SCOPE_MEMBER_LIMIT
+                )
+                if member.role_id in endpoint_roles
             )
-            if member.role_id in endpoint_roles
-        )
-    interface_role = registry.assembly_protocol.role("interface")
-    for owner_root in visible_roots:
-        if not _is_universal_composition(snapshot, registry, owner_root):
-            continue
-        admitted.update(
-            member.participant_id
-            for member in read_relation(
-                snapshot, owner_root, budget=_SCOPE_MEMBER_LIMIT
-            )
-            if member.role_id == interface_role
-        )
-    return frozenset(admitted)
+        return frozenset(admitted)
 
 
 def _visible_canvas_interface_roots(
@@ -21123,8 +21130,22 @@ def prepare_universal_retraction(
                 ),
                 budget=100_000,
             ).replace)
+    ancestor_replace = []
+    if not top_level:
+        trail = _read_view_scope_trail_structure(snapshot, registry, view_session)
+        exposures = _view_scope_exposures(snapshot, registry, view_session)
+        if trail[-1] == parent_root:
+            for index, ancestor in enumerate(trail[1:-1], start=1):
+                direct = _nested_canvas_scope(snapshot, registry, ancestor)[0]
+                exposed = exposures.get(ancestor)
+                if exposed is not None and trail[index + 1] in exposed[1] and trail[index + 1] not in direct:
+                    incidences = tuple(member.incidence_id for member in read_relation(snapshot, ancestor,
+                        budget=_SCOPE_MEMBER_LIMIT) if member.role_id == registry.roles["member"] and member.participant_id == root)
+                    ancestor_replace.extend(prepare_remove_relation_members(snapshot, ancestor, incidences,
+                        budget=_SCOPE_MEMBER_LIMIT).replace)
     replacements = {cell.id: cell for cell in patch.replace}
     for cell in (
+        *ancestor_replace,
         *exposure_replace,
         *(cell for revocation in revocations for cell in revocation.replace),
     ):
@@ -31485,6 +31506,17 @@ def _commit_atomic_visible_wip_resource(
     else:
         exposure_create, exposure_replace, exposure_grants = (), (), ()
     scope_patch = None
+    ancestor_patches = {}
+    if activate_view and active_scope_root != registry.canvas_root:
+        trail = _read_view_scope_trail_structure(snapshot, registry, view_session)
+        exposures = _view_scope_exposures(snapshot, registry, view_session)
+        for index, ancestor in enumerate(trail[1:-1], start=1):
+            direct = _nested_canvas_scope(snapshot, registry, ancestor)[0]
+            exposed = exposures.get(ancestor)
+            if exposed is not None and trail[index + 1] in exposed[1] and trail[index + 1] not in direct:
+                # A collapsed child still partitions its parent's exact leaf membership.
+                ancestor_patches[ancestor] = prepare_append_relation_members(snapshot, ancestor,
+                    ((registry.roles["member"], resource_root),), budget=_SCOPE_MEMBER_LIMIT)
     if (
         activate_view or placed_in_scope
     ) and active_scope_root != registry.canvas_root:
@@ -31594,6 +31626,7 @@ def _commit_atomic_visible_wip_resource(
         *additional_create,
         *exposure_create,
         *((scope_patch.create) if scope_patch is not None else ()),
+        *(cell for patch in ancestor_patches.values() for cell in patch.create),
         *selection_transition_create,
         *canvas_patch.create,
         *lens_patch.create,
@@ -31693,6 +31726,7 @@ def _commit_atomic_visible_wip_resource(
         *((visibility_patch.replace) if visibility_patch is not None else ()),
         *exposure_replace,
         *((scope_patch.replace) if scope_patch is not None else ()),
+        *(cell for patch in ancestor_patches.values() for cell in patch.replace),
         *additional_replace,
         *viewport_replacements,
         *identity_patch.replace,
@@ -31711,7 +31745,7 @@ def _commit_atomic_visible_wip_resource(
         command_name=command_name,
         authorization_scope_root=authorization_scope_root,
         additional_authorization_scope_roots=(
-            (active_scope_root,)
+            (active_scope_root, *ancestor_patches)
             if (activate_view or placed_in_scope)
             and active_scope_root != registry.canvas_root
             else ()
@@ -35074,6 +35108,7 @@ def project_universal_governed_work(
     registry: UniversalApplicationRegistry,
     *,
     authentication_context: object | None = None,
+    workshop_root: str | None = None,
 ) -> tuple[dict[str, object], ...]:
     """Project the ordered work registry without creating a second ledger."""
     view_session, context = _view_session_for_context(
@@ -35087,10 +35122,15 @@ def project_universal_governed_work(
         registry.governed_work_registry_root,
         authentication_context=context,
     )
-    visible_roots, _, _ = _session_canvas_roots(
-        snapshot, registry, view_session
-    )
-    visible = set(visible_roots)
+    if workshop_root is None:
+        visible_roots, _, _ = _session_canvas_roots(
+            snapshot, registry, view_session
+        )
+        visible = set(visible_roots)
+    else:
+        visible = set(_visibility_scope_projection(
+            snapshot, registry, view_session
+        )[0])
     members = read_relation(
         snapshot, registry.governed_work_registry_root, budget=100_000
     )
@@ -35107,6 +35147,12 @@ def project_universal_governed_work(
         work_root = member.participant_id
         if work_root not in visible:
             continue
+        if workshop_root is not None:
+            from .workshop_work_creation import _work_scope
+            if _work_scope(snapshot, registry, work_root) != workshop_root:
+                continue
+            _require_application_authorization(snapshot, registry, "read", work_root,
+                authentication_context=context)
         assembly = _instance_projection(snapshot, registry, work_root)
         if assembly is None:
             raise InvalidCell("registered work is not an assembly")

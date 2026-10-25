@@ -7,11 +7,11 @@ const {JSDOM}=require('jsdom');
 const studio=path.resolve(__dirname,'../../01.APP/nodelang/studio');
 const read=name=>fs.readFileSync(path.join(studio,name),'utf8');
 async function adapter(tasks=[],library,hosts=()=>({hosts:[]}),overrides={}){
- const requests=[],timers=new Map();let nextTimer=0;
+ const requests=[],stored=[],timers=new Map();let nextTimer=0;
  const window={ARCHHUB_BOOT:{token:'fixture',csrf:'fixture'},structuredClone:globalThis.structuredClone,crypto:require('node:crypto').webcrypto,Uint8Array:globalThis.Uint8Array,addEventListener(){},dispatchEvent(){},setInterval:fn=>{timers.set(++nextTimer,fn);return nextTimer;},clearInterval:id=>timers.delete(id)};
  const canvas={revision:0,root:'graph',scope:{current:'graph'},nodes:[],wires:[],catalog:[],workshops:[{root:'room'}],interaction_projection:{bindings:[{control:'graph',acknowledgement_mode:'topology-delta-v1'},{control:'new-group',acknowledgement_mode:'topology-delta-v1'}]}};
- window.ArchHubStudioAuthority={create:({get,post})=>({load:()=>get('/api/universal/canvas'),composition:()=>Promise.resolve(canvas),open:root=>{canvas.root=root;canvas.scope.current=root;return post('/api/universal/interaction',{control:root,event_facts:[],projection_mode:'topology-delta-v1'});}})};
- const context={window,document:{hidden:true,addEventListener(){}},console,URLSearchParams,TextEncoder,AbortSignal,setTimeout,clearTimeout,CustomEvent:class{},sessionStorage:{getItem:()=>null},
+ window.ArchHubStudioAuthority={create:({get,post})=>({load:()=>get('/api/universal/canvas'),composition:()=>Promise.resolve(canvas),select:root=>post('/api/universal/focus',{expected_scope:canvas.root,selected_roots:[root],primary_root:root}),open:root=>{canvas.root=root;canvas.scope.current=root;return post('/api/universal/interaction',{control:root,event_facts:[],projection_mode:'topology-delta-v1'});}})};
+ const context={window,document:{hidden:true,addEventListener(){}},console,URLSearchParams,TextEncoder,AbortSignal,setTimeout,clearTimeout,CustomEvent:class{},sessionStorage:{getItem:()=>null,setItem:(key,value)=>stored.push(JSON.parse(value))},
   fetch:async(url,options={})=>{
    const body=options.body?JSON.parse(options.body):{};requests.push({url,body});
    let data={ok:true};
@@ -31,7 +31,7 @@ async function adapter(tasks=[],library,hosts=()=>({hosts:[]}),overrides={}){
  require('node:vm').runInNewContext(read('api.js'),context);
  await window.ArchHubAPI.ready;
  await window.ArchHubAPI.refreshProjects();
- return {api:window.ArchHubAPI,requests,document:context.document,poll:async()=>{for(const fn of [...timers.values()])await fn();}};
+ return {api:window.ArchHubAPI,requests,stored,document:context.document,poll:async()=>{for(const fn of [...timers.values()])await fn();}};
 }
 
 test('Home hydrates stored zero-run starters and saved skills from their existing owners',async()=>{
@@ -97,6 +97,26 @@ test('failed graph navigation clears the new declaration projection immediately'
  await assert.rejects(api.selectGraph('missing'),/Graph refused/);
  assert.equal(api.getSnapshot().declaredTasks.length,0);
 });
+
+test('template scheduling resolves the stored template before a same-title collapsed card',async()=>{
+ const {api,requests}=await adapter([],undefined,undefined,{'/api/universal/canvas':()=>({
+  revision:0,root:'graph',scope:{current:'graph'},nodes:[{id:'existing',label:'Stored starter',kind:'Group',
+   members:[{id:'hidden-child',title:'Stored child'}],ports:[]}],wires:[],catalog:[],workshops:[{root:'room'}]})});
+ assert.equal(api.getSnapshot().graph.nodes[0].members[0].title,'Stored child');
+ await api.addSchedule('Stored starter','09:30');
+ assert.ok(requests.some(row=>row.url==='/api/universal/node-create'));
+ assert.deepEqual(requests.find(row=>row.body.op==='add_schedule').body.args,[['new-child'],'09:30']);
+});
+
+test('opening a hidden composition uses its existing scope control and keeps the saved project',async()=>{
+ const {api,requests,stored}=await adapter([],undefined,undefined,{'/api/universal/canvas':()=>({
+  revision:0,root:'graph',scope:{current:'graph'},nodes:[{id:'nested',label:'Stored group',members:[{id:'leaf',title:'Stored step'}],ports:[]}],wires:[],catalog:[],workshops:[{root:'room'}]})});
+ await api.selectGraph('nested');
+ assert.ok(requests.some(row=>row.url==='/api/universal/interaction'&&row.body.control==='nested'));
+ assert.equal(requests.filter(row=>row.url==='/api/universal/graph-open').length,0);
+ assert.ok(requests.findIndex(row=>row.url==='/api/universal/gesture')<requests.findIndex(row=>row.url==='/api/universal/interaction'),'selection must confirm before its scope control is used');
+ assert.equal(stored.length,0,'a child scope must not replace a saved top-level project');
+});
 test('Connections reads the existing owners and shows actual host and saved account names',async()=>{
  const dom=new JSDOM('<div id="root"></div>',{runScripts:'outside-only',pretendToBeVisual:true});
  const w=dom.window,calls=[],routes=[];
@@ -134,4 +154,27 @@ test('a completed template run never restores over a later deliberate graph navi
  const {api,requests}=await adapter([],undefined,undefined,{'/api/universal/run-graph':async()=>{begin();await new Promise(resolve=>{release=resolve;});return {ran:1,revision:3,results:{}};}});
  const running=api.startTemplate('starter');await entered;await api.selectGraph('other');release();await running;
  assert.deepEqual(requests.filter(row=>row.url==='/api/universal/interaction').map(row=>row.body.control),['new-group']);
+});
+
+
+test('Workshop own bubbles use sender keys even when an agent displays You or BABOOM',async()=>{
+ const dom=new JSDOM('<div id="root"></div>',{runScripts:'outside-only',pretendToBeVisual:true});
+ const w=dom.window;
+ try{
+  w.eval(read('vendor/react.js'));w.eval(read('vendor/react-dom.js'));w.eval(read('compiled/tokens.js'));
+  const h=w.React.createElement;
+  w.ArchHubAPI={executeAction(){},getSnapshot:()=>({providers:[]})};
+  w.UI={A:w.AH,D:{},Av:({id})=>h('i',{'data-avatar':id}),Chip:()=>null,TurnUsage:()=>null,AnswerWidget:()=>null,AnswerSources:()=>null};
+  w.eval(read('compiled/ds_workshop3.js'));
+  w.ReactDOM.createRoot(w.document.getElementById('root')).render(h(w.UI.Messages,{task:{messages:[
+   {id:'agent',who:'You',sender_key:'agent:session:spoof',viewer_key:'founder',provider:'codex',text:'Agent spoof'},
+   {id:'baboom',who:'BABOOM',sender_key:'agent:session:other',viewer_key:'founder',provider:'codex',text:'Agent system spoof'},
+   {id:'own',who:'Founder display',sender_key:'founder',viewer_key:'founder',text:'Founder message'}]}}));
+  for(let i=0;i<50&&!w.document.querySelector('p');i++)await new Promise(r=>setTimeout(r,5));
+  const rows=[...w.document.querySelectorAll('p')];
+  assert.equal(rows[0].parentElement.style.justifySelf,'');
+  assert.equal(rows[1].parentElement.style.justifySelf,'');
+  assert.equal(rows[2].parentElement.style.justifySelf,'end');
+  assert.deepEqual([...w.document.querySelectorAll('[data-avatar]')].map(el=>el.dataset.avatar),['codex','codex']);
+ }finally{w.close();}
 });

@@ -8437,7 +8437,8 @@
         "01.APP/nodelang/workshop_mailbox.py",
         "01.APP/nodelang/session_link/native.mjs",
         "02.TESTS/tests_replica/test_wsreply.py",
-        "05.EVIDENCE/acompiler-intents.json"
+        "05.EVIDENCE/acompiler-intents.json",
+        "04.DOCS/DECISIONS.md"
       ]
     }
   }

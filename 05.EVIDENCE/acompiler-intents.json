@@ -8669,6 +8669,20 @@
         "01.APP/nodelang/workshop_mailbox.py",
         "01.APP/nodelang/native_agent_mcp.py"
       ]
+    },
+    "CARDPOLISH": {
+      "source": "Founder CARDPOLISH: Canvas cards readable like approved plates 4.3/4.6; hide internal ids/hashes/instance refs/raw JSON only on card face; human labels, short values, full Properties/tooltip; preserve parameters sockets wires. Refuse six invisible and seven lookalike reserved names; normal Codex Claude Code and Arabic names pass. Isolated lane only; no install/live data/design writes.",
+      "scope": [
+        "01.APP/nodelang/studio/ds_screens.jsx",
+        "01.APP/nodelang/studio/style.css",
+        "01.APP/nodelang/workshop_mailbox.py",
+        "02.TESTS/tests_js/studio_canvasold.test.cjs",
+        "02.TESTS/tests_replica/test_designmatch.py",
+        "01.APP/nodelang/studio/context-menus.jsx",
+        "01.APP/nodelang/studio/workflow-states.jsx",
+        "02.TESTS/tests_js/newapp_account.test.cjs",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

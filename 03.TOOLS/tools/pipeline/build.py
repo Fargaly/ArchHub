@@ -62,7 +62,7 @@ def registration_context(root, parent, commit, paths, context):
 def compiler_identity(root):
     """Compiler bytes and pipeline; intent data is keyed per resolved request."""
     digest = hashlib.sha256()
-    digest.update(Path(strict_check._command(root)[0]).read_bytes())
+    digest.update(Path(strict_check._command(root, executable_only=True)[0]).read_bytes())
     listing = strict_check.git(root, "ls-files", "-z", "--", "tools/archhub-compiler", "tools/pipeline",
                                "tools/ratchet.py", "03.TOOLS/tools/archhub-compiler", "03.TOOLS/tools/pipeline", "03.TOOLS/tools/ratchet.py").decode()
     for path in sorted(p for p in listing.split("\0") if p):

@@ -120,7 +120,7 @@ def test_compiler_is_built_once_then_executed_and_stale_inputs_rebuild(tmp_path,
     monkeypatch.delenv("CARGO_TARGET_DIR", raising=False)
     builds = []
     def run(command, **kwargs):
-        assert command[1] == "build", command
+        assert command[1] in ("build", "run"), command
         builds.append((command, kwargs))
         executable = crate / "target" / "HOST-TARGET" / "release" / ("archhub-compiler.exe" if os.name == "nt" else "archhub-compiler")
         executable.parent.mkdir(parents=True, exist_ok=True)
@@ -148,6 +148,14 @@ def test_compiler_is_built_once_then_executed_and_stale_inputs_rebuild(tmp_path,
     fallback = strict_check._command(owner)
     assert fallback == [str(cargo), "run", "--quiet", "--release", "--locked", "--jobs", "2", "--manifest-path", str(crate / "Cargo.toml"), "--"]
     assert len(builds) == 4
+    prepared = strict_check._command(owner, executable_only=True)
+    assert prepared == first
+    assert len(builds) == 5
+    assert builds[-1][0][1] == "run"
+    assert builds[-1][0][-2:] == ["--", "source-identities"]
+    assert builds[-1][1]["input"] == "[]"
+    assert strict_check._command(owner) == first
+    assert len(builds) == 5
 
 
 @pytest.mark.parametrize("age, expected", [(0.0, False), (2.0, True), (float("inf"), False), (float("nan"), False)])
@@ -185,7 +193,16 @@ def test_real_compiler_cache_preserves_parent_admission(tmp_path, monkeypatch):
         seen.append(kwargs["context"]["intent"])
         return original(*args, **kwargs)
     monkeypatch.setattr(strict_check, "check_files", check)
-    monkeypatch.setattr(strict_check, "_command", lambda *a, **k: [os.environ["ACOMPILER_REAL_BINARY"]])
+    # A release may start active (Cargo launcher) and scan later while idle.
+    # Only the launcher selection changes; every admission uses the real binary.
+    active = [True]
+    def command(*args, **kwargs):
+        if active[0]:
+            active[0] = False
+            if not kwargs.get("executable_only"):
+                return [sys.executable, "run", "--"]
+        return [os.environ["ACOMPILER_REAL_BINARY"]]
+    monkeypatch.setattr(strict_check, "_command", command)
     assert build.admit_sequence(root, base) == 0
     assert seen == ["FIRST", "SECOND"]
     seen.clear()
@@ -200,6 +217,16 @@ def test_real_compiler_cache_preserves_parent_admission(tmp_path, monkeypatch):
     commit(root, "ACOMPILER2B: update request\n\nWhy: Verify that only users of changed authority are re-admitted.")
     assert build.admit_sequence(root, base) == 0
     assert seen == ["FIRST", "ACOMPILER2B"]
+    seen.clear()
+    changed_compiler = tmp_path / "changed-compiler.exe"
+    changed_compiler.write_bytes(Path(os.environ["ACOMPILER_REAL_BINARY"]).read_bytes() + b"\nGATEFAST identity court\n")
+    changed_compiler.chmod(Path(os.environ["ACOMPILER_REAL_BINARY"]).stat().st_mode)
+    monkeypatch.setattr(strict_check, "_command", lambda *a, **k: [str(changed_compiler)])
+    assert build.admit_sequence(root, base) == 0
+    assert seen == ["FIRST", "SECOND", "ACOMPILER2B", "ACOMPILER2B"]
+    seen.clear()
+    assert build.admit_sequence(root, base) == 0
+    assert seen == []
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows inherited pipe lifetime regression")

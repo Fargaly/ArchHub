@@ -246,7 +246,7 @@ def idle_or_away():
 _BUILT_COMPILERS = {}
 
 
-def _command(root, options=None):
+def _command(root, options=None, *, executable_only=False):
     # The product owns its compiler. A target project cannot replace admission
     # by placing a different executable/crate in the directory being checked.
     owner = Path(__file__).resolve().parents[2]
@@ -278,12 +278,19 @@ def _command(root, options=None):
     prepared = _BUILT_COMPILERS.get(key)
     if prepared and prepared[0].is_file() and hashlib.sha256(prepared[0].read_bytes()).hexdigest() == prepared[1]:
         return [str(prepared[0])]
-    if idle_or_away():
+    if executable_only or idle_or_away():
         try:
             # Cold compilation must not consume or inherit the executable scan deadline.
-            result = subprocess.run([str(cargo), "build", "--quiet", "--release", "--locked", "--jobs", str(options["jobs"]),
-                "--manifest-path", str(manifest), "--target-dir", str(target), "--message-format=json"],
-                cwd=root, env=env, capture_output=True, text=True, encoding="utf-8", check=True)
+            if idle_or_away():
+                result = subprocess.run([str(cargo), "build", "--quiet", "--release", "--locked", "--jobs", str(options["jobs"]),
+                    "--manifest-path", str(manifest), "--target-dir", str(target), "--message-format=json"],
+                    cwd=root, env=env, capture_output=True, text=True, encoding="utf-8", check=True)
+            else:
+                # Resolve Cargo's actual artifact, never hash its launcher as the compiler.
+                result = subprocess.run([str(cargo), "run", "--quiet", "--release", "--locked", "--jobs", str(options["jobs"]),
+                    "--manifest-path", str(manifest), "--target-dir", str(target), "--message-format=json", "--", "source-identities"],
+                    input="[]", cwd=root, env=env, capture_output=True, text=True, encoding="utf-8", check=True,
+                    timeout=node_timeout())
             artifacts = [json.loads(line) for line in result.stdout.splitlines()]
             executables = {item["executable"] for item in artifacts if item.get("reason") == "compiler-artifact"
                            and item.get("target", {}).get("name") == "archhub-compiler" and item.get("executable")}

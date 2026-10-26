@@ -8731,6 +8731,18 @@
         "02.TESTS/tests_replica/test_wsreply.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "NODES-OFFICE": {
+      "source": "Founder NODES-OFFICE 717: convert BAYATY D1-D8 coordination scripts into parameterized Canvas nodes. Extend existing Outlook/Office owners with search/thread/reply/forward drafts, signature-aware draft-only house email, workbook table/build/cell/share/open and PDF text/snips. Isolated patch and synthetic courts only; no live mailbox/client files/ArchHub-Test/screen/install/send.",
+      "scope": [
+        "01.APP/nodelang/clean_office_adapter.py",
+        "01.APP/nodelang/host_brokers.py",
+        "01.APP/nodelang/library_engines.py",
+        "01.APP/nodelang/base_universal_catalogue.py",
+        "02.TESTS/tests_replica/test_nodes_office.py",
+        "requirements.txt",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

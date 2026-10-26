@@ -1091,3 +1091,67 @@ Write-Output ('SNAPSHOT COURT PASS '+$Scenario)
         capture_output=True, encoding="utf-8", errors="replace", timeout=30)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "SNAPSHOT COURT PASS " + scenario in result.stdout
+
+
+@pytest.mark.parametrize('declared_before_refusal', [False, True])
+@pytest.mark.parametrize('outer', ['codex', 'claude'])
+def test_relroute_quota_fallback_binds_owned_server(tmp_path, monkeypatch, declared_before_refusal, outer):
+    import sqlite3
+    import psutil
+    from nodelang.conversation_history import ConversationHistoryStore
+    from nodelang.application_machine_transport import MachinePipePeer
+    from nodelang import workshop_mailbox, agent_runtime_registry as registry
+    from tools.real_app_check import agentlink_release as gate
+    class Process:
+        def __init__(self, pid): self.pid = pid
+        def name(self): return {300:'python.exe', 200:'opencode.exe', 100:outer+'.exe'}[self.pid]
+        def create_time(self): return float(self.pid)
+        def cmdline(self):
+            return {300:['python.exe','-m','nodelang.native_agent_mcp'],
+                200:['C:/CLI/opencode.exe','serve','--port','12345'],
+                100:[outer+'.exe','exec']}[self.pid]
+        def parent(self): return Process(self.pid-100) if self.pid>100 else None
+    monkeypatch.setattr(psutil, 'Process', Process)
+    peer = MachinePipePeer(pid=300, created_at=300, cwd=str(tmp_path))
+    database = tmp_path/'MAIL.sqlite3'
+    connection = sqlite3.connect(database, isolation_level=None)
+    with ConversationHistoryStore(database, instance_id='relroute', connection=connection) as history:
+        history.ensure_conversation('app:workshop')
+        def call(method, body):
+            return workshop_mailbox.call(method, body, {}, peer=peer, history=history)
+        calls, receipts = [], []
+        def declare():
+            receipt = call('declare', {'task':'Release proof', 'paths':[str(tmp_path)],
+                'status':'working', 'request_id':'AGENTLINK-RELEASE'})
+            receipts.append(receipt)
+            return receipt
+        def run(command, **_options):
+            calls.append(command)
+            if len(calls) == 1:
+                if declared_before_refusal: declare()
+                raise gate._FreeProviderFailure('free quota exhausted')
+            receipt = declare()
+            call('send', {'to':'Goose','text':'AGENTLINK-REQUEST '+command[-1]})
+            results = [('archhub_agent_coordination_declare',json.dumps(receipt))]
+            results.extend((tool,'ok') for tool in ['write','read','write','glob'])
+            return '\n'.join(json.dumps({'type':'tool_use','sessionID':'ses_selected','part':{
+                'tool':tool,'state':{'status':'completed','output':result}}}) for tool,result in results)
+        monkeypatch.setattr(gate, '_run', run)
+        primary = 'opencode/mimo-v2.6-flash-free'
+        page = lambda: call('read', {'since':0,'include_archived':True})
+        output, selected, routes = gate._opencode_turn(['fixture','-m',primary,'nonce'], model=primary,
+            env={'OPENROUTER_API_KEY':'fixture-key'}, cwd=tmp_path, timeout=300,
+            quota_log=tmp_path/'log', nonce='nonce', declaration_page=page)
+        assert selected == gate._FREE_FALLBACKS[0]
+        assert [row['reason'] for row in routes] == ['free quota exhausted','completed']
+        assert routes[-1]['nonce'] != routes[0]['nonce']
+        declaration, request = gate._request_proof(page(),'ses_selected',routes[-1]['nonce'],output=output)
+        assert declaration['root'] == routes[-1]['declaration'] == receipts[-1]['declaration']['root']
+        assert declaration['app'] == declaration['native_process']['runtime'] == 'opencode'
+        assert declaration['native_process']['pid'] == 200
+        assert request['content'].endswith('AGENTLINK-REQUEST '+routes[-1]['nonce'])
+        with pytest.raises(QualificationRefused, match='publish its nonce'):
+            gate._request_proof(page(),'ses_selected',routes[0]['nonce'],output=output)
+        # The accepted Agents list still excludes the server as a standalone row.
+        assert registry._process_runtime(Process(200)) is None
+    connection.close()

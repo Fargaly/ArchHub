@@ -25,7 +25,7 @@ _COMMAND_VALUE_OPTIONS = {'-c', '--config', '-p', '--profile', '-C', '--cd',
                           '-s', '--sandbox', '-a', '--ask-for-approval', '--add-dir', '-i', '--image'}
 
 
-def _process_runtime(process):
+def _process_runtime(process, *, include_services=False):
     names = {Path(process.name()).stem.casefold()}
     argv = process.cmdline()
     executable = (argv[0] if argv else '').replace('\\', '/').casefold()
@@ -54,7 +54,7 @@ def _process_runtime(process):
             continue
         if argument == '--':
             break
-        if argument in services or argument == '--type' or argument.startswith('--type='):
+        if (argument in services and not include_services) or argument == '--type' or argument.startswith('--type='):
             return None
         if not argument.startswith('-'):
             break  # Later positional words belong to the session/task.
@@ -76,12 +76,13 @@ def observed_runtime_process(peer, *, strict=False):
         if abs(process.create_time() - peer.created_at) > 0.00001:
             return None
         for _ in range(8):
-            runtime = _process_runtime(process)
+            # Declarations bind their nearest runtime, including an attached agent server.
+            runtime = _process_runtime(process, include_services=True)
             if runtime:
                 # npm's native CLI child and its Node launcher are one runtime.
                 try:
                     parent = process.parent()
-                    if parent is not None and Path(parent.name()).stem.casefold() == 'node' and _process_runtime(parent) == runtime:
+                    if parent is not None and Path(parent.name()).stem.casefold() == 'node' and _process_runtime(parent, include_services=True) == runtime:
                         process = parent
                 except (psutil.Error, OSError) as exc:
                     logging.getLogger(__name__).debug('Optional runtime launcher metadata unavailable: %s', exc)

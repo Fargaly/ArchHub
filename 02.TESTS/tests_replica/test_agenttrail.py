@@ -257,9 +257,11 @@ def test_agents_truth_desktop_services_are_not_cli_sessions_at_scale(monkeypatch
     reads=counts['cmdline']
     assert registry.discover_runtime_processes()['processes']==result['processes']
     assert counts['cmdline']==reads
-    # The same shared classifier must not call a service a native CLI ancestor.
-    assert registry.observed_runtime_process(SimpleNamespace(pid=5,created_at=5)) is None
-    assert registry.observed_runtime_process(SimpleNamespace(pid=23,created_at=23)) is None
+    # Discovery excludes service rows; declarations still bind the serving runtime.
+    assert registry.observed_runtime_process(SimpleNamespace(pid=5,created_at=5)) == {
+        'runtime':'codex','pid':5,'created_at':5.0}
+    assert registry.observed_runtime_process(SimpleNamespace(pid=23,created_at=23)) == {
+        'runtime':'goose','pid':23,'created_at':23.0}
     assert registry.observed_runtime_process(SimpleNamespace(pid=7,created_at=7))['pid']==7
     print('DESKTOP SCALE 1000 processes / 185 candidates / claude=6 codex=3 desktop=0; cold_ms=%.3f; warm_cmdline_reads=0' % (elapsed*1000))
 
@@ -860,3 +862,29 @@ def test_http_real_work_options_activity_handoff_and_privacy(served, tmp_path, m
         'args':[work, {'owns':['20.CLIENTS/SECRET.dwg']}],'root':server.universal_registry.workshop_root,
         'scope':_scope(server),'request_id':'reject-private'})
     assert status == 400
+
+
+@pytest.mark.parametrize('runtime', ['opencode', 'goose'])
+def test_relroute_declaration_service_ancestry_and_npm_launcher(monkeypatch, runtime):
+    import psutil
+    from nodelang import agent_runtime_registry as registry
+    class Process:
+        def __init__(self, pid): self.pid = pid
+        def name(self):
+            return {300:'python.exe',200:runtime+'.exe',
+                100:'node.exe' if runtime=='opencode' else 'codex.exe'}[self.pid]
+        def create_time(self): return float(self.pid)
+        def cmdline(self):
+            return {300:['python.exe','-m','nodelang.native_agent_mcp'],
+                200:['C:/CLI/'+runtime+'.exe','serve' if runtime=='opencode' else 'acp'],
+                100:['node.exe','C:/FIXTURE/node_modules/opencode-ai/bin/opencode','serve']
+                    if runtime=='opencode' else ['codex.exe','exec']}[self.pid]
+        def parent(self): return Process(self.pid-100) if self.pid>100 else None
+    monkeypatch.setattr(psutil, 'Process', Process)
+    assert registry._process_runtime(Process(200)) is None
+    if runtime=='opencode':
+        assert registry._process_runtime(Process(100)) is None
+    expected = 100 if runtime=='opencode' else 200
+    assert registry.observed_runtime_process(SimpleNamespace(pid=300,created_at=300)) == {
+        'runtime':runtime,'pid':expected,'created_at':float(expected)}
+    assert registry.observed_runtime_process(SimpleNamespace(pid=300,created_at=299)) is None

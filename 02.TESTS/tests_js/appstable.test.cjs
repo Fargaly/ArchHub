@@ -53,7 +53,7 @@ test('the existing refresh cadence updates a changed provider connection', async
   const window={structuredClone,AH:{inkSoft:'#999'},ARCHHUB_BOOT:{home_load_ms:60000,token:'fixture',csrf:'fixture'},
     addEventListener:() => {},dispatchEvent:() => {},clearInterval:() => {},
     setInterval:fn => {timers.push(fn);return timers.length;},
-    ArchHubStudioAuthority:{create:({get}) => ({load:() => get('/api/universal/canvas')})}};
+    ArchHubStudioAuthority:{create:({get})=>{let snapshot=null;return {load:async()=>{snapshot={canvas:await get('/api/universal/canvas')};return snapshot.canvas;},getSnapshot:()=>snapshot,clear:()=>{snapshot=null;},adopt:async canvas=>{snapshot={canvas};return canvas;},transact:async action=>{const canvas=await action();snapshot={canvas};return canvas;}};}}};
   const context=vm.createContext({window,console,setTimeout,clearTimeout,CustomEvent:class {},
     document:{hidden:false,addEventListener:() => {}},
     fetch:async url => ({ok:true,status:200,json:async () =>

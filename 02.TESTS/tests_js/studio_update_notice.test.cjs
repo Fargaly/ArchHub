@@ -80,7 +80,7 @@ async function mount(server,{holdBootDelay=false}={}) {
     }
     return {ok:data.ok!==false,status:data.ok===false?409:200,json:async()=>plain(data)};
   };
-  win.ArchHubStudioAuthority={create:({get,post})=>({load:()=>get('/api/universal/canvas'),undo:()=>post('/api/universal/gesture',{undo:true}),redo:()=>post('/api/universal/gesture',{redo:true})})};
+  win.ArchHubStudioAuthority={create:({get,post:send})=>{let held;const post=async(...args)=>{const result=await send(...args);held=Array.isArray(result.nodes)?result:await get('/api/universal/canvas');return result;};return ({getSnapshot:()=>({canvas:held}),clear:()=>{held=null;},adopt:async result=>held=result,transact:async action=>held=await action(),load:async()=>held=await get('/api/universal/canvas'),undo:()=>post('/api/universal/gesture',{undo:true}),redo:()=>post('/api/universal/gesture',{redo:true})})}};
   win.eval(read('01.APP/nodelang/studio/vendor/react.js'));
   win.eval(read('01.APP/nodelang/studio/vendor/react-dom.js'));
   const manifest=JSON.parse(read('01.APP/nodelang/studio/compiled/manifest.json'));

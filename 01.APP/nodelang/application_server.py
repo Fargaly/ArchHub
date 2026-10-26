@@ -268,6 +268,7 @@ from .universal_application import (
     settle_universal_baboom_model_execution,
     execute_universal_adapter_request,
     with_session_canvas_roots_scope,
+    _with_canvas_property_owner_index,
 )
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
@@ -522,6 +523,7 @@ _TOPOLOGY_DELTA_FIELDS = (
 )
 _INTERACTION_DELTA_FIELDS = (
     "action_history",
+    "topology_targets",
     "workshop_scope",
     "revision",
     "selected",
@@ -814,6 +816,7 @@ def _interaction_canvas_delta(
     *,
     base_revision: int,
     previous_projection: dict[str, object] | None = None,
+    compact: bool = False,
 ) -> dict[str, object]:
     """Return revision-bound interaction state without copying static graph data."""
     configuration = projection["configuration"]
@@ -875,7 +878,13 @@ def _interaction_canvas_delta(
             )
         ],
         "node_patches": [
-            node for node in projection["nodes"]
+            ({"id": node["id"], **{
+                field: value for field, value in node.items()
+                if field not in {"id", "selected", "x", "y"}
+                and _structural_value(previous_nodes[str(node["id"])].get(field), parent_field=field)
+                    != _structural_value(value, parent_field=field)
+            }} if str(node["id"]) in previous_nodes else node)
+            for node in projection["nodes"]
             if str(node["id"]) not in previous_nodes
             or node_structure(previous_nodes[str(node["id"])])
             != node_structure(node)
@@ -898,10 +907,33 @@ def _interaction_canvas_delta(
         },
     }
     delta.update({
-        field: projection[field]
+        field: projection.get(field)
         for field in _INTERACTION_DELTA_FIELDS
-        if field in projection and projection[field] is not None
+        if ((field in projection and projection[field] is not None) if not compact
+            else previous_projection is None or previous_projection.get(field) != projection.get(field))
     })
+    if compact:
+        delta['retained_fields'] = [field for field in _INTERACTION_DELTA_FIELDS if field not in delta]
+    if compact and isinstance(delta.get('selected_relation'), dict) and isinstance((previous_projection or {}).get('selected_relation'), dict):
+        old_relation, new_relation = previous_projection['selected_relation'], delta['selected_relation']
+        if {k: v for k, v in old_relation.items() if k != 'observed_revision'} == {k: v for k, v in new_relation.items() if k != 'observed_revision'}:
+            delta['selected_relation_revision'] = new_relation.get('observed_revision')
+            del delta['selected_relation']
+            delta['retained_fields'].append('selected_relation')
+    previous_history = (previous_projection or {}).get('action_history')
+    current_history = projection.get('action_history')
+    if compact and isinstance(previous_history, dict) and isinstance(current_history, dict) and 'action_history' in delta:
+        old, new = previous_history['transactions'], current_history['transactions']
+        common = 0
+        while common < min(len(old), len(new)) and old[-common-1] == new[-common-1]:
+            common += 1
+        delta['action_history'] = {key: value for key, value in current_history.items() if key != 'transactions'}
+        delta['action_history']['transactions_patch'] = {
+            'base_count': len(old), 'remove': len(old)-common, 'prepend': new[:len(new)-common], 'count': len(new)}
+    previous_bindings = (previous_projection or {}).get('interaction_projection')
+    current_bindings = delta.get('interaction_projection')
+    if compact and isinstance(previous_bindings, dict) and isinstance(current_bindings, dict) and previous_bindings.get('bindings') == current_bindings.get('bindings'):
+        delta['interaction_projection'] = {key: value for key, value in current_bindings.items() if key != 'bindings'}
     held_lens = (
         previous_projection is not None
         and previous_projection.get("revision") == base_revision
@@ -918,12 +950,13 @@ def _topology_canvas_delta(
     *,
     base_revision: int,
     previous_projection: dict[str, object] | None = None,
+    compact: bool = False,
 ) -> dict[str, object]:
     """Return a revision-bound topology patch or a complete recovery graph."""
     delta = _interaction_canvas_delta(
         projection,
         base_revision=base_revision,
-        previous_projection=previous_projection,
+        previous_projection=previous_projection, compact=compact,
     )
     delta["projection_mode"] = _TOPOLOGY_DELTA_MODE
     # The catalogue and the authorization block are ~200KB together and
@@ -1197,7 +1230,7 @@ def _validate_layout_preconditions(body, projection, *, scope):
             or type(body.get('expected_scope')) is not str or body['expected_scope'] != scope
             or type(body.get('projection_revision')) is not int
             or not 0 <= body['projection_revision'] <= projection['revision']
-            or body.get('projection_mode') not in (None, 'receipt-v1')):
+            or body.get('projection_mode') not in (None, 'receipt-v1', _INTERACTION_DELTA_MODE)):
         raise InvalidCell('layout preconditions are invalid or the canvas scope changed')
     for root, point in positions.items():
         base = expected[root]
@@ -4257,7 +4290,8 @@ class _CleanAuthorityHttpServer(WorkspaceRootsOwner):
                     except Exception:
                         self._json(500, {"ok": False, "error": "Workshop history could not be read"})
                     return
-                if self.path != "/api/universal/canvas":
+                canvas_url = urlsplit(self.path)
+                if canvas_url.path != "/api/universal/canvas":
                     self._json(404, {"ok": False, "error": "not found"})
                     return
                 try:
@@ -4265,7 +4299,21 @@ class _CleanAuthorityHttpServer(WorkspaceRootsOwner):
                     _r0 = _time.perf_counter()
                     binding = owner._resolve_binding(self._token())
                     _r1 = _time.perf_counter()
-                    payload = owner._canvas(binding, scope_root=owner._standing_scope(binding))
+                    scope = owner._standing_scope(binding)
+                    query = parse_qs(canvas_url.query, keep_blank_values=True)
+                    held = (getattr(owner, "_view_projections", None) or {}).get(binding.view_root)
+                    if (set(query) == {'since_revision'} and held is not None
+                            and query['since_revision'] == [str(held[0])]
+                            and held[0] == owner.authority.store.revision and held[1] == scope):
+                        authorization = held[2].get('authorization', {})
+                        sessions = authorization.get('browser_sessions', [])
+                        if (authorization.get('subject') == binding.subject_root
+                                and (authorization.get('session') == binding.session_root
+                                     or [row.get('root') for row in sessions] == [binding.session_root])):
+                            self._json(200, {'ok': True, 'unchanged': True, 'revision': held[0],
+                                'scope': scope, 'graph_id': held[2]['graph_id']})
+                            return
+                    payload = owner._canvas(binding, scope_root=scope)
                     _r2 = _time.perf_counter()
                     owner._record_gesture_timing(
                         "GET canvas rev=%s bind=%.3fs canvas=%.3fs"
@@ -6565,10 +6613,19 @@ class ApplicationServer(WorkspaceRootsOwner):
 
             def _json(self, status, payload):
                 raw = json.dumps(payload, separators=(',', ':')).encode('utf-8')
+                encoding = None
+                if len(raw) >= 2048 and 'gzip' in {part.strip() for part in (self.headers.get('Accept-Encoding') or '').lower().split(',')}:
+                    import gzip
+                    compressed = gzip.compress(raw, 6)
+                    if len(compressed) < len(raw):
+                        raw, encoding = compressed, 'gzip'
                 try:
                     self.send_response(status)
                     self.send_header('Content-Type', 'application/json; charset=utf-8')
                     self.send_header('Cache-Control', 'no-store')
+                    if encoding is not None:
+                        self.send_header('Content-Encoding', encoding)
+                        self.send_header('Vary', 'Accept-Encoding')
                     self.send_header('Content-Length', str(len(raw)))
                     self.end_headers()
                     self.wfile.write(raw)
@@ -6746,6 +6803,7 @@ class ApplicationServer(WorkspaceRootsOwner):
             @with_relation_projection_scope
             @with_catalog_verification_scope
             @with_session_canvas_roots_scope
+            @_with_canvas_property_owner_index
             def _do_get(self):
                 denied = local_browser_admission_error(
                     self.headers, self.server.server_address[1])
@@ -7482,6 +7540,18 @@ class ApplicationServer(WorkspaceRootsOwner):
                 if parsed.path == '/api/universal/canvas':
                     if not self._universal_route('GET', parsed.path, binding):
                         return
+                    freshness = parse_qs(parsed.query, keep_blank_values=True)
+                    if set(freshness) == {'since_revision'}:
+                        owner.require_universal_http_route('GET', parsed.path,
+                            authentication_context=binding.context, revalidate=True)
+                        current = owner._cached_browser_canvas_projection(
+                            binding, owner.universal_store.revision, include_candidates=self.headers.get('X-ArchHub-Renderer') != 'studio')
+                        if current is not None and freshness['since_revision'] == [str(current['revision'])]:
+                            self._json(200, {'ok': True, 'unchanged': True,
+                                'revision': current['revision'],
+                                'scope': current['scope']['current'],
+                                'graph_id': current['application_root']})
+                            return
                     if parse_qs(parsed.query, keep_blank_values=True) == {'screen': ['home']}:
                         with owner.mutation_lock:
                             projection = project_universal_home_frame(
@@ -7507,10 +7577,10 @@ class ApplicationServer(WorkspaceRootsOwner):
                         )
                     else:
                         projection = owner._cached_browser_canvas_projection(
-                            binding, owner.universal_store.revision
+                            binding, owner.universal_store.revision, include_candidates=self.headers.get('X-ArchHub-Renderer') != 'studio'
                         )
                     if projection is None:
-                        projection = owner.project_interaction_canvas(binding)
+                        projection = owner.project_interaction_canvas(binding, include_candidates=self.headers.get('X-ArchHub-Renderer') != 'studio')
                     owner._project_application_setting_owners(projection)
                     payload = {
                         'ok': True,
@@ -7889,6 +7959,7 @@ class ApplicationServer(WorkspaceRootsOwner):
             @with_relation_projection_scope
             @with_catalog_verification_scope
             @with_session_canvas_roots_scope
+            @_with_canvas_property_owner_index
             def do_POST(self):
                 try:
                     denied = local_browser_admission_error(
@@ -9344,11 +9415,11 @@ class ApplicationServer(WorkspaceRootsOwner):
                                     # Build once there, without optimistic
                                     # read-only retries for its new controls.
                                     else owner._project_interaction_canvas_scoped(
-                                        binding
+                                        binding, include_candidates=self.headers.get('X-ArchHub-Renderer') != 'studio'
                                     )
                                     if interaction.action_root == CAPABILITY_COMPOSITION
                                     else owner.project_interaction_canvas(
-                                        binding
+                                        binding, include_candidates=self.headers.get('X-ArchHub-Renderer') != 'studio'
                                     )
                                 )
                                 if projection_mode == _INTERACTION_DELTA_MODE:
@@ -9356,6 +9427,7 @@ class ApplicationServer(WorkspaceRootsOwner):
                                         projection,
                                         base_revision=body['revision'],
                                         previous_projection=previous_projection,
+                                        compact=self.headers.get('X-ArchHub-Renderer') == 'studio',
                                     )
                                 elif projection_mode == _TOPOLOGY_DELTA_MODE:
                                     projected = _topology_canvas_delta(
@@ -9364,6 +9436,7 @@ class ApplicationServer(WorkspaceRootsOwner):
                                         previous_projection=(
                                             previous_projection
                                         ),
+                                        compact=self.headers.get('X-ArchHub-Renderer') == 'studio',
                                     )
                                 else:
                                     projected = projection
@@ -9404,7 +9477,7 @@ class ApplicationServer(WorkspaceRootsOwner):
                             }
                             if body.get('projection', True):
                                 payload.update(
-                                    owner.project_interaction_canvas(binding)
+                                    owner.project_interaction_canvas(binding, include_candidates=self.headers.get('X-ArchHub-Renderer') != 'studio')
                                 )
                         self._json(200, payload)
                         return
@@ -9574,7 +9647,8 @@ class ApplicationServer(WorkspaceRootsOwner):
                     if self.path == '/api/universal/canvas-op' and type(body) is dict and body.get('op') == 'scheduler_tick':
                         from datetime import datetime
                         from .canvas_graph_owner import CanvasOwner as ScheduleCanvasOwner
-                        if set(body) != {'op', 'args'} or body['args'] != []:
+                        conditional = (set(body) == {'op', 'args', 'since_revision'} and type(body['since_revision']) is int and body['since_revision'] >= 0)
+                        if (set(body) != {'op', 'args'} and not conditional) or body['args'] != []:
                             raise InvalidCell('scheduler tick takes no arguments')
                         def scheduled_run(roots):
                             from urllib.request import Request, urlopen
@@ -9589,12 +9663,25 @@ class ApplicationServer(WorkspaceRootsOwner):
                         from .workshop_api import WorkshopAPI
                         from .desktop_owner import DesktopOwner
                         schedule_ops = ScheduleCanvasOwner(owner.universal_store, owner.universal_registry, binding.context)
-                        schedule_api = WorkshopAPI(owner, binding, owner.universal_registry.workshop_root,
-                            schedule_ops.canvas()['scope']['current'], guard=lambda: self._browser_session_binding(unsafe=True),
-                            request_id='scheduled-review', route=self.path)
-                        result = schedule_ops.tick_schedules(datetime.now(), scheduled_run, owner.mutation_lock,
-                            review=DesktopOwner(schedule_api).review_schedule)
-                        self._json(200, {'ok': True, 'result': result})
+                        def schedule_review(*args, **kwargs):
+                            schedule_api = WorkshopAPI(owner, binding, owner.universal_registry.workshop_root,
+                                schedule_ops.canvas()['scope']['current'], guard=lambda: self._browser_session_binding(unsafe=True),
+                                request_id='scheduled-review', route=self.path)
+                            return DesktopOwner(schedule_api).review_schedule(*args, **kwargs)
+                        result = schedule_ops.tick_schedules(datetime.now(), scheduled_run, owner.mutation_lock, review=schedule_review)
+                        payload = {'ok': True, 'result': result}
+                        if conditional:
+                            with owner.mutation_lock:
+                                owner.require_universal_http_route('GET', '/api/universal/canvas', authentication_context=binding.context, revalidate=True)
+                                current = owner._cached_browser_canvas_projection(binding, owner.universal_store.revision,
+                                    include_candidates=self.headers.get('X-ArchHub-Renderer') != 'studio')
+                                if current is not None and current['revision'] == body['since_revision']:
+                                    payload.update({'unchanged': True, 'revision': current['revision'],
+                                        'scope': current['scope']['current'], 'graph_id': current['application_root']})
+                                else:
+                                    payload['canvas'] = current or owner.project_interaction_canvas(binding,
+                                        include_candidates=self.headers.get('X-ArchHub-Renderer') != 'studio')
+                        self._json(200, payload)
                         return
                     # WIRE-projects end
                     if self.path == '/api/universal/run-graph':
@@ -9692,7 +9779,7 @@ class ApplicationServer(WorkspaceRootsOwner):
                                 layout_facts = owner._cached_browser_canvas_layout(
                                     binding, projection_revision)
                                 if layout_facts is None:
-                                    layout_projection = owner.project_interaction_canvas(binding)
+                                    layout_projection = owner.project_interaction_canvas(binding, include_candidates=self.headers.get('X-ArchHub-Renderer') != 'studio')
                                     layout_facts = _canvas_layout_facts(layout_projection)
                                 _validate_layout_preconditions(body, layout_facts,
                                     scope=layout_facts['scope']['current'])
@@ -9710,7 +9797,7 @@ class ApplicationServer(WorkspaceRootsOwner):
                                     or (
                                         projection_mode
                                         == _INTERACTION_DELTA_MODE
-                                        and self.path != '/api/universal/gesture'
+                                        and self.path not in ('/api/universal/gesture', '/api/universal/set-property')
                                     )
                                     or (
                                         projection_mode == _TOPOLOGY_DELTA_MODE
@@ -9889,13 +9976,16 @@ class ApplicationServer(WorkspaceRootsOwner):
                                         raise InvalidCell('graph creation requires only a title')
                                     payload = create_graph(owner.universal_store,
                                         owner.universal_registry, body['title'],
-                                        authentication_context=binding.context)
+                                        authentication_context=binding.context,
+                                        include_candidates=self.headers.get('X-ArchHub-Renderer') != 'studio')
                                 else:
                                     if set(body) != {'root'}:
                                         raise InvalidCell('graph opening requires only a root')
                                     payload = open_graph(owner.universal_store,
                                         owner.universal_registry, body['root'],
-                                        authentication_context=binding.context)
+                                        authentication_context=binding.context,
+                                        include_candidates=self.headers.get('X-ArchHub-Renderer') != 'studio')
+                                payload['canvas'] = owner.project_interaction_canvas(binding, include_candidates=self.headers.get('X-ArchHub-Renderer') != 'studio')
                                 owner._remember_tool_hub_graph_sessions(binding, payload)
                                 self._json(200, payload)
                                 return
@@ -10026,12 +10116,17 @@ class ApplicationServer(WorkspaceRootsOwner):
                                     ),
                                     authentication_context=binding.context,
                                 )
+                                projection = owner.project_interaction_canvas(binding, include_candidates=self.headers.get('X-ArchHub-Renderer') != 'studio')
+                                projected = (_interaction_canvas_delta(projection,
+                                    base_revision=projection_revision, previous_projection=previous_projection, compact=True)
+                                    if projection_mode == _INTERACTION_DELTA_MODE else None)
                                 self._json(200, {
                                     'ok': True,
                                     'value_root': value_root,
                                     'revision': (
                                         owner.universal_store.revision
                                     ),
+                                    **(projected if projected is not None else {'canvas': projection}),
                                 })
                                 return
                             elif self.path == '/api/universal/wire-property':
@@ -10272,19 +10367,21 @@ class ApplicationServer(WorkspaceRootsOwner):
                                 })
                             elif body.get('projection', True):
                                 projection = owner.project_interaction_canvas(
-                                    binding
+                                    binding, include_candidates=self.headers.get('X-ArchHub-Renderer') != 'studio'
                                 )
                                 if projection_mode == _INTERACTION_DELTA_MODE:
                                     projected = _interaction_canvas_delta(
                                         projection,
                                         base_revision=projection_revision,
                                         previous_projection=previous_projection,
+                                        compact=self.headers.get('X-ArchHub-Renderer') == 'studio',
                                     )
                                 elif projection_mode == _TOPOLOGY_DELTA_MODE:
                                     projected = _topology_canvas_delta(
                                         projection,
                                         base_revision=projection_revision,
                                         previous_projection=previous_projection,
+                                        compact=self.headers.get('X-ArchHub-Renderer') == 'studio',
                                     )
                                 else:
                                     projected = projection
@@ -18921,15 +19018,15 @@ class ApplicationServer(WorkspaceRootsOwner):
                     }
         return resolved
 
-    def project_interaction_canvas(self, binding: _BrowserSessionBinding):
+    def project_interaction_canvas(self, binding: _BrowserSessionBinding, *, include_candidates=True):
         """Project the real canvas and bind its callable controls to one revision."""
-        return self._project_interaction_canvas(binding)
+        return self._project_interaction_canvas(binding, include_candidates=include_candidates)
 
     # Build the full canvas outside the graph lock (00911b3 pattern).
     _interaction_canvas_outside_lock = True
 
     def _project_interaction_canvas(self, binding, *, scope_materialization=None,
-                                    previous_projection=None, expected_base_revision=None):
+                                    previous_projection=None, expected_base_revision=None, include_candidates=True):
         """Project the full canvas from a pinned head without holding the lock.
 
         The projection is built where any graph commit is refused. Each
@@ -18945,14 +19042,14 @@ class ApplicationServer(WorkspaceRootsOwner):
                 started_revision = self.universal_store.revision
                 try:
                     return self._project_interaction_canvas_scoped(
-                        binding, unlocked_from=started_revision)
+                        binding, unlocked_from=started_revision, include_candidates=include_candidates)
                 except Exception:
                     if self.universal_store.revision == started_revision:
                         break
         return self._project_interaction_canvas_scoped(
             binding, scope_materialization=scope_materialization,
             previous_projection=previous_projection,
-            expected_base_revision=expected_base_revision)
+            expected_base_revision=expected_base_revision, include_candidates=include_candidates)
 
     class _CanvasBuild:
         """One unlocked canvas build: the head it has seen, and its final lock."""
@@ -19032,6 +19129,7 @@ class ApplicationServer(WorkspaceRootsOwner):
         previous_projection=None,
         expected_base_revision=None,
         unlocked_from=None,
+        include_candidates=True,
     ):
         """Bind controls over one exact full or materialized session scope."""
         with self._interaction_canvas_scope(unlocked_from) as tail:
@@ -19047,6 +19145,7 @@ class ApplicationServer(WorkspaceRootsOwner):
                         target_scope,
                         expected_lineage_revision=expected_base_revision,
                         accepted_scope_materialization=scope_materialization,
+                        include_candidates=include_candidates,
                     )
                 )
             panel_event_root, panel_interaction_roots = (
@@ -19067,7 +19166,7 @@ class ApplicationServer(WorkspaceRootsOwner):
                 self._canvas_read(tail, project_universal_canvas)(
                     self.universal_store,
                     self.universal_registry,
-                    authentication_context=binding.context,
+                    authentication_context=binding.context, include_candidates=include_candidates,
                 )
                 if scope_materialization is None
                 else project_universal_scope_transition(
@@ -19078,6 +19177,7 @@ class ApplicationServer(WorkspaceRootsOwner):
                     previous_projection=previous_projection,
                     expected_base_revision=expected_base_revision,
                     reusable_scope_projection=reusable_scope_projection,
+                    include_candidates=include_candidates,
                 )
             )
             self._project_application_setting_owners(projection)
@@ -19630,6 +19730,7 @@ class ApplicationServer(WorkspaceRootsOwner):
         *,
         expected_lineage_revision: int,
         accepted_scope_materialization=None,
+        include_candidates=None,
     ) -> dict[str, object] | None:
         """Return one retained private scope only on an observed lineage."""
         if type(scope_root) is not str or type(expected_lineage_revision) is not int:
@@ -19673,6 +19774,8 @@ class ApplicationServer(WorkspaceRootsOwner):
             or cached.projection["scope"].get("current") != scope_root
         ):
             return None
+        if include_candidates is not None and ('topology_targets' not in cached.projection) != include_candidates:
+            return None
         return cached.projection
 
     def _cached_browser_scope_identity(
@@ -19700,6 +19803,7 @@ class ApplicationServer(WorkspaceRootsOwner):
         self,
         binding: _BrowserSessionBinding,
         revision: int,
+        include_candidates=None,
     ) -> dict[str, object] | None:
         """Return one disposable session projection at its exact revision."""
         with self._browser_session_lock:
@@ -19715,6 +19819,8 @@ class ApplicationServer(WorkspaceRootsOwner):
             or cached.assurance_root != binding.assurance_root
             or cached.projection.get("revision") != revision
         ):
+            return None
+        if include_candidates is not None and ('topology_targets' not in cached.projection) != include_candidates:
             return None
         return cached.projection
 

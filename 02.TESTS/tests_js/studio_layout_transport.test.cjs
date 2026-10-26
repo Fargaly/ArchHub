@@ -91,7 +91,7 @@ test('signed layout accepts unrelated graph advance and sends exact gesture base
   await api.load();durable=signedCanvas(6);await api.load();
   await api.moveMany({a:{x:30,y:40}},4,{a:{x:0,y:0}});
   assert.deepEqual(posts,[{expected_scope:'scope',positions:{a:{x:30,y:40}},
-    expected_positions:{a:{x:0,y:0}},projection_revision:6}]);
+    expected_positions:{a:{x:0,y:0}},projection_revision:6,projection_mode:'interaction-delta-v1'}]);
   assert.equal(api.getSnapshot().canvas.revision,7);
 });
 

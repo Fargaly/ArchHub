@@ -15,7 +15,7 @@ async function mount(name,props={},server=()=>({ok:true,result:[]})){
   else if(url==='/api/universal/brain-export')data={ok:true,facts:{folders:[{label:'User',facts:[{id:'fact',body:'A real fixture fact',kind:'fact'}]}]}};
   return {ok:data.ok!==false,status:data.ok===false?409:200,json:async()=>data};
  };
- w.ArchHubStudioAuthority={create:({get})=>({load:()=>get('/api/universal/canvas')})};
+ w.ArchHubStudioAuthority={create:({get})=>{let snapshot=null;return {load:async()=>{snapshot={canvas:await get('/api/universal/canvas')};return snapshot.canvas;},getSnapshot:()=>snapshot,clear:()=>{snapshot=null;},adopt:async canvas=>{snapshot={canvas};return canvas;},transact:async action=>{const canvas=await action();snapshot={canvas};return canvas;}};}};
  for(const f of ['vendor/react.js','vendor/react-dom.js','vendor/babel.js','api.js'])w.eval(read(f));
  await w.ArchHubAPI.ready;
  const R=w.React,api=w.ArchHubAPI,events=[];

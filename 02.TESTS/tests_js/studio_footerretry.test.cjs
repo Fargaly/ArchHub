@@ -156,7 +156,7 @@ async function mount(server,{holdBootDelay=false}={}) {
     }
     return {ok:data.ok!==false,status:data.ok===false?409:200,json:async()=>plain(data)};
   };
-  win.ArchHubStudioAuthority={create:({get})=>({load:()=>get('/api/universal/canvas')})};
+  win.ArchHubStudioAuthority={create:({get})=>{let canvas;return {getSnapshot:()=>({canvas}),clear:()=>{canvas=null;},adopt:async result=>canvas=result,transact:async action=>canvas=await action(),load:async()=>canvas=await get('/api/universal/canvas')};}};
   win.eval(read('01.APP/nodelang/studio/vendor/react.js'));
   win.eval(read('01.APP/nodelang/studio/vendor/react-dom.js'));
   const manifest=JSON.parse(read('01.APP/nodelang/studio/compiled/manifest.json'));

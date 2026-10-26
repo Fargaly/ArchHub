@@ -5,7 +5,7 @@ async function adapter(account, responses={}){
  const requests=[],events=new Map();
  const window={ARCHHUB_AUTHORITY:{},structuredClone:globalThis.structuredClone,ARCHHUB_BOOT:{home_load_ms:60000,token:'local-lease',csrf:'csrf'},
   Uint8Array:globalThis.Uint8Array,dispatchEvent(e){events.get(e.type)?.(e);},addEventListener(name,fn){events.set(name,fn);},AH:{inkSoft:'#888'},crypto:require('node:crypto')};
- window.ArchHubStudioAuthority={create:({get,post})=>({load:()=>get('/api/universal/canvas'),create:spec=>post('/fixture/create',spec),remove:id=>post('/fixture/remove',{id}),move:(id,point)=>post('/fixture/move',{id,point})})};
+ window.ArchHubStudioAuthority={create:({get,post:send})=>{let held;const post=async(...args)=>{const result=await send(...args);held=Array.isArray(result.nodes)?result:await get('/api/universal/canvas');return result;};return ({getSnapshot:()=>({canvas:held}),clear:()=>{held=null;},adopt:async result=>held=result,transact:async action=>held=await action(),load:async()=>held=await get('/api/universal/canvas'),create:spec=>post('/fixture/create',spec),remove:id=>post('/fixture/remove',{id}),move:(id,point)=>post('/fixture/move',{id,point})})}};
  const context={window,setTimeout,clearTimeout,document:{hidden:true,addEventListener(){}},
   CustomEvent:class {constructor(type,options){this.type=type;this.detail=options?.detail;}},sessionStorage:{getItem(){return null;}},URLSearchParams,TextEncoder:globalThis.TextEncoder,AbortSignal:globalThis.AbortSignal,console,
   fetch:async(url,options)=>{
@@ -157,7 +157,7 @@ async function mountReal(t) {
    if(url==='/fixture/remove')window.realCanvas.nodes=window.realCanvas.nodes.filter(n=>n.id!==body.id);
    return {ok:true,status:200,json:async()=>JSON.parse(JSON.stringify(data))};
   };
-  window.ArchHubStudioAuthority={create:({get,post})=>({load:()=>get('/api/universal/canvas'),move:(id,point)=>post('/fixture/move',{id,point}),remove:id=>post('/fixture/remove',{id})})};
+  window.ArchHubStudioAuthority={create:({get,post:send})=>{let held;const post=async(...args)=>{const result=await send(...args);held=Array.isArray(result.nodes)?result:await get('/api/universal/canvas');return result;};return ({getSnapshot:()=>({canvas:held}),clear:()=>{held=null;},adopt:async result=>held=result,transact:async action=>held=await action(),load:async()=>held=await get('/api/universal/canvas'),move:(id,point)=>post('/fixture/move',{id,point}),remove:id=>post('/fixture/remove',{id})})}};
  });
  await page.addScriptTag({content:readCanvas('api.js')});await page.evaluate(()=>window.ArchHubAPI.ready);
  await page.evaluate(()=>{
@@ -210,7 +210,7 @@ test('NODEPLACE bounded rendering wait does not move a node after navigation',as
  document.hidden=false;let frames=0;window.requestAnimationFrame=()=>{frames++;};let calls=0;
  window.addEventListener('archhub:canvas-insertion',e=>{calls++;e.detail.point={x:400,y:300,w:224,h:160};});
  const made=api.addNode('def');while(!frames)await new Promise(r=>setImmediate(r));
- await api.refreshProjects({userCanvas:true}).catch(()=>{});await made;
+ await api.selectGraph('other').catch(()=>{});await made;
  assert.equal(calls,1,'stale graph does not get post-create placement');assert.equal(requests.some(r=>r.url==='/fixture/remove'||r.url==='/fixture/move'),false);
 });
 test('NODEPLACE actual-height overflow keeps the new node and reports direction without deleting',async()=>{

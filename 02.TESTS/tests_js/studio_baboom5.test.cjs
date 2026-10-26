@@ -6,7 +6,7 @@ test('BABOOM5 native HTML mounts the actual shared Approve card and awaits its c
   const {fileURLToPath}=require('node:url');
   const fs=require('node:fs');
   const {JSDOM}=await import('jsdom');
-  const html=execFileSync(require('node:path').resolve(__dirname,'../../.venv/Scripts/python.exe'),
+  const html=execFileSync((process.env.PYTHON || 'python'),
     ['-c','from nodelang.baboom_native_companion import baboom_approval_html; print(baboom_approval_html({"title":"Remember","summary":"Remember blue?","state":"needs-user","id":"reviewed"}, "binding-court"))'],{encoding:'utf8',cwd:require('node:path').resolve(__dirname,'../..'),env:{...process.env,PYTHONPATH:require('node:path').resolve(__dirname,'../../01.APP')}});
   const dom=new JSDOM(html,{runScripts:'outside-only',pretendToBeVisual:true});
   const win=dom.window, calls=[], listeners=new Set();

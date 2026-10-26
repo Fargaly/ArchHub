@@ -44,7 +44,7 @@
   }
   // e6e4a367 studio-lm.jsx NodeRenderer: category header, role edge and parameter body.
   function NodeRenderer({n, catalogue = [], selected, headerProps, headerEnd, renderPort, members, onMember, compact = false}) {
-    const u = useApp(), [expanded,setExpanded] = React.useState(false);
+    const u = useApp(), [expanded,setExpanded] = React.useState(false), [parameterDrafts,setParameterDrafts] = React.useState({});
     const exact = catalogue.find(c=>c.id===n.definition||c.id===n.assembly||c.name===n.assembly||c.id===n.kind||c.name===n.kind),
       engines=catalogue.filter(c=>c.descriptor?.engine===n.kind), category=exact||(engines.length===1 ? engines[0] : null),
       family = (n.category || category?.family || n.kind).toLowerCase(), grouped = isGroup(n),
@@ -73,12 +73,19 @@
       headerEnd={headerEnd} chip={grouped && <div className="canvas-members">{(members || []).map(m=><button key={m.id} data-group-member={m.id} className="canvas-member" title={'Open '+m.title} onClick={event=>executeAction('projects.controls.activate',{handler:()=>onMember?.(m)},event)}><span style={{background:color,color:A.onFill}}>{m.title.slice(0,1)}</span>{m.title}</button>)}</div>}>
       {!grouped && (compact && !expanded ? parameters.slice(0,3) : parameters).map(([key,value])=>{
         const p=n.parameterSchema?.find(p=>p.key===key), label=n.title+' '+key,
-          save=v=>u.act(()=>api.setNodeParam(n.id,key,v));
+          shown=Object.hasOwn(parameterDrafts,key)?parameterDrafts[key]:value,
+          save=v=>{
+            setParameterDrafts(old=>({...old,[key]:v}));
+            return u.act(()=>api.setNodeParam(n.id,key,v)).then(saved=>{
+              if(!saved || saved.ok===false)return;
+              setParameterDrafts(old=>{if(!Object.is(old[key],v))return old;const next={...old};delete next[key];return next;});
+            });
+          };
         return <div className="canvas-card-param" data-parameter={key} key={key}><span title={p?.label || key}>{p?.label && p.label!==key ? p.label : key.replace(/_/g,' ').replace(/^./,c=>c.toUpperCase())}{p?.unit ? ' · '+p.unit : ''}</span>
           {p?.editable && ['string','number','boolean'].includes(typeof value) ? p.type==='boolean'
-            ? <D.Toggle label={label} checked={value} onCheckedChange={save} />
-            : p.options?.length ? <select aria-label={label} value={value} onChange={e=>save(e.target.value)}>{p.options.map(v=><option key={v}>{v}</option>)}</select>
-            : <input aria-label={label} title={String(value)} type={p.type==='number'?'number':'text'} min={p.min} max={p.max} step={p.step} value={value} style={{width:96,minWidth:0}} onChange={e=>{if(p.type!=='number'||Number.isFinite(e.target.valueAsNumber))save(p.type==='number'?e.target.valueAsNumber:e.target.value);}} />
+            ? <D.Toggle label={label} checked={shown} onCheckedChange={save} />
+            : p.options?.length ? <select aria-label={label} value={shown} onChange={e=>save(e.target.value)}>{p.options.map(v=><option key={v}>{v}</option>)}</select>
+            : <input aria-label={label} title={String(shown)} type={p.type==='number'?'number':'text'} min={p.min} max={p.max} step={p.step} value={shown} style={{width:96,minWidth:0}} onChange={e=>{if(p.type!=='number'||Number.isFinite(e.target.valueAsNumber))save(p.type==='number'?e.target.valueAsNumber:e.target.value);}} />
             : <span tabIndex={0} title={typeof value==='object'?JSON.stringify(value):String(value)}>{typeof value==='object'?JSON.stringify(value):String(value)}</span>}
         </div>;
       })}
@@ -86,7 +93,7 @@
     </D.Node>;
   }
   function Canvas({
-    embedded = false
+    embedded = false, active = true
   }) {
     const s = useData(),
       u = useApp();
@@ -116,6 +123,7 @@
     const [requestState, setRequestState] = React.useState('waiting');
     const [requestError, setRequestError] = React.useState('');
     const zoomSetting = zoomRow?.value;
+    const appliedZoomSetting = React.useRef(zoomSetting);
     const zoomSaveDelay = Number(s.canvasPolicy?.viewport_commit_debounce_ms ?? 140);
     const updateView = next => { view.current = next; setViewport(next); };
     const setPan = next => updateView({...view.current, pan: typeof next === 'function' ? next(view.current.pan) : next});
@@ -128,42 +136,48 @@
       updateView({zoom: next, pan: {x: x - (x - old.pan.x) * next / old.zoom, y: y - (y - old.pan.y) * next / old.zoom}});
     };
     React.useEffect(() => {
-      if (pendingZoomWrites.current || !Number.isFinite(Number(zoomSetting))) return;
+      if (!active || Object.is(appliedZoomSetting.current,zoomSetting)) return;
+      if (pendingZoomWrites.current) { appliedZoomSetting.current=zoomSetting; return; }
+      if (!Number.isFinite(Number(zoomSetting))) return;
+      appliedZoomSetting.current=zoomSetting;
       zoomAt(Number(zoomSetting) / 100);
-    }, [zoomSetting, requestState]);
+    }, [zoomSetting, requestState, active]);
     React.useEffect(() => {
       const percent = Math.round(zoom * 100);
+      if (!active) return;
       if (!['loaded','empty'].includes(requestState) || zoomSetting === undefined || percent === Number(zoomSetting)) return;
       const timer = setTimeout(() => {
         pendingZoomWrites.current++;
         zoomWrites.current = zoomWrites.current.then(() => u.act(() => api.setSetting(zoomRow.id, percent)))
+          .then(() => { appliedZoomSetting.current=api.getSnapshot().settings.find(row=>row.id===zoomRow.id)?.value; })
           .finally(() => { pendingZoomWrites.current--; });
         // u.act reports failures; a refused save must not poison the next gesture.
         zoomWrites.current = zoomWrites.current.catch(() => {});
       }, zoomSaveDelay);
       return () => clearTimeout(timer);
-    }, [zoom, zoomSetting, zoomRow?.id, zoomSaveDelay, requestState]);
+    }, [zoom, zoomSetting, zoomRow?.id, zoomSaveDelay, requestState, active]);
     const reload = () => {
       setRequestState('waiting');
-      return api.refreshProjects({userCanvas:true}).then(()=>api.refreshLibraryPorts?.()).then(() => {
+      return api.refreshProjects({userCanvas:true}).then(() => {
         setRequestState(api.getSnapshot().graph.nodes.length ? 'loaded' : 'empty');
       }).catch(error => {
         setRequestError(error.message);
         setRequestState('error');
       });
     };
-    React.useEffect(() => { reload(); u.setLibraryOpen?.(true); }, []);
+    React.useEffect(() => { if(active && requestState==='waiting'){reload(); u.setLibraryOpen?.(true);} }, [active]);
     React.useEffect(() => {
       if (requestState === 'loaded' || requestState === 'empty')
         setRequestState(s.graph.nodes.length ? 'loaded' : 'empty');
     }, [s.graph.nodes.length]);
     // A node whose group is not a node at this level is drawn here, never dropped.
-    const atLevel = n => s.graph.id!==s.graphs?.[0]?.id && !n.application && ((n.parent || null) === parent || (parent === null && !s.graph.nodes.some(x => x.id === n.parent)));
+    const atLevel = n => !s.graph.system && !n.application && ((n.parent || null) === parent || (parent === null && !s.graph.nodes.some(x => x.id === n.parent)));
     const scope = s.graph.id + ':' + (parent || ''), sourceNodes = s.graph.nodes.filter(atLevel);
     const visible = sourceNodes.map(n => ({...n, ...(layout.scope === scope ? layout.positions[n.id] : {})})),
       node = s.graph.nodes.find(n => n.id === selected.at(-1)),
       wire = s.graph.wires.find(w => w.id === wireId);
     React.useLayoutEffect(() => {
+      if (!active) return;
       const place = event => {
         if (!area.current || !world.current || !['loaded','empty'].includes(requestState)) return;
         const {zoom:z,pan:p} = view.current, rect = area.current.getBoundingClientRect(),
@@ -201,9 +215,9 @@
       };
       window.addEventListener('archhub:canvas-insertion',place);
       return () => window.removeEventListener('archhub:canvas-insertion',place);
-    });
+    }, [active, requestState, selected, scope, parent, s.graph.nodes]);
     React.useLayoutEffect(() => {
-      if (requestState !== 'loaded' || !world.current) return;
+      if (!active || requestState !== 'loaded' || !world.current) return;
       const positions = {}, points = new Map(), prior = layout.scope === scope ? layout.positions : {},
         minX = Math.min(...sourceNodes.map(n => n.x), 0), rowWidth = Math.max(760, Math.ceil(Math.sqrt(sourceNodes.length)) * 310);
       for (const n of sourceNodes) {
@@ -230,8 +244,9 @@
         positions[box.id] = box;
       }
       setLayout(old => old.scope === scope && JSON.stringify(old.positions) === JSON.stringify(positions) ? old : {scope,positions});
-    }, [requestState, scope, s.graph.nodes]);
+    }, [requestState, scope, s.graph.nodes, active]);
     React.useEffect(() => {
+      if (!active) { space.current=false; gesture.current=null; touches.current.clear(); return; }
       const listener = e => {
         if (e.target.closest('input,textarea,select,[contenteditable="true"],[role="textbox"]')) return;
         if (area.current?.contains(e.target)) {
@@ -273,8 +288,9 @@
       };
     });
     React.useLayoutEffect(() => {
+      if (!active) return;
       setPaths(measureWires(world.current,s.graph.wires,zoom));
-    }, [s.revision, parent, draft, requestState, layout]);
+    }, [s.graph, parent, draft, requestState, layout, active]);
     React.useEffect(() => u.setSelectedNodeId(selected.at(-1) || null), [selected.join(',')]);
     const group = async () => {
       const g = await u.act(() => api.groupNodes(selected));
@@ -477,11 +493,12 @@
       updateView({zoom: z, pan: {x: (w-width*z)/2-minX*z, y: (h-height*z)/2-minY*z}});
     };
     React.useEffect(() => {
-      if (requestState !== 'loaded' || layout.scope !== scope || fittedScope.current === scope+':'+u.libraryOpen) return;
+      if (!active || requestState !== 'loaded' || layout.scope !== scope || fittedScope.current === scope+':'+u.libraryOpen) return;
       fittedScope.current = scope+':'+u.libraryOpen;
       fit();
-    }, [requestState, scope, layout, u.libraryOpen]);
+    }, [requestState, scope, layout, u.libraryOpen, active]);
     React.useEffect(() => {
+      if (!active) return;
       const el = area.current;
       if (!el) return;
       const wheel = e => {
@@ -496,15 +513,16 @@
       };
       el.addEventListener('wheel', wheel, {passive:false});
       return () => el.removeEventListener('wheel', wheel);
-    }, [requestState]);
+    }, [requestState, active]);
     const physicalCtrl = React.useRef(false);
     React.useEffect(() => {
+      if (!active) { physicalCtrl.current=false; return; }
       const down = e => { if (e.key === 'Control') physicalCtrl.current = true; },
         up = e => { if (e.key === 'Control') physicalCtrl.current = false; },
         blur = () => { physicalCtrl.current = false; };
       window.addEventListener('keydown', down); window.addEventListener('keyup', up); window.addEventListener('blur', blur);
       return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); window.removeEventListener('blur', blur); };
-    }, []);
+    }, [active]);
     const openNode = n => {
       if (n.kind.toLowerCase().includes('meeting')) u.go('meetings');else if (n.kind === 'Watch program') u.act(() => api.windowAction('hide'));else if (n.kind === 'Present') u.go('present');else if (['Community', 'Community group', 'Marketplace listing', 'Project charge'].includes(n.kind)) u.go('community');else if (n.kind === 'Interface studio' || n.kind === 'UI element') u.go('interface');else if (n.kind.startsWith('TBP ')) u.go('model-review');else if (n.kind === 'Theme') u.go('settings/Appearance');else if (n.kind === 'Graph link') {
         if (n.params.targetGraph) u.act(() => api.selectGraph(n.params.targetGraph));else u.show('Graphs');

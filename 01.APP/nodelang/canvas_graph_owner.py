@@ -381,10 +381,23 @@ class CanvasOwner:
         raise CanvasRefused("that node is not on this canvas")
 
     def _rows(self, canvas, owner):
-        from .universal_pipeline import _owner_properties
-        held = _owner_properties(self.store.snapshot(), self.registry).get(owner) or {}
-        return {label: {"relation": relation, "value": value}
-                for label, (relation, value) in held.items()}
+        snapshot = self.store.snapshot()
+        rows = {}
+        try:
+            relations = app._canvas_property_owner_index(snapshot, self.registry).get(owner, ())
+        except (InvalidCell, app.MatchBudgetExceeded):
+            # Preserve the existing tolerant reader for noncanonical legacy properties.
+            from .universal_pipeline import _owner_properties
+            held = _owner_properties(snapshot, self.registry).get(owner) or {}
+            return {label: {'relation': relation, 'value': value}
+                    for label, (relation, value) in held.items()}
+        for relation in relations:
+            members = app.read_relation(snapshot, relation)
+            label = app._one_for_role(members, self.registry.roles['label'])
+            value = app._one_for_role(members, self.registry.roles['value'])
+            if label is not None and value is not None:
+                rows[app._text(snapshot, label)] = {'relation': relation, 'value': app._text(snapshot, value)}
+        return rows
 
     def set_property(self, owner, label, value, canvas=None):
         row = self._rows(canvas or self.canvas(), owner).get(label)
@@ -609,17 +622,21 @@ class CanvasOwner:
 
     def due_schedules(self, now):
         """Enabled schedules whose time has passed today and have not run today."""
-        canvas, today, hhmm = self.canvas(), now.strftime("%Y-%m-%d"), now.strftime("%H:%M")
+        from . import universal_application as app
+        snapshot = self.store.snapshot()
+        view, _ = app._view_session_for_context(self.registry, self.context)
+        roots = app._session_canvas_roots(snapshot, self.registry, view)[0]
+        today, hhmm = now.strftime("%Y-%m-%d"), now.strftime("%H:%M")
         due = []
-        for node in canvas["nodes"]:
-            rows = self._rows(canvas, node["id"])
+        for root in roots:
+            rows = self._rows(None, root)
             if (rows.get("engine") or {}).get("value") != SCHEDULE_ENGINE:
                 continue
             if (rows.get("enabled") or {}).get("value") == "true" \
                     and (rows.get("time") or {}).get("value", "99:99") <= hhmm \
                     and (rows.get("last_run") or {}).get("value") != today:
                 if (rows.get('last_attempt') or {}).get('value') != today:
-                    due.append(node["id"])
+                    due.append(root)
         return due
 
     def mark_schedule_ran(self, schedule, now):
@@ -722,8 +739,10 @@ class CanvasOwner:
         lock = lock or nullcontext()
         results = []
         with lock:
-            scope = self.canvas()['scope']['current']
             due = self.due_schedules(now)
+            if not due:
+                return results
+            scope = self.canvas()['scope']['current']
         def require_scope():
             if self.canvas()['scope']['current'] != scope:
                 raise CanvasRefused('The graph changed during its scheduled run; return to the original graph to reconcile its outcome')

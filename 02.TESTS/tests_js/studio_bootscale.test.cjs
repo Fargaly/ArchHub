@@ -9,7 +9,7 @@ const launcher=fs.readFileSync(path.join(repo,'01.APP/nodelang/launcher.py'),'ut
 const readiness=launcher.slice(launcher.indexOf('def _prepare_pipeline_after_home(')).match(/runJavaScript\("""([\s\S]*?)""", observed\)/)[1];
 const canvas=JSON.parse(fs.readFileSync(path.join(__dirname,'fixtures/clean-canvas-fresh-runtime.json'),'utf8'));
 for(const entry of ['launcher','clean','legacy'])test(`${entry}: Home shell paints while data is pending; hydration preserves input`,{timeout:25000},async()=>{
- const cleanPage=entry==='clean'?execFileSync(path.join(repo,'.venv/Scripts/python.exe'),['-c',
+ const cleanPage=entry==='clean'?execFileSync((process.env.PYTHON || 'python'),['-c',
   'from types import SimpleNamespace; from nodelang.application_server import _CleanAuthorityHttpServer as S; print(S._clean_studio_page(SimpleNamespace(clean_canvas_key="fixture",_clean_studio_asset=lambda name:open("01.APP/nodelang/studio/"+name,"rb").read())))'],{cwd:repo,env:{...process.env,PYTHONPATH:path.join(repo,'01.APP')},encoding:'utf8'}):null;
  const home={...canvas,projection:'home',nodes:[],wires:[],catalog:[],selected:[]};
  let release=false;const waiting=new Set(),errors=[];

@@ -35,9 +35,10 @@ const emptyWatcher=window.structuredClone(state.watcher);
 const exportedNames = ["moveNodes", "runValuation", "selectFirm", "acceptOfficeInvitation", "declineOfficeInvitation", "getUsageSummary", "setBilling", "prepareCheckout", "completeCheckout", "retryPayment", "downgradeBilling", "refreshBilling", "createCommunityGroup", "issueCommunityInvite", "revokeCommunityInvite", "verifyCommunityInvite", "joinCommunityGroup", "setMarketplace", "installMarketplaceItem", "proposeMarketplaceListing", "setProjectCharge", "proposeProjectCharge", "resolveTaskReview", "setApprovalRubric", "verifyOutputStamp", "setNodeRunPolicy", "contextLabel", "setGraphThumbnail", "setIntakeRule", "reviewBrainLink", "setOnboarding", "correctAnswerSource", "setResearchReview", "stampOutput", "runSpecialNode", "setTranscriptPass", "getDecisionState", "setDecisionState", "setRefine", "compareRefine", "setAnswerWidget", "startVoiceInput", "stopVoiceInput", "speak", "addCompatibleNode", "setPromotedParameter", "setPortVisibility", "compatibleNodes", "setDesktopProgram", "offerDesktopAction", "prepareDesktopAction", "setMeeting", "joinMeeting", "startMeetingTranscript", "stopMeetingTranscript", "readMeetingTranscript", "setMeetingActionOwner", "createMeetingTask", "proposeMeetingSummary", "setTaskPlanMode", "addTaskReview", "refreshOfficeAwareness", "settleTimesheet", "setSettingsScope", "openTemplateGraph", "addTemplateNode", "addComposerAttachment", "removeComposerAttachment", "manageDependency", "getCapabilityParameters", "setCapabilityParameter", "setCapabilityEnabled", "setLearningLayer", "postponeApproval", "resumeApproval", "contestDecision", "setScheduleResponsibility", "reviewScheduledWork", "getHealthHistory", "runResearchNode", "editSlide", "addSlide", "removeSlide", "reorderSlide", "setPrototype", "rebaselinePrototype", "checkVerdictPattern", "steerTask", "refreshModelRoster", "setMultipleNodeParameters", "runToHere", "setPinnedOutput", "setWireVisibility", "setSourceEvidence", "importHostSkill", "inspectConnectorBundle", "configureConnectorBundle", "installConnectorBundle", "setHostSkillEnabled", "auditHostSkill", "setAgentProfile", "setNodeFlags", "checkpointTask", "restoreTaskCheckpoint", "queueTaskMessage", "settleQueuedMessage", "setTaskDelegate", "getNodeOutput", "reviewModel", "updateReviewIssue", "subscribeCommunity", "reviewCommunityPattern", "proposeCommunityShare", "addInterfaceElement", "updateGraph", "removeGraph", "saveGraphVersion", "restoreGraphVersion", "setAccountSeats", "transferOwnership", "checkWatcherSource", "readYoutubeData", "refreshApproval", "setGraphWorkspaces", "discoverMcpTools", "reconnectMcp", "importMcpTool", "inspectMod", "retryMod", "installMod", "removeMod", "shareMod", "dismissSuggestion", "proposeMemory", "checkFeedback", "readResearchSource", "checkResearchLicense", "saveResearchDecision", "importRecipe", "exportRecipe", "getSocial", "saveSocialDraft", "proposeSocialDraft", "discardSocialDraft", "replySocialMessage", "readSocialMessage", "triageSocialInbox", "setSocialGroupRule", "updateOfficePage", "setSocialDigest", "generateSocialDigest", "readContentSource", "prepareTutorial", "setLearning", "runLearning", "distilLearning", "addGraph", "selectGraph", "openTaskGraph", "setAccountPlan", "setTeamAccess", "selectDevice", "setWorkspaceRules", "setModelSource", "checkModelRouting", "setWatcherDimension", "setWatcherOptions", "addDimension", "removeDimension", "getNodeParameters", "addNodeParameter", "setCompanionState", "getDocs", "getKnowledgeGraph", "getSnapshot", "subscribe", "ensureDependency", "checkDependencies", "reviewProofRow", "exposeSettingsPage", "selectWorkspace", "selectFile", "setWatcherView", "listWorkspaces", "addWorkspace", "removeWorkspace", "listProviders", "setProviderEnabled", "signInProvider", "setProviderModel", "listAgentsWorking", "getSettings", "setSetting", "resetSetting", "resetPage", "sendToBaboom", "listTasks", "listWorkshopMessages", "setTaskStatus", "approve", "decline", "stopEverything", "reassignTask", "startTemplate", "getGraph", "addNode", "moveNode", "setNodeParam", "resetNodeParam", "renameNode", "deleteNode", "forkNode", "arrangeGraph", "groupNodes", "ungroupNode", "connectSockets", "insertConvert", "setWireRule", "deleteWire", "runNode", "undo", "redo", "addSchedule", "setScheduleEnabled", "setScheduleTime", "removeSchedule", "editMemory", "forgetMemory", "remember", "setConnection", "checkConnection", "editWall", "addMark", "addComment", "proposeWatcherEdit", "discardWatcherChanges", "setWatcherHost", "updateProfile", "signIn", "syncAccount", "addFile", "removeFile", "disconnectSecret", "setModEnabled", "importFlow", "saveSkill", "sendFeedback", "changePlan", "invitePerson", "grantAccess", "installUpdate", "windowAction", "backUpNow", "rollBack", "archiveActivity", "readNotification", "exportData", "traceNode"];
 
 const listeners=new Set();
-let canvas=null, session=null, commands=null, renewing=null, scopeEpoch=0, restoreGraph=true;
-let graphNavigation=Promise.resolve();
+let canvas=null, session=null, commands=null, renewing=null, scopeEpoch=0, accountEpoch=0, restoreGraph=true;
+let graphNavigation=Promise.resolve(), requestedGraph=null;
 let refreshTimer=null, refreshInFlight=false, taskRefreshInFlight=null, ready=false, accountSignInPending=false;
+let activeSurface='home', canvasRefresh=null, canvasOpening=null, accountKnown=false;
 let providerRoster=[], workingAgents=[], agentsChecked=false;
 let controlsGeneration=0, notificationGeneration=0;
 let updateGeneration=0, updateActionPending=false;
@@ -55,8 +56,8 @@ function unavailable(operation,reason='') {
  notice(result.message);return result;
 }
 const normalise=data=>data && (data.canvas_root||data.root) && Array.isArray(data.nodes)
- ? {...data,root:data.root||data.canvas_root,graph_id:data.graph_id||data.application_root,
-    nodes:data.nodes.map(n=>({...n,properties:n.properties||n.params||[]}))} : data;
+ ? {...data,root:data.scope?.current||data.root||data.canvas_root,graph_id:data.graph_id||data.application_root,
+    nodes:data.nodes.map(n=>({...n,properties:Array.isArray(n.params)?n.params:n.properties||[]}))} : data;
 async function signIn() {
  const descriptor=window.ARCHHUB_AUTHORITY;
  const response=await fetch('/api/universal/session',{method:'POST',headers:{'Content-Type':'application/json','X-ArchHub-Sign-In':'1',
@@ -66,24 +67,25 @@ async function signIn() {
  try {sessionStorage.setItem('archhub.studio.session',JSON.stringify(session));} catch { notice('Browser session storage is unavailable. This window remains signed in.'); }
 }
 async function request(path,body=undefined,readRetry=true,signal=undefined) {
- const requestEpoch=scopeEpoch;
+ const requestEpoch=scopeEpoch, requestAccountEpoch=accountEpoch, requestCanvas=commands?.getSnapshot()?.canvas||canvas;
  if(path==='/api/universal/focus'&&!window.ARCHHUB_AUTHORITY){path='/api/universal/gesture';body={expected_scope:body.expected_scope,roots:body.selected_roots,focus:body.primary_root};}
  let acknowledgementMode='';
  if(path==='/api/universal/interaction'&&body&&!window.ARCHHUB_AUTHORITY){
   const keys=['interaction','control','event','revision'];
   if(Array.isArray(body.event_facts)&&body.event_facts.length)keys.push('event_facts');
   // Scope entry must carry the acknowledgement mode named by its current lease.
-  const held=(canvas?.interaction_projection?.bindings||[]).filter(b=>b.control===body.control);
+  const held=(requestCanvas?.interaction_projection?.bindings||[]).filter(b=>b.control===body.control);
   if(held.length===1&&typeof body.projection_mode==='string'&&[held[0].projection_mode,held[0].acknowledgement_mode].includes(body.projection_mode)){
-   acknowledgementMode=held[0].acknowledgement_mode||'';
-   if(acknowledgementMode){body={...body,projection_mode:acknowledgementMode};keys.push('projection_mode');}
+   keys.push('projection_mode');
+   if(body.projection_mode===held[0].acknowledgement_mode)acknowledgementMode=held[0].acknowledgement_mode;
   }
   if(body.control==='app:control:canvas:remove-member')keys.push('membership','expected_scope','command_id');
   body=Object.fromEntries(keys.filter(k=>Object.hasOwn(body,k)).map(k=>[k,body[k]]));
  }
  const response=await fetch(path,{method:body===undefined?'GET':'POST',cache:'no-store',signal,headers:{'Content-Type':'application/json',
- 'X-ArchHub-Session':session?.token||'','X-ArchHub-CSRF':session?.csrf||''},...(body===undefined?{}:{body:JSON.stringify(body)})});
+ 'X-ArchHub-Session':session?.token||'','X-ArchHub-CSRF':session?.csrf||'','X-ArchHub-Renderer':'studio'},...(body===undefined?{}:{body:JSON.stringify(body)})});
  const data=await response.json();
+ if(requestAccountEpoch!==accountEpoch)throw Error('The account changed while this request was in flight.');
  if(response.status===403&&/browser session|session lease|credential digest|browser-session/i.test(data.error||'')) {
   if(readRetry){renewing=renewing||signIn().finally(()=>{renewing=null;});await renewing;
    // A refused write is never replayed. Only the next deliberate action uses the renewed session.
@@ -96,7 +98,12 @@ async function request(path,body=undefined,readRetry=true,signal=undefined) {
   if(!Number.isInteger(latest.revision)||latest.revision<data.committed_revision)throw Error('The change is not visible in the refreshed canvas.');
   return latest;
  }
- const result=normalise(data);if(result?.root&&Array.isArray(result.nodes)&&requestEpoch===scopeEpoch)canvas=result;
+ const isDelta=['interaction-delta-v1','topology-delta-v1'].includes(data.projection_mode);
+ if(requestEpoch!==scopeEpoch&&isDelta)throw Error('The graph changed while this request was in flight.');
+ const result=normalise(isDelta?window.ArchHubStudioAuthority.mergeProjectionDelta(data,requestCanvas):data);
+ if((result?.root&&Array.isArray(result.nodes))||result?.canvas){
+  if(requestEpoch!==scopeEpoch)throw Error('The graph changed while this request was in flight.');
+ }
  return result;
 }
 function rows(node){return node?.properties||node?.params||[];}
@@ -112,7 +119,7 @@ function nodeDto(n) {
   const name=p.name||p.label||p.id, parameter=rows(n).find(row=>row.label===name),
    declared=definition?.interface_contract?.[name]||{}, metadata=definition?.parameters?.[name]||{},
    logical=item?.ports?.[p.side]?.find(port=>port.id===name);
-  return {...p,name,type:p.value_type||p.logical_type||declared.type||(logical?.type==='unknown' ? undefined : logical?.type)||parameter?.type||metadata.type||'any',
+  return {...p,name,connect_choices:p.connect_choices?.map(c=>({id:c.owner||c.id,interface:c.interface||c.id})),type:p.value_type||p.logical_type||declared.type||(logical?.type==='unknown' ? undefined : logical?.type)||parameter?.type||metadata.type||'any',
    list:p.list??p.multiple??declared.multiple??((p.cardinality||logical?.cardinality)==='many'),unit:p.unit||parameter?.unit||metadata.unit||''};
  });
  return {id:n.id,title:n.label||n.title||n.id,kind:params.element?'UI element':n.kind||n.engine||assembly.name||'Node',x:n.x||0,y:n.y||0,status:n.status||'',
@@ -131,13 +138,15 @@ function settingDto(n,p) {
  options:p.constraints?.options,advanced:false,owner:n.id,key:p.label,relation:p.relation,editable:p.editable===true,setting:p.setting};
 }
 function project() {
- if(!canvas)return;
+ const current=commands?.getSnapshot()?.canvas;
+ if(!current?.root||!Array.isArray(current.nodes))return;
+ canvas=current;
  const nodes=canvas.nodes.map(nodeDto),settings=canvas.nodes.flatMap(n=>rows(n).map(p=>settingDto(n,p)));
  if(Number.isFinite(canvas.viewport?.zoom)&&!settings.some(r=>r.page==='Appearance'&&r.label==='Zoom percentage'))settings.push({id:'Appearance.Zoom percentage',label:'Zoom percentage',page:'Appearance',group:'Canvas',type:'number',value:Math.round(canvas.viewport.zoom*100),owner:canvas.root,key:'zoom',editable:true});
  const catalogue=(canvas.catalog||[]).map(c=>({id:c.id,name:c.name,family:c.category||'Get',input:'any',output:'any',description:c.description||'',definition:c.id,revision:c.revision_root,descriptor:c.descriptor}));
  for(const mod of state.mods.filter(m=>m.enabled&&m.status!=='Ready for review'))for(const node of mod.nodes||[])catalogue.push({id:'mod:'+mod.id+':'+node.id,name:node.title,family:node.category||'Change',description:node.summary,modId:mod.id,itemId:node.id});
  const root=canvas.scope?.current||canvas.root;
- const graph={...state.graph,id:root,name:canvas.scope?.current_label||'Graph',nodes,wires:(canvas.wires||[]).map(w=>({id:w.id,from:w.source||w.from,to:w.target||w.to,fromPort:w.source_interface||w.fromPort,toPort:w.target_interface||w.toPort,type:w.value_type||'any',rule:w.label||''}))};
+ const graph={...state.graph,id:root,system:root===(canvas.canvas_root||(canvas.application_root?null:canvas.graph_id)),scopeKey:JSON.stringify([canvas.graph_id,canvas.authorization?.subject,canvas.authorization?.session,root]),name:canvas.scope?.current_label||'Graph',nodes,wires:(canvas.wires||[]).map(w=>({id:w.id,from:w.source||w.from,to:w.target||w.to,fromPort:w.source_interface||w.fromPort,toPort:w.target_interface||w.toPort,type:w.value_type||'any',rule:w.label||''}))};
  // WIRE-projects: the evaluator's condition parameter is the UI's wire rule.
  for(const wire of graph.wires)wire.type=nodes.find(n=>n.id===wire.from)?.outputs.find(p=>p.id===wire.fromPort)?.type||wire.type;
  const conditions=new Map((canvas.wires||[]).map(w=>[w.id,(w.params||[]).find(p=>p.label==='condition')?.value||'']));
@@ -241,7 +250,8 @@ async function refreshAgents() {
 }
 async function refreshAccount() {
  const account=await request('/api/universal/cloud-session');
- if((state.profile.email||'')!==(account.email||'')||state.profile.signedIn!==(account.signed_in===true)){scopeEpoch++;workingAgents=[];agentsChecked=false;publish({agents:[],agentSummary:'Checking running agents…',agentHealth:'Checking running agents…',tasks:[],declaredTasks:[],workshopMessages:[],workshopMessagesMore:false,workshopMessagesBefore:null,workshopMessagesScope:null});}
+ if(accountKnown&&((state.profile.email||'')!==(account.email||'')||state.profile.signedIn!==(account.signed_in===true))){clearCanvas();await commands.load({home:activeSurface!=='canvas',navigation:true});project();}
+ accountKnown=true;
  let attempt=null;
  if(accountSignInPending){
   attempt=await request('/api/universal/cloud-signin');
@@ -305,6 +315,11 @@ window.addEventListener('archhub:update-ready',()=>{
 });
 async function refreshLive() {
  if(!ready||document.hidden||listeners.size===0)return state.tasks;
+ if(activeSurface==='canvas'){
+  if(!canvasRefresh)canvasRefresh=api.tickSchedules(true)
+   .catch(error=>{if(error.status===403)clearCanvas();publish({connectionNotice:error.message});}).finally(()=>{canvasRefresh=null;});
+  return canvasRefresh;
+ }
  // The same timer refreshes rows even while account/provider discovery is slow.
  if(!taskRefreshInFlight)taskRefreshInFlight=refreshTasks(false).catch(error=>publish({connectionNotice:error.message})).finally(()=>{taskRefreshInFlight=null;});
  if(refreshInFlight){await taskRefreshInFlight;return state.tasks;}
@@ -312,6 +327,7 @@ async function refreshLive() {
  try {
   await taskRefreshInFlight;
   for(const refresh of [refreshAgents,...(Array.isArray(state.hosts)?[api.readHostAvailability]:[]),()=>refreshApplicationUpdate(true),refreshAccount,api.listProviders,refreshSettingsControls,refreshApprovals,refreshWatcher,refreshHostSkills,refreshDesktop,refreshNotifications]){
+   if(activeSurface==='canvas')break;
    try{await refresh();}catch(error){publish({connectionNotice:error.message});}
   }
  }
@@ -319,17 +335,36 @@ async function refreshLive() {
  return state.tasks;
 }
 function stopRefresh(){if(refreshTimer!==null){window.clearInterval(refreshTimer);refreshTimer=null;}}
+function clearCanvas(){
+ scopeEpoch++;accountEpoch++;canvas=null;canvasOpening=null;commands?.clear();defaults.clear();state=copy(initialState);providerRoster=[];controlsGeneration++;notificationGeneration++;
+ workingAgents=[];agentsChecked=false;
+ publish({graphOpening:false,graph:{id:'',scopeKey:'',name:'',nodes:[],wires:[],workspaceIds:[],documentation:'',customProperties:[],courtStatus:''},graphs:[],settings:[],catalogue:[],libraryPorts:[],capabilities:[],docs:[],agents:[],agentSummary:'Checking running agents…',agentHealth:'Checking running agents…',tasks:[],declaredTasks:[],workshopMessages:[],workshopMessagesMore:false,workshopMessagesBefore:null,workshopMessagesScope:null,approvals:[],notifications:[],activeWorkspace:'',activeFile:'',files:[],workspaces:[],desktopReady:false,desktop:{program:'',stage:'',taskId:null,offers:[]},watcherReady:false,watcher:copy(emptyWatcher),hostSkillsReady:false,hostSkills:[],connectorBundle:null});
+}
 function watchRefresh(){stopRefresh();if(ready&&listeners.size&&!document.hidden)refreshTimer=window.setInterval(refreshLive,ownerRefreshMs);}
 document.addEventListener('visibilitychange',()=>{watchRefresh();if(!document.hidden)refreshLive();});
 window.addEventListener('pagehide',stopRefresh);
 window.addEventListener('pageshow',watchRefresh);
-const canvasOperation=(op,args)=>mutate(async()=> (await request('/api/universal/canvas-op',{op,args})).result);
-async function mutate(command) { const result=await command();await commands.load();project();return result; }
+const canvasOperation=(op,args)=>['project_schedules','list_skills','library_ports'].includes(op)
+ ? request('/api/universal/canvas-op',{op,args}).then(data=>data.result)
+ : mutate(async()=> (await request('/api/universal/canvas-op',{op,args})).result);
+async function mutate(command,admitted=false) {
+ const epoch=scopeEpoch;let result;
+ if(admitted)result=await command();
+ else await commands.transact(async()=>{
+  result=await command();
+  if(result?.ok===false)return commands.getSnapshot().canvas;
+  const projection=normalise(result?.canvas||result);
+  return projection?.root&&Array.isArray(projection.nodes)?projection:request('/api/universal/canvas');
+ });
+ if(epoch===scopeEpoch)project();
+ return result;
+}
 function interaction(control,extra={}) {
- const bindings=(canvas?.interaction_projection?.bindings||[]).filter(b=>b.control===control);
+ const current=commands?.getSnapshot()?.canvas||canvas;
+ const bindings=(current?.interaction_projection?.bindings||[]).filter(b=>b.control===control);
  if(bindings.length!==1)return Promise.resolve(unavailable(control,'No current command binding'));
  const b=bindings[0];return request('/api/universal/interaction',{interaction:b.interaction,control:b.control,event:b.event,
- expected_scope:canvas.scope?.current||canvas.root,revision:canvas.revision,command_id:window.crypto.randomUUID(),...extra});
+ expected_scope:current.scope?.current||current.root,revision:current.revision,...(b.projection_mode?{projection_mode:b.projection_mode}:{}),command_id:window.crypto.randomUUID(),...extra});
 }
 function nodeProperty(id,key,value) {
  const epoch=scopeEpoch,address=JSON.stringify([epoch,id,key]),pending=parameterWrites.get(address);
@@ -340,16 +375,19 @@ function nodeProperty(id,key,value) {
  do {
  const submitted=write.value;delete write.value;value=submitted;
  try {
+ result=await mutate(async()=>{
  if(epoch!==scopeEpoch)throw Error('The graph changed before this parameter was saved.');
- const n=canvas.nodes.find(n=>n.id===id),p=rows(n).find(p=>p.label===key);
+ const current=commands.getSnapshot().canvas, n=current.nodes.find(n=>n.id===id),p=rows(n).find(p=>p.label===key);
  if(!p?.editable)return unavailable('setNodeParam','This parameter has no editable owner');
  if(p.setting?.kind==='baboom'){const preferences={value:rows(n).find(r=>r.setting?.key==='start_with_archhub')?.value,shows_as:rows(n).find(r=>r.setting?.key==='shows_as')?.value};preferences[p.setting.key==='shows_as'?'shows_as':'value']=value;value=JSON.stringify(preferences);}
- const binding=(canvas.interaction_projection?.bindings||[]).find(b=>b.control===p.relation);
- if(binding){const spec=binding.event_facts?.find(f=>f.source==='submitted');if(!spec)return unavailable('setNodeParam','No submitted-value binding');result=await interaction(binding.control,{event_facts:[{input:spec.input,value:typeof value==='string'?value:JSON.stringify(value)}]});}
- else result=await request('/api/universal/set-property',{relation:p.relation,value:typeof value==='string'?value:JSON.stringify(value)});
- await commands.load();
+ const binding=(current.interaction_projection?.bindings||[]).find(b=>b.control===p.relation);
+ if(binding){const spec=binding.event_facts?.find(f=>f.source==='submitted');if(!spec)return unavailable('setNodeParam','No submitted-value binding');result=await interaction(binding.control,{...(!window.ARCHHUB_AUTHORITY?{projection_mode:binding.projection_mode||'interaction-delta-v1'}:{}),event_facts:[{input:spec.input,value:typeof value==='string'?value:JSON.stringify(value)}]});}
+ else result=await request('/api/universal/set-property',{relation:p.relation,value:typeof value==='string'?value:JSON.stringify(value),...(!window.ARCHHUB_AUTHORITY&&Number.isInteger(current.revision)?{projection_mode:'interaction-delta-v1',projection_revision:current.revision}:{})});
+ return result;
+ });
  if(epoch!==scopeEpoch)throw Error('The graph changed while this parameter was saved.');
- project();result=state.graph.nodes.find(n=>n.id===id)||result;
+ if(result?.ok===false)return result;
+ result=state.graph.nodes.find(n=>n.id===id)||result;
  if(Object.is(write.value,submitted))delete write.value;
  }catch(error){if(epoch!==scopeEpoch||!Object.hasOwn(write,'value'))throw error;}
  }while(Object.hasOwn(write,'value'));
@@ -364,11 +402,13 @@ function rememberGraph(id) {
  catch {notice('The last graph could not be saved for this browser session.');}
 }
 function openGraph(id) {
+ requestedGraph=id;
  const opened=graphNavigation.then(()=>request('/api/universal/graph-open',{root:id}));
  graphNavigation=opened.catch(()=>{});
  return opened;
 }
 const api={};
+api.setActiveSurface=surface=>{activeSurface=surface;};
 for(const name of exportedNames)api[name]=()=>unavailable(name);
 const unfinishedActions={...api};
 api.supportsAction=(name,mode)=>!(name==='approve'&&mode&&mode!=='once')&&typeof api[name]==='function'&&api[name]!==unfinishedActions[name];
@@ -426,7 +466,7 @@ Object.assign(api,{
  },
  async addGraph(name){
   const result=await request('/api/universal/graph-create',{title:name});
-  await commands.load();project();await refreshGraphs();
+  await commands.load({navigation:true});project();await refreshGraphs();
   return state.graphs.find(g=>g.id===result.graph?.id)||state.graph;
  },
  async stopEverything(){const result=await request('/stop-all',{});publish({app:{...state.app,stopped:result.stopped===true}});return result;},
@@ -490,7 +530,7 @@ Object.assign(api,{
   if(modEntry){const made=await canvasOperation('import_mod_node',[modEntry.modId,modEntry.itemId]);await api.moveNode(made.id,{x,y});return state.graph.nodes.find(n=>n.id===made.id)||made;}
   const entry=(canvas.catalog||[]).find(c=>c.id===name||c.name===name);
   if(!entry)return unavailable('addNode','Definition unavailable');
-  if(entry.revision_root){const result=await mutate(()=>commands.create({definition:entry.id,definition_revision:entry.revision_root,x,y}));return state.graph.nodes.find(n=>n.id===result.selected);}
+  if(entry.revision_root){const result=await mutate(()=>commands.create({definition:entry.id,definition_revision:entry.revision_root,x,y}),true);return state.graph.nodes.find(n=>n.id===result.selected);}
   // Legacy catalogue entries use their actual engine/item descriptor, never a guessed operation.
   const engine=entry.descriptor?.engine,item=entry.descriptor?.item;
   if(!engine){const result=await interaction(entry.id,{event_facts:[{source:'canvas-point-x',value:x},{source:'canvas-point-y',value:y}]});if(result?.ok===false)return result;await commands.load();project();return state.graph.nodes.find(n=>n.id===result.selected)||result;}
@@ -510,11 +550,11 @@ Object.assign(api,{
   return state.graph.nodes.find(n=>n.id===made?.id)||made;
   }finally{if(reservation)insertionReservations.delete(reservation);}
  },
- moveNode:(id,position)=>mutate(()=>commands.move(id,position)),
- moveNodes:positions=>mutate(()=>commands.moveMany(positions)),
- groupNodes:ids=>mutate(()=>commands.composition('group',ids)),
- ungroupNode:id=>mutate(()=>commands.composition('ungroup',[id])),
- deleteNode:id=>mutate(()=>commands.remove(id)),
+ moveNode:(id,position)=>mutate(()=>commands.move(id,position),true),
+ moveNodes:positions=>mutate(()=>commands.moveMany(positions),true),
+ groupNodes:ids=>mutate(()=>commands.composition('group',ids),true),
+ ungroupNode:id=>mutate(()=>commands.composition('ungroup',[id]),true),
+ deleteNode:id=>mutate(()=>commands.remove(id),true),
  async forkNode(id){const result=await canvasOperation('fork_node',[id]);return state.graph.nodes.find(n=>n.id===result.id)||result;},
  setNodeFlags:(id,values)=>canvasOperation('set_node_flags',[id,values.frozen??null,values.pinned??null]),
  traceNode:(id,direction)=>canvasOperation('trace_node',[id,direction]),
@@ -524,11 +564,11 @@ Object.assign(api,{
   const result=await canvasOperation('update_graph',[id,values.name??null,values.pinned??null]);await refreshGraphs();return result;
  },
  async removeGraph(id){const result=await canvasOperation('remove_graph',[id]);await refreshGraphs();return result;},
- async arrangeGraph(){const positions=Object.fromEntries(state.graph.nodes.map((n,i)=>[n.id,{x:80+(i%4)*300,y:80+Math.floor(i/4)*220}]));return mutate(()=>commands.moveMany(positions,canvas.revision,null,'arrange'));},
- connectSockets:wire=>mutate(()=>commands.connect(wire.from,wire.fromPort,wire.to,wire.toPort)),
- deleteWire:id=>mutate(()=>commands.remove(id)),
- async runNode(id){if(id)await commands.select(id);return mutate(()=>commands.run());},
- undo:()=>mutate(()=>commands.undo()),redo:()=>mutate(()=>commands.redo()),
+ async arrangeGraph(){const positions=Object.fromEntries(state.graph.nodes.map((n,i)=>[n.id,{x:80+(i%4)*300,y:80+Math.floor(i/4)*220}]));return mutate(()=>commands.moveMany(positions,canvas.revision,null,'arrange'),true);},
+ connectSockets:wire=>mutate(()=>commands.connect(wire.from,wire.fromPort,wire.to,wire.toPort),true),
+ deleteWire:id=>mutate(()=>commands.remove(id),true),
+ async runNode(id){if(id)await commands.select(id);return mutate(()=>commands.run(),true);},
+ undo:()=>mutate(()=>commands.undo(),true),redo:()=>mutate(()=>commands.redo(),true),
  async addNodeParameter(id,input){
   if(!['text','All',undefined].includes(input.type))return unavailable('addNodeParameter','Typed parameter creation is not exposed by this owner');
   await commands.select(id);project();const b=(canvas.interaction_projection?.bindings||[]).find(b=>b.control==='app:control:inspector:add-property');
@@ -538,7 +578,7 @@ Object.assign(api,{
   return mutate(()=>interaction(b.control,{event_facts:[{input:specs[0].input,value:input.label},{input:specs[1].input,value:String(input.value??'')}]}));
  },
  async approve(id){const card=state.approvals.find(c=>c.id===id);if(card?.approvalKind==='social'){const result=await request('/api/universal/social-approve',{delegation:card.delegation,input_digest:card.input_digest,decision:'approve'});await refreshApprovals();return result;}if(!card?.delegation||!card?.input_digest||!card?.work)return unavailable('approve','No reviewed model delegation');const binding=workshopBinding();const body={...binding,work:card.work,delegation:card.delegation,input_digest:card.input_digest};const inspected=await request('/api/universal/workshop-model-approval?'+new URLSearchParams(body));if(inspected.expired||inspected.input_digest!==card.input_digest)return {ok:false,status:'stale',message:'Review changed; refresh before approving.'};const result=await request('/api/universal/workshop-model-approval',{...body,revision:inspected.revision});await refreshTasks();return result;},
-  async selectGraph(id){const epoch=++scopeEpoch;restoreGraph=false;workingAgents=[];agentsChecked=false;publish({agents:[],agentSummary:'Checking running agents…',agentHealth:'Checking running agents…',tasks:[],declaredTasks:[],workshopMessages:[],workshopMessagesMore:false,workshopMessagesBefore:null,workshopMessagesScope:null,approvals:[],approvalActionsReady:false,desktopReady:false,desktop:{program:"",stage:"",taskId:null,offers:[]},watcherReady:false,watcher:copy(emptyWatcher),hostSkillsReady:false,hostSkills:[],connectorBundle:null});await (state.graph.nodes.some(n=>n.id===id&&n.children.length) ? commands.select(id).then(()=>commands.open(id)) : openGraph(id));if(epoch!==scopeEpoch)return state.graph;await commands.load();if(epoch!==scopeEpoch)return state.graph;project();await refreshGraphs();if(epoch!==scopeEpoch)return state.graph;rememberGraph(id);await refreshTasks();if(epoch!==scopeEpoch)return state.graph;await refreshAgents();return state.graph;},
+  async selectGraph(id){const epoch=++scopeEpoch;restoreGraph=false;workingAgents=[];agentsChecked=false;publish({graphOpening:true,agents:[],agentSummary:'Checking running agents…',agentHealth:'Checking running agents…',tasks:[],declaredTasks:[],workshopMessages:[],workshopMessagesMore:false,workshopMessagesBefore:null,workshopMessagesScope:null,approvals:[],approvalActionsReady:false,desktopReady:false,desktop:{program:"",stage:"",taskId:null,offers:[]},watcherReady:false,watcher:copy(emptyWatcher),hostSkillsReady:false,hostSkills:[],connectorBundle:null});try{if(state.graph.nodes.some(n=>n.id===id&&n.children.length))await commands.select(id).then(()=>commands.open(id));else {const opened=await openGraph(id);if(epoch!==scopeEpoch)return state.graph;const projection=normalise(opened.canvas||opened);if(projection?.root&&Array.isArray(projection.nodes))await commands.adopt(projection,{navigation:true});else await commands.load({navigation:true});}if(epoch!==scopeEpoch)return state.graph;project();await refreshGraphs();if(epoch!==scopeEpoch)return state.graph;rememberGraph(id);await refreshTasks();if(epoch!==scopeEpoch)return state.graph;await refreshAgents();return state.graph;}catch(error){if(epoch===scopeEpoch)throw error;return state.graph;}finally{if(epoch===scopeEpoch)publish({graphOpening:false});}},
  async selectWorkspace(id){return api.selectGraph(id);},
  getUsageSummary:()=>({'Usage':'Usage is unavailable.'}),
  async setConnection(id,values){if(values.connected===false)return request('/api/universal/social-connection',{provider:id,action:'cancel'});if(values.connected===true)return request('/api/universal/social-connection',{provider:id,action:'start'});return unavailable('setConnection','No sign-in action requested');},
@@ -1049,7 +1089,7 @@ refreshAccount=async()=>{
  if(profile.id!==settingsAccountIdentity){
   settingsAccountIdentity=profile.id;settingsProfile={};
   publish({profile:{...state.profile,firm:'',plan:''},firms:[],activeFirm:'',people:[],officeInvitations:[],controlErrors:{},settingsScope:'User',activeWorkspace:'',activeDevice:'',devices:[],backups:[],workspaces:[],graph:{...state.graph,workspaceIds:[]},billing:{status:'',requestedPlan:'',cycle:'',checkout:null,invoices:[],plans:[]}});
-  if(profile.signedIn)await api.refreshSettingsAccount();
+  if(profile.signedIn)await api.refreshSettingsAccount().catch(error=>publish({connectionNotice:error.message}));
  }else if(profile.signedIn){publish({profile:{...state.profile,...settingsProfile}});}
  return copy(state.profile);
 };
@@ -1176,7 +1216,7 @@ Object.assign(api,{
   const opened=await mutate(()=>request('/api/universal/node-create',{template:id,expected_scope:state.graph.id}));
   return {...opened,nodes:opened.children};
  },
- async startTemplate(id){const parent=state.graph.id;const opened=await api.openTemplateGraph(id);if(opened.root){scopeEpoch++;publish({declaredTasks:[]});await mutate(()=>commands.open(opened.root));}const runEpoch=scopeEpoch;const raw=await mutate(()=>request('/api/universal/run-graph',{roots:opened.nodes}));const result=scopeEpoch===runEpoch?projectRunResult(raw):raw;if(opened.root&&scopeEpoch===runEpoch&&state.graph.id===opened.root){scopeEpoch++;publish({declaredTasks:[]});await mutate(()=>commands.open(parent));}await refreshProjectData();return result;},
+ async startTemplate(id){const parent=state.graph.id;const opened=await api.openTemplateGraph(id);if(opened.root){scopeEpoch++;publish({declaredTasks:[]});await mutate(()=>commands.open(opened.root),true);}const runEpoch=scopeEpoch;const raw=await mutate(()=>request('/api/universal/run-graph',{roots:opened.nodes}));const result=scopeEpoch===runEpoch?projectRunResult(raw):raw;if(opened.root&&scopeEpoch===runEpoch&&state.graph.id===opened.root){scopeEpoch++;publish({declaredTasks:[]});await mutate(()=>commands.open(parent),true);}await refreshProjectData();return result;},
  async exportRecipe(){return {name:'Recipe.yaml',type:'application/yaml',content:JSON.stringify(await canvasOperation('export_recipe',[]),null,2)};},
  async exportData(name,id){
   if(name==='Recipe')return api.exportRecipe();
@@ -1217,6 +1257,19 @@ Object.assign(api,{
   publish({feedback:state.feedback.map(f=>f.id===id?{...f,status:task.status,response}:f)});return task;
  },
  async refreshProjects({userCanvas=false}={}){
+  if(userCanvas){
+   if(!ready)await api.ready;
+   const epoch=scopeEpoch, saved=session?.lastGraphId, system=canvas?.canvas_root||state.graphs[0]?.id;
+   if(saved && ((canvas?.scope?.current||canvas?.root)===system || requestedGraph===system)){
+    const opened=await openGraph(saved);
+    if(epoch!==scopeEpoch)return state.graph;
+    const projection=normalise(opened.canvas||opened);
+    if(projection?.root&&Array.isArray(projection.nodes))await commands.adopt(projection,{navigation:true});
+    else await commands.load({navigation:true});
+   }else if(!canvas||canvas.canvas_deferred===true||canvas.projection==='home')await commands.load({navigation:true});
+   if(epoch!==scopeEpoch)return state.graph;
+   project();return state.graph;
+  }
   const epoch=userCanvas ? ++scopeEpoch : scopeEpoch;
   await refreshGraphs();
   if(epoch!==scopeEpoch)return state.graph;
@@ -1227,10 +1280,10 @@ Object.assign(api,{
    await openGraph(graph.id);
    if(epoch!==scopeEpoch)return state.graph;
   }
-  await commands.load();if(epoch!==scopeEpoch)return state.graph;
+  await commands.load({navigation:true}).catch(error=>{if(epoch===scopeEpoch)throw error;});if(epoch!==scopeEpoch)return state.graph;
   project();if(graph)rememberGraph(graph.id);return refreshProjectData();
  },
- async tickSchedules(){const result=await request('/api/universal/canvas-op',{op:'scheduler_tick',args:[]});await commands.load();project();return result.result;},
+ async tickSchedules(reconcile=false){let result,changed=false;await commands.transact(async()=>{const held=commands.getSnapshot().canvas;result=await request('/api/universal/canvas-op',{op:'scheduler_tick',args:[],...(reconcile?{since_revision:held.revision}:{})});if(result.canvas){changed=true;return normalise(result.canvas);}if(result.unchanged===true){if(result.revision!==held.revision||result.scope!==held.root||result.graph_id!==held.graph_id)throw Error('The graph freshness response belongs to another scope.');return held;}if(result.result?.length){changed=true;return request('/api/universal/canvas');}return held;});if(changed)project();return result.result;},
 });
 // WIRE-projects end
 // OPS-projects2: confirmed projections of the existing domain owners.
@@ -1245,7 +1298,7 @@ api.setPortVisibility=(id,port,value)=>canvasOperation('set_port_visibility',[id
 api.setPromotedParameter=(id,key,values)=>canvasOperation('set_promoted_parameter',[id,key,values]);
 api.refreshMods=async()=>{const result=await request('/api/universal/mods',{action:'state'});publish({mods:result.mods.rows});project();return result.mods.rows;};
 api.importModNode=(id,item)=>canvasOperation('import_mod_node',[id,item]);
-api.refreshLibraryPorts=async()=>{const libraryPorts=await canvasOperation('library_ports',[]);publish({libraryPorts});project();return libraryPorts;};
+api.refreshLibraryPorts=async()=>{const libraryPorts=await canvasOperation('library_ports',[]);if(!Array.isArray(libraryPorts))throw Error('Library owner did not return port metadata. Retry.');publish({libraryPorts});project();return libraryPorts;};
 api.compatibleNodes=endpoint=>{
  const node=state.graph.nodes.find(n=>n.id===endpoint?.id);
  const port=(endpoint?.side==='out'?node?.outputs:node?.inputs)?.find(p=>p.id===endpoint.port);
@@ -1255,7 +1308,7 @@ api.compatibleNodes=endpoint=>{
 };
 api.addCompatibleNode=(endpoint,item,position)=>canvasOperation('add_compatible_node',[endpoint,item,position]);
 api.insertConvert=wire=>canvasOperation('insert_convert',[typeof wire==='string'?wire:wire?.id||wire]);
-api.addTemplateNode=async id=>{const opened=await api.openTemplateGraph(id);return opened.root?state.graph.nodes.find(n=>n.id===opened.root)||opened:mutate(()=>commands.composition('group',opened.nodes));};
+api.addTemplateNode=async id=>{const opened=await api.openTemplateGraph(id);return opened.root?state.graph.nodes.find(n=>n.id===opened.root)||opened:mutate(()=>commands.composition('group',opened.nodes),true);};
 api.prepareMod=(name,description)=>socialWork('Prepare a reviewed ArchHub mod package using the existing supported stream engines. Do not install or claim completion before validation.\n'+JSON.stringify({name,description}));
 api.refreshFiles=async()=>{const files=await canvasOperation('project_files',[]);publish({files});return files;};
 api.addFile=async(_name,kind='Project file')=>{
@@ -1327,7 +1380,16 @@ api.saveResearchDecision=async values=>{
  return projectResearch(row);
 };
 const refreshBeforeOps=api.refreshProjects;
-api.refreshProjects=(options)=>refreshBeforeOps(options).then(function(r){[function(){return refreshProjectState();},function(){return api.refreshFiles();},function(){return api.refreshMods();},function(){return api.refreshLibraryPorts();},function(){return api.refreshMcpServers();},function(){return api.refreshCommunity();}].reduce(function(p,f){return p.then(f).catch(function(e){console.warn('background refresh',e);});},Promise.resolve());return r;});
+api.refreshProjects=(options)=>{
+ if(options?.userCanvas){
+  if(canvasOpening?.epoch===scopeEpoch)return canvasOpening.promise;
+  const promise=refreshBeforeOps(options), held={epoch:scopeEpoch,promise};
+  canvasOpening=held;
+  return promise.finally(()=>{if(canvasOpening===held)canvasOpening=null;});
+ }
+ return refreshBeforeOps(options).then(function(r){[function(){return refreshProjectState();},function(){return api.refreshFiles();},function(){return api.refreshMods();},function(){return api.refreshLibraryPorts();},function(){return api.refreshMcpServers();},function(){return api.refreshCommunity();}].reduce(function(p,f){return p.then(f).catch(function(e){console.warn('background refresh',e);});},Promise.resolve());return r;});
+};
+const initialState=copy(state);
 api.ready=(async()=>{
  // The native Qt owner supplies one reviewed payload and the existing bound decision bridge.
  if(window.ARCHHUB_NATIVE_APPROVAL){
@@ -1364,9 +1426,11 @@ api.ready=(async()=>{
  project();
  publish({learning:{...state.learning,layer:'Host'},connectionNotice:''});
  ready=true;watchRefresh();
+ void api.refreshLibraryPorts().catch(error=>notice(error.message));
  // Account/network discovery must not hold the usable graph behind its timeout.
  void (async()=>{
   for(const refresh of [refreshApplicationUpdate,refreshAccount,refreshGraphs,api.listWorkspaces,api.listProviders,refreshTasks,refreshAgents]){
+   if(activeSurface==='canvas')break;
    try{await refresh();}catch(error){if(refresh!==refreshApplicationUpdate)publish({connectionNotice:error.message});}
   }
  })();
@@ -1377,13 +1441,12 @@ api.ready.then(()=>{
  if(state.nativeApproval || typeof window.setInterval!=='function')return;
  let ticking=false;
  const tick=()=>{
-  if(ticking)return;ticking=true;
+  if(ticking||document.hidden||activeSurface==='canvas')return;ticking=true;
   return api.tickSchedules()
    .catch(failure=>notice(failure.message+' Review Schedules, then retry.'))
    .finally(()=>{ticking=false;});
  };
  const timer=window.setInterval(tick,ownerRefreshMs);
- void api.refreshProjects().catch(failure=>notice(failure.message+' Retry loading the graph.'));
  window.addEventListener('pagehide',()=>window.clearInterval(timer),{once:true});
 }).catch(error=>notice(error.message));
 // WIRE-projects end

@@ -136,7 +136,7 @@ async function adapter({current='mine',graphs=[{id:'system'},{id:'mine'}],refuse
   const sessionStorage={getItem:key=>stored[key]||null,setItem:(key,value)=>{stored[key]=value;}};
   const window={structuredClone:globalThis.structuredClone,crypto:require('node:crypto').webcrypto,ARCHHUB_BOOT:{home_load_ms:60000,token:'fixture',csrf:'fixture'},
     document:{hidden:true,addEventListener(){}},addEventListener(){},dispatchEvent(){},
-    ArchHubStudioAuthority:{create:({get})=>({load:()=>get('/api/universal/canvas')})}};
+    ArchHubStudioAuthority:{create:({get})=>{let canvas;return {getSnapshot:()=>({canvas}),clear:()=>{canvas=null;},adopt:async result=>canvas=result,transact:async action=>canvas=await action(),load:async()=>canvas=await get('/api/universal/canvas')};}}};
   const fetch=async(url,options={})=>{
     const body=options.body?JSON.parse(options.body):null;calls.push({url,body});
     let data={ok:true,result:[],mods:{rows:[]}};

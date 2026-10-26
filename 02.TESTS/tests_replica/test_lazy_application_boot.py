@@ -702,9 +702,10 @@ def test_saved_nested_scope_waits_for_its_authorized_first_canvas_projection(mon
         original_loader = lazy.lazy_scope_loader
         loads = []
 
-        def load(scope, opening_view=None):
-            loads.append(scope)
-            return original_loader(scope, opening_view)
+        def load(scope, opening_view=None, **options):
+            if not options.get('check_only'):
+                loads.append(scope)
+            return original_loader(scope, opening_view, **options)
 
         object.__setattr__(lazy, "lazy_scope_loader", load)
         revision = store.revision

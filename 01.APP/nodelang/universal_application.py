@@ -1453,7 +1453,7 @@ _SESSION_CANVAS_ROOTS_CACHE: ContextVar[dict[tuple, tuple] | None] = ContextVar(
     "session_canvas_roots_cache", default=None
 )
 _CANVAS_PROPERTY_OWNER_INDEX_CACHE: ContextVar[
-    dict[tuple, dict[str, list[str]]] | None
+    dict[tuple, object] | None
 ] = ContextVar("canvas_property_owner_index_cache", default=None)
 _STANDARD_CATALOG_PROJECTION_CACHE: WeakKeyDictionary[
     CellStore,
@@ -17640,7 +17640,8 @@ def restore_universal_application(
                     )
                 opened_scopes.add(scope_root)
 
-        object.__setattr__(registry, "lazy_scope_loader", lambda scope, view=None:
+        object.__setattr__(registry, "lazy_scope_loader", lambda scope, view=None, check_only=False:
+                           scope in opened_scopes if check_only else
                            _restore_on_first_use(lambda: load_scope(scope, view)))
     if migrated_scope_interfaces:
         _append_migrated_visibility_interfaces(
@@ -17659,24 +17660,38 @@ def restore_universal_application(
     return store, registry
 
 
+_PROPERTY_RELATION_CHAIN_CELLS = 8
+
+
 def _property_index(
     snapshot: Snapshot,
     registry: UniversalApplicationRegistry,
     relation_roots: tuple[str, ...],
 ) -> dict[str, tuple[PropertyProjection, ...]]:
     """Read every wired property relation once and index its explicit owner."""
+    cache = _CANVAS_PROPERTY_OWNER_INDEX_CACHE.get()
+    key = (id(registry), snapshot.revision, id(snapshot.cells), relation_roots)
+    if cache is not None and key in cache:
+        return cache[key]
     indexed: dict[str, list[PropertyProjection]] = {}
     for relation_root in relation_roots:
-        members = read_relation(snapshot, relation_root, budget=8)
-        owner = _one_for_role(members, registry.roles["owner"])
-        value = _one_for_role(members, registry.roles["value"])
-        label = _one_for_role(members, registry.roles["label"])
-        if owner is None or value is None or label is None:
-            continue
-        indexed.setdefault(owner, []).append(PropertyProjection(
-            relation_root, owner, value, label
-        ))
-    return {owner: tuple(rows) for owner, rows in indexed.items()}
+        relation_key = (id(registry), snapshot.revision, id(snapshot.cells), 'property', relation_root)
+        if cache is not None and relation_key in cache:
+            row = cache[relation_key]
+        else:
+            members = read_relation(snapshot, relation_root, budget=_PROPERTY_RELATION_CHAIN_CELLS)
+            owner = _one_for_role(members, registry.roles["owner"])
+            value = _one_for_role(members, registry.roles["value"])
+            label = _one_for_role(members, registry.roles["label"])
+            row = PropertyProjection(relation_root, owner, value, label) if None not in (owner, value, label) else None
+            if cache is not None:
+                cache[relation_key] = row
+        if row is not None:
+            indexed.setdefault(row.owner_root, []).append(row)
+    result = {owner: tuple(rows) for owner, rows in indexed.items()}
+    if cache is not None:
+        cache[key] = result
+    return result
 
 
 def _project_inspector_lenses(
@@ -18160,6 +18175,7 @@ def _registered_canvas_interfaces(
     registry: UniversalApplicationRegistry,
     *,
     admitted_roots: frozenset[str] | None = None,
+    admitted_owners: frozenset[str] | None = None,
 ) -> tuple[dict[str, object], ...]:
     """Read canvas sockets from explicit application graph membership."""
     if admitted_roots is not None and any(
@@ -18182,6 +18198,11 @@ def _registered_canvas_interfaces(
         )
     projected = []
     for interface_root in registered:
+        if admitted_owners is not None:
+            owner = _one_for_role(read_relation(snapshot, interface_root),
+                                  registry.assembly_protocol.role("interface-target"))
+            if owner not in admitted_owners:
+                continue
         interface = _project_canvas_interface(
             snapshot, registry.assembly_protocol, interface_root
         )
@@ -18228,7 +18249,7 @@ def _scope_canvas_interface_roots(
             admitted.update(
                 member.participant_id
                 for member in read_relation(
-                    snapshot, relation_root, budget=_SCOPE_MEMBER_LIMIT
+                    snapshot, relation_root
                 )
                 if member.role_id in endpoint_roles
             )
@@ -18244,7 +18265,7 @@ def _visible_canvas_interface_roots(
     visible = set(visible_roots)
     roots = {
         str(interface["id"])
-        for interface in _registered_canvas_interfaces(snapshot, registry)
+        for interface in _registered_canvas_interfaces(snapshot, registry, admitted_owners=frozenset(visible))
         if interface["owner"] in visible
     }
     for owner_root in visible_roots:
@@ -18265,7 +18286,7 @@ def _visible_canvas_interface_roots(
         roots.update(
             member.participant_id
             for member in read_relation(
-                snapshot, owner_root, budget=_SCOPE_MEMBER_LIMIT
+                snapshot, owner_root
             )
             if member.role_id == registry.assembly_protocol.role("interface")
         )
@@ -18281,7 +18302,7 @@ def _top_scope_interface_index_roots(
     visible = set(visible_roots)
     ordered = [
         str(interface["id"])
-        for interface in _registered_canvas_interfaces(snapshot, registry)
+        for interface in _registered_canvas_interfaces(snapshot, registry, admitted_owners=frozenset(visible))
         if interface["owner"] in visible
     ]
     interface_role = registry.assembly_protocol.role("interface")
@@ -18480,7 +18501,7 @@ def _migrate_legacy_canvas_scope_interfaces(
     owners; the established generic incidence migrator upgrades those only.
     """
     snapshot = store.snapshot()
-    scope_members = read_relation(snapshot, scope_root, budget=_SCOPE_MEMBER_LIMIT)
+    scope_members = read_relation(snapshot, scope_root)
     roots = tuple(
         member.participant_id for member in scope_members
         if member.role_id == roles["member"]
@@ -18518,7 +18539,7 @@ def _migrate_legacy_canvas_scope_interfaces(
         # canvas endpoint contract; reopening must not replace their wires.
         for owner_root in dict.fromkeys(roots):
             for member in read_relation(
-                snapshot, owner_root, budget=_SCOPE_MEMBER_LIMIT,
+                snapshot, owner_root,
                 retain_projection=False,
             ):
                 interface_root = member.participant_id
@@ -18712,7 +18733,7 @@ def _ensure_subsystem_domain_nodes(
         domain_root = "gm:domain:%s" % domain_key
         if domain_root not in snapshot.cells:
             continue
-        members = read_relation(snapshot, domain_root, budget=_SCOPE_MEMBER_LIMIT)
+        members = read_relation(snapshot, domain_root)
         held = {member.participant_id for member in members}
         additions = []
         create: list[Cell] = []
@@ -21139,10 +21160,8 @@ def prepare_universal_retraction(
                 direct = _nested_canvas_scope(snapshot, registry, ancestor)[0]
                 exposed = exposures.get(ancestor)
                 if exposed is not None and trail[index + 1] in exposed[1] and trail[index + 1] not in direct:
-                    incidences = tuple(member.incidence_id for member in read_relation(snapshot, ancestor,
-                        budget=_SCOPE_MEMBER_LIMIT) if member.role_id == registry.roles["member"] and member.participant_id == root)
-                    ancestor_replace.extend(prepare_remove_relation_members(snapshot, ancestor, incidences,
-                        budget=_SCOPE_MEMBER_LIMIT).replace)
+                    incidences = tuple(member.incidence_id for member in read_relation(snapshot, ancestor) if member.role_id == registry.roles["member"] and member.participant_id == root)
+                    ancestor_replace.extend(prepare_remove_relation_members(snapshot, ancestor, incidences).replace)
     replacements = {cell.id: cell for cell in patch.replace}
     for cell in (
         *ancestor_replace,
@@ -22292,7 +22311,7 @@ def _view_scope_exposures(
         if member.role_id != registry.roles["relation"]:
             raise InvalidCell("scope exposure registry contains a non-relation")
         exposure_members = read_relation(
-            snapshot, member.participant_id, budget=_SCOPE_MEMBER_LIMIT
+            snapshot, member.participant_id
         )
         if any(
             item.role_id not in (
@@ -22350,12 +22369,12 @@ def _released_scope_member_roots(
             continue
         before_roots = {
             item.participant_id
-            for item in read_relation(snapshot, before, budget=_SCOPE_MEMBER_LIMIT)
+            for item in read_relation(snapshot, before)
             if item.role_id == registry.roles["visible"]
         }
         released.update(
             item.participant_id
-            for item in read_relation(snapshot, after, budget=_SCOPE_MEMBER_LIMIT)
+            for item in read_relation(snapshot, after)
             if item.role_id == registry.roles["visible"]
             and item.participant_id not in before_roots
         )
@@ -22393,7 +22412,7 @@ def _visible_composition_members(
         if not _is_universal_composition(snapshot, registry, root):
             continue
         for member in read_relation(
-            snapshot, root, budget=_SCOPE_MEMBER_LIMIT
+            snapshot, root
         ):
             if (
                 member.role_id == member_role
@@ -22571,7 +22590,8 @@ def _relation_members_or_none(
     root_id: str,
 ):
     try:
-        return read_relation(snapshot, root_id, budget=_SCOPE_MEMBER_LIMIT)
+        # Property entries share this relation; the protocol bounds structural reads.
+        return read_relation(snapshot, root_id)
     except (InvalidCell, MatchBudgetExceeded):
         return None
 
@@ -24342,6 +24362,7 @@ def _project_session_action_history(
     redo_roots = set(state.redo_roots)
     discarded_roots = set(state.discarded_roots)
     rows = []
+    labels = {}
     for transaction_root in reversed(tuple(transactions)):
         transaction = transactions[transaction_root]
         scope_roots = tuple(sorted(transaction.scope_roots))
@@ -24365,6 +24386,8 @@ def _project_session_action_history(
             state_label = "discarded"
         else:
             raise InvalidCell("action history transaction has no derived state")
+        if target_root and target_root not in labels:
+            labels[target_root] = _scope_label(snapshot, registry, target_root)
         rows.append({
             "root": transaction.root_id,
             "operation": operation,
@@ -24382,8 +24405,7 @@ def _project_session_action_history(
             ),
             "target_root": target_root,
             "target_label": (
-                _scope_label(snapshot, registry, target_root)
-                if target_root else ""
+                labels[target_root] if target_root else ""
             ),
             "scope_count": len(transaction.scope_roots),
             "interface": transaction.interface_root,
@@ -24406,11 +24428,13 @@ def _project_universal_canvas_interpreter(
     registry: UniversalApplicationRegistry,
     *,
     authentication_context: object | None = None,
+    include_candidates: bool = True,
     scope_materialization: UniversalScopeMaterialization | None = None,
     previous_projection: Mapping[str, object] | None = None,
     reusable_scope_projection: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Interpret the graph-defined canvas and Properties lens for the browser."""
+    from .universal_pipeline import _STRUCTURAL
     # A live canvas grows -- governed work arrives, interfaces migrate --
     # and the view visibility indexes were reconciled only at build time,
     # so the first projection after any growth refused with "visibility
@@ -24832,6 +24856,7 @@ def _project_universal_canvas_interpreter(
             snapshot,
             registry,
             admitted_roots=admitted_interface_roots,
+            admitted_owners=frozenset((*visible_roots, selected_root)),
         )
     )
     endpoint_interface_cache = None
@@ -24895,7 +24920,7 @@ def _project_universal_canvas_interpreter(
             snapshot, registry, root_id
         )
         composition_members = (
-            read_relation(snapshot, root_id, budget=_SCOPE_MEMBER_LIMIT)
+            read_relation(snapshot, root_id)
             if composition else ()
         )
         composition_member_cards = [
@@ -24981,6 +25006,11 @@ def _project_universal_canvas_interpreter(
                     "owner": row.owner_root,
                     "value_root": row.value_root,
                     "cell_id": row.value_root,
+                    "editor": "text",
+                    "editable": name not in (_STRUCTURAL | {"color", "responsibility", "last_attempt", "last_result"}) and not any(
+                        member.role_id == registry.roles["read-only"]
+                        for member in read_relation(snapshot, row.relation_root, budget=64)
+                    ),
                 }
                 for name, row in labelled.items()
                 if name not in {
@@ -25429,7 +25459,7 @@ def _project_universal_canvas_interpreter(
                 ).append(interface)
         listed = []
         for member in read_relation(
-            snapshot, str(node["id"]), budget=_SCOPE_MEMBER_LIMIT
+            snapshot, str(node["id"])
         ):
             owner_root = member.participant_id
             if (
@@ -25581,11 +25611,9 @@ def _project_universal_canvas_interpreter(
                 in derived_composition_interfaces
             ):
                 continue
-            choices = compatible_port_choices(
-                side="target",
-                fixed_owner=str(node["id"]),
-                fixed_interface=str(port["id"]),
-            )
+            choices = (compatible_port_choices(
+                side="target", fixed_owner=str(node["id"]), fixed_interface=str(port["id"])
+            ) if include_candidates else None)
             port.update({
                 "connect_control": _topology_control_root(
                     view_session.subject_root,
@@ -25593,7 +25621,7 @@ def _project_universal_canvas_interpreter(
                     connect_operation,
                 ),
                 "connect_event_fact_input": topology_fact_root,
-                "connect_choices": choices,
+                **({"connect_choices": choices} if include_candidates else {}),
             })
     for owner_root, port in member_port_index.values():
         if port.get("side") != "source":
@@ -25605,11 +25633,9 @@ def _project_universal_canvas_interpreter(
                 connect_operation,
             ),
             "connect_event_fact_input": topology_fact_root,
-            "connect_choices": compatible_port_choices(
-                side="target",
-                fixed_owner=owner_root,
-                fixed_interface=str(port["id"]),
-            ),
+            **({"connect_choices": compatible_port_choices(
+                side="target", fixed_owner=owner_root, fixed_interface=str(port["id"])
+            )} if include_candidates else {}),
         })
 
     for wire in binary_wires:
@@ -27613,6 +27639,12 @@ def _project_universal_canvas_interpreter(
                     "admitted presenter projector is not a graph template"
                 )
             component["descriptor"] = descriptor_projection
+    if not include_candidates:
+        projected_canvas['topology_targets'] = [
+            topology_choice(owner, port) for owner, port in (*port_index.values(), *member_port_index.values())
+            if port.get('side') == 'target' and port.get('mode') == 'connection'
+            and str(port['id']) not in derived_composition_interfaces
+        ]
     return projected_canvas
 
 
@@ -28079,6 +28111,8 @@ def _canvas_membership_delta(store, registry, key, cells, authentication_context
     kept cards take the note's positions; each lens scope drawn on the
     canvas re-reads its member count. Anything else rebuilds.
     """
+    if key[-1] is False:
+        return None
     with _CANVAS_ACCELERATOR_LOCK:
         notes = dict(_CANVAS_MEMBERSHIP_NOTES.get(store) or {})
         entries = list(_CANVAS_ACCELERATOR.get(store, {}).items())
@@ -28374,6 +28408,7 @@ def _canvas_accelerator_key(
     registry: UniversalApplicationRegistry,
     authentication_context: object | None,
     now: float,
+    include_candidates: bool = True,
 ):
     """Everything the full canvas answer depends on, read without projecting."""
     snapshot = store.snapshot()
@@ -28396,12 +28431,10 @@ def _canvas_accelerator_key(
         identity.tenant_root,
         identity.assurance_root,
         authority_snapshot.registered_roots,
-        tuple(
-            relationship.root_id
-            for relationship in authority_snapshot.active_relationships
-        ),
+        tuple((relationship.root_id for relationship in authority_snapshot.active_relationships)),
         tuple(sorted(authority_snapshot.expired_roots)),
         tuple(sorted(authority_snapshot.invalid_reasons.items())),
+        include_candidates,
     )
 
 
@@ -28518,6 +28551,7 @@ def project_universal_canvas(
     registry: UniversalApplicationRegistry,
     *,
     authentication_context: object | None = None,
+    include_candidates: bool = True,
 ) -> dict[str, object]:
     """Exhaustively interpret the current canonical canvas.
 
@@ -28534,7 +28568,7 @@ def project_universal_canvas(
     from .canvas_placement import arrange_on_open
 
     projection = _project_universal_canvas_answer(
-        store, registry, authentication_context=authentication_context
+        store, registry, authentication_context=authentication_context, include_candidates=include_candidates
     )
     snapshot = store.snapshot()
     projection['runtime_parameters'] = {
@@ -28599,6 +28633,8 @@ def _restore_saved_scope_before_canvas_projection(store, registry, authenticatio
     trail = _read_view_scope_trail_structure(snapshot, registry, view)
     if trail[-1] == registry.canvas_root:
         return
+    if registry.lazy_scope_loader(trail[-1], check_only=True):
+        return
     verify_released_catalog_stable(
         store, snapshot, registry.assembly_protocol,
         registry.standard_library.catalog_root,
@@ -28636,6 +28672,7 @@ def _project_universal_canvas_answer(
     registry: UniversalApplicationRegistry,
     *,
     authentication_context: object | None = None,
+    include_candidates: bool = True,
 ) -> dict[str, object]:
     """The canvas answer itself: interpreter, accelerator or position delta."""
     _restore_saved_scope_before_canvas_projection(store, registry, authentication_context)
@@ -28643,12 +28680,12 @@ def _project_universal_canvas_answer(
         return _project_universal_canvas_interpreter(
             store,
             registry,
-            authentication_context=authentication_context,
+            authentication_context=authentication_context, include_candidates=include_candidates,
         )
     started = time.time()
     with record_time_thresholds() as thresholds:
         cells, key = _canvas_accelerator_key(
-            store, registry, authentication_context, started
+            store, registry, authentication_context, started, include_candidates=include_candidates
         )
         memory_key = (id(registry), key)
         with _CANVAS_ACCELERATOR_LOCK:
@@ -28680,7 +28717,7 @@ def _project_universal_canvas_answer(
                 projection = _project_universal_canvas_interpreter(
                     store,
                     registry,
-                    authentication_context=authentication_context,
+                    authentication_context=authentication_context, include_candidates=include_candidates,
                 )
         finally:
             _CANVAS_POSITION_SOURCES.reset(handle)
@@ -28722,6 +28759,7 @@ def project_universal_scope_transition(
     previous_projection: Mapping[str, object],
     expected_base_revision: int,
     reusable_scope_projection: Mapping[str, object] | None = None,
+    include_candidates: bool = True,
 ) -> dict[str, object]:
     """Interpret one exact committed session scope without the generic entry."""
     if type(expected_base_revision) is not int:
@@ -28791,6 +28829,7 @@ def project_universal_scope_transition(
         registry,
         authentication_context=authentication_context,
         scope_materialization=scope_materialization,
+        include_candidates=include_candidates,
         previous_projection=previous_projection,
         reusable_scope_projection=reusable_scope_projection,
     )
@@ -31516,7 +31555,7 @@ def _commit_atomic_visible_wip_resource(
             if exposed is not None and trail[index + 1] in exposed[1] and trail[index + 1] not in direct:
                 # A collapsed child still partitions its parent's exact leaf membership.
                 ancestor_patches[ancestor] = prepare_append_relation_members(snapshot, ancestor,
-                    ((registry.roles["member"], resource_root),), budget=_SCOPE_MEMBER_LIMIT)
+                    ((registry.roles["member"], resource_root),))
     if (
         activate_view or placed_in_scope
     ) and active_scope_root != registry.canvas_root:
@@ -31532,7 +31571,6 @@ def _commit_atomic_visible_wip_resource(
                 *((registry.roles["property"], ref.relation_root)
                   for ref in property_refs),
             ),
-            budget=_SCOPE_MEMBER_LIMIT,
         )
     canvas_patch = prepare_append_relation_members(
         snapshot,
@@ -52846,6 +52884,7 @@ def _session_editable_property_roots(
     snapshot: Snapshot,
     registry: UniversalApplicationRegistry,
     view_session: ApplicationViewSession,
+    requested_roots: tuple[str, ...] | None = None,
 ) -> set[str]:
     """Use the visible owners' admitted Properties lens in entered groups."""
     visible_roots, relation_roots, property_roots = _session_canvas_roots(
@@ -52862,11 +52901,12 @@ def _session_editable_property_roots(
     if not allowed.issubset(lens_property_roots):
         raise InvalidCell("active canvas properties leave the Properties lens")
     owners = set(visible_roots) | set(relation_roots)
-    indexed = _property_index(snapshot, registry, lens_property_roots)
+    requested = set(requested_roots) if requested_roots is not None else None
+    indexed = _property_index(snapshot, registry, tuple(root for root in lens_property_roots if requested is None or root in requested))
     allowed.update(
         row.relation_root for owner in owners for row in indexed.get(owner, ())
     )
-    return allowed
+    return allowed if requested is None else allowed.intersection(requested)
 
 
 def edit_universal_property(
@@ -52922,7 +52962,7 @@ def edit_universal_property(
         authentication_context=context,
         resource_usage={"max-atom-bytes": (0, len(encoded))},
     )
-    allowed = _session_editable_property_roots(snapshot, registry, view_session)
+    allowed = _session_editable_property_roots(snapshot, registry, view_session, (relation_root,))
     if relation_root not in allowed:
         raise InvalidCell("property relation is outside the application lens")
     members = read_relation(snapshot, relation_root, budget=64)
@@ -52983,7 +53023,7 @@ def edit_universal_property_batch(
         registry, authentication_context
     )
     encoded = value.encode("utf-8")
-    allowed = _session_editable_property_roots(snapshot, registry, view_session)
+    allowed = _session_editable_property_roots(snapshot, registry, view_session, relations)
     selection_members = read_relation(
         snapshot, view_session.selection_state_root, budget=100_000
     )
@@ -55249,6 +55289,8 @@ def submit_universal_topology_interaction(
         ):
             raise InvalidCell("topology connect control is not projected")
         choices = candidates[0].get("connect_choices")
+        if choices is None:
+            choices = projection.get('topology_targets')
         values = validate_event_fact_values(
             store.snapshot(),
             protocol,

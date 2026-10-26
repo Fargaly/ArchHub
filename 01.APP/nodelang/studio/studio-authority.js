@@ -72,6 +72,295 @@
     {k:'relay mode', v:settings.relay_mode, rel:'session-setting', editable:false, owner:settings.id, source:settings},
   ];
 
+  const interactionDeltaMode='interaction-delta-v1', topologyDeltaMode='topology-delta-v1';
+  const interactionDeltaFields=[
+    'action_history','topology_targets','workshop_scope',
+    'revision','selected','selection','selected_title','focus','obligations',
+    'authorization','catalog','scope','authoring','inspector','properties',
+    'selected_relation',
+    'selected_interface','selected_interfaces','viewport',
+    'selected_definition','selected_assembly','physical',
+    'interaction_projection','toolbar_descriptor','canvas_heading_descriptor',
+    'canvas_signature',
+  ];
+  function mergeProjectionDelta(result,baseProjection) {
+    const mode=result?.projection_mode;
+    if (mode !== interactionDeltaMode && mode !== topologyDeltaMode) return result;
+    if (!baseProjection || result.base_revision !== baseProjection.revision) {
+      throw new Error('Projection delta does not match the visible revision');
+    }
+    if (!result.control_state?.controls) {
+      throw new Error('Projection delta omitted graph control state');
+    }
+    if (!result.configuration_state
+      || typeof result.configuration_state !== 'object') {
+      throw new Error('Projection delta omitted mutable configuration state');
+    }
+    const merged={...baseProjection};
+    const retained=new Set(['catalog','authorization',...(result.retained_fields||[])]);
+    interactionDeltaFields.forEach(field => {
+      if (retained.has(field) && !(field in result)) return;
+      merged[field]=result[field];
+    });
+    if (result.interaction_projection && !('bindings' in result.interaction_projection)) {
+      merged.interaction_projection={...baseProjection.interaction_projection,...result.interaction_projection};
+    }
+    if ('selected_relation_revision' in result) {
+      if (!Number.isSafeInteger(result.selected_relation_revision) || !baseProjection.selected_relation)
+        throw new Error('Selected relation revision is invalid');
+      merged.selected_relation={...baseProjection.selected_relation,observed_revision:result.selected_relation_revision};
+    }
+    const historyPatch=result.action_history?.transactions_patch;
+    if (historyPatch) {
+      const held=baseProjection.action_history?.transactions;
+      if (!Array.isArray(held) || held.length!==historyPatch.base_count ||
+          !Number.isSafeInteger(historyPatch.remove) || historyPatch.remove<0 || historyPatch.remove>held.length ||
+          !Array.isArray(historyPatch.prepend)) throw new Error('History patch does not cover the held history');
+      const transactions=[...historyPatch.prepend,...held.slice(historyPatch.remove)];
+      if (transactions.length!==historyPatch.count || transactions.some(row=>!text(row?.root)) || new Set(transactions.map(row=>row.root)).size!==transactions.length)
+        throw new Error('History patch identities are invalid');
+      merged.action_history={...result.action_history,transactions};
+      delete merged.action_history.transactions_patch;
+    }
+    // The product canvas lens: a boolean and a count, sent only when they
+    // change, so an absent field keeps the held value.
+    ['selection_hidden','hidden_work_count'].forEach(field => {
+      if (field in result) merged[field]=result[field];
+    });
+    merged.configuration={
+      ...baseProjection.configuration,
+      ...result.configuration_state,
+      design_system:{
+        ...baseProjection.configuration.design_system,
+        control_catalog:result.control_state,
+      },
+    };
+    // A positioned splice of the entries that changed, instead of the whole
+    // 176KB catalogue, for the same reason the node patch stopped shipping
+    // whole nodes: a change is not a reason to resend everything.
+    if (Array.isArray(result.catalog_items)) {
+      const held=baseProjection.catalog;
+      if (!Array.isArray(held)
+          || held.length !== Number(result.catalog_count)) {
+        throw new Error('Catalogue patch does not cover the held catalogue');
+      }
+      const next=[...held];
+      result.catalog_items.forEach(entry => {
+        const index=Number(entry.index);
+        if (!Number.isInteger(index) || index < 0 || index >= next.length) {
+          throw new Error('Catalogue patch names an absent entry');
+        }
+        next[index]=entry.item;
+      });
+      merged.catalog=next;
+    }
+    merged.connection_count=Number(result.connection_count || 0);
+    merged.connections=[];
+    if (mode === topologyDeltaMode) {
+      const patch=result.topology_patch;
+      if (patch && typeof patch === 'object') {
+        const fields=[
+          'node_order','wire_order','remove_nodes','remove_wires',
+          'upsert_nodes','upsert_wires',
+        ];
+        if (fields.some(field => !Array.isArray(patch[field]))) {
+          throw new Error('Topology patch shape is invalid');
+        }
+        const stateNodes=patch.state_nodes || [];
+        const stateWires=patch.state_wires || [];
+        if (!Array.isArray(stateNodes) || !Array.isArray(stateWires)) {
+          throw new Error('Topology patch state channel is invalid');
+        }
+        const nodes=new Map(baseProjection.nodes.map(node => [node.id,node]));
+        const wires=new Map(baseProjection.wires.map(wire => [
+          `${wire.id}:${wire.segment}`,wire,
+        ]));
+        patch.remove_nodes.forEach(root => nodes.delete(root));
+        patch.remove_wires.forEach(root => wires.delete(root));
+        patch.upsert_nodes.forEach(node => nodes.set(node.id,node));
+        patch.upsert_wires.forEach(wire => wires.set(
+          `${wire.id}:${wire.segment}`,wire));
+        // A port's context is one boolean buried in a ten-kilobyte
+        // descriptor. The server sends it as state; rebuild the descriptor
+        // around it rather than making the server re-ship the node.
+        stateNodes.forEach(state => {
+          const held=nodes.get(state.id);
+          if (!held) throw new Error('Topology state names an absent node');
+          const next={...held,selected:state.selected,x:state.x,y:state.y};
+          if (Array.isArray(state.port_context) && Array.isArray(held.ports)) {
+            if (state.port_context.length !== held.ports.length) {
+              throw new Error('Topology port context does not cover the ports');
+            }
+            next.ports=held.ports.map((port,index) => {
+              const context=state.port_context[index];
+              const descriptor=port.descriptor;
+              if (!Array.isArray(descriptor) || !descriptor.length) return port;
+              const head=descriptor[0];
+              const attributes={...(head.attributes||{}),
+                'data-context':context};
+              return {...port,descriptor:[
+                {...head,attributes},...descriptor.slice(1),
+              ]};
+            });
+          }
+          nodes.set(state.id,next);
+        });
+        stateWires.forEach(state => {
+          const key=`${state.id}:${state.segment}`;
+          const held=wires.get(key);
+          if (!held) throw new Error('Topology state names an absent wire');
+          wires.set(key,{...held,
+            selected:state.selected,context:state.context});
+        });
+        if (
+          new Set(patch.node_order).size !== patch.node_order.length
+          || new Set(patch.wire_order).size !== patch.wire_order.length
+          || patch.node_order.length !== nodes.size
+          || patch.wire_order.length !== wires.size
+          || patch.node_order.some(root => !nodes.has(root))
+          || patch.wire_order.some(root => !wires.has(root))
+        ) {
+          throw new Error('Topology patch does not exactly cover the graph');
+        }
+        merged.nodes=patch.node_order.map(root => nodes.get(root));
+        merged.wires=patch.wire_order.map(root => wires.get(root));
+        Object.defineProperty(merged,'__topologyPatch',{
+          value:patch,enumerable:false,configurable:true,
+        });
+      } else if (
+        result.topology_recovery === true
+        && Array.isArray(result.nodes)
+        && Array.isArray(result.wires)
+      ) {
+        merged.nodes=result.nodes;
+        merged.wires=result.wires;
+      } else {
+        throw new Error('Topology delta omitted graph topology');
+      }
+      requireUniqueProjectionIdentities(merged);
+      Object.defineProperty(merged,'__topologyValidated',{
+        value:true,enumerable:false,configurable:true,
+      });
+      return merged;
+    }
+    if (
+      !Number.isSafeInteger(result.node_count)
+      || !Number.isSafeInteger(result.wire_count)
+      || result.node_count !== baseProjection.nodes.length
+      || result.wire_count !== baseProjection.wires.length
+      || !Array.isArray(result.node_states)
+      || !Array.isArray(result.wire_states)
+      || !Array.isArray(result.node_patches || [])
+      || !Array.isArray(result.wire_patches || [])
+    ) {
+      throw new Error('Interaction delta changed the projected topology');
+    }
+    const nodeStates=new Map((result.node_states || []).map(
+      state => [state.id,state]));
+    const wireStates=new Map((result.wire_states || []).map(
+      state => [`${state.id}:${state.segment}`,state]));
+    const nodePatches=new Map((result.node_patches || []).map(
+      node => [node.id,node]));
+    const wirePatches=new Map((result.wire_patches || []).map(
+      wire => [`${wire.id}:${wire.segment}`,wire]));
+    const nodeRoots=new Set(baseProjection.nodes.map(node => node.id));
+    const wireRoots=new Set(baseProjection.wires.map(
+      wire => `${wire.id}:${wire.segment}`));
+    if (
+      nodeStates.size !== (result.node_states || []).length
+      || wireStates.size !== (result.wire_states || []).length
+      || nodePatches.size !== (result.node_patches || []).length
+      || wirePatches.size !== (result.wire_patches || []).length
+      || [...nodeStates.keys()].some(root => !nodeRoots.has(root))
+      || [...wireStates.keys()].some(root => !wireRoots.has(root))
+      || [...nodePatches.keys()].some(root => !nodeRoots.has(root))
+      || [...wirePatches.keys()].some(root => !wireRoots.has(root))
+    ) {
+      throw new Error('Interaction delta changed the projected topology');
+    }
+    // The state channel carries port context as a boolean per port; folding
+    // it in as a bare field would leave a `port_context` key on the node and
+    // the descriptor still stale. Rebuild the descriptor from it instead.
+    const applyNodeState=(node,state) => {
+      if (!state) return node;
+      const {port_context:context,...plain}=state;
+      const next={...node,...plain};
+      if (Array.isArray(context) && Array.isArray(node.ports)
+          && context.length === node.ports.length) {
+        next.ports=node.ports.map((port,index) => {
+          const descriptor=port.descriptor;
+          if (!Array.isArray(descriptor) || !descriptor.length) return port;
+          const head=descriptor[0];
+          const attributes={...(head.attributes||{}),
+            'data-context':context[index]};
+          return {...port,descriptor:[
+            {...head,attributes},...descriptor.slice(1),
+          ]};
+        });
+      }
+      return next;
+    };
+    merged.nodes=nodeStates.size || nodePatches.size
+      ? baseProjection.nodes.map(node => (
+          nodeStates.has(node.id) || nodePatches.has(node.id)
+            ? applyNodeState(
+                {...node,...nodePatches.get(node.id)},
+                nodeStates.get(node.id))
+            : node
+        ))
+      : baseProjection.nodes;
+    merged.wires=wireStates.size || wirePatches.size
+      ? baseProjection.wires.map(wire => {
+          const key=`${wire.id}:${wire.segment}`;
+          return wireStates.has(key) || wirePatches.has(key)
+            ? {...wire,...wirePatches.get(key),...wireStates.get(key)}
+            : wire;
+        })
+      : baseProjection.wires;
+    Object.defineProperty(merged,'__interactionPatch',{
+      value:{
+        nodeStateCount:nodeStates.size,
+        wireStateCount:wireStates.size,
+        nodePatchCount:nodePatches.size,
+        wirePatchCount:wirePatches.size,
+        topologyUnchanged:nodePatches.size === 0 && wirePatches.size === 0,
+      },
+      enumerable:false,configurable:true,
+    });
+    return merged;
+  }
+  function requireUniqueProjectionIdentities(projection) {
+    const requireUnique=(values,label) => {
+      const seen=new Set();
+      values.forEach(value => {
+        if (typeof value !== 'string' || !value || seen.has(value)) {
+          throw new Error(`Duplicate or missing projected ${label}: ${value}`);
+        }
+        seen.add(value);
+      });
+    };
+    requireUnique(projection.nodes.map(node => node.id),'node identity');
+    requireUnique(
+      projection.catalog.map(item => item.id),'catalogue definition identity');
+    requireUnique(
+      projection.catalog_sections.map(section => section.id),
+      'catalogue section identity');
+    const catalogueDefinitions=projection.catalog.map(item => item.id);
+    const sectionDefinitions=projection.catalog_sections.flatMap(
+      section => section.definitions);
+    if (
+      sectionDefinitions.length !== catalogueDefinitions.length
+      || sectionDefinitions.some(
+        (definition,index) => definition !== catalogueDefinitions[index])
+    ) {
+      throw new Error('Catalogue sections do not exactly cover the release');
+    }
+    requireUnique(projection.wires.map(
+      wire => `${wire.id}:${wire.segment}`),'wire segment identity');
+    requireUnique(projection.nodes.flatMap(
+      node => node.ports.map(port => port.id)),'interface identity');
+  }
+
   function create({get, post, uuid = () => global.crypto.randomUUID(), pendingStorage,
       hash = async value => Array.from(new Uint8Array(await global.crypto.subtle.digest('SHA-256',
         new TextEncoder().encode(value))), byte => byte.toString(16).padStart(2, '0')).join('')}) {
@@ -195,11 +484,13 @@
 
     function enqueue(action, {navigation = false} = {}) {
       const scope = canvas?.root;
+      const epoch = scopeEpoch;
       pending += 1;
       project();
       const work = tail.then(async () => {
-        if (scope && canvas.root !== scope) fail('The scope changed while this action was waiting.');
+        if (epoch !== scopeEpoch || (scope && canvas?.root !== scope)) fail('The scope changed while this action was waiting.');
         const result = await action();
+        if (epoch !== scopeEpoch) fail('The scope changed while this action was in flight.');
         error = '';
         return accept(result, scope, navigation);
       }).catch(reason => {
@@ -214,7 +505,8 @@
     function binding(control) {
       const found = (canvas.interaction_projection?.bindings || []).filter(row => row.control === control);
       if (found.length !== 1) fail('This control has no current graph interaction. Refresh the canvas.');
-      return {...found[0], expected_scope: canvas.root, revision: canvas.revision, command_id: uuid()};
+      const current={...found[0], expected_scope: canvas.root, revision: canvas.revision, command_id: uuid()};
+      return current;
     }
 
     function node(root) {
@@ -316,6 +608,7 @@
     }
 
     const api = {
+      clear() { canvas=null;snapshot=null;identity=null;workshop=null;pageTarget=null;wantedFocus=undefined;scopeEpoch++; },
       getSnapshot: () => snapshot,
       subscribe(notify) { listeners.add(notify); return () => listeners.delete(notify); },
       refreshWorkshop: root => readWorkshop(root, pageTarget?.root === root ? pageTarget.before : null),
@@ -326,7 +619,19 @@
         return readWorkshop(root, workshop.next_before);
       },
       showLatestWorkshop: root => readWorkshop(root, null),
-      load: ({home = false} = {}) => enqueue(() => get('/api/universal/canvas' + (home ? '?screen=home' : ''))),
+      adopt: (result, options) => enqueue(() => Promise.resolve(result), options),
+      transact: action => enqueue(action),
+      load: ({home = false, navigation = false, conditional = false} = {}) => enqueue(async () => {
+        const result = await get('/api/universal/canvas' + (home ? '?screen=home' :
+          conditional && canvas ? '?since_revision=' + canvas.revision : ''));
+        if (result?.unchanged === true) {
+          if (result.revision !== canvas?.revision || result.scope !== canvas.root || result.graph_id !== identity) {
+            fail('The graph freshness response belongs to another scope.');
+          }
+          return canvas;
+        }
+        return result;
+      }, {navigation}),
       create(spec) {
         const intent = ++focusIntent;
         return enqueue(() => {
@@ -432,6 +737,7 @@
           }
           const result = await post('/api/universal/gesture', {expected_scope:scope, positions:copy,
             expected_positions:bases, projection_revision:canvas.revision,
+            ...(!global.ARCHHUB_AUTHORITY ? {projection_mode:'interaction-delta-v1'} : {}),
             ...(placement === 'arrange' ? {placement:'arrange'} : {})});
           if (!Array.isArray(result?.nodes) || Object.entries(copy).some(([root, point]) => {
             const held = result.nodes.find(row => row.id === root);
@@ -447,9 +753,17 @@
             if (!port || port.side !== side || port.connectable !== true || !port.name) fail('Choose an available output and input socket.');
             return port.name;
           };
+          const output=endpoint(source, sourcePort, 'source'), input=endpoint(target, targetPort, 'target');
+          const port=node(source).ports.find(row=>row.id===sourcePort);
+          if (port.connect_control && port.connect_control !== 'direct:connect') {
+            const choice=(port.connect_choices||canvas.topology_targets||[]).findIndex(row=>row.owner===target&&row.id===targetPort);
+            if(choice<0 || !text(port.connect_event_fact_input))fail('Choose compatible sockets in the current graph.');
+            return post('/api/universal/interaction', {...binding(port.connect_control),
+              projection_mode:'topology-delta-v1',
+              event_facts:[{input:port.connect_event_fact_input,value:choice}]});
+          }
           return post('/api/universal/connect', {expected_scope: canvas.root, source, target,
-            source_interface: endpoint(source, sourcePort, 'source'),
-            target_interface: endpoint(target, targetPort, 'target')});
+            source_interface: output, target_interface: input});
         });
       },
       moveMember(member, from_group, to_group, position = null) {
@@ -708,5 +1022,5 @@
         file: 'Revision ' + state.canvas.revision, last: state.graph.nodes.length + ' nodes', state: 'idle'}]};
     return api;
   }
-  global.ArchHubStudioAuthority = {create, boot, removeMember, confirmMemberRemoved};
+  global.ArchHubStudioAuthority = {create, boot, removeMember, confirmMemberRemoved, mergeProjectionDelta, requireUniqueProjectionIdentities};
 })(typeof window === 'undefined' ? globalThis : window);

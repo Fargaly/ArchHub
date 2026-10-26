@@ -29,11 +29,9 @@ test('selecting hidden Work for review goes through the existing gesture', async
 });
 
 test('an interaction delta holds the lens scalars when absent and never carries the list', () => {
-  const start = runtime.indexOf('  const interactionDeltaMode=');
-  const end = runtime.indexOf('\n  function scheduleRedraw(', start);
-  assert.ok(start > 0 && end > start);
-  const context = vm.createContext({lastProjection:null});
-  vm.runInContext(runtime.slice(start, end) + '\nglobalThis.merge = mergeProjectionDelta;', context);
+  const context = vm.createContext({});
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'../../01.APP/nodelang/studio/studio-authority.js'),'utf8'),context);
+  context.merge=context.ArchHubStudioAuthority.mergeProjectionDelta;
   const base = {revision:4, selected:'work-a', selection:[], selection_hidden:true, hidden_work_count:1,
     hidden_work:[{id:'work-a', title:'Work A'}], nodes:[], wires:[], configuration:{design_system:{}}};
   const delta = extra => ({projection_mode:'interaction-delta-v1', base_revision:4, revision:5, selected:'node-a',

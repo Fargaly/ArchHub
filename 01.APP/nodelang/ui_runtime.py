@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import html
 import json
+from pathlib import Path
 
 from .core import relation_sources, relation_targets
 from .laws_relation import set_relation_parameter
@@ -1436,245 +1437,6 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
   const interactionDeltaMode='interaction-delta-v1';
   const topologyDeltaMode='topology-delta-v1';
   const receiptMode='receipt-v1';
-  const interactionDeltaFields=[
-    'revision','selected','selection','selected_title','focus','obligations',
-    'authorization','catalog','scope','authoring','inspector','properties',
-    'selected_relation',
-    'selected_interface','selected_interfaces','viewport',
-    'selected_definition','selected_assembly','physical',
-    'interaction_projection','toolbar_descriptor','canvas_heading_descriptor',
-    'canvas_signature',
-  ];
-  function mergeProjectionDelta(result,baseProjection=lastProjection) {
-    const mode=result?.projection_mode;
-    if (mode !== interactionDeltaMode && mode !== topologyDeltaMode) return result;
-    if (!baseProjection || result.base_revision !== baseProjection.revision) {
-      throw new Error('Projection delta does not match the visible revision');
-    }
-    if (!result.control_state?.controls) {
-      throw new Error('Projection delta omitted graph control state');
-    }
-    if (!result.configuration_state
-      || typeof result.configuration_state !== 'object') {
-      throw new Error('Projection delta omitted mutable configuration state');
-    }
-    const merged={...baseProjection};
-    // The catalogue and authorization block travel only when they changed
-    // (topology deltas) or never (interaction deltas): absent means "what
-    // you hold still stands", not "cleared". Every other delta field is
-    // authoritative as sent -- absent clears it, exactly as before.
-    const heldWhenAbsent=new Set(['catalog','authorization']);
-    interactionDeltaFields.forEach(field => {
-      if (heldWhenAbsent.has(field) && !(field in result)) return;
-      merged[field]=result[field];
-    });
-    // The product canvas lens: a boolean and a count, sent only when they
-    // change, so an absent field keeps the held value.
-    ['selection_hidden','hidden_work_count'].forEach(field => {
-      if (field in result) merged[field]=result[field];
-    });
-    merged.configuration={
-      ...baseProjection.configuration,
-      ...result.configuration_state,
-      design_system:{
-        ...baseProjection.configuration.design_system,
-        control_catalog:result.control_state,
-      },
-    };
-    // A positioned splice of the entries that changed, instead of the whole
-    // 176KB catalogue, for the same reason the node patch stopped shipping
-    // whole nodes: a change is not a reason to resend everything.
-    if (Array.isArray(result.catalog_items)) {
-      const held=baseProjection.catalog;
-      if (!Array.isArray(held)
-          || held.length !== Number(result.catalog_count)) {
-        throw new Error('Catalogue patch does not cover the held catalogue');
-      }
-      const next=[...held];
-      result.catalog_items.forEach(entry => {
-        const index=Number(entry.index);
-        if (!Number.isInteger(index) || index < 0 || index >= next.length) {
-          throw new Error('Catalogue patch names an absent entry');
-        }
-        next[index]=entry.item;
-      });
-      merged.catalog=next;
-    }
-    merged.connection_count=Number(result.connection_count || 0);
-    merged.connections=[];
-    if (mode === topologyDeltaMode) {
-      const patch=result.topology_patch;
-      if (patch && typeof patch === 'object') {
-        const fields=[
-          'node_order','wire_order','remove_nodes','remove_wires',
-          'upsert_nodes','upsert_wires',
-        ];
-        if (fields.some(field => !Array.isArray(patch[field]))) {
-          throw new Error('Topology patch shape is invalid');
-        }
-        const stateNodes=patch.state_nodes || [];
-        const stateWires=patch.state_wires || [];
-        if (!Array.isArray(stateNodes) || !Array.isArray(stateWires)) {
-          throw new Error('Topology patch state channel is invalid');
-        }
-        const nodes=new Map(baseProjection.nodes.map(node => [node.id,node]));
-        const wires=new Map(baseProjection.wires.map(wire => [
-          `${wire.id}:${wire.segment}`,wire,
-        ]));
-        patch.remove_nodes.forEach(root => nodes.delete(root));
-        patch.remove_wires.forEach(root => wires.delete(root));
-        patch.upsert_nodes.forEach(node => nodes.set(node.id,node));
-        patch.upsert_wires.forEach(wire => wires.set(
-          `${wire.id}:${wire.segment}`,wire));
-        // A port's context is one boolean buried in a ten-kilobyte
-        // descriptor. The server sends it as state; rebuild the descriptor
-        // around it rather than making the server re-ship the node.
-        stateNodes.forEach(state => {
-          const held=nodes.get(state.id);
-          if (!held) throw new Error('Topology state names an absent node');
-          const next={...held,selected:state.selected,x:state.x,y:state.y};
-          if (Array.isArray(state.port_context) && Array.isArray(held.ports)) {
-            if (state.port_context.length !== held.ports.length) {
-              throw new Error('Topology port context does not cover the ports');
-            }
-            next.ports=held.ports.map((port,index) => {
-              const context=state.port_context[index];
-              const descriptor=port.descriptor;
-              if (!Array.isArray(descriptor) || !descriptor.length) return port;
-              const head=descriptor[0];
-              const attributes={...(head.attributes||{}),
-                'data-context':context};
-              return {...port,descriptor:[
-                {...head,attributes},...descriptor.slice(1),
-              ]};
-            });
-          }
-          nodes.set(state.id,next);
-        });
-        stateWires.forEach(state => {
-          const key=`${state.id}:${state.segment}`;
-          const held=wires.get(key);
-          if (!held) throw new Error('Topology state names an absent wire');
-          wires.set(key,{...held,
-            selected:state.selected,context:state.context});
-        });
-        if (
-          new Set(patch.node_order).size !== patch.node_order.length
-          || new Set(patch.wire_order).size !== patch.wire_order.length
-          || patch.node_order.length !== nodes.size
-          || patch.wire_order.length !== wires.size
-          || patch.node_order.some(root => !nodes.has(root))
-          || patch.wire_order.some(root => !wires.has(root))
-        ) {
-          throw new Error('Topology patch does not exactly cover the graph');
-        }
-        merged.nodes=patch.node_order.map(root => nodes.get(root));
-        merged.wires=patch.wire_order.map(root => wires.get(root));
-        Object.defineProperty(merged,'__topologyPatch',{
-          value:patch,enumerable:false,configurable:true,
-        });
-      } else if (
-        result.topology_recovery === true
-        && Array.isArray(result.nodes)
-        && Array.isArray(result.wires)
-      ) {
-        merged.nodes=result.nodes;
-        merged.wires=result.wires;
-      } else {
-        throw new Error('Topology delta omitted graph topology');
-      }
-      requireUniqueProjectionIdentities(merged);
-      Object.defineProperty(merged,'__topologyValidated',{
-        value:true,enumerable:false,configurable:true,
-      });
-      return merged;
-    }
-    if (
-      !Number.isSafeInteger(result.node_count)
-      || !Number.isSafeInteger(result.wire_count)
-      || result.node_count !== baseProjection.nodes.length
-      || result.wire_count !== baseProjection.wires.length
-      || !Array.isArray(result.node_states)
-      || !Array.isArray(result.wire_states)
-      || !Array.isArray(result.node_patches || [])
-      || !Array.isArray(result.wire_patches || [])
-    ) {
-      throw new Error('Interaction delta changed the projected topology');
-    }
-    const nodeStates=new Map((result.node_states || []).map(
-      state => [state.id,state]));
-    const wireStates=new Map((result.wire_states || []).map(
-      state => [`${state.id}:${state.segment}`,state]));
-    const nodePatches=new Map((result.node_patches || []).map(
-      node => [node.id,node]));
-    const wirePatches=new Map((result.wire_patches || []).map(
-      wire => [`${wire.id}:${wire.segment}`,wire]));
-    const nodeRoots=new Set(baseProjection.nodes.map(node => node.id));
-    const wireRoots=new Set(baseProjection.wires.map(
-      wire => `${wire.id}:${wire.segment}`));
-    if (
-      nodeStates.size !== (result.node_states || []).length
-      || wireStates.size !== (result.wire_states || []).length
-      || nodePatches.size !== (result.node_patches || []).length
-      || wirePatches.size !== (result.wire_patches || []).length
-      || [...nodeStates.keys()].some(root => !nodeRoots.has(root))
-      || [...wireStates.keys()].some(root => !wireRoots.has(root))
-      || [...nodePatches.keys()].some(root => !nodeRoots.has(root))
-      || [...wirePatches.keys()].some(root => !wireRoots.has(root))
-    ) {
-      throw new Error('Interaction delta changed the projected topology');
-    }
-    // The state channel carries port context as a boolean per port; folding
-    // it in as a bare field would leave a `port_context` key on the node and
-    // the descriptor still stale. Rebuild the descriptor from it instead.
-    const applyNodeState=(node,state) => {
-      if (!state) return node;
-      const {port_context:context,...plain}=state;
-      const next={...node,...plain};
-      if (Array.isArray(context) && Array.isArray(node.ports)
-          && context.length === node.ports.length) {
-        next.ports=node.ports.map((port,index) => {
-          const descriptor=port.descriptor;
-          if (!Array.isArray(descriptor) || !descriptor.length) return port;
-          const head=descriptor[0];
-          const attributes={...(head.attributes||{}),
-            'data-context':context[index]};
-          return {...port,descriptor:[
-            {...head,attributes},...descriptor.slice(1),
-          ]};
-        });
-      }
-      return next;
-    };
-    merged.nodes=nodeStates.size || nodePatches.size
-      ? baseProjection.nodes.map(node => (
-          nodeStates.has(node.id) || nodePatches.has(node.id)
-            ? applyNodeState(
-                {...node,...nodePatches.get(node.id)},
-                nodeStates.get(node.id))
-            : node
-        ))
-      : baseProjection.nodes;
-    merged.wires=wireStates.size || wirePatches.size
-      ? baseProjection.wires.map(wire => {
-          const key=`${wire.id}:${wire.segment}`;
-          return wireStates.has(key) || wirePatches.has(key)
-            ? {...wire,...wirePatches.get(key),...wireStates.get(key)}
-            : wire;
-        })
-      : baseProjection.wires;
-    Object.defineProperty(merged,'__interactionPatch',{
-      value:{
-        nodeStateCount:nodeStates.size,
-        wireStateCount:wireStates.size,
-        nodePatchCount:nodePatches.size,
-        wirePatchCount:wirePatches.size,
-        topologyUnchanged:nodePatches.size === 0 && wirePatches.size === 0,
-      },
-      enumerable:false,configurable:true,
-    });
-    return merged;
-  }
   function scheduleRedraw(segments=null) {
     // rAF for smoothness when frames flow, a timeout so a hidden or
     // throttled tab still draws -- the same race the toolbar chrome and
@@ -1832,7 +1594,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
   async function performUniversalRequest(
     path,payload={},baseProjection=lastProjection
   ) {
-    return mergeProjectionDelta(
+    return window.ArchHubStudioAuthority.mergeProjectionDelta(
       await performUniversalFetch(path,payload),baseProjection);
   }
   let projectionRefreshRequired=false;
@@ -3607,7 +3369,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
   }
   function reconcileStableViewProjection(previous,projection) {
     if (!projection.__interactionPatch?.topologyUnchanged) {
-      requireUniqueProjectionIdentities(projection);
+      window.ArchHubStudioAuthority.requireUniqueProjectionIdentities(projection);
     }
     const canvasUnchanged=(
       typeof projection.canvas_signature === 'string'
@@ -3758,37 +3520,6 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     // scope then sits with an empty path forever. Race a timeout.
     scheduleRedraw(redrawSegments);
   }
-  function requireUniqueProjectionIdentities(projection) {
-    const requireUnique=(values,label) => {
-      const seen=new Set();
-      values.forEach(value => {
-        if (typeof value !== 'string' || !value || seen.has(value)) {
-          throw new Error(`Duplicate or missing projected ${label}: ${value}`);
-        }
-        seen.add(value);
-      });
-    };
-    requireUnique(projection.nodes.map(node => node.id),'node identity');
-    requireUnique(
-      projection.catalog.map(item => item.id),'catalogue definition identity');
-    requireUnique(
-      projection.catalog_sections.map(section => section.id),
-      'catalogue section identity');
-    const catalogueDefinitions=projection.catalog.map(item => item.id);
-    const sectionDefinitions=projection.catalog_sections.flatMap(
-      section => section.definitions);
-    if (
-      sectionDefinitions.length !== catalogueDefinitions.length
-      || sectionDefinitions.some(
-        (definition,index) => definition !== catalogueDefinitions[index])
-    ) {
-      throw new Error('Catalogue sections do not exactly cover the release');
-    }
-    requireUnique(projection.wires.map(
-      wire => `${wire.id}:${wire.segment}`),'wire segment identity');
-    requireUnique(projection.nodes.flatMap(
-      node => node.ports.map(port => port.id)),'interface identity');
-  }
   function applyThemeProjection(projection) {
     Object.entries(projection.configuration?.theme || {}).forEach(
       ([name,value]) => document.documentElement.style.setProperty(
@@ -3808,7 +3539,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
         `--component-${component}-${property}`,binding.value)));
   }
   function render(projection) {
-    requireUniqueProjectionIdentities(projection);
+    window.ArchHubStudioAuthority.requireUniqueProjectionIdentities(projection);
     lastProjection=projection;
     if (
       !acceptedProjection
@@ -4104,7 +3835,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
   }
   function reconcileTopologyProjection(projection) {
     if (projection.__topologyValidated !== true) {
-      requireUniqueProjectionIdentities(projection);
+      window.ArchHubStudioAuthority.requireUniqueProjectionIdentities(projection);
     }
     const previous=lastProjection;
     const inspectorChanged=!sameProjectedRegion(
@@ -4141,7 +3872,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     clearInteractionStatus();
   }
   function reconcileStableProjection(projection) {
-    requireUniqueProjectionIdentities(projection);
+    window.ArchHubStudioAuthority.requireUniqueProjectionIdentities(projection);
     if (
       typeof projection.canvas_signature === 'string'
       && projection.canvas_signature
@@ -4250,7 +3981,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
   }
   window.__archhubUniversalRefresh=refresh;
   window.__archhubUniversalCommit=commit;
-  window.__archhubUniversalValidateProjection=requireUniqueProjectionIdentities;
+  window.__archhubUniversalValidateProjection=window.ArchHubStudioAuthority.requireUniqueProjectionIdentities;
 
   function canvasPoint(clientX,clientY) {
     const canvas=document.querySelector('.canvas');
@@ -5917,6 +5648,8 @@ UNIVERSAL_CANVAS_SCRIPT = UNIVERSAL_CANVAS_SCRIPT.replace(
     "__CARD_ROWS__", ",".join("%s:%d" % item for item in
                               {**card_content_rows(), "socketHalf": _socket_half()}.items()), 1)
 
+
+UNIVERSAL_CANVAS_SCRIPT = (Path(__file__).with_name('studio') / 'studio-authority.js').read_text(encoding='utf-8') + '\n' + UNIVERSAL_CANVAS_SCRIPT
 
 def project_document(store, app_id, ui_root):
     app = store.nodes[app_id]

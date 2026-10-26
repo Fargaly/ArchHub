@@ -64,7 +64,7 @@ test('actual adapter sends graph operations and rejects failed writes without op
  const w={ARCHHUB_BOOT:{home_load_ms:60000,token:'fixture-session',csrf:'fixture-csrf'},structuredClone,
   addEventListener(){},dispatchEvent:e=>events.push(e),crypto:require('node:crypto').webcrypto,
   Uint8Array,setInterval(){throw Error('No background timer without subscribers');},clearInterval(){}};
- w.ArchHubStudioAuthority={create:({get})=>({load:()=>get('/api/universal/canvas')})};
+ w.ArchHubStudioAuthority={create:({get})=>{let snapshot=null;return {load:async()=>{snapshot={canvas:await get('/api/universal/canvas')};return snapshot.canvas;},getSnapshot:()=>snapshot,clear:()=>{snapshot=null;},adopt:async canvas=>{snapshot={canvas};return canvas;},transact:async action=>{const canvas=await action();snapshot={canvas};return canvas;}};}};
  const fetch=async(url,options={})=>{
   const body=options.body?JSON.parse(options.body):null;
   if(body)posts.push({url,body,headers:options.headers});

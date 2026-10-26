@@ -5,7 +5,7 @@ async function adapter(serve){
  const canvas={root:'graph',scope:{current:'graph'},nodes:[],wires:[],catalog:[],workshops:[]};
  const window={structuredClone:globalThis.structuredClone,crypto:require('node:crypto').webcrypto,ARCHHUB_BOOT:{home_load_ms:60000,token:'local',csrf:'local'},
   document:{hidden:true,addEventListener(){}},addEventListener(){},dispatchEvent(event){notices.push(event.detail.message);},
-  ArchHubStudioAuthority:{create:({get})=>({load:()=>get('/api/universal/canvas')})}};
+  ArchHubStudioAuthority:{create:({get})=>{let snapshot=null;return {load:async()=>{snapshot={canvas:await get('/api/universal/canvas')};return snapshot.canvas;},getSnapshot:()=>snapshot,clear:()=>{snapshot=null;},adopt:async canvas=>{snapshot={canvas};return canvas;},transact:async action=>{const canvas=await action();snapshot={canvas};return canvas;}};}}};
  const fetch=async(url,options={})=>{
   const body=options.body?JSON.parse(options.body):null;calls.push({url,body,headers:options.headers});
   const data=url==='/api/universal/canvas'?canvas:await serve(url,body);

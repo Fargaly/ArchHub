@@ -4,7 +4,7 @@ from .cell_protocols import read_relation
 from .universal_cell import InvalidCell
 
 
-def project_graph_index(store, registry, *, authentication_context=None, include_canvas=True):
+def project_graph_index(store, registry, *, authentication_context=None, include_canvas=True, include_candidates=True):
     """List the root and top-level compositions admitted to this exact view."""
     if type(include_canvas) is not bool:
         raise InvalidCell("graph index canvas selector must be boolean")
@@ -12,7 +12,8 @@ def project_graph_index(store, registry, *, authentication_context=None, include
     # and root-level signed graph index; nested scope checks wait for its open.
     projector = app.project_universal_canvas if include_canvas else app.project_universal_home_frame
     canvas = projector(
-        store, registry, authentication_context=authentication_context)
+        store, registry, authentication_context=authentication_context,
+        **({'include_candidates': include_candidates} if include_canvas else {}))
     snapshot = store.dense_snapshot() if include_canvas else store.snapshot()
     view, _ = app._view_session_for_context(registry, authentication_context)
     roots = app._session_canvas_roots(snapshot, registry, view, root_only=not include_canvas)
@@ -50,11 +51,11 @@ def project_graph_index(store, registry, *, authentication_context=None, include
     return {"ok": True, "graphs": graphs, "current_graph": current, "canvas": canvas}
 
 
-def open_graph(store, registry, root, *, authentication_context=None):
+def open_graph(store, registry, root, *, authentication_context=None, include_candidates=True):
     """Use the existing scope transition; a raw store root is not admission."""
     if type(root) is not str or not root:
         raise InvalidCell("graph root is required")
-    index = project_graph_index(store, registry, authentication_context=authentication_context)
+    index = project_graph_index(store, registry, authentication_context=authentication_context, include_candidates=include_candidates)
     if root not in {row["id"] for row in index["graphs"]}:
         raise InvalidCell("graph is outside the admitted graph list")
     canvas = index["canvas"]
@@ -64,22 +65,22 @@ def open_graph(store, registry, root, *, authentication_context=None):
         app.set_universal_scope(store, registry, registry.canvas_root,
             projected_canvas=canvas, authentication_context=authentication_context)
         canvas = app.project_universal_canvas(store, registry,
-            authentication_context=authentication_context)
+            authentication_context=authentication_context, include_candidates=include_candidates)
     if root != registry.canvas_root:
         app.set_universal_scope(store, registry, root, projected_canvas=canvas,
             authentication_context=authentication_context)
-    return project_graph_index(store, registry, authentication_context=authentication_context)
+    return project_graph_index(store, registry, authentication_context=authentication_context, include_candidates=include_candidates)
 
 
-def create_graph(store, registry, title, *, authentication_context=None):
+def create_graph(store, registry, title, *, authentication_context=None, include_candidates=True):
     """Create a blank WIP composition without grouping the current selection."""
     if type(title) is not str or not title.strip() or len(title.strip().encode("utf-8")) > 256:
         raise InvalidCell("graph title is empty or too large")
     index = open_graph(store, registry, registry.canvas_root,
-                       authentication_context=authentication_context)
+                       authentication_context=authentication_context, include_candidates=include_candidates)
     root, _ = app._compose_universal_selection(store, registry, title=title,
         empty=True, projected_canvas=index["canvas"],
         authentication_context=authentication_context)
-    result = open_graph(store, registry, root, authentication_context=authentication_context)
+    result = open_graph(store, registry, root, authentication_context=authentication_context, include_candidates=include_candidates)
     result["graph"] = next(row for row in result["graphs"] if row["id"] == root)
     return result

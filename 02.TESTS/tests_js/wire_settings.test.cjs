@@ -58,7 +58,7 @@ test('approved account, storage, plan and billing controls remain present',()=>{
 });
 async function apiHarness(answer, account={signed_in:false,email:''}, extra={}){
  const calls=[],window={structuredClone:globalThis.structuredClone,ARCHHUB_BOOT:{home_load_ms:60000,token:'transport-only',csrf:'csrf'},crypto:require('node:crypto'),AH:{},addEventListener(){},dispatchEvent(){},open(){}};
- window.ArchHubStudioAuthority={create:({get})=>({load:()=>get('/api/universal/canvas')})};
+ window.ArchHubStudioAuthority={create:({get})=>{let snapshot=null;return {load:async()=>{snapshot={canvas:await get('/api/universal/canvas')};return snapshot.canvas;},getSnapshot:()=>snapshot,clear:()=>{snapshot=null;},adopt:async canvas=>{snapshot={canvas};return canvas;},transact:async action=>{const canvas=await action();snapshot={canvas};return canvas;}};}};
  const context=vm.createContext({window,setTimeout,clearTimeout,document:{hidden:true,addEventListener(){}},URL,URLSearchParams,AbortSignal:globalThis.AbortSignal,CustomEvent:class {},sessionStorage:{getItem:()=>null},
  fetch:async(url,options)=>{const body=options.body&&JSON.parse(options.body);calls.push([url,body]);if(url==='/api/universal/set-property'&&extra.canvas)extra.canvas.nodes[0].params[0].value=body.value;return {ok:true,status:200,json:async()=>url==='/api/universal/canvas'?(extra.canvas||{root:'graph',nodes:[],wires:[]}):url==='/api/universal/workspace-roots'&&body?.action==='browse'?{ok:true,path:extra.path||''}:url==='/api/universal/cloud-session'?account:url==='/api/universal/settings-action'?{ok:true,result:await answer(body)}:{ok:true}};}});
  vm.runInContext(read('api.js'),context);await window.ArchHubAPI.ready;return {api:window.ArchHubAPI,calls};

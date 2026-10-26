@@ -22,7 +22,7 @@ async function truthAdapter(){
  const window={structuredClone,crypto:require('node:crypto').webcrypto,AH:{inkSoft:'#999'},
   ARCHHUB_BOOT:{token:'fixture',csrf:'fixture'},addEventListener(){},dispatchEvent(){},
   clearInterval(){},setInterval(){return 1;},
-  ArchHubStudioAuthority:{create:({get})=>({load:()=>get('/api/universal/canvas')})}};
+  ArchHubStudioAuthority:{create:({get})=>{let held;return {load:async()=>{held=await get('/api/universal/canvas');return held;},getSnapshot:()=>({canvas:held}),clear:()=>{held=null;}};}}};
  const context={window,console,setTimeout,clearTimeout,AbortSignal,URLSearchParams,CustomEvent:class{},
  document:{hidden:true,addEventListener(){}},fetch:async(url,options)=>{
   const body=options?.body?JSON.parse(options.body):{};
@@ -125,7 +125,7 @@ test('the existing five-second timer refreshes Work rows while provider discover
   ARCHHUB_BOOT:{home_load_ms:60000,token:'fixture',csrf:'fixture'},
   addEventListener:()=>{},dispatchEvent:()=>{},clearInterval:()=>{},
   setInterval:(fn,ms)=>{timers.push({fn,ms});return timers.length;},
-  ArchHubStudioAuthority:{create:({get})=>({load:()=>get('/api/universal/canvas')})}};
+  ArchHubStudioAuthority:{create:({get})=>{let canvas;return {getSnapshot:()=>({canvas}),clear:()=>{canvas=null;},adopt:async result=>canvas=result,transact:async action=>canvas=await action(),load:async()=>canvas=await get('/api/universal/canvas')};}}};
  const context=vm.createContext({window,console,setTimeout,clearTimeout,AbortSignal,URLSearchParams,CustomEvent:class{},
   document:{hidden:false,addEventListener:()=>{}},fetch:async(url,options)=>{
    if(url==='/api/universal/providers'&&hold)await new Promise(resolve=>{release=resolve;});

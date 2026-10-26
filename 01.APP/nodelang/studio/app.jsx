@@ -19,6 +19,7 @@
   function App() {
     const s = useData();
     const [route, setRoute] = React.useState('home'),
+      [canvasOpened, setCanvasOpened] = React.useState(false),
       [task, setTask] = React.useState(''),
       [composerDraft, setComposerDraft] = React.useState({}),
       [modal, setModal] = React.useState(null),
@@ -115,6 +116,8 @@
         r = 'canvas';
         setLibraryOpen(true);
       }
+      if(r==='canvas')setCanvasOpened(true);
+      api.setActiveSurface?.(r);
       setRoute(r);
       setModal(null);
     };
@@ -282,7 +285,7 @@
       document.title = 'ArchHub · ' + (routeNames[route] || route.split('/').at(-1));
     }, [route]);
     const rail = [['home', 'Home', 'home'], ['workshop', 'Workshop', 'workshop'], ['canvas', 'Canvas', 'canvas'], ['docs', 'Docs', 'docs']];
-    const screen = route === 'meetings' ? <window.UI.Meetings /> : route === 'dependencies' ? <window.UI.Dependencies /> : route === 'present' ? <window.UI.Present /> : route === 'community' ? <window.UI.Community /> : route === 'model-review' ? <window.UI.ModelReview /> : route === 'interface' ? <window.UI.InterfaceStudio /> : route === 'social' ? <window.UI.Social /> : route === 'xray' ? <window.UI.Xray /> : route === 'access' ? <window.UI.Access /> : route === 'routing' ? <window.UI.Routing /> : route === 'home' ? <window.UI.Home /> : route === 'workshop' ? <window.UI.Workshop /> : route === 'canvas' ? <window.UI.Canvas /> : route === 'system' ? <window.UI.Settings page="System graph" /> : route === 'colleagues' ? <window.UI.Colleagues /> : route === 'brain' ? <window.UI.Brain /> : route === 'watcher' ? <window.UI.Watcher /> : route === 'first-run' ? <window.UI.FirstRun /> : route === 'runs' ? <window.UI.Runs /> : route === 'receipts' ? <window.UI.Receipts /> : route === 'docs' ? <window.UI.Docs /> : route === 'feedback' ? <window.UI.Feedback /> : route === 'automations' ? <window.UI.Automations /> : route.startsWith('settings/') ? <window.UI.Settings key={route} page={route.slice(9)} /> : <window.UI.Settings key={route} page={{
+    const screen = route === 'meetings' ? <window.UI.Meetings /> : route === 'dependencies' ? <window.UI.Dependencies /> : route === 'present' ? <window.UI.Present /> : route === 'community' ? <window.UI.Community /> : route === 'model-review' ? <window.UI.ModelReview /> : route === 'interface' ? <window.UI.InterfaceStudio /> : route === 'social' ? <window.UI.Social /> : route === 'xray' ? <window.UI.Xray /> : route === 'access' ? <window.UI.Access /> : route === 'routing' ? <window.UI.Routing /> : route === 'home' ? <window.UI.Home /> : route === 'workshop' ? <window.UI.Workshop /> : route === 'canvas' ? null : route === 'system' ? <window.UI.Settings page="System graph" /> : route === 'colleagues' ? <window.UI.Colleagues /> : route === 'brain' ? <window.UI.Brain /> : route === 'watcher' ? <window.UI.Watcher /> : route === 'first-run' ? <window.UI.FirstRun /> : route === 'runs' ? <window.UI.Runs /> : route === 'receipts' ? <window.UI.Receipts /> : route === 'docs' ? <window.UI.Docs /> : route === 'feedback' ? <window.UI.Feedback /> : route === 'automations' ? <window.UI.Automations /> : route.startsWith('settings/') ? <window.UI.Settings key={route} page={route.slice(9)} /> : <window.UI.Settings key={route} page={{
       account: 'Account',
       connections: 'Connections',
       hooks: 'Hooks',
@@ -403,7 +406,7 @@
               fontWeight: 700,
               fontSize: 12,
               flex: 'none'
-            }}>{s.profile.name.split(' ').map(n => n[0]).join('').slice(0, 2)}</button></nav><div className={'screen-with-composer ' + (route !== 'home' ? 'has-local-composer' : '')} style={{'--canvas-library-width':libraryOpen ? '248px' : '0px'}}>{screen}{route === 'canvas' && <div className="canvas-status" role="status"><span>{s.connectionNotice || '● Local session'}</span><span>{s.agentSummary||'Checking running agents…'} · {s.approvals.filter(c=>c.status==='pending').length} wait for you</span>{agentLoad.status==='error' && <button className="button-reset" onClick={event=>executeAction('appShell.RetryWorkshop',{reloadWorkshop},event)}>Retry Workshop connection</button>}</div>}{['home','canvas'].includes(route) && <div className={'global-composer'+(route==='canvas'?' canvas-composer':'')}><window.UI.Composer compact /></div>}</div></div>
+            }}>{s.profile.name.split(' ').map(n => n[0]).join('').slice(0, 2)}</button></nav><div className={'screen-with-composer ' + (route !== 'home' ? 'has-local-composer' : '')} style={{'--canvas-library-width':libraryOpen ? '248px' : '0px'}}>{(canvasOpened || route==='canvas') && <div hidden={route!=='canvas'} ref={element=>{element?.toggleAttribute('inert',route!=='canvas'||!!s.graphOpening);}} style={{display:route==='canvas'?'grid':'none',minHeight:0,height:'100%'}}><window.UI.Canvas key={s.graph.scopeKey || s.graph.id} active={route==='canvas'&&!s.graphOpening} /></div>}{screen}{route === 'canvas' && <div className="canvas-status" role="status"><span>{s.connectionNotice || '● Local session'}</span><span>{(s.agentSummary||'Checking running agents…')} · {s.approvals.filter(c=>c.status==='pending').length} wait for you</span>{agentLoad.status==='error' && <button className="button-reset" onClick={event=>executeAction('appShell.RetryWorkshop',{reloadWorkshop},event)}>Retry Workshop connection</button>}</div>}{['home','canvas'].includes(route) && <div className={'global-composer'+(route==='canvas'?' canvas-composer':'')}><window.UI.Composer compact /></div>}</div></div>
    {route !== 'canvas' && <footer className="flex" style={{
           fontSize: 11,
           gap: 16,

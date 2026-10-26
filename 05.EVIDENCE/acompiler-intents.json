@@ -8755,7 +8755,8 @@
         "requirements.txt",
         "05.EVIDENCE/acompiler-intents.json",
         "01.APP/nodelang/application_server.py",
-        "02.TESTS/tests_replica/test_five_more_cards_run.py"
+        "02.TESTS/tests_replica/test_five_more_cards_run.py",
+        "04.DOCS/DECISIONS.md"
       ]
     }
   }

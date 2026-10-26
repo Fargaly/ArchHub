@@ -403,7 +403,7 @@
               fontWeight: 700,
               fontSize: 12,
               flex: 'none'
-            }}>{s.profile.name.split(' ').map(n => n[0]).join('').slice(0, 2)}</button></nav><div className={'screen-with-composer ' + (route !== 'home' ? 'has-local-composer' : '')} style={{'--canvas-library-width':libraryOpen ? '248px' : '0px'}}>{screen}{route === 'canvas' && <div className="canvas-status" role="status"><span>{s.connectionNotice || '● Local session'}</span><span>{(s.tasks.filter(t=>t.status==='WIP').length+(s.declaredTasks||[]).length)} running · {s.approvals.filter(c=>c.status==='pending').length} wait for you</span>{agentLoad.status==='error' && <button className="button-reset" onClick={event=>executeAction('appShell.RetryWorkshop',{reloadWorkshop},event)}>Retry Workshop connection</button>}</div>}{['home','canvas'].includes(route) && <div className={'global-composer'+(route==='canvas'?' canvas-composer':'')}><window.UI.Composer compact /></div>}</div></div>
+            }}>{s.profile.name.split(' ').map(n => n[0]).join('').slice(0, 2)}</button></nav><div className={'screen-with-composer ' + (route !== 'home' ? 'has-local-composer' : '')} style={{'--canvas-library-width':libraryOpen ? '248px' : '0px'}}>{screen}{route === 'canvas' && <div className="canvas-status" role="status"><span>{s.connectionNotice || '● Local session'}</span><span>{s.agentSummary||'Checking running agents…'} · {s.approvals.filter(c=>c.status==='pending').length} wait for you</span>{agentLoad.status==='error' && <button className="button-reset" onClick={event=>executeAction('appShell.RetryWorkshop',{reloadWorkshop},event)}>Retry Workshop connection</button>}</div>}{['home','canvas'].includes(route) && <div className={'global-composer'+(route==='canvas'?' canvas-composer':'')}><window.UI.Composer compact /></div>}</div></div>
    {route !== 'canvas' && <footer className="flex" style={{
           fontSize: 11,
           gap: 16,
@@ -420,9 +420,9 @@
           {agentLoad.status === 'loaded' && <span className="sr-only" aria-label="Workshop settings ready" title="Workshop settings ready">✓</span>}
           <button className="button-reset muted" onClick={event => executeAction("appShell.Control.13", {
             go
-            }, event)}>{(s.hosts||[]).filter(h=>h.state==='connected'||h.state==='listening').map(h=>h.name+(h.detail?' · '+h.detail:'')).join(' · ') || s.files.find(f => f.id === s.activeFile)?.name || (s.hostsProbing?'Checking programs…':'Open Connections to connect a program')}</button><button className="button-reset muted" onClick={event => executeAction("appShell.RunningWaitForYou.14", {
+            }, event)}>{(s.hosts||[]).filter(h=>h.state==='connected'||h.state==='listening').map(h=>h.name+(h.detail?' · '+h.detail:'')).join(' · ') || s.files.find(f => f.id === s.activeFile)?.name || (s.hostsProbing?'Checking programs…':'Open Connections to connect a program')}</button><button className="button-reset muted" title={(s.agents||[]).map(a=>a.name+' · '+a.task).join(' · ')} onClick={event => executeAction("appShell.RunningWaitForYou.14", {
             go
-          }, event)}>{(s.tasks.filter(t => t.status === 'WIP').length+(s.declaredTasks||[]).length)} running · {s.approvals.filter(c => c.status === 'pending').length} wait for you</button><span className="fill" /><button className="button-reset muted" onClick={event => executeAction("appShell.CtrlK.15", {
+          }, event)}>{s.agentSummary||'Checking running agents…'} · {s.approvals.filter(c => c.status === 'pending').length} wait for you</button><span className="fill" /><button className="button-reset muted" onClick={event => executeAction("appShell.CtrlK.15", {
             show
           }, event)}>Ctrl K</button><button className="button-reset muted" onClick={event => executeAction("appShell.Receipts.16", {
             go
@@ -791,8 +791,8 @@
         saved,
         text
       }, event)}>Save skill</Btn></>;else if (k === 'Agent') {
-      const p = s.providers.find(p => p.id === m.id);
-      body = p ? <div className="grid"><window.UI.Providers /><window.UI.AgentProfile id={p.id} /><label className="grid">Model{api.supportsAction?.('setProviderModel') !== false && <select aria-label="Provider model" value={p.model} onChange={e => u.act(() => api.setProviderModel(p.id, e.target.value))}>{[...new Set([p.model, ...(p.models||[])])].map(x => <option key={x}>{x}</option>)}</select>}</label><Btn onClick={event => executeAction("appShell.AgentSettings.81", {
+      const p = (s.agents||[]).find(p => p.id === m.id) || s.providers.find(p => p.id === m.id);
+      body = p?.runtime ? <div className="grid"><h2>{p.name}</h2><p>{p.status_text} · {p.task}</p><p className="muted">{p.title} · {p.model}</p>{p.detail&&<p>{p.detail}</p>}</div> : p ? <div className="grid"><window.UI.Providers /><window.UI.AgentProfile id={p.id} /><label className="grid">Model{api.supportsAction?.('setProviderModel') !== false && <select aria-label="Provider model" value={p.model} onChange={e => u.act(() => api.setProviderModel(p.id, e.target.value))}>{[...new Set([p.model, ...(p.models||[])])].map(x => <option key={x}>{x}</option>)}</select>}</label><Btn onClick={event => executeAction("appShell.AgentSettings.81", {
           u
         }, event)}>Agent settings</Btn></div> : <Empty>No agent selected.</Empty>;
     } else if (k === 'Teammate') {

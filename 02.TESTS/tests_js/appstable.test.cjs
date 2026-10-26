@@ -23,7 +23,7 @@ test('connected provider state reaches Team without inventing agent eligibility'
   const rows = await providers([{id:'openai',name:'OpenAI',state:'keyed'},
     {id:'ollama',name:'Ollama',state:'running'}]);
   for (const row of rows) {
-    assert.match(row.presence, /Available/);
+    assert.match(row.availability, /Credential present|Reachable/);
     assert.equal(row.enabled, undefined);
     assert.equal(row.signedIn, undefined);
   }
@@ -35,7 +35,7 @@ test('disconnected and uncertain providers say why and how to recover', async ()
   for (const row of rows) {
     assert.notEqual(row.presence, 'Unavailable');
     assert.notEqual(row.signedIn, true);
-    assert.match(row.presence, /Settings|Checking|Installed/);
+    assert.match(row.availability, /Not connected|Credential invalid|Not reachable|Checking|Not installed|Installed|No direct route/);
   }
 });
 
@@ -64,7 +64,7 @@ test('the existing refresh cadence updates a changed provider connection', async
   await api.ready;
   const unsubscribe=api.subscribe(() => {});
   await api.listProviders();
-  assert.match(api.getSnapshot().providers[0].presence,/Available/);
+  assert.equal(api.getSnapshot().providers[0].availability,'Credential present · Sign-in not checked');
   state='no key';
   await timers.at(-1)();
   assert.match(api.getSnapshot().providers[0].presence,/Not connected/);

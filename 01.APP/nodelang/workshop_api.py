@@ -329,18 +329,123 @@ class WorkshopAPI:
         return {**self.listNotifications(), 'receipt': root}
 
     def listAgentsWorking(self):
-        from .agent_declarations import declarations
+        from datetime import datetime
+        from .agent_declarations import declarations, _alive
+        from .agent_runtime_registry import RUNTIMES, discover_runtime_processes, observed_runtime_process
+        from .workshop_activity import observer_for
+        from .model_router import redact_user_visible
+        import psutil
         self.admit()
-        grouped = {}
-        for row in declarations(self.owner):
-            if row["status"] != "working" or row["request_id"] == "unassigned":
+        aliases = {'claude-code':'claude', 'gemini-cli':'gemini', 'opencode-cli':'opencode'}
+        complete = True
+        unavailable = False
+        try:
+            observed = discover_runtime_processes()
+        except (OSError, RuntimeError, ValueError, ImportError, psutil.Error):
+            observed = {'processes':[], 'complete':False, 'observed_at':None}
+            unavailable = True
+        complete &= observed['complete']
+        try:
+            declared = declarations(self.owner, include_archived=True)
+            reader = observer_for(self.owner)
+            if reader is not None:
+                reader.poll()
+                with reader.lock:
+                    lifecycle = {key:dict(value) for key, value in reader.sessions.items()}
+                    complete &= not (reader.partial or reader.unavailable)
+                    unavailable |= reader.unavailable
+            else:
+                lifecycle = {}
+        except (OSError, RuntimeError, ValueError):
+            declared, lifecycle, complete = [], {}, False
+            unavailable = True
+        titles = {}
+        for work in self._works():
+            title = work['interfaces'].get('title', {}).get('value')
+            if title:
+                titles[work['root']] = title
+                titles[work['interfaces'].get('external-key', {}).get('value')] = title
+        grouped, claimed = {}, set()
+        def updated(declaration):
+            stamp = declaration.get('updated_at', 0)
+            if isinstance(stamp, str):
+                try:
+                    return datetime.fromisoformat(stamp.replace('Z', '+00:00')).timestamp()
+                except ValueError:
+                    return float('inf')
+            return stamp
+        for declaration in sorted(declared, key=updated):
+            runtime = aliases.get(declaration.get('runtime') or declaration['app'], declaration.get('runtime') or declaration['app'])
+            native = declaration.get('native_process') or declaration
+            try:
+                live = _alive(native, strict=True)
+            except (psutil.Error, OSError):
+                live, complete = None, False
+            generation = (runtime, native['pid'], native['created_at'])
+            if live:
+                claimed.add(generation)
+                if declaration.get('native_process'):
+                    from types import SimpleNamespace
+                    try:
+                        current = observed_runtime_process(SimpleNamespace(**native), strict=True)
+                        if current and current['runtime'] == runtime:
+                            claimed.add((runtime, current['pid'], current['created_at']))
+                    except (psutil.Error, OSError):
+                        live, complete = None, False
+            session = declaration.get('native_session_id') or declaration['session']
+            key = (runtime, session)
+            row = grouped.setdefault(key, {'id':runtime + ':' + session if declaration.get('native_session_id') else declaration['session'], 'runtime':runtime,
+                'name':declaration.get('display_name') or RUNTIMES.get(runtime, {}).get('label') or LABELS.get(runtime, runtime),
+                'session':session, 'title':declaration['agent'], 'sessions':[],
+                'presence':'not-running', 'model':'Model not reported', 'task':'Task not reported',
+                'evidence':'declaration', 'observed_at':observed['observed_at']})
+            row['sessions'].append(declaration)
+            row['name'] = declaration.get('display_name') or RUNTIMES.get(runtime, {}).get('label') or LABELS.get(runtime, runtime)
+            row['title'] = declaration['agent']
+            if declaration.get('model'):
+                row['model'] = declaration['model']
+            task = titles.get(declaration.get('request_id')) or declaration.get('task')
+            if task:
+                row['task'] = task
+            if not live:
+                row['presence'] = 'unknown' if live is None else 'not-running'
                 continue
-            app = row["app"]
-            provider = grouped.setdefault(app, {"id":app, "name":LABELS.get(app, app),
-                "enabled":True, "signedIn":None, "presence":"working", "model":"Unavailable",
-                "sessions":[]})
-            provider["sessions"].append(row)
-        return list(grouped.values())
+            status = {'working':'working', 'done':'idle', 'blocked':'needs-attention'}.get(declaration['status'], 'unknown')
+            event = lifecycle.get((runtime, session))
+            stamp = updated(declaration)
+            if stamp == float('inf'):
+                status = 'unknown'
+            if event and event['at'] >= max(stamp, native['created_at']):
+                status = 'idle' if event['state'] == 'turn_ended' else 'working'
+            row['presence'] = status
+        for process in observed['processes']:
+            runtime = process['runtime']
+            generation = (runtime, process['pid'], process['created_at'])
+            if generation in claimed:
+                continue
+            identity = '%s:%s:%s' % generation
+            grouped[(runtime, identity)] = {'id':identity, 'runtime':runtime,
+                'name':RUNTIMES.get(runtime, {}).get('label') or LABELS.get(runtime, runtime),
+                'session':identity, 'title':'Session identity not confirmed', 'sessions':[],
+                'presence':'working', 'task':'Task not reported', 'model':'Model not reported',
+                'evidence':'native-process', 'observed_at':observed['observed_at']}
+        result = list(grouped.values())
+        if not complete and not result:
+            result.append({'id':'agent-observation', 'kind':'observation', 'name':'Agent status',
+                'presence':'unknown', 'sessions':[]})
+        for row in result:
+            row['observation_complete'] = complete
+            if unavailable:
+                row['presence'] = 'unknown'
+            row['status_text'] = {'working':'Working', 'idle':'Idle', 'not-running':'Not running',
+                'needs-attention':'Needs attention', 'unknown':'Status unknown'}[row['presence']]
+            row['detail'] = {'working':'Runtime is running; task details are not available.' if row.get('task') == 'Task not reported' else '',
+                'idle':'Waiting for work.', 'not-running':'', 'needs-attention':'This agent could not continue its task.',
+                'unknown':'ArchHub could not check this agent.'}[row['presence']]
+            for field in ('task', 'title', 'model', 'name'):
+                if row.get(field):
+                    row[field] = redact_user_visible(row[field])
+        return result
 
     def _task(self, row):
         from .agent_declarations import declarations

@@ -74,7 +74,7 @@ def test_split_conversation_store_declarations_reach_workshop_http(tmp_path, mon
             except HTTPError as exc:
                 raise AssertionError(json.load(exc)) from exc
         agents = call('listAgentsWorking')
-        assert any(row['id'] == 'codex' and row['sessions'][0]['request_id'] == 'DESIGNMATCH-COURT' for row in agents)
+        assert any(row['runtime'] == 'codex' and row['sessions'][0]['request_id'] == 'DESIGNMATCH-COURT' for row in agents)
         tasks = call('listTasks')
         assert any(row['id'] == work and row['owner'] == 'codex' and row['status'] == 'WIP' for row in tasks)
         assert any(row['root'] == work for row in app.project_universal_governed_work(

@@ -15,6 +15,331 @@ from nodelang.workshop_api import WorkshopAPI
 pytest_plugins = ['tests_replica.test_workshop_assign_to_agent']
 
 
+@pytest.fixture
+def agent_truth(tmp_path, monkeypatch):
+    import psutil
+    from nodelang import agent_runtime_registry as registry, workshop_activity
+    process = subprocess.Popen([os.sys.executable, '-c', 'import time; time.sleep(120)'])
+    peer = psutil.Process(process.pid)
+    generation = {'pid':peer.pid, 'created_at':peer.create_time(), 'runtime':'claude'}
+    definition = {**registry.RUNTIMES['claude'], 'executables':(Path(peer.exe()).stem.casefold(),)}
+    monkeypatch.setattr(registry, 'RUNTIMES', {'claude':definition})
+    def process_iter(attrs):
+        if process.poll() is not None:
+            return iter([])
+        item = psutil.Process(process.pid)
+        item.info = item.as_dict(attrs=attrs)
+        return iter([item])
+    monkeypatch.setattr(psutil, 'process_iter', process_iter)
+    monkeypatch.setattr(registry, '_runtime_process_table', lambda:{process.pid:{'name':peer.name(),'ppid':0}}
+        if process.poll() is None else {}, raising=False)
+    monkeypatch.setattr(registry, '_runtime_process_cache', {}, raising=False)
+    owner = SimpleNamespace(universal_workspace_root=tmp_path)
+    api = WorkshopAPI(owner, SimpleNamespace(subject_root='account:fixture'), 'room', 'scope',
+        guard=lambda:None, request_id='AGENTS-TRUTH', route='court')
+    monkeypatch.setattr(api, 'admit', lambda:None)
+    monkeypatch.setattr(api, '_works', lambda:[])
+    rows = []
+    monkeypatch.setattr(agent_declarations, 'declarations', lambda owner, **kw:rows)
+    reader = workshop_activity.observer_for(owner)
+    monkeypatch.setattr(reader, 'poll', lambda:None)
+    yield api, rows, reader, generation, process, registry
+    if process.poll() is None:
+        process.terminate()
+    process.wait(timeout=10)
+
+
+def truth_declaration(generation, session='native-one', status='working'):
+    return {**generation, 'native_process':generation.copy(), 'app':'claude-code', 'runtime':'claude',
+        'session':'declaration:'+session, 'native_session_id':session, 'root':'declaration:'+session,
+        'task':'Repair agent presence', 'request_id':'FIXAGENTS', 'status':status,
+        'updated_at':time.time()-5, 'agent':'Claude Code / Fixture / '+session}
+
+
+def test_agents_truth_declared_observed_identity_and_second_session(agent_truth):
+    api, rows, _reader, generation, _process, _registry = agent_truth
+    rows.append(truth_declaration(generation))
+    first = api.listAgentsWorking()
+    assert len(first) == 1 and first[0]['presence'] == 'working'
+    assert first[0]['runtime'] == 'claude' and first[0]['task'] == 'Repair agent presence'
+    rows.append(truth_declaration(generation, 'native-two'))
+    assert len(api.listAgentsWorking()) == 2
+
+
+def test_agents_truth_undeclared_known_runtime_and_fallbacks(agent_truth):
+    api, _rows, _reader, _generation, _process, _registry = agent_truth
+    result = api.listAgentsWorking()
+    assert len(result) == 1 and result[0]['presence'] == 'working'
+    assert result[0]['task'] == 'Task not reported'
+    assert result[0]['model'] == 'Model not reported'
+
+
+def test_agents_truth_explicit_idle_survives_detail_horizon_and_new_task(agent_truth, monkeypatch):
+    api, rows, reader, generation, _process, _registry = agent_truth
+    row = truth_declaration(generation)
+    row['updated_at'] = time.time()-4000
+    rows.append(row)
+    event_at = time.time()+1
+    reader.accept('claude','native-one','turn-end','',None,None,event_at)
+    monkeypatch.setattr(time, 'time', lambda:event_at+2000)
+    assert api.listAgentsWorking()[0]['presence'] == 'idle'
+    reader.accept('claude','native-one','turn-start','',None,None,time.time())
+    assert api.listAgentsWorking()[0]['presence'] == 'working'
+
+
+def test_agents_truth_fixture_termination_and_pid_reuse(agent_truth):
+    api, rows, _reader, generation, process, _registry = agent_truth
+    rows.append(truth_declaration(generation))
+    assert api.listAgentsWorking()[0]['presence'] == 'working'
+    rows[0]['native_process']['created_at'] -= 50
+    rows[0]['created_at'] -= 50
+    assert all(row.get('session') != 'native-one' or row['presence'] != 'working' for row in api.listAgentsWorking())
+    process.terminate(); process.wait(timeout=10)
+    assert all(row['presence'] == 'not-running' for row in api.listAgentsWorking())
+
+
+def test_agents_truth_observer_failure_is_unknown(agent_truth, monkeypatch):
+    api, rows, _reader, generation, _process, registry = agent_truth
+    rows.append(truth_declaration(generation))
+    def fail():
+        raise OSError('fixture observer unavailable')
+    monkeypatch.setattr(registry, 'discover_runtime_processes', fail, raising=False)
+    result = api.listAgentsWorking()
+    assert result and all(row['presence'] == 'unknown' for row in result)
+    assert all(row['observation_complete'] is False for row in result)
+
+
+def test_agents_truth_latest_declaration_wins_and_identity_is_stable(agent_truth):
+    api, rows, _reader, generation, _process, _registry = agent_truth
+    newer = truth_declaration(generation, status='done')
+    newer['session'] = 'declaration:newer'
+    older = truth_declaration(generation)
+    older['updated_at'] = newer['updated_at']-5
+    rows.extend([newer, older])
+    result = api.listAgentsWorking()
+    assert len(result) == 1 and result[0]['presence'] == 'idle'
+    assert result[0]['id'] == 'claude:native-one'
+    assert len(result[0]['sessions']) == 2
+
+
+def test_agents_truth_cached_peer_is_not_alive_after_fixture_exit(agent_truth):
+    from nodelang.application_machine_transport import MachinePipePeer
+    _api, _rows, _reader, generation, process, registry = agent_truth
+    peer = MachinePipePeer(pid=generation['pid'],created_at=generation['created_at'])
+    assert registry.observed_runtime_process(peer)['pid'] == process.pid
+    process.terminate(); process.wait(timeout=10)
+    assert registry.observed_runtime_process(peer) is None
+
+
+@pytest.mark.parametrize('script', ['claude/capture.mjs','claude.js','codex.js','gemini.js','opencode.js'])
+def test_agents_truth_generic_node_in_claude_folder_is_not_an_agent(tmp_path, monkeypatch, script):
+    import psutil
+    from nodelang import agent_runtime_registry as registry
+    class Node:
+        _pid = 123
+        def create_time(self): return 42
+        def name(self): return 'node.exe'
+        def cmdline(self): return ['node.exe', str(tmp_path / script)]
+        def parent(self): return None
+    monkeypatch.setattr(psutil, 'Process', lambda pid:Node())
+    assert registry.observed_runtime_process(SimpleNamespace(pid=123, created_at=42)) is None
+
+
+def test_agents_truth_permission_failure_is_not_stopped(agent_truth, monkeypatch):
+    import psutil
+    api, rows, _reader, generation, _process, _registry = agent_truth
+    rows.append(truth_declaration(generation))
+    def denied(row, **kwargs):
+        raise psutil.AccessDenied(row['pid'])
+    monkeypatch.setattr(agent_declarations, '_alive', denied)
+    result = api.listAgentsWorking()
+    assert result[0]['presence'] == 'unknown'
+    assert result[0]['observation_complete'] is False
+
+
+def test_agents_truth_node_launcher_and_native_child_are_one_generation(monkeypatch):
+    import psutil
+    from nodelang.application_machine_transport import MachinePipePeer
+    from nodelang import agent_runtime_registry as registry
+    class Process:
+        def __init__(self, pid): self.pid=pid
+        def name(self): return 'node.exe' if self.pid==100 else 'codex.exe'
+        def create_time(self): return float(self.pid)
+        def cmdline(self): return ['node.exe','C:/FIXTURE/node_modules/@openai/codex/bin/codex.js']
+        def parent(self): return Process(100) if self.pid==200 else None
+    monkeypatch.setattr(psutil, 'Process', Process)
+    wrapper = registry.observed_runtime_process(MachinePipePeer(pid=100,created_at=100))
+    native = registry.observed_runtime_process(MachinePipePeer(pid=200,created_at=200))
+    assert wrapper == native == {'runtime':'codex','pid':100,'created_at':100.0}
+
+
+def test_agents_truth_old_native_declaration_joins_normalized_launcher(agent_truth, monkeypatch):
+    import psutil
+    api, rows, _reader, generation, _process, registry = agent_truth
+    rows.append(truth_declaration(generation))
+    parent = psutil.Process()
+    wrapper = {'runtime':'claude','pid':parent.pid,'created_at':parent.create_time()}
+    monkeypatch.setattr(registry,'discover_runtime_processes',lambda:{'processes':[wrapper],
+        'complete':True,'observed_at':time.time()})
+    monkeypatch.setattr(registry,'observed_runtime_process',lambda peer,**kwargs:wrapper)
+    result = api.listAgentsWorking()
+    assert len(result)==1 and result[0]['session']=='native-one'
+
+
+@pytest.mark.parametrize('argv', [
+    ['C:/CLI/claude.exe', '--type=renderer'],
+    ['C:/CLI/claude.exe', '--type=utility'],
+    ['C:/CLI/claude.exe', '--type=gpu-process'],
+    ['C:/Program Files/WindowsApps/Claude_1/app/claude.exe'],
+])
+def test_agents_truth_desktop_is_not_a_cli(argv):
+    from nodelang import agent_runtime_registry as registry
+    process = SimpleNamespace(name=lambda:'claude.exe', cmdline=lambda:argv)
+    assert registry._process_runtime(process) is None
+
+
+def test_agents_truth_known_opencode_package_is_a_cli():
+    from nodelang import agent_runtime_registry as registry
+    process = SimpleNamespace(name=lambda:'node.exe',cmdline=lambda:[
+        'node.exe','C:/FIXTURE/node_modules/opencode-ai/bin/opencode'])
+    assert registry._process_runtime(process) == 'opencode'
+
+
+def test_agents_truth_desktop_services_are_not_cli_sessions_at_scale(monkeypatch):
+    import psutil
+    from collections import Counter
+    from nodelang import agent_runtime_registry as registry
+    table = {pid:{'name':'ordinary.exe','ppid':0} for pid in range(1,1001)}
+    argv = {}
+    def add(pid, name, arguments, parent=0):
+        table[pid] = {'name':name,'ppid':parent}
+        argv[pid] = arguments
+    add(1,'ChatGPT.exe',['C:/Program Files/WindowsApps/OpenAI.Codex_1/app/ChatGPT.exe'])
+    add(2,'codex.exe',['C:/Program Files/WindowsApps/OpenAI.Codex_1/app/codex.exe','app-server'],1)
+    add(3,'codex.exe',['C:/Program Files/WindowsApps/OpenAI.Codex_1/app/codex.exe','exec-server','--remote'],1)
+    add(4,'node_repl.exe',['C:/Codex/runtimes/cua_node/node_repl.exe'],1)
+    add(5,'codex.exe',['C:/CLI/codex.exe','app-server','--listen','stdio://'],4)
+    add(6,'codex.exe',['C:/CLI/codex.exe','--config','model=fixture','app-server'],1)
+    for pid in range(7,10):
+        add(pid,'codex.exe',['C:/Program Files/WindowsApps/OpenAI.Codex_1/app/codex.exe','exec','app-server'],4)
+    for pid in range(10,16):
+        add(pid,'claude.exe',['C:/CLI/claude.exe','--print','app-server'],1)
+    add(16,'claude.exe',['C:/WindowsApps/Claude_1/app/claude.exe'])
+    for pid, role in enumerate(('renderer','utility','gpu-process'),17):
+        add(pid,'claude.exe',['C:/WindowsApps/Claude_1/app/claude.exe','--type='+role],16)
+    add(20,'OpenCode.exe',['C:/Programs/@opencode-aidesktop/OpenCode.exe'])
+    add(21,'opencode.exe',['C:/CLI/opencode.exe','serve'],20)
+    add(22,'Antigravity.exe',['C:/Programs/Antigravity/Antigravity.exe'])
+    for pid in range(23,188):
+        add(pid,'node.exe',['node.exe','C:/FIXTURE/tool.mjs'])
+    add(188,'pythonw.exe',['C:/ArchHub/pythonw.exe','C:/ArchHub/launcher.py'])
+    add(23,'goose.exe',['C:/CLI/goose.exe','acp'],188)
+    counts = {'cmdline':0,'parent':0,'snapshot':0}
+    class Process:
+        def __init__(self,pid=1000): self.pid=pid
+        def name(self): return table[self.pid]['name']
+        def create_time(self): return float(self.pid)
+        def username(self): return 'fixture-account'
+        def cmdline(self): counts['cmdline']+=1; return argv.get(self.pid,[])
+        def parent(self):
+            counts['parent']+=1
+            return Process(table[self.pid]['ppid']) if table[self.pid]['ppid'] else None
+    def snapshot(): counts['snapshot']+=1; return table.copy()
+    monkeypatch.setattr(registry,'_runtime_process_table',snapshot)
+    monkeypatch.setattr(registry,'_runtime_process_cache',{})
+    monkeypatch.setattr(psutil,'Process',Process)
+    started=time.perf_counter()
+    result=registry.discover_runtime_processes()
+    elapsed=time.perf_counter()-started
+    assert result['complete'] and elapsed<.3
+    assert Counter(row['runtime'] for row in result['processes'])=={'claude':6,'codex':3}
+    assert counts['snapshot']==1 and counts['parent']==0
+    reads=counts['cmdline']
+    assert registry.discover_runtime_processes()['processes']==result['processes']
+    assert counts['cmdline']==reads
+    # The same shared classifier must not call a service a native CLI ancestor.
+    assert registry.observed_runtime_process(SimpleNamespace(pid=5,created_at=5)) is None
+    assert registry.observed_runtime_process(SimpleNamespace(pid=23,created_at=23)) is None
+    assert registry.observed_runtime_process(SimpleNamespace(pid=7,created_at=7))['pid']==7
+    print('DESKTOP SCALE 1000 processes / 185 candidates / claude=6 codex=3 desktop=0; cold_ms=%.3f; warm_cmdline_reads=0' % (elapsed*1000))
+
+
+@pytest.mark.parametrize('name,argv,runtime', [
+    ('opencode.exe',['C:/CLI/opencode.exe','run','serve'],'opencode'),
+    ('opencode.exe',['C:/CLI/opencode.exe'], 'opencode'),
+    ('codex.exe',['C:/CLI/codex.exe','exec','--','app-server'],'codex'),
+    ('codex.exe',['C:/CLI/codex.exe','exec','--','--type=renderer'],'codex'),
+    ('codex.exe',['C:/CLI/codex.exe','--model','fixture','exec','exec-server'],'codex'),
+    ('codex.exe',['C:/CLI/codex.exe','--oss','--local-provider','lmstudio','app-server'],None),
+    ('codex.exe',['C:/CLI/codex.exe','--sandbox','workspace-write','exec-server'],None),
+    ('codex.exe',['C:/CLI/codex.exe'], 'codex'),
+    ('node.exe',['node.exe','C:/FIXTURE/node_modules/@openai/codex/bin/codex.js','app-server'],None),
+    ('node.exe',['node.exe','C:/FIXTURE/node_modules/opencode-ai/bin/opencode','serve'],None),
+    ('gemini.exe',['C:/CLI/gemini.exe'],'gemini'),
+    ('goose.exe',['C:/CLI/goose.exe'],'goose'),
+])
+def test_agents_truth_service_commands_do_not_consume_prompt_words(name,argv,runtime):
+    from nodelang import agent_runtime_registry as registry
+    assert registry._process_runtime(SimpleNamespace(name=lambda:name,cmdline=lambda:argv))==runtime
+
+
+def test_agents_truth_scale_snapshot_cache_and_pid_replacement(monkeypatch):
+    import psutil
+    from nodelang import agent_runtime_registry as registry
+    counts = {'snapshot':0, 'cmdline':0, 'parent':0}
+    table = {pid:{'name':'ordinary.exe','ppid':0} for pid in range(1,1001)}
+    argv = {}
+    for pid in range(1,161):
+        table[pid]['name']='node.exe'; argv[pid]=['node.exe','C:/FIXTURE/tool.mjs']
+    for pid in range(161,172):
+        table[pid]['name']='claude.exe'
+        argv[pid]=['C:/WindowsApps/Claude_1/app/claude.exe'] + (['--type=renderer'] if pid<171 else [])
+    for pid in range(172,181):
+        table[pid]['name']='codex.exe'; argv[pid]=['C:/CLI/codex.exe']
+    for pid in range(181,186):
+        table[pid]['name']='node.exe'
+        argv[pid]=['node.exe','C:/FIXTURE/node_modules/@openai/codex/bin/codex.js']
+        table[pid-9]['ppid']=pid
+    generations = {pid:float(pid) for pid in table}
+    for pid in range(181,186): generations[pid] = float(pid-150)
+    class Process:
+        def __init__(self,pid=1000): self.pid=pid
+        def name(self): return table[self.pid]['name']
+        def create_time(self): return generations[self.pid]
+        def username(self): return 'fixture-account'
+        def cmdline(self): counts['cmdline']+=1; return argv.get(self.pid,[])
+        def parent(self):
+            counts['parent']+=1
+            return Process(table[self.pid]['ppid']) if table[self.pid]['ppid'] else None
+    def snapshot(): counts['snapshot']+=1; return table.copy()
+    def old_snapshot(attrs):
+        for pid,row in table.items():
+            process=Process(pid)
+            process.info={'pid':pid,'name':row['name'],'username':'fixture-account'}
+            yield process
+    monkeypatch.setattr(registry,'_runtime_process_table',snapshot,raising=False)
+    monkeypatch.setattr(registry,'_runtime_process_cache',{},raising=False)
+    monkeypatch.setattr(psutil,'Process',Process)
+    monkeypatch.setattr(psutil,'process_iter',old_snapshot)
+    started=time.perf_counter()
+    first=registry.discover_runtime_processes()
+    elapsed=time.perf_counter()-started
+    assert first['complete'] and len(first['processes'])==9
+    assert elapsed<.3, elapsed
+    assert counts=={'snapshot':1,'cmdline':185,'parent':0}, counts
+    registry.discover_runtime_processes()
+    assert counts=={'snapshot':2,'cmdline':185,'parent':0}, counts
+    generations[180]+=1000
+    argv[180]=['C:/WindowsApps/Claude_1/app/claude.exe','--type=utility']
+    table[180]['name']='claude.exe'
+    third=registry.discover_runtime_processes()
+    assert third['complete'] and len(third['processes'])==8
+    assert counts['cmdline']==186
+    del table[179]
+    assert len(registry.discover_runtime_processes()['processes'])==7
+    print('SCALE 1000 processes / 185 candidates / 9 sessions; cold_ms=%.3f; warm_cmdline_reads=0' % (elapsed*1000))
+
+
 def write(path, *rows):
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open('a', encoding='utf-8') as stream:

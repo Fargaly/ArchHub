@@ -241,6 +241,11 @@ class WorkshopActivity:
         current = self.sessions.get(key)
         if current and at < current['at']:
             return
+        if current is None and kind in ('turn-start', 'turn-end'):
+            current = {'provider':provider, 'session':session, 'tool':'', 'file':None,
+                'state':'turn_ended' if kind == 'turn-end' else 'unassociated',
+                'at':at, 'call':None, 'associated':False}
+            self.sessions[key] = current
         if kind == 'tool-start':
             if type(tool) is not str or not _TOOL.fullmatch(tool):
                 return

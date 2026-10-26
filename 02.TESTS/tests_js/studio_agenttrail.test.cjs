@@ -9,6 +9,92 @@ const {transformSync}=require('esbuild');
 const {setImmediate}=require('node:timers');
 const {structuredClone}=globalThis;
 const studio=path.resolve(__dirname,'../../01.APP/nodelang/studio');
+const truthSource=file=>process.env.AGENTS_TRUTH_MAIN
+ ? require('node:child_process').execFileSync('git',['show','origin/main:01.APP/nodelang/studio/'+file],{cwd:path.resolve(studio,'../../..'),encoding:'utf8'})
+ : fs.readFileSync(path.join(studio,file),'utf8');
+
+async function truthAdapter(){
+ let fail=false;
+ const agents=[{id:'claude:native-one',runtime:'claude',name:'Claude Code',presence:'working',status_text:'Working',
+  task:'Repair presence',model:'Actual model',observation_complete:true,sessions:[]},
+ {id:'codex:native-two',runtime:'codex',name:'Codex',presence:'working',status_text:'Working',
+  task:'Verify presence',model:'Model not reported',observation_complete:true,sessions:[]}];
+ const window={structuredClone,crypto:require('node:crypto').webcrypto,AH:{inkSoft:'#999'},
+  ARCHHUB_BOOT:{token:'fixture',csrf:'fixture'},addEventListener(){},dispatchEvent(){},
+  clearInterval(){},setInterval(){return 1;},
+  ArchHubStudioAuthority:{create:({get})=>({load:()=>get('/api/universal/canvas')})}};
+ const context={window,console,setTimeout,clearTimeout,AbortSignal,URLSearchParams,CustomEvent:class{},
+ document:{hidden:true,addEventListener(){}},fetch:async(url,options)=>{
+  const body=options?.body?JSON.parse(options.body):{};
+  if(body.function==='listAgentsWorking'&&fail)throw Error('fixture observer offline');
+  const result=url==='/api/universal/canvas'?{ok:true,root:'graph:fixture',nodes:[],revision:1,workshops:[{root:'room'}]}:
+   url==='/api/universal/providers'?{providers:[{id:'claude-code',name:'Claude Code',state:'installed',signedIn:null},{id:'openrouter',name:'OpenRouter',state:'keyed'}]}:
+   body.function==='listAgentsWorking'?{ok:true,result:agents}:body.function==='listWorkshopMessages'?{ok:true,result:{messages:[]}}:{ok:true,result:[]};
+  return {ok:true,status:200,json:async()=>result};
+ }};
+ vm.runInNewContext(truthSource('api.js'),context);
+ const api=window.ArchHubAPI;
+ await api.ready;
+ await api.listProviders();await api.listAgentsWorking();
+ return {api,agents,fail:(value=true)=>{fail=value;}};
+}
+
+test('AGENTS-TRUTH sessions and counts are separate from provider availability',async()=>{
+ const {api}=await truthAdapter(),s=api.getSnapshot();
+ assert.equal(s.agents.length,2);assert.equal(s.providers.length,2);
+ assert.equal(s.agentSummary,'2 working · 0 idle');
+ assert.equal(s.agents[0].model,'Actual model');
+ assert.equal(s.providers[0].authentication,'Sign-in not checked');
+ assert.equal(s.providers[0].availability,'Installed · Sign-in not checked');
+ assert.equal(s.providers[1].availability,'Credential present · Sign-in not checked');
+});
+
+test('AGENTS-TRUTH failed refresh clears certainty immediately and recovers',async()=>{
+ const {api,fail}=await truthAdapter();fail();
+ await assert.rejects(api.listAgentsWorking(),/fixture observer offline/);
+ const s=api.getSnapshot();assert.equal(s.agentSummary,'Agent status is incomplete.');
+ assert.ok(s.agents.every(a=>a.presence==='unknown'));
+ assert.ok(s.agents.every(a=>a.detail==='ArchHub could not check this agent. Last known status: Working.'));
+ await assert.rejects(api.listAgentsWorking(),/fixture observer offline/);
+ assert.ok(api.getSnapshot().agents.every(a=>a.detail.endsWith('Last known status: Working.')));
+ fail(false);await api.listAgentsWorking();
+ assert.equal(api.getSnapshot().agentSummary,'2 working · 0 idle');
+ assert.ok(api.getSnapshot().agents.every(a=>!a.detail?.includes('Last known status')));
+});
+
+test('AGENTS-TRUTH owner unknown retains last verified state without inventing one',async()=>{
+ const {api,agents}=await truthAdapter();
+ agents[0]={...agents[0],presence:'idle',status_text:'Idle'};
+ await api.listAgentsWorking();
+ agents[0]={...agents[0],presence:'unknown',status_text:'Status unknown',observation_complete:false,detail:'ArchHub could not check this agent.'};
+ agents.push({id:'unseen',presence:'unknown',status_text:'Status unknown',observation_complete:false,detail:'ArchHub could not check this agent.'});
+ await api.listAgentsWorking();
+ const s=api.getSnapshot();
+ assert.equal(s.agents[0].detail,'ArchHub could not check this agent. Last known status: Idle.');
+ assert.equal(s.agents.at(-1).detail,'ArchHub could not check this agent.');
+ assert.equal(s.agentSummary,'Agent status is incomplete.');
+});
+
+test('AGENTS-TRUTH incomplete inventory retains undeclared sessions until recovery',async()=>{
+ const {api,agents}=await truthAdapter();
+ const original=agents.slice();
+ agents.splice(0,agents.length,{id:'agent-observation',kind:'observation',presence:'unknown',observation_complete:false});
+ await api.listAgentsWorking();
+ const s=api.getSnapshot();
+ assert.equal(s.agents.length,2);
+ assert.ok(s.agents.every(a=>a.presence==='unknown'&&a.detail.endsWith('Last known status: Working.')));
+ agents.splice(0,agents.length,...original);await api.listAgentsWorking();
+ assert.equal(api.getSnapshot().agentSummary,'2 working · 0 idle');
+});
+
+test('AGENTS-TRUTH provider null sign-in renders unchecked with no pretend switches',()=>{
+ const window={UI:{api:{supportsAction:()=>false},useData:()=>({providers:[{id:'openrouter',name:'OpenRouter',signedIn:null,
+  availability:'Credential present · Sign-in not checked'}]}),useApp:()=>({}),Card:({children})=>React.createElement('section',null,children),Av:()=>null},
+  AH_DS:{Toggle:()=>React.createElement('input',{type:'checkbox'})}};
+ vm.runInNewContext(transformSync(truthSource('ds_baboom.jsx'),{loader:'jsx'}).code,{window,React});
+ const html=renderToStaticMarkup(React.createElement(window.UI.Providers));
+ assert.match(html,/Sign-in not checked/);assert.doesNotMatch(html,/Signed out|type="checkbox"/);
+});
 
 test('the existing Task used by Workshop and Board renders runtime facts and honest flags',()=>{
  const window={ArchHubAPI:{executeAction:()=>{}},UI:{A:{warn:'#fc0'},D:{dot:()=>null},

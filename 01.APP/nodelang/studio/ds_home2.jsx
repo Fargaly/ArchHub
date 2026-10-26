@@ -44,7 +44,7 @@
     const working = [...s.tasks.filter(t => t.status === 'WIP'),...(s.declaredTasks||[])];
     const finished = s.tasks.filter(t => t.status === 'DONE');
     const reviewTask = s.tasks.find(t => t.id === pending[0]?.taskId);
-    const reviewOwner = s.providers.find(p => p.id === reviewTask?.owner);
+    const reviewOwner = (s.agents||[]).find(a=>(reviewTask?.declarations||[]).some(d=>a.sessions?.some(row=>row.root===d.root))) || s.providers.find(p => p.id === reviewTask?.owner);
     const reviewContext = pending[0]?.target || reviewTask?.project || s.graph.name;
     const [showTemplates, setShowTemplates] = React.useState(false);
     const openTask = t => { u.setTask(t.declaration?'':t.id); u.go('workshop'); };
@@ -53,8 +53,8 @@
         <header className="home-intro">
           <div className="eyebrow">Your workspace · {s.profile.firm}</div>
           <h1>{'A little input.\nA lot moving forward.'}</h1>
-          <div className="spread"><p className="muted">{pending.length ? `${pending.length} decision${pending.length === 1 ? '' : 's'} ready for you.` : 'Tell BABOOM what you want to do.'} {s.providers.length > 0 ? 'Your agents have the rest.' : ''}</p>
-            <button className="button-reset flex home-team" onClick={event => executeAction("projects.ds_home2.AgentsAtWork.4", {u}, event)} aria-label="Agents at work">{s.providers.filter(p => p.enabled).slice(0,3).map(p => <Av key={p.id} id={p.id} size={24} />)}<window.AHIcon name="arrow" size={15} /></button>
+          <div className="spread"><p className="muted">{pending.length ? `${pending.length} decision${pending.length === 1 ? '' : 's'} ready for you.` : 'Tell BABOOM what you want to do.'} {(s.agents||[]).some(p=>p.presence==='working') ? 'Your agents have the rest.' : ''}</p>
+            <button className="button-reset flex home-team" onClick={event => executeAction("projects.ds_home2.AgentsAtWork.4", {u}, event)} aria-label="Agents at work">{(s.agents||[]).filter(p => p.presence==='working').slice(0,3).map(p => <Av key={p.id} id={p.id} size={24} />)}<span title={(s.agents||[]).map(p=>p.name+' · '+p.task).join(' · ')}>{s.agentSummary||'Checking running agents…'}</span><window.AHIcon name="arrow" size={15} /></button>
           </div>
         </header>
         <section className="work-stream" aria-label="Your work stream">

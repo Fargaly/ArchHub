@@ -30,6 +30,7 @@
   };
 window.ArchHubRouteNames = Object.freeze(NAVIGATION_ROUTES);
 let state = {"revision": 0, "sessionApprovals": [], "activeWorkspace": "", "activeFile": "", "profile": {"id": "", "isFounder": false, "name": "", "firm": "", "email": "", "signedIn": false, "plan": ""}, "nodeSchemas": {}, "providers": [], "catalogue": [], "templates": [], "pages": ["Account", "Connections", "BABOOM", "Agents", "Brain", "System graph", "Workshop", "Library & Mods", "Automations", "Hooks", "Dependencies", "Privacy", "Appearance", "Updates & About", "Advanced"], "settings": [], "companion": {"mode": "idle", "x": null, "y": null, "pinned": false}, "workspaces": [], "tasks": [], "approvals": [], "graph": {"id": "", "name": "", "nodes": [], "wires": [], "workspaceIds": [], "documentation": "", "customProperties": [], "courtStatus": ""}, "brain": [], "dependencies": [], "connections": [], "files": [], "secrets": [], "people": [], "archives": [], "schedules": [], "mods": [], "receipts": [], "runs": [], "drafts": [], "feedback": [], "notifications": [], "meeting": {"title": "", "actions": [], "calendarId": "", "platform": "", "agent": "", "status": "", "consent": false, "transcript": [], "actionOwners": {}, "actionTasks": {}}, "watcher": {"geometry": {"outline": [], "walls": [], "doors": [], "tags": []}, "host": "", "view": "", "views": [], "rooms": [], "imageEdits": [], "wallY": 0, "pendingY": 0, "marks": [], "comments": [], "mask": null, "applied": false, "lengthMm": 0, "appliedLengthMm": 0, "thicknessMm": 0, "appliedThicknessMm": 0, "snap": false, "gridMm": 0, "orthogonal": false, "showDimensions": false, "dimensionAlignment": "", "dimensions": []}, "update": {"available": false, "installed": "", "next": ""}, "app": {"hidden": false, "quit": false, "stopped": false}, "backups": [], "sync": "", "lastResult": null, "docs": [], "bookGlossary": [], "social": {"office": {"name": "", "headline": "", "bio": "", "website": "", "audience": ""}, "inbox": [], "drafts": [], "groups": [], "digest": {"enabled": false, "time": "", "summary": ""}, "research": [], "tutorials": [], "triaged": false}, "learning": {"concept": "", "hosts": [], "baseline": "", "residual": "", "why": "", "sources": [], "findings": [], "status": "", "destination": "", "layer": "", "layers": {"Host": {"program": "", "operation": "", "preserveRelationships": false}, "Habit": {"pattern": "", "minimumRepeats": 0, "learn": false}, "Intent": {"baseline": "", "deviation": "", "why": ""}, "Self": {"metric": "", "threshold": null, "rebaseline": false}, "Agent": {"provider": "", "checkResults": false, "maxIterations": 0}, "Session": {"graph": "", "shareContext": false, "retainCheckpoints": false}}}, "modelSources": [], "devices": [], "activeDevice": "", "graphs": [], "capabilities": [], "mcpServers": [], "suggestions": [], "community": {"tab": "", "peers": [], "patterns": [], "shared": [], "points": [], "groups": [], "joinStatus": "", "marketQuery": "", "listing": {"title": "", "price": 0, "creatorShare": 0}, "charge": {"client": "", "project": "", "basis": "", "amount": 0}, "charges": [], "marketplace": []}, "modelReview": {"operation": "", "results": [], "issues": []}, "usage": {"tokens": 0, "cost": 0, "runs": 0, "quota": 0, "seats": 0, "grace": false}, "hostSkills": [], "provenance": [], "presentation": {"slides": [], "walkthrough": 0}, "healthHistory": [], "prototype": {"name": "", "threshold": null, "samples": 0, "baseline": 0, "status": "", "linkedModel": false, "pattern": null}, "composerAttachments": [], "settingsScope": "User", "officeItems": [], "timesheet": {"status": "", "rows": []}, "desktop": {"program": "", "stage": "", "taskId": null}, "meetingCalendar": [], "refine": {"breadth": 0, "depth": 0, "trials": 0, "tokens": 0, "results": [], "accepted": null}, "intakeRules": [], "uncertainLinks": [], "onboarding": {"role": "", "assessment": ""}, "firms": [], "activeFirm": "", "officeInvitations": [], "billing": {"status": "", "requestedPlan": "", "cycle": "", "checkout": null, "limitReached": null, "invoices": []}};
+Object.assign(state,{agents:[],agentSummary:'Checking running agents…',agentHealth:'Checking running agents…'});
 const emptyWatcher=window.structuredClone(state.watcher);
 const exportedNames = ["moveNodes", "runValuation", "selectFirm", "acceptOfficeInvitation", "declineOfficeInvitation", "getUsageSummary", "setBilling", "prepareCheckout", "completeCheckout", "retryPayment", "downgradeBilling", "refreshBilling", "createCommunityGroup", "issueCommunityInvite", "revokeCommunityInvite", "verifyCommunityInvite", "joinCommunityGroup", "setMarketplace", "installMarketplaceItem", "proposeMarketplaceListing", "setProjectCharge", "proposeProjectCharge", "resolveTaskReview", "setApprovalRubric", "verifyOutputStamp", "setNodeRunPolicy", "contextLabel", "setGraphThumbnail", "setIntakeRule", "reviewBrainLink", "setOnboarding", "correctAnswerSource", "setResearchReview", "stampOutput", "runSpecialNode", "setTranscriptPass", "getDecisionState", "setDecisionState", "setRefine", "compareRefine", "setAnswerWidget", "startVoiceInput", "stopVoiceInput", "speak", "addCompatibleNode", "setPromotedParameter", "setPortVisibility", "compatibleNodes", "setDesktopProgram", "offerDesktopAction", "prepareDesktopAction", "setMeeting", "joinMeeting", "startMeetingTranscript", "stopMeetingTranscript", "readMeetingTranscript", "setMeetingActionOwner", "createMeetingTask", "proposeMeetingSummary", "setTaskPlanMode", "addTaskReview", "refreshOfficeAwareness", "settleTimesheet", "setSettingsScope", "openTemplateGraph", "addTemplateNode", "addComposerAttachment", "removeComposerAttachment", "manageDependency", "getCapabilityParameters", "setCapabilityParameter", "setCapabilityEnabled", "setLearningLayer", "postponeApproval", "resumeApproval", "contestDecision", "setScheduleResponsibility", "reviewScheduledWork", "getHealthHistory", "runResearchNode", "editSlide", "addSlide", "removeSlide", "reorderSlide", "setPrototype", "rebaselinePrototype", "checkVerdictPattern", "steerTask", "refreshModelRoster", "setMultipleNodeParameters", "runToHere", "setPinnedOutput", "setWireVisibility", "setSourceEvidence", "importHostSkill", "inspectConnectorBundle", "configureConnectorBundle", "installConnectorBundle", "setHostSkillEnabled", "auditHostSkill", "setAgentProfile", "setNodeFlags", "checkpointTask", "restoreTaskCheckpoint", "queueTaskMessage", "settleQueuedMessage", "setTaskDelegate", "getNodeOutput", "reviewModel", "updateReviewIssue", "subscribeCommunity", "reviewCommunityPattern", "proposeCommunityShare", "addInterfaceElement", "updateGraph", "removeGraph", "saveGraphVersion", "restoreGraphVersion", "setAccountSeats", "transferOwnership", "checkWatcherSource", "readYoutubeData", "refreshApproval", "setGraphWorkspaces", "discoverMcpTools", "reconnectMcp", "importMcpTool", "inspectMod", "retryMod", "installMod", "removeMod", "shareMod", "dismissSuggestion", "proposeMemory", "checkFeedback", "readResearchSource", "checkResearchLicense", "saveResearchDecision", "importRecipe", "exportRecipe", "getSocial", "saveSocialDraft", "proposeSocialDraft", "discardSocialDraft", "replySocialMessage", "readSocialMessage", "triageSocialInbox", "setSocialGroupRule", "updateOfficePage", "setSocialDigest", "generateSocialDigest", "readContentSource", "prepareTutorial", "setLearning", "runLearning", "distilLearning", "addGraph", "selectGraph", "openTaskGraph", "setAccountPlan", "setTeamAccess", "selectDevice", "setWorkspaceRules", "setModelSource", "checkModelRouting", "setWatcherDimension", "setWatcherOptions", "addDimension", "removeDimension", "getNodeParameters", "addNodeParameter", "setCompanionState", "getDocs", "getKnowledgeGraph", "getSnapshot", "subscribe", "ensureDependency", "checkDependencies", "reviewProofRow", "exposeSettingsPage", "selectWorkspace", "selectFile", "setWatcherView", "listWorkspaces", "addWorkspace", "removeWorkspace", "listProviders", "setProviderEnabled", "signInProvider", "setProviderModel", "listAgentsWorking", "getSettings", "setSetting", "resetSetting", "resetPage", "sendToBaboom", "listTasks", "listWorkshopMessages", "setTaskStatus", "approve", "decline", "stopEverything", "reassignTask", "startTemplate", "getGraph", "addNode", "moveNode", "setNodeParam", "resetNodeParam", "renameNode", "deleteNode", "forkNode", "arrangeGraph", "groupNodes", "ungroupNode", "connectSockets", "insertConvert", "setWireRule", "deleteWire", "runNode", "undo", "redo", "addSchedule", "setScheduleEnabled", "setScheduleTime", "removeSchedule", "editMemory", "forgetMemory", "remember", "setConnection", "checkConnection", "editWall", "addMark", "addComment", "proposeWatcherEdit", "discardWatcherChanges", "setWatcherHost", "updateProfile", "signIn", "syncAccount", "addFile", "removeFile", "disconnectSecret", "setModEnabled", "importFlow", "saveSkill", "sendFeedback", "changePlan", "invitePerson", "grantAccess", "installUpdate", "windowAction", "backUpNow", "rollBack", "archiveActivity", "readNotification", "exportData", "traceNode"];
 
@@ -37,7 +38,7 @@ const listeners=new Set();
 let canvas=null, session=null, commands=null, renewing=null, scopeEpoch=0, restoreGraph=true;
 let graphNavigation=Promise.resolve();
 let refreshTimer=null, refreshInFlight=false, taskRefreshInFlight=null, ready=false, accountSignInPending=false;
-let providerRoster=[], workingAgents=[];
+let providerRoster=[], workingAgents=[], agentsChecked=false;
 let controlsGeneration=0, notificationGeneration=0;
 let updateGeneration=0, updateActionPending=false;
 let updateReadsPending=0, updateReadFailures=0, updateReadAfter=0;
@@ -185,34 +186,62 @@ async function refreshTasks(details=true) {
  return state.tasks;
 }
 function projectProviders() {
- const roster=new Map(providerRoster.map(p=>[p.id,p]));
- for(const a of workingAgents)roster.set(a.id,{...roster.get(a.id),...a});
- const providers=[...roster.values()].map(p=>({...p,model:state.providerPreferences?.[p.id]||p.model,models:state.providerModels?.[p.id]||[]}));
+ const providers=providerRoster.map(p=>({...p,model:state.providerPreferences?.[p.id]||p.model,models:state.providerModels?.[p.id]||[]}));
+ const agents=workingAgents.filter(a=>a.kind!=='observation');
+ const complete=workingAgents.every(a=>a.observation_complete!==false&&a.presence!=='unknown');
+ const working=agents.filter(a=>a.presence==='working').length, idle=agents.filter(a=>a.presence==='idle').length;
  const assigned=new Set(state.tasks.flatMap(t=>(t.declarations||[]).map(d=>d.root)));
- const declaredTasks=[...new Map(providers.flatMap(p=>(p.sessions||[]).filter(d=>d.status==='working'&&!assigned.has(d.root))
-  .map(d=>[d.request_id,{id:d.root,title:d.task,owner:p.id,status:'WIP',declaration:true}]))).values()];
- publish({providers,declaredTasks});
+ const declaredTasks=[...new Map(agents.flatMap(p=>(p.sessions||[]).filter(d=>d.status==='working'&&!assigned.has(d.root))
+  .map(d=>[d.request_id,{id:d.root,title:d.task,owner:p.runtime||p.id,status:'WIP',declaration:true}]))).values()];
+ publish({providers,agents,declaredTasks,
+  agentSummary:!agentsChecked?'Checking running agents…':!complete?'Agent status is incomplete.':working?`${working} working · ${idle} idle`:agents.some(a=>a.presence!=='not-running')?'No agents are working.':'No agents are running.',
+  agentHealth:!agentsChecked?'Checking running agents…':!complete?'Agent status is incomplete. Some sessions could not be checked.':'Agent status is current.'});
 }
 function providerDto(p) {
- const presence=p.status||p.presence||({keyed:'Available · connected',running:'Available · runtime running',
-  'no key':'Not connected · connect in Settings → Connections','key invalid':'Credential invalid · reconnect in Settings → Connections',
-  'not running':'Runtime stopped · start it in Settings → Dependencies',checking:'Checking local runtime…',
-  installed:'Installed · authentication not checked','not installed':'Not installed · manage in Settings → Dependencies',
-  'keyed, not routed':'Connected; no direct route · choose OpenRouter in Settings → Agents'})[p.state]||'Status not reported · refresh Settings → Agents';
+ const availability=({keyed:'Credential present · Sign-in not checked',running:'Reachable · Model not reported',
+  'no key':'Not connected','key invalid':'Credential invalid','not running':'Not reachable',checking:'Checking local runtime…',
+  installed:'Installed · Sign-in not checked','not installed':'Not installed',
+  'keyed, not routed':'Credential present · No direct route'})[p.state]||'Availability not reported';
  return {...p,id:p.id||p.provider||p.app,name:p.name||p.label||p.id||p.provider||p.app,
   ini:p.ini||(p.name||p.id||p.provider||p.app||'').slice(0,1),col:p.col||window.AH?.inkSoft,
-  presence,model:p.model||'Unavailable'};
+  availability,authentication:p.signedIn===true?'Connected':p.signedIn===false?'Not connected':'Sign-in not checked',
+  presence:p.status||p.presence||availability,model:p.model||'Model not reported'};
+}
+function unknownAgent(a,previous=a) {
+ const last=previous?.presence==='unknown'?previous.last_known_status:previous?.status_text;
+ return {...a,observation_complete:false,presence:'unknown',status_text:'Status unknown',last_known_status:last,
+  detail:'ArchHub could not check this agent.'+(last?` Last known status: ${last}.`:'')};
+}
+function agentsUnknown() {
+ agentsChecked=true;
+ workingAgents=workingAgents.length?workingAgents.map(a=>unknownAgent(a)): [{id:'agent-observation',kind:'observation',observation_complete:false}];
+ projectProviders();
 }
 async function refreshAgents() {
  const epoch=scopeEpoch,binding=JSON.stringify(workshopBinding());
- const agents=await workshop('listAgentsWorking');if(!Array.isArray(agents))return agents;
- if(epoch!==scopeEpoch||binding!==JSON.stringify(workshopBinding()))return state.providers;
- workingAgents=agents.map(a=>({...providerDto(a),enabled:a.enabled===true,signedIn:a.signedIn??null}));
- projectProviders();return state.providers;
+ try {
+  const agents=await workshop('listAgentsWorking');
+  if(epoch!==scopeEpoch||binding!==JSON.stringify(workshopBinding()))return state.agents;
+  if(!Array.isArray(agents)){agentsUnknown();return agents;}
+  agentsChecked=true;
+  const inventory=agents.some(a=>a.observation_complete===false)
+   ? [...agents,...workingAgents.filter(a=>a.kind!=='observation'&&!agents.some(row=>row.id===a.id)).map(a=>unknownAgent(a))]:agents;
+  workingAgents=inventory.map(a=>{
+   if(a.presence==='unknown')a=unknownAgent(a,workingAgents.find(row=>row.id===a.id));
+   return {...a,runtime:a.runtime||a.id,ini:(a.name||a.id||'A').slice(0,1),
+    col:a.col||window.AH?.inkSoft,model:a.model||'Model not reported',task:a.task||a.sessions?.[0]?.task||'Task not reported'};
+  });
+  projectProviders();return state.agents;
+ } catch(error) {
+  if(epoch===scopeEpoch&&binding===JSON.stringify(workshopBinding())){
+   agentsUnknown();
+  }
+  throw error;
+ }
 }
 async function refreshAccount() {
  const account=await request('/api/universal/cloud-session');
- if((state.profile.email||'')!==(account.email||'')||state.profile.signedIn!==(account.signed_in===true)){scopeEpoch++;workingAgents=[];publish({tasks:[],declaredTasks:[],workshopMessages:[],workshopMessagesMore:false,workshopMessagesBefore:null,workshopMessagesScope:null});}
+ if((state.profile.email||'')!==(account.email||'')||state.profile.signedIn!==(account.signed_in===true)){scopeEpoch++;workingAgents=[];agentsChecked=false;publish({agents:[],agentSummary:'Checking running agents…',agentHealth:'Checking running agents…',tasks:[],declaredTasks:[],workshopMessages:[],workshopMessagesMore:false,workshopMessagesBefore:null,workshopMessagesScope:null});}
  let attempt=null;
  if(accountSignInPending){
   attempt=await request('/api/universal/cloud-signin');
@@ -509,7 +538,7 @@ Object.assign(api,{
   return mutate(()=>interaction(b.control,{event_facts:[{input:specs[0].input,value:input.label},{input:specs[1].input,value:String(input.value??'')}]}));
  },
  async approve(id){const card=state.approvals.find(c=>c.id===id);if(card?.approvalKind==='social'){const result=await request('/api/universal/social-approve',{delegation:card.delegation,input_digest:card.input_digest,decision:'approve'});await refreshApprovals();return result;}if(!card?.delegation||!card?.input_digest||!card?.work)return unavailable('approve','No reviewed model delegation');const binding=workshopBinding();const body={...binding,work:card.work,delegation:card.delegation,input_digest:card.input_digest};const inspected=await request('/api/universal/workshop-model-approval?'+new URLSearchParams(body));if(inspected.expired||inspected.input_digest!==card.input_digest)return {ok:false,status:'stale',message:'Review changed; refresh before approving.'};const result=await request('/api/universal/workshop-model-approval',{...body,revision:inspected.revision});await refreshTasks();return result;},
-  async selectGraph(id){const epoch=++scopeEpoch;restoreGraph=false;workingAgents=[];publish({tasks:[],declaredTasks:[],workshopMessages:[],workshopMessagesMore:false,workshopMessagesBefore:null,workshopMessagesScope:null,approvals:[],approvalActionsReady:false,desktopReady:false,desktop:{program:"",stage:"",taskId:null,offers:[]},watcherReady:false,watcher:copy(emptyWatcher),hostSkillsReady:false,hostSkills:[],connectorBundle:null});await (state.graph.nodes.some(n=>n.id===id&&n.children.length) ? commands.select(id).then(()=>commands.open(id)) : openGraph(id));if(epoch!==scopeEpoch)return state.graph;await commands.load();if(epoch!==scopeEpoch)return state.graph;project();await refreshGraphs();if(epoch!==scopeEpoch)return state.graph;rememberGraph(id);await refreshTasks();if(epoch!==scopeEpoch)return state.graph;await refreshAgents();return state.graph;},
+  async selectGraph(id){const epoch=++scopeEpoch;restoreGraph=false;workingAgents=[];agentsChecked=false;publish({agents:[],agentSummary:'Checking running agents…',agentHealth:'Checking running agents…',tasks:[],declaredTasks:[],workshopMessages:[],workshopMessagesMore:false,workshopMessagesBefore:null,workshopMessagesScope:null,approvals:[],approvalActionsReady:false,desktopReady:false,desktop:{program:"",stage:"",taskId:null,offers:[]},watcherReady:false,watcher:copy(emptyWatcher),hostSkillsReady:false,hostSkills:[],connectorBundle:null});await (state.graph.nodes.some(n=>n.id===id&&n.children.length) ? commands.select(id).then(()=>commands.open(id)) : openGraph(id));if(epoch!==scopeEpoch)return state.graph;await commands.load();if(epoch!==scopeEpoch)return state.graph;project();await refreshGraphs();if(epoch!==scopeEpoch)return state.graph;rememberGraph(id);await refreshTasks();if(epoch!==scopeEpoch)return state.graph;await refreshAgents();return state.graph;},
  async selectWorkspace(id){return api.selectGraph(id);},
  getUsageSummary:()=>({'Usage':'Usage is unavailable.'}),
  async setConnection(id,values){if(values.connected===false)return request('/api/universal/social-connection',{provider:id,action:'cancel'});if(values.connected===true)return request('/api/universal/social-connection',{provider:id,action:'start'});return unavailable('setConnection','No sign-in action requested');},

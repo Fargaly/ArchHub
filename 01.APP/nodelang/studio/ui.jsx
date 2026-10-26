@@ -99,7 +99,7 @@
     size = 28
   }) => {
     const s = useData();
-    const p = s.providers.find(p => p.id === id) || {
+    const p = (s.agents||[]).find(p => p.id === id) || s.providers.find(p => p.id === id) || {
       name: id,
       ini: id?.slice(0, 2),
       col: A.userAv

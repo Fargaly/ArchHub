@@ -39,7 +39,8 @@
   "settings.ds_settings3.SettingsAction21": "SettingsAction21",
   "settings.ds_settings3.SettingsAction22": "SettingsAction22",
   "settings.ds_settings3.SettingsAction23": "SettingsAction23",
-  "settings.ds_settings3.SettingsAction24": "SettingsAction24"
+  "settings.ds_settings3.SettingsAction24": "SettingsAction24",
+  "settings.ds_settings3.SettingsAction25": "SettingsAction25"
 };
   const {
     A,
@@ -226,7 +227,8 @@ SettingsAction20: (event) => (() => u.show('Install mod'))(event),
 SettingsAction21: (event) => (() => u.go('receipts'))(event),
 SettingsAction22: (event) => (() => u.download('Receipts'))(event),
 SettingsAction23: (event) => (() => u.go('receipts'))(event),
-SettingsAction24: (event) => (() => u.go('docs'))(event)});
+SettingsAction24: (event) => (() => u.go('docs'))(event),
+SettingsAction25: () => u.act(api.listAgentsWorking)});
     return <><window.UI.RegisteredActionStatus state={actionState} retry={retryAction} /><div data-screen={'settings/' + actual} style={{
       display: 'grid',
       gridTemplateColumns: full ? 'minmax(0,1fr)' : '260px minmax(0,1fr)',
@@ -270,7 +272,7 @@ SettingsAction24: (event) => (() => u.go('docs'))(event)});
         }[actual] || 'Your preferences for ' + actual.toLowerCase() + '.'}><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction2', event)}>{actual === 'System graph' ? 'Open graph' : actual === 'BABOOM' ? 'Open BABOOM' : 'Open'}</Btn><Btn sm ghost onClick={event => runAction('settings.ds_settings3.SettingsAction3', event)}>Reset</Btn></Heading>
    <div className="flex settings-scope" style={{
           marginBottom: 14
-        }}><label className="flex muted">Scope<select aria-label="Settings scope" value={s.settingsScope} onChange={e => u.act(() => api.setSettingsScope(e.target.value))}><option>User</option><option>Workspace</option></select></label><span className="fill" /><span className="muted">{s.settingsScope === 'Workspace' ? s.workspaces.find(w => w.id === s.activeWorkspace)?.name : 'Your account'}</span></div><div className="settings-health"><span className="status-dot" /><span>{actual === 'Connections' ? (s.connections.filter(c => c.connected).length+(s.hosts||[]).filter(c=>['connected','listening'].includes(c.state)).length) + ' accounts and programs connected' : actual === 'BABOOM' ? s.providers.filter(p => p.enabled && p.signedIn).length + ' providers ready' : actual === 'Account' ? s.profile.firm + ' · ' + s.workspaces.length + ' workspace' : actual === 'Updates & About' ? s.update.available ? 'An update is ready' : s.update.detail || 'Update status unavailable' : 'Available backend preferences'}</span></div><div className="flex settings-filter" style={{
+        }}><label className="flex muted">Scope<select aria-label="Settings scope" value={s.settingsScope} onChange={e => u.act(() => api.setSettingsScope(e.target.value))}><option>User</option><option>Workspace</option></select></label><span className="fill" /><span className="muted">{s.settingsScope === 'Workspace' ? s.workspaces.find(w => w.id === s.activeWorkspace)?.name : 'Your account'}</span></div><div className="settings-health"><span className="status-dot" /><span>{actual === 'Connections' ? (s.connections.filter(c => c.connected).length+(s.hosts||[]).filter(c=>['connected','listening'].includes(c.state)).length) + ' accounts and programs connected' : actual === 'BABOOM' ? s.providers.filter(p => p.enabled && p.signedIn).length + ' providers ready' : actual === 'Agents' ? s.agentHealth||'Checking running agents…' : actual === 'Account' ? s.profile.firm + ' · ' + s.workspaces.length + ' workspace' : actual === 'Updates & About' ? s.update.available ? 'An update is ready' : s.update.detail || 'Update status unavailable' : 'Available backend preferences'}</span></div><div className="flex settings-filter" style={{
           marginBottom: 14
         }}><D.Toggle label="Changed only" checked={changed} onCheckedChange={setChanged} /><span className="muted" style={{
             fontSize: 12
@@ -279,9 +281,9 @@ SettingsAction24: (event) => (() => u.go('docs'))(event)});
     {actual === 'System graph' && <window.UI.SystemGraph />}
     {actual === 'Account' && <Account />}<window.UI.CapabilityRows page={actual} />
     {actual === 'Connections' && <Connections />}
-    {actual === 'BABOOM' && <Providers />}{actual === 'Agents' && <Card style={{
+    {actual === 'BABOOM' && <Providers />}{actual === 'Agents' && <><Card style={{
             padding: 18
-          }}><div className="spread"><h2>Agents at work</h2><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction4', event)}>Open</Btn></div>{s.providers.map(p => <div className="spread row" key={p.id}><span className="flex"><window.UI.Av id={p.id} size={24} />{p.name}</span><Chip c={p.enabled && p.signedIn ? A.ok : A.inkSoft}>{s.tasks.find(t => t.owner === p.id && t.status === 'WIP')?.title || (p.enabled && p.signedIn ? 'Ready' : 'Off')}</Chip></div>)}<button className="listbutton flex" onClick={event => runAction('settings.ds_settings3.SettingsAction5', event)}>Manage providers<window.AHIcon name="arrow" size={15} /></button></Card>}
+          }}><div className="spread"><h2>Agents at work</h2><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction4', event)}>Open</Btn></div><p role="status">{s.agentSummary||'Checking running agents…'}</p><p className="muted">{s.agentHealth||'Checking running agents…'}</p><Btn sm onClick={event=>runAction('settings.ds_settings3.SettingsAction25',event)}>{s.agentSummary==='Agent status is incomplete.'?'Check again':'Refresh'}</Btn>{(s.agents||[]).map(p => <div className="spread row" key={p.id}><span className="flex"><window.UI.Av id={p.id} size={24} /><span><b>{p.name}</b><small className="muted" style={{display:'block'}}>{p.title} · {p.model}</small><small style={{display:'block'}}>{p.task}</small>{p.detail&&<small className="muted" style={{display:'block'}}>{p.detail}</small>}</span></span><Chip c={p.presence === 'working' ? A.ok : p.presence === 'unknown' ? A.warn : A.inkSoft}>{p.status_text||'Status unknown'}</Chip></div>)}<button className="listbutton flex" onClick={event => runAction('settings.ds_settings3.SettingsAction5', event)}>Manage providers<window.AHIcon name="arrow" size={15} /></button></Card><Providers /></>}
     {actual === 'Brain' && <><window.UI.MemoryRules /><Btn onClick={event => runAction('settings.ds_settings3.SettingsAction6', event)}>Community</Btn></>}
     {actual === 'Automations' && <window.UI.Automations embedded />}
     {actual === 'Dependencies' && <Card style={{

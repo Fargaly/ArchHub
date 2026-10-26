@@ -10,11 +10,13 @@ SESSION_KEYS = {"threadId": "codex", "ai.opencode/sessionID": "opencode",
 SESSION_KEYS.update({"antigravity/sessionID": "antigravity", "antigravity-ide/sessionID": "antigravity-ide"})
 
 
-def _alive(row):
+def _alive(row, *, strict=False):
     import psutil
     try:
         return abs(psutil.Process(row["pid"]).create_time() - row["created_at"]) < 0.00001
-    except (psutil.Error, OSError):
+    except (psutil.Error, OSError) as exc:
+        if strict and not isinstance(exc, psutil.NoSuchProcess):
+            raise
         return False
 
 

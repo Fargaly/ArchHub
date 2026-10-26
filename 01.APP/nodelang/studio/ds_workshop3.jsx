@@ -147,13 +147,13 @@
           display: 'grid',
           gap: 10,
           flex: 'none'
-        }}>{s.providers.filter(p => p.enabled && (p.signedIn || p.sessions?.length)).map(p => <button key={p.id} draggable title={'Drag ' + p.name + ' to Canvas'} onDragStart={e => e.dataTransfer.setData('node', 'Agent:' + p.id)} className="button-reset spread" onClick={() => executeAction("ui.show", u, 'Agent', {
+        }}><p role="status">{s.agentSummary||'Checking running agents…'}</p>{(s.agents||[]).map(p => <button key={p.id} draggable title={'Drag ' + p.name + ' to Canvas'} onDragStart={e => e.dataTransfer.setData('node', 'Agent:' + p.runtime)} className="button-reset spread" onClick={() => executeAction("ui.show", u, 'Agent', {
             id: p.id
           })}><span className="flex"><Av id={p.id} size={22} /><b style={{
                 fontSize: 12
               }}>{p.name}</b></span><span className="muted" style={{
               fontSize: 11
-            }}>{p.sessions?.map(session=>session.task).filter(Boolean).join(' · ') || p.presence || (p.sessions?.length ? 'Session discovered' : 'Signed in')}</span></button>)}<Btn sm ghost onClick={() => executeAction("ui.go", u, 'colleagues')}>Team &amp; meetings</Btn></Card>
+            }}>{p.status_text||'Status unknown'} · {p.task}</span></button>)}<Btn sm ghost onClick={() => executeAction("ui.go", u, 'colleagues')}>Team &amp; meetings</Btn></Card>
   </aside>
   <main style={{
         display: 'grid',

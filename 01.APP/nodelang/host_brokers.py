@@ -269,7 +269,7 @@ def _process_snapshot_api():
     return kernel
 
 
-def _windows_process_names() -> frozenset[str]:
+def _windows_process_table() -> dict[int, dict]:
     """Fresh, bounded presence hints; never process identity or authority."""
     try:
         kernel = _process_snapshot_api()
@@ -281,30 +281,35 @@ def _windows_process_names() -> frozenset[str]:
     try:
         entry = _PROCESSENTRY32W()
         entry.dwSize = ctypes.sizeof(entry)
-        names = set()
+        processes = {}
         available = kernel.Process32FirstW(handle, ctypes.byref(entry))
         if not available:
             if ctypes.get_last_error() == 18:  # ERROR_NO_MORE_FILES
-                return frozenset()
+                return {}
             raise ProcessEnumerationUnavailable("Windows process snapshot could not be read")
         for index in range(8192):
             name = ntpath.basename(entry.szExeFile).casefold()
             if not name:
                 raise ProcessEnumerationUnavailable("Windows process snapshot contains an invalid name")
-            names.add(name)
+            processes[entry.th32ProcessID] = {'name':name, 'ppid':entry.th32ParentProcessID}
             if index == 8191:
                 # Do not read an extra entry merely to distinguish the cap
                 # from a complete enumeration. Exhaustion remains unknown.
                 raise ProcessEnumerationUnavailable("Windows process snapshot exceeds its entry budget")
             if not kernel.Process32NextW(handle, ctypes.byref(entry)):
                 if ctypes.get_last_error() == 18:
-                    return frozenset(names)
+                    return processes
                 raise ProcessEnumerationUnavailable("Windows process snapshot ended incompletely")
+        raise ProcessEnumerationUnavailable("Windows process snapshot exceeds its entry budget")
     except OSError as error:
         raise ProcessEnumerationUnavailable("Windows process observation failed") from error
     finally:
         if not kernel.CloseHandle(handle):
             raise ProcessEnumerationUnavailable("Windows process snapshot could not be closed")
+
+
+def _windows_process_names() -> frozenset[str]:
+    return frozenset(row['name'] for row in _windows_process_table().values())
 
 
 def _running(names: tuple[str, ...]) -> bool:

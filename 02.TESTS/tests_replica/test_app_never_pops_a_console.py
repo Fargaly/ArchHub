@@ -45,7 +45,7 @@ def test_tasklist_probe_is_silent():
 
     running = inspect.getsource(host_brokers._running)
     assert "_windows_process_names()" in running
-    snapshot = inspect.getsource(host_brokers._windows_process_names)
+    snapshot = inspect.getsource(host_brokers._windows_process_table)
     assert "CreateToolhelp32Snapshot" in snapshot
     src = (ROOT / "01.APP/nodelang" / "host_brokers.py").read_text(encoding="utf-8")
     assert "tasklist" not in src.lower()

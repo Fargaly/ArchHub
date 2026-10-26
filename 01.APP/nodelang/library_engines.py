@@ -890,26 +890,147 @@ def _open_outlook():
 _OUTLOOK = [_open_outlook]
 
 
+def _draft_url_labels(content):
+    import html
+    from html.parser import HTMLParser
+
+    class Links(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.lines = content.split('\n')
+            self.pending = None
+            self.replacements = []
+
+        def source_position(self):
+            line, column = self.getpos()
+            return sum(len(part) + 1 for part in self.lines[:line - 1]) + column
+
+        def handle_startendtag(self, tag, attrs):
+            if tag == 'a':
+                raise ValueError('self-closing draft links are not supported')
+
+        def handle_starttag(self, tag, attrs):
+            if tag == 'a':
+                href = next((value for name, value in attrs if name == 'href'), None)
+                if href is not None:
+                    if self.pending is not None:
+                        raise ValueError('nested draft links are not supported')
+                    self.pending = (self.source_position() + len(self.get_starttag_text()), href)
+
+        def handle_endtag(self, tag):
+            if tag == 'a' and self.pending is not None:
+                start, href = self.pending
+                self.replacements.append((start, self.source_position(), html.escape(href)))
+                self.pending = None
+
+    parser = Links()
+    parser.feed(content)
+    parser.close()
+    if parser.pending is not None:
+        raise ValueError('draft link needs a closing anchor tag')
+    for start, end, label in reversed(parser.replacements):
+        content = content[:start] + label + content[end:]
+    return content
+
+
 def draft_email(params: Mapping[str, object], feeds: Mapping[str, object]):
-    """A draft on screen in the open Outlook; sending stays the founder's click."""
-    to = _text(params, "to")
-    subject = _text(params, "subject") or "From ArchHub"
-    body = _text(params, "body") or _wired_text(feeds)
+    """Save a house-format draft; sending is deliberately not an operation."""
+    import html
+    import os
+    import re
+    from pathlib import Path
+    from .clean_office_adapter import coordination_arguments
+    params = coordination_arguments('library.draft_email', params, feeds)
+    to = str(params['to'])
+    subject = str(params['subject'] or 'From ArchHub')
+    if params['subject_case'] == 'UPPER':
+        subject = subject.upper()
+    elif params['subject_case'] != 'preserve':
+        raise ValueError('subject_case must be UPPER or preserve')
+    body = str(params['body'] or _wired_text(feeds))
     if not body:
         return {"out": []}, "nothing to write: no body, nothing wired in"
+    if params['reply_to'] and params['forward_of']:
+        raise ValueError('choose reply_to or forward_of')
+    if params['body_format'] not in ('html', 'text'):
+        raise ValueError('body_format must be text or html')
+    content = body if params['body_format'] == 'html' else '<p>' + html.escape(body).replace('\n', '<br>') + '</p>'
+    content = _draft_url_labels(content)
+    signature = ''
+    signature_assets = []
+    if params['signature']:
+        name = str(params['signature'])
+        if Path(name).name != name or '/' in name or '\\' in name:
+            raise ValueError('signature must be a saved signature name')
+        root = Path(params['signature_dir'] or Path(os.environ.get('APPDATA', '')) / 'Microsoft' / 'Signatures')
+        raw = (root / (name + '.htm')).read_bytes()
+        charset = re.search(rb'charset\s*=\s*[\"\x27]?([a-zA-Z0-9_-]+)', raw)
+        signature = raw.decode(charset[1].decode('ascii') if charset else 'utf-8-sig')
+        from urllib.parse import unquote
+        def signature_image(match):
+            source = html.unescape(match[3])
+            if re.match(r'(?i)^(https?:|data:|cid:)', source):
+                return match[0]
+            image = (root / unquote(source.replace('\\', '/'))).resolve()
+            if not image.is_relative_to(root.resolve()) or not image.is_file():
+                raise ValueError('saved signature image is missing or outside its folder')
+            cid = 'archhub-signature-%d@local' % len(signature_assets)
+            signature_assets.append((image, cid))
+            return match[1] + match[2] + 'cid:' + cid + match[2]
+        signature = re.sub(r'(<img\b[^>]*\bsrc\s*=\s*)([\"\x27])([^\"\x27]+)\2',
+                           signature_image, signature, flags=re.I)
+    attachments = [Path(p).resolve() for p in params['attachments']]
+    if any(not path.is_file() for path in attachments):
+        raise ValueError('draft attachment does not exist')
     app = _OUTLOOK[0]()
     if app is None:
         return {"out": []}, "Outlook is not open; the draft needs it open"
     try:
-        mail = app.CreateItem(0)
-        mail.To = to
+        original = None
+        reference = params['reply_to'] or params['forward_of']
+        if reference:
+            namespace = app.GetNamespace('MAPI')
+            original = (namespace.GetItemFromID(reference, params['store_id']) if params['store_id']
+                        else namespace.GetItemFromID(reference))
+        mail = (original.ReplyAll() if params['reply_to'] else original.Forward()) if original is not None else app.CreateItem(0)
+        if not signature and original is None and getattr(mail, 'GetInspector', None) is not None:
+            signature = str(getattr(mail, 'HTMLBody', '') or '')
+        quoted = str(getattr(mail, 'HTMLBody', '') or '') if original is not None else ''
+        if to:
+            mail.To = to
+        if params['cc']:
+            mail.CC = str(params['cc'])
+        if original is not None and not params['subject']:
+            subject = str(mail.Subject)
+            if params['subject_case'] == 'UPPER':
+                subject = subject.upper()
         mail.Subject = subject
-        mail.Body = body
-        mail.Display()
+        mail.BodyFormat = 2
+        if signature:
+            composed = signature.replace('{{body}}', content) if '{{body}}' in signature else re.sub(
+                r'(<body\b[^>]*>)', lambda m: m[1] + content, signature, count=1, flags=re.I)
+            if composed == signature:
+                composed = content + signature
+        else:
+            composed = '<html><body>' + content + '</body></html>'
+        if not re.search(r'<body\b', composed, flags=re.I):
+            composed = '<html><body>' + composed + '</body></html>'
+        if quoted:
+            quoted = re.sub(r'</?(?:html|body)\b[^>]*>', '', quoted, flags=re.I)
+            composed = re.sub(r'</body>', lambda _: '<br>' + quoted + '</body>', composed, count=1, flags=re.I)
+        mail.HTMLBody = composed
+        for path in attachments:
+            mail.Attachments.Add(str(path))
+        for image, cid in signature_assets:
+            attached = mail.Attachments.Add(str(image))
+            attached.PropertyAccessor.SetProperty('http://schemas.microsoft.com/mapi/proptag/0x3712001F', cid)
+        mail.Save()
+        if params['show']:
+            mail.Display()
     except Exception as failed:
-        return {"out": []}, "Outlook refused the draft: %s" % failed
-    return {"out": {"to": to, "subject": subject, "chars": len(body)}}, (
-        "draft open in Outlook (%s) - you send it" % (to or "no recipient yet"))
+        return {"out": [], 'ok': False, 'reason': str(failed)}, "Outlook refused the draft: %s" % failed
+    return {"out": {"to": str(mail.To), "subject": subject, "chars": len(body),
+                    'id': str(mail.EntryID), 'draft_only': True}}, 'draft saved in Outlook; you send it'
 
 
 LIBRARY_ENGINES.update({
@@ -1480,6 +1601,7 @@ ENGINE_SOCKETS = {
     "control.foreach": {"source": ("each", "results"), "target": ("items",)},
     "control.merge": {"source": ("value",), "target": ("a", "b")},
     "shape.map": {"source": ("items_out",), "target": ("items",)},
+    "shape.filter": {"source": ("items_out",), "target": ("items",)},
     "shape.unique": {"source": ("items_out",), "target": ("items",)},
     "shape.pluck": {"source": ("values",), "target": ("items",)},
     "shape.count": {"source": ("count",), "target": ("items",)},
@@ -2042,6 +2164,9 @@ def library_item_ports(item: str, engine: str, title: str = "") -> dict:
     """Projected port metadata: id, type and cardinality for the library card."""
     sockets = engine_sockets(engine)
     interfaces = _base_catalogue_interfaces().get((str(title or "").casefold(), str(engine or "")), {})
+    from .clean_office_adapter import COORDINATION_NODES, coordination_catalogue
+    if engine in COORDINATION_NODES:
+        interfaces = next(entry['interfaces'] for entry in coordination_catalogue() if entry['engine'] == engine)
     if engine == 'research.weighted':
         interfaces = {'in':{'type':'list','direction':'input'},'criteria':{'type':'list','direction':'input'},
                       'out':{'type':'list','direction':'output'}}
@@ -2127,4 +2252,21 @@ ENGINE_SOCKETS["archhub.enforce"] = {
 }
 LIBRARY_PRESENTATION = LIBRARY_PRESENTATION + (("enforce", (("archhub_enforce", "Enforce", "Check pending writes; correct compiler diagnostics before approval"),)),)
 LIBRARY_ITEM_ENGINES['research_valuation'] = {'engine':'research.weighted','params':{'criteria':'[]'}}
+
+# Existing catalogue projection seeds these same cards and their wireable parameters.
+from .clean_office_adapter import COORDINATION_NODES as _COORDINATION_NODES
+_coordination_rows = []
+for _engine, _spec in _COORDINATION_NODES.items():
+    _label, _defaults, _outputs = _spec['title'], _spec['params'], _spec['outputs']
+    ENGINE_SOCKETS[_engine] = {'source': tuple(_outputs), 'target': ('in', *tuple(_defaults))}
+    _card_defaults = {key: json.dumps(value) if isinstance(value, (list, dict, bool)) else value
+                      for key, value in _defaults.items()}
+    if _engine == 'library.draft_email':
+        for _item in ('o_email', 'o_email_handoff'):
+            LIBRARY_ITEM_ENGINES[_item]['params'] = dict(_card_defaults)
+        continue
+    _item = _engine.replace('.', '_')
+    LIBRARY_ITEM_ENGINES[_item] = {'engine': _engine, 'params': dict(_card_defaults)}
+    _coordination_rows.append((_item, _label, _label))
+LIBRARY_PRESENTATION = (*LIBRARY_PRESENTATION, ('office', tuple(_coordination_rows)))
 LIBRARY_PRESENTATION = LIBRARY_PRESENTATION + (('logic', (('research_valuation','Weighted valuation','Score wired rows using explicit numeric criteria and weights'),)),)

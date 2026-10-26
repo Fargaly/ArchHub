@@ -22,6 +22,8 @@ import urllib.error
 import urllib.request
 from collections.abc import Mapping
 from pathlib import Path
+from functools import partial
+from datetime import datetime, timezone
 
 # MaxMCP (bridges/sources/max_mcp/max_mcp_startup.py) binds the first free
 # port from 48886 to 48899 -- the range the AutoCAD and Revit brokers share --
@@ -632,6 +634,106 @@ def outlook_inbox(params: Mapping[str, object], feeds: Mapping[str, object]):
     return {"out": rows}, "%d inbox item(s)" % len(rows)
 
 
+def outlook_correspondence(operation, params, feeds):
+    """Bounded reads through the SAME running-Outlook attachment owner."""
+    from .clean_office_adapter import coordination_arguments
+    from .library_engines import _OUTLOOK, draft_email
+    args = coordination_arguments(operation, params, feeds)
+    if operation in ('outlook.reply_draft', 'outlook.forward_draft'):
+        reference = 'reply_to' if operation == 'outlook.reply_draft' else 'forward_of'
+        args[reference] = args[reference] or args['message_id']
+        if not args[reference]:
+            raise ValueError('set message_id for the draft')
+        return draft_email(args, feeds)
+    app = _OUTLOOK[0]()
+    if app is None:
+        return _honest('Outlook is not open')
+    namespace = app.GetNamespace('MAPI')
+    conversation = str(args.get('conversation_id') or '')
+    if operation == 'outlook.read_thread' and not conversation:
+        if not args['message_id']:
+            raise ValueError('set conversation_id or message_id')
+        original = (namespace.GetItemFromID(args['message_id'], args['store_id']) if args['store_id']
+                    else namespace.GetItemFromID(args['message_id']))
+        conversation = str(original.ConversationID)
+    limit, scan_limit = int(args['limit']), int(args['scan_limit'])
+    if not 1 <= limit <= 1000 or not 1 <= scan_limit <= 10000:
+        raise ValueError('Outlook limit/scan_limit out of range')
+    since = datetime.fromisoformat(str(args['since']).replace('Z', '+00:00')) if args.get('since') else None
+    if since and since.tzinfo is None:
+        since = since.replace(tzinfo=timezone.utc)
+    rows, scanned, seen = [], 0, set()
+    for folder_id in args['folders']:
+        default = {'inbox': 6, 'sent': 5, 'drafts': 16}.get(str(folder_id).casefold())
+        if default is not None:
+            folder = (namespace.GetStoreFromID(args['store_id']).GetDefaultFolder(default)
+                      if args['store_id'] else namespace.GetDefaultFolder(default))
+        else:
+            folder = (namespace.GetFolderFromID(str(folder_id), args['store_id']) if args['store_id']
+                      else namespace.GetFolderFromID(str(folder_id)))
+        items = folder.Items
+        items.Sort('[ReceivedTime]', True)
+        for index in range(1, int(items.Count) + 1):
+            if scanned >= scan_limit or len(rows) >= limit:
+                break
+            scanned += 1
+            item = items.Item(index)
+            if int(getattr(item, 'Class', 43)) != 43:
+                continue
+            identity = (str(item.Parent.StoreID), str(item.EntryID))
+            if identity in seen:
+                continue
+            seen.add(identity)
+            if conversation and str(item.ConversationID) != conversation:
+                continue
+            received = str(item.ReceivedTime)
+            if since:
+                observed = datetime.fromisoformat(received.replace('Z', '+00:00'))
+                if observed.tzinfo is None:
+                    observed = observed.replace(tzinfo=since.tzinfo)
+                if observed < since:
+                    continue
+            row = {'id': str(item.EntryID), 'store_id': identity[0], 'folder_id': str(folder.EntryID),
+                   'conversation_id': str(item.ConversationID), 'subject': str(item.Subject),
+                   'sender': str(item.SenderName), 'sender_address': str(item.SenderEmailAddress),
+                   'to': str(item.To), 'cc': str(item.CC), 'received': received, 'unread': bool(item.UnRead)}
+            if args['include_body']:
+                row['body'], row['html_body'] = str(item.Body), str(item.HTMLBody)
+            keywords = args.get('keywords') or []
+            haystack = ' '.join(str(row.get(k, '')) for k in ('subject', 'sender', 'sender_address', 'body')).casefold()
+            if keywords and not all(str(word).casefold() in haystack for word in keywords):
+                continue
+            if args['include_attachments']:
+                row['attachments'] = [{'name': str(item.Attachments.Item(i).FileName),
+                                       'bytes': int(item.Attachments.Item(i).Size)}
+                                      for i in range(1, int(item.Attachments.Count) + 1)]
+            rows.append(row)
+    return {'out': rows, 'scanned': scanned, 'truncated': scanned >= scan_limit or len(rows) >= limit}, '%d correspondence item(s)' % len(rows)
+
+
+def office_coordination(operation, params, feeds, *, owner_admitted=False):
+    from .clean_office_adapter import coordination_arguments, invoke
+    args = coordination_arguments(operation, params, feeds)
+    result = invoke(operation, args, owner_admitted=owner_admitted)
+    return result, operation
+
+
+def coordination_engine_table(gate):
+    """Attach existing actions through the application's per-call owner gate."""
+    from .clean_office_adapter import COORDINATION_NODES
+    from .library_engines import draft_email
+    engines = {}
+    for name in COORDINATION_NODES:
+        if name.startswith(('excel.', 'pdf.')):
+            effect = partial(office_coordination, name, owner_admitted=True)
+        elif name == 'library.draft_email':
+            effect = draft_email
+        else:
+            effect = partial(outlook_correspondence, name)
+        engines[name] = gate(name, effect)
+    return engines
+
+
 def _notion_title(row: Mapping[str, object]) -> str:
     for value in (row.get("properties") or {}).values():
         if isinstance(value, dict) and value.get("type") == "title":
@@ -714,6 +816,11 @@ ENGINES = {
     "outlook.imap.inbox": _imap_inbox, "outlook.imap.status": _imap_status,
     "outlook.imap.message": _imap_message,
 }
+for _coordination_engine in ('outlook.search', 'outlook.read_thread', 'outlook.reply_draft', 'outlook.forward_draft'):
+    ENGINES[_coordination_engine] = partial(outlook_correspondence, _coordination_engine)
+for _coordination_engine in ('excel.read_table', 'excel.build_workbook', 'excel.write_cells',
+                             'excel.share_workbook', 'excel.open', 'pdf.extract_text', 'pdf.snip'):
+    ENGINES[_coordination_engine] = partial(office_coordination, _coordination_engine)
 
 __all__ = ["ENGINES", "probe_host_rows", "probe_catalogue_rows"]
 

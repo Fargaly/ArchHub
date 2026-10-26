@@ -1755,8 +1755,12 @@ class _CleanAuthorityHttpServer(WorkspaceRootsOwner):
 
         table = {name: refuse(name) for name in PIPELINE_ENGINES}
         table.update({name: LIBRARY_ENGINES[name] for name in PURE_LIBRARY_ENGINES})
+        table['text.ops'] = PIPELINE_ENGINES['text.ops']
         for name, engine in STEM_EFFECT_ENGINES.items():
             table[name] = gate(name, engine) if gate is not None else refuse(name)
+        if gate is not None:
+            from .host_brokers import coordination_engine_table
+            table.update(coordination_engine_table(gate))
         table.update(dict(extra_effect_engines or {}))
         return table
 
@@ -9632,6 +9636,13 @@ class ApplicationServer(WorkspaceRootsOwner):
                         # presence leases (universal_pipeline._graph_engines):
                         # the one source every BABOOM presence route reads.
                         engines = owner._effect_engines_with_mods_store()
+                        from .host_brokers import coordination_engine_table
+                        def office_gate(_name, effect):
+                            def admitted(params, feeds):
+                                terminal_admission()
+                                return effect(params, feeds)
+                            return admitted
+                        engines.update(coordination_engine_table(office_gate))
                         if "library.terminal" in engines:
                             engines["library.terminal"] = (
                                 owner.terminal_sessions.admitted_engine(terminal_admission))

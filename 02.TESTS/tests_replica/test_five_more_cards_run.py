@@ -94,6 +94,9 @@ def test_draft_email_opens_a_draft_and_never_sends(monkeypatch):
     class Mail:
         def __init__(self):
             self.calls = []
+            self.EntryID = "synthetic-draft"
+        def Save(self):
+            self.calls.append("Save")
         def Display(self):
             self.calls.append("Display")
         def Send(self):
@@ -109,9 +112,16 @@ def test_draft_email_opens_a_draft_and_never_sends(monkeypatch):
     outlook = Outlook()
     monkeypatch.setattr(L, "_OUTLOOK", [lambda: outlook])
     out, said = L.draft_email({"to": "eng@firm.example.test", "subject": "Sheets"}, {"in": "Set 03 attached"})
-    assert outlook.mail.To == "eng@firm.example.test" and outlook.mail.Body == "Set 03 attached"
-    assert outlook.mail.calls == ["Display"], "a draft on screen, never Send"
+    assert outlook.mail.To == "eng@firm.example.test"
+    assert outlook.mail.HTMLBody == "<html><body><p>Set 03 attached</p></body></html>"
+    assert outlook.mail.Subject == "SHEETS"
+    assert outlook.mail.calls == ["Save"], "save the draft, no Display by default, never Send"
+    assert out["out"]["id"] == "synthetic-draft" and out["out"]["draft_only"] is True
     assert out["out"]["chars"] == 15 and "you send it" in said
+    outlook.mail.calls.clear()
+    out, said = L.draft_email({"body": "x", "show": True}, {})
+    assert outlook.mail.calls == ["Save", "Display"], "show only when requested, never Send"
+    assert out["out"]["draft_only"] is True
     monkeypatch.setattr(L, "_OUTLOOK", [lambda: None])
     out, said = L.draft_email({"body": "x"}, {})
     assert out["out"] == [] and "Outlook is not open" in said

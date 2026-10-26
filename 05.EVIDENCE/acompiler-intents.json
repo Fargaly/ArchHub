@@ -8832,6 +8832,24 @@
         "02.TESTS/tests_replica/test_cell_floor_boundaries.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "RELISO": {
+      "source": "Founder RELISO 717: the release build never touches the founder's real profile. Reuse one shared isolated environment for release checks and the existing profile-write guard; USERPROFILE HOME LOCALAPPDATA APPDATA TEMP TMP ARCHHUB_TEST_STATE_DIR resolve within run fixtures. Decoy-only reproduction and deliberate-write court; preserve USERSIM, AGENTLINK, zero-idle and update checks, existing deadlines and provider proofs. No installed app/live data/ArchHub-Test/screen access. Source patch only for 717 admission. Fix directly reproduced zero-idle subprocess boot repair exposed by FIXWS86657d0a and USERSIM bounded model environment leak; shared receipt makes caught child writes fail release. No VM, new store/channel or extra model calls.",
+      "scope": [
+        "02.TESTS/tests/test_agentlink_release.py",
+        "02.TESTS/tests/test_release_profile_isolation.py",
+        "02.TESTS/tests/test_zero_idle_growth.py",
+        "02.TESTS/tests_replica/conftest.py",
+        "03.TOOLS/installer/build_release.ps1",
+        "03.TOOLS/packaging/windows/publish_release.ps1",
+        "03.TOOLS/tools/real_app_check/agentlink_release.py",
+        "03.TOOLS/tools/real_app_check/graph_owner.py",
+        "03.TOOLS/tools/real_app_check/profile_guard.py",
+        "03.TOOLS/tools/real_app_check/real_app_check.py",
+        "03.TOOLS/tools/real_app_check/usersim.py",
+        "04.DOCS/DECISIONS.md",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

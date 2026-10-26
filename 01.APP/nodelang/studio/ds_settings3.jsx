@@ -9,6 +9,7 @@
   "settings.ds_settings3.WorkspaceRowsAction1": "WorkspaceRowsAction1",
   "settings.ds_settings3.WorkspaceRowsAction2": "WorkspaceRowsAction2",
   "settings.ds_settings3.WorkspaceRowsAction3": "WorkspaceRowsAction3",
+  "settings.ds_settings3.WorkspaceRowsAction4": "WorkspaceRowsAction4",
   "settings.ds_settings3.AccountAction0": "AccountAction0",
   "settings.ds_settings3.AccountAction1": "AccountAction1",
   "settings.ds_settings3.AccountAction2": "AccountAction2",
@@ -136,12 +137,13 @@ WorkspaceRowsAction1: (w, event) => (async () => {
 WorkspaceRowsAction2: (w, event) => (() => u.show('Workspace rules', {
             id: w.id
           }))(event),
-WorkspaceRowsAction3: (w, event) => (() => u.confirm('Remove this workspace from the list?', () => api.removeWorkspace(w.id)))(event)});
+WorkspaceRowsAction3: (w, event) => (() => u.confirm('Remove this workspace from the list?', () => api.removeWorkspace(w.id)))(event),
+WorkspaceRowsAction4: (event) => (() => u.act(api.listWorkspaces))(event)});
     return <><window.UI.RegisteredActionStatus state={actionState} retry={retryAction} /><Card><div className="spread" style={{
         padding: 16
-      }}><div><h2>Workspaces</h2><small className="muted">Choose the folders available to this graph.</small></div><Btn sm onClick={event => runAction('settings.ds_settings3.WorkspaceRowsAction0', event)}>Add</Btn></div>{s.workspaces.map(w => <div key={w.id} className="spread row"><D.Toggle label={'Use ' + w.name + ' in this graph'} checked={(s.graph.workspaceIds || []).includes(w.id)} onCheckedChange={v => u.act(() => api.setGraphWorkspaces(v ? [...new Set([...(s.graph.workspaceIds || []), w.id])] : (s.graph.workspaceIds || []).filter(id => id !== w.id)))} /><div className="fill"><h3>{w.name}</h3><span className="muted" style={{
+      }}><div><h2>Workspaces</h2><small className="muted">Choose the folders available to this graph.</small></div><Btn sm onClick={event => runAction('settings.ds_settings3.WorkspaceRowsAction0', event)}>Add workspace</Btn></div><div className="row muted" role={s.workspaceHealth?.state === 'error' ? 'alert' : 'status'}>{s.workspaceHealth?.message || 'Reading workspaces…'}{s.workspaceHealth?.state === 'error' && <Btn sm ghost onClick={event => runAction('settings.ds_settings3.WorkspaceRowsAction4', event)}>Retry</Btn>}</div>{s.workspaceHealth?.recovery && <div className="row muted">{s.workspaceHealth.recovery.message}</div>}{s.workspaceHealth && <details className="row muted"><summary>Advanced</summary><div>Source: Application graph</div><div>Projection: {s.workspaceHealth.projection}</div><div>Revision: {s.workspaceHealth.revision}</div>{s.workspaceHealth.recovery && <div>{s.workspaceHealth.recovery.archive}</div>}{s.workspaceHealth.detail}</details>}{s.workspaces.map(w => <div key={w.id} className="spread row"><D.Toggle label={'Use ' + w.name + ' in this graph'} checked={(s.graph.workspaceIds || []).includes(w.id)} onCheckedChange={v => u.act(() => api.setGraphWorkspaces(v ? [...new Set([...(s.graph.workspaceIds || []), w.id])] : (s.graph.workspaceIds || []).filter(id => id !== w.id)))} /><div className="fill"><h3>{w.name}</h3><span className="muted" style={{
             fontSize: 12
-          }}>{w.folder} · open to all your agents</span></div><div className="flex"><Btn sm onClick={event => runAction('settings.ds_settings3.WorkspaceRowsAction1', w, event)}>Open</Btn><Btn sm ghost aria-label={'Privacy ' + w.name} title="Workspace privacy" onClick={event => runAction('settings.ds_settings3.WorkspaceRowsAction2', w, event)}><window.AHIcon name="shield" size={16} /></Btn><Btn sm ghost onClick={event => runAction('settings.ds_settings3.WorkspaceRowsAction3', w, event)}>Remove</Btn></div></div>)}{!s.workspaces.length && <Empty>Add a folder to work in.</Empty>}</Card></>;
+          }}>{w.folder} · {w.available === false ? 'Folder unavailable' : (s.workspaceHealth?.state === 'ready' || (s.workspaceHealth?.state === 'idle' && w.builtIn)) ? 'Ready' : 'Checking…'}</span></div><div className="flex"><Btn sm onClick={event => runAction('settings.ds_settings3.WorkspaceRowsAction1', w, event)}>Open</Btn><Btn sm ghost aria-label={'Privacy ' + w.name} title="Workspace privacy" onClick={event => runAction('settings.ds_settings3.WorkspaceRowsAction2', w, event)}><window.AHIcon name="shield" size={16} /></Btn>{!w.builtIn && w.removable !== false && <Btn sm ghost onClick={event => runAction('settings.ds_settings3.WorkspaceRowsAction3', w, event)}>Remove</Btn>}</div></div>)}{!s.workspaces.some(w => !w.builtIn) && <Empty>No other workspaces yet.</Empty>}</Card></>;
   }
   function Account() {
     const s = useData(),

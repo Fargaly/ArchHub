@@ -17,7 +17,72 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import os
+from pathlib import Path
+import sys
 import threading
+import tempfile
+
+
+def _profile_path(path):
+    target = os.path.normcase(os.path.realpath(os.fsdecode(path)))
+    if target.startswith("\\\\?\\unc\\"):
+        return "\\\\" + target[8:]
+    return target.removeprefix("\\\\?\\")
+
+
+def _real_profile_paths():
+    if os.name == "nt":
+        import winreg
+        # Logon values are independent of the redirected process environment.
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Volatile Environment") as key:
+            home = Path(winreg.QueryValueEx(key, "USERPROFILE")[0])
+            local = Path(winreg.QueryValueEx(key, "LOCALAPPDATA")[0])
+    else:
+        import pwd
+        home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+        local = home / ".local" / "share"
+    return tuple(_profile_path(path) for path in (
+        home / ".archhub", local / "ArchHub" / "governance"))
+
+
+_REAL_PROFILE_PATHS = _real_profile_paths()
+_PROFILE_WRITE_ATTEMPTS = []
+
+
+def _deny_profile_write(event, args, protected=_REAL_PROFILE_PATHS, attempts=_PROFILE_WRITE_ATTEMPTS):
+    if event == "open":
+        path, mode, flags = args
+        if not (set(mode or "") & set("wax+") or (flags or 0) & (
+                os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND)):
+            return
+        paths = (path,)
+    elif event in ("os.rename", "os.link", "os.symlink"):
+        paths = args[:2]
+    elif event in ("os.remove", "os.rmdir", "os.mkdir", "os.chmod", "os.chown", "os.utime",
+                   "os.truncate", "sqlite3.connect"):
+        paths = args[:1]
+    else:
+        return
+    for path in paths:
+        if not isinstance(path, (str, bytes, os.PathLike)):
+            continue
+        target = _profile_path(path)
+        if any(target == root or target.startswith(root + os.sep) for root in protected):
+            attempts.append((event, target))
+            raise AssertionError("court refused a write to the real profile: " + target)
+
+
+# Install before application imports/collection; caught refusals still fail session teardown.
+sys.addaudithook(_deny_profile_write)
+
+# Collection imports must also see only disposable profile paths.
+_COLLECTION_PROFILE = tempfile.TemporaryDirectory(prefix="PROFILE-", dir=os.environ.get("TEMP"))
+for _name, _suffix in (("USERPROFILE", ""), ("HOME", ""), ("LOCALAPPDATA", "LOCAL"),
+                       ("APPDATA", "ROAMING"), ("TEMP", "TMP"), ("TMP", "TMP")):
+    _path = Path(_COLLECTION_PROFILE.name) / _suffix
+    _path.mkdir(parents=True, exist_ok=True)
+    os.environ[_name] = str(_path)
 
 import nodelang.universal_application as _application_module
 from nodelang.universal_application import (
@@ -72,6 +137,43 @@ def _restore_state(obj, saved):
 
 
 import pytest
+
+
+@pytest.fixture(scope="session", autouse=True)
+def no_live_profile_writes(tmp_path_factory):
+    with pytest.MonkeyPatch.context() as patch:
+        _isolate_profile(tmp_path_factory.mktemp("PROFILE"), patch)
+        yield
+    assert not _PROFILE_WRITE_ATTEMPTS, _PROFILE_WRITE_ATTEMPTS
+
+
+@pytest.fixture(autouse=True)
+def isolated_profile(tmp_path, monkeypatch, no_live_profile_writes):
+    """Every server fixture starts with its own home, registry and app key path."""
+    return _isolate_profile(tmp_path / "PROFILE", monkeypatch)
+
+
+def _isolate_profile(home, monkeypatch):
+    local = home / "LOCAL"
+    local.mkdir(parents=True)
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+    monkeypatch.setenv("APPDATA", str(home / "ROAMING"))
+    temporary = home / "TMP"
+    temporary.mkdir()
+    monkeypatch.setenv("TEMP", str(temporary))
+    monkeypatch.setenv("TMP", str(temporary))
+    from nodelang import workspace_roots_catalogue as roots
+    monkeypatch.setattr(roots, "registry_dir", lambda: home / ".archhub")
+    monkeypatch.setattr(roots, "default_app_key_path", lambda snapshot_path=None: (
+        Path(snapshot_path).with_name("workspace-roots.app-key.dpapi") if snapshot_path is not None
+        else local / "ArchHub" / "governance" / "workspace-roots.app-key.dpapi"))
+    return home
+
+
+def pytest_terminal_summary(terminalreporter):
+    terminalreporter.write_line("PROFILE-WRITE-GUARD: protected write attempts=" + str(len(_PROFILE_WRITE_ATTEMPTS)))
 
 
 _FRESH_TEMPLATE_STATE: list = []

@@ -18,7 +18,7 @@ async function mount(outcome) {
     if (url !== '/api/universal/workspace-roots') return new Promise(() => {});
     const body = JSON.parse(options.body);
     requests.push(body);
-    if (outcome === 'owner') {
+    if (outcome === 'owner' || outcome === 'owner-idle') {
       const target = new URL(process.env.WSADD_OWNER_URL);
       assert.equal(target.hostname, '127.0.0.1');
       return fetch(new URL(url, target), {...options, headers:{...options.headers,
@@ -32,7 +32,7 @@ async function mount(outcome) {
       roots = [{root_id:'client', path:body.path}];
       data = {ok:true, roots};
     }
-    if (body.action === 'list') data = {ok:true, built_in:{id:'archhub',path:'C:\\FIXTURE\\BUILTIN'}, roots};
+    if (body.action === 'list') data = {ok:true, built_in:{id:'archhub',path:'C:\\FIXTURE\\BUILTIN',removable:false}, roots:roots.map(w=>({...w,available:outcome!=='unavailable'})), projection:'match',revision:3,health:{state:'ready',message:'Workspaces are ready.',recovery:outcome==='repaired'?{message:'Workspace list restored from the graph. Previous local files were archived.',archive:'FIXTURE/ARCHIVE'}:null}};
     return {ok:true, status:200, json:async () => data};
   };
   win.eval(read('vendor/react.js'));
@@ -42,9 +42,9 @@ async function mount(outcome) {
   win.eval(transformSync(read('ds/index.jsx'), {loader:'jsx',target:'es2022'}).code);
   win.eval(transformSync(read('ui.jsx'), {loader:'jsx',target:'es2022'}).code);
   win.eval(`
-    window.UI.Btn=({children,onClick,...props})=>React.createElement('button',{onClick},children);
+    window.UI.Btn=({children,onClick,sm,ghost,p,variant,...props})=>React.createElement('button',{...props,onClick},children);
     window.UI.Card=({children})=>React.createElement('section',null,children);
-    window.UI.Chip=window.UI.Empty=()=>null;
+    window.UI.Chip=()=>null;window.UI.Empty=({children})=>React.createElement('p',null,children);
     window.UI.BaboomSprite=()=>null;
     window.AHIcon=()=>null;
     window.ArchHubRouteNames={home:'Home'};
@@ -56,9 +56,10 @@ async function mount(outcome) {
   }
   const settle = () => new Promise(resolve => setTimeout(resolve, 40));
   await settle();
-  const add = [...win.document.querySelectorAll('button')].find(b => b.textContent === 'Add');
+  const add = [...win.document.querySelectorAll('button')].find(b => b.textContent === 'Add workspace');
   assert.ok(add, 'real Settings Add rendered');
-  add.click();
+  if (outcome === 'owner-idle') await win.ArchHubAPI.listWorkspaces();
+  else add.click();
   for (let attempt = 0; attempt < 100; attempt++) {
     await settle();
     const status = win.document.querySelector('[role="status"]');
@@ -76,7 +77,7 @@ test('Add picks, registers and refreshes the rendered list', async () => {
     assert.deepEqual(page.requests.map(r => r.action), ['browse','register','list']);
     assert.equal(page.requests[1].path, 'C:\\FIXTURE\\CLIENT');
     assert.match(page.text, /client/);
-    assert.match(page.text, /Workspace registered/);
+    assert.match(page.text, /Workspace added\. Your agents can work here\./);
     assert.doesNotMatch(page.text, /Action completed/);
   } finally {page.close();}
 });
@@ -85,8 +86,8 @@ test('cancel says cancelled and never registers', async () => {
   const page = await mount('cancel');
   try {
     assert.deepEqual(page.requests.map(r => r.action), ['browse']);
-    assert.match(page.text, /Folder selection cancelled/);
-    assert.doesNotMatch(page.text, /Action completed|Workspace registered/);
+    assert.match(page.text, /No workspace was added\./);
+    assert.doesNotMatch(page.text, /Action completed|Workspace added/);
   } finally {page.close();}
 });
 
@@ -95,8 +96,24 @@ test('register refusal reaches the Settings status unchanged', async () => {
   try {
     assert.equal(page.win.document.querySelector('[role="alert"]')?.textContent,
       'fixture folder is already governedRetry');
-    assert.doesNotMatch(page.text, /Action completed|Workspace registered/);
+    assert.doesNotMatch(page.text, /Action completed|Workspace added/);
   } finally {page.close();}
+});
+
+test('verified recovery keeps the existing workspace controls and truthful row states', async () => {
+  for (const outcome of ['repaired','unavailable']) {
+    const page = await mount(outcome);
+    try {
+      assert.match(page.text, /Workspaces are ready\./);
+      assert.match(page.text, outcome === 'repaired' ? /Workspace list restored from the graph\. Previous local files were archived\./ : /Folder unavailable/);
+      const buttons = [...page.win.document.querySelectorAll('button')];
+      assert.equal(buttons.filter(b => b.textContent === 'Open').length, 2);
+      assert.equal(buttons.filter(b => b.textContent === 'Remove').length, 1, 'built-in is not removable');
+      assert.equal(buttons.filter(b => b.getAttribute('aria-label')?.startsWith('Privacy ')).length, 2);
+      assert.match(page.text, /Source: Application graph/);
+      assert.match(page.text, /Projection: match/);
+    } finally {page.close();}
+  }
 });
 
 if (process.env.WSADD_OWNER_URL) test('desktop owner Add registers the actual catalogue and renders its refreshed list', async () => {
@@ -105,7 +122,18 @@ if (process.env.WSADD_OWNER_URL) test('desktop owner Add registers the actual ca
     assert.deepEqual(page.requests.map(r => r.action), ['browse','register','list']);
     assert.equal(page.requests[1].path, process.env.WSADD_OWNER_FOLDER);
     assert.match(page.text, /CLIENT/);
-    assert.match(page.text, /Workspace registered/);
+    assert.match(page.text, /Workspace added\. Your agents can work here\./);
     assert.doesNotMatch(page.text, /Action completed/);
+  } finally {page.close();}
+});
+
+if (process.env.WSADD_OWNER_URL) test('fresh idle owner renders built-in Ready', async () => {
+  const page = await mount('owner-idle');
+  try {
+    assert.deepEqual(page.requests.map(r => r.action), ['list']);
+    assert.match(page.text, /No other workspaces yet\./);
+    assert.match(page.text, /\u00b7 Ready/);
+    assert.doesNotMatch(page.text, /Reading workspaces|Checking\u2026/);
+    assert.equal([...page.win.document.querySelectorAll('button')].filter(b => b.textContent === 'Remove').length, 0);
   } finally {page.close();}
 });

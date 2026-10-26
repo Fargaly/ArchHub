@@ -36,16 +36,18 @@ def browser(owner, monkeypatch):
     server.start()
 
     def post(body, csrf=None):
-        request = Request(server.url + '/api/universal/workspace-roots',
+        current = post.server
+        request = Request(current.url + '/api/universal/workspace-roots',
             data=json.dumps(body).encode(), headers={'Content-Type': 'application/json',
-                'Cookie': 'ArchHub-Session=' + server.browser_session_token,
-                'X-ArchHub-CSRF': csrf or server.browser_csrf_token})
+                'Cookie': 'ArchHub-Session=' + current.browser_session_token,
+                'X-ArchHub-CSRF': csrf or current.browser_csrf_token})
         try:
             with urlopen(request, timeout=30) as response:
                 return response.status, json.load(response)
         except HTTPError as error:
             with error:
                 return error.code, json.load(error)
+    post.server = server
     return server, root, post
 
 
@@ -173,6 +175,302 @@ def test_refused_browser_never_opens_picker(browser):
     server, _root, post = browser
     server.native_folder_picker = lambda title: pytest.fail('unauthenticated picker')
     assert post({'action': 'browse'}, csrf='wrong')[0] == 403
+
+
+def test_fixws_absent_catalogue_archives_then_recovers_over_http(browser, monkeypatch, request):
+    server, root, post = browser
+    home = root / 'REGISTRY'
+    # Create only a disposable pre-existing DPAPI key; recovery itself must never mint one.
+    key_path = home / 'workspace-roots.app-key.dpapi'
+    key_path.unlink()
+    signer = roots.AppWorkspaceRootSigner(key_path)
+    blob = signer.public_blob()
+    protected_key = key_path.read_bytes()
+    monkeypatch.setattr(roots, 'app_signing_components', lambda: (
+        lambda pinned: signer, lambda: hashlib.sha256(blob).hexdigest(), roots.AppWorkspaceRootVerifier(key_path)))
+    old = {name: data for name, data in (
+        ('workspace-roots.json', b'{"roots":[{"path":"C:\\\\STALE"}]}\r\n'),
+        ('workspace-roots.pin', b'old unpinned public projection\r\n'))}
+    for name, data in old.items():
+        (home / name).write_bytes(data)
+    assert roots.find_workspace_root_catalogue(server.workspace_roots_authority,
+        caller=server.workspace_roots_caller) is None
+    server._check_workspace_roots()  # Startup has no authenticated HTTP commit context.
+    assert server.workspace_roots_boot == 'match', server._workspace_roots_repair_error
+    status, answer = post({'action': 'list'})
+    assert status == 200 and answer['boot'] == answer['projection'] == 'match', json.dumps(answer, indent=2)
+    assert answer['health']['message'] == 'Workspaces are ready.'
+    assert answer['health']['recovery']['message'] == (
+        'Workspace list restored from the graph. Previous local files were archived.')
+    archive = Path(answer['health']['recovery']['archive'])
+    assert post({'action': 'list'})[1]['health']['recovery'] is None
+    manifest = json.loads((archive / 'receipt.json').read_text())
+    assert manifest['state'] == 'complete'
+    for entry in manifest['files']:
+        assert (archive / entry['name']).read_bytes() == old[entry['name']]
+        assert entry['sha256'] == hashlib.sha256(old[entry['name']]).hexdigest()
+    assert answer['roots'] == [] and Path(answer['built_in']['path']) == root / 'BUILTIN'
+    revision = server.universal_store.revision
+    from nodelang.application_server import ApplicationServer
+    from nodelang.cell_secret_keys import MemorySigningKeyProvider
+    database = server.universal_store.database_path
+    provider = MemorySigningKeyProvider('archhub.local.relationship-authority', b'r' * 32)
+    provider.add_key('archhub.local.court-attestation', b'c' * 32)
+    provider.add_key('archhub.local.private-root-grants', b'g' * 32)
+    for _ in range(2):
+        server.close()
+        server = ApplicationServer(universal_state_path=database, universal_key_provider=provider,
+            universal_workspace_root=root / 'BUILTIN', private_root_grants_path=root / 'private-root-grants.json',
+            enable_machine_transport=False, enable_universal_cloud_gateway=False, live_watch=False)
+        request.addfinalizer(server.close)
+        server.start()
+        post.server = server
+        assert key_path.read_bytes() == protected_key
+        health = post({'action': 'list'})[1]['health']
+        assert health['state'] == 'ready' and health['recovery'] is None
+        assert server.universal_store.revision == revision
+        assert list((home / 'ARCHIVE').glob('*/' + archive.name)) == [archive]
+    receipts = [json.loads(line) for line in (home / 'private-grant-events.log').read_text().splitlines()]
+    assert len(receipts) == 1 and receipts[0]['outcome'] == 'ok'
+    folder = root / 'CLIENT'
+    folder.mkdir()
+    marker = folder / 'keep.txt'
+    marker.write_text('user files survive')
+    status, added = post({'action': 'register', 'id': 'client', 'path': str(folder), 'privacy': 'private'})
+    assert status == 200 and added['projection'] == 'match', added
+    state = roots.current_registry_state(server.workspace_roots_authority, caller=server.workspace_roots_caller)
+    for runtime in ('claude', 'codex', 'opencode'):
+        container, digest, entry = roots.root_bound_registration('workspace-roots/client/' + runtime + '.txt',
+            runtime=runtime, registry_state=state)
+        assert container and digest and entry['id'] == 'client'
+        (folder / (runtime + '.txt')).write_text(runtime)
+        assert (folder / (runtime + '.txt')).read_text() == runtime
+    held = root / 'CLIENT-HELD'
+    folder.rename(held)
+    folder.mkdir()
+    assert post({'action': 'list'})[1]['roots'][0]['available'] is False
+    folder.rmdir()
+    held.rename(folder)
+    assert post({'action': 'unregister', 'id': 'client'})[0] == 200
+    assert marker.read_text() == 'user files survive'
+
+
+def test_fixws_missing_key_archives_and_starts_fresh(browser, monkeypatch, request):
+    server, root, post = browser
+    home = root / 'REGISTRY'
+    old = {'workspace-roots.json': b'old unsigned projection', 'workspace-roots.pin': b'old pin'}
+    for name, data in old.items():
+        (home / name).write_bytes(data)
+    key_path = home / 'workspace-roots.app-key.dpapi'
+    key_path.unlink()
+    monkeypatch.setattr(roots, 'app_signing_components', lambda: pytest.fail('boot minted a key'))
+    server._check_workspace_roots()
+    assert server.workspace_roots_boot == 'missing', server._workspace_roots_repair_error
+    answer = post({'action': 'list'})[1]
+    assert answer['health']['state'] == 'idle' and answer['roots'] == []
+    assert answer['health']['recovery'] is None
+    assert not key_path.exists()
+    assert roots.find_workspace_root_catalogue(server.workspace_roots_authority,
+        caller=server.workspace_roots_caller) is None
+    receipts = list((home / 'ARCHIVE').glob('*/*/receipt.json'))
+    assert len(receipts) == 1
+    receipt = json.loads(receipts[0].read_text())
+    assert receipt['state'] == 'complete' and receipt['outcome'] == 'fresh'
+    for entry in receipt['files']:
+        assert (receipts[0].parent / entry['name']).read_bytes() == old[entry['name']]
+        assert entry['sha256'] == hashlib.sha256(old[entry['name']]).hexdigest()
+        assert not (home / entry['name']).exists()
+    monkeypatch.setattr(roots, 'app_signing_components', lambda: (
+        lambda pin: roots.AppWorkspaceRootSigner(key_path),
+        lambda: hashlib.sha256(roots.AppWorkspaceRootSigner(key_path).public_blob()).hexdigest(),
+        roots.AppWorkspaceRootVerifier(key_path)))
+    folder = root / 'CLIENT'
+    folder.mkdir()
+    assert post({'action': 'register', 'id': 'client', 'path': str(folder), 'privacy': 'private'})[0] == 200
+    assert key_path.exists()
+    from nodelang.application_server import ApplicationServer
+    from nodelang.cell_secret_keys import MemorySigningKeyProvider
+    database = server.universal_store.database_path
+    provider = MemorySigningKeyProvider('archhub.local.relationship-authority', b'r' * 32)
+    provider.add_key('archhub.local.court-attestation', b'c' * 32)
+    provider.add_key('archhub.local.private-root-grants', b'g' * 32)
+    for _ in range(2):
+        server.close()
+        server = ApplicationServer(universal_state_path=database, universal_key_provider=provider,
+            universal_workspace_root=root / 'BUILTIN', private_root_grants_path=root / 'private-root-grants.json',
+            enable_machine_transport=False, enable_universal_cloud_gateway=False, live_watch=False)
+        request.addfinalizer(server.close)
+        server.start()
+        post.server = server
+        listed = post({'action': 'list'})[1]
+        assert listed['boot'] == 'match' and listed['health']['recovery'] is None
+        assert [entry['root_id'] for entry in listed['roots']] == ['client']
+        assert list((home / 'ARCHIVE').glob('*/*/receipt.json')) == receipts
+    assert post({'action': 'unregister', 'id': 'client'})[0] == 200
+
+
+def test_fixws_empty_profile_and_interrupted_recovery_retry(browser, monkeypatch):
+    server, root, post = browser
+    home = root / 'REGISTRY'
+    # Fresh built-in-only profile reaches a terminal state without a false archive notice.
+    status, answer = post({'action': 'list'})
+    assert status == 200 and answer['boot'] == 'missing', answer
+    assert answer['roots'] == [] and answer['health']['recovery'] is None
+    assert answer['health']['state'] == 'idle'
+    assert answer['health']['message'] == 'No other workspaces yet.'
+    folder = root / 'CLIENT'
+    folder.mkdir()
+    assert post({'action': 'register', 'id': 'client', 'path': str(folder), 'privacy': 'private'})[0] == 200
+    catalogue = roots.find_workspace_root_catalogue(server.workspace_roots_authority,
+        caller=server.workspace_roots_caller)
+    original = roots.write_projection
+    monkeypatch.setattr(roots, 'write_projection', lambda *a, **k: (_ for _ in ()).throw(PermissionError('publish denied')))
+    (home / 'workspace-roots.pin').unlink()
+    answer = post({'action': 'list'})[1]
+    assert answer['health']['state'] == 'error' and 'publish denied' in answer['health']['detail']
+    monkeypatch.setattr(roots, 'write_projection', original)
+    assert post({'action': 'list'})[1]['health']['state'] == 'ready'
+    assert roots.find_workspace_root_catalogue(server.workspace_roots_authority,
+        caller=server.workspace_roots_caller) == catalogue
+
+
+def test_fixws_fresh_keyless_profile_first_register_works(owner, isolated_profile):
+    server, root = owner
+    assert roots.registry_dir() == isolated_profile / '.archhub'
+    assert roots.default_app_key_path().is_relative_to(Path(os.environ['LOCALAPPDATA']))
+    assert server.workspace_roots_boot == 'missing', server._workspace_roots_repair_error
+    assert not roots.default_app_key_path().exists()
+    assert not roots.default_snapshot_path().exists()
+    assert not (roots.registry_dir() / 'ARCHIVE').exists()
+    folder = root / 'CLIENT'
+    folder.mkdir()
+    server.start()
+    request = Request(server.url + '/api/universal/workspace-roots',
+        data=json.dumps({'action': 'register', 'path': str(folder), 'privacy': 'private'}).encode(),
+        headers={'Content-Type': 'application/json',
+                 'Cookie': 'ArchHub-Session=' + server.browser_session_token,
+                 'X-ArchHub-CSRF': server.browser_csrf_token})
+    with urlopen(request, timeout=30) as response:
+        assert response.status == 200
+        assert json.load(response)['projection'] == 'match'
+    assert roots.default_app_key_path().exists()
+    assert not (roots.registry_dir() / 'ARCHIVE').exists()
+
+
+def test_profile_write_guard_blocks_mutations_before_they_happen(tmp_path, tmp_path_factory):
+    code = '''
+import functools, os, sqlite3, sys
+from pathlib import Path
+from tests_replica.conftest import _deny_profile_write, _profile_path
+root = Path(sys.argv[1])
+attempts = []
+sys.addaudithook(functools.partial(_deny_profile_write,
+    protected=(_profile_path(root),), attempts=attempts))
+for action in (lambda: (root / "file").write_text("bad"), lambda: root.mkdir(),
+               lambda: os.replace(root.parent / "source", root / "dest"),
+               lambda: os.open(root / "file", os.O_CREAT | os.O_WRONLY),
+               lambda: sqlite3.connect(root / "db"),
+               lambda: os.remove(root / "file")):
+    try:
+        action()
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("profile mutation was admitted")
+assert len(attempts) == 6 and not root.exists()
+if os.name == "nt":
+    assert _profile_path("\\\\\\\\?\\\\" + str(root)) == _profile_path(root)
+'''
+    env = {**os.environ, 'PYTHONPATH': os.pathsep.join(
+        str(Path(__file__).resolve().parents[2] / folder) for folder in ('01.APP', '02.TESTS'))}
+    result = subprocess.run([os.sys.executable, '-c', code, str(tmp_path / 'PROTECTED')],
+        env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    from tests_replica import conftest
+    session = conftest.no_live_profile_writes.__wrapped__(tmp_path_factory)
+    next(session)
+    attempt = ('open', str(tmp_path / 'PROTECTED'))
+    try:
+        conftest._PROFILE_WRITE_ATTEMPTS.append(attempt)
+        with pytest.raises(AssertionError):
+            next(session)
+    finally:
+        conftest._PROFILE_WRITE_ATTEMPTS.remove(attempt)
+        session.close()
+
+
+def test_fixws_mutation_keeps_repair_notice_for_the_following_list(browser):
+    _server, root, post = browser
+    (root / 'REGISTRY' / 'workspace-roots.pin').write_bytes(b'old unpinned projection')
+    folder = root / 'CLIENT'
+    folder.mkdir()
+    status, added = post({'action': 'register', 'path': str(folder), 'privacy': 'private'})
+    assert status == 200 and added['health']['recovery'] is None, added
+    assert post({'action': 'list'})[1]['health']['recovery']['message'] == (
+        'Workspace list restored from the graph. Previous local files were archived.')
+    assert post({'action': 'list'})[1]['health']['recovery'] is None
+
+
+def test_fixws_first_enrollment_faults_preserve_pair_and_resume(browser, monkeypatch):
+    server, root, post = browser
+    home = root / 'REGISTRY'
+    old = {'workspace-roots.json': b'old unsigned projection', 'workspace-roots.pin': b'old public pin'}
+    for name, data in old.items():
+        (home / name).write_bytes(data)
+    components = roots.app_signing_components
+    key_bytes = (home / 'workspace-roots.app-key.dpapi').read_bytes()
+    def unreadable():
+        raise ValueError('app key unreadable')
+    monkeypatch.setattr(roots, 'app_signing_components', unreadable)
+    assert 'app key unreadable' in post({'action': 'list'})[1]['health']['detail']
+    assert (home / 'workspace-roots.app-key.dpapi').read_bytes() == key_bytes
+    signer, fingerprint, _verifier = components()
+    monkeypatch.setattr(roots, 'app_signing_components', lambda: (signer, fingerprint, _Key()))
+    assert 'could not be verified' in post({'action': 'list'})[1]['health']['detail']
+    assert not (home / 'ARCHIVE').exists()
+    monkeypatch.setattr(roots, 'app_signing_components', components)
+    atomic = roots._atomic_write
+    def archive_denied(target, data):
+        if 'ARCHIVE' in target.parts:
+            raise PermissionError('archive denied')
+        return atomic(target, data)
+    monkeypatch.setattr(roots, '_atomic_write', archive_denied)
+    answer = post({'action': 'list'})[1]
+    assert answer['health']['message'] == 'ArchHub could not archive the previous workspace list. Nothing was replaced.'
+    assert roots.find_workspace_root_catalogue(server.workspace_roots_authority,
+        caller=server.workspace_roots_caller) is None
+    for name, data in old.items():
+        assert (home / name).read_bytes() == data
+    monkeypatch.setattr(roots, '_atomic_write', atomic)
+    pin = roots.pin_signing_key
+    monkeypatch.setattr(roots, 'pin_signing_key', lambda *a, **k: (_ for _ in ()).throw(RuntimeError('interrupted before pin')))
+    assert 'interrupted before pin' in post({'action': 'list'})[1]['health']['detail']
+    catalogue = roots.find_workspace_root_catalogue(server.workspace_roots_authority,
+        caller=server.workspace_roots_caller)
+    assert catalogue is not None
+    archives = list((home / 'ARCHIVE').glob('*/*/receipt.json'))
+    assert len(archives) == 1
+    archive = archives[0].parent
+    (archive / 'workspace-roots.json').write_bytes(b'corrupt archive')
+    monkeypatch.setattr(roots, 'pin_signing_key', pin)
+    assert 'archived workspace list could not be verified' in post({'action': 'list'})[1]['health']['detail']
+    assert roots.read_state(server.workspace_roots_authority, catalogue,
+        caller=server.workspace_roots_caller)[2] is None
+    (archive / 'workspace-roots.json').write_bytes(old['workspace-roots.json'])
+    def completion_denied(target, data):
+        if target.name == 'receipt.json' and json.loads(data).get('state') == 'complete':
+            raise PermissionError('interrupted after publish')
+        return atomic(target, data)
+    monkeypatch.setattr(roots, '_atomic_write', completion_denied)
+    assert 'interrupted after publish' in post({'action': 'list'})[1]['health']['detail']
+    assert roots.boot_check(server.workspace_roots_authority, catalogue,
+        caller=server.workspace_roots_caller) == 'match'
+    monkeypatch.setattr(roots, '_atomic_write', atomic)
+    answer = post({'action': 'list'})[1]
+    assert answer['health']['state'] == 'ready' and json.loads(archives[0].read_text())['state'] == 'complete'
+    assert list((home / 'ARCHIVE').glob('*/*/receipt.json')) == archives
+    for name, data in old.items():
+        assert (archive / name).read_bytes() == data
 
 
 def test_rendered_add_round_trips_through_desktop_catalogue(browser):
@@ -310,3 +608,48 @@ def test_external_archive_removes_the_settings_warning(vault, external, monkeypa
     assert not result['controlErrors']
     assert result['secrets'][0]['id'] == 'notion-mcp'
     assert list(external.glob('secrets-legacy-*.dat'))
+
+
+def test_fixws_fresh_idle_rendered_over_http(browser):
+    server, _root, _post = browser
+    driver = Path(__file__).resolve().parents[1] / 'tests_js/wsadd.test.cjs'
+    environment = {**os.environ, 'WSADD_OWNER_URL': server.url,
+        'WSADD_OWNER_SESSION': server.browser_session_token, 'WSADD_OWNER_CSRF': server.browser_csrf_token}
+    result = subprocess.run(['node', '--test', '--test-name-pattern=fresh idle owner', str(driver)],
+        env=environment, capture_output=True, text=True, encoding='utf-8', timeout=45)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize('stage', ['copy', 'retire'])
+def test_fixws_keyless_interruption_resumes_one_archive(browser, monkeypatch, stage):
+    _server, root, post = browser
+    home = root / 'REGISTRY'
+    old = {'workspace-roots.json': b'old unsigned projection', 'workspace-roots.pin': b'old pin'}
+    for name, data in old.items():
+        (home / name).write_bytes(data)
+    (home / 'workspace-roots.app-key.dpapi').unlink()
+    atomic, unlink = roots._atomic_write, Path.unlink
+    def interrupted_copy(target, data):
+        if 'ARCHIVE' in target.parts and target.name == 'workspace-roots.pin':
+            raise PermissionError('copy interrupted')
+        return atomic(target, data)
+    def interrupted_retire(path, *args, **kwargs):
+        if path == home / 'workspace-roots.pin':
+            raise PermissionError('retirement interrupted')
+        return unlink(path, *args, **kwargs)
+    with monkeypatch.context() as patch:
+        if stage == 'copy':
+            patch.setattr(roots, '_atomic_write', interrupted_copy)
+        else:
+            patch.setattr(Path, 'unlink', interrupted_retire)
+        assert post({'action': 'list'})[1]['health']['state'] == 'error'
+    receipts = list((home / 'ARCHIVE').glob('*/*/receipt.json'))
+    assert len(receipts) == 1
+    answer = post({'action': 'list'})[1]
+    assert answer['boot'] == 'missing' and answer['health']['state'] == 'idle', answer
+    assert list((home / 'ARCHIVE').glob('*/*/receipt.json')) == receipts
+    for name, data in old.items():
+        assert (receipts[0].parent / name).read_bytes() == data
+        assert not (home / name).exists()
+    assert json.loads(receipts[0].read_text())['state'] == 'complete'
+    assert not roots.default_app_key_path().exists()

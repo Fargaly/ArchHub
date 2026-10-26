@@ -269,7 +269,7 @@ test('cancelled native folder selection never registers a workspace',async()=>{
  const {api,requests}=await adapter({signed_in:false},{'/api/universal/workspace-roots':{ok:true,path:'',roots:[]}});
  const cancelled=await api.addWorkspace();
  assert.equal(cancelled.cancelled,true);
- assert.equal(cancelled.message,'Folder selection cancelled');
+ assert.equal(cancelled.message,'No workspace was added.');
  assert.equal(requests.some(r=>r.body?.action==='register'),false);
 });
 

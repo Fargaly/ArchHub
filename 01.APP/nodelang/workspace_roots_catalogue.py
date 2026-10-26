@@ -868,6 +868,51 @@ def default_pin_path() -> Path:
     return registry_dir() / "workspace-roots.pin"
 
 
+def archive_workspace_projection(directory):
+    """Preserve a pair once by content hash; resume an interrupted archive."""
+    sources = (default_snapshot_path(), default_pin_path())
+    payloads = {}
+    files = []
+    for path in sources:
+        try:
+            data = path.read_bytes()
+        except FileNotFoundError:
+            data = None
+        payloads[path.name] = data
+        files.append({"name": path.name, "source": str(path),
+                      "sha256": hashlib.sha256(data).hexdigest() if data is not None else None})
+    archive = directory / hashlib.sha256(canonical(files)).hexdigest().upper()
+    receipt = archive / "receipt.json"
+    if receipt.exists():
+        body = json.loads(receipt.read_text(encoding="utf-8"))
+        if body["files"] != files:
+            raise InvalidCell("the previous workspace list changed during archival")
+    else:
+        body = {"operation_id": str(uuid.uuid4()), "state": "archiving", "files": files}
+        _atomic_write(receipt, canonical(body))
+    for entry in files:
+        if entry["sha256"] is None:
+            continue
+        target = archive / entry["name"]
+        if not target.exists():
+            _atomic_write(target, payloads[entry["name"]])
+    verify_workspace_projection_archive(archive, body)
+    if body["state"] == "archiving":
+        body["state"] = "archived"
+        _atomic_write(receipt, canonical(body))
+    return archive, body
+
+
+def verify_workspace_projection_archive(archive, body):
+    """Resume only while the original pair is still preserved."""
+    if {entry["name"] for entry in body["files"]} != {"workspace-roots.json", "workspace-roots.pin"}:
+        raise InvalidCell("the workspace archive receipt is invalid")
+    for entry in body["files"]:
+        if entry["sha256"] is not None and hashlib.sha256(
+                (archive / entry["name"]).read_bytes()).hexdigest() != entry["sha256"]:
+            raise InvalidCell("the archived workspace list could not be verified")
+
+
 def _atomic_write(target: Path, data: bytes) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     handle, temporary = tempfile.mkstemp(prefix="." + target.name + ".", dir=str(target.parent))

@@ -14,7 +14,7 @@ import uuid
 
 import pytest
 
-from nodelang import workspace_roots_catalogue as roots
+from nodelang import cloud_session, workspace_roots_catalogue as roots
 from nodelang.clean_coordination_host import CleanCoordinationHost
 from nodelang.universal_cell import InvalidCell
 from tests_replica.test_clean_server_admission import _provision_clean_runtime
@@ -24,6 +24,7 @@ from tests_replica.test_workspace_roots_catalogue import _Key
 
 @pytest.fixture()
 def graph(tmp_path, monkeypatch):
+    monkeypatch.setattr(cloud_session, "signed_in_cloud_account", lambda: "owner@example.test")
     # The court can run with --basetemp inside the source tree. Keep its fake
     # built-in workspace separate from the fake client, just as on an instance.
     built_in = tmp_path / "built-in-archhub"

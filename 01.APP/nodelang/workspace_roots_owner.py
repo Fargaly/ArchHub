@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import time
 
 from .universal_cell import InvalidCell
+
+_KEY_RECOVERY_MESSAGE = "ArchHub's saved workspace key is missing. Restart ArchHub and try again. Your files are unchanged."
 
 
 class WorkspaceRootsOwner:
@@ -21,32 +24,120 @@ class WorkspaceRootsOwner:
     def _check_workspace_roots(self):
         import uuid
 
+        from . import commit_intent
         from .private_root_grants import record_grant_event
         from .workspace_roots_catalogue import (
             APP_KEY_ID,
             APP_WRITTEN,
+            KEY_CHECK,
+            _atomic_write,
+            _verify_blob,
+            archive_workspace_projection,
             app_signing_components,
             boot_check,
             default_app_key_path,
+            default_pin_path,
             default_snapshot_path,
             find_workspace_root_catalogue,
+            install_workspace_root_catalogue,
             owner_change,
+            pin_signing_key,
+            read_state,
+            canonical,
+            verify_workspace_projection_archive,
         )
         self._workspace_roots_repair_error = None
+        self._workspace_roots_recovery = None
+        self._workspace_roots_repair_stage = "read"
         try:
-            with self._mutation_lock:
+            caller = self.workspace_roots_caller
+            actor = caller if isinstance(caller, str) else caller.actor_root
+            with self._mutation_lock, commit_intent.declare(
+                    commit_intent.MIGRATION, actor=actor,
+                    reason="restore the workspace registry from the selected application graph"):
                 catalogue = find_workspace_root_catalogue(
-                    self.workspace_roots_authority, caller=self.workspace_roots_caller
-                )
+                    self.workspace_roots_authority, caller=self.workspace_roots_caller)
+                identity = str(self.workspace_roots_authority.store.database_path) + "\0" + str(self.clean_workspace_root)
+                archive_root = default_snapshot_path().parent / "ARCHIVE" / (
+                    "WORKSPACE-ROOTS-" + hashlib.sha256(identity.encode()).hexdigest().upper())
+                receipts = sorted(archive_root.glob("*/receipt.json"), key=lambda path: path.stat().st_mtime_ns)
+                receipt = receipts[-1] if receipts else None
+                self._workspace_roots_recovery_archive = str(receipt.parent) if receipt else None
+                if receipt is not None:
+                    self._workspace_roots_recovery = json.loads(receipt.read_text(encoding="utf-8"))
                 self.workspace_roots_boot = boot_check(
                     self.workspace_roots_authority, catalogue, caller=self.workspace_roots_caller
                 )
+                pending = self._workspace_roots_recovery is not None and self._workspace_roots_recovery["state"] != "complete"
+                if self.clean_workspace_root is not None and (
+                        (catalogue is None and (default_snapshot_path().exists()
+                         or default_pin_path().exists())) or pending):
+                    if catalogue is None and not default_app_key_path().exists():
+                        self._workspace_roots_repair_stage = "archive"
+                        if pending and self._workspace_roots_recovery["state"] != "archiving":
+                            recovery = self._workspace_roots_recovery
+                            verify_workspace_projection_archive(receipt.parent, recovery)
+                        else:
+                            archive, recovery = archive_workspace_projection(archive_root)
+                            receipt = archive / "receipt.json"
+                            self._workspace_roots_recovery_archive = str(archive)
+                        recovery.update(state="retiring", outcome="fresh")
+                        _atomic_write(receipt, canonical(recovery))
+                        # Retire only verified copies; old roots never become graph authority.
+                        for path in (default_snapshot_path(), default_pin_path()):
+                            if path.exists():
+                                expected = next(entry["sha256"] for entry in recovery["files"]
+                                                if entry["name"] == path.name)
+                                if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+                                    raise InvalidCell("the previous workspace list changed during archival")
+                                path.unlink()
+                        recovery["state"] = "complete"
+                        _atomic_write(receipt, canonical(recovery))
+                        self._workspace_roots_recovery = recovery
+                        self.workspace_roots_boot = "missing"
+                        record_grant_event("workspace-roots-repair", "ok",
+                            "Unverifiable local workspace files archived; ready for first registration.",
+                            directory=default_snapshot_path().parent)
+                        return
+                    if not default_app_key_path().exists():
+                        raise InvalidCell("the app signing key is missing")
+                    signer, fingerprint, verifier = app_signing_components()
+                    proof = signer(None).sign(KEY_CHECK)
+                    if not _verify_blob(APP_KEY_ID, verifier.public_blob(), 1, KEY_CHECK, proof, verifier):
+                        raise InvalidCell("the app signing key could not be verified")
+                    pin = fingerprint()
+                    if catalogue is None:
+                        self._workspace_roots_repair_stage = "archive"
+                        archive, recovery = archive_workspace_projection(archive_root)
+                        receipt = archive / "receipt.json"
+                        self._workspace_roots_recovery = recovery
+                        self._workspace_roots_recovery_archive = str(archive)
+                    else:
+                        recovery = self._workspace_roots_recovery
+                        verify_workspace_projection_archive(receipt.parent, recovery)
+                    catalogue = find_workspace_root_catalogue(
+                        self.workspace_roots_authority, caller=self.workspace_roots_caller)
+                    if catalogue is None:
+                        self._workspace_roots_repair_stage = "install"
+                        catalogue = install_workspace_root_catalogue(self.workspace_roots_authority,
+                            caller=self.workspace_roots_caller, operation_id=recovery["operation_id"])
+                    if read_state(self.workspace_roots_authority, catalogue,
+                                  caller=self.workspace_roots_caller)[2] is None:
+                        self._workspace_roots_repair_stage = "pin"
+                        pin_signing_key(self.workspace_roots_authority, catalogue, pin,
+                            caller=self.workspace_roots_caller, operation_id=recovery["operation_id"],
+                            key_id=APP_KEY_ID, mode=APP_WRITTEN, allow_repin=False,
+                            enrolled_by="archhub-browser-workspace-settings",
+                            enrolled_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+                    self.workspace_roots_boot = boot_check(self.workspace_roots_authority, catalogue,
+                        caller=self.workspace_roots_caller)
                 if self.clean_workspace_root is not None and catalogue is not None and self.workspace_roots_boot in (
                         "unpinned", "unsigned", "mismatch"):
                     try:
                         if not default_app_key_path().exists():
                             raise InvalidCell("the app signing key is missing")
                         signer, fingerprint, verifier = app_signing_components()
+                        self._workspace_roots_repair_stage = "publish"
                         view = owner_change(
                             self.workspace_roots_authority, catalogue, {"action": "republish"},
                             caller=self.workspace_roots_caller, operation_id=str(uuid.uuid4()),
@@ -67,6 +158,13 @@ class WorkspaceRootsOwner:
                         record_grant_event("workspace-roots-repair", "ok",
                                            "Workspace registry restored from the graph.",
                                            directory=default_snapshot_path().parent)
+                if self.workspace_roots_boot == "match" and self._workspace_roots_recovery is not None and self._workspace_roots_recovery["state"] != "complete":
+                    self._workspace_roots_recovery["state"] = "complete"
+                    _atomic_write(receipt, canonical(self._workspace_roots_recovery))
+                    if any(entry["sha256"] is not None for entry in self._workspace_roots_recovery["files"]):
+                        self._workspace_roots_recovery_notice = {
+                            "message": "Workspace list restored from the graph. Previous local files were archived.",
+                            "archive": self._workspace_roots_recovery_archive}
         except Exception as exc:  # noqa: BLE001 - a failed check is never a match
             self.workspace_roots_boot = "unverifiable: " + type(exc).__name__
             self._workspace_roots_repair_error = str(exc)
@@ -91,6 +189,8 @@ class WorkspaceRootsOwner:
             NO_WINDOW,
             owner_change,
             roots_view,
+            folder_identity,
+            read_state,
         )
         if type(body) is not dict:
             raise WorkspaceRootRefused("workspace-roots request is invalid")
@@ -121,10 +221,12 @@ class WorkspaceRootsOwner:
             action = change.get("action") if type(change) is dict else None
             if action not in ("register", "unregister", "republish", "update-writers"):
                 raise WorkspaceRootRefused("only a change can be prepared for approval")
-        if action in ("register", "unregister", "update-writers"):
+        if action in ("list", "register", "unregister", "update-writers"):
             self._check_workspace_roots()
         boot = self.workspace_roots_boot
         if action in ("register", "unregister", "update-writers") and boot not in ("match", "missing"):
+            if self._workspace_roots_repair_error == "the app signing key is missing":
+                raise WorkspaceRootRefused(_KEY_RECOVERY_MESSAGE)
             raise WorkspaceRootRefused(
                 "ArchHub could not restore the workspace registry: %s" % (
                     self._workspace_roots_repair_error or boot)
@@ -200,7 +302,43 @@ class WorkspaceRootsOwner:
                                                          caller=self.workspace_roots_caller),
                 "session_reader": self._private_root_grant_sessions,
             }
+        import os
+        view["built_in"]["available"] = os.path.isdir(view["built_in"]["path"])
+        identities = {}
+        if catalogue is not None:
+            with self._mutation_lock:
+                _revision, registered, _pin = read_state(self.workspace_roots_authority, catalogue,
+                    caller=self.workspace_roots_caller)
+            identities = {entry["root_id"]: tuple(entry.get("identity", ())) for entry in registered}
+        for root in view["roots"]:
+            root["available"] = folder_identity(root["path"]) == identities.get(root["root_id"])
+        message = "Reading workspaces…"
+        if self._workspace_roots_repair_error:
+            message = {
+                "archive": "ArchHub could not archive the previous workspace list. Nothing was replaced.",
+                "install": "ArchHub could not confirm the workspace change. Checking the saved list…",
+                "pin": "The workspace list is saved in the graph, but its local copy is not ready. ArchHub will try again.",
+                "publish": "The workspace list is saved in the graph, but its local copy is not ready. ArchHub will try again.",
+            }.get(getattr(self, "_workspace_roots_repair_stage", "read"),
+                  "ArchHub could not read your workspace list. Your files are unchanged.")
+        elif view["projection"] == "match":
+            message = "Workspaces are ready."
+        elif catalogue is None and view["projection"] == "missing":
+            message = "No other workspaces yet."
+        if self._workspace_roots_repair_error == "the app signing key is missing":
+            message = _KEY_RECOVERY_MESSAGE
+        with self._mutation_lock:
+            recovery_notice = None
+            if action == "list" and not self._workspace_roots_repair_error:
+                recovery_notice = getattr(self, "_workspace_roots_recovery_notice", None)
+                self._workspace_roots_recovery_notice = None
         return {**view, "boot": self.workspace_roots_boot,
+                "health": {"state": "error" if self._workspace_roots_repair_error else (
+                    "ready" if view["projection"] == "match" else (
+                        "idle" if catalogue is None and view["projection"] == "missing" else "unverified")),
+                    "message": message,
+                    "detail": self._workspace_roots_repair_error,
+                    "recovery": recovery_notice},
                 **private_grant_settings_view(grant_store, **settings_context),
                 "last_private_grant_event": getattr(self, "_last_private_grant_event", None)}
 

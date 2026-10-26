@@ -8683,6 +8683,14 @@
         "02.TESTS/tests_js/newapp_account.test.cjs",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "WSCLAIM": {
+      "source": "Founder WSCLAIM: Workshop stops chasing claims and notices as unanswered questions. Extend the existing mailbox classifier; exact 8d10add2 CLAIM to all never creates a reply obligation or escalation, real addressed questions retain reminders/escalation, existing ask/no-reply/reply courts remain green. Patch-only lane; installed app and live data excluded.",
+      "scope": [
+        "01.APP/nodelang/workshop_mailbox.py",
+        "02.TESTS/tests_replica/test_wsclaim.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

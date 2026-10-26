@@ -119,28 +119,6 @@ def test_next_unrelated_mcp_result_carries_pending_and_notification(room, monkey
     assert not owner.shared_agent_mail('pending', {'context':context}, peer=peer()).get('acknowledged')
 
 
-def test_unanswered_reinjects_once_then_escalates_and_survives_restart(room):
-    owner, history = room
-    declare(owner, {'threadId':'codex-fixture'})
-    native = NativeFixture()
-    delivery = mail.WorkshopInjection(owner, native, reminder_minutes=1.0, escalation_minutes=2.0)
-    owner.workshop_injection = delivery
-    note = send(owner)
-    original = history.get(mail.ROOM, note['message_id'], principal='court')
-    from datetime import datetime
-    sent_at = datetime.fromisoformat(original['created_at']).timestamp()
-    delivery.tick(now=sent_at)
-    delivery.tick(now=sent_at + 60)
-    delivery.tick(now=sent_at + 90)
-    assert len(native.turns) == 2
-    assert 'Reminder' in native.turns[1][1] and 'repeat' in native.turns[1][1]
-    delivery = mail.WorkshopInjection(owner, native, reminder_minutes=1.0, escalation_minutes=2.0)
-    delivery.tick(now=sent_at + 121)
-    delivery.tick(now=sent_at + 180)
-    assert len(native.turns) == 2
-    notices = history._db.execute("SELECT content FROM messages WHERE author='Workshop coordination' AND reply_to=?",
-        (note['message_id'],)).fetchall()
-    assert len(notices) == 1 and notices[0][0].startswith('To 717:')
 
 
 def test_only_addressed_recipient_read_or_reply_confirms_delivery(room):
@@ -159,8 +137,8 @@ def test_only_addressed_recipient_read_or_reply_confirms_delivery(room):
     assert next(row for row in page['messages'] if row['id']==note['message_id'])['state'] == 'answered'
 
 
-@pytest.mark.parametrize('kwargs', [{'reminder_minutes':0}, {'reminder_minutes':True},
-    {'escalation_minutes':float('nan')}, {'reminder_minutes':3, 'escalation_minutes':2}])
+@pytest.mark.parametrize('kwargs', [{'tick_seconds':0}, {'tick_seconds':True},
+    {'injection_timeout_seconds':float('nan')}, {'injection_timeout_seconds':-1}])
 def test_invalid_timing_defaults_refuse(room, kwargs):
     with pytest.raises(ValueError):
         mail.WorkshopInjection(room[0], NativeFixture(), **kwargs)
@@ -244,18 +222,6 @@ def test_mcp_wire_emits_notifications_message_and_preserves_unrelated_result(roo
     assert received and received[0].logger == 'workshop' and received[0].data['pending'][0]['id'] == note['message_id']
 
 
-def test_coordinator_escalation_is_itself_injected_without_recursive_followup(room):
-    owner, _history = room
-    declare(owner, {'threadId':'codex-fixture'})
-    declare(owner, {'claude/sessionID':'71700000-0000-4000-8000-000000000001'})
-    native = NativeFixture()
-    delivery = mail.WorkshopInjection(owner, native, reminder_minutes=1, escalation_minutes=2)
-    send(owner)
-    started = time.time()
-    for offset in (0, 61, 121, 122, 400, 401):
-        delivery.tick(now=started + offset)
-    coordinator = [turn for turn in native.turns if turn[0]['id'].startswith('717')]
-    assert len(coordinator) == 1 and 'No reply from' in coordinator[0][1]
 
 
 def test_coordinator_title_resolves_717_when_native_uuid_does_not_start_with_717(room):
@@ -298,12 +264,16 @@ def test_mcp_only_vendor_uses_its_connector_identity(room, monkeypatch, vendor, 
     assert note['message_id'] in [row['id'] for row in page['pending']]
 
 
-def test_public_room_projection_contains_unattached_mailbox_notes_and_real_states(room):
+def test_public_room_projection_contains_unattached_mailbox_notes_and_real_states(room, monkeypatch):
+    from nodelang import agent_declarations
     from nodelang.workshop_api import WorkshopAPI
     owner, history = room
+    monkeypatch.setattr(agent_declarations, 'declarations', lambda owner, *, include_archived=False:
+        mail.read_declarations(owner.conversation_content._history._db, include_archived=include_archived))
     declare(owner, {'threadId':'codex-fixture'})
     note = send(owner)
-    api = SimpleNamespace(root=mail.ROOM, history=lambda:history)
+    api = SimpleNamespace(owner=owner, binding=SimpleNamespace(subject_root='fixture-founder'),
+        root=mail.ROOM, history=lambda:history)
     page = WorkshopAPI.listWorkshopMessages(api)
     assert next(row for row in page['messages'] if row['id']==note['message_id'])['state'] == 'pending'
     owner.workshop_injection = mail.WorkshopInjection(owner, None)
@@ -323,24 +293,6 @@ def test_public_room_projection_contains_unattached_mailbox_notes_and_real_state
         Path(os.environ['WSINJECT_UI_DATA']).write_text(json.dumps(page), encoding='utf-8')
 
 
-def test_reminder_to_a_read_but_unanswered_message_returns_on_next_tool(room):
-    owner, _history = room
-    context = {'gemini/sessionID':'recipient-fixture'}
-    declare(owner, context)
-    note = send(owner, to='gemini')
-    delivery = mail.WorkshopInjection(owner, None, reminder_minutes=1, escalation_minutes=2)
-    owner.workshop_injection = delivery
-    started = time.time()
-    delivery.tick(now=started)
-    owner.shared_agent_mail('read', {'since':note['sequence'],'context':context}, peer=peer())
-    delivery.tick(now=started)
-    assert not owner.shared_agent_mail('pending', {'context':context}, peer=peer())['pending']
-    delivery.tick(now=started + 61)
-    assert note['message_id'] in [row['id'] for row in owner.shared_agent_mail('pending', {'context':context}, peer=peer())['pending']]
-    reminder = owner.shared_agent_mail('pending', {'context':context}, peer=peer())['pending'][0]
-    owner.shared_agent_mail('read', {'since':reminder['delivery_sequence'],'context':context}, peer=peer())
-    delivery.tick(now=started+61)
-    assert not owner.shared_agent_mail('pending', {'context':context}, peer=peer())['pending']
 
 
 def test_late_declared_target_gets_native_injection_from_unresolved_address(room):
@@ -389,12 +341,12 @@ def test_new_message_reaches_native_target_before_historical_backfill(room):
     assert len(native.turns)==1 and note['message_id'] in native.turns[0][1]
 
 
-def test_explicit_native_controller_is_not_replayed_and_model_survives_reminder(room):
+def test_explicit_native_controller_is_not_replayed(room):
     owner, _history = room
     declare(owner, {'ai.opencode/sessionID':'selected-target'})
     native = NativeFixture()
     model = {'providerID':'openrouter','modelID':'qwen/qwen3.8-27b:free'}
-    delivery = mail.WorkshopInjection(owner, native, reminder_minutes=1, escalation_minutes=2)
+    delivery = mail.WorkshopInjection(owner, native)
     owner.shared_agent_mail('send', {'to':'selected-target','text':'Please use the explicitly selected free model',
         'native_control':{'app':'opencode','id':'selected-target','model':model},
         'context':{'claude/sessionID':'source'}}, peer=peer())
@@ -402,7 +354,7 @@ def test_explicit_native_controller_is_not_replayed_and_model_survives_reminder(
     delivery.tick(now=started)
     assert native.turns==[], 'Session Link ask already owns the original model-selected native call'
     delivery.tick(now=started + 61)
-    assert len(native.turns)==1 and native.turns[0][2]['model']==model
+    assert native.turns == [], 'caller-owned model-selected delivery is never replayed'
 
 
 def test_unicode_native_excerpt_respects_session_link_utf16_envelope(room):
@@ -415,28 +367,6 @@ def test_unicode_native_excerpt_respects_session_link_utf16_envelope(room):
     assert len(text.encode('utf-16-le')) // 2 <= 32000 and '[Excerpt;' in text
 
 
-def test_escalation_append_failure_does_not_mark_it_escalated(room, monkeypatch):
-    owner, history = room
-    declare(owner, {'threadId':'codex-fixture'})
-    native = NativeFixture()
-    delivery = mail.WorkshopInjection(owner, native, reminder_minutes=1, escalation_minutes=2)
-    note = send(owner)
-    started = time.time()
-    delivery.tick(now=started)
-    delivery.tick(now=started + 61)
-    append = ConversationHistoryStore.append
-    def refused(self, *args, **kw):
-        if kw.get('author') == 'Workshop coordination':
-            raise OSError('fixture append interrupted')
-        return append(self, *args, **kw)
-    monkeypatch.setattr(ConversationHistoryStore, 'append', refused)
-    with pytest.raises(OSError, match='fixture append interrupted'):
-        delivery.tick(now=started + 121)
-    assert all('escalated' not in event for event in mail.delivery_events(history, {'id':note['message_id']}).values())
-    monkeypatch.setattr(ConversationHistoryStore, 'append', append)
-    delivery.tick(now=started + 122)
-    assert history._db.execute("SELECT count(*) FROM messages WHERE author='Workshop coordination' AND reply_to=?",
-        (note['message_id'],)).fetchone()[0] == 1
 
 
 def test_running_application_http_send_reaches_codex_bridge_without_read(owner, tmp_path):
@@ -507,11 +437,3 @@ def test_a_broadcast_is_never_injected_back_into_its_sender():
     note = {"category":mail.CATEGORY, "author":"Claude Code / ArchHub / session-a / ahmed [agent:session:a]", "content":"To *:\nBuild installed"}
     sessions = [row["session"] for row in mail._recipient_rows(note, [sender, other])]
     assert "agent:session:a" not in sessions and "agent:session:b" in sessions
-
-
-
-def test_a_broadcast_is_delivered_once_never_reminded():
-    """Each 'To *' status produced a reminder per agent and an escalation per agent to 717."""
-    assert mail._is_broadcast({"content":"To *:\nBuild installed"})
-    assert mail._is_broadcast({"content":"To 717, *:\nBoth"})
-    assert not mail._is_broadcast({"content":"To codex:\nPlease reply"})

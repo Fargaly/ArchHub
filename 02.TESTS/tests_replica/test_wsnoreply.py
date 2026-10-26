@@ -64,38 +64,6 @@ def test_reply_acknowledgement_is_delivered_without_followup(room, text):
     assert any('answered' in row for row in mail.delivery_events(history, message(history, ask)).values())
 
 
-@pytest.mark.parametrize('text,reply,asks', [('Can you review the patch?', False, True),
-    ('ACK. Can you review the patch?', True, True), ('Can you confirm?', True, True),
-    ('The phrase no reply needed appears in the quoted brief; can you review?', False, True),
-    ('> No reply required\nCan you confirm?', False, True),
-    ('No reply needed unless the court fails; can you check?', False, True),
-    ('ACK', False, False)])
-def test_real_ask_keeps_five_and_ten_minute_followup(room, text, reply, asks):
-    owner, history = room
-    declare(owner, {'threadId':'codex-fixture'})
-    parent = history.append(mail.ROOM, author='Fixture asker', category=mail.CATEGORY,
-        content='To claude:\nOriginal ask', idempotency_key='parent-ask') if reply else None
-    note = send(owner, text=text, **({'reply_to':parent['id']} if parent else {}))
-    native = NativeFixture()
-    worker, now = start(owner, history, note, native)
-    # A plain ACK creates no ask; quoted and conditional opt-outs still require replies.
-    if not asks:
-        assert_not_chased(owner, history, note, native, now)
-        return
-    worker.tick(now=now + 299)
-    assert len(native.turns) == 1
-    worker.tick(now=now + 300)
-    assert len(native.turns) == 2 and native.turns[-1][2]['message_id'] == note['message_id'] + ':reminder'
-    worker.tick(now=now + 599)
-    assert not any('escalated' in row for row in mail.delivery_events(history, message(history, note)).values())
-    worker = mail.WorkshopInjection(owner, native)
-    worker.tick(now=now + 600)
-    worker.tick(now=now + 601)
-    events = mail.delivery_events(history, message(history, note))
-    assert any('escalated' in row for row in events.values())
-    assert len(native.turns) == 2
-    assert history._db.execute("SELECT count(*) FROM messages WHERE reply_to=? AND author='Workshop coordination'",
-        (note['message_id'],)).fetchone()[0] == 1
 
 
 def test_coordinator_fallback_never_injects_its_own_to_717_note(room):

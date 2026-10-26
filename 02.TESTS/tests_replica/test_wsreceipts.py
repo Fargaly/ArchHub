@@ -132,17 +132,17 @@ def test_worker_upserts_one_cursor_and_read_never_acknowledges_its_new_page(rece
         "AND json_extract(content,'$.event')='delivered'").fetchone()[0] == 0
 
 
-def test_late_reply_after_escalation_is_recorded_by_worker(receipt_room):
+def test_late_reply_is_recorded_by_worker(receipt_room):
     owner, history, path = receipt_room
     context = {'threadId':'late-reader'}
     declared = owner.shared_agent_mail('declare', {'task':'late reply','paths':[str(path.parent)],
         'status':'working','request_id':'WSRECEIPTS','context':context}, peer=peer())
-    worker = mail.WorkshopInjection(owner, None, reminder_minutes=1, escalation_minutes=2)
+    worker = mail.WorkshopInjection(owner, None)
     note = owner.shared_agent_mail('send', {'to':'codex','text':'answer eventually'}, peer=peer())
     started = time.time()
     for offset in (0,61,121):
         worker.tick(now=started+offset)
-    assert 'escalated' in mail.delivery_events(history, {'id':note['message_id']})[declared['sender_key']]
+    assert 'attempt' in mail.delivery_events(history, {'id':note['message_id']})[declared['sender_key']]
     owner.shared_agent_mail('send', {'to':'*','text':'late answer','reply_to':note['message_id'],
         'context':context}, peer=peer())
     worker.tick(now=started+122)

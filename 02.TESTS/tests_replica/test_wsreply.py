@@ -233,9 +233,9 @@ def test_unrelated_native_session_cannot_close_an_ask(room):
         worker.tick(now=now + offset)
     events = mail.delivery_events(history, message(history, ask))
     assert not any('answered' in row for row in events.values())
-    assert sum('reminder' in row for row in events.values()) == 1
+    assert all('reminder' not in row for row in events.values())
     assert history._db.execute("SELECT count(*) FROM messages WHERE reply_to=? "
-        "AND author='Workshop coordination'", (ask['message_id'],)).fetchone()[0] == 1
+        "AND author='Workshop coordination'", (ask['message_id'],)).fetchone()[0] == 0
 
 
 def test_reply_binding_survives_another_redeclare_and_a_busy_room(room):
@@ -474,7 +474,7 @@ def test_undeclared_codex_same_address_reply_closes_ask(room, monkeypatch, reply
 
 
 @pytest.mark.parametrize('variant', ['different-address', 'asker', 'no-parent', 'quoted-address', 'broadcast'])
-def test_address_reply_spoof_keeps_one_reminder_and_escalation(room, monkeypatch, variant):
+def test_address_reply_spoof_keeps_original_ask_unanswered(room, monkeypatch, variant):
     from dataclasses import replace
 
     owner, history = room
@@ -497,10 +497,10 @@ def test_address_reply_spoof_keeps_one_reminder_and_escalation(room, monkeypatch
         mail.WorkshopInjection(owner, None, backfill_minutes=30.0).tick(now=now + offset)
     events = mail.delivery_events(history, message(history, ask))
     assert not any('answered' in row for row in events.values())
-    assert sum('reminder' in row for row in events.values()) == 1
-    assert sum('escalated' in row for row in events.values()) == 1
+    assert all('reminder' not in row for row in events.values())
+    assert all('escalated' not in row for row in events.values())
     assert history._db.execute("SELECT count(*) FROM messages WHERE reply_to=? AND author='Workshop coordination'",
-        (ask['message_id'],)).fetchone()[0] == 1
+        (ask['message_id'],)).fetchone()[0] == 0
 
 
 
@@ -529,8 +529,8 @@ def test_same_address_reply_cannot_claim_a_declared_native_session(room):
         worker.tick(now=now + offset)
     events = mail.delivery_events(history, message(history, ask))
     assert not any('answered' in row for row in events.values())
-    assert sum('reminder' in row for row in events.values()) == 1
-    assert sum('escalated' in row for row in events.values()) == 1
+    assert all('reminder' not in row for row in events.values())
+    assert all('escalated' not in row for row in events.values())
 
 
 def test_address_reply_parent_lookup_beyond_recent_tail(room, monkeypatch):

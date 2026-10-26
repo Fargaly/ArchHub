@@ -111,6 +111,8 @@ def _is_broadcast(message):
 
 
 def _asks_for_reply(message):
+    if not agent_addressed(message):
+        return False
     body = message.get("content", "").partition("\n")[2]
     unquoted = "\n".join(line for line in body.splitlines() if not line.lstrip().startswith(">"))
     # Only an unquoted, unconditional sentence can waive the reply obligation.
@@ -119,6 +121,27 @@ def _asks_for_reply(message):
             r"(?![ \t]*[.!]?\s*(?:unless|if|until)\b)[ \t]*(?:[.!](?=\s|$)|$)",
             unquoted, flags=re.IGNORECASE | re.MULTILINE):
         return False
+    # Ignore link/path punctuation before finding notice and question boundaries.
+    body = re.sub(r"(?:\b[a-zA-Z][\w+.-]*://|(?:[A-Za-z]:)?[/\\]|"
+        r"\b[^\s<>`]+[/\\])[^\s<>`]*|\b[^\s<>`/\\]+\?[^\s<>`/\\]*\.[a-zA-Z0-9]+\b", "", unquoted)
+    # Structural vocabulary applies only to notice lines, never ordinary prose.
+    lines = []
+    for line in body.splitlines():
+        if re.match(r"[ \t]*(?:[\w.-]+[ \t]+Run[ \t]+\d+[ \t]+)?"
+                r"(?:CLAIM|PROVIDE|RELEASED|DONE(?![ \t]+WHEN\b))\b", line):
+            line = re.sub(r"(?:^|(?<=[.!?؟;])\s+)[ \t]*"
+                r"(?:[\w.-]+[ \t]+Run[ \t]+\d+[ \t]+)?"
+                r"(?:CLAIM|PROVIDE|RELEASED|DONE(?![ \t]+WHEN\b))\b"
+                r"[^\n]*?(?:[.!?؟;](?=[ \t]|$)|"
+                r",(?=[ \t]+(?i:(?:can|could|would|will)[ \t]+you|please|kindly)\b)|$)",
+                "", line)
+        lines.append(line)
+    body = "\n".join(lines)
+    # A status sentence may be followed by a real request on the same line.
+    body = re.sub(r"^[ \t]*(?:(?:status|progress|verdict|final[ \t]+verdict)\b[ \t]*:?|"
+        r"[\w.-]+[ \t]+(?:status|progress|verdict)[ \t]*:)[ \t]*"
+        r"[^\n]*?(?:[.!?؟](?:[ \t]+|$)|$)",
+        "", body, flags=re.IGNORECASE | re.MULTILINE)
     # shortcut: lexical requests; add a replay court and marker for each missed ask.
     return "?" in body or "؟" in body or bool(re.search(
         r"\b(?:please|kindly)\b|\blet[ \t]+me[ \t]+know\b|\byour[ \t]+task[ \t]*:|"
@@ -133,7 +156,7 @@ def _asks_for_reply(message):
         r"(?:passed|failed)\b[ \t]*(?:[.!:;,]|$|\d|(?:all|on|at|in|with|for|across|during|after|before|because|due|and)\b)|"
         r"(?:verdict|status|result|evidence)[ \t]*:|"
         r"(?:complete[ds]?|finished|done|received|running)\b[ \t]*(?:[.!:;,]|$|(?:on|at|in|with|for|across)\b)))|"
-        r"(?:I[ \t]+)?need\b(?![ \t]*:?[ \t]*(?:none|nothing)\b))",
+        r"(?:I[ \t]+)?need\b(?![ \t]*:?[ \t]*(?:none|nothing|no)\b))",
         body, flags=re.IGNORECASE | re.MULTILINE))
 
 

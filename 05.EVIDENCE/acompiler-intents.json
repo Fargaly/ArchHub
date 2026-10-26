@@ -8777,6 +8777,23 @@
         "02.TESTS/tests_replica/test_agenttrail.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "FIXWS": {
+      "source": "Founder FIXWS: recover absent graph workspace catalogue with stale unsigned/unpinned projection and existing app key; preserve byte-exact pair and hashes, first-pin through existing app signer, publish/verify, idempotent reboot, approved DESIGN-TRUTH texts. Isolated source patch and fixtures only; no live profile, installed app or founder screen. Review 1 run 2: isolate all court profiles before construction; session-wide real-profile write guard; preserve fresh keyless first registration; actionable key refusal; one recovery notice per outcome. Review 2: without graph catalogue or app key, archive untrusted old projection then return to fresh missing state; first register creates key; fresh dialog built-in Ready. Import application only after all profile and temp paths are isolated.",
+      "scope": [
+        "01.APP/nodelang/workspace_roots_owner.py",
+        "01.APP/nodelang/workspace_roots_catalogue.py",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/ds_settings3.jsx",
+        "02.TESTS/tests_replica/test_wsadd.py",
+        "02.TESTS/tests_js/wsadd.test.cjs",
+        "02.TESTS/tests_js/newapp_account.test.cjs",
+        "02.TESTS/tests_js/studio_workspace_selection.test.cjs",
+        "05.EVIDENCE/acompiler-intents.json",
+        "02.TESTS/tests_replica/conftest.py",
+        "02.TESTS/tests_replica/test_nokey.py",
+        "02.TESTS/tests_replica/test_workspace_roots_graph_current.py"
+      ]
     }
   }
 }

@@ -108,3 +108,9 @@ button{transition:background .14s,color .14s,box-shadow .14s}button:hover{filter
 
 .screen-with-composer{position:relative}
 .canvas-status{position:absolute;bottom:4px;left:calc(var(--canvas-library-width,0px) + 16px);z-index:12;display:flex;gap:12px;max-width:calc(100% - 280px);font-size:10px;color:var(--muted);pointer-events:auto}
+
+/* Plate 4.3: one-line labels/values and a bounded state foot at every zoom. */
+[data-screen="canvas"] .canvas-card-param>span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+[data-screen="canvas"] .canvas-card-param>input,[data-screen="canvas"] .canvas-card-param>select{max-width:100%;min-width:0;text-overflow:ellipsis}
+[data-screen="canvas"] .canvas-card-more{padding:4px 10px;font-size:11px;color:var(--canvas-muted)}
+[data-screen="canvas"] .lm-node>div:last-child>span[title]{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

@@ -33,7 +33,7 @@
       if (open) open();else u.go('canvas');
     }], ['Properties', 'settings', '', () => {
       close();
-      u.go('canvas');
+      u.show('Node', {id: n.id});
     }], ['Output', 'eye', '', () => u.show('Node output', {
       id: n.id
     })]], [['Rerun', 'refresh', '', () => run(() => api.runNode(n.id))], ['Run to here', 'play', '', () => run(() => api.runToHere(n.id))], [n.frozen ? 'Unfreeze' : 'Freeze', 'shield', '', () => actionState.run(() => api.setNodeFlags(n.id, {

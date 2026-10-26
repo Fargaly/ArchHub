@@ -41,6 +41,11 @@ def test_split_conversation_store_declarations_reach_workshop_http(tmp_path, mon
                 server.shared_agent_mail('declare', {'context': {'threadId': 'spoof-court'},
                     'task': 'Synthetic impersonation attempt', 'paths': [str(tmp_path / 'SHEET.txt')],
                     'status': 'working', 'request_id': 'DESIGNMATCH-COURT', 'display_name': name})
+        for normal in ('Codex', 'Claude Code', 'أحمد', 'محمّد', "Ahmed's helper", 'وكيل', 'Yours', 'ArchHub Bot', 'Youssef', 'Bob', 'José', 'Łukasz'):
+            accepted = server.shared_agent_mail('declare', {'context': {'threadId': 'designmatch-court'},
+                'task': 'Inspect the synthetic sheet', 'paths': [str(tmp_path / 'SHEET.txt')],
+                'status': 'working', 'request_id': 'DESIGNMATCH-COURT', 'display_name': normal})
+            assert accepted['declaration']['display_name'] == normal
         sent = server.shared_agent_mail('declare', {'context': {'threadId': 'designmatch-court'},
             'task': 'Inspect the synthetic sheet', 'paths': [str(tmp_path / 'SHEET.txt')],
             'status': 'working', 'request_id': 'DESIGNMATCH-COURT',
@@ -167,9 +172,13 @@ import pytest
 from types import SimpleNamespace
 
 
-@pytest.mark.parametrize('name', ['\uff39\uff2f\uff35', '\u0423ou', 'Y\u200bou', '\u0412\u0410\u0412\u041e\u041e\u041c', 'Arch\u200bHub'])
+@pytest.mark.parametrize('name', ['\uff39\uff2f\uff35', '\u0423ou', 'Y\u200bou', '\u0412\u0410\u0412\u041e\u041e\u041c', 'Arch\u200bHub',
+    *['Y'+c+'ou' for c in ('\u034f','\ufe0f','\u3164','\u115f','\u1160','\uffa0')],
+    'Y\u0585\u057d', 'Y\u0585u', '\u13aa r\u13dfhHub'.replace(' ',''), 'Wor\u13e6shop coordination',
+    '\u028fou', 'Y\u1d0fu', '\u0299aboom', '\u03a5ou', 'ArchHu\u0185', 'Y\u0275u'])
 def test_reserved_unicode_declaration(name, tmp_path):
     from nodelang.workshop_mailbox import _declare
-    with pytest.raises(ValueError, match='reserved'):
-        _declare(None, dict(task='Synthetic', request_id='DESIGNMATCH', paths=[str(tmp_path)],
-            status='working', display_name=name), {}, {}, 'codex', SimpleNamespace(cwd=str(tmp_path)), 'spoof')
+    for spelling in ({name, name.lower()} if any(c in name for c in "ᎪᏟᏦ") else {name}):
+        with pytest.raises(ValueError, match='reserved'):
+            _declare(None, dict(task='Synthetic', request_id='DESIGNMATCH', paths=[str(tmp_path)],
+                status='working', display_name=spelling), {}, {}, 'codex', SimpleNamespace(cwd=str(tmp_path)), 'spoof')

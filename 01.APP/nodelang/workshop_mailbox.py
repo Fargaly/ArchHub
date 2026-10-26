@@ -631,7 +631,8 @@ def _declare(history, body, context, identity, runtime, peer, native_session):
     if "display_name" in metadata:
         # Compare system-label lookalikes only; preserve the user's stored display name.
         skeleton = "".join(char for char in unicodedata.normalize("NFKC", metadata["display_name"])
-                           if unicodedata.category(char) != "Cf" and not char.isspace())
+                           if unicodedata.category(char) not in {"Cf", "Mn"}
+                           and char not in "\u3164\u115f\u1160\uffa0" and not char.isspace())
         skeleton = skeleton.translate(str.maketrans({
             "А": "A", "а": "a", "В": "B", "в": "b", "С": "C", "с": "c",
             "Е": "E", "е": "e", "Н": "H", "н": "h", "һ": "h", "Һ": "H", "І": "I", "і": "i",
@@ -642,8 +643,22 @@ def _declare(history, body, context, identity, runtime, peer, native_session):
             "Η": "H", "η": "h", "Ι": "I", "ι": "i", "Κ": "K", "κ": "k", "Μ": "M", "μ": "m",
             "Ν": "N", "ν": "n", "Ο": "O", "ο": "o", "Ρ": "P", "ρ": "p", "Τ": "T",
             "τ": "t", "Υ": "Y", "υ": "u", "Ϲ": "C", "ϲ": "c",
+            "օ": "o", "Օ": "O", "ս": "u", "Ս": "U", "Ꭺ": "A", "Ꮯ": "C", "Ꮶ": "K",
+            "ꭺ": "A", "ꮯ": "C", "ꮶ": "K",
+            # Small capitals are Latin, so a mixed-script check cannot catch them.
+            "ʏ": "y", "ᴏ": "o", "ʙ": "b", "ᴀ": "a", "ᴍ": "m", "ʜ": "h", "ᴜ": "u",
+            "ʀ": "r", "ᴄ": "c", "ᴡ": "w", "ɪ": "i", "ᴅ": "d", "ᴛ": "t", "ɴ": "n",
+            "ᴘ": "p", "ᴋ": "k", "ꜱ": "s",
         })).casefold()
-        if skeleton in {"you", "baboom", "workshopcoordination", "archhub"}:
+        reserved = {"you", "baboom", "workshopcoordination", "archhub"}
+        scripts = {"NON_ASCII_LATIN" if unicodedata.name(char, "").startswith("LATIN ")
+                   and not unicodedata.normalize("NFKD", char).isascii()
+                   else unicodedata.name(char, "").split(" ")[0] for char in skeleton if char.isalpha()}
+        # shortcut: bounded near-label check, not a full UTS39 confusables database.
+        near_reserved = "LATIN" in scripts and len(scripts)>1 and any(
+            len(skeleton)==len(name) and sum(a!=b for a,b in zip(skeleton,name))<=max(1,len(name)//5)
+            for name in reserved)
+        if skeleton in reserved or near_reserved:
             raise ValueError("Declaration display name is reserved")
     root = ROOM + ":declaration:" + sha256(native_session.encode()).hexdigest()
     row = {"root": root, "agent": identity["sender_label"], "session": identity["sender_key"],

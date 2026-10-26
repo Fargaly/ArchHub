@@ -90,7 +90,7 @@
     return <div className="grid"><h2>{n.title}</h2><p className="muted">{s.catalogue.find(c => c.name === n.kind)?.description || 'An editable part of your graph.'}</p><Chip>{n.frozen ? 'Frozen' : n.status}</Chip><Table rows={api.getNodeParameters(n).map(p => ({
         parameter: p.label,
         type: p.type,
-        value: String(n.params[p.key]),
+        value: typeof n.params[p.key]==='object' ? JSON.stringify(n.params[p.key]) : String(n.params[p.key]),
         unit: p.unit
       }))} /><div className="flex"><Btn p onClick={() => {
           executeAction("ui.setSelectedNodeId", u, id);

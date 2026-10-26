@@ -43,8 +43,8 @@
     })}</>;
   }
   // e6e4a367 studio-lm.jsx NodeRenderer: category header, role edge and parameter body.
-  function NodeRenderer({n, catalogue = [], selected, headerProps, headerEnd, renderPort, members, onMember}) {
-    const u = useApp();
+  function NodeRenderer({n, catalogue = [], selected, headerProps, headerEnd, renderPort, members, onMember, compact = false}) {
+    const u = useApp(), [expanded,setExpanded] = React.useState(false);
     const exact = catalogue.find(c=>c.id===n.definition||c.id===n.assembly||c.name===n.assembly||c.id===n.kind||c.name===n.kind),
       engines=catalogue.filter(c=>c.descriptor?.engine===n.kind), category=exact||(engines.length===1 ? engines[0] : null),
       family = (n.category || category?.family || n.kind).toLowerCase(), grouped = isGroup(n),
@@ -55,26 +55,34 @@
         see:[A.ok,'eye'],watch:[A.ok,'eye'],watcher:[A.ok,'eye'],check:[A.ok,'check'],send:[A.ok,'send'],output:[A.ok,'export']})[family] || [A.blue,'canvas'],
       state = n.frozen ? 'Disabled' : n.previewOff ? 'Preview off' : n.status || 'Idle',
       stateColor = /error|fail|refus/i.test(state) ? A.err : /approval|wait|warning|changed/i.test(state) ? A.warn : /running/i.test(state) ? A.accent : /done|ran/i.test(state) ? A.ok : A.inkSoft;
+    // Plate 4.3: only the first three human values; Properties keeps every parameter.
+    const parameters = Object.entries(n.params).filter(([key,value])=>!compact || n.parameterSchema?.some(p=>p.key===key && p.editable) ||
+      (!/(^_|(?:^|_)(?:id|hash|instance|ref)(?:_|$)|^template_|^(?:engine|responsibility|last_result|last_attempt)$)/i.test(key) &&
+       (value === null || typeof value !== 'object') &&
+       !/(?:[a-f0-9]{32,}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}|(?:assembly|template|node)-instance:|^\s*[\[{][\s\S]*[\]}]\s*$)/i.test(String(value)))),
+      foot = compact && /(?:[a-f0-9]{32,}|(?:assembly|template|node)-instance:)/i.test(state)
+        ? (state.match(/^(?:blocked|error|failed|held|waiting|refused)\b/i)?.[0] || 'See Properties').replace(/^./,c=>c.toUpperCase()) : state;
     return <D.Node className="lm-node" data-category={family} w={224} glyph={<window.AHIcon name={icon} size={12} />} gc={color}
       title={n.title} sub={grouped ? `group · ${(members || []).length} members` : category?.name || n.assembly || n.kind}
       style={{borderTop:'2px solid '+color}} stacked={grouped}
       edge={!n.inputs.length && n.outputs.length ? 'l' : n.inputs.length && !n.outputs.length ? 'r' : undefined}
       selected={selected} run={/running/i.test(state)} dashed={n.frozen}
-      foot={state + (n.elapsedMs ? ' · ' + n.elapsedMs + ' ms' : '')} footc={stateColor}
+      foot={<span title={state}>{foot + (n.elapsedMs ? ' · ' + n.elapsedMs + ' ms' : '')}</span>} footc={stateColor}
       ins={n.inputs} outs={n.outputs} renderPort={renderPort}
       headerProps={{...headerProps,style:{borderTop:'2px solid '+color,borderBottom:'1px solid '+A.lineSoft,...headerProps?.style}}}
       headerEnd={headerEnd} chip={grouped && <div className="canvas-members">{(members || []).map(m=><button key={m.id} data-group-member={m.id} className="canvas-member" title={'Open '+m.title} onClick={event=>executeAction('projects.controls.activate',{handler:()=>onMember?.(m)},event)}><span style={{background:color,color:A.onFill}}>{m.title.slice(0,1)}</span>{m.title}</button>)}</div>}>
-      {!grouped && Object.entries(n.params).map(([key,value])=>{
+      {!grouped && (compact && !expanded ? parameters.slice(0,3) : parameters).map(([key,value])=>{
         const p=n.parameterSchema?.find(p=>p.key===key), label=n.title+' '+key,
           save=v=>u.act(()=>api.setNodeParam(n.id,key,v));
-        return <div className="canvas-card-param" data-parameter={key} key={key}><span>{key}{p?.unit ? ' · '+p.unit : ''}</span>
+        return <div className="canvas-card-param" data-parameter={key} key={key}><span title={p?.label || key}>{p?.label && p.label!==key ? p.label : key.replace(/_/g,' ').replace(/^./,c=>c.toUpperCase())}{p?.unit ? ' · '+p.unit : ''}</span>
           {p?.editable && ['string','number','boolean'].includes(typeof value) ? p.type==='boolean'
             ? <D.Toggle label={label} checked={value} onCheckedChange={save} />
             : p.options?.length ? <select aria-label={label} value={value} onChange={e=>save(e.target.value)}>{p.options.map(v=><option key={v}>{v}</option>)}</select>
-            : <input aria-label={label} type={p.type==='number'?'number':'text'} min={p.min} max={p.max} step={p.step} value={value} style={{width:96,minWidth:0}} onChange={e=>{if(p.type!=='number'||Number.isFinite(e.target.valueAsNumber))save(p.type==='number'?e.target.valueAsNumber:e.target.value);}} />
-            : <span title={typeof value==='object'?JSON.stringify(value):String(value)}>{typeof value==='object'?JSON.stringify(value):String(value)}</span>}
+            : <input aria-label={label} title={String(value)} type={p.type==='number'?'number':'text'} min={p.min} max={p.max} step={p.step} value={value} style={{width:96,minWidth:0}} onChange={e=>{if(p.type!=='number'||Number.isFinite(e.target.valueAsNumber))save(p.type==='number'?e.target.valueAsNumber:e.target.value);}} />
+            : <span tabIndex={0} title={typeof value==='object'?JSON.stringify(value):String(value)}>{typeof value==='object'?JSON.stringify(value):String(value)}</span>}
         </div>;
       })}
+      {!grouped && compact && parameters.length>3 && <button className="button-reset canvas-card-more" onClick={event=>executeAction('projects.controls.activate',{handler:()=>setExpanded(!expanded)},event)}>{expanded ? 'Show less' : `+${parameters.length-3} more`}</button>}
     </D.Node>;
   }
   function Canvas({
@@ -627,7 +635,7 @@
        const position = draft?.positions?.[n.id] || (draft?.id === n.id ? draft : n),
          members = (n.children || []).map(id => s.graph.nodes.find(x => x.id === id) || n.members?.find(m => m.id === id)).filter(Boolean);
        return <div key={n.id} data-graph-node={n.id} onPointerDown={e=>startNode(e,n)} style={{position:'absolute',width:224,opacity:n.frozen ? .5 : 1,left:position.x,top:position.y}} onDoubleClick={() => openNode(n)}>
-         <NodeRenderer n={n} catalogue={s.catalogue} selected={selected.includes(n.id)} members={members}
+         <NodeRenderer compact n={n} catalogue={s.catalogue} selected={selected.includes(n.id)} members={members}
            onMember={m=>{if (s.graph.nodes.some(row => row.id === m.id)) {setParent(n.id);setSelected([m.id]);} else {setParent(null);u.act(async()=>{await api.selectGraph(n.id);setSelected([m.id]);});}}}
            renderPort={(p,i,side)=><div className="canvas-port-row" style={{justifyContent:side === 'out' ? 'flex-end' : undefined}}><span style={{position:'absolute',[side === 'in' ? 'left' : 'right']:-11,top:0}}>{socket(n,p,side)}</span><span title={p.type}>{p.name}{p.unit ? ' · '+p.unit : ''}</span></div>}
            headerProps={{className:'node-header',onPointerDown:e=>startNode(e,n),onPointerMove:move,onPointerUp:end,

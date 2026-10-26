@@ -281,3 +281,58 @@ test('System graph exposes a refused read and retries the same owner',async t=>{
  assert.equal(await page.locator('[data-system-group]').count(),3);
  assert.equal((await page.evaluate(()=>window.fixtureCalls)).filter(c=>c.action==='selectGraph'&&c.id==='root').length,2);
 });
+
+
+test('CARDPOLISH bounds human rows while retaining internal parameters and every socket',async t=>{
+ const raw=fixture(),n=raw.nodes[0],hash='a'.repeat(64);
+ n.properties=[{...prop('engine','library.think','text'),editable:false},{...prop('template_instance',hash,'text'),editable:false},
+  {...prop('responsibility',JSON.stringify({owner:'assembly-instance:'+hash}),'text'),editable:false},
+  {...prop('room_width',3,'number','m'),display_label:'Room width'},
+  prop('description','A complete long description '.repeat(8),'text'),
+  prop('enabled',true,'boolean'),prop('extra_value',4),{...prop('last_result',{raw:'private result'}),editable:false}];
+ n.status='blocked by assembly-instance:'+hash;
+ const page=await mount(t,{raw}),card=page.locator('[data-graph-node="level"]');
+ assert.equal(await card.locator('[data-parameter="template_instance"]').count(),0,'internal instance hash must stay off the face');
+ assert.equal(await card.locator('[data-parameter="engine"]').count(),0);
+ assert.equal(await card.locator('[data-parameter="responsibility"]').count(),0,'serialized JSON stays in Properties');
+ assert.equal(await card.locator('[data-parameter="last_result"]').count(),0);
+ assert.equal(await card.locator('[data-parameter]').count(),3,'plate 4.3: first three human rows');
+ assert.match(await card.innerText(),/Room width/);
+ assert.match(await card.innerText(),/\+1 more/);
+ assert.doesNotMatch(await card.innerText(),/[a-f0-9]{64}|assembly-instance:|\{"/);
+ const description=card.locator('[data-parameter="description"]');
+ assert.equal(await description.locator('[title]').last().getAttribute('title'),n.properties.find(p=>p.label==='description').value);
+ assert.equal(await description.evaluate(el=>window.getComputedStyle(el.lastElementChild).textOverflow),'ellipsis');
+ assert.equal(await card.locator('[data-port-key]').count(),1);
+ const stored=await page.evaluate(()=>window.fixtureState().graph.nodes.find(n=>n.id==='level'));
+ assert.equal(stored.params.template_instance,hash);
+ assert.equal(stored.params.responsibility,n.properties.find(p=>p.label==='responsibility').value);
+ await card.getByRole('button',{name:'+1 more',exact:true}).click();
+ assert.equal(await card.locator('[data-parameter]').count(),4);
+ assert.equal(await card.locator('[data-parameter="template_instance"]').count(),0);
+ await card.getByRole('spinbutton',{name:'Level extra_value',exact:true}).fill('9');
+ await card.getByRole('button',{name:'Show less',exact:true}).click();
+ assert.equal(await card.locator('[data-parameter]').count(),3);
+ await card.getByRole('spinbutton',{name:'Level room_width',exact:true}).fill('8');
+ assert.ok((await page.evaluate(()=>window.fixtureCalls)).some(c=>c.action==='parameter'&&c.key==='room_width'&&c.value===8));
+});
+
+
+test('CARDPOLISH declared editable text remains reachable regardless of key or value shape',async t=>{
+ const raw=fixture(),n=raw.nodes[0];
+ n.properties=[prop('value',3),prop('caption','[TBD]','text'),prop('note','{draft}','text'),
+  prop('root_id','workspace-root','text'),prop('level_ref','Level 3','text'),
+  prop('source_hash','a'.repeat(64),'text'),prop('metadata','{"draft":true}','text')];
+ const page=await mount(t,{raw}),card=page.locator('[data-graph-node="level"]');
+ assert.equal(await card.getByRole('textbox',{name:'Level caption',exact:true}).inputValue(),'[TBD]');
+ assert.equal(await card.getByRole('textbox',{name:'Level note',exact:true}).inputValue(),'{draft}');
+ await card.getByRole('button',{name:'+4 more',exact:true}).click();
+ for(const key of ['caption','note','root_id','level_ref','source_hash','metadata']){
+  await card.getByRole('textbox',{name:'Level '+key,exact:true}).fill('edited-'+key);
+  assert.ok((await page.evaluate(()=>window.fixtureCalls)).some(c=>c.action==='parameter'&&c.key===key&&c.value==='edited-'+key));
+ }
+ await card.getByRole('button',{name:'Show less',exact:true}).click();
+ assert.equal(await card.locator('[data-parameter]').count(),3);
+ await card.getByRole('button',{name:'+4 more',exact:true}).click();
+ assert.equal(await card.getByRole('textbox',{name:'Level root_id',exact:true}).inputValue(),'edited-root_id');
+});

@@ -569,12 +569,13 @@ async function restScreen(component, api, state, props={}) {
  const React=win.React;
  const element=tag=>({children,...props})=>React.createElement(tag,props,children);
  const navigation=[];
+ if(component==='NodeDetails')win.ArchHubAPI=api;
  const u={go:route=>navigation.push(route),show:(name,data)=>navigation.push({name,data}),advanced:false};
  win.AHIcon=()=>null;
  win.UI={api,A:{ok:'green',warn:'orange',inkSoft:'gray'},D:{Toggle:({checked,onCheckedChange,label})=>React.createElement('input',{type:'checkbox',checked,'aria-label':label,onChange:event=>onCheckedChange(event.target.checked)})},
   useData:()=>state,useApp:()=>u,Btn:({p,sm,ghost,danger,...props})=>React.createElement('button',props),Card:element('section'),Chip:element('span'),
   Heading:({title,children})=>React.createElement('header',null,title,children),Empty:element('p'),Table:({rows})=>React.createElement('pre',null,JSON.stringify(rows)),SettingControl:()=>null,Av:()=>null};
- for(const screenFile of ['answer-widgets.jsx','community-tools.jsx','decision-results.jsx','canvas-states.jsx','watcher-controls.jsx','desktop.jsx','ds_watch_edit.jsx','routing.jsx','xray.jsx','context-menus.jsx']){
+ for(const screenFile of ['answer-widgets.jsx','community-tools.jsx','decision-results.jsx','canvas-states.jsx','watcher-controls.jsx','desktop.jsx','ds_watch_edit.jsx','routing.jsx','xray.jsx','context-menus.jsx',...(component==='NodeDetails'?['workflow-states.jsx']:[])]){
   win.eval(win.Babel.transform(fs.readFileSync(path.join(__dirname,'../../01.APP/nodelang/studio',screenFile),'utf8'),{presets:['react']}).code);
  }
  for(const surfaceName of ['RefineComparison','ModelAvailability','HealthHistory','XrayLayers','Research','GraphMetadata','CapabilitySettings'])if(!win.UI[surfaceName])win.UI[surfaceName]=()=>null;
@@ -594,7 +595,8 @@ test('WIRE-rest rendered Desktop shows waiting, real refusal, retry and the owne
   assert.equal(screen.win.document.querySelector('button').disabled,true);
   release({ok:false,error:'Host refused: choose the active program in Connections'});await screen.settle();
   assert.match(screen.win.document.querySelector('[role="alert"]').textContent,/choose the active program/);
-  assert.equal(calls,1);click('Retry action');await screen.settle();
+  assert.equal(calls,1);click('Retry action');
+  for(let attempt=0;attempt<50&&!screen.win.document.body.textContent.includes('Native owner frame 17');attempt++)await screen.settle();
   assert.match(screen.win.document.body.textContent,/Native owner frame 17/);assert.equal(calls,2);
   click('BABOOM settings');assert.deepEqual(screen.navigation,['settings/BABOOM']);
  }finally{screen.close();}
@@ -1354,4 +1356,18 @@ for(const final of ['newest','first'])test('STUDIOFIX queued '+final+' edit surv
  assert.deepEqual(requests.filter(r=>r.url==='/api/universal/set-property').map(r=>r.body.value),['first',final],'newest edit must still reach the owner after failure');
  assert.equal(property.value,final);
  assert.equal(results.at(-1).status,'fulfilled','queued caller must not receive the older write failure');
+});
+
+
+test('CARDPOLISH Properties opens the existing full-value Node dialog',async()=>{
+ const {api}=await adapter({signed_in:false});const state=api.getSnapshot();
+ state.graph.nodes=[{id:'node-1',title:'Actual node',inputs:[],outputs:[],params:{payload:{full:'retained structured value'}}}];
+ const screen=await restScreen('ContextMenu',api,state,{kind:'Node menu',nodeId:'node-1',close(){}});
+ try{
+  [...screen.win.document.querySelectorAll('button')].find(b=>b.textContent==='Properties').click();await screen.settle();
+  assert.deepEqual(JSON.parse(JSON.stringify(screen.navigation)),[{name:'Node',data:{id:'node-1'}}]);
+ }finally{screen.close();}
+ const detail=await restScreen('NodeDetails',{...api,getNodeParameters:()=>[{key:'payload',label:'Payload',type:'object'}]},state,{id:'node-1'});
+ try{assert.match(detail.win.document.body.textContent,/retained structured value/);assert.doesNotMatch(detail.win.document.body.textContent,/\[object Object\]/);}
+ finally{detail.close();}
 });

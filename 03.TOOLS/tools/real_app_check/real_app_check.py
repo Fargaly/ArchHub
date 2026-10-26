@@ -74,16 +74,35 @@ def free_port() -> int:
     return port
 
 
-def isolated_env(base: dict, root: Path, *, cdp_port: int, lock_port: int) -> dict:
+def isolated_env(base: dict, root: Path, *, cdp_port: int | None = None, lock_port: int | None = None) -> dict:
     """The app's whole environment: base minus agent/session variables, every profile path in root."""
     env = {key: value for key, value in base.items() if not key.upper().startswith(DROPPED_ENV)}
+    for key in ("ARCHHUB_PROFILE_GUARD_LOG", "ARCHHUB_PROFILE_GUARD_ROOTS",
+                "ARCHHUB_COURT_SOURCE", "ARCHHUB_OLD_GRAPH_SOURCE"):
+        if key in base:
+            env[key] = base[key]
+    env.setdefault("ARCHHUB_PROFILE_GUARD_LOG", str(root / "PROFILE-WRITES.jsonl"))
     for name in ("APPDATA", "LOCALAPPDATA", "USERPROFILE", "TEMP"):
         env[name] = str(root / name)
     env.update(HOME=env["USERPROFILE"], TMP=env["TEMP"], CLAUDE_CONFIG_DIR=str(root / "claude-config"),
-               ARCHHUB_TEST_STATE_DIR=str(root / "state"), ARCHHUB_TEST_LOCK_PORT=str(lock_port),
-               QTWEBENGINE_REMOTE_DEBUGGING="127.0.0.1:%d" % cdp_port, ARCHHUB_VERIFY_NO_GPU="1",
+               ARCHHUB_TEST_STATE_DIR=str(root / "state"), ARCHHUB_VERIFY_NO_GPU="1",
                PYTHONIOENCODING="utf-8", PYTHONDONTWRITEBYTECODE="1")
+    if cdp_port is not None:
+        env["QTWEBENGINE_REMOTE_DEBUGGING"] = "127.0.0.1:%d" % cdp_port
+    if lock_port is not None:
+        env["ARCHHUB_TEST_LOCK_PORT"] = str(lock_port)
+    for name in ("APPDATA", "LOCALAPPDATA", "USERPROFILE", "TEMP", "ARCHHUB_TEST_STATE_DIR"):
+        Path(env[name]).mkdir(parents=True, exist_ok=True)
     return env
+
+
+def _profile_guard():
+    # Absolute sibling import also works when loaded by path or from installed Python with -I.
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("release_profile_guard", HERE / "profile_guard.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def tree_digest(root: Path, entries=CODE_ENTRIES) -> str:
@@ -354,7 +373,7 @@ class JobRunner:
         own = RunJob()
         process = None
         try:
-            process = subprocess.Popen([str(part) for part in command], env=env, cwd=cwd,
+            process = subprocess.Popen(_profile_guard().command(command), env=env, cwd=cwd,
                                        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                        text=True, encoding="utf-8", errors="replace",
                                        creationflags=0x00000004 | 0x08000000)
@@ -562,6 +581,7 @@ def main(argv=None) -> int:
     if out.exists() and any(out.iterdir()):
         raise SystemExit("evidence directory must be new or empty: %s" % out)
     out.mkdir(parents=True, exist_ok=True)
+    _profile_guard().install(out / "PROFILE-WRITES.jsonl")
     installed = args.app.resolve()
     python = installed / ".venv" / "Scripts" / "python.exe"
     report = {"installed": str(installed), "signing_key_before": signing_key_state(),
@@ -608,7 +628,7 @@ def main(argv=None) -> int:
         report["state_written_in_run_folder"] = sorted(path.name for path in (run_dir / "state").iterdir())[:20]
         probe = subprocess.Popen(["node", str(HERE / "harness.mjs"), str(args.scenario.resolve())], cwd=str(HERE),
                                  text=True, encoding="utf-8", stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                 stderr=subprocess.STDOUT)
+                                 stderr=subprocess.STDOUT, env=env)
         job.adopt(int(probe._handle))
         scenario_input = json.loads(args.input.read_text(encoding="utf-8")) if args.input else None
         probe.stdin.write(json.dumps({"cdp": cdp, "out": str(out), "label": label, "input": scenario_input}) + "\n")

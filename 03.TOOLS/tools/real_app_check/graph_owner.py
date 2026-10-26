@@ -122,7 +122,8 @@ def provision_command(plan: dict, python: str, code_root: Path) -> list:
 def start_graph_owner(desktop, plan: dict, python: str, code_root: Path):
     """Start the owner on the run's hidden desktop, inside the run's Job (desktop.spawn adopts it).
     Only launch_graph_owner calls this, after its gates."""
-    command = " ".join('"%s"' % part if " " in part else part for part in [python, *plan["service_args"]])
+    from tools.real_app_check.profile_guard import command as guarded
+    command = subprocess.list2cmdline(guarded([python, *plan["service_args"]]))
     return desktop.spawn(command, env=plan["env"], cwd=str(code_root))
 
 

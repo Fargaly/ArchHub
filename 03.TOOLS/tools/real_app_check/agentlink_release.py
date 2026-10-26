@@ -487,10 +487,10 @@ def _executable(candidate, fallback):
 
 
 def isolated_environment(profile):
-    env = {key:value for key,value in os.environ.items() if not key.startswith(
-        ("ARCHHUB_", "CODEX_", "CLAUDE", "OPENCODE_", "SESSION_LINK_", "GEMINI_", "GOOSE_"))}
-    for name in ("HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "TEMP", "TMP",
-                 "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):
+    from tools.real_app_check.real_app_check import isolated_env
+    env = isolated_env({key:value for key,value in os.environ.items() if not key.startswith(
+        ("CODEX_", "CLAUDE", "OPENCODE_", "SESSION_LINK_", "GEMINI_", "GOOSE_"))}, Path(profile))
+    for name in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):
         env[name] = str(profile)
     env.update(PYTHONUTF8="1", PYTHONDONTWRITEBYTECODE="1",
                ARCHHUB_TEST_STATE_DIR=str(profile), ARCHHUB_NATIVE_MCP_LAUNCHER="1")
@@ -499,6 +499,7 @@ def isolated_environment(profile):
 
 def qualify_connector(profile, *, source=None, stall_wait=10):
     """Real stdio connector/SDK; fixture broker and owner, never a live host/profile."""
+    from tools.real_app_check.profile_guard import command
     import anyio
     import builtins
     from nodelang.clean_coordination_service import build_bound_service
@@ -603,7 +604,8 @@ native.main()
         host.mode = mode
         entered.clear()
         params = StdioServerParameters(command=sys.executable,
-            args=["-I", "-B", "-c", code, str(source)], env=env, cwd=str(profile))
+            args=command(
+                [sys.executable, "-I", "-B", "-c", code, str(source)])[1:], env=env, cwd=str(profile))
         started = time.monotonic()
         async with stdio_client(params) as (reader, writer):
             async with ClientSession(reader, writer) as session:
@@ -866,6 +868,7 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
             model="opencode/mimo-v2.6-flash-free", peer="goose", goose=None, inject_failure=None,
             stop_wait=10, connect_wait=1, startup_wait=30, poll_interval=0.1, initial_turn_timeout=300,
             final_turn_timeout=150):
+    from tools.real_app_check.profile_guard import command
     root = Path(__file__).resolve().parents[2]
     if root.name == "03.TOOLS":
         root = root.parent
@@ -899,18 +902,19 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
             GOOSE_MODEL=_GOOSE_MODEL, GOOSE_MODE="approve",
             OPENROUTER_PARAMETERS=json.dumps({"max_tokens":4096}))
         env["GOOSE_TELEMETRY_ENABLED"]=str(False).lower()
-    profile.mkdir(parents=True)
+    profile.mkdir(parents=True, exist_ok=True)
     fixture = profile / "workspace"
     fixture.mkdir()
     nonce = uuid4().hex
     mcp = {"type":"local", "enabled":True,
-           "command":[sys.executable, "-m", "nodelang.native_agent_mcp"],
+           "command":command(
+               [sys.executable, "-m", "nodelang.native_agent_mcp"]),
            "environment":{"PYTHONPATH":str(source), "PYTHONUTF8":"1"}}
     loader = profile / "governance.mjs"
     gate_receipts=profile/'native-receipts.jsonl'
     loader.write_text("import fs from 'node:fs';\nimport {createOpenCodeGovernance,createNativeGateRunner} from " +
         json.dumps((source / "nodelang/session_link/opencode-governance.mjs").as_uri()) + ";\n" +
-        "const native=createNativeGateRunner("+json.dumps(sys.executable)+","+json.dumps([str(gate)])+");\n"+
+        "const native=createNativeGateRunner("+json.dumps(sys.executable)+","+json.dumps(command([sys.executable, str(gate)])[1:])+");\n"+
         "const runner=async event=>{const result=await native(event);fs.appendFileSync("+json.dumps(str(gate_receipts))+
         ",JSON.stringify({call:event.tool_use_id,tool:event.tool_name,phase:event.hook_event_name,status:event.tool_response?.status,allow:result.allow})+'\\n');return result;};\n"+
         "runner.close=native.close;runner.idle=native.idle;runner.reconcile=native.reconcile;\n"+
@@ -939,7 +943,7 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
         with _environment(env):
             evidence["connector"] = qualify_connector(profile / "CONNECTOR", source=source)
             checks["connector"] = True
-            local = profile / "ArchHub"
+            local = Path(env["LOCALAPPDATA"]) / "ArchHub"
             # Disposable source fixture: the trusted native gate checks that
             # its Python owner is resident under this profile's ArchHub root.
             # Stage product source only, never installed/user configuration.
@@ -1067,7 +1071,8 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
             evidence.update(opencode_session=session, opencode_server_pid=server.pid,
                 request_message=note["id"], opencode_tools=tools)
             cc_mcp = json.dumps({"mcpServers":{"archhub_agent_coordination":{
-                "command":sys.executable, "args":["-m", "nodelang.native_agent_mcp"],
+                "command":sys.executable, "args":command(
+                    [sys.executable, "-m", "nodelang.native_agent_mcp"])[1:],
                 "env":{"PYTHONPATH":str(source), "PYTHONUTF8":"1",
                        "ARCHHUB_COORDINATION_ENDPOINT":endpoint}}}})
             # Two ordered prompts: the free Goose model read the room before it declared
@@ -1214,6 +1219,8 @@ def main(argv=None):
                         help="Run the mandatory stdio connector court without providers or application startup")
     args = parser.parse_args(argv)
     output = Path(args.output).resolve()
+    from tools.real_app_check.profile_guard import install
+    install(output.parent / "PROFILE-WRITES.jsonl")
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps({"status":"running"}) + "\n", encoding="utf-8")
     profile = Path(args.profile_parent).resolve() / ("agentlink-qualification-" + uuid4().hex)

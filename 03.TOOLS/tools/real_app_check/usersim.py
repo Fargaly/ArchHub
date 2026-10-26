@@ -130,8 +130,8 @@ def model_turn(request, out, usage, *, timeout_seconds=40.0):
         messages[-1]['content'] = [
             {'type':'text', 'text':messages[-1]['content']},
             {'type':'image_url', 'image_url':{'url':'data:image/png;base64,' + base64.b64encode(path.read_bytes()).decode()}}]
-    model_env = dict(os.environ, ARCHHUB_TEST_STATE_DIR=str(out/'FIXTURE'/'state'),
-                     LOCALAPPDATA=str(out/'FIXTURE'/'LOCALAPPDATA'))
+    from real_app_check import isolated_env
+    model_env = isolated_env(dict(os.environ), out/'FIXTURE')
     result = route_chat('openrouter/free', messages, free_only=True, timeout=timeout_seconds,
                         max_tokens=2400, reasoning_effort='low', response_byte_limit=128*1024, environ=model_env,
                         tools=[{'type':'function','function':{'name':'record_observation',
@@ -295,10 +295,10 @@ def write_report(out, report):
 
 
 def bounded_model_turn(job, python, model_app, fixture, out, request, usage, deadline):
-    from real_app_check import JobRunner
+    from real_app_check import JobRunner, isolated_env
     request_file = fixture/'MODEL-REQUEST.json'
     request_file.write_text(json.dumps(request),encoding='utf-8')
-    env = dict(os.environ, TEMP=str(fixture/'TEMP'),TMP=str(fixture/'TEMP'),PYTHONDONTWRITEBYTECODE='1')
+    env = isolated_env(dict(os.environ), fixture)
     done = JobRunner(job)([str(python),'-B',str(HERE/'usersim.py'),'--model',str(request_file),
                            '--app',str(model_app),'--out',str(out)],env=env,cwd=fixture,
                           timeout=max(1,min(45,deadline-time.monotonic())))
@@ -352,6 +352,7 @@ def run(args, *, budget_seconds:int=1800, boot_seconds:float=120.0,
         request_timeout_seconds:float=2.0, boot_poll_seconds:float=1.0, seed_timeout_seconds:float=60.0):
     sys.path.insert(0,str(HERE))
     from real_app_check import RunJob, HiddenDesktop, JobRunner, isolated_env, free_port, tree_digest, signing_key_state, signing_key_verdict
+    from profile_guard import command
     app, out = args.app.resolve(), args.out.resolve()
     runtime = args.runtime_app.resolve() if args.runtime_app else app
     if out.exists() and any(out.iterdir()):
@@ -402,7 +403,7 @@ def run(args, *, budget_seconds:int=1800, boot_seconds:float=120.0,
         desktop = HiddenDesktop(job)
         report['desktop'] = desktop.name
         python = runtime/'.venv/Scripts/python.exe'
-        desktop.spawn(subprocess.list2cmdline([str(python),'-E','-s','-B',str(app/'nodelang/launcher.py')]),env=env,cwd=str(fixture))
+        desktop.spawn(subprocess.list2cmdline(command([str(python),'-E','-s','-B',str(app/'nodelang/launcher.py')])),env=env,cwd=str(fixture))
         (out/'run-state.json').write_text(json.dumps({'cdp':cdp,'desktop':desktop.name,'build':report['build']}),encoding='utf-8')
         app_pids = set(job.pids())
         booting = threading.Event()
@@ -438,8 +439,8 @@ def run(args, *, budget_seconds:int=1800, boot_seconds:float=120.0,
         else:
             report['scale'] = json.loads(seeded.stdout.strip().splitlines()[-1])
         for index in range(11):
-            desktop.spawn(subprocess.list2cmdline([str(python),'-B',str(HERE/'usersim.py'),'--poll',str(index),
-                '--fixture',str(fixture),'--app',str(app)]),env=env,cwd=str(app))
+            desktop.spawn(subprocess.list2cmdline(command([str(python),'-B',str(HERE/'usersim.py'),'--poll',str(index),
+                '--fixture',str(fixture),'--app',str(app)])),env=env,cwd=str(app))
         report['pollers_started'] = 11
         report['scope_gaps'] += ['No clean-PC installer or tray update is performed on the founder Windows account.',
                                 'No Revit model is copied or mutated; host parameter completion requires disposable host evidence.',
@@ -524,6 +525,16 @@ def main(argv=None):
     parser.add_argument('--question')
     parser.add_argument('--model',type=Path)
     args = parser.parse_args(argv)
+    sys.path.insert(0, str(HERE))
+    from profile_guard import install
+    if args.out or args.seed or args.fixture:
+        install((args.out or args.seed or args.fixture) / 'PROFILE-WRITES.jsonl')
+    if args.model or args.seed or args.poll is not None:
+        from real_app_check import isolated_env
+        fixture = args.seed or args.fixture or args.out / 'FIXTURE'
+        isolated = isolated_env(dict(os.environ), fixture)
+        os.environ.clear()
+        os.environ.update(isolated)
     kernel = ctypes.windll.kernel32
     kernel.GetCurrentProcess.restype = ctypes.c_void_p
     kernel.SetPriorityClass.argtypes = (ctypes.c_void_p,ctypes.c_ulong)

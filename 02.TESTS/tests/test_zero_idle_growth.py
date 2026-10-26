@@ -78,7 +78,9 @@ def _old_source(target: Path) -> Path:
 
 
 def _run(phase: str, source: Path, state: Path, *extra: str) -> str:
-    environment = dict(os.environ)
+    from tools.real_app_check.real_app_check import isolated_env
+    from tools.real_app_check.profile_guard import command
+    environment = isolated_env(dict(os.environ), state.parent / "PROFILE")
     environment.update({
         "PYTHONIOENCODING": "utf-8",
         "PYTHONDONTWRITEBYTECODE": "1",
@@ -89,7 +91,7 @@ def _run(phase: str, source: Path, state: Path, *extra: str) -> str:
     })
     environment.pop("PYTHONPATH", None)
     completed = subprocess.run(
-        [sys.executable, str(DRIVER), phase, str(source), str(state), *extra],
+        command([sys.executable, str(DRIVER), phase, str(source), str(state), *extra]),
         capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=PHASE_TIMEOUT_SECONDS, env=environment, cwd=str(state.parent),
     )

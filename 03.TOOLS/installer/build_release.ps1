@@ -77,6 +77,7 @@ $selectedInputs = @(
     'requirements.txt', 'installer', 'packaging/windows/Test-SourcePortability.ps1',
     'packaging/windows/publish_release.ps1', 'packaging/windows/check_update_offer.py',
     'package.json', 'packaging/compile_studio.cjs',
+    'tools/real_app_check/real_app_check.py', 'tools/real_app_check/profile_guard.py',
     'app/secrets_store.py', 'app/credential_lock.py', 'app/__init__.py', 'bridges', 'archhub.ico',
     'packaging/windows/licenses/Node-v24.13.0-LICENSE.txt',
     'packaging/windows/licenses/ArchHub-components-MIT.txt',
@@ -187,6 +188,7 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
             'nodelang/launcher.py', 'nodelang/studio/style.css', 'colleague_setup.py', 'requirements.txt',
             'NOTICE', 'packaging/windows/goose-pin.json', 'packaging/windows/stage_goose.py',
             'package.json', 'packaging/compile_studio.cjs',
+    'tools/real_app_check/real_app_check.py', 'tools/real_app_check/profile_guard.py',
             'installer/ArchHub.iss', 'installer/ArchHub.bat', 'installer/ArchHub.vbs', 'installer/README.md', 'nodelang/README.md', 'app/README.md',
             'installer/legacy_sweep.iss', 'installer/legacy_doc_files.iss', 'installer/legacy_v1_files.iss', 'installer/host_file_staging.iss',
             'installer/build_release.ps1', 'packaging/windows/Test-SourcePortability.ps1',
@@ -594,6 +596,7 @@ try {
     $userSimEvidence = Join-Path $selectedRoot (Get-RepositoryPath ("evidence/USERSIM-RELEASE-" + $BuildId.ToUpperInvariant()))
     # The runner retains usersim-baseline.json beside these per-build reports.
     & $compilerPython -m tools.real_app_check.usersim --out $userSimEvidence --expected-build $BuildId
+    if ($LASTEXITCODE -eq 3) { throw 'PROFILE-WRITE-GUARD refused release: protected profile write attempted.' }
     if ($LASTEXITCODE -eq 1) { throw 'USERSIM refused release: observed app hang/exit or regression from an installed DONE job; inspect samples and screenshots.' }
     if ($LASTEXITCODE -ne 0) { Write-Warning 'USERSIM actor/runner UNREACHED; no app regression proved. See the release report.' }
 } finally { Pop-Location; $env:PYTHONPATH = $priorPythonPath }
@@ -721,7 +724,8 @@ $env:ARCHHUB_COURT_SOURCE = $selectedRoot
 $candidateClock.Stop()
 try {
     $LASTEXITCODE = 0
-    & $PythonPath -m pytest -q -p no:cacheprovider $zeroIdleCourt
+    $profileGuard = Join-Path $snapshot.SelectedCheckout (Get-RepositoryPath 'tools/real_app_check/profile_guard.py' $snapshot.SelectedCheckout)
+    & $PythonPath $profileGuard --profile (Join-Path $output 'CHECK-PROFILE') -m pytest -q -p no:cacheprovider $zeroIdleCourt
     if ($LASTEXITCODE -ne 0) { throw 'Release refused: the zero-idle-growth court is red.' }
 } finally {
     $env:ARCHHUB_COURT_SOURCE = $priorCourtSource

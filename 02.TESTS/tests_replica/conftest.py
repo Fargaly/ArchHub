@@ -24,54 +24,14 @@ import threading
 import tempfile
 
 
-def _profile_path(path):
-    target = os.path.normcase(os.path.realpath(os.fsdecode(path)))
-    if target.startswith("\\\\?\\unc\\"):
-        return "\\\\" + target[8:]
-    return target.removeprefix("\\\\?\\")
-
-
-def _real_profile_paths():
-    if os.name == "nt":
-        import winreg
-        # Logon values are independent of the redirected process environment.
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Volatile Environment") as key:
-            home = Path(winreg.QueryValueEx(key, "USERPROFILE")[0])
-            local = Path(winreg.QueryValueEx(key, "LOCALAPPDATA")[0])
-    else:
-        import pwd
-        home = Path(pwd.getpwuid(os.getuid()).pw_dir)
-        local = home / ".local" / "share"
-    return tuple(_profile_path(path) for path in (
-        home / ".archhub", local / "ArchHub" / "governance"))
-
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "03.TOOLS"))
+from tools.real_app_check.profile_guard import _profile_path, _real_profile_paths, _deny_profile_write as _guard_profile_write
+from functools import partial
 
 _REAL_PROFILE_PATHS = _real_profile_paths()
 _PROFILE_WRITE_ATTEMPTS = []
-
-
-def _deny_profile_write(event, args, protected=_REAL_PROFILE_PATHS, attempts=_PROFILE_WRITE_ATTEMPTS):
-    if event == "open":
-        path, mode, flags = args
-        if not (set(mode or "") & set("wax+") or (flags or 0) & (
-                os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND)):
-            return
-        paths = (path,)
-    elif event in ("os.rename", "os.link", "os.symlink"):
-        paths = args[:2]
-    elif event in ("os.remove", "os.rmdir", "os.mkdir", "os.chmod", "os.chown", "os.utime",
-                   "os.truncate", "sqlite3.connect"):
-        paths = args[:1]
-    else:
-        return
-    for path in paths:
-        if not isinstance(path, (str, bytes, os.PathLike)):
-            continue
-        target = _profile_path(path)
-        if any(target == root or target.startswith(root + os.sep) for root in protected):
-            attempts.append((event, target))
-            raise AssertionError("court refused a write to the real profile: " + target)
-
+_deny_profile_write = partial(_guard_profile_write, protected=_REAL_PROFILE_PATHS,
+                              attempts=_PROFILE_WRITE_ATTEMPTS)
 
 # Install before application imports/collection; caught refusals still fail session teardown.
 sys.addaudithook(_deny_profile_write)

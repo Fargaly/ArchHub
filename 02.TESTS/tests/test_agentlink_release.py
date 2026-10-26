@@ -827,6 +827,7 @@ def test_qualification_server_and_native_mailbox_select_one_profile(tmp_path, mo
         if peer == "goose":
             assert json.loads(os.environ["OPENROUTER_PARAMETERS"]) == {"max_tokens":4096}
             assert os.environ["GOOSE_MODEL"] == gate._GOOSE_MODEL
+        assert Path(options["machine_descriptor_path"]).parent == Path(os.environ["LOCALAPPDATA"]) / "ArchHub"
         selected = options["universal_state_path"]
         assert selected == application_database_path(profile)
         assert selected == workshop_mailbox.profile_database()

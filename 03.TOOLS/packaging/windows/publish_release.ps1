@@ -22,9 +22,11 @@ if (-not $PythonPath) {
     $PythonPath = (Get-Command python.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 }
 $checker = Join-Path $PSScriptRoot 'check_update_offer.py'
+$profileGuard = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'tools/real_app_check/profile_guard.py'
+$checkProfile = Join-Path $release 'CHECK-PROFILE'
 $arguments = @($checker, $release, '--live', '--repository', $Repository)
 if ($ExpectedSourceRevision) { $arguments += @('--expected-revision', $ExpectedSourceRevision) }
-$report = (& $PythonPath @arguments) -join "`n"
+$report = (& $PythonPath $profileGuard --profile $checkProfile @arguments) -join "`n"
 $checkExit = $LASTEXITCODE
 Write-Output $report
 if ($checkExit -ne 0) { throw 'Release refused before upload; nothing was published.' }
@@ -50,7 +52,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Draft release upload failed; nothing was promo
 if ($LASTEXITCODE -ne 0) { throw 'Release promotion did not complete; inspect its current state before retrying.' }
 # Read back through the installed updater's own parser, from the live API.
 $probe = "import json,sys; sys.path.insert(0, sys.argv[1]); from nodelang import quiet_update as q; print(json.dumps(q.read_latest_release()))"
-$live = (& $PythonPath -c $probe (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))) -join ''
+$live = (& $PythonPath $profileGuard --profile $checkProfile -c $probe (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))) -join ''
+if ($LASTEXITCODE -ne 0) { throw 'Published release readback failed; inspect the guard receipt.' }
 Write-Output "LIVE latest as installed users read it: $live"
 if (($live | ConvertFrom-Json).build_id -cne $offer.build_id) {
     throw "Published $tag but releases/latest does not yet read as it; re-check before announcing."

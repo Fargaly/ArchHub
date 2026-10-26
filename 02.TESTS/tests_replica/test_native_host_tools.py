@@ -33,6 +33,17 @@ ARCHHUB_HOSTS_TOOLS = {
     "hosts_state", "office_read", "outlook_inbox", "notion_search", "dropbox_list",
 }
 REVIT = {"port": 48884, "pid": 1, "revit_version": "2025", "service_version": "1", "document": "A.rvt"}
+
+
+def test_office_name_reaches_existing_broker_engine(monkeypatch):
+    from nodelang import native_host_tools as hosts
+    received = []
+    def read(params, inputs):
+        received.append((params, inputs))
+        return {'ok':True}, 'Office fixture'
+    monkeypatch.setitem(hosts.ENGINES, 'office.read', read)
+    assert hosts._engine('office.read', operation='read', name='fixture')['ok']
+    assert received == [({'operation':'read', 'name':'fixture'}, {})]
 ACAD = {"port": 48885, "pid": 2, "revit_version": None, "service_version": "1",
         "document": "B.dwg", "service": "acad-mcp", "acad_version": "25"}
 MAX = {"port": 48886, "pid": 3, "revit_version": None, "service_version": "0.2.0",

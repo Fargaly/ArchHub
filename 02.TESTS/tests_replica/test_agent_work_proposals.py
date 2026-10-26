@@ -357,7 +357,7 @@ def test_a_work_proposal_projects_as_an_unowned_planned_workshop_item(world):
     assert [item for item in projection if item["message_id"] == proposal["message_id"]] == []
 
 
-def test_importing_a_plan_fixture_is_idempotent_on_item_and_task_no(world):
+def test_importing_a_plan_fixture_is_idempotent_on_item_and_task_no(world, monkeypatch):
     server, descriptor, provider, browser = world
     proposer, _session = _tools(descriptor, provider, "court-plan-import")
     rows = [
@@ -369,12 +369,22 @@ def test_importing_a_plan_fixture_is_idempotent_on_item_and_task_no(world):
          "depends_on": ["OPEN-1.2"], "owner": None},
     ]
 
+    from nodelang.application_machine_transport import UniversalRuntimeClient
+    original = UniversalRuntimeClient.request
+    budgets = []
+    def slow_row(self, method, path, *args, **kwargs):
+        if method == 'POST' and path == '/api/universal/workshop':
+            budgets.append(kwargs.get('response_timeout_seconds'))
+            time.sleep(.3)
+        return original(self, method, path, *args, **kwargs)
+    monkeypatch.setattr(UniversalRuntimeClient, 'request', slow_row)
     imported = proposer["native.work_plan_import"](rows=rows, container=CONTAINER, write_grants=GRANTS)
     repeated = proposer["native.work_plan_import"](rows=rows, container=CONTAINER, write_grants=GRANTS)
     assert imported["created"] == 3
     assert repeated["created"] == 0
     assert imported["existing"] == 0
     assert repeated["existing"] == 3
+    assert budgets == [.75] * 6
     projection = work_proposals.project_planned_items(
         _workshop_entries(server, browser), bound=_proposal_works(server), declined={})
     assert [(item["plan_item"], item["task_no"], item["title"], item["state"]) for item in projection] == [

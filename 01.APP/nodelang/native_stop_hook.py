@@ -1335,6 +1335,20 @@ def no_idle_decision(payload, vendor, *, now=None, directory=None):
     return {'decision': 'block', 'reason': verdict['reason'][:4000] + suffix}
 
 
+def _declaration_notice(payload, vendor, *, directory=None):
+    """Use the existing local Stop guards; an advisory is shown once per session."""
+    if type(payload) is not dict or not payload.get('session_id'):
+        return ''
+    fingerprint = _fingerprint(canonical_runtime(vendor), payload['session_id'])
+    path = _verdict_path(fingerprint, directory).with_suffix('.declaration.json')
+    if _load_guard(path).get('shown'):
+        return ''
+    from nodelang.agent_declarations import reminder
+    notice = reminder(mailbox=lambda: {"declarations": []})
+    _save_guard(path, {'shown': True})
+    return notice
+
+
 def main():
     import argparse
     parser=argparse.ArgumentParser(description=__doc__)
@@ -1368,8 +1382,10 @@ def main():
             result=_merge_followup(result,followup_decision(payload,registry_directory=Path.home()/'.claude'/'sessions'))
         except Exception:
             pass
-    from nodelang.agent_declarations import reminder
-    notice = reminder()
+    try:
+        notice = _declaration_notice(payload, args.vendor)
+    except (OSError, ValueError, RuntimeError):
+        notice = ''
     if notice:
         result = {**result, "systemMessage": " ".join(filter(None, (result.get("systemMessage"), notice)))}
     sys.stdout.write(json.dumps(result))

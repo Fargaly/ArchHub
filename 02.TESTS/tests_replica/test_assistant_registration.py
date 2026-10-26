@@ -41,6 +41,30 @@ def _codex(machine):
     return next(c for c in registration.readiness(machine.env)["clients"] if c["client"] == "codex")
 
 
+def test_retired_isolated_loader_with_session_link_hints_can_be_migrated(machine):
+    entry = registration.codex_entry(machine.install, machine.state)
+    entry["args"][3] = entry["args"][3].replace("native_agent_mcp", "clean_coordination_mcp")
+    entry["env"].update(SESSION_LINK_STATE_DIR=str(machine.state / "session-link"),
+                        SESSION_LINK_NODE="codex")
+    config = machine.profile / ".codex" / "config.toml"
+    config.parent.mkdir()
+    config.write_text(registration._codex_block(entry), encoding="utf-8")
+    assert _codex(machine)["state"] == "migration_available"
+    result = registration.register("codex", consent=True, environment=machine.env)
+    assert result["state"] == "registered"
+    saved = tomllib.loads(config.read_text(encoding="utf-8"))["mcp_servers"][SERVER_NAME]
+    assert saved == registration.codex_entry(machine.install, machine.state)
+
+
+@pytest.mark.parametrize("hints", [{"SESSION_LINK_NODE": ""}, {"SESSION_LINK_STATE_DIR": "relative"},
+    {"SESSION_LINK_NODE": 3}, {"SESSION_LINK_NODE": "codex", "UNMANAGED": "kept"}])
+def test_retired_loader_does_not_absorb_unmanaged_or_invalid_hints(machine, hints):
+    entry = registration.codex_entry(machine.install, machine.state)
+    entry["args"][3] = entry["args"][3].replace("native_agent_mcp", "clean_coordination_mcp")
+    entry["env"].update(hints)
+    assert not registration._dev_era_codex_entry(entry)
+
+
 def test_all_six_provider_specs_share_the_native_owner(machine):
     specs={name:registration.mcp_server_spec(name,environment=machine.env)
            for name in ('claude-code','codex','antigravity','opencode','goose','baboom')}

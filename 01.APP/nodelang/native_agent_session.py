@@ -19,7 +19,8 @@ import threading
 import time
 
 from .application_machine_transport import (
-    MachineTransportError, RuntimeResolutionError, UniversalRuntimeClient, resolve_active_runtime,
+    MachineNoResponse, MachineNotSent, MachineRefusedWithoutEffect, MachineTransportError, RuntimeResolutionError,
+    UniversalRuntimeClient, resolve_active_runtime,
 )
 from .cell_secret_keys import WindowsDpapiSigningKeyProvider
 
@@ -174,12 +175,11 @@ def resolve_native_agent_identity(environment=None) -> NativeAgentIdentity:
 
 
 class NativeAgentSession:
-    """Own one client; uncertain enrollment is never repeated on the same owner.
+    """Own one client; initial enrollment retries retain its exact receipt key.
 
     Explicit constructor dependencies support isolated signed-descriptor tests.
     Production defaults require existing installed descriptor and DPAPI custody.
-    bind_agent_session retains the transport's finite response wait (currently
-    240 seconds); AF_PIPE connection setup has no strict wall-clock deadline.
+    Conditional continuation retains explicit outcome reconciliation.
     """
 
     def __init__(self, *, environment=None, descriptor_path=None, key_provider=None,
@@ -222,6 +222,7 @@ class NativeAgentSession:
         self._retired_release = None
         self._inbox_reader = None
         self._lease_keeper = None
+        self._retry_initial_enrollment = False
 
     def register_hook_rebind_guard(self, guard):
         """Private composition registers retained OS custody, never an MCP argument."""
@@ -994,7 +995,13 @@ class NativeAgentSession:
                 if expected_owner is not None and self._owner_fingerprint(self._descriptor) != expected_owner:
                     raise MachineTransportError("Native connection owner does not match expected owner")
                 return self.require_client()
-            if self._state != "unbound":
+            retry = (self._state == "uncertain" and self._retry_initial_enrollment
+                and not self._active_calls and self._expected_agent_session is None
+                and self._rebind_candidate is None and self._retired_release is None
+                and self._client is not None and not self._client.agent_session_root
+                and not self._client._agent_session_token
+                and self._read_owner() == self._descriptor)
+            if self._state != "unbound" and not retry:
                 raise MachineTransportError("native agent attachment is uncertain; no automatic enrollment retry")
             # Reserve the attempt before any effect-capable dependency is called.
             self._state = "attaching"
@@ -1004,13 +1011,14 @@ class NativeAgentSession:
                 self._descriptor = self._read_owner()
                 if expected_owner is not None and self._owner_fingerprint(self._descriptor) != expected_owner:
                     raise MachineTransportError("Native connection owner changed before enrollment")
-                self._client = self._factory(self._descriptor_path, self._key_provider)
+                if not retry:
+                    self._client = self._factory(self._descriptor_path, self._key_provider)
                 client = self._client
                 if not isinstance(client, UniversalRuntimeClient):
                     raise MachineTransportError("native attachment requires its own runtime client")
                 with client._request_lock:
                     if (client.agent_session_root or client._agent_session_token
-                            or client._pinned_runtime_descriptor is not None
+                            or client._pinned_runtime_descriptor != (self._descriptor if retry else None)
                             or Path(client.descriptor_path).resolve() != self._descriptor_path
                             or client.key_provider is not self._key_provider):
                         raise MachineTransportError("native attachment cannot borrow an existing client binding")
@@ -1039,8 +1047,13 @@ class NativeAgentSession:
                     self._continued = result.get("continued") is True
                     self._generation += 1
                     self._state = "bound"
+                    self._retry_initial_enrollment = False
                     return client
-            except BaseException:
+            except BaseException as exc:
+                self._retry_initial_enrollment = (isinstance(exc, (MachineNoResponse, MachineNotSent, MachineRefusedWithoutEffect))
+                    and self._expected_agent_session is None and self._client is not None
+                    and self._client._initial_enrollment is not None
+                    and not self._client.agent_session_root)
                 # No client means no enrollment was sent; retain all other uncertainty.
                 self._state = "unbound" if self._client is None else "uncertain"
                 raise

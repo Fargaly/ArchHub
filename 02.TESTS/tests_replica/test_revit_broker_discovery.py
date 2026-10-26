@@ -9,6 +9,12 @@ from nodelang import clean_revit_adapter as adapter
 _discover = adapter.live_sessions
 
 
+def test_broker_down_names_one_recovery_action_without_trying_a_command(monkeypatch):
+    monkeypatch.setattr(adapter, "broker_sessions", lambda service: [])
+    with pytest.raises(adapter.RevitUnreachable, match="Open Revit with the ArchHub add-in loaded"):
+        adapter.broker_call("revit", "/info", port=48884)
+
+
 def test_multiple_models_require_explicit_session_and_never_select_newest():
     first = {"pid": 101, "port": 48884, "revit_version": "2026", "document": "First"}
     second = {"pid": 102, "port": 48885, "revit_version": "2026", "document": "Second"}

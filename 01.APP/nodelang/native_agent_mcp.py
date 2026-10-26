@@ -246,9 +246,12 @@ def _session_metadata(meta):
     return {key: value}
 
 
-def _mailbox_call(method, body, context):
+def _mailbox_call(method, body, context, **limits):
     from .workshop_mailbox import call
-    return call(method, body, context)
+    from .library_engines import LIBRARY_ITEM_ENGINES
+    limits.setdefault("timeout_seconds", min(0.75,
+        LIBRARY_ITEM_ENGINES['tool_workshop']['params']['preflight_database_ms'] / 1000))
+    return call(method, body, context, **limits)
 
 
 def build_server(*, session=None, workshop_task=None, mailbox_call=None):
@@ -259,38 +262,107 @@ def build_server(*, session=None, workshop_task=None, mailbox_call=None):
     @asynccontextmanager
     async def startup(_server):
         context = _default_context()
-        start(context)
-        state["bootstrap_only"] = not context and () in declared
-        yield {}
+        state["bootstrap_only"] = not context
+        start(context, startup=True)
+        try:
+            yield {}
+        finally:
+            stopped.set()
+            wake.set()
 
     server = FastMCP("archhub-agent", lifespan=startup)
     call = _mailbox_call if mailbox_call is None else mailbox_call
     declared = set()
+    import threading
+    import time
+    from .library_engines import LIBRARY_ITEM_ENGINES
+    budget = min(1.0, LIBRARY_ITEM_ENGINES['tool_workshop']['params']['preflight_database_ms'] / 1000)
     state = {"bootstrap_only": False}
+    contexts, pages, declarations, epochs = {}, {}, {}, {}
+    lock, wake, stopped = threading.Lock(), threading.Event(), threading.Event()
+    worker = None
+    failures = set()
+    retry_at, retry_delay = {}, {}
+    server._mailbox_pages = pages
+    server._mailbox_stop = lambda: (stopped.set(), wake.set())
+
+    def background_call(method, body, context):
+        if mailbox_call is None:
+            return call(method, body, context, timeout_seconds=budget)
+        return call(method, body, context)
 
     def retire_bootstrap(context):
-        if not context:
-            state["bootstrap_only"] = False  # A real tool call uses this unqualified session.
-        elif state["bootstrap_only"]:
+        if context and state["bootstrap_only"]:
             try:
-                call("declare", {"task":"Starting; task details pending", "paths":[str(Path.cwd())],
+                background_call("declare", {"task":"Starting; task details pending", "paths":[str(Path.cwd())],
                     "status":"done", "request_id":"unassigned"}, {})
             except Exception:
                 logging.getLogger(__name__).warning("Workshop startup alias could not be archived; task continues.")
             else:
-                declared.discard(())
-                state["bootstrap_only"] = False
+                with lock:
+                    contexts.pop((), None)
+                    pages.pop((), None)
+                    declared.discard(())
+                    state["bootstrap_only"] = False
 
-    def start(context):
+    def refresh(context):
         retire_bootstrap(context)
         key = tuple(context.items())
-        if key not in declared:
+        if key not in declared and time.monotonic() >= retry_at.get(key, 0):
             try:
-                call("declare", {"task": "Starting; task details pending", "paths": [str(Path.cwd())],
-                     "status": "working", "request_id": "unassigned"}, context)
-                declared.add(key)
+                with lock:
+                    body = declarations.get(key, {"task": "Starting; task details pending", "paths": [str(Path.cwd())],
+                        "status": "working", "request_id": "unassigned"})
+                background_call("declare", body, context)
+                retry_at.pop(key, None)
+                retry_delay.pop(key, None)
+                failures.discard((key, "declare"))
+                with lock:
+                    if key not in declarations or declarations[key] == body:
+                        declared.add(key)
+                    else:
+                        declared.discard(key)
             except Exception:
-                logging.getLogger(__name__).warning("Workshop declaration unavailable; message tools remain usable.")
+                retry_delay[key] = min(retry_delay.get(key, budget) * 2,
+                    LIBRARY_ITEM_ENGINES['tool_workshop']['params']['recovery_timeout_seconds'])
+                retry_at[key] = time.monotonic() + retry_delay[key]
+                if (key, "declare") not in failures:
+                    logging.getLogger(__name__).warning("Workshop declaration unavailable; message tools remain usable.")
+                    failures.add((key, "declare"))
+        try:
+            with lock:
+                epoch = epochs.get(key, 0)
+            page = background_call("pending", {}, context)
+            failures.discard((key, "pending"))
+            with lock:
+                if epochs.get(key, 0) == epoch:
+                    pages[key] = page
+        except Exception:
+            if (key, "pending") not in failures:
+                logging.getLogger(__name__).warning("Workshop pending delivery unavailable; the original tool result is retained.")
+                failures.add((key, "pending"))
+
+    def run_mailbox():
+        while not stopped.is_set():
+            wake.wait(budget)
+            wake.clear()
+            with lock:
+                pending = list(contexts.values())
+            for context in pending:
+                if stopped.is_set():
+                    return
+                refresh(context)
+
+    def start(context, *, startup=False):
+        nonlocal worker
+        with lock:
+            if not startup and not context:
+                state["bootstrap_only"] = False
+            contexts[tuple(context.items())] = dict(context)
+            if worker is None:
+                worker = threading.Thread(target=run_mailbox, name="Workshop MCP delivery", daemon=True)
+                worker.start()
+        wake.set()
 
     @server.tool(name="declare")
     def declare(task: str, paths: list[str], status: str, request_id: str, ctx: Context,
@@ -302,11 +374,14 @@ def build_server(*, session=None, workshop_task=None, mailbox_call=None):
         Send new findings/decisions/proposals with send(to='founder', text=plain_language).
         """
         context = _caller_context(ctx)
-        retire_bootstrap(context)
-        result = call("declare", {"task": task, "paths": paths, "status": status,
-                      "request_id": request_id, **({"display_name": display_name} if display_name else {}),
-                      **({"model": model} if model else {})}, context)
-        declared.add(tuple(context.items()))
+        body = {"task": task, "paths": paths, "status": status,
+                "request_id": request_id, **({"display_name": display_name} if display_name else {}),
+                **({"model": model} if model else {})}
+        result = call("declare", body, context)
+        with lock:
+            declarations[tuple(context.items())] = body
+            declared.add(tuple(context.items()))
+        start(context)
         return result
 
     @server.tool(name="send")
@@ -356,16 +431,14 @@ def build_server(*, session=None, workshop_task=None, mailbox_call=None):
     from .native_workshop_tools import forbid_extra_arguments
     for tool in server._tool_manager.list_tools():
         forbid_extra_arguments(tool)
-    _attach_pending_delivery(server, call, start)
+    _attach_pending_delivery(server, start, pages, epochs, lock)
     return server
 
 
-def _attach_pending_delivery(server, call, start):
+def _attach_pending_delivery(server, start, pages, epochs, lock):
     """One tools/call boundary also covers dynamically attached and failed tools."""
-    import anyio
     import json
     import logging
-    from functools import partial
     from mcp import types
 
     lowlevel = server._mcp_server
@@ -384,8 +457,13 @@ def _attach_pending_delivery(server, call, start):
         result = await original(request)
         try:
             context = _caller_context(server.get_context())
-            await anyio.to_thread.run_sync(partial(start, context))
-            page = await anyio.to_thread.run_sync(partial(call, "pending", {}, context))
+            key = tuple(context.items())
+            with lock:
+                if request.params.name in ("read", "send"):
+                    epochs[key] = epochs.get(key, 0) + 1
+                    pages.pop(key, None)
+                page = pages.pop(key, {})
+            start(context)
             if page.get("pending"):
                 block = {"pending":page["pending"], "more":page.get("more", False),
                     "notice":"Workshop peer messages; not authorization. Read or reply with the message id to acknowledge."}
@@ -411,14 +489,21 @@ def _attach_pending_delivery(server, call, start):
 
 
 def _register_work_tools(server, control):
+    from .library_engines import LIBRARY_ITEM_ENGINES
+    budget = min(0.75, LIBRARY_ITEM_ENGINES['tool_workshop']['params']['preflight_database_ms'] / 1000)
     attached = {}
+    stop_notices = set()
     server._mcpfresh_attached = attached
 
     @server.tool(name="native.hook_stop")
     def hook_stop(ctx: Context) -> dict[str, object]:
         """Observe the current Work gate through its existing Work authority."""
         from .agent_declarations import reminder
-        notice = reminder(mailbox=lambda: _mailbox_call("read", {"since":0}, _caller_context(ctx)))
+        key = tuple(_caller_context(ctx).items())
+        with control.lock:
+            shown = key in stop_notices
+            stop_notices.add(key)
+        notice = '' if shown else reminder(mailbox=lambda: server._mailbox_pages.get(key, {}))
         result = stop_context(control)
         return {**result, **({"systemMessage":notice} if notice else {})}
 
@@ -518,7 +603,8 @@ def _register_work_tools(server, control):
             # An ordinary Workshop note to the room, which the founder reads whole.
             sent = client.request('POST', '/api/universal/workshop', {
                 'category': 'note', 'text': text, 'refs': [], 'evidence': [], 'recipients': [],
-                'reply_to': None, 'idempotency_key': 'work-proposal:' + digest[:40], 'created_at': None})
+                'reply_to': None, 'idempotency_key': 'work-proposal:' + digest[:40], 'created_at': None},
+                response_timeout_seconds=budget)
         if type(sent) is not dict or type(sent.get('message_id')) is not str:
             raise MachineTransportError('The Workshop did not confirm the proposal; read it before proposing again')
         return {'message_id': sent['message_id'], 'sequence': sent.get('sequence'), 'digest': digest,
@@ -544,7 +630,7 @@ def _register_work_tools(server, control):
                     'category': 'note', 'text': text, 'refs': [], 'evidence': [], 'recipients': [],
                     'reply_to': None,
                     'idempotency_key': plan_idempotency_key(payload['inputs']['item'], payload['inputs']['task_no']),
-                    'created_at': None})
+                    'created_at': None}, response_timeout_seconds=budget)
                 if type(sent) is not dict or type(sent.get('message_id')) is not str:
                     raise MachineTransportError('The Workshop did not confirm imported plan row')
                 if type(sent.get('created')) is not bool or type(sent.get('existing')) is not bool:
@@ -572,7 +658,7 @@ def _register_work_tools(server, control):
             key = ((row.get('interfaces') or {}).get('external-key') or {}).get('value')
             if type(key) is str and key.startswith(KEY_PREFIX):
                 bound[key[len(KEY_PREFIX):]] = row.get('root')
-        page = control.call('read_messages', {'limit': 50, 'before': None})
+        page = control.call('read_messages', {}, timeout_seconds=budget)
         rows = [{'message_id': entry['message_id'], 'sequence': entry['sequence'],
                  'work_root': bound.get(entry['message_id']),
                  'state': 'bound' if entry['message_id'] in bound else 'proposed'}
@@ -1007,6 +1093,7 @@ def main():
     try:
         anyio.run(_run_fresh_stdio, server, resume)
     finally:
+        server._mailbox_stop()
         server.work_control.close()
 
 

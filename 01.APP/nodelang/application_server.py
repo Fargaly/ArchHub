@@ -423,6 +423,7 @@ from .cell_state_machine import (
 )
 from .cell_authorization import (
     AuthorizationDenied,
+    RefusedWithoutEffect,
     AuthorizationRequest,
     require_authorization,
 )
@@ -13122,6 +13123,26 @@ class ApplicationServer(WorkspaceRootsOwner):
                 "Claude enrollment requires canonical runtime claude; "
                 "use the existing native owner, not a second alias capability"
             )
+        peer_context = _VERIFIED_MACHINE_PEER_CONTEXT.get()
+        peer = (peer_context[2] if peer_context is not None and peer_context[0] is self
+            and peer_context[1].get("body") is body
+            and peer_context[1].get("path") == "/api/universal/agent-session" else None)
+        fingerprint = hashlib.sha256(external_session_id.encode()).hexdigest()
+        if "expected_agent_session" not in body and "device_credential" not in body and type(peer) is MachinePipePeer:
+            with self._machine_agent_session_lock:
+                for binding in self._machine_agent_sessions.values():
+                    if (binding.get("runtime") != runtime.strip()
+                            or binding.get("external_session_fingerprint") != fingerprint):
+                        continue
+                    if (binding.get("enrollment_peer") != {"pid": peer.pid, "created_at": peer.created_at}
+                            or binding.get("enrollment_runtime_id") != runtime_id
+                            or "enrollment_result" not in binding):
+                        break  # Ordinary identity admission below still refuses another holder.
+                    result = binding["enrollment_result"]
+                    if (binding["expires_at"] <= time.time() or binding["token"] != result["session_token"]):
+                        raise AuthorizationDenied("enrollment retry capability expired; start a fresh agent session")
+                    self._ensure_universal_workshop_participant(result["agent_session"])
+                    return dict(result)
         entry = _agent_body_catalog_entry_for_runtime(
             self.universal_store.snapshot(),
             self.universal_registry,
@@ -13144,9 +13165,6 @@ class ApplicationServer(WorkspaceRootsOwner):
         token = secrets.token_urlsafe(48)
         issued_at = time.time()
         expires_at = issued_at + self.machine_session_lifetime_seconds
-        fingerprint = hashlib.sha256(
-            external_session_id.encode("utf-8")
-        ).hexdigest()
         runtime = runtime.strip()
         with self.mutation_lock, self._machine_agent_session_lock:
             conditional_actor = body.get("expected_agent_session")
@@ -13257,6 +13275,10 @@ class ApplicationServer(WorkspaceRootsOwner):
             if conditional_actor is not None:
                 from .native_enrollment_reconciliation import confirm_continuation
                 confirm_continuation(self,body,result)
+            if conditional_actor is None and entry.credential_mode == "machine-transport" and type(peer) is MachinePipePeer:
+                self._machine_agent_sessions[session_root].update({
+                    "enrollment_runtime_id": runtime_id,
+                    "enrollment_result": dict(result)})
         # A runtime session becomes a visible, authorised Workshop participant
         # when it is enrolled.  Posting a plan or research record must never
         # smuggle enrollment side effects into a separate set of revisions.
@@ -16033,6 +16055,21 @@ class ApplicationServer(WorkspaceRootsOwner):
                 "session_root": self.browser_session_root,
                 "revision": self.universal_store.revision,
             }
+        if method == "POST" and path == "/api/universal/agent-session":
+            if not direct and request.get("session") != {}:
+                raise AuthorizationDenied("Agent Session enrollment must be unbound")
+            from .library_engines import LIBRARY_ITEM_ENGINES
+            budget = min(1.0, LIBRARY_ITEM_ENGINES['tool_workshop']['params']['preflight_database_ms'] / 1000)
+            if not self.mutation_lock.acquire(timeout=budget):
+                raise RefusedWithoutEffect("ArchHub is finishing a graph update; retry this tool")
+            try:
+                if self.universal_checkpoint_guard is not None:
+                    self.universal_checkpoint_guard.require_healthy()
+                self.require_universal_http_route(method, path, authentication_context=context)
+                return self._enroll_universal_machine_agent_session(body,
+                    runtime_id=str(request.get("runtime_id") or ""))
+            finally:
+                self.mutation_lock.release()
         with self.mutation_lock:
             if self.universal_checkpoint_guard is not None:
                 self.universal_checkpoint_guard.require_healthy()
@@ -16170,15 +16207,6 @@ class ApplicationServer(WorkspaceRootsOwner):
                             self.universal_registry,
                         ),
                     }
-            if path == "/api/universal/agent-session":
-                if not direct and request.get("session") != {}:
-                    raise AuthorizationDenied(
-                        "Agent Session enrollment must be unbound"
-                    )
-                return self._enroll_universal_machine_agent_session(
-                    body,
-                    runtime_id=str(request.get("runtime_id") or ""),
-                )
             if path == "/api/universal/agent-session-resume":
                 if not direct and request.get("session") != {}:
                     raise AuthorizationDenied(

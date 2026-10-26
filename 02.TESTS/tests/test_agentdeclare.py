@@ -218,6 +218,61 @@ def test_declaration_reminder_is_advisory():
     assert reminder(mailbox=lambda:{"sender_key":"a", "declarations":[{"session":"a", "request_id":"AGENTDECLARE"}]}) == ""
 
 
+def test_standalone_stop_declaration_notice_is_once_per_session(tmp_path, monkeypatch):
+    from nodelang import native_stop_hook as stop
+    from nodelang import agent_declarations
+    calls = []
+    monkeypatch.setattr(agent_declarations, 'reminder', lambda **kw: calls.append(kw) or 'declare fixture')
+    one = {'session_id': '00000000-0000-4000-8000-000000000001'}
+    two = {'session_id': '00000000-0000-4000-8000-000000000002'}
+    assert stop._declaration_notice(one, 'claude', directory=tmp_path) == 'declare fixture'
+    assert stop._declaration_notice(one, 'claude', directory=tmp_path) == ''
+    assert stop._declaration_notice(two, 'claude', directory=tmp_path) == 'declare fixture'
+    assert len(calls) == 2
+    assert calls[0]['mailbox']() == {'declarations': []}
+
+
+def test_direct_stop_script_shows_declaration_once(tmp_path):
+    import os
+    import subprocess
+    import sys
+    import time
+    from nodelang import native_stop_hook as stop
+    env = dict(os.environ)
+    for key in ('USERPROFILE', 'LOCALAPPDATA', 'APPDATA', 'TEMP', 'TMP'):
+        path = tmp_path / key
+        path.mkdir()
+        env[key] = str(path)
+    payload = json.dumps({'session_id': '00000000-0000-4000-8000-000000000003'})
+    answers = []
+    for _ in range(2):
+        started = time.monotonic()
+        result = subprocess.run([sys.executable, '-I', '-B', stop.__file__, '--vendor', 'claude'],
+            input=payload, capture_output=True, text=True, env=env, timeout=3)
+        assert result.returncode == 0, result.stderr
+        assert time.monotonic() - started < 1.5
+        answers.append(json.loads(result.stdout))
+    assert 'declare(' in answers[0].get('systemMessage', '')
+    assert 'declare(' not in answers[1].get('systemMessage', '')
+
+
+def test_stop_reminder_bounds_hung_workshop(monkeypatch):
+    import time
+    from nodelang import native_agent_mcp as native
+    from nodelang.agent_declarations import reminder
+    limits = []
+    def hung(method, body, context, **kwargs):
+        limits.append(kwargs.get('timeout_seconds'))
+        time.sleep(min(kwargs.get('timeout_seconds', 30), 2))
+        raise TimeoutError('hung Workshop')
+    monkeypatch.setattr(native, '_default_context', lambda: {'threadId':'stop-fixture'})
+    monkeypatch.setattr(native, '_mailbox_call', hung)
+    started = time.monotonic()
+    assert 'declare(' in reminder()
+    assert time.monotonic() - started <= 1.5
+    assert limits == [0.75]
+
+
 def test_builtin_lifecycle_preserves_privacy_and_never_blocks(tmp_path):
     from nodelang.agent_declarations import declaration_scope, declared_baboom
     class Owner:

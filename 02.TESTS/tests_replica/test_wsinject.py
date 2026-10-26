@@ -110,6 +110,10 @@ def test_next_unrelated_mcp_result_carries_pending_and_notification(room, monkey
         finally:
             request_ctx.reset(token)
 
+    asyncio.run(run('unrelated'))
+    deadline=time.monotonic()+5
+    while not server._mailbox_pages.get(tuple(context.items())) and time.monotonic()<deadline:
+        time.sleep(.01)
     result = asyncio.run(run('unrelated'))
     blocks = [json.loads(item.text) for item in result.content if item.type == 'text']
     assert any(block.get('pending', [{}])[0].get('id') == note['message_id'] for block in blocks if block.get('pending'))
@@ -117,6 +121,7 @@ def test_next_unrelated_mcp_result_carries_pending_and_notification(room, monkey
     assert emitted and emitted[0]['logger'] == 'workshop' and emitted[0]['data']['pending'][0]['id'] == note['message_id']
     assert asyncio.run(run('broken')).isError, 'pending content must preserve tool failure'
     assert not owner.shared_agent_mail('pending', {'context':context}, peer=peer()).get('acknowledged')
+    server._mailbox_stop()
 
 
 
@@ -215,10 +220,16 @@ def test_mcp_wire_emits_notifications_message_and_preserves_unrelated_result(roo
         received.append(params)
     async def run():
         async with create_connected_server_and_client_session(server, logging_callback=logged) as client:
+            await client.call_tool('unrelated', {}, meta=context)
+            import anyio
+            with anyio.fail_after(5):
+                while not server._mailbox_pages.get(tuple(context.items())):
+                    await anyio.sleep(.01)
             result = await client.call_tool('unrelated', {}, meta=context)
             assert result.structuredContent == {'unrelated':True}
             assert any('pending' in item.text and note['message_id'] in item.text for item in result.content)
     asyncio.run(run())
+    server._mailbox_stop()
     assert received and received[0].logger == 'workshop' and received[0].data['pending'][0]['id'] == note['message_id']
 
 
@@ -437,3 +448,133 @@ def test_a_broadcast_is_never_injected_back_into_its_sender():
     note = {"category":mail.CATEGORY, "author":"Claude Code / ArchHub / session-a / ahmed [agent:session:a]", "content":"To *:\nBuild installed"}
     sessions = [row["session"] for row in mail._recipient_rows(note, [sender, other])]
     assert "agent:session:a" not in sessions and "agent:session:b" in sessions
+
+
+
+
+
+def test_hung_automatic_mailbox_never_delays_host_answer():
+    from mcp import types
+    from mcp.server.lowlevel.server import request_ctx
+    from mcp.shared.context import RequestContext
+    from nodelang.native_agent_mcp import build_server
+    entered, released = threading.Event(), threading.Event()
+    def hung(method, body, context, **limits):
+        entered.set()
+        released.wait(2)
+        raise TimeoutError('Workshop fixture hung')
+    server = build_server(mailbox_call=hung)
+    server.add_tool(lambda: {'ok':True}, name='host_fixture')
+    async def run():
+        token=request_ctx.set(RequestContext(request_id=1,
+            meta=types.RequestParams.Meta(**{'gemini/sessionID':'hung-fixture'}),
+            session=SimpleNamespace(), lifespan_context={}))
+        try:
+            started=time.monotonic()
+            result=await server._mcp_server.request_handlers[types.CallToolRequest](
+                types.CallToolRequest(method='tools/call',params=types.CallToolRequestParams(name='host_fixture',arguments={})))
+            assert time.monotonic()-started < 1, 'host answer waited on Workshop'
+            assert json.loads(result.root.content[0].text)=={'ok':True}
+        finally:
+            released.set()
+            server._mailbox_stop()
+            request_ctx.reset(token)
+    asyncio.run(run())
+
+
+def test_real_unqualified_declaration_is_not_retired_as_startup_alias(monkeypatch):
+    from mcp import types
+    from nodelang import native_agent_mcp as native
+    monkeypatch.setattr(native, '_default_context', lambda: {})
+    calls = []
+    started, qualified = threading.Event(), threading.Event()
+    def mailbox(method, body, context):
+        calls.append((method, dict(body), dict(context)))
+        if method == 'declare':
+            (qualified if context else started).set()
+        return {'pending': []}
+    server = native.build_server(mailbox_call=mailbox)
+    async def run():
+        import anyio
+        async with server.settings.lifespan(server):
+            with anyio.fail_after(3):
+                while not started.is_set():
+                    await anyio.sleep(.01)
+            declare_tool = server._tool_manager.get_tool('declare').fn
+            declare_tool('Real unqualified task', ['fixture'], 'working', 'FIXTURE',
+                SimpleNamespace(request_context=SimpleNamespace(meta=None)))
+            declare_tool('Qualified task', ['fixture'], 'working', 'FIXTURE',
+                SimpleNamespace(request_context=SimpleNamespace(meta=types.RequestParams.Meta(
+                    **{'threadId': 'qualified-fixture'}))))
+            with anyio.fail_after(3):
+                while not qualified.is_set():
+                    await anyio.sleep(.01)
+    asyncio.run(run())
+    assert not any(method == 'declare' and not context and body['status'] == 'done'
+                   for method, body, context in calls)
+    assert [body['task'] for method, body, context in calls if method == 'declare' and not context][-1] == 'Real unqualified task'
+
+
+@pytest.mark.parametrize('acknowledgement', ['read', 'send'])
+def test_acknowledged_pending_is_not_replayed_from_cache_or_inflight_fetch(acknowledgement):
+    from mcp import types
+    from mcp.server.lowlevel.server import request_ctx
+    from mcp.shared.context import RequestContext
+    from nodelang.native_agent_mcp import build_server
+    context = {'threadId': 'cache-ack-fixture'}
+    active, fetches = True, 0
+    held, release, next_fetch, finish = (threading.Event() for _ in range(4))
+    def mailbox(method, body, supplied):
+        nonlocal active, fetches
+        if method in ('read', 'send'):
+            active = False
+        pending = [{'id': 'acknowledged-note'}] if active else []
+        if method == 'pending':
+            fetches += 1
+            if fetches == 2:
+                held.set()
+                assert release.wait(3)
+            elif fetches >= 3:
+                next_fetch.set()
+                assert finish.wait(3)
+        return {'pending': pending, 'declarations': [], 'sender_key': 'fixture'}
+    server = build_server(mailbox_call=mailbox)
+    server.add_tool(lambda: {'ok': True}, name='unrelated')
+    async def notify(**_kwargs):
+        pass
+    async def call(name, arguments):
+        token = request_ctx.set(RequestContext(request_id=1,
+            meta=types.RequestParams.Meta(**context),
+            session=SimpleNamespace(send_log_message=notify), lifespan_context={}))
+        try:
+            return (await server._mcp_server.request_handlers[types.CallToolRequest](
+                types.CallToolRequest(method='tools/call', params=types.CallToolRequestParams(
+                    name=name, arguments=arguments)))).root
+        finally:
+            request_ctx.reset(token)
+    async def run():
+        import anyio
+        try:
+            await call('unrelated', {})
+            with anyio.fail_after(3):
+                while not server._mailbox_pages.get(tuple(context.items())):
+                    await anyio.sleep(.01)
+            await call('unrelated', {})
+            with anyio.fail_after(3):
+                while not held.is_set():
+                    await anyio.sleep(.01)
+            args = {'since': 1} if acknowledgement == 'read' else {
+                'to': 'peer', 'text': 'Received', 'reply_to': 'acknowledged-note'}
+            result = await call(acknowledgement, args)
+            assert not any('acknowledged-note' in getattr(item, 'text', '') for item in result.content)
+            release.set()
+            with anyio.fail_after(3):
+                while not next_fetch.is_set():
+                    await anyio.sleep(.01)
+            result = await call('unrelated', {})
+            assert not any('acknowledged-note' in getattr(item, 'text', '') for item in result.content)
+        finally:
+            release.set()
+            finish.set()
+            server._mailbox_stop()
+    asyncio.run(run())

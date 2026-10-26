@@ -441,10 +441,10 @@ def test_governed_runtime_handoff_court(tmp_path):
     )
 
 
-def test_agent_session_enrollment_keeps_the_long_graph_receipt_wait():
+def test_agent_session_enrollment_answers_within_the_native_tool_budget():
     assert _default_machine_response_timeout(
         "POST", "/api/universal/agent-session"
-    ) == 240.0
+    ) == 5.0
     assert _default_machine_response_timeout(
         "POST", "/api/universal/assembly"
     ) == 180.0
@@ -1270,6 +1270,146 @@ def test_concurrent_machine_enrollment_mints_one_graph_session():
         )
         assert relationship.target_root == results[0]["agent_session"]
     finally:
+        server.close()
+
+
+def test_initial_enrollment_retries_recover_only_the_same_peers_capability(monkeypatch):
+    import psutil
+    server = ApplicationServer()
+    server._ensure_universal_workshop_participant = lambda _root: None
+    process = psutil.Process()
+    peer = transport_module.MachinePipePeer(process.pid, process.create_time())
+    body = {"runtime": "codex", "external_session_id": "lost-response-court"}
+    request = {"path": "/api/universal/agent-session", "body": body}
+    context = application_server_module._VERIFIED_MACHINE_PEER_CONTEXT
+    token = context.set((server, request, peer))
+    try:
+        first = server._enroll_universal_machine_agent_session(body, runtime_id="owner-a")
+        revision = server.universal_store.revision
+        again = server._enroll_universal_machine_agent_session(body, runtime_id="owner-a")
+        assert again == first
+        assert server.universal_store.revision == revision
+        assert len(server._machine_agent_sessions) == 1
+        for other_peer, other_runtime in ((None, "owner-a"),
+                (transport_module.MachinePipePeer(12346, 100.0), "owner-a"), (peer, "owner-b")):
+            context.set((server, request, other_peer))
+            with pytest.raises(AuthorizationDenied, match="already bound"):
+                server._enroll_universal_machine_agent_session(body, runtime_id=other_runtime)
+        context.set((server, request, peer))
+        server._machine_agent_sessions[first["agent_session"]]["expires_at"] = time.time() - 1
+        with pytest.raises(AuthorizationDenied, match="enrollment retry capability expired"):
+            server._enroll_universal_machine_agent_session(body, runtime_id="owner-a")
+    finally:
+        context.reset(token)
+        server.close()
+
+
+def test_enrollment_refuses_busy_graph_with_one_actionable_reason():
+    server = ApplicationServer()
+    held, release = threading.Event(), threading.Event()
+    def hold():
+        with server.mutation_lock:
+            held.set()
+            release.wait(8)
+    worker = threading.Thread(target=hold, daemon=True)
+    worker.start()
+    assert held.wait(2)
+    started = time.monotonic()
+    try:
+        with pytest.raises(AuthorizationDenied, match="ArchHub is finishing a graph update; retry this tool"):
+            server.dispatch_universal_machine_route({"method": "POST", "path": "/api/universal/agent-session",
+                "body": {"runtime": "codex", "external_session_id": "busy-enrollment-court"}})
+        assert time.monotonic() - started < 1.5
+        assert not server._machine_agent_sessions
+    finally:
+        release.set()
+        worker.join(5)
+        server.close()
+
+
+def test_enrollment_finishes_local_participant_admission_before_return(monkeypatch):
+    import psutil
+    server = ApplicationServer()
+    original = server._ensure_universal_workshop_participant
+    completed = []
+    def participant(root):
+        original(root)
+        completed.append(root)
+    server._ensure_universal_workshop_participant = participant
+    process = psutil.Process()
+    peer = transport_module.MachinePipePeer(process.pid, process.create_time())
+    body = {"runtime": "codex", "external_session_id": "enrollment-participant-court"}
+    context = application_server_module._VERIFIED_MACHINE_PEER_CONTEXT
+    token = context.set((server, {"path": "/api/universal/agent-session", "body": body}, peer))
+    try:
+        result = server._enroll_universal_machine_agent_session(body, runtime_id="court")
+        assert completed == [result["agent_session"]]
+        revision = server.universal_store.revision
+        assert server._enroll_universal_machine_agent_session(body, runtime_id="court") == result
+        assert server.universal_store.revision == revision
+    finally:
+        context.reset(token)
+        server.close()
+
+
+def test_busy_enrollment_is_a_signed_no_effect_refusal_then_recovers(tmp_path):
+    descriptor = tmp_path / "runtime.json"
+    provider = MemorySigningKeyProvider("archhub.local.universal-runtime-pipe", b"e" * 32)
+    server = ApplicationServer(enable_machine_transport=True, machine_descriptor_path=descriptor,
+        machine_key_provider=provider).start()
+    client = UniversalRuntimeClient(descriptor, provider)
+    held, release = threading.Event(), threading.Event()
+    def hold():
+        with server.mutation_lock:
+            held.set()
+            release.wait(8)
+    worker = threading.Thread(target=hold, daemon=True)
+    worker.start()
+    assert held.wait(2)
+    try:
+        with pytest.raises(transport_module.MachineRefusedWithoutEffect, match="retry this tool"):
+            client.bind_agent_session(runtime="codex", external_session_id="busy-pipe-court")
+        assert not server._machine_agent_sessions
+        release.set()
+        worker.join(5)
+        result = client.bind_agent_session(runtime="codex", external_session_id="busy-pipe-court")
+        assert client.agent_session_root == result["agent_session"]
+        assert len(server._machine_agent_sessions) == 1
+    finally:
+        release.set()
+        worker.join(5)
+        server.close()
+
+
+def test_only_enrollment_retry_completes_failed_local_participant_admission(monkeypatch):
+    import psutil
+    server = ApplicationServer()
+    original = server._ensure_universal_workshop_participant
+    calls = []
+    def participant(root):
+        calls.append(root)
+        if len(calls) == 1:
+            raise RuntimeError("court: first local participant admission unavailable")
+        original(root)
+    server._ensure_universal_workshop_participant = participant
+    process = psutil.Process()
+    peer = transport_module.MachinePipePeer(process.pid, process.create_time())
+    body = {"runtime": "codex", "external_session_id": "participant-retry-court"}
+    context = application_server_module._VERIFIED_MACHINE_PEER_CONTEXT
+    token = context.set((server, {"path": "/api/universal/agent-session", "body": body}, peer))
+    try:
+        with pytest.raises(RuntimeError, match="local participant"):
+            server._enroll_universal_machine_agent_session(body, runtime_id="court")
+        binding = next(iter(server._machine_agent_sessions.values()))
+        cached = dict(binding["enrollment_result"])
+        result = server._enroll_universal_machine_agent_session(body, runtime_id="court")
+        assert result == cached
+        assert len(server._machine_agent_sessions) == 1
+        revision = server.universal_store.revision
+        assert server._enroll_universal_machine_agent_session(body, runtime_id="court") == cached
+        assert server.universal_store.revision == revision
+    finally:
+        context.reset(token)
         server.close()
 
 

@@ -720,10 +720,10 @@ def test_actual_stream_log_rejects_implicit_nonfree_title_model(title):
         gate._free_stream_models("", model)
 
 
-@pytest.mark.parametrize("failed", ["exchange", "overlap", "opencode"])
+@pytest.mark.parametrize("failed", ["exchange", "overlap", "opencode", "connector"])
 def test_each_required_scenario_refuses_in_a_real_gate_process(failed):
     program = ("from tools.real_app_check.agentlink_release import require_checks; "
-        "require_checks({'exchange':True,'overlap':True,'opencode':True," + repr(failed) + ":False})")
+        "require_checks({'exchange':True,'overlap':True,'opencode':True,'connector':True," + repr(failed) + ":False})")
     result = subprocess.run([sys.executable, "-c", program],
         cwd=Path(__file__).resolve().parents[2] / "03.TOOLS", capture_output=True, encoding="utf-8",
         env={**os.environ, "PYTHONDONTWRITEBYTECODE":"1"},
@@ -737,7 +737,25 @@ def test_missing_or_unknown_state_never_becomes_pass():
         require_checks({"exchange":True,"overlap":True})
     with pytest.raises(QualificationRefused):
         require_checks({"exchange":True,"overlap":True,"opencode":"skipped"})
-    require_checks({"exchange":True,"overlap":True,"opencode":True})
+    with pytest.raises(QualificationRefused, match="connector"):
+        require_checks({"exchange":True,"overlap":True,"opencode":True})
+    require_checks({"exchange":True,"overlap":True,"opencode":True,"connector":True})
+
+
+def test_connector_release_court_runs_real_stdio_with_workshop_hung_down_and_up(tmp_path):
+    from tools.real_app_check.agentlink_release import qualify_connector
+    profile = tmp_path / "CONNECTOR"
+    result = qualify_connector(profile)
+    assert result["status"] == "isolated-pass"
+    assert result["declarations_arrived"]
+    assert {row["workshop"] for row in result["cases"]} == {"hung", "down", "up"}
+    assert all(row["initialize_seconds"] <= 5 and
+               row["host_seconds"] <= row["broker_seconds"] + 1 for row in result["cases"])
+    for case in result["cases"]:
+        assert sorted(item["tool"] for item in case["tools"]) == case["registered_tools"]
+        assert {"send", "read", "declare", "native.hook_stop", "native.hook_user_prompt_submit"} <= set(case["registered_tools"])
+        assert all(item["seconds"] <= item["work_seconds"] + 1 for item in case["tools"])
+    assert not profile.exists()
 
 
 def test_echoed_ids_are_not_tool_read_receipts():

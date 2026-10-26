@@ -47,6 +47,56 @@ def lose_reply(monkeypatch):
     return lost
 
 
+def test_initial_enrollment_timeout_recovers_same_receipt(world, monkeypatch):
+    from nodelang.application_machine_transport import MachineNoResponse
+    original = UniversalRuntimeClient.request
+    attempts, replies = [], []
+    def request(client, method, path, body=None, **kwargs):
+        result = original(client, method, path, body, **kwargs)
+        if path == '/api/universal/agent-session':
+            attempts.append((client, dict(body)))
+            replies.append(result)
+            if len(attempts) == 1:
+                raise MachineNoResponse('court: enrollment response lost')
+        return result
+    monkeypatch.setattr(UniversalRuntimeClient, 'request', request)
+    owner = NativeAgentSession(environment={'CODEX_THREAD_ID':'court-idempotent-enrollment'},
+        descriptor_path=world.root / 'runtime.json', key_provider=KEY)
+    with pytest.raises(MachineNoResponse, match='response lost'):
+        owner.connect()
+    assert owner._state == 'uncertain'
+    client = owner.connect()
+    assert len(attempts) == 2 and attempts[0] == attempts[1]
+    assert attempts[0][1] == {'runtime':'codex', 'external_session_id':'court-idempotent-enrollment'}
+    assert replies[0] == replies[1]
+    assert client.agent_session_root == replies[0]['agent_session']
+    assert owner.connect() is client and len(attempts) == 2
+
+
+def test_initial_enrollment_busy_reply_recovers_on_next_call(world):
+    import threading
+    from nodelang.application_machine_transport import MachineRefusedWithoutEffect
+    held, release = threading.Event(), threading.Event()
+    def hold():
+        with world.server.mutation_lock:
+            held.set()
+            release.wait(8)
+    worker = threading.Thread(target=hold, daemon=True)
+    worker.start()
+    assert held.wait(2)
+    owner = NativeAgentSession(environment={'CODEX_THREAD_ID':'court-busy-enrollment'},
+        descriptor_path=world.root / 'runtime.json', key_provider=KEY)
+    try:
+        started = time.monotonic()
+        with pytest.raises(MachineRefusedWithoutEffect, match='retry this tool'):
+            owner.connect()
+        assert time.monotonic() - started < 2
+    finally:
+        release.set()
+        worker.join(5)
+    assert owner.connect().agent_session_root
+
+
 def retired(monkeypatch, owner):
     # All fixture servers run in this process: substitute only old process death.
     monkeypatch.setattr(owner, "_require_retired_owner_process", lambda descriptor: None)

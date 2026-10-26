@@ -88,10 +88,12 @@ def reminder(*, mailbox=None):
     try:
         if mailbox is None:
             from .native_agent_mcp import _mailbox_call, _default_context
+            from .library_engines import LIBRARY_ITEM_ENGINES
+            budget = min(0.75, LIBRARY_ITEM_ENGINES['tool_workshop']['params']['preflight_database_ms'] / 1000)
             context = _default_context()
             if not context:
                 return ""  # A human commit is not an undeclared agent session.
-            page = _mailbox_call("read", {"since": 0}, context)
+            page = _mailbox_call("read", {"since": 0}, context, timeout_seconds=budget)
             native = next(iter(context.values()), None)
         else:
             page, native = mailbox(), None

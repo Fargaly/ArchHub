@@ -207,7 +207,7 @@ def user_prompt_submit_context(control, *, selected=None) -> dict[str, object]:
     several pending Works and none attached is not an error (live 717,
     2026-09-30): they are listed by root and state instead of one current Work.
     Assignment uses its existing ten-second response wait; messages use at
-    most five seconds within the remaining shared ten-second response budget.
+    most one second within the remaining shared ten-second response budget.
     Existing automatic renewal and AF_PIPE connection
     setup can exceed that budget; this is not a hard operation deadline.
     """
@@ -226,9 +226,13 @@ def user_prompt_submit_context(control, *, selected=None) -> dict[str, object]:
                     raise
                 current, pending = _pending_works(client, deadline)
         work, state = _current_work(current, client.agent_session_root)
-        page = control.call("read_messages", {"limit": _PAGE_LIMIT},
-                            timeout_seconds=_remaining(deadline))
-        messages = _messages(page, client)
+        try:
+            page = control.call("read_messages", {"limit": _PAGE_LIMIT},
+                                timeout_seconds=min(0.75, _remaining(deadline)))
+            messages = _messages(page, client)
+        except (OSError, RuntimeError, ValueError, KeyError):
+            page = {"revision": None, "has_older": True}
+            messages = []
         _remaining(deadline)
         data = {"agent_session": client.agent_session_root,
                 "work_revision": current["revision"], "current_work": work,

@@ -1072,8 +1072,8 @@ def broker_call(service: str, route: str, body: Mapping[str, object] | None = No
     rows = [row for row in broker_sessions(service) if port is None or row["port"] == port]
     name = "AutoCAD" if service == "acad" else "Revit"
     if not rows:
-        raise RevitUnreachable("no %s session answers%s" % (
-            name, "" if port is None else " on :%d" % port))
+        raise RevitUnreachable("no %s session answers%s. Open %s with the ArchHub add-in loaded, then try again." % (
+            name, "" if port is None else " on :%d" % port, name))
     if len(rows) > 1:
         raise RevitUnreachable("%d %s sessions answer (ports %s); name one with port" % (
             len(rows), name, ", ".join(str(row["port"]) for row in rows)))

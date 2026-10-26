@@ -69,7 +69,7 @@ def _default_machine_response_timeout(method: str, path: str) -> float:
     if route == ("POST", "/api/universal/work-court"):
         return 660.0
     if route == ("POST", "/api/universal/agent-session"):
-        return 240.0
+        return 5.0
     return 180.0
 
 
@@ -2022,6 +2022,7 @@ class UniversalRuntimeClient:
         # True once an enrollment request has left this process. Before that,
         # an unanswered request minted nothing and may be asked again.
         self.enrollment_sent = False
+        self._initial_enrollment = None
         self._request_lock = threading.RLock()
         self._cancellation_event = cancellation_event
         self._pinned_runtime_descriptor: RuntimeDescriptor | None = None
@@ -2088,6 +2089,12 @@ class UniversalRuntimeClient:
             "runtime": runtime,
             "external_session_id": external_session_id,
         }
+        if expected_agent_session is None and device_credential_provider is None:
+            if self._initial_enrollment is None:
+                self._initial_enrollment = dict(body)
+            if any(self._initial_enrollment[key] != value for key, value in body.items()):
+                raise MachineTransportError("initial enrollment identity changed")
+            body = dict(self._initial_enrollment)
         if expected_agent_session is not None:
             if type(expected_agent_session) is not str or not re.fullmatch(
                     r"app:agent-session:runtime:[a-f0-9]{32}", expected_agent_session):
@@ -4006,6 +4013,8 @@ class UniversalRuntimeClient:
                 self._check_cancelled()
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
+                    if (method.upper(), path) == ("POST", "/api/universal/agent-session"):
+                        raise MachineNoResponse("ArchHub enrollment did not answer within five seconds; retry this tool to recover the same session")
                     raise MachineNoResponse("universal runtime did not respond")
                 if not connection.poll(min(0.1, remaining)):
                     continue

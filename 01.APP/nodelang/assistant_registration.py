@@ -167,11 +167,19 @@ def _dev_era_connector_entry(entry, vendor) -> bool:
     if type(entry) is not dict or set(entry) - {"command", "args", "env", "env_vars"}:
         return False
     command, env, args = entry.get("command"), entry.get("env"), entry.get("args")
+    hints = {"SESSION_LINK_STATE_DIR", "SESSION_LINK_NODE"}
     if (type(command) is not str or ntpath.basename(command).casefold() != 'python.exe'
-            or type(env) is not dict or set(env) - _DEV_ERA_ENV
+            or type(env) is not dict or set(env) - _DEV_ERA_ENV - hints
             or env.get('ARCHHUB_COORDINATION_VENDOR', vendor) != vendor
             or 'PYTHONPATH' in env and (type(env['PYTHONPATH']) is not str or not ntpath.isabs(env['PYTHONPATH']))):
         return False
+    if set(env) & hints:
+        # Old isolated loaders carried Session Link hints; they are not a second owner.
+        if (not _retired_runpy_args(args)
+                or any(type(env[key]) is not str or not env[key] or '\x00' in env[key]
+                       for key in hints & set(env))
+                or 'SESSION_LINK_STATE_DIR' in env and not ntpath.isabs(env['SESSION_LINK_STATE_DIR'])):
+            return False
     if args == _DEV_ERA_ARGS:
         return 'env_vars' not in entry and 'PYTHONPATH' in env
     return (_retired_runpy_args(args)

@@ -52,6 +52,20 @@ class Control:
                 "storage": "conversation-content", "revision": 3, "has_older": False, "entries": []}
 
 
+def test_prompt_keeps_work_context_when_workshop_hangs():
+    import time
+    class Hung(Control):
+        def call(self, method, values, **kwargs):
+            assert kwargs['timeout_seconds'] <= 1
+            time.sleep(kwargs['timeout_seconds'])
+            raise TimeoutError('Workshop unavailable')
+    started = time.monotonic()
+    result = hook.user_prompt_submit_context(Hung())
+    assert time.monotonic() - started <= 1.5
+    context = result['hookSpecificOutput']['additionalContext']
+    assert '"work_revision":3' in context and '"workshop_revision":null' in context
+
+
 @pytest.mark.parametrize("vendor", ["codex", "claude-code"])
 def test_stdin_context_and_completed_receipt_use_the_existing_client(monkeypatch, vendor):
     control = Control()

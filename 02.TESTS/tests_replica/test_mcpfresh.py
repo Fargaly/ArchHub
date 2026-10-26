@@ -14,6 +14,35 @@ import pytest
 
 pytest_plugins = ('tests_replica.test_nokey',)
 
+
+def test_startup_and_explicit_connector_mail_have_bounded_budgets(monkeypatch):
+    import asyncio
+    from nodelang import native_agent_mcp as native, workshop_mailbox
+    from nodelang.library_engines import LIBRARY_ITEM_ENGINES
+    monkeypatch.setitem(LIBRARY_ITEM_ENGINES['tool_workshop']['params'], 'preflight_database_ms', 750)
+    calls = []
+
+    def unavailable(method, body, context, *, timeout_seconds=30.0):
+        calls.append((method, timeout_seconds))
+        raise TimeoutError("fixture mailbox is unavailable")
+
+    monkeypatch.setattr(workshop_mailbox, "call", unavailable)
+    server = native.build_server()
+
+    async def initialize():
+        async with server.settings.lifespan(server):
+            import anyio
+            with anyio.fail_after(3):
+                while not calls:
+                    await anyio.sleep(.01)
+
+    asyncio.run(initialize())
+    assert calls[0] == ("declare", 0.75)
+    assert all(timeout == .75 for _, timeout in calls)
+    with pytest.raises(TimeoutError):
+        native._mailbox_call("read", {"since": 0}, {})
+    assert calls[-1] == ("read", 0.75)
+
 ENTRY = '''import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))

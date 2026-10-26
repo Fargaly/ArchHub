@@ -111,7 +111,7 @@ def source_digest(root):
 
 
 def require_checks(checks):
-    for name in ("exchange", "overlap", "opencode"):
+    for name in ("exchange", "overlap", "opencode", "connector"):
         if checks.get(name) is not True:
             raise QualificationRefused("AGENTLINK release refused: " + name + " has no real-process proof")
 
@@ -497,6 +497,180 @@ def isolated_environment(profile):
     return env
 
 
+def qualify_connector(profile, *, source=None, stall_wait=10):
+    """Real stdio connector/SDK; fixture broker and owner, never a live host/profile."""
+    import anyio
+    import builtins
+    from nodelang.clean_coordination_service import build_bound_service
+    from nodelang.runtime_activity import RuntimeActivity, RuntimeClosing
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
+    root = Path(__file__).resolve().parents[2]
+    if root.name == "03.TOOLS":
+        root = root.parent
+    source = Path(source) if source is not None else root / "01.APP" if (root / "01.APP").is_dir() else root
+    profile = Path(profile).resolve()
+    if profile.exists():
+        raise QualificationRefused("Connector qualification profile must be fresh")
+    profile.mkdir(parents=True)
+    release, entered = threading.Event(), threading.Event()
+    declarations = []
+
+    class Workshop:
+        mode = "hung"
+        activity = RuntimeActivity()
+
+        def begin_shutdown(self):
+            self.activity.begin_shutdown()
+            release.set()
+
+        def dispatch(self, payload, **_kwargs):
+            mode = self.mode
+            entered.set()
+            if mode == "hung":
+                release.wait(timeout=stall_wait)
+            if mode != "up":
+                raise RuntimeClosing("Workshop fixture unavailable")
+            if payload["path"].endswith("/declare"):
+                declarations.append(payload["body"])
+            return {"ok":True, "pending":[], "declarations":[], "sender_key":"fixture",
+                "message_id":"fixture-message", "created":True, "existing":False}
+
+    host = Workshop()
+    workshop = build_bound_service(host, port=0)
+    threading.Thread(target=workshop.serve_forever, daemon=True).start()
+    env = isolated_environment(profile)
+    env.update(ARCHHUB_COORDINATION_ENDPOINT="http://127.0.0.1:%d/coordination" % workshop.server_port,
+        ARCHHUB_COORDINATION_VENDOR="claude", CLAUDE_CODE_SESSION_ID="connector-release-fixture")
+    # Handlers, dispatch, lifespan and stdio stay real; only physical owners are fixtures.
+    code = '''import sys,time
+from contextlib import contextmanager
+from types import SimpleNamespace
+sys.path.insert(0,sys.argv.pop(1))
+from nodelang import native_agent_mcp as native, native_host_tools as hosts
+class Client:
+    agent_session_root="app:agent-session:runtime:"+"a"*32
+    _pinned_runtime_descriptor=SimpleNamespace(application_root="application",workshop_root="workshop",work_registry_root="registry")
+    def current_claimed_work(self): return None
+    def current_claimed_work_detail(self): return {"work":None}
+    def current_work_assignment(self):
+        return {"agent_session":self.agent_session_root,"work":None,"revision":1,"projection":"assignment"}
+    def current_work_configuration(self): return {"work":None}
+    def request(self,method,path,body,**kwargs):
+        if method=="GET" and path=="/api/universal/hosts": return {"connectors":[],"ok":True}
+        if method=="GET" and path=="/api/universal/work":
+            return {"application":"application","agent_session":self.agent_session_root,"workshop":"workshop",
+                "registry":"registry","revision":1,"brain_scope":"brain","total":0,"items":[]}
+        if method=="POST" and path=="/api/universal/workshop":
+            return native._mailbox_call("send",{"to":"fixture","text":body["text"]},native._default_context(),
+                timeout_seconds=kwargs.get("response_timeout_seconds",180))
+        raise RuntimeError("Fixture owner does not admit effects")
+client=Client()
+@contextmanager
+def bound(self):
+    yield client
+native._WorkControl.bound_client=bound
+def messages(self,method,body,**kwargs):
+    if method!="read_messages": raise RuntimeError("Fixture owner admits only context reads")
+    native._mailbox_call("read",{"since":0},native._default_context(),timeout_seconds=kwargs.get("timeout_seconds",35))
+    return {"ok":True,"application":"application","space":"workshop","agent_session":client.agent_session_root,
+        "storage":"conversation-content","revision":1,"has_older":False,"entries":[]}
+native._WorkControl.call=messages
+def sessions(service):
+    started=time.monotonic()
+    time.sleep(0.1)
+    return {"ok":True,"fixture_service":service,"broker_seconds":time.monotonic()-started}
+hosts._sessions=sessions
+hosts._broker=lambda service,*a,**kw:sessions(service)
+hosts._engine=lambda engine,**kw:sessions(engine)
+native.main()
+'''
+
+    def arguments(schema):
+        def value(spec):
+            if "default" in spec:
+                return spec["default"]
+            if "enum" in spec:
+                return spec["enum"][0]
+            if "anyOf" in spec:
+                return value(next(item for item in spec["anyOf"] if item.get("type") != "null"))
+            return {"string":"fixture", "integer":0, "number":0,
+                    "boolean":False, "array":[], "object":{}}.get(spec.get("type"), "fixture")
+        return {name:value(schema["properties"][name]) for name in schema.get("required", [])}
+
+    async def run_case(mode):
+        host.mode = mode
+        entered.clear()
+        params = StdioServerParameters(command=sys.executable,
+            args=["-I", "-B", "-c", code, str(source)], env=env, cwd=str(profile))
+        started = time.monotonic()
+        async with stdio_client(params) as (reader, writer):
+            async with ClientSession(reader, writer) as session:
+                with anyio.fail_after(5):
+                    await session.initialize()
+                initialize_seconds = time.monotonic() - started
+                if initialize_seconds > 5:
+                    raise QualificationRefused("Connector initialize exceeded five seconds with Workshop " + mode)
+                tools = (await session.list_tools()).tools
+                receipts = []
+                overrides = {"declare":{"task":"Connector court", "paths":[str(profile)], "status":"working", "request_id":"FIXREVIT"},
+                    "send":{"to":"fixture", "text":"Connector court", "idempotency_key":"connector-court"}}
+                container = {"container_id":"GM.nodes.cde-authority", "source_requirement":"court:connector",
+                    "domain":"nodes", "tier":"T1", "suitability_status":"S0", "revision":"P01",
+                    "owner":"founder", "checker":"court", "gate_kind":"pytest",
+                    "gate_spec":{"path":"02.TESTS/tests/test_agentlink_release.py"}}
+                grants = [{"path":"70.COMPANY/72.HANDOFFS/CONNECTOR", "scope":"descendants", "operations":["apply_patch"]}]
+                overrides["native.work_propose"] = {"title":"Connector court", "description":"Fixture only", "priority":100,
+                    "purpose":"general", "inputs":{}, "requirements":{}, "container":container, "write_grants":grants}
+                overrides["native.work_plan_import"] = {"rows":[{"item":"CONNECTOR", "task_no":1, "title":"Connector court",
+                    "done_when":"Fixture evidence", "depends_on":[], "owner":"fixture"}],
+                    "container":container, "write_grants":grants}
+                required_success = {"revit_ping", "revit_info", "acad_ping", "acad_info", "hosts_state", "hosts.status",
+                    "max_ping", "max_info", "blender_ping", "rhino_ping", "office_read", "outlook_inbox",
+                    "notion_search", "dropbox_list", "native.hook_stop", "native.hook_user_prompt_submit"}
+                for tool in tools:
+                    started = time.monotonic()
+                    with anyio.fail_after(2):
+                        answer = await session.call_tool(tool.name, overrides.get(tool.name, arguments(tool.inputSchema)))
+                    elapsed = time.monotonic() - started
+                    result = (answer.structuredContent or json.loads(answer.content[0].text)
+                        if not answer.isError and answer.content else {})
+                    work_seconds = result.get("broker_seconds", 0)
+                    if elapsed > work_seconds + 1:
+                        raise QualificationRefused("Connector tool " + tool.name + " waited on Workshop " + mode)
+                    if tool.name in required_success and answer.isError:
+                        raise QualificationRefused("Registered tool " + tool.name + " did not return its fixture owner answer")
+                    if tool.name in {"declare", "send", "read"} and mode == "up" and answer.isError:
+                        raise QualificationRefused("Workshop-up message tool " + tool.name + " failed")
+                    if tool.name in {"native.work_propose", "native.work_plan_import", "native.work_proposals"} and mode == "up" and answer.isError:
+                        raise QualificationRefused("Workshop-up proposal tool " + tool.name + " failed")
+                    receipts.append({"tool":tool.name, "seconds":elapsed, "work_seconds":work_seconds,
+                        "is_error":answer.isError})
+                ping = next(row for row in receipts if row["tool"] == "revit_ping")
+                with anyio.fail_after(5):
+                    while not entered.is_set() or (mode == "up" and not declarations):
+                        await anyio.sleep(delay=0.02)
+                return {"workshop":mode, "initialize_seconds":initialize_seconds,
+                    "host_seconds":ping["seconds"], "broker_seconds":ping["work_seconds"],
+                    "tools":receipts, "registered_tools":sorted(tool.name for tool in tools)}
+
+    try:
+        cases = [anyio.run(run_case, mode) for mode in ("hung", "down", "up")]
+        return {"status":"isolated-pass", "scope":"real MCP connector and SDK; fixture owner, broker and Workshop",
+            "native_sha256":hashlib.sha256((source / "nodelang/native_agent_mcp.py").read_bytes()).hexdigest(),
+            "cases":cases, "declarations_arrived":bool(declarations)}
+    except Exception as exc:
+        while isinstance(exc, builtins.BaseExceptionGroup):
+            exc = exc.exceptions[0]
+        raise QualificationRefused("Connector runtime court failed: " + (str(exc) or type(exc).__name__)) from exc
+    finally:
+        release.set()
+        workshop.shutdown()
+        workshop.server_close()
+        shutil.rmtree(profile)
+
+
 def _extract_opencode_dependencies(staging, config, version):
     plan = json.loads((staging / "manifest.json").read_text(encoding="utf-8"))
     locked = {"": {"dependencies": {"@opencode-ai/plugin": version}}}
@@ -756,13 +930,15 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
     from nodelang.persistence import application_database_path
     from nodelang.cell_secret_keys import WindowsDpapiSigningKeyProvider
     app = server = server_job = coordination = None
-    checks = {name:False for name in ("exchange", "overlap", "opencode")}
+    checks = {name:False for name in ("exchange", "overlap", "opencode", "connector")}
     evidence = {"schema":"archhub-agentlink-qualification/v1", "nonce":nonce,
         "source_sha256":source_digest(root), "profile":str(profile), "checks":checks,
         "opencode_executable_sha256":hashlib.sha256(Path(oc).read_bytes()).hexdigest(),
         "peer":peer, "peer_executable_sha256":hashlib.sha256(Path(cc).read_bytes()).hexdigest()}
     try:
         with _environment(env):
+            evidence["connector"] = qualify_connector(profile / "CONNECTOR", source=source)
+            checks["connector"] = True
             local = profile / "ArchHub"
             # Disposable source fixture: the trusted native gate checks that
             # its Python owner is resident under this profile's ArchHub root.
@@ -1034,20 +1210,24 @@ def main(argv=None):
     parser.add_argument("--peer", choices=("goose", "claude"), default=defaults['peer'].default)
     parser.add_argument("--native-gate")
     parser.add_argument("--model", default=defaults['model'].default)
+    parser.add_argument("--connector-only", action="store_true",
+                        help="Run the mandatory stdio connector court without providers or application startup")
     args = parser.parse_args(argv)
     output = Path(args.output).resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps({"status":"running"}) + "\n", encoding="utf-8")
     profile = Path(args.profile_parent).resolve() / ("agentlink-qualification-" + uuid4().hex)
     try:
-        receipt = qualify(profile, opencode=args.opencode, claude=args.claude,
-                          native_gate=args.native_gate, model=args.model, peer=args.peer, goose=args.goose)
+        receipt = (qualify_connector(profile) if args.connector_only else
+            qualify(profile, opencode=args.opencode, claude=args.claude,
+                    native_gate=args.native_gate, model=args.model, peer=args.peer, goose=args.goose))
     except (QualificationRefused, OSError, ValueError, KeyError) as exc:
         output.write_text(json.dumps({**getattr(exc, "evidence", {}), "status":"refused", "error":str(exc)}, indent=2) + "\n", encoding="utf-8")
         print("AGENTLINK RELEASE REFUSED: " + str(exc))
         return 1
     output.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
-    print("AGENTLINK RELEASE PASS: exchange, overlap, OpenCode write/read/write/list")
+    print("AGENTLINK RELEASE PASS: " + ("connector" if args.connector_only else
+          "connector, exchange, overlap, OpenCode write/read/write/list"))
     return 0
 
 

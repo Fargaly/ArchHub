@@ -39,8 +39,8 @@ class HostToolRefused(MachineTransportError):
     """A host tool refused before any host was reached."""
 
 
-def _engine(name: str, **params) -> dict:
-    out, label = ENGINES[name](params, {})
+def _engine(engine: str, **params) -> dict:
+    out, label = ENGINES[engine](params, {})
     return {"ok": out.get("ok", True) is not False, "label": label, **out}
 
 

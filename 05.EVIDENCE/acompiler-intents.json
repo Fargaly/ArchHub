@@ -8716,6 +8716,21 @@
         "01.APP/nodelang/host_brokers.py",
         "02.TESTS/tests_replica/test_app_never_pops_a_console.py"
       ]
+    },
+    "NOBLOCK": {
+      "source": "Founder NOBLOCK 717: nothing in the Workshop interrupts or delays work; supersedes unanswered-message escalation. Deliver addressed messages once; remove automatic reminder/escalation injections, receipts and timers. Preserve first delivery, replies, answered and visible waiting. Isolated source patch against origin/main 780e7fec; no installed app, live data, screen or native_agent_mcp startup changes.",
+      "scope": [
+        "01.APP/nodelang/workshop_mailbox.py",
+        "02.TESTS/tests_replica/test_sessionlink2.py",
+        "02.TESTS/tests_replica/test_wsaskonly.py",
+        "02.TESTS/tests_replica/test_wsclaim.py",
+        "02.TESTS/tests_replica/test_wsinject.py",
+        "02.TESTS/tests_replica/test_wsnoblock.py",
+        "02.TESTS/tests_replica/test_wsnoreply.py",
+        "02.TESTS/tests_replica/test_wsreceipts.py",
+        "02.TESTS/tests_replica/test_wsreply.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

@@ -120,7 +120,6 @@ GRAPH_ASSEMBLY_OR_LENS_MODULES = {
     "cell_inspector_controls_view.py",
     "cell_inspector_header_view.py",
     "cell_inspector_shell_view.py",
-    "cell_legacy_brain_governance.py",
     "cell_legacy_core_nodes.py",
     "cell_legacy_custom_nodes.py",
     "cell_legacy_self_extension.py",

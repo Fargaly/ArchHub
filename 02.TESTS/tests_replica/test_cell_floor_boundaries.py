@@ -36,7 +36,6 @@ OUTER_RING_EXCEPTION_BASELINE = frozenset({
     "cell_baboom_connector_execution",
     "cell_baboom_meeting_note_publication",
     "cell_baboom_steward",
-    "cell_legacy_brain_governance",
     "cell_legacy_core_nodes",
     "cell_legacy_custom_nodes",
     "cell_legacy_self_extension",

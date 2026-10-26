@@ -8850,6 +8850,44 @@
         "04.DOCS/DECISIONS.md",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "FIXCANVAS": {
+      "source": "Founder FIXCANVAS 717: Canvas loads once, never reloads on tab return, edits save and persist; preserve approved design. DESIGN-FLOW sections 3-5 and 10 steps 1-3. Isolated source patch only; no installed app, live profile or Workshop behavior.",
+      "scope": [
+        "01.APP/nodelang/studio/app.jsx",
+        "01.APP/nodelang/studio/ds_screens.jsx",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/studio-authority.js",
+        "01.APP/nodelang/application_server.py",
+        "02.TESTS/tests_js/studio_fixcanvas.test.cjs",
+        "02.TESTS/tests_js/studio_fixcanvas_rendered.test.cjs",
+        "02.TESTS/tests_replica/test_fixcanvas.py",
+        "05.EVIDENCE/acompiler-intents.json",
+        "02.TESTS/tests_js/studio_agenttrail.test.cjs",
+        "02.TESTS/tests_js/studio_canvasfeel.test.cjs",
+        "02.TESTS/tests_js/studio_canvasold.test.cjs",
+        "02.TESTS/tests_js/studio_footerretry.test.cjs",
+        "02.TESTS/tests_js/studio_nodeplace.test.cjs",
+        "02.TESTS/tests_js/studio_designmatch.test.cjs",
+        "02.TESTS/tests_js/studio_update_notice.test.cjs",
+        "02.TESTS/tests_js/studio_baboom5.test.cjs",
+        "02.TESTS/tests_js/studio_bootscale.test.cjs",
+        "01.APP/nodelang/universal_application.py",
+        "01.APP/nodelang/canvas_graph_owner.py",
+        "01.APP/nodelang/ui_runtime.py",
+        "02.TESTS/tests_replica/test_lazy_application_boot.py",
+        "01.APP/nodelang/universal_graphs.py",
+        "02.TESTS/tests_js/studio_hidden_work.test.cjs",
+        "02.TESTS/tests_js/studio_layout_transport.test.cjs",
+        "02.TESTS/tests_js/newapp_account.test.cjs",
+        "02.TESTS/tests_js/wire_agents.test.cjs",
+        "02.TESTS/tests_js/wire_agents_adapter.test.cjs",
+        "02.TESTS/tests_js/research_actions.test.cjs",
+        "02.TESTS/tests_js/wire_settings.test.cjs",
+        "02.TESTS/tests_js/ops_settings.test.cjs",
+        "02.TESTS/tests_js/wire_social.test.cjs",
+        "02.TESTS/tests_js/appstable.test.cjs"
+      ]
     }
   }
 }

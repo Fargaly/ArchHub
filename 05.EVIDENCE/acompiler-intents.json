@@ -8691,6 +8691,31 @@
         "02.TESTS/tests_replica/test_wsclaim.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "FIXAGENTS": {
+      "source": "Founder FIXAGENTS 717: app shows which agents are really working; approved DESIGN-TRUTH Agents section and AGENTS-TRUTH cases. One session identity joined to revalidated existing runtime observer; Working/Idle/Not running/Status unknown, truthful task/model fallbacks, providers separate availability and null sign-in unchecked; identical Home Workshop footer summaries. Isolated fixture/source patch only, no founder profile/screen/session control/install. Review 1 Run 2: exclude Electron/Desktop helpers, reuse one existing process table and generation-validated metadata cache; complete 1000-process/185-candidate scan within 300ms; Last known status and Check again on failure. Review 2 Run 3: table-driven desktop-host and non-session server exclusion across runtimes; preserve declared desktop sessions and individual CLI sessions; 1000-process court proves six Claude CLI and three Codex exec rows without service/helper rows.",
+      "scope": [
+        "01.APP/nodelang/agent_runtime_registry.py",
+        "01.APP/nodelang/workshop_activity.py",
+        "01.APP/nodelang/workshop_api.py",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/ds_settings3.jsx",
+        "01.APP/nodelang/studio/ds_baboom.jsx",
+        "01.APP/nodelang/studio/ds_home2.jsx",
+        "01.APP/nodelang/studio/ds_workshop3.jsx",
+        "01.APP/nodelang/studio/app.jsx",
+        "01.APP/nodelang/studio/ui.jsx",
+        "02.TESTS/tests_replica/test_agenttrail.py",
+        "02.TESTS/tests_js/studio_agenttrail.test.cjs",
+        "02.TESTS/tests_replica/test_router_lists_real_providers.py",
+        "02.TESTS/tests_replica/test_designmatch.py",
+        "05.EVIDENCE/acompiler-intents.json",
+        "01.APP/nodelang/agent_declarations.py",
+        "02.TESTS/tests_js/appstable.test.cjs",
+        "02.TESTS/tests_js/app_agents.test.cjs",
+        "01.APP/nodelang/host_brokers.py",
+        "02.TESTS/tests_replica/test_app_never_pops_a_console.py"
+      ]
     }
   }
 }

@@ -8758,6 +8758,16 @@
         "02.TESTS/tests_replica/test_five_more_cards_run.py",
         "04.DOCS/DECISIONS.md"
       ]
+    },
+    "GATEFAST": {
+      "source": "Founder GATEFAST: a release build rechecks only commits whose own admission inputs changed; unrelated registrations retain older admissions; changed authority and actual compiler identity still force admission. Fix existing GATECACHE owner only, one existing admitted.json, isolated patch lane, no installed app, live data or build67 writes.",
+      "scope": [
+        "03.TOOLS/tools/pipeline/build.py",
+        "03.TOOLS/tools/pipeline/strict_check.py",
+        "02.TESTS/tests_replica/test_gatecache.py",
+        "02.TESTS/tests_replica/test_acompiler_gate.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

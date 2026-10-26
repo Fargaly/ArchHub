@@ -8794,6 +8794,34 @@
         "02.TESTS/tests_replica/test_nokey.py",
         "02.TESTS/tests_replica/test_workspace_roots_graph_current.py"
       ]
+    },
+    "FIXREVIT": {
+      "source": "Founder FIXREVIT: agents reach running Revit 2027.3 through the existing ArchHub connector and signed host broker; repair only, no new bridge/server/store, no model transactions or saves, no installed writes; 717 lands/builds/installs. Recognize exact retired isolated connector entries with validated Session Link hints and make broker-down failure actionable. Bound startup declaration separately from normal Workshop requests so fresh MCP initialization finishes within client timeout. RUN2: automatic declare and pending delivery run off connector startup and all request paths, with bounded retries and cached pending acknowledgements. Mandatory fresh connector <=5s and host reply <=broker+1s with Workshop hung/down; declarations arrive when up; existing AGENTLINK build gate. RUN3: bound initial enrollment and retry same native identity only on lost/no-effect/not-sent outcomes; Stop/prompt Workshop budget; every-tool connector court; preserve NOBLOCK deletions and repair shared Office helper name collision; no install. RUN4 review: finalize local participant authorization only during enrollment; reads never trigger commits; Stop declaration notice once per native session using existing guards; plan import gets a budget per row; preserve unrelated registry text and all main entries.",
+      "scope": [
+        "01.APP/nodelang/assistant_registration.py",
+        "01.APP/nodelang/clean_revit_adapter.py",
+        "01.APP/nodelang/native_agent_mcp.py",
+        "02.TESTS/tests_replica/test_mcpfresh.py",
+        "02.TESTS/tests_replica/test_assistant_registration.py",
+        "02.TESTS/tests_replica/test_revit_broker_discovery.py",
+        "05.EVIDENCE/acompiler-intents.json",
+        "02.TESTS/tests_replica/test_wsinject.py",
+        "03.TOOLS/tools/real_app_check/agentlink_release.py",
+        "02.TESTS/tests/test_agentlink_release.py",
+        "01.APP/nodelang/application_machine_transport.py",
+        "01.APP/nodelang/application_server.py",
+        "01.APP/nodelang/native_agent_session.py",
+        "01.APP/nodelang/agent_declarations.py",
+        "01.APP/nodelang/native_agent_hooks.py",
+        "01.APP/nodelang/native_stop_hook.py",
+        "01.APP/nodelang/native_host_tools.py",
+        "02.TESTS/tests/test_agentdeclare.py",
+        "02.TESTS/tests_replica/test_application_machine_transport.py",
+        "02.TESTS/tests_replica/test_native_reattach.py",
+        "02.TESTS/tests_replica/test_native_prompt_cli.py",
+        "02.TESTS/tests_replica/test_native_host_tools.py",
+        "02.TESTS/tests_replica/test_agent_work_proposals.py"
+      ]
     }
   }
 }

@@ -8743,6 +8743,20 @@
         "requirements.txt",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "NODES-OFFICE-ROUTE": {
+      "source": "Founder NODES-OFFICE 717 continuation: bind requested coordination nodes into existing authenticated Canvas owner gate so graph runs use the existing Office/Outlook owners. Complete original scope, synthetic only; no new bridge/store, no installed/live data, no send. Independent review found owner routing necessary for real parameterized actions. Review 2 RUN 3 explicitly authorizes updating the legacy draft-email court to HTMLBody, Save, no default Display and never Send; rebase cumulative patch onto dee81b92 preserving main intents.",
+      "scope": [
+        "01.APP/nodelang/clean_office_adapter.py",
+        "01.APP/nodelang/host_brokers.py",
+        "01.APP/nodelang/library_engines.py",
+        "01.APP/nodelang/base_universal_catalogue.py",
+        "02.TESTS/tests_replica/test_nodes_office.py",
+        "requirements.txt",
+        "05.EVIDENCE/acompiler-intents.json",
+        "01.APP/nodelang/application_server.py",
+        "02.TESTS/tests_replica/test_five_more_cards_run.py"
+      ]
     }
   }
 }

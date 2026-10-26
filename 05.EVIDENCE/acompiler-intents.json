@@ -8768,6 +8768,15 @@
         "02.TESTS/tests_replica/test_acompiler_gate.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "RELROUTE": {
+      "source": "Founder RELROUTE 717: exhausted first free route must not block qualification on the second free route. Real run reproduced wrong outer-agent declaration: FIXAGENTS 780e7fec applied UI service exclusion to nearest-runtime declaration observation, skipping qualification-owned OpenCode serve. Restore service ancestry only for declarations; preserve agent-list service exclusion, all release proof predicates and explicit free allow-list. Isolated patch; no installed/live data/screen/build68/build69 outputs.",
+      "scope": [
+        "01.APP/nodelang/agent_runtime_registry.py",
+        "02.TESTS/tests/test_agentlink_release.py",
+        "02.TESTS/tests_replica/test_agenttrail.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

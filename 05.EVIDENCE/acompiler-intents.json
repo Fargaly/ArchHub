@@ -8898,6 +8898,18 @@
         "02.TESTS/tests_replica/test_enrolment_reads_the_canvas_once.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "ROUTEFAST": {
+      "source": "Founder ROUTEFAST 717: agent sign-in must take a cheap lookup, not scan every cloud route. Extend existing verified route projection with a method/path index invalidated by actual route changes; identical concurrent enrollment shares its in-flight result. Preserve route digests, registry membership, authority checks, transport/continuation/device rules. Patch-only isolated lane on90fc45ed; no installed files, live graph, restart or screen. Existing lane BOARD STEP explicitly authorizes claim.",
+      "scope": [
+        "01.APP/nodelang/cell_cloud_routes.py",
+        "01.APP/nodelang/application_server.py",
+        "01.APP/nodelang/universal_application.py",
+        "01.APP/nodelang/cell_fastapi_gate.py",
+        "02.TESTS/tests_replica/test_cell_cloud_routes.py",
+        "02.TESTS/tests_replica/test_routefast_enrollment.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

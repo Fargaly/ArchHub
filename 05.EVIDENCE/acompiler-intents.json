@@ -8921,6 +8921,22 @@
         "02.TESTS/tests_replica/test_application_machine_transport.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "ENROLL4": {
+      "source": "Founder ENROLL4 717: sweep every enrollment relation scan together; enrollment alone may wait120s for its own first completion; preserve graph history, all security/peer/identity checks and existing stores. Isolated patch on8b19425a for717 review, no installed files/restart/live graph/screen/model writes. Current candidate implements catalog and policy candidate/reuse owners plus deadline; whole-path scan inventory and acceptance remain explicit OPEN until every listed scan is removed.",
+      "scope": [
+        "01.APP/nodelang/application_machine_transport.py",
+        "01.APP/nodelang/application_server.py",
+        "01.APP/nodelang/cell_agent_body.py",
+        "01.APP/nodelang/cell_agent_body_catalog.py",
+        "01.APP/nodelang/cell_authorization.py",
+        "01.APP/nodelang/universal_application.py",
+        "02.TESTS/tests_replica/test_enroll3.py",
+        "02.TESTS/tests_replica/test_enroll4.py",
+        "02.TESTS/tests_replica/test_cell_authorization.py",
+        "05.EVIDENCE/acompiler-intents.json",
+        "02.TESTS/tests_replica/test_application_machine_transport.py"
+      ]
     }
   }
 }

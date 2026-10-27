@@ -8910,6 +8910,17 @@
         "02.TESTS/tests_replica/test_routefast_enrollment.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "ENROLL3": {
+      "source": "Founder ENROLL3 717: live installed build76 stacks identify third enrollment blocker; preserve five-second client cap, current authority/security/identity checks and server completion after caller timeout; retry same identity coalesces or replays completed outcome. Reuse existing policy read memo mechanisms and session binding; no new store, installed files, app restart, screen or model writes. Isolated patch on b5e0ce4c for 717 admission and installed acceptance.",
+      "scope": [
+        "01.APP/nodelang/application_server.py",
+        "01.APP/nodelang/cell_authorization.py",
+        "02.TESTS/tests_replica/test_enroll3.py",
+        "02.TESTS/tests_replica/test_cell_authorization.py",
+        "02.TESTS/tests_replica/test_application_machine_transport.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

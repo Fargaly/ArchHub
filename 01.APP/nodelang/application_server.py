@@ -13237,7 +13237,11 @@ class ApplicationServer(WorkspaceRootsOwner):
                     result = binding["enrollment_result"]
                     if (binding["expires_at"] <= time.time() or binding["token"] != result["session_token"]):
                         raise AuthorizationDenied("enrollment retry capability expired; start a fresh agent session")
-                    self._ensure_universal_workshop_participant(result["agent_session"])
+                    if not binding.get("enrollment_ready"):
+                        self._ensure_universal_workshop_participant(result["agent_session"])
+                        binding["enrollment_ready"] = True
+                    else:
+                        self._validate_universal_workshop_participant(result["agent_session"])
                     return dict(result)
         entry = _agent_body_catalog_entry_for_runtime(
             self.universal_store.snapshot(),
@@ -13379,6 +13383,8 @@ class ApplicationServer(WorkspaceRootsOwner):
         # when it is enrolled.  Posting a plan or research record must never
         # smuggle enrollment side effects into a separate set of revisions.
         self._ensure_universal_workshop_participant(session_root)
+        with self._machine_agent_session_lock:
+            self._machine_agent_sessions[session_root]["enrollment_ready"] = True
         return result
 
     def _resume_universal_machine_agent_session(
@@ -13574,10 +13580,10 @@ class ApplicationServer(WorkspaceRootsOwner):
                 "cloud Agent Session custody does not match DPoP device"
             )
 
-    def _ensure_universal_workshop_participant(
+    def _validate_universal_workshop_participant(
         self, participant_root: str
     ) -> None:
-        """Admit one proven runtime Agent Session to Workshop control spaces."""
+        """Recheck runtime identity and signed memberships on enrollment replay."""
         if participant_root == self.universal_registry.authorization.subject_root:
             return
         if not participant_root.startswith("app:agent-session:runtime:"):
@@ -13592,6 +13598,14 @@ class ApplicationServer(WorkspaceRootsOwner):
         if session.subject_root != self.universal_registry.authorization.subject_root:
             raise AuthorizationDenied("runtime Agent Session subject is not admitted")
         self._ensure_runtime_workshop_memberships(participant_root)
+
+    def _ensure_universal_workshop_participant(
+        self, participant_root: str
+    ) -> None:
+        """Admit one proven runtime Agent Session to Workshop control spaces."""
+        if participant_root == self.universal_registry.authorization.subject_root:
+            return
+        self._validate_universal_workshop_participant(participant_root)
         snapshot = self.universal_store.snapshot()
         space = read_deliberation_space(
             snapshot,
@@ -19023,6 +19037,7 @@ class ApplicationServer(WorkspaceRootsOwner):
             authority.broker,
             authentication_context,
             request,
+            store=self.universal_store,
         )
         # Never acquire the graph lock while holding the route-cache lock:
         # guarded content readers enter this method with the graph lock held.

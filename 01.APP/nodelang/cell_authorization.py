@@ -18,8 +18,13 @@ import threading
 import time
 from types import MappingProxyType
 from typing import Callable, Iterable, Mapping
+from weakref import WeakKeyDictionary
 
-from .cell_protocols import CellBatch, RelationMember, read_relation
+from .cell_protocols import (
+    CellBatch, RelationMember, read_relation, relation_projection_scope,
+    capture_relation_projections,
+)
+from .cell_read_memo import read_set_unchanged
 from .universal_cell import NULL_CELL_ID, Cell, CellStore, InvalidCell, Snapshot
 
 
@@ -840,6 +845,58 @@ def verify_authorization_policy(
     return policy
 
 
+_POLICY_MEMOS = WeakKeyDictionary()
+_POLICY_MEMO_LOCK = threading.RLock()
+
+
+def _verified_policy_rules(snapshot, protocol, policy_root, store):
+    if store is None:
+        policy = verify_authorization_policy(snapshot, protocol, policy_root)
+        return policy, tuple(read_authorization_rule(snapshot, protocol, root) for root in policy.rule_roots)
+    signature = (policy_root, protocol.root_id, *(tuple(sorted(values.items()))
+        for values in (protocol.roles, protocol.actions, protocol.effects, protocol.states)))
+    holder = None
+    prior = None
+    unchanged = False
+    if store is not None:
+        with _POLICY_MEMO_LOCK:
+            holder = _POLICY_MEMOS.setdefault(store, [threading.RLock(), None])
+            prior = holder[1]
+        # Never acquire the graph lock while holding a memo lock.
+        with store._lock:
+            current = store.snapshot()
+            if current.revision != snapshot.revision or current.cells is not snapshot.cells:
+                holder = None
+            elif prior is not None and prior[1] == signature and prior[0] <= snapshot.revision:
+                unchanged = read_set_unchanged(store, prior[0], prior[4])
+                if not unchanged and store._history_reader is None:
+                    unchanged = not any(prior[4].intersection(store.revision_changes(revision))
+                        for revision in range(prior[0] + 1, snapshot.revision + 1))
+    lock = holder[0] if holder is not None else threading.RLock()
+    with lock:
+        if (holder is not None and holder[1] is not None
+                and holder[1][0] == snapshot.revision and holder[1][1] == signature):
+            return holder[1][2], holder[1][3]
+        if unchanged and holder[1] is prior:
+            holder[1] = (snapshot.revision, signature, prior[2], prior[3], prior[4])
+            return prior[2], prior[3]
+        with relation_projection_scope():
+            policy = verify_authorization_policy(snapshot, protocol, policy_root)
+            rules = tuple(read_authorization_rule(snapshot, protocol, root) for root in policy.rule_roots)
+            roots = (policy_root, *policy.rule_roots)
+            projections = capture_relation_projections(snapshot, roots)
+            touched = {policy.version_root, policy.digest_root}
+            owned_values = {protocol.role('expires-at'), protocol.role('max-invocations')}
+            for projection in projections:
+                touched.update(cell.id for cell in projection.source_cells)
+                touched.update(member.participant_id for member in projection.members
+                               if member.role_id in owned_values)
+        if (holder is not None and len(projections) == len(roots) and len(touched) <= 1_000_000
+                and (holder[1] is None or holder[1][0] <= snapshot.revision)):
+            holder[1] = (snapshot.revision, signature, policy, rules, frozenset(touched))
+        return policy, rules
+
+
 def _request_roots(request: AuthorizationRequest) -> tuple[str, ...]:
     return tuple(root for root in (
         request.action_root,
@@ -1027,6 +1084,7 @@ def evaluate_node_requests(
     requests: Iterable[AuthorizationRequest],
     *,
     resolver_state: object | None = None,
+    store: CellStore | None = None,
 ) -> AuthorizationEvaluation:
     """Return decisions and exact identity evidence from one evaluation pass."""
     requested = tuple(requests)
@@ -1034,17 +1092,13 @@ def evaluate_node_requests(
     if len(explicit_times) > 1:
         raise InvalidCell("authorization batch requests disagree on evaluation time")
     current = next(iter(explicit_times), time.time())
-    policy = verify_authorization_policy(snapshot, protocol, policy_root)
+    policy, rules = _verified_policy_rules(snapshot, protocol, policy_root, store)
     identities = authentication_broker.resolve_for_requests(
         snapshot,
         authentication_context,
         requested,
         now=current,
         resolver_state=resolver_state,
-    )
-    rules = tuple(
-        read_authorization_rule(snapshot, protocol, root)
-        for root in policy.rule_roots
     )
     decisions = tuple(
         _evaluate_authorization_request(
@@ -1121,6 +1175,7 @@ def authorize_node_request(
     request: AuthorizationRequest,
     *,
     resolver_state: object | None = None,
+    store: CellStore | None = None,
 ) -> AuthorizationDecision:
     """Evaluate one exact interface request; missing authority always denies."""
     return evaluate_node_requests(
@@ -1131,6 +1186,7 @@ def authorize_node_request(
         authentication_context,
         (request,),
         resolver_state=resolver_state,
+        store=store,
     ).decisions[0]
 
 
@@ -1143,6 +1199,7 @@ def authorize_node_requests(
     requests: Iterable[AuthorizationRequest],
     *,
     resolver_state: object | None = None,
+    store: CellStore | None = None,
 ) -> tuple[AuthorizationDecision, ...]:
     """Evaluate an exact request set against one policy and graph revision."""
     return evaluate_node_requests(
@@ -1153,6 +1210,7 @@ def authorize_node_requests(
         authentication_context,
         requests,
         resolver_state=resolver_state,
+        store=store,
     ).decisions
 
 
@@ -1165,6 +1223,7 @@ def require_authorization(
     request: AuthorizationRequest,
     *,
     resolver_state: object | None = None,
+    store: CellStore | None = None,
 ) -> AuthorizationDecision:
     decision = authorize_node_request(
         snapshot,
@@ -1174,6 +1233,7 @@ def require_authorization(
         authentication_context,
         request,
         resolver_state=resolver_state,
+        store=store,
     )
     if not decision.allowed:
         raise AuthorizationDenied(

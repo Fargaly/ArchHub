@@ -1276,7 +1276,6 @@ def test_concurrent_machine_enrollment_mints_one_graph_session():
 def test_initial_enrollment_retries_recover_only_the_same_peers_capability(monkeypatch):
     import psutil
     server = ApplicationServer()
-    server._ensure_universal_workshop_participant = lambda _root: None
     process = psutil.Process()
     peer = transport_module.MachinePipePeer(process.pid, process.create_time())
     body = {"runtime": "codex", "external_session_id": "lost-response-court"}

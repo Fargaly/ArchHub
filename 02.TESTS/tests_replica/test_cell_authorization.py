@@ -373,3 +373,58 @@ def test_authorization_floor_contains_no_product_domain_dispatch():
         '"bim"', '"cockpit"',
     ):
         assert forbidden not in source
+
+
+@pytest.mark.parametrize('changed', ['rule', 'version', 'digest', 'expires-at', 'max-invocations'])
+def test_enroll3_verified_policy_memo_rejects_tampering(authority, changed):
+    from nodelang.cell_authorization import read_authorization_policy
+    store, protocol = authority
+    rule = build_authorization_rule(store, protocol, rule_id='rule:memo', effect='permit',
+        principal_root='member', object_root='node-a', action_root=protocol.actions['edit'],
+        expires_at=time.time() + 60, max_invocations=2)
+    policy = _released_policy(store, protocol, (rule,))
+    identities = AuthenticationBroker()
+    context = _context(store, identities)
+    old = store.snapshot()
+    def evaluate(snapshot):
+        return authorize_node_request(snapshot, protocol, policy, identities, context,
+                                      _request(protocol), store=store)
+    assert evaluate(old).allowed
+    definition = read_authorization_policy(old, protocol, policy)
+    if changed == 'rule':
+        member = next(row for row in read_relation(old, rule) if row.role_id == protocol.role('object'))
+        cell = store.read(member.incidence_id)
+        replacement = Cell(cell.id, cell.link0, 'node-b', cell.atom)
+    else:
+        root = {'version': definition.version_root, 'digest': definition.digest_root}.get(changed)
+        if root is None:
+            root = next(row.participant_id for row in read_relation(old, rule)
+                        if row.role_id == protocol.role(changed))
+        cell = store.read(root)
+        replacement = Cell(cell.id, cell.link0, cell.link1, b'changed')
+    store.commit(store.revision, replace=(replacement,))
+    with pytest.raises(InvalidCell, match='drifted'):
+        evaluate(store.snapshot())
+    assert evaluate(old).allowed, 'historical read consumed the current memo'
+    with pytest.raises(InvalidCell, match='drifted'):
+        evaluate(store.snapshot())
+
+
+def test_enroll3_policy_memo_rechecks_clock_budget_and_identity(authority):
+    store, protocol = authority
+    deadline = time.time() + 60
+    rule = build_authorization_rule(store, protocol, rule_id='rule:memo-limits', effect='permit',
+        principal_root='member', object_root='node-a', action_root=protocol.actions['edit'],
+        expires_at=deadline, max_invocations=1)
+    policy = _released_policy(store, protocol, (rule,))
+    identities = AuthenticationBroker()
+    context = _context(store, identities)
+    def evaluate(**changes):
+        return authorize_node_request(store.snapshot(), protocol, policy, identities, context,
+                                      _request(protocol, **changes), store=store)
+    assert evaluate().allowed
+    assert not evaluate(now=deadline + 1).allowed
+    assert not evaluate(invocation_count=1).allowed
+    with pytest.raises(AuthorizationDenied):
+        authorize_node_request(store.snapshot(), protocol, policy, identities, object(),
+                               _request(protocol), store=store)

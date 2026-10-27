@@ -15699,7 +15699,7 @@ def restore_universal_application(
     )
     projected_routes = {
         "%s %s" % (route.method, route.path_template): route.root_id
-        for route in list_cloud_routes(snapshot, cloud_route_protocol)
+        for route in list_cloud_routes(snapshot, cloud_route_protocol, store=store)
     }
     expected_route_keys = {
         "%s %s" % (method, path)
@@ -16471,7 +16471,7 @@ def restore_universal_application(
     snapshot = store.snapshot()
     projected_routes = {
         "%s %s" % (route.method, route.path_template): route.root_id
-        for route in list_cloud_routes(snapshot, cloud_route_protocol)
+        for route in list_cloud_routes(snapshot, cloud_route_protocol, store=store)
     }
     active_route_keys = set(projected_routes) - _RETIRED_APPLICATION_HTTP_ROUTE_KEYS
     # Restore verifies the persisted published website without adopting a
@@ -43468,7 +43468,7 @@ def project_universal_founder_baboom_capability_report(
     )
     routes = sorted(
         "%s %s" % (route.method, route.path_template)
-        for route in list_cloud_routes(snapshot, registry.cloud_route_protocol)
+        for route in list_cloud_routes(snapshot, registry.cloud_route_protocol, store=store)
         if (route.method, route.path_template) in _BABOOM_CAPABILITY_ROUTE_KEYS
     )
     if len(routes) != len(_BABOOM_CAPABILITY_ROUTE_KEYS):

@@ -202,3 +202,97 @@ def test_route_relation_tampering_is_detected_by_semantic_digest():
     )
     with pytest.raises(CloudRouteDenied, match="digest mismatch"):
         read_cloud_route(store.snapshot(), protocol, route_root)
+
+
+def test_index_reuses_verified_routes_and_invalidates_changes(tmp_path, monkeypatch):
+    from nodelang import cell_cloud_routes as routes
+    from nodelang.cell_protocols import remove_relation_member
+
+    store = CellStore(tmp_path / 'routes.sqlite3')
+    protocol = bootstrap_cloud_route_protocol(store)
+    store.commit(store.revision, create=(_cell('action', 'read'), _cell('object', 'scope')))
+    def add(name):
+        return build_cloud_route(store, protocol, route_id=name, method='GET',
+                                 path_template='/' + name, action_root='action', object_root='object')
+    add('one')
+    lookup = lambda name, snapshot=None: find_cloud_route(snapshot or store.snapshot(), protocol,
+        method='GET', path_template='/' + name, store=store)
+    from nodelang.cell_protocols import relation_projection_scope
+    with relation_projection_scope(max_retained_bytes=1024 * 1024, max_entries=1):
+        assert lookup('one').root_id == 'one'
+    old = store.snapshot()
+    with monkeypatch.context() as patch:
+        patch.setattr(routes, '_read_registered_cloud_route', lambda *_a, **_k: pytest.fail('registry reprojected'))
+        store.commit(store.revision, create=(_cell('unrelated', 'session'),))
+        assert lookup('one').root_id == 'one'
+    add('two')
+    assert lookup('two').root_id == 'two'
+    with pytest.raises(CloudRouteDenied, match='no unique'):
+        lookup('two', old)
+    from nodelang.cell_protocols import read_relation
+    member = next(m for m in read_relation(store.snapshot(), protocol.root_id) if m.participant_id == 'two')
+    remove_relation_member(store, protocol.root_id, member.incidence_id)
+    with pytest.raises(CloudRouteDenied, match='no unique'):
+        lookup('two')
+    digest = store.read('one:field:route-digest')
+    store.commit(store.revision, replace=(Cell(digest.id, digest.link0, digest.link1, b'0' * 64),))
+    with pytest.raises(CloudRouteDenied, match='digest mismatch'):
+        lookup('one')
+    store.close()
+
+
+def test_route_index_never_holds_cache_lock_while_waiting_for_store(monkeypatch):
+    import threading
+    from nodelang import cell_cloud_routes as routes
+    store, protocol, roots = _world()
+    build_cloud_route(store, protocol, route_id='lock-route', method='GET', path_template='/lock',
+                     action_root=roots['action_read'], object_root=roots['object_settings'])
+    attempted = threading.Event()
+    original = store.snapshot
+    def snapshot():
+        attempted.set()
+        return original()
+    monkeypatch.setattr(store, 'snapshot', snapshot)
+    errors = []
+    # Pin the input before the worker waits for the store lock.
+    pinned = original()
+    def lookup_pinned():
+        try:
+            find_cloud_route(pinned, protocol, method='GET', path_template='/lock', store=store)
+        except Exception as exc:
+            errors.append(exc)
+    thread = threading.Thread(target=lookup_pinned, daemon=True)
+    try:
+        with store.stable_snapshot():
+            thread.start()
+            assert attempted.wait(5)
+            acquired = routes._ROUTE_INDEX_LOCK.acquire(timeout=1)
+            assert acquired, 'route cache lock was held while waiting for the store'
+            if acquired:
+                routes._ROUTE_INDEX_LOCK.release()
+        thread.join(5)
+        assert not thread.is_alive()
+        assert not errors
+    finally:
+        store.close()
+
+
+def test_cached_lookup_refuses_a_forged_duplicate_pair():
+    from types import MappingProxyType
+    from nodelang.cell_cloud_routes import prepare_cloud_route
+    from nodelang.cell_protocols import compose_relation_cells, prepare_append_relation_member
+    from nodelang.universal_cell import Snapshot
+    store, protocol, roots = _world()
+    build_cloud_route(store, protocol, route_id='one', method='GET', path_template='/duplicate',
+                     action_root=roots['action_read'], object_root=roots['object_settings'])
+    assert find_cloud_route(store.snapshot(), protocol, method='GET',
+                            path_template='/duplicate', store=store).root_id == 'one'
+    empty = compose_relation_cells((), relation_id=protocol.root_id)
+    blank = Snapshot(0, MappingProxyType({cell.id: cell for cell in empty.cells}))
+    forged = prepare_cloud_route(blank, protocol, route_id='forged', method='GET',
+        path_template='/duplicate', action_root=roots['action_read'], object_root=roots['object_settings'])
+    patch = prepare_append_relation_member(store.snapshot(), protocol.root_id,
+                                           protocol.role('route-member'), 'forged')
+    store.commit(store.revision, create=(*forged, *patch.create), replace=patch.replace)
+    with pytest.raises(CloudRouteDenied, match='no unique'):
+        find_cloud_route(store.snapshot(), protocol, method='GET', path_template='/duplicate', store=store)

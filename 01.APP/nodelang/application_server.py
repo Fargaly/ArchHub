@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import contextlib
+from concurrent.futures import Future
 from contextvars import ContextVar
 
 _VERIFIED_MACHINE_RECOVERY_CONTEXT = ContextVar("verified_machine_recovery_context", default=None)
@@ -5901,6 +5902,7 @@ class ApplicationServer(WorkspaceRootsOwner):
         self._browser_scope_projection_lineage: dict[str, int] = {}
         self._brain_export_active = 0
         self._machine_agent_sessions = {}
+        self._machine_agent_enrollments = {}
         self._machine_agent_recovery_capabilities = {}
         self._machine_agent_release_receipts = {}
         self._machine_agent_continuation_receipts = {}
@@ -16154,13 +16156,38 @@ class ApplicationServer(WorkspaceRootsOwner):
                 raise AuthorizationDenied("Agent Session enrollment must be unbound")
             if self.universal_checkpoint_guard is not None:
                 self.universal_checkpoint_guard.require_healthy()
-            self.require_universal_http_route(method, path, authentication_context=context)
-            with self.mutation_lock:
+            peer_context = _VERIFIED_MACHINE_PEER_CONTEXT.get()
+            peer = peer_context[2] if peer_context is not None and peer_context[0] is self else None
+            # Only identical authenticated holders may share an in-flight outcome.
+            key = (direct, peer, str(request.get("runtime_id") or ""),
+                   json.dumps(body, sort_keys=True, separators=(",", ":")))
+            with self._machine_agent_session_lock:
+                pending = self._machine_agent_enrollments.get(key)
+                owner = pending is None
+                if owner:
+                    pending = self._machine_agent_enrollments[key] = Future()
+            if not owner:
+                result = pending.result()
                 if self.universal_checkpoint_guard is not None:
                     self.universal_checkpoint_guard.require_healthy()
                 self.require_universal_http_route(method, path, authentication_context=context)
-                return self._enroll_universal_machine_agent_session(body,
-                    runtime_id=str(request.get("runtime_id") or ""))
+                return dict(result)
+            try:
+                self.require_universal_http_route(method, path, authentication_context=context)
+                with self.mutation_lock:
+                    if self.universal_checkpoint_guard is not None:
+                        self.universal_checkpoint_guard.require_healthy()
+                    self.require_universal_http_route(method, path, authentication_context=context)
+                    result = self._enroll_universal_machine_agent_session(body,
+                        runtime_id=str(request.get("runtime_id") or ""))
+                pending.set_result(result)
+                return result
+            except BaseException as exc:
+                pending.set_exception(exc)
+                raise
+            finally:
+                with self._machine_agent_session_lock:
+                    self._machine_agent_enrollments.pop(key, None)
         with self.mutation_lock:
             if self.universal_checkpoint_guard is not None:
                 self.universal_checkpoint_guard.require_healthy()
@@ -18968,6 +18995,7 @@ class ApplicationServer(WorkspaceRootsOwner):
             self.universal_registry.cloud_route_protocol,
             method=method,
             path_template=path,
+            store=self.universal_store,
         )
         resolved = resolve_cloud_route(snapshot, route)
         if (

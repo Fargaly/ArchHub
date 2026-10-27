@@ -169,6 +169,7 @@ class GraphGovernedAPIRoute(APIRoute):
                     runtime.route_protocol,
                     method=request.method,
                     path_template=path_template,
+                    store=runtime.store,
                 )
                 resolved = resolve_cloud_route(
                     snapshot, route, path_parameters=request.path_params

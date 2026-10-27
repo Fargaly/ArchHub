@@ -12,15 +12,20 @@ import hashlib
 import hmac
 import json
 import re
+import threading
+from weakref import WeakKeyDictionary
 from types import MappingProxyType
 from typing import Mapping
 
 from .cell_protocols import (
     RelationMember,
+    capture_relation_projections,
+    relation_projection_scope,
     compose_relation_cells,
     prepare_append_relation_member,
     read_relation,
 )
+from .cell_read_memo import read_set_unchanged
 from .universal_cell import NULL_CELL_ID, Cell, CellStore, InvalidCell, Snapshot
 
 
@@ -48,6 +53,8 @@ _PATH_PARAMETER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 _TEMPLATE_PARAMETER = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]{0,63})(?::[^{}]+)?\}")
 _MAX_PATH = 2048
 _MAX_EXTERNAL_ID = 1024
+_ROUTE_INDEXES = WeakKeyDictionary()
+_ROUTE_INDEX_LOCK = threading.RLock()
 
 
 class CloudRouteDenied(PermissionError):
@@ -395,6 +402,10 @@ def read_cloud_route(
     )
     if route_root not in registered:
         raise CloudRouteDenied("cloud route is not protocol-registered")
+    return _read_registered_cloud_route(snapshot, protocol, route_root)
+
+
+def _read_registered_cloud_route(snapshot, protocol, route_root):
     members = read_relation(snapshot, route_root, budget=256)
     allowed = {protocol.role(name) for name in ROLE_NAMES[2:]}
     if any(member.role_id not in allowed for member in members):
@@ -494,16 +505,66 @@ def secrets_compare(left: str, right: str) -> bool:
     return hmac.compare_digest(left, right)
 
 
+def _cloud_route_index(snapshot, protocol, store=None):
+    signature = (protocol.root_id, tuple(sorted(protocol.roles.items())))
+    current = store is not None and store.snapshot().cells is snapshot.cells
+    with _ROUTE_INDEX_LOCK:
+        held = _ROUTE_INDEXES.get(store) if current else None
+    if held is not None and held[1] == signature and held[0] <= snapshot.revision:
+        revision, _, routes, index, touched = held
+        with store._lock:
+            unchanged = read_set_unchanged(store, revision, touched)
+            if not unchanged and store._history_reader is None:
+                unchanged = not any(
+                    touched.intersection(store.revision_changes(rev))
+                    for rev in range(revision + 1, snapshot.revision + 1)
+                )
+            current = store.snapshot().cells is snapshot.cells
+        if unchanged and current:
+            with _ROUTE_INDEX_LOCK:
+                _ROUTE_INDEXES[store] = (snapshot.revision, signature, routes, index, touched)
+            return routes, index
+    with relation_projection_scope():
+        touched = set()
+        routes = list_cloud_routes(snapshot, protocol, _dependencies=touched if current else None)
+        index = {}
+        for route in routes:
+            key = (route.method, route.path_template)
+            index[key] = None if key in index else route
+        complete = protocol.root_id in touched and all(route.root_id in touched for route in routes)
+        if current and complete and store.snapshot().cells is snapshot.cells:
+            with _ROUTE_INDEX_LOCK:
+                _ROUTE_INDEXES[store] = (snapshot.revision, signature, routes, index, frozenset(touched))
+    return routes, index
+
+
 def list_cloud_routes(
-    snapshot: Snapshot, protocol: CloudRouteProtocol
+    snapshot: Snapshot, protocol: CloudRouteProtocol, *, store: CellStore | None = None,
+    _dependencies: set[str] | None = None,
 ) -> tuple[CloudRouteProjection, ...]:
+    if store is not None:
+        return _cloud_route_index(snapshot, protocol, store)[0]
     roots = _for_role(
         read_relation(snapshot, protocol.root_id, budget=100_000),
         protocol.role("route-member"),
     )
     if len(roots) != len(set(roots)):
         raise CloudRouteDenied("cloud-route registry contains duplicates")
-    return tuple(read_cloud_route(snapshot, protocol, root) for root in roots)
+    routes = []
+    scalar_roles = {protocol.role(name) for name in (
+        "method", "path-template", "object-namespace", "object-path-parameter", "route-digest",
+    )}
+    for position, root in enumerate((protocol.root_id, *roots)):
+        if position:
+            routes.append(_read_registered_cloud_route(snapshot, protocol, root))
+        if _dependencies is not None:
+            # Capture before the surrounding bounded scope can evict this walk.
+            captured = capture_relation_projections(snapshot, (root,))
+            for projection in captured:
+                _dependencies.update(cell.id for cell in projection.source_cells)
+                _dependencies.update(member.participant_id for member in projection.members
+                                     if member.role_id in scalar_roles)
+    return tuple(routes)
 
 
 def find_cloud_route(
@@ -512,16 +573,14 @@ def find_cloud_route(
     *,
     method: str,
     path_template: str,
+    store: CellStore | None = None,
 ) -> CloudRouteProjection:
     method = _validate_method(method)
     path_template = _validate_path_template(path_template)
-    matches = tuple(
-        route for route in list_cloud_routes(snapshot, protocol)
-        if route.method == method and route.path_template == path_template
-    )
-    if len(matches) != 1:
+    route = _cloud_route_index(snapshot, protocol, store)[1].get((method, path_template))
+    if route is None:
         raise CloudRouteDenied("request has no unique registered cloud route")
-    return matches[0]
+    return route
 
 
 def external_object_root(namespace: str, external_id: str) -> str:

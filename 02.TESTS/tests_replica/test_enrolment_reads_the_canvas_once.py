@@ -78,3 +78,24 @@ def test_the_values_are_still_the_two_released_properties(monkeypatch):
                   "v": types.SimpleNamespace(atom=b"claude-code")}
     assert fake._machine_session_surface_values(snap, "app:agent-session:runtime:a") == {"runtime": "claude-code"}
     assert fake._machine_session_surface_values(snap, "app:agent-session:runtime:other") == {}
+
+
+def test_unrelated_historical_sessions_need_no_signed_session_scan(monkeypatch):
+    fake = types.SimpleNamespace(
+        universal_store=types.SimpleNamespace(snapshot=lambda: _Snapshot(1)),
+        universal_registry=types.SimpleNamespace(roles={"member":"member"},
+            agent_body=types.SimpleNamespace(protocol=object()),
+            authorization=types.SimpleNamespace(protocol=object())),
+        _bound_machine_agent_session_identity=lambda **_: None,
+        _machine_session_surface_values=lambda *_: {"runtime":"codex", "session fingerprint":"other"})
+    monkeypatch.setattr(server_module, "read_relation", lambda *_args, **_kwargs: [
+        types.SimpleNamespace(role_id="member", participant_id="app:agent-session:runtime:%s" % index)
+        for index in range(1000)])
+
+    def signed_read(*_args, **_kwargs):
+        pytest.fail("An unrelated historical session was fully verified")
+
+    monkeypatch.setattr(server_module, "read_agent_session", signed_read)
+    entry = types.SimpleNamespace(credential_mode="machine-transport", control_root="control")
+    assert server_module.ApplicationServer._continuable_machine_agent_session(fake,
+        entry=entry, runtime="codex", external_session_fingerprint="fresh", custody_root=None) is None

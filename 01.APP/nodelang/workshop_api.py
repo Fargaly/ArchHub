@@ -5,6 +5,7 @@ Task status is projected from committed Work state and live declarations.
 """
 import hashlib
 import json
+from contextlib import nullcontext
 
 from .cell_authorization import AuthorizationDenied
 from .cell_protocols import prepare_append_relation_members
@@ -276,10 +277,12 @@ class WorkshopAPI:
         from .workshop_delivery_state import project_injection_delivery
         from .agent_declarations import declarations
         declared = declarations(self.owner, include_archived=True)
+        with history._transaction():
+            events = {row["id"]: delivery_events(history, row) for row in selected.values()}
         return [{"id":row["id"], **_message_identity(row["author"], declared, self.binding.subject_root), "text":row["content"],
             **research.sources(row['id'],row.get('evidence',[]),row.get('refs',[task])),
             "reply_to":row["reply_to"],"sequence":row["sequence"],
-            "created_at":row["created_at"], **project_injection_delivery(delivery_events(history, row))}
+            "created_at":row["created_at"], **project_injection_delivery(events[row["id"]])}
             for row in sorted(selected.values(),key=lambda item:item["sequence"])], truncated
 
     def _notification_root(self, id):
@@ -567,14 +570,16 @@ class WorkshopAPI:
         if before is not None and (type(before) is not int or before < 1):
             raise InvalidCell("Workshop message cursor is invalid")
         history = self.history()
-        rows, more = history._collect(history._db.execute("SELECT * FROM messages WHERE conversation_id=? "
-            "AND category=? AND public=1 AND (? IS NULL OR sequence<?) ORDER BY sequence DESC LIMIT 101",
-            (self.root, CATEGORY, before, before)), 100, 180000)
         from .agent_declarations import declarations
         declared = declarations(self.owner, include_archived=True)
+        with history._transaction():
+            rows, more = history._collect(history._db.execute("SELECT * FROM messages WHERE conversation_id=? "
+                "AND category=? AND public=1 AND (? IS NULL OR sequence<?) ORDER BY sequence DESC LIMIT 101",
+                (self.root, CATEGORY, before, before)), 100, 180000)
+            events = {row["id"]: delivery_events(history, row) for row in rows}
         messages = [{"id":row["id"], **_message_identity(row["author"], declared, self.binding.subject_root), "text":row["content"],
             "reply_to":row["reply_to"], "sequence":row["sequence"], "created_at":row["created_at"],
-            **project_injection_delivery(delivery_events(history, row), addressed=agent_addressed(row))}
+            **project_injection_delivery(events[row["id"]], addressed=agent_addressed(row))}
             for row in reversed(rows)]
         return {"messages":messages, "more":more, "next_before":rows[-1]["sequence"] if rows else None}
 
@@ -965,13 +970,21 @@ def dispatch(owner, binding, body, *, guard, route):
         raise InvalidCell("Workshop data function request is invalid")
     api = WorkshopAPI(owner, binding, body["root"], body["scope"], guard=guard,
                       request_id=hashlib.sha256(body["request_id"].encode()).hexdigest(), route=route)
-    with owner.mutation_lock, owner.universal_registry.authorization.broker.live_context(binding.context):
-        api.admit()
+    # Browser and route scans must not hold the graph writer lock.
+    revision = api.admit().revision
+    read = body["function"] in {"listAgentsWorking", "listTasks", "listWorkshopMessages"}
+    with (nullcontext() if read else owner.mutation_lock), (
+        nullcontext() if read else owner.universal_registry.authorization.broker.live_context(binding.context)
+    ):
+        if not read:
+            api.admit()
         try:
             result = getattr(api, body["function"])(*body["args"])
         except TypeError as exc:
             raise InvalidCell("Workshop data function arguments are invalid") from exc
-        return {"ok":True, "result":result, "revision":owner.universal_store.revision}
+        if read and api.admit().revision != revision:
+            raise InvalidCell("Workshop changed while reading; refresh the data")
+        return {"ok":True, "result":result, "revision":revision if read else owner.universal_store.revision}
 
 # WIRE-agents: extend the same authenticated dispatch allowlist.
 FUNCTIONS = FUNCTIONS | frozenset({"getAgentSurface","setAgentProfile","setTaskPlanMode",

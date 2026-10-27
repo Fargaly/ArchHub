@@ -424,7 +424,6 @@ from .cell_state_machine import (
 )
 from .cell_authorization import (
     AuthorizationDenied,
-    RefusedWithoutEffect,
     AuthorizationRequest,
     require_authorization,
 )
@@ -12382,6 +12381,12 @@ class ApplicationServer(WorkspaceRootsOwner):
                 )
             ):
                 continue
+            surface = self._machine_session_surface_values(
+                snapshot, member.participant_id
+            )
+            if (surface.get("runtime") != runtime
+                    or surface.get("session fingerprint") != external_session_fingerprint):
+                continue
             session = read_agent_session(
                 snapshot,
                 self.universal_registry.agent_body.protocol,
@@ -12400,15 +12405,7 @@ class ApplicationServer(WorkspaceRootsOwner):
                 raise AuthorizationDenied(
                     "runtime Agent Session catalog continuation drifted"
                 )
-            surface = self._machine_session_surface_values(
-                snapshot, session.root_id
-            )
-            if (
-                surface.get("runtime") == runtime
-                and surface.get("session fingerprint")
-                == external_session_fingerprint
-            ):
-                candidates.append(session)
+            candidates.append(session)
         if not candidates:
             return None
         evidence_roots: tuple[str, ...] = ()
@@ -16155,18 +16152,15 @@ class ApplicationServer(WorkspaceRootsOwner):
         if method == "POST" and path == "/api/universal/agent-session":
             if not direct and request.get("session") != {}:
                 raise AuthorizationDenied("Agent Session enrollment must be unbound")
-            from .library_engines import LIBRARY_ITEM_ENGINES
-            budget = min(1.0, LIBRARY_ITEM_ENGINES['tool_workshop']['params']['preflight_database_ms'] / 1000)
-            if not self.mutation_lock.acquire(timeout=budget):
-                raise RefusedWithoutEffect("ArchHub is finishing a graph update; retry this tool")
-            try:
+            if self.universal_checkpoint_guard is not None:
+                self.universal_checkpoint_guard.require_healthy()
+            self.require_universal_http_route(method, path, authentication_context=context)
+            with self.mutation_lock:
                 if self.universal_checkpoint_guard is not None:
                     self.universal_checkpoint_guard.require_healthy()
                 self.require_universal_http_route(method, path, authentication_context=context)
                 return self._enroll_universal_machine_agent_session(body,
                     runtime_id=str(request.get("runtime_id") or ""))
-            finally:
-                self.mutation_lock.release()
         with self.mutation_lock:
             if self.universal_checkpoint_guard is not None:
                 self.universal_checkpoint_guard.require_healthy()

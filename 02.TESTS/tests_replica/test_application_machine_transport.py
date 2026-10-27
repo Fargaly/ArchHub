@@ -1304,27 +1304,174 @@ def test_initial_enrollment_retries_recover_only_the_same_peers_capability(monke
         server.close()
 
 
-def test_enrollment_refuses_busy_graph_with_one_actionable_reason():
+def test_enrollment_waits_for_a_short_graph_write_without_refusing():
     server = ApplicationServer()
     held, release = threading.Event(), threading.Event()
     def hold():
         with server.mutation_lock:
             held.set()
-            release.wait(8)
+            release.wait(1.1)
     worker = threading.Thread(target=hold, daemon=True)
     worker.start()
     assert held.wait(2)
     started = time.monotonic()
     try:
-        with pytest.raises(AuthorizationDenied, match="ArchHub is finishing a graph update; retry this tool"):
-            server.dispatch_universal_machine_route({"method": "POST", "path": "/api/universal/agent-session",
-                "body": {"runtime": "codex", "external_session_id": "busy-enrollment-court"}})
-        assert time.monotonic() - started < 1.5
-        assert not server._machine_agent_sessions
+        result = server.dispatch_universal_machine_route({"method": "POST", "path": "/api/universal/agent-session",
+            "body": {"runtime": "codex", "external_session_id": "busy-enrollment-court"}})
+        assert time.monotonic() - started < 2
+        assert result["agent_session"] in server._machine_agent_sessions
     finally:
         release.set()
         worker.join(5)
         server.close()
+
+
+@pytest.mark.parametrize("phase", ["guard", "projection"])
+def test_fresh_enrollment_succeeds_during_repeated_workshop_reads(monkeypatch, tmp_path, phase):
+    from nodelang import workshop_api
+    descriptor = tmp_path / "runtime.json"
+    provider = MemorySigningKeyProvider("archhub.local.universal-runtime-pipe", b"E" * 32)
+    server = ApplicationServer(enable_machine_transport=True,
+        machine_descriptor_path=descriptor, machine_key_provider=provider).start()
+    busy, stop = threading.Event(), threading.Event()
+    errors, reads, attempts, stale = [], [], [], []
+    paused = [False]
+    binding = server._resolve_browser_session(server.browser_session_token)
+    scope = universal_application_module.project_universal_canvas(server.universal_store,
+        server.universal_registry, authentication_context=binding.context)["scope"]["current"]
+    original = workshop_api.WorkshopAPI.listAgentsWorking
+
+    def pause():
+        busy.set()
+        stop.wait(1.25)
+
+    def guard():
+        assert server._resolve_browser_session(server.browser_session_token) == binding
+        server.require_universal_http_route("POST", "/api/universal/workshop",
+            authentication_context=binding.context, revalidate=True)
+        if phase == "guard" and not paused[0]:
+            paused[0] = True
+            pause()
+
+    def projection(api):
+        if phase == "projection":
+            pause()
+        return original(api)
+
+    monkeypatch.setattr(workshop_api.WorkshopAPI, "listAgentsWorking", projection)
+
+    def reader():
+        try:
+            while not stop.is_set():
+                paused[0] = False
+                try:
+                    reads.append(workshop_api.dispatch(server, binding, {"action":"data-api",
+                        "function":"listAgentsWorking", "args":[], "root":server.universal_registry.workshop_root,
+                        "scope":scope, "request_id":"contention-court"}, guard=guard,
+                        route=("POST", "/api/universal/workshop")))
+                except InvalidCell as exc:
+                    if str(exc) != "Workshop changed while reading; refresh the data":
+                        raise
+                    stale.append(True)
+                attempts.append(True)
+        except Exception as exc:
+            errors.append(exc)
+
+    worker = threading.Thread(target=reader, daemon=True)
+    worker.start()
+    try:
+        for index in range(3):
+            assert busy.wait(5)
+            busy.clear()
+            started = time.monotonic()
+            client = UniversalRuntimeClient(descriptor, provider)
+            result = client.bind_agent_session(runtime="codex", external_session_id="workshop-contention-%s-%s" % (phase, index))
+            elapsed = time.monotonic() - started
+            print("ENROLLREAL %s enrollment %.6fs" % (phase, elapsed))
+            assert elapsed < 2 and worker.is_alive() and not errors
+            assert result["agent_session"] in server._machine_agent_sessions
+        assert len(attempts) >= 2
+    finally:
+        stop.set()
+        worker.join(10)
+        server.close()
+    assert not worker.is_alive() and not errors and len(attempts) >= 3
+    if phase == "projection":
+        assert len(stale) >= 2
+    else:
+        assert len(reads) >= 2
+
+
+@pytest.mark.parametrize("function", ["listAgentsWorking", "listTasks", "listWorkshopMessages"])
+def test_workshop_list_revalidates_revocation_before_disclosing(monkeypatch, function):
+    from nodelang import workshop_api
+    server = ApplicationServer().start()
+    binding = server._resolve_browser_session(server.browser_session_token)
+    scope = universal_application_module.project_universal_canvas(server.universal_store,
+        server.universal_registry, authentication_context=binding.context)["scope"]["current"]
+
+    def revoked(api):
+        server.universal_registry.authorization.broker.revoke(binding.context)
+        return {"private":"must not be disclosed"}
+
+    monkeypatch.setattr(workshop_api.WorkshopAPI, function, revoked)
+    try:
+        with pytest.raises(AuthorizationDenied):
+            workshop_api.dispatch(server, binding, {"action":"data-api", "function":function,
+                "args":[], "root":server.universal_registry.workshop_root, "scope":scope,
+                "request_id":"revocation-court"}, guard=lambda: None,
+                route=("POST", "/api/universal/workshop"))
+    finally:
+        server.close()
+
+
+def test_workshop_message_read_cannot_disclose_a_rolled_back_append(monkeypatch, tmp_path):
+    from nodelang import workshop_api, agent_declarations
+    from nodelang.conversation_history import ConversationHistoryStore
+    from nodelang.workshop_mailbox import ROOM, CATEGORY
+    history = ConversationHistoryStore(tmp_path / "content.sqlite3", instance_id="content-court")
+    history.ensure_conversation(ROOM)
+    api = workshop_api.WorkshopAPI(SimpleNamespace(), SimpleNamespace(subject_root="account"),
+        ROOM, "scope", guard=lambda: None, request_id="rollback-court", route="court")
+    api.history = lambda: history
+    monkeypatch.setattr(agent_declarations, "declarations", lambda *_a, **_kw: [])
+    entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+    results, errors = [], []
+
+    def rollback():
+        entered.set()
+        release.wait(5)
+        raise ValueError("deliberate rollback")
+
+    def writer():
+        try:
+            history.append(ROOM, author="account", content="uncommitted private draft", category=CATEGORY,
+                idempotency_key="rolled-back", before_commit=rollback)
+        except ValueError as exc:
+            if str(exc) != "deliberate rollback":
+                errors.append(exc)
+
+    def reader():
+        try:
+            results.append(api.listWorkshopMessages())
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            finished.set()
+
+    writing, reading = threading.Thread(target=writer), threading.Thread(target=reader)
+    writing.start()
+    try:
+        assert entered.wait(3)
+        reading.start()
+        assert not finished.wait(.1), "read disclosed an in-progress shared-connection append"
+    finally:
+        release.set()
+        writing.join(5)
+        if reading.ident is not None:
+            reading.join(5)
+        history.close()
+    assert not errors and results[0]["messages"] == []
 
 
 def test_enrollment_finishes_local_participant_admission_before_return(monkeypatch):
@@ -1352,7 +1499,7 @@ def test_enrollment_finishes_local_participant_admission_before_return(monkeypat
         server.close()
 
 
-def test_busy_enrollment_is_a_signed_no_effect_refusal_then_recovers(tmp_path):
+def test_busy_pipe_enrollment_waits_for_graph_write_and_mints_once(tmp_path):
     descriptor = tmp_path / "runtime.json"
     provider = MemorySigningKeyProvider("archhub.local.universal-runtime-pipe", b"e" * 32)
     server = ApplicationServer(enable_machine_transport=True, machine_descriptor_path=descriptor,
@@ -1362,19 +1509,20 @@ def test_busy_enrollment_is_a_signed_no_effect_refusal_then_recovers(tmp_path):
     def hold():
         with server.mutation_lock:
             held.set()
-            release.wait(8)
+            release.wait(1.1)
     worker = threading.Thread(target=hold, daemon=True)
     worker.start()
     assert held.wait(2)
     try:
-        with pytest.raises(transport_module.MachineRefusedWithoutEffect, match="retry this tool"):
-            client.bind_agent_session(runtime="codex", external_session_id="busy-pipe-court")
-        assert not server._machine_agent_sessions
-        release.set()
-        worker.join(5)
+        started = time.monotonic()
         result = client.bind_agent_session(runtime="codex", external_session_id="busy-pipe-court")
+        assert time.monotonic() - started < 2
         assert client.agent_session_root == result["agent_session"]
         assert len(server._machine_agent_sessions) == 1
+        revision = server.universal_store.revision
+        replay = UniversalRuntimeClient(descriptor, provider)
+        assert replay.bind_agent_session(runtime="codex", external_session_id="busy-pipe-court") == result
+        assert server.universal_store.revision == revision
     finally:
         release.set()
         worker.join(5)

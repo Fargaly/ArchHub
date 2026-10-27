@@ -8888,6 +8888,16 @@
         "02.TESTS/tests_js/wire_social.test.cjs",
         "02.TESTS/tests_js/appstable.test.cjs"
       ]
+    },
+    "ENROLLREAL": {
+      "source": "Founder ENROLLREAL 717: agents sign in on the real busy app and reach Revit within broker time plus a few seconds. Read-only nonblocking installed stack samples; shorten existing Workshop browser/preflight/read critical sections and historical enrollment scan; preserve checkpoint, route, peer/device, identity, continuity, expiry and signed-authority checks. No timeout-only fix, new store, live database access, screen, installed writes, restart or model mutation. Isolated patch for 717 landing and installed acceptance. Existing-board CLAIM explicitly requested by lane brief.",
+      "scope": [
+        "01.APP/nodelang/application_server.py",
+        "01.APP/nodelang/workshop_api.py",
+        "02.TESTS/tests_replica/test_application_machine_transport.py",
+        "02.TESTS/tests_replica/test_enrolment_reads_the_canvas_once.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

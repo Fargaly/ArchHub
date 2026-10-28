@@ -84,23 +84,23 @@
     "red": {
       "kind": "regression",
       "must_pass": [
-        "tests/test_zero_idle_growth.py::test_an_old_graph_opened_by_new_code_does_not_grow_while_idle",
-        "tests/test_zero_idle_growth.py::test_old_change_records_undo_and_redo_on_an_old_graph_with_new_code"
+        "tests/test_zero_idle_growth.py::test_an_idle_app_grows_no_file",
+        "tests/test_zero_idle_growth.py::test_a_canvas_change_undoes_and_redoes_exactly"
       ],
       "results": {
-        "tests/test_zero_idle_growth.py::test_an_old_graph_opened_by_new_code_does_not_grow_while_idle": "skip",
-        "tests/test_zero_idle_growth.py::test_old_change_records_undo_and_redo_on_an_old_graph_with_new_code": "pass"
+        "tests/test_zero_idle_growth.py::test_an_idle_app_grows_no_file": "skip",
+        "tests/test_zero_idle_growth.py::test_a_canvas_change_undoes_and_redoes_exactly": "pass"
       }
     },
     "green": {
       "kind": "regression",
       "must_pass": [
-        "tests/test_zero_idle_growth.py::test_an_old_graph_opened_by_new_code_does_not_grow_while_idle",
-        "tests/test_zero_idle_growth.py::test_old_change_records_undo_and_redo_on_an_old_graph_with_new_code"
+        "tests/test_zero_idle_growth.py::test_an_idle_app_grows_no_file",
+        "tests/test_zero_idle_growth.py::test_a_canvas_change_undoes_and_redoes_exactly"
       ],
       "results": {
-        "tests/test_zero_idle_growth.py::test_an_old_graph_opened_by_new_code_does_not_grow_while_idle": "pass",
-        "tests/test_zero_idle_growth.py::test_old_change_records_undo_and_redo_on_an_old_graph_with_new_code": "pass"
+        "tests/test_zero_idle_growth.py::test_an_idle_app_grows_no_file": "pass",
+        "tests/test_zero_idle_growth.py::test_a_canvas_change_undoes_and_redoes_exactly": "pass"
       }
     }
   }

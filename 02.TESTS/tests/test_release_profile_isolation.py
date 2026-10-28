@@ -45,11 +45,11 @@ def test_zero_idle_release_child_preserves_decoy_profile(tmp_path, monkeypatch):
     gate = load('zero_idle_release', ROOT / '02.TESTS/tests/test_zero_idle_growth.py')
     state = tmp_path / 'RUN/STATE'
     state.mkdir(parents=True)
-    # Run the release driver's exact server opener; no unrelated historical edit/migration.
+    # Run the release driver's exact app boot (nograph_launcher); nothing else.
     probe = tmp_path / 'BOOT.py'
     probe.write_text('import runpy\nns=runpy.run_path(' + repr(str(gate.DRIVER)) +
-                     ',run_name="release_profile_probe")\nserver=ns["open_server"]()\n'
-                     'print("boot",server.workspace_roots_boot)\nserver.close()\n')
+                     ',run_name="release_profile_probe")\nserver=ns["boot"]()\n'
+                     'print("boot",server.public_url)\nserver.close()\n')
     gate.DRIVER = probe
     gate._run('profile-probe', ROOT / '01.APP', state)
     after = [digest(p) for p in protected]

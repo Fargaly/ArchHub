@@ -364,8 +364,8 @@
         "source": "inputs/MASTER-REQUESTS-3-MONTHS-2026-10-16.md#R110",
         "count": 21,
         "must_pass": [
-          "tests/test_zero_idle_growth.py::test_an_old_graph_opened_by_new_code_does_not_grow_while_idle",
-          "tests/test_zero_idle_growth.py::test_old_change_records_undo_and_redo_on_an_old_graph_with_new_code"
+          "tests/test_zero_idle_growth.py::test_an_idle_app_grows_no_file",
+          "tests/test_zero_idle_growth.py::test_a_canvas_change_undoes_and_redoes_exactly"
         ],
         "manifest": "evidence/must_pass.json",
         "pattern": "regression",

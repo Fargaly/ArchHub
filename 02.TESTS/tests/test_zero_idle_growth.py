@@ -1,45 +1,31 @@
-"""RELEASE GATE: an idle ArchHub graph does not grow.
+"""RELEASE GATE: an idle ArchHub grows nothing, and a canvas change undoes and redoes exactly.
 
-Founder order, 2026-09-23: the graph must stop growing for nothing. SPEC.md
-section 3.3 keeps heartbeats, leases, renewals, receipts and signals out of
-graph revisions, and nodelang/commit_intent.py refuses any commit without a
-closed-set intent. This court proves it on the thing that matters: a graph
-written by an OLD release, opened by the code under test.
+Founder order, 2026-09-23: the app must stop growing for nothing. NOGRAPH: the app runs
+nograph_launcher -> NoGraphServer and never opens a graph, so this court boots exactly that, from
+the code under test (this checkout, or ARCHHUB_COURT_SOURCE: the build passes its verified
+snapshot), headless, in an isolated profile. The window saves and opens one .archhub document;
+then nobody acts:
 
-A fresh fixture built by the code under test cannot fail this court, so the
-graph is built by the old release's own bytes in a separate process
-(ARCHHUB_OLD_GRAPH_SOURCE, else ``git archive`` of OLD_GRAPH_SOURCE_REVISION
-from this checkout). The code under test is this checkout, or
-ARCHHUB_COURT_SOURCE (the build passes its verified snapshot). It opens the
-old graph once (an admitted migration may publish here); BABOOM enrolls and
-reports, the brain hook records a session start, and the founder's window
-reads its canvas. Then nobody acts:
+* ten intervals of window/agent reads (catalogue, revision poll, document read, canvas, project
+  files), each past the local probe cache;
+* a close and two restarts, each its own process.
 
-* ten intervals on a fake clock, each past the runtime-presence lease and
-  inside the browser renewal lead: agent-session lease renewal, runtime
-  presence heartbeat, foreground activity, an unchanged steward signal, a
-  brain session-start receipt, the Desktop browser-handoff renewal, and
-  agent and browser reads;
-* a close and two restarts.
-
-max(revision), count(cell_versions) and count(current_cells) must not move
-from the baseline. The build refuses a release when this court is red.
+No file in the data dir or the profile (no journal, no .archhub, nothing) may appear, change size
+or be rewritten from the baseline. An agent canvas change must undo (canvas.undo), redo (the
+window's redo saved through autosave) and undo again to the exact documents. The build refuses a
+release when this court is red.
 """
 from __future__ import annotations
 
-import io
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
-import tarfile
 
 import pytest
 
 
-OLD_GRAPH_SOURCE_REVISION = "9eefd8145db822940ab2458dadc1643e5af1081d"
 ROOT = Path(__file__).resolve().parents[2]
 DRIVER = Path(__file__).with_name("zero_idle_growth_driver.py")
 PHASE_TIMEOUT_SECONDS = 900
@@ -47,48 +33,17 @@ PHASE_TIMEOUT_SECONDS = 900
 
 def _source_under_test() -> Path:
     configured = os.environ.get("ARCHHUB_COURT_SOURCE", "").strip()
-    source = Path(configured).resolve() if configured else ROOT
-    if not (source / "nodelang" / "universal_cell.py").is_file():
-        pytest.fail("source under test has no nodelang package: %s" % source)
+    source = Path(configured).resolve() if configured else ROOT / "01.APP"
+    if not (source / "nodelang" / "nograph_server.py").is_file():
+        pytest.fail("source under test has no NOGRAPH app: %s" % source)
     return source
-
-
-def _old_source(target: Path) -> Path:
-    configured = os.environ.get("ARCHHUB_OLD_GRAPH_SOURCE", "").strip()
-    if configured:
-        source = Path(configured).resolve()
-        if not (source / "nodelang" / "universal_cell.py").is_file():
-            pytest.fail("ARCHHUB_OLD_GRAPH_SOURCE has no nodelang package: %s" % source)
-        return source
-    archive = subprocess.run(
-        ["git", "-C", str(ROOT), "archive", "--format=tar",
-         OLD_GRAPH_SOURCE_REVISION, "nodelang", "launch_archhub_test.py"],
-        capture_output=True, timeout=300,
-    )
-    if archive.returncode != 0:
-        pytest.fail(
-            "the old-shape graph needs release %s (git archive failed: %s); "
-            "set ARCHHUB_OLD_GRAPH_SOURCE to its source tree"
-            % (OLD_GRAPH_SOURCE_REVISION, archive.stderr.decode(errors="replace")[:300])
-        )
-    target.mkdir(parents=True)
-    with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as bundle:
-        bundle.extractall(target, filter="data")
-    return target
 
 
 def _run(phase: str, source: Path, state: Path, *extra: str) -> str:
     from tools.real_app_check.real_app_check import isolated_env
     from tools.real_app_check.profile_guard import command
     environment = isolated_env(dict(os.environ), state.parent / "PROFILE")
-    environment.update({
-        "PYTHONIOENCODING": "utf-8",
-        "PYTHONDONTWRITEBYTECODE": "1",
-        # Each release reads its own packaged map; never a machine-local one.
-        "ARCHHUB_GRAND_MAP_PATH": str(
-            source / "nodelang" / "data" / "public_runtime_map.json"
-        ),
-    })
+    environment.update({"PYTHONIOENCODING": "utf-8", "PYTHONDONTWRITEBYTECODE": "1"})
     environment.pop("PYTHONPATH", None)
     completed = subprocess.run(
         command([sys.executable, str(DRIVER), phase, str(source), str(state), *extra]),
@@ -102,79 +57,39 @@ def _run(phase: str, source: Path, state: Path, *extra: str) -> str:
     return completed.stdout
 
 
-@pytest.fixture(scope="module")
-def old_graph(tmp_path_factory) -> Path:
-    base = tmp_path_factory.mktemp("zero-idle-old")
-    source = _old_source(base / "old-source")
-    state = base / "old-state"
+def _changes(baseline: dict, after: dict) -> dict:
+    return {path: [baseline.get(path), after.get(path)] for path in set(baseline) | set(after)
+            if baseline.get(path) != after.get(path)}
+
+
+def test_an_idle_app_grows_no_file(tmp_path):
+    state = tmp_path / "state"
     state.mkdir()
-    _run("build-old", source, state)
-    return state
-
-
-def _copy_graph(old_state: Path, target: Path) -> Path:
-    target.mkdir()
-    for item in old_state.iterdir():
-        if (item.name.startswith("graph.sqlite3") and not item.name.endswith(".lock")
-                or item.name == "old-edit.json"):
-            shutil.copy2(item, target / item.name)
-    return target
-
-
-def test_an_old_graph_opened_by_new_code_does_not_grow_while_idle(old_graph, tmp_path):
-    state = _copy_graph(old_graph, tmp_path / "state")
     result_path = tmp_path / "zero-idle-result.json"
-    _run("idle", _source_under_test(), state, str(result_path))
+    source = _source_under_test()
+    _run("idle", source, state, str(result_path))
+    _run("restart", source, state, str(result_path))
+    _run("restart", source, state, str(result_path))
     result = json.loads(result_path.read_text(encoding="utf-8"))
     baseline = result["baseline"]
     observed = {
-        **{"interval %d" % (index + 1): counts
-           for index, counts in enumerate(result["intervals"])},
+        **{"interval %d" % (index + 1): files for index, files in enumerate(result["intervals"])},
         "close": result["closed"],
-        "restart 1": result["restart_1"],
-        "restart 2": result["restart_2"],
+        **{"restart %d" % (index + 1): files for index, files in enumerate(result["restarts"])},
     }
-    grew = {name: counts for name, counts in observed.items() if counts != baseline}
-    print("zero-idle baseline [max(revision), cell_versions, current_cells]:", baseline)
-    print("zero-idle after:", json.dumps(observed))
-    assert len(result["intervals"]) == 10
-    assert not grew, (
-        "the graph grew while nobody acted: baseline %s, %s; commits: %s"
-        % (baseline, json.dumps(grew), json.dumps([
-            item for item in result["commits"] if item["phase"] != "warm"
-        ][:40]))
-    )
+    grew = {name: _changes(baseline, files) for name, files in observed.items() if files != baseline}
+    print("zero-idle baseline: %d files" % len(baseline))
+    assert len(result["intervals"]) == 10 and len(result["restarts"]) == 2
+    assert any(path.endswith(".archhub") for path in baseline), "the window's document was not saved"
+    assert not grew, "the app wrote files while nobody acted: %s" % json.dumps(grew)[:4000]
 
 
-def test_old_change_records_undo_and_redo_on_an_old_graph_with_new_code(
-    old_graph, tmp_path
-):
-    """Undo history is a released protocol: an edit recorded by the old
-    release (per-change before/after image Cells) must still undo and redo
-    after the new code opens its graph, and a new edit must record a compact
-    change (images read back from cell_versions) that undoes and redoes."""
-    state = _copy_graph(old_graph, tmp_path / "state")
+def test_a_canvas_change_undoes_and_redoes_exactly(tmp_path):
+    state = tmp_path / "state"
+    state.mkdir()
     result_path = tmp_path / "undo-result.json"
-    _run("undo-old", _source_under_test(), state, str(result_path))
+    _run("undo", _source_under_test(), state, str(result_path))
     result = json.loads(result_path.read_text(encoding="utf-8"))
-    old = result["old_edit"]
-    print("undo court: old-release edit wrote %d cells; new edit wrote %d cells"
-          % (old["cells"], result["new_edit"]["cells"]))
-    assert result["opened"] == old["moved"]
-    assert result["after_old_undo"] == old["original"]
-    assert result["after_old_redo"] == old["moved"]
-    assert result["new_edit"]["position"] == ["512.0", "128.0"]
-    assert result["after_new_undo"] == old["moved"]
-    assert result["after_new_redo"] == ["512.0", "128.0"]
-
-
-@pytest.mark.parametrize("corruption", ["", "unrelated", "1", "2"])
-def test_release_routes_migrate_atomically_and_refuse_partial_registries(old_graph, tmp_path, corruption):
-    state = _copy_graph(old_graph, tmp_path / "state")
-    result_path = tmp_path / "routes-result.json"
-    _run("release-routes", _source_under_test(), state, str(result_path), corruption)
-    result = json.loads(result_path.read_text(encoding="utf-8"))
-    assert len(result["routes"]) == 3
-    assert result["atomic_refusals"] == (0 if corruption else 1)
-    assert result["corruption"] == corruption
-    assert result["reopen_unchanged"] is True
+    print("undo court: count through edit/undo/redo/undo:", result["count"])
+    assert result["count"] == ["3", "2", "3", "2", "3"]
+    assert result["changed"] and result["undo_exact"] and result["redo_exact"] and result["second_undo_exact"]

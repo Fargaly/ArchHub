@@ -18,15 +18,15 @@
       g = s.graph,
       [name, setName] = React.useState(''),
       [value, setValue] = React.useState('');
-    return <div className="grid"><label className="grid">Documentation<input aria-label="Graph documentation" value={g.documentation || ''} onChange={e => executeAction("updateGraph", u, g.id, {
+    return <div className="grid"><label className="grid">Documentation<input aria-label="Workflow documentation" value={g.documentation || ''} onChange={e => executeAction("updateGraph", u, g.id, {
           documentation: e.target.value
-        })} /></label><Btn sm onClick={() => executeAction("ui.go", u, 'docs')}>Read documentation</Btn><label className="listbutton">{g.thumbnail && <img alt="Graph thumbnail" src={g.thumbnail} style={{
+        })} /></label><Btn sm onClick={() => executeAction("ui.go", u, 'docs')}>Read documentation</Btn><label className="listbutton">{g.thumbnail && <img alt="Workflow thumbnail" src={g.thumbnail} style={{
           width: '100%',
           maxHeight: 90,
           objectFit: 'cover'
-        }} />}Choose thumbnail<input aria-label="Graph thumbnail" type="file" accept="image/*" onChange={e => {
+        }} />}Choose thumbnail<input aria-label="Workflow thumbnail" type="file" accept="image/*" onChange={e => {
           if (e.target.files[0]) executeAction("setGraphThumbnail", u, e.target.files[0]);
-        }} /></label><h3>Custom properties</h3>{(g.customProperties || []).map((r, i) => <div className="spread" key={i}><span>{r.name}</span><input aria-label={'Graph property ' + r.name} value={r.value} onChange={e => executeAction("updateGraph", u, g.id, {
+        }} /></label><h3>Custom properties</h3>{(g.customProperties || []).map((r, i) => <div className="spread" key={i}><span>{r.name}</span><input aria-label={'Workflow property ' + r.name} value={r.value} onChange={e => executeAction("updateGraph", u, g.id, {
           customProperties: g.customProperties.map((x, j) => j === i ? {
             ...x,
             value: e.target.value
@@ -41,7 +41,7 @@
           }]
         });
         if(saved){executeAction('ui.state',setName,'');executeAction('ui.state',setValue,'');}
-      }}>Add property</Btn><label className="spread">Court status<select aria-label="Graph court status" value={g.courtStatus || 'Not reviewed'} onChange={e => executeAction("updateGraph", u, g.id, {
+      }}>Add property</Btn><label className="spread">Court status<select aria-label="Workflow court status" value={g.courtStatus || 'Not reviewed'} onChange={e => executeAction("updateGraph", u, g.id, {
           courtStatus: e.target.value
         })}>{['Not reviewed', 'Needs review', 'Pass', 'Fail', 'Inconclusive'].map(x => <option key={x}>{x}</option>)}</select></label><Btn sm onClick={() => executeAction("ui.go", u, 'runs')}>Run history</Btn></div>;
   }

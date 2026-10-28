@@ -113,9 +113,9 @@
                 }))} /></label><small className="muted">Platform share · {100 - c.listing.creatorShare}%. Charges require owner review before collection.</small><Btn p disabled={!c.listing.title.trim()} onClick={(event) => dispatch("community-tools.7", event)}>Review listing</Btn></div></details></Card></details><details><summary>Client project charges</summary><Card style={{
           padding: 20,
           marginTop: 14
-        }}><p className="muted">Prepare a reviewed project or graph-run charge. Collection requires owner review.</p>{[['client', 'Client'], ['project', 'Project'], ['basis', 'Charge basis'], ['amount', 'Amount · USD']].map(([key, label]) => <label className="parameter-row" key={key}><span>{label}</span>{key === 'basis' ? <select aria-label={label} value={c.charge[key]} onChange={(e) => actionState.run(() => api.setProjectCharge({
+        }}><p className="muted">Prepare a reviewed project or workflow-run charge. Collection requires owner review.</p>{[['client', 'Client'], ['project', 'Project'], ['basis', 'Charge basis'], ['amount', 'Amount · USD']].map(([key, label]) => <label className="parameter-row" key={key}><span>{label}</span>{key === 'basis' ? <select aria-label={label} value={c.charge[key]} onChange={(e) => actionState.run(() => api.setProjectCharge({
               [key]: e.target.value
-            }))}>{['Per project', 'Per graph run'].map((x) => <option key={x}>{x}</option>)}</select> : <input aria-label={label} type={key === 'amount' ? 'number' : 'text'} min={key === 'amount' ? 0 : undefined} value={c.charge[key]} onChange={(e) => actionState.run(() => api.setProjectCharge({
+            }))}>{['Per project', 'Per workflow run'].map((x) => <option key={x}>{x}</option>)}</select> : <input aria-label={label} type={key === 'amount' ? 'number' : 'text'} min={key === 'amount' ? 0 : undefined} value={c.charge[key]} onChange={(e) => actionState.run(() => api.setProjectCharge({
               [key]: key === 'amount' ? Number(e.target.value) : e.target.value
             }))} />}</label>)}<Btn p onClick={(event) => dispatch("community-tools.8", event)}>Review charge</Btn>{c.charges.length > 0 && <Table rows={c.charges} columns={['client', 'project', 'basis', 'amount', 'status']} />}</Card></details></div>;
   }

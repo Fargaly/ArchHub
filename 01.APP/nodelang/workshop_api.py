@@ -569,14 +569,14 @@ class WorkshopAPI:
         from .workshop_delivery_state import project_injection_delivery
         if before is not None and (type(before) is not int or before < 1):
             raise InvalidCell("Workshop message cursor is invalid")
-        history = self.history()
-        from .agent_declarations import declarations
-        declared = declarations(self.owner, include_archived=True)
-        with history._transaction():
-            rows, more = history._collect(history._db.execute("SELECT * FROM messages WHERE conversation_id=? "
-                "AND category=? AND public=1 AND (? IS NULL OR sequence<?) ORDER BY sequence DESC LIMIT 101",
-                (self.root, CATEGORY, before, before)), 100, 180000)
-            events = {row["id"]: delivery_events(history, row) for row in rows}
+        from .workshop_mailbox import application_history, read_declarations
+        with application_history() as history:
+            declared = read_declarations(history._db, include_archived=True)
+            with history._transaction():
+                rows, more = history._collect(history._db.execute("SELECT * FROM messages WHERE conversation_id=? "
+                    "AND category=? AND public=1 AND (? IS NULL OR sequence<?) ORDER BY sequence DESC LIMIT 101",
+                    ("app:workshop", CATEGORY, before, before)), 100, 180000)
+                events = {row["id"]: delivery_events(history, row) for row in rows}
         messages = [{"id":row["id"], **_message_identity(row["author"], declared, self.binding.subject_root), "text":row["content"],
             "reply_to":row["reply_to"], "sequence":row["sequence"], "created_at":row["created_at"],
             **project_injection_delivery(events[row["id"]], addressed=agent_addressed(row))}
@@ -815,23 +815,8 @@ class WorkshopAPI:
 
     def getAgentSurface(self):
         return {name:self._parameter("studio:" + name, default) for name,default in
-            (("agentProfiles",{}),("intakeRules",[]),("uncertainLinks",[]),("onboarding",{}),
+            (("intakeRules",[]),("uncertainLinks",[]),("onboarding",{}),
              ("provenance",[]),("learning",{}),("hostSkills",[]))}
-
-    def setAgentProfile(self, id, values):
-        if id not in LABELS or type(values) is not dict or not values or set(values) - {
-                "purpose","humanOwner","admins","autonomy","questionsPerDay","memoryScope","skillIds"}:
-            raise InvalidCell("Choose a known agent and supported profile fields")
-        if "questionsPerDay" in values and (type(values["questionsPerDay"]) is not int or values["questionsPerDay"] < 0):
-            raise InvalidCell("Questions per day must be a nonnegative integer")
-        if "autonomy" in values and (type(values["autonomy"]) is not dict or
-                set(values["autonomy"]) - {"Read","Write","Send","Spend"} or
-                any(v not in {"Review all","Escalate hard","Autonomous"} for v in values["autonomy"].values())):
-            raise InvalidCell("Choose a supported autonomy policy")
-        profiles=self._parameter("studio:agentProfiles",{})
-        profiles[id]={**profiles.get(id,{}),**values}
-        self._put_parameter("studio:agentProfiles",profiles)
-        return profiles[id]
 
     def setTaskPlanMode(self, id, mode):
         if mode not in {"Run on its own","Confirm each step","Keep planning"}:
@@ -970,6 +955,12 @@ def dispatch(owner, binding, body, *, guard, route):
         raise InvalidCell("Workshop data function request is invalid")
     api = WorkshopAPI(owner, binding, body["root"], body["scope"], guard=guard,
                       request_id=hashlib.sha256(body["request_id"].encode()).hexdigest(), route=route)
+    if body["function"] == "listWorkshopMessages":
+        guard()
+        try:
+            return {"ok":True, "result":api.listWorkshopMessages(*body["args"]), "revision":0}
+        except TypeError as exc:
+            raise InvalidCell("Workshop data function arguments are invalid") from exc
     # Browser and route scans must not hold the graph writer lock.
     revision = api.admit().revision
     read = body["function"] in {"listAgentsWorking", "listTasks", "listWorkshopMessages"}
@@ -987,7 +978,7 @@ def dispatch(owner, binding, body, *, guard, route):
         return {"ok":True, "result":result, "revision":revision if read else owner.universal_store.revision}
 
 # WIRE-agents: extend the same authenticated dispatch allowlist.
-FUNCTIONS = FUNCTIONS | frozenset({"getAgentSurface","setAgentProfile","setTaskPlanMode",
+FUNCTIONS = FUNCTIONS | frozenset({"getAgentSurface","setTaskPlanMode",
     "checkpointTask","restoreTaskCheckpoint","openTaskGraph","setIntakeRule","setOnboarding",
     "reviewBrainLink","setSourceEvidence","setLearningLayer","setGraphMetadata","getGraphMetadata",
     "setPinnedOutput","setNodeRunPolicy","verifyOutputStamp","refreshOfficeAwareness"})

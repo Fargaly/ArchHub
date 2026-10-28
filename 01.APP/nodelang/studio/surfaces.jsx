@@ -72,7 +72,7 @@
         <Btn onClick={event=>executeAction('projects.watcher.add',{api,s,u},event)}>Add Watcher</Btn>
         <Btn p onClick={event=>executeAction('projects.watcher.run',{refresh},event)}>Run to here</Btn>
       </Heading>
-      {requestState==='waiting'&&<p role="status">Reading the source through its graph…</p>}
+      {requestState==='waiting'&&<p role="status">Reading the source through its workflow…</p>}
       {requestState==='error'&&<Card><p role="alert">{failure}</p><Btn onClick={event=>executeAction('projects.watcher.run',{refresh},event)}>Retry source</Btn></Card>}
       {requestState==='empty'&&<Empty>Wire geometry into the Watcher, then run to here to inspect the source.</Empty>}
       {requestState==='loaded'&&<Card><window.UI.Sheet large /><Table rows={s.watcher.geometry.walls.map(([x1,y1,x2,y2])=>({x1,y1,x2,y2}))} columns={['x1','y1','x2','y2']} /></Card>}

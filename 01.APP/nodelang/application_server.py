@@ -1291,6 +1291,79 @@ def _site_tutorial_asset(path):
 from .workspace_roots_owner import WorkspaceRootsOwner
 
 
+def _router_http(owner, handler):
+    """Existing desktop boot capability admits local router calls, without graph I/O."""
+    if not handler.path.startswith('/api/router/'):
+        return False
+    from .model_router import composer_chat
+    from .settings_owner import SettingsOwner
+    streaming = False
+    def event(value):
+        nonlocal streaming
+        if not streaming:
+            handler.send_response(200)
+            handler.send_header('Content-Type', 'text/event-stream; charset=utf-8')
+            handler.send_header('Cache-Control', 'no-store')
+            handler.send_header('Connection', 'close')
+            handler.end_headers()
+            handler.close_connection = True
+            streaming = True
+        handler.wfile.write(('data: ' + json.dumps(value) + '\n\n').encode('utf-8'))
+        handler.wfile.flush()
+    try:
+        denied = local_browser_admission_error(handler.headers, handler.server.server_address[1])
+        if denied or handler.headers.get('Sec-Fetch-Site') not in (None, 'none', 'same-origin'):
+            raise AuthorizationDenied('Cross-origin router request refused.')
+        canvas_key = getattr(owner, 'clean_canvas_key', '')
+        if canvas_key:
+            admitted = owner._clean_canvas_key_matches(handler.headers.get('X-ArchHub-Canvas-Key'))
+        else:
+            expected = getattr(owner, 'browser_session_token', '')
+            csrf = getattr(owner, 'browser_csrf_token', '')
+            admitted = bool(expected and csrf and
+                secrets.compare_digest(handler.headers.get('X-ArchHub-Session', ''), expected) and
+                secrets.compare_digest(handler.headers.get('X-ArchHub-CSRF', ''), csrf))
+        if not admitted:
+            raise AuthorizationDenied('Reopen ArchHub to renew the router session.')
+        from .universal_application import is_application_halted
+        activity = getattr(owner, 'activity', None)
+        halted = getattr(owner, '_application_halted', None)
+        closing = getattr(owner, '_runtime_handoff_exit', None)
+        if (is_application_halted() or (activity is not None and activity.closing) or
+                (halted is not None and halted.is_set()) or (closing is not None and closing.is_set())):
+            raise InvalidCell('Stopped by you. Press Resume to continue.')
+        body = handler._body()
+        settings = SettingsOwner(None, dependencies=object())
+        if handler.path == '/api/router/chat':
+            with activity.admit() if activity is not None else contextlib.nullcontext():
+                result = composer_chat(body, on_delta=lambda text: event({'delta': text}))
+            event({'result': result})
+            return True
+        elif handler.path == '/api/router/settings':
+            if type(body) is not dict:
+                raise InvalidCell('Router settings must be an object.')
+            result = settings.setRouterSettings(body) if body else settings.routerSettings()
+        else:
+            handler._json(404, {'ok': False, 'error': 'Router route not found.'})
+            return True
+        handler._json(200, {'ok': True, **result})
+    except AuthorizationDenied:
+        handler.close_connection = True
+        handler._json(403, {'ok': False, 'error': 'Router session or origin was refused.'})
+    except (InvalidCell, ValueError, TypeError, KeyError):
+        handler.close_connection = True
+        if streaming:
+            event({'error': 'The model reply was interrupted. Retry the message.'})
+        else:
+            handler._json(400, {'ok': False, 'error': 'Router request was refused. Check free model settings and retry.'})
+    except Exception:
+        if streaming:
+            event({'error': 'The model reply was interrupted.'})
+        else:
+            handler._json(503, {'ok': False, 'error': 'The router is unavailable. Check provider availability.'})
+    return True
+
+
 class _CleanAuthorityHttpServer(WorkspaceRootsOwner):
     """Bounded clean-graph browser consumer without a second store."""
 
@@ -4102,7 +4175,7 @@ class _CleanAuthorityHttpServer(WorkspaceRootsOwner):
                     return {}
                 # Bounded before any read: an unauthenticated caller must not
                 # be able to make this process swallow gigabytes.
-                if length > MAX_REQUEST_BODY_BYTES:
+                if length > (9 * 1024 * 1024 if self.path == '/api/session-files' else MAX_REQUEST_BODY_BYTES):
                     self.close_connection = True
                     raise InvalidCell("request body exceeds the admitted limit")
                 raw = self.rfile.read(length)
@@ -4349,6 +4422,8 @@ class _CleanAuthorityHttpServer(WorkspaceRootsOwner):
                 )
 
             def do_POST(self):
+                if _router_http(owner, self):
+                    return
                 if not self._admit_local_request():
                     return
                 from .universal_application import is_application_halted
@@ -4359,6 +4434,23 @@ class _CleanAuthorityHttpServer(WorkspaceRootsOwner):
                 try:
                     body = self._body()
                     csrf_token = self._csrf()
+                    if self.path == '/api/session-files':
+                        if not owner._clean_canvas_key_matches(self.headers.get('X-ArchHub-Canvas-Key')):
+                            self._json(403, {'ok': False, 'error': 'Local desktop frame required'})
+                            return
+                        from .session_files import SessionFiles
+                        from .enforce import guard_effect
+                        try:
+                            payload = SessionFiles().dispatch(body,
+                                invoke=lambda name, effect, params, feeds: guard_effect(name, effect, params, feeds),
+                                picker=getattr(owner, 'native_file_picker', None),
+                                save_picker=getattr(owner, 'native_save_file_picker', None),
+                                stopped=is_application_halted)
+                        except (ValueError, OSError, TypeError, RecursionError) as error:
+                            self._json(400, {'ok': False, 'error': str(error)})
+                            return
+                        self._json(200, payload)
+                        return
                     if self.path != "/api/universal/session":
                         owner._await_clean_warmup()
                     if self.path == "/api/universal/agent":
@@ -7372,6 +7464,11 @@ class ApplicationServer(WorkspaceRootsOwner):
                                     owner.universal_store.snapshot(), owner.universal_registry,
                                     'home_load_ms', default=_application_setting_default('home_load_ms'),
                                     lower=home_bounds['min'], upper=home_bounds['max']),
+                                # NG-NOGRAPH: Workshop binding without loading the Cell canvas graph.
+                                'workshop': {
+                                    'root': owner.universal_registry.workshop_root,
+                                    'scope': owner.universal_registry.workshop_root,
+                                },
                             }).encode('utf-8'),
                         )
                     kind = (
@@ -7963,6 +8060,8 @@ class ApplicationServer(WorkspaceRootsOwner):
             @_with_canvas_property_owner_index
             def do_POST(self):
                 try:
+                    if _router_http(owner, self):
+                        return
                     denied = local_browser_admission_error(
                         self.headers, self.server.server_address[1])
                     if denied:
@@ -7975,6 +8074,35 @@ class ApplicationServer(WorkspaceRootsOwner):
                             'ok': False,
                             'error': 'runtime generation was released',
                         })
+                        return
+                    if self.path == '/api/session-files':
+                        import hmac
+                        token = self.headers.get('X-ArchHub-Session') or ''
+                        csrf = self.headers.get('X-ArchHub-CSRF') or ''
+                        if (not token or not csrf
+                                or not hmac.compare_digest(token, owner.browser_session_token)
+                                or not hmac.compare_digest(csrf, owner.browser_csrf_token)):
+                            self._discard_admitted_body()
+                            self._json(403, {'ok': False, 'error': 'Local owner browser session required'})
+                            return
+                        if owner.is_halted():
+                            self._discard_admitted_body()
+                            self._json(403, {'ok': False, 'error': 'Stopped by you. Press Resume to continue.'})
+                            return
+                        from .session_files import SessionFiles
+                        from .enforce import guard_effect
+                        files = SessionFiles()
+                        body = self._body(max_bytes=9 * 1024 * 1024)
+                        try:
+                            payload = files.dispatch(body,
+                                invoke=lambda name, effect, params, feeds: guard_effect(name, effect, params, feeds),
+                                picker=getattr(owner, 'native_file_picker', None),
+                                save_picker=getattr(owner, 'native_save_file_picker', None),
+                                stopped=owner.is_halted)
+                        except (ValueError, OSError, TypeError, RecursionError) as error:
+                            self._json(400, {'ok': False, 'error': str(error)})
+                            return
+                        self._json(200, payload)
                         return
                     try:
                         binding, _session_token = \
@@ -9971,24 +10099,11 @@ class ApplicationServer(WorkspaceRootsOwner):
                                     owner, binding, 'brain.publish', {'fragment_id': fact_id}))
                                 return
                             elif self.path in ('/api/universal/graph-create', '/api/universal/graph-open'):
-                                from .universal_graphs import create_graph, open_graph
-                                if self.path == '/api/universal/graph-create':
-                                    if set(body) != {'title'}:
-                                        raise InvalidCell('graph creation requires only a title')
-                                    payload = create_graph(owner.universal_store,
-                                        owner.universal_registry, body['title'],
-                                        authentication_context=binding.context,
-                                        include_candidates=self.headers.get('X-ArchHub-Renderer') != 'studio')
-                                else:
-                                    if set(body) != {'root'}:
-                                        raise InvalidCell('graph opening requires only a root')
-                                    payload = open_graph(owner.universal_store,
-                                        owner.universal_registry, body['root'],
-                                        authentication_context=binding.context,
-                                        include_candidates=self.headers.get('X-ArchHub-Renderer') != 'studio')
-                                payload['canvas'] = owner.project_interaction_canvas(binding, include_candidates=self.headers.get('X-ArchHub-Renderer') != 'studio')
-                                owner._remember_tool_hub_graph_sessions(binding, payload)
-                                self._json(200, payload)
+                                # NG-NOGRAPH: Canvas is a portable .archhub session file, not the Cell graph.
+                                self._json(400, {
+                                    'ok': False,
+                                    'error': 'Canvas sessions use /api/session-files (New / Open / Save). The universal graph create/open path is retired.',
+                                })
                                 return
                             elif self.path == '/api/universal/node-create':
                                 if 'template' in body:
@@ -12828,38 +12943,9 @@ class ApplicationServer(WorkspaceRootsOwner):
         value = self._refresh_in_background("brain", 15.0, self._probe_brain)
         return value if isinstance(value, dict) else {"ok": None, "facts": 0}
 
-    def _agent_model_path(self):
-        """Where an older build recorded the pick beside the graph. Read only."""
-        from pathlib import Path
-        return Path(str(self.universal_state_path) + ".agent-model")
-
     def _read_agent_model(self) -> str:
-        """The composer pick the graph holds, else an older build's record.
-
-        A Send, BABOOM, the relay and the model listing all read this. The
-        pick is the owner's configuration.composer_model, saved when it is
-        made (2026-09-17). It used to live in memory and in a file a Send
-        wrote beside the graph, so a restart before any Send came back with
-        "Choose a model". That file is only read, and only while the graph
-        holds no pick. An unreadable graph pick is no pick; it never falls
-        back to the file.
-        """
-        store = getattr(self, "universal_store", None)
-        registry = getattr(self, "universal_registry", None)
-        if store is not None and registry is not None:
-            from .universal_application import read_universal_composer_model
-            try:
-                current = read_universal_composer_model(store.snapshot(), registry)
-            except Exception:
-                return ""
-            if current["source"] == "graph":
-                from .settings_owner import SettingsOwner
-                return SettingsOwner(store, runtime=self, authentication_context=registry.authorization.subject_root).providerModel(
-                    str(current["value"]))
-        try:
-            return self._agent_model_path().read_text(encoding="utf-8").strip()[:200]
-        except (OSError, ValueError):
-            return ""
+        from .settings_owner import read_router_settings
+        return read_router_settings()['default_model']
 
     def _project_application_setting_owners(self, projection):
         from .cloud_session import signed_in_cloud_account
@@ -12872,42 +12958,11 @@ class ApplicationServer(WorkspaceRootsOwner):
         )
 
     def _read_agent_generation(self) -> dict[str, object]:
-        """The request builder consumes the same composer asset as Settings."""
-        from .universal_application import read_universal_composer_model, _MODEL_DEFAULTS
-        setting = read_universal_composer_model(
-            self.universal_store.snapshot(), self.universal_registry)
-        values = setting.get("generation", _MODEL_DEFAULTS)
-        return {"temperature": values["temperature"], "top_p": values["top-p"],
-                "max_tokens": values["max tokens"]}
+        from .settings_owner import read_router_settings
+        return read_router_settings()['generation']
 
     def _default_agent_model(self) -> tuple:
-        """The model the founder configured, used only while nothing is picked.
-
-        Founder 2026-09-23: Chat could not send because no pick had been
-        saved. Only the model he already configured (settings default_model,
-        a concrete route) is used; no model is ever chosen for him. A pick
-        always wins, and so does an explicit clear: this answers only while
-        the graph holds no pick and no older build's record exists.
-        """
-        store = getattr(self, "universal_store", None)
-        registry = getattr(self, "universal_registry", None)
-        if store is not None and registry is not None:
-            from .universal_application import read_universal_composer_model
-            try:
-                if read_universal_composer_model(store.snapshot(), registry)["source"] == "graph":
-                    return "", ""
-            except Exception:
-                return "", ""
-        try:
-            if self._agent_model_path().exists():
-                return "", ""
-        except (OSError, ValueError):
-            return "", ""
-        from .model_router import default_composer_route
-        try:
-            return default_composer_route()
-        except Exception:
-            return "", ""
+        return self._read_agent_model(), 'router.json'
 
     def _effect_engines_with_mods_store(self):
         engines = dict(self.pipeline_effect_engines or {})

@@ -26,7 +26,7 @@ def test_ask_refuses_without_managed_runtime():
         adapter.ask("hello", "", "openrouter/free")
 
 
-def test_read_only_host_extension_reuses_existing_tool():
+def test_read_only_host_extension_reuses_existing_tool(monkeypatch):
     from contextlib import contextmanager
     from nodelang.native_host_tools import register_host_tools
     calls, tools = [], {}
@@ -42,10 +42,12 @@ def test_read_only_host_extension_reuses_existing_tool():
     def bound_client():
         yield SimpleNamespace(request=lambda *args: calls.append(args) or {"hosts": [{"host": "Rhino"}]})
 
+    from nodelang import native_host_tools
+    monkeypatch.setattr(native_host_tools, "_host_state", lambda: calls.append("direct") or {"hosts": [{"host": "Rhino"}]})
     register_host_tools(Server(), SimpleNamespace(bound_client=bound_client), read_only=True)
     assert set(tools) == {"hosts_state"}
     assert tools["hosts_state"]() == {"hosts": [{"host": "Rhino"}]}
-    assert calls == [("GET", "/api/universal/hosts", {})]
+    assert calls == ["direct"]
 
 
 @pytest.fixture
@@ -68,6 +70,9 @@ def packaged(tmp_path, monkeypatch):
             calls.append(args)
             return {"ok": True, "hosts": [{"host": "Rhino", "document": "court-fixture.3dm"}]}
         yield SimpleNamespace(request=request)
+    from nodelang import native_host_tools
+    monkeypatch.setattr(native_host_tools, "_host_state", lambda: calls.append("direct") or
+        {"ok": True, "hosts": [{"host": "Rhino", "document": "court-fixture.3dm"}]})
     control = SimpleNamespace(bound_client=bound_client)
     mode = ["read"]
     def spawn(command, **kwargs):
@@ -88,7 +93,7 @@ def test_fake_goose_reads_actual_mcp_tool_and_returns_host_result(packaged):
     assert "court-fixture.3dm" in result["text"]
     assert result["steps"][0]["tool"] == "hosts_state"
     assert result["steps"][0]["status"] == "ok"
-    assert packaged.calls == [("GET", "/api/universal/hosts", {})]
+    assert packaged.calls == ["direct"]
     assert len(packaged.launches) == 1
     assert [row["status"] for row in progress] == ["running", "ok"]
     assert all(set(row) == {"tool", "status", "summary"} for row in progress)

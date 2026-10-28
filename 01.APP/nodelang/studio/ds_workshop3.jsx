@@ -98,7 +98,7 @@
             fontSize: 15,
             lineHeight: '24px',
             whiteSpace: 'pre-wrap'
-          }}>{m.text}</p>{['pending', 'delivered', 'answered'].includes(m.state) && <span role="status" data-delivery-state={m.state} className="muted">{m.state === 'answered' ? 'Answered' : m.state === 'delivered' ? 'Delivered' : 'Pending'}{m.delivery?.some(row => row.escalated) ? ' · Coordinator notified' : ''}</span>}<window.UI.TurnUsage message={m} /><window.UI.AnswerWidget message={m} />{(!m.sender_key || m.sender_key !== m.viewer_key) && <window.UI.AnswerSources message={m} />}{m.rule && <Chip c={A.purple}>Your rule: {m.rule}</Chip>}</div></div>)}</div>;
+          }}>{m.text}</p>{m.reply_to && <span className="muted" style={{fontSize:12}}>↳ reply</span>}{(m.live||[]).length>0 && <div className="flex" data-live-delivery style={{flexWrap:'wrap',gap:6}}>{m.live.map((d,i)=><Chip key={i} c={d.state==='delivered'?A.accent:A.warn}>{d.state==='delivered'?'✓':'✗'} {d.agent} · {d.state==='delivered'?new Date(d.at).toLocaleTimeString()+' · '+d.ms+' ms':d.reason}</Chip>)}</div>}{['pending', 'delivered', 'answered'].includes(m.state) && <span role="status" data-delivery-state={m.state} className="muted">{m.state === 'answered' ? 'Answered' : m.state === 'delivered' ? 'Delivered' : 'Pending'}{m.delivery?.some(row => row.escalated) ? ' · Coordinator notified' : ''}</span>}<window.UI.TurnUsage message={m} /><window.UI.AnswerWidget message={m} />{(!m.sender_key || m.sender_key !== m.viewer_key) && <window.UI.AnswerSources message={m} />}{m.rule && <Chip c={A.purple}>Your rule: {m.rule}</Chip>}</div></div>)}</div>;
   }
   function Win() {
     const s = useData(),
@@ -168,7 +168,7 @@
               fontSize: 22
             }}>{task?.title || (roomMessages.length ? 'Workshop room' : 'What should the agents do?')}</h1><p className="muted" style={{
               fontSize: 12
-            }}>One room · {s.graph.name}</p></div><div className="flex">{task && <Chip c={color(task.status)}>{task.status}</Chip>}<Btn sm onClick={async () => {
+            }}>One room · {s.graph.name}{(s.liveAgents||[]).length>0 && <span data-live-agents> · Live: {s.liveAgents.map(a=>'@'+a.handle+(a.status&&a.status!=='unknown'?' ('+a.status+')':'')).join(' ')} · @everyone</span>}</p></div><div className="flex">{task && <Chip c={color(task.status)}>{task.status}</Chip>}<Btn sm onClick={async () => {
               if(!task){executeAction("ui.go",u,"canvas");return;}
               const opened=await executeAction("openTaskGraph",u,task.id);
               if(opened){executeAction("ui.setSelectedNodeId",u,task.id);executeAction("ui.go",u,"canvas");}

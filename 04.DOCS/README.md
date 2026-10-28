@@ -14,5 +14,5 @@ Engineering reference reflects the implementation it describes; archived design 
 - [Shared messages and governed Work](NATIVE-OWNER-RECOVERY.md) — Shared messages and governed Work.
 - [ArchHub Node Language Handbook](NODE-LANGUAGE-HANDBOOK.md) — ArchHub Node Language Handbook.
 - [OpenCode native governance activation](OPENCODE-NATIVE-GOVERNANCE.md) — OpenCode native governance activation.
-- [ArchHub Universal Cell Specification](SPEC.md) — ArchHub Universal Cell Specification.
+- [ArchHub Node Specification](SPEC.md) — ArchHub Node Specification (NOGRAPH, D-014).
 - [BABOOM: adopted agent, Phase A](STEP0-GOOSE.md) — BABOOM: adopted agent, Phase A.

@@ -1,16 +1,19 @@
-"""Inert host packages in the existing graph, activated by one sealed review."""
+"""Inert host packages in one plain owner file, activated by one sealed review (no graph)."""
 import base64
 import hashlib
 import io
 import json
 import math
-from pathlib import PurePosixPath
+import os
+from pathlib import Path, PurePosixPath
 import re
+import secrets
 import stat
+import tempfile
+import threading
 import zipfile
 
-from .cell_protocols import prepare_append_relation_members, read_relation
-from .universal_cell import Cell, InvalidCell
+from .universal_cell import InvalidCell
 
 PREFIX = "app:host-package-review:"
 SCRIPT_SUFFIXES = {".py", ".js", ".ps1", ".sh", ".exe", ".dll"}
@@ -136,75 +139,63 @@ def _bundle(upload, *, byte_budget: int = 262144, record_budget: int = 524288):
     return {"kind":"connector", "manifest":manifest, "files":files}, values
 
 
+_LOCK = threading.Lock()
+
+
 class HostSkillOwner:
-    def __init__(self, api):
-        from .canvas_graph_owner import CanvasOwner
-        self.api = api
-        self.ops = CanvasOwner(api.owner.universal_store, api.owner.universal_registry, api.binding.context)
-        self.owner = api.root + ":host-packages:" + _digest([api.scope, api.binding.subject_root])
+    """Host packages in one plain owner file, settings/host-packages.json (no graph)."""
+
+    def __init__(self, state_dir, request_id=""):
+        self.path = Path(state_dir) / "settings" / "host-packages.json"
+        self.request_id = str(request_id or secrets.token_hex(16))
+        self.owner = "app:host-packages"
+
+    def _file(self):
+        try:
+            return json.loads(self.path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {"revision":0, "packages":{}}
 
     @staticmethod
-    def package_files(snapshot, root):
-        return json.loads(snapshot.cells[root + ":host-package"].atom)["package"]["files"]
+    def package_files(record):
+        return record["package"]["files"]
 
     def _records(self):
-        snapshot = self.api.admit()
-        result = []
-        for node in self.ops.canvas()["nodes"]:
-            cell = snapshot.cells.get(node["id"] + ":host-package")
-            if cell and cell.link1 == self.api.binding.subject_root:
-                value = json.loads(cell.atom)
-                if value["owner"] == self.owner:
-                    result.append((node["id"], value))
-        return result
+        return list(self._file()["packages"].items())
 
     def _record(self, root):
-        value = next((v for key, v in self._records() if key == root), None)
+        value = self._file()["packages"].get(root)
         if value is None:
-            raise InvalidCell("Package belongs to another graph or account")
+            raise InvalidCell("Package is not in this ArchHub")
         return value
 
-    def _save(self, root, value, *, properties=None, record_budget: int = 524288):
-        from . import universal_application as app
-        encoded = _encoded(value)
-        if len(encoded) > record_budget:
+    def _save(self, root, value, *, record_budget: int = 524288):
+        if len(_encoded(value)) > record_budget:
             raise InvalidCell("Package record exceeds 512 KiB; existing state is unchanged")
-        api = self.api
-        snapshot = api.admit()
-        cell = Cell(root + ":host-package", root, api.binding.subject_root, encoded)
-        markers = tuple(Cell(proposal["id"], root, api.binding.subject_root, b"host-package-review")
-            for proposal in value["proposals"] if proposal["id"] not in snapshot.cells)
-        patch = prepare_append_relation_members(snapshot, root,
-            tuple((api.owner.universal_registry.roles["member"], member.id)
-                for member in (*((cell,) if cell.id not in snapshot.cells else ()), *markers)))
-        replacements = []
-        for key, text in (properties or {}).items():
-            relation = self.ops._rows(None, root)[key]["relation"]
-            members = read_relation(snapshot, relation)
-            roots = [m.participant_id for m in members if m.role_id == api.owner.universal_registry.roles["value"]]
-            if len(roots) != 1:
-                raise InvalidCell("Package property must resolve to one graph value")
-            current = snapshot.cells[roots[0]]
-            replacements.append(Cell(current.id, current.link0, current.link1, text.encode()))
-        view, context = app._view_session_for_context(api.owner.universal_registry, api.binding.context)
-        api.guard()
-        app._commit_universal_user_change(api.owner.universal_store, api.owner.universal_registry,
-            view, context, snapshot, route=api.route, command_name="catalog.configure", authorization_scope_root=api.root,
-            create=(*patch.create, *markers, *((cell,) if cell.id not in snapshot.cells else ())),
-            replace=(*patch.replace, *replacements, *((cell,) if cell.id in snapshot.cells else ())))
+        with _LOCK:
+            data = self._file()
+            data["packages"][root] = value
+            data["revision"] += 1
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            fd, temporary = tempfile.mkstemp(dir=self.path.parent, suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                    json.dump(data, stream, ensure_ascii=False, indent=1)
+                os.replace(temporary, self.path)
+            finally:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
 
     def _import(self, package, settings, *, record_budget: int = 524288):
         digest = _digest(package)
         prior = next((root for root, row in self._records() if row["digest"] == digest), None)
         if prior:
             return self._row(prior, self._record(prior))
-        manifest = package["manifest"]
         record = {"owner":self.owner, "package":package, "digest":digest, "settings":settings,
-            "enabled":False, "installed":False, "audit":None, "proposals":[], "activeDigest":None}
+            "enabled":False, "installed":False, "audit":None, "proposals":[], "activeDigest":None, "descriptor":None}
         if len(_encoded(record)) > record_budget:
             raise InvalidCell("Package record exceeds 512 KiB")
-        self.api.guard()
-        root = self.ops.import_host_package(manifest["name"], digest)["id"]
+        root = "app:host-package:" + digest[:24]
         self._save(root, record)
         return self._row(root, record)
 
@@ -272,7 +263,7 @@ class HostSkillOwner:
         if record["settings"][key] != value:
             record["settings"][key] = value
             record.update(installed=False, activeDigest=None)
-            self._save(root, record, properties={"frozen":"true", "value":""})
+            self._save(root, record)
         return self._row(root, record)
 
     def audit(self, root, *, limitations: str = "Static declarations and text findings only; no safety certification or code execution"):
@@ -302,7 +293,7 @@ class HostSkillOwner:
             if (proposal["action"] == action and proposal["material"] == material
                     and (proposal["status"] == "pending" or proposal["status"] == "approved" and active)):
                 return self.card(proposal["id"])
-        identity = PREFIX+_digest([self.owner, root, self.api.request_id])
+        identity = PREFIX+_digest([self.owner, root, self.request_id])
         if any(p["id"] == identity for p in record["proposals"]):
             raise InvalidCell("This request identity names a closed approval; use a fresh request")
         record["proposals"].append({"id":identity, "action":action,
@@ -322,7 +313,8 @@ class HostSkillOwner:
         for proposal in record["proposals"]:
             if proposal["status"] == "pending":
                 proposal["status"] = "declined"
-        self._save(root, record, properties={"frozen":"true", "value":""})
+        record["descriptor"] = None
+        self._save(root, record)
         return self._row(root, record)
 
     def _proposal(self, identity):
@@ -330,12 +322,11 @@ class HostSkillOwner:
             for proposal in record["proposals"]:
                 if proposal["id"] == identity:
                     return root, record, proposal
-        raise InvalidCell("Approval belongs to another graph or account")
+        raise InvalidCell("Approval is not in this ArchHub")
 
     def card(self, identity):
         root, record, proposal = self._proposal(identity)
-        cell = self.api.admit().cells.get(identity + ":approval-review")
-        review = json.loads(cell.atom) if cell else {"status":"pending", "rows":[], "rubric":{}, "events":[]}
+        review = {"status":"pending", "rows":[], "rubric":{}, "events":[]}
         stale = proposal["material"] != self._material(record) or record["digest"] != _digest(record["package"])
         return {**review, "id":identity, "delegation":identity, "work":root, "input_digest":proposal["input_digest"],
             "approvalKind":"hostskills", "kind":"qc", "title":proposal["action"].title()+" "+record["package"]["manifest"]["name"],
@@ -343,16 +334,14 @@ class HostSkillOwner:
             "rows":review["rows"] or [{"element":root, "before":"Disabled; no imported code executed",
                 "after":json.dumps({"action":proposal["action"], "digest":record["digest"], "settings":record["settings"],
                     "tools":record["package"]["manifest"].get("tools", []), "server":record["package"]["manifest"].get("server"),
-                    "audit":record["audit"]}, ensure_ascii=False)}], "revision":self.api.owner.universal_store.revision}
+                    "audit":record["audit"]}, ensure_ascii=False)}], "revision":self._file()["revision"]}
 
     def reviews(self):
         return [self.card(proposal["id"]) for _, record in self._records() for proposal in record["proposals"]]
 
     def decide(self, identity, digest, decision):
-        from .social_approval import _founder, require_review_admission
+        # The founder decides in his own app; the server admits only his bootstrapped Studio session.
         root, record, proposal = self._proposal(identity)
-        snapshot = self.api.admit()
-        _founder(snapshot, self.api.owner.universal_registry, self.api.binding)
         if (decision not in {"approve", "deny"} or digest != proposal["input_digest"]
                 or digest != _digest(self._material(record)) or record["digest"] != _digest(record["package"])):
             raise InvalidCell("Package or configuration digest changed; review a fresh approval")
@@ -361,13 +350,12 @@ class HostSkillOwner:
         if proposal["status"] != "pending":
             raise InvalidCell("This package approval is closed")
         if decision == "approve":
-            require_review_admission(snapshot, identity)
             descriptor = record["package"]["files"].get("SKILL.md") if proposal["action"] == "enable" else json.dumps(
                 {"server":record["package"]["manifest"]["server"], "tools":record["package"]["manifest"].get("tools", []),
                  "settings":record["settings"], "digest":record["digest"]}, ensure_ascii=False)
-            # The installed graph descriptor is runnable data; imported processes remain inert.
+            # The installed descriptor is runnable data; imported processes remain inert.
             record["enabled" if proposal["action"] == "enable" else "installed"] = True
-            record["activeDigest"] = record["digest"]
+            record.update(activeDigest=record["digest"], descriptor=descriptor)
         proposal["status"] = "approved" if decision == "approve" else "declined"
-        self._save(root, record, properties={"value":descriptor, "frozen":"false"} if decision == "approve" else None)
+        self._save(root, record)
         return self.card(identity)

@@ -45,6 +45,99 @@ MAX_PLUGIN_ABSENT = (
     "then restart 3ds Max."
 )
 RHINO_URL = "http://127.0.0.1:9879"
+# Broker discovery node: its typed parameters.
+BROKER_NODE = {'id': 'host.brokers', 'params': {'info_timeout_seconds': 0.4}}
+
+
+def broker_sessions(service: str, *, include_document=True) -> list[dict]:
+    """Discover session files, then verify each live broker's identity."""
+    from .clean_revit_adapter import _call, _CONNECT_TIMEOUT, _PING_TIMEOUT
+    if service not in ("revit", "acad"):
+        raise ValueError("unknown broker service")
+    family = "autocad" if service == "acad" else "revit"
+    directory = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "ArchHub" / "sessions"
+    found = {}
+    try:
+        processes = _windows_process_table() if os.name == "nt" else None
+    except ProcessEnumerationUnavailable:
+        processes = None
+    # Newest session files first; skip anything whose PID is not a live host.
+    paths = sorted(directory.glob(family + "-*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for path in paths[:24]:
+        try:
+            row = json.loads(path.read_text(encoding="utf-8-sig"))
+            port, pid = row["port"], row["pid"]
+            if (row.get("family") != family or type(port) is not int or
+                    not 1 <= port <= 65535 or type(pid) is not int or pid <= 0):
+                continue
+            expected = "acad.exe" if service == "acad" else "revit.exe"
+            if processes is not None and processes.get(pid, {}).get("name") != expected:
+                continue
+            # Stale session files must not spend their HTTP timeout budget.
+            if not _port_open(port, timeout=_CONNECT_TIMEOUT):
+                continue
+            ping = _call(port, "/ping", timeout=_PING_TIMEOUT)
+            if ping.get("status") != "ok" or ping.get("pid") != pid:
+                continue
+            identity = ping.get("service")
+            if (service == "acad" and identity != "acad-mcp" or
+                    service == "revit" and (not ping.get("revit_version") or
+                    identity not in (None, "", "revit-mcp"))):
+                continue
+            info = {}
+            if include_document:
+                import urllib.error
+                try:
+                    # Cap hard: live add-in /info can hang; fixtures answer immediately.
+                    info = _call(port, "/info", timeout=BROKER_NODE["params"]["info_timeout_seconds"])
+                except (urllib.error.URLError, OSError, ValueError, TimeoutError):
+                    info = {}
+            document = (info.get("document") or info.get("document_title") or info.get("title") or
+                        info.get("doc") or info.get("document_name") or
+                        row.get("document") or row.get("document_title") or row.get("title") or "")
+            found[port] = {"port": port, "pid": pid, "service": identity,
+                "revit_version": ping.get("revit_version"),
+                "acad_version": info.get("acad_version") or ping.get("acad_version"),
+                "service_version": ping.get("version"), "document": document}
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return [found[port] for port in sorted(found)]
+
+
+def broker_call(service: str, route: str, body=None, *, port=None, timeout=10.0) -> dict:
+    """One signed call; ambiguity and stale identities refuse before dispatch."""
+    import urllib.error
+    from .clean_revit_adapter import _call, _PING_TIMEOUT, RevitUnreachable
+    rows = [row for row in broker_sessions(service, include_document=False) if port is None or row["port"] == port]
+    name = "AutoCAD" if service == "acad" else "Revit"
+    if not rows:
+        raise RevitUnreachable("no %s session answers; open it with the ArchHub add-in loaded" % name)
+    if len(rows) != 1:
+        raise RevitUnreachable("%d %s sessions answer; name one with port" % (len(rows), name))
+    row = rows[0]
+    # /info on the live add-in can hang; never burn the founder <2s budget on it.
+    if route == "/info":
+        wait = min(float(timeout), float(_PING_TIMEOUT), 1.5)
+        try:
+            answer = _call(row["port"], route, body, timeout=wait)
+        except (urllib.error.URLError, OSError, ValueError, TimeoutError):
+            answer = {"status": "ok", "service": row.get("service"), "pid": row.get("pid"),
+                      "port": row["port"], "revit_version": row.get("revit_version"),
+                      "acad_version": row.get("acad_version"), "version": row.get("service_version"),
+                      "document": row.get("document") or "", "info_source": "ping-discovery"}
+        if answer.get("status") != "ok":
+            answer = {"status": "ok", "service": row.get("service"), "pid": row.get("pid"),
+                      "port": row["port"], "revit_version": row.get("revit_version"),
+                      "acad_version": row.get("acad_version"), "version": row.get("service_version"),
+                      "document": row.get("document") or "", "info_source": "ping-discovery",
+                      "broker_status": answer.get("status"), "http_status": answer.get("http_status")}
+        return {"ok": True, "port": row["port"],
+                "document": (answer.get("document") or answer.get("document_title") or answer.get("title") or
+                             answer.get("document_name") or row.get("document") or ""), **answer}
+    answer = _call(row["port"], route, body, timeout=timeout)
+    return {"ok": answer.get("status") == "ok", "port": row["port"],
+            "document": (answer.get("document") or answer.get("document_title") or answer.get("title") or
+                         answer.get("document_name") or row.get("document")), **answer}
 
 
 def _watcher_script(host, request):

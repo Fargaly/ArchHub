@@ -70,6 +70,7 @@ def application_database_path(state_directory=None):
     root = Path(state_directory) if state_directory is not None else Path(
         os.environ.get('ARCHHUB_TEST_STATE_DIR') or
         (Path(os.environ.get('LOCALAPPDATA') or Path.home() / 'AppData' / 'Local') / 'ArchHub'))
+    root = root.resolve()
     runtime = root / 'unified-authority'
     current = runtime / 'CURRENT'
     if current.exists():
@@ -82,17 +83,30 @@ def application_database_path(state_directory=None):
             held = json.loads(metadata.read_text(encoding='utf-8'))
             if held.get('adoption') == 'flat-in-place':
                 database = (root / held['journal_relative_path']).resolve()
-                allowed = (root / 'authority.sqlite3', root / 'archhub-test.universal.sqlite3',
-                    root / 'node-native-wip.json.gz.universal.sqlite3', _legacy_desktop_journal(root))
-                if database not in allowed:
-                    raise ValueError('selected flat journal is outside this profile')
-        if any(path.is_symlink() or path.is_junction() for path in
-               (database, database.parent, database.parent.parent, runtime)):
-            raise ValueError('selected authority must not be a link; source preserved')
-        if not database.is_file():
-            raise ValueError('selected authority is missing; no replacement will be created')
-        return database.resolve()
-    return (root / 'authority.sqlite3').resolve()
+                # NG-NOGRAPH: sticky CURRENT must not pull sibling ArchHub-Test (10 GB hang).
+                try:
+                    database.relative_to(root)
+                except ValueError:
+                    database = None
+                else:
+                    allowed = (root / 'authority.sqlite3', root / 'archhub-test.universal.sqlite3',
+                        root / 'node-native-wip.json.gz.universal.sqlite3', _legacy_desktop_journal(root))
+                    if database not in allowed:
+                        raise ValueError('selected flat journal is outside this profile')
+        if database is not None:
+            if any(path.is_symlink() or path.is_junction() for path in
+                   (database, database.parent, database.parent.parent, runtime)):
+                raise ValueError('selected authority must not be a link; source preserved')
+            if not database.is_file():
+                raise ValueError('selected authority is missing; no replacement will be created')
+            return database.resolve()
+    local = root / 'authority.sqlite3'
+    if local.is_file():
+        return local.resolve()
+    wip = root / 'node-native-wip.json.gz.universal.sqlite3'
+    if wip.is_file():
+        return wip.resolve()
+    return local.resolve()
 
 
 def application_content_path(database):
@@ -108,11 +122,7 @@ def application_content_path(database):
 
 
 def _legacy_desktop_journal(root):
-    local = os.environ.get('LOCALAPPDATA')
-    declared = os.environ.get('ARCHHUB_TEST_STATE_DIR')
-    if local and (root == (Path(local) / 'ArchHub').resolve()
-            or (declared and root == Path(declared).resolve())):
-        return Path(local) / 'ArchHub-Test' / 'archhub-test.universal.sqlite3'
+    # NG-NOGRAPH: never pull the founder ArchHub-Test journal into the live profile.
     return None
 
 

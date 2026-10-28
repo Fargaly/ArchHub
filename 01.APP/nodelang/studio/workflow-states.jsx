@@ -20,7 +20,7 @@
     return <Card style={{
       padding: 22,
       marginTop: 22
-    }}><Heading title="Six ways to learn" sub="The same graph can learn from a program, your habits, an intent or a completed session." /><div className="social-tabs">{Object.keys(s.learning.layers).map(l => <button key={l} aria-pressed={layer === l} onClick={() => executeAction("setLearningLayer", u, l)}>{l}</button>)}</div><div className="settings-grid" style={{
+    }}><Heading title="Six ways to learn" sub="The same workflow can learn from a program, your habits, an intent or a completed session." /><div className="social-tabs">{Object.keys(s.learning.layers).map(l => <button key={l} aria-pressed={layer === l} onClick={() => executeAction("setLearningLayer", u, l)}>{l}</button>)}</div><div className="settings-grid" style={{
         marginTop: 18
       }}>{Object.entries(values).map(([key, value]) => <label className="parameter-row" key={key}><span>{key.replace(/([A-Z])/g, ' $1').replace(/^./, c => c.toUpperCase())}</span>{typeof value === 'boolean' ? <D.Toggle label={layer + ' ' + key} checked={value} onCheckedChange={v => executeAction("setLearningLayer", u, layer, {
             [key]: v
@@ -87,7 +87,7 @@
       u = useApp(),
       n = s.graph.nodes.find(n => n.id === id);
     if (!n) return null;
-    return <div className="grid"><h2>{n.title}</h2><p className="muted">{s.catalogue.find(c => c.name === n.kind)?.description || 'An editable part of your graph.'}</p><Chip>{n.frozen ? 'Frozen' : n.status}</Chip><Table rows={api.getNodeParameters(n).map(p => ({
+    return <div className="grid"><h2>{n.title}</h2><p className="muted">{s.catalogue.find(c => c.name === n.kind)?.description || 'An editable part of your workflow.'}</p><Chip>{n.frozen ? 'Frozen' : n.status}</Chip><Table rows={api.getNodeParameters(n).map(p => ({
         parameter: p.label,
         type: p.type,
         value: typeof n.params[p.key]==='object' ? JSON.stringify(n.params[p.key]) : String(n.params[p.key]),

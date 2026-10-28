@@ -42,7 +42,7 @@
       marginTop: 22
     }}><section aria-label="Action result" aria-live="polite">
       {wire.status === 'waiting' && <p role="status">Waiting for the owner…</p>}
-      {wire.status === 'empty' && <p>No saved content in this graph.</p>}
+      {wire.status === 'empty' && <p>No saved content in this workflow.</p>}
       {wire.status === 'loaded' && <p role="status">{wire.result?.title || wire.result?.message || wire.result?.status || wire.result?.phase || wire.result?.id || ''}</p>}
       {wire.status === 'error' && <div role="alert"><p>{wire.message}</p><Btn onClick={() => dispatch("wire.research.surfaces.retry",wire.retry)}>Retry</Btn></div>}
     </section><Heading title="Reference & deviation" sub="Compare against approved examples, with a visible threshold." /><div className="settings-grid"><label className="grid">Prototype<input aria-label="Prototype name" value={p.name} onChange={event => wire.act(() => (e => wire.call(() => api.setPrototype({
@@ -78,13 +78,13 @@
       index = slides.indexOf(slide);
     if(!slide)return <main className="page" data-screen="present"><section aria-label="Action result" aria-live="polite">
       {wire.status === 'waiting' && <p role="status">Waiting for the owner…</p>}
-      {wire.status === 'empty' && <p>No saved content in this graph.</p>}
+      {wire.status === 'empty' && <p>No saved content in this workflow.</p>}
       {wire.status === 'loaded' && <p role="status">{wire.result?.title || wire.result?.message || wire.result?.status || wire.result?.phase || wire.result?.id || ''}</p>}
       {wire.status === 'error' && <div role="alert"><p>{wire.message}</p><Btn onClick={() => dispatch("wire.research.surfaces.retry",wire.retry)}>Retry</Btn></div>}
-    </section><Heading title="Present"><Btn p onClick={event => dispatch("wire.research.surfaces.3", () => (async()=>{const row=await wire.call(api.addSlide);if(row)setId(row.id);})(event))}>Add slide</Btn></Heading><window.UI.Empty>No slides in this graph. Add the first slide.</window.UI.Empty></main>;
+    </section><Heading title="Present"><Btn p onClick={event => dispatch("wire.research.surfaces.3", () => (async()=>{const row=await wire.call(api.addSlide);if(row)setId(row.id);})(event))}>Add slide</Btn></Heading><window.UI.Empty>No slides in this workflow. Add the first slide.</window.UI.Empty></main>;
     return <main className="page" data-screen="present"><section aria-label="Action result" aria-live="polite">
       {wire.status === 'waiting' && <p role="status">Waiting for the owner…</p>}
-      {wire.status === 'empty' && <p>No saved content in this graph.</p>}
+      {wire.status === 'empty' && <p>No saved content in this workflow.</p>}
       {wire.status === 'loaded' && <p role="status">{wire.result?.title || wire.result?.message || wire.result?.status || wire.result?.phase || wire.result?.id || ''}</p>}
       {wire.status === 'error' && <div role="alert"><p>{wire.message}</p><Btn onClick={() => dispatch("wire.research.surfaces.retry",wire.retry)}>Retry</Btn></div>}
     </section><Heading title="Present" sub="Edit the story and walk through the reviewed result."><select aria-label="Presentation mode" value={mode} onChange={event => wire.act(() => (e => setMode(e.target.value))(event))}><option>Deck</option><option>Walkthrough</option></select><Btn sm onClick={event => dispatch("wire.research.surfaces.4", () => (() => u.download('Presentation'))(event))}>Export</Btn><Btn p onClick={event => dispatch("wire.research.surfaces.5", () => (async () => {
@@ -120,7 +120,7 @@
       marginTop: 22
     }}><section aria-label="Action result" aria-live="polite">
       {wire.status === 'waiting' && <p role="status">Waiting for the owner…</p>}
-      {wire.status === 'empty' && <p>No saved content in this graph.</p>}
+      {wire.status === 'empty' && <p>No saved content in this workflow.</p>}
       {wire.status === 'loaded' && <p role="status">{wire.result?.title || wire.result?.message || wire.result?.status || wire.result?.phase || wire.result?.id || ''}</p>}
       {wire.status === 'error' && <div role="alert"><p>{wire.message}</p><Btn onClick={() => dispatch("wire.research.surfaces.retry",wire.retry)}>Retry</Btn></div>}
     </section><div className="spread"><div><h3>Model availability</h3><p className="muted">Check changes without replacing your chosen default.</p></div><Btn sm onClick={event => dispatch("wire.research.surfaces.10", () => (() => wire.call(api.refreshModelRoster))(event))}>Refresh models</Btn></div>{s.modelNotice && <p role="status" style={{

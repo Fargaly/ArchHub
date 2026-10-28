@@ -67,7 +67,7 @@
       style={{borderTop:'2px solid '+color}} stacked={grouped}
       edge={!n.inputs.length && n.outputs.length ? 'l' : n.inputs.length && !n.outputs.length ? 'r' : undefined}
       selected={selected} run={/running/i.test(state)} dashed={n.frozen}
-      foot={<span title={state}>{foot + (n.elapsedMs ? ' · ' + n.elapsedMs + ' ms' : '')}</span>} footc={stateColor}
+      foot={<span title={state}>{foot + (n.error ? ' · '+n.error : '') + (n.elapsedMs ? ' · ' + n.elapsedMs + ' ms' : '')}</span>} footc={stateColor}
       ins={n.inputs} outs={n.outputs} renderPort={renderPort}
       headerProps={{...headerProps,style:{borderTop:'2px solid '+color,borderBottom:'1px solid '+A.lineSoft,...headerProps?.style}}}
       headerEnd={headerEnd} chip={grouped && <div className="canvas-members">{(members || []).map(m=><button key={m.id} data-group-member={m.id} className="canvas-member" title={'Open '+m.title} onClick={event=>executeAction('projects.controls.activate',{handler:()=>onMember?.(m)},event)}><span style={{background:color,color:A.onFill}}>{m.title.slice(0,1)}</span>{m.title}</button>)}</div>}>
@@ -82,15 +82,43 @@
             });
           };
         return <div className="canvas-card-param" data-parameter={key} key={key}><span title={p?.label || key}>{p?.label && p.label!==key ? p.label : key.replace(/_/g,' ').replace(/^./,c=>c.toUpperCase())}{p?.unit ? ' · '+p.unit : ''}</span>
-          {p?.editable && ['string','number','boolean'].includes(typeof value) ? p.type==='boolean'
+          {p?.editable && (['string','number','boolean'].includes(typeof value) || p.type==='json') ? p.type==='boolean'
             ? <D.Toggle label={label} checked={shown} onCheckedChange={save} />
             : p.options?.length ? <select aria-label={label} value={shown} onChange={e=>save(e.target.value)}>{p.options.map(v=><option key={v}>{v}</option>)}</select>
+            : p.type==='color' ? <input aria-label={label} type="color" value={shown} onChange={e=>save(e.target.value)} />
+            : p.type==='date' ? <input aria-label={label} type="date" value={shown} onChange={e=>save(e.target.value)} />
+            : p.type==='json' ? <input aria-label={label} title={JSON.stringify(shown)} value={typeof shown==='string'?shown:JSON.stringify(shown)} style={{width:96,minWidth:0}} onChange={e=>setParameterDrafts(old=>({...old,[key]:e.target.value}))} onBlur={e=>save(e.target.value)} />
             : <input aria-label={label} title={String(shown)} type={p.type==='number'?'number':'text'} min={p.min} max={p.max} step={p.step} value={shown} style={{width:96,minWidth:0}} onChange={e=>{if(p.type!=='number'||Number.isFinite(e.target.valueAsNumber))save(p.type==='number'?e.target.valueAsNumber:e.target.value);}} />
             : <span tabIndex={0} title={typeof value==='object'?JSON.stringify(value):String(value)}>{typeof value==='object'?JSON.stringify(value):String(value)}</span>}
+          {p?.dataType && <small className="muted" data-param-type={p.dataType}>{p.dataType}</small>}
+          {p?.linkedTo && <small data-linked-to title="Same value as the parameter it is exposed from">linked {'\u2192'} {p.linkedTo}</small>}
+          {p?.promoted && <small data-linked-node title="Edited here or on its Parameter node: one value">linked node</small>}
+          {!n.bind && n.paramDefs && api.promoteParam && key!=='engine' && <button className="button-reset" aria-label={(p?.promoted?'Demote ':'Expose as node ')+key} title={p?.promoted?'Demote: back to an inline parameter':'Expose as node'}
+            onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>p?.promoted?api.demoteParam(n.id,key):api.promoteParam(n.id,key))},event)}>{p?.promoted?'\u21b2':'\u21f1'}</button>}
         </div>;
       })}
+      {!grouped && !n.bind && n.paramDefs && api.addNodeParameter && <AddParameter n={n} u={u} />}
+      {!grouped && n.status==='Done' && <output aria-label={n.title+' output'} style={{display:'block',maxHeight:100,overflow:'auto',whiteSpace:'pre-wrap'}}>{typeof n.output==='object'?JSON.stringify(n.output):String(n.output)}</output>}
       {!grouped && compact && parameters.length>3 && <button className="button-reset canvas-card-more" onClick={event=>executeAction('projects.controls.activate',{handler:()=>setExpanded(!expanded)},event)}>{expanded ? 'Show less' : `+${parameters.length-3} more`}</button>}
     </D.Node>;
+  }
+  // Add parameter: name, data type and value; the value is checked once, on the server (node_params.py).
+  function AddParameter({n, u}) {
+    const [open, setOpen] = React.useState(false), [name, setName] = React.useState(''), [type, setType] = React.useState('number'),
+      [value, setValue] = React.useState(''), [options, setOptions] = React.useState(''),
+      [limits, setLimits] = React.useState({min:'', max:'', step:'', unit:''}), [asNode, setAsNode] = React.useState(false);
+    const numeric = ['number','integer'].includes(type), limit = key => <input aria-label={'Parameter '+key} placeholder={key} value={limits[key]} style={{width:'100%',minWidth:0}} onChange={e=>setLimits(old=>({...old,[key]:e.target.value}))} />;
+    if (!open) return <button className="button-reset canvas-card-more" data-add-parameter onClick={event=>executeAction('projects.controls.activate',{handler:()=>setOpen(true)},event)}>+ Parameter</button>;
+    return <div className="canvas-card-param" data-add-parameter-form style={{display:'grid',gap:4}}>
+      <input aria-label="Parameter name" placeholder="Name" value={name} onChange={e=>setName(e.target.value)} />
+      <select aria-label="Parameter type" value={type} onChange={e=>setType(e.target.value)}>{api.parameterTypes().map(t=><option key={t}>{t}</option>)}</select>
+      {type==='choice' && <input aria-label="Parameter options" placeholder="Choices, comma separated" value={options} onChange={e=>setOptions(e.target.value)} />}
+      <input aria-label="Parameter value" placeholder="Value" type={numeric?'number':type==='date'?'date':'text'} value={value} onChange={e=>setValue(e.target.value)} />
+      {numeric && <div data-parameter-limits style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:4}}>{limit('min')}{limit('max')}{limit('step')}{type==='number' && limit('unit')}</div>}
+      <label className="flex" style={{gap:6}}><input type="checkbox" aria-label="Show as node" checked={asNode} onChange={e=>setAsNode(e.target.checked)} />Show as node</label>
+      <div className="flex"><Btn sm aria-label="Add parameter" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(async()=>{await api.addNodeParameter(n.id,{name,type,value,showAsNode:asNode,...(numeric?Object.fromEntries(Object.entries(limits).filter(([,v])=>v!=='').map(([k,v])=>[k,k==='unit'?v:Number(v)])):{}),options:type==='choice'?options.split(',').map(x=>x.trim()).filter(Boolean):undefined});setOpen(false);setName('');setValue('');})},event)}>Add</Btn>
+        <Btn sm ghost onClick={event=>executeAction('projects.controls.activate',{handler:()=>setOpen(false)},event)}>Cancel</Btn></div>
+    </div>;
   }
   function Canvas({
     embedded = false, active = true
@@ -125,7 +153,8 @@
     const zoomSetting = zoomRow?.value;
     const appliedZoomSetting = React.useRef(zoomSetting);
     const zoomSaveDelay = Number(s.canvasPolicy?.viewport_commit_debounce_ms ?? 140);
-    const updateView = next => { view.current = next; setViewport(next); };
+    const updateView = next => { view.current = next; setViewport(next); api.setSessionViewport?.({x:next.pan.x,y:next.pan.y,zoom:next.zoom}); };
+    React.useEffect(()=>{const saved=s.graph.viewport;if(saved){const next={zoom:saved.zoom,pan:{x:saved.x,y:saved.y}};view.current=next;setViewport(next);}},[s.graph.scopeKey]);
     const setPan = next => updateView({...view.current, pan: typeof next === 'function' ? next(view.current.pan) : next});
     const zoomAt = (value, client = null) => {
       const bounds = area.current?.getBoundingClientRect();
@@ -493,7 +522,7 @@
       updateView({zoom: z, pan: {x: (w-width*z)/2-minX*z, y: (h-height*z)/2-minY*z}});
     };
     React.useEffect(() => {
-      if (!active || requestState !== 'loaded' || layout.scope !== scope || fittedScope.current === scope+':'+u.libraryOpen) return;
+      if (s.graph.viewport || !active || requestState !== 'loaded' || layout.scope !== scope || fittedScope.current === scope+':'+u.libraryOpen) return;
       fittedScope.current = scope+':'+u.libraryOpen;
       fit();
     }, [requestState, scope, layout, u.libraryOpen, active]);
@@ -524,8 +553,8 @@
       return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); window.removeEventListener('blur', blur); };
     }, [active]);
     const openNode = n => {
-      if (n.kind.toLowerCase().includes('meeting')) u.go('meetings');else if (n.kind === 'Watch program') u.act(() => api.windowAction('hide'));else if (n.kind === 'Present') u.go('present');else if (['Community', 'Community group', 'Marketplace listing', 'Project charge'].includes(n.kind)) u.go('community');else if (n.kind === 'Interface studio' || n.kind === 'UI element') u.go('interface');else if (n.kind.startsWith('TBP ')) u.go('model-review');else if (n.kind === 'Theme') u.go('settings/Appearance');else if (n.kind === 'Graph link') {
-        if (n.params.targetGraph) u.act(() => api.selectGraph(n.params.targetGraph));else u.show('Graphs');
+      if (n.kind.toLowerCase().includes('meeting')) u.go('meetings');else if (n.kind === 'Watch program') u.act(() => api.windowAction('hide'));else if (n.kind === 'Present') u.go('present');else if (['Community', 'Community group', 'Marketplace listing', 'Project charge'].includes(n.kind)) u.go('community');else if (n.kind === 'Interface studio' || n.kind === 'UI element') u.go('interface');else if (n.kind.startsWith('TBP ')) u.go('model-review');else if (n.kind === 'Theme') u.go('settings/Appearance');else if (n.kind === 'Workflow link') {
+        if (n.params.targetGraph) u.act(() => api.selectGraph(n.params.targetGraph));else u.show('Workflows');
       } else if (n.kind === 'Agent') u.show('Agent', {
         id: n.params.provider
       });else if (n.kind === 'Research') u.go('xray');else if (n.kind === 'History') u.go('receipts');else if (['Remember', 'Recall'].includes(n.kind)) u.go('brain');else if (['Social media', 'Read video', 'Read mail', 'Read file', 'Tutorial', 'Digest'].includes(n.kind)) u.go('social');else if (n.kind === 'X-RAY') u.go('xray');else if (['Account access', 'Billing & usage', 'Office invitations'].includes(n.kind)) u.go('access');else if (n.kind === 'Model routing') u.go('routing');else if (n.kind === 'Workshop') u.go('workshop');else if (n.kind === 'BABOOM') u.go('baboom');else if (n.kind === 'Watcher') u.go('watcher');else if (isGroup(n)) {
@@ -556,13 +585,13 @@
         position:'absolute',top:12,left:u.libraryOpen ? 264 : 16,right:16,zIndex:12,
         padding: '6px 12px',borderRadius:6,border:'1px solid '+A.lineSoft,
         background: A.bgPanel
-      }}><div className="flex"><button className="button-reset muted" onClick={event => executeAction("projects.ds_screens.NavigateHome.5", {u}, event)}>{s.graph.name} ›</button>{parent ? <Btn variant="controls" sm ghost onClick={event => executeAction("projects.ds_screens.Parent.6", {parent,s,setParent,setSelected}, event)}>← Parent</Btn> : <button className="button-reset flex" title="Graphs" aria-label="Graphs" onClick={event => executeAction("projects.ds_screens.Graphs.7", {u}, event)}>{s.graph.name}<window.AHIcon name="more" size={16} /></button>}<Chip>{visible.length} nodes</Chip><Btn variant="controls" sm ghost onClick={event => executeAction("projects.ds_screens.Workspaces.8", {u}, event)}>Workspaces · {s.workspaces.length}</Btn></div><div className="flex"><button className="icon-button" aria-label="Toggle Library" title="Library" aria-expanded={u.libraryOpen} onClick={event => executeAction("projects.ds_screens.ToggleLibrary.9", {u}, event)}><window.AHIcon name="library" /></button><select aria-label="Wire visibility" value={s.graph.wireVisibility || 'Visible'} onChange={e => u.act(() => api.setWireVisibility(e.target.value))}>{['Visible', 'Faint', 'Hidden'].map(x => <option key={x}>{x}</option>)}</select><Btn variant="controls" sm title="Group · Ctrl G" onClick={event => executeAction("projects.ds_screens.Group.10", {group}, event)} disabled={selected.length < 2}>Group</Btn><Btn variant="controls" sm onClick={event => executeAction("projects.ds_screens.Undo.11", {api,u}, event)} title="Undo · Ctrl Z">↶</Btn><Btn variant="controls" sm onClick={event => executeAction("projects.ds_screens.Redo.12", {api,u}, event)} title="Redo · Ctrl Shift Z">↷</Btn><Btn variant="controls" sm onClick={event => executeAction("projects.ds_screens.Arrange.13", {api,u}, event)}>Arrange</Btn><Btn variant="controls" sm onClick={event => executeAction("projects.ds_screens.SaveSkill.14", {u}, event)}>Save skill</Btn><Btn variant="controls" p sm onClick={event => executeAction("projects.ds_screens.Run.15", {api,u}, event)}>▶ Run</Btn></div></div>
+      }}><div className="flex"><button className="button-reset muted" onClick={event => executeAction("projects.ds_screens.NavigateHome.5", {u}, event)}>{s.graph.name} ›</button>{parent ? <Btn variant="controls" sm ghost onClick={event => executeAction("projects.ds_screens.Parent.6", {parent,s,setParent,setSelected}, event)}>← Parent</Btn> : <button className="button-reset flex" title="Workflows" aria-label="Workflows" onClick={event => executeAction("projects.ds_screens.Graphs.7", {u}, event)}>{s.graph.name}<window.AHIcon name="more" size={16} /></button>}<Chip>{visible.length} nodes</Chip>{/^(Solved|Updated by)/.test(s.sync||'') && <Chip data-solve-status>{s.sync}</Chip>}<Btn variant="controls" sm ghost onClick={event => executeAction("projects.ds_screens.Workspaces.8", {u}, event)}>Workspaces · {s.workspaces.length}</Btn></div><div className="flex"><Btn variant="controls" sm onClick={event=>executeAction("projects.controls.activate",{handler:()=>u.act(()=>api.newSession())},event)}>New</Btn><Btn variant="controls" sm onClick={event=>executeAction("projects.controls.activate",{handler:()=>u.act(()=>api.openSession())},event)}>Open</Btn><Btn variant="controls" sm onClick={event=>executeAction("projects.controls.activate",{handler:()=>u.act(()=>api.saveSession())},event)}>Save</Btn><Btn variant="controls" sm onClick={event=>executeAction("projects.controls.activate",{handler:()=>u.act(()=>api.saveSessionAs())},event)}>Save as…</Btn><button className="icon-button" aria-label="Toggle Library" title="Library" aria-expanded={u.libraryOpen} onClick={event => executeAction("projects.ds_screens.ToggleLibrary.9", {u}, event)}><window.AHIcon name="library" /></button><select aria-label="Wire visibility" value={s.graph.wireVisibility || 'Visible'} onChange={e => u.act(() => api.setWireVisibility(e.target.value))}>{['Visible', 'Faint', 'Hidden'].map(x => <option key={x}>{x}</option>)}</select><Btn variant="controls" sm title="Group · Ctrl G" onClick={event => executeAction("projects.ds_screens.Group.10", {group}, event)} disabled={selected.length < 2}>Group</Btn><Btn variant="controls" sm onClick={event => executeAction("projects.ds_screens.Undo.11", {api,u}, event)} title="Undo · Ctrl Z">↶</Btn><Btn variant="controls" sm onClick={event => executeAction("projects.ds_screens.Redo.12", {api,u}, event)} title="Redo · Ctrl Shift Z">↷</Btn><Btn variant="controls" sm onClick={event => executeAction("projects.ds_screens.Arrange.13", {api,u}, event)}>Arrange</Btn><Btn variant="controls" sm onClick={event => executeAction("projects.ds_screens.SaveSkill.14", {u}, event)}>Save skill</Btn><Btn variant="controls" p sm onClick={event => executeAction("projects.ds_screens.Run.15", {api,u}, event)}>▶ Run</Btn></div></div>
   <div style={{
         display: 'grid',
         gridTemplateColumns: (u.libraryOpen ? '248px ' : '') + 'minmax(0,1fr)' + (wire ? ' 320px' : ''),
         minHeight: 0
       }}>{u.libraryOpen && <window.UI.LibraryShelf onClose={() => u.setLibraryOpen(false)} />}
-   <div ref={area} className="node-canvas" tabIndex={0} aria-label="Graph canvas" style={{touchAction:'none',userSelect:'none'}} title="Drag to select · Shift adds · Ctrl removes · Middle or Space-drag to pan · Wheel to zoom · Double-click to fit" onPointerDownCapture={e => {
+   <div ref={area} className="node-canvas" tabIndex={0} aria-label="Workflow canvas" style={{touchAction:'none',userSelect:'none'}} title="Drag to select · Shift adds · Ctrl removes · Middle or Space-drag to pan · Wheel to zoom · Double-click to fit" onPointerDownCapture={e => {
           if (e.target.closest('input,textarea,select,[contenteditable="true"]')) return;
           area.current.focus({preventScroll:true});
           if (e.pointerType === 'touch') {
@@ -607,6 +636,7 @@
           setMarquee(null);
         }} onDragOver={e => e.preventDefault()} onDrop={e => {
           e.preventDefault();
+          if(e.dataTransfer.files?.length){u.act(()=>api.importSession(e.dataTransfer.files[0]));return;}
           const name = e.dataTransfer.getData('node');
           if (name) {
             const r = area.current.getBoundingClientRect();
@@ -681,31 +711,30 @@
   </div>
  </div>;
     return <>
-      {requestState === 'waiting' && <div role="status">Loading your graph…</div>}
-      {requestState === 'error' && <div role="alert">{requestError}<Btn variant="controls" onClick={event => executeAction('projects.controls.activate', {handler:reload}, event)}>Retry loading graph</Btn></div>}
+      {requestState === 'waiting' && <div role="status">Loading your workflow…</div>}
+      {requestState === 'error' && <div role="alert">{requestError}<Btn variant="controls" onClick={event => executeAction('projects.controls.activate', {handler:reload}, event)}>Retry loading workflow</Btn></div>}
       {requestState === 'empty' && <>{body}</>}
       {requestState === 'loaded' && <>{body}</>}
     </>;
   }
   function SystemGraph() {
     const s = useData(), u = useApp(), world=React.useRef(), [paths,setPaths]=React.useState([]), [load,setLoad] = React.useState('waiting'), [error,setError] = React.useState(''), [attempt,setAttempt]=React.useState(0);
-    const root = s.graphs?.[0]?.id;
+    const [system,setSystem]=React.useState({nodes:[],wires:[]});
     React.useEffect(()=>{
       let active=true;
-      if (!root) { setLoad('empty'); return; }
       setLoad('waiting');
-      Promise.resolve(s.graph.id===root ? null : api.selectGraph(root)).then(()=>api.refreshLibraryPorts?.()).then(()=>{if(active)setLoad(api.getSnapshot().graph.nodes.some(n=>n.application)?'loaded':'empty');})
+      api.readSystemGraph().then(graph=>{if(active){setSystem(graph);setLoad(graph.nodes.some(n=>n.application)?'loaded':'empty');}})
         .catch(e=>{if(active){setError(e.message);setLoad('error');}});
       return ()=>{active=false;};
-    },[root,attempt]);
-    const nodes = s.graph.nodes.filter(n=>n.application), groups = [...new Set(nodes.map(n=>n.frame||n.category||'System'))];
+    },[attempt,s.systemRevision]);
+    const nodes = system.nodes.filter(n=>n.application), groups = [...new Set(nodes.map(n=>n.frame||n.category||'System'))];
     React.useLayoutEffect(()=>{
-      const measure=()=>setPaths(measureWires(world.current,s.graph.wires));
+      const measure=()=>setPaths(measureWires(world.current,system.wires));
       measure();
       const observer=new window.ResizeObserver(measure);if(world.current)observer.observe(world.current);
       return ()=>observer.disconnect();
-    },[s.revision,load]);
-    return <div data-screen="system" className="system-graph scroll" style={{minHeight:0,padding:24,overflow:'auto'}}>
+    },[s.revision,load,system]);
+    return <div data-screen="system" className="system-workflow scroll" style={{minHeight:0,padding:24,overflow:'auto'}}>
       <div className="spread"><h2>System graph</h2><Chip>{nodes.length} nodes</Chip></div>
       {load==='waiting' && <p role="status">Loading the system graph…</p>}
       {load==='error' && <p role="alert">{error}<Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(n=>n+1)},event)}>Retry loading system graph</Btn></p>}
@@ -737,7 +766,7 @@ function projectsdsscreensjsxParent6({parent,s,setParent,setSelected}, event) {
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }
 function projectsdsscreensjsxGraphs7({u}, event) {
-  const handler = () => u.show('Graphs');
+  const handler = () => u.show('Workflows');
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }
 function projectsdsscreensjsxWorkspaces8({u}, event) {

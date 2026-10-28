@@ -7,12 +7,110 @@ import math
 from pathlib import Path
 import re
 import uuid
+import os
+import threading
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
 from .universal_cell import Cell, NULL_CELL_ID, InvalidCell
 from .cell_accounts import upsert_account, ensure_accounts
+
+_ROUTER_LOCK = threading.RLock()
+
+
+def router_settings_path():
+    return Path(os.environ['LOCALAPPDATA']) / 'ArchHub' / 'settings' / 'router.json'
+
+
+def read_router_settings():
+    from .model_router import DEFAULT_FREE_ROUTE, _OPENROUTER_FREE_MODELS_DEFAULT
+    defaults = {'default_model': DEFAULT_FREE_ROUTE,
+                'fallback_models': ['openrouter/' + model for model in _OPENROUTER_FREE_MODELS_DEFAULT], 'free_first': True,
+                'providers': {'openrouter': {'credential': 'wcm://ArchHub/openrouter', 'enabled': True}},
+                'agents': {}, 'providerPreferences': {},
+                'generation': {'max_tokens': 900, 'temperature': 0.0, 'top_p': 1.0}}
+    try:
+        path = router_settings_path()
+        if path.stat().st_size > 65536:
+            raise InvalidCell('Router settings exceed 64 KiB.')
+        values = json.loads(path.read_text(encoding='utf-8'))
+    except FileNotFoundError:
+        return defaults
+    except (OSError, ValueError):
+        raise InvalidCell('Router settings could not be read.') from None
+    if type(values) is not dict:
+        raise InvalidCell('Router settings must be an object.')
+    return _checked_router_settings({**defaults, **values})
+
+
+def _checked_router_settings(values):
+    from .model_router import resolve_model_route
+    allowed = {'default_model', 'fallback_models', 'free_first', 'providers', 'agents',
+               'providerPreferences', 'generation'}
+    if type(values) is not dict or set(values) - allowed or values.get('free_first') is not True:
+        raise InvalidCell('Router settings require free-first and credential references only.')
+    def route(value, *, free=False):
+        if type(value) is not str or len(value) > 200:
+            raise InvalidCell('Choose a free model route.')
+        destination = resolve_model_route(value)
+        if free and (destination.family != 'openrouter' or not (destination.model == 'openrouter/free' or destination.model.endswith(':free'))):
+            raise InvalidCell('Choose a free OpenRouter model; paid fallbacks are disabled.')
+    route(values['default_model'])
+    fallbacks = values['fallback_models']
+    if type(fallbacks) is not list or len(fallbacks) > 8:
+        raise InvalidCell('Choose at most eight free fallback models.')
+    for value in fallbacks:
+        route(value, free=True)
+    providers = values['providers']
+    if (type(providers) is not dict or set(providers) != {'openrouter'} or
+            type(providers['openrouter']) is not dict or
+            set(providers['openrouter']) != {'credential', 'enabled'} or
+            providers['openrouter']['credential'] != 'wcm://ArchHub/openrouter' or
+            type(providers['openrouter']['enabled']) is not bool):
+        raise InvalidCell('Use the existing OpenRouter Windows credential reference.')
+    agents = values['agents']
+    if type(agents) is not dict or len(agents) > 64:
+        raise InvalidCell('Agent profiles exceed the router limit.')
+    for agent, profile in agents.items():
+        if (type(agent) is not str or not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', agent) or
+                type(profile) is not dict or set(profile) - {'model', 'prompt', 'purpose', 'humanOwner',
+                    'admins', 'autonomy', 'questionsPerDay', 'memoryScope', 'skillIds'} or
+                type(profile.get('prompt', '')) is not str or len(profile.get('prompt', '')) > 4096):
+            raise InvalidCell('Use a named agent profile with a model and short prompt.')
+        if 'model' in profile:
+            route(profile['model'])
+        for name in ('purpose', 'humanOwner', 'memoryScope', 'admins'):
+            if name in profile and (type(profile[name]) is not str or len(profile[name]) > 4096):
+                raise InvalidCell('Agent profile text is invalid.')
+        for name in ('skillIds',):
+            if name in profile and (type(profile[name]) is not list or len(profile[name]) > 128 or
+                    any(type(item) is not str or len(item) > 200 for item in profile[name])):
+                raise InvalidCell('Agent profile list is invalid.')
+        if 'questionsPerDay' in profile and (type(profile['questionsPerDay']) is not int or profile['questionsPerDay'] < 0):
+            raise InvalidCell('Questions per day must be a nonnegative integer.')
+        autonomy = profile.get('autonomy', {})
+        if (type(autonomy) is not dict or set(autonomy) - {'Read', 'Write', 'Send', 'Spend'} or
+                any(value not in {'Review all', 'Escalate hard', 'Autonomous'} for value in autonomy.values())):
+            raise InvalidCell('Choose a supported autonomy policy.')
+    preferences = values['providerPreferences']
+    if type(preferences) is not dict or set(preferences) - {'openrouter', 'lmstudio', 'ollama', 'cloud',
+            'openai', 'google', 'nvidia', 'anthropic', 'claude-code', 'codex', 'copilot', 'gemini-cli', 'opencode', 'antigravity', 'cursor'}:
+        raise InvalidCell('Provider preference is invalid.')
+    for provider, value in preferences.items():
+        route(value)
+        if SettingsOwner._provider_id(value) != provider:
+            raise InvalidCell('Choose a model belonging to its configured provider.')
+    generation = values['generation']
+    if type(generation) is not dict or set(generation) != {'max_tokens', 'temperature', 'top_p'}:
+        raise InvalidCell('Generation settings are invalid.')
+    if (type(generation['max_tokens']) is not int or not 1 <= generation['max_tokens'] <= 32000 or
+            any(type(generation[key]) not in (int, float) or not math.isfinite(generation[key]) or
+                not 0 <= generation[key] <= limit for key, limit in (('temperature', 2), ('top_p', 1)))):
+        raise InvalidCell('Generation settings are outside their allowed range.')
+    if len(json.dumps(values, allow_nan=False).encode('utf-8')) > 65536:
+        raise InvalidCell('Router settings exceed 64 KiB.')
+    return values
 
 
 class CloudRouteUnavailable(InvalidCell):
@@ -91,7 +189,9 @@ class SettingsOwner:
         return destination.family
 
     def _provider_models(self):
-        payload = self.runtime._project_model_discovery('/api/universal/models')
+        from .model_catalogue import live_model_groups, groups_with_routes
+        from .model_router import default_cloud_session
+        payload = groups_with_routes(live_model_groups(default_cloud_session()))
         if payload.get('ok') is False:
             raise InvalidCell('Model catalogue unavailable. Refresh Agents and retry.')
         result = {}
@@ -115,15 +215,42 @@ class SettingsOwner:
             provider = self._provider_id(route)
         except ValueError:
             return route
-        return self._control_preferences().get('providerPreferences', {}).get(provider, route)
+        return read_router_settings()['providerPreferences'].get(provider, route)
 
     def setProviderModel(self, id, model):
-        self._subject()
-        if type(id) is not str or type(model) is not str or model not in self._provider_models().get(id, []):
-            raise InvalidCell('Choose a current model belonging to this provider.')
-        held = self._control_preferences().get('providerPreferences', {})
-        self._save(self._subject(), {'providerPreferences': {**held, id: model}})
-        return {'providerPreferences': self._control_preferences()['providerPreferences']}
+        if type(model) is not str or self._provider_id(model) != id:
+            raise InvalidCell('Choose a model belonging to this provider.')
+        with _ROUTER_LOCK:
+            return self.setRouterSettings({'default_model': model, 'providerPreferences': {
+                **read_router_settings()['providerPreferences'], id: model}})
+
+    def routerSettings(self):
+        from .model_router import request_profiles, _FREE_ROTATION_ATTEMPT_SECONDS
+        from .agent_runtime_registry import discover_runtime_processes
+        from .model_catalogue import openrouter_models, openrouter_free_chat_routes, BYO_GROUP
+        try:
+            rows = openrouter_models(opener=urlopen, timeout=_FREE_ROTATION_ATTEMPT_SECONDS, prices={})
+            models = ['openrouter/' + model for model in openrouter_free_chat_routes(
+                {'groups': [{'name': BYO_GROUP, 'items': rows}]})]
+        except Exception:
+            models = []
+        return {**read_router_settings(), 'models': ['openrouter/free', *models], 'requests': request_profiles(),
+                'live_agents': discover_runtime_processes()}
+
+    def setRouterSettings(self, changes):
+        if type(changes) is not dict:
+            raise InvalidCell('Router settings must be an object.')
+        with _ROUTER_LOCK:
+            values = _checked_router_settings({**read_router_settings(), **changes})
+            path = router_settings_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_suffix('.tmp')
+            try:
+                temporary.write_text(json.dumps(values, ensure_ascii=False, allow_nan=False), encoding='utf-8')
+                os.replace(temporary, path)
+            finally:
+                temporary.unlink(missing_ok=True)
+        return values
 
     def _secrets(self, listing=None):
         from .model_router import list_social_credentials
@@ -175,7 +302,7 @@ class SettingsOwner:
     def readControls(self):
         from .model_router import ProviderCredentialError, list_social_credentials
         result = {'companion': self.companionState(),
-                  'providerPreferences': self._control_preferences().get('providerPreferences', {}),
+                  'providerPreferences': read_router_settings()['providerPreferences'],
                   'controlErrors': {}}
         try:
             listing = list_social_credentials()

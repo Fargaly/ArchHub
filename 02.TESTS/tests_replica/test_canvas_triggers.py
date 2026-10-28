@@ -1,0 +1,76 @@
+"""Trigger nodes fire while the app is open: schedule and file change run the downstream nodes once."""
+import copy
+import datetime
+import time
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def profile(tmp_path, monkeypatch):
+    for name in ('LOCALAPPDATA', 'APPDATA', 'USERPROFILE', 'HOME'):
+        monkeypatch.setenv(name, str(tmp_path / name))
+        (tmp_path / name).mkdir()
+    yield tmp_path
+
+
+def workflow(path, trigger, params):
+    from nodelang.session_files import SessionFiles, catalogue, new_document, write_document
+    items = {row['id']: row for row in catalogue()}
+    doc = new_document('Triggered')
+    doc['nodes'] = [
+        {'id': 't', 'item': trigger, 'type': items[trigger]['engine'], 'title': 'Trigger',
+         'params': {**copy.deepcopy(items[trigger]['params']), **params}, 'position': {'x': 0, 'y': 0}},
+        {'id': 'c', 'item': 'data.convert', 'type': 'data.convert', 'title': 'Convert',
+         'params': {'target_type': 'text'}, 'position': {'x': 300, 'y': 0}}]
+    doc['wires'] = [{'id': 'w', 'from': {'node': 't', 'socket': 'payload'}, 'to': {'node': 'c', 'socket': 'in'}}]
+    write_document(path, doc)
+    SessionFiles().remember(path, doc)          # a workflow the app knows (recent)
+    return doc
+
+
+def test_schedule_trigger_is_armed_and_fires_downstream(profile):
+    from nodelang.canvas_triggers import TriggerService
+    from nodelang.session_files import read_document
+    path = profile / 'daily.archhub'
+    workflow(path, 'tr_schedule', {'every_seconds': '600'})
+    service = TriggerService()
+    try:
+        armed = service.refresh()
+        assert [(a['node'], a['kind']) for a in armed] == [('t', 'trigger.schedule')]
+        service.fire((str(path), 't'), 'trigger.schedule')
+        saved = read_document(path)
+        assert next(n for n in saved['nodes'] if n['id'] == 'c')['result']['status'] == 'Done'
+        assert saved['properties']['history'][-1]['by'] == 'trigger:schedule'
+        assert service.fired[-1]['outcome'] == 'ran'
+    finally:
+        service.close()
+
+
+def test_file_trigger_fires_on_a_change_only(profile):
+    from nodelang.canvas_triggers import TriggerService
+    folder = profile / 'drop'
+    folder.mkdir()
+    path = profile / 'watch.archhub'
+    workflow(path, 'tr_file', {'folder': str(folder), 'pattern': '*.txt', 'debounce_seconds': '1'})
+    service = TriggerService()
+    try:
+        service.refresh()
+        time.sleep(1.5)
+        assert not service.fired                     # first look only records the folder
+        (folder / 'new.txt').write_text('x')
+        deadline = time.time() + 6
+        while not service.fired and time.time() < deadline:
+            time.sleep(0.2)
+        assert service.fired and service.fired[0]['kind'] == 'trigger.file'
+    finally:
+        service.close()
+
+
+def test_next_delay_interval_floor_and_daily_time():
+    from nodelang.canvas_triggers import next_delay
+    assert next_delay({'every_seconds': '300'}) == 300
+    assert next_delay({'every_seconds': '1'}) == 10
+    noon = datetime.datetime(2026, 10, 28, 12, 0)
+    assert next_delay({'every_seconds': '', 'daily_at': '13:30'}, noon) == 5400
+    assert next_delay({'every_seconds': '', 'daily_at': '08:00'}, noon) == 20 * 3600

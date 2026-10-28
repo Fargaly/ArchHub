@@ -56,7 +56,7 @@
               fontSize: 12
             }}>{p.task}</p></span></button>)}</aside><main className="page"><section aria-label="Action result" aria-live="polite">
       {wire.status === 'waiting' && <p role="status">Loading team…</p>}
-      {wire.status === 'empty' && <p>No saved content in this graph.</p>}
+      {wire.status === 'empty' && <p>No saved content in this workflow.</p>}
       {wire.status === 'loaded' && <p role="status">{wire.result?.title || wire.result?.message || wire.result?.status || wire.result?.phase || wire.result?.id || ''}</p>}
       {wire.status === 'error' && <div role="alert"><p>{wire.message}</p><Btn onClick={() => dispatch("wire.ds_colleagues.retry",wire.retry)}>Retry</Btn></div>}
     </section><Heading title={s.meeting.title} sub="People and agents finish work in the same room"><Btn p onClick={event => dispatch("wire.ds_colleagues.3", () => (() => u.go('meetings'))(event))}>Meetings</Btn><Btn onClick={event => dispatch("wire.ds_colleagues.4", () => (() => u.show('New task'))(event))}>New task</Btn></Heading><div style={{
@@ -91,7 +91,7 @@
       padding: 16
     }}><section aria-label="Action result" aria-live="polite">
       {wire.status === 'waiting' && <p role="status">Loading learned rules…</p>}
-      {wire.status === 'empty' && <p>No saved content in this graph.</p>}
+      {wire.status === 'empty' && <p>No saved content in this workflow.</p>}
       {wire.status === 'loaded' && <p role="status">{wire.result?.title || wire.result?.message || wire.result?.status || wire.result?.phase || wire.result?.id || ''}</p>}
       {wire.status === 'error' && <div role="alert"><p>{wire.message}</p><Btn onClick={() => dispatch("wire.ds_colleagues.retry",wire.retry)}>Retry</Btn></div>}
     </section><div className="spread"><h2>What ArchHub knows about you</h2><Btn sm onClick={event => dispatch("wire.ds_colleagues.7", () => (() => setEditor({id:null,text:''}))(event))}>Remember</Btn></div>{editor && <div><textarea aria-label="Learned rule" value={editor.text} onChange={event=>setEditor({...editor,text:event.target.value})}/><Btn p disabled={!editor.text.trim()} onClick={()=>dispatch('wire.memory.save',async()=>{await wire.call(()=>editor.id?api.editMemory(editor.id,editor.text):api.remember(editor.text));setEditor(null);})}>Save</Btn><Btn sm onClick={()=>dispatch('wire.memory.cancel',()=>setEditor(null))}>Cancel</Btn></div>}{s.brain.map(r => <div className="spread row" key={r.id}><div><p>{r.text}</p><span className="muted" style={{

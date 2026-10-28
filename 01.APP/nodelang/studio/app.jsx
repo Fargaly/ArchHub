@@ -419,7 +419,7 @@
           }}>{s.connectionNotice || '● Local session'}</span>
           {agentLoad.status === 'waiting' && <span role="status">Loading Workshop settings…</span>}
           {agentLoad.status === 'error' && <span role="alert">{agentLoad.message}<Btn aria-label="Retry Workshop connection" onClick={event => executeAction("appShell.RetryWorkshop", {reloadWorkshop}, event)}>Retry</Btn></span>}
-          {agentLoad.status === 'empty' && <span role="status">Select a graph for Workshop settings.</span>}
+          {agentLoad.status === 'empty' && <span role="status">Select a workflow for Workshop settings.</span>}
           {agentLoad.status === 'loaded' && <span className="sr-only" aria-label="Workshop settings ready" title="Workshop settings ready">✓</span>}
           <button className="button-reset muted" onClick={event => executeAction("appShell.Control.13", {
             go
@@ -531,20 +531,20 @@
             id: skill.id
           });
         }
-      }} />}</>;else if (k === 'Rename graph') body = <><input aria-label="Graph name" value={text} onChange={e => setText(e.target.value)} /><Btn p disabled={!text.trim()} onClick={event => executeAction("appShell.Save.23", {
+      }} />}</>;else if (k === 'Rename workflow') body = <><input aria-label="Workflow name" value={text} onChange={e => setText(e.target.value)} /><Btn p disabled={!text.trim()} onClick={event => executeAction("appShell.Save.23", {
         api,
         m,
         saved,
         text
-      }, event)}>Save</Btn></>;else if (k === 'Subscription') body = <window.UI.BillingAccount />;else if (k === 'Task details') body = <window.UI.TaskDetails id={m.id} />;else if (k === 'Node output') body = <window.UI.NodeOutput id={m.id} />;else if (k === 'Graphs') body = <window.UI.GraphManager />;else if (k === 'MCP tools') body = <window.UI.McpTools />;else if (k === 'Install mod' || k === 'Make a mod') body = <window.UI.ModManager making={k === 'Make a mod'} />;else if (k === 'Legacy graphs') body = <div className="grid">{s.graphs.map(g => <button className="listbutton spread" key={g.id} onClick={event => executeAction("appShell.Control.24", {
+      }, event)}>Save</Btn></>;else if (k === 'Subscription') body = <window.UI.BillingAccount />;else if (k === 'Task details') body = <window.UI.TaskDetails id={m.id} />;else if (k === 'Node output') body = <window.UI.NodeOutput id={m.id} />;else if (k === 'Workflows') body = <window.UI.GraphManager />;else if (k === 'MCP tools') body = <window.UI.McpTools />;else if (k === 'Install mod' || k === 'Make a mod') body = <window.UI.ModManager making={k === 'Make a mod'} />;else if (k === 'Legacy workflows') body = <div className="grid">{s.graphs.map(g => <button className="listbutton spread" key={g.id} onClick={event => executeAction("appShell.Control.24", {
         api,
         g,
         u
-      }, event)}><span>{g.name}</span><span className="muted">{g.nodes.length} nodes</span></button>)}<label className="grid">New graph<input aria-label="New graph name" value={text} onChange={e => setText(e.target.value)} /></label><Btn p onClick={event => executeAction("appShell.AddGraph.25", {
+      }, event)}><span>{g.name}</span><span className="muted">{g.nodes.length} nodes</span></button>)}<label className="grid">New workflow<input aria-label="New workflow name" value={text} onChange={e => setText(e.target.value)} /></label><Btn p onClick={event => executeAction("appShell.AddGraph.25", {
         api,
         text,
         u
-      }, event)}>Add graph</Btn></div>;else if (k === 'Workspace rules') body = <window.UI.WorkspaceRules id={m.id} />;else if (k === 'Dimensions') body = <window.UI.WatcherDimensions />;else if (k === 'Update') body = <><p>{s.update.detail || 'Update status unavailable'}</p><p>{s.update.installed} → {s.update.next}</p><p>Restart now. Unsent text is lost; your saved graphs and settings stay with you.</p>{s.update.restartRefusal && <p role="alert">{s.update.restartRefusal}</p>}<Btn p disabled={!s.update.available || !!s.update.restartRefusal} onClick={event => executeAction("appShell.RestartAndUpdate.26", {
+      }, event)}>Add workflow</Btn></div>;else if (k === 'Workspace rules') body = <window.UI.WorkspaceRules id={m.id} />;else if (k === 'Dimensions') body = <window.UI.WatcherDimensions />;else if (k === 'Update') body = <><p>{s.update.detail || 'Update status unavailable'}</p><p>{s.update.installed} → {s.update.next}</p><p>Restart now. Unsent text is lost; your saved workflows and settings stay with you.</p>{s.update.restartRefusal && <p role="alert">{s.update.restartRefusal}</p>}<Btn p disabled={!s.update.available || !!s.update.restartRefusal} onClick={event => executeAction("appShell.RestartAndUpdate.26", {
         api,
         saved
       }, event)}>Restart and update</Btn><Btn onClick={event => executeAction("appShell.ReadStatus.27", {

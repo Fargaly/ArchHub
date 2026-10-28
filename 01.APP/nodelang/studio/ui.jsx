@@ -58,7 +58,7 @@
     'Retry': 'refresh',
     'Rerun': 'refresh',
     'Fork': 'canvas',
-    'Open graph': 'canvas'
+    'Open workflow': 'canvas'
   };
   const Btn = ({
     p,
@@ -157,13 +157,16 @@
       pending.current = true;
       setSending(true);
       try {
-        const t = await u.act(() => api.sendToBaboom(text, {
-          taskId,
-          scope: u.selectedNodeId || s.graph.id,
-          provider
-        }));
+        const t = await u.act(() => {
+          if (!taskId && typeof api.apiRouterChat === 'function') return api.apiRouterChat(text, provider || 'BABOOM');
+          return api.sendToBaboom(text, {taskId, scope: u.selectedNodeId || s.graph.id, provider});
+        });
         if (t) {
           setDraft(current => current.revision === revision ? {text:'',revision:current.revision+1} : current);
+          if (typeof t.answer === 'string') {
+            onSent?.(t);
+            return;
+          }
           u.setTask(t.id);
           onSent?.(t);
           if (!taskId && !onSent) u.go('workshop');
@@ -186,10 +189,10 @@
       }}><button type="button" className="tab-button" aria-label="Composer scope" onClick={event => executeAction("sharedUI.ComposerScope.1", {
           contextOpen,
           setContextOpen
-        }, event)}><window.AHIcon name="canvas" size={12} /> {u.selectedNodeId ? api.contextLabel(u.selectedNodeId) : s.graph.name}</button><button type="button" className="icon-button" aria-label="Mention context" title="Add nodes, graphs, agents or sessions" onClick={event => executeAction("sharedUI.MentionContext.2", {
+        }, event)}><window.AHIcon name="canvas" size={12} /> {u.selectedNodeId ? api.contextLabel(u.selectedNodeId) : s.graph.name}</button><button type="button" className="icon-button" aria-label="Mention context" title="Add nodes, workflows, agents or sessions" onClick={event => executeAction("sharedUI.MentionContext.2", {
           contextOpen,
           setContextOpen
-        }, event)}>＠</button></div>{contextOpen && <div className="composer-mentions" role="region" aria-label="Context choices">{[['Nodes', s.graph.nodes], ['Graphs', s.graphs], ['Agents', s.providers], ['Sessions', s.tasks]].map(([label, rows]) => <details key={label}><summary>{label}</summary>{rows.slice(0, 20).map(r => <button type="button" key={r.id} onClick={event => executeAction("sharedUI.Control.3", {
+        }, event)}>＠</button></div>{contextOpen && <div className="composer-mentions" role="region" aria-label="Context choices">{[['Nodes', s.graph.nodes], ['Workflows', s.graphs], ['Agents', s.providers], ['Sessions', s.tasks]].map(([label, rows]) => <details key={label}><summary>{label}</summary>{rows.slice(0, 20).map(r => <button type="button" key={r.id} onClick={event => executeAction("sharedUI.Control.3", {
             api,
             r,
             setContextOpen,
@@ -221,6 +224,7 @@
           setText,
           u
         }, event)} title="Talk · F2">🎙 Talk</Btn>}<Btn p sm type="submit" aria-label="Send ↵" title="Send · Enter" disabled={sending || !text.trim()}><window.AHIcon name="send" size={15} /></Btn></div>
+ {s.composerAnswer&&<div className="composer-answer" role="status" aria-label="Model answer"><small className="muted">{s.composerAnswer.provider} · {s.composerAnswer.model}</small><p style={{whiteSpace:'pre-wrap'}}>{s.composerAnswer.answer}</p></div>}
  </D.Composer>;
   }
   function ApprovalCard({

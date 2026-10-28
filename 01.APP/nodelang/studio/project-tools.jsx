@@ -23,7 +23,7 @@
         padding: 14
       }}><div className="spread"><button className="button-reset fill" style={{
             textAlign: 'left'
-          }} onClick={event => executeAction("projects.project-tools.AsyncAwaitUActApi.1", {api,g,u}, event)}><b>{g.pinned ? '★ ' : ''}{g.name}</b><p className="muted">{g.nodes?.length ?? '—'} nodes · {g.workspaceIds?.length || 0} workspaces</p></button><Btn sm title={'Pin ' + g.name} aria-label={'Pin ' + g.name} onClick={event => executeAction("projects.project-tools.UActApiUpdateGraphG.2", {api,g,u}, event)}><Icon name="pin" size={15} /></Btn><Btn sm title={'Rename ' + g.name} aria-label={'Rename ' + g.name} onClick={event => executeAction("projects.project-tools.UShowRenameGraphId.3", {g,u}, event)}><Icon name="edit" size={15} /></Btn><Btn sm title={'Remove ' + g.name} aria-label={'Remove ' + g.name} onClick={event => executeAction("projects.project-tools.UConfirmRemoveGName.4", {api,g,u}, event)}><Icon name="trash" size={15} /></Btn></div></Card>)}<label className="grid">New graph<input aria-label="New graph name" value={name} onChange={e => setName(e.target.value)} /></label><Btn p disabled={!name.trim()} onClick={event => executeAction("projects.project-tools.AddGraph.5", {api,name,u}, event)}>Add graph</Btn><div className="row spread"><h3>{s.graph.name} · history</h3><Btn sm onClick={event => executeAction("projects.project-tools.SaveVersion.6", {api,u}, event)}>Save version</Btn></div>{s.graph.versions?.map(v => <div className="row spread" key={v.id}><span>{v.name} · {v.nodes.length} nodes</span><Btn sm onClick={event => executeAction("projects.project-tools.Restore.7", {api,u,v}, event)}>Restore</Btn></div>)}<div className="flex"><Btn sm onClick={event => executeAction("projects.project-tools.ExportGraph.8", {u}, event)}>Export graph</Btn><Btn sm onClick={event => executeAction("projects.project-tools.Sync.9", {api,u}, event)}>Sync</Btn></div></div>;
+          }} onClick={event => executeAction("projects.project-tools.AsyncAwaitUActApi.1", {api,g,u}, event)}><b>{g.pinned ? '★ ' : ''}{g.name}</b><p className="muted">{g.nodes?.length ?? '—'} nodes · {g.workspaceIds?.length || 0} workspaces</p></button><Btn sm title={'Pin ' + g.name} aria-label={'Pin ' + g.name} onClick={event => executeAction("projects.project-tools.UActApiUpdateGraphG.2", {api,g,u}, event)}><Icon name="pin" size={15} /></Btn><Btn sm title={'Rename ' + g.name} aria-label={'Rename ' + g.name} onClick={event => executeAction("projects.project-tools.UShowRenameGraphId.3", {g,u}, event)}><Icon name="edit" size={15} /></Btn><Btn sm title={'Remove ' + g.name} aria-label={'Remove ' + g.name} onClick={event => executeAction("projects.project-tools.UConfirmRemoveGName.4", {api,g,u}, event)}><Icon name="trash" size={15} /></Btn></div></Card>)}<label className="grid">New workflow<input aria-label="New workflow name" value={name} onChange={e => setName(e.target.value)} /></label><Btn p disabled={!name.trim()} onClick={event => executeAction("projects.project-tools.AddGraph.5", {api,name,u}, event)}>Add workflow</Btn><div className="row spread"><h3>{s.graph.name} · history</h3><Btn sm onClick={event => executeAction("projects.project-tools.SaveVersion.6", {api,u}, event)}>Save version</Btn></div>{s.graph.versions?.map(v => <div className="row spread" key={v.id}><span>{v.name} · {v.nodes.length} nodes</span><Btn sm onClick={event => executeAction("projects.project-tools.Restore.7", {api,u,v}, event)}>Restore</Btn></div>)}<div className="flex"><Btn sm onClick={event => executeAction("projects.project-tools.ExportGraph.8", {u}, event)}>Export workflow</Btn><Btn sm onClick={event => executeAction("projects.project-tools.Sync.9", {api,u}, event)}>Sync</Btn></div></div>;
   }
   function ModelReview() {
     const s = useData(),
@@ -190,7 +190,7 @@ function projectsprojecttoolsjsxUActApiUpdateGraphG2({api,g,u}, event) {
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }
 function projectsprojecttoolsjsxUShowRenameGraphId3({g,u}, event) {
-  const handler = () => u.show('Rename graph', {
+  const handler = () => u.show('Rename workflow', {
             id: g.id,
             text: g.name
           });
@@ -219,7 +219,7 @@ function projectsprojecttoolsjsxRestore7({api,u,v}, event) {
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }
 function projectsprojecttoolsjsxExportGraph8({u}, event) {
-  const handler = () => u.download('Graph');
+  const handler = () => u.download('Workflow');
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }
 function projectsprojecttoolsjsxSync9({api,u}, event) {

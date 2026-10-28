@@ -1,0 +1,12 @@
+{
+  "name": "archhub-ide-live",
+  "displayName": "ArchHub Workshop live input",
+  "description": "Receives a Workshop message over a local pipe and submits it into this IDE's agent panel.",
+  "version": "0.1.0",
+  "publisher": "archhub",
+  "license": "MIT",
+  "engines": { "vscode": "^1.80.0" },
+  "main": "./extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {}
+}

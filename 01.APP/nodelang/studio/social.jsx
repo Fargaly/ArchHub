@@ -94,7 +94,7 @@
     };
     return <div className="social-layout" data-screen="social"><section aria-label="Action result" aria-live="polite">
       {wire.status === 'waiting' && <p role="status">Waiting for the owner…</p>}
-      {wire.status === 'empty' && <p>No saved content in this graph.</p>}
+      {wire.status === 'empty' && <p>No saved content in this workflow.</p>}
       {wire.status === 'loaded' && <p role="status">{wire.result?.title || wire.result?.message || wire.result?.status || wire.result?.phase || wire.result?.id || ''}</p>}
       {wire.status === 'error' && <div role="alert"><p>{wire.message}</p><Btn onClick={() => dispatch("wire.social.retry",wire.retry)}>Retry</Btn></div>}
     </section><aside className="pane social-side"><div className="flex"><Icon name="workshop" /><h2>Social media</h2></div><button className="office-chip" onClick={event => dispatch("wire.social.1", () => (() => {

@@ -16,7 +16,7 @@
       return u.show('Workspaces');
     }
     function handleCanvasstatesjsx2() {
-      return u.show('Graphs');
+      return u.show('Workflows');
     }
     function handleCanvasstatesjsx3() {
       return u.go('settings/System graph');
@@ -33,15 +33,15 @@
         handleCanvasstatesjsx3
       })(id, ...args);
     }
-    return <div className="grid"><window.UI.ActionStatus action={actionState} /><div className="spread"><h2>Graph</h2><Icon name="canvas" size={18} /></div><p className="muted">The working space and its shared parameters.</p><label className="grid">Name<input aria-label="Graph name" value={g.name} onChange={(e) => actionState.run(async () => await api.updateGraph(g.id, {
+    return <div className="grid"><window.UI.ActionStatus action={actionState} /><div className="spread"><h2>Workflow</h2><Icon name="canvas" size={18} /></div><p className="muted">The working space and its shared parameters.</p><label className="grid">Name<input aria-label="Workflow name" value={g.name} onChange={(e) => actionState.run(async () => await api.updateGraph(g.id, {
           name: e.target.value
-        }))} /></label><label className="grid">Owner<select aria-label="Graph owner" value={g.humanOwner || s.profile.name || 'Unassigned'} onChange={(e) => actionState.run(async () => await api.updateGraph(g.id, {
+        }))} /></label><label className="grid">Owner<select aria-label="Workflow owner" value={g.humanOwner || s.profile.name || 'Unassigned'} onChange={(e) => actionState.run(async () => await api.updateGraph(g.id, {
           humanOwner: e.target.value
-        }))}>{s.people.map((p) => <option key={p.id}>{p.name}</option>)}</select></label><label className="grid">Description<textarea aria-label="Graph description" rows={4} value={g.description || ''} placeholder="What does this workflow do?" onChange={(e) => actionState.run(async () => await api.updateGraph(g.id, {
+        }))}>{s.people.map((p) => <option key={p.id}>{p.name}</option>)}</select></label><label className="grid">Description<textarea aria-label="Workflow description" rows={4} value={g.description || ''} placeholder="What does this workflow do?" onChange={(e) => actionState.run(async () => await api.updateGraph(g.id, {
           description: e.target.value
-        }))} /></label><div className="row spread"><span>{g.nodes.length} nodes</span><span className="muted">{g.wires.length} relations</span></div><div className="row spread"><span>Keep at the top</span><D.Toggle label="Pin graph" checked={!!g.pinned} onCheckedChange={(v) => actionState.run(() => api.updateGraph(g.id, {
+        }))} /></label><div className="row spread"><span>{g.nodes.length} nodes</span><span className="muted">{g.wires.length} relations</span></div><div className="row spread"><span>Keep at the top</span><D.Toggle label="Pin workflow" checked={!!g.pinned} onCheckedChange={(v) => actionState.run(() => api.updateGraph(g.id, {
           pinned: v
-        }))} /></div><window.UI.GraphMetadata /><Btn sm onClick={(event) => dispatch("canvas-states.1", event)}>Graph workspaces</Btn><Btn sm onClick={(event) => dispatch("canvas-states.2", event)}>Versions &amp; other graphs</Btn><Btn sm onClick={(event) => dispatch("canvas-states.3", event)}>Graph preferences</Btn></div>;
+        }))} /></div><window.UI.GraphMetadata /><Btn sm onClick={(event) => dispatch("canvas-states.1", event)}>Workflow workspaces</Btn><Btn sm onClick={(event) => dispatch("canvas-states.2", event)}>Versions &amp; other workflows</Btn><Btn sm onClick={(event) => dispatch("canvas-states.3", event)}>Workflow preferences</Btn></div>;
   }
   function CompositeParameters({
     id

@@ -123,13 +123,13 @@ window.ArchHubTheme = (() => {
   const apply = theme => {
     const values = validate(theme); // Reject the whole document before changing any token.
     const changed = Object.keys(values).some(key => window.AH[key] !== values[key]);
-    if (!changed && source === 'graph') { window.ARCHHUB_THEME_ERROR = ''; return false; }
+    if (!changed && source === 'workflow') { window.ARCHHUB_THEME_ERROR = ''; return false; }
     const next = {...window.AH, ...values};
     // Build every dependent projection first; a failed builder cannot partially apply.
     const updates = derived.map(({target, build}) => ({target, values:build(next)}));
     Object.assign(window.AH, values);
     for (const update of updates) Object.assign(update.target, update.values);
-    source = 'graph';
+    source = 'workflow';
     window.ARCHHUB_THEME_ERROR = '';
     epoch += 1;
     for (const notify of listeners) { notify(); }

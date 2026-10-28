@@ -1,6 +1,6 @@
 # Node Language authority index
 
-Date: 2026-07-16
+Date: 2026-07-16 (updated 2026-10-28 for NOGRAPH, decision D-014)
 Status: active precedence and supersession index
 
 This index prevents research notes, implementation comments, stale counts, and
@@ -14,10 +14,10 @@ evidence and MUST NOT silently override the higher source.
 | Order | Authority | Controls | Does not control |
 |---:|---|---|---|
 | 1 | Current explicit founder decision and founder Core Values source | Product intent, constitutional priorities, acceptance/rejection | Physical implementation details by itself |
-| 2 | `SPEC.md` | Universal Cell product architecture, normative requirements, courts, migration conformance | Mutable progress or release status |
+| 2 | `SPEC.md` | Node product architecture (nodes, `.archhub` files, owners, solve/run), normative requirements, courts, migration conformance | Mutable progress or release status |
 | 3 | `00.GOVERNANCE/WORKSPACE-STANDARD.md` | Workspace placement, privacy tiers, CDE custody, generated agent contract | A second node ontology or product completion |
-| 4 | Released protocol/design/security decisions explicitly incorporated by `SPEC.md` | Detailed protocol contracts inside their stated scope | Requirements outside that scope |
-| 5 | Grand Map source graph | Product requirements, dependencies, parameters, domain scope | Physical kernel semantics or hand-written progress counts |
+| 4 | `DECISIONS.md` records and released protocol/design/security decisions incorporated by `SPEC.md` (for example D-014 NOGRAPH, `FORMAT.md`) | Detailed contracts inside their stated scope | Requirements outside that scope |
+| 5 | Grand Map requirement source | Product requirements, dependencies, parameters, domain scope | Storage semantics or hand-written progress counts |
 | 6 | Revision-bound implementation evidence | What exact code/artifact passed exact courts in an exact environment | Target architecture or untested completion |
 | 7 | Research, model-room transcripts, audits, legacy code, screenshots, comments | Evidence, alternatives, failures, visual/behavior reference | Active authority unless promoted through levels 1-4 |
 
@@ -32,7 +32,8 @@ evidence and MUST NOT silently override the higher source.
 
 ### Normative product target
 
-- `10.PRODUCT/11.ARCHHUB-APP/docs/SPEC.md`
+- `10.PRODUCT/11.ARCHHUB-APP/04.DOCS/SPEC.md` (ArchHub Node Specification 0.2, NOGRAPH)
+- `04.DOCS/FORMAT.md` and `04.DOCS/ARCHHUB.schema.json` (the `.archhub` document)
 
 There is one active Node Language product specification. It contains no mutable
 test count, percentage, deployment, or completion claim.
@@ -43,7 +44,7 @@ test count, percentage, deployment, or completion claim.
 - Generated agent contracts derived from that source.
 
 Generated files never outrank their source. The Workspace Standard governs
-information handling; it cannot introduce Cell kinds or separate product truth.
+information handling; it cannot introduce node types, stores or separate product truth.
 
 ### Detailed accepted decisions
 
@@ -54,7 +55,7 @@ information handling; it cannot introduce Cell kinds or separate product truth.
 These control only the detail explicitly delegated by `SPEC.md`. Their WIP and
 gap statements remain binding honesty constraints.
 
-### Requirement graph
+### Requirement source
 
 - `30.KNOWLEDGE/31.GRAND-MAP/data/grand_domains.json`
 
@@ -80,6 +81,13 @@ These sources explain why decisions were accepted or rejected. They do not creat
 a second specification.
 
 ## Superseded sources
+
+On 2026-10-28 (decision D-014 NOGRAPH) the Universal Cell specification, the
+Cell-based Node Language handbook and the previous version of this index were
+replaced. Their exact bytes and SHA-256 are kept in `04.DOCS/04.ARCHIVE/`
+(see `04.ARCHIVE/MANIFEST.md`). The universal Cell graph, its journal, agent
+enrollment and signed authority at boot are no longer the application store;
+they are historical evidence only.
 
 The previous contradictory Node Language specification is preserved unchanged at:
 

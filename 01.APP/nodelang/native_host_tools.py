@@ -1,41 +1,20 @@
-"""Host tools on the shipped native MCP: one broker implementation, gated like every agent effect.
+"""Native host tools call existing signed brokers directly, without app enrollment.
 
-The same twenty tools the founder's development-era host server offered, served
-by the installed native owner (native_agent_mcp.build_server). Nothing here
-knows how to reach a host: 3ds Max, Rhino, Blender, Office, Outlook, Notion and
-Dropbox go through host_brokers.ENGINES, Revit and AutoCAD through the signed
-broker client in clean_revit_adapter, each broker found by its own identity.
-Every bridge call is signed there (host_bridge_auth).
-
-Gates, the ones every native tool already stands behind:
-
-* Owner: each call is admitted inside the verified native owner (bound_client).
-  A host effect then runs with the session's lock released, and the owner and
-  the task's admission are verified again when it returns; if either changed
-  the result is reported unconfirmed, never re-run. A changed or stale owner
-  refuses before any host is reached.
-* Admission and scope: a host effect (code execution, a screenshot written to
-  disk) runs only while this session holds a claimed Work whose configured
-  ``requirements`` name that host in ``hosts`` (for example
-  ``{"hosts": ["revit", "max"]}``). The Work configuration projection carries
-  exactly inputs, requirements and cde-container; requirements is the founder's
-  structured object, so that is where a Work admits its hosts. The founder sets
-  them as "Programs this task may use" in the Workshop (on creation and in the
-  Work configuration). The host is called once; there is no retry. Reads need
-  the owner, not a Work.
+Reads need no Work. Effects require settings.json host_effects[host] == true,
+checked before and after one dispatch; uncertain calls are never replayed.
 """
 from __future__ import annotations
 
 from typing import Callable
 
-from .application_machine_transport import MachineTransportError
 from .host_brokers import ENGINES, EXEC_WAIT_LIMIT
 
-INFO_WAIT = 10.0
+# Reads must answer inside the founder <2s budget; never sit on a hung signed /info.
+INFO_WAIT = 1.5
 SCREENSHOT_PATH = r"C:\temp\revit_view.png"
 
 
-class HostToolRefused(MachineTransportError):
+class HostToolRefused(RuntimeError):
     """A host tool refused before any host was reached."""
 
 
@@ -45,87 +24,62 @@ def _engine(engine: str, **params) -> dict:
 
 
 def _broker(service: str, route: str, body=None, port=None, wait=INFO_WAIT) -> dict:
-    from . import clean_revit_adapter as brokers
+    from . import host_brokers as brokers
     return brokers.broker_call(service, route, body, port=port, timeout=wait)
 
 
 def _sessions(service: str) -> dict:
-    from . import clean_revit_adapter as brokers
-    rows = brokers.broker_sessions(service)
+    from . import host_brokers as brokers
+    rows = brokers.broker_sessions(service, include_document=False)
     return {"ok": bool(rows), "sessions": rows}
 
 
-def _program(host: str) -> str:
-    from .existing_workshop_project_revision import WORK_PROGRAMS
-    return WORK_PROGRAMS[host]
+def _allow_effect(host: str) -> None:
+    import json
+    import os
+    from pathlib import Path
+    path = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "ArchHub" / "settings.json"
+    try:
+        settings = json.loads(path.read_text(encoding="utf-8-sig"))
+        permissions = settings.get("host_effects", {})
+        allowed = isinstance(permissions, dict) and permissions.get(host) is True
+    except (OSError, ValueError, AttributeError):
+        allowed = False
+    if not allowed:
+        raise HostToolRefused("Local host effect permission is disabled for %s (settings.json: host_effects)." % host)
 
 
-def _admitted_work(client, host: str) -> str:
-    """The claimed Work that admits ``host``, read under the owner, or a plain refusal."""
-    projection = client.current_work_configuration()
-    work = projection.get("work") if isinstance(projection, dict) else None
-    if not work:
-        raise HostToolRefused(
-            "No task is claimed in this session yet. Claim the task in the Workshop first, then try again.")
-    fields = work["configuration"].get("fields") or {}
-    requirements = (fields.get("requirements") or {}).get("value")
-    hosts = requirements.get("hosts") if isinstance(requirements, dict) else None
-    if not isinstance(hosts, list) or host not in hosts:
-        name = _program(host)
-        raise HostToolRefused(
-            "This task isn't allowed to use %s yet. In the Workshop, open the task's Work configuration, "
-            "tick %s under Programs this task may use, and save." % (name, name))
-    return work["root"]
+def _host_state() -> dict:
+    from .connector_operation_evidence import host_projection
+    return host_projection()
 
 
-def register_host_tools(server, control, *, read_only=False) -> None:
-    """Add the host tools to a native server bound to ``control``."""
-
+def register_host_tools(server, control=None, *, read_only=False) -> None:
+    """Keep the existing MCP tools independent of Work and graph ownership."""
     def read(run: Callable[[], dict]) -> dict:
-        with control.bound_client():
-            return run()
+        return run()
 
     def effect(host: str, run: Callable[[], dict]) -> dict:
-        # Admission under the owner, then the host call with the session's
-        # lock released (a 240 s call must not stall its other tools), then
-        # the owner and the same task's admission verified again. The host
-        # is never called a second time; a failed recheck reports the result
-        # as unconfirmed.
-        with control.bound_client() as client:
-            work = _admitted_work(client, host)
-        name, reason = _program(host), None
+        _allow_effect(host)
+        reason = None
         try:
             result = run()
         except OSError:
-            # Sent, then no answer (timeout, dropped connection): the command
-            # may have run. Refusals raised before the host is contacted
-            # (no session, ambiguous port) are not OSError and still raise.
             result = {"ok": False}
-            reason = ("%s did not answer in time. The command may have run; check %s "
-                      "before anything else. Do not run it again blindly." % (name, name))
+            reason = "%s did not answer. The command may have run; check the host. Do not run it again blindly." % host
         try:
-            with control.bound_client() as client:
-                if _admitted_work(client, host) != work:
-                    raise HostToolRefused("claimed task changed")
+            _allow_effect(host)
         except HostToolRefused:
-            reason = reason or ("This task was released or its programs changed while %s was running. "
-                                "The command may have run; check %s before anything else. "
-                                "Do not run it again blindly." % (name, name))
-        except MachineTransportError:
-            reason = reason or ("ArchHub's connection to this session changed while %s was running. "
-                                "The command may have run; check %s before anything else. "
-                                "Do not run it again blindly." % (name, name))
-        # The host's answer comes first; the gate's own verdict always wins.
+            reason = reason or "Local permission changed. The command may have run; check the host. Do not run it again blindly."
         answer = {key: value for key, value in result.items()
                   if key not in ("work", "confirmed", "unconfirmed")}
-        return {**answer, "work": work, "confirmed": reason is None,
+        return {**answer, "confirmed": reason is None,
                 **({"unconfirmed": reason} if reason else {})}
 
     @server.tool(name="hosts_state")
     def hosts_state() -> dict:
         """Every host connector's live state; the same read as hosts.status."""
-        with control.bound_client() as client:
-            return client.request("GET", "/api/universal/hosts", {})
+        return _host_state()
 
     if read_only:
         return
@@ -144,13 +98,13 @@ def register_host_tools(server, control, *, read_only=False) -> None:
     def revit_open_document(path: str, activate: bool = True, view: str | None = None,
                             port: int | None = None) -> dict:
         """Open and activate a model (UNC supported), optionally a named view. Works at Home; no model write."""
-        return read(lambda: _broker("revit", "/open", {"path": path, "activate": activate, "view": view},
+        return effect("revit", lambda: _broker("revit", "/open", {"path": path, "activate": activate, "view": view},
                                     port, EXEC_WAIT_LIMIT))
 
     @server.tool(name="revit_execute_csharp")
     def revit_execute_csharp(code: str, transaction_name: str = "ArchHub",
                              port: int | None = None, transaction: bool = True) -> dict:
-        """C# with UIApp/UIDoc/Doc and result. Doc is null at Home; transaction:false for app calls. Needs Work."""
+        """C# with UIApp/UIDoc/Doc and result. Doc is null at Home; transaction:false for app calls. Needs local host effect permission."""
         return effect("revit", lambda: _broker("revit", "/exec",
                       {"code": code, "transaction_name": transaction_name,
                        **({"transaction": False} if not transaction else {})}, port, EXEC_WAIT_LIMIT))
@@ -158,7 +112,7 @@ def register_host_tools(server, control, *, read_only=False) -> None:
     @server.tool(name="revit_screenshot")
     def revit_screenshot(output_path: str = SCREENSHOT_PATH, width_px: int = 1920,
                          port: int | None = None) -> dict:
-        """Export the active Revit view as PNG to output_path. Needs Work admitting revit."""
+        """Export the active Revit view as PNG to output_path. Needs local revit effect permission."""
         return effect("revit", lambda: _broker("revit", "/screenshot",
                       {"output_path": output_path, "width_px": width_px}, port, EXEC_WAIT_LIMIT))
 
@@ -175,7 +129,7 @@ def register_host_tools(server, control, *, read_only=False) -> None:
     @server.tool(name="acad_execute_csharp")
     def acad_execute_csharp(code: str, transaction_name: str = "ArchHub",
                             port: int | None = None) -> dict:
-        """Execute C# live in AutoCAD (globals Doc, Db, Ed; set `result`). Needs Work admitting acad."""
+        """Execute C# live in AutoCAD (globals Doc, Db, Ed; set `result`). Needs local acad effect permission."""
         return effect("acad", lambda: _broker("acad", "/exec",
                       {"code": code, "transaction_name": transaction_name}, port, EXEC_WAIT_LIMIT))
 
@@ -191,12 +145,12 @@ def register_host_tools(server, control, *, read_only=False) -> None:
 
     @server.tool(name="max_execute_python")
     def max_execute_python(code: str) -> dict:
-        """Execute Python in 3ds Max via pymxs (rt; set `result`). Needs Work admitting max."""
+        """Execute Python in 3ds Max via pymxs (rt; set `result`). Needs local max effect permission."""
         return effect("max", lambda: _engine("max.python", code=code, timeout_s=EXEC_WAIT_LIMIT))
 
     @server.tool(name="max_execute_maxscript")
     def max_execute_maxscript(script: str) -> dict:
-        """Execute MAXScript in 3ds Max. Needs Work admitting max."""
+        """Execute MAXScript in 3ds Max. Needs local max effect permission."""
         return effect("max", lambda: _engine("max.exec", code=script, timeout_s=EXEC_WAIT_LIMIT))
 
     @server.tool(name="blender_ping")
@@ -206,7 +160,7 @@ def register_host_tools(server, control, *, read_only=False) -> None:
 
     @server.tool(name="blender_execute_python")
     def blender_execute_python(code: str) -> dict:
-        """Execute Python with bpy in the open Blender (set `result`). Needs Work admitting blender."""
+        """Execute Python with bpy in the open Blender (set `result`). Needs local blender effect permission."""
         return effect("blender", lambda: _engine("blender.exec", code=code, timeout_s=EXEC_WAIT_LIMIT))
 
     @server.tool(name="rhino_ping")
@@ -216,7 +170,7 @@ def register_host_tools(server, control, *, read_only=False) -> None:
 
     @server.tool(name="rhino_execute_python")
     def rhino_execute_python(code: str) -> dict:
-        """Run RhinoPython in the open Rhino model. Needs Work admitting rhino."""
+        """Run RhinoPython in the open Rhino model. Needs local rhino effect permission."""
         return effect("rhino", lambda: _engine("rhino.exec", code=code, timeout_s=EXEC_WAIT_LIMIT))
 
     @server.tool(name="office_read")

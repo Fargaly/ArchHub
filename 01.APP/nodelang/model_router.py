@@ -31,6 +31,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import sqlite3
 import time
 import urllib.error
 import urllib.request
@@ -167,6 +168,75 @@ _MODEL_SLUG_PATTERN = re.compile(
 _UNAVAILABLE_UNTIL: dict[tuple[str, str], float] = {}
 _OPENROUTER_FREE_ANSWERED_AT: dict[str, float] = {}
 _SESSION_MODEL_LOCK = threading.Lock()
+_PROFILE_LOCK = threading.Lock()
+
+
+def request_profiles(record=None):
+    """Metadata only; no prompt, reply, credential or provider error body."""
+    from .settings_owner import router_settings_path
+    path = router_settings_path().parent / 'router.sqlite'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with _PROFILE_LOCK, sqlite3.connect(path) as db:
+        db.execute('CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, ts REAL, agent TEXT, model TEXT, provider TEXT, tokens INTEGER, ms INTEGER, outcome TEXT)')
+        db.execute('DELETE FROM requests WHERE ts < ?', (time.time() - 20 * 86400,))
+        if record is not None:
+            db.execute('INSERT INTO requests VALUES (:id,:ts,:agent,:model,:provider,:tokens,:ms,:outcome)', record)
+        db.row_factory = sqlite3.Row
+        return [dict(row) for row in db.execute('SELECT * FROM requests ORDER BY ts DESC LIMIT 100')]
+
+
+def composer_chat(body, *, on_delta=None):
+    """The Home/BABOOM text turn reads the one settings file on every send."""
+    from .settings_owner import read_router_settings
+    if type(body) is not dict or set(body) - {'prompt', 'model', 'agent'}:
+        raise ModelRouteRefused('Composer fields are invalid.')
+    prompt, agent = body.get('prompt'), body.get('agent', 'BABOOM')
+    if type(prompt) is not str or not prompt.strip() or len(prompt.encode('utf-8')) > 32768:
+        raise ModelRouteRefused('Write a message of at most 32768 bytes.')
+    if type(agent) is not str or not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', agent):
+        raise ModelRouteRefused('Choose a named agent.')
+    settings = read_router_settings()
+    profile = settings['agents'].get(agent, {})
+    route = body.get('model') or profile.get('model') or settings['providerPreferences'].get(agent)
+    if not route:
+        if agent not in ('BABOOM', resolve_model_route(settings['default_model']).family):
+            raise ModelRouteRefused('Choose a model for this agent in Settings before sending.')
+        route = settings['default_model']
+    destination = resolve_model_route(route)
+    if destination.family == 'openrouter' and not settings['providers']['openrouter']['enabled']:
+        raise ModelRouteRefused('OpenRouter is disabled in Settings.')
+    free = _is_openrouter_free_route(destination)
+    started = time.monotonic()
+    record = dict(id=str(uuid4()), ts=time.time(), agent=agent, model=destination.model,
+                  provider=destination.provider, tokens=None, ms=0, outcome='refused')
+    def credential(name):
+        import keyring
+        return keyring.get_password('ArchHub', name) or ''
+    models = [resolve_model_route(item).model for item in settings['fallback_models']]
+    env = {'OPENROUTER_FREE_MODELS': ','.join(models)}
+    try:
+        result = route_chat(route, [{'role': 'system', 'content': profile.get('prompt') or profile.get('purpose') or
+            'You are BABOOM, the ArchHub assistant. Answer the message. Do not claim tools or changes ran.'},
+            {'role': 'user', 'content': prompt.strip()}],
+            free_only=free, environ=env, secrets_loader=credential,
+            fallback_routes=settings['fallback_models'] if free else None,
+            on_delta=on_delta if free else None,
+            response_byte_limit=_FREE_CHAT_TRACE_BYTES, **settings['generation'])
+        record.update(model=result.get('actual_model') or result['model'],
+                      provider=result['provider'], outcome='answered')
+        tokens = (result.get('usage') or {}).get('total_tokens')
+        record['tokens'] = tokens if type(tokens) is int and tokens >= 0 else None
+        return {'ok': True, 'answer': result['text'], 'model': record['model'],
+                'provider': record['provider'], 'request_id': record['id'], 'applied': []}
+    except ModelRouteRefused as exc:
+        record['outcome'] = exc.reason_code if exc.reason_code in {
+            'provider_rate_limited', 'free_model_exhausted', 'provider_timeout', 'invalid_cost',
+            'empty_answer', 'free_model_unavailable', 'provider_error'} else 'refused'
+        raise
+    finally:
+        record['ms'] = int((time.monotonic() - started) * 1000)
+        request_profiles(record)
+        _LOG.info('router_request %s', json.dumps(record, separators=(',', ':')))
 
 _FAMILY_PREFIXES = {
     "lmstudio/": "lmstudio",
@@ -2114,6 +2184,31 @@ def _payload_from_event_stream(raw: bytes, *, require_complete: bool = False) ->
     return {**metadata, "choices": [{"message": {"role": "assistant", "content": "".join(pieces)}, "finish_reason": finish}]}
 
 
+def _read_chat_stream(answer, limit, on_delta):
+    """Bound and forward real upstream deltas; the existing parser verifies completion."""
+    chunks, size = [], 0
+    while True:
+        line = answer.readline(min(limit - size + 1, 65537))
+        if not line:
+            break
+        size += len(line)
+        if size > limit or len(line) > 65536:
+            raise ModelRouteRefused('Response stream exceeds its bound.', reason_code='response_incomplete')
+        chunks.append(line)
+        if line.startswith(b'data:'):
+            data = line[5:].strip()
+            if data == b'[DONE]':
+                break
+            if data:
+                event = json.loads(data)
+                choices = event.get('choices') or []
+                if choices:
+                    text = (choices[0].get('delta') or {}).get('content')
+                    if type(text) is str and text:
+                        on_delta(text)
+    return _payload_from_event_stream(b''.join(chunks), require_complete=True)
+
+
 _LOCAL_CLI: dict = {"broker": None}
 
 
@@ -2480,6 +2575,8 @@ def route_chat(
     before_dispatch: Optional[Callable] = None,
     tools: object = None,
     local_cli_session: Optional[Mapping[str, str]] = None,
+    fallback_routes: Optional[Sequence[str]] = None,
+    on_delta: Optional[Callable] = None,
 ) -> dict:
     """Send these messages to the provider this route names, and read its answer.
 
@@ -2495,6 +2592,8 @@ def route_chat(
         raise ModelRouteRefused("free_only must be true or false.")
     if before_dispatch is not None and not callable(before_dispatch):
         raise ModelRouteRefused("The request dispatch guard is invalid.")
+    if on_delta is not None and not callable(on_delta):
+        raise ModelRouteRefused('The stream callback is invalid.')
     free_only = free_only or _legacy_free_route(route)
     verified_openrouter_free_picks: set[str] = set()
     if response_byte_limit is not None and (
@@ -2619,11 +2718,19 @@ def route_chat(
         require_tools=tool_turn,
         timeout=timeout,
     )
+    if fallback_routes is not None:
+        if not free_only or type(fallback_routes) is not list or len(fallback_routes) > 8:
+            raise ModelRouteRefused('Configured fallbacks require a bounded free-only request.')
+        attempts = tuple(resolve_model_route(item) for item in [route, *fallback_routes])
+        if any(not _is_openrouter_free_route(item) for item in attempts):
+            raise ModelRouteRefused('Configured fallbacks must all be free models.')
     if free_only and destination.family == "openrouter" and tool_turn and not attempts:
         trace.close("free_model_exhausted")
         raise _openrouter_free_exhausted_refusal()
     before_dispatch_once()
     openrouter_deadline = min(deadline, time.monotonic() + _OPENROUTER_FREE_TOTAL_SECONDS)
+    def emit(text):
+        on_delta(text)
     for index, attempt in enumerate(attempts):
         attempt_timeout = (
             _remaining_timeout(openrouter_deadline)
@@ -2634,6 +2741,8 @@ def route_chat(
             trace.close("free_model_exhausted")
             raise _openrouter_free_exhausted_refusal()
         body = _body(attempt, rows, max_tokens, temperature, top_p, tools=tool_rows)
+        if on_delta is not None:
+            body.update(stream=True, stream_options={'include_usage': True})
         if reasoning_effort is not None and attempt.url == GOOGLE_CHAT:
             body["reasoning_effort"] = "high" if reasoning_effort == "xhigh" else reasoning_effort  # Gemini's OpenAI-compatible field
         elif reasoning_effort is not None:
@@ -2652,10 +2761,16 @@ def route_chat(
         attempt_started = trace.start()
         try:
             with send(request, timeout=attempt_timeout) as answer:
-                raw = answer.read() if response_byte_limit is None else _read_bounded_response(answer, response_byte_limit)
+                if on_delta is not None:
+                    payload = _read_chat_stream(answer, response_byte_limit or 262144, emit)
+                    raw = None
+                else:
+                    raw = answer.read() if response_byte_limit is None else _read_bounded_response(answer, response_byte_limit)
                 answer_headers = getattr(answer, "headers", None)
                 kind = str(answer_headers.get("Content-Type", "") if answer_headers is not None else "")
-                if "text/event-stream" in kind.casefold() or raw.lstrip().startswith(b"data:"):
+                if raw is None:
+                    pass
+                elif "text/event-stream" in kind.casefold() or raw.lstrip().startswith(b"data:"):
                     # The founder's cloud always streams (proxy.py: Server-Sent
                     # Events); a reader that expected one JSON document saw the
                     # cloud family as never answering (audit 2026-09-06).
@@ -2665,11 +2780,12 @@ def route_chat(
         except ModelRouteRefused:
             raise
         except urllib.error.HTTPError as refused:
+            refused_status = refused.code
             failure = _http_error_refusal(attempt, refused)
             trace.add(attempt.model, failure.reason_code or "refused", attempt_started)
             if failure.reason_code == "free_model_unavailable":
                 _remember_unavailable("openrouter", attempt.model, trace)
-            if free_only and attempt.family == "openrouter" and _next_openrouter_free_allowed(failure):
+            if fallback_routes is None and free_only and attempt.family == "openrouter" and _next_openrouter_free_allowed(failure):
                 try:
                     return _free_only_after_first_openrouter_failure(
                         rows,
@@ -2688,6 +2804,9 @@ def route_chat(
                     )
                 except ModelRouteRefused as fallback_refused:
                     raise fallback_refused from refused
+            if (fallback_routes is not None and index + 1 < len(attempts) and
+                    refused_status in {400, 404, 429, 502, 503, 504}):
+                continue
             if free_only and attempt.family == "openrouter" and _next_openrouter_free_allowed(failure):
                 continue
             raise failure from refused
@@ -2713,7 +2832,7 @@ def route_chat(
                 reason_code="provider_error",
             )
             trace.add(attempt.model, failure.reason_code or "refused", attempt_started)
-            if free_only and attempt.family == "openrouter" and _next_openrouter_free_allowed(failure):
+            if fallback_routes is None and free_only and attempt.family == "openrouter" and _next_openrouter_free_allowed(failure):
                 try:
                     return _free_only_after_first_openrouter_failure(
                         rows,
@@ -2760,7 +2879,7 @@ def route_chat(
             trace.add(attempt.model, refused.reason_code or "refused", attempt_started)
             if refused.reason_code == "free_model_unavailable":
                 _remember_unavailable("openrouter", attempt.model, trace)
-            if free_only and attempt.family == "openrouter" and _next_openrouter_free_allowed(refused):
+            if fallback_routes is None and free_only and attempt.family == "openrouter" and _next_openrouter_free_allowed(refused):
                 try:
                     return _free_only_after_first_openrouter_failure(
                         rows,
@@ -2795,7 +2914,7 @@ def route_chat(
         answerer_refusal = _openrouter_free_answerer_refusal(actual_model if free_only else None)
         if answerer_refusal is not None:
             trace.add(attempt.model, answerer_refusal.reason_code or "refused", attempt_started)
-            if attempt.family == "openrouter" and _next_openrouter_free_allowed(answerer_refusal):
+            if fallback_routes is None and attempt.family == "openrouter" and _next_openrouter_free_allowed(answerer_refusal):
                 return _free_only_after_first_openrouter_failure(
                     rows,
                     remaining_openrouter=attempts[index + 1:],

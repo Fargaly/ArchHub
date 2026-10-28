@@ -130,7 +130,7 @@ class AcpTransport:
                 raise GooseRefused("Stopped by you")
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise GooseRefused("Goose did not answer within 20 s; the request was not replayed.")
+                raise GooseRefused("Goose did not answer in time; the request was not replayed.")
             try:
                 message = self.inbox.get(timeout=min(remaining, 0.1))
             except queue.Empty:
@@ -203,7 +203,7 @@ class GooseAdapter:
         self.lock = threading.Lock()
 
     def ask(self, prompt, context_block, model, *, before_dispatch=None, generation=None,
-            is_halted=None, halt_generation=None, **_unused):
+            is_halted=None, halt_generation=None, turn_seconds=20.0, **_unused):
         provider, selected = free_route(model)
         if self.runtime is None:
             raise GooseRefused("The packaged Goose brain is not available. Open ArchHub from its launcher.")
@@ -212,7 +212,7 @@ class GooseAdapter:
         if not self.lock.acquire(blocking=False):
             raise GooseRefused("BABOOM is answering another request. Wait for its answer.")
         transport = self.runtime.transport
-        deadline = time.monotonic() + 20.0
+        deadline = time.monotonic() + float(turn_seconds)
         original_generation = halt_generation() if halt_generation else None
         def stopped():
             return bool((is_halted and is_halted()) or

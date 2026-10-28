@@ -205,11 +205,11 @@ def _caller_context(ctx):
 
 def _default_context():
     """Connector-owned environment, never model-visible identity arguments."""
+    import psutil
     from .agent_runtime_registry import RUNTIMES
     vendor = os.environ.get("ARCHHUB_COORDINATION_VENDOR", "").casefold()
     if vendor and vendor not in ("codex", "claude", "claude-code", "gemini", "gemini-cli", "opencode", "goose", "antigravity", "antigravity-ide"):
         import re
-        import psutil
         if not re.fullmatch(r"[a-z0-9_-]{1,64}", vendor):
             raise ValueError("Invalid Workshop connector vendor")
         identity = os.environ.get("ARCHHUB_EXTERNAL_SESSION_ID") or "%d:%d" % (
@@ -218,6 +218,16 @@ def _default_context():
     keys = {"codex": "threadId", "opencode": "ai.opencode/sessionID",
             "claude": "claude/sessionID", "gemini": "gemini/sessionID"}
     selected = {"claude-code":"claude", "gemini-cli":"gemini"}.get(vendor, vendor)
+    if not selected:
+        candidates = {runtime for runtime, definition in RUNTIMES.items()
+            if any(os.environ.get(name) for name in definition["session_environment"])}
+        if len(candidates) > 1:
+            from types import SimpleNamespace
+            from .agent_runtime_registry import observed_runtime_process
+            process = psutil.Process()
+            observed = observed_runtime_process(SimpleNamespace(pid=process.pid, created_at=process.create_time()))
+            if observed and observed["runtime"] in candidates:
+                selected = observed["runtime"]
     for runtime, definition in RUNTIMES.items():
         if selected and runtime != selected:
             continue
@@ -263,7 +273,6 @@ def build_server(*, session=None, workshop_task=None, mailbox_call=None):
     async def startup(_server):
         context = _default_context()
         state["bootstrap_only"] = not context
-        start(context, startup=True)
         try:
             yield {}
         finally:
@@ -389,7 +398,7 @@ def build_server(*, session=None, workshop_task=None, mailbox_call=None):
         """Post to the shared Workshop room; to='*' addresses everyone.
 
         Use a peer's sender_label as its readable address across connector restarts.
-        The application records this connection's own name. No sender override,
+        The local Workshop records this connection's own name. No sender override,
         binding, enrollment or relay is accepted. All room members can read it.
         Keep idempotency_key unchanged when retrying an uncertain send.
         """
@@ -428,6 +437,16 @@ def build_server(*, session=None, workshop_task=None, mailbox_call=None):
                 server.add_tool(tool.fn, name=tool.name, description=tool.description)
     else:
         _register_work_tools(server, control)
+    from .native_host_tools import register_host_tools
+    existing_tools = {tool.name for tool in server._tool_manager.list_tools()}
+    register_host_tools(server)
+    from .canvas_tools import register_canvas_tools
+    register_canvas_tools(server)
+    # NOGRAPH: Work lived in the graph runtime, which no longer runs; these tools only refused
+    # ("existing runtime descriptor is unavailable"). Agents build on the canvas instead.
+    for retired in [tool.name for tool in server._tool_manager.list_tools() if tool.name.startswith('native.work_')]:
+        server._tool_manager._tools.pop(retired)
+    server._direct_host_tools = ({tool.name for tool in server._tool_manager.list_tools()} - existing_tools) | {"hosts.status"}
     from .native_workshop_tools import forbid_extra_arguments
     for tool in server._tool_manager.list_tools():
         forbid_extra_arguments(tool)
@@ -455,6 +474,8 @@ def _attach_pending_delivery(server, start, pages, epochs, lock):
 
     async def deliver_pending(request):
         result = await original(request)
+        if request.params.name in server._direct_host_tools:
+            return result
         try:
             context = _caller_context(server.get_context())
             key = tuple(context.items())
@@ -561,21 +582,12 @@ def _register_work_tools(server, control):
 
     @server.tool(name="hosts.status")
     def hosts_status() -> dict[str, object]:
-        """Read every host connector's live state and each operation's evidence.
-
-        Read-only through the installed application: no host is opened and no
-        operation runs. Each operation row says whether a real court proved it
-        or names the dependency that keeps it unavailable. Host execution tools
-        (revit_execute_csharp, max_execute_maxscript, ...) run only while this
-        session holds a claimed Work (native_host_tools).
-        """
-        with control.bound_client() as client:
-            return client.request("GET", "/api/universal/hosts", {})
+        """Read live host state directly, with no app or Work enrollment."""
+        from .native_host_tools import _host_state
+        return _host_state()
 
     from .native_workshop_tools import register_artifact_tools
     register_artifact_tools(server, control)
-    from .native_host_tools import register_host_tools
-    register_host_tools(server, control)
     # Social Works (LinkedIn, Facebook Pages, Instagram): prepare for the founder's
     # approval, then execute once. The tools take only a Work root.
     from .social_connectors import register_social_tools
@@ -1083,6 +1095,10 @@ def main():
         print(mailbox_json.dumps(_mailbox_call("read" if args.mailbox_read else "send", body, _default_context())))
         return
     server = build_server(workshop_task=args.workshop_task)
+    # The Workshop is the gateway: hooks+rules are applied to this agent off the start path.
+    import threading
+    from .workshop_gateway import on_connect
+    threading.Thread(target=on_connect, name="archhub-gateway", daemon=True).start()
     import anyio
     import json
     count = int(os.environ.pop('ARCHHUB_MCP_CONTINUATION', '0'))

@@ -46,7 +46,7 @@
     }, [m.status, m.calendarId]);
     return <main className="page meeting-page" data-screen="meetings"><section aria-label="Action result" aria-live="polite">
       {wire.status === 'waiting' && <p role="status">Waiting for the owner…</p>}
-      {wire.status === 'empty' && <p>No saved content in this graph.</p>}
+      {wire.status === 'empty' && <p>No saved content in this workflow.</p>}
       {wire.status === 'loaded' && <p role="status">{wire.result?.title || wire.result?.message || wire.result?.status || wire.result?.phase || wire.result?.id || ''}</p>}
       {wire.status === 'error' && <div role="alert"><p>{wire.message}</p><Btn onClick={() => dispatch("wire.meetings.retry",wire.retry)}>Retry</Btn></div>}
     </section><div className="flex"><Btn sm onClick={()=>dispatch('wire.meetings.calendar',api.importMeetingCalendar)}>Read calendar file</Btn><Btn sm onClick={()=>dispatch('wire.meetings.transcript',api.importMeetingTranscript)}>Read transcript file</Btn></div><Heading title="Meetings" sub="People, agents and decisions, connected to the same Workshop."><Btn sm onClick={event => dispatch("wire.meetings.1", () => (() => u.go('colleagues'))(event))}>Team</Btn><Btn sm onClick={event => dispatch("wire.meetings.2", () => (async () => {

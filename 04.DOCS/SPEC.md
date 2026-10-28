@@ -1,8 +1,10 @@
-# ArchHub Universal Cell Specification
+# ArchHub Node Specification
 
-Version: 0.1 WIP
-Date: 2026-07-16
+Version: 0.2 WIP (NOGRAPH)
+Date: 2026-10-28
 Status: normative implementation target; not a completion claim
+Supersedes: the Universal Cell Specification 0.1 (2026-07-16), kept unchanged at
+`04.ARCHIVE/SPEC-universal-cell-2026-07-16.md`. Decision: D-014 in `DECISIONS.md`.
 
 This document defines what ArchHub must become. It does not report mutable
 progress, test counts, percentages, deployments, or release status. Those belong
@@ -13,192 +15,163 @@ are normative.
 
 ## 1. Product invariant
 
-ArchHub is one persistent, governed, visual graph computer.
+ArchHub is a simple visual node application, like Grasshopper, Dynamo and
+ComfyUI: blocks wired together on a canvas, saved as files people can share.
 
-The application, Brain, Cockpit, Grand Map, website, governance, design system,
-data, users, sessions, AI work, repository evidence, and every domain are regions
-and lenses of the same graph. They are not separate products that exchange copied
-status reports.
-
-Every persisted semantic fact MUST be represented by compositions of one physical
-record:
-
-```text
-Cell {
-  id: CellId
-  link0: CellId
-  link1: CellId
-  atom: Bytes
-}
-```
-
-There are no persisted `kind`, `type`, `body`, `params`, `ports`, `group`,
-`session`, `wire`, `ui`, `secret_ref`, or product-specific record classes. A Cell
-may participate in several roles at once. Roles are graph protocols, not engine
-enums.
+1. **Everything is a node.** Every capability of the app (a host action, a
+   setting owner, an agent, the Workshop, the Brain, a model route, a check) can
+   be dropped on a canvas as a node with sockets and parameters and wired to
+   other nodes. "Everything is a node" means everything is wireable. It does NOT
+   mean everything is stored in one graph.
+2. **A canvas is a workspace of nodes where people and agents work.** Any use of
+   the words "graph" or "canvas" in the product means this workspace. There is no
+   single always-running application graph.
+3. **A document is a file.** Each canvas is one `.archhub` file (see `FORMAT.md`
+   and `ARCHHUB.schema.json`). A workflow and a skill are both `.archhub` files.
+   Save, open, copy and share work like any desktop program.
+4. **The whole app is parametric.** Pure nodes re-solve when an input, wire or
+   parameter changes. Effect nodes (anything that writes a file, changes a host
+   program, sends, posts, spends or calls a model) run only when the user presses
+   Run, and then pass the one Approve card where their policy requires it.
+5. **Nothing runs in the background by itself.** No graph is kept running, and
+   nothing blocks other work while idle. Work runs on Run, on an explicit trigger
+   the user set (schedule, file change, host event), or on an agent request.
+6. **Provider agnostic.** Every node, broker, Workshop message and canvas tool
+   works for any agent installed on the PC (Claude Code, Codex, OpenCode, Gemini
+   CLI, Goose/BABOOM and others). No capability is tied to one vendor.
+7. **We give up nothing.** Re-engineering changes what sits underneath, never
+   what the user gets. A feature that worked on the Cell graph and has no file
+   owner yet is an open item with a visible notice, never a silent removal.
 
 ## 2. Terms
 
-- **Cell:** the only persisted semantic record.
-- **Root:** a stable Cell identity selected as the entry to a reachable region.
-- **Composition:** a reachable arrangement of Cells interpreted through a
-  released graph protocol.
-- **Protocol:** an inspectable graph definition that states structural roles,
-  constraints, behavior, presentation, authority, and evidence requirements.
-- **Relation:** a composition that has its own identity and relates any number of
-  participants through explicit incidence identities.
-- **Interface:** a public boundary composition exposing permitted relations,
-  contracts, direction/polarity, policy, and presentation.
-- **Assembly:** a reusable, versioned composition definition in the catalogue.
-- **Lens:** an authorised projection of the same roots for a purpose and audience.
-- **Revision:** one atomic committed graph state with predecessor and evidence.
-- **Court:** an executable acceptance predicate bound to an exact artifact,
-  revision, environment, and evidence set.
-- **Adapter:** the narrow admitted bridge to a physical host capability.
+- **Node:** one block with an engine type, typed input and output sockets, and
+  typed parameters. A parameter is also a socket: type a value or wire one in.
+- **Socket:** a typed connection point. Colour is data type; shape is structure
+  (event, single, list).
+- **Wire:** one connection from an output socket to an input socket, optionally
+  with a rule (condition) using the existing wire condition grammar.
+- **Group:** nodes collapsed into one node; crossing wires become its sockets.
+- **Document:** one `.archhub` file holding nodes, wires, groups, notes and the
+  viewport.
+- **Workflow:** a document saved to be run again.
+- **Skill:** a document saved so that it appears as one node in the Library.
+- **Pure node:** a node whose outputs depend only on its inputs and parameters.
+- **Effect node:** a node that changes something outside the document.
+- **Solve:** recomputing pure nodes downstream of a change.
+- **Run:** executing the open document in wire order, including effect nodes.
+- **Owner:** the one module that holds one kind of data in one plain file or one
+  small SQLite file.
+- **System graph:** a live, read-only view of how the running app is wired
+  (owners, brokers, routes, agents). It is a picture of the app, not a store and
+  not an editor.
+- **Lens:** an authorised view of the same data for a purpose and audience.
+- **Court:** an executable acceptance check bound to an exact artifact, revision,
+  environment and evidence set.
+- **Broker:** the narrow admitted bridge to one host program or service.
 
-Familiar names such as List, Watcher, Logic, Session, Database, BIM Asset, AI
-Worker, Properties, Brain, or Application name assemblies and lenses. They do not
-extend the physical schema or native dispatch table.
+## 3. Storage floor
 
-## 3. Physical floor
+### 3.1 Owners and files
 
-### 3.1 Cell invariants
+Each kind of data has exactly one owner and one file. No owner reads another
+owner's file directly; it calls that owner.
 
-1. `id` is stable identity. Revisions replace Cell content while preserving
-   identity when the semantic root continues.
-2. `link0` and `link1` are raw incidence only. The kernel assigns no semantic
-   meaning, order, direction, ownership, or type to either position.
-3. `atom` is opaque bytes. The kernel compares and stores it but does not dispatch
-   on its decoded content.
-4. A distinguished immutable null Cell terminates physical links.
-5. Every non-null physical link MUST resolve in the same committed snapshot.
-6. A semantic side table is forbidden. Search indexes, caches, GPU buffers, and
-   projections MAY exist only as disposable, revision-bound acceleration.
-7. Deleting an accelerator MUST NOT change meaning. A generic graph path MUST
-   produce the same result at the same snapshot.
+| Data | Owner | File |
+|---|---|---|
+| Canvas documents, workflows, skills | `session_files` | `*.archhub` (portable) |
+| Settings | one owner per page | `settings/<owner>.json` |
+| Workshop messages and Session Link | `workshop_mailbox` | `workshop/messages.sqlite3` |
+| Model routing | `model_router` | `settings/router.json`, `router.sqlite` |
+| Host programs | `host_brokers`, `pipeline_engines` | live broker session files |
+| Workspaces | settings owner | `settings/workspaces.json` |
+| Secrets | OS Credential Manager | never in a file above |
 
-### 3.2 Native boundary
+Rules:
 
-The trusted floor is deliberately small:
+1. Settings files are replaced atomically (write temporary, then replace).
+2. A `.archhub` document holds no account identity, local recent paths, tokens or
+   secrets. Recent paths and recovery files are local metadata.
+3. Opening a document never executes it.
+4. Boot opens no graph journal, enrols no agent and checks no signed authority.
+   The app is usable as soon as its window and its files are readable.
+5. A search index, cache or thumbnail MAY exist only as disposable acceleration;
+   deleting it MUST NOT change meaning.
+6. The retired universal graph journal is not opened, read or written by the
+   app. It stays on disk until the founder decides otherwise.
+
+### 3.2 Execution boundary
 
 ```text
-read(cell_id, snapshot)
-match(pattern_root, target_root, snapshot, budget)
-commit(expected_snapshot, creates, replacements)
-rewrite(rule_root, target_root, expected_snapshot, budget)
-observe(committed_revision)
-invoke(capability_handle, request_root, authority_root, budget)
+solve(document, changed_nodes)          pure nodes only, on every edit
+run(document, from?, to?)               all nodes in wire order, on Run
+invoke(broker_action, inputs, approval) the only path to an outside effect
 ```
 
-- `read` reads only an immutable snapshot.
-- `match` performs bounded structural matching and returns explicit bindings.
-- `commit` atomically publishes a complete valid next revision or publishes
-  nothing. Stale expected snapshots fail.
-- `rewrite` resolves an editable graph-held rule and commits its replacement
-  atomically. Product operation names are forbidden at this boundary.
-- `observe` announces a completed durable commit. Durable subscriptions, cursors,
-  obligations, and reactions remain Cells; an in-memory callback is disposable.
-- `invoke` is the only effect boundary. Requests, grants, denials, outcomes,
-  receipts, and reconciliation are Cells. Live capability handles are unforgeable
-  host state and MUST NOT be serialized into `atom`.
+- `solve` MUST be bounded, deterministic and side-effect free. It recomputes only
+  nodes downstream of the change and marks effect nodes "out of date".
+- `run` executes in topological order. Cycles refuse before any effect. A failed
+  node keeps its error; downstream nodes show Blocked.
+- `invoke` carries a typed request; writes pass the one Approve card where the
+  policy requires it, and the result is re-read from the real target.
 
-Every traversal, match, rewrite, reaction round, query, and invocation MUST have
-an explicit resource budget and deterministic failure state.
+Every solve, run and invoke has an explicit budget and a deterministic failure
+state.
 
 ### 3.3 Honest boundary
 
-Not every implementation byte is a user-editable Cell. Pixels, DOM nodes, GPU
-buffers, database pages, OS handles, network sockets, cryptographic key bytes,
-and process stacks are physical machinery. Their semantic contracts, policies,
-references, versions, requests, and observable outcomes MUST be Cells.
-
-This boundary prevents two opposite failures: hiding product meaning in host code,
-and materialising disposable machine details as millions of misleading nodes.
+Pixels, DOM nodes, GPU buffers, OS handles, sockets, key bytes and process stacks
+are machinery, not nodes. Their contracts, settings, requests and observable
+outcomes are visible as node parameters and results.
 
 ## 4. Meaning and computation
 
-### 4.1 No hidden interpreter
+### 4.1 No hidden logic
 
-Meaning MUST resolve from released protocol definitions in the graph. The kernel,
-renderer, server, agent, or adapter MUST NOT select behavior from a product label,
-protocol name string, JavaScript branch, Python class, database table name, or
-hard-coded node catalogue.
+Logic lives in nodes and wires the user can see. An engine implements one node
+type behind its declared sockets; product behaviour MUST NOT hide in a branch the
+canvas cannot show. A chat request becomes nodes the user can see and edit.
 
-A host fast path MAY accelerate a released protocol only when an equivalence court
-proves the generic graph path and fast path produce the same result at the same
-snapshot. Removing the fast path may reduce speed; it MUST NOT change behavior.
+### 4.2 Wires
 
-### 4.2 Relations and wires
-
-A relation is a selectable, editable composition with:
-
-- its own stable root identity;
-- explicit incidence identity for every participant;
-- graph-held participant roles;
-- optional ordering, direction/polarity, data contract, gate, transform,
-  encryption policy, provenance, lifecycle, and presentation;
-- arbitrary arity, including relations that participate in other relations.
-
-A visible wire is a lens over an actual relation and its incidences. A renderer
-MUST NOT invent ports, infer authority from a line, collapse an n-ary relation into
-a false binary edge, or hide intermediate gates and transforms as decoration.
+A wire connects one output to one input. Before a wire is made, socket types are
+compared; a mismatch is refused with a reason and an **Insert Convert** fix. One
+wire per input. A wire may carry a rule ("only if the check passed"). Named socket
+values are delivered in topological order.
 
 ### 4.3 Properties and parameters
 
-A property or parameter is not an inline field. It is a composition relating at
-least an owner, name, value root, constraints, editor/presentation, authority,
-lifecycle, and history where applicable. The value may be text, number, logic,
-function/rule, reference, structured data, geometry metadata, image metadata, or
-another composition.
-
-Editing a visible field MUST commit the authoritative value Cell or relation. The
-right Properties rail MUST discover applicable panels and editors through graph
-relations; it MUST NOT be a product-specific report over copied JSON.
+Each parameter has a type (number, text, yes/no, file, colour, list, choice,
+slider), a default, limits and an editor. It is shown with the right widget,
+never as a text blob. Editing a value in the inspector re-solves pure nodes at
+once. A Settings row and the matching node parameter are the same value in the
+same owner file; changing one changes the other.
 
 ### 4.4 Composition and scale
 
-Grouping is not a primitive Cell class. Grouping creates a WIP composition
-boundary and public interfaces while preserving the identities and relations of
-its contents. Ungrouping removes that boundary without destroying internal
-identities or external connectivity.
-
-Opening a composition changes scope. It does not create a second graph. The
-application itself is the top composition. A domain, session, database, Brain,
-Cockpit, and the application are the same mechanism at different scales.
+Grouping creates one node from several and keeps their identities and wires.
+Ungrouping restores them. Opening a group changes scope; it does not open a
+second store. A saved skill is a group saved as its own `.archhub` file.
 
 ### 4.5 Reusable catalogue
 
-The left catalogue contains reviewed, released assemblies built from Cells. It is
-not a list of physical node kinds and not a domain index.
+The Library lists node types (from engines, importers, mods) and saved skills.
+Click, drag and keyboard placement create the same node. Filtering is local view
+state and changes no file. Importers bring ecosystems in as nodes: MCP tools,
+flow files (read only, their servers never run), skills, host verbs.
 
-An assembly definition MUST expose its parts, interfaces, rules, parameters,
-presentation, required capabilities, lifecycle, courts, provenance, version, and
-digest. Instances retain a relation to the exact definition revision. Editing a
-definition creates a new WIP revision; it does not mutate released instances.
+### 4.6 Agents on the canvas
 
-Catalogue membership, category, display order, icon, documentation, search
-terms, favourites, and interface summaries MUST be graph relations rooted in the
-exact assembly definition revision. A renderer MAY build a disposable search
-index from the authorised projection, but it MUST NOT maintain a second catalogue
-or infer metadata from product-specific code. Hidden or unauthorised definitions
-MUST NOT affect results, counts, ordering, or suggestions.
+Agents work inside the canvas through the same node, wire, parameter, solve and
+run operations the user has, exposed as canvas tools to any installed agent. An
+agent's work is visible as nodes. Agents cannot bypass the Approve card or gain
+authority by using a private API.
 
-The ordinary Build lens MUST support category browsing and keyword search over
-the graph-projected name, category, documentation, and interface contracts.
-Click, drag, and keyboard placement MUST invoke the same governed instantiation
-interaction and create an instance of the exact selected definition revision.
-Filtering alone is local projection state and MUST NOT mutate the graph.
+## 5. Attention and memory
 
-Agents and users compose through admitted assemblies and graph-visible commands.
-Raw Cell construction is a Floor privilege, not the ordinary composer API.
+Persistent attention survives from the earlier specification as a target; its
+records are owned by the Brain and Workshop owners in plain files, not Cells.
 
-## 5. Persistent graph attention
-
-ArchHub uses transformer ideas only as an analogy for authorised selection. It is
-not a neural transformer and MUST NOT hide policy in learned weights or model
-context.
-
-- The durable graph is memory and authority.
 - A **Signal** records an observed committed change with source revision,
   provenance, trust, audience, time, and deduplication identity.
 - **Attention** relates an observer to an authorised candidate, source snapshot,
@@ -211,81 +184,55 @@ context.
 - **Decision** and **Outcome** compositions preserve the selected action, actor,
   authority, evidence, effect receipt, reconciliation, and reversal/compensation.
 
-These are standard compositions, not Cell kinds.
-
 The first ordering policy MUST be a visible partial order: safety and data-loss
 risk, explicit user/founder pin, blocking dependency, failed active court,
 accepted due work and fairness, then optional model-proposed relevance. Every
 ordering edge has an inspectable reason. Model output is untrusted proposal
 evidence and cannot broaden scope or authority.
 
-Candidate roots MUST be authorised before ranking. Hidden roots MUST NOT influence
-visible counts, order, explanation, embeddings, or model context.
-
-Signals, attention, focus, obligations, cursors, decisions, and outcomes MUST
-survive process close, session reopen, and machine-restart simulation. In-memory
-queues, DOM state, caches, and model contexts are disposable.
+Candidates MUST be authorised before ranking. Hidden items MUST NOT influence
+visible counts, order, explanation, embeddings, or model context. These records
+MUST survive process close and restart.
 
 ## 6. One application, many lawful lenses
 
-The same semantic root MUST be traversable, subject to authority, from every
-applicable lens. No lens may own a duplicate truth field.
+The same data is reachable, subject to authority, from every applicable screen.
+No screen owns a duplicate truth field.
 
-The default application provides four progressive visibility layers:
+1. **Use:** ordinary work, clear names, status, direct manipulation, safe
+   actions. No hashes, raw ids or JSON.
+2. **Build:** nodes, sockets, wires, parameters, groups and presentation.
+3. **Govern:** authority, lifecycle, provenance, courts, decisions, history,
+   impact and release evidence.
+4. **Advanced:** raw parameters, file paths, digests and broker diagnostics for
+   authorised experts.
 
-1. **Use:** ordinary work, clear names, status, direct manipulation, and safe
-   actions. No hashes, raw Cells, protocol internals, or JSON.
-2. **Build:** assemblies, real interfaces, relations, parameters, composition,
-   behavior, and presentation authoring.
-3. **Govern:** authority, lifecycle, provenance, courts, decisions, attention,
-   history, impact, and release evidence.
-4. **Floor:** physical Cells, raw links/atoms, digests, capability diagnostics,
-   and kernel evidence for authorised experts.
-
-Visibility is not cosmetic hiding. Each lens is an authorised graph projection.
-
-Brain is the memory, attention, obligation, evidence, and governance lens.
-Cockpit is the founder operating lens. Grand Map is the requirement and dependency
-lens. They MUST open inside the same application composition and address the same
-roots. Separate static dashboards are non-conforming.
+Visibility is an authorisation result, not CSS hiding. Brain, Cockpit, Grand Map
+and the System graph open inside the same application and read the same owners.
 
 ## 7. Visual language and interaction
 
-The visual application is the primary language, not a report about the language.
+1. The app opens on Home; the canvas is one click away.
+2. Groups are enterable by double-click/Enter, with breadcrumbs and Esc back.
+3. Wheel zoom is cursor-centred. Pan, drag, wire and resize use pointer capture
+   and stay stable under zoom.
+4. Selection follows AEC behaviour: click, Ctrl additive toggle, Shift
+   removal/range, left-to-right containing window, right-to-left crossing window.
+5. The inspector for a multi-selection shows only parameters common to all;
+   mixed values are explicit; editing one is one undoable step.
+6. Every visible socket is a real declared socket; every cable is a real wire.
+7. Selecting a node, wire or group opens its inspector. Tabs appear only when
+   they apply; empty or decorative tabs are forbidden.
+8. Users edit labels, icons, colours, parameters and rules without CSS or code.
+9. Delete, group, ungroup, arrange, drag and paste are single undoable steps.
+10. Technical identity and hashes are available in Govern/Advanced only.
 
-1. The first screen is the usable graph workspace.
-2. Domains and compositions are enterable by double-click/Enter, with breadcrumbs
-   and a reversible return path.
-3. Wheel zoom is cursor-centred. Pan, drag, wire, and resize use pointer capture
-   and remain stable under zoom.
-4. Selection follows mature AEC behavior: click, Ctrl additive toggle, Shift
-   removal/range where applicable, left-to-right containing window, and
-   right-to-left crossing window.
-5. Multi-selection and focus are graph-held view-session state after commit.
-   Its Properties lens exposes only unambiguous properties common to every
-   selected root. Mixed values are explicit, and editing one common field is
-   one atomic, undoable transaction over the exact participating value roots.
-6. Every visible socket resolves to a real public interface root. Every cable
-   resolves to exact relation and incidence roots.
-7. Selecting any root, interface, relation, incidence, attention reason, rule, or
-   presentation opens the applicable Properties composition.
-8. Properties tabs are graph-defined and appear only when applicable. Empty,
-   dead, or decorative tabs are forbidden.
-9. Users can edit permitted labels, icons, colors/token bindings, parameters,
-   interfaces, presentation, and rules without editing CSS or code.
-10. Personal design changes begin as WIP preview and never broadcast silently.
-11. The design system, tokens, components, panel definitions, icon assignments,
-    interaction rules, and accessibility metadata are versioned graph regions.
-12. Technical identity and hashes are available in Govern/Floor, not forced into
-    ordinary Properties.
+Interaction courts use real browsers and the actual artifact. Source-string
+assertions and backend-only tests cannot release visible behaviour.
 
-The reference interaction courts use real browsers and the actual artifact.
-Source-string assertions and backend-only tests cannot release visible behavior.
+## 8. History, lifecycle and concurrent work
 
-## 8. History, lifecycle, and concurrent work
-
-ArchHub is append-oriented. Undo, restore, rejection, compensation, and merge add
-new revisions; they do not erase history.
+Undo, restore and rejection add new steps; they do not erase history.
 
 The following independent axes MUST NOT be collapsed into one status string:
 
@@ -296,57 +243,37 @@ The following independent axes MUST NOT be collapsed into one status string:
 - visibility/trust: private, team, public, confidentiality tier, approval state;
 - external outcome: requested, accepted, settled/issued, rejected, reversed.
 
-WIP, Shared, and Published are immutable revision views, not three mutable copies
-kept in a fragile bidirectional sync. Promotion refers to exact content revisions,
-actors, approval, evidence, and policy. Later WIP does not alter Shared or
-Published history.
-
-Concurrent users work on explicit branches/heads. Conflicts are preserved and
-made visible; last-write-wins MUST NOT silently discard work. Merge and selection
-are governed decisions with provenance.
-
-Database writes, monetary transactions, BIM exchanges, geometry/image revisions,
-AI actions, and deployments MUST separate request, authorization, attempt,
-provider/host outcome, reconciliation, and current projection. A label such as
-`done` is never proof of an external effect.
-
-Large geometry, image, model, media, and document bytes MAY live in admitted
-content-addressed storage. Their hash, format, coordinate/reference system,
-metadata, lineage, access, revisions, transforms, previews, and lifecycle are
-graph compositions.
+A document save is atomic: a failed write keeps the old file. Two people editing
+copies of one `.archhub` file produce two files; merging is an explicit, visible
+choice, never last-write-wins. Host writes, sends, payments and deployments
+separate request, approval, attempt, outcome, reconciliation and current view. A
+label such as `done` is never proof of an external effect. Large geometry, image
+and document bytes stay in their own files; a node references them.
 
 ## 9. Security and external capabilities
 
-Security is default-deny and relationship-aware at every scale.
-
-1. Every read, projection, proposal, mutation, composition, release, and effect
-   evaluates actor, action, object, relationship, audience, scope, policy revision,
-   time/budget, and relevant data classification.
+1. Every read, write, send and publish evaluates actor, action, object, audience,
+   scope, policy and data classification.
 2. Network or process location grants no implicit trust.
-3. Secret bytes, private keys, bearer tokens, and live capability handles MUST NOT
-   enter ordinary Cells, logs, model prompts, URLs, command lines, or client
-   bundles.
-4. Cells may hold opaque references, policy, public fingerprints, requests, and
-   redacted evidence. Secret custody remains in an admitted OS/cloud key store.
-5. Adapters are fingerprinted, versioned, allowlisted, least-privilege, revocable,
-   budgeted, and audited. Unknown adapters and unknown actions fail closed.
-6. An adapter translates an exact physical operation. Product workflow, domain
-   decisions, lifecycle, presentation, and policy MUST remain graph assemblies.
-7. AI sessions and agents are graph compositions with identity, model/provider,
-   scope, capabilities, focus, obligations, context sources, proposals, costs,
-   evidence, and lifecycle. They cannot mint their own authority.
-8. Untrusted content and model output cannot modify released policy or execute an
-   effect without the required proposal, review, and capability path.
-9. Security controls apply before attention/ranking so hidden information cannot
-   leak through priority, counts, timing, or explanation.
+3. Secret bytes, private keys, bearer tokens and live capability handles MUST NOT
+   enter `.archhub` files, settings files, logs, model prompts, URLs, command
+   lines or client bundles. Secrets live in the OS Credential Manager.
+4. Brokers are versioned, allowlisted, least-privilege and revocable. Unknown
+   actions fail closed. Raw "run any code" exists only as an escape hatch behind
+   the Approve card.
+5. The account is the identity, never the machine (D-009). No signed-owner key
+   layer may block the app.
+6. A registered workspace is open to the user's own agents without prompts. The
+   permission system stays at the real edges: other people, client data, the
+   public, writes to host models, and real harm.
+7. Untrusted content and model output cannot change policy or run an effect
+   without the required approval path.
 
 ## 10. Governance and Core Values
 
-The founder Core Values are constitutional input. Their software translation
-remains WIP until founder-reviewed and released; partial coverage cannot be shown
-as compliant.
-
-Every released slice MUST map the ten values to exact controls or explicit gaps:
+The founder Core Values are constitutional input; their translation remains WIP
+until founder-reviewed. Every released slice maps the ten values to exact
+controls or explicit gaps:
 
 - Security is Sacred Trust -> threat model, least privilege, secret handling,
   privacy, incident and recovery evidence.
@@ -358,89 +285,71 @@ Every released slice MUST map the ten values to exact controls or explicit gaps:
 - Architect Review Mandatory -> founder/architect review at the defined authority
   threshold.
 - Solve Real Pain -> traced founder/user requirement and outcome evidence.
-- Simplicity Conquers Complexity -> one physical model, progressive disclosure,
-  and justified assemblies.
+- Simplicity Conquers Complexity -> nodes, wires and files; progressive
+  disclosure.
 - Test What You Ship -> courts on the real packaged artifact.
 - Break It Down, Iterate Fast -> bounded WIP slices without partial-green claims.
 - Fix Root Causes -> contradiction and recurrence analysis, not cosmetic patches.
 
-The workspace BIM/CDE standard governs placement, privacy, evidence handling, and
-release custody. It does not define a second node ontology.
+The Workspace Standard governs placement, privacy and release custody. It does
+not define a second node model.
 
 ## 11. Required acceptance courts
 
 A slice is complete only when all applicable courts pass against its exact
 revision and artifact:
 
-1. Uniform Cell: no second persisted semantic shape or side authority.
-2. Authority coherence: no active contradiction; mutable facts are generated.
-3. No hidden interpreter: graph path and any fast path are equivalent; deleting
-   the fast path does not alter meaning.
-4. One identity: every lens resolves the same roots and facts.
-5. Explicit causality: rewiring authority changes behavior; deleting projection
-   does not.
-6. Persistent attention: signals, reasons, focus, obligations, and cursors recover
-   after restart.
-7. Replay: graph state reconstructs deterministically and effects do not repeat.
-8. Attention security: hidden roots cannot influence visible output or context.
+1. One owner: each kind of data has one owner and one file; no second copy.
+2. No graph at boot: boot opens no graph journal, imports no graph server and
+   enrols no agent.
+3. File round trip: save, close, open and share a `.archhub` document with no
+   loss; opening never executes it.
+4. Parametric solve: editing a parameter re-solves pure downstream nodes and
+   marks effect nodes out of date without running them.
+5. Run: Run executes in wire order, refuses cycles before effects, and stops at
+   the Approve card where required; the result is re-read from the real target.
+6. Every app capability is placeable as a node with sockets and parameters.
+7. Provider agnostic: brokers, Workshop and canvas tools work for every installed
+   agent, proved with at least two different vendors.
+8. Nothing given up: every behaviour that worked before is listed and still works,
+   or is shown as an open item.
 9. User control: a nontechnical user can understand cause, edit permitted state,
-   undo, and recover without Floor knowledge.
-10. Real interfaces: sockets, cables, relations, incidences, and n-ary cases are
-    exact.
-11. Properties: panels/editors are graph-projected and no tab is dead.
-12. Composition: group, enter, breadcrumb, ungroup, and undo preserve identity and
-    connectivity.
-13. Interaction: selection, zoom, pan, drag, wire, keyboard, focus, and pointer
+   undo and recover.
+10. Interaction: selection, zoom, pan, drag, wire, keyboard, focus and pointer
     capture pass in a real browser.
-14. Performance: pointer frame p95 <= 16.7 ms, same-frame selection feedback,
+11. Performance: pointer frame p95 <= 16.7 ms, same-frame selection feedback,
     local mutation acknowledgement <= 100 ms, bounded scope entry <= 150 ms, and
     no steady-state long task over 50 ms on the reference machine.
-15. Lifecycle/effect: independent states, receipts, reconciliation, conflicts,
-    recovery, and compensation are proven.
-16. Core Values: each value maps to a passing control or visible gap; no partial
-    row is green.
-17. No false done: report exact revision, environment, evidence, open requirement,
-    residual risk, and untested boundary.
+12. Lifecycle/effect: independent states, receipts, reconciliation and recovery
+    are proven.
+13. Core Values: each value maps to a passing control or visible gap.
+14. No false done: report exact revision, environment, evidence, open items,
+    residual risk and untested boundary.
 
-Security, privacy, data-loss, authority-coherence, and one-identity failures are
-release blockers. A local visual demo, test count, or completion percentage cannot
-override a red court.
+Security, privacy, data-loss and one-owner failures are release blockers.
 
 ## 12. Migration and conformance
 
-The previous typed-node runtime, old Studio, separate Brain/Cockpit pages, and
-hand-built projections are migration evidence only. They remain available for
-behavior and visual comparison until graph-native replacements pass intentionally
-superseding courts.
+The Universal Cell runtime and its journal are retired as the store. Migration
+proceeds owner by owner (strangler pattern):
 
-Migration MUST proceed capability by capability:
+1. trace the founder requirement;
+2. list the user-visible behaviours the area had on the graph;
+3. give the data one owner and one file;
+4. serve the Studio route from that owner;
+5. prove each listed behaviour still works on the installed app;
+6. remove the graph path for that function in the same patch (delete on replace);
+7. archive, never delete, the documentation it replaces.
 
-1. trace the founder requirement and accepted source;
-2. identify the current authoritative and copied paths;
-3. define the graph protocol and red courts;
-4. implement on the Universal Cell floor;
-5. verify security, restart, causality, usability, and performance;
-6. switch the authoritative path;
-7. prove no fallback recreates or bypasses it;
-8. then archive/remove the consumed legacy path with evidence.
-
-No old source is deleted merely because a replacement looks similar. No new UI
-patch, backend protocol, assembly, or adapter may claim conformance without the
-applicable courts.
+Routes still answering `not_available` are open items until step 5 passes.
 
 ## 13. Evidence and references
 
-Active authority order is defined in `AUTHORITY.md`. Implementation truth is
-recorded separately from this target specification.
+Authority order is defined in `AUTHORITY.md`. Implementation truth is recorded
+separately from this specification.
 
-Primary architecture research and contradiction evidence:
-
-- `the retired design (Git revision 388b5cd5)`
-- `30.KNOWLEDGE/strategy/persistent-graph-attention-reconciliation-2026-07-16.md`
-- `30.KNOWLEDGE/strategy/node-native-design-system-visibility-interaction-architecture-2026-07-16.md`
-- `30.KNOWLEDGE/strategy/universal-visual-authority-adversarial-audit-2026-07-16.md`
-- `30.KNOWLEDGE/strategy/node-language-versioned-state-security-authority-2026-07-15.md`
-- `30.KNOWLEDGE/strategy/core-values-governance-authority-2026-07-16.md`
-
-The archived contradictory specification and its hash are recorded at
-`90.ARCHIVE/node-language-authority/2026-07-16/MANIFEST.md`.
+- `DECISIONS.md` D-014 NOGRAPH (request, prior art, replacement, budgets).
+- `FORMAT.md` and `ARCHHUB.schema.json` (the `.archhub` document).
+- `01.APP/nodelang/nograph_server.py` (the file server and its route table).
+- `70.COMPANY/72.HANDOFFS/72.60-NEW-APP/APP-BUTTONS/RESULT-NOGRAPH-SERVER.md`.
+- Archived Universal Cell specification: `04.ARCHIVE/SPEC-universal-cell-2026-07-16.md`.

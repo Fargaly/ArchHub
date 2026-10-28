@@ -1,14 +1,18 @@
-"""Source-bound Watcher drafts and annotations in the admitted application graph."""
+"""Source-bound Watcher drafts and annotations in one plain owner file, settings/watcher.json (no graph)."""
 import hashlib
 import json
 import math
-from types import SimpleNamespace
+import os
+from pathlib import Path
+import secrets
+import tempfile
+import threading
 
-from .cell_protocols import prepare_append_relation_members
-from .universal_cell import Cell, InvalidCell
+from .universal_cell import InvalidCell
 
 PREFIX = "app:watcher-proposal:"
 SCALE_MM = 15.0
+_LOCK = threading.Lock()
 
 
 def _digest(value):
@@ -28,57 +32,40 @@ def _point(value):
 
 
 class WatcherOwner:
-    def __init__(self, api):
-        self.api = api
-        self.root = api.root + ":watcher:" + _digest([api.scope, api.binding.subject_root])
+    def __init__(self, state_dir, request_id=""):
+        self.path = Path(state_dir) / "settings" / "watcher.json"
+        self.request_id = str(request_id or secrets.token_hex(16))
+        self.root = "app:watcher"
 
-    def _node(self, create=False):
-        from .canvas_graph_owner import CanvasOwner
-        from .universal_pipeline import create_engine_node
-        api = self.api
-        api.admit()
-        ops = CanvasOwner(api.owner.universal_store, api.owner.universal_registry, api.binding.context)
-        found = [node['id'] for node in ops.canvas()['nodes']
-                 if ops._rows(None,node['id']).get('watcher_owner',{}).get('value') == self.root]
-        if len(found) > 1:
-            raise InvalidCell('Watcher owner is ambiguous; reconcile its existing nodes')
-        if found:
-            return ops, found[0]
-        if not create:
-            return ops, None
-        api.guard()
-        node = create_engine_node(api.owner.universal_store, api.owner.universal_registry,
-            title='Watcher', engine='lines.watch', properties={'watcher_owner':self.root},
-            authentication_context=api.binding.context)
-        return ops, node['root']
+    def _file(self):
+        try:
+            return json.loads(self.path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {"revision":0, "records":{}}
 
     def _read(self, root):
-        cell = self.api.admit().cells.get(root)
-        return json.loads(cell.atom) if cell else None
+        return self._file()["records"].get(root)
 
-    def _save(self, root, value, parent, *, state=None, record_limit: int = 65536):
-        from . import universal_application as app
-        api = self.api
-        store, registry = api.owner.universal_store, api.owner.universal_registry
+    def _save(self, root, value, parent=None, *, state=None, record_limit: int = 65536):
         records = [(root, value)] + ([(self.root, state)] if state is not None else [])
-        encoded = [(key, json.dumps(record, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode())
-                   for key, record in records]
-        if any(len(value) > record_limit for _, value in encoded):
+        if any(len(json.dumps(record, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode()) > record_limit
+               for _, record in records):
             raise InvalidCell("Watcher record exceeds 64 KiB; existing content is unchanged")
-        _, node = self._node(create=True)
-        parent = node if parent == api.root else parent
-        snapshot = api.admit()
-        cells = [Cell(key, parent, api.binding.subject_root, value) for key, value in encoded]
-        if all(snapshot.cells.get(cell.id) == cell for cell in cells):
-            return
-        patch = prepare_append_relation_members(snapshot, parent,
-            tuple((registry.roles["member"], cell.id) for cell in cells if cell.id not in snapshot.cells))
-        view, context = app._view_session_for_context(registry, api.binding.context)
-        api.guard()
-        app._commit_universal_user_change(store, registry, view, context, snapshot,
-            route=api.route, command_name="catalog.configure", authorization_scope_root=api.root,
-            create=(*patch.create, *(cell for cell in cells if cell.id not in snapshot.cells)),
-            replace=(*patch.replace, *(cell for cell in cells if cell.id in snapshot.cells)))
+        with _LOCK:
+            data = self._file()
+            if all(data["records"].get(key) == record for key, record in records):
+                return
+            data["records"].update(records)
+            data["revision"] += 1
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            fd, temporary = tempfile.mkstemp(dir=self.path.parent, suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                    json.dump(data, stream, ensure_ascii=False, indent=1)
+                os.replace(temporary, self.path)
+            finally:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
 
     def _state(self):
         return self._read(self.root) or {"source":None, "pendingY":None, "proposal":None,
@@ -128,7 +115,7 @@ class WatcherOwner:
             raise InvalidCell("Discard pending geometry before changing source")
         source = watcher_read(host)
         state.update(source=source, pendingY=None, applied=False)
-        self._save(self.root, state, self.api.root)
+        self._save(self.root, state)
         return self.read()
 
     def set_view(self, view):
@@ -140,7 +127,7 @@ class WatcherOwner:
             raise InvalidCell("Choose an available view after discarding pending geometry")
         state["source"] = watcher_read(source["host"], instance=source["instance"], view=view,
                                         document=source["document"], element=source["element"]["id"])
-        self._save(self.root, state, self.api.root)
+        self._save(self.root, state)
         return self.read()
 
     def edit(self, y):
@@ -158,7 +145,7 @@ class WatcherOwner:
                     raise InvalidCell("The edited element would leave your mask")
         # shortcut: offset editing only; add typed length/type edits with their own host validation.
         state.update(pendingY=y if y != source["element"]["start"][1] else None, applied=False)
-        self._save(self.root, state, self.api.root)
+        self._save(self.root, state)
         return self.read()
 
     def annotate(self, kind, values):
@@ -166,9 +153,9 @@ class WatcherOwner:
         source = self._source(state)
         if type(values) is not dict:
             raise InvalidCell("Annotation inputs must be named values")
-        row = {"id":self.root + ":annotation:" + self.api.request_id, "kind":kind,
+        row = {"id":self.root + ":annotation:" + self.request_id, "kind":kind,
             "source":self._binding(source), "element":source["element"]["id"],
-            "revision":source["element"]["revision"], "anchorY":source["element"]["start"][1], "author":self.api.binding.subject_root}
+            "revision":source["element"]["revision"], "anchorY":source["element"]["start"][1], "author":"Ahmed"}
         if kind == "dimension":
             if set(values) != {"from", "to"}:
                 raise InvalidCell("A dimension needs its two endpoints")
@@ -201,7 +188,7 @@ class WatcherOwner:
             raise InvalidCell("This annotation request already names another value")
         if not old:
             state["annotations"].append(row)
-            self._save(self.root, state, self.api.root)
+            self._save(self.root, state)
         return self.read()
 
     def propose(self):
@@ -209,26 +196,18 @@ class WatcherOwner:
         source = self._source(state)
         if state["proposal"]:
             return self.card(state["proposal"])
-        from .desktop_owner import DesktopOwner
-        desktop = DesktopOwner(self.api)
-        root = desktop._state()['proposal']
-        if root:
-            plan = desktop.proposal(root)
-            if (plan['status'] in {'pending', 'executing', 'unconfirmed'} and plan['payload']['action'] == 'move'
-                    and plan['payload']['payload']['source'] == source):
-                raise InvalidCell('This offset already has a desktop approval; decide that card first')
         if state["pendingY"] is None:
             raise InvalidCell("Edit a source wall or line before proposing a change")
         payload = {"source":source, "offsetMm":(state["pendingY"]-source["element"]["start"][1])*SCALE_MM}
-        root = PREFIX + _digest([self.root, self.api.request_id])
+        root = PREFIX + _digest([self.root, self.request_id])
         if self._read(root) is not None:
             raise InvalidCell("This proposal request already names a closed transaction; use a fresh request identity")
         proposal = {"owner":self.root, "payload":payload, "input_digest":_digest(payload), "status":"pending"}
         # The proposal is sealed before linking; an interrupted link creates no executable card.
-        self._save(root, proposal, self.api.root)
+        self._save(root, proposal)
         state["proposal"] = root
         state["proposals"].append(root)
-        self._save(self.root, state, self.api.root)
+        self._save(self.root, state)
         return self.card(root)
 
     def proposal(self, root):
@@ -241,14 +220,14 @@ class WatcherOwner:
         proposal = self.proposal(root)
         source = proposal["payload"]["source"]
         element = source["element"]
-        review = self._read(root + ":approval-review") or {"status":"pending", "rows":[], "rubric":{}, "events":[]}
+        review = {"status":"pending", "rows":[], "rubric":{}, "events":[]}
         rows = review["rows"] or [{"element":element["id"], "before":str(element["start"]),
             "after":str(proposal["payload"]["offsetMm"]) + " mm offset"}]
         return {**review, "rows":rows, "id":root, "delegation":root, "work":self.root,
             "input_digest":proposal["input_digest"], "approvalKind":"watcher", "kind":"qc",
             "title":"Move " + element["label"], "elementId":element["id"],
             "sourceRevision":element["revision"], "status":review["status"] if proposal["status"] == "pending" else proposal["status"],
-            "revision":self.api.owner.universal_store.revision}
+            "revision":self._file()["revision"]}
 
     def reviews(self):
         return [self.card(root) for root in self._state()["proposals"]]
@@ -262,14 +241,14 @@ class WatcherOwner:
                 raise InvalidCell("Host outcome needs reconciliation; discard cannot undo an uncertain write")
             if proposal["status"] == "approved":
                 state.update(source=proposal["readback"], pendingY=None, proposal=None, applied=True)
-                self._save(self.root, state, self.api.root)
+                self._save(self.root, state)
                 return self.read()
             proposal["status"] = "declined"
             state.update(pendingY=None, proposal=None)
-            self._save(root, proposal, self.api.root, state=state)
+            self._save(root, proposal, state=state)
         else:
             state.update(pendingY=None)
-            self._save(self.root, state, self.api.root)
+            self._save(self.root, state)
         return self.read()
 
     def decide(self, root, digest, decision):
@@ -292,7 +271,7 @@ class WatcherOwner:
         if current != source:
             raise InvalidCell("Source revision changed; discard and review a fresh edit")
         proposal["status"] = "executing"
-        self._save(root, proposal, self.api.root)
+        self._save(root, proposal)
         try:
             watcher_write(proposal["payload"])
             actual = watcher_read(source["host"], instance=source["instance"], view=source["view"],
@@ -310,20 +289,10 @@ class WatcherOwner:
                 raise InvalidCell("Host readback differs from the approved wall position")
         except Exception:
             proposal["status"] = "unconfirmed"
-            self._save(root, proposal, self.api.root)
+            self._save(root, proposal)
             raise
         proposal.update(status="approved", readback=actual)
         state.update(source=actual, pendingY=None, proposal=None, applied=True)
-        self._save(root, proposal, self.api.root, state=state)
+        self._save(root, proposal, state=state)
         return self.card(root)
 
-
-def approval_context(api, root):
-    owner = WatcherOwner(api)
-    proposal = owner.proposal(root)
-    registry = api.owner.universal_registry
-    delegation = SimpleNamespace(root_id=root, permission_root=root, work_root=owner._node()[1],
-        input_digest=proposal["input_digest"], expires_at=float("inf"))
-    lifecycle = "requested" if proposal["status"] == "pending" else "granted" if proposal["status"] == "approved" else "revoked"
-    permission = SimpleNamespace(lifecycle_root=registry.adapter_protocol.states[lifecycle], user_root=api.binding.subject_root)
-    return api.admit(), "watcher", delegation, permission, {"interfaces":{"title":{"value":owner.card(root)["title"]}}}

@@ -2,6 +2,8 @@
 // the Book's 15 pages is now a live projection of the single settings schema.
 (() => {
   const WIRE_DS_SETTINGS3_JSX_ACTIONS = {
+  "settings.ds_settings3.RouterRefresh": "RouterRefresh",
+  "settings.ds_settings3.RouterModel": "RouterModel",
   "settings.ds_settings3.ConnectionsAction0": "ConnectionsAction0",
   "settings.ds_settings3.ConnectionsAction1": "ConnectionsAction1",
   "settings.ds_settings3.ConnectionsAction2": "ConnectionsAction2",
@@ -74,6 +76,26 @@
     'Updates & About': 'updates',
     'Advanced': 'system'
   };
+  function RouterSettings() {
+    const s=useData(),u=useApp();
+    const [model,setModel]=React.useState('');
+    const [attempt,setAttempt]=React.useState(0),[load,setLoad]=React.useState({status:'waiting'});
+    React.useEffect(()=>{
+      let current=true;setLoad({status:'waiting'});
+      api.refreshRouter().then(r=>{if(current){setModel(r.default_model);setLoad({status:r.requests.length?'loaded':'empty'});}},
+        error=>{if(current)setLoad({status:'error',message:error.message});});
+      return()=>{current=false;};
+    },[attempt]);
+    const {runAction,actionState,retryAction}=window.UI.useRegisteredActions(WIRE_DS_SETTINGS3_JSX_ACTIONS,{
+      RouterRefresh:()=>setAttempt(value=>value+1),
+      RouterModel:value=>u.act(()=>api.setRouterSettings({default_model:value}))
+    });
+    if(load.status==='waiting')return <p role="status">Reading router settings…</p>;
+    if(load.status==='error')return <div role="alert">{load.message}<Btn sm onClick={event=>runAction('settings.ds_settings3.RouterRefresh',event)}>Retry router</Btn></div>;
+    const r=s.router;
+    const models=[...new Set([r.default_model,...r.fallback_models,...r.models])];
+    return <Card style={{padding:18}}><window.UI.RegisteredActionStatus state={actionState} retry={retryAction} /><h2>Models &amp; request profiling</h2><label>Default free model<select aria-label="Default free model" value={model} onChange={e=>{setModel(e.target.value);runAction('settings.ds_settings3.RouterModel',e.target.value);}}>{models.map(m=><option key={m}>{m}</option>)}</select></label><p className="muted">Free first · no paid fallbacks · request metadata kept for 20 days</p><Btn sm onClick={event=>runAction('settings.ds_settings3.RouterRefresh',event)}>Refresh requests</Btn><table aria-label="Router requests"><thead><tr><th>Agent</th><th>Model</th><th>Provider</th><th>Tokens</th><th>Time</th><th>Result</th></tr></thead><tbody>{r.requests.map(row=><tr key={row.id}><td>{row.agent}</td><td>{row.model}</td><td>{row.provider}</td><td>{row.tokens??'Unknown'}</td><td>{row.ms} ms</td><td>{row.outcome}</td></tr>)}</tbody></table>{load.status==='empty'&&<p>No model requests yet.</p>}{load.status==='loaded'&&<p>{r.requests.length} recent requests</p>}<h3>Live agent processes</h3><p>{r.live_agents.complete?'Observed processes':'Process observation incomplete'}</p>{r.live_agents.processes.map(p=><p key={p.pid}>{p.runtime} · PID {p.pid}</p>)}</Card>;
+  }
   function Connections() {
     const s = useData(),
       u = useApp();
@@ -141,7 +163,7 @@ WorkspaceRowsAction3: (w, event) => (() => u.confirm('Remove this workspace from
 WorkspaceRowsAction4: (event) => (() => u.act(api.listWorkspaces))(event)});
     return <><window.UI.RegisteredActionStatus state={actionState} retry={retryAction} /><Card><div className="spread" style={{
         padding: 16
-      }}><div><h2>Workspaces</h2><small className="muted">Choose the folders available to this graph.</small></div><Btn sm onClick={event => runAction('settings.ds_settings3.WorkspaceRowsAction0', event)}>Add workspace</Btn></div><div className="row muted" role={s.workspaceHealth?.state === 'error' ? 'alert' : 'status'}>{s.workspaceHealth?.message || 'Reading workspaces…'}{s.workspaceHealth?.state === 'error' && <Btn sm ghost onClick={event => runAction('settings.ds_settings3.WorkspaceRowsAction4', event)}>Retry</Btn>}</div>{s.workspaceHealth?.recovery && <div className="row muted">{s.workspaceHealth.recovery.message}</div>}{s.workspaceHealth && <details className="row muted"><summary>Advanced</summary><div>Source: Application graph</div><div>Projection: {s.workspaceHealth.projection}</div><div>Revision: {s.workspaceHealth.revision}</div>{s.workspaceHealth.recovery && <div>{s.workspaceHealth.recovery.archive}</div>}{s.workspaceHealth.detail}</details>}{s.workspaces.map(w => <div key={w.id} className="spread row"><D.Toggle label={'Use ' + w.name + ' in this graph'} checked={(s.graph.workspaceIds || []).includes(w.id)} onCheckedChange={v => u.act(() => api.setGraphWorkspaces(v ? [...new Set([...(s.graph.workspaceIds || []), w.id])] : (s.graph.workspaceIds || []).filter(id => id !== w.id)))} /><div className="fill"><h3>{w.name}</h3><span className="muted" style={{
+      }}><div><h2>Workspaces</h2><small className="muted">Choose the folders ArchHub and your agents work in.</small></div><Btn sm onClick={event => runAction('settings.ds_settings3.WorkspaceRowsAction0', event)}>Add workspace</Btn></div><div className="row muted" role={s.workspaceHealth?.state === 'error' ? 'alert' : 'status'}>{s.workspaceHealth?.message || 'Reading workspaces…'}{s.workspaceHealth?.state === 'error' && <Btn sm ghost onClick={event => runAction('settings.ds_settings3.WorkspaceRowsAction4', event)}>Retry</Btn>}</div>{s.workspaceHealth?.recovery && <div className="row muted">{s.workspaceHealth.recovery.message}</div>}{s.workspaces.map(w => <div key={w.id} className="spread row"><D.Toggle label={'Use ' + w.name} checked={(s.graph.workspaceIds || []).includes(w.id)} onCheckedChange={v => u.act(() => api.setGraphWorkspaces(v ? [...new Set([...(s.graph.workspaceIds || []), w.id])] : (s.graph.workspaceIds || []).filter(id => id !== w.id)))} /><div className="fill"><h3>{w.name}</h3><span className="muted" style={{
             fontSize: 12
           }}>{w.folder} · {w.available === false ? 'Folder unavailable' : (s.workspaceHealth?.state === 'ready' || (s.workspaceHealth?.state === 'idle' && w.builtIn)) ? 'Ready' : 'Checking…'}</span></div><div className="flex"><Btn sm onClick={event => runAction('settings.ds_settings3.WorkspaceRowsAction1', w, event)}>Open</Btn><Btn sm ghost aria-label={'Privacy ' + w.name} title="Workspace privacy" onClick={event => runAction('settings.ds_settings3.WorkspaceRowsAction2', w, event)}><window.AHIcon name="shield" size={16} /></Btn>{!w.builtIn && w.removable !== false && <Btn sm ghost onClick={event => runAction('settings.ds_settings3.WorkspaceRowsAction3', w, event)}>Remove</Btn>}</div></div>)}{!s.workspaces.some(w => !w.builtIn) && <Empty>No other workspaces yet.</Empty>}</Card></>;
   }
@@ -173,7 +195,7 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
       padding: 16,
       display: 'grid',
       gap: 12
-    }}><h2>Where your work lives</h2><p className="muted">Graphs and settings stay with your account. Client work stays on this machine.</p><div className="flex">{api.supportsAction?.('archiveActivity') !== false && <Btn sm onClick={event => runAction('settings.ds_settings3.StorageAction0', event)}>Archive old activity</Btn>}<Btn sm onClick={event => runAction('settings.ds_settings3.StorageAction1', event)}>Back up now</Btn></div>{s.backups.map(b => <div className="spread" key={b.id}><span>{b.name}</span><Btn sm onClick={event => runAction('settings.ds_settings3.StorageAction2', b, event)}>Roll back</Btn></div>)}</Card></>;
+    }}><h2>Where your work lives</h2><p className="muted">Workflows and settings stay with your account. Client work stays on this machine.</p><div className="flex">{api.supportsAction?.('archiveActivity') !== false && <Btn sm onClick={event => runAction('settings.ds_settings3.StorageAction0', event)}>Archive old activity</Btn>}<Btn sm onClick={event => runAction('settings.ds_settings3.StorageAction1', event)}>Back up now</Btn></div>{s.backups.map(b => <div className="spread" key={b.id}><span>{b.name}</span><Btn sm onClick={event => runAction('settings.ds_settings3.StorageAction2', b, event)}>Roll back</Btn></div>)}</Card></>;
   }
   function Settings({
     page = 'Account',
@@ -271,7 +293,7 @@ SettingsAction25: () => u.act(api.listAgentsWorking)});
           Advanced: 'Fine control over loading, performance and connection limits.',
           Privacy: 'Control what stays local and what can leave your workspace.',
           'Updates & About': 'One update, with your work kept intact.'
-        }[actual] || 'Your preferences for ' + actual.toLowerCase() + '.'}><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction2', event)}>{actual === 'System graph' ? 'Open graph' : actual === 'BABOOM' ? 'Open BABOOM' : 'Open'}</Btn><Btn sm ghost onClick={event => runAction('settings.ds_settings3.SettingsAction3', event)}>Reset</Btn></Heading>
+        }[actual] || 'Your preferences for ' + actual.toLowerCase() + '.'}><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction2', event)}>{actual === 'System graph' ? 'Open workflow' : actual === 'BABOOM' ? 'Open BABOOM' : 'Open'}</Btn><Btn sm ghost onClick={event => runAction('settings.ds_settings3.SettingsAction3', event)}>Reset</Btn></Heading>
    <div className="flex settings-scope" style={{
           marginBottom: 14
         }}><label className="flex muted">Scope<select aria-label="Settings scope" value={s.settingsScope} onChange={e => u.act(() => api.setSettingsScope(e.target.value))}><option>User</option><option>Workspace</option></select></label><span className="fill" /><span className="muted">{s.settingsScope === 'Workspace' ? s.workspaces.find(w => w.id === s.activeWorkspace)?.name : 'Your account'}</span></div><div className="settings-health"><span className="status-dot" /><span>{actual === 'Connections' ? (s.connections.filter(c => c.connected).length+(s.hosts||[]).filter(c=>['connected','listening'].includes(c.state)).length) + ' accounts and programs connected' : actual === 'BABOOM' ? s.providers.filter(p => p.enabled && p.signedIn).length + ' providers ready' : actual === 'Agents' ? s.agentHealth||'Checking running agents…' : actual === 'Account' ? s.profile.firm + ' · ' + s.workspaces.length + ' workspace' : actual === 'Updates & About' ? s.update.available ? 'An update is ready' : s.update.detail || 'Update status unavailable' : 'Available backend preferences'}</span></div><div className="flex settings-filter" style={{
@@ -283,6 +305,7 @@ SettingsAction25: () => u.act(api.listAgentsWorking)});
     {actual === 'System graph' && <window.UI.SystemGraph />}
     {actual === 'Account' && <Account />}<window.UI.CapabilityRows page={actual} />
     {actual === 'Connections' && <Connections />}
+    {actual === 'Agents' && <RouterSettings />}
     {actual === 'BABOOM' && <Providers />}{actual === 'Agents' && <><Card style={{
             padding: 18
           }}><div className="spread"><h2>Agents at work</h2><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction4', event)}>Open</Btn></div><p role="status">{s.agentSummary||'Checking running agents…'}</p><p className="muted">{s.agentHealth||'Checking running agents…'}</p><Btn sm onClick={event=>runAction('settings.ds_settings3.SettingsAction25',event)}>{s.agentSummary==='Agent status is incomplete.'?'Check again':'Refresh'}</Btn>{(s.agents||[]).map(p => <div className="spread row" key={p.id}><span className="flex"><window.UI.Av id={p.id} size={24} /><span><b>{p.name}</b><small className="muted" style={{display:'block'}}>{p.title} · {p.model}</small><small style={{display:'block'}}>{p.task}</small>{p.detail&&<small className="muted" style={{display:'block'}}>{p.detail}</small>}</span></span><Chip c={p.presence === 'working' ? A.ok : p.presence === 'unknown' ? A.warn : A.inkSoft}>{p.status_text||'Status unknown'}</Chip></div>)}<button className="listbutton flex" onClick={event => runAction('settings.ds_settings3.SettingsAction5', event)}>Manage providers<window.AHIcon name="arrow" size={15} /></button></Card><Providers /></>}

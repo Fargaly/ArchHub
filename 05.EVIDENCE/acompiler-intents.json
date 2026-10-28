@@ -9022,6 +9022,8 @@
         "01.APP/bridges/ide-live/extension.js",
         "01.APP/bridges/ide-live/package.json",
         "01.APP/colleague_setup.py",
+        "01.APP/nodelang/agent_declarations.py",
+        "01.APP/nodelang/agent_runtime_registry.py",
         "01.APP/nodelang/agent_status.py",
         "01.APP/nodelang/app_agents.py",
         "01.APP/nodelang/application_server.py",
@@ -9096,6 +9098,7 @@
         "01.APP/nodelang/studio/canvas-states.jsx",
         "01.APP/nodelang/studio/community-tools.jsx",
         "01.APP/nodelang/studio/companion.jsx",
+        "01.APP/nodelang/studio/ds/index.jsx",
         "01.APP/nodelang/studio/ds_colleagues.jsx",
         "01.APP/nodelang/studio/ds_library.jsx",
         "01.APP/nodelang/studio/ds_screens.jsx",
@@ -9106,6 +9109,7 @@
         "01.APP/nodelang/studio/research-surfaces.jsx",
         "01.APP/nodelang/studio/review-states.jsx",
         "01.APP/nodelang/studio/social.jsx",
+        "01.APP/nodelang/studio/style.css",
         "01.APP/nodelang/studio/surfaces.jsx",
         "01.APP/nodelang/studio/tokens.jsx",
         "01.APP/nodelang/studio/ui.jsx",
@@ -9168,6 +9172,7 @@
         "02.TESTS/tests_js/opencode_agenttrail.test.mjs",
         "02.TESTS/tests_js/opencode_governance_native_child.test.cjs",
         "02.TESTS/tests_js/session_link_worker_exit.test.mjs",
+        "02.TESTS/tests_js/studio_canvaslook.test.cjs",
         "02.TESTS/tests_js/workshop_worker_exit.test.mjs",
         "02.TESTS/tests_replica/session_link_caller_target_host.test.mjs",
         "02.TESTS/tests_replica/session_link_codex_reach.test.mjs",
@@ -9254,10 +9259,7 @@
         "04.DOCS/OPENCODE-NATIVE-GOVERNANCE.md",
         "04.DOCS/README.md",
         "04.DOCS/SPEC.md",
-        "05.EVIDENCE/acompiler-intents.json",
-        "01.APP/nodelang/studio/ds/index.jsx",
-        "01.APP/nodelang/studio/style.css",
-        "02.TESTS/tests_js/studio_canvaslook.test.cjs"
+        "05.EVIDENCE/acompiler-intents.json"
       ]
     }
   }

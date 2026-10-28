@@ -270,6 +270,35 @@ def _routing(message):
     return json.loads("".join(evidence[1:])) if evidence and evidence[0] == ROUTING_EVIDENCE else None
 
 
+def _acknowledged(history, message, identity):
+    """A message is acknowledged for this recipient once it was injected into its session (one live
+    delivery row, any channel) or once the recipient replied to it; it is never attached again."""
+    db = history._db
+    if db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_live_deliveries'").fetchone() is not None and \
+            db.execute("SELECT 1 FROM workshop_live_deliveries WHERE message_id=? AND recipient=? AND state='delivered'",
+                       (message["id"], identity["sender_key"])).fetchone() is not None:
+        return True
+    return db.execute("SELECT 1 FROM messages WHERE conversation_id=? AND reply_to=? AND author=? LIMIT 1",
+                      (ROOM, message["id"], identity["sender"])).fetchone() is not None
+
+
+def _seen(history, body, identity, runtime):
+    """The delivery receipt of a channel that hands pending messages over itself (connector tool
+    results, hook context): once handed to this recipient, a message is acknowledged for it."""
+    from .workshop_live import SCHEMA
+    ids = body["message_ids"]
+    if type(ids) is not list or not all(type(value) is str and value for value in ids) or type(body["channel"]) is not str:
+        raise ValueError("Workshop mailbox arguments are invalid")
+    at = datetime.now(timezone.utc).isoformat()
+    with history._transaction(write=True):
+        history._db.execute(SCHEMA)
+        for message_id in ids:
+            history._db.execute("INSERT OR IGNORE INTO workshop_live_deliveries VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (message_id, identity["sender_key"], identity["sender_label"], runtime, None, body["channel"],
+                 "delivered", "handed over in " + body["channel"], at, 0))
+    return {"seen": ids}
+
+
 def _pending(history, identity, runtime):
     declaration = _declaration(history, identity, runtime)
     declarations = read_declarations(history._db)
@@ -306,7 +335,7 @@ def _pending(history, identity, runtime):
             if not routed and not _can_ack(history, message, identity, declaration, declarations):
                 continue
             events = all_events.get(identity["sender_key"], {})
-            if "answered" in events or "delivered" in events:
+            if "answered" in events or "delivered" in events or _acknowledged(history, message, identity):
                 continue
             message["delivery_sequence"] = message["sequence"]
             cost = len(json.dumps(message).encode())
@@ -749,9 +778,9 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
     if (type(store_busy_timeout_seconds) not in (int, float)
             or not 0 <= store_busy_timeout_seconds <= 2):
         raise ValueError("Workshop store lock wait must be between zero and two seconds")
-    required = {"send": {"to", "text"}, "read": {"since"}, "pending": set(),
+    required = {"send": {"to", "text"}, "read": {"since"}, "pending": set(), "seen": {"message_ids", "channel"},
                 "declare": {"task", "paths", "status", "request_id"}}
-    optional = {"send": {"reply_to", "idempotency_key", "native_control"}, "read": {"declarations_after", "include_archived"}, "declare": {"display_name", "model"}, "pending":set()}
+    optional = {"send": {"reply_to", "idempotency_key", "native_control"}, "read": {"declarations_after", "include_archived"}, "declare": {"display_name", "model"}, "pending":set(), "seen":set()}
     if method not in required or type(body) is not dict or not required[method] <= set(body) or set(body) - required[method] - optional[method]:
         raise ValueError("Workshop mailbox arguments are invalid")
     if type(timeout_seconds) not in (int, float) or not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
@@ -767,7 +796,8 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
     if method == "send":
         # A reply is one message: the same sender answering the same message with the same words
         # again (an agent retrying a call it thought failed) is that reply, not a new one.
-        repeat = sha256(json.dumps([identity["sender_key"], body["to"], body["reply_to"], body["text"]],
+        # Case, spacing and the recipient's spelling do not make it a new reply.
+        repeat = sha256(json.dumps([identity["sender_key"], body["reply_to"], " ".join(body["text"].split()).casefold()],
                                            ensure_ascii=False).encode("utf-8")).hexdigest()[:32] if body.get("reply_to") else None
         body = {**body, "idempotency_key":body.get("idempotency_key") or repeat or uuid4().hex}
     while True:
@@ -783,6 +813,8 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
                     return result
                 if method == "pending":
                     return _pending(selected, identity, runtime)
+                if method == "seen":
+                    return _seen(selected, body, identity, runtime)
                 if method == "declare":
                     return _declare(selected, body, context, identity, runtime, peer, identity["sender_key"])
                 result = _send(selected, body, identity, sender_binding={"session":identity["sender_key"],
@@ -795,6 +827,9 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
                 raise
             # SQLite has no writer fairness; jitter only transactions, never native effects.
             time.sleep(min(remaining, random.uniform(0.01, 0.04)))
+    # A failed live push is not a failed send: an agent told "failed" sent the same reply again.
+    result["note"] = ("Sent and recorded; do not send it again. A failed live push only means the "
+                      "recipient reads it in the Workshop.")
     # Live delivery now, into each recipient's running session; no pending state, no queue.
     if body["to"].strip().casefold() in ("ahmed", "founder", "you"):
         result["delivery"] = []  # the founder reads the Workshop screen; nothing to push
@@ -925,6 +960,11 @@ def _send(history, body, identity, *, queued=(), sender_binding=None):
         evidence = json.loads(prior[0]) if prior else [ROUTING_EVIDENCE, *(encoded[i:i+512] for i in range(0, len(encoded), 512))]
         if prior and (_routing({"evidence":evidence}) or {}).get("native_control") != control:
             raise ValueError("idempotency conflict")
+        if prior and reply:
+            # The same reply again (re-worded spacing/case or another spelling of the recipient): the first one stands.
+            row = history._db.execute("SELECT id, sequence, content FROM messages WHERE conversation_id=? AND idempotency_key=?",
+                (ROOM, retry_key)).fetchone()
+            return {**identity, "to": target, "text": row[2].split("\n", 1)[-1], "message_id": row[0], "sequence": row[1], "repeat": True}
         message = history.append(ROOM, author=identity["sender"], content="To " + target + ":\n" + text,
             category=CATEGORY, recipients=(), reply_to=reply, refs=queued,
             evidence=evidence,

@@ -41,6 +41,8 @@ def push(app, native_id, text, message_id, *, timeout=10.0, pids=()):
     env = {'WORKSHOP_PYTHON': sys.executable, 'WORKSHOP_PYTHONPATH': str(Path(__file__).resolve().parents[1])}
     if app == 'goose' and native_id == 'baboom':
         app, pids = 'archhub', ()            # the app's own BABOOM: Workshop reaches its turn door
+    if not native_id:
+        return 'failed', 'none', 'This session has no live door; it reads the message in the Workshop.'
     recipient = {'app': app, 'id': str(native_id or ''), **({'pids': [int(p) for p in pids]} if pids and app not in ('claude', 'opencode') else {}),
                  **({'desktop': True} if app == 'codex' and codex_desktop_thread(native_id) else {})}
     transport = _local_transport(env)

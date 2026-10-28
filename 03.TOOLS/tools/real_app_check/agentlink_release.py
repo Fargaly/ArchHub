@@ -455,7 +455,8 @@ def _overlap_proof(page, declaration, reply, peer):
     notices = [row for row in page["messages"] if row["author"] == "Workshop coordination" and
                "Your work overlaps at" in row["content"] and len(row["refs"]) == 2 and set(row["refs"]) == refs]
     if len(notices) != 1:
-        raise QualificationRefused("Real " + peer.title() + " turn did not return the paired reply and overlap")
+        raise QualificationRefused("Real " + peer.title() + " turn did not return the paired reply and overlap "
+                                   "(%d overlap notices for refs %s)" % (len(notices), sorted(refs)))
     return notices[0]
 
 
@@ -822,6 +823,11 @@ def _goose_turn(executable, prompts, *, env, cwd, proof_factory, timeout=180):
                     pending.add(call)
                 if item.get("status") in {"completed", "failed", "error"}:
                     pending.discard(call)
+                if item.get("status") == "completed":
+                    output = item.get("rawOutput") or {}
+                    print("GOOSE TOOL completed", json.dumps(((item.get("_meta") or {}).get("goose") or {}).get("toolCall"))[:500],
+                          json.dumps({key: output.get(key) for key in ("id", "idempotency_key", "content", "reply_to", "delivery")}
+                                     if type(output) is dict else output)[:500], flush=True)
         def response_error(error):
             reason = _free_failure_reason(str(error))
             if reason and not failed_tools and not pending:
@@ -1121,7 +1127,8 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
                         peers = [row for row in peer_page["declarations"] if row.get("native_session_id") == connector
                                  and row.get("app") == peer]
                         if len(peers) != 1:
-                            raise QualificationRefused("Real Goose turn did not return the paired reply and overlap")
+                            raise QualificationRefused("Real Goose turn did not return the paired reply and overlap "
+                                "(%d Goose declarations for connector %s)" % (len(peers), connector))
                         paired = _new_paired_message(peer_page["messages"], seen=seen,
                             author=peers[0]["agent"] + " [" + peers[0]["session"] + "]", reply_to=note["id"],
                             marker="AGENTLINK-REPLY " + nonce)

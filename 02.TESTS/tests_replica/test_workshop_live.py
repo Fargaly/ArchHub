@@ -121,3 +121,105 @@ def test_the_same_reply_sent_twice_is_one_message(monkeypatch):
     first = call('send', {'to': 'asker', 'text': 'answer', 'reply_to': asked['message_id']}, {'threadId': 'replier'})
     again = call('send', {'to': 'asker', 'text': 'answer', 'reply_to': asked['message_id']}, {'threadId': 'replier'})
     assert again['message_id'] == first['message_id']
+
+
+@pytest.mark.parametrize('context,channel', [
+    ({'claude/sessionID': 'ack-claude'}, 'claude peer pipe'),
+    ({'threadId': 'ack-codex'}, 'codex app bridge'),
+    ({'ai.opencode/sessionID': 'ack-opencode'}, 'opencode plugin'),
+    ({'goose/sessionID': 'ack-goose'}, 'goose connector'),
+])
+def test_a_message_injected_once_is_never_attached_again(monkeypatch, context, channel):
+    """Any channel: once injected (one delivery receipt), 3 later tool calls carry it 0 more times."""
+    from nodelang import workshop_live
+    from nodelang.workshop_mailbox import call
+    cwd = str(__import__('pathlib').Path.cwd())
+    monkeypatch.setattr(workshop_live, 'push', lambda *a, **k: ('delivered', channel, ''))
+    call('declare', {'task': 't', 'paths': [cwd], 'status': 'working', 'request_id': 'S'}, {'threadId': 'ack-sender'})
+    me = call('declare', {'task': 't', 'paths': [cwd], 'status': 'working', 'request_id': 'R'}, context)
+    sent = call('send', {'to': me['declaration']['display_name'] if 'display_name' in me['declaration'] else me['declaration']['agent'],
+                         'text': 'do the thing'}, {'threadId': 'ack-sender'})
+    assert [row['state'] for row in sent['delivery']] == ['delivered']
+    seen = [m['id'] for _ in range(3) for m in call('pending', {}, context)['pending']]
+    assert sent['message_id'] not in seen
+
+
+def test_replying_acknowledges_a_message_that_was_never_injected(monkeypatch):
+    from nodelang import workshop_live
+    from nodelang.workshop_mailbox import call
+    cwd = str(__import__('pathlib').Path.cwd())
+    monkeypatch.setattr(workshop_live, 'push', lambda *a, **k: ('failed', 'none', 'no live session'))
+    call('declare', {'task': 't', 'paths': [cwd], 'status': 'working', 'request_id': 'S'}, {'threadId': 'r-sender'})
+    me = call('declare', {'task': 't', 'paths': [cwd], 'status': 'working', 'request_id': 'R'}, {'threadId': 'r-replier'})
+    sent = call('send', {'to': me['declaration']['agent'], 'text': 'question'}, {'threadId': 'r-sender'})
+    assert sent['message_id'] in [m['id'] for m in call('pending', {}, {'threadId': 'r-replier'})['pending']]
+    call('send', {'to': 'r-sender', 'text': 'answer', 'reply_to': sent['message_id']}, {'threadId': 'r-replier'})
+    seen = [m['id'] for _ in range(3) for m in call('pending', {}, {'threadId': 'r-replier'})['pending']]
+    assert sent['message_id'] not in seen
+
+
+def test_connector_hands_a_pending_message_over_once_and_records_the_receipt():
+    """Goose/any MCP client: the message rides one tool result, then 3 more calls carry it 0 times."""
+    import time
+    import anyio
+    from mcp.shared.memory import create_connected_server_and_client_session
+    from nodelang import native_agent_mcp as native
+    seen = []
+
+    def mailbox(method, body, context, **kwargs):
+        if method == 'pending':
+            return {'pending': [{'id': 'm-once', 'text': 'do the thing'}], 'more': False}
+        if method == 'seen':
+            seen.extend(body['message_ids'])
+        return {'ok': True}
+
+    server = native.build_server(mailbox_call=mailbox)
+
+    def carried(result):
+        return sum('m-once' in item.text for item in result.content if getattr(item, 'text', None) and 'Workshop peer messages' in item.text)
+
+    async def run():
+        async with create_connected_server_and_client_session(server._mcp_server) as session:
+            args = {'task': 't', 'paths': ['.'], 'status': 'working', 'request_id': 'R'}
+            first = 0
+            for _ in range(100):
+                first = carried(await session.call_tool('declare', args))
+                if first:
+                    break
+                await anyio.sleep(0.05)
+            later = []
+            for _ in range(3):
+                await anyio.sleep(0.1)
+                later.append(carried(await session.call_tool('declare', args)))
+            return first, later
+
+    try:
+        first, later = anyio.run(run)
+    finally:
+        server._mailbox_stop()
+    deadline = time.monotonic() + 5
+    while not seen and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert first == 1 and later == [0, 0, 0]
+    assert seen == ['m-once']
+
+
+def test_a_failed_push_is_still_one_sent_reply(monkeypatch):
+    """Goose re-sent its reply on 'failed'; the send says it is recorded, and a retry is the same reply."""
+    from nodelang import workshop_live
+    from nodelang.workshop_mailbox import call
+    cwd = str(__import__('pathlib').Path.cwd())
+    monkeypatch.setattr(workshop_live, 'push', lambda *a, **k: ('failed', 'none', 'no live door'))
+    call('declare', {'task': 't', 'paths': [cwd], 'status': 'working', 'request_id': 'S'}, {'threadId': 'f-asker'})
+    me = call('declare', {'task': 't', 'paths': [cwd], 'status': 'working', 'request_id': 'R'}, {'threadId': 'f-replier'})
+    asked = call('send', {'to': me['declaration']['agent'], 'text': 'question'}, {'threadId': 'f-asker'})
+    first = call('send', {'to': 'f-asker', 'text': 'AGENTLINK-REPLY 1', 'reply_to': asked['message_id']}, {'threadId': 'f-replier'})
+    assert 'do not send it again' in first['note']
+    again = call('send', {'to': 'F-Asker', 'text': ' agentlink-reply  1 ', 'reply_to': asked['message_id']}, {'threadId': 'f-replier'})
+    assert again['message_id'] == first['message_id']
+
+
+def test_push_without_a_session_id_says_where_the_message_is():
+    from nodelang.workshop_live import push
+    state, channel, reason = push('opencode', '', 'text', 'm1')
+    assert (state, channel) == ('failed', 'none') and 'reads the message in the Workshop' in reason

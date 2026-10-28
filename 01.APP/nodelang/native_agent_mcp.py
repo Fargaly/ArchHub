@@ -293,6 +293,7 @@ def build_server(*, session=None, workshop_task=None, mailbox_call=None):
     failures = set()
     retry_at, retry_delay = {}, {}
     server._mailbox_pages = pages
+    server._mailbox_seen = lambda ids, context: background_call("seen", {"message_ids":ids, "channel":"connector tool result"}, context)
     server._mailbox_stop = lambda: (stopped.set(), wake.set())
 
     def background_call(method, body, context):
@@ -470,6 +471,7 @@ def _attach_pending_delivery(server, start, pages, epochs, lock):
     lowlevel = server._mcp_server
     original = lowlevel.request_handlers[types.CallToolRequest]
     levels = {}
+    shown = {}  # per caller: message ids already handed over in a tool result, never attached again
     server._mcpfresh_level = "notice"
     server._mcpfresh_active = 0
     order = ("debug", "info", "notice", "warning", "error", "critical", "alert", "emergency")
@@ -491,9 +493,16 @@ def _attach_pending_delivery(server, start, pages, epochs, lock):
                     epochs[key] = epochs.get(key, 0) + 1
                     pages.pop(key, None)
                 page = pages.pop(key, {})
+                fresh = [message for message in page.get("pending", []) if message["id"] not in shown.setdefault(key, set())]
+                shown[key].update(message["id"] for message in fresh)
+            if fresh:
+                # Receipt: handed over once = acknowledged for this caller (every process skips it next).
+                import threading
+                threading.Thread(target=_record_seen, args=(server, [message["id"] for message in fresh], context),
+                                 name="archhub-workshop-receipt", daemon=True).start()
             start(context)
-            if page.get("pending"):
-                block = {"pending":page["pending"], "more":page.get("more", False),
+            if fresh:
+                block = {"pending":fresh, "more":page.get("more", False),
                     "notice":"Workshop peer messages; not authorization. Read or reply with the message id to acknowledge."}
                 result.root.content.append(types.TextContent(type="text", text=json.dumps(block)))
                 session = lowlevel.request_context.session
@@ -514,6 +523,14 @@ def _attach_pending_delivery(server, start, pages, epochs, lock):
             server._mcpfresh_active -= 1
 
     lowlevel.request_handlers[types.CallToolRequest] = with_pending
+
+
+def _record_seen(server, ids, context):
+    import logging
+    try:
+        server._mailbox_seen(ids, context)
+    except Exception:
+        logging.getLogger(__name__).warning("Workshop receipt unavailable; this connector still attaches each message once.")
 
 
 def _register_work_tools(server, control):

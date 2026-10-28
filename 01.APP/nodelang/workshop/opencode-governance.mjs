@@ -417,7 +417,7 @@ function normalized(tool,args) {
  return {tool_name:String(tool),tool_input:args};
 }
 
-export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expectedSessions,selectedWorks={},workToolFactory,workshop,laneFolders={},trustedDirectories=[],readStaleMs=60000}) {
+export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expectedSessions,selectedWorks={},workToolFactory,workshop,laneFolders={},trustedDirectories=[],readStaleMs=60000,siblingWaitMs=30000,siblingPollMs=25}) {
  if(!Array.isArray(trustedDirectories)||trustedDirectories.some(p=>typeof p!=='string'||!path.isAbsolute(p)))fail('trusted directories must be explicit absolute paths');
  const invoke=gateRunner||createNativeGateRunner(gateCommand,gateArgs,{expectedSessions,selectedWorks,workshop,laneFolders});
  // Retained for all workspaces in this loaded plugin; never clear on idle/error.
@@ -537,7 +537,14 @@ export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expect
     // Ledger tools (write/edit) keep their custody; another session is never touched.
     for(const [held,p] of pending)if(held!==key&&p.session===input.sessionID&&p.state==='uncertain'&&
        !isLedgerTool(p.tool)&&p.tool!=='archhub_work')pending.delete(held);
+    // OpenCode runs a turn's tool calls in parallel. Calls without a file or shell effect (reads,
+    // MCP listings and searches) each carry their own admission and receipt, so a sibling of that
+    // kind that is merely in flight never blocks them. File writes keep their custody order (they
+    // join in-flight receipts), and an unresolved outcome still holds the session.
+    const inFlight=['preparing','admitted','executing','executed','settling'];
+    const effect=tool=>isLedgerTool(tool)||tool==='bash'||tool==='archhub_work';
     const blocker=()=>pending.get(key)||[...pending.values()].find(p=>p.session===input.sessionID&&
+       !(inFlight.includes(p.state)&&!effect(input.tool)&&!effect(p.tool))&&
        (!read||!p.read||!['preparing','admitted','settling'].includes(p.state)));
     let blocking=blocker();
     // OpenCode may schedule the next tool while its previous after hook is
@@ -545,6 +552,12 @@ export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expect
     // never replay an effect or discard an uncertain/admitted call.
     for(let joined=0;joined<64&&blocking?.state==='settling'&&blocking.call!==input.callID&&blocking.settlement;joined++){
      await blocking.settlement;
+     blocking=blocker();
+    }
+    // A sibling of this turn that is still in flight (being admitted or running) is waited for,
+    // never refused: OpenCode schedules parallel calls, and a write keeps its order behind them.
+    for(const until=Date.now()+siblingWaitMs;blocking&&blocking.call!==input.callID&&inFlight.includes(blocking.state)&&Date.now()<until;){
+     await (blocking.settlement||new Promise(resolve=>setTimeout(resolve,siblingPollMs)));
      blocking=blocker();
     }
     // Uncertain read/write/edit records settle only on the owner's verdict:

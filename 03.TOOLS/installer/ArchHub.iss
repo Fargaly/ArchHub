@@ -114,6 +114,8 @@ Source: "..\NOTICE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\packaging\windows\licenses\Goose-Apache-2.0.txt"; DestDir: "{app}\licenses"; Flags: ignoreversion
 Source: "..\packaging\windows\licenses\Hermes-MIT.txt"; DestDir: "{app}\licenses"; Flags: ignoreversion
 Source: "..\nodelang\*"; DestDir: "{app}\nodelang"; Excludes: "{#PayloadExcludes}"; Flags: recursesubdirs ignoreversion
+; The connector runtime packed by packaging\pack_runtime.py: one file read per start, not hundreds.
+Source: "..\packed\*"; DestDir: "{app}\packed"; Flags: ignoreversion
 Source: "{#CompilerPayloadPath}\archhub-compiler.exe"; DestDir: "{app}\runtime\acompiler"; Flags: ignoreversion
 Source: "{#CompilerPayloadPath}\provenance.json"; DestDir: "{app}\runtime\acompiler"; Flags: ignoreversion
 Source: "{#CompilerPayloadPath}\rules.json"; DestDir: "{app}\runtime\acompiler"; Flags: ignoreversion

@@ -12,7 +12,10 @@ def _use_packed_runtime():
     import sys
     from pathlib import Path
     folder = Path(__file__).resolve().parents[1] / "packed"
-    if not os.environ.get("ARCHHUB_COORDINATION_VENDOR") or not (folder / "stamp.json").is_file():
+    # The connector runs from its `-c` loader (client_mcp_installation.LOADER); a governance gate
+    # child (a script, same vendor variable) keeps the plain interpreter.
+    if (not os.environ.get("ARCHHUB_COORDINATION_VENDOR") or sys.argv[:1] != ["-c"]
+            or not (folder / "stamp.json").is_file()):
         return
     try:
         stamp = json.loads((folder / "stamp.json").read_text(encoding="utf-8"))

@@ -151,3 +151,39 @@ test('trusted outside directories keep other permission rules and the native gat
  await assert.rejects(hooks['tool.execute.before']({sessionID:'ses_scope',callID:'write',tool:'write'},{args:{filePath:path.join(trusted,'x'),content:'x'}}),/admission denied/);
  assert.equal(admissions,1);await hooks.dispose();
 });
+
+test('parallel MCP calls in one turn are each admitted while a sibling is still preparing', async () => {
+  const { createOpenCodeGovernance } = await import(pathToFileURL(path.join(root, '01.APP/nodelang/workshop/opencode-governance.mjs')).href);
+  let release; const held = new Promise(resolve => { release = resolve; });
+  const hooks = await createOpenCodeGovernance({ gateRunner: async event =>
+    event.hook_event_name === 'PreToolUse' && event.tool_use_id === 'call-a' ? held : { allow: true } })({ directory: root, client: {} });
+  const a = { sessionID: 'ses_parallel', callID: 'call-a', tool: 'list_mcp_resources' };
+  const b = { ...a, callID: 'call-b', tool: 'archhub_agent_coordination_library_search' };
+  const first = hooks['tool.execute.before'](a, { args: {} });
+  await new Promise(resolve => setTimeout(resolve, 0));             // call-a is still preparing
+  await hooks['tool.execute.before'](b, { args: { query: 'wall' } });  // admitted, not "earlier unresolved"
+  release({ allow: true }); await first;
+  await hooks['tool.execute.after']({ ...b, args: { query: 'wall' } }, {});
+  await hooks['tool.execute.after']({ ...a, args: {} }, {});
+  await hooks.dispose();
+});
+
+test('a write waits for a sibling read that is still being admitted, then is admitted', async () => {
+  const { createOpenCodeGovernance } = await import(pathToFileURL(path.join(root, '01.APP/nodelang/workshop/opencode-governance.mjs')).href);
+  let release; const held = new Promise(resolve => { release = resolve; });
+  const hooks = await createOpenCodeGovernance({ gateRunner: async event =>
+    event.hook_event_name === 'PreToolUse' && event.tool_use_id === 'read-1' ? held : { allow: true } })({ directory: root, client: {} });
+  const args = { filePath: path.join(root, 'unused.txt') };
+  const read = { sessionID: 'ses_writewaits', callID: 'read-1', tool: 'read' };
+  const write = { ...read, callID: 'write-1', tool: 'write' }, writeArgs = { ...args, content: 'x' };
+  const first = hooks['tool.execute.before'](read, { args });
+  await new Promise(resolve => setTimeout(resolve, 0));              // read-1 is still preparing
+  let admitted = false;
+  const second = hooks['tool.execute.before'](write, { args: writeArgs }).then(() => { admitted = true; });
+  await new Promise(resolve => setTimeout(resolve, 60)); assert.equal(admitted, false);   // waits, is not refused
+  release({ allow: true }); await first;
+  await hooks['tool.execute.after']({ ...read, args }, {});
+  await second; assert.equal(admitted, true);
+  await hooks['tool.execute.after']({ ...write, args: writeArgs }, {});
+  await hooks.dispose();
+});

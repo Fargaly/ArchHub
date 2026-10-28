@@ -108,3 +108,16 @@ def test_a_declaration_the_live_list_does_not_return_is_dropped(monkeypatch):
     call('declare', {'task': 't', 'paths': [str(__import__('pathlib').Path.cwd())], 'status': 'working', 'request_id': 'S2'}, {'threadId': 'live-thread'})
     monkeypatch.setattr(workshop_live, 'live_ids', lambda: dict(codex={'live-thread'}))
     assert [a['native_session_id'] for a in workshop_live.live_agents() if a['app'] == 'codex'] == ['live-thread']
+
+
+def test_the_same_reply_sent_twice_is_one_message(monkeypatch):
+    from nodelang import workshop_live
+    from nodelang.workshop_mailbox import call
+    monkeypatch.setattr(workshop_live, 'push', lambda *a, **k: ('delivered', 'workshop', ''))
+    cwd = str(__import__('pathlib').Path.cwd())
+    call('declare', {'task': 't', 'paths': [cwd], 'status': 'working', 'request_id': 'A'}, {'threadId': 'asker'})
+    call('declare', {'task': 't', 'paths': [cwd], 'status': 'working', 'request_id': 'B'}, {'threadId': 'replier'})
+    asked = call('send', {'to': 'replier', 'text': 'question'}, {'threadId': 'asker'})
+    first = call('send', {'to': 'asker', 'text': 'answer', 'reply_to': asked['message_id']}, {'threadId': 'replier'})
+    again = call('send', {'to': 'asker', 'text': 'answer', 'reply_to': asked['message_id']}, {'threadId': 'replier'})
+    assert again['message_id'] == first['message_id']

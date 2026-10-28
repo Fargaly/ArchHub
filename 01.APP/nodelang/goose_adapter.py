@@ -32,7 +32,8 @@ def safe_workshop_call(identity, arguments):
             or type(arguments) is not dict):
         return False
     tool = identity.get("toolName")
-    fields = {"archhub-agent__declare":({"task", "paths", "status", "request_id"}, set()),
+    # The same fields the Workshop mailbox itself admits (workshop_mailbox.call); nothing wider.
+    fields = {"archhub-agent__declare":({"task", "paths", "status", "request_id"}, {"display_name", "model"}),
               "archhub-agent__send":({"to", "text"}, {"reply_to", "idempotency_key"}),
               "archhub-agent__read":(set(), {"since", "declarations_after", "include_archived"})}
     if tool not in fields:

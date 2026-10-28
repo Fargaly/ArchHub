@@ -765,7 +765,11 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
         database = None
     # Work/account admission is separate. Local messages never open the application graph.
     if method == "send":
-        body = {**body, "idempotency_key":body.get("idempotency_key", uuid4().hex)}
+        # A reply is one message: the same sender answering the same message with the same words
+        # again (an agent retrying a call it thought failed) is that reply, not a new one.
+        repeat = sha256(json.dumps([identity["sender_key"], body["to"], body["reply_to"], body["text"]],
+                                           ensure_ascii=False).encode("utf-8")).hexdigest()[:32] if body.get("reply_to") else None
+        body = {**body, "idempotency_key":body.get("idempotency_key") or repeat or uuid4().hex}
     while True:
         try:
             with application_history(database=database, busy_timeout_seconds=min(store_busy_timeout_seconds, 0.05)) as selected:
@@ -804,8 +808,10 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
                               name="archhub-workshop-delivery", daemon=True)
     worker.start()
     worker.join(LIVE_NODE["params"]["sender_wait_seconds"])
+    # Say plainly that the message is sent: an agent told "delivering" re-sent the same reply.
     result["delivery"] = done.get("rows") if "rows" in done else [
-        {"agent": body["to"], "state": "delivering", "reason": "each recipient's row appears in the Workshop as its push lands"}]
+        {"agent": body["to"], "state": "sent", "reason": "Sent and recorded; do not send it again. "
+         "Its live push into each recipient session is finishing now."}]
     return result
 
 

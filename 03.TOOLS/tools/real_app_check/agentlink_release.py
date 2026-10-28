@@ -66,9 +66,10 @@ def _check_turn_errors(output, *, timed_out=False):
             state = part.get("state", {})
             unfinished = unfinished or state.get("status") in {"pending", "running"}
             if state.get("status") == "error" and not (
-                "native_work_task_detach" in part.get("tool", "") and
-                "No Work task surface is attached" in str(state.get("error", "")) and
+                "canvas_read" in part.get("tool", "") and
+                "absent-agentlink.archhub" in str(state.get("error", "")) and
                 "ArchHub OpenCode governance" not in str(state.get("error", ""))):
+                print("OPENCODE TOOL", part.get("tool"), "error", str(state.get("error", ""))[:1200], flush=True)
                 raise QualificationRefused("OpenCode tool failed; provider fallback cannot hide a tool failure")
         if event.get("type") == "error":
             errors.append(event.get("error", {}))
@@ -469,7 +470,7 @@ def _new_paired_message(messages, *, seen, author, reply_to, marker):
     paired = [row for row in messages if row["id"] not in seen and row["author"] == author and
               row["reply_to"] == reply_to and row["content"].endswith(marker)]
     if len(paired) != 1:
-        raise QualificationRefused("Selected route lacks a unique fresh paired message")
+        raise QualificationRefused("Selected route lacks a unique fresh paired message (%d from %s)" % (len(paired), author))
     return paired[0]
 
 
@@ -805,6 +806,9 @@ def _goose_turn(executable, prompts, *, env, cwd, proof_factory, timeout=180):
             if call:
                 if item.get("status") in {"failed", "error"}:
                     failed_tools.add(call)
+                    print("GOOSE TOOL failed", json.dumps(((item.get("_meta") or {}).get("goose") or {}).get("toolCall")),
+                          json.dumps(item.get("rawInput"))[:400],
+                          json.dumps(item.get("rawOutput") or item.get("content") or "")[:600], flush=True)
                 if item.get("status") in {"pending", "in_progress"}:
                     pending.add(call)
                 if item.get("status") in {"completed", "failed", "error"}:
@@ -1008,7 +1012,7 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
                 "write a.txt with exact bytes '" + nonce + "'; read a.txt; write b.txt with exact bytes '" + nonce +
                 "'; FOURTH use the glob tool with pattern='*' and path="+json.dumps(str(fixture))+
                 ". Do not use bash, powershell or any shell for listing. Next read the rule file outside cwd at "+json.dumps(str(outside))+
-                ". Then deliberately call native.work_task_detach on the MCP server with no attached Work; it must return 'No Work task surface is attached'. "
+                ". Then deliberately call canvas.read on the MCP server with path="+json.dumps(str(fixture/'absent-agentlink.archhub'))+" (the file does not exist); it must fail. "
                 "After that failed MCP call, read a.txt and write recovered.txt with exact bytes '"+nonce+
                 "'. Continue even if the MCP tool fails. Then send(to='"+peer.title()+"',text='AGENTLINK-REQUEST " + nonce +
                 "'). Keep declaration working for the paired reader. Do not use a shell to fake MCP calls. Stop.")
@@ -1045,9 +1049,11 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
             outside_reads=[part for part in parts if part.get('tool')=='read' and
                 tool_path(part)==outside.resolve() and
                 'AGENTLINK-OUTSIDE '+rule_nonce in str(part.get('state',{}).get('output',''))]
-            failures=[i for i,part in enumerate(parts) if 'native_work_task_detach' in part.get('tool','') and
+            # NOGRAPH (D-014): Work tools are retired; the deliberate MCP handler error is a canvas
+            # read of a file that does not exist.
+            failures=[i for i,part in enumerate(parts) if 'canvas_read' in part.get('tool','') and
                 part.get('state',{}).get('status')=='error' and
-                'No Work task surface is attached' in str(part.get('state',{}).get('error','')) and
+                'absent-agentlink.archhub' in str(part.get('state',{}).get('error','')) and
                 'ArchHub OpenCode governance' not in str(part.get('state',{}).get('error',''))]
             receipts=[json.loads(line) for line in gate_receipts.read_text(encoding='utf-8').splitlines()]
             failure_ids={parts[i].get('callID') for i in failures}

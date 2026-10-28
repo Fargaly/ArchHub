@@ -3,12 +3,12 @@ import os
 from pathlib import Path
 import time
 import pytest
-from nodelang.session_link_transport import SessionLinkTransport
+from nodelang.workshop_transport import WorkshopTransport
 
 
 @pytest.mark.parametrize('operation',['discover','request'])
 def test_completed_discovery_survives_slow_provider_but_never_becomes_reply(tmp_path,operation):
-    node=Path(os.environ.get('SESSION_LINK_NODE',str(Path(os.environ['LOCALAPPDATA'])/'ArchHub/runtime/node.exe')))
+    node=Path(os.environ.get('WORKSHOP_NODE',str(Path(os.environ['LOCALAPPDATA'])/'ArchHub/runtime/node.exe')))
     assets=tmp_path/'assets';assets.mkdir()
     (assets/'worker.mjs').write_text("""
 process.stdin.once('data',()=>{
@@ -17,7 +17,7 @@ process.stdin.once('data',()=>{
  setInterval(()=>{},1000);
 });
 """,encoding='utf8')
-    transport=SessionLinkTransport(node_executable=node,state_dir=tmp_path/'state')
+    transport=WorkshopTransport(node_executable=node,state_dir=tmp_path/'state')
     transport._assets=assets
     start=time.monotonic()
     try:

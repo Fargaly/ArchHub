@@ -211,7 +211,7 @@ The owner:
 - **Ports.** Its own two free ports, never the live owner's 8474 or 8475. The desktop is pointed at it
   through `ARCHHUB_COORDINATION_ENDPOINT`, so no default endpoint is ever used.
 - **Paths.** The owner's and the desktop's roots are resolved under the planned environment: the
-  DPAPI stores, the runtime root, the runtime descriptor, Session Link state, assistant state and home.
+  DPAPI stores, the runtime root, the runtime descriptor, Workshop state, assistant state and home.
   Every one must lie in the run folder.
 - **Lifecycle.** It starts only through the run's hidden desktop, so the run's Job owns and ends it.
 

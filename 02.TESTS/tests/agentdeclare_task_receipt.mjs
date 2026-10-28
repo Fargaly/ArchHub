@@ -1,6 +1,6 @@
 // Only native task control is synthetic; text, identity and receipt use the real mailbox.
 import fs from 'node:fs';
-import {ask} from '../01.APP/nodelang/session_link/ask.mjs';
+import {ask} from '../01.APP/nodelang/workshop/ask.mjs';
 const {id,runtimeId,app='opencode'}=JSON.parse(fs.readFileSync(0,'utf8'));
 const result=await ask(app,id,'Native task receipt court','prompting',{
  discover:async()=>({[app]:[{app,id,...(app==='opencode'?{runtimeId}:{})}]}),

@@ -262,6 +262,14 @@ def _brain_call(tool: str, arguments: Mapping[str, object], *, budget: float | N
     the card says so. ``budget`` is kept for callers; a graph read has none.
     """
     from . import app_brain
+    if not app_brain._BOUND:
+        # NOGRAPH: no graph is bound; the Brain is one plain owner file (brain_files.py).
+        from . import brain_files
+        try:
+            answer = brain_files.call(tool, dict(arguments))
+        except ValueError as refusal:
+            raise BrainSilent(str(refusal)) from refusal
+        return answer if isinstance(answer, str) else json.dumps(answer)
     try:
         answer = app_brain.call(tool, dict(arguments), actor=actor)
     except app_brain.BrainUnavailable as refusal:

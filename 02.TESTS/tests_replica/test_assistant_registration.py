@@ -41,11 +41,11 @@ def _codex(machine):
     return next(c for c in registration.readiness(machine.env)["clients"] if c["client"] == "codex")
 
 
-def test_retired_isolated_loader_with_session_link_hints_can_be_migrated(machine):
+def test_retired_isolated_loader_with_workshop_hints_can_be_migrated(machine):
     entry = registration.codex_entry(machine.install, machine.state)
     entry["args"][3] = entry["args"][3].replace("native_agent_mcp", "clean_coordination_mcp")
-    entry["env"].update(SESSION_LINK_STATE_DIR=str(machine.state / "session-link"),
-                        SESSION_LINK_NODE="codex")
+    entry["env"].update(WORKSHOP_STATE_DIR=str(machine.state / "workshop"),
+                        WORKSHOP_NODE="codex")
     config = machine.profile / ".codex" / "config.toml"
     config.parent.mkdir()
     config.write_text(registration._codex_block(entry), encoding="utf-8")
@@ -56,8 +56,8 @@ def test_retired_isolated_loader_with_session_link_hints_can_be_migrated(machine
     assert saved == registration.codex_entry(machine.install, machine.state)
 
 
-@pytest.mark.parametrize("hints", [{"SESSION_LINK_NODE": ""}, {"SESSION_LINK_STATE_DIR": "relative"},
-    {"SESSION_LINK_NODE": 3}, {"SESSION_LINK_NODE": "codex", "UNMANAGED": "kept"}])
+@pytest.mark.parametrize("hints", [{"WORKSHOP_NODE": ""}, {"WORKSHOP_STATE_DIR": "relative"},
+    {"WORKSHOP_NODE": 3}, {"WORKSHOP_NODE": "codex", "UNMANAGED": "kept"}])
 def test_retired_loader_does_not_absorb_unmanaged_or_invalid_hints(machine, hints):
     entry = registration.codex_entry(machine.install, machine.state)
     entry["args"][3] = entry["args"][3].replace("native_agent_mcp", "clean_coordination_mcp")
@@ -266,7 +266,7 @@ def test_a_split_table_is_refused_and_left_exactly_as_it_was(machine):
 
 
 def test_opencode_gets_no_mcp_entry_and_is_not_written_when_absent(machine):
-    # OpenCode connects through the Session Link plugin (test_opencode_is_recognised_and_connected).
+    # OpenCode connects through the Workshop plugin (test_opencode_is_recognised_and_connected).
     opencode = next(c for c in registration.readiness(machine.env)["clients"] if c["client"] == "opencode")
     assert opencode["state"] == "not_installed" and opencode["governance"] == "blocked"
     assert registration.register("opencode", consent=True, environment=machine.env)["state"] == "not_installed"

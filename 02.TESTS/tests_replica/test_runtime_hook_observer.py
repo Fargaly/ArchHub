@@ -197,7 +197,7 @@ def test_codex_hook_hash_matches_codex_canonical_form():
 
 
 def test_opencode_governance_plugin_is_found_in_the_singular_plugin_folder(tmp_path):
-    _write(tmp_path / ".config" / "opencode" / "plugins" / "session-link.js", "export default {}")
+    _write(tmp_path / ".config" / "opencode" / "plugins" / "workshop.js", "export default {}")
     red = observe_runtime_compliance("opencode", home=tmp_path)
     assert red["status"] == "red" and red["checks"]["scope-gate"] is False
     _write(tmp_path / ".config" / "opencode" / "plugin" / "archhub-governance-abc-product.js",

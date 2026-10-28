@@ -4,7 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import pytest
-from nodelang import session_link_config as config
+from nodelang import workshop_config as config
 
 
 @pytest.fixture
@@ -89,7 +89,7 @@ def test_writer_refuses_preview_drift_without_modifying_file(inputs):
     home, _, _, backup = inputs
     target = home / ".codex" / "hooks.json"
     target.write_bytes(b"changed-by-user")
-    with pytest.raises(config.SessionLinkConfigRefused, match="changed since preview"):
+    with pytest.raises(config.WorkshopConfigRefused, match="changed since preview"):
         config.write_with_backup(target, "candidate", backup, expected_digest="outdated")
     assert target.read_bytes() == b"changed-by-user"
     assert not list(backup.iterdir())
@@ -134,7 +134,7 @@ def test_plan_requires_reapproval_after_settings_change(inputs):
     second = config.plan_client_hook_install("codex", home=home, install_root=home,
                                             python_executable=python, gate_script=gate)
     assert first["plan_digest"] != second["plan_digest"]
-    with pytest.raises(config.SessionLinkConfigRefused, match="plan changed"):
+    with pytest.raises(config.WorkshopConfigRefused, match="plan changed"):
         config.apply_client_hook_install(second, expected_digest=first["plan_digest"],
                                          backup_dir=home)
     assert json.loads(target.read_text())["unrelated"] == "new user setting"
@@ -210,7 +210,7 @@ def test_renderer_refuses_shell_metacharacters_in_existing_paths(inputs):
     hostile_directory.mkdir()
     hostile = hostile_directory / python.name
     hostile.write_text("# never execute")
-    with pytest.raises(config.SessionLinkConfigRefused, match="metacharacters"):
+    with pytest.raises(config.WorkshopConfigRefused, match="metacharacters"):
         config.render_client_hooks("codex", python_executable=hostile,
                                    gate_script=gate, install_root=home)
 
@@ -467,7 +467,7 @@ def test_stop_hook_refuses_a_source_checkout(inputs, tmp_path):
     for rel in (".venv/Scripts/python.exe", "nodelang/native_stop_hook.py"):
         (checkout / rel).parent.mkdir(parents=True, exist_ok=True)
         (checkout / rel).write_text("#", encoding="utf-8")
-    with pytest.raises(config.SessionLinkConfigRefused, match="installed ArchHub"):
+    with pytest.raises(config.WorkshopConfigRefused, match="installed ArchHub"):
         config.render_stop_hook("claude-code", install_root=checkout)
 
 
@@ -766,7 +766,7 @@ def test_reviewed_migration_leaves_exactly_this_installs_check(inputs, installed
     preview = registration.preview_hooks("claude-code", environment=env)
     assert preview["migration"] is True and "Repair moves it to this install" in preview["description"]
     target.write_text(target.read_text(encoding="utf-8").replace("keep-me", "keep-me-2"), encoding="utf-8")
-    with pytest.raises(config.SessionLinkConfigRefused):
+    with pytest.raises(config.WorkshopConfigRefused):
         registration.repair_hooks("claude-code", consent=True, plan_digest=preview["plan_digest"], environment=env)
     preview = registration.preview_hooks("claude-code", environment=env)
     registration.repair_hooks("claude-code", consent=True, plan_digest=preview["plan_digest"], environment=env)

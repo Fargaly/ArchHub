@@ -13,10 +13,10 @@ installer writes and removes for a client.
   Codex hands CODEX_THREAD_ID to the server through ``env_vars``.
 * OpenCode: no MCP entry. OpenCode gives MCP servers no session identity, and
   the native owner requires the real ``ses_...`` hook identity; OpenCode
-  attaches through the Session Link plugin instead. On consent one portable
+  attaches through the Workshop plugin instead. On consent one portable
   plugin file is written to the OpenCode config folder: it imports this
   install's opencode-plugin.mjs pinned by its sha256 and names this install's
-  Session Link state folder, and no session.
+  Workshop state folder, and no session.
 
 A differing entry of the same name, an unreadable config or a legacy entry
 (client_mcp_installation.LEGACY_NAMES) is reported and left untouched, except
@@ -167,18 +167,18 @@ def _dev_era_connector_entry(entry, vendor) -> bool:
     if type(entry) is not dict or set(entry) - {"command", "args", "env", "env_vars"}:
         return False
     command, env, args = entry.get("command"), entry.get("env"), entry.get("args")
-    hints = {"SESSION_LINK_STATE_DIR", "SESSION_LINK_NODE"}
+    hints = {"WORKSHOP_STATE_DIR", "WORKSHOP_NODE"}
     if (type(command) is not str or ntpath.basename(command).casefold() != 'python.exe'
             or type(env) is not dict or set(env) - _DEV_ERA_ENV - hints
             or env.get('ARCHHUB_COORDINATION_VENDOR', vendor) != vendor
             or 'PYTHONPATH' in env and (type(env['PYTHONPATH']) is not str or not ntpath.isabs(env['PYTHONPATH']))):
         return False
     if set(env) & hints:
-        # Old isolated loaders carried Session Link hints; they are not a second owner.
+        # Old isolated loaders carried Workshop hints; they are not a second owner.
         if (not _retired_runpy_args(args)
                 or any(type(env[key]) is not str or not env[key] or '\x00' in env[key]
                        for key in hints & set(env))
-                or 'SESSION_LINK_STATE_DIR' in env and not ntpath.isabs(env['SESSION_LINK_STATE_DIR'])):
+                or 'WORKSHOP_STATE_DIR' in env and not ntpath.isabs(env['WORKSHOP_STATE_DIR'])):
             return False
     if args == _DEV_ERA_ARGS:
         return 'env_vars' not in entry and 'PYTHONPATH' in env
@@ -273,7 +273,7 @@ def migrate_codex(install_root, state_root, *, consent, environment=None) -> dic
     """
     import hashlib
     import tomllib
-    from .session_link_config import SessionLinkConfigRefused, write_with_backup
+    from .workshop_config import WorkshopConfigRefused, write_with_backup
     env = os.environ if environment is None else environment
     before = codex_readiness(install_root, state_root, env)
     if consent is not True or before["state"] != "migration_available":
@@ -308,7 +308,7 @@ def migrate_codex(install_root, state_root, *, consent, environment=None) -> dic
             path, text, backup_dir, expected_digest=hashlib.sha256(raw).hexdigest(),
             protect_backup=lambda data: protect_current_user_data(
                 data, purpose="archhub.client-hook-backup/v1"))
-    except SessionLinkConfigRefused as exc:
+    except WorkshopConfigRefused as exc:
         return dict(before, state="migration_unconfirmed", reason=str(exc))
     after = codex_readiness(install_root, state_root, env)
     if after["state"] != "registered":
@@ -354,7 +354,7 @@ def register_codex(install_root, state_root, *, consent, environment=None) -> di
     return after
 
 
-OPENCODE_PLUGIN_NAME = "session-link.js"
+OPENCODE_PLUGIN_NAME = "workshop.js"
 OPENCODE_GOVERNANCE_BLOCKER = (
     "OpenCode's tool governance loader is not written: its write gate "
     "(opencode_native_gate.py with pretooluse_validate and governed_write_broker) lives only "
@@ -375,24 +375,24 @@ def _opencode_installed(env) -> bool:
 
 
 def render_opencode_plugin(install_root, state_root) -> str:
-    """The portable Session Link plugin for OpenCode; the same for every user of one install."""
+    """The portable Workshop plugin for OpenCode; the same for every user of one install."""
     import hashlib
-    module = Path(install_root) / "nodelang" / "session_link" / "opencode-plugin.mjs"
+    module = Path(install_root) / "nodelang" / "workshop" / "opencode-plugin.mjs"
     if not module.is_file():
-        raise RegistrationRefused("installed Session Link module missing")
+        raise RegistrationRefused("installed Workshop module missing")
     revision = hashlib.sha256(module.read_bytes()).hexdigest()
-    state = str(Path(state_root) / "session-link").replace("\\", "/")
+    state = str(Path(state_root) / "workshop").replace("\\", "/")
     literal = lambda value: json.dumps(value, ensure_ascii=True)
-    return ("// ArchHub Session Link for OpenCode, written by ArchHub on your consent.\n"
-            "import {createSessionLinkPlugin} from %s;\n"
-            "export const SessionLink = createSessionLinkPlugin({stateDirectory:%s});\n"
+    return ("// ArchHub Workshop for OpenCode, written by ArchHub on your consent.\n"
+            "import {createWorkshopPlugin} from %s;\n"
+            "export const Workshop = createWorkshopPlugin({stateDirectory:%s});\n"
             % (literal(module.as_uri() + "?revision=" + revision), literal(state)))
 
 
-def _archhub_session_link_loader(raw: bytes) -> bool:
+def _archhub_workshop_loader(raw: bytes) -> bool:
     text = raw.decode("utf-8", "replace")
-    return ("createSessionLinkPlugin" in text
-            and "/nodelang/session_link/opencode-plugin.mjs" in text and len(raw) < 4096)
+    return ("createWorkshopPlugin" in text
+            and "/nodelang/workshop/opencode-plugin.mjs" in text and len(raw) < 4096)
 
 
 def opencode_readiness(install_root, state_root, environment=None) -> dict:
@@ -407,7 +407,7 @@ def opencode_readiness(install_root, state_root, environment=None) -> dict:
     target = folder / "plugins" / OPENCODE_PLUGIN_NAME
     report["config"] = str(target)
     if not (Path(install_root) / "BUILD_METADATA.json").is_file():
-        # session_link_config.installed_stop_hook: assistant hooks come only from the installed ArchHub.
+        # workshop_config.installed_stop_hook: assistant hooks come only from the installed ArchHub.
         return dict(report, state="install_required",
                     reason="assistant plugins are installed only from the installed ArchHub")
     try:
@@ -422,16 +422,16 @@ def opencode_readiness(install_root, state_root, environment=None) -> dict:
         return dict(report, state="config_unreadable")
     if raw.replace(b"\r\n", b"\n") == report["plugin"].encode("utf-8"):
         return dict(report, state="registered")
-    if _archhub_session_link_loader(raw):
+    if _archhub_workshop_loader(raw):
         return dict(report, state="ready_to_register", config_exists=True,
-                    reason="an older ArchHub Session Link plugin is replaced")
+                    reason="an older ArchHub Workshop plugin is replaced")
     return dict(report, state="conflict",
                 reason="another %s is in the OpenCode plugins folder; left unchanged" % OPENCODE_PLUGIN_NAME)
 
 
 def register_opencode(install_root, state_root, *, consent, environment=None) -> dict:
     """Write the portable plugin only on consent, keep a backup of what it replaces, re-read."""
-    from .session_link_config import write_with_backup, SessionLinkConfigRefused
+    from .workshop_config import write_with_backup, WorkshopConfigRefused
     env = os.environ if environment is None else environment
     before = opencode_readiness(install_root, state_root, env)
     if consent is not True or before["state"] != "ready_to_register":
@@ -445,7 +445,7 @@ def register_opencode(install_root, state_root, *, consent, environment=None) ->
                 if before["config_exists"] else "absent")
     try:
         result = write_with_backup(target, before["plugin"], backup_dir, expected_digest=expected)
-    except SessionLinkConfigRefused as exc:
+    except WorkshopConfigRefused as exc:
         return dict(before, state="registration_unconfirmed", reason=str(exc))
     if result.get("sha256"):
         receipts = _read_hook_receipts(state_root)
@@ -537,12 +537,12 @@ def _client_folder(client, env):
 
 
 def _hook_homes(client, env):
-    from .session_link_config import SessionLinkConfigRefused
+    from .workshop_config import WorkshopConfigRefused
     if not env.get("USERPROFILE"):
-        raise SessionLinkConfigRefused("client home directory is unavailable")
+        raise WorkshopConfigRefused("client home directory is unavailable")
     codex_home = _codex_home(env) if client == "codex" else None
     if codex_home is not None and not codex_home.is_absolute():
-        raise SessionLinkConfigRefused("CODEX_HOME must be an absolute folder")
+        raise WorkshopConfigRefused("CODEX_HOME must be an absolute folder")
     return Path(env["USERPROFILE"]), codex_home
 
 
@@ -550,19 +550,19 @@ def _hook_plan(client, env, *, include_gate, migrate):
     """One private plan: ArchHub's installed end-of-turn check, plus (Settings only) the
     in-place spelling repair of an existing workspace gate. The gate is never added.
     migrate (Settings only, reviewed) moves another or stale ArchHub copy's check here."""
-    from .session_link_config import (observed_client_hook_binding, plan_client_hook_install,
-                                      plan_antigravity_stop_cutover, SessionLinkConfigRefused)
+    from .workshop_config import (observed_client_hook_binding, plan_client_hook_install,
+                                      plan_antigravity_stop_cutover, WorkshopConfigRefused)
     if client == "antigravity":
         # Antigravity's hooks file is the archhub-governance/flat shape, not the
         # grouped settings.json shape, so its end-of-turn cutover is the localized
         # Stop-only replacement -- same consented preview/repair path, different writer.
         if not env.get("USERPROFILE"):
-            raise SessionLinkConfigRefused("client home directory is unavailable")
+            raise WorkshopConfigRefused("client home directory is unavailable")
         root, state = install_roots(env)
         plan = plan_antigravity_stop_cutover(home=Path(env["USERPROFILE"]), install_root=root)
         return plan, state
     if client not in _HOOK_FOLDERS:
-        raise SessionLinkConfigRefused("unsupported hook client")
+        raise WorkshopConfigRefused("unsupported hook client")
     root, state = install_roots(env)
     home, codex_home = _hook_homes(client, env)
     binding = (observed_client_hook_binding(client, home=home, optional=True, codex_home=codex_home)
@@ -604,13 +604,13 @@ def preview_hooks(client, *, environment=None, include_gate=True, migrate=True):
 
 
 def _repair_hooks(client, *, consent, plan_digest, environment=None, include_gate=True, migrate=True):
-    from .session_link_config import apply_client_hook_install, SessionLinkConfigRefused
+    from .workshop_config import apply_client_hook_install, WorkshopConfigRefused
     if consent is not True:
-        raise SessionLinkConfigRefused("hook repair requires the reviewed user's consent")
+        raise WorkshopConfigRefused("hook repair requires the reviewed user's consent")
     env = os.environ if environment is None else environment
     plan, state = _hook_plan(client, env, include_gate=include_gate, migrate=migrate)
     if plan["plan_digest"] != plan_digest:
-        raise SessionLinkConfigRefused("settings changed; review the current hook preview")
+        raise WorkshopConfigRefused("settings changed; review the current hook preview")
     backup_dir = state / "private-client-backups"
     from .client_mcp_installation import _require_plain
     _require_plain(backup_dir, "directory", may_be_absent=True)
@@ -635,7 +635,7 @@ def repair_hooks(client, *, consent, plan_digest, environment=None):
 def migrate_gemini(install_root, state_root, *, consent, environment=None) -> dict:
     """Replace only this product's retired Gemini entry, with encrypted custody."""
     import hashlib
-    from .session_link_config import write_with_backup, settings_target
+    from .workshop_config import write_with_backup, settings_target
     from .cell_secret_keys import protect_current_user_data
     from .client_mcp_installation import _require_plain
     env = os.environ if environment is None else environment
@@ -693,7 +693,7 @@ def preflight_install_connectors(environment=None, *, warning=None):
     env = os.environ if environment is None else environment
     paths = [('codex', _codex_config(env), tomllib.loads, 'mcp_servers')]
     if env.get('USERPROFILE'):
-        from .session_link_config import settings_target
+        from .workshop_config import settings_target
         paths.append(('gemini', settings_target('gemini-cli', home=env['USERPROFILE']), json.loads, 'mcpServers'))
     ownership = {}
     report = warning if warning is not None else lambda message: print(message, flush=True)
@@ -725,7 +725,7 @@ def connect_hooks_on_setup(*, consent, environment=None) -> list:
     """The installer's "Connect my AI assistants to ArchHub" choice, through the same consent
     path as Settings > Repair: ArchHub's end-of-turn check for each assistant that is
     installed. An existing workspace gate is left exactly as it is."""
-    from .session_link_config import SessionLinkConfigRefused
+    from .workshop_config import WorkshopConfigRefused
     from .client_mcp_installation import RegistrationRefused
     if consent is not True:
         raise ValueError("connecting assistants needs the person's explicit consent")
@@ -750,9 +750,9 @@ def connect_hooks_on_setup(*, consent, environment=None) -> list:
                 done = _repair_hooks(client, consent=True, plan_digest=plan["plan_digest"],
                                      environment=env, include_gate=False, migrate=False)
                 results.append({"client": client, "state": "configured", "changed": done["changed"]})
-            except (SessionLinkConfigRefused, RegistrationRefused, OSError, ValueError):
+            except (WorkshopConfigRefused, RegistrationRefused, OSError, ValueError):
                 results.append({"client": client, "state": "not_connected"})
-        # OpenCode has no end-of-turn hook here; it connects through the Session Link plugin.
+        # OpenCode has no end-of-turn hook here; it connects through the Workshop plugin.
         root, state = install_roots(env)
         try:
             done = register_opencode(root, state, consent=True, environment=env)
@@ -760,7 +760,7 @@ def connect_hooks_on_setup(*, consent, environment=None) -> list:
                 else "not_connected"
             results.append({"client": "opencode", "state": said,
                             **({"reason": done["reason"]} if said == "conflict" else {})})
-        except (SessionLinkConfigRefused, RegistrationRefused, OSError, ValueError):
+        except (WorkshopConfigRefused, RegistrationRefused, OSError, ValueError):
             results.append({"client": "opencode", "state": "not_connected"})
     return results
 
@@ -801,7 +801,7 @@ def _record_hook_write(state, client, plan, result):
 
 def disconnect_hooks_on_uninstall(environment=None) -> list:
     """Uninstall: take out exactly the end-of-turn entries this install wrote; nothing else."""
-    from .session_link_config import remove_stop_hook, SessionLinkConfigRefused
+    from .workshop_config import remove_stop_hook, WorkshopConfigRefused
     from .client_mcp_installation import RegistrationRefused
     env = os.environ if environment is None else environment
     root, state = install_roots(env)
@@ -817,7 +817,7 @@ def disconnect_hooks_on_uninstall(environment=None) -> list:
                                                 receipt=receipts.get(client), backup_dir=backup_dir,
                                                 codex_home=codex_home))
                 receipts.pop(client, None)
-            except (SessionLinkConfigRefused, RegistrationRefused, OSError, ValueError):
+            except (WorkshopConfigRefused, RegistrationRefused, OSError, ValueError):
                 results.append({"vendor": client, "changed": False, "method": "refused"})
         try:
             results.append(_remove_opencode_plugin(receipts.get("opencode")))
@@ -860,7 +860,7 @@ _EVENT_WORDS = {
 
 def hook_readiness(client, *, environment=None):
     """Per event, in plain words, whether ArchHub's own hook is set for this assistant."""
-    from .session_link_config import SessionLinkConfigRefused, hook_event_states
+    from .workshop_config import WorkshopConfigRefused, hook_event_states
     env = os.environ if environment is None else environment
     if client == "opencode":
         return {"available": False, "state": "per_session", "events": [],
@@ -880,7 +880,7 @@ def hook_readiness(client, *, environment=None):
         home, codex_home = _hook_homes(client, env)
         events = hook_event_states(client, home=home, install_root=root, codex_home=codex_home)
         plan = preview_hooks(client, environment=env)
-    except (SessionLinkConfigRefused, RegistrationRefused, OSError, ValueError):
+    except (WorkshopConfigRefused, RegistrationRefused, OSError, ValueError):
         return {"available": False, "state": "install_incomplete", "events": [],
                 "reason": "The assistant's settings could not be read. Repair the assistant installation first."}
     for row in events:

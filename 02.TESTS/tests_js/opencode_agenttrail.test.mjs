@@ -1,9 +1,9 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import {collectOpenCodeActivity} from '../../01.APP/nodelang/session_link/opencode-plugin.mjs';
+import {collectOpenCodeActivity} from '../../01.APP/nodelang/workshop/opencode-plugin.mjs';
 
-test('Session Link projects only exact-session runtime tool parts and never prompts',async()=>{
+test('Workshop projects only exact-session runtime tool parts and never prompts',async()=>{
  const directory=path.resolve('WORKSPACE'),sessionId='ses_fixture', at=Date.now();
  const part=(filePath,sessionID=sessionId)=>({type:'tool',sessionID,messageID:'msg_fixture',tool:'edit',
   state:{status:'running',input:{filePath,content:'PRIVATE_PROMPT_CANARY'},time:{start:at}}});

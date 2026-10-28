@@ -25,7 +25,7 @@ committed. A replay with the same idempotency key returns the stored message and
 none; a replay with different text or target is an idempotency conflict and relays
 nothing.
 
-Interrupt is not a Workshop write and has one owner, baboom_session_interrupt (Session Link);
+Interrupt is not a Workshop write and has one owner, baboom_session_interrupt (Workshop);
 this sink only stores.
 
 Unused until S3b switches BABOOM's tell to it.

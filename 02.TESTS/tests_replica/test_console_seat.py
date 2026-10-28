@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from nodelang import console_seat
+from nodelang.workshop import console_seat
 
 PROMPT = r'''
 import sys, pathlib
@@ -44,6 +44,16 @@ def test_reader_patterns():
     assert console_seat.classify(['› Ask Codex to do anything'], 0) == ('empty', '')
     assert console_seat.classify(['❯ 1. Yes'], 0)[0] == 'selection_open'
     assert console_seat.staged('reaches the end of it', 'a long message that reaches the end of it')
+    classify = console_seat.classify
+    assert classify(['╭───╮', '│ >   Type your message or @path/to/file │', '╰───╯'], 1) == ('empty', '')
+    assert classify(['❯ fix the wall'], 0) == ('draft', 'fix the wall')
+    assert classify(['plain output'], 0)[0] == 'unknown'
+    assert classify(['▄▄▄', ' *   Type your message or @path/to/file', '▀▀▀'], 1) == ('empty', '')
+    assert not console_seat.staged('somebody else typed', 'our message')
+    assert classify(['  → first part of a long', '    wrapped message'], 0) == ('draft', 'first part of a long wrapped message')
+    assert classify(['  ┃', '  ┃', '  ┃  Build · Inkling (free) OpenRouter'], 1) == ('empty', '')
+    assert classify(['  ┃  hello there', '  ┃  Build · x'], 0) == ('draft', 'hello there')
+    assert classify(['Update Available', '┃', '┃  Build · x'], 1)[0] == 'selection_open'
 
 
 def test_delivers_into_an_empty_composer(seat):
@@ -55,9 +65,9 @@ def test_delivers_into_an_empty_composer(seat):
 
 def test_never_types_over_a_draft(seat):
     pid, out = seat
-    code = ('import sys;sys.path.insert(0,sys.argv[1]);from nodelang import console_seat as c;k=c._kernel();k.FreeConsole();'
+    code = ('import sys;sys.path.insert(0,sys.argv[1]);from nodelang.workshop import console_seat as c;k=c._kernel();k.FreeConsole();'
             'k.AttachConsole(int(sys.argv[2]));c._type(k,c._open(k,"CONIN$"),"half typed",enter=False)')
-    subprocess.run([sys.executable, '-I', '-c', code, str(Path(console_seat.__file__).resolve().parents[1]), str(pid)],
+    subprocess.run([sys.executable, '-I', '-c', code, str(Path(console_seat.__file__).resolve().parents[2]), str(pid)],
                    check=True, creationflags=0x08000000)
     time.sleep(0.5)
     state, reason = console_seat.deliver(pid, 'must not be typed')

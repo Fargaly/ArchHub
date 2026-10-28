@@ -10,7 +10,7 @@ from nodelang.native_workshop_profile import (
 SESSION = "477c5160-73cd-4a0e-8eac-2b506368b06c"
 
 
-@pytest.mark.parametrize('key',['SESSION_LINK_REQUIRED_CONNECTIONS','Session_Link_Required_Connections'])
+@pytest.mark.parametrize('key',['WORKSHOP_REQUIRED_CONNECTIONS','Workshop_Required_Connections'])
 def test_fresh_profile_does_not_inherit_existing_session_recovery_links(tmp_path,key):
     values=inputs(tmp_path)
     values['environment'][key]='a'*16
@@ -18,8 +18,8 @@ def test_fresh_profile_does_not_inherit_existing_session_recovery_links(tmp_path
     profile=prepare_claude_workshop_profile(**values)
     try:
         server=json.loads((profile.cwd/'mcp.json').read_bytes())['mcpServers'][SERVER_NAME]
-        assert 'SESSION_LINK_REQUIRED_CONNECTIONS' not in {name.upper() for name in profile.environment}
-        assert 'SESSION_LINK_REQUIRED_CONNECTIONS' not in {name.upper() for name in server['env']}
+        assert 'WORKSHOP_REQUIRED_CONNECTIONS' not in {name.upper() for name in profile.environment}
+        assert 'WORKSHOP_REQUIRED_CONNECTIONS' not in {name.upper() for name in server['env']}
         assert '--expected-actor' not in server['args']
         assert values['environment']==original
         assert server['env']['CLAUDE_CODE_SESSION_ID']==SESSION

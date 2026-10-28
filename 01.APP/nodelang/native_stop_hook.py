@@ -927,11 +927,11 @@ def _peer_key(value):
 
 # Codex rollouts (vendor codex): {timestamp, type, payload}. Sends are collaboration
 # send_message/followup_task {target, message}, send_message_to_thread {threadId,
-# prompt}, or an exec running session-link.ps1 send <connection> --file <text>.
-# Replies from Claude carry the bridge header (session_link/bridge.mjs) naming the
+# prompt}, or an exec running workshop.ps1 send <connection> --file <text>.
+# Replies from Claude carry the bridge header (workshop/bridge.mjs) naming the
 # Claude session and the link. /root/... targets are the task's own subagents.
 _CODEX_ENTRY_TYPES = ('response_item', 'event_msg', 'compacted')
-_CODEX_LINK_SEND = re.compile(r'session-link\.ps1\W{0,6}\s+send\s+\W?([0-9a-f]{16})\W?\s+--file\s+\W?([A-Za-z]:[^\x27"\r\n]+?)\W?(?:\s|$)')
+_CODEX_LINK_SEND = re.compile(r'workshop\.ps1\W{0,6}\s+send\s+\W?([0-9a-f]{16})\W?\s+--file\s+\W?([A-Za-z]:[^\x27"\r\n]+?)\W?(?:\s|$)')
 _CODEX_REPLY = re.compile(r'\[From Claude Code: [^;\]]*; session ([0-9a-f-]{36}); link ([0-9a-f]{16}); message')
 
 
@@ -941,7 +941,7 @@ def _message_roots():
 
 
 def _message_file(path, sent_at=None):
-    """The text a Session Link send carried: only a message file under the temp or
+    """The text a Workshop send carried: only a message file under the temp or
     handoff roots, where agents write them. Any other path is never opened."""
     try:
         target = Path(path).resolve()
@@ -957,7 +957,7 @@ def _message_file(path, sent_at=None):
 
 def _codex_output_ok(payload):
     """A send counts only when it did not fail, as on the Claude path: an exec of
-    session-link carries no failure marker; a collaboration send answers empty."""
+    workshop carries no failure marker; a collaboration send answers empty."""
     output = payload.get('output')
     if isinstance(output, list):
         return bool(output) and 'error' not in json.dumps(output).lower()
@@ -1006,7 +1006,7 @@ def _codex_events(payload, moment=None):
 def _peer_registry(directory):
     """Name, pipe and local_ id of each live Claude-side peer (~/.claude/sessions/*.json).
 
-    A Session Link bridge registers there under its peer name; its replies arrive
+    A Workshop bridge registers there under its peer name; its replies arrive
     from its pipe alone, so this is what ties the two together. Read-only, bounded.
     """
     try:

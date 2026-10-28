@@ -4,7 +4,7 @@ Strangler pattern (2026-10-28): every route the Studio calls is answered here by
 the owner that holds that data as a plain file or one small SQLite file.
 
   Canvas      .archhub documents            session_files.SessionFiles
-  Workshop    workshop/messages.sqlite3     workshop_mailbox + Session Link
+  Workshop    workshop/messages.sqlite3     workshop_mailbox + Workshop
   Router      settings/router.json + router.sqlite   model_router / settings_owner
   Hosts       live broker sessions/*.json   pipeline_engines.probe_connectors
   Settings    settings/<name>.json          this module (one file per owner)
@@ -427,7 +427,7 @@ class NoGraphServer:
             from .workshop_mailbox import _local_transport
             try:
                 transport = _local_transport()
-            except Exception:  # noqa: BLE001 - Session Link runtime absent: listAgentSessions says so
+            except Exception:  # noqa: BLE001 - Workshop runtime absent: listAgentSessions says so
                 transport = None
             self._agents_api = AgentsAPI(transport=transport)
         return self._agents_api
@@ -515,7 +515,7 @@ SYSTEM_OWNERS = (
     ('owner:canvas', 'Canvas', 'Session files', 'sessions-files/*.archhub', ['workshop']),
     ('owner:library', 'Node library', 'Session files', 'library_engines + pipeline_engines', ['canvas']),
     ('owner:workshop', 'Workshop', 'Workshop', 'workshop/messages.sqlite3', ['router']),
-    ('owner:session-link', 'Session Link', 'Workshop', 'session-link/ (native injection)', ['workshop']),
+    ('owner:workshop', 'Workshop', 'Workshop', 'workshop/ (native injection)', ['workshop']),
     ('owner:router', 'Router', 'Router', 'settings/router.json', ['profiling']),
     ('owner:profiling', 'Profiling', 'Router', 'settings/router.sqlite', []),
     ('owner:brokers', 'Brokers', 'Hosts', 'broker sessions/*.json + BridgeAuth', ['canvas']),
@@ -613,7 +613,7 @@ def r_providers(s, req):
         cli_probe=find_assistant, opencode_status_probe=probe_opencode_status)}
 
 
-# -- Workshop: the room is workshop/messages.sqlite3; delivery is Session Link --
+# -- Workshop: the room is workshop/messages.sqlite3; delivery is Workshop --
 STATUS = {'working': 'WIP', 'blocked': 'PLANNED', 'review': 'IN REVIEW', 'done': 'DONE'}
 
 
@@ -820,9 +820,20 @@ def r_settings_action(s, req):
         return {'ok': True, 'result': {**result, 'secrets': _secrets()}}
     if function == 'setSettingsScope':
         return {'ok': True, 'result': settings.write({**settings.read(), 'settingsScope': args[0] if args else 'User'})}
-    if function in ('read', 'readOperations', 'checkDependencies'):
-        return {'ok': True, 'result': {'ok': True, 'settingsScope': settings.read().get('settingsScope', 'User'),
-                                       'workspacePolicies': {}, 'dependencies': []}}
+    local = {'ok': True, 'settingsScope': settings.read().get('settingsScope', 'User'), 'workspacePolicies': {}}
+    if function == 'readOperations':
+        return {'ok': True, 'result': {**local, 'dependencies': []}}
+    if function in SettingsOwner.ACCOUNT:
+        # Account, office, team and billing are the ArchHub cloud's; local preferences are one plain file.
+        from .settings_owner import AccountFiles, CloudRouteUnavailable
+        from .universal_cell import InvalidCell
+        owner = SettingsOwner(AccountFiles(s.settings_dir / 'account.json'))
+        try:
+            return {'ok': True, 'result': {**(local if function == 'read' else {}), **owner.dispatch(function, list(args))}}
+        except (InvalidCell, CloudRouteUnavailable, OSError) as refused:
+            if function == 'read':   # signed out: Settings still opens with the local values
+                return {'ok': True, 'result': {**local, 'dependencies': [], 'controlErrors': {'account': str(refused)}}}
+            raise Refused(str(refused)) from refused
     return {'ok': True, 'result': not_available('Settings "%s"' % function)}
 
 
@@ -977,8 +988,45 @@ def r_social_connection(s, req):
         return {'ok': True, 'connection': social_connections.start(provider)}
     if action == 'cancel':
         return {'ok': True, 'connection': social_connections.cancel(provider)}
-    # finish enrolls through the graph custody owner; the sign-in itself stays available.
-    return not_available('Finishing a social account enrolment')
+    if action == 'finish':
+        # The account the provider itself confirmed goes into the protected store; nothing is typed.
+        return {'ok': True, 'connection': social_connections.finish(
+            None, {k: v for k, v in body.items() if k != 'action'}, require_admission=lambda: None)}
+    raise Refused('Choose start, finish or cancel provider sign-in.')
+
+
+def r_social_finish(provider):
+    """LinkedIn / Meta sign-in finish: enroll the account (or Page) the provider returned."""
+    def route(s, req):
+        from . import cloud_social_oauth
+        from .social_custody import enroll_social_account
+        body = req.body or {}
+        signin = __import__('nodelang.social_%s_signin' % provider, fromlist=['take_verified'])
+        with signin._current_lock:
+            local = signin._current
+        via_cloud = cloud_social_oauth._CURRENT.get(provider) is not None and (
+            local is None or local.__class__.__module__ == cloud_social_oauth.__name__)
+        try:
+            if provider == 'linkedin':
+                account_id, token = (cloud_social_oauth.take_verified if via_cloud else lambda _p: signin.take_verified())('linkedin')
+                record = {'provider': 'linkedin', 'account_id': account_id,
+                          'vault_entry': 'social-linkedin-' + account_id.rsplit(':', 1)[1], 'token': token}
+            else:
+                if set(body) != {'page_id'}:
+                    raise Refused('Meta finish requires one selected Page.')
+                selected = (cloud_social_oauth.take_verified_page if via_cloud else signin.take_verified_page)(body['page_id'])
+                record = {'provider': 'meta', 'account_id': selected['page']['id'],
+                          'vault_entry': 'social-meta-page-' + selected['page']['id'], 'token': selected['page_token']}
+        except cloud_social_oauth.SocialGrantNotReady as waiting:
+            raise Refused(str(waiting)) from waiting
+        return {'ok': True, **enroll_social_account(None, record, require_admission=lambda: None, verified=True)}
+    return route
+
+
+def r_social_credential(s, req):
+    """An operator-declared social token goes straight into the protected store (format 1)."""
+    from .model_router import save_social_credential
+    return {'ok': True, **save_social_credential(req.body or {}, verified=False)}
 
 
 def r_social_credentials(s, req):
@@ -1046,10 +1094,35 @@ def r_boot(s, req):
     return {'ok': True, 'ready': True, 'nograph': True}
 
 
+BRAIN_TOOLS = {'/api/universal/brain-forget': 'brain.delete_fact', '/api/universal/brain-edit': 'brain.edit_fact',
+               '/api/universal/brain-publish': 'brain.publish', '/api/universal/brain-remember': 'brain.write'}
+
+
 def r_brain(s, req):
-    if req.path == '/api/universal/brain-export':
-        return {'ok': True, 'facts': {'folders': [], 'held': 0, 'total': 0}}
-    return not_available('Brain memory editing')
+    """The Brain tab: export, remember, edit, forget, publish -- one owner (brain_files without a graph)."""
+    import secrets
+    from .pipeline_engines import BrainSilent, _brain_call
+    body = req.body if isinstance(req.body, dict) else {}
+    try:
+        if req.path == '/api/universal/brain-export':
+            try:
+                wanted = max(1, min(int(body.get('limit') or 500), 100000))
+            except (TypeError, ValueError):
+                wanted = 500
+            return {'ok': True, 'facts': json.loads(_brain_call('brain.list_facts', {'limit': wanted}))}
+        tool = BRAIN_TOOLS.get(req.path)
+        if tool is None:
+            return not_available('Brain "%s"' % req.path.rsplit('/', 1)[-1])
+        if tool == 'brain.write':
+            said = str(body.get('text') or '').strip()
+            if not said:
+                return {'ok': False, 'error': 'nothing to remember'}
+            arguments = {'ops': [{'op': 'add', 'fragment': {'id': 'remember:' + secrets.token_hex(8), 'kind': 'fact', 'text': said}}]}
+        else:
+            arguments = {'fragment_id': str(body.get('id') or '').strip(), **({'text': body.get('text')} if 'text' in body else {})}
+        return json.loads(_brain_call(tool, arguments))
+    except BrainSilent as silent:
+        return {'ok': False, 'error': 'Brain not answering: %s' % str(silent)[:200]}
 
 
 def r_stop(s, req):
@@ -1080,7 +1153,7 @@ ROUTES = {
     '/api/universal/workshop-native': ('graph only', r_graph_only('Graph Work publication')),
     '/api/universal/native-contact': ('graph only', r_graph_only('Graph native contact binding')),
     '/api/universal/mcp-client-install': ('graph only', r_graph_only('MCP client install from the old Workshop page')),
-    WORKSHOP_PATH: ('workshop/messages.sqlite3 + Session Link', r_workshop),
+    WORKSHOP_PATH: ('workshop/messages.sqlite3 + Workshop', r_workshop),
     '/api/universal/workshop-model-approval': ('graph only (read: expired)', r_workshop_model_approval),
     '/api/universal/native-agents': ('agent_runtime_registry + declarations', r_native_agents),
     '/api/universal/hosts': ('pipeline_engines.probe_connectors + settings/hosts.json', r_hosts),
@@ -1098,12 +1171,12 @@ ROUTES = {
     '/api/universal/social-connections': ('social_connections', r_social_connections),
     '/api/universal/social-connection': ('social_connections', r_social_connection),
     '/api/universal/social-credentials': ('Credential Manager index', r_social_credentials),
-    '/api/universal/social-credential': ('graph custody', r_graph_only('Typed social token enrolment')),
+    '/api/universal/social-credential': ('protected store', r_social_credential),
     '/api/universal/social-credential-remove': ('Credential Manager', r_social_credential_remove),
     '/api/universal/social-linkedin-signin': ('social_linkedin_signin', r_social_signin('linkedin')),
     '/api/universal/social-meta-signin': ('social_meta_signin', r_social_signin('meta')),
-    '/api/universal/social-linkedin-finish': ('graph custody', r_graph_only('LinkedIn enrolment finish')),
-    '/api/universal/social-meta-finish': ('graph custody', r_graph_only('Meta enrolment finish')),
+    '/api/universal/social-linkedin-finish': ('protected store', r_social_finish('linkedin')),
+    '/api/universal/social-meta-finish': ('protected store', r_social_finish('meta')),
     '/api/universal/social-linkedin-app': ('ArchHub cloud', r_graph_only('LinkedIn app configuration (ArchHub cloud owns it)')),
     '/api/universal/social-meta-app': ('ArchHub cloud', r_graph_only('Meta app configuration (ArchHub cloud owns it)')),
     '/api/universal/social-approvals': ('graph only (read: empty)', lambda s, req: {'ok': True, 'items': []}),
@@ -1122,4 +1195,5 @@ POST_ONLY = frozenset({
     '/api/session-files', '/api/universal/canvas-op', '/api/universal/settings-action', '/api/universal/workspace-roots',
     '/api/universal/pick-file', '/api/universal/mods', '/api/universal/cloud-signout', '/api/universal/social-credential-remove',
     '/api/universal/social-surface', '/api/universal/provider-key', '/api/universal/notion-connect', '/stop-all', '/resume',
+    '/api/universal/social-credential', '/api/universal/social-linkedin-finish', '/api/universal/social-meta-finish',
 } | {path for path, (owner, _handler) in ROUTES.items() if owner == 'graph only'})

@@ -1,8 +1,8 @@
 """Automatic follow-up for Codex rollouts, and Claude peers known only by their pipe.
 
 Codex shapes are the ones its rollouts hold (read 2026-09-28): collaboration
-send_message {target, message}, exec session-link.ps1 send <link> --file, and the
-Session Link bridge header on Claude's reply. A Session Link bridge answers a Claude
+send_message {target, message}, exec workshop.ps1 send <link> --file, and the
+Workshop bridge header on Claude's reply. A Workshop bridge answers a Claude
 session from its pipe alone; ~/.claude/sessions/<pid>.json names that pipe.
 """
 import json
@@ -47,12 +47,12 @@ def _link_send(seconds, tmp_path, text=ASK, output=SCRIPT_OK):
     note = tmp_path / ('msg-%d.txt' % seconds)
     note.write_text(text, encoding='utf-8')
     os.utime(note, (T0 + seconds, T0 + seconds))  # written at the send, as agents do
-    command = '& ' + chr(39) + r'C:\x\session-link.ps1' + chr(39) + ' send %s --file ' % LINK + chr(39) + str(note) + chr(39)
+    command = '& ' + chr(39) + r'C:\x\workshop.ps1' + chr(39) + ' send %s --file ' % LINK + chr(39) + str(note) + chr(39)
     return [_item(seconds, {'type': 'custom_tool_call', 'name': 'exec', 'call_id': 'c%d' % seconds, 'input': command}),
             _item(seconds + 1, {'type': 'custom_tool_call_output', 'call_id': 'c%d' % seconds, 'output': output})]
 
 
-def test_a_codex_session_link_request_is_chased_until_the_claude_reply_arrives(tmp_path):
+def test_a_codex_workshop_request_is_chased_until_the_claude_reply_arrives(tmp_path):
     entries = _link_send(0, tmp_path)
     held = _decide(tmp_path, entries, 700)
     assert held['decision'] == 'block' and LINK in held['reason']

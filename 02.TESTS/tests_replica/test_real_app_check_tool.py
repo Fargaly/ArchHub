@@ -255,13 +255,13 @@ def test_an_overlay_junction_is_refused(tmp_path):
 def test_the_app_environment_is_isolated_and_drops_agent_variables(tmp_path):
     rig = _rig()
     base = {"PATH": "x", "APPDATA": r"C:\real", "LOCALAPPDATA": r"C:\real", "USERPROFILE": r"C:\real",
-            "CLAUDE_CODE_SESSION_ID": "s", "ARCHHUB_STATE_DIR": "d", "SESSION_LINK_NODE": "n",
+            "CLAUDE_CODE_SESSION_ID": "s", "ARCHHUB_STATE_DIR": "d", "WORKSHOP_NODE": "n",
             "CODEX_HOME": "c", "ANTHROPIC_API_KEY": "k", "PYTHONPATH": "p"}
     env = rig.isolated_env(base, tmp_path, cdp_port=9301, lock_port=9302)
     for name in ("APPDATA", "LOCALAPPDATA", "USERPROFILE", "HOME", "TEMP", "TMP", "CLAUDE_CONFIG_DIR",
                  "ARCHHUB_TEST_STATE_DIR"):
         assert Path(env[name]).is_relative_to(tmp_path), name
-    assert not [key for key in env if key.startswith(("CLAUDE_CODE", "SESSION_LINK", "CODEX", "ANTHROPIC", "PYTHONPATH"))]
+    assert not [key for key in env if key.startswith(("CLAUDE_CODE", "WORKSHOP", "CODEX", "ANTHROPIC", "PYTHONPATH"))]
     assert "ARCHHUB_STATE_DIR" not in env and env["PATH"] == "x"
     assert env["QTWEBENGINE_REMOTE_DEBUGGING"] == "127.0.0.1:9301" and env["ARCHHUB_TEST_LOCK_PORT"] == "9302"
     assert env["PYTHONDONTWRITEBYTECODE"] == "1"

@@ -34,7 +34,7 @@ def is_pure(engine):
     """Pure nodes solve on edit; anything that writes waits for Run."""
     from .library_engines import STEM_RUN_ENGINES
     from .pipeline_engines import PIPELINE_ENGINES
-    if engine in STEM_RUN_ENGINES or engine in ('note', 'data.convert', 'param.value'):
+    if engine in STEM_RUN_ENGINES or engine in ('note', 'data.convert', 'param.value', 'data.dataset', 'data.field'):
         return True
     if engine in THING_ENGINES:
         return THING_ENGINES[engine]['pure']

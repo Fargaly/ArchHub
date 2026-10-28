@@ -152,22 +152,22 @@ def test_invalid_timing_defaults_refuse(room, kwargs):
 @pytest.mark.parametrize('runtime,context', [('codex', {'threadId':'codex-fixture'}),
     ('claude', {'claude/sessionID':'71700000-0000-4000-8000-000000000001'}),
     ('opencode', {'ai.opencode/sessionID':'opencode-fixture'})])
-def test_real_session_link_worker_reaches_fixture_native_socket(room, tmp_path, runtime, context):
-    from nodelang.session_link_transport import SessionLinkTransport
+def test_real_workshop_worker_reaches_fixture_native_socket(room, tmp_path, runtime, context):
+    from nodelang.workshop_transport import WorkshopTransport
     owner, history = room
     root = Path(__file__).resolve().parents[2]
     node = shutil.which('node')
     session = next(iter(context.values()))
     environment = {**os.environ, 'HOME':str(tmp_path), 'USERPROFILE':str(tmp_path),
-        'SESSION_LINK_STATE_DIR':str(tmp_path), 'CODEX_APP_TOOLS_PIPE_PATH':'', 'CODEX_THREAD_ID':''}
-    process = subprocess.Popen([node, str(root / '02.TESTS/tests/session_link_wsinject.mjs'),
+        'WORKSHOP_STATE_DIR':str(tmp_path), 'CODEX_APP_TOOLS_PIPE_PATH':'', 'CODEX_THREAD_ID':''}
+    process = subprocess.Popen([node, str(root / '02.TESTS/tests/workshop_wsinject.mjs'),
         str(tmp_path), runtime, session], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
         stderr=subprocess.PIPE, env=environment)
     delivery = None
     try:
         assert process.stdout.readline().strip() == b'READY'
         declare(owner, context)
-        transport = SessionLinkTransport(node_executable=Path(node), state_dir=tmp_path, env=environment)
+        transport = WorkshopTransport(node_executable=Path(node), state_dir=tmp_path, env=environment)
         delivery = mail.WorkshopInjection(owner, transport)
         owner.workshop_injection = delivery
         delivery.start()
@@ -363,12 +363,12 @@ def test_explicit_native_controller_is_not_replayed(room):
         'context':{'claude/sessionID':'source'}}, peer=peer())
     started = time.time()
     delivery.tick(now=started)
-    assert native.turns==[], 'Session Link ask already owns the original model-selected native call'
+    assert native.turns==[], 'Workshop ask already owns the original model-selected native call'
     delivery.tick(now=started + 61)
     assert native.turns == [], 'caller-owned model-selected delivery is never replayed'
 
 
-def test_unicode_native_excerpt_respects_session_link_utf16_envelope(room):
+def test_unicode_native_excerpt_respects_workshop_utf16_envelope(room):
     owner, _history = room
     declare(owner, {'threadId':'codex-fixture'})
     native = NativeFixture()
@@ -382,15 +382,15 @@ def test_unicode_native_excerpt_respects_session_link_utf16_envelope(room):
 
 def test_running_application_http_send_reaches_codex_bridge_without_read(owner, tmp_path):
     from nodelang import desktop
-    from nodelang.session_link_transport import SessionLinkTransport
+    from nodelang.workshop_transport import WorkshopTransport
     server, _root = owner
     node = shutil.which('node')
     root = Path(__file__).resolve().parents[2]
     environment = {**os.environ,'HOME':str(tmp_path),'USERPROFILE':str(tmp_path),
-        'SESSION_LINK_STATE_DIR':str(tmp_path),'CODEX_APP_TOOLS_PIPE_PATH':'','CODEX_THREAD_ID':''}
-    process = subprocess.Popen([node,str(root/'02.TESTS/tests/session_link_wsinject.mjs'),
+        'WORKSHOP_STATE_DIR':str(tmp_path),'CODEX_APP_TOOLS_PIPE_PATH':'','CODEX_THREAD_ID':''}
+    process = subprocess.Popen([node,str(root/'02.TESTS/tests/workshop_wsinject.mjs'),
         str(tmp_path),'codex','http-codex'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=environment)
-    transport = SessionLinkTransport(node_executable=Path(node), state_dir=tmp_path, env=environment)
+    transport = WorkshopTransport(node_executable=Path(node), state_dir=tmp_path, env=environment)
     try:
         assert process.stdout.readline().strip() == b'READY'
         server.workshop_injection.close()

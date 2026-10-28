@@ -84,7 +84,6 @@ def ask(prompt, context=''):
 
 
 def _join_workshop(state_dir, url):
-    from .workshop_live import register_adapter
     from .workshop_mailbox import call
     import os
     import psutil
@@ -98,7 +97,6 @@ def _join_workshop(state_dir, url):
     JsonFile(Path(state_dir) / 'settings' / 'baboom-session.json', {}).write(
         {'session': declared['declaration']['session'], 'pid': os.getpid(), 'created_at': psutil.Process().create_time(),
          'url': url, 'token': _STATE['token']})
-    register_adapter('goose', _adapter)
 
 
 def _record(state_dir=None):
@@ -121,26 +119,8 @@ def own_session(state_dir=None):
     return held['session'] if held else None
 
 
-def deliver_remote(text, message_id, timeout):
-    """Workshop delivery to BABOOM from any process: the app's local turn door, or the reason it is closed."""
-    import urllib.request
-    held = _record()
-    if not held or not held.get('url'):
-        return 'failed', 'goose-acp', 'BABOOM is not running (start ArchHub; BABOOM starts with it unless turned off): %s' % (
-            _STATE.get('record_error') or 'its session has no turn door')
-    request = urllib.request.Request(held['url'] + '/baboom/turn', method='POST',
-                                     data=json.dumps({'text': text, 'message_id': message_id}).encode('utf-8'),
-                                     headers={'Content-Type': 'application/json', 'X-ArchHub-BABOOM': held['token']})
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            answer = json.loads(response.read() or b'{}')
-    except (OSError, ValueError) as error:
-        return 'failed', 'goose-acp', 'BABOOM did not take the message: %s' % str(error)[:200]
-    return ('delivered', 'goose-acp', '') if answer.get('ok') else ('failed', 'goose-acp', str(answer.get('error')))
-
-
 def accept_turn(token, text, message_id):
-    """The app side of the turn door (nograph_server): token-checked, answered in the thread."""
+    """The app side of the turn door, which Workshop calls (workshop-apps.mjs): token-checked, answered in the thread."""
     import hmac
     if not _STATE.get('token') or not hmac.compare_digest(str(token or ''), _STATE['token']):
         return {'ok': False, 'error': 'BABOOM turn refused: wrong token.'}

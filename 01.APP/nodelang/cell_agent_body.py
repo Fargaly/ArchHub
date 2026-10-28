@@ -2258,7 +2258,7 @@ def _read_agent_session(
     return session
 
 
-def read_agent_session_links(
+def read_agent_workshops(
     snapshot: Snapshot, protocol: AgentBodyProtocol, session_root: str
 ) -> tuple[str, str, str]:
     """(body, subject, view session) one session is bound to, without re-validating it.

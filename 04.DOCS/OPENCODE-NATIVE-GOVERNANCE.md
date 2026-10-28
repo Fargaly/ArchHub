@@ -2,7 +2,7 @@
 
 Status: source candidate, synthetic checks only. Not active in OpenCode.
 
-The public `01.APP/nodelang/session_link/opencode-governance.mjs` plugin uses Node
+The public `01.APP/nodelang/workshop/opencode-governance.mjs` plugin uses Node
 child_process, never Bun.spawn. A trusted private loader supplies an absolute
 Python command and one private native-gate composition script. Public product
 modules do not import workspace governance or legacy source trees.
@@ -72,7 +72,7 @@ no pending tools. It renews while tools remain active. Known expiry or installed
 owner change uses the existing same-instance rebind with both observed owner
 fingerprints only without pending calls or release ambiguity.
 The server refuses this actor's active operations, all unreceipted active permits
-(including expired ones), attached Session Link channels or pending deliveries.
+(including expired ones), attached Workshop channels or pending deliveries.
 Expiry never proves that a write did not happen. Late settlement of an expired
 unreceipted permit remains an open reconciliation gap; custody is retained.
 Consumed/revoked permits retain their original evidence.
@@ -136,7 +136,7 @@ unrelated revisions. This fence is not a permit ledger or write authority.
    fixture before admitting writes; synthetic mapping is not byte proof.
 4. Replace the legacy loader only as one reviewed profile: public installed
    governance module, private composition, installed interpreter, and existing
-   public Session Link plugin. Preserve the old loader as exact rollback
+   public Workshop plugin. Preserve the old loader as exact rollback
    evidence outside the active plugin directories. Never load both profiles.
 5. OpenCode documentation guarantees startup discovery, not safe hot reload.
    Do not change live files or restart for this candidate. If supported reconnect

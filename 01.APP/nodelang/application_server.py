@@ -5549,11 +5549,11 @@ class NativeWorkDelivery:
             # definitive non-dispatch receipt. Started/uncertain/lost outcomes
             # retain the same idempotency identity and can never replay.
             for _ in range(32):
-                outcome=history.get_by_idempotency(space_root,'session-link:outcome:'+digest,principal=sender_root)
+                outcome=history.get_by_idempotency(space_root,'workshop:outcome:'+digest,principal=sender_root)
                 if not (outcome and outcome['author']==self._owner.universal_registry.authorization.subject_root
                     and outcome['category']==self._owner.universal_registry.workshop_category_roots['tool']
                     and contact_root in outcome['refs']
-                    and outcome['content'].startswith('Session Link did not relay this message to ')):
+                    and outcome['content'].startswith('Workshop did not relay this message to ')):
                     break
                 digest=hashlib.sha256((digest+outcome['id']).encode()).hexdigest()
             else:
@@ -5562,8 +5562,8 @@ class NativeWorkDelivery:
             self._ensure_worker()
             try:
                 self._append(space_root=space_root,reply_to=message_id,recipient_root=sender_root,
-                    key="session-link:decision:"+digest,
-                    content="Session Link started relaying this message to %s. Its reply or delivery outcome follows here." % label,
+                    key="workshop:decision:"+digest,
+                    content="Workshop started relaying this message to %s. Its reply or delivery outcome follows here." % label,
                     references=(contact_root,),require_new=True)
             except ValueError as exc:
                 if str(exc) not in {"idempotency conflict","message identity was removed by conversation retention"}:
@@ -5699,20 +5699,20 @@ class NativeWorkDelivery:
             if stored_reply and stored_reply['reply_to']==job['message_id']:
                 self._append(space_root=job['space'],reply_to=job['message_id'],recipient_root=job['sender'],
                     content='Agent replied in this Workshop; message '+reply['id']+'. Execution remains unverified.',
-                    key='session-link:outcome:'+job['digest'],references=(job['recipient'],))
+                    key='workshop:outcome:'+job['digest'],references=(job['recipient'],))
                 return
-            content = ("Session Link delivery of this message to %s is uncertain "
+            content = ("Workshop delivery of this message to %s is uncertain "
                        "(native_reply_without_workshop_receipt). The native text was not copied; "
                        "reconcile the original Workshop message before retrying." % label)
         elif status == "held":
-            from .session_link_transport import public_delivery_reason
+            from .workshop_transport import public_delivery_reason
             reported=public_delivery_reason(outcome.get('delivery_reason'))
             code=outcome.get('delivery_status')
             code=code if code in {'held','refused','rejected','denied','expired','dropped'} else 'held'
             content = ("The native recipient held or refused the message to %s (reported status: %s). %s The message is not resent automatically."
                 % (label,code,("Reported reason: "+reported) if reported else "No reason was provided."))
         elif status == "not_sent":
-            content = ("Session Link did not relay this message to %s (%s). Nothing was "
+            content = ("Workshop did not relay this message to %s (%s). Nothing was "
                        "requested of the recipient; the message stays in this conversation."
                        % (label, reason or "not sent"))
         elif status == "cancelled_wait":
@@ -5720,12 +5720,12 @@ class NativeWorkDelivery:
                        "arrived; nothing was cancelled at the recipient and it is not resent "
                        "automatically." % (label, reason or "wait stopped"))
         else:
-            content = ("Session Link delivery of this message to %s is uncertain (%s). It "
+            content = ("Workshop delivery of this message to %s is uncertain (%s). It "
                        "may have arrived; it is not resent automatically."
                        % (label, reason or status or "invalid transport result"))
         self._append(space_root=job["space"], reply_to=job["message_id"],
                      recipient_root=job["sender"], content=content,
-                     key="session-link:outcome:" + job["digest"],
+                     key="workshop:outcome:" + job["digest"],
                      references=(job["recipient"],))
 
 
@@ -5868,7 +5868,7 @@ class ApplicationServer(WorkspaceRootsOwner):
                  runtime_compliance_runner=None,
                  model_execution_broker=None,
                  project_work_execution_broker=None,
-                 session_link_transport=None,
+                 workshop_transport=None,
                  social_execution_host=None,
                  social_account_binding_verifier=None,
                  universal_journal_progress_handler=None):
@@ -6527,14 +6527,14 @@ class ApplicationServer(WorkspaceRootsOwner):
             content_path = self.universal_store.database_path
         self.conversation_content = ApplicationConversationContent(self, content_path)
         self._fresh_content_bootstrap = False
-        # The reused Session Link transport is optional; absent, sends are unchanged.
-        self.native_work_delivery = NativeWorkDelivery(self, session_link_transport)
+        # The reused Workshop transport is optional; absent, sends are unchanged.
+        self.native_work_delivery = NativeWorkDelivery(self, workshop_transport)
         from .app_agents import AgentsAPI
         from .settings_owner import SettingsOwner
-        self.app_agents = AgentsAPI(transport=session_link_transport, settings=SettingsOwner(
+        self.app_agents = AgentsAPI(transport=workshop_transport, settings=SettingsOwner(
             universal_store, runtime=self, authentication_context=universal_registry.authorization.subject_root))
         self._cloud_relay_enabled = bool(enable_cloud_relay)
-        self._cloud_relay_transport = session_link_transport
+        self._cloud_relay_transport = workshop_transport
         self._cloud_relay_appdata = None  # cloud_relay's canonical account locator; explicit fixtures may override.
         state_base = Path(
             os.environ.get('ARCHHUB_STATE_DIR', '')
@@ -8191,7 +8191,7 @@ class ApplicationServer(WorkspaceRootsOwner):
                         if binding.subject_root != owner.universal_registry.authorization.subject_root:
                             raise AuthorizationDenied('only this instance owner configures its assistants')
                         from .assistant_registration import register, preview_hooks, repair_hooks
-                        from .session_link_config import SessionLinkConfigRefused
+                        from .workshop_config import WorkshopConfigRefused
                         from .client_mcp_installation import RegistrationRefused
                         action = body.get('action')
                         try:
@@ -8207,7 +8207,7 @@ class ApplicationServer(WorkspaceRootsOwner):
                                 result = register(str(body['client']), consent=True)
                             else:
                                 raise InvalidCell('invalid assistant configuration action')
-                        except (SessionLinkConfigRefused, RegistrationRefused, OSError, ValueError):
+                        except (WorkshopConfigRefused, RegistrationRefused, OSError, ValueError):
                             raise InvalidCell('Assistant settings could not be updated. Review the current settings and try again.') from None
                         self._json(200, {'ok': True, 'result': result})
                         return
@@ -10624,7 +10624,7 @@ class ApplicationServer(WorkspaceRootsOwner):
             )
         self.thread = None
         from .workshop_mailbox import WorkshopInjection
-        self.workshop_injection = WorkshopInjection(self, session_link_transport)
+        self.workshop_injection = WorkshopInjection(self, workshop_transport)
         if enable_workshop_injection:
             self.workshop_injection.start()
         self._live_stop = threading.Event()

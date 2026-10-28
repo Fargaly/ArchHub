@@ -1,4 +1,4 @@
-"""Session Link's public Workshop mailbox, independent of the Qt window.
+"""Workshop's public Workshop mailbox, independent of the Qt window.
 
 Local stdio clients and the application use one standalone SQLite mailbox.
 This does not start a service, open a graph or grant Work.
@@ -23,7 +23,7 @@ from uuid import uuid4
 from .agent_declarations import SESSION_KEYS, _alive, _lineage, canonical_path, overlaps
 from .agent_runtime_registry import mailbox_label, observed_runtime_process
 from .conversation_history import ConversationHistoryStore, WORKSHOP_CURSOR_SCHEMA
-from .session_link_transport import public_delivery_reason
+from .workshop_transport import public_delivery_reason
 
 ROOM = "app:workshop"
 CATEGORY = ROOM + ":category:note"
@@ -499,7 +499,7 @@ class WorkshopInjection:
                         or recipient["session"] == "address:" + value["native_session_id"].casefold()), None)
                     if control and "attempt" not in events:
                         _delivery_receipt(history, message, recipient, "attempt",
-                            now=datetime.fromisoformat(control["created_at"]).timestamp(), via="session-link", status="caller-owned")
+                            now=datetime.fromisoformat(control["created_at"]).timestamp(), via="workshop", status="caller-owned")
                         events = delivery_events(history, message).get(recipient["session"], {})
                     if "answered" not in events:
                         replies = history._db.execute("SELECT * FROM messages WHERE conversation_id=? AND reply_to=? "
@@ -534,7 +534,7 @@ class WorkshopInjection:
                     cancel_event=self._stop, **({"model":control["model"]} if control and control.get("model") else {}))
                 with history._transaction(write=True):
                     _delivery_receipt(history, message, recipient, "initial-outcome", now=now,
-                        via="session-link", status=outcome.get("status", "uncertain"),
+                        via="workshop", status=outcome.get("status", "uncertain"),
                         delivery_reason=public_delivery_reason(outcome.get("delivery_reason", "")),
                         dispatch_attempted=outcome.get("dispatch_attempted") is True)
                 if not direct:
@@ -848,7 +848,7 @@ def _resolve_native_recipient(history, result, transport):
 def _local_transport(env=None):
     import shutil
     import sys
-    from .session_link_transport import SessionLinkTransport
+    from .workshop_transport import WorkshopTransport
     node = (Path(sys._MEIPASS) / "runtime" / "node.exe" if getattr(sys, "frozen", False)
         else shutil.which("node"))
     env = dict(env or {})
@@ -856,9 +856,9 @@ def _local_transport(env=None):
     # app profile names it explicitly so discovery reads where the agents really run.
     if os.environ.get("ARCHHUB_AGENT_PROFILE"):
         env.update(USERPROFILE=os.environ["ARCHHUB_AGENT_PROFILE"], HOME=os.environ["ARCHHUB_AGENT_PROFILE"])
-    state = Path(os.environ.get("SESSION_LINK_STATE_DIR") or (_profile_root() / "session-link"))
+    state = Path(os.environ.get("WORKSHOP_STATE_DIR") or (_profile_root() / "workshop"))
     state.mkdir(parents=True, exist_ok=True)
-    return SessionLinkTransport(node_executable=node, state_dir=state, env=env)
+    return WorkshopTransport(node_executable=node, state_dir=state, env=env)
 
 
 def _validate_send(body):
@@ -871,7 +871,7 @@ def _validate_send(body):
                 or set(control) - {"app", "id", "model"}
                 or control["app"] not in ("codex", "opencode", "antigravity", "antigravity-ide")
                 or control["id"] != target):
-            raise ValueError("Native control must name its exact Session Link target")
+            raise ValueError("Native control must name its exact Workshop target")
         if "model" in control:
             model = control["model"]
             if (control["app"] != "opencode" or type(model) is not dict

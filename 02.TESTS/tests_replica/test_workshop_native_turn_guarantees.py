@@ -62,7 +62,7 @@ def isolated(tmp_path, monkeypatch):
     for name in ("appdata", "localappdata", "home", "claude-config", "gate"):
         (tmp_path / name).mkdir()
     for key in list(os.environ):
-        if key.upper().startswith(("ARCHHUB_", "SESSION_LINK", "CODEX", "CLAUDE_CODE", "ANTHROPIC_")):
+        if key.upper().startswith(("ARCHHUB_", "WORKSHOP", "CODEX", "CLAUDE_CODE", "ANTHROPIC_")):
             monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "localappdata"))

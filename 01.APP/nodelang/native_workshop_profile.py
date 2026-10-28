@@ -235,7 +235,7 @@ def prepare_claude_workshop_profile(*, install_root, state_root, python_executab
                 "ARCHHUB_EXTERNAL_SESSION_ID", "ARCHHUB_COORDINATION_VENDOR",
                 "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID", "CODEX_THREAD_ID",
                 "GEMINI_SESSION_ID", "PYTHONPATH", "PYTHONHOME",
-                "SESSION_LINK_REQUIRED_CONNECTIONS"):
+                "WORKSHOP_REQUIRED_CONNECTIONS"):
         inherited.pop(key, None)
     inherited["PYTHONDONTWRITEBYTECODE"] = "1"
     inherited["CLAUDE_CODE_DISABLE_CLAUDE_MDS"] = "1"

@@ -23,7 +23,7 @@ def test_two_agents_overlap_founder_inbox_and_live_app(tmp_path, monkeypatch):
     from nodelang.cell_secret_keys import WindowsDpapiSigningKeyProvider
     from nodelang.agent_declarations import declarations
     for name in tuple(os.environ):
-        if name.startswith(("ARCHHUB_", "CODEX_", "CLAUDE_", "SESSION_LINK_", "OPENCODE_", "GEMINI_")):
+        if name.startswith(("ARCHHUB_", "CODEX_", "CLAUDE_", "WORKSHOP_", "OPENCODE_", "GEMINI_")):
             monkeypatch.delenv(name)
     for key in ("LOCALAPPDATA", "APPDATA", "TEMP", "TMP", "HOME", "USERPROFILE"):
         monkeypatch.setenv(key, str(tmp_path))
@@ -84,7 +84,7 @@ def test_two_agents_overlap_founder_inbox_and_live_app(tmp_path, monkeypatch):
             for native in ({"app":"opencode","id":"ses_declare","runtimeId":two.process.pid},
                            {"app":"codex","id":"declare-codex"}):
                 receipt_process = await asyncio.create_subprocess_exec("node", str(Path(__file__).with_name("agentdeclare_task_receipt.mjs")),
-                    env={**os.environ,"ARCHHUB_PYTHON":sys.executable,"SESSION_LINK_STATE_DIR":str(tmp_path/"native-control")}, stdin=asyncio.subprocess.PIPE,
+                    env={**os.environ,"ARCHHUB_PYTHON":sys.executable,"WORKSHOP_STATE_DIR":str(tmp_path/"native-control")}, stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                     creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
                 try:

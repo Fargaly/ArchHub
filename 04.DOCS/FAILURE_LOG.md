@@ -225,7 +225,7 @@ Status legend:
 
 ### AGENTLINK - qualification and one-channel correction
 - Source drift during a real qualification was refused; that receipt is not acceptance. Final source must remain stable throughout the real-client run.
-- Retired peer-chat expectations in existing Session Link courts were replaced with Workshop identity, pointer-only native control, explicit uncertainty and real Unicode/stdin mailbox readback. Behavior-test cases were retained. The real stdin court found a bridge/ask circular import; one shared native mailbox client removed that cycle.
+- Retired peer-chat expectations in existing Workshop courts were replaced with Workshop identity, pointer-only native control, explicit uncertainty and real Unicode/stdin mailbox readback. Behavior-test cases were retained. The real stdin court found a bridge/ask circular import; one shared native mailbox client removed that cycle.
 - A broader legacy Node invocation inherited system temp. The exact owned test runner was stopped; subsequent Node and Python runners redirect all profile/temp state into one fresh lane fixture. No shared process was stopped or founder data copied.
 - Automatic approval review rejected deletion of four completed lane-local fixture directories with "blocked by policy". They were retained without retry through another tool. Final disk accounting includes them.
 - Independent review found explicit provider substitution, Work/message identity mismatch, private native reply copying, definitive non-dispatch retry suppression, silent bounded-thread truncation, and self-follow-up mistaken for a recipient reply. The final candidate corrects those paths and retains uncertainty for unsupported native identity.

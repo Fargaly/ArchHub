@@ -8,7 +8,7 @@ import json
 
 from tests_replica.test_native_stop_followup import ASK, _at, _prompt, _stop
 
-BRIDGE = "opencode-session-link-74588"
+BRIDGE = "opencode-workshop-74588"
 TAKEOVER = "Codex Archhub work takeover"
 
 

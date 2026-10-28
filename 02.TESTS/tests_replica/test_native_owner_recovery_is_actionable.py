@@ -11,7 +11,7 @@ still had no way out:
 2. an attempt that never left the process (it read no owner, so it has no
    fingerprint to recover with);
 3. a restarted process holding the exact actor (--expected-actor) on a runtime
-   with no Session Link configured, which could never activate, and whose
+   with no Workshop configured, which could never activate, and whose
    refused-before-enrollment connection could never be reopened.
 
 Recovery keeps the exact actor and every unresolved effect. It never reports
@@ -309,7 +309,7 @@ def test_an_attempt_that_never_left_the_process_is_named_and_settled(world, monk
     assert world.bind_calls == [(EXTERNAL, None), (EXTERNAL, actor)]
 
 
-def test_a_restarted_process_keeps_the_exact_actor_without_session_link(world):
+def test_a_restarted_process_keeps_the_exact_actor_without_workshop(world):
     owner, control = world.owner(EXTERNAL)
     actor = owner.owner_status()["agent_session"]
     world.send(actor, "kept across the handoff", "court-h1")

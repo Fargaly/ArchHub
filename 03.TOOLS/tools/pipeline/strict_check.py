@@ -573,6 +573,20 @@ def renamed_sources(root, revision, selected, candidate, compiler_command=None, 
         prior = predecessors.get(identity)
         if path in selected and prior in selected and prior != path:
             renamed[path] = prior
+    # A moved file (git's own rename detection, same content give or take its edits) keeps its
+    # predecessor's baseline: only its changed lines are new, exactly as for an identity rename.
+    fields = git(root, "diff", "-M50%", "--name-status", "-z", revision, "HEAD").decode("utf-8").split("\0")
+    taken, index = set(renamed.values()), 0
+    while index < len(fields) and fields[index]:
+        status = fields[index]
+        width = 2 if status[:1] in ("R", "C") else 1          # rename/copy records carry two paths
+        if status[:1] == "R" and index + 2 < len(fields):
+            prior, path = fields[index + 1], fields[index + 2]
+            if (path in selected and prior in selected and path not in renamed and prior not in taken
+                    and candidate.get(path, "") is not None and candidate.get(prior, "") is None):
+                renamed[path] = prior
+                taken.add(prior)
+        index += 1 + width
     return renamed
 
 

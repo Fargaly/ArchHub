@@ -22,10 +22,10 @@ import json
 import re
 
 
-RELAY_DECISION = "session-link:decision:"
-RELAY_OUTCOME = "session-link:outcome:"
+RELAY_DECISION = "workshop:decision:"
+RELAY_OUTCOME = "workshop:outcome:"
 BROADCAST = "workshop-broadcast:"
-RELAYED_REPLY = "Session Link relayed reply from "
+RELAYED_REPLY = "Workshop relayed reply from "
 STATES = ("stored", "started", "replied", "unavailable", "uncertain")
 _ORDER = ("uncertain", "started", "unavailable", "replied")
 
@@ -39,7 +39,7 @@ def project_injection_delivery(events, *, addressed=False):
         latest = next(reversed(records.values()))
         state = "answered" if "answered" in records else "delivered" if "delivered" in records else "pending"
         delivery.append({"recipient":recipient, "label":latest["label"], "state":state,
-            "via":"session-link" if any(row.get("via") == "session-link" for row in records.values()) else "mcp",
+            "via":"workshop" if any(row.get("via") == "workshop" for row in records.values()) else "mcp",
             "reminded":"reminder" in records, "escalated":"escalated" in records,
             **({"reply_message_id":records["answered"]["reply_message_id"]} if "answered" in records else {})})
     if any(not row["recipient"].startswith("address:") for row in delivery):
@@ -50,7 +50,7 @@ def project_injection_delivery(events, *, addressed=False):
     return {"state":state, "delivery":delivery}
 _REASON = re.compile(r"\(([^()]{1,200})\)\. ")
 # The relay's own header names the recipient as it was bound (application_server _settle).
-_RELAY_LABEL = re.compile(r"\ASession Link relayed reply from (.{1,200}) \((?:claude|codex|opencode|antigravity|antigravity-ide) "
+_RELAY_LABEL = re.compile(r"\AWorkshop relayed reply from (.{1,200}) \((?:claude|codex|opencode|antigravity|antigravity-ide) "
                           r"native session\)\. The application relays")
 
 
@@ -94,10 +94,10 @@ def _reason(content):
 
 
 def _relay_decision(content):
-    if content.startswith("Session Link did not relay"):
+    if content.startswith("Workshop did not relay"):
         return "unavailable", _reason(content)
-    if (content.startswith("Session Link started relaying this message to")
-            or (content.startswith("Session Link relay of this message to") and " started. " in content)):
+    if (content.startswith("Workshop started relaying this message to")
+            or (content.startswith("Workshop relay of this message to") and " started. " in content)):
         return "started", None
     return "uncertain", "unrecognized relay decision"
 
@@ -110,7 +110,7 @@ def _relay_outcome(content):
     if content.startswith("The native recipient held or refused"):
         found = re.search(r"reported status: ([a-z]+)\)", content)
         return "unavailable", found.group(1) if found else "held"
-    if content.startswith("Session Link did not relay"):
+    if content.startswith("Workshop did not relay"):
         return "unavailable", _reason(content)
     if content.startswith("Stopped waiting for a reply"):
         return "uncertain", "wait stopped"
@@ -193,7 +193,7 @@ def project_delivery(messages, replies, *, relay_pending=frozenset(), note_categ
             recipient = entry["recipient"]
             if "outcome" in entry:
                 state, reason, child = entry["outcome"]
-                row = {"recipient": recipient, "state": state, "via": "session-link"}
+                row = {"recipient": recipient, "state": state, "via": "workshop"}
                 if state == "replied" and child["id"] in relayed:
                     row["reply_message_id"] = child["id"]
                 elif state == "replied" and child["content"].startswith("Agent replied in this Workshop; message "):
@@ -204,7 +204,7 @@ def project_delivery(messages, replies, *, relay_pending=frozenset(), note_categ
                 state, reason, _child = entry["decision"]
                 if state == "started" and digest not in relay_pending:
                     state, reason = "uncertain", "dispatched without a recorded outcome"
-                row = {"recipient": recipient, "state": state, "via": "session-link"}
+                row = {"recipient": recipient, "state": state, "via": "workshop"}
             else:
                 continue
             if reason:

@@ -113,6 +113,39 @@ def _checked_router_settings(values):
     return values
 
 
+class AccountFiles:
+    """NOGRAPH: the account's local preferences in one plain owner file instead of graph cells."""
+
+    def __init__(self, path):
+        self.path = Path(path)
+
+    def read(self, root):
+        try:
+            return json.loads(self.path.read_text(encoding='utf-8')).get(root, {})
+        except FileNotFoundError:
+            return {}
+
+    def write(self, root, values):
+        import tempfile
+        try:
+            data = json.loads(self.path.read_text(encoding='utf-8'))
+        except FileNotFoundError:
+            data = {}
+        data[root] = values
+        encoded = json.dumps(data, ensure_ascii=False, allow_nan=False, indent=1)
+        if len(encoded.encode('utf-8')) > 65536:
+            raise InvalidCell('Settings exceed 64 KiB. Shorten workspace rules and retry.')
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(dir=self.path.parent, suffix='.tmp')
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+                stream.write(encoded)
+            os.replace(temporary, self.path)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+
+
 class CloudRouteUnavailable(InvalidCell):
     """The pinned cloud does not serve a requested feature."""
 
@@ -153,16 +186,23 @@ class SettingsOwner:
         me = self.cloud('GET', '/v1/me')
         if not me.get('email') or not me.get('user_id'):
             raise InvalidCell('Sign in with your browser, then retry.')
+        if isinstance(self.store, AccountFiles):
+            return me, 'account:' + me['user_id']   # the cloud account is the identity; no graph row
         ensure_accounts(self.store, founder_email=None)
         root, _email, _tier = upsert_account(self.store, me['email'])
         return me, root
 
     def _preferences(self, root):
+        if isinstance(self.store, AccountFiles):
+            return self.store.read(root)
         held = self.store.snapshot().cells.get(root + ':settings')
         return json.loads(bytes(held.atom)) if held else {}
 
     def _save(self, root, values):
         values = {**self._preferences(root), **values}
+        if isinstance(self.store, AccountFiles):
+            self.store.write(root, values)
+            return values
         snapshot = self.store.snapshot()
         cell = Cell(root + ':settings', NULL_CELL_ID, NULL_CELL_ID,
                     json.dumps(values, ensure_ascii=False, allow_nan=False).encode('utf-8'))
@@ -675,6 +715,10 @@ class SettingsOwner:
 
     def checkDependencies(self):
         return {'dependencies': self.dependencies.check()}
+
+    ACCOUNT = ('read', 'updateProfile', 'invitePerson', 'selectFirm', 'setTeamAccess', 'setBilling', 'refreshBilling',
+               'prepareCheckout', 'completeCheckout', 'retryPayment', 'downgradeBilling', 'acceptOfficeInvitation',
+               'declineOfficeInvitation', 'manageDependency', 'ensureDependency', 'checkDependencies')
 
     def manageDependency(self, id, action):
         return self.dependencies.manage(id, action)

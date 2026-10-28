@@ -144,3 +144,25 @@ def test_agent_canvas_tools_build_run_and_refuse_cycles(profile):
     ran = tool('canvas.run', path=path)
     assert all(n['status'] == 'Done' for n in ran['nodes']) and ran['last_edits'][-1]['op'] == 'run'
     assert tool('library.search', query='revit')['count'] >= 1
+
+
+def test_skill_has_typed_sockets_from_its_inner_workflow(profile):
+    from nodelang.session_files import catalogue, new_document, run_document, skills_directory, write_document
+    items = {row['id']: row for row in catalogue()}
+    skill = new_document('Count items')
+    skill['id'] = 'count_items'
+    skill['nodes'] = [
+        {'id': 'items', 'item': 'param.value', 'type': 'param.value', 'title': 'Items', 'params': {'type': 'list', 'value': []}, 'position': {'x': 0, 'y': 0}},
+        {'id': 'count', 'item': 's_count', 'type': items['s_count']['engine'], 'title': 'Count', 'params': copy.deepcopy(items['s_count']['params']), 'position': {'x': 300, 'y': 0}}]
+    skill['wires'] = [{'id': 'w', 'from': {'node': 'items', 'socket': 'value'}, 'to': {'node': 'count', 'socket': 'items'}}]
+    write_document(str(skills_directory() / 'count_items.archhub'), skill)
+    entry = {row['id']: row for row in catalogue()}['skill:count_items']
+    assert entry['ports']['target'] == [{'id': 'in:items', 'type': 'list', 'label': 'Items'}]
+    assert {'id': 'out:count:count', 'type': 'number', 'label': 'Count · count'} in entry['ports']['source']
+    outer = new_document('Uses the skill')
+    outer['nodes'] = [
+        {'id': 'list', 'item': 'n_list', 'type': items['n_list']['engine'], 'title': 'List', 'params': {**copy.deepcopy(items['n_list']['params']), 'value': '[4, 5, 6, 7]'}, 'position': {'x': 0, 'y': 0}},
+        {'id': 'skill', 'item': 'skill:count_items', 'type': 'skill', 'title': 'Count items', 'params': {'skill': 'count_items'}, 'position': {'x': 300, 'y': 0}}]
+    outer['wires'] = [{'id': 'a', 'from': {'node': 'list', 'socket': 'value'}, 'to': {'node': 'skill', 'socket': 'in:items'}}]
+    ran = run_document(outer)
+    assert ran['succeeded'] and ran['results']['skill']['output']['out:count:count'] == 4

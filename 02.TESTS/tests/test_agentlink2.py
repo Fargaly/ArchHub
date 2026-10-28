@@ -10,7 +10,7 @@ from mcp.client.stdio import stdio_client
 
 def test_fresh_process_has_send_read_without_binding(tmp_path):
     async def court():
-        env = {k: v for k, v in os.environ.items() if not k.startswith(("ARCHHUB_", "CODEX_", "CLAUDE_", "SESSION_LINK_", "OPENCODE_", "GEMINI_"))}
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("ARCHHUB_", "CODEX_", "CLAUDE_", "WORKSHOP_", "OPENCODE_", "GEMINI_"))}
         for key in ("LOCALAPPDATA", "APPDATA", "TEMP", "TMP", "HOME", "USERPROFILE"):
             env[key] = str(tmp_path)
         env["ARCHHUB_NATIVE_MCP_LAUNCHER"] = "1"
@@ -52,7 +52,7 @@ def test_two_process_exchange_public_workshop_and_sender_integrity(tmp_path, mon
             from agentlink2_client import start_agent
             peers = []
             for _ in range(2):
-                env = {k: v for k, v in os.environ.items() if not k.startswith(("ARCHHUB_", "CODEX_", "CLAUDE_", "SESSION_LINK_", "OPENCODE_", "GEMINI_"))}
+                env = {k: v for k, v in os.environ.items() if not k.startswith(("ARCHHUB_", "CODEX_", "CLAUDE_", "WORKSHOP_", "OPENCODE_", "GEMINI_"))}
                 peers.append(await stack.enter_async_context(start_agent(env)))
             assert peers[0].process.pid != peers[1].process.pid
             async def call(peer, name, arguments):

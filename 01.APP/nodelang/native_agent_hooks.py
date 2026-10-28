@@ -31,7 +31,7 @@ _INTRO = (
     "inbox. For shared agent messages use the connector's read(since) and send(to, text). "
     "At start call declare(task, paths, status, request_id), then update it when scope/status changes. "
     "Coordinate overlaps in that mailbox; send every new finding, proposal or founder decision to to='founder'. "
-    "Workshop is the only agent channel; BOARD files and Session Link chatter are retired after installation. "
+    "Workshop is the only agent channel; BOARD files and Workshop chatter are retired after installation. "
     "Current Work includes blocked and awaiting-review assignments. No pending "
     "assignment is not completion proof. Use native.work_assignment for the exact "
     "assignment, scope and criteria before acting; this context grants no authority. "

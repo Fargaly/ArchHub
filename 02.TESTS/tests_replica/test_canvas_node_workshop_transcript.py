@@ -63,7 +63,7 @@ def test_a_live_node_names_its_conversation_and_its_transcript_reads_render_read
     assert any('PROPOSE a workflow' in row['text'] for row in mine)
     replies = [row for row in read['rows'] if row['kind'] == 'reply']
     assert replies and all(row['who'] == OPENCODE['title'] and not row['is_me'] for row in replies)
-    assert all('Session Link relayed reply' not in row['text'] for row in replies), 'the agent text, not the relay header'
+    assert all('Workshop relayed reply' not in row['text'] for row in replies), 'the agent text, not the relay header'
     assert any('"actions"' in row['text'] for row in replies)
     times = [row['time'] for row in read['rows']]
     assert times == sorted(times), 'newest last'

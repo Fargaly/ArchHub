@@ -16,7 +16,7 @@ def main():
  profile=out.parent/'FIXTURE';profile.mkdir(exist_ok=True)
  browsers=os.environ.get('PLAYWRIGHT_BROWSERS_PATH',str(Path(os.environ['LOCALAPPDATA'])/'ms-playwright'))
  for name in tuple(os.environ):
-  if name.startswith(('ARCHHUB_','CODEX_','CLAUDE_','SESSION_LINK_','OPENCODE_','GEMINI_')):os.environ.pop(name)
+  if name.startswith(('ARCHHUB_','CODEX_','CLAUDE_','WORKSHOP_','OPENCODE_','GEMINI_')):os.environ.pop(name)
  for name in ('LOCALAPPDATA','APPDATA','TEMP','TMP','USERPROFILE','HOME'):os.environ[name]=str(profile)
  os.environ['PLAYWRIGHT_BROWSERS_PATH']=browsers
  os.environ['PYTHONDONTWRITEBYTECODE']='1'

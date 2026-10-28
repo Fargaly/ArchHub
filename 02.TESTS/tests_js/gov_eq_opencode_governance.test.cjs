@@ -6,7 +6,7 @@ const { pathToFileURL } = require('node:url');
 const root = path.resolve(__dirname, '..', '..');
 
 test('gov eq unmapped OpenCode tools pass through the shared governance gate', async () => {
-  const moduleUrl = pathToFileURL(path.join(root, '01.APP/nodelang', 'session_link', 'opencode-governance.mjs')).href;
+  const moduleUrl = pathToFileURL(path.join(root, '01.APP/nodelang', 'workshop', 'opencode-governance.mjs')).href;
   const { createOpenCodeGovernance } = await import(moduleUrl);
   const events = [];
   const hooks = await createOpenCodeGovernance({
@@ -30,7 +30,7 @@ test('gov eq unmapped OpenCode tools pass through the shared governance gate', a
 });
 
 test('gov eq one unclear shell outcome never refuses every later OpenCode tool', async () => {
-  const moduleUrl = pathToFileURL(path.join(root, '01.APP/nodelang', 'session_link', 'opencode-governance.mjs')).href;
+  const moduleUrl = pathToFileURL(path.join(root, '01.APP/nodelang', 'workshop', 'opencode-governance.mjs')).href;
   const { createOpenCodeGovernance } = await import(moduleUrl);
   let calls = 0;
   const hooks = await createOpenCodeGovernance({
@@ -51,7 +51,7 @@ test('gov eq one unclear shell outcome never refuses every later OpenCode tool',
 });
 
 test('next OpenCode tool joins the exact in-flight receipt without replay', async () => {
-  const { createOpenCodeGovernance } = await import(pathToFileURL(path.join(root, '01.APP/nodelang/session_link/opencode-governance.mjs')).href);
+  const { createOpenCodeGovernance } = await import(pathToFileURL(path.join(root, '01.APP/nodelang/workshop/opencode-governance.mjs')).href);
   let settle; const events = [];
   const receipt = new Promise(resolve => { settle = resolve; });
   const hooks = await createOpenCodeGovernance({
@@ -80,7 +80,7 @@ test('next OpenCode tool joins the exact in-flight receipt without replay', asyn
 });
 
 test('a denied in-flight receipt retains custody and refuses continuation', async () => {
-  const { createOpenCodeGovernance } = await import(pathToFileURL(path.join(root, '01.APP/nodelang/session_link/opencode-governance.mjs')).href);
+  const { createOpenCodeGovernance } = await import(pathToFileURL(path.join(root, '01.APP/nodelang/workshop/opencode-governance.mjs')).href);
   let settle; let admissions = 0;
   const receipt = new Promise(resolve => { settle = resolve; });
   const hooks = await createOpenCodeGovernance({
@@ -99,7 +99,7 @@ test('a denied in-flight receipt retains custody and refuses continuation', asyn
 });
 
 test('write joins both in-flight receipts after concurrent reads', async () => {
-  const { createOpenCodeGovernance } = await import(pathToFileURL(path.join(root, '01.APP/nodelang/session_link/opencode-governance.mjs')).href);
+  const { createOpenCodeGovernance } = await import(pathToFileURL(path.join(root, '01.APP/nodelang/workshop/opencode-governance.mjs')).href);
   const resolvers = new Map(), receipts = new Map();
   for (const id of ['read-a', 'read-b']) receipts.set(id, new Promise(resolve => resolvers.set(id, resolve)));
   const hooks = await createOpenCodeGovernance({ gateRunner: async event => event.hook_event_name === 'PostToolUse' && receipts.has(event.tool_use_id) ? receipts.get(event.tool_use_id) : { allow: true } })({ directory: root, client: {} });
@@ -115,7 +115,7 @@ test('write joins both in-flight receipts after concurrent reads', async () => {
 });
 
 test('declare mailbox tool bypasses Work/file admission like send and read', async () => {
-  const { createOpenCodeGovernance } = await import(pathToFileURL(path.join(root, '01.APP/nodelang/session_link/opencode-governance.mjs')).href);
+  const { createOpenCodeGovernance } = await import(pathToFileURL(path.join(root, '01.APP/nodelang/workshop/opencode-governance.mjs')).href);
   const hooks = await createOpenCodeGovernance({
     gateRunner: async () => { throw new Error('Work owner must not be acquired for declare'); },
   })({ directory: root, client: {} });
@@ -129,7 +129,7 @@ test('declare mailbox tool bypasses Work/file admission like send and read', asy
 });
 
 test('failed MCP terminal event settles its exact call then permits file work', async () => {
- const {createOpenCodeGovernance}=await import(pathToFileURL(path.join(root,'01.APP/nodelang/session_link/opencode-governance.mjs')).href);
+ const {createOpenCodeGovernance}=await import(pathToFileURL(path.join(root,'01.APP/nodelang/workshop/opencode-governance.mjs')).href);
  const events=[];
  const hooks=await createOpenCodeGovernance({gateRunner:async event=>{events.push(event);return {allow:true};}})({directory:root,client:{}});
  const first={sessionID:'ses_failedmcp',callID:'failed-call',tool:'archhub-hosts_hosts_state'},args={};
@@ -142,7 +142,7 @@ test('failed MCP terminal event settles its exact call then permits file work', 
 });
 
 test('trusted outside directories keep other permission rules and the native gate', async () => {
- const {createOpenCodeGovernance}=await import(pathToFileURL(path.join(root,'01.APP/nodelang/session_link/opencode-governance.mjs')).href);
+ const {createOpenCodeGovernance}=await import(pathToFileURL(path.join(root,'01.APP/nodelang/workshop/opencode-governance.mjs')).href);
  const trusted=path.join(root,'registered-rules');let admissions=0;
  const hooks=await createOpenCodeGovernance({trustedDirectories:[trusted],gateRunner:async()=>{admissions++;return {allow:false};}})({directory:root,client:{}});
  const config={permission:{edit:'deny',external_directory:{'*':'ask','/outside/*':'deny'}}};await hooks.config(config);

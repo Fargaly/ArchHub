@@ -1377,21 +1377,31 @@ const sessionRequest=(action,extra={})=>request('/api/session-files',{action,...
 const PARAM_SOCKET={bool:'boolean',integer:'number',number:'number',text:'string',choice:'string',date:'string',file:'file',folder:'file',object:'any',list:'list',path:'file',color:'string',enum:'string',json:'any'};
 const PARAM_EDITOR={number:'number',integer:'number',bool:'boolean',color:'color',date:'date',list:'json',json:'json',object:'json'};
 const PARAM_TYPES=['bool','integer','number','text','choice','date','file','folder','object','list'];
+// node_datasets.py, mirrored for display only: a field node is its dataset's column as a typed list.
+const COLUMN_LABEL={number:'Number',integer:'Integer',text:'Text',bool:'Boolean',choice:'Choice',date:'Date',file:'File',folder:'Folder',object:'Object',list:'List'};
+function datasetPorts(node){
+ if(node.type==='data.field')return {source:[{id:'values',type:'list',label:(COLUMN_LABEL[node.params.type]||'Any')+'[]'}],target:[{id:'column',type:'list',label:'column'}]};
+ if(node.type!=='data.dataset')return null;
+ return {source:[{id:'records',type:'list',label:'Record[]'},...(node.paramDefs||[]).map(d=>({id:'field:'+d.id,type:'list',label:d.name+' \u00b7 '+(COLUMN_LABEL[d.type]||'Any')+'[]'}))],target:[]};
+}
 function fileNode(node){
  const item=state.libraryPorts.find(row=>row.id===node.item)||state.libraryPorts.find(row=>row.engine===node.type), base=item?.ports||node.ports||{source:[],target:[]};
  const defs=node.paramDefs||[], bind=node.type==='param.value'?node.bind:null, owner=bind&&sessionDocument.nodes.find(n=>n.id===bind.node);
- const ports={source:node.type==='param.value'?[{id:'value',type:PARAM_SOCKET[node.params.type]||'any'}]:base.source||[],
+ const ports=datasetPorts(node)||{source:node.type==='param.value'?[{id:'value',type:PARAM_SOCKET[node.params.type]||'any'}]:base.source||[],
   target:[...(base.target||[]),...defs.map(d=>({id:'param:'+d.id,type:PARAM_SOCKET[d.type]||'any',label:d.name}))]};
  const params=bind?{type:node.params.type,value:owner?.params[bind.param]}:{...node.params};
  const typeOf=key=>bind&&key==='value'?node.params.type:node.type==='param.value'&&key==='value'?node.params.type:defs.find(d=>d.id===key)?.type;
  const schema=Object.keys(params).map(key=>{const kind=typeOf(key),def=defs.find(d=>d.id===key)||(bind&&owner?.paramDefs?.find(d=>d.id===bind.param))||{};
   return {key,label:node.type==='param.value'&&key==='type'?'Type':def.name||key,type:PARAM_EDITOR[kind]||(kind?'text':typeof params[key]==='number'?'number':typeof params[key]==='boolean'?'boolean':'text'),
    dataType:kind||'',min:def.min,max:def.max,step:def.step??(kind==='integer'?1:undefined),unit:node.type==='param.value'&&key==='type'?'':def.unit||'',options:['enum','choice'].includes(kind)?def.options||[]:undefined,
-   editable:!(node.type==='param.value'&&key==='type'),userParam:!!defs.find(d=>d.id===key),promoted:defs.find(d=>d.id===key)?.promoted||null,
+   editable:!(['param.value','data.field'].includes(node.type)&&key==='type'),userParam:!!defs.find(d=>d.id===key),promoted:defs.find(d=>d.id===key)?.promoted||null,
    linkedTo:bind&&key==='value'?(owner?.title||'')+' \u00b7 '+(owner?.paramDefs?.find(d=>d.id===bind.param)?.name||bind.param):''};});
- return {id:node.id,title:node.title||item?.title||node.type,kind:node.children?'Group':item?.title||node.type,category:item?.cat||'Node',x:node.position.x,y:node.position.y,
+ const dataset=node.type==='data.dataset'?{fields:defs,records:node.records||[]}:null;
+ const feed=node.type==='data.field'&&sessionDocument.wires.find(w=>w.to.node===node.id&&w.to.socket==='column');
+ const column=node.type==='data.field'?{dataset:feed?sessionDocument.nodes.find(n=>n.id===feed.from.node)?.title||'':'',field:feed?feed.from.socket.replace(/^field:/,''):'',label:(COLUMN_LABEL[node.params.type]||'Any')+'[]'}:null;
+ return {id:node.id,type:node.type,dataset,column,title:node.title||item?.title||node.type,kind:node.children?'Group':item?.title||node.type,category:item?.cat||'Node',x:node.position.x,y:node.position.y,
   params,defaults:item?.params||{},parameterSchema:schema,paramDefs:defs,bind,
-  inputs:(ports.target||[]).map(p=>({...p,name:p.label||p.id,type:p.type==='unknown'?'any':p.type})),outputs:(ports.source||[]).map(p=>({...p,name:p.id,type:p.type==='unknown'?'any':p.type})),
+  inputs:(ports.target||[]).map(p=>({...p,name:p.label||p.id,type:p.type==='unknown'?'any':p.type})),outputs:(ports.source||[]).map(p=>({...p,name:p.label||p.id,type:p.type==='unknown'?'any':p.type})),
   children:node.children||[],members:[],parent:node.parent||null,frozen:!!node.frozen,pinned:!!node.pinned,portVisibility:node.portVisibility||{},parameterPresentation:node.parameterPresentation||{},
   output:node.result?.output||[],status:node.result?.status||'Idle',error:node.result?.error||''};
 }
@@ -1526,6 +1536,23 @@ api.addNodeParameter=async(id,input={})=>{
  await paramOp('add',[id,name,type,input.value??'',limits]);
  return state.graph.nodes.find(n=>n.id===id);
 };
+// +Field / +Record / cells: one implementation on the server (node_datasets.py); a cell edit re-solves downstream.
+async function datasetOp(op,args,options={}){
+ const result=await sessionRequest('dataset-op',{document:portableDocument(),op,args,options});
+ fileEdit(d=>{d.nodes=result.document.nodes;d.wires=result.document.wires;},result.changed);
+ return result;
+}
+api.addDatasetField=async(id,input={})=>{
+ const name=String(input.name||'').trim(),type=input.type||'number';
+ if(!name)throw Error('Name the field.');
+ const options=Object.fromEntries(Object.entries({unit:input.unit,options:input.options,min:input.min,max:input.max,step:input.step}).filter(([,v])=>v!==undefined&&v!==''));
+ await datasetOp('add-field',[id,name,type,input.value??''],options);
+ if(input.showAsNode){const held=sessionDocument.nodes.find(n=>n.id===id);await datasetOp('expose-field',[id,held.paramDefs[held.paramDefs.length-1].id]);}
+ return state.graph.nodes.find(n=>n.id===id);
+};
+api.addDatasetRecord=async(id,cells={})=>{await datasetOp('add-record',[id,cells]);return state.graph.nodes.find(n=>n.id===id);};
+api.setDatasetCell=async(id,record,field,value)=>{await datasetOp('set-cell',[id,record,field,value]);return state.graph.nodes.find(n=>n.id===id);};
+api.exposeDatasetField=async(id,field)=>{const result=await datasetOp('expose-field',[id,field]);return state.graph.nodes.find(n=>n.id===result.changed[0]);};
 api.promoteParam=async(id,key)=>{await paramOp('promote',[id,key]);return state.graph.nodes.find(n=>n.id===id);};
 api.demoteParam=async(id,key)=>{await paramOp('demote',[id,key]);return state.graph.nodes.find(n=>n.id===id);};
 api.parameterTypes=()=>[...PARAM_TYPES];

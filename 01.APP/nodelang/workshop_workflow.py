@@ -38,7 +38,7 @@ WORKSHOP_CATALOGUE = {
     },
     "w_agent": {
         "engine": "agent.session", "title": "Agent session",
-        "sub": "one live native session through Session Link",
+        "sub": "one live native session through Workshop",
         "clean_definition": "Agent session state",
         "clean_source": "agent_session_catalogue.install_agent_session_catalogue",
         "params": {"agent": "", "message": ""},

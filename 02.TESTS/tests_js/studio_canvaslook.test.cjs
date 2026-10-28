@@ -93,12 +93,12 @@ test('Library is present on open and a real drag adds the selected definition at
   assert.equal(await page.locator('[data-graph-node="added"]').count(),1);
   assert.equal(await page.getByRole('complementary',{name:'Library shelf'}).count(),1,'library stays available after a drop');
 });
-test('flat overlapping ordinary nodes retain the approved 224px anatomy and 2px clipped wires',async t=>{
+test('flat overlapping ordinary nodes retain the Ping rev1047 156px anatomy and 2px clipped wires',async t=>{
   const graph=fixture();graph.nodes=graph.nodes.filter(n=>!n.children.length).map(n=>({...n,parent:null}));
   const page=await mount(t,graph);await checkCards(page,12);
   const card=page.locator('[data-ds-node]').first();
-  assert.equal(await card.evaluate(el=>el.style.width),'224px');
-  assert.equal(await card.evaluate(el=>window.getComputedStyle(el).borderRadius),'6px');
+  assert.equal(await card.evaluate(el=>el.style.width),'156px');
+  assert.equal(await card.evaluate(el=>window.getComputedStyle(el).borderRadius),'8px');
   assert.equal(await page.locator('[data-stacked-edge]').count(),0);
   assert.equal(await page.locator('.node-properties').count(),0,'rejected node properties panel absent');
   assert.ok(await page.locator('svg [clip-path]').count()>0,'wires clip away from cards');

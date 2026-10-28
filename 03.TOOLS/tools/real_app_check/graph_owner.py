@@ -79,14 +79,14 @@ from nodelang.cell_secret_keys import WindowsDpapiSigningKeyProvider
 from nodelang.runtime_caller_capability import WindowsDpapiCallerKeyStore
 from nodelang.unified_authority_runtime import default_runtime_root
 from nodelang.application_machine_transport import default_runtime_descriptor_path
-from nodelang.session_link_config import app_state_dir
+from nodelang.workshop_config import app_state_dir
 from nodelang.assistant_registration import install_roots
 paths = {
     "authority_provider": WindowsDpapiSigningKeyProvider.default_path(),
     "caller_key_store": WindowsDpapiCallerKeyStore.default_path(),
     "runtime_root": default_runtime_root(),
     "runtime_descriptor": default_runtime_descriptor_path(),
-    "session_link_state": app_state_dir(),
+    "workshop_state": app_state_dir(),
     "assistant_state": install_roots()[1],
     "home": Path.home(),
 }

@@ -149,15 +149,16 @@ def catalogue():
     items.append({'id':'data.convert','cat':'shape','title':'Convert','sub':'Convert a wired value','engine':'data.convert','params':{'target_type':'text'},'ports':{'source':[{'id':'out','type':'any'}],'target':[{'id':'in','type':'any'}]}})
     from .canvas_documents import thing_items
     from .node_params import CATALOGUE_ITEM
+    from .node_datasets import CATALOGUE_ITEM as DATASET_ITEM, FIELD_ITEM
     items.extend(thing_items())
-    items.append(dict(CATALOGUE_ITEM))
+    items.extend(dict(item) for item in (CATALOGUE_ITEM, DATASET_ITEM, FIELD_ITEM))
     for path in sorted(skills_directory().glob('*.archhub')):
         try:
             skill = read_document(path)
         except (OSError, ValueError):
             continue
         items.append({'id':'skill:'+skill['id'],'cat':'skills','title':skill['title'],'sub':'Skill · %d nodes'%len(skill['nodes']),
-                      'engine':'skill','params':{'skill':skill['id']},'ports':{'source':[{'id':'out','type':'any'}],'target':[]}})
+                      'engine':'skill','params':{'skill':skill['id']},'ports':skill_ports(skill, items)})
     return items
 
 
@@ -168,18 +169,49 @@ def skills_directory():
     return path
 
 
-def run_skill(params, *, invoke, stopped, depth):
+def skill_ports(skill, items=()):
+    """A skill's sockets come from its inner workflow: each unbound Parameter node is a typed input
+    ('in:<node>'), each output of a node nothing inside reads is a typed output ('out:<node>:<socket>').
+    'out' (the last node's values) stays for skills placed before typed sockets existed."""
+    from .node_params import PARAM_ENGINE, ports as node_ports, socket_type
+    known = {item['id']: item for item in items}
+    read = {w['from']['node'] for w in skill['wires']}
+    target = [{'id': 'in:' + n['id'], 'type': socket_type(n['params'].get('type')), 'label': n.get('title') or 'Input'}
+              for n in skill['nodes'] if n['type'] == PARAM_ENGINE and not n.get('bind')]
+    source = [{'id': 'out', 'type': 'any', 'label': 'Result'}]
+    for n in skill['nodes']:
+        if n['id'] in read or n['type'] in (PARAM_ENGINE, 'note'):
+            continue
+        entry = known.get(n.get('item')) or next((i for i in known.values() if i['engine'] == n['type']), None) or {}
+        for port in node_ports(n, entry.get('ports') or {})['source']:
+            source.append({'id': 'out:%s:%s' % (n['id'], port['id']), 'type': port.get('type', 'any'),
+                           'label': '%s · %s' % (n.get('title') or n['type'], port.get('label') or port['id'])})
+    return {'source': source, 'target': target}
+
+
+def run_skill(params, *, invoke, stopped, depth, feeds=None):
     if depth > 8:
         raise ValueError('Skills nest at most 8 deep')
     name = str(params.get('skill',''))
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', name):
         raise ValueError('Skill id is invalid')
-    inner = run_document(read_document(skills_directory()/(name+'.archhub')), invoke=invoke, stopped=stopped, depth=depth+1)
+    from .node_params import PARAM_ENGINE, coerce
+    skill = read_document(skills_directory()/(name+'.archhub'))
+    inputs = {n['id']: n for n in skill['nodes'] if n['type'] == PARAM_ENGINE and not n.get('bind')}
+    for socket, value in (feeds or {}).items():
+        held = inputs.get(str(socket)[3:]) if str(socket).startswith('in:') else None
+        if held is None:
+            raise ValueError('This skill has no input %s' % socket)
+        held['params']['value'] = coerce(held['params'].get('type', 'json'), value)   # a wired value sets the inner Parameter
+    inner = run_document(skill, invoke=invoke, stopped=stopped, depth=depth+1)
     if not inner['succeeded']:
         raise ValueError('Skill failed: '+'; '.join(r.get('error','') for r in inner['results'].values() if r.get('error')))
-    # shortcut: a skill exposes one output (its last node's values); typed skill sockets come with a skill editor.
     last = inner['results'][inner['order'][-1]]['output'] if inner['order'] else {}
-    return {'out': last}, 'Skill ran %d nodes' % len(inner['order'])
+    produced = {'out': last}
+    for key, result in inner['results'].items():
+        for socket, value in (result.get('output') or {}).items():
+            produced['out:%s:%s' % (key, socket)] = value
+    return produced, 'Skill ran %d nodes' % len(inner['order'])
 
 
 def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, plan_only=False, cached=(), only=None):
@@ -229,7 +261,7 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
     for key in order:
         node = nodes[key]
         engine = node['type']
-        if engine not in PIPELINE_ENGINES and engine not in STEM_RUN_ENGINES and engine not in ('note', 'skill', PARAM_ENGINE) and engine not in THING_ENGINES:
+        if engine not in PIPELINE_ENGINES and engine not in STEM_RUN_ENGINES and engine not in ('note', 'skill', PARAM_ENGINE, 'data.dataset', 'data.field') and engine not in THING_ENGINES:
             raise ValueError('Missing engine: '+engine)
         entry = known.get(node.get('item')) or next((r for r in known.values() if r['engine'] == engine), None)
         if entry and entry['engine'] != engine:
@@ -283,10 +315,13 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
             if engine == PARAM_ENGINE:
                 value = bound_value(document, node)
                 produced, display = {'value': coerce(node['params'].get('type', 'json'), value)}, str(value)
+            elif engine in ('data.dataset', 'data.field'):
+                from .node_datasets import outputs as dataset_outputs
+                produced, display = dataset_outputs(node, feeds)
             elif engine in THING_ENGINES:
                 produced, display = run_thing(engine, params, feeds)
             elif engine == 'skill':
-                produced, display = run_skill(params, invoke=invoke, stopped=stopped, depth=depth)
+                produced, display = run_skill(params, invoke=invoke, stopped=stopped, depth=depth, feeds=feeds)
             elif engine == 'note':
                 produced, display = {}, node.get('title','Note')
             elif engine in STEM_RUN_ENGINES:
@@ -421,6 +456,19 @@ class SessionFiles:
                     changed = node_params.promote(document, owner['id'], owner['paramDefs'][-1]['id'])
             else:
                 changed = operation(document, *args)
+            return {'ok': True, 'document': validate(document), 'changed': changed}
+        if action == 'dataset-op':
+            # One implementation of fields, records and cells for the window and the agents (node_datasets.py).
+            from . import node_datasets
+            document = validate(body.get('document'))
+            operations = {'new': node_datasets.new_dataset, 'add-field': node_datasets.add_field,
+                          'add-record': node_datasets.add_record, 'set-cell': node_datasets.set_cell,
+                          'expose-field': node_datasets.expose_field}
+            operation = operations.get(body.get('op'))
+            if operation is None or not isinstance(body.get('args'), list):
+                raise ValueError('Dataset operation must be new, add-field, add-record, set-cell or expose-field')
+            args, options = body['args'], body.get('options') if isinstance(body.get('options'), dict) else {}
+            changed = operation(document, *args, **options)
             return {'ok': True, 'document': validate(document), 'changed': changed}
         if action == 'solve':
             from .canvas_documents import solve, write_through

@@ -102,7 +102,7 @@ def source_digest(root):
     source = Path(root) / "01.APP" if Path(root, "01.APP").is_dir() else Path(root)
     paths = [Path(__file__).resolve(), Path(__file__).with_name("agentlink_dependencies.cjs").resolve(),
              *Path(source, "nodelang").rglob("*.py"),
-             *Path(source, "nodelang/session_link").rglob("*.mjs")]
+             *Path(source, "nodelang/workshop").rglob("*.mjs")]
     digest = hashlib.sha256()
     for path in sorted(paths):
         digest.update(str(path.relative_to(root)).replace("\\", "/").encode())
@@ -185,7 +185,7 @@ def write_sequence(output):
 
 
 def _run(command, *, env, cwd, timeout=150, quota_log=None, quota_model=None):
-    from nodelang.session_link_transport import _OwnedProcessJob
+    from nodelang.workshop_transport import _OwnedProcessJob
     process = None
     job = None
     offset = quota_log.stat().st_size if quota_log is not None and quota_log.is_file() else 0
@@ -489,7 +489,7 @@ def _executable(candidate, fallback):
 def isolated_environment(profile):
     from tools.real_app_check.real_app_check import isolated_env
     env = isolated_env({key:value for key,value in os.environ.items() if not key.startswith(
-        ("CODEX_", "CLAUDE", "OPENCODE_", "SESSION_LINK_", "GEMINI_", "GOOSE_"))}, Path(profile))
+        ("CODEX_", "CLAUDE", "OPENCODE_", "WORKSHOP_", "GEMINI_", "GOOSE_"))}, Path(profile))
     for name in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):
         env[name] = str(profile)
     env.update(PYTHONUTF8="1", PYTHONDONTWRITEBYTECODE="1",
@@ -777,7 +777,7 @@ _RELEASE_FREE_MODELS = frozenset((*_FREE_FALLBACKS, *_GOOSE_FALLBACKS,
 
 def _goose_turn(executable, prompts, *, env, cwd, proof_factory, timeout=180):
     from nodelang.goose_adapter import AcpTransport, workshop_mcp_server, GooseRefused
-    from nodelang.session_link_transport import _OwnedProcessJob
+    from nodelang.workshop_transport import _OwnedProcessJob
     def attempt(selected, deadline, route):
         verify = proof_factory()
         mcp = workshop_mcp_server()
@@ -913,7 +913,7 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
     loader = profile / "governance.mjs"
     gate_receipts=profile/'native-receipts.jsonl'
     loader.write_text("import fs from 'node:fs';\nimport {createOpenCodeGovernance,createNativeGateRunner} from " +
-        json.dumps((source / "nodelang/session_link/opencode-governance.mjs").as_uri()) + ";\n" +
+        json.dumps((source / "nodelang/workshop/opencode-governance.mjs").as_uri()) + ";\n" +
         "const native=createNativeGateRunner("+json.dumps(sys.executable)+","+json.dumps(command([sys.executable, str(gate)])[1:])+");\n"+
         "const runner=async event=>{const result=await native(event);fs.appendFileSync("+json.dumps(str(gate_receipts))+
         ",JSON.stringify({call:event.tool_use_id,tool:event.tool_name,phase:event.hook_event_name,status:event.tool_response?.status,allow:result.allow})+'\\n');return result;};\n"+
@@ -980,7 +980,7 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
             server = subprocess.Popen([oc, "serve", "--hostname", "127.0.0.1", "--port", str(port)],
                 cwd=fixture, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            from nodelang.session_link_transport import _OwnedProcessJob
+            from nodelang.workshop_transport import _OwnedProcessJob
             server_job = _OwnedProcessJob(server)
             deadline = time.monotonic() + startup_wait
             while time.monotonic() < deadline:

@@ -16,7 +16,7 @@ and the 64 KiB input bound remain on the loopback HTTP boundary.
 Historical signed-authority verification remains an explicit migration/audit API;
 normal startup does not bind it. Closing the desktop drains admitted coordination
 requests before closing the graph; an unsettled request keeps its owner open.
-The existing stdio/Session Link mailbox call uses this surface while it is
+The existing stdio/Workshop mailbox call uses this surface while it is
 running. Only a refused TCP connection falls back to the existing closed-app
 profile mailbox; HTTP refusals, timeouts and uncertain sends are never replayed.
 The desktop observes the actual TCP client process and admits its own OS user,
@@ -46,7 +46,7 @@ Workshop shows Who is doing what, exact paths/status, and field sockets. Founder
 
 Stop/commit reminders are advisory. Private conversation contents and client data keep their existing audience; built-in agent notices carry source references rather than copying those replies into the public room. An addressed note is a recorded message, not proof that its recipient has executed a task.
 
-Addressed public Workshop notes now use the existing Session Link native adapters
+Addressed public Workshop notes now use the existing Workshop native adapters
 for Claude, Codex and OpenCode injection. The desktop owns this delivery lifetime;
 no recipient polling, replacement agent session or second message store is used.
 The native envelope contains the public note and its original message ID; long
@@ -73,7 +73,7 @@ that follow-up is injected but does not recursively escalate. Reopening reconstr
 attempts from receipts. Shutdown joins this owner's worker before closing content.
 Founder-only notes are not agent watchdog jobs.
 
-Session Link `ask` records its caller-owned native control in an ordinary
+Workshop `ask` records its caller-owned native control in an ordinary
 delivery receipt before dispatch. This prevents a duplicate application wakeup,
 keeps Antigravity and closed-app native control available, and preserves an
 explicit OpenCode model on the application's single reminder. `ask` no longer
@@ -89,7 +89,7 @@ or answered from those receipts; native submission never becomes delivered merel
 because its socket write succeeded. Older pages use the same history, and graph /
 account switches clear room data and discard stale pagination responses.
 
-At installation, the existing governance owner archives BOARD.md into its digest and retires its dispatch writers. Session Link's public chat commands already forward to this same mailbox in this patch; old bridge creation commands do not launch peer-chat pipes. Native task execution stays an application-owned action adapter, carrying a mailbox pointer and receiving its result through the same mailbox, not another reply pipe.
+At installation, the existing governance owner archives BOARD.md into its digest and retires its dispatch writers. Workshop's public chat commands already forward to this same mailbox in this patch; old bridge creation commands do not launch peer-chat pipes. Native task execution stays an application-owned action adapter, carrying a mailbox pointer and receiving its result through the same mailbox, not another reply pipe.
 
 This lane does not install, touch live profiles, or claim installed activation. Backend release acceptance uses real isolated OpenCode and Goose MCP clients plus the HTTP/Work owner. The design owner and integration owner retain browser/plate verification and the installed cutover check.
 

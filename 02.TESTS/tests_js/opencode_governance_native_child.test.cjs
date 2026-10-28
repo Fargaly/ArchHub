@@ -6,7 +6,7 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
 const root = path.resolve(__dirname, '..', '..');
-const moduleUrl = pathToFileURL(path.join(root, '01.APP/nodelang', 'session_link', 'opencode-governance.mjs')).href;
+const moduleUrl = pathToFileURL(path.join(root, '01.APP/nodelang', 'workshop', 'opencode-governance.mjs')).href;
 
 const gateSource = `
 const fs=require('node:fs');

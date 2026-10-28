@@ -696,7 +696,7 @@ def test_board_activity_does_not_starve_delivery_transport(tmp_path, monkeypatch
     import shutil
     from nodelang.application_server import NativeWorkDelivery
     from nodelang.cloud_relay import RemoteSessionCaller
-    from nodelang.session_link_transport import SessionLinkTransport
+    from nodelang.workshop_transport import WorkshopTransport
 
     _root, _home, _file, api, _options = setup(tmp_path, monkeypatch)
     assets = tmp_path / 'ASSETS'
@@ -707,7 +707,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 const input=readline.createInterface({input:process.stdin,crlfDelay:Infinity});
 input.on('line', async line=>{
- const r=JSON.parse(line), state=process.env.SESSION_LINK_STATE_DIR;
+ const r=JSON.parse(line), state=process.env.WORKSHOP_STATE_DIR;
  const recipient={app:'claude',id:'court-peer',account:'court-account'};
  if(r.operation==='activity'){
   fs.writeFileSync(path.join(state,'ENTERED'),'');
@@ -722,7 +722,7 @@ input.on('line', async line=>{
 });
 ''', encoding='utf-8')
     state = tmp_path / 'STATE'
-    transport = SessionLinkTransport(node_executable=Path(shutil.which('node')), state_dir=state)
+    transport = WorkshopTransport(node_executable=Path(shutil.which('node')), state_dir=state)
     transport._assets = assets
     channels = []
     create = transport.create_channel

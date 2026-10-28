@@ -52,7 +52,7 @@ _CLEAN_STOP = ('"C:\\Python\\python.exe" '
 
 
 def test_argv_predicate_accepts_only_the_exact_clean_stop_command():
-    from nodelang.session_link_config import _antigravity_clean_stop_argv as parse
+    from nodelang.workshop_config import _antigravity_clean_stop_argv as parse
     assert parse(_CLEAN_STOP) is not None
     lookalikes = [
         "echo clean_antigravity_hook.py stop",                       # not a python interpreter
@@ -194,12 +194,12 @@ def test_cutover_leaves_other_clients_byte_identical(tmp_path, monkeypatch):
 
 
 def test_cutover_refuses_a_stale_plan_digest(tmp_path, monkeypatch):
-    from nodelang.session_link_config import SessionLinkConfigRefused
+    from nodelang.workshop_config import WorkshopConfigRefused
     reg, env, hooks = _setup(tmp_path, monkeypatch,
                              [{"command": _CLEAN_STOP, "timeout": 10, "type": "command"}])
     original = hooks.read_bytes()
     reg.preview_hooks("antigravity", environment=env)
-    with pytest.raises(SessionLinkConfigRefused):
+    with pytest.raises(WorkshopConfigRefused):
         reg.repair_hooks("antigravity", consent=True, plan_digest="0" * 64, environment=env)
     assert hooks.read_bytes() == original, "a refused repair must not touch the file"
 
@@ -213,9 +213,9 @@ def test_cutover_refuses_a_stale_plan_digest(tmp_path, monkeypatch):
      {"command": _CLEAN_STOP, "timeout": 10, "type": "command"}],  # duplicate
 ])
 def test_cutover_refuses_and_leaves_the_file_unchanged(tmp_path, monkeypatch, stop_entries):
-    from nodelang.session_link_config import SessionLinkConfigRefused
+    from nodelang.workshop_config import WorkshopConfigRefused
     reg, env, hooks = _setup(tmp_path, monkeypatch, stop_entries)
     original = hooks.read_bytes()
-    with pytest.raises(SessionLinkConfigRefused):
+    with pytest.raises(WorkshopConfigRefused):
         reg.preview_hooks("antigravity", environment=env)
     assert hooks.read_bytes() == original, "a refused preview must not touch the file"

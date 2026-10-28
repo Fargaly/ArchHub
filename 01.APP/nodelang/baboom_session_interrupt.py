@@ -1,10 +1,10 @@
 """BABOOM's interrupt act for agents that can be asked to stop immediately.
 
 The coordination host's interrupt_agent records a message the agent reads on
-its next turn. A Claude Code session takes a Session Link peer frame with
+its next turn. A Claude Code session takes a Workshop peer frame with
 priority "now" as a request for immediate interruption
-(session_link/interrupt.mjs), so a named Claude Code session goes there.
-Session Link reports that frame as sent and unconfirmed: nothing acknowledges
+(workshop/interrupt.mjs), so a named Claude Code session goes there.
+Workshop reports that frame as sent and unconfirmed: nothing acknowledges
 the receiver's abort, so the result is an interruption *request*, never
 "interrupted". Codex Desktop exposes no interrupt to other apps: BABOOM says so
 and sends nothing. Every other agent keeps the coordination request.
@@ -23,10 +23,10 @@ import subprocess
 from pathlib import Path
 from typing import Callable, Mapping, Optional
 
-from .session_link_config import INSTALL_ROOT, SessionLinkConfigRefused, app_state_dir
+from .workshop_config import INSTALL_ROOT, WorkshopConfigRefused, app_state_dir
 from .universal_cell import InvalidCell
 
-ASK_ENTRY = Path(__file__).resolve().parent / "session_link" / "ask.mjs"
+ASK_ENTRY = Path(__file__).resolve().parent / "workshop" / "ask.mjs"
 DEFAULT_REASON = "the founder asked you to stop"
 TIMEOUT_SECONDS = 20
 RUNNER: Callable[..., subprocess.CompletedProcess] = subprocess.run
@@ -36,23 +36,23 @@ _NOT_DELIVERED = frozenset({"held", "refused", "rejected", "denied", "expired", 
 CODEX_REFUSAL = ("Codex agents can't be interrupted: Codex Desktop does not expose "
                  "interrupt to other apps. Nothing was sent.")
 NAME_CLAUDE = ("Name the Claude Code session to interrupt by its session ID, e.g. "
-               "\"interrupt claude:<session id>: why\" (Session Link lists the IDs). Nothing was sent.")
-_UNMATCHED = ("Session Link's answer does not match this request (%s); the interrupt may or may not "
+               "\"interrupt claude:<session id>: why\" (Workshop lists the IDs). Nothing was sent.")
+_UNMATCHED = ("Workshop's answer does not match this request (%s); the interrupt may or may not "
               "have been sent. Do not resend automatically.")
 
 
 def interrupt_claude_session(session_id: str, reason: str, *, environment: Optional[Mapping[str, str]] = None,
                              runner: Optional[Callable[..., subprocess.CompletedProcess]] = None) -> dict:
-    """One Session Link interrupt to one exact Claude Code session; its answer, checked."""
+    """One Workshop interrupt to one exact Claude Code session; its answer, checked."""
     env = dict(os.environ if environment is None else environment)
-    node = env.get("SESSION_LINK_NODE") or env.get("CODEX_MCP_NODE_PATH") or str(INSTALL_ROOT / "runtime" / "node.exe")
+    node = env.get("WORKSHOP_NODE") or env.get("CODEX_MCP_NODE_PATH") or str(INSTALL_ROOT / "runtime" / "node.exe")
     if not Path(node).is_absolute() or not Path(node).is_file():
-        raise InvalidCell("Session Link's Node runtime is unavailable; nothing was sent.")
-    if not env.get("SESSION_LINK_STATE_DIR"):
+        raise InvalidCell("Workshop's Node runtime is unavailable; nothing was sent.")
+    if not env.get("WORKSHOP_STATE_DIR"):
         try:
-            env["SESSION_LINK_STATE_DIR"] = str(app_state_dir(env))
-        except SessionLinkConfigRefused as exc:
-            raise InvalidCell("Session Link state is unavailable (%s); nothing was sent." % exc) from exc
+            env["WORKSHOP_STATE_DIR"] = str(app_state_dir(env))
+        except WorkshopConfigRefused as exc:
+            raise InvalidCell("Workshop state is unavailable (%s); nothing was sent." % exc) from exc
     try:
         result = (runner or RUNNER)(
             [node, str(ASK_ENTRY), "interrupt", "--app", "claude", "--session", session_id, "--reason", reason],
@@ -60,11 +60,11 @@ def interrupt_claude_session(session_id: str, reason: str, *, environment: Optio
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except subprocess.TimeoutExpired as exc:
-        raise InvalidCell("Session Link did not answer in %d s; the interrupt may or may not have been sent. "
+        raise InvalidCell("Workshop did not answer in %d s; the interrupt may or may not have been sent. "
                           "Do not resend automatically." % TIMEOUT_SECONDS) from exc
     if result.returncode:
         lines = [line.strip() for line in str(result.stderr or "").splitlines() if line.strip()]
-        raise InvalidCell("Session Link refused the interrupt: %s" % ((lines[-1] if lines else "no reason given")[:300]))
+        raise InvalidCell("Workshop refused the interrupt: %s" % ((lines[-1] if lines else "no reason given")[:300]))
     try:
         sent = json.loads(result.stdout)
     except (TypeError, ValueError):
@@ -106,11 +106,11 @@ def route_interrupt(spec: Mapping[str, object], row: Optional[Mapping[str, objec
         raise InvalidCell(NAME_CLAUDE)
     reason = str(spec.get("reason") or "").strip() or DEFAULT_REASON
     sent = interrupt_claude_session(selector, reason, environment=environment, runner=runner)
-    data = {"transport": "session-link", "interrupt": sent, "reason": reason, "confirmed": False}
+    data = {"transport": "workshop", "interrupt": sent, "reason": reason, "confirmed": False}
     if sent["status"] == "sent_unconfirmed":
         return {
             "kind": "agent-interrupt-requested",
-            "summary": ("Interruption requested for Claude Code session %s (Session Link message %s): "
+            "summary": ("Interruption requested for Claude Code session %s (Workshop message %s): "
                         "sent, not confirmed. The session decides under its own permissions."
                         % (sent["target"], sent["messageId"])),
             "data": data,

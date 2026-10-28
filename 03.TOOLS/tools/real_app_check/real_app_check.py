@@ -58,7 +58,7 @@ CODE_ENTRIES = ("nodelang", "app", "runtime", "governed-bin", "workflows", "libr
 # An overlay may only replace or add files under these code roots.
 OVERLAY_ROOTS = ("nodelang", "app", "runtime", "workflows", "library", "custom_nodes", "ui_widgets",
                  "skills")
-DROPPED_ENV = ("CLAUDE", "ARCHHUB", "SESSION_LINK", "CODEX", "ANTHROPIC", "PYTHON")
+DROPPED_ENV = ("CLAUDE", "ARCHHUB", "WORKSHOP", "CODEX", "ANTHROPIC", "PYTHON")
 SIGNING_KEY_NAME = "ArchHub-workspace-roots-v1"      # nodelang/workspace_roots_catalogue.py KEY_NAME
 NTE_BAD_KEYSET = 0x80090016                           # the one NCryptOpenKey answer that means "no key"
 NCRYPT_SILENT_FLAG = 0x40

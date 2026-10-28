@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT))
 GATE = Path(os.environ.get("ARCHHUB_OPENCODE_GATE")
             or ROOT.parents[1] / "00.GOVERNANCE" / "hooks" / "opencode_native_gate.py")
 GATE_HOOKS = GATE.parent
-MODULE = (ROOT / "01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+MODULE = (ROOT / "01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
 
 
 def _node(code):
@@ -63,7 +63,7 @@ import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
 import {createNativeGateRunner} from MODULE;
 const mark=path.join(os.tmpdir(),'archhub-idle-spawn-'+process.pid);
 const run=createNativeGateRunner(process.execPath,['-e','require("fs").writeFileSync('+JSON.stringify(mark)+',"x")'],
- {selectedWorks:{ses_writer:'assembly-instance:1'},sessionLink:{node:process.execPath,stateDirectory:os.tmpdir(),connections:{ses_writer:['0123456789abcdef']}}});
+ {selectedWorks:{ses_writer:'assembly-instance:1'},workshop:{node:process.execPath,stateDirectory:os.tmpdir(),connections:{ses_writer:['0123456789abcdef']}}});
 assert.equal(await run.idle('ses_writer',process.cwd()),null);
 assert.equal(await run.idle('ses_unconfigured',process.cwd()),null);
 await assert.rejects(async()=>run({session_id:'ses_writer',cwd:process.cwd(),tool_use_id:'idle-1',vendor:'opencode',hook_event_name:'Stop'}),/no live native owner/);
@@ -141,7 +141,7 @@ def test_a_failing_idle_check_never_poisons_the_session(tmp_path):
     _node(r"""import assert from 'node:assert/strict';import os from 'node:os';
 import {createNativeGateRunner} from MODULE;
 const run=createNativeGateRunner(process.execPath,[GATE],
- {selectedWorks:{ses_writer:'assembly-instance:1'},sessionLink:{node:process.execPath,stateDirectory:os.tmpdir(),connections:{ses_writer:['0123456789abcdef']}}});
+ {selectedWorks:{ses_writer:'assembly-instance:1'},workshop:{node:process.execPath,stateDirectory:os.tmpdir(),connections:{ses_writer:['0123456789abcdef']}}});
 const call=id=>run({session_id:'ses_writer',cwd:process.cwd(),tool_use_id:id,vendor:'opencode',hook_event_name:'PreToolUse',tool_name:'read',tool_input:{}});
 assert.equal((await call('t-1')).allow,true);
 assert.equal(await run.idle('ses_writer',process.cwd()),null,'a failed idle check reads as no open Work');

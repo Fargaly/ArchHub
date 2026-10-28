@@ -65,7 +65,7 @@ function rpc(control, payload) {
 }
 
 async function closePlugin() {
-  const symbol = Symbol.for('archhub.session-link.opencodeserver');
+  const symbol = Symbol.for('archhub.workshop.opencodeserver');
   const held = globalThis[symbol];
   delete globalThis[symbol];
   if (!held) return;
@@ -75,15 +75,15 @@ async function closePlugin() {
 
 test('gov eq OpenCode plugin queues a busy session and delivers when idle', async () => {
   const dir = tmpRoot();
-  const moduleUrl = pathToFileURL(path.join(root, '01.APP/nodelang', 'session_link', 'opencode-plugin.mjs')).href;
-  const { createSessionLinkPlugin } = await import(moduleUrl);
+  const moduleUrl = pathToFileURL(path.join(root, '01.APP/nodelang', 'workshop', 'opencode-plugin.mjs')).href;
+  const { createWorkshopPlugin } = await import(moduleUrl);
   const calls = [];
   const directory = path.join(dir, 'workspace');
   fs.mkdirSync(directory);
   const client = fakeClient(directory, calls, [{ type: 'busy' }, { type: 'idle' }]);
 
   try {
-    await createSessionLinkPlugin({ stateDirectory: dir })({ client, directory });
+    await createWorkshopPlugin({ stateDirectory: dir })({ client, directory });
     const runtime = JSON.parse(fs.readFileSync(path.join(dir, 'opencode-runtimes', `${process.pid}.json`), 'utf8'));
     const answer = await rpc(runtime.control, {
       token: runtime.keyPath ? JSON.parse(fs.readFileSync(runtime.keyPath, 'utf8')).peerToken : undefined,
@@ -103,9 +103,9 @@ test('gov eq OpenCode plugin queues a busy session and delivers when idle', asyn
 
 test('gov eq OpenCode plugin reads its PeerEndpoint inbox and prompts the session', async () => {
   const dir = tmpRoot();
-  const moduleUrl = pathToFileURL(path.join(root, '01.APP/nodelang', 'session_link', 'opencode-plugin.mjs')).href;
-  const protocolUrl = pathToFileURL(path.join(root, '01.APP/nodelang', 'session_link', 'vendor', 'src', 'peer-protocol.mjs')).href;
-  const { createSessionLinkPlugin } = await import(moduleUrl);
+  const moduleUrl = pathToFileURL(path.join(root, '01.APP/nodelang', 'workshop', 'opencode-plugin.mjs')).href;
+  const protocolUrl = pathToFileURL(path.join(root, '01.APP/nodelang', 'workshop', 'vendor', 'src', 'peer-protocol.mjs')).href;
+  const { createWorkshopPlugin } = await import(moduleUrl);
   const { buildFrame, peerKeyPath } = await import(protocolUrl);
   const calls = [];
   const directory = path.join(dir, 'workspace');
@@ -113,12 +113,12 @@ test('gov eq OpenCode plugin reads its PeerEndpoint inbox and prompts the sessio
   const client = fakeClient(directory, calls);
 
   try {
-    await createSessionLinkPlugin({ stateDirectory: dir })({ client, directory });
+    await createWorkshopPlugin({ stateDirectory: dir })({ client, directory });
     const sessionDir = path.join(process.env.HOME, '.claude', 'sessions');
     const entries = fs.readdirSync(sessionDir)
       .filter(name => name.endsWith('.json'))
       .map(name => JSON.parse(fs.readFileSync(path.join(sessionDir, name), 'utf8')));
-    const opencode = entries.find(entry => entry.name && entry.name.startsWith('opencode-session-link-'));
+    const opencode = entries.find(entry => entry.name && entry.name.startsWith('opencode-workshop-'));
     assert.ok(opencode, 'OpenCode peer was not registered');
 
     const key = JSON.parse(fs.readFileSync(peerKeyPath(opencode.pid, opencode.messagingSocketPath), 'utf8'));

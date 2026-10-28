@@ -78,3 +78,75 @@ def test_watcher_edit_propose_approve_writes_host_and_reads_back(server, monkeyp
     view = call(server, 'readWatcher')
     assert view['applied'] is True and view['wallY'] == 2 and len(view['dimensions']) == 1
     assert (server.state_dir / 'settings' / 'watcher.json').is_file()
+
+
+def test_social_finish_enrols_the_provider_confirmed_account_into_the_protected_store(server, monkeypatch):
+    from nodelang import model_router, social_connections
+    from nodelang.nograph_server import r_social_connection
+    saved = []
+    monkeypatch.setattr(social_connections.broker, 'current_status', lambda provider: {'name': 'Ahmed'})
+    monkeypatch.setattr(social_connections.broker, 'take_verified', lambda provider: ('urn:li:person:abc', 'token-value'))
+    monkeypatch.setattr(model_router, 'save_social_credential', lambda body, **kw: saved.append((body, kw)) or {'ok': True})
+    monkeypatch.setattr(social_connections, 'connection', lambda provider, **kw: {'provider': provider, 'state': 'connected'})
+    result = r_social_connection(server, SimpleNamespace(method='POST', body={'provider': 'linkedin', 'action': 'finish'}))
+    assert result['connection']['state'] == 'connected'
+    assert saved[0][0]['vault_entry'] == 'social-linkedin-abc' and saved[0][1]['verified'] is True
+
+
+def test_account_profile_and_billing_use_the_cloud_and_one_local_file(server, monkeypatch):
+    from nodelang import settings_owner
+    from nodelang.nograph_server import r_settings_action
+    calls = []
+
+    def cloud(method, path, body=None, **_kw):
+        calls.append((method, path))
+        return {'/v1/me': {'email': 'a@b.c', 'user_id': 'u1', 'plan': 'solo', 'full_name': 'Ahmed'},
+                '/v1/companies/mine': {'companies': []}, '/v1/billing/plans': {'tiers': [{'tier': 'solo'}]},
+                '/v1/companies/invites/mine': {'invitations': []}}.get(path, {})
+    monkeypatch.setattr(settings_owner, 'cloud_call', cloud)
+
+    def action(function, *args):
+        return r_settings_action(server, SimpleNamespace(method='POST', body={'function': function, 'args': list(args)}))['result']
+    assert action('read')['profile']['plan'] == 'Personal'
+    assert action('updateProfile', {'firm': 'Albayaty'})['profile'] == {'firm': 'Albayaty'}
+    stored = json.loads((server.state_dir / 'settings' / 'account.json').read_text(encoding='utf-8'))
+    assert stored['account:u1']['profile'] == {'firm': 'Albayaty'}
+    assert action('read')['profile']['firm'] == 'Albayaty' and ('GET', '/v1/me') in calls
+
+
+def test_signed_out_settings_still_open(server, monkeypatch):
+    from nodelang import settings_owner
+    from nodelang.nograph_server import r_settings_action
+    from nodelang.universal_cell import InvalidCell
+
+    def signed_out(*_a, **_kw):
+        raise InvalidCell('Not signed in. Sign in with your browser, then retry.')
+    monkeypatch.setattr(settings_owner, 'cloud_call', signed_out)
+    result = r_settings_action(server, SimpleNamespace(method='POST', body={'function': 'read', 'args': []}))['result']
+    assert result['settingsScope'] == 'User' and 'Not signed in' in result['controlErrors']['account']
+
+
+def test_watcher_read_opens_no_transaction_in_revit_and_write_does(monkeypatch):
+    from nodelang import clean_revit_adapter, host_brokers
+    sent = []
+    monkeypatch.setattr(clean_revit_adapter, 'broker_sessions', lambda service: [{'port': 7}])
+    monkeypatch.setattr(clean_revit_adapter, 'broker_call', lambda service, path, body, **kw: sent.append(body) or {'status': 'ok', 'result': {}})
+    host_brokers.watcher_read('Revit')
+    host_brokers.watcher_write({'source': {'host': 'Revit', 'instance': 7, 'element': {'id': 'w'}}, 'offsetMm': 30.0})
+    assert sent[0]['transaction'] is False and 'transaction' not in sent[1]
+
+
+def test_brain_remember_edit_forget_export_without_the_graph(server, tmp_path):
+    from nodelang.nograph_server import r_brain
+
+    def brain(path, **body):
+        return r_brain(server, SimpleNamespace(method='POST', path='/api/universal/' + path, body=body))
+    assert brain('brain-remember', text='Doors are 900 mm in Tower A')['written'] == 1
+    fact = brain('brain-export')['facts']['folders'][0]['facts'][0]['id']
+    assert brain('brain-edit', id=fact, text='Doors are 1000 mm in Tower A')['edited'] is True
+    assert brain('brain-export')['facts']['folders'][0]['facts'][0]['body'] == 'Doors are 1000 mm in Tower A'
+    assert brain('brain-publish', id=fact)['ok'] is False
+    assert brain('brain-forget', id=fact)['ok'] is True
+    assert brain('brain-export')['facts']['held'] == 0
+    stored = json.loads((tmp_path / 'LOCALAPPDATA' / 'ArchHub' / 'settings' / 'brain.json').read_text(encoding='utf-8'))
+    assert stored['facts'][0]['forgotten'] is True   # forget is soft: the fact is kept

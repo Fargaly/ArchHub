@@ -120,8 +120,12 @@ def enroll_social_account(owner, body, *, require_admission, verified=False):
     Report a partial outcome if the protected save succeeds but its reference
     cannot be confirmed; never erase that saved credential to simulate rollback.
     """
-    from .cell_brain_secrets import admit_secret
     from .model_router import save_social_credential
+    if owner is None:
+        # NOGRAPH: the protected store (Windows Credential Manager / DPAPI) is the custody; there
+        # is no graph reference to admit beside it.
+        return save_social_credential(body, before_replace=require_admission, verified=verified)
+    from .cell_brain_secrets import admit_secret
 
     store = owner.universal_store
     name = body.get("vault_entry") if type(body) is dict else None

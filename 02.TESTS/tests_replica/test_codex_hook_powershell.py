@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from nodelang import session_link_config as config
+from nodelang import workshop_config as config
 
 pytestmark = pytest.mark.skipif(os.name != "nt" or not shutil.which("pwsh"),
                                 reason="Codex hooks run through Windows PowerShell")

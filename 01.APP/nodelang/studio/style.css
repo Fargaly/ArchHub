@@ -78,9 +78,6 @@ button{transition:background .14s,color .14s,box-shadow .14s}button:hover{filter
 /* CANVASLOOK: plate 4.3/4.5/4.7/5.3, projected from the existing graph theme. */
 [data-screen="canvas"] .node-canvas{background:var(--canvas-bg);background-image:radial-gradient(var(--canvas-line) 1px,transparent 1px);background-size:24px 24px;isolation:isolate}
 [data-screen="canvas"] [data-graph-node]{isolation:isolate}
-[data-screen="canvas"] .canvas-port-row{position:relative;height:22px;display:flex;align-items:center;padding:0 12px;font-size:12px}
-[data-screen="canvas"] .canvas-card-param{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;border-top:1px solid var(--canvas-line-soft);padding:4px 10px;font-size:12px;color:var(--canvas-muted)}
-[data-screen="canvas"] .canvas-card-param>span:last-child{text-align:right;font-family:var(--mono,monospace);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 [data-screen="canvas"] .canvas-node-menu{opacity:0;cursor:pointer}
 [data-screen="canvas"] [data-ds-node]:hover .canvas-node-menu,[data-screen="canvas"] [data-ds-node]:focus-within .canvas-node-menu{opacity:1}
 [data-screen="canvas"] .canvas-members{display:flex;flex-wrap:wrap;gap:6px;padding-top:4px}
@@ -110,7 +107,75 @@ button{transition:background .14s,color .14s,box-shadow .14s}button:hover{filter
 .canvas-status{position:absolute;bottom:4px;left:calc(var(--canvas-library-width,0px) + 16px);z-index:12;display:flex;gap:12px;max-width:calc(100% - 280px);font-size:10px;color:var(--muted);pointer-events:auto}
 
 /* Plate 4.3: one-line labels/values and a bounded state foot at every zoom. */
-[data-screen="canvas"] .canvas-card-param>span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-[data-screen="canvas"] .canvas-card-param>input,[data-screen="canvas"] .canvas-card-param>select{max-width:100%;min-width:0;text-overflow:ellipsis}
-[data-screen="canvas"] .canvas-card-more{padding:4px 10px;font-size:11px;color:var(--canvas-muted)}
 [data-screen="canvas"] .lm-node>div:last-child>span[title]{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* CANVASDESIGN: Ping rev1047 canvas spec (35.02-APP-DESIGN/01.WIP/archhub-canvas-build-spec.json). Sockets sit centred on the card edge (xyflow Handle pattern). */
+[data-screen="canvas"] .lm-node[data-spec]{box-sizing:border-box;display:flex;flex-direction:column;gap:4px;padding:12px 10px 8px;color:#ece8e0}
+[data-screen="canvas"] .lm-node[data-spec] [data-category-tile],[data-screen="canvas"] .lm-node[data-spec] [data-status-dot]{display:none!important}
+[data-screen="canvas"] .lm-node[data-spec]>.node-header{padding:0!important;gap:0;border:0!important;align-items:flex-start}
+[data-screen="canvas"] .lm-node[data-spec] [data-node-card-title]{font-size:14px;font-weight:600;line-height:1.25;color:#ece8e0}
+[data-screen="canvas"] .lm-node[data-spec] [data-node-card-subtitle]{margin-top:4px;font-size:11px;line-height:1.25;color:#9b938a}
+[data-screen="canvas"] .lm-node[data-spec] [data-node-footer-status]{border:0!important;padding:0!important;font-size:11px;line-height:1.25}
+[data-screen="canvas"] .lm-node[data-spec] .canvas-node-menu{margin-right:14px}
+[data-screen="canvas"] .lm-node[data-spec] [data-port-band]{position:static!important;display:flex!important;flex-direction:column;gap:4px;height:auto!important;border:0!important;padding:0!important}
+[data-screen="canvas"] .lm-node[data-spec] [data-port-band]>div{display:flex;flex-direction:column;gap:4px}
+[data-screen="canvas"] .lm-node[data-spec] [data-port-band]>div:empty{display:none}
+[data-screen="canvas"] .canvas-port-row{position:relative;display:flex;align-items:center;min-width:0;height:14px;padding:0;font-size:11px;line-height:1.25;color:#9b938a}
+[data-screen="canvas"] .canvas-port-row>span:not(.canvas-port-socket),[data-screen="canvas"] .canvas-port-row>b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+[data-screen="canvas"] .canvas-port-row.in{display:grid;align-content:start;height:30px;box-sizing:border-box;padding:3px 6px;border-radius:5px;background:#202026}
+[data-screen="canvas"] .canvas-port-row.in>b{font-weight:400;font-size:12px;color:#ece8e0}
+[data-screen="canvas"] .canvas-port-row.out:only-child{position:static}
+[data-screen="canvas"] .canvas-port-socket{position:absolute;top:50%;z-index:2;line-height:0}
+[data-screen="canvas"] .canvas-port-socket.in{left:-11px;transform:translate(-50%,-50%)}
+[data-screen="canvas"] .canvas-port-socket.out{right:-11px;transform:translate(50%,-50%)}
+[data-screen="canvas"] .canvas-port-row.out:only-child>.canvas-port-socket,[data-screen="canvas"] .canvas-port-socket.out.field{right:-1px}
+[data-screen="canvas"] .canvas-port-socket.in.field{left:-1px}
+[data-screen="canvas"] [data-socket-dot]{display:block;width:8px;height:8px;box-sizing:border-box;border-radius:50%;background:#17171c;border:1.2px solid #77727f}
+[data-screen="canvas"] [data-socket-dot][data-wired]{background:#5fb3b3;border:0}
+[data-screen="canvas"] .socket[aria-pressed=true] [data-socket-dot],[data-screen="canvas"] .socket:focus-visible [data-socket-dot]{box-shadow:0 0 0 2px #d97757}
+[data-screen="canvas"] .lm-node[data-spec] .canvas-card-param{position:relative;display:grid;grid-template-columns:minmax(0,1fr);align-content:start;gap:1px;min-height:30px;box-sizing:border-box;padding:3px 6px;border:0;border-radius:5px;background:#202026;font-size:11px;line-height:1.25;color:#9b938a}
+[data-screen="canvas"] .lm-node[data-spec] .canvas-card-param>span:not(.canvas-port-socket){min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+[data-screen="canvas"] .lm-node[data-spec] .canvas-card-param>span[tabindex],[data-screen="canvas"] .lm-node[data-spec] .canvas-card-param>input,[data-screen="canvas"] .lm-node[data-spec] .canvas-card-param>select{width:100%!important;min-width:0;height:15px;box-sizing:border-box;padding:0;border:0;background:transparent;color:#ece8e0;font:400 12px/1.25 inherit;text-align:left}
+[data-screen="canvas"] .lm-node[data-spec] .canvas-card-param>small[data-param-type]{display:none}
+[data-screen="canvas"] .lm-node[data-spec] .canvas-card-param>small{font-size:10px}
+[data-screen="canvas"] .lm-node[data-spec] .canvas-card-param>button.button-reset{position:absolute;top:3px;right:5px;font-size:11px;color:#9b938a}
+[data-screen="canvas"] .canvas-card-add{position:absolute;top:10px;right:13px;font-size:14px;line-height:1.25;color:#9B938A;cursor:pointer}
+[data-screen="canvas"] .canvas-card-more{padding:0;font-size:11px;color:#9b938a;text-align:left}
+/* Spec AddField + FieldTypeMenu: one editor opened from a card's + or a dataset's + Field. */
+.spec-add-field{position:absolute;z-index:20;left:0;top:calc(100% + 8px);width:340px;box-sizing:border-box;padding:16px;border-radius:12px;background:#15151a;box-shadow:0 8px 24px #0008;display:grid;font-size:11px;line-height:1.2;color:#A7A3A0;text-align:left;cursor:default}
+.spec-add-field>b{height:21px;font-size:16px;font-weight:400;line-height:1.3;color:#E6E3DF}
+.spec-add-field>p{margin:5px 0 0;height:16px;font-size:11px}
+.spec-add-field label{display:grid;gap:3px;min-width:0}
+.spec-add-field>label,.spec-add-row{margin-top:13px}
+.spec-add-row{display:grid;grid-template-columns:174px 124px;gap:10px}
+.spec-input{display:block;width:100%;height:32px;box-sizing:border-box;padding:0 10px;border:0;border-radius:5px;background:#202026;color:#E6E3DF;font:400 12px/1.2 inherit;text-align:left;white-space:pre}
+.spec-input.small{height:28px}
+.spec-unit{width:48px;padding:0;border:0;background:transparent;color:inherit;font:inherit}
+.spec-add-limits{display:grid;grid-template-columns:repeat(3,96px);gap:10px;margin-top:11px;font-size:10px}
+.spec-add-foot{display:flex;align-items:center;justify-content:space-between;margin-top:12px}
+.spec-add-foot label{display:flex;align-items:center;gap:6px;color:#E6E3DF;font-size:11px}
+.spec-add-go{width:124px;height:30px;box-sizing:border-box;padding:0 10px;border-radius:12px;background:#d97757;color:#E6E3DF;font-size:12px;text-align:left;cursor:pointer;white-space:pre}
+.spec-type-menu{position:absolute;z-index:21;left:0;top:calc(100% + 4px);width:240px;box-sizing:border-box;padding:16px 16px 9px;border-radius:12px;background:#15151a;box-shadow:0 8px 24px #0008;display:grid}
+.spec-type-menu>b{height:19px;margin-bottom:10px;font-size:14px;font-weight:400;line-height:1.35;color:#F09272}
+.spec-type-menu>button{height:29px;padding:0 0 12px;font-size:12px;line-height:17px;color:#D9D6D2;text-align:left;cursor:pointer}
+.spec-type-menu>button:hover,.spec-type-menu>button:focus-visible{color:#ece8e0}
+/* Spec Dataset: header bar, typed columns, exposed field highlight, + Field / + Record links. */
+[data-screen="canvas"] .lm-node[data-spec=dataset]{gap:0;padding:0 0 11px}
+[data-screen="canvas"] .lm-node[data-spec=dataset]>.node-header{height:32px;box-sizing:border-box;padding:0 12px!important;align-items:center;border-radius:4px;background:#202026}
+[data-screen="canvas"] .lm-node[data-spec=dataset] [data-node-card-title]{font-size:13px;font-weight:400;line-height:1.2;color:#D9D6D2}
+[data-screen="canvas"] .lm-node[data-spec=dataset] [data-node-card-subtitle],[data-screen="canvas"] .lm-node[data-spec=dataset] [data-node-footer-status]{display:none}
+[data-screen="canvas"] [data-dataset-count]{flex:none;font-size:11px;color:#96918C}
+[data-dataset-editor]{position:relative;display:grid;margin-top:4px;padding:0 12px 0 0;font-size:12px;line-height:1.2;color:#D9D6D2}
+[data-dataset-editor]>button{height:29px;box-sizing:border-box;padding:6px 0 0 12px;font-size:11px;line-height:1.2;color:#A7A3A0;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+[data-dataset-editor]>button[data-exposed]{color:#F09272;background:#2D2624;border-radius:4px 4px 0 0}
+[data-dataset-editor]>button[data-dataset-link]{color:#F09272}
+[data-dataset-editor]>span{display:flex;align-items:center;height:29px;box-sizing:border-box;padding-left:12px;min-width:0}
+[data-dataset-editor]>span[data-record]:not([data-record="0"]){box-shadow:inset 0 1px #2B292D}
+[data-dataset-editor]>span[data-exposed]{background:#2D2624}
+[data-dataset-editor]>span input,[data-dataset-editor]>span select{width:100%;min-width:0;padding:0;border:0;background:transparent;color:inherit;font:inherit}
+[data-dataset-editor]>span[data-cell-type=number] input,[data-dataset-editor]>span[data-cell-type=integer] input{color:#F2D9CC}
+[data-dataset-editor]>small{display:flex;gap:12px;padding:5px 0 0 12px;font-size:10px;line-height:1.5;color:#96918C;white-space:nowrap}
+[data-dataset-editor]>small>button{font-size:11px;color:#F09272;cursor:pointer}
+[data-screen="canvas"] .lm-node[data-spec=dataset] [data-port-band]{padding:0 12px!important}
+[data-screen="canvas"] .lm-node[data-spec=dataset] .canvas-port-socket.out{right:-12px}
+[data-screen="canvas"] [data-graph-node]:has([data-add-field-form]){z-index:30}
+.spec-add-field>label{width:100%}

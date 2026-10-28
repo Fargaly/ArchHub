@@ -81,7 +81,7 @@ owner's file directly; it calls that owner.
 |---|---|---|
 | Canvas documents, workflows, skills | `session_files` | `*.archhub` (portable) |
 | Settings | one owner per page | `settings/<owner>.json` |
-| Workshop messages and Session Link | `workshop_mailbox` | `workshop/messages.sqlite3` |
+| Workshop messages and Workshop | `workshop_mailbox` | `workshop/messages.sqlite3` |
 | Model routing | `model_router` | `settings/router.json`, `router.sqlite` |
 | Host programs | `host_brokers`, `pipeline_engines` | live broker session files |
 | Workspaces | settings owner | `settings/workspaces.json` |

@@ -322,7 +322,7 @@ class WorkshopActivity:
                     self.unavailable = True
 
     def read_opencode(self, transport, sessions):
-        """Use Session Link's bounded reader, then revalidate at this privacy boundary."""
+        """Use Workshop's bounded reader, then revalidate at this privacy boundary."""
         if transport is None or not hasattr(transport, 'activity'):
             return
         selected = sorted(set(sessions), key=lambda session: self.opencodes.get(session, -math.inf))

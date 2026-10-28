@@ -26,12 +26,12 @@ def create_boot_surface(host, port, *, expected):
 
 def create_workshop_transport(state_directory):
     """Compose the packaged transport without starting a worker or another owner."""
-    from .session_link_transport import SessionLinkTransport
+    from .workshop_transport import WorkshopTransport
 
     if getattr(sys, 'frozen', False):
         node_executable = None  # Transport resolves the bundled runtime only.
     else:
-        declared = os.environ.get('SESSION_LINK_NODE')
+        declared = os.environ.get('WORKSHOP_NODE')
         bundled = Path(__file__).resolve().parents[1] / 'runtime' / 'node.exe'
         if declared:
             node_executable = declared
@@ -40,9 +40,9 @@ def create_workshop_transport(state_directory):
         else:
             # Source-only callers must explicitly supply their installed toolchain.
             return None
-    return SessionLinkTransport(
+    return WorkshopTransport(
         node_executable=node_executable,
-        state_dir=Path(state_directory).resolve() / 'session-link',
+        state_dir=Path(state_directory).resolve() / 'workshop',
         # Starting ArchHub from an agent shell does not attach that agent.
         # Product dispatch receives host authority only through attach_host.
         env={'CODEX_APP_TOOLS_PIPE_PATH': '', 'CODEX_THREAD_ID': ''},

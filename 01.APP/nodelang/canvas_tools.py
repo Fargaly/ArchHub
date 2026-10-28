@@ -41,6 +41,9 @@ def _summary(document, solved=None):
                            'out': [p['id'] + ':' + p.get('type', 'any') for p in held['source']]}
         if source.get('paramDefs'):
             node['param_types'] = {d['id']: d['type'] for d in source['paramDefs']}
+        if source['type'] == 'data.dataset':
+            node['fields'] = source.get('paramDefs', [])
+            node['records'] = source.get('records', [])
         if source['type'] == PARAM_ENGINE and source.get('bind'):
             node['params'] = {**node['params'], 'value': bound_value(document, source)}
             node['bound_to'] = source['bind']
@@ -161,6 +164,38 @@ def register_canvas_tools(server):
         action = demote_param if demote else promote
         document, solved = docs.edit(_path(path), _who(ctx), '%s %s.%s' % ('demote' if demote else 'promote', node, param),
                                      lambda d: action(d, _end(d, node + '.x')[0]['id'], param))
+        return _summary(document, solved)
+
+    @server.tool(name='canvas.add_field')
+    def canvas_add_field(path: str, dataset: str, name: str, type: str, ctx: Context, value: str = '',
+                         unit: str = '', options: list[str] | None = None, show_as_node: bool = False) -> dict:
+        """+Field: add a typed column to a dataset (creates the dataset when absent); show_as_node exposes it as a typed list node."""
+        from . import node_datasets as ds
+        def change(document):
+            if not any(n['type'] == ds.DATASET_ENGINE and dataset in (n['id'], n.get('title')) for n in document['nodes']):
+                ds.new_dataset(document, dataset)
+            changed = ds.add_field(document, dataset, name, type, value, unit=unit, options=options)
+            if show_as_node:
+                field = ds._dataset(document, dataset)['paramDefs'][-1]['id']
+                changed += ds.expose_field(document, dataset, field)
+            return changed
+        document, solved = docs.edit(_path(path), _who(ctx), 'add field %s.%s' % (dataset, name), change)
+        return _summary(document, solved)
+
+    @server.tool(name='canvas.add_record')
+    def canvas_add_record(path: str, dataset: str, ctx: Context, cells: dict | None = None) -> dict:
+        """+Record: add one row; cells are {field: value}, typed by their field, others take the default."""
+        from .node_datasets import add_record
+        document, solved = docs.edit(_path(path), _who(ctx), 'add record to %s' % dataset,
+                                     lambda d: add_record(d, dataset, cells))
+        return _summary(document, solved)
+
+    @server.tool(name='canvas.set_cell')
+    def canvas_set_cell(path: str, dataset: str, record: str, field: str, value: str, ctx: Context) -> dict:
+        """Edit one cell (record = index or id); its field nodes and everything downstream re-solve at once."""
+        from .node_datasets import set_cell
+        document, solved = docs.edit(_path(path), _who(ctx), 'set %s[%s].%s' % (dataset, record, field),
+                                     lambda d: set_cell(d, dataset, record, field, value))
         return _summary(document, solved)
 
     @server.tool(name='canvas.remove')

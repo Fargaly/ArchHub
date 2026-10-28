@@ -1,6 +1,6 @@
 """Approved agent faces over existing owners; no store, launcher or channel.
 
-The HTTP owner supplies its existing SessionLinkTransport and native BABOOM
+The HTTP owner supplies its existing WorkshopTransport and native BABOOM
 host. Environment is server-owned. Native settings never cross this boundary.
 """
 from __future__ import annotations
@@ -81,15 +81,15 @@ class AgentsAPI:
 
     def listAgentSessions(self):
         if self.transport is None:
-            raise RuntimeError("The application's existing Session Link transport is unavailable")
+            raise RuntimeError("The application's existing Workshop transport is unavailable")
         discovered = self.transport.discover(apps=list(APPS))
         if discovered.get("status") != "ok" or type(discovered.get("recipients")) is not list:
-            raise RuntimeError("Session Link discovery did not complete; refresh before choosing a session")
+            raise RuntimeError("Workshop discovery did not complete; refresh before choosing a session")
         sessions = []
         for row in discovered["recipients"]:
             if (type(row) is not dict or row.get("app") not in APPS
                     or type(row.get("id")) is not str or not row["id"]):
-                raise RuntimeError("Session Link returned a session without an identity")
+                raise RuntimeError("Workshop returned a session without an identity")
             sessions.append({"app": row["app"], "id": row["id"],
                              "title": _label(row.get("title"))})
         # Discovery is routing evidence. It is never sign-in or delivery proof.

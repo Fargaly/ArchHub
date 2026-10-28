@@ -94,7 +94,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a Desktop shortcut"; GroupDescription: "Shortcuts:"
 ; Ticked by default; choosing it is the person's consent (colleague_setup.py reads
 ; the marker once). Unticked writes no marker, so no assistant setting is touched.
-Name: "connectassistants"; Description: "Connect my AI assistants to ArchHub (adds ArchHub's end-of-turn check to Claude Code, Codex and Gemini CLI and the Session Link plugin to OpenCode; your other settings are kept)"; GroupDescription: "Assistants:"
+Name: "connectassistants"; Description: "Connect my AI assistants to ArchHub (adds ArchHub's end-of-turn check to Claude Code, Codex and Gemini CLI and the Workshop plugin to OpenCode; your other settings are kept)"; GroupDescription: "Assistants:"
 
 [Files]
 ; Setup extracts the new product backup owner before replacing any old code.
@@ -104,7 +104,7 @@ Source: "..\nodelang\backup_retention.py"; Flags: dontcopy
 Source: "..\nodelang\assistant_registration.py"; Flags: dontcopy
 Source: "..\nodelang\client_mcp_installation.py"; Flags: dontcopy
 Source: "..\nodelang\native_workshop_profile.py"; Flags: dontcopy
-Source: "..\nodelang\session_link_config.py"; Flags: dontcopy
+Source: "..\nodelang\workshop_config.py"; Flags: dontcopy
 Source: "..\nodelang\cell_secret_keys.py"; Flags: dontcopy
 Source: "..\nodelang\conversation_trace_shapes.py"; Flags: dontcopy
 Source: "{#NodeRuntimePath}"; DestDir: "{app}\runtime"; DestName: "node.exe"; Flags: ignoreversion; Check: NodeRuntimeNeedsInstall
@@ -239,8 +239,8 @@ Type: files; Name: "{app}\nodelang\native_session_resume.py"
 Type: files; Name: "{app}\nodelang\__pycache__\native_session_resume.*.pyc"
 Type: files; Name: "{app}\nodelang\native_start_hook.py"
 Type: files; Name: "{app}\nodelang\__pycache__\native_start_hook.*.pyc"
-Type: files; Name: "{app}\nodelang\session_link_host.py"
-Type: files; Name: "{app}\nodelang\__pycache__\session_link_host.*.pyc"
+Type: files; Name: "{app}\nodelang\workshop_host.py"
+Type: files; Name: "{app}\nodelang\__pycache__\workshop_host.*.pyc"
 Type: files; Name: "{app}\nodelang\opencode_coordination_tools.py"
 Type: files; Name: "{app}\nodelang\__pycache__\opencode_coordination_tools.*.pyc"
 Type: files; Name: "{app}\nodelang\clean_browser_workshop.py"
@@ -251,8 +251,8 @@ Type: files; Name: "{app}\nodelang\clean_coordination_mcp.py"
 Type: files; Name: "{app}\nodelang\__pycache__\clean_coordination_mcp.*.pyc"
 Type: files; Name: "{app}\nodelang\clean_antigravity_hook.py"
 Type: files; Name: "{app}\nodelang\__pycache__\clean_antigravity_hook.*.pyc"
-Type: files; Name: "{app}\nodelang\session_link\host-attachment.mjs"
-Type: files; Name: "{app}\nodelang\session_link\host-worker.mjs"
+Type: files; Name: "{app}\nodelang\workshop\host-attachment.mjs"
+Type: files; Name: "{app}\nodelang\workshop\host-worker.mjs"
 ; The wheelhouse is this build's alone; an older build's wheels never mix in.
 ; STAGE2B retires executable copies as well as their scheduled registrations.
 ; Exact paths only: never sweep user state or third-party host files.
@@ -324,11 +324,11 @@ begin
   Result := True;
   if FileExists(InstalledRuntime) then
   begin
-    { Session Link may still use this executable after the desktop closes.
+    { Workshop may still use this executable after the desktop closes.
       Keep identical bytes in place; an unreadable file fails installation. }
     Result := CompareText(GetSHA256OfFile(InstalledRuntime), '{#BundledNodeSha256}') <> 0;
     if not Result then
-      Log('Bundled Node runtime already matches SHA-256; preserving active Session Link processes.');
+      Log('Bundled Node runtime already matches SHA-256; preserving active Workshop processes.');
   end;
 end;
 
@@ -641,12 +641,12 @@ begin
     ExtractTemporaryFile('assistant_registration.py');
     ExtractTemporaryFile('client_mcp_installation.py');
     ExtractTemporaryFile('native_workshop_profile.py');
-    ExtractTemporaryFile('session_link_config.py');
+    ExtractTemporaryFile('workshop_config.py');
     ExtractTemporaryFile('cell_secret_keys.py');
     FileCopy(ExpandConstant('{tmp}\assistant_registration.py'), ConnectorTemp + '\nodelang\assistant_registration.py', False);
     FileCopy(ExpandConstant('{tmp}\client_mcp_installation.py'), ConnectorTemp + '\nodelang\client_mcp_installation.py', False);
     FileCopy(ExpandConstant('{tmp}\native_workshop_profile.py'), ConnectorTemp + '\nodelang\native_workshop_profile.py', False);
-    FileCopy(ExpandConstant('{tmp}\session_link_config.py'), ConnectorTemp + '\nodelang\session_link_config.py', False);
+    FileCopy(ExpandConstant('{tmp}\workshop_config.py'), ConnectorTemp + '\nodelang\workshop_config.py', False);
     FileCopy(ExpandConstant('{tmp}\cell_secret_keys.py'), ConnectorTemp + '\nodelang\cell_secret_keys.py', False);
     BackupProgress := CreateOutputMarqueeProgressPage('Checking assistant connections',
       'Checking existing entries before replacing application files');

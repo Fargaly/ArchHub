@@ -37,7 +37,10 @@ def coerce(kind, value, definition=None):
     if kind not in TYPES:
         raise ValueError('Choose a parameter type: ' + ', '.join(TYPES))
     if kind in ('number', 'integer'):
-        number = float(value)
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            raise ValueError('Enter a number, not %r.' % value) from None
         if not math.isfinite(number) or (kind == 'integer' and number != int(number)):
             raise ValueError('Enter a %s.' % ('whole number' if kind == 'integer' else 'finite number'))
         for bound, test in (('min', lambda b: number < b), ('max', lambda b: number > b)):
@@ -101,6 +104,17 @@ def definition(node, param):
     return found[0]
 
 
+def default(entry):
+    """The empty value of a parameter (or dataset field) of this type."""
+    import datetime
+    first = (entry.get('options') or [''])[0]
+    value = {'number': 0, 'integer': 0, 'bool': False, 'list': [], 'json': {}, 'object': {}, 'color': '#d97757',
+             'date': datetime.date.today().isoformat(), 'enum': first, 'choice': first}.get(entry['type'], '')
+    if entry['type'] in ('number', 'integer') and entry.get('min') not in (None, ''):
+        value = max(value, float(entry['min']))
+    return coerce(entry['type'], value, entry)
+
+
 def add_param(document, node_ref, name, kind, value=None, **limits):
     """Add a typed user parameter (with its input socket) to a node. Returns the node id."""
     node = _node(document, node_ref)
@@ -109,11 +123,7 @@ def add_param(document, node_ref, name, kind, value=None, **limits):
         raise ValueError('Choose a new parameter name for this node.')
     entry = {'id': identity, 'name': str(name).strip()[:80], 'type': kind,
              **{k: v for k, v in limits.items() if k in ('min', 'max', 'step', 'unit', 'options') and v not in (None, '', [])}}
-    import datetime
-    default = {'number': 0, 'integer': 0, 'bool': False, 'list': [], 'json': {}, 'object': {}, 'color': '#d97757',
-               'date': datetime.date.today().isoformat(), 'enum': (entry.get('options') or [''])[0],
-               'choice': (entry.get('options') or [''])[0]}.get(kind, '')
-    node['params'][identity] = coerce(kind, default if value in (None, '') else value, entry)
+    node['params'][identity] = coerce(kind, default(entry) if value in (None, '') else value, entry)
     node.setdefault('paramDefs', []).append(entry)
     return [node['id']]
 
@@ -177,9 +187,13 @@ def demote(document, node_ref, param):
 def ports(node, base):
     """Library ports plus the typed sockets of the node's own parameters (and a Parameter node's output)."""
     source, target = list(base.get('source', [])), list(base.get('target', []))
+    if node['type'] in ('data.dataset', 'data.field'):
+        from .node_datasets import ports as dataset_ports
+        source, target = dataset_ports(node)['source'], dataset_ports(node)['target']
     if node['type'] == PARAM_ENGINE:
         source = [{'id': 'value', 'type': socket_type(node['params'].get('type'))}]
-    target += [{'id': 'param:' + d['id'], 'type': socket_type(d['type'])} for d in node.get('paramDefs', [])]
+    if node['type'] != 'data.dataset':  # a dataset's fields are its columns, not inputs
+        target += [{'id': 'param:' + d['id'], 'type': socket_type(d['type'])} for d in node.get('paramDefs', [])]
     return {'source': source, 'target': target}
 
 

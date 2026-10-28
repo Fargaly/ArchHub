@@ -71,7 +71,7 @@ class GooseRuntime:
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             self.transport = AcpTransport(process)
-            from .session_link_transport import _OwnedProcessJob
+            from .workshop_transport import _OwnedProcessJob
             self.job = _OwnedProcessJob(process)
             init = self.transport.request("initialize", {"protocolVersion": 1,
                 "clientInfo": {"name": "ArchHub BABOOM", "version": "1"},

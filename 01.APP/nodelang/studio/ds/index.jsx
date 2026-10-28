@@ -410,7 +410,7 @@
             textOverflow: 'ellipsis'
           }}>{sub}</div></div>
         {headerExtra || headerEnd}
-        <span aria-hidden="true" style={{
+        <span data-status-dot="" aria-hidden="true" style={{
           width: 8,
           height: 8,
           borderRadius: '50%',

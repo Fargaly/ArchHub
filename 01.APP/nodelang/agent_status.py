@@ -5,7 +5,7 @@ Codex rollouts (~/.codex/sessions/**/rollout-*<id>.jsonl: task_started / task_co
 turn_aborted) and Claude Code transcripts (~/.claude/projects/*/<id>.jsonl: an assistant row
 with stop_reason end_turn ends a turn). Only the tail of one file is read, no prompt text is kept.
 Agents without such a record (Gemini, Cursor, OpenCode, Copilot...) are read from their console
-seat in workshop_live.live_agents (console_seat.peek_many): an open choice or dialog means needs-you.
+seat in workshop_live.live_agents (workshop/console_seat.peek_many): an open choice or dialog means needs-you.
 """
 from __future__ import annotations
 

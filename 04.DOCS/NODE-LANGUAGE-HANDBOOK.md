@@ -162,7 +162,7 @@ Scale: app floor.
 |---|---|---|
 | Canvas documents, workflows, skills | `session_files` | `*.archhub` |
 | Settings | one owner per page | `settings/<owner>.json` |
-| Workshop and Session Link | `workshop_mailbox` | `workshop/messages.sqlite3` |
+| Workshop and Workshop | `workshop_mailbox` | `workshop/messages.sqlite3` |
 | Model routing | `model_router` | `settings/router.json`, `router.sqlite` |
 | Host programs | `host_brokers` | live broker session files |
 | Secrets | OS Credential Manager | never in the files above |
@@ -574,7 +574,7 @@ Scale: app.
 
 Any agent installed on the PC (Claude Code, Codex, OpenCode, Gemini CLI, Goose
 as BABOOM and others) works inside the canvas through canvas tools, and talks in
-the one Workshop with Session Link.
+the one Workshop with Workshop.
 
 Attention records, owned by the Brain and Workshop in plain files:
 
@@ -708,7 +708,7 @@ remove the graph path in the same patch. Routes not yet moved answer a plain
 `not_available` notice and stay open items.
 
 **Worked example:** the Workshop route is answered from
-`workshop/messages.sqlite3` with Session Link; the graph is not read for it.
+`workshop/messages.sqlite3` with Workshop; the graph is not read for it.
 
 **Failure/counterexample:** deleting a screen because its graph route is gone.
 

@@ -13,7 +13,7 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-MODULE = (ROOT / "01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+MODULE = (ROOT / "01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
 ACTOR = "app:agent-session:runtime:" + "a" * 32
 
 GATE = r"""

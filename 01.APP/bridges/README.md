@@ -116,7 +116,7 @@ connector's state and each operation's evidence; host operations run only as
 graph nodes inside admitted Work. Settings > Hosts > Assistants shows Claude
 Code, Codex and OpenCode and writes an entry only when you press Connect
 (`nodelang/assistant_registration.py`). OpenCode cannot take an MCP entry (it
-gives MCP servers no session identity); it connects through the Session Link
+gives MCP servers no session identity); it connects through the Workshop
 plugin.
 
 ## What each operation has proven

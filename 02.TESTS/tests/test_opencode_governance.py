@@ -12,7 +12,7 @@ import pytest
 
 
 def test_shared_mailbox_needs_no_native_work_owner_or_admission():
-    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     code='''import assert from 'node:assert/strict';
 import {createOpenCodeGovernance} from MODULE;
 const hooks=await createOpenCodeGovernance({gateRunner:async()=>{throw Error('Work owner must not be acquired');}})({directory:process.cwd()});
@@ -32,7 +32,7 @@ await hooks.dispose();
 
 
 def test_selected_work_custom_tool_pairs_native_execution_and_receipt():
-    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     code='''import assert from 'node:assert/strict';
 import {createOpenCodeGovernance} from MODULE;
 const schema={string:()=>({optional(){return this;}}),object:()=>({passthrough(){return this;}})};
@@ -64,7 +64,7 @@ await hooks.dispose();
 
 
 def test_selected_work_lost_execution_blocks_replay_and_dispose():
-    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     code='''import assert from 'node:assert/strict';
 import {createOpenCodeGovernance} from MODULE;
 const factory=d=>d;factory.schema={string:()=>({optional(){return this;}}),object:()=>({passthrough(){return this;}})};
@@ -84,7 +84,7 @@ await assert.rejects(hooks.dispose(),/unresolved/);assert.equal(executions,1);
 
 
 def test_unresolved_diagnostics_identify_call_without_blocking_other_sessions():
-    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     code='''import assert from 'node:assert/strict';
 import {createOpenCodeGovernance} from MODULE;
 const events=[];
@@ -118,7 +118,7 @@ from nodelang.opencode_native_custody import OpenCodeProcessCustody, Process
 
 
 def test_oversized_first_request_does_not_spawn_or_retain_child(tmp_path):
-    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     marker=tmp_path/'spawned';worker=tmp_path/'must-not-start.mjs'
     worker.write_text("import fs from 'node:fs';fs.writeFileSync("+json.dumps(str(marker))+",'started');",encoding='utf-8')
     code='''import assert from 'node:assert/strict';import fs from 'node:fs';
@@ -135,7 +135,7 @@ assert.equal(fs.existsSync(MARKER),false);
 
 
 def test_plugin_local_release_window_refusal_does_not_poison_next_pre_call(tmp_path):
-    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     worker=tmp_path/'release-window.mjs'
     log=tmp_path/'calls.jsonl'
     worker.write_text('''import fs from 'node:fs';import readline from 'node:readline';
@@ -215,7 +215,7 @@ def test_custody_retains_exact_native_parent_and_checks_session(tmp_path):
 
 @pytest.mark.parametrize("case",["success","deny","uncertain","receipt-deny","mismatch","unknown-tool"])
 def test_hook_pairing_and_fail_closed(case):
-    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     code=r'''import assert from 'node:assert/strict';
 import {createOpenCodeGovernance} from MODULE;
 const scenario=CASE,events=[];
@@ -259,7 +259,7 @@ const args={filePath:'test.txt',oldString:'old',newString:'\u2019\u0639\u{1f600}
 
 @pytest.mark.parametrize("mode",["good","nonzero","malformed","foreign"])
 def test_persistent_native_gate_child_is_reused_and_actorless_failures_stay_quarantined(tmp_path,mode):
-    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     log=tmp_path/"fixture-frames.jsonl"
     worker=tmp_path/"worker.mjs"
     marker=tmp_path/"first-failed"
@@ -295,7 +295,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
 
 
 def test_parallel_read_hooks_complete_without_waiting_for_all_afters():
-    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     code='''import assert from 'node:assert/strict';
 import {createOpenCodeGovernance} from MODULE;
 const events=[],runner=async e=>{events.push(e);return {allow:true}};
@@ -318,7 +318,7 @@ await hooks.dispose();
 
 
 def test_clean_release_reclaims_slots_and_same_session_continues(tmp_path):
-    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     worker=tmp_path/'release-worker.mjs'
     worker.write_text('''import readline from 'node:readline';
 const actor='app:agent-session:runtime:'+'a'.repeat(32);let last=null;
@@ -350,7 +350,7 @@ await run.close();
 
 
 def test_actorless_owner_close_without_positive_no_enrollment_stays_quarantined(tmp_path):
-    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     worker=tmp_path/'crash-then-allow-worker.mjs'
     marker=tmp_path/'first-done'
     worker.write_text('''import fs from 'node:fs';import readline from 'node:readline';
@@ -385,7 +385,7 @@ await run.close().catch(()=>{});
 
 
 def test_actorless_pre_admission_refusal_without_never_bound_stays_quarantined(tmp_path):
-    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     worker=tmp_path/'refuse-then-allow-worker.mjs'
     marker=tmp_path/'refused'
     worker.write_text('''import fs from 'node:fs';import readline from 'node:readline';
@@ -421,7 +421,7 @@ await run.close().catch(()=>{});
 
 
 def test_never_bound_pre_admission_refusal_can_reenroll_until_owner_accepts(tmp_path):
-    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     worker=tmp_path/'refuse-twice-worker.mjs'
     marker=tmp_path/'count.txt'
     worker.write_text('''import fs from 'node:fs';import readline from 'node:readline';
@@ -453,7 +453,7 @@ await run.close().catch(()=>{});
 
 
 def test_expected_actor_pre_admission_refusal_reconciles_not_fresh(tmp_path):
-    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     worker=tmp_path/'expected-refusal-worker.mjs'
     log=tmp_path/'spawns.jsonl'
     actor='app:agent-session:runtime:'+'a'*32
@@ -486,7 +486,7 @@ await run.close().catch(()=>{});
 
 
 def test_stdin_error_before_write_clears_for_fresh_enrollment():
-    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     code='''import assert from 'node:assert/strict';import fs from 'node:fs';import {EventEmitter} from 'node:events';
 let spawns=0,writes=0;
 globalThis.__fakeSpawn=()=>{
@@ -530,7 +530,7 @@ await run.close().catch(()=>{});
 
 
 def test_silent_consume_then_exit_stays_quarantined(tmp_path):
-    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     worker=tmp_path/'silent-consume-worker.mjs'
     worker.write_text("process.stdin.once('data',()=>process.exit(3));",encoding='utf-8')
     code='''import assert from 'node:assert/strict';import {createNativeGateRunner} from MODULE;
@@ -546,7 +546,7 @@ await run.close().catch(()=>{});
 
 
 def test_late_output_after_failure_does_not_clear_quarantine(tmp_path):
-    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     worker=tmp_path/'late-output-worker.mjs'
     worker.write_text('''process.stdin.once('data',()=>{
  process.stdout.write('bad-json\\n');
@@ -570,7 +570,7 @@ await run.close().catch(()=>{});
 
 
 def test_release_watermark_proves_racing_request_not_delivered_without_replay(tmp_path):
-    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     log=tmp_path/'evaluated.jsonl';worker=tmp_path/'idle-race-worker.mjs'
     worker.write_text('''import fs from 'node:fs';import readline from 'node:readline';
 const actor='app:agent-session:runtime:'+'a'.repeat(32);let last=null,sid=null;
@@ -599,7 +599,7 @@ await run.close();
 
 @pytest.mark.parametrize('changed_actor', [False, True])
 def test_recovery_pins_original_actor_in_worker_and_reply(tmp_path, changed_actor):
-    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     worker=tmp_path/'conditional-owner.mjs'
     actor='app:agent-session:runtime:'+'a'*32
     worker.write_text('''import assert from 'node:assert/strict';import readline from 'node:readline';
@@ -625,11 +625,11 @@ else {assert.equal((await run(request)).allow,true);await run.close();}
     assert result.returncode==0,result.stderr
 
 def test_skill_uses_read_admission_and_retains_native_name_validation():
-    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     code='''import assert from 'node:assert/strict';import {createOpenCodeGovernance} from MODULE;
 const events=[];
 const hooks=await createOpenCodeGovernance({gateRunner:async e=>{events.push(e);return {allow:true};}})({directory:process.cwd()});
-const input={sessionID:'ses_skill',callID:'load',tool:'skill'},args={name:'session-link'};
+const input={sessionID:'ses_skill',callID:'load',tool:'skill'},args={name:'workshop'};
 await hooks['tool.execute.before'](input,{args});
 await hooks['tool.execute.after']({...input,args},{});
 assert.equal(events.length,2);assert.equal(events[0].tool_name,'skill');
@@ -687,7 +687,7 @@ def _run_node(code, timeout=15):
 
 @pytest.mark.parametrize('outcome', ['released', 'unknown'])
 def test_uncertain_release_reconciles_only_when_owner_confirms(tmp_path, outcome):
-    module = (Path(__file__).resolve().parents[2] / "01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module = (Path(__file__).resolve().parents[2] / "01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     worker, log = _reconcile_worker(tmp_path, outcome)
     code = '''import assert from 'node:assert/strict';import {createNativeGateRunner} from MODULE;
 const run=createNativeGateRunner(process.execPath,[WORKER],{expectedSessions:{ses_q:ACTOR},laneFolders:{ses_q:LANE}});
@@ -719,7 +719,7 @@ await run.close().catch(()=>{});
 
 
 def test_release_ack_reconciles_without_probe(tmp_path):
-    module = (Path(__file__).resolve().parents[2] / "01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module = (Path(__file__).resolve().parents[2] / "01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     worker, log = _reconcile_worker(tmp_path, 'unknown', ack=True)
     code = '''import assert from 'node:assert/strict';import {createNativeGateRunner} from MODULE;
 const run=createNativeGateRunner(process.execPath,[WORKER],{expectedSessions:{ses_q:ACTOR}});
@@ -735,7 +735,7 @@ await run.close().catch(()=>{});
 
 
 def test_lane_folders_must_be_trusted_absolute_paths():
-    module = (Path(__file__).resolve().parents[2] / "01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module = (Path(__file__).resolve().parents[2] / "01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     code = '''import assert from 'node:assert/strict';import {createNativeGateRunner} from MODULE;
 assert.throws(()=>createNativeGateRunner(process.execPath,[],{laneFolders:{ses_q:'relative/lane'}}),/trusted lane folders required/);
 assert.throws(()=>createNativeGateRunner(process.execPath,[],{laneFolders:{bad:'C:/lane'}}),/trusted lane folders required/);
@@ -744,7 +744,7 @@ assert.throws(()=>createNativeGateRunner(process.execPath,[],{laneFolders:{bad:'
 
 
 def test_plugin_uncertain_records_settle_on_owner_verdict_and_shell_maps_to_gate():
-    module = (Path(__file__).resolve().parents[2] / "01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module = (Path(__file__).resolve().parents[2] / "01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     code = '''import assert from 'node:assert/strict';import {createOpenCodeGovernance} from MODULE;
 const factory=d=>d;factory.schema={string:()=>({optional(){return this;}}),object:()=>({passthrough(){return this;}})};
 const events=[],reconciles=[];
@@ -786,7 +786,7 @@ await hooks['tool.execute.after']({sessionID:'ses_s',callID:'wf',tool:'webfetch'
 
 
 def test_archhub_mcp_tools_map_to_the_shared_hook_classifications():
-    module = (Path(__file__).resolve().parents[2] / "01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module = (Path(__file__).resolve().parents[2] / "01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     code = '''import assert from 'node:assert/strict';import {createOpenCodeGovernance} from MODULE;
 const events=[];
 const runner=async e=>{
@@ -1023,7 +1023,7 @@ class NativeAgentSession:
         return {"released": True, "release_id": "a" * 32, "agent_session": None}
 ''', encoding='utf-8')
     monkeypatch.setenv('LOCALAPPDATA', str(tmp_path))
-    module = (Path(__file__).resolve().parents[2] / "01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module = (Path(__file__).resolve().parents[2] / "01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     code = '''import assert from 'node:assert/strict';import {createNativeGateRunner} from MODULE;
 const run=createNativeGateRunner(PYTHON,[GATE]);
 const event={session_id:'ses_gate',cwd:process.cwd(),tool_use_id:'a',vendor:'opencode',
@@ -1047,7 +1047,7 @@ def test_uncertain_shell_call_is_released_and_later_tools_run(tool, args):
     # every agent. A shell call carries no permit or write receipt, so an unclear shell
     # outcome is released at the next call instead of refusing the session forever.
     # An uncertain WRITE still settles only on the owner's verdict (ledger custody).
-    module = (Path(__file__).resolve().parents[2] / "01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module = (Path(__file__).resolve().parents[2] / "01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     code = '''import assert from 'node:assert/strict';import {createOpenCodeGovernance} from MODULE;
 const reconciles=[];
 const runner=async e=>{if(e.tool_use_id==='lost-shell'&&e.hook_event_name==='PostToolUse'||e.tool_use_id==='lost-write')throw Error('reply lost');return {allow:true};};
@@ -1077,7 +1077,7 @@ await hooks.dispose();
 def test_an_aborted_read_stops_blocking_the_session_once_stale():
     """Live 717, 2026-10-07: OpenCode aborted a glob, never ran tool.execute.after,
     and every later edit was refused 'earlier tool admission or receipt unresolved'."""
-    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module=(Path(__file__).resolve().parents[2]/"01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     code='''import assert from 'node:assert/strict';
 import {createOpenCodeGovernance} from MODULE;
 const hooks=await createOpenCodeGovernance({gateRunner:async()=>({allow:true}),readStaleMs:200})({directory:process.cwd()});
@@ -1099,7 +1099,7 @@ await hooks.dispose();
 
 
 def test_opencode_idle_offer_is_prompted_once_without_native_owner():
-    module = (Path(__file__).resolve().parents[2] / "01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module = (Path(__file__).resolve().parents[2] / "01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     code = '''import assert from 'node:assert/strict';
 import {createOpenCodeGovernance} from MODULE;
 const prompts=[];
@@ -1122,7 +1122,7 @@ assert.equal(prompts.length,1);
 
 
 def test_opencode_local_idle_nudge_does_not_hide_later_owner_idle_check():
-    module = (Path(__file__).resolve().parents[2] / "01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module = (Path(__file__).resolve().parents[2] / "01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     code = '''import assert from 'node:assert/strict';
 import {createOpenCodeGovernance} from MODULE;
 const prompts=[];const idleChecks=[];
@@ -1142,7 +1142,7 @@ assert.match(prompts[1].body.parts[0].text,/owner has open Work/);
 
 
 def test_opencode_real_idle_shape_uses_retained_final_message_not_idle_properties():
-    module = (Path(__file__).resolve().parents[2] / "01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module = (Path(__file__).resolve().parents[2] / "01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     code = '''import assert from 'node:assert/strict';
 import {createOpenCodeGovernance} from MODULE;
 const prompts=[];
@@ -1164,7 +1164,7 @@ assert.match(prompts[1].body.parts[0].text,/Resolve the local follow-up queue/);
 
 
 def test_opencode_local_queue_requires_exact_followup_item_ids():
-    module = (Path(__file__).resolve().parents[2] / "01.APP/nodelang/session_link/opencode-governance.mjs").as_uri()
+    module = (Path(__file__).resolve().parents[2] / "01.APP/nodelang/workshop/opencode-governance.mjs").as_uri()
     code = '''import assert from 'node:assert/strict';
 import {createOpenCodeGovernance} from MODULE;
 const prompts=[];

@@ -5,24 +5,12 @@ delivered live into the recipient session (it lands mid-turn, like Claude Code's
 own cross-session messages) or it fails at once with the exact reason. The
 Workshop store keeps the chat history and one delivery row per recipient.
 
-Live channels (adopted, not invented):
-  claude    Claude Code peer pipe (\\\\.\\pipe\\LOCAL\\cc-msg-*) via Session Link's vendored
-            peer protocol (codex-mcp-bridge, MIT).
-  codex     Codex Desktop app-tools pipe (\\\\.\\pipe\\codex-app-tools-*):
-            send_message_to_thread into a loaded thread, via Session Link native.mjs.
-  opencode  OpenCode server plugin (Session Link opencode-plugin) when it is loaded.
-  any CLI   its console seat (console_seat.py, fitted from OpenRig seat delivery): typed only
-            into an empty composer, re-checked before Enter.
-  cursor, antigravity-ide, grok-bot  desktop apps: workshop_desktop.py (Cursor Desktop Bridge,
-            ArchHub ide-live extension), tried before the CLI channels.
-Desktop agents with no channel answer with the missing piece (NO_LIVE_CHANNEL / workshop_desktop).
-
-Adapter interface (stable; other channel modules plug in here, e.g. desktop/IDE agents):
-    register_adapter(app, adapter)
-    adapter(native_id: str | None, text: str, message_id: str, pids: tuple[int, ...])
-        -> (state, channel, reason)   state is 'delivered' or 'failed'; reason is shown to the sender.
-A registered adapter is tried first for its app; on 'failed' the built-in IPC channel and the
-console seat still run. An adapter must deliver now or fail now: no pending state, no queue.
+One channel (founder 2026-10-28, "one Workshop, one channel"): every push goes through Session
+Link (workshop/: worker inject -> native.mjs injectWorkshop). Workshop resolves the
+recipient against its live catalog and uses that app's own door: Claude peer pipe, Codex Desktop
+app bridge (`workshop resume --current` from a Codex Desktop task), OpenCode plugin,
+Antigravity cascade API, Cursor Desktop Bridge, the app's BABOOM turn door, or the console seat of
+a terminal session (workshop/console_seat.py, the Workshop's seat adapter). This module only records the rows.
 """
 from __future__ import annotations
 
@@ -33,124 +21,57 @@ from pathlib import Path
 
 FOUNDER = 'Ahmed'
 # Live delivery node: its typed parameters.
-LIVE_NODE = {'id': 'workshop.live', 'params': {'discover_timeout_seconds': 10}}
-# Desktop/IDE agents with neither an IPC channel nor a console seat: the exact missing piece.
-NO_LIVE_CHANNEL = {
-    'cursor': 'the Cursor app session has no console seat and no external input channel; cursor-agent sessions use their console',
-    'antigravity': 'the Antigravity app session has no console seat and no external input channel',
-    'antigravity-ide': 'the Antigravity IDE session has no console seat and no external input channel',
-}
+LIVE_NODE = {'id': 'workshop.live', 'params': {'discover_timeout_seconds': 10, 'list_cache_seconds': 30}}
 SCHEMA = ("CREATE TABLE IF NOT EXISTS workshop_live_deliveries (message_id TEXT NOT NULL, recipient TEXT NOT NULL, "
           "agent TEXT, app TEXT, native_session_id TEXT, channel TEXT, state TEXT NOT NULL, reason TEXT, "
           "at TEXT NOT NULL, ms INTEGER, PRIMARY KEY (message_id, recipient))")
 
 
-def codex_app_pipes():
+def push(app, native_id, text, message_id, *, timeout=10.0, pids=()):
+    """One live push, any agent, through Workshop (the one channel). Returns (state, channel, reason).
+
+    Workshop resolves the recipient against its live catalog and uses that app's own door: Claude
+    peer pipe, Codex Desktop app bridge, OpenCode plugin, Antigravity cascade API, Cursor Desktop Bridge,
+    the app's BABOOM, or the console seat of a terminal session. Never waits for a reply.
+    """
+    import sys
+    from .workshop_transport import public_delivery_reason
+    from .workshop_mailbox import _local_transport
+    env = {'WORKSHOP_PYTHON': sys.executable, 'WORKSHOP_PYTHONPATH': str(Path(__file__).resolve().parents[1])}
+    if app == 'goose' and native_id == 'baboom':
+        app, pids = 'archhub', ()            # the app's own BABOOM: Workshop reaches its turn door
+    recipient = {'app': app, 'id': str(native_id or ''), **({'pids': [int(p) for p in pids]} if pids and app not in ('claude', 'opencode') else {}),
+                 **({'desktop': True} if app == 'codex' and codex_desktop_thread(native_id) else {})}
+    transport = _local_transport(env)
     try:
-        return sorted(name for name in os.listdir('\\\\.\\pipe\\') if name.startswith('codex-app-tools-'))
-    except OSError:
-        return []
+        result = transport.inject(recipient, text, message_id=message_id, timeout_seconds=timeout)
+    except Exception as error:  # noqa: BLE001 - the reason is the answer
+        return 'failed', 'workshop', str(error)[:300]
+    finally:
+        getattr(transport, 'close', lambda: None)()
+    if result.get('status') in ('injected', 'ok', 'delivered'):
+        return 'delivered', 'workshop', result.get('note', '')
+    return 'failed', 'workshop', public_delivery_reason(result.get('reason') or result.get('error') or result.get('status'))
 
 
-def codex_caller_thread():
-    """The app tools answer only a caller thread they know: the newest recorded local Codex session."""
-    import re
+def codex_desktop_thread(native_id):
+    """True when this Codex thread belongs to Codex Desktop (its rollout's originator), not a terminal session."""
+    import json as _json
+    if not native_id:
+        return False
     homes = [Path(os.environ.get('CODEX_HOME', '')), Path('C:/Users') / os.environ.get('USERNAME', '') / '.codex']
     for home in homes:
         sessions = home / 'sessions'
         if not sessions.is_dir():
             continue
-        newest = max(sessions.rglob('rollout-*.jsonl'), key=lambda p: p.stat().st_mtime, default=None)
-        match = newest and re.search(r'([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$', newest.name)
-        if match:
-            return match.group(1)
-    return ''
-
-
-ADAPTERS = {}
-
-
-def register_adapter(app, adapter):
-    """Plug a live channel in for one agent app (see the interface in the module docstring)."""
-    ADAPTERS[str(app)] = adapter
-
-
-def push(app, native_id, text, message_id, *, timeout=10.0, pids=()):
-    """One live push, any agent. Returns (state, channel, reason); never waits for a reply.
-
-    The agent's own IPC channel first (Claude peer pipe, Codex Desktop app tools, OpenCode
-    plugin); then its console seat (console_seat.py) for every terminal-hosted agent.
-    """
-    adapter = ADAPTERS.get(app)
-    if adapter is not None:
-        try:
-            result = adapter(native_id, text, message_id, tuple(pids))
-        except Exception as error:  # noqa: BLE001 - an adapter failure falls through to the built-in channels
-            result = ('failed', app + '-adapter', str(error)[:200])
-        if result[0] == 'delivered':
-            return result
-    # Desktop apps (Cursor app, Antigravity IDE, Grok Bot): their own channel. A cursor-agent CLI
-    # session is also app 'cursor'; when the desktop channel cannot take it, its console seat does.
-    from .workshop_desktop import push as desktop_push
-    desktop = desktop_push(app, native_id, text, timeout)
-    if desktop is not None and (desktop[0] == 'delivered' or not pids):
-        return desktop
-    from .console_seat import deliver as seat_deliver
-
-    def seat():
-        reason = 'no process of this session has a console'
-        for pid in pids:
-            state, reason = seat_deliver(pid, text)
-            if state == 'delivered':
-                return 'delivered', 'console-seat', ''
-            if state != 'console_unavailable':
-                return 'failed', 'console-seat', '%s: %s' % (state, reason)
-        return 'failed', 'console-seat', reason
-    # A terminal Codex session is reached through its own console at once; the Desktop app tools
-    # only know Desktop threads and cost seconds to list.
-    if app == 'codex' and pids:
-        result = seat()
-        if result[0] == 'delivered' or not result[2].startswith('no process'):
-            return result
-    state, channel, reason = _ipc(app, native_id, text, message_id, timeout)
-    if state == 'delivered' or not pids or app == 'codex':
-        return state, channel, reason
-    result = seat()
-    return result if channel == 'none' or result[0] == 'delivered' else (state, channel, reason + '; console seat: ' + result[2])
-
-
-def _ipc(app, native_id, text, message_id, timeout):
-    if app == 'goose' and native_id == 'baboom':
-        from .baboom_nograph import deliver_remote
-        return deliver_remote(text, message_id, timeout)
-    if app in ('claude', 'opencode'):
-        channel = 'claude-peer-pipe' if app == 'claude' else 'opencode-plugin'
-        env = {}
-    elif app == 'codex':
-        pipes = codex_app_pipes()
-        if not pipes:
-            return 'failed', 'codex-app-tools', 'Codex Desktop is not running (no app-tools pipe)'
-        channel = 'codex-app-tools'
-        caller = codex_caller_thread()
-        if not caller:
-            return 'failed', channel, 'No Codex session is recorded on this PC to call the app tools from'
-        env = {'CODEX_APP_TOOLS_PIPE_PATH': '\\\\.\\pipe\\' + pipes[0], 'CODEX_THREAD_ID': caller}
-    else:
-        return 'failed', 'none', NO_LIVE_CHANNEL.get(app, '%s has no IPC channel; only its console seat' % app)
-    if not native_id or str(native_id).startswith('mcp:'):
-        return 'failed', channel, 'The session did not report its native id; it cannot be addressed live'
-    from .workshop_mailbox import _local_transport
-    transport = _local_transport(env)
-    try:
-        result = transport.inject({'app': app, 'id': str(native_id)}, text, message_id=message_id, timeout_seconds=timeout)
-    except Exception as error:  # noqa: BLE001 - the reason is the answer
-        return 'failed', channel, str(error)[:300]
-    finally:
-        getattr(transport, 'close', lambda: None)()
-    if result.get('status') in ('injected', 'ok', 'delivered'):
-        return 'delivered', channel, ''
-    from .session_link_transport import public_delivery_reason
-    return 'failed', channel, public_delivery_reason(result.get('reason') or result.get('error') or result.get('status'))
+        for rollout in sessions.rglob('rollout-*%s.jsonl' % native_id):
+            try:
+                with rollout.open(encoding='utf-8') as stream:
+                    meta = _json.loads(stream.readline()).get('payload') or {}
+            except (OSError, ValueError):
+                continue
+            return meta.get('originator') == 'Codex Desktop'
+    return False
 
 
 def envelope(message_id, sender, text):
@@ -222,20 +143,41 @@ def discover_target(target):
     from .workshop_mailbox import _local_transport
     transport = _local_transport()
     try:
-        found = transport.discover(timeout_seconds=LIVE_NODE['params']['discover_timeout_seconds'], apps=['claude', 'codex', 'opencode'])
+        found = transport.discover(timeout_seconds=LIVE_NODE['params']['discover_timeout_seconds'],
+                                   apps=['claude', 'codex', 'opencode', 'antigravity', 'antigravity-ide', 'cursor'])
     except Exception:  # noqa: BLE001 - no discovery means no match, reported by the caller
         found = {}
     finally:
         getattr(transport, 'close', lambda: None)()
     wanted = target.strip().casefold()
-    from .workshop_desktop import cursor_threads
-    # Cursor agent threads open in the desktop app (Desktop Bridge), addressable by id or title.
-    found = {'recipients': list(found.get('recipients', [])) +
-             [dict(t, app='cursor', selector='cursor:' + t['id']) for t in cursor_threads()]}
     return [{'session': 'native:%s:%s' % (row['app'], row['id']), 'agent': row.get('title') or row['id'],
              'runtime': row['app'], 'native_session_id': row['id']}
             for row in found.get('recipients', [])
             if wanted in {str(row.get(k) or '').casefold() for k in ('id', 'title', 'selector')}]
+
+
+_LIVE = {'at': 0.0, 'ids': {}}
+
+
+def live_ids():
+    """{app: {native ids}} from the Workshop's own live list, for apps whose discovery answered (cached briefly)."""
+    if time.monotonic() - _LIVE['at'] < LIVE_NODE['params']['list_cache_seconds']:
+        return _LIVE['ids']
+    from .workshop_mailbox import _local_transport
+    transport = _local_transport()
+    try:
+        found = transport.discover(timeout_seconds=LIVE_NODE['params']['discover_timeout_seconds'],
+                                   apps=['claude', 'codex', 'opencode', 'antigravity', 'antigravity-ide'])
+    except Exception as error:  # noqa: BLE001 - no list means nothing is dropped; the reason is logged
+        print('  workshop   : live list unavailable (%s)' % str(error)[:160], flush=True)
+        found = {}
+    finally:
+        getattr(transport, 'close', lambda: None)()
+    ids = {}
+    for row in found.get('recipients', []):
+        ids.setdefault(row['app'], set()).add(row['id'])
+    _LIVE.update(at=time.monotonic(), ids=ids)
+    return ids
 
 
 def live_agents(with_status=False):
@@ -246,8 +188,12 @@ def live_agents(with_status=False):
         rows = read_declarations(history._db)
     from .baboom_nograph import own_session
     baboom = own_session()
+    live = live_ids()
     agents, seen = [], set()
     for row in rows:
+        app = row.get('runtime') or row.get('app')
+        if app in live and row.get('native_session_id') and row['native_session_id'] not in live[app]:
+            continue   # its native id is not a session the Workshop's own list returns: a stale row, never addressed
         name = 'BABOOM' if row['session'] == baboom else row.get('display_name') or row['agent']
         handle = re.sub(r'[^a-z0-9]+', '-', name.split(' (')[0].casefold()).strip('-')[:40] or row['session'][-8:]
         while handle in seen:
@@ -261,8 +207,8 @@ def live_agents(with_status=False):
                                 + list(row.get('process_lineage') or [])]})
     if with_status:
         from .agent_status import _claude, _codex
-        from .console_seat import peek_many
-        seats = peek_many(sorted({pid for a in agents if a['app'] not in ('claude',) for pid in a['pids'][:4]}))
+        from .workshop import console_seat
+        seats = console_seat.peek_many(sorted({pid for a in agents if a['app'] not in ('claude',) for pid in a['pids'][:4]}))
         for agent in agents:
             state = None
             if agent['native_session_id'] and agent['app'] == 'codex':

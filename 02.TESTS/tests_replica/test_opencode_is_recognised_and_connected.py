@@ -26,9 +26,9 @@ from nodelang import model_router  # noqa: E402
 @pytest.fixture
 def machine(tmp_path, monkeypatch):
     install = tmp_path / "LocalAppData" / "ArchHub"
-    module = install / "nodelang" / "session_link" / "opencode-plugin.mjs"
+    module = install / "nodelang" / "workshop" / "opencode-plugin.mjs"
     module.parent.mkdir(parents=True)
-    module.write_text("export function createSessionLinkPlugin(){}\n", encoding="utf-8")
+    module.write_text("export function createWorkshopPlugin(){}\n", encoding="utf-8")
     (install / "BUILD_METADATA.json").write_text("{}", encoding="utf-8")
     profile = tmp_path / "profile"
     profile.mkdir()
@@ -77,11 +77,11 @@ def test_setup_writes_one_portable_plugin_for_any_user_and_is_idempotent(machine
     rows = {r["client"]: r["state"] for r in
             registration.connect_hooks_on_setup(consent=True, environment=machine.env)}
     assert rows["opencode"] == "registered"
-    plugin = machine.profile / ".config" / "opencode" / "plugins" / "session-link.js"
+    plugin = machine.profile / ".config" / "opencode" / "plugins" / "workshop.js"
     text = plugin.read_text(encoding="utf-8")
     revision = hashlib.sha256(machine.module.read_bytes()).hexdigest()
     assert machine.module.as_uri() + "?revision=" + revision in text
-    assert str(machine.state / "session-link").replace("\\", "/") in text
+    assert str(machine.state / "workshop").replace("\\", "/") in text
     assert "ses_" not in text and "00.GOVERNANCE" not in text and "gateCommand" not in text
     # Consent again changes nothing; readiness says registered.
     first = plugin.read_bytes()
@@ -90,7 +90,7 @@ def test_setup_writes_one_portable_plugin_for_any_user_and_is_idempotent(machine
     report = next(c for c in registration.readiness(machine.env)["clients"] if c["client"] == "opencode")
     assert report["state"] == "registered" and report["governance"] == "blocked"
     # A new install revision re-renders the same file on consent.
-    machine.module.write_text("export function createSessionLinkPlugin(){ /* v2 */ }\n", encoding="utf-8")
+    machine.module.write_text("export function createWorkshopPlugin(){ /* v2 */ }\n", encoding="utf-8")
     assert registration.register("opencode", consent=True, environment=machine.env)["state"] == "registered"
     assert hashlib.sha256(machine.module.read_bytes()).hexdigest() in plugin.read_text(encoding="utf-8")
     # Uninstall removes exactly the file ArchHub wrote.
@@ -100,7 +100,7 @@ def test_setup_writes_one_portable_plugin_for_any_user_and_is_idempotent(machine
 
 def test_opencode_needs_consent_and_a_foreign_plugin_is_left_alone(machine):
     _desktop(machine)
-    plugin = machine.profile / ".config" / "opencode" / "plugins" / "session-link.js"
+    plugin = machine.profile / ".config" / "opencode" / "plugins" / "workshop.js"
     with pytest.raises(ValueError):
         registration.register("opencode", consent=False, environment=machine.env)
     assert not plugin.exists()

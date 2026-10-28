@@ -10,7 +10,7 @@ import pytest
 def api_owner(tmp_path, monkeypatch):
     from nodelang.application_server import ApplicationServer
     for name in tuple(os.environ):
-        if name.startswith(("ARCHHUB_", "CODEX_", "CLAUDE_", "SESSION_LINK_", "OPENCODE_", "GEMINI_")):
+        if name.startswith(("ARCHHUB_", "CODEX_", "CLAUDE_", "WORKSHOP_", "OPENCODE_", "GEMINI_")):
             monkeypatch.delenv(name)
     for name in ("LOCALAPPDATA", "APPDATA", "TEMP", "TMP", "USERPROFILE", "HOME"):
         monkeypatch.setenv(name, str(tmp_path))

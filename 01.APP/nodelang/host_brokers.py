@@ -240,8 +240,10 @@ def _watcher_call(host, request, *, instance=None, timeout_seconds: float = 30.0
     rows = [row for row in broker_sessions(service) if instance is None or row["port"] == instance]
     if len(rows) != 1:
         raise InvalidCell("Choose exactly one available source host session")
-    answer = broker_call(service, "/exec", {"code":_watcher_script(host, request),
-        "transaction_name":"ArchHub Watcher " + request["action"]}, port=rows[0]["port"], timeout=timeout_seconds)
+    body = {"code":_watcher_script(host, request), "transaction_name":"ArchHub Watcher " + request["action"]}
+    if host == "Revit" and request["action"] == "read":
+        body["transaction"] = False   # a read opens no transaction in the model: nothing can be written or undone
+    answer = broker_call(service, "/exec", body, port=rows[0]["port"], timeout=timeout_seconds)
     if answer.get("status") != "ok" or type(answer.get("result")) is not dict:
         raise InvalidCell("Watcher source refused: " + str(answer.get("error") or "No geometry readback"))
     return {**answer["result"], "host":host, "instance":rows[0]["port"]}

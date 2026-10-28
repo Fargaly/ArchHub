@@ -203,7 +203,7 @@ from .cell_agent_body import (
     open_agent_body_protocol,
     read_agent_body,
     read_agent_session,
-    read_agent_session_links,
+    read_agent_workshops,
 )
 from .cell_agent_body_catalog import (
     AgentBodyCatalogEntry,
@@ -3772,7 +3772,7 @@ _BABOOM_CAPABILITY_ROUTE_KEYS = frozenset({
     ("POST", "/api/universal/workshop-board/sweep"),
 })
 _RETIRED_APPLICATION_HTTP_ROUTE_KEYS = frozenset({
-    "POST /api/universal/agent-session-link",
+    "POST /api/universal/agent-workshop",
     "POST /api/universal/group",
     "POST /api/universal/inspector-lens",
     "POST /api/universal/properties-panel",
@@ -9297,7 +9297,7 @@ def _ensure_baboom_application_agent_body_variant(
                 or not member.participant_id.startswith("app:agent-session:runtime:")
             ):
                 raise InvalidCell("%s control has an undeclared member" % label)
-            if read_agent_session_links(
+            if read_agent_workshops(
                 snapshot, protocol, member.participant_id
             )[0] != body.root_id:
                 raise InvalidCell("%s runtime session body drifted" % label)
@@ -9589,7 +9589,7 @@ def _ensure_baboom_execution_capability_control(
                 raise InvalidCell(
                     "BABOOM action capability control has an undeclared member"
                 )
-            if read_agent_session_links(
+            if read_agent_workshops(
                 snapshot, protocol, member.participant_id
             ) != (baboom_body.root_id, authorization.subject_root, view_session.root_id):
                 raise InvalidCell("BABOOM action capability session drifted")
@@ -10226,7 +10226,7 @@ def execute_universal_baboom_utterance(
         spec = json.loads(str(command["payload"]))
         if command["intent"] == "agent-interrupt":
             # A named Claude Code session takes an immediate interruption
-            # request through Session Link; Codex Desktop exposes none, so
+            # request through Workshop; Codex Desktop exposes none, so
             # BABOOM says so and sends nothing.
             from . import baboom_session_interrupt
             routed = baboom_session_interrupt.route_interrupt(spec)

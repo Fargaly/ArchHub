@@ -48,3 +48,14 @@ def test_without_the_brain_the_orb_is_down_and_asks_fail_with_the_reason(monkeyp
     assert transport.baboom_native_frame()['context']['brain']['ok'] is False
     with pytest.raises(RuntimeError, match='turned off'):
         transport.respond_baboom_command(utterance='hi')
+
+
+def test_goose_is_offered_only_the_workshop_and_canvas_tools(monkeypatch, tmp_path):
+    from nodelang.goose_adapter import WORKSHOP_TOOLS
+    from nodelang.native_agent_mcp import build_server
+    for name in ('LOCALAPPDATA', 'APPDATA', 'USERPROFILE', 'HOME'):
+        monkeypatch.setenv(name, str(tmp_path / name))
+    monkeypatch.setenv('ARCHHUB_CONNECTOR_TOOLS', WORKSHOP_TOOLS)
+    names = {tool.name for tool in build_server()._tool_manager.list_tools()}
+    assert {'declare', 'send', 'read', 'canvas.read', 'library.search'} <= names
+    assert all(n in ('declare', 'send', 'read', 'library.search') or n.startswith('canvas.') for n in names)

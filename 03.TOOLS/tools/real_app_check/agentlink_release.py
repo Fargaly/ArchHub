@@ -50,6 +50,10 @@ def _free_failure_reason(detail):
         return "rate limited"
     if "403" in detail and "only available on agentic harnesses" in detail:
         return "harness-only provider refusal"
+    # A provider's own failure (5xx, overloaded, gateway): the next free route is tried. A tool
+    # failure or a governance refusal is never classified here and still fails at once.
+    if re.search(r"\b5\d\d\b|server error|internal error|overloaded|bad gateway|service unavailable|upstream", detail):
+        return "provider server error"
     return None
 
 
@@ -206,7 +210,8 @@ def _run(command, *, env, cwd, timeout=150, quota_log=None, quota_model=None):
         if any(reason is None for reason in reasons):
             if process.returncode:
                 raise QualificationRefused("Provider returned nonzero exit " + str(process.returncode))
-            raise QualificationRefused("OpenCode returned an unclassified server error; no provider fallback")
+            # The provider's stream failed with no tool or governance error in it: a provider error.
+            raise _FreeProviderFailure("provider stream error")
         return reasons[0] if reasons else None
     def check_failure(output, *, timed_out=False):
         transient = None
@@ -316,7 +321,8 @@ def _stop_opencode_turn(command, deadline):
 def _free_turn(models, attempt, *, env, timeout, cancel=lambda _: None, nonce=None):
     from nodelang.model_router import discover_key, ModelRouteRefused
     deadline = time.monotonic() + timeout
-    models = list(dict.fromkeys(models))
+    # One run plus at most two retries on the next free routes, each attempt logged.
+    models = list(dict.fromkeys(models))[:3]
     for identity in models:
         _require_free_model(identity)
     routes = []
@@ -774,6 +780,9 @@ def _claude_auth(env, original_home):
 
 
 _GOOSE_MODEL = "dots-studio/dots-3-note-preview:free"
+# The court's Goose profile: no built-in extensions, approve mode, no telemetry.
+GOOSE_COURT_NODE = {"id": "court.goose", "params": {"GOOSE_PROVIDER": "openrouter", "GOOSE_MODE": "approve",
+                                                     "extensions": {}, "telemetry_enabled": False}}
 _GOOSE_FALLBACKS = ("openrouter/thinkingmachines/inkling:free",)
 _RELEASE_FREE_MODELS = frozenset((*_FREE_FALLBACKS, *_GOOSE_FALLBACKS,
     "openrouter/" + _GOOSE_MODEL, "opencode/mimo-v2.6-flash-free"))
@@ -909,6 +918,10 @@ def qualify(profile, *, opencode=None, claude=None, native_gate=None,
             GOOSE_MODEL=_GOOSE_MODEL, GOOSE_MODE="approve",
             OPENROUTER_PARAMETERS=json.dumps({"max_tokens":4096}))
         env["GOOSE_TELEMETRY_ENABLED"]=str(False).lower()
+        # The court's Goose has no built-in extensions: only the ArchHub connector it is given.
+        (profile/"goose"/"config").mkdir(parents=True, exist_ok=True)
+        (profile/"goose"/"config"/"config.yaml").write_text(json.dumps(
+            {**GOOSE_COURT_NODE["params"], "GOOSE_MODEL":_GOOSE_MODEL}), encoding="utf-8")
     profile.mkdir(parents=True, exist_ok=True)
     fixture = profile / "workspace"
     fixture.mkdir()

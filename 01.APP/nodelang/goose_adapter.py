@@ -46,11 +46,16 @@ def safe_workshop_call(identity, arguments):
     return len(json.dumps(arguments, ensure_ascii=True).encode()) <= 200000
 
 
+# What Goose is offered on the ArchHub connector: the Workshop and the canvas, nothing else.
+WORKSHOP_TOOLS = "declare,send,read,canvas.,library.search"
+
+
 def workshop_mcp_server():
     from .client_mcp_installation import LOADER
     return {"name":"archhub-agent", "command":sys.executable,
         "args":["-c", LOADER, str(Path(__file__).resolve().parents[1])],
         "env":[{"name":"PYTHONUTF8", "value":"1"},
+               {"name":"ARCHHUB_CONNECTOR_TOOLS", "value":WORKSHOP_TOOLS},
                {"name":"GOOSE_SESSION_ID", "value":"connector-"+uuid4().hex}]}
 
 

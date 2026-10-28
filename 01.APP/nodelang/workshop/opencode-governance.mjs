@@ -196,7 +196,7 @@ export function createNativeGateRunner(command,args,{expectedSessions={},selecte
     ...(workshop?{WORKSHOP_NODE:workshop.node,WORKSHOP_STATE_DIR:workshop.stateDirectory,
       WORKSHOP_REQUIRED_CONNECTIONS:(workshop.connections[event.session_id]||[]).join(',')}:{}),
     PYTHONUTF8:'1',PYTHONIOENCODING:'utf-8'}});
-   state={child,cwd:event.cwd,failed:false,pending:null,buffer:Buffer.alloc(0),stderrBytes:0};workers.set(event.session_id,state);
+   state={child,cwd:event.cwd,failed:false,pending:null,buffer:Buffer.alloc(0),stderrBytes:0,stderrTail:''};workers.set(event.session_id,state);
    const abort=reason=>{
     state.failed=true;state.buffer=Buffer.alloc(0);
     // Preserve an in-flight native owner after caller uncertainty; no respawn.
@@ -215,11 +215,21 @@ export function createNativeGateRunner(command,args,{expectedSessions={},selecte
     }else{
      const provenNeverEnrolled = state.neverBound===true&&!state.actor&&!lineages.get(event.session_id)&&
       (state.preAdmissionRefused||state.inputUndelivered)&&!state.pending&&!state.notDelivered&&!state.deliveryUncertain;
-     if(!provenNeverEnrolled)abort('native owner closed without confirmed release');
+     const said=state.stderrTail.trim()?': '+state.stderrTail.trim().split(/\r?\n/).slice(-6).join(' | '):'';
+     // Our own gate process crashed (nonzero exit). A call it had not yet admitted never ran:
+     // it fails now with the gate's own words and the session is NOT quarantined; the next call
+     // starts a fresh gate. An admitted call's outcome stays uncertain (it may have run).
+     const crashed=code!==0&&!state.released;
+     if(crashed&&state.pending?.phase==='PreToolUse'){
+      clearTimeout(state.pending.timer);
+      state.pending.reject(new NativeNotDelivered('ArchHub OpenCode governance: native gate exited (code '+code+') before admitting this call'+said+'; tool not delivered'));
+      state.pending=null;
+     }
+     if(!provenNeverEnrolled)abort('native owner closed without confirmed release (exit '+code+')'+said);
      if(provenNeverEnrolled){
       reenrolls.set(event.session_id,(reenrolls.get(event.session_id)||0)+1);
       probes.delete(event.session_id);
-     }else quarantined.set(event.session_id,{actor:state.actor||lineages.get(event.session_id)||null,cwd:state.cwd,
+     }else if(!crashed)quarantined.set(event.session_id,{actor:state.actor||lineages.get(event.session_id)||null,cwd:state.cwd,
       delivered:!!(state.actor||state.lastCompleted||state.released||state.deliveryUncertain||provenNeverEnrolled),
       ack:state.released?.released===true&&!state.notDelivered?state.released:null});
      workers.delete(event.session_id);
@@ -227,7 +237,10 @@ export function createNativeGateRunner(command,args,{expectedSessions={},selecte
      else state.closed?.reject(new Error('native release uncertain'));
     }
    });
-   child.stderr.on('data',data=>{if(state.failed)return;state.stderrBytes+=data.length;if(state.stderrBytes>65536)abort('native diagnostics byte limit');});
+   child.stderr.on('data',data=>{
+    // The gate's own last lines travel with any failure it causes (the cause, not a guess).
+    state.stderrTail=(state.stderrTail+data.toString('utf8')).slice(-1200);
+    if(state.failed)return;state.stderrBytes+=data.length;if(state.stderrBytes>65536)abort('native diagnostics byte limit');});
    const receive=line=>{
     if(state.released){abort('native frame after release');return;}
     const held=state.pending;
@@ -297,7 +310,7 @@ export function createNativeGateRunner(command,args,{expectedSessions={},selecte
    const stop=event.hook_event_name==='Stop';
    // An idle check never fails its owner: past 10 s it reads as "no open Work" and its
    // late reply is absorbed below; every tool call keeps the 30 s abort.
-   state.pending={id,call:event.tool_use_id,resolve,reject,stop,timer:setTimeout(()=>{
+   state.pending={id,call:event.tool_use_id,phase:event.hook_event_name,resolve,reject,stop,timer:setTimeout(()=>{
     if(stop)resolve({allow:true,toolOutput:'{}'});else state.abort('native gate timeout');},stop?10000:30000)};
    setTimeout(()=>{
     if(state.failed||state.pending?.id!==id)return;

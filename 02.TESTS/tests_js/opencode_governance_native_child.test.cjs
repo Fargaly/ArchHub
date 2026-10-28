@@ -83,7 +83,7 @@ test('no owner binding allows the first read and a normal write without quaranti
   await hooks.dispose();
 });
 
-test('a native child closing before a read decision is refused and does not allow', async (t) => {
+test('a gate that crashes before a read decision fails that call, never quarantines the session', async (t) => {
   const { dir, gate } = await makeGate(t);
   const counter = path.join(dir, 'spawns.txt');
   const { createNativeGateRunner } = await import(moduleUrl);
@@ -91,13 +91,13 @@ test('a native child closing before a read decision is refused and does not allo
   const call = id => run({ session_id: 'ses_readclose', cwd: root, tool_use_id: id, vendor: 'opencode',
     hook_event_name: 'PreToolUse', tool_name: 'read', tool_input: { file_path: 'brief' } });
 
-  await assert.rejects(call('read-1'), /retained outcome requires reconciliation/);
+  await assert.rejects(call('read-1'), /native gate exited \(code 2\) before admitting this call.*tool not delivered/);
   await settle();
-  await assert.rejects(async () => call('read-2'), /native session quarantined.*reconcile no recorded graph actor/);
-  assert.equal(fs.readFileSync(counter, 'utf8'), '1', 'the read was not replayed in a new child');
+  await assert.rejects(async () => call('read-2'), /native gate exited \(code 2\) before admitting this call.*tool not delivered/);   // a fresh gate, not a quarantine
+  assert.equal(fs.readFileSync(counter, 'utf8'), '2', 'each call had its own gate; read-1 was not replayed');
 });
 
-test('an owner-bound read close is refused and keeps the actor lineage', async (t) => {
+test('an owner-bound gate that crashes fails only the call in flight', async (t) => {
   const { gate } = await makeGate(t);
   const { createNativeGateRunner } = await import(moduleUrl);
   const run = createNativeGateRunner(process.execPath, [gate, 'owner-bound-read-close']);
@@ -105,12 +105,14 @@ test('an owner-bound read close is refused and keeps the actor lineage', async (
     hook_event_name: 'PreToolUse', tool_name: 'read', tool_input: { file_path: 'brief' } });
 
   assert.equal((await run(event('read-1'))).allow, true);
-  await assert.rejects(run(event('read-2')), /retained outcome requires reconciliation/);
+  await assert.rejects(run(event('read-2')), /native gate exited \(code 2\) before admitting this call.*tool not delivered/);
   await settle();
-  await assert.rejects(run(event('read-3')), /native session quarantined.*owner binding still retained/);
+  // The next call reaches a fresh gate (never "quarantined"); that gate must still prove it
+  // continues the same owner binding, which this fixture's fresh child does not.
+  await assert.rejects(run(event('read-3')), error => !/quarantined/.test(error.message) && /identity changed/.test(error.message));
 });
 
-test('a native child closing mid write quarantines and does not replay the write', async (t) => {
+test('a gate that crashes mid write admission fails that write and never replays it', async (t) => {
   const { dir, gate } = await makeGate(t);
   const counter = path.join(dir, 'spawns.txt');
   const { createNativeGateRunner } = await import(moduleUrl);
@@ -118,10 +120,10 @@ test('a native child closing mid write quarantines and does not replay the write
   const event = id => ({ session_id: 'ses_uncertainwrite', cwd: root, tool_use_id: id, vendor: 'opencode',
     hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: 'x', content: 'y' } });
 
-  await assert.rejects(run(event('write-1')), /retained outcome requires reconciliation/);
+  await assert.rejects(run(event('write-1')), /native gate exited \(code 2\) before admitting this call.*tool not delivered/);
   await settle();
-  await assert.rejects(async () => run(event('write-2')), /native session quarantined.*reconcile no recorded graph actor/);
-  assert.equal(fs.readFileSync(counter, 'utf8'), '1', 'the quarantined write was not replayed in a new child');
+  await assert.rejects(async () => run(event('write-2')), /native gate exited \(code 2\) before admitting this call.*tool not delivered/);
+  assert.equal(fs.readFileSync(counter, 'utf8'), '2', 'write-1 was never replayed; write-2 had its own gate');
 });
 
 test('hard harm is refused even when no owner binding exists', async (t) => {
@@ -177,7 +179,7 @@ test('confirmed owner-absent allow and deny are decided by the matching hard-har
   assert.match(refused.reason, /public_session_private_area/);
 });
 
-test('unknown retained owner outcome is not delivered', async (t) => {
+test('a crashed gate call is not delivered and the session continues', async (t) => {
   const { gate } = await makeGate(t);
   const { createNativeGateRunner } = await import(moduleUrl);
   const run = createNativeGateRunner(process.execPath, [gate, 'owner-bound-read-close']);
@@ -185,7 +187,7 @@ test('unknown retained owner outcome is not delivered', async (t) => {
     hook_event_name: 'PreToolUse', tool_name: 'read', tool_input: { file_path: 'brief' } });
 
   assert.equal((await run(event('read-1'))).allow, true);
-  await assert.rejects(run(event('read-2')), /retained outcome requires reconciliation/);
+  await assert.rejects(run(event('read-2')), /tool not delivered/);
   await settle();
-  await assert.rejects(run(event('read-3')), /tool not delivered/);
+  await assert.rejects(run(event('read-3')), error => !/quarantined/.test(error.message));
 });

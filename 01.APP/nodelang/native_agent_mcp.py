@@ -446,6 +446,13 @@ def build_server(*, session=None, workshop_task=None, mailbox_call=None):
     # ("existing runtime descriptor is unavailable"). Agents build on the canvas instead.
     for retired in [tool.name for tool in server._tool_manager.list_tools() if tool.name.startswith('native.work_')]:
         server._tool_manager._tools.pop(retired)
+    # A client may be given only some tools (Goose gets the Workshop and the canvas): the names or
+    # name prefixes in ARCHHUB_CONNECTOR_TOOLS; every other tool is not offered to it at all.
+    allowed = [part.strip() for part in os.environ.get("ARCHHUB_CONNECTOR_TOOLS", "").split(",") if part.strip()]
+    if allowed:
+        for name in [tool.name for tool in server._tool_manager.list_tools()
+                     if not any(tool.name == part or (part.endswith(".") and tool.name.startswith(part)) for part in allowed)]:
+            server._tool_manager._tools.pop(name)
     server._direct_host_tools = ({tool.name for tool in server._tool_manager.list_tools()} - existing_tools) | {"hosts.status"}
     from .native_workshop_tools import forbid_extra_arguments
     for tool in server._tool_manager.list_tools():

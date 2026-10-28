@@ -9254,7 +9254,10 @@
         "04.DOCS/OPENCODE-NATIVE-GOVERNANCE.md",
         "04.DOCS/README.md",
         "04.DOCS/SPEC.md",
-        "05.EVIDENCE/acompiler-intents.json"
+        "05.EVIDENCE/acompiler-intents.json",
+        "01.APP/nodelang/studio/ds/index.jsx",
+        "01.APP/nodelang/studio/style.css",
+        "02.TESTS/tests_js/studio_canvaslook.test.cjs"
       ]
     }
   }

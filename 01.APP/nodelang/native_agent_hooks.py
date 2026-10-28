@@ -9,6 +9,7 @@ import json
 import hashlib
 import os
 from pathlib import Path
+import sqlite3
 import sys
 import threading
 import time
@@ -230,7 +231,7 @@ def user_prompt_submit_context(control, *, selected=None) -> dict[str, object]:
             page = control.call("read_messages", {"limit": _PAGE_LIMIT},
                                 timeout_seconds=min(0.75, _remaining(deadline)))
             messages = _messages(page, client)
-        except (OSError, RuntimeError, ValueError, KeyError):
+        except (OSError, RuntimeError, ValueError, KeyError, sqlite3.Error):   # a locked Workshop store: no context, not a failure
             page = {"revision": None, "has_older": True}
             messages = []
         _remaining(deadline)

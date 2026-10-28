@@ -754,17 +754,18 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
     optional = {"send": {"reply_to", "idempotency_key", "native_control"}, "read": {"declarations_after", "include_archived"}, "declare": {"display_name", "model"}, "pending":set()}
     if method not in required or type(body) is not dict or not required[method] <= set(body) or set(body) - required[method] - optional[method]:
         raise ValueError("Workshop mailbox arguments are invalid")
+    if type(timeout_seconds) not in (int, float) or not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+        raise ValueError("Workshop call timeout must be positive and finite")
+    # The caller's budget covers the whole call, the sender's process lineage included.
+    deadline = time.monotonic() + timeout_seconds
     identity, runtime, peer = _identity(context, peer)
     # Existing app callers pass their graph filename beside a selected mailbox handle.
     # The filename cannot redirect local messages back into that graph.
     if history is not None:
         database = None
     # Work/account admission is separate. Local messages never open the application graph.
-    if type(timeout_seconds) not in (int, float) or not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
-        raise ValueError("Workshop call timeout must be positive and finite")
     if method == "send":
         body = {**body, "idempotency_key":body.get("idempotency_key", uuid4().hex)}
-    deadline = time.monotonic() + timeout_seconds
     while True:
         try:
             with application_history(database=database, busy_timeout_seconds=min(store_busy_timeout_seconds, 0.05)) as selected:
@@ -794,6 +795,21 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
     if body["to"].strip().casefold() in ("ahmed", "founder", "you"):
         result["delivery"] = []  # the founder reads the Workshop screen; nothing to push
         return result
+    # The message is recorded; the pushes run beside the caller and each lands as its own row in the
+    # Workshop (delivered, or failed with the reason). A slow or hung agent never delays the sender.
+    import threading
+    from .workshop_live import LIVE_NODE
+    done = {}
+    worker = threading.Thread(target=lambda: done.update(rows=_deliver_now(database, result, body, identity)),
+                              name="archhub-workshop-delivery", daemon=True)
+    worker.start()
+    worker.join(LIVE_NODE["params"]["sender_wait_seconds"])
+    result["delivery"] = done.get("rows") if "rows" in done else [
+        {"agent": body["to"], "state": "delivering", "reason": "each recipient's row appears in the Workshop as its push lands"}]
+    return result
+
+
+def _deliver_now(database, result, body, identity):
     from .workshop_live import deliver
     with application_history(database=database) as selected:
         message = selected.get(ROOM, result["message_id"], principal=DELIVERY_AUTHOR)
@@ -811,7 +827,7 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
             if not recipients:
                 from .workshop_live import discover_target
                 recipients = discover_target(body["to"])
-        result["delivery"] = deliver(selected, result["message_id"], recipients, identity["sender_label"], body["text"])
+        rows = deliver(selected, result["message_id"], recipients, identity["sender_label"], body["text"])
         if not recipients and not founder:
             from .workshop_live import SCHEMA
             selected._db.execute(SCHEMA)
@@ -819,8 +835,8 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
             selected._db.execute("INSERT OR IGNORE INTO workshop_live_deliveries VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (result["message_id"], body["to"], body["to"], "", "", "none", "failed", reason,
                  datetime.now(timezone.utc).isoformat(), 0))
-            result["delivery"] = [{"agent": body["to"], "state": "failed", "reason": reason}]
-    return result
+            rows = [{"agent": body["to"], "state": "failed", "reason": reason}]
+    return rows
 
 
 def _resolve_native_recipient(history, result, transport):

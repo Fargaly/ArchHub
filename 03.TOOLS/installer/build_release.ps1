@@ -584,8 +584,11 @@ if ($PrepareCandidateManifest) {
 # fresh admission before creating its snapshot, runtime or installer output.
 & $compilerPython (Join-Path $selectedRoot (Get-RepositoryPath 'tools/pipeline/build.py')) --root $selectedRoot
 if ($LASTEXITCODE -ne 0) { throw "ACOMPILER refused release build (exit $LASTEXITCODE)." }
+# The connector's runtime as two zips (zipimport): one file read instead of hundreds per connector start.
+& $compilerPython (Join-Path $selectedRoot (Get-RepositoryPath 'packaging/pack_runtime.py')) --out (Join-Path (Join-Path $selectedRoot '01.APP') 'packed')
+if ($LASTEXITCODE -ne 0) { throw 'Connector runtime packing failed; no release without the packed runtime.' }
 # No optional switch and no cached PASS: real clients qualify this exact source.
-$agentLinkEvidence = Join-Path $selectedRoot (Get-RepositoryPath 'evidence/agentlink-release.json')
+$agentLinkEvidence =Join-Path $selectedRoot (Get-RepositoryPath 'evidence/agentlink-release.json')
 $priorPythonPath = $env:PYTHONPATH
 $env:PYTHONPATH = (@($compilerSourceRoot, (Join-Path $selectedRoot '01.APP'), $selectedRoot, $priorPythonPath) | Where-Object { $_ }) -join [IO.Path]::PathSeparator
 Push-Location $selectedRoot

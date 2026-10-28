@@ -62,7 +62,34 @@ def _process_runtime(process, *, include_services=False):
     return runtime
 
 
-def observed_runtime_process(peer, *, strict=False):
+def parent_map():
+    """One snapshot of every process's parent pid. psutil rebuilds this whole table on every
+    Process.parent() call on Windows (~30-100 ms each), so a lineage walk reads it once."""
+    import psutil
+    try:
+        return psutil._psplatform.ppid_map()
+    except (AttributeError, OSError) as exc:
+        logging.getLogger(__name__).debug('Parent-pid snapshot unavailable; walking parents one by one: %s', exc)
+        return None
+
+
+def parent_of(process, parents):
+    """process.parent() from one parent-pid snapshot, with psutil's own pid-reuse check."""
+    import psutil
+    if parents is None:
+        return process.parent()
+    ppid = parents.get(process.pid)
+    if not ppid:
+        return None
+    try:
+        parent = psutil.Process(ppid)
+        return parent if parent.create_time() <= process.create_time() else None
+    except psutil.Error as exc:
+        logging.getLogger(__name__).debug('Parent %s of %s is gone: %s', ppid, process.pid, exc)
+        return None
+
+
+def observed_runtime_process(peer, *, strict=False, parents=None):
     """Actual runtime ancestor and its generation, never a cached display claim."""
     try:
         import psutil
@@ -75,19 +102,20 @@ def observed_runtime_process(peer, *, strict=False):
         process = psutil.Process(peer.pid)
         if abs(process.create_time() - peer.created_at) > 0.00001:
             return None
+        parents = parent_map() if parents is None else parents
         for _ in range(8):
             # Declarations bind their nearest runtime, including an attached agent server.
             runtime = _process_runtime(process, include_services=True)
             if runtime:
                 # npm's native CLI child and its Node launcher are one runtime.
                 try:
-                    parent = process.parent()
+                    parent = parent_of(process, parents)
                     if parent is not None and Path(parent.name()).stem.casefold() == 'node' and _process_runtime(parent, include_services=True) == runtime:
                         process = parent
                 except (psutil.Error, OSError) as exc:
                     logging.getLogger(__name__).debug('Optional runtime launcher metadata unavailable: %s', exc)
                 return {'runtime':runtime, 'pid':process.pid, 'created_at':process.create_time()}
-            process = process.parent()
+            process = parent_of(process, parents)
             if process is None:
                 return None
     except (psutil.Error, OSError, ValueError) as exc:

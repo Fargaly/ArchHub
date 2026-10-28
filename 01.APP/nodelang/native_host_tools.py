@@ -49,9 +49,32 @@ def _allow_effect(host: str) -> None:
         raise HostToolRefused("Local host effect permission is disabled for %s (settings.json: host_effects)." % host)
 
 
+_HOST_STATE = {"value": None, "at": 0.0, "running": None}
+# Host probing node: a probe walks every host port and can take seconds; a tool never waits for it.
+HOST_STATE_NODE = {"id": "hosts.state", "params": {"fresh_seconds": 10.0, "first_wait_seconds": 0.5}}
+
+
 def _host_state() -> dict:
+    """The newest host probe; a stale one refreshes beside the caller (nothing waits on a slow host)."""
+    import threading
+    import time
     from .connector_operation_evidence import host_projection
-    return host_projection()
+    params = HOST_STATE_NODE["params"]
+    if time.monotonic() - _HOST_STATE["at"] >= params["fresh_seconds"] and _HOST_STATE["running"] is None:
+        def refresh():
+            try:
+                _HOST_STATE.update(value=host_projection(), at=time.monotonic())
+            finally:
+                _HOST_STATE["running"] = None
+        _HOST_STATE["running"] = threading.Thread(target=refresh, name="archhub-host-probe", daemon=True)
+        _HOST_STATE["running"].start()
+    running = _HOST_STATE["running"]
+    if _HOST_STATE["value"] is None and running is not None:
+        running.join(params["first_wait_seconds"])
+    if _HOST_STATE["value"] is None:
+        return {"ok": True, "connectors": [], "operations": [], "probing": True,
+                "detail": "Hosts are being probed; ask again in a few seconds."}
+    return _HOST_STATE["value"]
 
 
 def register_host_tools(server, control=None, *, read_only=False) -> None:

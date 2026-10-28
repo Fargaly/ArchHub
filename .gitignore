@@ -50,3 +50,6 @@ signature_AFargaly*
 
 # Generated website payload; rebuild with nodelang.site_export.
 /06.CLOUD/public_site/site-export.json
+
+# Packed connector runtime: built by 03.TOOLS/packaging/pack_runtime.py in the release payload step
+/01.APP/packed/

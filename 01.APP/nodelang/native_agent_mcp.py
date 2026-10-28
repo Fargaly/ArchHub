@@ -259,7 +259,7 @@ def _session_metadata(meta):
 def _mailbox_call(method, body, context, **limits):
     from .workshop_mailbox import call
     from .library_engines import LIBRARY_ITEM_ENGINES
-    limits.setdefault("timeout_seconds", min(0.75,
+    limits.setdefault("timeout_seconds", min(0.5,
         LIBRARY_ITEM_ENGINES['tool_workshop']['params']['preflight_database_ms'] / 1000))
     return call(method, body, context, **limits)
 

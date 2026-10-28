@@ -21,7 +21,8 @@ from pathlib import Path
 
 FOUNDER = 'Ahmed'
 # Live delivery node: its typed parameters.
-LIVE_NODE = {'id': 'workshop.live', 'params': {'discover_timeout_seconds': 10, 'list_cache_seconds': 30}}
+LIVE_NODE = {'id': 'workshop.live', 'params': {'discover_timeout_seconds': 10, 'list_cache_seconds': 30,
+                                                 'sender_wait_seconds': 0.5}}
 SCHEMA = ("CREATE TABLE IF NOT EXISTS workshop_live_deliveries (message_id TEXT NOT NULL, recipient TEXT NOT NULL, "
           "agent TEXT, app TEXT, native_session_id TEXT, channel TEXT, state TEXT NOT NULL, reason TEXT, "
           "at TEXT NOT NULL, ms INTEGER, PRIMARY KEY (message_id, recipient))")
@@ -161,23 +162,30 @@ _LIVE = {'at': 0.0, 'ids': {}}
 
 def live_ids():
     """{app: {native ids}} from the Workshop's own live list, for apps whose discovery answered (cached briefly)."""
-    if time.monotonic() - _LIVE['at'] < LIVE_NODE['params']['list_cache_seconds']:
-        return _LIVE['ids']
+    # Never waited on: the list refreshes beside the caller; until it answers nothing is dropped.
+    if time.monotonic() - _LIVE['at'] >= LIVE_NODE['params']['list_cache_seconds'] and not _LIVE.get('running'):
+        import threading
+        _LIVE['running'] = True
+        threading.Thread(target=_refresh_live_ids, name='archhub-workshop-list', daemon=True).start()
+    return _LIVE['ids']
+
+
+def _refresh_live_ids():
     from .workshop_mailbox import _local_transport
     transport = _local_transport()
     try:
         found = transport.discover(timeout_seconds=LIVE_NODE['params']['discover_timeout_seconds'],
                                    apps=['claude', 'codex', 'opencode', 'antigravity', 'antigravity-ide'])
     except Exception as error:  # noqa: BLE001 - no list means nothing is dropped; the reason is logged
-        print('  workshop   : live list unavailable (%s)' % str(error)[:160], flush=True)
+        import sys   # stdout is an MCP connector's protocol stream; diagnostics go to stderr
+        sys.stderr.write('  workshop   : live list unavailable (%s)\n' % str(error)[:160])
         found = {}
     finally:
         getattr(transport, 'close', lambda: None)()
     ids = {}
     for row in found.get('recipients', []):
         ids.setdefault(row['app'], set()).add(row['id'])
-    _LIVE.update(at=time.monotonic(), ids=ids)
-    return ids
+    _LIVE.update(at=time.monotonic(), ids=ids, running=False)
 
 
 def live_agents(with_status=False):

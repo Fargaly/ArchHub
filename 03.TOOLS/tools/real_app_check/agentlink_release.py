@@ -15,6 +15,7 @@ import gzip
 import inspect
 import io
 import json
+from contextlib import closing
 import os
 import re
 from pathlib import Path
@@ -502,8 +503,8 @@ def qualify_connector(profile, *, source=None, stall_wait=10):
     from tools.real_app_check.profile_guard import command
     import anyio
     import builtins
-    from nodelang.clean_coordination_service import build_bound_service
-    from nodelang.runtime_activity import RuntimeActivity, RuntimeClosing
+    import sqlite3
+    from nodelang.workshop_mailbox import application_history
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
 
@@ -515,35 +516,38 @@ def qualify_connector(profile, *, source=None, stall_wait=10):
     if profile.exists():
         raise QualificationRefused("Connector qualification profile must be fresh")
     profile.mkdir(parents=True)
-    release, entered = threading.Event(), threading.Event()
-    declarations = []
+    # NOGRAPH (D-014): the Workshop is its own store, workshop/messages.sqlite3 in the profile. "hung"
+    # holds that store's write lock for the whole case, "down" makes it unopenable, "up" leaves it be.
+    database = profile / "workshop" / "messages.sqlite3"
+    with application_history(database=database):
+        pass
+    held = {}
 
-    class Workshop:
-        mode = "hung"
-        activity = RuntimeActivity()
+    def set_workshop(mode):
+        conn = held.pop("lock", None)
+        if conn is not None:
+            conn.execute("ROLLBACK")
+            conn.close()
+        parked = database.with_name(database.name + ".down")
+        if database.is_dir():
+            database.rmdir()
+        if parked.exists():
+            parked.rename(database)
+        if mode == "hung":
+            conn = sqlite3.connect(database, isolation_level=None)
+            conn.execute("BEGIN EXCLUSIVE")
+            held["lock"] = conn
+        elif mode == "down":
+            database.rename(parked)
+            database.mkdir()
 
-        def begin_shutdown(self):
-            self.activity.begin_shutdown()
-            release.set()
+    def court_declarations():
+        with closing(sqlite3.connect(database)) as conn:
+            rows = conn.execute("SELECT record FROM workshop_declarations").fetchall()
+        return [json.loads(row[0]) for row in rows]
 
-        def dispatch(self, payload, **_kwargs):
-            mode = self.mode
-            entered.set()
-            if mode == "hung":
-                release.wait(timeout=stall_wait)
-            if mode != "up":
-                raise RuntimeClosing("Workshop fixture unavailable")
-            if payload["path"].endswith("/declare"):
-                declarations.append(payload["body"])
-            return {"ok":True, "pending":[], "declarations":[], "sender_key":"fixture",
-                "message_id":"fixture-message", "created":True, "existing":False}
-
-    host = Workshop()
-    workshop = build_bound_service(host, port=0)
-    threading.Thread(target=workshop.serve_forever, daemon=True).start()
     env = isolated_environment(profile)
-    env.update(ARCHHUB_COORDINATION_ENDPOINT="http://127.0.0.1:%d/coordination" % workshop.server_port,
-        ARCHHUB_COORDINATION_VENDOR="claude", CLAUDE_CODE_SESSION_ID="connector-release-fixture")
+    env.update(ARCHHUB_COORDINATION_VENDOR="claude", CLAUDE_CODE_SESSION_ID="connector-release-fixture")
     # Handlers, dispatch, lifespan and stdio stay real; only physical owners are fixtures.
     code = '''import sys,time
 from contextlib import contextmanager
@@ -601,8 +605,7 @@ native.main()
         return {name:value(schema["properties"][name]) for name in schema.get("required", [])}
 
     async def run_case(mode):
-        host.mode = mode
-        entered.clear()
+        set_workshop(mode)
         params = StdioServerParameters(command=sys.executable,
             args=command(
                 [sys.executable, "-I", "-B", "-c", code, str(source)])[1:], env=env, cwd=str(profile))
@@ -651,7 +654,9 @@ native.main()
                         "is_error":answer.isError})
                 ping = next(row for row in receipts if row["tool"] == "revit_ping")
                 with anyio.fail_after(5):
-                    while not entered.is_set() or (mode == "up" and not declarations):
+                    # The court's declaration is recorded in the Workshop's own store: session, app and task.
+                    while mode == "up" and not any(row.get("task") == "Connector court" and row.get("runtime") == "claude"
+                                                   and "connector-release-fixture" in json.dumps(row) for row in court_declarations()):
                         await anyio.sleep(delay=0.02)
                 return {"workshop":mode, "initialize_seconds":initialize_seconds,
                     "host_seconds":ping["seconds"], "broker_seconds":ping["work_seconds"],
@@ -661,15 +666,13 @@ native.main()
         cases = [anyio.run(run_case, mode) for mode in ("hung", "down", "up")]
         return {"status":"isolated-pass", "scope":"real MCP connector and SDK; fixture owner, broker and Workshop",
             "native_sha256":hashlib.sha256((source / "nodelang/native_agent_mcp.py").read_bytes()).hexdigest(),
-            "cases":cases, "declarations_arrived":bool(declarations)}
+            "cases":cases, "declarations_arrived":bool(court_declarations())}
     except Exception as exc:
         while isinstance(exc, builtins.BaseExceptionGroup):
             exc = exc.exceptions[0]
         raise QualificationRefused("Connector runtime court failed: " + (str(exc) or type(exc).__name__)) from exc
     finally:
-        release.set()
-        workshop.shutdown()
-        workshop.server_close()
+        set_workshop("up")
         shutil.rmtree(profile)
 
 

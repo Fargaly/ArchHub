@@ -25,11 +25,13 @@ def _lineage(peer):
     import psutil
     result = [{"pid":peer.pid, "created_at":peer.created_at}]
     try:
+        from .agent_runtime_registry import parent_map, parent_of
         process = psutil.Process(peer.pid)
         if abs(process.create_time()-peer.created_at) >= 0.00001:
             return result
+        parents = parent_map()
         for _ in range(7):
-            process = process.parent()
+            process = parent_of(process, parents)
             if process is None:
                 break
             result.append({"pid":process.pid, "created_at":process.create_time()})

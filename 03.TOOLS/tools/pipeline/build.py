@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -59,10 +60,27 @@ def registration_context(root, parent, commit, paths, context):
     return {**context, 'intent': 'ACOMPILER2B'}
 
 
+def toolchain_identity(root):
+    """Rust toolchain and flags a source-built compiler is made with."""
+    owner = Path(strict_check.__file__).resolve().parents[2]
+    cargo_home = Path(os.environ.get("CARGO_HOME", str(strict_check.rust_root(owner) / "cargo")))
+    rustc = cargo_home / "bin" / ("rustc.exe" if os.name == "nt" else "rustc")
+    version = subprocess.run([str(rustc), "-vV"], cwd=owner / "tools" / "archhub-compiler",
+                             env=strict_check._environment(), capture_output=True, check=True).stdout
+    return version + strict_check.compiler_options()["rustflags"].encode()
+
+
 def compiler_identity(root):
-    """Compiler bytes and pipeline; intent data is keyed per resolved request."""
+    """Compiler inputs and pipeline; intent data is keyed per resolved request.
+
+    A source-built executable embeds its checkout path (Cargo package id), so each
+    release worktree produced new bytes and replayed all history; hash its inputs.
+    """
     digest = hashlib.sha256()
-    digest.update(Path(strict_check._command(root, executable_only=True)[0]).read_bytes())
+    if (Path(strict_check.__file__).resolve().parents[2] / "runtime" / "acompiler").exists():
+        digest.update(Path(strict_check._command(root, executable_only=True)[0]).read_bytes())
+    else:
+        digest.update(toolchain_identity(root))
     listing = strict_check.git(root, "ls-files", "-z", "--", "tools/archhub-compiler", "tools/pipeline",
                                "tools/ratchet.py", "03.TOOLS/tools/archhub-compiler", "03.TOOLS/tools/pipeline", "03.TOOLS/tools/ratchet.py").decode()
     for path in sorted(p for p in listing.split("\0") if p):

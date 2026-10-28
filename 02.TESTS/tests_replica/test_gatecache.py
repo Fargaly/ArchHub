@@ -48,7 +48,8 @@ def test_registry_change_only_replays_its_users(tmp_path, monkeypatch):
                         seen.append(k["context"]["intent"]) or {"ok": True, "diagnostics": []})
     # Exercise the actual replay loop, Git history and admitted.json. Only the
     # expensive compiler transport is replaced; its identity remains real bytes.
-    monkeypatch.setattr(strict_check, "_command", lambda *a, **k: [sys.executable])
+    toolchain = [b"rustc court 1"]
+    monkeypatch.setattr(build, "toolchain_identity", lambda root: toolchain[0])
     assert build.admit_sequence(root, base) == 0
     assert seen == ["FIRST", "SECOND"]
     seen.clear()
@@ -82,9 +83,51 @@ def test_registry_change_only_replays_its_users(tmp_path, monkeypatch):
     seen.clear()
     assert build.admit_sequence(root, base) == 0
     assert seen == []
-    monkeypatch.setattr(strict_check, "_command", lambda *a, **k: [__file__])
+    toolchain[0] = b"rustc court 2"
     assert build.admit_sequence(root, base) == 0
     assert len(seen) == 6
+    seen.clear()
+    (root / "tools" / "archhub-compiler").mkdir(parents=True, exist_ok=True)
+    (root / "tools" / "archhub-compiler" / "rules.json").write_text("{}")
+    commit(root, "compiler rule\n\nIntent: SECOND\nWhy: Change the compiler source")
+    assert build.admit_sequence(root, base) == 0
+    assert len(seen) == 7, seen
+
+
+def test_other_worktree_path_keeps_admissions(tmp_path, monkeypatch):
+    """A release worktree rebuilds the compiler with path-dependent bytes; hits must survive."""
+    root = tmp_path / "MAIN"
+    root.mkdir()
+    git(root, "init", "-q")
+    git(root, "config", "user.name", "Cache court")
+    git(root, "config", "user.email", "court@example.invalid")
+    git(root, "config", "core.hooksPath", str(tmp_path / "NOHOOKS"))
+    git(root, "config", "commit.gpgsign", "false")
+    (root / ".gitignore").write_text("tools/archhub-compiler/target/\ncompiler.bin\n")
+    (root / "evidence").mkdir()
+    (root / "evidence" / "acompiler-intents.json").write_text(json.dumps(
+        {"schema_version": 1, "intents": {"FIRST": {"source": "f", "scope": ["app.py"]}}}))
+    base = commit(root, "base")
+    (root / "app.py").write_text("value = 1\n")
+    commit(root, "FIRST: one\n\nWhy: first")
+    seen = []
+    monkeypatch.setattr(strict_check, "check_files", lambda *a, **k:
+                        seen.append(k["context"]["intent"]) or {"ok": True, "diagnostics": []})
+    monkeypatch.setattr(build, "toolchain_identity", lambda root: b"rustc court")
+    def path_dependent_executable(root, *a, **k):
+        executable = Path(root) / "compiler.bin"
+        executable.write_bytes(str(root).encode())  # Cargo package id embeds the checkout path.
+        return [str(executable)]
+    monkeypatch.setattr(strict_check, "_command", path_dependent_executable)
+    assert build.admit_sequence(root, base) == 0
+    assert seen == ["FIRST"]
+    seen.clear()
+    other = tmp_path / "RELEASE"
+    git(root, "worktree", "add", "-q", "--detach", str(other), "HEAD")
+    record, _ = build.admitted_record(other)
+    record.write_bytes(build.admitted_record(root)[0].read_bytes())
+    assert build.admit_sequence(other, base) == 0
+    assert seen == []
 
 
 def test_external_repin_invalidates_every_intent():
@@ -218,10 +261,8 @@ def test_real_compiler_cache_preserves_parent_admission(tmp_path, monkeypatch):
     assert build.admit_sequence(root, base) == 0
     assert seen == ["FIRST", "ACOMPILER2B"]
     seen.clear()
-    changed_compiler = tmp_path / "changed-compiler.exe"
-    changed_compiler.write_bytes(Path(os.environ["ACOMPILER_REAL_BINARY"]).read_bytes() + b"\nGATEFAST identity court\n")
-    changed_compiler.chmod(Path(os.environ["ACOMPILER_REAL_BINARY"]).stat().st_mode)
-    monkeypatch.setattr(strict_check, "_command", lambda *a, **k: [str(changed_compiler)])
+    real_toolchain = build.toolchain_identity
+    monkeypatch.setattr(build, "toolchain_identity", lambda root: real_toolchain(root) + b"\nGATEMEM court\n")
     assert build.admit_sequence(root, base) == 0
     assert seen == ["FIRST", "SECOND", "ACOMPILER2B", "ACOMPILER2B"]
     seen.clear()

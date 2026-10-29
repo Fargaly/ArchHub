@@ -206,7 +206,7 @@
   function AddParameter({n, u}) {
     const [open, setOpen] = React.useState(false);
     return <>
-      <button className="button-reset canvas-card-add" data-add-parameter aria-label={'Add parameter to ' + n.title} title="Add parameter" onClick={event => executeAction('projects.controls.activate', {handler: () => setOpen(!open)}, event)}>+</button>
+      <button className="button-reset canvas-card-add" data-add-parameter aria-label={'Add parameter to ' + n.title} title="Add parameter" onClick={event => executeAction('projects.controls.activate', {handler: () => setOpen(!open)}, event)}>+ Parameter</button>
       {open && <AddField kind="Parameter" title="Add parameter" sub="A value on this node" onClose={() => setOpen(false)} onAdd={input => u.act(() => api.addNodeParameter(n.id, input))} />}
     </>;
   }
@@ -274,7 +274,7 @@
     const scalarParameter = ['thing.setting', 'param.value'].includes(n.type) && n.outputs.length === 1 && (typeof n.params.value === 'number' || n.params.value === null);
     if (scalarParameter) return <ParameterNode n={n} socket={socket} selected={selected} u={u} />;
     const [state, stateColor] = nodeState(n, !!refusal), wiresIn = s.graph.wires.filter(w => w.to === n.id),
-      sourceTitle = port => { const w = wiresIn.find(x => x.toPort === port); return w && s.graph.nodes.find(x => x.id === w.from)?.title; },
+      sourceOf = port => { const w = wiresIn.find(x => x.toPort === port), a = w && s.graph.nodes.find(x => x.id === w.from); return a && a.title + '.' + (a.outputs.find(p => p.id === w.fromPort)?.name || w.fromPort); },
       slotPorts = new Set(), settingsKeys = new Set(n.settingsKeys || []),
       // Internal ids, hashes and serialized JSON stay in Properties; the face shows human values (CARDPOLISH), first three until expanded.
       shown = (n.parameterSchema || []).filter(p => p.editable || (!HIDDEN_PARAM.test(p.key) && (n.params[p.key] === null || typeof n.params[p.key] !== 'object') && !HIDDEN_VALUE.test(String(n.params[p.key]))))
@@ -284,7 +284,7 @@
     for (const p of params) if (n.inputs.some(x => x.id === p.key || x.id === 'param:' + p.key)) slotPorts.add(n.inputs.find(x => x.id === p.key || x.id === 'param:' + p.key).id);
     const result = n.status === 'Done' ? summary(n.output) : '';
     return <div data-ds-node="" className="lm-node" data-spec={n.dataset ? 'dataset' : 'operation'} data-node-state={state.split(' · ')[0]}
-      style={{...CARD, width: n.dataset ? 478 : 208, paddingBottom: 10, border: '1px solid ' + (refusal ? A.err : SPEC.fieldLine), outline: selected ? '2px solid ' + A.accent : 'none', outlineOffset: 2}}>
+      style={{...CARD, width: n.dataset ? 478 : 280, paddingBottom: 10, border: '1px solid ' + (refusal ? A.err : SPEC.fieldLine), outline: selected ? '2px solid ' + A.accent : 'none', outlineOffset: 2}}>
       <div className="node-header" style={{display: 'flex', alignItems: 'flex-start', gap: 8, padding: '11px 12px 0'}}>
         <div data-node-card-title="" style={{flex: 1, minWidth: 0, fontSize: 14, overflowWrap: 'anywhere'}}>{n.title}</div>
         {!n.pure && <span data-node-pure="false" style={{paddingTop: 2, color: A.inkSoft}}
@@ -292,23 +292,29 @@
       </div>
       {members.length > 0 && <div className="canvas-members">{members.map(m => <button key={m.id} data-group-member={m.id} className="canvas-member nodrag" title={'Open ' + m.title} onClick={event => executeAction('projects.controls.activate', {handler: () => onMember(m)}, event)}><span style={{background: A.purple, color: A.onFill}}>{m.title.slice(0, 1)}</span>{m.title}</button>)}</div>}
       <div style={{display: 'grid', gap: 8, padding: '12px 12px 0'}}>
-        {n.inputs.filter(p => !slotPorts.has(p.id)).map(p => <React.Fragment key={p.id}><div data-port-row="in" style={{position: 'relative', display: 'flex', justifyContent: 'space-between', color: SPEC.typed, minHeight: 16, alignItems: 'center'}}>
-          <span style={edgeSocket('in', '50%', 12)}>{socket(p, 'in')}</span><span>{p.name}</span><span style={{color: sourceTitle(p.id) ? SPEC.text : SPEC.typed}}>{sourceTitle(p.id) ? 'From ' + sourceTitle(p.id) : typeName(p)}</span></div>{refusedHere(p.id)}</React.Fragment>)}
-        {params.map(p => {
-          const port = n.inputs.find(x => x.id === p.key || x.id === 'param:' + p.key), from = port && sourceTitle(port.id);
-          // Spec Model parameter slot: name on top, value (or its source) below; a connectable parameter carries its socket on the card edge.
-          return <React.Fragment key={p.key}><div data-parameter={p.key} style={{...SLOT, display: 'grid', gap: 2, padding: '4px 8px'}}>{port && <span style={edgeSocket('in', '50%', 12)}>{socket(port, 'in')}</span>}
-            <span style={{color: SPEC.label, overflowWrap: 'anywhere'}} title={p.label || p.key}>{p.label && p.label !== p.key ? p.label : p.key.replace(/_/g, ' ')}{p.unit ? ' · ' + p.unit : ''}</span>
-            <span style={{display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>{from ? <span>From {from}</span> : n.params[p.key] === null ? <span data-unset="" style={{color: SPEC.label}}>unset</span> : <ValueWidget n={n} p={p} value={n.params[p.key]} u={u} />}
-              {!from && settingsKeys.has(p.key) && <small style={{color: SPEC.count, whiteSpace: 'nowrap', fontSize: 12.5}} title="One value with Settings (router.json)">From Settings</small>}</span></div>{port && refusedHere(port.id)}</React.Fragment>;
+        {/* Full-node row (archhub-full-node-controls-native.png): name over its type, then the linked source or an inline control, then a row menu. Real data or empty. */}
+        {[...n.inputs.filter(p => !slotPorts.has(p.id)).map(p => ({key: p.id, port: p})), ...params.map(p => ({key: 'param:' + p.key, param: p, port: n.inputs.find(x => x.id === p.key || x.id === 'param:' + p.key)}))].map(({key, port, param}) => {
+          const from = port && sourceOf(port.id), name = param ? (param.label && param.label !== param.key ? param.label : param.key.replace(/_/g, ' ')) : port.name,
+            type = param ? (param.dataType || (param.options?.length ? 'enum' : param.type === 'boolean' ? 'boolean' : param.type === 'number' ? 'number' : 'string')) + (param.unit ? ' · ' + param.unit : '') + (settingsKeys.has(param.key) ? ' · From Settings' : '') : typeName(port);
+          return <React.Fragment key={key}><div data-port-row={param ? undefined : 'in'} data-parameter={param ? param.key : undefined}
+            style={{...SLOT, display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1.2fr) auto', gap: 8, padding: '4px 4px 4px 10px', alignItems: 'center'}}>
+            {port && <span style={edgeSocket('in', '50%', 12)}>{socket(port, 'in')}</span>}
+            <span style={{minWidth: 0}}><span style={{display: 'block', fontSize: 13.5, overflowWrap: 'anywhere'}} title={param ? param.label || param.key : port.name}>{name}</span>
+              <span style={{display: 'block', color: SPEC.label}}>{type}</span></span>
+            <span data-row-value="" style={{display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>
+              {from ? <span data-linked-source="" style={{color: SPEC.typed}} title={from}>↳ {from}</span>
+                : !param ? null : n.params[param.key] === null ? <span data-unset="" style={{color: SPEC.label}}>unset</span> : <ValueWidget n={n} p={param} value={n.params[param.key]} u={u} />}</span>
+            <button type="button" className="button-reset nodrag" aria-label={name + ' row actions'} style={{color: SPEC.label, padding: '0 4px'}}
+              onClick={event => executeAction('projects.controls.activate', {handler: () => u.show('Port menu', {id: n.id, port: port?.id || 'param:' + param.key, anchor: {x: event.clientX, y: event.clientY}})}, event)}>⋮</button>
+          </div>{port && refusedHere(port.id)}</React.Fragment>;
         })}
         {shown.length > 3 && <button type="button" className="button-reset nodrag canvas-card-more" aria-pressed={compact} style={{justifySelf: 'start', color: SPEC.label}} onClick={event => executeAction('projects.controls.activate', {handler: () => setCompact(!compact)}, event)}>{compact ? `+${shown.length - 3} more` : 'Compact'}</button>}
         {n.loop && <div data-node-loop="" style={{color: SPEC.label}} title={'Trigger ' + n.loop.trigger + ' · stops when ' + n.loop.stop + (n.loop.evaluator ? ' · evaluator ' + n.loop.evaluator : '')}>Loop · cap {n.loop.cap} · until {n.loop.stop}</div>}
         {n.dataset && <DatasetEditor n={n} u={u} />}
         {!n.dataset && !n.column && n.paramDefs && api.addNodeParameter && <AddParameter n={n} u={u} />}
-        {n.outputs.map(p => <div key={p.id} data-port-row="out" style={{position: 'relative', display: 'flex', justifyContent: 'space-between', color: SPEC.label, minHeight: 16, alignItems: 'center'}}>
-          <span>{p.name}</span><span>{typeName(p)}</span><span style={edgeSocket('out', '50%', 12)}>{socket(p, 'out')}</span></div>)}
-        {result && <div data-node-result="" data-todo="output-summary-expanded" style={{color: SPEC.typed, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}} title={result}>▸  {result}</div>}
+        {n.outputs.map(p => <div key={p.id} data-port-row="out" style={{position: 'relative', color: SPEC.typed, minHeight: 18, display: 'flex', alignItems: 'center'}}>
+          <span>{p.name} · {typeName(p)}</span><span style={edgeSocket('out', '50%', 12)}>{socket(p, 'out')}</span></div>)}
+        {n.outputs.length > 0 && <div data-node-result="" data-todo="output-summary-expanded" style={{...SLOT, color: result ? SPEC.text : SPEC.label, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block'}} title={result}>{result ? '▸  ' + result : wiresIn.length || !n.inputs.length ? 'Run to inspect output' : 'Connect data to inspect output'}</div>}
         <span data-node-status="" style={{...FOOT, color: stateColor}} title={n.error || state}>{state.split(' · ')[0]}</span>
       </div>
     </div>;

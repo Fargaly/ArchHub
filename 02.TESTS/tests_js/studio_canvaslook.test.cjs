@@ -97,7 +97,7 @@ test('flat overlapping ordinary nodes use the canvas build spec operation anatom
   const graph=fixture();graph.nodes=graph.nodes.filter(n=>!n.children.length).map(n=>({...n,parent:null}));
   const page=await mount(t,graph);await checkCards(page,12);
   const card=page.locator('[data-ds-node]').first();
-  assert.equal(await card.evaluate(el=>el.style.width),'208px');
+  assert.equal(await card.evaluate(el=>el.style.width),'280px');
   assert.equal(await card.evaluate(el=>window.getComputedStyle(el).borderRadius),'6px');
   assert.ok(await card.evaluate(el=>parseFloat(window.getComputedStyle(el).fontSize))>=12.5,'spec d9c0d514: text at least 12.5px');
   assert.equal(await page.locator('[data-stacked-edge]').count(),0);

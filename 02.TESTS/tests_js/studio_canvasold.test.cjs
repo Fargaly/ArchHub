@@ -312,7 +312,7 @@ test('CARDPOLISH bounds human rows while retaining internal parameters and every
  assert.doesNotMatch(await card.innerText(),/[a-f0-9]{64}|assembly-instance:|\{"/);
  const description=card.locator('[data-parameter="description"]');
  assert.equal(await description.locator('[title]').last().getAttribute('title'),n.properties.find(p=>p.label==='description').value);
- assert.equal(await description.evaluate(el=>window.getComputedStyle(el.lastElementChild).textOverflow),'ellipsis');
+ assert.equal(await description.locator('[data-row-value]').evaluate(el=>window.getComputedStyle(el).textOverflow),'ellipsis');
  assert.equal(await card.locator('[data-port-key]').count(),1);
  const stored=await page.evaluate(()=>window.fixtureState().graph.nodes.find(n=>n.id==='level'));
  assert.equal(stored.params.template_instance,hash);

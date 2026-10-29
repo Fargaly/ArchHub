@@ -41,7 +41,7 @@ AccessAction3: (device, event) => (() => u.act(() => api.selectDevice(device.id)
             }}>Choose where the next task runs. Your identity stays with your account.</p>{s.devices.map(device => <button className="device-row" key={device.id} aria-pressed={s.activeDevice === device.id} onClick={event => runAction('settings.access.AccessAction3', device, event)}><Icon name="canvas" /><span className="fill"><b>{device.name}</b><small>{device.status}</small></span>{s.activeDevice === device.id ? <Icon name="check" size={16} /> : <Icon name="arrow" size={16} />}</button>)}</Card><Card style={{
             padding: 22
           }}><h2>Included with your account</h2>{['BABOOM companion', 'Connected programs', 'Your Brain', 'Visual workflows', 'Shared skills', 'Team Workshop'].map(name => <div className="source-row" key={name}><Icon name="check" size={14} /><span>{name}</span><span className="fill" /><span className="muted" style={{
-                fontSize: 10
+                fontSize: 11
               }}>Included</span></div>)}</Card></div></div><window.UI.AccountUsage /><window.UI.BillingAccount /></main></>;
   }
   function WorkspaceRules({

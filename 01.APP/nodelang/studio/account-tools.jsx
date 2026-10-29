@@ -85,7 +85,7 @@ BillingAccountAction9: (event) => (() => u.go('access'))(event)});
     const r = message.usage;
     return <small className="muted mono" style={{
       display: 'block',
-      fontSize: 10,
+      fontSize: 11,
       marginTop: 8
     }}>{r.inputTokens} in · {r.outputTokens} out · ${r.cost.toFixed(2)} · {r.connectorCalls} program calls</small>;
   }

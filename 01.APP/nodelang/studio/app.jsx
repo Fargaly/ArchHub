@@ -265,7 +265,7 @@
           e.preventDefault();
           show('Search');
         }
-        if (e.ctrlKey && e.key.toLowerCase() === 'z' && !e.target.isContentEditable && e.target.contentEditable !== 'true' && !e.target.closest('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"]')) {
+        if (e.ctrlKey && e.key.toLowerCase() === 'z' && !e.target.isContentEditable && e.target.contentEditable !== 'true' && !e.target.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"]')) {
           e.preventDefault();
           act(e.shiftKey ? api.redo : api.undo);
         }
@@ -468,7 +468,8 @@
       voiceGeneration.current++;
       const el = ref.current;
       if (!el) return;
-      const f = el.querySelector('input:not([type=file]),textarea,button,select');
+      // The first field takes the typing (Ctrl K → type a node name), not the header's close button.
+      const f = el.querySelector('input:not([type=file]),textarea') || el.querySelector('button,select');
       f?.focus();
       const handler = e => {
         if (e.key !== 'Tab') return;

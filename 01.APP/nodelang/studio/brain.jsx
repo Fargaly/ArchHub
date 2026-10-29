@@ -44,7 +44,7 @@
       Memory: A.inkSoft
     };
     return <main className="page brain-page" data-screen="brain"><Heading title="Brain" sub="A picture of what your agents know about you"><Chip c={A.ok}>{s.brain.length} memories</Chip><Btn sm onClick={() => executeAction("ui.download", u, 'Brain')}>Export</Btn><Btn sm onClick={() => executeAction("ui.go", u, 'settings/Brain')}>Settings</Btn></Heading>{request.status === 'waiting' && <p role="status">Reading your Brain…</p>}{request.status === 'error' && <div role="alert">{request.error}<Btn sm onClick={() => executeAction('ui.state',setAttempt,n=>n+1)}>Retry Brain</Btn></div>}{request.status === 'empty' && <p>No memories yet. Remember a rule to add one.</p>}{request.status === 'loaded' && <p role="status">Brain read confirmed.</p>}<div className="brain-layout"><section className="knowledge-map"><div className="map-header spread"><div className="flex"><Icon name="brain" /><h3>Your knowledge</h3></div><input aria-label="Search Brain" placeholder="People, projects, programs, memories…" value={query} onChange={e => setQuery(e.target.value)} /></div><svg className="knowledge-svg" viewBox="0 0 860 560" aria-label="Knowledge map" onWheel={e => setZoom(z => Math.max(.5, Math.min(2, z + (e.deltaY < 0 ? .08 : -.08))))} onPointerDown={e => {
-            if (e.target.closest('[data-knowledge-node]')) return;
+            if (e.target.closest?.('[data-knowledge-node]')) return;
             drag.current = {
               x: e.clientX,
               y: e.clientY,
@@ -102,7 +102,7 @@
                   })}>Edit</Btn><Btn sm onClick={() => executeAction("ui.confirm", u, 'Forget this rule?', () => api.forgetMemory(r.id))}>Forget</Btn></div></div><p style={{
                 margin: '12px 0'
               }}>{r.text}</p><span className="muted mono" style={{
-                fontSize: 10
+                fontSize: 11
               }}>{r.source}</span></Card>)}</div>{q && <p className="muted" style={{
             paddingTop: 12
           }}>{shown.length} knowledge matches</p>}</section><section className="memory-timeline"><h2>Recent memory</h2>{s.brain.map((r, i) => <div key={r.id} className="timeline-item"><i /><div><small className="muted">{i === 0 ? 'Most recent' : 'Earlier'} · {r.source}</small><p>{r.text}</p></div></div>)}</section></div></main>;

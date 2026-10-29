@@ -141,7 +141,7 @@
       <div style={{marginTop: 9, height: 16, fontSize: 11, lineHeight: 1.2, color: SPEC.label}}>All records {'·'} {values.length}</div>
       <output data-column-of={n.column.dataset + '.' + n.column.field} style={{display: 'block', marginTop: 7, height: 28, boxSizing: 'border-box', padding: '6px 9px', borderRadius: 5, background: SPEC.slot,
         fontSize: 12, lineHeight: 1.2, color: SPEC.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>{values.map(cellText).join(' · ')}</output>
-      <div style={{marginTop: 14, height: 15, fontSize: 10, lineHeight: 1.2, color: SPEC.label}}>{'↗'} {dataset.title} {'·'} {def.name}</div>
+      <div style={{marginTop: 14, height: 15, fontSize: 11, lineHeight: 1.2, color: SPEC.label}}>{'↗'} {dataset.title} {'·'} {def.name}</div>
     </div>;
   }
   // Spec FieldTypeMenu: a listbox of the server's parameter types (node_params.py), labelled as the design names them.
@@ -369,7 +369,7 @@
     React.useEffect(() => {
       if (!active) { space.current=false; gesture.current=null; touches.current.clear(); return; }
       const listener = e => {
-        if (e.target.closest('input,textarea,select,[contenteditable="true"],[role="textbox"]')) return;
+        if (e.target.closest?.('input,textarea,select,[contenteditable="true"],[role="textbox"]')) return;
         if (area.current?.contains(e.target)) {
           if (e.key === ' ') { e.preventDefault(); space.current = true; }
           if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomAt(view.current.zoom * 1.2); }
@@ -519,7 +519,7 @@
       }}><span data-socket-dot="" data-wired={side === 'out' || s.graph.wires.some(w => w.to === n.id && w.toPort === p.id) || undefined} /></span>;
     };
     const startNode = (e, n) => {
-      if (e.button !== 0 || e.target.closest('button,input,textarea,select,[contenteditable="true"],[data-endpoint]')) return;
+      if (e.button !== 0 || e.target.closest?.('button,input,textarea,select,[contenteditable="true"],[data-endpoint]')) return;
       e.stopPropagation();
       setWireId(null);
       if (e.ctrlKey) { setSelected(selected.filter(id=>id!==n.id)); return; }
@@ -625,7 +625,7 @@
       const el = area.current;
       if (!el) return;
       const wheel = e => {
-        if (e.target.closest('input,textarea,select,[contenteditable="true"]')) return;
+        if (e.target.closest?.('input,textarea,select,[contenteditable="true"]')) return;
         e.preventDefault();
         const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? el.clientHeight : 1,
           dx = e.deltaX * unit, dy = e.deltaY * unit;
@@ -686,7 +686,7 @@
         minHeight: 0
       }}>{u.libraryOpen && <window.UI.LibraryShelf onClose={() => u.setLibraryOpen(false)} />}
    <div ref={area} className="node-canvas" tabIndex={0} aria-label="Workflow canvas" style={{touchAction:'none',userSelect:'none'}} title="Drag to select · Shift adds · Ctrl removes · Middle or Space-drag to pan · Wheel to zoom · Double-click to fit" onPointerDownCapture={e => {
-          if (e.target.closest('input,textarea,select,[contenteditable="true"]')) return;
+          if (e.target.closest?.('input,textarea,select,[contenteditable="true"]')) return;
           area.current.focus({preventScroll:true});
           if (e.pointerType === 'touch') {
             touches.current.set(e.pointerId, {x:e.clientX,y:e.clientY});

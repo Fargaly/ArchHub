@@ -1465,7 +1465,7 @@ async function pollFile(){
  fileHistory.push(copy(sessionDocument));sessionDocument=copy(read.document);sessionRevision=read.revision;runEpoch++;
  solveNote=read.by&&read.by!=='You'?'Updated by '+read.by:solveNote;projectFile();publish({liveEditBy:read.by,liveRevision:read.revision});
 }
-if(typeof window.setInterval==='function')window.setInterval(()=>pollFile().catch(()=>{}),Number(state.canvasPolicy?.file_poll_ms??1000));
+if(typeof window.setInterval==='function')window.setInterval(()=>pollFile().catch(()=>{}),Number(state.canvasPolicy?.file_poll_ms??ownerRefreshMs));
 function portableDocument(){return copy(sessionDocument);}
 async function adoptFile(document,path='',navigation=++fileNavigation){
  const checked=await sessionRequest('validate',{document});

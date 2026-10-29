@@ -521,7 +521,7 @@
         borderRadius: 7,
         background: A.warn,
         color: A.onFill,
-        fontSize: 10,
+        fontSize: 11,
         fontWeight: 600,
         display: 'grid',
         placeItems: 'center'

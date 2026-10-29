@@ -329,7 +329,7 @@
         display: 'grid',
         gap: 3
       }}><span>{changed && <span className="changed">● </span>}{row.label}</span>{raw && <span className="muted" style={{
-          fontSize: 10
+          fontSize: 11
         }}>{row.type} · parameter socket</span>}</label><div className="flex" style={{
         gap: 6,
         minWidth: 0

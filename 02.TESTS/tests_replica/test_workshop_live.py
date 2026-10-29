@@ -184,7 +184,18 @@ def test_a_message_injected_once_is_never_attached_again(monkeypatch, context, c
     me = call('declare', {'task': 't', 'paths': [cwd], 'status': 'working', 'request_id': 'R'}, context)
     sent = call('send', {'to': me['declaration']['display_name'] if 'display_name' in me['declaration'] else me['declaration']['agent'],
                          'text': 'do the thing'}, {'threadId': 'ack-sender'})
-    assert [row['state'] for row in sent['delivery']] == ['delivered']
+    # The push finishes beside the sender (its 0.5 s wait may end first under load): wait for the receipt row.
+    import time
+    from nodelang.workshop_mailbox import application_history
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        with application_history() as history:
+            if history._db.execute("SELECT 1 FROM workshop_live_deliveries WHERE message_id=? AND state='delivered'",
+                                   (sent['message_id'],)).fetchone():
+                break
+        time.sleep(0.05)
+    else:
+        raise AssertionError('the delivery receipt never landed: %s' % sent['delivery'])
     seen = [m['id'] for _ in range(3) for m in call('pending', {}, context)['pending']]
     assert sent['message_id'] not in seen
 
@@ -295,3 +306,19 @@ def test_every_opencode_archhub_starts_gets_its_own_server_password():
     first, second = launch_environment(['C:/npm/opencode.cmd', 'run']), launch_environment(['opencode.exe'])
     assert len(first['OPENCODE_SERVER_PASSWORD']) >= 32 and first['OPENCODE_SERVER_PASSWORD'] != second['OPENCODE_SERVER_PASSWORD']
     assert launch_environment(['claude.exe', '-p']) is None
+
+def test_reading_the_workshop_never_waits_for_another_writer():
+    """'database is locked': every open of the store took BEGIN IMMEDIATE for schema checks, so each poll
+    queued behind any writer. Opening an existing store is a read; it succeeds while another writer holds the lock."""
+    import sqlite3
+    from nodelang.workshop_mailbox import application_history, profile_database, read_declarations
+    with application_history():
+        pass  # the file and its schema exist
+    writer = sqlite3.connect(profile_database(), isolation_level=None, timeout=2)
+    writer.execute('BEGIN IMMEDIATE')
+    try:
+        with application_history(busy_timeout_seconds=0.05) as history:
+            assert read_declarations(history._db) == []
+    finally:
+        writer.execute('ROLLBACK')
+        writer.close()

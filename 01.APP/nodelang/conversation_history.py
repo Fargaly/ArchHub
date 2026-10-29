@@ -202,7 +202,12 @@ class ConversationHistoryStore(ConversationPageProtection):
             self._db.execute("PRAGMA busy_timeout=%d" % (busy_timeout_seconds * 1000))
             self._db.execute("PRAGMA foreign_keys=ON")
             self._db.execute("PRAGMA cache_size=-2048")
-            with self._transaction(write=create):
+            # Only a new, empty file needs the write lock to lay its schema; validating an existing one is a
+            # read. Taking BEGIN IMMEDIATE on every open serialised every reader (each agent's pending poll,
+            # every Studio read) behind one write lock: "database is locked" on the Workshop store.
+            fresh = create and self._db.execute(
+                "SELECT 1 FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' LIMIT 1").fetchone() is None
+            with self._transaction(write=fresh):
                 objects = self._schema_objects()
                 app_id = self._db.execute("PRAGMA application_id").fetchone()[0]
                 version = self._db.execute("PRAGMA user_version").fetchone()[0]

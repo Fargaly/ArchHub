@@ -9239,6 +9239,7 @@
         "02.TESTS/tests_replica/test_opencode_is_recognised_and_connected.py",
         "02.TESTS/tests_replica/test_opencode_owner_error_is_a_denial_not_a_quarantine.py",
         "02.TESTS/tests_replica/test_real_app_check_tool.py",
+        "02.TESTS/tests_replica/test_router_runs_on_any_llm.py",
         "02.TESTS/tests_replica/test_runtime_hook_observer.py",
         "02.TESTS/tests_replica/test_session_files.py",
         "02.TESTS/tests_replica/test_session_link_config.py",

@@ -570,6 +570,25 @@ DAILY_ENGINES = {
 for _spec in DAILY_ENGINES.values():
     _spec['budget'] = {'seconds': _spec['params']['budget_s'], 'pages': _spec['params'].get('max_pages')}
 
+# C3 hook: HOOKGUARD binds its one decision function here (decide(payload, vendor) -> {'decision': ...}).
+# Until it does, pressing Run is the approval. Every side-effect node passes this gate before it acts.
+DECIDE = None
+
+
+def _gated(engine, run):
+    def gated(params, feeds):
+        if DECIDE is not None:
+            verdict = DECIDE({'tool_name': engine, 'tool_input': dict(params)}, 'archhub-canvas') or {}
+            if verdict.get('decision', 'allow') != 'allow':
+                raise PermissionError('%s is waiting for approval: %s' % (engine, verdict.get('reason') or verdict['decision']))
+        return run(params, feeds)
+    return gated
+
+
+for _engine, _spec in DAILY_ENGINES.items():
+    if not _spec['pure']:
+        _spec['run'] = _gated(_engine, _spec['run'])
+
 
 def daily_items():
     """Library cards for the daily-work pack."""

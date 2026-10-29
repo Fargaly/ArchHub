@@ -171,3 +171,17 @@ def test_a_heavy_job_is_stopped_at_its_budget(tmp_path, monkeypatch):
     monkeypatch.setattr(daily, 'WORKER', answer)
     with pytest.raises(RuntimeError, match='bad image'):
         daily.run_worker('ocr', {}, site=None, budget_s=20)
+
+
+def test_side_effect_nodes_pass_the_c3_decision_before_they_act(tmp_path, monkeypatch):
+    from nodelang import daily_work_nodes as daily
+    from nodelang.canvas_documents import run_thing
+    asked = []
+    monkeypatch.setattr(daily, 'DECIDE', lambda payload, vendor: asked.append((payload['tool_name'], vendor)) or
+                        {'decision': 'ask', 'reason': 'Approve card shown'})
+    with pytest.raises(PermissionError, match='daily.arabic_ocr is waiting for approval: Approve card shown'):
+        run_thing('daily.arabic_ocr', {'image': str(tmp_path / 'scan.png')}, {})
+    assert asked == [('daily.arabic_ocr', 'archhub-canvas')] and not daily.runtimes_root().exists()
+    sheets = make_pdf(tmp_path / 'one.pdf', [title_block('Tower A', 'A-101', 'P01')])
+    out, _shown = run_thing('daily.titleblock_qa', {'pdf': sheets, 'fields': 'Project'}, {})
+    assert out['issues'] == [] and len(asked) == 1  # a pure read never asks

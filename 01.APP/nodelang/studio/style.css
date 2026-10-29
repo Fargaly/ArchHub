@@ -199,7 +199,7 @@ button{transition:background .14s,color .14s,box-shadow .14s}button:hover{filter
 .ws-msgs{display:grid;gap:28px}.ws-msg{display:grid;grid-template-columns:28px 1fr;gap:16px}.ws-msg.own{grid-template-columns:1fr}
 .ws-msg-body{display:grid;gap:8px}.ws-msg-body p{font-size:15px;line-height:24px;white-space:pre-wrap}.ws-msg-body b{font-size:14px}.ws-live{flex-wrap:wrap;gap:6px}
 .ws-to select{background:transparent;border:0;color:#9b938a;font-size:12px}.ws-input{background:transparent;border:0;color:#ece8e0;font-size:15px;resize:none;outline:none}
-.ws-tools{gap:28px}.ws-tools button[type=submit]{min-width:80px}.ws-result{white-space:pre-wrap}
+.ws-tools{gap:28px}.ws-tools button[type=submit]{min-width:80px}
 .ws-people-list{display:grid;gap:22px;align-content:start;max-height:45%}.ws-person{display:grid;grid-template-columns:28px 1fr;gap:12px;text-align:left;align-items:start}
 .ws-person>span{display:grid;gap:4px;min-width:0}.ws-person b{font-size:13px;font-weight:500}.ws-person.to b{font-weight:700}.ws-person .ws-small{overflow-wrap:anywhere}
 .ws-rule{border:0;border-top:1px solid #1e1e24;margin:28px 0 24px;width:100%}.ws-note{margin:8px 0 18px}

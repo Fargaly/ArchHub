@@ -11,7 +11,7 @@
     ['IN PROGRESS', t => (t.status === 'WIP' || t.status === 'PLANNED') && !waiting.has(t.id), 'WIP'],
     ...(archived ? [['COMPLETED AND ARCHIVED', t => t.status === 'DONE' || t.status === 'ARCHIVED', 'DONE']] : [])];
   window.UI.workshopGroups = groupsFor;
-  const color = s => s === 'IN REVIEW' ? A.warn : s === 'DONE' ? A.ok : s === 'STOPPED' ? A.err : s === 'WIP' ? A.accent : A.inkSoft;
+  const color = s => s === 'IN REVIEW' ? A.warn : s === 'DONE' ? A.ok : s === 'STOPPED' ? A.err : s === 'WIP' ? A.ink : A.inkSoft;
   const statusText = s => ({'IN REVIEW': 'Waits for your OK', WIP: 'Working', PLANNED: 'Planned', DONE: 'Completed', ARCHIVED: 'Archived', STOPPED: 'Stopped'})[s] || s;
   const sessionState = row => row.state === 'turn_ended' ? 'Turn ended' : row.state === 'tool_ended' ? 'Tool ended' : row.state === 'unassociated' ? 'Activity unassociated' : 'Working';
   function Task({task, on, select, ownerName}) {
@@ -44,18 +44,18 @@
       const own = Boolean(m.sender_key) && m.sender_key === m.viewer_key;
       return <div key={m.id} className={'ws-msg' + (own ? ' own' : '')}>{!own && <Av id={m.provider || window.ArchHubAPI.getSnapshot().providers.find(p => p.name === m.who)?.id || 'claude'} size={28} />}
         <div className="ws-msg-body" style={own ? {justifySelf: 'end', maxWidth: 560, padding: '12px 16px', borderRadius: '14px 14px 4px 14px', background: '#24242b'} : {}}>
-          {!own && <div className="flex"><b>{m.who}</b>{roles[m.who] && <span className="ws-small">{roles[m.who]}</span>}</div>}<p>{m.text}</p>
+          {!own && <div className="flex"><b>{m.who}</b>{roles[m.who] && <span className="ws-small">{roles[m.who]}</span>}</div>}{m.to && <span className="ws-small">To {m.to}</span>}<p>{m.text}</p>
           {m.reply_to && <span className="ws-small">↳ reply</span>}
-          {(m.live || []).length > 0 && <div className="flex ws-live" data-live-delivery>{m.live.map((d, i) => <Chip key={i} c={d.state === 'delivered' ? A.accent : A.warn}>{d.state === 'delivered' ? '✓' : '✗'} {d.agent} · {d.state === 'delivered' ? new Date(d.at).toLocaleTimeString() + ' · ' + d.ms + ' ms' : d.reason}</Chip>)}</div>}
+          {(m.live || []).length > 0 && <div className="flex ws-live" data-live-delivery>{m.live.map((d, i) => <Chip key={i} c={d.state === 'delivered' ? A.inkSoft : A.warn}>{d.state === 'delivered' ? '✓' : '✗'} {d.agent} · {d.state === 'delivered' ? new Date(d.at).toLocaleTimeString() + ' · ' + d.ms + ' ms' : d.reason}</Chip>)}</div>}
           {['pending', 'delivered', 'answered'].includes(m.state) && <span role="status" data-delivery-state={m.state} className="ws-small">{m.state === 'answered' ? 'Answered' : m.state === 'delivered' ? 'Delivered' : 'Pending'}{m.delivery?.some(row => row.escalated) ? ' · Coordinator notified' : ''}</span>}
           {window.UI.TurnUsage && <window.UI.TurnUsage message={m} />}{window.UI.AnswerWidget && <window.UI.AnswerWidget message={m} />}{!own && window.UI.AnswerSources && <window.UI.AnswerSources message={m} />}{m.rule && <Chip c={A.purple}>Your rule: {m.rule}</Chip>}
         </div></div>;
     })}</div>;
   }
   // "To" is a joined agent session, Everyone, or BABOOM (free first); Send goes live into the chosen session.
-  function TaskComposer({agents, to, setTo, notesOpen, setNotesOpen, sendRef}) {
+  function TaskComposer({agents, to, setTo, sendRef}) {
     const s = useData(), u = useApp();
-    const [text, setText] = React.useState(''), [sending, setSending] = React.useState(false), [result, setResult] = React.useState('');
+    const [text, setText] = React.useState(''), [sending, setSending] = React.useState(false);
     const files = s.composerAttachments || [];
     const send = async (body = text) => {
       if (!body.trim()) return;
@@ -66,7 +66,6 @@
       try {
         const sent = await u.act(() => api.apiRouterChat(prompt, 'BABOOM'));
         if (!sent) { if (body === text) setText(body); return; }
-        setResult(sent.answer || '');
         files.forEach(f => api.removeComposerAttachment(f.id));
         await api.listTasks?.();
       } finally {
@@ -86,11 +85,9 @@
       }} />
       <div className="flex ws-tools">
         {u.pickFile && <button type="button" className="ws-link" onClick={() => executeAction("ui.select", u.pickFile)}>Attach</button>}
-        <button type="button" className="ws-link" aria-pressed={notesOpen} onClick={() => executeAction("ui.select", () => setNotesOpen(!notesOpen))}>Notes</button>
         {u.voice && api.supportsAction?.('startVoiceInput') !== false && <button type="button" className="ws-link" onClick={() => executeAction("ui.select", () => u.voice(setText))}>Voice</button>}
         <span className="fill" /><Btn p type="submit" aria-busy={sending} disabled={!text.trim()}>Send</Btn>
       </div>
-      {result && <p role="status" data-send-result className="ws-small ws-result">{result}</p>}
     </D.Composer>;
   }
   function Win() {
@@ -109,7 +106,7 @@
     const waiting = new Set((s.approvals || []).filter(c => c.status === 'pending').map(c => c.taskId));
     const agents = s.liveAgents || [];
     // People & agents: each joined session, then running agents that have not joined, then the founder.
-    const people = [...agents.map(a => ({key: a.handle, id: a.app, name: a.name, role: (a.task || 'No task declared') + (a.status && a.status !== 'unknown' ? ' · ' + a.status : ''), handle: a.handle})),
+    const people = [...agents.map(a => ({key: a.handle, id: (s.providers || []).some(p => p.id === a.app) ? a.app : a.name, name: a.name, role: (a.task || 'No task declared') + (a.status && a.status !== 'unknown' ? ' · ' + a.status : ''), handle: a.handle})),
       ...(s.agents || []).filter(p => !agents.some(a => a.app === p.runtime)).map(p => ({key: p.id, id: p.id, name: p.name,
         role: p.presence === 'working' ? 'Working · ' + p.task : p.presence === 'unknown' ? (p.status_text || 'Status unknown') : 'Idle'})),
       ...(s.profile.name ? [{key: 'founder', id: s.profile.name, name: s.profile.name, role: 'Founder · workspace owner'}] : [])];
@@ -150,10 +147,10 @@
       {roomMessages.length > 0 && <Messages task={{messages: roomMessages}} roles={roles} />}
       {task ? <><Messages task={task} roles={roles} />{task.approvalId && <ApprovalCard id={task.approvalId} />}{task.status === 'STOPPED' && <Btn onClick={() => executeAction("reassignTask", u, task.id)}>Continue with another agent</Btn>}{task.status === 'DONE' && <div className="flex"><Btn onClick={() => executeAction("ui.go", u, 'watcher')}>Open result</Btn><Btn onClick={() => executeAction("ui.schedule", u, task.title)}>Repeat this</Btn></div>}</> : roomMessages.length === 0 && <Empty>Create a task to begin.</Empty>}
     </div></div>
-    <div className="ws-dock"><div>{D.Composer ? <TaskComposer agents={agents} to={recipient} setTo={setTo} notesOpen={notesOpen} setNotesOpen={setNotesOpen} sendRef={sendRef} /> : window.UI.Composer && <window.UI.Composer taskId={task?.id} />}</div></div>
+    <div className="ws-dock"><div>{D.Composer ? <TaskComposer agents={agents} to={recipient} setTo={setTo} sendRef={sendRef} /> : window.UI.Composer && <window.UI.Composer taskId={task?.id} />}</div></div>
   </main>
   <aside data-workshop-column="people" className="ws-col ws-people">
-    <h2>People &amp; agents</h2><p className="ws-small ws-note">{agents.length ? agents.length + (agents.length === 1 ? ' session' : ' sessions') + ' joined this Workshop' : s.agentSummary || 'No agent session has joined yet'}</p>
+    <h2>People &amp; agents</h2><p className="ws-small ws-note">{people.length + ' in this Workshop · ' + agents.length + ' joined'}</p>
     <div className="scroll ws-people-list">{people.map(p => <button key={p.key} className={'button-reset ws-person' + (recipient && p.handle === recipient ? ' to' : '')} title={p.handle ? 'Send to ' + p.name : p.name} onClick={() => p.handle ? executeAction("ui.select", () => setTo(p.handle)) : executeAction("ui.show", u, 'Agent', {id: p.id})}><Av id={p.id} size={28} /><span><b>{p.name}</b><span className="ws-small">{p.role}</span></span></button>)}</div>
     <hr className="ws-rule" />
     <h2>Meeting input</h2><p className="ws-small ws-note">Notes for this task go to {recipient ? (agents.find(a => a.handle === recipient)?.name || 'Everyone') : 'BABOOM'}.</p>

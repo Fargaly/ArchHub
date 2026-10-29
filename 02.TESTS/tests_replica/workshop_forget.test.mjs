@@ -17,7 +17,7 @@ fs.mkdirSync(dir,{recursive:true});
 const lib=path.join(import.meta.dirname,'..','..','01.APP','nodelang','workshop');
 test.after(()=>fs.rmSync(home,{recursive:true,force:true}));
 const env={...process.env,HOME:home,WORKSHOP_STATE_DIR:state};
-delete env.CODEX_APP_TOOLS_PIPE_PATH;delete env.CODEX_THREAD_ID;
+delete env.CODEX_APP_TOOLS_PIPE_PATH;delete env.CODEX_THREAD_ID;env.CODEX_HOME='C:\\no-codex-home-in-courts';
 const cli=(...args)=>new Promise(resolve=>{const child=spawn(process.execPath,[path.join(lib,'bridge.mjs'),...args],{env,windowsHide:true,stdio:['ignore','pipe','pipe']});
  let out='',err='';child.stdout.setEncoding('utf8');child.stderr.setEncoding('utf8');child.stdout.on('data',c=>out+=c);child.stderr.on('data',c=>err+=c);
  child.on('close',code=>resolve({code,out,err}));});

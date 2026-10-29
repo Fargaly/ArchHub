@@ -159,7 +159,7 @@ def test_real_workshop_worker_reaches_fixture_native_socket(room, tmp_path, runt
     node = shutil.which('node')
     session = next(iter(context.values()))
     environment = {**os.environ, 'HOME':str(tmp_path), 'USERPROFILE':str(tmp_path),
-        'WORKSHOP_STATE_DIR':str(tmp_path), 'CODEX_APP_TOOLS_PIPE_PATH':'', 'CODEX_THREAD_ID':''}
+        'WORKSHOP_STATE_DIR':str(tmp_path), 'CODEX_APP_TOOLS_PIPE_PATH':'', 'CODEX_THREAD_ID':'', 'CODEX_HOME':str(tmp_path)}
     process = subprocess.Popen([node, str(root / '02.TESTS/tests/workshop_wsinject.mjs'),
         str(tmp_path), runtime, session], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
         stderr=subprocess.PIPE, env=environment)
@@ -387,7 +387,7 @@ def test_running_application_http_send_reaches_codex_bridge_without_read(owner, 
     node = shutil.which('node')
     root = Path(__file__).resolve().parents[2]
     environment = {**os.environ,'HOME':str(tmp_path),'USERPROFILE':str(tmp_path),
-        'WORKSHOP_STATE_DIR':str(tmp_path),'CODEX_APP_TOOLS_PIPE_PATH':'','CODEX_THREAD_ID':''}
+        'WORKSHOP_STATE_DIR':str(tmp_path),'CODEX_APP_TOOLS_PIPE_PATH':'','CODEX_THREAD_ID':'','CODEX_HOME':str(tmp_path)}
     process = subprocess.Popen([node,str(root/'02.TESTS/tests/workshop_wsinject.mjs'),
         str(tmp_path),'codex','http-codex'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=environment)
     transport = WorkshopTransport(node_executable=Path(node), state_dir=tmp_path, env=environment)

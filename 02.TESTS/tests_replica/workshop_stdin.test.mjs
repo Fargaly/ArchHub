@@ -83,7 +83,7 @@ fs.writeFileSync(path.join(requests,REQUEST+'.json'),JSON.stringify({control:req
 test.after(()=>{for(const s of servers)s.close();});
 
 const env={...ownerEnv,WORKSHOP_STATE_DIR:state,CODEX_THREAD_ID:CODEX};
-delete env.CODEX_APP_TOOLS_PIPE_PATH;
+delete env.CODEX_APP_TOOLS_PIPE_PATH;env.CODEX_HOME='C:\\no-codex-home-in-courts';
 function run(file,args,input,{command=process.execPath,extraEnv={}}={}){
  return new Promise(resolve=>{
   const child=spawn(command,file?[path.join(lib,file),...args]:args,{env:{...env,...extraEnv},windowsHide:true,stdio:['pipe','pipe','pipe']});

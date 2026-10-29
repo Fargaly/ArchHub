@@ -134,6 +134,8 @@ THING_ENGINES = {
                        'engine': 'thing.workshop', 'params': {'thread': 'app:workshop', 'limit': 20}},
     'thing.setting': {'pure': True, 'run': _run_setting, 'in': [_port('value')], 'out': [_port('value')]},
 }
+from .daily_work_nodes import DAILY_ENGINES, daily_items  # noqa: E402 - the daily-work pack shares this one contract
+THING_ENGINES.update(DAILY_ENGINES)
 # (engine, param) -> function(new value) writing the owner file the Settings screen reads.
 WRITE_THROUGH = {
     ('thing.model', 'default_model'): lambda value: _set_router({'default_model': str(value)}),
@@ -184,6 +186,7 @@ def thing_items():
                       dict(THING_ENGINES['thing.workshop']['params'])))
     items.append(card('thing:setting:temperature', 'settings', 'Setting · temperature', 'Router generation setting',
                       'thing.setting', {'value': ''}))
+    items.extend(daily_items())
     return items
 
 

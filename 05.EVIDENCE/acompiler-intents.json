@@ -9285,7 +9285,10 @@
         "04.DOCS/README.md",
         "04.DOCS/SPEC.md",
         "05.EVIDENCE/acompiler-intents.json",
-        "requirements.txt"
+        "requirements.txt",
+        "01.APP/nodelang/mcp_share.py",
+        "02.TESTS/tests_replica/test_mcp_share.py",
+        "01.APP/nodelang/client_mcp_installation.py"
       ]
     }
   }

@@ -25,8 +25,10 @@ mcp>=1.27.2,<2
 # SEPARATE distribution from PyQt6 -- listing only PyQt6 left a clean machine
 # with a setup that finished and an app that died on the WebEngine import,
 # no window and no message.
-PyQt6>=6.11,<7
-PyQt6-WebEngine>=6.11,<7
+# Same minor for both: PyQt6 6.12 (Qt 6.12) with WebEngine 6.11 fails QtWebEngineWidgets with a DLL
+# procedure error, so a fresh install never opened (caught by the installed-build gate, 2026-10-29).
+PyQt6>=6.11,<6.12
+PyQt6-WebEngine>=6.11,<6.12
 # Pipeline effect engine: DXF drafting. Its import is guarded, so a machine
 # without it still boots and reports the engine as absent.
 ezdxf>=1.4,<2

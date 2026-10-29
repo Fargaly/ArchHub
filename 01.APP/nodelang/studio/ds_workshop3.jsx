@@ -22,6 +22,7 @@
     ['WORKING', t => (t.status === 'WIP' || t.status === 'PLANNED') && !waiting.has(t.id), 'WIP'],
     ['DONE TODAY', t => t.status === 'DONE' && today(t), 'DONE'],
     ...(archived ? [['ARCHIVED', t => t.status === 'ARCHIVED', 'ARCHIVED']] : [])];
+  window.UI.workshopGroups = groupsFor;  // the Board draws the same groups
   const color = s => s === 'IN REVIEW' ? A.warn : s === 'DONE' ? A.ok : s === 'STOPPED' ? A.err : s === 'WIP' ? A.accent : A.inkSoft;
   function Task({
     task,

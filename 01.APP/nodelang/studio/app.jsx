@@ -656,15 +656,15 @@
         saved
       }, event)}>Quit</Btn></div>;else if (k === 'Workshop board') body = <div style={{
       display: 'grid',
-      gridTemplateColumns: 'repeat(5,minmax(160px,1fr))',
+      gridTemplateColumns: 'repeat(3,minmax(200px,1fr))',
       minHeight: 300
-    }}>{['PLANNED', 'WIP', 'IN REVIEW', 'DONE', 'ARCHIVED'].map(status => <div className="task-column" key={status} onDragOver={e => e.preventDefault()} onDrop={e => {
+    }}>{window.UI.workshopGroups(false, new Set(s.approvals.filter(c => c.status === 'pending').map(c => c.taskId))).map(([name, member, status]) => <div className="task-column" key={name} data-workshop-lane={name} onDragOver={e => e.preventDefault()} onDrop={e => {
         e.preventDefault();
         const id = e.dataTransfer.getData('task');
         if (id) u.act(() => api.setTaskStatus(id, status));
       }}><h3 style={{
           color: A.inkSoft
-        }}>{status} · {s.tasks.filter(t => t.status === status).length}</h3>{s.tasks.filter(t => t.status === status).map(t => <Card key={t.id} style={{
+        }}>{name} · {s.tasks.filter(member).length}</h3>{s.tasks.filter(member).map(t => <Card key={t.id} style={{
           padding: 8
         }}><window.UI.Task task={t} select={() => {
             u.setTask(t.id);

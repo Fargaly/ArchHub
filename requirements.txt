@@ -59,3 +59,10 @@ PyYAML==6.0.3
 openpyxl==3.1.5
 Pillow==12.1.1
 pypdfium2==5.8.0
+# The one hook decision every agent's hook calls (nodelang/hook_decision.py):
+# Cedar is the perimeter policy, Presidio the PII scan (pattern recognizers on a
+# blank spaCy pipeline, no model download). Betterleaks 1.9.0 (MIT, Go binary) is
+# the secrets scan, shipped beside node as runtime/betterleaks/ (installer payload).
+cedarpy==4.12.2
+presidio-analyzer==2.2.366
+spacy==3.8.18

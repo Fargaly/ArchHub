@@ -198,6 +198,9 @@ def render_governance_loader(spec, *, install_root=None, state_dir=None) -> str:
         ("gateCommand", gate_command),
         ("gateArgs", gate_args),
     ] + ([("laneFolders", lanes)] if lanes is not None else []) + ([("trustedDirectories", trusted)] if trusted else [])
+    decision = (root / ".venv" / "Scripts" / "python.exe", root / "nodelang" / "hook_decision.py")
+    if all(p.is_file() for p in decision):  # the one hook decision, same as every other agent
+        fields.append(("decisionCommand", [slash(p) for p in decision]))
     return ("import {tool} from '@opencode-ai/plugin/tool';\n"
             "import {createOpenCodeGovernance} from " + _json(module.as_uri() + "?revision=" + revision) + ";\n"
             "export const ArchHubGovernance = createOpenCodeGovernance({\n"
@@ -355,6 +358,34 @@ def render_stop_hook(vendor, *, install_root):
     if vendor == "gemini-cli":
         hook["name"] = "archhub-end-of-turn-check"
     return {event: [{"hooks": [hook]}]}
+
+
+def render_decision_hook(vendor, *, install_root):
+    """The one hook decision (hook_decision.py) on this client's pre-tool event, or {}
+    when the installed copy carries no decision script."""
+    from . import hook_decision
+    python, stop = installed_stop_hook(install_root)
+    script = stop.with_name(Path(hook_decision.__file__).name)
+    if vendor not in _HOOK_CLIENTS or not script.is_file():
+        return {}
+    _, flag, before, _, timeout = _HOOK_CLIENTS[vendor]
+    hook = {"type": "command", "command": _render_hook_command(vendor, python, script, flag), "timeout": timeout}
+    group = {"hooks": [hook]}
+    if vendor == "gemini-cli":
+        hook["name"] = "archhub-hook-decision"
+        group["matcher"] = ".*"
+    return {before: [group]}
+
+
+def _is_decision_hook(hook, script):
+    parts = _hook_command_parts(hook)
+    return parts is not None and os.path.normcase(os.path.normpath(parts[1])) == os.path.normcase(os.path.normpath(str(script)))
+
+
+def hook_drift_report(home, *, codex_home=None):
+    """S0: every agent and plugin hook hashed against the last approved state (reads only)."""
+    from .hook_drift import check, default_state_file
+    return check(home, default_state_file(), codex_home=codex_home)
 
 
 def settings_target(vendor, *, home, codex_home=None):
@@ -625,26 +656,35 @@ def remove_stop_hook(vendor, *, home, install_root, receipt=None, backup_dir, co
     except (ValueError, UnicodeError):
         raise WorkshopConfigRefused("client settings are unreadable") from None
     events = existing.get("hooks") if type(existing) is dict else None
-    event = _STOP_HOOKS[vendor][0]
-    groups = events.get(event) if type(events) is dict else None
-    if type(groups) is not list:
+    if type(events) is not dict:
         return {"vendor": vendor, "changed": False, "method": "none"}
     import copy
     result = copy.deepcopy(existing)
-    kept = []
-    for group in groups:
-        if type(group) is not dict or type(group.get("hooks")) is not list:
-            kept.append(group)
+    decision = script.with_name("hook_decision.py")
+    ours = {_STOP_HOOKS[vendor][0]: lambda h: _stop_hook_role(h, vendor, script) == "ours",
+            _HOOK_CLIENTS[vendor][2]: lambda h: _is_decision_hook(h, decision)}
+    touched = False
+    for event, is_ours in ours.items():
+        groups = events.get(event)
+        if type(groups) is not list:
             continue
-        hooks = [h for h in group["hooks"] if _stop_hook_role(h, vendor, script) != "ours"]
-        if hooks or len(hooks) == len(group["hooks"]):
-            kept.append({**group, "hooks": hooks})
-    if kept == groups:
+        kept = []
+        for group in groups:
+            if type(group) is not dict or type(group.get("hooks")) is not list:
+                kept.append(group)
+                continue
+            hooks = [h for h in group["hooks"] if not is_ours(h)]
+            if hooks or len(hooks) == len(group["hooks"]):
+                kept.append({**group, "hooks": hooks})
+        if kept == groups:
+            continue
+        touched = True
+        if kept:
+            result["hooks"][event] = kept
+        else:
+            result["hooks"].pop(event)
+    if not touched:
         return {"vendor": vendor, "changed": False, "method": "none"}
-    if kept:
-        result["hooks"][event] = kept
-    else:
-        result["hooks"].pop(event)
     indent = 2
     found = re.search(rb"\n([ \t]+)\S", current)
     if found and found.group(1).startswith(b"\t"):
@@ -881,6 +921,11 @@ def plan_client_hook_install(vendor, *, home, install_root, python_executable=No
         merged, stop_binding, stop_roles = merge_stop_hook(merged, stop, vendor=vendor,
                                                            install_root=stop_root, migrate=migrate)
         managed = {**managed, **stop}
+        decision = render_decision_hook(vendor, install_root=stop_root)
+        if decision:
+            merged = merge_client_hooks(merged, decision, vendor=vendor, known_owned_commands=())
+            for event, groups in decision.items():
+                managed[event] = managed.get(event, []) + groups
     changed = existing != merged
     indent = 2  # Keep the file's own indent unit: 2 or 4 spaces, or a tab.
     found = re.search(rb"\n([ \t]+)\S", before) if before is not None else None

@@ -430,7 +430,17 @@ function normalized(tool,args) {
  return {tool_name:String(tool),tool_input:args};
 }
 
-export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expectedSessions,selectedWorks={},workToolFactory,workshop,laneFolders={},trustedDirectories=[],readStaleMs=60000,siblingWaitMs=30000,siblingPollMs=25}) {
+// The one hook decision (nodelang/hook_decision.py) every agent's hook runs; a refusal
+// names real harm only, anything else (or a broken check) lets the tool run.
+const hookDecision=(command,event,timeoutMs)=>new Promise(resolve=>{
+ let out='';const child=spawn(command[0],[command[1],'--vendor','opencode'],{shell:false,windowsHide:true,stdio:['pipe','pipe','ignore']});
+ const timer=setTimeout(()=>{child.kill();resolve({verdict:'allow'});},timeoutMs);
+ child.on('error',()=>{clearTimeout(timer);resolve({verdict:'allow'});});
+ child.stdout.on('data',chunk=>{out+=chunk;});
+ child.on('close',()=>{clearTimeout(timer);try{resolve(JSON.parse(out));}catch(_){resolve({verdict:'allow'});}});
+ child.stdin.on('error',()=>{});child.stdin.end(JSON.stringify(event));
+});
+export function createOpenCodeGovernance({decisionCommand=null,decisionTimeoutMs=30000,gateCommand,gateArgs,gateRunner,expectedSessions,selectedWorks={},workToolFactory,workshop,laneFolders={},trustedDirectories=[],readStaleMs=60000,siblingWaitMs=30000,siblingPollMs=25}) {
  if(!Array.isArray(trustedDirectories)||trustedDirectories.some(p=>typeof p!=='string'||!path.isAbsolute(p)))fail('trusted directories must be explicit absolute paths');
  const invoke=gateRunner||createNativeGateRunner(gateCommand,gateArgs,{expectedSessions,selectedWorks,workshop,laneFolders});
  // Retained for all workspaces in this loaded plugin; never clear on idle/error.
@@ -596,6 +606,10 @@ export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expect
     const event={...normalized(input.tool,args),session_id:input.sessionID,tool_use_id:input.callID,
      cwd:directory,vendor:'opencode',hook_event_name:'PreToolUse'};
     const record={session:input.sessionID,call:input.callID,tool:input.tool,read,args:stringify(args),event,state:'preparing'};
+    if(decisionCommand){
+     const decided=await hookDecision(decisionCommand,{...event,tool_name:event.tool_name||input.tool},decisionTimeoutMs);
+     if(decided?.verdict==='refuse')fail('refused: '+(decided.rules||[]).join(', '));
+    }
     pending.set(key,record);
     let result;
     try{result=await invoke(event);}catch(error){

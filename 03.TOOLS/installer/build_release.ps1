@@ -796,6 +796,11 @@ if ($wheels.Count -eq 0) { throw 'The desktop wheelhouse is empty.' }
 if (@($wheels | Where-Object { $_.Name -match '^(?i:psycopg|boto3|botocore|fastapi|opencv)' }).Count -ne 0) {
     throw 'A server-only package reached the desktop wheelhouse.'
 }
+# S0 (F20): LiteLLM is banned (PyPI litellm 1.82.7 and 1.82.8, March 2026, shipped a credential stealer).
+if (@($wheels | Where-Object { $_.Name -match '^(?i:litellm)-' }).Count -ne 0 -or
+    (Select-String -LiteralPath (Join-Path $selectedRoot 'requirements.txt') -Pattern '(?im)^\s*litellm\b' -Quiet)) {
+    throw 'LiteLLM is banned (litellm 1.82.7 and 1.82.8, March 2026, carried a credential stealer); remove it from requirements.txt.'
+}
 # The Work completion court runs pytest gates with the installed interpreter,
 # so a release without the pytest wheel would ship a court that cannot pass.
 if (@($wheels | Where-Object { $_.Name -match '^(?i:pytest)-' }).Count -ne 1) {

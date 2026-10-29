@@ -836,3 +836,31 @@ def test_mixed_own_and_foreign_check_is_disclosed_and_migrated_only_on_review(
     assert after["hooks"]["Stop"] == [{"hooks": [ours, theirs]}]  # the emptied group goes too
     assert after["keep"] == 1
     assert registration.hook_readiness("claude-code", environment=env)["state"] == "configured"
+
+
+# HOOKGUARD: the one hook decision rides the same consent, from the installed copy.
+_PRE = {"claude-code": ("PreToolUse", "claude"), "codex": ("PreToolUse", "codex"), "gemini-cli": ("BeforeTool", "gemini")}
+
+
+@pytest.mark.parametrize("vendor", sorted(_PRE))
+def test_decision_hook_installs_once_and_uninstall_takes_out_only_ours(inputs, installed, vendor):
+    home, _, _, backup = inputs
+    (installed / "nodelang/hook_decision.py").write_text("# court fixture; never executed\n", encoding="utf-8")
+    event, flag = _PRE[vendor]
+    target = home / config._HOOK_CLIENTS[vendor][0]
+    theirs = {"type": "command", "command": "someone-elses-gate", "timeout": 5}
+    target.write_text(json.dumps({"hooks": {event: [{"hooks": [theirs]}]}}), encoding="utf-8")
+    plan = config.plan_client_hook_install(vendor, home=home, install_root=installed, stop_root=installed)
+    commands = [h["command"] for g in json.loads(plan["text"])["hooks"][event] for h in g["hooks"]]
+    expected = _stop_command(installed, flag).replace("native_stop_hook.py", "hook_decision.py")
+    assert commands == ["someone-elses-gate", expected]
+    config.apply_client_hook_install(plan, expected_digest=plan["plan_digest"], backup_dir=backup)
+    assert config.plan_client_hook_install(vendor, home=home, install_root=installed, stop_root=installed)["changed"] is False
+    edited = json.loads(target.read_text(encoding="utf-8"))
+    edited["model"] = "later edit"
+    target.write_text(json.dumps(edited), encoding="utf-8")
+    config.remove_stop_hook(vendor, home=home, install_root=installed, backup_dir=backup)
+    left = json.loads(target.read_text(encoding="utf-8"))
+    assert left["model"] == "later edit"
+    assert [h["command"] for g in left["hooks"][event] for h in g["hooks"]] == ["someone-elses-gate"]
+    assert _STOP[vendor][0] not in left["hooks"]

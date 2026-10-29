@@ -9018,6 +9018,9 @@
     "NOGRAPH": {
       "source": "Founder 2026-10-28 NOGRAPH: app is .archhub files of nodes/sockets/wires, parametric, no always-on graph; agents work in the canvas; any agent. Cumulative release of NG-ROUTER, NG-WORKSHOP, NG-BROKERS, NG-CANVAS, NG-NOGRAPH plus live Workshop delivery and the compiler pass.",
       "scope": [
+        "01.APP/nodelang/agent_runtime_defs/opencode.py",
+        "01.APP/nodelang/model_execution_broker.py",
+        "01.APP/nodelang/terminal_sessions.py",
         ".gitignore",
         "01.APP/bridges/README.md",
         "01.APP/bridges/ide-live/extension.js",

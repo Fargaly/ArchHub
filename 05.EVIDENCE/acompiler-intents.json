@@ -9209,6 +9209,7 @@
         "02.TESTS/tests_replica/test_canvas_parametric.py",
         "02.TESTS/tests_replica/test_canvas_triggers.py",
         "02.TESTS/tests_replica/test_client_hook_install.py",
+        "02.TESTS/tests_replica/test_cloud404.py",
         "02.TESTS/tests_replica/test_codex_hook_powershell.py",
         "02.TESTS/tests_replica/test_console_seat.py",
         "02.TESTS/tests_replica/test_goose_brain.py",

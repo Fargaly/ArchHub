@@ -1,3 +1,4 @@
+import types
 """MCPFRESH: real stdio pipes, real process replacement, no live application data."""
 import json
 import os
@@ -217,11 +218,15 @@ def test_build_switch_uses_same_pipes_and_never_replays(connector, loader):
     second = client.response(3)['result']['structuredContent']
     assert (first['build'], second['build']) == ('A', 'B')
     assert first['pid'] != second['pid'] if os.name == 'nt' else first['pid'] == second['pid']
+    # The process the client started stays alive: a client that watches it (Claude Code) never sees
+    # "server closed" on an install and never respawns into a half-updated app.
+    assert client.process.poll() is None
     assert (client.root / 'EFFECTS').read_text(encoding='utf-8').splitlines() == ['"before"', '"after"']
     # Keep using the original pipe objects through another replacement.
     client.update('C')
     client.call(4, 'again')
     assert client.response(4)['result']['structuredContent']['build'] == 'C'
+    assert client.process.poll() is None
 
 
 def test_change_during_call_drains_response_before_reexec(connector):
@@ -480,7 +485,7 @@ def test_final_recheck_holds_stop_then_owner_locks_through_replacement(monkeypat
         pass
     def finish(*args, **kwargs):
         raise Replaced
-    monkeypatch.setattr(subprocess, 'Popen', lambda *args, **kwargs: None)
+    monkeypatch.setattr(subprocess, 'Popen', lambda *args, **kwargs: types.SimpleNamespace(wait=lambda: 0))  # the shim waits on its successor
     monkeypatch.setattr(native.os, '_exit', finish)
     monkeypatch.setattr(native.os, 'execve', finish)
     with pytest.raises(Replaced):

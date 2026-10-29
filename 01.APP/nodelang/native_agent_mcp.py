@@ -998,7 +998,7 @@ class _FreshStdio:
             import subprocess
             # CRT exec splits -c arguments and caps argv+environment at 32 KiB.
             try:
-                subprocess.Popen([sys.executable, *sys.orig_argv[1:]], env=environment,
+                child = subprocess.Popen([sys.executable, *sys.orig_argv[1:]], env=environment,
                     stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr,
                     creationflags=subprocess.CREATE_NO_WINDOW)
             except OSError as error:
@@ -1011,7 +1011,12 @@ class _FreshStdio:
                     control.supervisor._closed.set()
                     control.supervisor._close_host()
             print('ArchHub MCP re-exec: %s -> %s' % (self.build, changed), file=sys.stderr, flush=True)
-            os._exit(0)
+            # Windows has no in-place exec: the client (Claude Code, Codex...) watches the process it
+            # started, so this one stays as the stable shim until the new build's process ends. Exiting
+            # here read as "server closed" and the client's respawn met a half-updated install:
+            # every live agent lost its connector on each install (founder: "the brokers don't work").
+            getattr(self.server, '_mailbox_stop', lambda: None)()  # the new process owns the Workshop polling now
+            os._exit(child.wait())
         for descriptor in (0, 1, 2):
             os.set_inheritable(descriptor, True)
         print('ArchHub MCP re-exec: %s -> %s' % (self.build, changed), file=sys.stderr, flush=True)

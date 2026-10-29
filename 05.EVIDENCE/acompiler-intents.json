@@ -9055,6 +9055,7 @@
         "01.APP/nodelang/cell_legacy_self_extension.py",
         "01.APP/nodelang/cell_legacy_surface_catalog.py",
         "01.APP/nodelang/cell_legacy_webshell_host.py",
+        "01.APP/nodelang/clean_host_boundaries.py",
         "01.APP/nodelang/console_seat.py",
         "01.APP/nodelang/conversation_history.py",
         "01.APP/nodelang/daily_work_nodes.py",
@@ -9314,6 +9315,7 @@
         "04.DOCS/README.md",
         "04.DOCS/SPEC.md",
         "05.EVIDENCE/acompiler-intents.json",
+        "05.EVIDENCE/grandmap_bindings.json",
         "requirements.txt"
       ]
     }

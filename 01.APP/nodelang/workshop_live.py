@@ -45,6 +45,8 @@ def push(app, native_id, text, message_id, *, timeout=10.0, pids=(), permission_
         return 'failed', 'none', 'This session has no live door; it reads the message in the Workshop.'
     recipient = {'app': app, 'id': str(native_id or ''), **({'pids': [int(p) for p in pids]} if pids and app not in ('claude', 'opencode') else {}),
                  **({'desktop': True} if app == 'codex' and codex_desktop_thread(native_id) else {})}
+    if app == 'codex' and not recipient.get('desktop') and codex_remote(pids):
+        recipient['remote'] = codex_remote(pids)   # its TUI runs on this App Server (--remote), not the shared daemon
     transport = _local_transport(env)
     try:
         result = transport.inject(recipient, text, message_id=message_id, timeout_seconds=timeout, permission_mode=permission_mode)
@@ -55,6 +57,21 @@ def push(app, native_id, text, message_id, *, timeout=10.0, pids=(), permission_
     if result.get('status') in ('injected', 'ok', 'delivered'):
         return 'delivered', 'workshop', result.get('note', '')
     return 'failed', 'workshop', public_delivery_reason(result.get('reason') or result.get('error') or result.get('status'))
+
+
+def codex_remote(pids):
+    """The loopback App Server a Codex session runs on, from its process line: the TUI's `--remote ws://...` or the
+    serving app server's `--listen ws://...` (the connector that declared the session is that server's child)."""
+    import psutil
+    for pid in pids:
+        try:
+            argv = psutil.Process(pid).cmdline()
+        except (psutil.Error, OSError):
+            continue
+        for flag, value in zip(argv, argv[1:]):
+            if flag in ('--remote', '--listen') and value.startswith(('ws://127.0.0.1:', 'ws://localhost:')):
+                return value
+    return ''
 
 
 def codex_desktop_thread(native_id):

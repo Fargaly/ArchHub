@@ -98,6 +98,32 @@ def test_founder_chat_is_sent_as_bypass_so_a_bypass_session_takes_it_mid_turn(mo
     assert modes == ['bypass', 'prompting']
 
 
+def test_a_codex_session_on_a_loopback_app_server_is_steered_there(monkeypatch):
+    import psutil
+    from nodelang import workshop_live, workshop_mailbox
+    lines = {7: ['node', 'codex.js', 'app-server', '--listen', 'ws://127.0.0.1:45123'], 8: ['codex', '--remote', 'ws://evil.example:1']}
+
+    class Proc:
+        def __init__(self, pid):
+            if pid not in lines:
+                raise psutil.NoSuchProcess(pid)
+            self.pid = pid
+
+        def cmdline(self):
+            return lines[self.pid]
+    monkeypatch.setattr(psutil, 'Process', Proc)
+    assert workshop_live.codex_remote((9, 8, 7)) == 'ws://127.0.0.1:45123'   # never a non-loopback endpoint
+    sent = []
+
+    class Transport:
+        def inject(self, recipient, text, **kw):
+            sent.append(recipient)
+            return {'status': 'injected'}
+    monkeypatch.setattr(workshop_mailbox, '_local_transport', lambda env=None: Transport())
+    workshop_live.push('codex', 'thread-9', 'hi', 'm12', pids=(7,))
+    assert sent == [{'app': 'codex', 'id': 'thread-9', 'pids': [7], 'remote': 'ws://127.0.0.1:45123'}]
+
+
 def test_inject_refuses_an_unknown_sender_mode():
     from nodelang.workshop_transport import WorkshopTransport
     with pytest.raises(ValueError):

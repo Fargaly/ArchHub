@@ -90,6 +90,12 @@ export async function injectWorkshop(recipient,text,messageId,{onDispatch=()=>{}
  // outside Claude/Codex/OpenCode through its own native door (workshop-apps.mjs). One channel.
  const terminal=(recipient.pids||[]).length&&!['claude','opencode'].includes(recipient.app)&&
   !(recipient.app==='codex'&&recipient.desktop);
+ // A Codex CLI session runs on a Codex App Server (the shared daemon, or the endpoint its TUI was started with --remote):
+ // turn/steer puts the message into the turn that is running now. Only when that server cannot take it does the seat type it.
+ if(recipient.app==='codex'&&!recipient.desktop){
+  const steered=await steerCodex(recipient.id,text,{url:recipient.remote,onDispatch}).catch(error=>({status:'not_sent',reason:String(error?.message||error).slice(0,300)}));
+  if(steered.status==='injected'||!(recipient.pids||[]).length)return steered;
+ }
  if(terminal||!['claude','codex','opencode'].includes(recipient.app)){
   const {injectApp}=await import('./workshop-apps.mjs');
   return await injectApp(terminal?{...recipient,app:'seat'}:recipient,text,messageId,onDispatch);
@@ -162,4 +168,40 @@ export function nativeCall(tool,args,threadId=process.env.CODEX_THREAD_ID,contex
       try{const response=JSON.parse(buffer.subarray(4,n+4));if(response.error)finish(new Error(response.error.message));else if(response.result?.success!==true)finish(new Error(JSON.stringify(response.result)));else finish(null,response.result);}catch(e){finish(e);}
     });
   });
+}
+
+// Codex App Server door (adopted: Codex's own JSON-RPC, `turn/steer` / `turn/start`). url = ws://... when the TUI runs
+// against that endpoint (--remote); otherwise the shared local daemon through `codex app-server proxy`.
+export async function steerCodex(threadId,text,{url='',onDispatch=()=>{},timeoutMs=20000}={}){
+ if(typeof threadId!=='string'||!threadId)throw new Error('Codex thread id required');
+ const {spawn}=await import('node:child_process');
+ const waiting=new Map(),log=[];let id=0,send,close;
+ const onLine=line=>{try{const m=JSON.parse(line);if(m.id!=null&&waiting.has(m.id)){waiting.get(m.id)(m);waiting.delete(m.id);}}catch{}};
+ if(/^wss?:\/\/(127\.0\.0\.1|localhost|\[::1\])[:/]/i.test(url||'')){
+  const ws=new WebSocket(url);
+  await new Promise((resolve,reject)=>{ws.addEventListener('open',resolve,{once:true});ws.addEventListener('error',()=>reject(new Error('Codex app server unreachable')),{once:true});});
+  ws.addEventListener('message',e=>onLine(String(e.data)));send=o=>ws.send(JSON.stringify(o));close=()=>ws.close();
+ }else{
+  const p=spawn(process.platform==='win32'?'cmd.exe':'codex',process.platform==='win32'?['/d','/c','codex','app-server','proxy']:['app-server','proxy'],{windowsHide:true,stdio:['pipe','pipe','pipe']});
+  let buf='';p.stdout.setEncoding('utf8');p.stderr.setEncoding('utf8');p.stderr.on('data',d=>{if(log.length<4)log.push(d.slice(0,200));});
+  p.on('error',e=>log.push(String(e.message)));
+  p.stdout.on('data',d=>{buf+=d;if(buf.length>4194304){p.kill();return;}let i;while((i=buf.indexOf('\n'))>=0){onLine(buf.slice(0,i));buf=buf.slice(i+1);}});
+  send=o=>p.stdin.write(JSON.stringify(o)+'\n');close=()=>{p.stdin.end();setTimeout(()=>p.kill(),500);};
+ }
+ const call=(method,params)=>new Promise((resolve,reject)=>{const n=++id;waiting.set(n,resolve);send({jsonrpc:'2.0',id:n,method,params});
+  setTimeout(()=>reject(new Error('Codex app server did not answer '+method+(log.length?': '+log.join(' ').replace(/\s+/g,' '):''))),timeoutMs);});
+ try{
+  const init=await call('initialize',{clientInfo:{name:'archhub-workshop',version:'1'},capabilities:{experimentalApi:true}});
+  if(init.error)return {status:'not_sent',reason:'Codex app server refused: '+init.error.message};
+  send({jsonrpc:'2.0',method:'initialized'});
+  const turns=await call('thread/turns/list',{threadId,limit:5});
+  if(turns.error)return {status:'not_sent',reason:'Codex thread not on this app server: '+turns.error.message};
+  const list=turns.result?.data||turns.result?.turns||[];
+  const active=list.find(t=>/progress|running|active/i.test(String(t.status)));
+  onDispatch();
+  // Running turn: the message joins it now. Idle: it starts the next turn now. Never parked.
+  const r=active?await call('turn/steer',{threadId,expectedTurnId:active.id,input:[{type:'text',text}]})
+   :await call('turn/start',{threadId,input:[{type:'text',text}]});
+  return r.error?{status:'not_sent',reason:'Codex refused the message: '+r.error.message}:{status:'injected',note:active?'steered into the running turn':'started a turn'};
+ }finally{close();}
 }

@@ -239,7 +239,8 @@ class WorkshopTransport:
                permission_mode="prompting"):
         """One-way public Workshop notification; never waits for or executes a reply."""
         # The one Workshop channel: every app Workshop can reach (native door or console seat).
-        if (type(recipient) is not dict or not {"app", "id"} <= set(recipient) <= {"app", "id", "pids", "desktop"}
+        if (type(recipient) is not dict or not {"app", "id"} <= set(recipient) <= {"app", "id", "pids", "desktop", "remote"}
+                or type(recipient.get("remote", "")) is not str
                 or type(recipient["app"]) is not str or not recipient["app"]
                 or any(type(pid) is not int for pid in recipient.get("pids", []))
                 or type(recipient["id"]) is not str or not recipient["id"]

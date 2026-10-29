@@ -107,7 +107,13 @@ test('every wire terminates at the real socket centers',async t=>{
  });
  assert.ok(delta.every(d=>d<.5),JSON.stringify(delta));
 });
-test('logical type mismatch never writes a wire; compatible socket activation writes the real IDs',async t=>{
+test('clicking a wire inspects its type, both sockets and its value',async t=>{
+ const page=await mount(t);
+ await page.locator('[data-graph-wire]').first().evaluate(el=>el.parentNode.querySelector('.react-flow__edge-interaction').dispatchEvent(new window.MouseEvent('click',{bubbles:true})));
+ const text=await page.locator('[data-wire-inspection]').innerText();
+ for(const label of ['Type','From','To','Value'])assert.match(text,new RegExp(label));
+ assert.match(text,/Number/);
+});test('logical type mismatch never writes a wire; compatible socket activation writes the real IDs',async t=>{
  const page=await mount(t);
  const key=key=>page.locator('[data-port-key="'+key+'"]');
  const wire=async(a,b)=>{const p=await key(a).boundingBox(),q=await key(b).boundingBox(),release=await beginDrag(page,{x:p.x+p.width/2,y:p.y+p.height/2},{x:q.x+q.width/2,y:q.y+q.height/2});await release();await page.waitForTimeout(60);};
@@ -300,9 +306,9 @@ test('CARDPOLISH bounds human rows while retaining internal parameters and every
  assert.equal(await card.locator('[data-parameter="engine"]').count(),0);
  assert.equal(await card.locator('[data-parameter="responsibility"]').count(),0,'serialized JSON stays in Properties');
  assert.equal(await card.locator('[data-parameter="last_result"]').count(),0);
- assert.equal(await card.locator('[data-parameter]').count(),3,'plate 4.3: first three human rows');
+ assert.equal(await card.locator('[data-parameter]').count(),4,'spec section 0b: the default card shows every human row');
  assert.match(await card.innerText(),/Room width/);
- assert.match(await card.innerText(),/\+1 more/);
+ assert.equal(await card.getByRole('button',{name:'Compact',exact:true}).count(),1,'compact is an opt-in toggle');
  assert.doesNotMatch(await card.innerText(),/[a-f0-9]{64}|assembly-instance:|\{"/);
  const description=card.locator('[data-parameter="description"]');
  assert.equal(await description.locator('[title]').last().getAttribute('title'),n.properties.find(p=>p.label==='description').value);
@@ -311,12 +317,11 @@ test('CARDPOLISH bounds human rows while retaining internal parameters and every
  const stored=await page.evaluate(()=>window.fixtureState().graph.nodes.find(n=>n.id==='level'));
  assert.equal(stored.params.template_instance,hash);
  assert.equal(stored.params.responsibility,n.properties.find(p=>p.label==='responsibility').value);
- await card.getByRole('button',{name:'+1 more',exact:true}).click();
- assert.equal(await card.locator('[data-parameter]').count(),4);
  assert.equal(await card.locator('[data-parameter="template_instance"]').count(),0);
  await card.getByRole('spinbutton',{name:'Level extra_value',exact:true}).fill('9');
- await card.getByRole('button',{name:'Show less',exact:true}).click();
+ await card.getByRole('button',{name:'Compact',exact:true}).click();
  assert.equal(await card.locator('[data-parameter]').count(),3);
+ assert.equal(await card.getByRole('button',{name:'+1 more',exact:true}).count(),1);
  await card.getByRole('spinbutton',{name:'Level room_width',exact:true}).fill('8');
  assert.ok((await page.evaluate(()=>window.fixtureCalls)).some(c=>c.action==='parameter'&&c.key==='room_width'&&c.value===8));
 });
@@ -330,12 +335,11 @@ test('CARDPOLISH declared editable text remains reachable regardless of key or v
  const page=await mount(t,{raw}),card=page.locator('[data-graph-node="level"]');
  assert.equal(await card.getByRole('textbox',{name:'Level caption',exact:true}).inputValue(),'[TBD]');
  assert.equal(await card.getByRole('textbox',{name:'Level note',exact:true}).inputValue(),'{draft}');
- await card.getByRole('button',{name:'+4 more',exact:true}).click();
  for(const key of ['caption','note','root_id','level_ref','source_hash','metadata']){
   await card.getByRole('textbox',{name:'Level '+key,exact:true}).fill('edited-'+key);
   assert.ok((await page.evaluate(()=>window.fixtureCalls)).some(c=>c.action==='parameter'&&c.key===key&&c.value==='edited-'+key));
  }
- await card.getByRole('button',{name:'Show less',exact:true}).click();
+ await card.getByRole('button',{name:'Compact',exact:true}).click();
  assert.equal(await card.locator('[data-parameter]').count(),3);
  await card.getByRole('button',{name:'+4 more',exact:true}).click();
  assert.equal(await card.getByRole('textbox',{name:'Level root_id',exact:true}).inputValue(),'edited-root_id');

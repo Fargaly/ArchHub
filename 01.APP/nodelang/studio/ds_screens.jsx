@@ -262,12 +262,13 @@
   const FOOT = {display: 'inline-block', justifySelf: 'start', padding: '1px 8px', borderRadius: 10, border: '1px solid ' + SPEC.fieldLine};
   function RefusedChip({refusal, onConvert}) {
     return <div data-refused-chip="" role="status" style={{color: A.err, display: 'flex', flexWrap: 'wrap', gap: 4}}>
-      <span>Needs a {refusal.outType} → {refusal.inType} converter ·</span>
-      <button type="button" className="button-reset nodrag" style={{color: A.err, textDecoration: 'underline'}} onClick={event => executeAction('projects.controls.activate', {handler: onConvert}, event)}>Insert converter</button>
+      {refusal.outType === refusal.inType && refusal.reason ? <span>{refusal.reason}</span> : <><span>Needs a {refusal.outType} → {refusal.inType} converter ·</span>
+      <button type="button" className="button-reset nodrag" style={{color: A.err, textDecoration: 'underline'}} onClick={event => executeAction('projects.controls.activate', {handler: onConvert}, event)}>Insert converter</button></>}
     </div>;
   }
   function FlowCard({n, s, u, selected, refusal, onConvert, socket, members, onMember, menu}) {
-    const [expanded, setExpanded] = React.useState(false);
+    // Spec section 0b P0: the default card is full capability (every row); compact (first three rows) is an opt-in toggle.
+    const [compact, setCompact] = React.useState(false);
     const field = n.column && fieldColumn(n, s.graph);
     if (field) return <FieldNode n={n} field={field} selected={selected} headerProps={{className: 'node-header'}} renderSocket={socket} />;
     const scalarParameter = ['thing.setting', 'param.value'].includes(n.type) && n.outputs.length === 1 && (typeof n.params.value === 'number' || n.params.value === null);
@@ -278,7 +279,7 @@
       // Internal ids, hashes and serialized JSON stay in Properties; the face shows human values (CARDPOLISH), first three until expanded.
       shown = (n.parameterSchema || []).filter(p => p.editable || (!HIDDEN_PARAM.test(p.key) && (n.params[p.key] === null || typeof n.params[p.key] !== 'object') && !HIDDEN_VALUE.test(String(n.params[p.key]))))
         .filter(p => !(p.key === 'prompt' && n.inputs.some(x => x.id === 'prompt'))),
-      params = expanded ? shown : shown.slice(0, 3),
+      params = compact ? shown.slice(0, 3) : shown,
       refusedHere = port => refusal && refusal.to.port === port && <RefusedChip refusal={refusal} onConvert={onConvert} />;
     for (const p of params) if (n.inputs.some(x => x.id === p.key || x.id === 'param:' + p.key)) slotPorts.add(n.inputs.find(x => x.id === p.key || x.id === 'param:' + p.key).id);
     const result = n.status === 'Done' ? summary(n.output) : '';
@@ -301,7 +302,7 @@
             <span style={{display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>{from ? <span>From {from}</span> : n.params[p.key] === null ? <span data-unset="" style={{color: SPEC.label}}>unset</span> : <ValueWidget n={n} p={p} value={n.params[p.key]} u={u} />}
               {!from && settingsKeys.has(p.key) && <small style={{color: SPEC.count, whiteSpace: 'nowrap', fontSize: 12.5}} title="One value with Settings (router.json)">From Settings</small>}</span></div>{port && refusedHere(port.id)}</React.Fragment>;
         })}
-        {shown.length > 3 && <button type="button" className="button-reset nodrag canvas-card-more" style={{justifySelf: 'start', color: SPEC.label}} onClick={event => executeAction('projects.controls.activate', {handler: () => setExpanded(!expanded)}, event)}>{expanded ? 'Show less' : `+${shown.length - 3} more`}</button>}
+        {shown.length > 3 && <button type="button" className="button-reset nodrag canvas-card-more" aria-pressed={compact} style={{justifySelf: 'start', color: SPEC.label}} onClick={event => executeAction('projects.controls.activate', {handler: () => setCompact(!compact)}, event)}>{compact ? `+${shown.length - 3} more` : 'Compact'}</button>}
         {n.loop && <div data-node-loop="" style={{color: SPEC.label}} title={'Trigger ' + n.loop.trigger + ' · stops when ' + n.loop.stop + (n.loop.evaluator ? ' · evaluator ' + n.loop.evaluator : '')}>Loop · cap {n.loop.cap} · until {n.loop.stop}</div>}
         {n.dataset && <DatasetEditor n={n} u={u} />}
         {!n.dataset && !n.column && n.paramDefs && api.addNodeParameter && <AddParameter n={n} u={u} />}
@@ -554,18 +555,18 @@
       setSelected([]);
     });
     const connect = async (out, input) => {
+      const word = p => (TYPE_NAME[p.type] || p.type || 'any').toLowerCase();
       if (out.id === input.id) return;
       const outputPort = s.graph.nodes.find(n=>n.id===out.id)?.outputs.find(p=>p.id===out.port),
         inputPort = s.graph.nodes.find(n=>n.id===input.id)?.inputs.find(p=>p.id===input.port);
       if (!outputPort || !inputPort || outputPort.connectable === false || inputPort.connectable === false || outputPort.read_only || inputPort.read_only) return;
       if (outputPort.type !== inputPort.type && outputPort.type !== 'any' && inputPort.type !== 'any') {
         // Spec d9c0d514: an invalid drop draws the wire red at the drop and offers the converter on the target socket; no modal, nothing written.
-        const word = p => (TYPE_NAME[p.type] || p.type || 'any').toLowerCase();
         setRejected({from:out, to:input, outType:word(outputPort), inType:word(inputPort)}); return;
       }
       const choices = outputPort.connect_choices;
       if (Array.isArray(choices) && !choices.some(p=>p.id===input.id && p.interface===input.port)) {
-        setRejected({from:out, to:input, outType:outputPort.type, inType:inputPort.type}); return;
+        setRejected({from:out, to:input, outType:word(outputPort), inType:word(inputPort), reason:'These sockets do not share an admitted contract.'}); return;
       }
       const result = await u.act(() => api.connectSockets({
         from: out.id,
@@ -573,7 +574,8 @@
         fromPort: out.port,
         toPort: input.port
       }));
-      if (result && !result.ok) u.show('Type mismatch', result);
+      // A refusal from the owner lands in the same inline state as a client-side type check: red wire, converter on the socket.
+      if (result && !result.ok) setRejected({from:out, to:input, outType:word(outputPort), inType:word(inputPort), reason:result.error || result.reason || ''});
     };
     const insertConverter = async () => {
       const r = rejected, a = r && s.graph.nodes.find(n => n.id === r.from.id), b = r && s.graph.nodes.find(n => n.id === r.to.id);
@@ -728,7 +730,18 @@
      <div className="spread"><h2>Wire</h2><Btn variant="controls" sm ghost aria-label="Close wire" onClick={event=>executeAction('projects.controls.activate',{handler:()=>setWireId(null)},event)}>×</Btn></div>
      <div className="grid" style={{marginTop:16}}><div className="flex">{['Rules','Data'].map(t=><button className="tab-button" key={t} aria-pressed={wireTab===t} onClick={event=>executeAction('projects.ds_screens.SetTabT.27',{setTab:setWireTab,t},event)}>{t}</button>)}</div>
        <label className="grid">Pass when<input aria-label="Wire rule" value={wire.rule || ''} onChange={e=>u.act(()=>api.setWireRule(wire.id,e.target.value))} /></label>
-       {wireTab==='Data' && <window.UI.Table rows={[{from:s.graph.nodes.find(n=>n.id===wire.from)?.title,to:s.graph.nodes.find(n=>n.id===wire.to)?.title,type:wire.type}]} />}
+       {(() => {
+         // Wire inspection (Dynamo/Grasshopper parity): its type, both sockets and the value it carries now.
+         const a = s.graph.nodes.find(n => n.id === wire.from), b = s.graph.nodes.find(n => n.id === wire.to),
+           out = a?.outputs.find(p => p.id === wire.fromPort), into = b?.inputs.find(p => p.id === wire.toPort),
+           value = a?.status === 'Done' ? (a.output && typeof a.output === 'object' && !Array.isArray(a.output) && wire.fromPort in a.output ? a.output[wire.fromPort] : a.output) : undefined;
+         return <dl data-wire-inspection="" style={{display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '6px 12px', fontSize: 13, margin: 0}}>
+           <dt className="muted">Type</dt><dd style={{margin: 0}}>{out ? typeName(out) : wire.type}{into && out && into.type !== out.type ? ' → ' + typeName(into) : ''}</dd>
+           <dt className="muted">From</dt><dd style={{margin: 0}}>{a?.title || wire.from} · {out?.name || wire.fromPort}</dd>
+           <dt className="muted">To</dt><dd style={{margin: 0}}>{b?.title || wire.to} · {into?.name || wire.toPort}</dd>
+           <dt className="muted">Value</dt><dd style={{margin: 0, overflowWrap: 'anywhere'}}>{value === undefined ? 'Not run yet' : summary(value) || 'empty'}</dd>
+         </dl>;
+       })()}
        <Btn variant="controls" danger sm onClick={event=>executeAction('projects.ds_screens.DeleteWire.28',{api,u,wire},event)}>Delete wire…</Btn>
      </div></aside>}
 

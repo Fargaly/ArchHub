@@ -35,10 +35,6 @@ FLOOR_IMPORTS = {
 OUTER_RING_EXCEPTION_BASELINE = frozenset({
     "cell_baboom_connector_execution",
     "cell_baboom_meeting_note_publication",
-    "cell_legacy_core_nodes",
-    "cell_legacy_custom_nodes",
-    "cell_legacy_self_extension",
-    "cell_legacy_webshell_host",
 })
 
 OUTER_RING_RUNTIME_IMPORT_BASELINE = frozenset({

@@ -19,11 +19,28 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
     server = NoGraphServer(state_dir, port=int(os.environ.get('ARCHHUB_TEST_HTTP_PORT', '0')),
                            engines=PIPELINE_ENGINES).start()
     print('  nograph    : server up in %.2fs at %s (no graph opened)' % (time.perf_counter() - started, server.public_url), flush=True)
+    app_root = Path(__file__).resolve().parents[1]
+    restart = {'requested': False, 'quit': None}
+
+    def request_restart():
+        # "Update and reload": close the window; after the event loop ends the staged build is armed and relaunched.
+        if restart['quit'] is None:
+            raise RuntimeError('no desktop window to close')
+        restart['requested'] = True
+        restart['quit']()
     try:
         from .application_update import ApplicationUpdate
-        server.application_update = ApplicationUpdate(Path(state_dir), Path(__file__).resolve().parents[1])
+        server.application_update = ApplicationUpdate(Path(state_dir), app_root, request_restart=request_restart,
+                                                      report=lambda line: print('  update     : ' + line, flush=True))
     except Exception as refusal:  # noqa: BLE001 - updates say unavailable, the app still opens
-        print('  update     : unavailable (%s)' % type(refusal).__name__, flush=True)
+        print('  update     : unavailable (%s: %s)' % (type(refusal).__name__, refusal), flush=True)
+
+    def confirm_boot():
+        # A build installed by the updater must acknowledge this boot, or the next start restores the old code.
+        from .quiet_update import confirm_when_free
+        result = confirm_when_free(Path(state_dir), app_root)
+        if result.get('confirmed'):
+            print('  update     : build %s confirmed after boot' % result.get('build_id'), flush=True)
     def start_baboom():
         try:
             import psutil
@@ -127,7 +144,35 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
     landing.start(1000)
     window.show()
     QTimer.singleShot(0, lambda: print('  window     : Studio opened', flush=True))
+    view.loadFinished.connect(lambda ok: ok and threading.Thread(target=confirm_boot, name='archhub-update-confirm',
+                                                                 daemon=True).start())
+    restart['quit'] = app.quit
     code = app.exec()
     del window_commands
     server.close()
+    _arm_staged_update(server.application_update, Path(state_dir), app_root, instance_lock, relaunch=restart['requested'])
     return code
+
+
+def _arm_staged_update(update, state_dir, app_root, instance_lock, *, relaunch):
+    """After the last window closed: arm the confirmed (or quit-applied) staged build for the next boot, which
+    installs it (launcher.py begin_update_boot / apply_staged); relaunch when the founder asked to reload."""
+    if update is None:
+        return
+    try:
+        if relaunch or update.apply_on_quit():
+            from .application_update_recovery import arm_update
+            from .persistence import application_content_path, application_database_path
+            database = application_database_path(state_dir)
+            arm_update(state_dir, app_root, database, application_content_path(database), expected_build=update.confirmed_build)
+            print('  update     : staged build armed for the next start', flush=True)
+            if relaunch:
+                import subprocess
+                if instance_lock is not None:
+                    instance_lock.close()
+                subprocess.Popen(['wscript.exe', str(app_root / 'ArchHub.vbs')], close_fds=True,
+                                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    except Exception as refused:  # noqa: BLE001 - the staged package stays; the next check offers it again
+        print('  update     : not armed (%s: %s)' % (type(refused).__name__, refused), flush=True)
+    finally:
+        update.close()

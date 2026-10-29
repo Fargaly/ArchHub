@@ -166,3 +166,15 @@ def test_providers_poll_starts_the_opencode_cli_once_per_30_s(server, monkeypatc
     later = [server.opencode_status('C:/oc/opencode.exe') for _ in range(5)]
     assert calls == ['C:/oc/opencode.exe']
     assert not first[0].get('signed_in') and later[-1]['signed_in'] is True
+
+def test_the_desktop_builds_its_updater_and_closes_it(server, tmp_path):
+    """Fresh-profile gate: `update : unavailable (TypeError)` - the NOGRAPH launcher omitted request_restart."""
+    from nodelang.application_update import ApplicationUpdate
+    from nodelang.nograph_launcher import _arm_staged_update
+    app = tmp_path / 'app'
+    app.mkdir()
+    lines = []
+    update = ApplicationUpdate(tmp_path / 'state', app, request_restart=lambda: None, report=lines.append)
+    assert update.status()['restart_supported'] is True
+    _arm_staged_update(update, tmp_path / 'state', app, None, relaunch=False)  # nothing staged, quit: no arm, closed
+    assert update.status()['restart_supported'] is False

@@ -21,7 +21,6 @@ def test_startup_and_explicit_connector_mail_have_bounded_budgets(monkeypatch):
     from nodelang import native_agent_mcp as native, workshop_mailbox
     from nodelang.library_engines import LIBRARY_ITEM_ENGINES
     monkeypatch.setitem(LIBRARY_ITEM_ENGINES['tool_workshop']['params'], 'preflight_database_ms', 750)
-    monkeypatch.setitem(LIBRARY_ITEM_ENGINES['tool_workshop']['params'], 'recovery_timeout_seconds', 4)
     calls = []
 
     def unavailable(method, body, context, *, timeout_seconds=30.0):
@@ -43,7 +42,7 @@ def test_startup_and_explicit_connector_mail_have_bounded_budgets(monkeypatch):
     assert all(timeout == .75 for _, timeout in calls)
     with pytest.raises(TimeoutError):
         native._mailbox_call("read", {"since": 0}, {})
-    assert calls[-1] == ("read", 4.0)  # an agent's own tool call waits out other writers
+    assert calls[-1] == ("read", 0.5)  # fail fast: never past the connector tool budget
 
 ENTRY = '''import sys
 from pathlib import Path

@@ -259,9 +259,10 @@ def _session_metadata(meta):
 def _mailbox_call(method, body, context, **limits):
     from .workshop_mailbox import call
     from .library_engines import LIBRARY_ITEM_ENGINES
-    # An agent's own send/read/declare waits out other agents' short writes (it used to fail at 0.5 s with
-    # 'database is locked' while ~20 sessions polled); the background pending poll keeps its own short budget.
-    limits.setdefault("timeout_seconds", LIBRARY_ITEM_ENGINES['tool_workshop']['params']['recovery_timeout_seconds'])
+    # Fail fast: a hung Workshop never holds an agent's tool call past the connector budget. Reads no longer
+    # queue behind writers (conversation_history opens existing stores as a read), so the short budget holds.
+    limits.setdefault("timeout_seconds", min(0.5,
+        LIBRARY_ITEM_ENGINES['tool_workshop']['params']['preflight_database_ms'] / 1000))
     return call(method, body, context, **limits)
 
 

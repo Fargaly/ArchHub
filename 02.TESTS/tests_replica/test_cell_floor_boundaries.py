@@ -38,7 +38,6 @@ OUTER_RING_EXCEPTION_BASELINE = frozenset({
     "cell_legacy_core_nodes",
     "cell_legacy_custom_nodes",
     "cell_legacy_self_extension",
-    "cell_legacy_surface_catalog",
     "cell_legacy_webshell_host",
 })
 

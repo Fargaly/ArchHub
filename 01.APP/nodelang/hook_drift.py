@@ -21,8 +21,12 @@ import re
 import sys
 from pathlib import Path
 
-_JSON_SOURCES = (".claude/settings.json", ".claude/settings.local.json", ".codex/hooks.json",
-                 ".gemini/settings.json", ".gemini/config/hooks.json", ".cursor/hooks.json")
+if not __package__:  # run as the installed script: import the canonical package
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from nodelang.runtime_hook_observer import VENDORS
+
+# The same per-agent hook files the compliance observer reads, plus Claude's local layer.
+_JSON_SOURCES = tuple(spec["config"] for spec in VENDORS.values() if "config" in spec) + (".claude/settings.local.json",)
 _PLUGIN_GLOBS = (".claude/plugins/**/hooks/hooks.json", ".claude/plugins/**/.claude-plugin/plugin.json",
                  ".claude/plugins/**/plugin.json")
 _OPENCODE = (".config/opencode/plugin", ".config/opencode/plugins")

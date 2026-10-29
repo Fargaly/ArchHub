@@ -143,6 +143,14 @@ class ApplicationOpenRouterCredentialResolver:
         return key or None
 
 
+def launch_environment(command):
+    """The child's environment: every OpenCode ArchHub starts gets its own random server password; others inherit."""
+    name = Path(str(command[0])).stem.casefold() if command else ""
+    if not name.startswith("opencode"):
+        return None
+    from .agent_runtime_defs.opencode import server_password_environment
+    return server_password_environment(os.environ)
+
 class LocalModelExecutionHost:
     """Default subprocess and HTTP implementation for one broker invocation."""
 
@@ -186,6 +194,7 @@ class LocalModelExecutionHost:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
                 cwd=str(cwd),
+                env=launch_environment(command),
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         except OSError:

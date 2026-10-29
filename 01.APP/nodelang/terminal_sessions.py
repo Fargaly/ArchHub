@@ -31,6 +31,8 @@ import threading
 import time
 import uuid
 
+from .agent_runtime_defs.opencode import server_password_environment
+
 MAX_SESSIONS = 4
 MAX_OUTPUT_BYTES = 256 * 1024
 MAX_INPUT_BYTES = 8 * 1024
@@ -299,6 +301,8 @@ class TerminalSessions:
                 self._argv(), cwd=str(folder), stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0,
                 shell=False, creationflags=flags,
+                # An OpenCode started from this terminal opens its server with this terminal's own password.
+                env=server_password_environment(os.environ),
             )
             session = TerminalSession(uuid.uuid4().hex, folder, process, self._clock)
             self._sessions[session.id] = session

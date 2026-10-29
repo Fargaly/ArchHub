@@ -834,6 +834,13 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
     if body["to"].strip().casefold() in ("ahmed", "founder", "you"):
         result["delivery"] = []  # the founder reads the Workshop screen; nothing to push
         return result
+    # Sender check: only a process running inside a real agent session (its observed runtime ancestor) pushes into
+    # other sessions. Any other local process is recorded in the Workshop and never injected. The founder's own
+    # chat comes through the app's authenticated Studio session (workshop_live.send_as_founder), not this call.
+    if not _sender_may_push(peer):
+        result["delivery"] = [{"agent": body["to"], "state": "failed", "reason": "Sender is not a running agent session; "
+                               "recorded in the Workshop, not pushed into any session."}]
+        return result
     # The message is recorded; the pushes run beside the caller and each lands as its own row in the
     # Workshop (delivered, or failed with the reason). A slow or hung agent never delays the sender.
     import threading
@@ -848,6 +855,10 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
         {"agent": body["to"], "state": "sent", "reason": "Sent and recorded; do not send it again. "
          "Its live push into each recipient session is finishing now."}]
     return result
+
+
+def _sender_may_push(peer):
+    return observed_runtime_process(peer) is not None
 
 
 def _deliver_now(database, result, body, identity):
@@ -868,7 +879,10 @@ def _deliver_now(database, result, body, identity):
             if not recipients:
                 from .workshop_live import discover_target
                 recipients = discover_target(body["to"])
-        rows = deliver(selected, result["message_id"], recipients, identity["sender_label"], body["text"])
+        # The sender passed the agent-session check in call(): one of the founder's own agents, so its message lands
+        # mid-turn like his chat does ('prompting' is held for approval in a bypass-mode Claude session).
+        rows = deliver(selected, result["message_id"], recipients, identity["sender_label"], body["text"],
+                       permission_mode="bypass")
         if not recipients and not founder:
             from .workshop_live import SCHEMA
             selected._db.execute(SCHEMA)

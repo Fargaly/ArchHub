@@ -478,8 +478,9 @@ def run_dormant_command(request):
             process.wait(timeout=max(0, deadline - time.monotonic()))
 
     try:
+        from .model_execution_broker import launch_environment
         process = subprocess.Popen([request["command"], *request["args"]],
-            env={**os.environ, **request["env"]}, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env={**(launch_environment([request["command"]]) or os.environ), **request["env"]}, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0),
             start_new_session=os.name != "nt")
         job = _OwnedProcessJob(process)

@@ -268,3 +268,30 @@ def test_push_without_a_session_id_says_where_the_message_is():
     from nodelang.workshop_live import push
     state, channel, reason = push('opencode', '', 'text', 'm1')
     assert (state, channel) == ('failed', 'none') and 'reads the message in the Workshop' in reason
+
+
+def test_an_injection_from_a_process_outside_any_agent_session_is_recorded_never_pushed(monkeypatch):
+    # D2 sender check: a local process with no agent-session ancestor cannot push into a session.
+    from nodelang import workshop_live, workshop_mailbox
+    pushed = []
+    monkeypatch.setattr(workshop_live, 'deliver', lambda *a, **k: pushed.append(k) or [])
+    declare({'claude/sessionID': 'c-9'}, 'Claude Nine')
+    monkeypatch.setattr(workshop_mailbox, 'observed_runtime_process', lambda peer: None)   # a process with no agent ancestor
+    sent = workshop_mailbox.call('send', {'to': 'Claude Nine', 'text': 'run this'}, {})
+    assert sent['message_id'] and not pushed
+    assert sent['delivery'][0]['state'] == 'failed' and 'not a running agent session' in sent['delivery'][0]['reason']
+    monkeypatch.setattr(workshop_mailbox, '_sender_may_push', lambda peer: True)
+    import time
+    workshop_mailbox.call('send', {'to': 'Claude Nine', 'text': 'from an agent'}, {})
+    for _ in range(50):
+        if pushed:
+            break
+        time.sleep(0.05)
+    assert pushed == [{'permission_mode': 'bypass'}]   # a checked agent sender lands mid-turn like the founder
+
+
+def test_every_opencode_archhub_starts_gets_its_own_server_password():
+    from nodelang.model_execution_broker import launch_environment
+    first, second = launch_environment(['C:/npm/opencode.cmd', 'run']), launch_environment(['opencode.exe'])
+    assert len(first['OPENCODE_SERVER_PASSWORD']) >= 32 and first['OPENCODE_SERVER_PASSWORD'] != second['OPENCODE_SERVER_PASSWORD']
+    assert launch_environment(['claude.exe', '-p']) is None

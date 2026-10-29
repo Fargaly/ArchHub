@@ -150,3 +150,19 @@ def test_brain_remember_edit_forget_export_without_the_graph(server, tmp_path):
     assert brain('brain-export')['facts']['held'] == 0
     stored = json.loads((tmp_path / 'LOCALAPPDATA' / 'ArchHub' / 'settings' / 'brain.json').read_text(encoding='utf-8'))
     assert stored['facts'][0]['forgotten'] is True   # forget is soft: the fact is kept
+
+
+def test_providers_poll_starts_the_opencode_cli_once_per_30_s(server, monkeypatch):
+    """Gate PERF: each 5 s Providers poll ran `opencode run --help` and `opencode auth list` (385 MB at idle)."""
+    import time
+    from nodelang import model_router
+    calls = []
+    monkeypatch.setattr(model_router, 'probe_opencode_status', lambda exe: calls.append(exe) or {'installed': True, 'signed_in': True})
+    first = [server.opencode_status('C:/oc/opencode.exe') for _ in range(5)]
+    deadline = time.monotonic() + 5
+    while not calls and time.monotonic() < deadline:
+        time.sleep(0.02)
+    time.sleep(0.1)
+    later = [server.opencode_status('C:/oc/opencode.exe') for _ in range(5)]
+    assert calls == ['C:/oc/opencode.exe']
+    assert not first[0].get('signed_in') and later[-1]['signed_in'] is True

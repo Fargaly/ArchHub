@@ -129,6 +129,7 @@ class NoGraphServer:
             ('settings', {'settingsScope': 'User'}))}
         self._hosts = Cached(30.0, self._probe_hosts)
         self._local = Cached(10.0, self._probe_local)
+        self._opencode = {}
         self._terminals = None
         self._agents_api = None
         self.httpd = QuietThreadingHTTPServer((host, port), self._handler())
@@ -195,6 +196,13 @@ class NoGraphServer:
                 print('  cloud relay: did not stop -- %s' % stuck, flush=True)
         self.httpd.shutdown()
         self.httpd.server_close()
+
+    def opencode_status(self, executable):
+        """OpenCode auth/run readiness off the request path, 30 s like the old server's cache: the 5 s
+        Providers poll must not start the OpenCode CLI twice per poll (385 MB opencode.exe at idle)."""
+        from .model_router import probe_opencode_status
+        probe = self._opencode.setdefault(str(executable), Cached(30.0, lambda: probe_opencode_status(executable)))
+        return probe.get() or {'installed': bool(executable)}  # until the first answer: installed, nothing claimed
 
     def is_halted(self):
         return self._halted.is_set()
@@ -596,7 +604,7 @@ def r_hosts(s, req):
 
 
 def r_providers(s, req):
-    from .model_router import provider_rows, find_assistant, probe_opencode_status
+    from .model_router import provider_rows, find_assistant
     from .cloud_relay import load_cloud_session
     states = s._local.get()
     if req.path.endswith('/models'):
@@ -610,7 +618,7 @@ def r_providers(s, req):
     return {'ok': True, 'providers': provider_rows(
         cloud_session=load_cloud_session(),
         local_probe=lambda _host, port: None if states is None else states.get(int(port)),
-        cli_probe=find_assistant, opencode_status_probe=probe_opencode_status)}
+        cli_probe=find_assistant, opencode_status_probe=s.opencode_status)}
 
 
 # -- Workshop: the room is workshop/messages.sqlite3; delivery is Workshop --

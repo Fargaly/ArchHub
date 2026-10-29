@@ -172,11 +172,15 @@ export function nativeCall(tool,args,threadId=process.env.CODEX_THREAD_ID,contex
 
 // Codex App Server door (adopted: Codex's own JSON-RPC, `turn/steer` / `turn/start`). url = ws://... when the TUI runs
 // against that endpoint (--remote); otherwise the shared local daemon through `codex app-server proxy`.
-export async function steerCodex(threadId,text,{url='',onDispatch=()=>{},timeoutMs=20000}={}){
+// Codex door node: its typed parameters.
+const CODEX_DOOR_NODE={id:'workshop.codex',params:{answer_ms:20000,close_ms:500,turns_listed:5}};
+const {WebSocket}=globalThis;  // Node's built-in client (Node 22+)
+export async function steerCodex(threadId,text,{url='',onDispatch=()=>{},timeoutMs=CODEX_DOOR_NODE.params.answer_ms}={}){
  if(typeof threadId!=='string'||!threadId)throw new Error('Codex thread id required');
  const {spawn}=await import('node:child_process');
  const waiting=new Map(),log=[];let id=0,send,close;
- const onLine=line=>{try{const m=JSON.parse(line);if(m.id!=null&&waiting.has(m.id)){waiting.get(m.id)(m);waiting.delete(m.id);}}catch{}};
+ // An unreadable line is named in the failure the caller sees (the call's timeout reason), never dropped silently.
+ const onLine=line=>{try{const m=JSON.parse(line);if(m.id!=null&&waiting.has(m.id)){waiting.get(m.id)(m);waiting.delete(m.id);}}catch(error){if(log.length<4)log.push('unreadable app server line: '+String(error.message).slice(0,80));}};
  if(/^wss?:\/\/(127\.0\.0\.1|localhost|\[::1\])[:/]/i.test(url||'')){
   const ws=new WebSocket(url);
   await new Promise((resolve,reject)=>{ws.addEventListener('open',resolve,{once:true});ws.addEventListener('error',()=>reject(new Error('Codex app server unreachable')),{once:true});});
@@ -186,7 +190,7 @@ export async function steerCodex(threadId,text,{url='',onDispatch=()=>{},timeout
   let buf='';p.stdout.setEncoding('utf8');p.stderr.setEncoding('utf8');p.stderr.on('data',d=>{if(log.length<4)log.push(d.slice(0,200));});
   p.on('error',e=>log.push(String(e.message)));
   p.stdout.on('data',d=>{buf+=d;if(buf.length>4194304){p.kill();return;}let i;while((i=buf.indexOf('\n'))>=0){onLine(buf.slice(0,i));buf=buf.slice(i+1);}});
-  send=o=>p.stdin.write(JSON.stringify(o)+'\n');close=()=>{p.stdin.end();setTimeout(()=>p.kill(),500);};
+  send=o=>p.stdin.write(JSON.stringify(o)+'\n');close=()=>{p.stdin.end();setTimeout(()=>p.kill(),CODEX_DOOR_NODE.params.close_ms);};
  }
  const call=(method,params)=>new Promise((resolve,reject)=>{const n=++id;waiting.set(n,resolve);send({jsonrpc:'2.0',id:n,method,params});
   setTimeout(()=>reject(new Error('Codex app server did not answer '+method+(log.length?': '+log.join(' ').replace(/\s+/g,' '):''))),timeoutMs);});
@@ -194,7 +198,7 @@ export async function steerCodex(threadId,text,{url='',onDispatch=()=>{},timeout
   const init=await call('initialize',{clientInfo:{name:'archhub-workshop',version:'1'},capabilities:{experimentalApi:true}});
   if(init.error)return {status:'not_sent',reason:'Codex app server refused: '+init.error.message};
   send({jsonrpc:'2.0',method:'initialized'});
-  const turns=await call('thread/turns/list',{threadId,limit:5});
+  const turns=await call('thread/turns/list',{threadId,limit:CODEX_DOOR_NODE.params.turns_listed});
   if(turns.error)return {status:'not_sent',reason:'Codex thread not on this app server: '+turns.error.message};
   const list=turns.result?.data||turns.result?.turns||[];
   const active=list.find(t=>/progress|running|active/i.test(String(t.status)));

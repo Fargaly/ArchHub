@@ -60,6 +60,7 @@ def validate(document):
                 raise ValueError('Node '+field+' must be text')
         if 'children' in node and (not isinstance(node['children'],list) or any(not isinstance(child,str) for child in node['children'])):
             raise ValueError('Group children must be node ids')
+        canvas_documents.check_contract(node)
         for field in ('portVisibility','parameterPresentation','ports','result'):
             if field in node and not isinstance(node[field],dict):
                 raise ValueError('Node '+field+' must be an object')
@@ -159,6 +160,9 @@ def catalogue():
             continue
         items.append({'id':'skill:'+skill['id'],'cat':'skills','title':skill['title'],'sub':'Skill · %d nodes'%len(skill['nodes']),
                       'engine':'skill','params':{'skill':skill['id']},'ports':skill_ports(skill, items)})
+    # C2 on every definition: pure (Unreal: re-solves on edit, else waits for Run), budget, loop.
+    for item in items:
+        item.update(canvas_documents.node_contract(item.get('engine')))
     return items
 
 

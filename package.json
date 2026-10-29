@@ -9,7 +9,7 @@
     "test:interaction": "python -m pytest 02.TESTS/tests_replica/test_universal_ui_interactions.py -q -p no:cacheprovider --timeout=300"
   },
   "devDependencies": {
-    "@xyflow/react": "^12.11.2",
+    "@xyflow/react": "12.11.2",
     "esbuild": "^0.28.1",
     "jsdom": "29.1.1",
     "lucide-static": "1.25.0",

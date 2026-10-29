@@ -284,9 +284,9 @@ Type: files; Name: "{app}\wheelhouse\*.whl"
 Type: filesandordirs; Name: "{app}\.retired-host-files"
 
 [Icons]
-Name: "{group}\ArchHub"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}\archhub.ico"
+Name: "{group}\ArchHub"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}\archhub.ico"; AppUserModelID: "ArchHub.ArchHub"
 Name: "{group}\Uninstall ArchHub"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\ArchHub"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}\archhub.ico"; Tasks: desktopicon
+Name: "{autodesktop}\ArchHub"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}\archhub.ico"; AppUserModelID: "ArchHub.ArchHub"; Tasks: desktopicon
 
 [Run]
 ; The first open prepares the machine before any window appears; a plain

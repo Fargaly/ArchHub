@@ -65,6 +65,11 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
     from PyQt6.QtWebEngineWidgets import QWebEngineView
     from PyQt6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMenu, QSystemTrayIcon
 
+    if os.name == 'nt':
+        # Taskbar identity: without an AppUserModelID Windows groups pythonw under a generic icon; the
+        # installer's shortcuts carry the same id and archhub.ico.
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('ArchHub.ArchHub')
     app = QApplication(sys.argv)
     app.setApplicationName('ArchHub')
     profile_root = Path(state_dir) / 'web-profile'

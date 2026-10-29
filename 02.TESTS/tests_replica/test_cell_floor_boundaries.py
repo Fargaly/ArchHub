@@ -87,19 +87,9 @@ def test_product_and_legacy_interpreter_modules_are_shrink_only():
     actual = frozenset(
         path.stem
         for path in NODELANG.glob("cell_*.py")
-        if path.stem.startswith(("cell_baboom_", "cell_legacy_"))
+        if path.stem.startswith("cell_baboom_")
     )
     assert actual <= OUTER_RING_EXCEPTION_BASELINE
-
-
-def test_normal_runtime_has_no_legacy_interpreter_imports():
-    for path in NODELANG.glob("*.py"):
-        if path.stem.startswith("cell_legacy_"):
-            continue
-        assert not {
-            module for module in _local_imports(path)
-            if module.startswith("cell_legacy_")
-        }, path.name
 
 
 def test_normal_runtime_product_specific_imports_are_shrink_only():

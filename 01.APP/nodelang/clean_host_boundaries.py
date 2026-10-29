@@ -17,10 +17,7 @@ from dataclasses import dataclass
 
 # Which applications ArchHub reaches and which documents it reads is a
 # product boundary, not legacy behavior -- so the fact lives here, in the
-# module whose whole job is publishing it, and the legacy bridge imports
-# it from here. It sat inside cell_legacy_core_nodes, which made this
-# module the one normal-runtime importer of a legacy interpreter and kept
-# the floor court red.
+# module whose whole job is publishing it.
 HOST_FAMILIES = (
     "revit",
     "autocad",

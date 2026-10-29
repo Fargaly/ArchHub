@@ -265,22 +265,9 @@
         "tests_replica/test_cell_accessibility.py"
       ]
     },
-    "brain_write": {
-      "why": "observing a fact writes it into the graph and it is readable back",
-      "tests": [
-        "tests_replica/test_cell_legacy_brain_governance.py"
-      ]
-    },
-    "brain_layers": {
-      "why": "scopes are graph relations, not folders on disk",
-      "tests": [
-        "tests_replica/test_cell_legacy_brain_governance.py"
-      ]
-    },
     "nl_brain_memory_is_nodes": {
       "why": "memory is the same one shape as everything else",
       "tests": [
-        "tests_replica/test_cell_legacy_brain_governance.py",
         "tests_replica/test_forcing_one_table.py"
       ]
     },
@@ -790,6 +777,8 @@
     "nl_arch_interpret": "no kernel court yet - the interpret runtime is not migrated",
     "models_composer": "no kernel court yet - the composer agent is not migrated",
     "nl_model_build_agent": "no kernel court yet - the build agent is not migrated",
-    "cockpit_withheld": "no kernel court yet - founder-hands-only actions are not migrated"
+    "cockpit_withheld": "no kernel court yet - founder-hands-only actions are not migrated",
+    "brain_write": "no court: its only court was deleted with the legacy brain-governance module (TRIMDEAD)",
+    "brain_layers": "no court: its only court was deleted with the legacy brain-governance module (TRIMDEAD)"
   }
 }

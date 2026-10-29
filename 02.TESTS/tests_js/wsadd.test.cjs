@@ -49,6 +49,7 @@ async function mount(outcome) {
     window.AHIcon=()=>null;
     window.ArchHubRouteNames={home:'Home'};
     window.UI.Home=()=>React.createElement(window.UI.WorkspaceRows);
+    window.UI.Workshop=window.UI.Home;  // the app opens on the Workshop; this test hosts the workspace rows there
     const createRoot=ReactDOM.createRoot;
     ReactDOM.createRoot=element=>(window.__root=createRoot(element));`);
   for (const name of ['app.jsx','ds_settings3.jsx']) {

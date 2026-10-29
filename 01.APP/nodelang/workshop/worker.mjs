@@ -43,7 +43,7 @@ input.on('line',async line=>{
    terminal({event:'result',status:'ok',events,work_authority:false,execution_verified:false});
   }else if(r.operation==='inject'){
    if(r.attachment)throw new Error('Public Workshop injection cannot borrow a Work attachment');
-   const result=await injectWorkshop(r.recipient,r.text,r.message_id,{model:r.model,onDispatch:()=>{dispatched=true;emit({event:'dispatch_attempted'});}});
+   const result=await injectWorkshop(r.recipient,r.text,r.message_id,{model:r.model,permissionMode:r.permission_mode||'prompting',onDispatch:()=>{dispatched=true;emit({event:'dispatch_attempted'});}});
    terminal({event:'result',...result,dispatch_attempted:dispatched,work_authority:false,execution_verified:false});
   }else if(r.operation==='request'){
    const e=r.recipient;

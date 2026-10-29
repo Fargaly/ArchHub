@@ -235,7 +235,8 @@ class WorkshopTransport:
             return {'status':'not_sent', 'reason':'activity_requires_public_reader'}
         return self._call({'operation':'activity', 'session':session, 'root':str(Path(root).resolve())}, 3.0, None)
 
-    def inject(self, recipient, text, *, message_id, timeout_seconds: float = 10.0, cancel_event=None, model=None):
+    def inject(self, recipient, text, *, message_id, timeout_seconds: float = 10.0, cancel_event=None, model=None,
+               permission_mode="prompting"):
         """One-way public Workshop notification; never waits for or executes a reply."""
         # The one Workshop channel: every app Workshop can reach (native door or console seat).
         if (type(recipient) is not dict or not {"app", "id"} <= set(recipient) <= {"app", "id", "pids", "desktop"}
@@ -243,12 +244,13 @@ class WorkshopTransport:
                 or any(type(pid) is not int for pid in recipient.get("pids", []))
                 or type(recipient["id"]) is not str or not recipient["id"]
                 or type(text) is not str or not text.strip() or len(text) > 32000
-                or type(message_id) is not str or not message_id):
+                or type(message_id) is not str or not message_id or permission_mode not in ("prompting", "bypass")):
             raise ValueError("Invalid public Workshop injection")
         if model is not None and recipient["app"] != "opencode":
             raise ValueError("Explicit model selection is OpenCode-only")
         return self._call({"operation":"inject", "recipient":recipient, "text":text,
-            "message_id":message_id, **({"model":model} if model is not None else {})}, self._budget(timeout_seconds), cancel_event)
+            "message_id":message_id, "permission_mode":permission_mode, **({"model":model} if model is not None else {})},
+            self._budget(timeout_seconds), cancel_event)
 
     def _call(self, payload, budget, cancel_event):
         request_id = str(uuid.uuid4())

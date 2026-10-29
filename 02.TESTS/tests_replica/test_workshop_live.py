@@ -85,6 +85,25 @@ def test_unknown_mention_refused_and_everyone_reaches_each_joined_agent(monkeypa
     assert [r['agent'] for r in dm['deliveries']] == ['Codex B']
 
 
+def test_founder_chat_is_sent_as_bypass_so_a_bypass_session_takes_it_mid_turn(monkeypatch):
+    # Claude Code holds a 'prompting' peer frame for approval in a bypass session (INJ rig, 2026-10-29); the founder's chat is his own.
+    from nodelang import workshop_live
+    modes = []
+    monkeypatch.setattr(workshop_live, 'push', lambda *a, **k: modes.append(k.get('permission_mode')) or ('delivered', 'workshop', ''))
+    declare({'claude/sessionID': 'c-2'}, 'Claude C')
+    workshop_live.send_as_founder('@claude-c PROOF', ['claude-c'])
+    from nodelang.workshop_mailbox import application_history
+    with application_history() as history:
+        workshop_live.deliver(history, 'agent-msg', [{'session': 's9', 'agent': 'X', 'runtime': 'claude', 'native_session_id': 'z'}], 'Agent', 'hi')
+    assert modes == ['bypass', 'prompting']
+
+
+def test_inject_refuses_an_unknown_sender_mode():
+    from nodelang.workshop_transport import WorkshopTransport
+    with pytest.raises(ValueError):
+        WorkshopTransport(node_executable='node').inject({'app': 'claude', 'id': 'x'}, 'hi', message_id='m', permission_mode='admin')
+
+
 def test_gateway_applies_once_per_stamp(profile, monkeypatch):
     from nodelang import workshop_gateway as gateway
     hooks = profile / 'gov' / '.rulesync'

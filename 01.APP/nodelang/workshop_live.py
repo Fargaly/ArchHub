@@ -28,7 +28,7 @@ SCHEMA = ("CREATE TABLE IF NOT EXISTS workshop_live_deliveries (message_id TEXT 
           "at TEXT NOT NULL, ms INTEGER, PRIMARY KEY (message_id, recipient))")
 
 
-def push(app, native_id, text, message_id, *, timeout=10.0, pids=()):
+def push(app, native_id, text, message_id, *, timeout=10.0, pids=(), permission_mode='prompting'):
     """One live push, any agent, through Workshop (the one channel). Returns (state, channel, reason).
 
     Workshop resolves the recipient against its live catalog and uses that app's own door: Claude
@@ -47,7 +47,7 @@ def push(app, native_id, text, message_id, *, timeout=10.0, pids=()):
                  **({'desktop': True} if app == 'codex' and codex_desktop_thread(native_id) else {})}
     transport = _local_transport(env)
     try:
-        result = transport.inject(recipient, text, message_id=message_id, timeout_seconds=timeout)
+        result = transport.inject(recipient, text, message_id=message_id, timeout_seconds=timeout, permission_mode=permission_mode)
     except Exception as error:  # noqa: BLE001 - the reason is the answer
         return 'failed', 'workshop', str(error)[:300]
     finally:
@@ -83,8 +83,11 @@ def envelope(message_id, sender, text):
             'Never reply to an acknowledgement.') % (sender, message_id, text, sender, message_id)
 
 
-def deliver(history, message, recipients, sender, text):
-    """Push to every recipient now; record one row each. Idempotent per (message, recipient)."""
+def deliver(history, message, recipients, sender, text, permission_mode='prompting'):
+    """Push to every recipient now; record one row each. Idempotent per (message, recipient).
+
+    permission_mode is the sender's: the founder's own chat is 'bypass', so a session running in bypass takes it
+    mid-turn instead of holding it for approval (Claude Code permission-mode parity)."""
     if not recipients:
         return []
     history._db.execute(SCHEMA)
@@ -99,7 +102,8 @@ def deliver(history, message, recipients, sender, text):
             continue
         started = time.perf_counter()
         state, channel, reason = push(row.get('runtime') or row.get('app'), row.get('native_session_id'),
-                                      envelope(message, sender, text), message, pids=_seat_pids(history, key))
+                                      envelope(message, sender, text), message, pids=_seat_pids(history, key),
+                                      permission_mode=permission_mode)
         ms = int((time.perf_counter() - started) * 1000)
         at = datetime.now(timezone.utc).isoformat()
         history._db.execute('INSERT OR IGNORE INTO workshop_live_deliveries VALUES (?,?,?,?,?,?,?,?,?,?)',
@@ -249,7 +253,7 @@ def send_as_founder(text, handles, *, reply_to=None):
                      sender_binding={'session': 'founder'})
         rows = deliver(history, sent['message_id'], [{'session': a['session'], 'agent': a['name'], 'runtime': a['app'],
                                                        'native_session_id': a['native_session_id']} for a in chosen],
-                       FOUNDER, text)
+                       FOUNDER, text, permission_mode='bypass')
     return {'message_id': sent['message_id'], 'deliveries': rows, 'unknown': unknown}
 
 

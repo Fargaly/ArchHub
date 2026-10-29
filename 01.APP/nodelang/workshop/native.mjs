@@ -82,9 +82,9 @@ export async function postCodex(threadId,prompt,{requestId,workshopInjection=fal
  throw new Error('No active bridge supports terminal-to-Codex delivery; connect from a current Codex Desktop task');
 }
 
-export async function injectWorkshop(recipient,text,messageId,{onDispatch=()=>{},model}={}){
+export async function injectWorkshop(recipient,text,messageId,{onDispatch=()=>{},model,permissionMode='prompting'}={}){
  if(!recipient||typeof recipient.app!=='string'||typeof recipient.id!=='string'||!recipient.id||
-    typeof text!=='string'||!text.trim()||text.length>32000||typeof messageId!=='string'||!messageId)
+    typeof text!=='string'||!text.trim()||text.length>32000||typeof messageId!=='string'||!messageId||!['prompting','bypass'].includes(permissionMode))
   throw new Error('Invalid Workshop injection');
  // A terminal session (any CLI, a terminal Codex) is reached through its console seat; every other app
  // outside Claude/Codex/OpenCode through its own native door (workshop-apps.mjs). One channel.
@@ -105,8 +105,9 @@ export async function injectWorkshop(recipient,text,messageId,{onDispatch=()=>{}
  if(recipient.app==='codex'){onDispatch();await postCodex(target.id,text,{requestId:messageId,workshopInjection:true});}
  else if(recipient.app==='claude'){
   const {PeerEndpoint}=await import('./vendor/src/peer-protocol.mjs');
-  // No peer reply endpoint: the recipient answers in the existing Workshop.
-  await new PeerEndpoint({name:'Workshop'}).send(target.socket,text,{msgId:messageId,permissionMode:'prompting',beforeSend:onDispatch});
+  // No peer reply endpoint: the recipient answers in the existing Workshop. Claude Code holds a 'prompting' frame for the
+  // recipient user's approval when that session runs in bypass mode (permission-mode parity); the founder's own chat says 'bypass'.
+  await new PeerEndpoint({name:'Workshop'}).send(target.socket,text,{msgId:messageId,permissionMode,beforeSend:onDispatch});
  }else{
   const {pluginRpc}=await import('./extra-apps.mjs');
   onDispatch();

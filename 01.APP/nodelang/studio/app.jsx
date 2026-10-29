@@ -1681,8 +1681,13 @@
     const handler = async () => {
       const n = await u.act(() => api.addNode(c.name));
       if (n) {
-        await u.act(() => api.setNodeParam(n.id, 'example', 'Level 3'));
+        // Rule 10: no fixed sample value. The parameter stays empty and takes the focus for the founder's own value.
         u.go('canvas');
+        const focusField = () => {
+          const field = document.querySelector('[data-graph-node="' + n.id + '"] [data-parameter="example"]');
+          (field?.querySelector('input,textarea,select,button') || field)?.focus?.();
+        };
+        window.requestAnimationFrame(() => window.requestAnimationFrame(focusField));
       }
     };
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;

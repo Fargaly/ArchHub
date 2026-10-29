@@ -336,3 +336,15 @@ def test_a_slow_sender_check_records_without_injecting_and_never_blocks_the_send
     assert time.monotonic() - started < 1.0
     time.sleep(1.2)
     assert workshop_mailbox._sender_may_push(peer) is True           # the walk finished beside the caller; remembered
+def test_an_opencode_declaration_finds_its_session_in_its_own_opencode_process(monkeypatch):
+    # OpenCode gives its MCP connector no session id; the plugin's live list names the session of that process.
+    from nodelang import workshop_live, workshop_mailbox
+
+    class Transport:
+        def discover(self, **kw):
+            return {'recipients': [{'app': 'opencode', 'id': 'ses_a', 'runtimeId': 7}, {'app': 'opencode', 'id': 'ses_b', 'runtimeId': 8},
+                                   {'app': 'opencode', 'id': 'ses_c', 'runtimeId': 8}]}
+    monkeypatch.setattr(workshop_mailbox, '_local_transport', lambda env=None: Transport())
+    assert workshop_live.opencode_session((90, 7)) == 'ses_a'
+    assert workshop_live.opencode_session((8,)) == ''      # two sessions in that process: no guess
+    assert workshop_live.opencode_session(()) == ''

@@ -59,6 +59,25 @@ def push(app, native_id, text, message_id, *, timeout=10.0, pids=(), permission_
     return 'failed', 'workshop', public_delivery_reason(result.get('reason') or result.get('error') or result.get('status'))
 
 
+def opencode_session(pids):
+    """The one OpenCode session in the declaring connector's own OpenCode process, from Workshop's live list (the
+    plugin answers for its process, runtimeId = that process id). Several sessions there: '' (no guess)."""
+    from .workshop_mailbox import _local_transport
+    if not pids:
+        return ''
+    transport = _local_transport()
+    try:
+        found = transport.discover(timeout_seconds=LIVE_NODE['params']['discover_timeout_seconds'], apps=['opencode'])
+    except Exception as error:  # noqa: BLE001 - no list means no door; the push reports it
+        import sys
+        sys.stderr.write('  workshop   : OpenCode live list unavailable (%s)\n' % str(error)[:160])
+        return ''
+    finally:
+        getattr(transport, 'close', lambda: None)()
+    rows = [r for r in found.get('recipients', []) if r.get('app') == 'opencode' and r.get('runtimeId') in set(pids)]
+    return rows[0]['id'] if len(rows) == 1 else ''
+
+
 def codex_remote(pids):
     """The loopback App Server a Codex session runs on, from its process line: the TUI's `--remote ws://...` or the
     serving app server's `--listen ws://...` (the connector that declared the session is that server's child)."""
@@ -118,7 +137,10 @@ def deliver(history, message, recipients, sender, text, permission_mode='prompti
                          'at': done[3], 'ms': done[4], 'repeat': True})
             continue
         started = time.perf_counter()
-        state, channel, reason = push(row.get('runtime') or row.get('app'), row.get('native_session_id'),
+        runtime, native = row.get('runtime') or row.get('app'), row.get('native_session_id')
+        if runtime == 'opencode' and not native:
+            native = opencode_session(_seat_pids(history, key))   # OpenCode gives its MCP connector no session id
+        state, channel, reason = push(runtime, native,
                                       envelope(message, sender, text), message, pids=_seat_pids(history, key),
                                       permission_mode=permission_mode)
         ms = int((time.perf_counter() - started) * 1000)

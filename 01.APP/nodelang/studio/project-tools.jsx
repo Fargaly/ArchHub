@@ -62,9 +62,9 @@
     const action = window.UI.useAction();
     React.useEffect(() => { action.run(async () => { const result = await api.refreshCommunity(); return result.peers.length || result.patterns.length ? result : null; }); }, []);
     const status = <div aria-live="polite">{action.state === 'waiting' && <p role="status">Reading Community…</p>}{action.state === 'empty' && <p>No incoming patterns or subscriptions.</p>}{action.state === 'loaded' && <p>{s.community.peers.length} peers returned</p>}{action.state === 'error' && <div role="alert">{action.error}<Btn onClick={event => executeAction("projects.project-tools.RetryCommunity", {action}, event)}>Retry</Btn></div>}</div>;
-    return <main className="page" data-screen="community">{status}<Heading title="Community" sub="Share reusable knowledge with clear sources and boundaries."><Btn sm onClick={event => executeAction("projects.project-tools.Brain.13", {u}, event)}>Brain</Btn></Heading><div className="social-tabs" style={{
+    return <main className="page" data-screen="community">{status}<Heading title="Community" sub="Share reusable knowledge with clear sources and boundaries."><Btn sm onClick={event => executeAction("projects.project-tools.Brain.13", {u}, event)}>Brain</Btn></Heading><div className="social-tabs shelf-tabs" role="tablist" aria-label="Community" style={{
         marginBottom: 22
-      }}>{['Discover', 'Shared', 'Review'].map(t => <button key={t} aria-pressed={tab === t} onClick={event => executeAction("projects.project-tools.SetTabT.14", {setTab,t}, event)}>{t}</button>)}</div>{tab === 'Discover' ? <div className="settings-grid"><Card style={{
+      }}>{['Discover', 'Shared', 'Review'].map(t => <button key={t} className="tab-button" role="tab" aria-selected={tab === t} aria-pressed={tab === t} onClick={event => executeAction("projects.project-tools.SetTabT.14", {setTab,t}, event)}>{t}</button>)}</div>{tab === 'Discover' ? <div className="settings-grid"><Card style={{
           padding: 22
         }}><h2>Knowledge networks</h2>{s.community.peers.map(p => <div className="row spread" key={p.id}><div><h3>{p.name}</h3><small className="muted">Verified patterns · no raw project models</small></div><D.Toggle label={'Subscribe ' + p.name} checked={p.subscribed} onCheckedChange={() => u.act(() => api.subscribeCommunity(p.id))} /></div>)}</Card><Card style={{
           padding: 22

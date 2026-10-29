@@ -4475,12 +4475,6 @@
         "tools/rollback-rehearsal-ci/rollback-rehearsal.ps1",
         "nodelang/cell_adapters.py",
         "nodelang/social_approval.py",
-        "nodelang/studio/answer-widgets.jsx",
-        "nodelang/studio/api.js",
-        "nodelang/studio/app.jsx",
-        "nodelang/studio/ui.jsx",
-        "nodelang/workshop_api.py",
-        "tests_js/newapp_account.test.cjs",
         "tests_replica/test_approval_actions.py"
       ],
       "external_entrypoints": [
@@ -9100,10 +9094,13 @@
         "01.APP/nodelang/studio/research-surfaces.jsx",
         "01.APP/nodelang/studio/review-states.jsx",
         "01.APP/nodelang/studio/social.jsx",
+        "01.APP/nodelang/studio/studio.html",
         "01.APP/nodelang/studio/style.css",
         "01.APP/nodelang/studio/surfaces.jsx",
         "01.APP/nodelang/studio/tokens.jsx",
         "01.APP/nodelang/studio/ui.jsx",
+        "01.APP/nodelang/studio/vendor/xyflow.css",
+        "01.APP/nodelang/studio/vendor/xyflow.js",
         "01.APP/nodelang/studio/workflow-states.jsx",
         "01.APP/nodelang/studio_downloads.py",
         "01.APP/nodelang/studio_window.py",
@@ -9170,6 +9167,7 @@
         "02.TESTS/tests_js/opencode_governance_native_child.test.cjs",
         "02.TESTS/tests_js/session_link_worker_exit.test.mjs",
         "02.TESTS/tests_js/studio_canvaslook.test.cjs",
+        "02.TESTS/tests_js/studio_canvasxy.test.cjs",
         "02.TESTS/tests_js/workshop_worker_exit.test.mjs",
         "02.TESTS/tests_replica/session_link_caller_target_host.test.mjs",
         "02.TESTS/tests_replica/session_link_codex_reach.test.mjs",
@@ -9276,7 +9274,8 @@
         "04.DOCS/SPEC.md",
         "05.EVIDENCE/acompiler-intents.json",
         "05.EVIDENCE/grandmap_bindings.json",
-        "requirements.txt"
+        "requirements.txt",
+        "NOTICE"
       ]
     }
   }

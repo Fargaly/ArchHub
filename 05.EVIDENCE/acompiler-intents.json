@@ -9011,6 +9011,7 @@
         "01.APP/nodelang/baboom_session_interrupt.py",
         "01.APP/nodelang/boot_profile.py",
         "01.APP/nodelang/brain_files.py",
+        "01.APP/nodelang/brain_memory_accelerators.py",
         "01.APP/nodelang/browser_graph_editor_court.py",
         "01.APP/nodelang/canvas_documents.py",
         "01.APP/nodelang/canvas_tools.py",
@@ -9198,6 +9199,8 @@
         "02.TESTS/tests_replica/test_baboom_interrupts_claude_through_session_link.py",
         "02.TESTS/tests_replica/test_baboom_interrupts_claude_through_workshop.py",
         "02.TESTS/tests_replica/test_baboom_nograph.py",
+        "02.TESTS/tests_replica/test_brain_memory_accelerators.py",
+        "02.TESTS/tests_replica/test_brain_one_sqlite_store.py",
         "02.TESTS/tests_replica/test_browser_graph_editor_court.py",
         "02.TESTS/tests_replica/test_canvas_node_workshop_transcript.py",
         "02.TESTS/tests_replica/test_canvas_parametric.py",
@@ -9265,6 +9268,7 @@
         "03.TOOLS/packaging/windows/licenses/bimwright-rvt-mcp-Apache-2.0.txt",
         "03.TOOLS/tools/archhub-compiler/rules.json",
         "03.TOOLS/tools/archhub-compiler/tests/fixtures/conduct.json",
+        "03.TOOLS/tools/brain_bench.py",
         "03.TOOLS/tools/pipeline/strict_check.py",
         "03.TOOLS/tools/real_app_check/README.md",
         "03.TOOLS/tools/real_app_check/agentlink_release.py",
@@ -9287,6 +9291,7 @@
         "04.DOCS/SPEC.md",
         "05.EVIDENCE/acompiler-intents.json",
         "05.EVIDENCE/grandmap_bindings.json",
+        "NOTICE",
         "requirements.txt"
       ]
     }

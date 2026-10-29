@@ -423,7 +423,7 @@
           {agentLoad.status === 'loaded' && <span className="sr-only" aria-label="Workshop settings ready" title="Workshop settings ready">✓</span>}
           <button className="button-reset muted" onClick={event => executeAction("appShell.Control.13", {
             go
-            }, event)}>{(s.hosts||[]).filter(h=>h.state==='connected'||h.state==='listening').map(h=>h.name+(h.detail?' · '+h.detail:'')).join(' · ') || s.files.find(f => f.id === s.activeFile)?.name || (s.hostsProbing?'Checking programs…':'Open Connections to connect a program')}</button><button className="button-reset muted" title={(s.agents||[]).map(a=>a.name+' · '+a.task).join(' · ')} onClick={event => executeAction("appShell.RunningWaitForYou.14", {
+            }, event)}>{(s.hosts||[]).filter(h=>h.state==='connected'||h.state==='listening').map(h=>h.name+' ready').join(' · ') || s.files.find(f => f.id === s.activeFile)?.name || (s.hostsProbing?'Checking programs…':'Open Connections to connect a program')}</button><button className="button-reset muted" title={(s.agents||[]).map(a=>a.name+' · '+a.task).join(' · ')} onClick={event => executeAction("appShell.RunningWaitForYou.14", {
             go
           }, event)}>{s.agentSummary||'Checking running agents…'} · {s.approvals.filter(c => c.status === 'pending').length} wait for you</button><span className="fill" /><button className="button-reset muted" onClick={event => executeAction("appShell.CtrlK.15", {
             show

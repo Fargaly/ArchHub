@@ -52,7 +52,7 @@
       <div className="home-content">
         <header className="home-intro">
           <div className="eyebrow">Your workspace · {s.profile.firm}</div>
-          <h1>{'A little input.\nA lot moving forward.'}</h1>
+          <h1>{working.length ? `Your agents are finishing ${working.length} thing${working.length === 1 ? '' : 's'} for you` : 'Nothing is running. Start something below.'}</h1>
           <div className="spread"><p className="muted">{pending.length ? `${pending.length} decision${pending.length === 1 ? '' : 's'} ready for you.` : 'Tell BABOOM what you want to do.'} {(s.agents||[]).some(p=>p.presence==='working') ? 'Your agents have the rest.' : ''}</p>
             <button className="button-reset flex home-team" onClick={event => executeAction("projects.ds_home2.AgentsAtWork.4", {u}, event)} aria-label="Agents at work">{(s.agents||[]).filter(p => p.presence==='working').slice(0,3).map(p => <Av key={p.id} id={p.id} size={24} />)}<span title={(s.agents||[]).map(p=>p.name+' · '+p.task).join(' · ')}>{s.agentSummary||'Checking running agents…'}</span><window.AHIcon name="arrow" size={15} /></button>
           </div>

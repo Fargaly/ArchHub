@@ -275,7 +275,7 @@ async function refreshAgents() {
   workingAgents=inventory.map(a=>{
    if(a.presence==='unknown')a=unknownAgent(a,workingAgents.find(row=>row.id===a.id));
    return {...a,runtime:a.runtime||a.id,ini:(a.name||a.id||'A').slice(0,1),
-    col:a.col||window.AH?.inkSoft,model:a.model||'Model not reported',task:a.task||a.sessions?.[0]?.task||'Task not reported'};
+    col:a.col||window.AH?.inkSoft,model:a.model||'Model not reported',task:a.task||a.sessions?.[0]?.task||'Idle'};
   });
   projectProviders();return state.agents;
  } catch(error) {
@@ -1002,6 +1002,7 @@ api.setProviderModel=async(id,model)=>{const current=await api.refreshRouter();r
 api.setAgentProfile=async(id,values)=>{const current=await api.refreshRouter();return api.setRouterSettings({agents:{...current.agents,[id]:{...current.agents[id],...values}}});};
 api.disconnectSecret=async id=>{const result=await settingsAction('disconnectSecret',[id]);await refreshSocialConnections();return result;};
 api.setCompanionState=values=>settingsAction('setCompanionState',[values]);
+api.openProgram=id=>settingsAction('openProgram',[id]);
 async function refreshSocialConnections(){
  const identity=state.profile.id,epoch=scopeEpoch;
  const data=await request('/api/universal/social-connections');

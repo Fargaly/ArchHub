@@ -178,3 +178,19 @@ def test_the_desktop_builds_its_updater_and_closes_it(server, tmp_path):
     assert update.status()['restart_supported'] is True
     _arm_staged_update(update, tmp_path / 'state', app, None, relaunch=False)  # nothing staged, quit: no arm, closed
     assert update.status()['restart_supported'] is False
+
+def test_one_agent_row_per_app_with_its_session_count(server, monkeypatch):
+    """Plate 077: five Claude Code sessions are one 'Claude Code' row reading 5; no task reads Idle."""
+    from nodelang import agent_runtime_registry, nograph_server
+    monkeypatch.setattr(agent_runtime_registry, 'discover_runtime_processes', lambda: {
+        'processes': [{'runtime': 'claude', 'pid': p} for p in (1, 2, 3, 4, 5)] + [{'runtime': 'codex', 'pid': 9}], 'complete': True})
+    monkeypatch.setattr(nograph_server, '_declarations', lambda: [])
+    rows = {r['runtime']: r for r in nograph_server._list_agents()}
+    assert rows['claude']['session_count'] == 5 and rows['codex']['session_count'] == 1
+    assert rows['claude']['task'] == 'Idle' and len(rows) == 2
+
+
+def test_programs_read_one_plain_status():
+    from nodelang.nograph_server import _plain_status
+    assert [_plain_status(s) for s in ('connected', 'running', 'installed', 'absent', 'needs-sign-in')] == [
+        'Connected', 'Installed · not running', 'Installed · not running', 'Not installed', 'Sign in to connect']

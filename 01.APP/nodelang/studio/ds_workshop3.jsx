@@ -15,7 +15,13 @@
     ApprovalCard,
     Empty
   } = window.UI;
-  const stages = ['PLANNED', 'WIP', 'IN REVIEW', 'DONE', 'ARCHIVED'];
+  // The task list groups by what it asks of you; a drop sets the group's stage. Archived shows only on its filter.
+  const today = t => !t.updated_at || new Date(t.updated_at).toDateString() === new Date().toDateString();
+  const groupsFor = (archived, waiting) => [
+    ['NEEDS YOU', t => t.status === 'IN REVIEW' || waiting.has(t.id), 'IN REVIEW'],
+    ['WORKING', t => (t.status === 'WIP' || t.status === 'PLANNED') && !waiting.has(t.id), 'WIP'],
+    ['DONE TODAY', t => t.status === 'DONE' && today(t), 'DONE'],
+    ...(archived ? [['ARCHIVED', t => t.status === 'ARCHIVED', 'ARCHIVED']] : [])];
   const color = s => s === 'IN REVIEW' ? A.warn : s === 'DONE' ? A.ok : s === 'STOPPED' ? A.err : s === 'WIP' ? A.accent : A.inkSoft;
   function Task({
     task,
@@ -103,7 +109,7 @@
   function Win() {
     const s = useData(),
       u = useApp();
-    const [query, setQuery] = React.useState('');
+    const [showArchived, setShowArchived] = React.useState(false), [query, setQuery] = React.useState('');
     const roomScope = JSON.stringify([s.graph.id, s.profile.email, s.profile.signedIn, s.workshopMessagesScope]);
     const currentScope = React.useRef(roomScope);
     currentScope.current = roomScope;
@@ -132,15 +138,15 @@
         }} />
    <div className="scroll" style={{
           flex: 1
-        }}>{stages.map(stage => <div key={stage} onDragOver={e => e.preventDefault()} onDrop={e => {
+        }}>{groupsFor(showArchived, new Set(s.approvals.filter(c => c.status === 'pending').map(c => c.taskId))).map(([name, member, stage]) => <div key={name} onDragOver={e => e.preventDefault()} onDrop={e => {
             e.preventDefault();
             const id = e.dataTransfer.getData('task');
             if (id) executeAction("setTaskStatus", u, id, stage);
           }}><div className="spread label" style={{
               padding: '16px 22px 6px'
-            }}><span>{stage}</span><span>{list.filter(t => t.status === stage).length}</span></div><div style={{
+            }}><span>{name}</span><span>{list.filter(member).length}</span></div><div style={{
               padding: '0 10px'
-            }}>{list.filter(t => t.status === stage).map(t => <Task key={t.id} task={t} on={task?.id === t.id} select={() => executeAction("ui.setTask", u, t.id)} />)}</div></div>)}</div>
+            }}>{list.filter(member).map(t => <Task key={t.id} task={t} on={task?.id === t.id} select={() => executeAction("ui.setTask", u, t.id)} />)}</div></div>)}<label className="flex muted" style={{padding: '12px 22px'}}><input type="checkbox" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} />Show archived</label></div>
    <Card style={{
           margin: 12,
           padding: 14,
@@ -151,9 +157,9 @@
             id: p.id
           })}><span className="flex"><Av id={p.id} size={22} /><b style={{
                 fontSize: 12
-              }}>{p.name}</b></span><span className="muted" style={{
+              }}>{p.name}</b>{p.session_count > 0 && <span className="mono muted" aria-label={p.session_count + ' sessions'}>{p.session_count}</span>}</span><span className="muted" style={{
               fontSize: 11
-            }}>{p.status_text||'Status unknown'} · {p.task}</span></button>)}<Btn sm ghost onClick={() => executeAction("ui.go", u, 'colleagues')}>Team &amp; meetings</Btn></Card>
+            }}>{p.presence === 'working' ? 'Working · ' + p.task : p.presence === 'unknown' ? (p.status_text || 'Status unknown') : 'Idle'}</span></button>)}<Btn sm ghost onClick={() => executeAction("ui.go", u, 'colleagues')}>Team &amp; meetings</Btn></Card>
   </aside>
   <main style={{
         display: 'grid',

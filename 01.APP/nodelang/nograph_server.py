@@ -592,7 +592,9 @@ def r_hosts(s, req):
     if rows is None:
         return {'ok': True, 'hosts': [], 'connectors': [], 'probing': True}
     disabled = set(s.files['hosts'].read()['disabled'])
-    rows = [{**row, 'enabled': row.get('id') not in disabled, 'enabled_state': 'confirmed'} for row in rows]
+    # Plate 083: one plain status per program; the probe's own wording stays in 'reason' for agents.
+    rows = [{**row, 'enabled': row.get('id') not in disabled, 'enabled_state': 'confirmed',
+             'detail': _plain_status(row.get('state')), 'reason': row.get('detail', '')} for row in rows]
     try:
         from .connector_operation_evidence import operation_rows
         operations = operation_rows(rows)
@@ -601,6 +603,18 @@ def r_hosts(s, req):
     return {'ok': True, 'connectors': rows, 'operations': operations,
             'hosts': [{'id': r['id'], 'name': r['name'], 'port': '', 'state': r['state'], 'file': r.get('detail', '')}
                       for r in rows if r.get('drive') and r.get('state') in ('connected', 'listening')]}
+
+
+def _plain_status(state):
+    if state in ('connected', 'listening'):
+        return 'Connected'
+    if state in ('needs-sign-in', 'needs-key'):
+        return 'Sign in to connect'
+    if state == 'off':
+        return 'No connector'
+    if state == 'absent':
+        return 'Not installed'
+    return 'Installed · not running'
 
 
 def r_providers(s, req):
@@ -635,7 +649,7 @@ def _list_tasks():
     return [{'id': row['root'], 'title': row.get('task') or 'Task not reported', 'status': STATUS.get(row.get('status'), 'PLANNED'),
              'owner': row.get('runtime') or row.get('app'), 'messages': [], 'steps': [], 'reviews': [], 'queuedMessages': [],
              'declarations': [{'root': row['root'], 'agent': row.get('agent'), 'status': row.get('status')}],
-             'paths': row.get('paths', [])}
+             'paths': row.get('paths', []), 'updated_at': row.get('updated_at')}
             for row in _declarations() if row.get('current') or row.get('status') == 'done']
 
 
@@ -643,19 +657,22 @@ def _list_agents():
     from .agent_runtime_registry import RUNTIMES, discover_runtime_processes
     observed = discover_runtime_processes()
     declared = [row for row in _declarations() if row.get('current')]
-    rows = []
+    rows = {}
     for process in observed['processes']:
         runtime = process['runtime']
-        mine = [row for row in declared if (row.get('runtime') or row.get('app')) == runtime]
-        working = any(row.get('status') == 'working' for row in mine)
-        rows.append({'id': '%s:%d' % (runtime, process['pid']), 'runtime': runtime,
-                     'name': RUNTIMES.get(runtime, {}).get('label', runtime),
-                     'presence': 'working' if working else 'idle', 'status_text': 'Working' if working else 'Idle',
-                     'task': mine[0].get('task') if mine else 'Task not reported', 'model': 'Model not reported',
-                     'sessions': [{'root': row['root'], 'task': row.get('task'), 'status': row.get('status'),
-                                   'request_id': row.get('request_id', row['root'])} for row in mine],
-                     'observation_complete': observed['complete'], 'evidence': 'process'})
-    return rows
+        row = rows.get(runtime)
+        if row is None:
+            mine = [r for r in declared if (r.get('runtime') or r.get('app')) == runtime]
+            busy = [r for r in mine if r.get('status') == 'working']
+            row = rows[runtime] = {'id': runtime, 'runtime': runtime, 'name': RUNTIMES.get(runtime, {}).get('label', runtime),
+                                   'session_count': 0, 'presence': 'working' if busy else 'idle',
+                                   'status_text': 'Working' if busy else 'Idle',
+                                   'task': busy[0].get('task') if busy else 'Idle', 'model': 'Model not reported',
+                                   'sessions': [{'root': r['root'], 'task': r.get('task'), 'status': r.get('status'),
+                                                 'request_id': r.get('request_id', r['root'])} for r in mine],
+                                   'observation_complete': observed['complete'], 'evidence': 'process'}
+        row['session_count'] += 1
+    return list(rows.values())
 
 
 def _list_messages(before=None):
@@ -826,6 +843,16 @@ def r_settings_action(s, req):
             raise Refused('Choose an existing connected account, then retry.')
         result = revoke_social_credential({key: row[key] for key in ('vault_entry', 'provider', 'account_id')})
         return {'ok': True, 'result': {**result, 'secrets': _secrets()}}
+    if function == 'openProgram':
+        # The first-run "Open Revit": start the newest installed Revit (Autodesk installs one folder per year).
+        if (args[0] if args else '') != 'revit':
+            raise Refused('Only Revit can be opened from here.')
+        found = max(Path(os.environ.get('ProgramFiles', r'C:\Program Files'), 'Autodesk').glob('Revit 20[0-9][0-9]/Revit.exe'),
+                    default=None)
+        if found is None:
+            raise Refused('Revit is not installed on this PC.')
+        os.startfile(str(found))  # noqa: S606 - the founder pressed Open; the installed program starts
+        return {'ok': True, 'result': {'opened': str(found)}}
     if function == 'setSettingsScope':
         return {'ok': True, 'result': settings.write({**settings.read(), 'settingsScope': args[0] if args else 'User'})}
     local = {'ok': True, 'settingsScope': settings.read().get('settingsScope', 'User'), 'workspacePolicies': {}}

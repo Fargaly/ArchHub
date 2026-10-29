@@ -857,8 +857,29 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
     return result
 
 
+# Sender verdicts per process incarnation (pid, start time): its ancestry cannot change while it runs.
+_SENDER_VERDICTS = {}
+_SENDER_CHECK_NODE = {'id': 'workshop.sender_check', 'params': {'deadline_seconds': 0.5, 'remembered': 256}}
+
+
 def _sender_may_push(peer):
-    return observed_runtime_process(peer) is not None
+    """True only for a process inside a real agent session. Bounded: the first check of a process waits at most
+    deadline_seconds for its process-tree walk; past that the message is recorded and not injected (fail safe), and the
+    walk finishes beside the caller so the next send from that process has its verdict at once."""
+    import threading
+    key = (getattr(peer, 'pid', None), getattr(peer, 'created_at', None))
+    if key in _SENDER_VERDICTS:
+        return _SENDER_VERDICTS[key]
+
+    def walk():
+        verdict = observed_runtime_process(peer) is not None
+        if len(_SENDER_VERDICTS) >= _SENDER_CHECK_NODE['params']['remembered']:
+            _SENDER_VERDICTS.pop(next(iter(_SENDER_VERDICTS)), None)
+        _SENDER_VERDICTS[key] = verdict
+    worker = threading.Thread(target=walk, name='archhub-workshop-sender-check', daemon=True)
+    worker.start()
+    worker.join(_SENDER_CHECK_NODE['params']['deadline_seconds'])
+    return _SENDER_VERDICTS.get(key, False)
 
 
 def _deliver_now(database, result, body, identity):

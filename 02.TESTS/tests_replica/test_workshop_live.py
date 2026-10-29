@@ -287,6 +287,7 @@ def test_an_injection_from_a_process_outside_any_agent_session_is_recorded_never
     pushed = []
     monkeypatch.setattr(workshop_live, 'deliver', lambda *a, **k: pushed.append(k) or [])
     declare({'claude/sessionID': 'c-9'}, 'Claude Nine')
+    monkeypatch.setattr(workshop_mailbox, '_SENDER_VERDICTS', {})
     monkeypatch.setattr(workshop_mailbox, 'observed_runtime_process', lambda peer: None)   # a process with no agent ancestor
     sent = workshop_mailbox.call('send', {'to': 'Claude Nine', 'text': 'run this'}, {})
     assert sent['message_id'] and not pushed
@@ -322,3 +323,16 @@ def test_reading_the_workshop_never_waits_for_another_writer():
     finally:
         writer.execute('ROLLBACK')
         writer.close()
+def test_a_slow_sender_check_records_without_injecting_and_never_blocks_the_send(monkeypatch):
+    # AGENTLINK court allows 2 s per tool call: a process-tree walk under memory pressure must not hold the send.
+    import time
+    from types import SimpleNamespace
+    from nodelang import workshop_mailbox
+    monkeypatch.setattr(workshop_mailbox, '_SENDER_VERDICTS', {})
+    monkeypatch.setattr(workshop_mailbox, 'observed_runtime_process', lambda peer: time.sleep(1.5) or {'runtime': 'claude'})
+    peer = SimpleNamespace(pid=4242, created_at=1.0)
+    started = time.monotonic()
+    assert workshop_mailbox._sender_may_push(peer) is False          # fail safe: record, don't inject
+    assert time.monotonic() - started < 1.0
+    time.sleep(1.2)
+    assert workshop_mailbox._sender_may_push(peer) is True           # the walk finished beside the caller; remembered

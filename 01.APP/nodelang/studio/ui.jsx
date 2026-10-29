@@ -101,7 +101,7 @@
     const s = useData();
     const p = (s.agents||[]).find(p => p.id === id) || s.providers.find(p => p.id === id) || {
       name: id,
-      ini: id?.slice(0, 2),
+      ini: String(id || '').trim().split(/[\s._-]+/).filter(Boolean).map(w => w[0].toUpperCase()).join('').slice(0, 2),  // initials of the display name
       col: A.userAv
     };
     return <D.Avatar agent={p} size={size} />;

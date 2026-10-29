@@ -22,7 +22,7 @@
   const modalActions = {'Talk':'startVoiceInput','Timesheet':'settleTimesheet','Import skill':'importHostSkill','Contest decision':'contestDecision','Add comment':'addComment','Change plan':'changePlan','Connector bundle':'inspectConnectorBundle','Notifications':'readNotification'};
   function App() {
     const s = useData();
-    const [route, setRoute] = React.useState('home'),
+    const [route, setRoute] = React.useState('workshop'),  // founder: the Workshop is the command center; the app opens there
       [canvasOpened, setCanvasOpened] = React.useState(false),
       [task, setTask] = React.useState(''),
       [composerDraft, setComposerDraft] = React.useState({}),
@@ -400,7 +400,7 @@
               fontWeight: 700,
               fontSize: 12,
               flex: 'none'
-            }}>{s.profile.name.split(' ').map(n => n[0]).join('').slice(0, 2)}</button></nav><div className={'screen-with-composer ' + (route !== 'home' ? 'has-local-composer' : '')} style={{'--canvas-library-width':libraryOpen ? '248px' : '0px'}}>{(canvasOpened || route==='canvas') && <div hidden={route!=='canvas'} ref={element=>{element?.toggleAttribute('inert',route!=='canvas'||!!s.graphOpening);}} style={{display:route==='canvas'?'grid':'none',minHeight:0,height:'100%'}}><window.UI.Canvas key={s.graph.scopeKey || s.graph.id} active={route==='canvas'&&!s.graphOpening} /></div>}{screen}{route === 'canvas' && <div className="canvas-status" role="status"><span>{s.connectionNotice || '● Local session'}</span><span>{(s.agentSummary||'Checking running agents…')} · {s.approvals.filter(c=>c.status==='pending').length} wait for you</span>{agentLoad.status==='error' && <button className="button-reset" onClick={event=>executeAction('appShell.RetryWorkshop',{reloadWorkshop},event)}>Retry Workshop connection</button>}</div>}{['home','canvas'].includes(route) && <div className={'global-composer'+(route==='canvas'?' canvas-composer':'')}><window.UI.Composer compact /></div>}</div></div>
+            }}>{s.profile.name.split(' ').map(n => n[0]).join('').slice(0, 2)}</button></nav><div className={'screen-with-composer ' + (route !== 'home' ? 'has-local-composer' : '')} style={{'--canvas-library-width':libraryOpen ? '248px' : '0px'}}>{(canvasOpened || route==='canvas') && <div hidden={route!=='canvas'} ref={element=>{element?.toggleAttribute('inert',route!=='canvas'||!!s.graphOpening);}} style={{display:route==='canvas'?'grid':'none',minHeight:0,height:'100%'}}><window.UI.Canvas key={s.graph.scopeKey || s.graph.id} active={route==='canvas'&&!s.graphOpening} /></div>}{screen}{route === 'canvas' && <div className="canvas-status" role="status"><span>{s.connectionNotice && s.connectionNotice !== 'Checking for updates…' ? '1 notice · see Receipts' : s.connectionNotice || '● Local session'}</span><span>{(s.agentSummary||'Checking running agents…')} · {(n => n ? n + ' wait for you' : 'Nothing waiting for you')(s.approvals.filter(c=>c.status==='pending').length)}</span>{agentLoad.status==='error' && <button className="button-reset" onClick={event=>executeAction('appShell.RetryWorkshop',{reloadWorkshop},event)}>Retry Workshop connection</button>}</div>}{['home','canvas'].includes(route) && <div className={'global-composer'+(route==='canvas'?' canvas-composer':'')}><window.UI.Composer compact /></div>}</div></div>
    {route !== 'canvas' && <footer className="flex" style={{
           fontSize: 11,
           gap: 16,
@@ -408,9 +408,7 @@
           background: '#0f0f13',
           borderTop: '1px solid ' + A.lineSoft,
           color: A.inkSoft
-        }}><span style={{
-            color: A.ok
-          }}>{s.connectionNotice || '● Local session'}</span>
+        }}>{s.connectionNotice && s.connectionNotice !== 'Checking for updates…' ? <button className="button-reset muted" onClick={event => executeAction("appShell.Receipts.16", {go}, event)}>1 notice · see Receipts</button> : <span>{s.connectionNotice || '● Local session'}</span>}
           {agentLoad.status === 'waiting' && <span role="status">Loading Workshop settings…</span>}
           {agentLoad.status === 'error' && <span role="alert">{agentLoad.message}<Btn aria-label="Retry Workshop connection" onClick={event => executeAction("appShell.RetryWorkshop", {reloadWorkshop}, event)}>Retry</Btn></span>}
           {agentLoad.status === 'empty' && <span role="status">Select a workflow for Workshop settings.</span>}
@@ -419,7 +417,7 @@
             go
             }, event)}>{(s.hosts||[]).filter(h=>h.state==='connected'||h.state==='listening').map(h=>h.name+' ready').join(' · ') || s.files.find(f => f.id === s.activeFile)?.name || (s.hostsProbing?'Checking programs…':'Open Connections to connect a program')}</button><button className="button-reset muted" title={(s.agents||[]).map(a=>a.name+' · '+a.task).join(' · ')} onClick={event => executeAction("appShell.RunningWaitForYou.14", {
             go
-          }, event)}>{s.agentSummary||'Checking running agents…'} · {s.approvals.filter(c => c.status === 'pending').length} wait for you</button><span className="fill" /><button className="button-reset muted" onClick={event => executeAction("appShell.CtrlK.15", {
+          }, event)}>{s.agentSummary||'Checking running agents…'} · {(n => n ? n + ' wait for you' : 'Nothing waiting for you')(s.approvals.filter(c => c.status === 'pending').length)}</button><span className="fill" /><button className="button-reset muted" onClick={event => executeAction("appShell.CtrlK.15", {
             show
           }, event)}>Ctrl K</button><button className="button-reset muted" onClick={event => executeAction("appShell.Receipts.16", {
             go
@@ -561,7 +559,7 @@
         }
       })), ...s.templates.map(t => ({
         label: t.title,
-        group: 'Skills',
+        group: 'Workflows',
         action: () => u.show('Skill', {
           id: t.id
         })
@@ -583,22 +581,22 @@
           await u.act(() => api.selectGraph(g.id));
           u.go('canvas');
         }
-      })), ...(s.connections || []).map(c => ({
-        label: c.name || c.id,
+      })), ...(s.hosts || []).map(h => ({
+        label: h.name + (h.state ? ' · ' + h.state : ''),
         group: 'Hosts',
-        action: () => u.show('Connection', {id: c.id})
+        action: () => u.go('connections')
       })), ...(s.pages || []).map(page => ({
         label: page,
-        group: 'Settings',
+        group: 'Settings pages',
         action: () => u.openSystem(page)
       })), ...Object.entries(routeNames).map(([r, label]) => ({
         label,
         group: 'Pages',
         action: () => u.go(r)
       }))].filter(x => (mode === 'All' || x.group === mode) && x.label.toLowerCase().includes(query.toLowerCase()));
-      body = <><input aria-label="Search everything" placeholder="Find an agent, workflow, host, setting, node or chat…" value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => {
+      body = <><input aria-label="Search everything" placeholder="Find an agent, workflow, program, setting, node or chat…" value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => {
           if (e.key === 'Enter') items[0]?.action();
-        }} /><div className="flex" style={{flexWrap: 'wrap'}}>{['All', 'Agents', 'Workflows', 'Hosts', 'Settings', 'Add node', 'Skills', 'Chats', 'Pages'].map(t => <Btn key={t} sm ghost aria-pressed={mode === t} onClick={event => executeAction("appShell.Control.29", {
+        }} /><div className="flex" style={{flexWrap: 'wrap'}}>{['All', 'Agents', 'Workflows', 'Hosts', 'Settings pages', 'Add node', 'Chats', 'Pages'].map(t => <Btn key={t} sm ghost aria-pressed={mode === t} onClick={event => executeAction("appShell.Control.29", {
             setMode,
             t
           }, event)}>{t}</Btn>)}</div><div style={{

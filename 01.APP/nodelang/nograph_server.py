@@ -685,10 +685,18 @@ def _list_messages(before=None):
     page = api.listWorkshopMessages(before)
     with application_history() as history:
         live = deliveries(history, [m['id'] for m in page['messages']])
+        from .workshop_mailbox import read_declarations
+        names = {row['agent']: row.get('display_name') or row['agent'] for row in read_declarations(history._db, include_archived=True)}
     from .baboom_nograph import own_session
     baboom = own_session()
     for message in page['messages']:
         message['live'] = live.get(message['id'], [])
+        # Display only: the stored "To <session label>:" header stays the routing address; the room shows who received it.
+        header, newline, body = message['text'].partition('\n')
+        if newline and header.startswith('To ') and header.endswith(':'):
+            labels = [names.get(label.strip(), label.strip()) for label in header[3:-1].split(',')]
+            message.update(to=', '.join(dict.fromkeys(d['agent'] for d in message['live'] if d.get('agent'))) or ', '.join(labels),
+                           text=__import__('re').sub(r'^(?:@[\w.-]+\s+)+', '', body))
         # No pending state (founder 2026-10-28): delivery is the per-recipient live rows only.
         message.pop('state', None)
         message['delivery'] = []

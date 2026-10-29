@@ -327,40 +327,38 @@
   {s.app.quit || s.app.hidden ? <window.UI.DesktopScene /> : <div className="app-window" style={{
         height: '100%',
         display: 'grid',
-        gridTemplateRows: route === 'canvas' ? '36px minmax(0,1fr)' : '36px minmax(0,1fr) 22px'
+        gridTemplateRows: route === 'canvas' ? '48px minmax(0,1fr)' : '48px minmax(0,1fr) 22px'
       }}>
-   <header className="flex" style={{
-          height: 36,
-          padding: '0 16px',
+   <header className="flex app-header" data-window-caption style={{
+          height: 48,
+          padding: window.ARCHHUB_ONE_TITLE_BAR ? '0 0 0 12px' : '0 12px',
           background: '#0f0f13',
           borderBottom: '1px solid ' + A.lineSoft,
-          fontSize: 12
-        }}><button className="button-reset" style={{
-            width: 40,
-            color: A.accent,
-            fontSize: 20
+          fontSize: 13,
+          gap: 0
+        }}><button className="button-reset header-mark" style={{
+            color: A.accent
           }} aria-label="ArchHub menu" title="ArchHub menu" onClick={event => executeAction("appShell.ArchHubMenu.1", {
             show
-          }, event)}><ArchMark size={20} /></button><button className="button-reset muted" onClick={event => executeAction("appShell.ArchHub.2", {
+          }, event)}><ArchMark size={20} /></button><button className="button-reset header-workspace" aria-label="Workspace" title="Workspace" onClick={event => executeAction("appShell.Control.4", {
+            show
+          }, event)}><span>{s.workspaces.find(w => w.id === s.activeWorkspace)?.name || s.workspaces.find(w => w.builtIn)?.name || 'Add workspace'}</span><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true"><path d="M3 4.5l3 3 3-3" /></svg></button><i className="header-divider" /><span className="muted">/</span><button className="button-reset header-page" onClick={event => executeAction("appShell.ArchHub.2", {
             go
-          }, event)}>ArchHub</button><span className="muted">›</span><span>{routeNames[route] || route.split('/').at(-1)}</span><span className="fill" />{(s.update.available || s.update.updatedTo || s.update.state === 'failed') && <button className={(s.update.available ? 'button-reset' : 'icon-button') + ' update-badge'} title={s.update.available ? `${s.update.installed} → ${s.update.next}. Unsent text is lost; your saved graphs and settings stay with you.` : s.update.updatedTo ? 'Update installed' : 'Update needs attention'} aria-label={s.update.available ? 'Update available' : s.update.updatedTo ? 'Update installed' : 'Update needs attention'} onClick={event => executeAction("appShell.Control.3", {
+          }, event)}>{routeNames[route] || route.split('/').at(-1)}</button><span className="fill" /><button className="button-reset header-search" onClick={event => executeAction("appShell.SearchCtrlK.5", {
+            show
+          }, event)} aria-label="Search · Ctrl K"><window.AHIcon name="search" size={15} /><span className="fill">Search...</span><kbd>Ctrl K</kbd></button>{s.update.available && <button className="button-reset header-update" title={`${s.update.installed} → ${s.update.next}. Unsent text is lost; your saved graphs and settings stay with you.`} aria-label="Update available" onClick={event => executeAction("appShell.Control.3", {
             act,
             api,
             go,
             s
-          }, event)}>{s.update.available ? 'Relaunch to update' : <window.AHIcon name="update" />}<i /></button>}<button className="button-reset muted" onClick={event => executeAction("appShell.Control.4", {
+          }, event)}>Update</button>}<button className="button-reset header-icon" aria-label="Tray menu" title="Tray menu" onClick={event => executeAction("appShell.TrayMenu.7", {
             show
-          }, event)}>{s.workspaces.find(w => w.id === s.activeWorkspace)?.name || s.workspaces.find(w => w.builtIn)?.name || 'Add workspace'} ▾</button><button className="button-reset" style={{
-            padding: '0 14px'
-          }} aria-label="Tray menu" title="Tray menu" onClick={event => executeAction("appShell.TrayMenu.7", {
+          }, event)}><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3" cy="8" r="1.3" /><circle cx="8" cy="8" r="1.3" /><circle cx="13" cy="8" r="1.3" /></svg></button><button className="button-reset header-icon" aria-label="Notifications" title="Notifications" onClick={event => executeAction("appShell.Notifications.6", {
             show
-          }, event)}><ArchMark size={16} /></button><button className="button-reset muted" style={{
-            padding: '0 14px'
-          }} onClick={event => executeAction("appShell.SearchCtrlK.5", {
-            show
-          }, event)} aria-label="Search · Ctrl K"><span className="flex"><window.AHIcon name="search" size={14} />Search<span className="mono">Ctrl K</span></span></button><button className="button-reset muted" aria-label="Notifications" title="Notifications" onClick={event => executeAction("appShell.Notifications.6", {
-            show
-          }, event)}><window.AHIcon name="bell" size={16} /> {s.notifications.filter(n => !n.read).length}</button></header>
+          }, event)}><window.AHIcon name="bell" size={16} />{s.notifications.some(n => !n.read) && <b className="header-count">{s.notifications.filter(n => !n.read).length}</b>}</button>{window.ARCHHUB_ONE_TITLE_BAR && <div className="window-controls" role="group" aria-label="Window">{[['minimize', 'Minimize', '\uE921'], ['maximize', 'Maximize', '\uE922'], ['close', 'Close', '\uE8BB']].map(([action, label, glyph]) => <button key={action} className="button-reset" data-window-button={action} aria-label={label} title={label} onClick={event => executeAction("appShell.WindowControl.99", {
+            api,
+            action
+          }, event)}><span aria-hidden="true">{action === 'maximize' ? <><span className="when-normal">{glyph}</span><span className="when-maximized">{'\uE923'}</span></> : glyph}</span></button>)}</div>}</header>
    <div style={{
           display: 'grid',
           gridTemplateColumns: '64px minmax(0,1fr)',
@@ -949,6 +947,13 @@
     show
   }, event) {
     const handler = () => show('Tray');
+    return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
+  }
+  function appShellWindowControl99({
+    api,
+    action
+  }, event) {
+    const handler = () => api.windowAction(action);
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
   }
   function appShellControl10({
@@ -1824,7 +1829,8 @@
     "appShell.OpenTeam.95": "appShellOpenTeam95",
     "appShell.UpdatesAbout.96": "appShellUpdatesAbout96",
     "appShell.OpenDocs.97": "appShellOpenDocs97",
-    "appShell.CloseDialog.98": "appShellCloseDialog98"
+    "appShell.CloseDialog.98": "appShellCloseDialog98",
+    "appShell.WindowControl.99": "appShellWindowControl99"
   };
   window.registerActions(appShellActions, {
     appShellRetryWorkshop: ({reloadWorkshop}) => reloadWorkshop(),
@@ -1924,6 +1930,7 @@
     appShellOpenTeam95,
     appShellUpdatesAbout96,
     appShellOpenDocs97,
-    appShellCloseDialog98
+    appShellCloseDialog98,
+    appShellWindowControl99
   });
 })();

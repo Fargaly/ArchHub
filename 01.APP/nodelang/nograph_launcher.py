@@ -83,6 +83,8 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
     view = QWebEngineView(window)
     window.setCentralWidget(view)
     window.resize(1440, 900)
+    from .window_chrome import install_one_title_bar
+    title_bar = install_one_title_bar(window, view)  # the Studio header is the only title bar
     from .studio_window import lock_studio_navigation
     lock_studio_navigation(view)  # one page in this window: the Studio
 
@@ -121,7 +123,7 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
         tray.show()
     from .window_commands import bind_window_commands
     from .studio_downloads import install_studio_downloads
-    window_commands = bind_window_commands(view, window, app.quit, server.public_url)  # Studio window buttons
+    window_commands = bind_window_commands(view, window, app.quit, server.public_url, title_bar)  # Studio window buttons
     downloads = install_studio_downloads(view.page().profile(), view.page(), server.public_url, parent=window,
                                          on_status=lambda status: window.statusBar().showMessage(status['detail']))
     app.aboutToQuit.connect(downloads.close)

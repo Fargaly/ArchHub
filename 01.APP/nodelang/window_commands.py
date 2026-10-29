@@ -11,9 +11,9 @@ from PyQt6.QtWebEngineCore import QWebEngineScript
 class WindowCommands(QObject):
     voiceFinished = pyqtSignal(str, 'QVariantMap')
 
-    def __init__(self, view, window, quit_application, origin):
+    def __init__(self, view, window, quit_application, origin, title_bar=None):
         super().__init__(view.page())
-        self.view, self.window, self.quit_application = view, window, quit_application
+        self.view, self.window, self.quit_application, self.title_bar = view, window, quit_application, title_bar
         self.origin = QUrl(origin)
         from .baboom_native_voice import BaboomVoiceInput
         self._voice_input = BaboomVoiceInput()
@@ -72,6 +72,10 @@ class WindowCommands(QObject):
             self.window.hide()
         elif action == "minimize":
             self.window.showMinimized()
+        elif action == "maximize":
+            self.window.showNormal() if self.window.isMaximized() else self.window.showMaximized()
+        elif action == "close":
+            QTimer.singleShot(0, self.window.close)  # the same close the native caption button did
         elif action == "open":
             self.window.showNormal()
             self.window.raise_()
@@ -86,14 +90,20 @@ class WindowCommands(QObject):
         return {"ok": True, "action": action, "visible": self.window.isVisible(),
                 "minimized": self.window.isMinimized()}
 
+    @pyqtSlot(float, "QVariantList", "QVariantList")
+    def titleBar(self, caption, holes, buttons):
+        """The Studio header's layout: caption height, interactive boxes, minimize/maximize/close boxes."""
+        if self.title_bar is not None and self._in_studio():
+            self.title_bar.layout(caption, holes, buttons)
 
-def bind_window_commands(view, window, quit_application, origin):
+
+def bind_window_commands(view, window, quit_application, origin, title_bar=None):
     page = view.page()
     channel = page.webChannel()
     if channel is None:
         channel = QWebChannel(page)
         page.setWebChannel(channel)
-    commands = WindowCommands(view, window, quit_application, origin)
+    commands = WindowCommands(view, window, quit_application, origin, title_bar)
     channel.registerObject("desktopWindow", commands)
     resource = QFile(":/qtwebchannel/qwebchannel.js")
     if not resource.open(QIODevice.OpenModeFlag.ReadOnly):
@@ -113,9 +123,34 @@ def bind_window_commands(view, window, quit_application, origin):
         "window.ARCHHUB_WINDOW_ACTION = action => new Promise((resolve,reject) => {\n"
         "channel.objects.desktopWindow.perform(action, result => {\n"
         "if(result.ok)resolve(result);else reject(new Error(result.error));\n"
-        "});});\n" + VOICE_BRIDGE + "\n});})();")
+        "});});\n" + (TITLE_BAR_BRIDGE if title_bar is not None else "") + VOICE_BRIDGE + "\n});})();")
     page.scripts().insert(script)
     return commands
+
+
+TITLE_BAR_BRIDGE = """
+window.ARCHHUB_ONE_TITLE_BAR = true;
+(() => {
+ // Header controls stay clickable; an open dialog or menu layer takes the whole band.
+ const controls = "button,a[href],input,select,textarea,[role=button],[tabindex]:not([tabindex='-1'])", layers = ".overlay,.context-dismiss,.context-menu";
+ const box = element => { const r = element.getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; };
+ let sent = "", queued = false;
+ const report = () => {
+  queued = false;
+  const header = document.querySelector("[data-window-caption]");
+  const caption = header ? header.getBoundingClientRect().bottom : 0;
+  const buttons = header ? ["minimize", "maximize", "close"].map(name => header.querySelector("[data-window-button=" + name + "]")) : [];
+  const holes = caption ? [...header.querySelectorAll(controls)].filter(e => !buttons.includes(e)).concat([...document.querySelectorAll(layers)]).map(box).filter(b => b[1] < caption) : [];
+  const boxes = buttons.map(b => b ? box(b) : []);
+  const layout = JSON.stringify([caption, holes, boxes]);
+  if (layout !== sent) { sent = layout; channel.objects.desktopWindow.titleBar(caption, holes, boxes); }
+ };
+ const schedule = () => { if (!queued) { queued = true; requestAnimationFrame(report); } };
+ new MutationObserver(schedule).observe(document.documentElement, {subtree: true, childList: true, characterData: true});
+ window.addEventListener("resize", schedule);
+ schedule();
+})();
+"""
 
 
 VOICE_BRIDGE = """

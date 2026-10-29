@@ -2,6 +2,10 @@
   function executeAction(...args) {
     return window.executeAction(...args);
   }
+  // The ArchHub mark: the paths of data/website/favicon.svg (the one source), portrait, never rotated or cropped.
+  function ArchMark({size}) {
+    return <svg viewBox="0 0 64 64" width={size} height={size} aria-hidden="true" focusable="false"><path d="M10 56 V32 a22 22 0 0 1 44 0 V56" fill="none" stroke="#d97757" strokeWidth="4.5" strokeLinecap="square" /><circle cx="32" cy="22" r="5.2" fill="#0e0e11" stroke="#d97757" strokeWidth="2.4" /><circle cx="32" cy="22" r="1.8" fill="#d97757" /><path d="M6 58 H58" stroke="#d97757" strokeWidth="1.5" strokeLinecap="round" /></svg>;
+  }
   const {
     A,
     D,
@@ -337,7 +341,7 @@
             fontSize: 20
           }} aria-label="ArchHub menu" title="ArchHub menu" onClick={event => executeAction("appShell.ArchHubMenu.1", {
             show
-          }, event)}>⬡</button><button className="button-reset muted" onClick={event => executeAction("appShell.ArchHub.2", {
+          }, event)}><ArchMark size={20} /></button><button className="button-reset muted" onClick={event => executeAction("appShell.ArchHub.2", {
             go
           }, event)}>ArchHub</button><span className="muted">›</span><span>{routeNames[route] || route.split('/').at(-1)}</span><span className="fill" />{(s.update.available || s.update.updatedTo || s.update.state === 'failed') && <button className={(s.update.available ? 'button-reset' : 'icon-button') + ' update-badge'} title={s.update.available ? `${s.update.installed} → ${s.update.next}. Unsent text is lost; your saved graphs and settings stay with you.` : s.update.updatedTo ? 'Update installed' : 'Update needs attention'} aria-label={s.update.available ? 'Update available' : s.update.updatedTo ? 'Update installed' : 'Update needs attention'} onClick={event => executeAction("appShell.Control.3", {
             act,
@@ -350,7 +354,7 @@
             padding: '0 14px'
           }} aria-label="Tray menu" title="Tray menu" onClick={event => executeAction("appShell.TrayMenu.7", {
             show
-          }, event)}>⬡</button><button className="button-reset muted" style={{
+          }, event)}><ArchMark size={16} /></button><button className="button-reset muted" style={{
             padding: '0 14px'
           }} onClick={event => executeAction("appShell.SearchCtrlK.5", {
             show
@@ -634,7 +638,7 @@
       }, event)}>Settings</Btn></div>;else if (k === 'Tray') body = <div className="grid"><Btn onClick={event => executeAction("appShell.OpenArchHub.44", {
         api,
         saved
-      }, event)}>⬡ Open ArchHub</Btn><Btn onClick={event => executeAction("appShell.BABOOM.45", {
+      }, event)}>Open ArchHub</Btn><Btn onClick={event => executeAction("appShell.BABOOM.45", {
         close,
         u
       }, event)}>BABOOM</Btn><Btn onClick={event => executeAction("appShell.StopEverything.46", {

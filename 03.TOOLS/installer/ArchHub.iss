@@ -155,6 +155,11 @@ Source: "ArchHub.vbs"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\archhub.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [InstallDelete]
+Type: files; Name: "{app}\nodelang\studio\atlas-cockpit.jsx"
+Type: files; Name: "{app}\nodelang\studio\atlas-engine.jsx"
+Type: files; Name: "{app}\nodelang\studio\atlas-panels.jsx"
+Type: files; Name: "{app}\nodelang\studio\atlas-runtime.jsx"
+Type: files; Name: "{app}\nodelang\studio\atlas-side.jsx"
 Type: files; Name: "{app}\nodelang\studio\brain-model.jsx"
 Type: files; Name: "{app}\nodelang\studio\cockpit-core.jsx"
 Type: files; Name: "{app}\nodelang\studio\design-canvas.jsx"

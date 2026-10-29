@@ -9018,10 +9018,6 @@
     "NOGRAPH": {
       "source": "Founder 2026-10-28 NOGRAPH: app is .archhub files of nodes/sockets/wires, parametric, no always-on graph; agents work in the canvas; any agent. Cumulative release of NG-ROUTER, NG-WORKSHOP, NG-BROKERS, NG-CANVAS, NG-NOGRAPH plus live Workshop delivery and the compiler pass.",
       "scope": [
-        "requirements.txt",
-        "01.APP/nodelang/agent_runtime_defs/opencode.py",
-        "01.APP/nodelang/model_execution_broker.py",
-        "01.APP/nodelang/terminal_sessions.py",
         ".gitignore",
         "01.APP/bridges/README.md",
         "01.APP/bridges/ide-live/extension.js",
@@ -9029,6 +9025,7 @@
         "01.APP/colleague_setup.py",
         "01.APP/nodelang/__init__.py",
         "01.APP/nodelang/agent_declarations.py",
+        "01.APP/nodelang/agent_runtime_defs/opencode.py",
         "01.APP/nodelang/agent_runtime_registry.py",
         "01.APP/nodelang/agent_status.py",
         "01.APP/nodelang/app_agents.py",
@@ -9048,6 +9045,7 @@
         "01.APP/nodelang/canvas_triggers.py",
         "01.APP/nodelang/cell_agent_body.py",
         "01.APP/nodelang/console_seat.py",
+        "01.APP/nodelang/conversation_history.py",
         "01.APP/nodelang/desktop.py",
         "01.APP/nodelang/existing_workshop_model_worker.py",
         "01.APP/nodelang/existing_workshop_native_host.py",
@@ -9058,6 +9056,7 @@
         "01.APP/nodelang/host_skill_owner.py",
         "01.APP/nodelang/launcher.py",
         "01.APP/nodelang/library_engines.py",
+        "01.APP/nodelang/model_execution_broker.py",
         "01.APP/nodelang/model_router.py",
         "01.APP/nodelang/native_agent_hooks.py",
         "01.APP/nodelang/native_agent_mcp.py",
@@ -9098,6 +9097,7 @@
         "01.APP/nodelang/settings_owner.py",
         "01.APP/nodelang/social_approval.py",
         "01.APP/nodelang/social_custody.py",
+        "01.APP/nodelang/starters.py",
         "01.APP/nodelang/studio/access.jsx",
         "01.APP/nodelang/studio/account-tools.jsx",
         "01.APP/nodelang/studio/api.js",
@@ -9108,6 +9108,8 @@
         "01.APP/nodelang/studio/companion.jsx",
         "01.APP/nodelang/studio/ds/index.jsx",
         "01.APP/nodelang/studio/ds_colleagues.jsx",
+        "01.APP/nodelang/studio/ds_firstrun.jsx",
+        "01.APP/nodelang/studio/ds_home2.jsx",
         "01.APP/nodelang/studio/ds_library.jsx",
         "01.APP/nodelang/studio/ds_screens.jsx",
         "01.APP/nodelang/studio/ds_settings3.jsx",
@@ -9124,6 +9126,7 @@
         "01.APP/nodelang/studio/workflow-states.jsx",
         "01.APP/nodelang/studio_downloads.py",
         "01.APP/nodelang/studio_window.py",
+        "01.APP/nodelang/terminal_sessions.py",
         "01.APP/nodelang/universal_application.py",
         "01.APP/nodelang/watcher_owner.py",
         "01.APP/nodelang/window_commands.py",
@@ -9209,6 +9212,7 @@
         "02.TESTS/tests_replica/test_codex_hook_powershell.py",
         "02.TESTS/tests_replica/test_console_seat.py",
         "02.TESTS/tests_replica/test_goose_brain.py",
+        "02.TESTS/tests_replica/test_mcpfresh.py",
         "02.TESTS/tests_replica/test_native_discovery_partial.py",
         "02.TESTS/tests_replica/test_native_host_tools.py",
         "02.TESTS/tests_replica/test_native_owner_recovery_is_actionable.py",
@@ -9273,7 +9277,8 @@
         "04.DOCS/OPENCODE-NATIVE-GOVERNANCE.md",
         "04.DOCS/README.md",
         "04.DOCS/SPEC.md",
-        "05.EVIDENCE/acompiler-intents.json"
+        "05.EVIDENCE/acompiler-intents.json",
+        "requirements.txt"
       ]
     }
   }

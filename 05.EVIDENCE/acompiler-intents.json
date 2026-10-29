@@ -9191,6 +9191,7 @@
         "02.TESTS/tests_js/session_link_worker_exit.test.mjs",
         "02.TESTS/tests_js/studio_canvaslook.test.cjs",
         "02.TESTS/tests_js/workshop_worker_exit.test.mjs",
+        "02.TESTS/tests_js/wsadd.test.cjs",
         "02.TESTS/tests_replica/session_link_caller_target_host.test.mjs",
         "02.TESTS/tests_replica/session_link_codex_reach.test.mjs",
         "02.TESTS/tests_replica/session_link_discovery_unavailable.test.mjs",

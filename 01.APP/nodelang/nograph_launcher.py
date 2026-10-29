@@ -19,6 +19,14 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
     server = NoGraphServer(state_dir, port=int(os.environ.get('ARCHHUB_TEST_HTTP_PORT', '0')),
                            engines=PIPELINE_ENGINES).start()
     print('  nograph    : server up in %.2fs at %s (no graph opened)' % (time.perf_counter() - started, server.public_url), flush=True)
+    try:
+        from .mcp_share import start_if_configured
+        mcp_host = start_if_configured(state_dir)  # None, and nothing running, until settings/mcp-share.json exists
+        if mcp_host is not None:
+            print('  mcp-share  : shared MCP host at %s (servers start on first call)' % mcp_host.url, flush=True)
+    except Exception as refusal:  # noqa: BLE001 - agents keep launching their own servers; the app still opens
+        mcp_host = None
+        print('  mcp-share  : unavailable (%s: %s)' % (type(refusal).__name__, refusal), flush=True)
     app_root = Path(__file__).resolve().parents[1]
     restart = {'requested': False, 'quit': None}
 
@@ -154,6 +162,8 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
     restart['quit'] = app.quit
     code = app.exec()
     del window_commands
+    if mcp_host is not None:
+        mcp_host.close()
     server.close()
     _arm_staged_update(server.application_update, Path(state_dir), app_root, instance_lock, relaunch=restart['requested'])
     return code

@@ -412,7 +412,204 @@ def register_claude_code(install_root, state_root, *, consent, environment=None,
     return after
 
 
+# ---- shared host entries (mcp_share) for every agent on the machine ---------------
+# Each agent's entry for a server becomes a URL on ArchHub's one local host. Only names
+# starting GATEWAY_PREFIX are ever written or removed by us; a founder's own stdio entry is
+# replaced only when it launches exactly the registered command, and is kept in a receipt.
+GATEWAY_PREFIX = "archhub-"
+GATEWAY_CLIENTS = ("claude-code", "codex", "cursor", "opencode", "gemini-cli", "antigravity")
+
+
+def gateway_entry(client, url, token) -> dict:
+    """The agent's own remote-server shape (vendor docs, 2026-10-29)."""
+    auth = {"Authorization": "Bearer " + token}
+    shapes = {"claude-code": {"type": "http", "url": url, "headers": auth},
+              "cursor": {"url": url, "headers": auth},
+              "opencode": {"type": "remote", "url": url, "headers": auth, "enabled": True},
+              "gemini-cli": {"httpUrl": url, "headers": auth},
+              "antigravity": {"serverUrl": url, "headers": auth},  # path and transport unverified
+              # http_headers keeps the token in the file; bearer_token_env_var would need a user env var
+              "codex": {"url": url, "http_headers": auth}}
+    return shapes[client]
+
+
+def _home(env, *parts):
+    return Path(env["USERPROFILE"], *parts) if env.get("USERPROFILE") else None
+
+
+def _gateway_file(client, env):
+    """(config file, key holding the server table); None for codex's TOML and claude's own command."""
+    xdg = Path(env["XDG_CONFIG_HOME"]) if env.get("XDG_CONFIG_HOME") else _home(env, ".config")
+    return {"cursor": (_home(env, ".cursor", "mcp.json"), "mcpServers"),
+            "gemini-cli": (_home(env, ".gemini", "settings.json"), "mcpServers"),
+            "antigravity": (_home(env, ".gemini", "antigravity", "mcp_config.json"), "mcpServers"),
+            "opencode": (xdg / "opencode" / "opencode.json" if xdg else None, "mcp")}.get(client, (None, None))
+
+
+def _codex_toml(env):
+    home = env.get("CODEX_HOME") or (str(_home(env, ".codex")) if env.get("USERPROFILE") else None)
+    return Path(home) / "config.toml" if home else None
+
+
+def _atomic_write(path, text):
+    tmp = path.with_name(path.name + ".archhub.tmp")
+    tmp.write_text(text, encoding="utf-8", newline="\n")
+    os.replace(tmp, path)
+
+
+def _toml_key(name):
+    return name if re.fullmatch(r"[A-Za-z0-9_-]+", name) else json.dumps(name)
+
+
+def _drop_toml_tables(text, names):
+    """text without [mcp_servers.<name>] and its sub-tables; every other byte kept."""
+    heads = [("[mcp_servers.%s]" % _toml_key(n), "[mcp_servers.%s." % _toml_key(n)) for n in names]
+    out, skipping = [], False
+    for line in text.splitlines(keepends=True):
+        head = line.strip()
+        if head.startswith("["):
+            skipping = any(head.startswith(h) for pair in heads for h in pair)
+        if not skipping:
+            out.append(line)
+    return "".join(out)
+
+
+def _toml_block(name, entry):
+    q = json.dumps
+    table = lambda d: "{ %s }" % ", ".join("%s = %s" % (q(k), q(v)) for k, v in d.items())
+    lines = ["", "[mcp_servers.%s]" % _toml_key(name)]
+    if entry.get("url"):
+        lines += ["url = %s" % q(entry["url"]), "http_headers = %s" % table(entry["http_headers"])]
+    else:
+        lines += ["command = %s" % q(entry["command"]), "args = %s" % q(list(entry.get("args") or []))]
+        if entry.get("env"):
+            lines.append("env = %s" % table(entry["env"]))
+    return "\n".join(lines) + "\n"
+
+def _same_launch(entry, spec) -> bool:
+    return (isinstance(entry, dict) and not entry.get("url") and entry.get("command") == spec.get("command")
+            and list(entry.get("args") or []) == list(spec.get("args") or []))
+
+
+def _read_servers(client, env):
+    """(server table or None, reason). Absent file is an empty table; unreadable is a refusal."""
+    if client == "claude-code":
+        config, problem = _user_config(env)
+        return (config.get("mcpServers", {}) if config is not None else None), problem
+    if client == "codex":
+        path = _codex_toml(env)
+        if path is None:
+            return None, "config_location_unverified"
+        try:
+            import tomllib
+            return tomllib.loads(path.read_text(encoding="utf-8")).get("mcp_servers", {}), None
+        except FileNotFoundError:
+            return {}, None
+        except (OSError, UnicodeError, ValueError):
+            return None, "config_unreadable"
+    path, key = _gateway_file(client, env)
+    if path is None:
+        return None, "config_location_unverified"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}, None
+    except (OSError, UnicodeError, ValueError):
+        return None, "config_unreadable"  # includes JSONC: never rewritten, comments would be lost
+    table = data.get(key, {}) if isinstance(data, dict) else None
+    return (table, None) if isinstance(table, dict) else (None, "config_unreadable")
+
+
+def _apply(client, env, add, drop, run):
+    """Write the changed table in place; every other key of the file is kept."""
+    if client == "claude-code":
+        found = find_claude_code(env)
+        if found["state"] != "found":
+            return found["state"]
+        for name in drop:
+            if _run_claude(run, [found["executable"], "mcp", "remove", name, "--scope", "user"], env)[1]:
+                return "claude_mcp_remove_failed"
+        for name, entry in add.items():
+            if _run_claude(run, [found["executable"], "mcp", "add-json", name,
+                                 json.dumps(entry, separators=(",", ":")), "--scope", "user"], env)[1]:
+                return "claude_mcp_add_failed"
+        return None
+    if client == "codex":
+        path = _codex_toml(env)
+        text = path.read_text(encoding="utf-8") if path.exists() else ""
+        text = _drop_toml_tables(text, [*drop, *add]).rstrip("\n") + "\n"
+        _atomic_write(path, text + "".join(_toml_block(n, e) for n, e in add.items()))
+        return None
+    path, key = _gateway_file(client, env)
+    data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    table = data.setdefault(key, {})
+    for name in drop:
+        table.pop(name, None)
+    table.update(add)
+    _atomic_write(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    return None
+
+
+def _installed(client, env) -> bool:
+    """Never create the config folder of an agent that is not installed."""
+    if client == "claude-code":
+        return find_claude_code(env)["state"] == "found"
+    path = _codex_toml(env) if client == "codex" else _gateway_file(client, env)[0]
+    return path is not None and path.parent.is_dir()
+
+
+def install_gateway(client, base_url, specs, token, *, receipt=None, replace=False,
+                    environment=None, run=subprocess.run) -> dict:
+    """Point one agent at the shared host for every registered server. Reads, then writes in place.
+
+    specs: {server name: {"command", "args"}}. With replace, the agent's own entry of the same
+    name is removed only if it launches exactly that command; it is saved to ``receipt`` (a JSON
+    file) so remove_gateway can put it back. Returns {"client", "state", "added", "replaced"}.
+    """
+    env = os.environ if environment is None else environment
+    result = {"client": client, "state": None, "added": [], "replaced": []}
+    if client not in GATEWAY_CLIENTS:
+        raise ValueError("no shared-host entry shape for %r" % client)
+    if not _installed(client, env):
+        return {**result, "state": "not_installed"}
+    current, problem = _read_servers(client, env)
+    if current is None:
+        return {**result, "state": problem}
+    add = {GATEWAY_PREFIX + n: gateway_entry(client, "%s/%s/%s/mcp" % (base_url, n, client), token)
+           for n in specs}
+    originals = {n: current[n] for n in specs if replace and _same_launch(current.get(n), specs[n])}
+    failure = _apply(client, env, add, list(originals), run)
+    if failure:
+        return {**result, "state": failure}
+    if originals and receipt:
+        saved = json.loads(Path(receipt).read_text(encoding="utf-8")) if Path(receipt).exists() else {}
+        saved.setdefault(client, {}).update(originals)
+        _atomic_write(Path(receipt), json.dumps(saved, indent=2))
+    return {**result, "state": "registered", "added": list(add), "replaced": list(originals)}
+
+
+def remove_gateway(client, *, receipt=None, environment=None, run=subprocess.run) -> dict:
+    """Remove our archhub-* entries and put back any original saved in the receipt."""
+    env = os.environ if environment is None else environment
+    if not _installed(client, env):
+        return {"client": client, "state": "not_installed"}
+    current, problem = _read_servers(client, env)
+    if current is None:
+        return {"client": client, "state": problem}
+    ours = [n for n, e in current.items() if n.startswith(GATEWAY_PREFIX) and isinstance(e, dict)
+            and "127.0.0.1" in json.dumps(e)]
+    saved = json.loads(Path(receipt).read_text(encoding="utf-8")) if receipt and Path(receipt).exists() else {}
+    back = {n: e for n, e in saved.get(client, {}).items() if n not in current}
+    failure = _apply(client, env, back, ours, run) if ours or back else None
+    return {"client": client, "state": failure or "removed", "removed": ours, "restored": list(back)}
+
+
 __all__ = [
+    "GATEWAY_CLIENTS",
+    "GATEWAY_PREFIX",
+    "gateway_entry",
+    "install_gateway",
+    "remove_gateway",
     "DEAD_BRAIN_PORTS",
     "LEGACY_NAMES",
     "LOADER",

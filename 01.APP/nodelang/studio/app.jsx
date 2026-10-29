@@ -572,14 +572,33 @@
           u.setTask(t.id);
           u.go('workshop');
         }
+      })), ...(s.liveAgents || []).map(a => ({
+        label: a.name + (a.task ? ' · ' + a.task : ''),
+        group: 'Agents',
+        action: () => u.go('workshop')
+      })), ...(s.graphs || []).map(g => ({
+        label: g.name || g.title || g.id,
+        group: 'Workflows',
+        action: async () => {
+          await u.act(() => api.selectGraph(g.id));
+          u.go('canvas');
+        }
+      })), ...(s.connections || []).map(c => ({
+        label: c.name || c.id,
+        group: 'Hosts',
+        action: () => u.show('Connection', {id: c.id})
+      })), ...(s.pages || []).map(page => ({
+        label: page,
+        group: 'Settings',
+        action: () => u.openSystem(page)
       })), ...Object.entries(routeNames).map(([r, label]) => ({
         label,
         group: 'Pages',
         action: () => u.go(r)
       }))].filter(x => (mode === 'All' || x.group === mode) && x.label.toLowerCase().includes(query.toLowerCase()));
-      body = <><input aria-label="Search everything" placeholder="Find a node, skill or chat…" value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => {
+      body = <><input aria-label="Search everything" placeholder="Find an agent, workflow, host, setting, node or chat…" value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => {
           if (e.key === 'Enter') items[0]?.action();
-        }} /><div className="flex">{['All', 'Add node', 'Skills', 'Chats', 'Pages'].map(t => <Btn key={t} sm ghost aria-pressed={mode === t} onClick={event => executeAction("appShell.Control.29", {
+        }} /><div className="flex" style={{flexWrap: 'wrap'}}>{['All', 'Agents', 'Workflows', 'Hosts', 'Settings', 'Add node', 'Skills', 'Chats', 'Pages'].map(t => <Btn key={t} sm ghost aria-pressed={mode === t} onClick={event => executeAction("appShell.Control.29", {
             setMode,
             t
           }, event)}>{t}</Btn>)}</div><div style={{

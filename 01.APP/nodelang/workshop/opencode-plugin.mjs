@@ -167,11 +167,13 @@ export function createWorkshopPlugin({stateDirectory}){
     const key='workshop:'+r.id+':'+r.messageId;
     if(!seen.has(key)){
      seen.add(key);if(seen.size>2000)seen.delete(seen.values().next().value);
-     void enqueue({id:r.id,directory:r.directory,text:r.text,model}).catch(()=>{
-      process.stderr.write('Workshop injection did not complete; its public message remains pending.\n');
-     });
+     // Live, never parked until idle: OpenCode appends a prompt sent to a busy session and its running loop takes
+     // it at the next step, like a message typed mid-turn. prompt_async returns once the message is accepted.
+     const body={parts:[{type:'text',text:r.text}],...(model?{model}:{})};
+     if(typeof c.session.promptAsync!=='function')throw new Error('This OpenCode has no prompt_async; update OpenCode (1.18.22 or later)');
+     unwrap(await c.session.promptAsync({path:{id:r.id},query:{directory:r.directory},body}));
     }
-    result={status:'queued'};
+    result={status:'injected'};
    }
    else if(r.operation==='send'){
    const model=validateModel(r.model);

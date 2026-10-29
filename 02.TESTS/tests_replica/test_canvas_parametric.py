@@ -114,6 +114,11 @@ def test_model_node_param_writes_router_json(profile):
     assert read_router_settings()['default_model'] == 'openrouter/openrouter/free'
     stored = json.loads((profile / 'LOCALAPPDATA' / 'ArchHub' / 'settings' / 'router.json').read_text())
     assert stored['default_model'] == 'openrouter/openrouter/free'
+    # Generation parameters (temperature, top-p, max tokens) are the Model node's own parameters.
+    assert {'temperature', 'top_p', 'max_tokens'} <= set(model['params'])
+    out = SessionFiles().dispatch({'action': 'solve', 'document': doc, 'changed': ['m'],
+                                   'params': [{'node': 'm', 'key': 'top_p', 'value': '0.9'}]})
+    assert out['written'] == ['top_p'] and read_router_settings()['generation']['top_p'] == 0.9
 
 
 def test_library_has_a_node_for_every_app_thing():

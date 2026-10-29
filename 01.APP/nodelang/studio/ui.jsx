@@ -143,7 +143,7 @@
       u = useApp();
     const [localDraft,setLocalDraft] = React.useState({text:'',revision:0});
     const draftKey = JSON.stringify([u.route,taskId || '']);
-    const {text,revision} = onSent ? localDraft : u.composerDraft[draftKey] || {text:'',revision:0},
+    const {text} = onSent ? localDraft : u.composerDraft[draftKey] || {text:'',revision:0},
       setDraft = onSent ? setLocalDraft : update => u.setComposerDraft(current => ({
         ...current,[draftKey]:update(current[draftKey] || {text:'',revision:0})
       }));
@@ -151,18 +151,22 @@
     const [provider, setProvider] = React.useState(''),
       [sending, setSending] = React.useState(false),
       [contextOpen, setContextOpen] = React.useState(false);
-    const pending = React.useRef(false);
+    const pending = React.useRef(0);
     const send = async () => {
-      if (pending.current || !text.trim()) return;
-      pending.current = true;
+      const message = text;
+      if (!message.trim()) return;
+      // Each send leaves at once: the draft clears now (a second message 1 s later is its own send)
+      // and comes back only if this send fails while the box is still empty.
+      setDraft(current => ({text:'',revision:current.revision+1}));
+      pending.current += 1;
       setSending(true);
       try {
         const t = await u.act(() => {
-          if (!taskId && typeof api.apiRouterChat === 'function') return api.apiRouterChat(text, provider || 'BABOOM');
-          return api.sendToBaboom(text, {taskId, scope: u.selectedNodeId || s.graph.id, provider});
+          if (!taskId && typeof api.apiRouterChat === 'function') return api.apiRouterChat(message, provider || 'BABOOM');
+          return api.sendToBaboom(message, {taskId, scope: u.selectedNodeId || s.graph.id, provider});
         });
+        if (!t) setDraft(current => current.text ? current : {text:message,revision:current.revision+1});
         if (t) {
-          setDraft(current => current.revision === revision ? {text:'',revision:current.revision+1} : current);
           if (typeof t.answer === 'string') {
             onSent?.(t);
             return;
@@ -172,8 +176,8 @@
           if (!taskId && !onSent) u.go('workshop');
         }
       } finally {
-        pending.current = false;
-        setSending(false);
+        pending.current -= 1;
+        if (!pending.current) setSending(false);
       }
     };
     return <D.Composer variant="home" as="form" onSubmit={e => {
@@ -223,7 +227,7 @@
         }}><option value="">BABOOM chooses · free first</option>{s.providers.filter(p => p.enabled && p.signedIn).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select><span className="fill" />{api.supportsAction?.('startVoiceInput') !== false && <Btn sm onClick={event => executeAction("sharedUI.TalkF2.8", {
           setText,
           u
-        }, event)} title="Talk · F2">🎙 Talk</Btn>}<Btn p sm type="submit" aria-label="Send ↵" title="Send · Enter" disabled={sending || !text.trim()}><window.AHIcon name="send" size={15} /></Btn></div>
+        }, event)} title="Talk · F2">🎙 Talk</Btn>}<Btn p sm type="submit" aria-label="Send ↵" title="Send · Enter" aria-busy={sending} disabled={!text.trim()}><window.AHIcon name="send" size={15} /></Btn></div>
  {s.composerAnswer&&<div className="composer-answer" role="status" aria-label="Model answer"><small className="muted">{s.composerAnswer.provider} · {s.composerAnswer.model}</small><p style={{whiteSpace:'pre-wrap'}}>{s.composerAnswer.answer}</p></div>}
  </D.Composer>;
   }

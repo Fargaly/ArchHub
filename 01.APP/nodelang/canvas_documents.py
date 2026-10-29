@@ -139,6 +139,7 @@ WRITE_THROUGH = {
     ('thing.model', 'default_model'): lambda value: _set_router({'default_model': str(value)}),
     ('thing.model', 'temperature'): lambda value: _set_router({'generation': {**_router()['generation'], 'temperature': float(value)}}),
     ('thing.model', 'max_tokens'): lambda value: _set_router({'generation': {**_router()['generation'], 'max_tokens': int(value)}}),
+    ('thing.model', 'top_p'): lambda value: _set_router({'generation': {**_router()['generation'], 'top_p': float(value)}}),
 }
 
 
@@ -153,7 +154,8 @@ def thing_items():
         router = _router()
         items.append(card('thing:model:default', 'models', 'Model', 'Default model from router.json', 'thing.model',
                           {'route': router['default_model'], 'default_model': router['default_model'], 'prompt': '',
-                           'temperature': router['generation']['temperature'], 'max_tokens': router['generation']['max_tokens']}))
+                           'temperature': router['generation']['temperature'], 'top_p': router['generation']['top_p'],
+                           'max_tokens': router['generation']['max_tokens']}))
         for route in router['fallback_models'][:8]:
             items.append(card('thing:model:' + route, 'models', route.split('/')[-1], 'Free model', 'thing.model',
                               {'route': route, 'prompt': ''}))

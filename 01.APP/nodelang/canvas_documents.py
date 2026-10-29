@@ -225,10 +225,14 @@ def thing_items():
     items.append(card('thing:file', 'files', 'File or folder', 'A local file or folder reference', 'thing.file', {'path': ''}))
     items.append(card('thing:workshop', 'workshop', 'Workshop thread', 'Messages in the Workshop room', 'thing.workshop',
                       dict(THING_ENGINES['thing.workshop']['params'])))
+    # The value is router.json's own; a profile whose router.json sets no temperature shows "unset", never a default.
     try:
-        temperature = float(_router()['generation']['temperature'])
-    except Exception:  # noqa: BLE001 - an unreadable router file still offers the typed parameter
-        temperature = 0.7
+        from .settings_owner import router_settings_path
+        _router()
+        held = json.loads(router_settings_path().read_text(encoding='utf-8'))
+        temperature = held.get('generation', {}).get('temperature') if isinstance(held, dict) else None
+    except Exception:  # noqa: BLE001 - a missing or unreadable router file leaves the parameter unset
+        temperature = None
     items.append(card('thing:setting:temperature', 'settings', 'Temperature', 'Number parameter · router generation',
                       'thing.setting', {'value': temperature}, kind='number'))
     items.extend(daily_items())

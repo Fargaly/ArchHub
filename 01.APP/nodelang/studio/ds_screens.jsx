@@ -138,10 +138,10 @@
       {renderSocket && n.inputs.map(p => <span key={p.id} style={edge('in')}>{renderSocket(p, 'in')}</span>)}
       {renderSocket && n.outputs.map(p => <span key={p.id} style={edge('out')}>{renderSocket(p, 'out')}</span>)}
       <div data-node-card-title="" style={{position: 'absolute', left: 12, top: 9, right: 40, fontSize: 14, lineHeight: 1.2, color: SPEC.text, whiteSpace: 'pre', overflow: 'hidden', textOverflow: 'ellipsis'}}>{typeGlyph(def.type) && typeGlyph(def.type) + '  '}{def.name}</div>
-      <span data-record-count="" style={{position: 'absolute', right: 12, top: 11, fontSize: 11, color: SPEC.label}} title="All records">{values.length}</span>
-      <div style={{position: 'absolute', left: 12, top: 34, fontSize: 11, lineHeight: 1.2, color: SPEC.typed}}>{n.column.label}{def.unit ? ' · ' + def.unit : ''}</div>
+      <span data-record-count="" style={{position: 'absolute', right: 12, top: 11, fontSize: 12.5, color: SPEC.label}} title="All records">{values.length}</span>
+      <div style={{position: 'absolute', left: 12, top: 34, fontSize: 12.5, lineHeight: 1.2, color: SPEC.typed}}>{n.column.label}{def.unit ? ' · ' + def.unit : ''}</div>
       <output data-column-of={n.column.dataset + '.' + n.column.field} data-todo="output-summary-expanded" style={{position: 'absolute', left: 8, right: 8, top: 56, height: 24, boxSizing: 'border-box', padding: '5px 6px', borderRadius: 5,
-        background: SPEC.slot, fontSize: 12, lineHeight: 1.2, color: SPEC.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>{values.slice(0, 3).map(cellText).join(', ')}{values.length > 3 ? '…' : ''}  ›</output>
+        background: SPEC.slot, fontSize: 12.5, lineHeight: 1.2, color: SPEC.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>{values.slice(0, 3).map(cellText).join(', ')}{values.length > 3 ? '…' : ''}  ›</output>
     </div>;
   }
   // Spec FieldTypeMenu: a listbox of the server's parameter types (node_params.py), labelled as the design names them.
@@ -223,8 +223,9 @@
     if (typeof value === 'object') return Object.entries(value).slice(0, 3).map(([k, v]) => k + ' ' + (v && typeof v === 'object' ? (Array.isArray(v) ? v.length + ' items' : 'record') : String(v))).join(' · ');
     return String(value).slice(0, 60);
   };
+  const HIDDEN_VALUE = /(?:[a-f0-9]{32,}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}|(?:assembly|template|node)-instance:|^\s*[\[{][\s\S]*[\]}]\s*$)/i;
   const HIDDEN_PARAM = /(^_|(?:^|_)(?:id|hash|instance|ref)(?:_|$)|^template_|^(?:engine|responsibility|last_result|last_attempt)$)/i;
-  const CARD = {background: SPEC.field, border: '1px solid ' + SPEC.fieldLine, borderRadius: 6, boxSizing: 'border-box', position: 'relative', color: SPEC.text, fontSize: 11, lineHeight: 1.2};
+  const CARD = {background: SPEC.field, border: '1px solid ' + SPEC.fieldLine, borderRadius: 6, boxSizing: 'border-box', position: 'relative', color: SPEC.text, fontSize: 12.5, lineHeight: 1.2};
   const SLOT = {background: SPEC.slot, borderRadius: 5, padding: '6px 9px', position: 'relative', display: 'flex', alignItems: 'center', gap: 6, minHeight: 28, boxSizing: 'border-box'};
   const edgeSocket = (side, top, inset = 0) => ({position: 'absolute', [side === 'in' ? 'left' : 'right']: -11 - inset, top, transform: 'translateY(-50%)', lineHeight: 0, zIndex: 2});
   function ValueWidget({n, p, value, u}) {
@@ -235,65 +236,79 @@
     if (p.options?.length) return <select className="nodrag" aria-label={label} value={shown} onChange={e => save(e.target.value)}>{p.options.map(o => <option key={o}>{o}</option>)}</select>;
     return <input className="nodrag" aria-label={label} title={String(shown)} type={p.type === 'number' ? 'number' : 'text'} min={p.min} max={p.max} step={p.step ?? 'any'}
       value={typeof shown === 'object' ? JSON.stringify(shown) : shown} style={{flex: 1, minWidth: 0, width: 0, background: 'transparent', border: 0, color: SPEC.text, font: 'inherit', fontSize: 12}}
-      onChange={e => setDraft(p.type === 'number' ? e.target.valueAsNumber : e.target.value)} onBlur={() => draft !== null && save(draft)} onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }} />;
+      onChange={e => { if (p.type !== 'number' || Number.isFinite(e.target.valueAsNumber)) save(p.type === 'number' ? e.target.valueAsNumber : e.target.value); }} />;
   }
   function ParameterNode({n, socket, selected, u}) {
     // LimitParameter: one typed value, inline stepper and slider, one output socket; the value lives in this node only.
-    const p = n.parameterSchema?.find(x => x.key === 'value') || {key: 'value', type: 'number', editable: true}, value = Number(n.params.value),
-      max = p.max ?? (Math.abs(value) <= 2 ? 2 : Math.abs(value) * 2), min = p.min ?? 0, step = p.step ?? (max <= 2 ? .05 : 1),
+    // A value the owner does not hold (router.json without it) shows "unset", never a default.
+    const p = n.parameterSchema?.find(x => x.key === 'value') || {key: 'value', type: 'number', editable: true}, unset = typeof n.params.value !== 'number',
+      value = unset ? NaN : n.params.value, max = p.max ?? (unset || Math.abs(value) <= 2 ? 2 : Math.abs(value) * 2), min = p.min ?? 0, step = p.step ?? (max <= 2 ? .05 : 1),
       out = n.outputs[0], save = v => u.act(() => api.setNodeParam(n.id, 'value', Math.min(max, Math.max(min, +v.toFixed(6)))));
     return <div data-ds-node="" data-spec="parameter" className="node-header" style={{...CARD, width: 180, height: 80, outline: selected ? '2px solid ' + A.accent : 'none', outlineOffset: 2}}>
-      <div data-node-card-title="" style={{position: 'absolute', left: 12, top: 10, right: 40, color: SPEC.typed}}>#  {n.title}</div>
-      <span data-node-pure={String(!!n.pure)} title={n.pure ? 'Pure: re-solves on every edit' : 'Side effect: waits for Run'} style={{position: 'absolute', right: 10, top: 10, color: A.warn}}>{n.pure ? '' : '⚡'}</span>
-      <div style={{position: 'absolute', left: 12, top: 34, right: 12, display: 'flex', alignItems: 'center', gap: 6, color: SPEC.typed}}>
-        <ValueWidget n={n} p={{...p, type: 'number', min, max, step}} value={n.params.value} u={u} />
+      <div data-node-card-title="" style={{position: 'absolute', left: 12, top: 9, right: 40, color: SPEC.typed}}>#  {n.title}</div>
+      {!n.pure && <span data-node-pure="false" title="Side effect: waits for Run" style={{position: 'absolute', right: 10, top: 9, color: A.inkSoft}}>⚡</span>}
+      <div style={{position: 'absolute', left: 12, top: 32, right: 12, display: 'flex', alignItems: 'center', gap: 6, color: SPEC.typed}}>
+        {unset ? <span data-unset="" style={{flex: 1, color: SPEC.label}} title="Not set in router.json">unset</span> : <ValueWidget n={n} p={{...p, type: 'number', min, max, step}} value={value} u={u} />}
         <span>{p.unit || ''}</span>
-        <button type="button" className="button-reset nodrag" aria-label={'Decrease ' + n.title} onClick={event => executeAction('projects.controls.activate', {handler: () => save(value - step)}, event)}>◀</button>
-        <button type="button" className="button-reset nodrag" aria-label={'Increase ' + n.title} onClick={event => executeAction('projects.controls.activate', {handler: () => save(value + step)}, event)}>▶</button>
+        <button type="button" className="button-reset nodrag" aria-label={'Decrease ' + n.title} onClick={event => executeAction('projects.controls.activate', {handler: () => save((unset ? min : value) - step)}, event)}>◀</button>
+        <button type="button" className="button-reset nodrag" aria-label={'Increase ' + n.title} onClick={event => executeAction('projects.controls.activate', {handler: () => save((unset ? min : value) + step)}, event)}>▶</button>
       </div>
-      <input className="nodrag" type="range" aria-label={n.title + ' slider'} min={min} max={max} step={step} value={Number.isFinite(value) ? value : min}
-        onChange={e => save(e.target.valueAsNumber)} style={{position: 'absolute', left: 12, right: 12, top: 58, width: 156, accentColor: '#5fb3b3'}} />
+      <input className="nodrag" type="range" aria-label={n.title + ' slider'} min={min} max={max} step={step} value={unset ? min : value}
+        onChange={e => save(e.target.valueAsNumber)} style={{position: 'absolute', left: 12, right: 12, top: 58, width: 156, accentColor: SPEC.typed}} />
       {out && <span style={edgeSocket('out', 34)}>{socket(out, 'out')}</span>}
     </div>;
   }
-  function FlowCard({n, s, u, selected, rejected, socket, members, onMember, menu}) {
+  // Spec d9c0d514: one footer chip per card (Done / Not run / Out of date, or what stops it), never a second status line.
+  const FOOT = {display: 'inline-block', justifySelf: 'start', padding: '1px 8px', borderRadius: 10, border: '1px solid ' + SPEC.fieldLine};
+  function RefusedChip({refusal, onConvert}) {
+    return <div data-refused-chip="" role="status" style={{color: A.err, display: 'flex', flexWrap: 'wrap', gap: 4}}>
+      <span>Needs a {refusal.outType} → {refusal.inType} converter ·</span>
+      <button type="button" className="button-reset nodrag" style={{color: A.err, textDecoration: 'underline'}} onClick={event => executeAction('projects.controls.activate', {handler: onConvert}, event)}>Insert converter</button>
+    </div>;
+  }
+  function FlowCard({n, s, u, selected, refusal, onConvert, socket, members, onMember, menu}) {
+    const [expanded, setExpanded] = React.useState(false);
     const field = n.column && fieldColumn(n, s.graph);
     if (field) return <FieldNode n={n} field={field} selected={selected} headerProps={{className: 'node-header'}} renderSocket={socket} />;
-    const scalarParameter = ['thing.setting', 'param.value'].includes(n.type) && n.outputs.length === 1 && typeof n.params.value === 'number';
+    const scalarParameter = ['thing.setting', 'param.value'].includes(n.type) && n.outputs.length === 1 && (typeof n.params.value === 'number' || n.params.value === null);
     if (scalarParameter) return <ParameterNode n={n} socket={socket} selected={selected} u={u} />;
-    const [state, stateColor] = nodeState(n, rejected), wiresIn = s.graph.wires.filter(w => w.to === n.id),
+    const [state, stateColor] = nodeState(n, !!refusal), wiresIn = s.graph.wires.filter(w => w.to === n.id),
       sourceTitle = port => { const w = wiresIn.find(x => x.toPort === port); return w && s.graph.nodes.find(x => x.id === w.from)?.title; },
       slotPorts = new Set(), settingsKeys = new Set(n.settingsKeys || []),
-      params = (n.parameterSchema || []).filter(p => p.editable || !HIDDEN_PARAM.test(p.key)).filter(p => !(p.key === 'prompt' && n.inputs.some(x => x.id === 'prompt')));
+      // Internal ids, hashes and serialized JSON stay in Properties; the face shows human values (CARDPOLISH), first three until expanded.
+      shown = (n.parameterSchema || []).filter(p => p.editable || (!HIDDEN_PARAM.test(p.key) && (n.params[p.key] === null || typeof n.params[p.key] !== 'object') && !HIDDEN_VALUE.test(String(n.params[p.key]))))
+        .filter(p => !(p.key === 'prompt' && n.inputs.some(x => x.id === 'prompt'))),
+      params = expanded ? shown : shown.slice(0, 3),
+      refusedHere = port => refusal && refusal.to.port === port && <RefusedChip refusal={refusal} onConvert={onConvert} />;
     for (const p of params) if (n.inputs.some(x => x.id === p.key || x.id === 'param:' + p.key)) slotPorts.add(n.inputs.find(x => x.id === p.key || x.id === 'param:' + p.key).id);
     const result = n.status === 'Done' ? summary(n.output) : '';
     return <div data-ds-node="" className="lm-node" data-spec={n.dataset ? 'dataset' : 'operation'} data-node-state={state.split(' · ')[0]}
-      style={{...CARD, width: n.dataset ? 478 : 208, paddingBottom: 10, border: '1px solid ' + (rejected ? A.err : SPEC.fieldLine), outline: selected ? '2px solid ' + A.accent : 'none', outlineOffset: 2}}>
+      style={{...CARD, width: n.dataset ? 478 : 208, paddingBottom: 10, border: '1px solid ' + (refusal ? A.err : SPEC.fieldLine), outline: selected ? '2px solid ' + A.accent : 'none', outlineOffset: 2}}>
       <div className="node-header" style={{display: 'flex', alignItems: 'flex-start', gap: 8, padding: '11px 12px 0'}}>
         <div data-node-card-title="" style={{flex: 1, minWidth: 0, fontSize: 14, overflowWrap: 'anywhere'}}>{n.title}</div>
-        <span data-node-pure={String(!!n.pure)} title={(n.pure ? 'Pure: re-solves on every edit' : 'Side effect: waits for Run') + (n.budget ? ' · budget ' + [n.budget.seconds != null && n.budget.seconds + ' s', n.budget.calls != null && n.budget.calls + ' call(s)'].filter(Boolean).join(', ') : '')}
-          style={{paddingTop: 2, color: A.warn}}>{n.pure ? '' : '⚡'}</span>{menu}
+        {!n.pure && <span data-node-pure="false" style={{paddingTop: 2, color: A.inkSoft}}
+          title={'Side effect: waits for Run' + (n.budget ? ' · budget ' + [n.budget.seconds != null && n.budget.seconds + ' s', n.budget.calls != null && n.budget.calls + ' call(s)'].filter(Boolean).join(', ') : '')}>⚡</span>}{menu}
       </div>
-      {!n.pure && <div style={{padding: '4px 12px 0', color: SPEC.label}}>Side effect · waits for Run</div>}
       {members.length > 0 && <div className="canvas-members">{members.map(m => <button key={m.id} data-group-member={m.id} className="canvas-member nodrag" title={'Open ' + m.title} onClick={event => executeAction('projects.controls.activate', {handler: () => onMember(m)}, event)}><span style={{background: A.purple, color: A.onFill}}>{m.title.slice(0, 1)}</span>{m.title}</button>)}</div>}
       <div style={{display: 'grid', gap: 8, padding: '12px 12px 0'}}>
-        {n.inputs.filter(p => !slotPorts.has(p.id)).map(p => <div key={p.id} data-port-row="in" style={{position: 'relative', display: 'flex', justifyContent: 'space-between', color: SPEC.typed, height: 16, alignItems: 'center'}}>
-          <span style={edgeSocket('in', '50%', 12)}>{socket(p, 'in')}</span><span>{p.name}</span><span style={{color: sourceTitle(p.id) ? SPEC.text : SPEC.typed}}>{sourceTitle(p.id) ? 'From ' + sourceTitle(p.id) : typeName(p)}</span></div>)}
+        {n.inputs.filter(p => !slotPorts.has(p.id)).map(p => <React.Fragment key={p.id}><div data-port-row="in" style={{position: 'relative', display: 'flex', justifyContent: 'space-between', color: SPEC.typed, minHeight: 16, alignItems: 'center'}}>
+          <span style={edgeSocket('in', '50%', 12)}>{socket(p, 'in')}</span><span>{p.name}</span><span style={{color: sourceTitle(p.id) ? SPEC.text : SPEC.typed}}>{sourceTitle(p.id) ? 'From ' + sourceTitle(p.id) : typeName(p)}</span></div>{refusedHere(p.id)}</React.Fragment>)}
         {params.map(p => {
           const port = n.inputs.find(x => x.id === p.key || x.id === 'param:' + p.key), from = port && sourceTitle(port.id);
           // Spec Model parameter slot: name on top, value (or its source) below; a connectable parameter carries its socket on the card edge.
-          return <div key={p.key} data-parameter={p.key} style={{...SLOT, display: 'grid', gap: 2, padding: '4px 8px'}}>{port && <span style={edgeSocket('in', '50%', 12)}>{socket(port, 'in')}</span>}
+          return <React.Fragment key={p.key}><div data-parameter={p.key} style={{...SLOT, display: 'grid', gap: 2, padding: '4px 8px'}}>{port && <span style={edgeSocket('in', '50%', 12)}>{socket(port, 'in')}</span>}
             <span style={{color: SPEC.label, overflowWrap: 'anywhere'}} title={p.label || p.key}>{p.label && p.label !== p.key ? p.label : p.key.replace(/_/g, ' ')}{p.unit ? ' · ' + p.unit : ''}</span>
-            <span style={{display: 'flex', alignItems: 'center', gap: 6, minWidth: 0}}>{from ? <span>From {from}</span> : <ValueWidget n={n} p={p} value={n.params[p.key]} u={u} />}
-              {!from && settingsKeys.has(p.key) && <small style={{color: SPEC.count, whiteSpace: 'nowrap'}} title="One value with Settings (router.json)">From Settings</small>}</span></div>;
+            <span style={{display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>{from ? <span>From {from}</span> : n.params[p.key] === null ? <span data-unset="" style={{color: SPEC.label}}>unset</span> : <ValueWidget n={n} p={p} value={n.params[p.key]} u={u} />}
+              {!from && settingsKeys.has(p.key) && <small style={{color: SPEC.count, whiteSpace: 'nowrap', fontSize: 12.5}} title="One value with Settings (router.json)">From Settings</small>}</span></div>{port && refusedHere(port.id)}</React.Fragment>;
         })}
+        {shown.length > 3 && <button type="button" className="button-reset nodrag canvas-card-more" style={{justifySelf: 'start', color: SPEC.label}} onClick={event => executeAction('projects.controls.activate', {handler: () => setExpanded(!expanded)}, event)}>{expanded ? 'Show less' : `+${shown.length - 3} more`}</button>}
         {n.loop && <div data-node-loop="" style={{color: SPEC.label}} title={'Trigger ' + n.loop.trigger + ' · stops when ' + n.loop.stop + (n.loop.evaluator ? ' · evaluator ' + n.loop.evaluator : '')}>Loop · cap {n.loop.cap} · until {n.loop.stop}</div>}
         {n.dataset && <DatasetEditor n={n} u={u} />}
         {!n.dataset && !n.column && n.paramDefs && api.addNodeParameter && <AddParameter n={n} u={u} />}
-        {n.outputs.map(p => <div key={p.id} data-port-row="out" style={{position: 'relative', display: 'flex', justifyContent: 'space-between', color: SPEC.label, fontSize: 10, height: 16, alignItems: 'center'}}>
+        {n.outputs.map(p => <div key={p.id} data-port-row="out" style={{position: 'relative', display: 'flex', justifyContent: 'space-between', color: SPEC.label, minHeight: 16, alignItems: 'center'}}>
           <span>{p.name}</span><span>{typeName(p)}</span><span style={edgeSocket('out', '50%', 12)}>{socket(p, 'out')}</span></div>)}
         {result && <div data-node-result="" data-todo="output-summary-expanded" style={{color: SPEC.typed, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}} title={result}>▸  {result}</div>}
-        <div data-node-status="" style={{color: stateColor}} title={n.error || state}>{state}</div>
+        <span data-node-status="" style={{...FOOT, color: stateColor}} title={n.error || state}>{state.split(' · ')[0]}</span>
       </div>
     </div>;
   }
@@ -306,7 +321,8 @@
     return <div data-graph-node={id}>{c.renderNode(data.n, selected)}</div>;
   }
   function FlowWire({id, sourceX, sourceY, targetX, targetY, data}) {
-    const d = curve({x: sourceX, y: sourceY}, {x: targetX, y: targetY});
+    // xyflow anchors at the Handle's outer edge; the spec wire meets the socket centre (Handle is 22 px wide, see SOCKET_STYLE).
+    const d = curve({x: sourceX - 11, y: sourceY}, {x: targetX + 11, y: targetY});
     return <>{data.selected && <path d={d} stroke={A.ink} strokeWidth="8" opacity=".22" fill="none" />}
       <path data-graph-wire={id} data-wire-state={data.state} d={d} stroke={data.color} strokeWidth="2" strokeLinecap="round" opacity={data.opacity} fill="none" />
       <path className="react-flow__edge-interaction" d={d} stroke="transparent" strokeWidth="16" fill="none" aria-label={'Inspect wire ' + id} />
@@ -330,6 +346,7 @@
       [rejected, setRejected] = React.useState(null),
       [layout, setLayout] = React.useState({scope: null, positions: {}}),
       [flowNodes, setFlowNodes] = React.useState([]),
+      [more, setMore] = React.useState(false),
       [wireTab, setWireTab] = React.useState('Rules');
     const area = React.useRef(),
       view = React.useRef(viewport),
@@ -343,7 +360,6 @@
     const zoomSetting = zoomRow?.value;
     const appliedZoomSetting = React.useRef(zoomSetting);
     const zoomSaveDelay = Number(s.canvasPolicy?.viewport_commit_debounce_ms ?? 140);
-    const rejectedHold = Number(s.canvasPolicy?.rejected_wire_ms ?? A.dur.slow * 10);
     const updateView = next => { view.current = next; setViewport(next); api.setSessionViewport?.({x:next.pan.x,y:next.pan.y,zoom:next.zoom}); };
     React.useEffect(()=>{const saved=s.graph.viewport;if(saved){const next={zoom:saved.zoom,pan:{x:saved.x,y:saved.y}};view.current=next;setViewport(next);}},[s.graph.scopeKey]);
     const zoomAt = (value, client = null) => {
@@ -474,6 +490,10 @@
           if (e.key === '0') { e.preventDefault(); e.ctrlKey ? fit() : zoomAt(1); }
           if (e.shiftKey && (e.code === 'Digit1' || e.key === '1')) { e.preventDefault(); fit(); }
         }
+        if (e.ctrlKey && e.key.toLowerCase() === 's') {
+          e.preventDefault();
+          u.act(() => api.saveSession());
+        }
         if (e.ctrlKey && e.key.toLowerCase() === 'g') {
           e.preventDefault();
           group();
@@ -484,6 +504,7 @@
         }
         if (e.key === 'Enter' && node && isGroup(node)) openNode(node);
         if (e.key === 'Escape') {
+          setRejected(null);
           setSelected([]);
           setWireId(null);
           if (parent) setParent(null);
@@ -538,13 +559,13 @@
         inputPort = s.graph.nodes.find(n=>n.id===input.id)?.inputs.find(p=>p.id===input.port);
       if (!outputPort || !inputPort || outputPort.connectable === false || inputPort.connectable === false || outputPort.read_only || inputPort.read_only) return;
       if (outputPort.type !== inputPort.type && outputPort.type !== 'any' && inputPort.type !== 'any') {
-        // An invalid drop draws the rejected wire, commits nothing, then clears.
-        setRejected({from:out, to:input}); window.setTimeout(()=>setRejected(null), rejectedHold);
-        u.show('Type mismatch', {text:outputPort.type+' cannot connect to '+inputPort.type}); return;
+        // Spec d9c0d514: an invalid drop draws the wire red at the drop and offers the converter on the target socket; no modal, nothing written.
+        const word = p => (TYPE_NAME[p.type] || p.type || 'any').toLowerCase();
+        setRejected({from:out, to:input, outType:word(outputPort), inType:word(inputPort)}); return;
       }
       const choices = outputPort.connect_choices;
       if (Array.isArray(choices) && !choices.some(p=>p.id===input.id && p.interface===input.port)) {
-        u.show('Type mismatch', {text:'These sockets do not share an admitted contract.'}); return;
+        setRejected({from:out, to:input, outType:outputPort.type, inType:inputPort.type}); return;
       }
       const result = await u.act(() => api.connectSockets({
         from: out.id,
@@ -553,6 +574,17 @@
         toPort: input.port
       }));
       if (result && !result.ok) u.show('Type mismatch', result);
+    };
+    const insertConverter = async () => {
+      const r = rejected, a = r && s.graph.nodes.find(n => n.id === r.from.id), b = r && s.graph.nodes.find(n => n.id === r.to.id);
+      if (!a || !b) return;
+      setRejected(null);
+      await u.act(async () => {
+        const c = await api.addNode('data.convert', {x: (a.x + b.x) / 2, y: Math.max(a.y, b.y) + 160});
+        await api.setNodeParam(c.id, 'target_type', r.inType === 'number' ? 'number' : 'text');
+        await api.connectSockets({from: r.from.id, fromPort: r.from.port, to: c.id, toPort: 'in'});
+        return api.connectSockets({from: c.id, fromPort: 'out', to: r.to.id, toPort: r.to.port});
+      });
     };
     const toFlow = e => {
       const r = area.current.getBoundingClientRect(), point = e.changedTouches?.[0] || e;
@@ -571,10 +603,11 @@
     };
     const renderNode = (n, isSelected) => {
       const members = (n.children || []).map(id => s.graph.nodes.find(x => x.id === id) || n.members?.find(m => m.id === id)).filter(Boolean);
-      return <FlowCard n={n} s={s} u={u} selected={isSelected} rejected={rejected?.to.id === n.id} members={members} socket={(p, side = 'in') => socket(n, p, side)}
+      return <FlowCard n={n} s={s} u={u} selected={isSelected} refusal={rejected?.to.id === n.id ? rejected : null} onConvert={insertConverter} members={members} socket={(p, side = 'in') => socket(n, p, side)}
         onMember={m=>{if (s.graph.nodes.some(row => row.id === m.id)) {setParent(n.id);setSelected([m.id]);} else {setParent(null);u.act(async()=>{await api.selectGraph(n.id);setSelected([m.id]);});}}}
         menu={<button className="button-reset canvas-node-menu nodrag" aria-label={n.title+' menu'} title={n.title+' actions'} onClick={event=>executeAction('projects.ds_screens.NodeMenu.16',{n,openNode,setSelected,u},event)}>⋯</button>} />;
     };
+    const stale = (s.solveStale || []).filter(id => s.graph.nodes.some(n => n.id === id)).length;
     const shownIds = new Set(visible.map(n => n.id));
     const edges = (rejected ? [...s.graph.wires,{id:'rejected',rejected:true,from:rejected.from.id,fromPort:rejected.from.port,to:rejected.to.id,toPort:rejected.to.port}] : s.graph.wires)
       .filter(w => shownIds.has(w.from) && shownIds.has(w.to)).map(w => {
@@ -632,17 +665,33 @@
       '--canvas-accent': A.accent,
       '--canvas-accent-dim': A.accentDim
     }}>
-  <div data-canvas-overlay="" className="spread" style={{
+  {/* Spec d9c0d514 top bar: name · Unsaved, + Add node, ⋯, Run. Everything else lives in ⋯; saving is autosave plus Ctrl+S. */}
+  <div data-canvas-overlay="" data-canvas-topbar="" className="spread" style={{
         position:'absolute',top:12,left:u.libraryOpen ? 264 : 16,right:16,zIndex:12,
         padding: '6px 12px',borderRadius:6,border:'1px solid '+A.lineSoft,
-        background: A.bgPanel
-      }}><div className="flex"><button className="button-reset muted" onClick={event => executeAction("projects.ds_screens.NavigateHome.5", {u}, event)}>{s.graph.name} ›</button>{parent ? <Btn variant="controls" sm ghost onClick={event => executeAction("projects.ds_screens.Parent.6", {parent,s,setParent,setSelected}, event)}>← Parent</Btn> : <button className="button-reset flex" title="Workflows" aria-label="Workflows" onClick={event => executeAction("projects.ds_screens.Graphs.7", {u}, event)}>{s.graph.name}<window.AHIcon name="more" size={16} /></button>}<Chip>{visible.length} nodes</Chip>{/^(Solved|Updated by)/.test(s.sync||'') && <Chip data-solve-status>{s.sync}</Chip>}<Btn variant="controls" sm ghost onClick={event => executeAction("projects.ds_screens.Workspaces.8", {u}, event)}>Workspaces · {s.workspaces.length}</Btn></div><div className="flex"><Btn variant="controls" sm onClick={event=>executeAction("projects.controls.activate",{handler:()=>u.act(()=>api.newSession())},event)}>New</Btn><Btn variant="controls" sm onClick={event=>executeAction("projects.controls.activate",{handler:()=>u.act(()=>api.openSession())},event)}>Open</Btn><Btn variant="controls" sm onClick={event=>executeAction("projects.controls.activate",{handler:()=>u.act(()=>api.saveSession())},event)}>Save</Btn><Btn variant="controls" sm onClick={event=>executeAction("projects.controls.activate",{handler:()=>u.act(()=>api.saveSessionAs())},event)}>Save as…</Btn><button className="icon-button" aria-label="Toggle Library" title="Library" aria-expanded={u.libraryOpen} onClick={event => executeAction("projects.ds_screens.ToggleLibrary.9", {u}, event)}><window.AHIcon name="library" /></button><select aria-label="Wire visibility" value={s.graph.wireVisibility || 'Visible'} onChange={e => u.act(() => api.setWireVisibility(e.target.value))}>{['Visible', 'Faint', 'Hidden'].map(x => <option key={x}>{x}</option>)}</select><Btn variant="controls" sm title="Group · Ctrl G" onClick={event => executeAction("projects.ds_screens.Group.10", {group}, event)} disabled={selected.length < 2}>Group</Btn><Btn variant="controls" sm onClick={event => executeAction("projects.ds_screens.Undo.11", {api,u}, event)} title="Undo · Ctrl Z">↶</Btn><Btn variant="controls" sm onClick={event => executeAction("projects.ds_screens.Redo.12", {api,u}, event)} title="Redo · Ctrl Shift Z">↷</Btn><Btn variant="controls" sm onClick={event => executeAction("projects.ds_screens.Arrange.13", {api,u}, event)}>Arrange</Btn><Btn variant="controls" sm onClick={event => executeAction("projects.ds_screens.SaveSkill.14", {u}, event)}>Save skill</Btn><Btn variant="controls" p sm onClick={event => executeAction("projects.ds_screens.Run.15", {api,u}, event)}>▶ Run</Btn></div></div>
+        background: A.bgPanel, fontSize: 13
+      }}><div className="flex"><button className="button-reset" title="Workflows" aria-label="Workflows" onClick={event => executeAction("projects.ds_screens.Graphs.7", {u}, event)}>{s.graph.name} · {s.sessionDirty === false ? 'Saved' : 'Unsaved'}</button>
+        {parent && <Btn variant="controls" sm ghost onClick={event => executeAction("projects.ds_screens.Parent.6", {parent,s,setParent,setSelected}, event)}>← Parent</Btn>}
+        {stale > 0 && <span data-solve-status="" style={{color: A.warn}}>{stale} out of date · Run</span>}</div>
+      <div className="flex" style={{position:'relative'}}><Btn variant="controls" sm onClick={event => executeAction("projects.ds_screens.AddANodeCtrlK.24", {u}, event)}>+ Add node</Btn>
+        <Btn variant="controls" sm ghost aria-label="More canvas actions" aria-expanded={more} onClick={event => executeAction('projects.controls.activate', {handler: () => setMore(!more)}, event)}>⋯</Btn>
+        <Btn variant="controls" p sm onClick={event => executeAction("projects.ds_screens.Run.15", {api,u}, event)}>▶ Run</Btn>
+        {more && <div role="menu" aria-label="Canvas actions" data-canvas-more="" onKeyDown={e => { if (e.key === 'Escape') setMore(false); }} style={{position:'absolute',right:0,top:'calc(100% + 6px)',display:'grid',minWidth:200,padding:6,gap:2,
+          background:A.bgPanel,border:'1px solid '+A.lineSoft,borderRadius:6,zIndex:20}}>{[
+            ['New', () => u.act(() => api.newSession())], ['Open…', () => u.act(() => api.openSession())], ['Save · Ctrl S', () => u.act(() => api.saveSession())],
+            ['Save as…', () => u.act(() => api.saveSessionAs())], ['Save as skill…', () => u.show('Save skill')], ['Workspaces · ' + s.workspaces.length, () => u.show('Workspaces')],
+            [(u.libraryOpen ? 'Hide' : 'Show') + ' Library', () => u.setLibraryOpen(v => !v)], ['Group · Ctrl G', group, selected.length < 2],
+            ['Undo · Ctrl Z', () => u.act(api.undo)], ['Redo · Ctrl Shift Z', () => u.act(api.redo)], ['Arrange', () => u.act(api.arrangeGraph)],
+            ['Wires: ' + (s.graph.wireVisibility || 'Visible') + ' → ' + ({Visible: 'Faint', Faint: 'Hidden', Hidden: 'Visible'})[s.graph.wireVisibility || 'Visible'],
+              () => u.act(() => api.setWireVisibility(({Visible: 'Faint', Faint: 'Hidden', Hidden: 'Visible'})[s.graph.wireVisibility || 'Visible']))],
+          ].map(([label, run, disabled]) => <button key={label} role="menuitem" type="button" className="button-reset listbutton" disabled={disabled} style={{textAlign:'left',padding:'6px 8px'}}
+            onClick={event => executeAction('projects.controls.activate', {handler: () => { setMore(false); return run(); }}, event)}>{label}</button>)}</div>}</div></div>
   <div style={{
         display: 'grid',
         gridTemplateColumns: (u.libraryOpen ? '248px ' : '') + 'minmax(0,1fr)' + (wire ? ' 320px' : ''),
         minHeight: 0
       }}>{u.libraryOpen && <window.UI.LibraryShelf onClose={() => u.setLibraryOpen(false)} />}
-   <div ref={area} className={'node-canvas' + (visible.some(n => n.status === 'Running') ? ' running-wires' : '')} tabIndex={0} aria-label="Workflow canvas" style={{position:'relative',minHeight:0}}
+   <div ref={area} className={'node-canvas' + (visible.some(n => n.status === 'Running') ? ' running-wires' : '')} tabIndex={0} aria-label="Workflow canvas" style={{position:'relative',minHeight:0,'--xy-selection-background-color':A.accent+'16','--xy-selection-border':'1px solid '+A.accent,'--xy-background-color':'transparent'}}
         title="Drag to select · Shift adds · Middle or Space-drag to pan · Wheel to zoom · Double-click to fit"
         onDoubleClick={e => { if (e.target.classList?.contains('react-flow__pane')) fit(); }}
         onDragOver={e => e.preventDefault()} onDrop={e => {
@@ -669,16 +718,11 @@
          u.show('Compatible nodes', {endpoint: {id: state.fromNode.id, side: state.fromHandle.type === 'source' ? 'out' : 'in', port: state.fromHandle.id}, position: toFlow(e)});
        }}
        onEdgeClick={(e, edge) => { if (edge.id !== 'rejected') { setWireId(edge.id); setSelected([]); } }}
-       onPaneClick={() => setWireId(null)}
+       onPaneClick={() => { setWireId(null); setRejected(null); }}
        selectionOnDrag panOnDrag={[1]} panActivationKeyCode="Space" multiSelectionKeyCode="Shift" selectionKeyCode={null} deleteKeyCode={null}
        zoomOnDoubleClick={false} connectionLineStyle={{stroke: A.cyan, strokeWidth: 2}} proOptions={{hideAttribution: true}} />
     </CanvasContext.Provider>
     <div data-canvas-overlay="" className="canvas-toolbar"><Btn variant="controls" sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom">{Math.round(zoom * 100)}%</button><Btn variant="controls" sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><Btn variant="controls" sm ghost onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</Btn></div>
-    <div data-canvas-overlay="" style={{
-            position: 'absolute',
-            top: 70,
-            left: 16
-          }}><Btn variant="controls" onClick={event => executeAction("projects.ds_screens.AddANodeCtrlK.24", {u}, event)}>/ Add a node · Ctrl K</Btn></div>
    </div>
    {wire && <aside className="pane inspector" style={{borderLeft:'1px solid '+A.line,padding:16}} aria-label="Wire">
      <div className="spread"><h2>Wire</h2><Btn variant="controls" sm ghost aria-label="Close wire" onClick={event=>executeAction('projects.controls.activate',{handler:()=>setWireId(null)},event)}>×</Btn></div>

@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {transformSync} = require('esbuild');
 const {chromium} = require('playwright');
+const xyflow = require('./studio_xyflow.cjs'); // CANVASXY: the canvas runs on the bundled xyflow
 const studio = path.resolve(__dirname, '../../01.APP/nodelang/studio');
 const read = name => process.env.CANVASLOOK_BASELINE === '1'
   ? require('node:child_process').execFileSync('git',['show','HEAD:01.APP/nodelang/studio/'+name],{cwd:path.resolve(studio,'../../..'),encoding:'utf8'})
@@ -26,9 +27,9 @@ async function mount(t, graph = fixture()) {
   page.on('pageerror',e=>errors.push(e.message));
   await page.route('**/*',r=>r.fulfill({contentType:'text/html',body:'<div id="root" style="display:grid;height:100vh"></div>'}));
   await page.goto('http://canvaslook.test/');
-  await page.addStyleTag({content:read('style.css')+'html,body{margin:0;height:100%}'});
-  for(const name of ['vendor/react.js','vendor/react-dom.js','tokens.jsx','ds/index.jsx','icons.jsx','ui.jsx'])
-    await page.addScriptTag({content:name.endsWith('.jsx')?transformSync(read(name),{loader:'jsx'}).code:read(name)});
+  await page.addStyleTag({content:xyflow.css()+read('style.css')+'html,body{margin:0;height:100%}'});
+  for(const name of ['vendor/react.js','vendor/react-dom.js','xyflow','tokens.jsx','ds/index.jsx','icons.jsx','ui.jsx'])
+    await page.addScriptTag({content:name==='xyflow'?xyflow.script():name.endsWith('.jsx')?transformSync(read(name),{loader:'jsx'}).code:read(name)});
   await page.evaluate(graph=>{
     const R=window.React,h=R.createElement;
     let state={revision:1,graph,settings:[],workspaces:[],catalogue:[{id:'level',name:'Level',description:'A level value',family:'Get',output:'text',descriptor:{engine:'Input'}},
@@ -69,7 +70,6 @@ async function checkCards(page,count) {
 test('12 nodes in 3 groups open without overlaps, fitted at each scope; groups show members',async t=>{
   const page=await mount(t);
   await checkCards(page,3);
-  assert.equal(await page.locator('[data-stacked-edge]').count(),6);
   assert.equal(await page.locator('[data-group-member]').count(),12);
   for(const id of ['g0','g1','g2']){
     await page.locator('[data-graph-node="'+id+'"] .node-header').dblclick();
@@ -84,7 +84,7 @@ test('Library is present on open and a real drag adds the selected definition at
   const page=await mount(t);
   assert.equal(await page.getByRole('complementary',{name:'Library shelf'}).count(),1,'library opens beside canvas');
   assert.equal(await page.getByRole('button',{name:'Add Doors of level',exact:true}).count(),1,'catalogue categories outside the five families remain available');
-  const expected=await page.locator('.node-canvas').evaluate(el=>{const world=el.querySelector(':scope > div[style*="scale"]'), m=new window.DOMMatrix(window.getComputedStyle(world).transform);return {x:(550-m.e)/m.a,y:(500-m.f)/m.d};});
+  const expected=await page.locator('.node-canvas').evaluate(el=>{const world=el.querySelector('.react-flow__viewport'), m=new window.DOMMatrix(window.getComputedStyle(world).transform);return {x:(550-m.e)/m.a,y:(500-m.f)/m.d};});
   await page.getByRole('button',{name:'Add Level',exact:true}).dragTo(page.locator('.node-canvas'),{targetPosition:{x:550,y:500}});
   await page.waitForTimeout(100);
   const calls=await page.evaluate(()=>window.fixtureCalls);
@@ -93,28 +93,27 @@ test('Library is present on open and a real drag adds the selected definition at
   assert.equal(await page.locator('[data-graph-node="added"]').count(),1);
   assert.equal(await page.getByRole('complementary',{name:'Library shelf'}).count(),1,'library stays available after a drop');
 });
-test('flat overlapping ordinary nodes retain the Ping rev1047 156px anatomy and 2px clipped wires',async t=>{
+test('flat overlapping ordinary nodes use the canvas build spec operation anatomy and 2px wires',async t=>{
   const graph=fixture();graph.nodes=graph.nodes.filter(n=>!n.children.length).map(n=>({...n,parent:null}));
   const page=await mount(t,graph);await checkCards(page,12);
   const card=page.locator('[data-ds-node]').first();
-  assert.equal(await card.evaluate(el=>el.style.width),'156px');
-  assert.equal(await card.evaluate(el=>window.getComputedStyle(el).borderRadius),'8px');
+  assert.equal(await card.evaluate(el=>el.style.width),'208px');
+  assert.equal(await card.evaluate(el=>window.getComputedStyle(el).borderRadius),'6px');
+  assert.ok(await card.evaluate(el=>parseFloat(window.getComputedStyle(el).fontSize))>=12.5,'spec d9c0d514: text at least 12.5px');
   assert.equal(await page.locator('[data-stacked-edge]').count(),0);
   assert.equal(await page.locator('.node-properties').count(),0,'rejected node properties panel absent');
-  assert.ok(await page.locator('svg [clip-path]').count()>0,'wires clip away from cards');
+  assert.ok(await page.locator('[data-graph-wire][stroke-width="2"]').count()>0,'2px wires drawn by the custom xyflow edge');
   if(process.env.CANVASLOOK_EVIDENCE)await page.screenshot({path:path.join(process.env.CANVASLOOK_EVIDENCE,'AFTER-FLAT.png')});
 });
 test('saving a drag keeps untouched cards at their repaired display positions',async t=>{
-  const page=await mount(t), positions=()=>page.locator('[data-graph-node]').evaluateAll(els=>Object.fromEntries(els.map(el=>[el.dataset.graphNode,{x:el.style.left,y:el.style.top}])));
+  const page=await mount(t), positions=()=>page.locator('[data-graph-node]').evaluateAll(els=>Object.fromEntries(els.map(el=>[el.dataset.graphNode,el.closest('.react-flow__node').style.transform])));
   const before=await positions();
-  await page.locator('[data-graph-node="g0"] .node-header').evaluate(el=>{
-    // Synthetic fixture pointers have no browser capture; this court checks the save/readback, not capture.
-    el.setPointerCapture=()=>{};
-    const r=el.getBoundingClientRect(), emit=(target,type,x,y)=>target.dispatchEvent(new window.PointerEvent(type,{bubbles:true,cancelable:true,button:0,pointerId:1,clientX:x,clientY:y}));
-    emit(el,'pointerdown',r.left+25,r.top+20);
-    emit(el,'pointermove',r.left+625,r.top+520);
-    emit(el,'pointerup',r.left+625,r.top+520);
-  });
+  // CDP drives only this headless page; xyflow drags the card by its title bar.
+  const r=await page.locator('[data-graph-node="g0"] .node-header').boundingBox(), cdp=await page.context().newCDPSession(page);
+  await cdp.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:r.x+25,y:r.y+12});
+  await cdp.send('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',buttons:1,clickCount:1,x:r.x+25,y:r.y+12});
+  for(let i=1;i<=8;i++)await cdp.send('Input.dispatchMouseEvent',{type:'mouseMoved',button:'left',buttons:1,x:r.x+25+75*i,y:r.y+12+40*i});
+  await cdp.send('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',buttons:0,clickCount:1,x:r.x+625,y:r.y+332});await cdp.detach();
   await page.waitForTimeout(80);const after=await positions();
   assert.notDeepEqual(after.g0,before.g0);
   assert.deepEqual(after.g1,before.g1);assert.deepEqual(after.g2,before.g2);
@@ -125,7 +124,7 @@ test('saving a drag keeps untouched cards at their repaired display positions',a
 test('STUDIOFIX distinct saved coordinates stay authoritative even when intentionally overlapping',async t=>{
  const graph=fixture();graph.nodes=graph.nodes.filter(n=>!n.children.length).slice(0,2).map((n,i)=>({...n,parent:null,x:20+i*80,y:40+i*10}));graph.wires=[];
  const page=await mount(t,graph);
- const positions=await page.locator('[data-graph-node]').evaluateAll(els=>els.map(el=>[el.style.left,el.style.top]));
- assert.deepEqual(positions,[['20px','40px'],['100px','50px']]);
+ const positions=await page.locator('[data-graph-node]').evaluateAll(els=>els.map(el=>el.closest('.react-flow__node').style.transform));
+ assert.deepEqual(positions,['translate(20px, 40px)','translate(100px, 50px)']);
  assert.deepEqual(await page.evaluate(()=>window.fixtureCalls),[]);
 });

@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {execFileSync} = require('node:child_process');
 const {chromium} = require('playwright');
+const xyflow = require('./studio_xyflow.cjs'); // CANVASXY: the canvas runs on the bundled xyflow
 const root = path.resolve(__dirname,'../..'), studio=path.join(root,'01.APP/nodelang/studio');
 const baseline=process.env.FIXCANVAS_BASELINE==='1';
 const read=name=>baseline ? execFileSync('git',['show','4d8dd06b:01.APP/nodelang/studio/'+name],{cwd:root,encoding:'utf8',maxBuffer:5*1024*1024}) : fs.readFileSync(path.join(studio,name),'utf8');
@@ -15,8 +16,8 @@ test('30 shell tab returns preserve the actual Canvas, viewport, selection and d
   page.on('pageerror',e=>errors.push(e.message));
   await page.route('**/*',route=>route.fulfill({contentType:'text/html',body:'<div id="root" style="height:100vh;display:grid"></div>'}));
   await page.goto('http://fixcanvas.test');
-  await page.addStyleTag({content:read('style.css')+'html,body{margin:0;height:100%}'});
-  for(const name of ['vendor/react.js','vendor/react-dom.js','tokens.jsx','ds/index.jsx','icons.jsx'])await page.addScriptTag({content:script(name)});
+  await page.addStyleTag({content:xyflow.css()+read('style.css')+'html,body{margin:0;height:100%}'});
+  for(const name of ['vendor/react.js','vendor/react-dom.js','xyflow','tokens.jsx','ds/index.jsx','icons.jsx'])await page.addScriptTag({content:name==='xyflow'?xyflow.script():script(name)});
   await page.evaluate(()=>{
     window.calls=[];
     const prop={label:'value',value:'initial',editable:true,editor:'text',relation:'value'};
@@ -50,7 +51,7 @@ test('30 shell tab returns preserve the actual Canvas, viewport, selection and d
   await page.locator('[data-graph-node="n0"] .node-header').click();
   const canvas=page.locator('.node-canvas');await canvas.press('+');
   await page.locator('[data-graph-node="n0"] input').fill('unconfirmed draft');
-  const before=await page.locator('.node-canvas > div[style*="scale"]').getAttribute('style');
+  const before=await page.locator('.node-canvas .react-flow__viewport').getAttribute('style');
   await page.getByRole('button',{name:'Home',exact:true}).click();
   await page.evaluate(()=>{window.calls=[];});
   await page.getByRole('button',{name:'Canvas',exact:true}).click();
@@ -63,7 +64,7 @@ test('30 shell tab returns preserve the actual Canvas, viewport, selection and d
     freshnessCalls:window.calls.filter(c=>c.url.includes('since_revision')),calls:window.calls,returns:window.returnTimes,
     selected:document.querySelector('[data-graph-node="n0"] [data-ds-node]')?.style.outline,
     draft:document.querySelector('[data-graph-node="n0"] input')?.value,nodes:document.querySelectorAll('[data-graph-node]').length}));
-  const after=await page.locator('.node-canvas > div[style*="scale"]').getAttribute('style');
+  const after=await page.locator('.node-canvas .react-flow__viewport').getAttribute('style');
   if(process.env.FIXCANVAS_EVIDENCE){await page.screenshot({path:path.join(process.env.FIXCANVAS_EVIDENCE,baseline?'BEFORE.png':'AFTER.png')});fs.writeFileSync(path.join(process.env.FIXCANVAS_EVIDENCE,baseline?'RED-RENDERED.json':'GREEN-RENDERED.json'),JSON.stringify({...result,before,after,errors},null,2));}
   assert.deepEqual(errors,[]);assert.equal(result.same,true,JSON.stringify(result));assert.equal(result.loadingFrames,0);
   assert.equal(result.graphCalls.length,0,JSON.stringify(result.graphCalls));assert.equal(after,before);assert.equal(result.nodes,50);

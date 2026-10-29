@@ -35,6 +35,8 @@
     <RevitYear Condition="'$(RevitYear)' == ''">2025</RevitYear>
     <UseLocalRevitApi Condition="Exists('$(RevitInstallDir)\RevitAPI.dll')">true</UseLocalRevitApi>
     <UseLocalRevitApi Condition="'$(UseLocalRevitApi)' == ''">false</UseLocalRevitApi>
+    <!-- RevitIds: ElementId.Value / new ElementId(long) from 2024 on. -->
+    <DefineConstants Condition="$(RevitYear) &gt;= 2024">$(DefineConstants);REVIT2024_OR_GREATER</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup Condition="'$(UseLocalRevitApi)' == 'true'">

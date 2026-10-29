@@ -37,6 +37,7 @@ EVIDENCE: dict[str, dict[str, str]] = {
     "vision.sketch_lines": {"unavailable": "OpenCV (cv2), which the desktop requirements.txt does not install"},
     "cad.read_lines": {"court": _OWN + "test_cad_read_lines_reads_the_shipped_sample_dxf"},
     "cad.host_lines": {"unavailable": "a running AutoCAD that loads the ArchHub AutoCAD add-in (acad-mcp); setup registers the add-in (ApplicationPlugins bundle) only after its custody review, and courts do not launch hosts"},
+    "autocad.verb": {"court": "tests_replica/test_host_verbs_folded.py::test_autocad_verb_node_runs_the_verb_and_carries_the_wired_approval"},
     "lines.watch": {"court": _OWN + "test_lines_watch_passes_real_lines_through"},
     "revit.sessions": {"unavailable": _REVIT_SCRATCH},
     "revit.read": {"unavailable": _REVIT_SCRATCH},

@@ -187,11 +187,11 @@ var rows = new List<Dictionary<string,object>>();
 foreach (var e in col) {
     var fi = e as FamilyInstance;
     rows.Add(new Dictionary<string,object>{
-        {"id", e.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(e.Id)},
         {"name", e.Name},
         {"family", (fi!=null && fi.Symbol!=null && fi.Symbol.Family!=null)
                    ? fi.Symbol.Family.Name : ""},
-        {"level", (e.LevelId!=null && e.LevelId.IntegerValue>0
+        {"level", (e.LevelId!=null && global::RevitMCPCore.RevitIds.Of(e.LevelId)>0
                    && Doc.GetElement(e.LevelId)!=null)
                    ? Doc.GetElement(e.LevelId).Name : ""}
     });
@@ -203,7 +203,7 @@ var col = new FilteredElementCollector(Doc).OfClass(typeof(Family));
 var rows = new List<Dictionary<string,object>>();
 foreach (Family f in col) {
     rows.Add(new Dictionary<string,object>{
-        {"id", f.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(f.Id)},
         {"name", f.Name},
         {"category", (f.FamilyCategory!=null) ? f.FamilyCategory.Name : ""}
     });
@@ -215,7 +215,7 @@ var col = new FilteredElementCollector(Doc).OfClass(typeof(Level));
 var rows = new List<Dictionary<string,object>>();
 foreach (Level lv in col) {
     rows.Add(new Dictionary<string,object>{
-        {"id", lv.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(lv.Id)},
         {"name", lv.Name},
         {"elevation", lv.Elevation}
     });
@@ -234,7 +234,7 @@ foreach (var e in col) {
     try { var np = e.get_Parameter(BuiltInParameter.ROOM_NUMBER);
           if (np != null) num = np.AsString() ?? ""; } catch {}
     rows.Add(new Dictionary<string,object>{
-        {"id", e.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(e.Id)},
         {"name", e.Name},
         {"number", num},
         {"area", area}
@@ -248,7 +248,7 @@ foreach (var id in UIDoc.Selection.GetElementIds()) {
     var e = Doc.GetElement(id);
     if (e == null) continue;
     rows.Add(new Dictionary<string,object>{
-        {"id", id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(id)},
         {"name", e.Name},
         {"category", (e.Category!=null) ? e.Category.Name : ""}
     });
@@ -260,7 +260,7 @@ var col = new FilteredElementCollector(Doc).OfClass(typeof(ViewSheet));
 var rows = new List<Dictionary<string,object>>();
 foreach (ViewSheet sh in col) {
     rows.Add(new Dictionary<string,object>{
-        {"id", sh.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(sh.Id)},
         {"number", sh.SheetNumber},
         {"name", sh.Name}
     });
@@ -273,7 +273,7 @@ var rows = new List<Dictionary<string,object>>();
 foreach (View v in col) {
     if (v.IsTemplate) continue;
     rows.Add(new Dictionary<string,object>{
-        {"id", v.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(v.Id)},
         {"name", v.Name},
         {"view_type", v.ViewType.ToString()},
         {"is_template", v.IsTemplate}
@@ -291,11 +291,11 @@ foreach (var e in col) {
     try { var lp = e.get_Parameter(BuiltInParameter.CURVE_ELEM_LENGTH);
           if (lp != null) len = lp.AsDouble(); } catch {}
     rows.Add(new Dictionary<string,object>{
-        {"id", e.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(e.Id)},
         {"name", e.Name},
         {"type", (w!=null && w.WallType!=null) ? w.WallType.Name : ""},
         {"length", len},
-        {"level", (e.LevelId!=null && e.LevelId.IntegerValue>0
+        {"level", (e.LevelId!=null && global::RevitMCPCore.RevitIds.Of(e.LevelId)>0
                    && Doc.GetElement(e.LevelId)!=null)
                    ? Doc.GetElement(e.LevelId).Name : ""}
     });
@@ -320,11 +320,11 @@ var rows = new List<Dictionary<string,object>>();
 foreach (var e in col) {
     var fi = e as FamilyInstance;
     rows.Add(new Dictionary<string,object>{
-        {"id", e.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(e.Id)},
         {"name", e.Name},
         {"family", (fi!=null && fi.Symbol!=null && fi.Symbol.Family!=null)
                    ? fi.Symbol.Family.Name : ""},
-        {"level", (e.LevelId!=null && e.LevelId.IntegerValue>0
+        {"level", (e.LevelId!=null && global::RevitMCPCore.RevitIds.Of(e.LevelId)>0
                    && Doc.GetElement(e.LevelId)!=null)
                    ? Doc.GetElement(e.LevelId).Name : ""}
     });
@@ -339,7 +339,7 @@ var rows = new List<Dictionary<string,object>>();
 foreach (ViewSchedule v in new FilteredElementCollector(Doc).OfClass(typeof(ViewSchedule))) {
     if (v.IsTemplate) continue;
     rows.Add(new Dictionary<string,object>{
-        {"id", v.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(v.Id)},
         {"name", v.Name},
         {"is_revision_schedule", v.IsTitleblockRevisionSchedule}
     });
@@ -352,7 +352,7 @@ foreach (var e in new FilteredElementCollector(Doc).OfCategory(BuiltInCategory.O
     var r = e as Revision;
     if (r == null) continue;
     rows.Add(new Dictionary<string,object>{
-        {"id", r.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(r.Id)},
         {"sequence", r.SequenceNumber},
         {"description", r.Description ?? ""},
         {"date", r.RevisionDate ?? ""},
@@ -366,7 +366,7 @@ result = rows;
     'revit.list_grids': """
 var rows = new List<Dictionary<string,object>>();
 foreach (Grid g in new FilteredElementCollector(Doc).OfClass(typeof(Grid))) {
-    rows.Add(new Dictionary<string,object>{ {"id", g.Id.IntegerValue}, {"name", g.Name} });
+    rows.Add(new Dictionary<string,object>{ {"id", global::RevitMCPCore.RevitIds.Of(g.Id)}, {"name", g.Name} });
 }
 result = rows;
 """,
@@ -389,7 +389,7 @@ foreach (RevitLinkType t in new FilteredElementCollector(Doc).OfClass(typeof(Rev
     string status = "";
     try { status = t.GetLinkedFileStatus().ToString(); } catch {}
     rows.Add(new Dictionary<string,object>{
-        {"id", t.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(t.Id)},
         {"name", t.Name},
         {"status", status},
         {"nested", t.IsNestedLink}
@@ -401,14 +401,14 @@ result = rows;
 var rows = new List<Dictionary<string,object>>();
 foreach (CADLinkType t in new FilteredElementCollector(Doc).OfClass(typeof(CADLinkType))) {
     rows.Add(new Dictionary<string,object>{
-        {"id", t.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(t.Id)},
         {"name", t.Name},
         {"linked", t.IsExternalFileReference()}
     });
 }
 foreach (ImportInstance i in new FilteredElementCollector(Doc).OfClass(typeof(ImportInstance))) {
     rows.Add(new Dictionary<string,object>{
-        {"id", i.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(i.Id)},
         {"name", i.Category != null ? i.Category.Name : "(import)"},
         {"linked", i.IsLinked}
     });
@@ -420,7 +420,7 @@ var rows = new List<Dictionary<string,object>>();
 foreach (View v in new FilteredElementCollector(Doc).OfClass(typeof(View))) {
     if (!v.IsTemplate) continue;
     rows.Add(new Dictionary<string,object>{
-        {"id", v.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(v.Id)},
         {"name", v.Name},
         {"view_type", v.ViewType.ToString()}
     });
@@ -430,7 +430,7 @@ result = rows;
     'revit.list_phases': """
 var rows = new List<Dictionary<string,object>>();
 foreach (Phase p in Doc.Phases) {
-    rows.Add(new Dictionary<string,object>{ {"id", p.Id.IntegerValue}, {"name", p.Name} });
+    rows.Add(new Dictionary<string,object>{ {"id", global::RevitMCPCore.RevitIds.Of(p.Id)}, {"name", p.Name} });
 }
 result = rows;
 """,
@@ -443,7 +443,7 @@ foreach (DesignOption o in new FilteredElementCollector(Doc).OfClass(typeof(Desi
         if (sp != null) { var s = Doc.GetElement(sp.AsElementId()); if (s != null) setName = s.Name; }
     } catch {}
     rows.Add(new Dictionary<string,object>{
-        {"id", o.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(o.Id)},
         {"name", o.Name},
         {"option_set", setName},
         {"primary", o.IsPrimary}
@@ -455,7 +455,7 @@ result = rows;
 var rows = new List<Dictionary<string,object>>();
 foreach (Group g in new FilteredElementCollector(Doc).OfClass(typeof(Group))) {
     rows.Add(new Dictionary<string,object>{
-        {"id", g.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(g.Id)},
         {"name", g.Name},
         {"members", g.GetMemberIds().Count}
     });
@@ -467,7 +467,7 @@ var rows = new List<Dictionary<string,object>>();
 foreach (Family f in new FilteredElementCollector(Doc).OfClass(typeof(Family))) {
     if (!f.IsInPlace) continue;
     rows.Add(new Dictionary<string,object>{
-        {"id", f.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(f.Id)},
         {"name", f.Name},
         {"category", f.FamilyCategory != null ? f.FamilyCategory.Name : ""}
     });
@@ -481,7 +481,7 @@ var rows = new List<Dictionary<string,object>>();
 foreach (var e in col) {
     var s = e as FamilySymbol;
     rows.Add(new Dictionary<string,object>{
-        {"id", e.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(e.Id)},
         {"name", e.Name},
         {"family", (s != null && s.Family != null) ? s.Family.Name : ""}
     });
@@ -492,7 +492,7 @@ result = rows;
 var rows = new List<Dictionary<string,object>>();
 foreach (Material m in new FilteredElementCollector(Doc).OfClass(typeof(Material))) {
     rows.Add(new Dictionary<string,object>{
-        {"id", m.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(m.Id)},
         {"name", m.Name},
         {"material_class", m.MaterialClass ?? ""}
     });
@@ -518,10 +518,10 @@ while (it.MoveNext()) {
 result = rows;
 """,
     'revit.list_views_not_on_sheet': """
-var placed = new HashSet<int>();
+var placed = new HashSet<long>();
 foreach (var vp in new FilteredElementCollector(Doc).OfClass(typeof(Viewport))) {
     var v = vp as Viewport;
-    if (v != null) placed.Add(v.ViewId.IntegerValue);
+    if (v != null) placed.Add(global::RevitMCPCore.RevitIds.Of(v.ViewId));
 }
 var rows = new List<Dictionary<string,object>>();
 foreach (View v in new FilteredElementCollector(Doc).OfClass(typeof(View))) {
@@ -529,9 +529,9 @@ foreach (View v in new FilteredElementCollector(Doc).OfClass(typeof(View))) {
     if (v.ViewType == ViewType.DrawingSheet) continue;
     if (v.ViewType == ViewType.ProjectBrowser) continue;
     if (v.ViewType == ViewType.SystemBrowser) continue;
-    if (placed.Contains(v.Id.IntegerValue)) continue;
+    if (placed.Contains(global::RevitMCPCore.RevitIds.Of(v.Id))) continue;
     rows.Add(new Dictionary<string,object>{
-        {"id", v.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(v.Id)},
         {"name", v.Name},
         {"view_type", v.ViewType.ToString()}
     });
@@ -553,7 +553,7 @@ foreach (var e in col) {
     try { var np = e.get_Parameter(BuiltInParameter.ROOM_NUMBER);
           if (np != null) num = np.AsString() ?? ""; } catch {}
     rows.Add(new Dictionary<string,object>{
-        {"id", e.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(e.Id)},
         {"name", e.Name},
         {"number", num},
         {"reason", (r != null && r.Location == null) ? "not placed" : "zero area"}
@@ -582,7 +582,7 @@ foreach (TextNote t in new FilteredElementCollector(Doc).OfClass(typeof(TextNote
     string body = t.Text ?? "";
     if (body.Length > 120) body = body.Substring(0, 120);
     rows.Add(new Dictionary<string,object>{
-        {"id", t.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(t.Id)},
         {"view", owner},
         {"text", body.Replace((char)13, (char)32).Replace((char)10, (char)32)}
     });
@@ -598,7 +598,7 @@ foreach (var e in col) {
     try { var p = e.get_Parameter(BuiltInParameter.HOST_AREA_COMPUTED);
           if (p != null) area = p.AsDouble(); } catch {}
     rows.Add(new Dictionary<string,object>{
-        {"id", e.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(e.Id)},
         {"type", e.Name},
         {"level", (e.LevelId != null && Doc.GetElement(e.LevelId) != null)
                   ? Doc.GetElement(e.LevelId).Name : ""},
@@ -613,7 +613,7 @@ var col = new FilteredElementCollector(Doc)
 var rows = new List<Dictionary<string,object>>();
 foreach (var e in col) {
     rows.Add(new Dictionary<string,object>{
-        {"id", e.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(e.Id)},
         {"type", e.Name},
         {"level", (e.LevelId != null && Doc.GetElement(e.LevelId) != null)
                   ? Doc.GetElement(e.LevelId).Name : ""}
@@ -627,7 +627,7 @@ var col = new FilteredElementCollector(Doc)
 var rows = new List<Dictionary<string,object>>();
 foreach (var e in col) {
     rows.Add(new Dictionary<string,object>{
-        {"id", e.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(e.Id)},
         {"type", e.Name},
         {"level", (e.LevelId != null && Doc.GetElement(e.LevelId) != null)
                   ? Doc.GetElement(e.LevelId).Name : ""}
@@ -642,7 +642,7 @@ foreach (var category in new[] { BuiltInCategory.OST_Columns,
     foreach (var e in new FilteredElementCollector(Doc)
              .OfCategory(category).WhereElementIsNotElementType()) {
         rows.Add(new Dictionary<string,object>{
-            {"id", e.Id.IntegerValue},
+            {"id", global::RevitMCPCore.RevitIds.Of(e.Id)},
             {"type", e.Name},
             {"category", e.Category != null ? e.Category.Name : ""},
             {"level", (e.LevelId != null && Doc.GetElement(e.LevelId) != null)
@@ -658,7 +658,7 @@ var col = new FilteredElementCollector(Doc)
 var rows = new List<Dictionary<string,object>>();
 foreach (var e in col) {
     rows.Add(new Dictionary<string,object>{
-        {"id", e.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(e.Id)},
         {"type", e.Name},
         {"level", (e.LevelId != null && Doc.GetElement(e.LevelId) != null)
                   ? Doc.GetElement(e.LevelId).Name : ""}
@@ -672,7 +672,7 @@ var col = new FilteredElementCollector(Doc)
 var rows = new List<Dictionary<string,object>>();
 foreach (var e in col) {
     rows.Add(new Dictionary<string,object>{
-        {"id", e.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(e.Id)},
         {"type", e.Name},
         {"level", (e.LevelId != null && Doc.GetElement(e.LevelId) != null)
                   ? Doc.GetElement(e.LevelId).Name : ""}
@@ -688,7 +688,7 @@ foreach (var e in new FilteredElementCollector(Doc)
     if (wall == null || wall.WallType == null) continue;
     if (wall.WallType.Kind != WallKind.Curtain) continue;
     rows.Add(new Dictionary<string,object>{
-        {"id", e.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(e.Id)},
         {"type", wall.WallType.Name},
         {"level", (e.LevelId != null && Doc.GetElement(e.LevelId) != null)
                   ? Doc.GetElement(e.LevelId).Name : ""}
@@ -702,7 +702,7 @@ foreach (WallType t in new FilteredElementCollector(Doc).OfClass(typeof(WallType
     double width = 0;
     try { width = t.Width; } catch {}
     rows.Add(new Dictionary<string,object>{
-        {"id", t.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(t.Id)},
         {"name", t.Name},
         {"kind", t.Kind.ToString()},
         {"width", width}
@@ -724,7 +724,7 @@ foreach (var e in col) {
         if (a != null && a.AreaScheme != null) scheme = a.AreaScheme.Name;
     } catch {}
     rows.Add(new Dictionary<string,object>{
-        {"id", e.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(e.Id)},
         {"name", e.Name},
         {"scheme", scheme},
         {"area", area}
@@ -738,7 +738,7 @@ var lines = Doc.Settings.Categories.get_Item(BuiltInCategory.OST_Lines);
 if (lines != null) {
     foreach (Category c in lines.SubCategories) {
         rows.Add(new Dictionary<string,object>{
-            {"id", c.Id.IntegerValue},
+            {"id", global::RevitMCPCore.RevitIds.Of(c.Id)},
             {"name", c.Name},
             {"line_weight", c.GetLineWeight(GraphicsStyleType.Projection) ?? 0}
         });
@@ -772,7 +772,7 @@ foreach (ParameterFilterElement f in new FilteredElementCollector(Doc)
     int categories = 0;
     try { foreach (var c in f.GetCategories()) { categories++; } } catch {}
     rows.Add(new Dictionary<string,object>{
-        {"id", f.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(f.Id)},
         {"name", f.Name},
         {"categories", categories}
     });
@@ -784,7 +784,7 @@ var col = new FilteredElementCollector(Doc)
     .OfCategory(BuiltInCategory.OST_VolumeOfInterest).WhereElementIsNotElementType();
 var rows = new List<Dictionary<string,object>>();
 foreach (var e in col) {
-    rows.Add(new Dictionary<string,object>{ {"id", e.Id.IntegerValue}, {"name", e.Name} });
+    rows.Add(new Dictionary<string,object>{ {"id", global::RevitMCPCore.RevitIds.Of(e.Id)}, {"name", e.Name} });
 }
 result = rows;
 """,
@@ -795,7 +795,7 @@ foreach (ReferencePlane p in new FilteredElementCollector(Doc)
     string owner = "";
     try { var v = Doc.GetElement(p.OwnerViewId); if (v != null) owner = v.Name; } catch {}
     rows.Add(new Dictionary<string,object>{
-        {"id", p.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(p.Id)},
         {"name", p.Name},
         {"view", owner}
     });
@@ -809,7 +809,7 @@ var rows = new List<Dictionary<string,object>>();
 foreach (var e in col) {
     var s = e as FamilySymbol;
     rows.Add(new Dictionary<string,object>{
-        {"id", e.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(e.Id)},
         {"type", e.Name},
         {"family", (s != null && s.Family != null) ? s.Family.Name : ""}
     });
@@ -823,7 +823,7 @@ var rows = new List<Dictionary<string,object>>();
 foreach (var e in col) {
     var s = e as FamilySymbol;
     rows.Add(new Dictionary<string,object>{
-        {"id", e.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(e.Id)},
         {"type", e.Name},
         {"family", (s != null && s.Family != null) ? s.Family.Name : ""}
     });
@@ -836,7 +836,7 @@ var col = new FilteredElementCollector(Doc)
 var rows = new List<Dictionary<string,object>>();
 foreach (var e in col) {
     rows.Add(new Dictionary<string,object>{
-        {"id", e.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(e.Id)},
         {"type", e.Name},
         {"level", (e.LevelId != null && Doc.GetElement(e.LevelId) != null)
                   ? Doc.GetElement(e.LevelId).Name : ""}
@@ -852,7 +852,7 @@ foreach (var category in new[] { BuiltInCategory.OST_Furniture,
     foreach (var e in new FilteredElementCollector(Doc)
              .OfCategory(category).WhereElementIsNotElementType()) {
         rows.Add(new Dictionary<string,object>{
-            {"id", e.Id.IntegerValue},
+            {"id", global::RevitMCPCore.RevitIds.Of(e.Id)},
             {"type", e.Name},
             {"category", e.Category != null ? e.Category.Name : ""}
         });
@@ -868,7 +868,7 @@ foreach (Dimension d in new FilteredElementCollector(Doc).OfClass(typeof(Dimensi
     string over = "";
     try { over = d.ValueOverride ?? ""; } catch {}
     rows.Add(new Dictionary<string,object>{
-        {"id", d.Id.IntegerValue},
+        {"id", global::RevitMCPCore.RevitIds.Of(d.Id)},
         {"view", owner},
         {"type", d.Name},
         {"overridden", over.Length > 0}
@@ -881,7 +881,7 @@ var rows = new List<Dictionary<string,object>>();
 foreach (View v in new FilteredElementCollector(Doc).OfClass(typeof(View))) {
     if (v.IsTemplate) continue;
     if (v.ViewType != ViewType.Legend) continue;
-    rows.Add(new Dictionary<string,object>{ {"id", v.Id.IntegerValue}, {"name", v.Name} });
+    rows.Add(new Dictionary<string,object>{ {"id", global::RevitMCPCore.RevitIds.Of(v.Id)}, {"name", v.Name} });
 }
 result = rows;
 """,
@@ -890,6 +890,468 @@ result = rows;
 
 def _cs_string(value: object) -> str:
     return json.dumps("" if value is None else str(value))
+
+
+# ---------------------------------------------------------------------------
+# Geometry verbs, folded from bimwright rvt-mcp (Apache-2.0, toolset
+# "geometry", src/shared/Handlers/Geometry + Workflows/ClashDetectionHandler,
+# upstream 4affa2aaae3f6e7b798d1067ce7e324ad92f0f91). Copyright the bimwright
+# authors; licence text in 03.TOOLS/packaging/windows/licenses/
+# bimwright-rvt-mcp-Apache-2.0.txt. Modified: re-written as scripts for the
+# one signed /exec broker (no second server, no named pipe), metric in and out.
+#
+# Each script = _GEO_PRELUDE + declarations built from checked arguments (data
+# only, every value a C# literal) + a fixed body. Ids go through the one helper
+# in the broker Core (RevitMCPCore.RevitIds, compiled per Revit year).
+_GEO_PRELUDE = r"""
+const double FT = 0.3048;
+Func<ElementId,long> idv = global::RevitMCPCore.RevitIds.Of;
+Func<long,ElementId> eid = global::RevitMCPCore.RevitIds.Id;
+Func<XYZ,double[]> pt = gp => new double[] { Math.Round(gp.X * FT, 4), Math.Round(gp.Y * FT, 4), Math.Round(gp.Z * FT, 4) };
+Func<double,double,double,XYZ> xyz = (gx, gy, gz) => new XYZ(gx / FT, gy / FT, gz / FT);
+Func<string,ViewDetailLevel> detail = gs => { ViewDetailLevel gd; return Enum.TryParse(gs, true, out gd) ? gd : ViewDetailLevel.Medium; };
+Func<Category,string,bool> isCategory = (gcat, gn) => gcat != null && (gcat.Name == gn || ((BuiltInCategory)idv(gcat.Id)).ToString() == gn);
+List<Solid> SolidsOf(GeometryElement gge, List<Solid> gacc) {
+    if (gge == null) return gacc;
+    foreach (GeometryObject go in gge) {
+        var gsol = go as Solid;
+        if (gsol != null && gsol.Faces.Size > 0) gacc.Add(gsol);
+        var ginst = go as GeometryInstance;
+        if (ginst != null) SolidsOf(ginst.GetInstanceGeometry(), gacc);
+    }
+    return gacc;
+}
+Func<Element,ViewDetailLevel,List<Solid>> solids = (gel, glvl) =>
+    SolidsOf(gel.get_Geometry(new Options { DetailLevel = glvl, ComputeReferences = true }), new List<Solid>());
+Func<Element,View,BoundingBoxXYZ> box = (gel, gview) => gel.get_BoundingBox(gview);
+var missing = new List<long>();
+"""
+
+
+def _ids(arguments: Mapping[str, object], *keys: str) -> list[int]:
+    """Element ids from rows ({"id": n}) or plain numbers; anything else is refused."""
+    found: list[int] = []
+    for key in keys or ("elements", "element_ids"):
+        value = arguments.get(key)
+        if value in (None, ""):
+            continue
+        for row in value if isinstance(value, (list, tuple)) else [value]:
+            raw = row.get("id") if isinstance(row, Mapping) else row
+            if isinstance(raw, bool):
+                raise ValueError("element id must be a number, not %r" % (raw,))
+            try:
+                found.append(int(str(raw).strip()))
+            except (TypeError, ValueError):
+                raise ValueError("element id must be a number, not %r" % (raw,)) from None
+    return found
+
+
+def _num(arguments: Mapping[str, object], key: str, default: float | None = None) -> float:
+    value = arguments.get(key, default)
+    if value in (None, ""):
+        if default is None:
+            raise ValueError("%s is required" % key)
+        value = default
+    if isinstance(value, bool):
+        raise ValueError("%s must be a number" % key)
+    number = float(value)
+    if number != number or number in (float("inf"), float("-inf")):
+        raise ValueError("%s must be a finite number" % key)
+    return number
+
+
+def _cs_double(value: float) -> str:
+    return repr(float(value))  # finite only (_num); "1e-05" is a valid C# double literal
+
+
+def _cs_strings(values: object) -> str:
+    if isinstance(values, str):
+        values = [part.strip() for part in values.split(",")]
+    items = [_cs_string(v) for v in (values or []) if str(v).strip()]
+    return "new string[] { %s }" % ", ".join(items)
+
+
+def _cs_longs(values: list[int]) -> str:
+    return "new long[] { %s }" % ", ".join("%dL" % v for v in values)
+
+
+def _flag(arguments: Mapping[str, object], key: str, default: bool = False) -> str:
+    value = arguments.get(key, default)
+    if isinstance(value, str):
+        value = value.strip().lower() in ("1", "true", "yes", "on")
+    return "true" if bool(value) else "false"
+
+
+def _choice(arguments: Mapping[str, object], key: str, allowed: tuple[str, ...]) -> str:
+    value = str(arguments.get(key) or allowed[0]).strip().lower()
+    if value not in allowed:
+        raise ValueError("%s must be one of %s" % (key, ", ".join(allowed)))
+    return _cs_string(value)
+
+
+def _view_decl(arguments: Mapping[str, object], key: str = "view_id") -> str:
+    ids = _ids(arguments, key)
+    return "long viewId = %dL;\nView view = viewId > 0 ? Doc.GetElement(eid(viewId)) as View : null;\n" % (
+        ids[0] if ids else -1)
+
+
+def _geo_bounding_box(a):
+    ids = _ids(a)
+    if not ids:
+        raise ValueError("elements are required")
+    return "var ids = %s;\n%sbool withTransform = %s;\n" % (_cs_longs(ids), _view_decl(a), _flag(a, "include_transform")) + r"""
+var rows = new List<Dictionary<string,object>>();
+foreach (var id in ids) {
+    var el = Doc.GetElement(eid(id));
+    if (el == null) { missing.Add(id); continue; }
+    var bb = box(el, view);
+    if (bb == null) { rows.Add(new Dictionary<string,object>{ {"id", id}, {"name", el.Name}, {"bounding_box", null} }); continue; }
+    var row = new Dictionary<string,object>{
+        {"id", id}, {"name", el.Name},
+        {"category", el.Category != null ? el.Category.Name : ""},
+        {"min_m", pt(bb.Min)}, {"max_m", pt(bb.Max)},
+        {"size_m", new double[] { Math.Round((bb.Max.X - bb.Min.X) * FT, 4), Math.Round((bb.Max.Y - bb.Min.Y) * FT, 4), Math.Round((bb.Max.Z - bb.Min.Z) * FT, 4) }}
+    };
+    if (withTransform && bb.Transform != null)
+        row["transform"] = new Dictionary<string,object>{ {"origin_m", pt(bb.Transform.Origin)},
+            {"basis_x", new double[] { bb.Transform.BasisX.X, bb.Transform.BasisX.Y, bb.Transform.BasisX.Z }},
+            {"basis_y", new double[] { bb.Transform.BasisY.X, bb.Transform.BasisY.Y, bb.Transform.BasisY.Z }} };
+    rows.Add(row);
+}
+result = new Dictionary<string,object>{ {"elements", rows}, {"missing", missing} };
+"""
+
+
+def _geo_geometry(a):
+    ids = _ids(a)
+    if not ids:
+        raise ValueError("elements are required")
+    limit = int(_num(a, "sample_limit", 20))
+    if not 0 <= limit <= 500:
+        raise ValueError("sample_limit must be 0-500")
+    return "var ids = %s;\nvar lvl = detail(%s);\nbool samples = %s;\nint sampleLimit = %d;\n" % (
+        _cs_longs(ids), _cs_string(a.get("detail_level") or "Medium"), _flag(a, "include_samples"), limit) + r"""
+var rows = new List<Dictionary<string,object>>();
+foreach (var id in ids) {
+    var el = Doc.GetElement(eid(id));
+    if (el == null) { missing.Add(id); continue; }
+    var ss = solids(el, lvl);
+    int faces = 0, edges = 0; double volume = 0, area = 0;
+    var points = new List<double[]>();
+    foreach (var s in ss) {
+        faces += s.Faces.Size; edges += s.Edges.Size; volume += s.Volume;
+        foreach (Face f in s.Faces) area += f.Area;
+        if (samples) foreach (Edge e in s.Edges) {
+            if (points.Count >= sampleLimit) break;
+            points.Add(pt(e.AsCurve().GetEndPoint(0)));
+        }
+    }
+    var row = new Dictionary<string,object>{
+        {"id", id}, {"name", el.Name}, {"category", el.Category != null ? el.Category.Name : ""},
+        {"solids", ss.Count}, {"faces", faces}, {"edges", edges},
+        {"volume_m3", Math.Round(volume * FT * FT * FT, 6)}, {"area_m2", Math.Round(area * FT * FT, 6)}
+    };
+    var loc = el.Location as LocationPoint;
+    if (loc != null) row["location_m"] = pt(loc.Point);
+    var lc = el.Location as LocationCurve;
+    if (lc != null) { row["start_m"] = pt(lc.Curve.GetEndPoint(0)); row["end_m"] = pt(lc.Curve.GetEndPoint(1)); row["length_m"] = Math.Round(lc.Curve.Length * FT, 4); }
+    if (samples) row["samples_m"] = points;
+    rows.Add(row);
+}
+result = new Dictionary<string,object>{ {"elements", rows}, {"missing", missing} };
+"""
+
+
+def _geo_distance(a):
+    first, second = _ids(a, "element_id_1"), _ids(a, "element_id_2")
+    if len(first) != 1 or len(second) != 1:
+        raise ValueError("element_id_1 and element_id_2 each name one element")
+    return "long idA = %dL, idB = %dL;\nstring strategy = %s;\n" % (
+        first[0], second[0], _choice(a, "strategy", ("bbox", "location"))) + r"""
+var ea = Doc.GetElement(eid(idA)); var eb = Doc.GetElement(eid(idB));
+if (ea == null || eb == null) throw new Exception("element not found: " + (ea == null ? idA : idB));
+Func<Element,XYZ> anchor = el => {
+    var lp = el.Location as LocationPoint; if (lp != null) return lp.Point;
+    var lc = el.Location as LocationCurve; if (lc != null) return lc.Curve.Evaluate(0.5, true);
+    var b = el.get_BoundingBox(null); return b == null ? null : (b.Min + b.Max) / 2;
+};
+double d; string used = strategy;
+var ba = ea.get_BoundingBox(null); var bbx = eb.get_BoundingBox(null);
+if (strategy == "bbox" && ba != null && bbx != null) {
+    double dx = Math.Max(0, Math.Max(ba.Min.X - bbx.Max.X, bbx.Min.X - ba.Max.X));
+    double dy = Math.Max(0, Math.Max(ba.Min.Y - bbx.Max.Y, bbx.Min.Y - ba.Max.Y));
+    double dz = Math.Max(0, Math.Max(ba.Min.Z - bbx.Max.Z, bbx.Min.Z - ba.Max.Z));
+    d = Math.Sqrt(dx * dx + dy * dy + dz * dz);
+} else {
+    var pa = anchor(ea); var pb = anchor(eb);
+    if (pa == null || pb == null) throw new Exception("an element has no location or bounding box");
+    d = pa.DistanceTo(pb); used = "location";
+}
+result = new Dictionary<string,object>{ {"element_id_1", idA}, {"element_id_2", idB}, {"strategy", used}, {"distance_m", Math.Round(d * FT, 4)} };
+"""
+
+
+def _geo_clash(a):
+    max_pairs, max_results = int(_num(a, "max_pairs", 1000)), int(_num(a, "max_results", 100))
+    if not (1 <= max_pairs <= 100000 and 1 <= max_results <= 10000):
+        raise ValueError("max_pairs 1-100000 and max_results 1-10000")
+    cats_a, cats_b = _cs_strings(a.get("categories_a")), _cs_strings(a.get("categories_b"))
+    if cats_a.endswith("{  }") or cats_b.endswith("{  }"):
+        raise ValueError("categories_a and categories_b are required")
+    return "var catsA = %s;\nvar catsB = %s;\n%sstring strategy = %s;\nint maxPairs = %d, maxResults = %d;\n" % (
+        cats_a, cats_b, _view_decl(a), _choice(a, "strategy", ("bbox_then_solid", "bbox")),
+        max_pairs, max_results) + r"""
+Func<string[],List<Element>> pick = names => {
+    var col = view != null ? new FilteredElementCollector(Doc, view.Id) : new FilteredElementCollector(Doc);
+    return col.WhereElementIsNotElementType().Where(e => names.Any(n => isCategory(e.Category, n))).ToList();
+};
+var A = pick(catsA); var B = pick(catsB);
+var clashes = new List<Dictionary<string,object>>(); int tested = 0; bool truncated = false;
+foreach (var ea in A) {
+    var ba = ea.get_BoundingBox(null); if (ba == null) continue;
+    var filter = new BoundingBoxIntersectsFilter(new Outline(ba.Min, ba.Max));
+    foreach (var eb in B) {
+        if (idv(eb.Id) == idv(ea.Id)) continue;
+        if (catsA.SequenceEqual(catsB) && idv(eb.Id) < idv(ea.Id)) continue;
+        if (!filter.PassesFilter(eb)) continue;
+        if (++tested > maxPairs) { truncated = true; break; }
+        double overlap = -1;
+        if (strategy == "bbox_then_solid") {
+            overlap = 0;
+            foreach (var sa in solids(ea, ViewDetailLevel.Medium)) foreach (var sb in solids(eb, ViewDetailLevel.Medium)) {
+                try { var i = BooleanOperationsUtils.ExecuteBooleanOperation(sa, sb, BooleanOperationsType.Intersect); if (i != null) overlap += i.Volume; } catch {}
+            }
+            if (overlap <= 1e-9) continue;
+        }
+        clashes.Add(new Dictionary<string,object>{ {"element_a", idv(ea.Id)}, {"category_a", ea.Category.Name},
+            {"element_b", idv(eb.Id)}, {"category_b", eb.Category.Name},
+            {"overlap_m3", overlap < 0 ? (object)null : Math.Round(overlap * FT * FT * FT, 6)} });
+        if (clashes.Count >= maxResults) { truncated = true; break; }
+    }
+    if (truncated) break;
+}
+result = new Dictionary<string,object>{ {"strategy", strategy}, {"pairs_tested", Math.Min(tested, maxPairs)}, {"clashes", clashes}, {"truncated", truncated} };
+"""
+
+
+def _geo_raycast(a):
+    view_ids = _ids(a, "view3d_id")
+    if len(view_ids) != 1:
+        raise ValueError("view3d_id names one 3D view")
+    coords = [_num(a, k) for k in ("x", "y", "z", "dir_x", "dir_y", "dir_z")]
+    if not any(coords[3:]):
+        raise ValueError("the direction must not be zero")
+    return "long view3dId = %dL;\nvar origin = xyz(%s, %s, %s);\nvar dir = new XYZ(%s, %s, %s).Normalize();\nvar cats = %s;\ndouble maxDistance = %s;\n" % (
+        view_ids[0], *(_cs_double(c) for c in coords), _cs_strings(a.get("categories")),
+        _cs_double(_num(a, "max_distance", 1000.0))) + r"""
+var v3 = Doc.GetElement(eid(view3dId)) as View3D;
+if (v3 == null) throw new Exception("view3d_id is not a 3D view");
+var ri = new ReferenceIntersector(v3) { FindReferencesInRevitLinks = false };
+var hits = ri.Find(origin, dir).Where(h => h.Proximity * FT <= maxDistance).OrderBy(h => h.Proximity);
+foreach (var h in hits) {
+    var el = Doc.GetElement(h.GetReference().ElementId);
+    if (el == null) continue;
+    if (cats.Length > 0 && !cats.Any(n => isCategory(el.Category, n))) continue;
+    result = new Dictionary<string,object>{ {"hit", true}, {"id", idv(el.Id)}, {"name", el.Name},
+        {"category", el.Category != null ? el.Category.Name : ""}, {"distance_m", Math.Round(h.Proximity * FT, 4)},
+        {"point_m", pt(h.GetReference().GlobalPoint)} };
+    break;
+}
+if (result == null) result = new Dictionary<string,object>{ {"hit", false} };
+"""
+
+
+def _geo_in_volume(a):
+    limit = int(_num(a, "limit", 200))
+    if not 1 <= limit <= 10000:
+        raise ValueError("limit must be 1-10000")
+    rooms = _ids(a, "room_id")
+    volume = a.get("volume") or {}
+    if rooms:
+        bounds = "Outline outline = null;\nlong roomId = %dL;\n" % rooms[0]
+    elif isinstance(volume, Mapping) and volume.get("min") and volume.get("max"):
+        lo = [float(v) for v in volume["min"]][:3]
+        hi = [float(v) for v in volume["max"]][:3]
+        if len(lo) != 3 or len(hi) != 3:
+            raise ValueError("volume min and max are [x, y, z] in metres")
+        bounds = "Outline outline = new Outline(xyz(%s, %s, %s), xyz(%s, %s, %s));\nlong roomId = -1L;\n" % tuple(
+            _cs_double(v) for v in (*map(min, lo, hi), *map(max, lo, hi)))
+    else:
+        raise ValueError("give room_id or volume {min:[x,y,z], max:[x,y,z]} in metres")
+    return bounds + "var cats = %s;\n%sstring match = %s;\nint limit = %d;\n" % (
+        _cs_strings(a.get("categories")), _view_decl(a), _choice(a, "match", ("intersects", "inside")), limit) + r"""
+if (outline == null) {
+    var room = Doc.GetElement(eid(roomId));
+    var rb = room == null ? null : room.get_BoundingBox(null);
+    if (rb == null) throw new Exception("room_id has no bounding box");
+    outline = new Outline(rb.Min, rb.Max);
+}
+ElementFilter f = match == "inside" ? (ElementFilter)new BoundingBoxIsInsideFilter(outline) : new BoundingBoxIntersectsFilter(outline);
+var col = view != null ? new FilteredElementCollector(Doc, view.Id) : new FilteredElementCollector(Doc);
+var rows = new List<Dictionary<string,object>>(); bool truncated = false;
+foreach (var el in col.WhereElementIsNotElementType().WherePasses(f)) {
+    if (el.Category == null || (cats.Length > 0 && !cats.Any(n => isCategory(el.Category, n)))) continue;
+    if (rows.Count >= limit) { truncated = true; break; }
+    rows.Add(new Dictionary<string,object>{ {"id", idv(el.Id)}, {"name", el.Name}, {"category", el.Category.Name} });
+}
+result = new Dictionary<string,object>{ {"match", match}, {"min_m", pt(outline.MinimumPoint)}, {"max_m", pt(outline.MaximumPoint)}, {"elements", rows}, {"truncated", truncated} };
+"""
+
+
+def _geo_measure(kind: str):
+    def build(a):
+        ids = _ids(a)
+        if not ids:
+            raise ValueError("elements are required")
+        return "var ids = %s;\nvar lvl = detail(%s);\nbool wantVolume = %s;\n" % (
+            _cs_longs(ids), _cs_string(a.get("detail_level") or "Medium"),
+            "true" if kind == "volume" else "false") + r"""
+var rows = new List<Dictionary<string,object>>(); double total = 0;
+foreach (var id in ids) {
+    var el = Doc.GetElement(eid(id));
+    if (el == null) { missing.Add(id); continue; }
+    double v = 0;
+    foreach (var s in solids(el, lvl)) {
+        if (wantVolume) v += s.Volume;
+        else foreach (Face f in s.Faces) v += f.Area;
+    }
+    v = wantVolume ? v * FT * FT * FT : v * FT * FT;
+    total += v;
+    rows.Add(new Dictionary<string,object>{ {"id", id}, {"name", el.Name}, {wantVolume ? "volume_m3" : "area_m2", Math.Round(v, 6)} });
+}
+result = new Dictionary<string,object>{ {"elements", rows}, {wantVolume ? "total_volume_m3" : "total_area_m2", Math.Round(total, 6)}, {"missing", missing} };
+"""
+    return build
+
+
+def _geo_project(a):
+    ids = _ids(a, "element_id")
+    if len(ids) != 1:
+        raise ValueError("element_id names one element")
+    face = int(_num(a, "face_index", 0))
+    if face < 0:
+        raise ValueError("face_index must be 0 or more")
+    return "long id = %dL;\nvar p = xyz(%s, %s, %s);\nint faceIndex = %d;\nvar lvl = detail(%s);\n" % (
+        ids[0], *(_cs_double(_num(a, k)) for k in ("x", "y", "z")), face,
+        _cs_string(a.get("detail_level") or "Medium")) + r"""
+var el = Doc.GetElement(eid(id));
+if (el == null) throw new Exception("element not found: " + id);
+var faces = new List<Face>();
+foreach (var s in solids(el, lvl)) foreach (Face f in s.Faces) faces.Add(f);
+if (faceIndex >= faces.Count) throw new Exception("face_index " + faceIndex + " is beyond the " + faces.Count + " faces");
+var r = faces[faceIndex].Project(p);
+result = r == null
+    ? new Dictionary<string,object>{ {"projected", false}, {"face_count", faces.Count} }
+    : new Dictionary<string,object>{ {"projected", true}, {"point_m", pt(r.XYZPoint)}, {"distance_m", Math.Round(r.Distance * FT, 4)},
+        {"uv", new double[] { r.UVPoint.U, r.UVPoint.V }}, {"face_count", faces.Count} };
+"""
+
+
+def _geo_overlapping(a):
+    category = str(a.get("category") or "").strip()
+    if not category:
+        raise ValueError("category is required")
+    max_pairs, max_results = int(_num(a, "max_pairs", 1000)), int(_num(a, "max_results", 100))
+    if not (1 <= max_pairs <= 100000 and 1 <= max_results <= 10000):
+        raise ValueError("max_pairs 1-100000 and max_results 1-10000")
+    return "string category = %s;\n%sint maxPairs = %d, maxResults = %d;\n" % (
+        _cs_string(category), _view_decl(a), max_pairs, max_results) + r"""
+var col = view != null ? new FilteredElementCollector(Doc, view.Id) : new FilteredElementCollector(Doc);
+var els = col.WhereElementIsNotElementType().Where(e => isCategory(e.Category, category)).ToList();
+var pairs = new List<Dictionary<string,object>>(); int tested = 0; bool truncated = false;
+for (int i = 0; i < els.Count && !truncated; i++) {
+    var bi = els[i].get_BoundingBox(null); if (bi == null) continue;
+    for (int j = i + 1; j < els.Count; j++) {
+        var bj = els[j].get_BoundingBox(null); if (bj == null) continue;
+        if (++tested > maxPairs) { truncated = true; break; }
+        double ox = Math.Min(bi.Max.X, bj.Max.X) - Math.Max(bi.Min.X, bj.Min.X);
+        double oy = Math.Min(bi.Max.Y, bj.Max.Y) - Math.Max(bi.Min.Y, bj.Min.Y);
+        double oz = Math.Min(bi.Max.Z, bj.Max.Z) - Math.Max(bi.Min.Z, bj.Min.Z);
+        if (ox <= 0 || oy <= 0 || oz <= 0) continue;
+        pairs.Add(new Dictionary<string,object>{ {"element_a", idv(els[i].Id)}, {"element_b", idv(els[j].Id)},
+            {"overlap_box_m3", Math.Round(ox * oy * oz * FT * FT * FT, 6)} });
+        if (pairs.Count >= maxResults) { truncated = true; break; }
+    }
+}
+result = new Dictionary<string,object>{ {"category", category}, {"elements", els.Count}, {"pairs_tested", Math.Min(tested, maxPairs)}, {"overlaps", pairs}, {"truncated", truncated} };
+"""
+
+
+def _geo_centroid(a):
+    ids = _ids(a)
+    if not ids:
+        raise ValueError("elements are required")
+    return "var ids = %s;\nstring strategy = %s;\n" % (
+        _cs_longs(ids), _choice(a, "strategy", ("solid_then_bbox", "bbox", "solid"))) + r"""
+var rows = new List<Dictionary<string,object>>();
+foreach (var id in ids) {
+    var el = Doc.GetElement(eid(id));
+    if (el == null) { missing.Add(id); continue; }
+    XYZ c = null; string used = "";
+    if (strategy != "bbox") {
+        double vol = 0; XYZ sum = XYZ.Zero;
+        foreach (var s in solids(el, ViewDetailLevel.Medium)) {
+            if (s.Volume <= 1e-9) continue;
+            sum += s.ComputeCentroid() * s.Volume; vol += s.Volume;
+        }
+        if (vol > 0) { c = sum / vol; used = "solid"; }
+    }
+    if (c == null && strategy != "solid") {
+        var b = el.get_BoundingBox(null);
+        if (b != null) { c = (b.Min + b.Max) / 2; used = "bbox"; }
+    }
+    rows.Add(new Dictionary<string,object>{ {"id", id}, {"name", el.Name}, {"strategy", used}, {"centroid_m", c == null ? null : pt(c)} });
+}
+result = new Dictionary<string,object>{ {"elements", rows}, {"missing", missing} };
+"""
+
+
+def _geo_complexity(a):
+    ids = _ids(a)
+    limit = int(_num(a, "limit", 200))
+    if not 1 <= limit <= 10000:
+        raise ValueError("limit must be 1-10000")
+    cats = _cs_strings(a.get("categories"))
+    if not ids and cats.endswith("{  }"):
+        raise ValueError("give elements or categories")
+    return "var ids = %s;\nvar cats = %s;\n%svar lvl = detail(%s);\nint limit = %d;\n" % (
+        _cs_longs(ids), cats, _view_decl(a), _cs_string(a.get("detail_level") or "Medium"), limit) + r"""
+IEnumerable<Element> pool;
+if (ids.Length > 0) pool = ids.Select(i => Doc.GetElement(eid(i))).Where(e => e != null);
+else {
+    var col = view != null ? new FilteredElementCollector(Doc, view.Id) : new FilteredElementCollector(Doc);
+    pool = col.WhereElementIsNotElementType().Where(e => cats.Any(n => isCategory(e.Category, n)));
+}
+var rows = new List<Dictionary<string,object>>(); bool truncated = false;
+foreach (var el in pool) {
+    if (rows.Count >= limit) { truncated = true; break; }
+    int faces = 0, edges = 0, curved = 0; var ss = solids(el, lvl);
+    foreach (var s in ss) {
+        faces += s.Faces.Size; edges += s.Edges.Size;
+        foreach (Face f in s.Faces) if (!(f is PlanarFace)) curved++;
+    }
+    string band = faces == 0 ? "none" : faces <= 12 ? "simple" : faces <= 200 ? "moderate" : "complex";
+    rows.Add(new Dictionary<string,object>{ {"id", idv(el.Id)}, {"name", el.Name}, {"category", el.Category != null ? el.Category.Name : ""},
+        {"solids", ss.Count}, {"faces", faces}, {"curved_faces", curved}, {"edges", edges}, {"complexity", band} });
+}
+result = new Dictionary<string,object>{ {"elements", rows.OrderByDescending(r => (int)r["faces"]).ToList()}, {"truncated", truncated} };
+"""
+
+
+_GEOMETRY_VERBS = {
+    "revit.get_element_bounding_box": _geo_bounding_box,
+    "revit.get_element_geometry": _geo_geometry,
+    "revit.measure_distance_between_elements": _geo_distance,
+    "revit.clash_detection": _geo_clash,
+    "revit.raycast_from_point": _geo_raycast,
+    "revit.find_elements_in_volume": _geo_in_volume,
+    "revit.compute_element_volume": _geo_measure("volume"),
+    "revit.compute_element_area": _geo_measure("area"),
+    "revit.project_point_onto_face": _geo_project,
+    "revit.find_overlapping_elements": _geo_overlapping,
+    "revit.get_element_centroid": _geo_centroid,
+    "revit.analyze_geometry_complexity": _geo_complexity,
+}
 
 
 def _effect_arguments(arguments: Mapping[str, object]) -> dict:
@@ -914,6 +1376,8 @@ def _require_write_grant(op_id: str, arguments: Mapping[str, object]) -> Mapping
 
 
 def _script_for(op_id: str, arguments: Mapping[str, object]) -> str | None:
+    if op_id in _GEOMETRY_VERBS:
+        return _GEO_PRELUDE + _GEOMETRY_VERBS[op_id](arguments)
     if op_id == "revit.elements_of_category":
         category_name = _cs_string(arguments.get("category"))
         return """
@@ -924,7 +1388,7 @@ foreach (Category cat in Doc.Settings.Categories) {
     var col = new FilteredElementCollector(Doc).OfCategoryId(cat.Id).WhereElementIsNotElementType();
     foreach (var e in col) {
         rows.Add(new Dictionary<string,object>{
-            {"id", e.Id.IntegerValue}, {"name", e.Name},
+            {"id", global::RevitMCPCore.RevitIds.Of(e.Id)}, {"name", e.Name},
             {"category", e.Category != null ? e.Category.Name : ""}
         });
     }
@@ -946,7 +1410,7 @@ string parameterName = %s;
 var wanted = new HashSet<int>(new int[] { %s });
 var rows = new List<Dictionary<string,object>>();
 foreach (int id in wanted) {
-    var e = Doc.GetElement(new ElementId(id));
+    var e = Doc.GetElement(global::RevitMCPCore.RevitIds.Id(id));
     if (e == null) continue;
     var p = e.LookupParameter(parameterName);
     rows.Add(new Dictionary<string,object>{
@@ -973,14 +1437,14 @@ string parameterValue = %s;
 var wanted = new HashSet<int>(new int[] { %s });
 var rows = new List<Dictionary<string,object>>();
 foreach (int id in wanted) {
-    var e = Doc.GetElement(new ElementId(id));
+    var e = Doc.GetElement(global::RevitMCPCore.RevitIds.Id(id));
     if (e == null) continue;
     var p = e.LookupParameter(parameterName);
     if (p == null || p.IsReadOnly) continue;
     bool changed = false;
     if (p.StorageType == StorageType.String) changed = p.Set(parameterValue);
     else changed = p.SetValueString(parameterValue);
-    rows.Add(new Dictionary<string,object>{{ {"id", id}, {"name", e.Name}, {"changed", changed} }});
+    rows.Add(new Dictionary<string,object>{ {"id", id}, {"name", e.Name}, {"changed", changed} });
 }
 result = rows;
 """ % (name, value, id_list)
@@ -996,7 +1460,7 @@ foreach (var pair in new [] { %s }) {
     var sheet = ViewSheet.Create(Doc, ElementId.InvalidElementId);
     if (pair[0].Length > 0) sheet.SheetNumber = pair[0];
     if (pair[1].Length > 0) sheet.Name = pair[1];
-    rows.Add(new Dictionary<string,object>{{ {"id", sheet.Id.IntegerValue}, {"number", sheet.SheetNumber}, {"name", sheet.Name} }});
+    rows.Add(new Dictionary<string,object>{ {"id", global::RevitMCPCore.RevitIds.Of(sheet.Id)}, {"number", sheet.SheetNumber}, {"name", sheet.Name} });
 }
 result = rows;
 """ % entries
@@ -1034,14 +1498,14 @@ Func<string,int,string> applyIndexFormat = (pattern, number) => {
         });
 };
 for (int index = 0; index < wanted.Length; index++) {
-    var e = Doc.GetElement(new ElementId(wanted[index]));
+    var e = Doc.GetElement(global::RevitMCPCore.RevitIds.Id(wanted[index]));
     if (e == null) continue;
     string number = applyIndexFormat(numberPattern, index + 1);
     string name = applyIndexFormat(namePattern, index + 1);
     var numberParam = e.LookupParameter("Sheet Number") ?? e.LookupParameter("Number");
     if (number.Length > 0 && numberParam != null && !numberParam.IsReadOnly) numberParam.Set(number);
     if (name.Length > 0) e.Name = name;
-    rows.Add(new Dictionary<string,object>{{ {"id", e.Id.IntegerValue}, {"number", number}, {"name", e.Name} }});
+    rows.Add(new Dictionary<string,object>{ {"id", global::RevitMCPCore.RevitIds.Of(e.Id)}, {"number", number}, {"name", e.Name} });
 }
 result = rows;
 """ % (number_pattern, name_pattern, id_list)
@@ -1110,7 +1574,7 @@ foreach (var seg in data) {
     var wall = Wall.Create(Doc, line, level.Id, false);
     var hp = wall.get_Parameter(BuiltInParameter.WALL_USER_HEIGHT_PARAM);
     if (hp != null) hp.Set(heightMm / 304.8);
-    built.Add(wall.Id.IntegerValue);
+    built.Add(global::RevitMCPCore.RevitIds.Of(wall.Id));
 }
 result = built;
 """
@@ -1173,12 +1637,13 @@ def authoring(script: str, transaction: str, params: Mapping[str, object], *, ti
 def invoke(op_id: str, arguments: Mapping[str, object]) -> dict:
     """Carry out one declared Revit operation against a live session."""
     write_grant = _require_write_grant(op_id, arguments) if op_id in _REVIT_WRITE_OPS else None
-    sessions = live_sessions()
+    # Arguments are checked into the script before any host is asked.
     script = _script_for(op_id, arguments)
     if script is None:
         raise RevitUnreachable(
             "this adapter does not yet carry out %s" % op_id
         )
+    sessions = live_sessions()
     session = _session_for(arguments.get("instance"), sessions)
     answer = _execute(session, script, "ArchHub write" if write_grant else "ArchHub read")
     if answer.get("status") != "ok":

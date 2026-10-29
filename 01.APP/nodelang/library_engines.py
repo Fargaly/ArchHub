@@ -1216,15 +1216,15 @@ LIBRARY_ITEMS_WITHOUT_ENGINE.pop("o_pdf", None)
 
 _TAG_ROOMS = """
 var view = Doc.ActiveView;
-var already = new HashSet<int>();
+var already = new HashSet<long>();
 foreach (Element e in new FilteredElementCollector(Doc, view.Id).OfClass(typeof(SpatialElementTag))) {
-    var rt = e as Autodesk.Revit.DB.Architecture.RoomTag; if (rt != null && rt.Room != null) already.Add(rt.Room.Id.IntegerValue);
+    var rt = e as Autodesk.Revit.DB.Architecture.RoomTag; if (rt != null && rt.Room != null) already.Add(global::RevitMCPCore.RevitIds.Of(rt.Room.Id));
 }
 int tagged = 0, skipped = 0;
 // The broker runs this inside the transaction it named; a second Start here would throw.
 foreach (Element e in new FilteredElementCollector(Doc, view.Id).OfCategory(BuiltInCategory.OST_Rooms).WhereElementIsNotElementType()) {
     var room = e as Autodesk.Revit.DB.Architecture.Room;
-    if (room == null || room.Area <= 0 || already.Contains(room.Id.IntegerValue)) { skipped++; continue; }
+    if (room == null || room.Area <= 0 || already.Contains(global::RevitMCPCore.RevitIds.Of(room.Id))) { skipped++; continue; }
     var lp = room.Location as LocationPoint;
     if (lp == null) { skipped++; continue; }
     Doc.Create.NewRoomTag(new LinkElementId(room.Id), new UV(lp.Point.X, lp.Point.Y), view.Id);
@@ -1250,15 +1250,15 @@ var catName = %s;
 BuiltInCategory bic;
 if (!Enum.TryParse("OST_" + catName, out bic)) throw new Exception("unknown category " + catName);
 bool leader = %s;
-var already = new HashSet<int>();
+var already = new HashSet<long>();
 foreach (Element e in new FilteredElementCollector(Doc, view.Id).OfClass(typeof(IndependentTag))) {
     var it = e as IndependentTag; if (it == null) continue;
-    foreach (var id in it.GetTaggedLocalElementIds()) already.Add(id.IntegerValue);
+    foreach (var id in it.GetTaggedLocalElementIds()) already.Add(global::RevitMCPCore.RevitIds.Of(id));
 }
 int tagged = 0, skipped = 0;
 // The broker runs this inside the transaction it named; a second Start here would throw.
 foreach (Element e in new FilteredElementCollector(Doc, view.Id).OfCategory(bic).WhereElementIsNotElementType()) {
-    if (already.Contains(e.Id.IntegerValue)) { skipped++; continue; }
+    if (already.Contains(global::RevitMCPCore.RevitIds.Of(e.Id))) { skipped++; continue; }
     var bb = e.get_BoundingBox(view); if (bb == null) { skipped++; continue; }
     var c = (bb.Min + bb.Max) / 2;
     IndependentTag.Create(Doc, view.Id, new Reference(e), leader, TagMode.TM_ADDBY_CATEGORY, TagOrientation.Horizontal, c);

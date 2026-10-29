@@ -686,7 +686,7 @@ Gesture paint in the browser; committed state in the document.
 
 - **Authority:** [SPEC.md sections 7 and 11](./SPEC.md).
 - **Literature:** Pointer Events; WCAG 2.2.
-- **Court:** `02.TESTS/tests_replica/test_universal_ui_performance.py`, `02.TESTS/tests_replica/test_browser_graph_editor_court.py`.
+- **Court:** `02.TESTS/tests_replica/test_universal_ui_performance.py`.
 
 ## 14. Migration From the Retired Cell Graph
 

@@ -28,7 +28,8 @@ FAKE = textwrap.dedent('''
         def log_message(self, *a): pass
         def do_POST(self):
             self.rfile.read(int(self.headers.get("Content-Length") or 0)); n[0] += 1
-            body = json.dumps({"pid": os.getpid(), "n": n[0], "auth": self.headers.get("Authorization"),
+            body = json.dumps({"pid": os.getpid(), "n": n[0], "auth": self.headers.get("Authorization"), "sess": os.environ.get("CLAUDE_CODE_SESSION_ID"),
+                               "vendor": os.environ.get("ARCHHUB_COORDINATION_VENDOR"), "hdr": self.headers.get("X-ArchHub-Session"),
                                "origin": self.headers.get("Origin")}).encode()
             self.send_response(200); self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
@@ -45,7 +46,10 @@ def host(tmp_path):
     script = tmp_path / "fake_proxy.py"
     script.write_text(FAKE)
     spans = []
-    h = McpHost({"notion": {"command": "x"}, "screen": {"command": "y"}}, {"notion"}, "s3cret",
+    h = McpHost({"notion": {"command": "x"}, "screen": {"command": "y"},
+                 "connector": {"command": "z", "session_env": ["CLAUDE_CODE_SESSION_ID"],
+                               "agent_env": {"claude-code": {"ARCHHUB_COORDINATION_VENDOR": "claude"}}}},
+                {"notion"}, "s3cret",
                 [sys.executable, str(script)], LIMITS, span=spans.append).start()
     h.spans = spans
     yield h
@@ -65,7 +69,7 @@ def call(h, name, agent, token="ok", **headers):
 def test_nothing_runs_until_the_first_call(host):
     assert host.running() == []
     assert call(host, "notion", "codex")[0] == 200
-    assert host.running() == ["notion"]
+    assert host.running() == [("notion",)]
 
 
 def test_stateless_server_is_one_process_for_all_agents(host):
@@ -82,7 +86,7 @@ def test_stateful_server_gets_a_copy_per_agent_with_no_crosstalk(host):
 
 def test_idle_upstream_is_reaped_and_restarts_on_the_next_call(host):
     first = json.loads(call(host, "notion", "codex")[1])["pid"]
-    assert host.reap(now=1e12) == ["notion"] and host.running() == []
+    assert host.reap(now=1e12) == [("notion",)] and host.running() == []
     assert json.loads(call(host, "notion", "codex")[1])["pid"] != first
     assert [e["event"] for e in host.spans] == ["start", "stop", "start"]
 
@@ -95,6 +99,63 @@ def test_token_and_origin_are_enforced_and_the_token_never_reaches_the_server(ho
     assert host.running() == [], "refused calls must not start anything"
     seen = json.loads(call(host, "notion", "codex")[1])
     assert seen["auth"] is None and seen["origin"] is None
+
+
+def session_call(h, session, agent="claude-code"):
+    port = h.httpd.server_address[1]
+    conn = http.client.HTTPConnection("127.0.0.1", port)
+    conn.request("POST", "/connector/%s/mcp" % agent, b"{}", {
+        "Authorization": "Bearer " + agent_token("s3cret", agent), "Host": "127.0.0.1:%d" % port,
+        "X-ArchHub-Session": session})
+    r = conn.getresponse()
+    return r.status, r.read()
+
+
+def test_connector_copy_is_per_session_and_gets_that_sessions_identity(host):
+    a = json.loads(session_call(host, "CLAUDE_CODE_SESSION_ID=aaa")[1])
+    b = json.loads(session_call(host, "CLAUDE_CODE_SESSION_ID=bbb")[1])
+    again = json.loads(session_call(host, "CLAUDE_CODE_SESSION_ID=aaa")[1])
+    assert (a["sess"], b["sess"]) == ("aaa", "bbb") and a["pid"] != b["pid"] and again["pid"] == a["pid"]
+    assert a["vendor"] == "claude" and a["hdr"] is None, "vendor comes from the agent route; header never forwarded"
+
+
+def test_session_header_is_validated(host):
+    assert session_call(host, "")[0] == 400
+    assert session_call(host, "PATH=aaa")[0] == 400  # only the spec's own variables
+    assert session_call(host, "CLAUDE_CODE_SESSION_ID=a b;c")[0] == 400
+    assert host.running() == []
+
+
+def test_launcher_sends_the_identity_it_was_spawned_with():
+    from nodelang.mcp_launcher import build_command
+    cmd = build_command(["http://u/connector/codex/mcp", "tok", "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID"],
+                        {"CODEX_THREAD_ID": "t-1"}, "py")
+    assert cmd == ["py", "-m", "mcp_proxy", "--headers", "Authorization", "Bearer tok",
+                   "--headers", "X-ArchHub-Session", "CODEX_THREAD_ID=t-1", "http://u/connector/codex/mcp"]
+    assert "X-ArchHub-Session" not in build_command(["u", "tok", "A"], {}, "py")
+
+
+def test_runtime_lives_outside_the_install_and_entries_point_at_it(tmp_path, monkeypatch):
+    install = tmp_path / "ArchHub"
+    (install / ".venv" / "Scripts").mkdir(parents=True)
+    (install / ".venv" / "Scripts" / "python.exe").write_bytes(b"MZ")
+    (install / "nodelang").mkdir()
+    (install / "nodelang" / "native_agent_mcp.py").write_text("x")
+    env = {"LOCALAPPDATA": str(tmp_path), "USERPROFILE": str(tmp_path)}
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    assert inst.managed_entry(install, tmp_path)["command"] == str(install / ".venv" / "Scripts" / "python.exe")
+    limits = {"port": 47831, "idle_seconds": 600, "start_timeout": 30, "upstream_timeout": 300,
+              "reap_every": 30, "poll": 0.2, "stop_wait": 5}
+    runtime = inst.deploy_runtime(install, env, limits)
+    (runtime / "venv" / "Scripts").mkdir(parents=True)
+    (runtime / "venv" / "Scripts" / "python.exe").write_bytes(b"MZ")
+    assert inst.ensure_runtime(env, popen=lambda *a, **k: None) == "started"
+    entry = inst.managed_entry(install, tmp_path, "codex")
+    assert str(install) not in json.dumps(entry) and str(runtime) in entry["command"]
+    assert entry["args"][3] == "http://127.0.0.1:47831/connector/codex/mcp"
+    assert "CODEX_THREAD_ID" in entry["args"] and entry["env"]["ARCHHUB_COORDINATION_VENDOR"] == "codex"
+    cfg = json.loads((runtime / "mcp-share.json").read_text())
+    assert cfg["servers"]["connector"]["command"].startswith(str(install))  # only the host's child uses the install
 
 
 # ---- the writer: six agents, copies only ------------------------------------------------------

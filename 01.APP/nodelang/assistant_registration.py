@@ -55,7 +55,7 @@ def install_roots(environment=None) -> tuple[Path, Path]:
 
 
 def codex_entry(install_root, state_root) -> dict:
-    entry = managed_entry(install_root, state_root)
+    entry = managed_entry(install_root, state_root, "codex")
     env = dict(entry["env"], ARCHHUB_COORDINATION_VENDOR="codex")
     return {"command": entry["command"], "args": list(entry["args"]),
             "env_vars": ["CODEX_THREAD_ID"], "env": env}
@@ -76,7 +76,7 @@ def mcp_server_spec(client: str, *, existing=None, environment=None) -> dict:
     elif client == "codex":
         entry = codex_entry(root, state)
     elif client in {"opencode", "antigravity", "antigravity-ide", "gemini-cli", "goose"}:
-        entry = managed_entry(root, state)
+        entry = managed_entry(root, state, client)
         entry["env"]["ARCHHUB_COORDINATION_VENDOR"] = client
         if client == "opencode":
             entry = {"type":"local", "enabled":True,
@@ -652,7 +652,7 @@ def migrate_gemini(install_root, state_root, *, consent, environment=None) -> di
     data = json.loads(raw.decode('utf-8'))
     servers = data.get('mcpServers') if type(data) is dict else None
     old = servers.get(SERVER_NAME) if type(servers) is dict else None
-    entry = managed_entry(install_root, state_root)
+    entry = managed_entry(install_root, state_root, 'gemini-cli')
     entry.pop('type', None)
     entry['env']['ARCHHUB_COORDINATION_VENDOR'] = 'gemini'
     if old == entry:

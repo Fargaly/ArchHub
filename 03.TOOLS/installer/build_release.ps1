@@ -694,6 +694,12 @@ foreach ($row in $snapshot.Rows) {
 }
 Assert-CandidateSources $snapshot
 $selectedRoot = Join-Path $output 'source/selected'
+# The snapshot holds tracked files only; the packed runtime (gitignored, packed above) joins it here
+# for the installer's ..\packed\* source.
+Copy-Item -LiteralPath $packedRuntime -Destination (Join-Path $selectedRoot 'packed') -Recurse -ErrorAction Stop
+if (-not (Test-Path -LiteralPath (Join-Path $selectedRoot 'packed/stamp.json') -PathType Leaf)) {
+    throw 'The packed runtime has no stamp.json; no release without the packed runtime.'
+}
 
 # Apply the existing portability gate to shipped code, not tests or private
 # workspace areas. A refusal needs a source repair, never a gate bypass.
@@ -823,6 +829,11 @@ if ($BrokerReviewPath) {
 $goosePayload = Join-Path $output 'goose-payload'
 & $PythonPath -E -s (Join-Path $selectedRoot 'packaging/windows/stage_goose.py') $GooseArchivePath $goosePayload
 if ($LASTEXITCODE -ne 0) { throw 'Pinned Goose staging failed; no installer was compiled.' }
+foreach ($name in 'site.zip', 'stdlib.zip', 'stamp.json') {
+    if (-not (Test-Path -LiteralPath (Join-Path $selectedRoot "packed/$name") -PathType Leaf)) {
+        throw "The installer snapshot lacks packed/$name; no installer was compiled."
+    }
+}
 & $compiler "/DBuildId=$BuildId" "/DRequirementsSha256=$requirementsSha" "/DBuildMetadataPath=$buildMetadataPath" "/DNodeRuntimePath=$node" "/DNodeLicensePath=$nodeLicense" "/DGoosePayloadPath=$goosePayload" "/DCompilerPayloadPath=$(Join-Path $selectedRoot 'runtime/acompiler')" "/DWheelhousePath=$wheelhouse" "/DHostPayloadPath=$hostPayload" "/O$output" $installer
 if ($LASTEXITCODE -ne 0) { throw "Selected installer compilation failed with exit code $LASTEXITCODE." }
 if ((Get-FileHash -LiteralPath $node -Algorithm SHA256).Hash.ToLowerInvariant() -cne $nodeRuntimeSha) {

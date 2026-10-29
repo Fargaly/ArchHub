@@ -9099,8 +9099,6 @@
         "01.APP/nodelang/studio/surfaces.jsx",
         "01.APP/nodelang/studio/tokens.jsx",
         "01.APP/nodelang/studio/ui.jsx",
-        "01.APP/nodelang/studio/vendor/xyflow.css",
-        "01.APP/nodelang/studio/vendor/xyflow.js",
         "01.APP/nodelang/studio/workflow-states.jsx",
         "01.APP/nodelang/studio_downloads.py",
         "01.APP/nodelang/studio_window.py",
@@ -9249,6 +9247,7 @@
         "02.TESTS/tests_replica/workshop_target_host_unloaded.test.mjs",
         "03.TOOLS/installer/ArchHub.iss",
         "03.TOOLS/installer/build_release.ps1",
+        "03.TOOLS/packaging/compile_studio.cjs",
         "03.TOOLS/packaging/pack_runtime.py",
         "03.TOOLS/tools/archhub-compiler/rules.json",
         "03.TOOLS/tools/archhub-compiler/tests/fixtures/conduct.json",
@@ -9275,7 +9274,9 @@
         "05.EVIDENCE/acompiler-intents.json",
         "05.EVIDENCE/grandmap_bindings.json",
         "requirements.txt",
-        "NOTICE"
+        "NOTICE",
+        "package-lock.json",
+        "package.json"
       ]
     }
   }

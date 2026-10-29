@@ -75,6 +75,7 @@ def _db():
     connection.enable_load_extension(True)
     sqlite_vec.load(connection)
     connection.enable_load_extension(False)
+    connection.execute('PRAGMA busy_timeout=5000')  # another ArchHub process may hold the write lock
     connection.execute('PRAGMA journal_mode=WAL')
     connection.execute('PRAGMA foreign_keys=ON')
     connection.executescript(_SCHEMA)

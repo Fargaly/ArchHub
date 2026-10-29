@@ -951,20 +951,6 @@
     const handler = () => show('Tray');
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
   }
-  function appShellMinimize8({
-    act,
-    api
-  }, event) {
-    const handler = () => act(() => api.windowAction('minimize'));
-    return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-  }
-  function appShellCloseWindow9({
-    act,
-    api
-  }, event) {
-    const handler = () => act(() => api.windowAction('hide'));
-    return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-  }
   function appShellControl10({
     go,
     r
@@ -1750,8 +1736,6 @@
     "appShell.SearchCtrlK.5": "appShellSearchCtrlK5",
     "appShell.Notifications.6": "appShellNotifications6",
     "appShell.TrayMenu.7": "appShellTrayMenu7",
-    "appShell.Minimize.8": "appShellMinimize8",
-    "appShell.CloseWindow.9": "appShellCloseWindow9",
     "appShell.Control.10": "appShellControl10",
     "appShell.Control.11": "appShellControl11",
     "appShell.YourAccount.12": "appShellYourAccount12",
@@ -1852,8 +1836,6 @@
     appShellSearchCtrlK5,
     appShellNotifications6,
     appShellTrayMenu7,
-    appShellMinimize8,
-    appShellCloseWindow9,
     appShellControl10,
     appShellControl11,
     appShellYourAccount12,

@@ -56,21 +56,21 @@
     const s = useData(),
       u = useApp(),
       [tab, setTab] = React.useState('Discover'),
-      [title, setTitle] = React.useState('Checked door clearance'),
+      [title, setTitle] = React.useState(''),
       [scope, setScope] = React.useState('Office'),
       [redact, setRedact] = React.useState(true);
     const action = window.UI.useAction();
     React.useEffect(() => { action.run(async () => { const result = await api.refreshCommunity(); return result.peers.length || result.patterns.length ? result : null; }); }, []);
-    const status = <div aria-live="polite">{action.state === 'waiting' && <p role="status">Reading Community…</p>}{action.state === 'empty' && <p>No incoming patterns or subscriptions.</p>}{action.state === 'loaded' && <p>{s.community.peers.length} peers returned</p>}{action.state === 'error' && <div role="alert">{action.error}<Btn onClick={event => executeAction("projects.project-tools.RetryCommunity", {action}, event)}>Retry</Btn></div>}</div>;
+    const status = <div aria-live="polite">{action.state === 'waiting' && <p role="status">Reading Community…</p>}{action.state === 'loaded' && <p>{s.community.peers.length} peers returned</p>}{action.state === 'error' && <div role="alert">{action.error}<Btn onClick={event => executeAction("projects.project-tools.RetryCommunity", {action}, event)}>Retry</Btn></div>}</div>;
     return <main className="page" data-screen="community">{status}<Heading title="Community" sub="Share reusable knowledge with clear sources and boundaries."><Btn sm onClick={event => executeAction("projects.project-tools.Brain.13", {u}, event)}>Brain</Btn></Heading><div className="social-tabs" style={{
         marginBottom: 22
       }}>{['Discover', 'Shared', 'Review'].map(t => <button className="tab-button" key={t} aria-pressed={tab === t} onClick={event => executeAction("projects.project-tools.SetTabT.14", {setTab,t}, event)}>{t}</button>)}</div>{tab === 'Discover' ? <div className="settings-grid"><Card style={{
           padding: 22
-        }}><h2>Knowledge networks</h2>{s.community.peers.map(p => <div className="row spread" key={p.id}><div><h3>{p.name}</h3><small className="muted">Verified patterns · no raw project models</small></div><D.Toggle label={'Subscribe ' + p.name} checked={p.subscribed} onCheckedChange={() => u.act(() => api.subscribeCommunity(p.id))} /></div>)}</Card><Card style={{
+        }}><h2>Knowledge networks</h2>{action.state === 'empty' && <p className="muted">No incoming patterns or subscriptions.</p>}{s.community.peers.map(p => <div className="row spread" key={p.id}><div><h3>{p.name}</h3><small className="muted">Verified patterns · no raw project models</small></div><D.Toggle label={'Subscribe ' + p.name} checked={p.subscribed} onCheckedChange={() => u.act(() => api.subscribeCommunity(p.id))} /></div>)}</Card><Card style={{
           padding: 22
         }}><h2>Share a pattern</h2><label className="grid" style={{
             marginTop: 16
-          }}>Pattern<input aria-label="Pattern title" value={title} onChange={e => setTitle(e.target.value)} /></label><label className="grid" style={{
+          }}>Pattern<input aria-label="Pattern title" placeholder="Name the pattern" value={title} onChange={e => setTitle(e.target.value)} /></label><label className="grid" style={{
             marginTop: 14
           }}>Audience<select aria-label="Share audience" value={scope} onChange={e => setScope(e.target.value)}><option>Office</option><option>Community</option></select></label><div className="spread row"><span>Remove client details</span><D.Toggle label="Remove client details" checked={redact} onCheckedChange={setRedact} /></div><Btn p disabled={!title.trim()} onClick={event => executeAction("projects.project-tools.ReviewShare.15", {api,redact,scope,title,u}, event)}>Review share</Btn></Card></div> : tab === 'Shared' ? <div className="grid">{s.community.shared.length ? s.community.shared.map(p => <Card key={p.id} style={{
           padding: 22

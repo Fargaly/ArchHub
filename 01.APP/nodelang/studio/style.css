@@ -179,3 +179,27 @@ button{transition:background .14s,color .14s,box-shadow .14s}button:hover{filter
 [data-screen="canvas"] .lm-node[data-spec=dataset] .canvas-port-socket.out{right:-12px}
 [data-screen="canvas"] [data-graph-node]:has([data-add-field-form]){z-index:30}
 .spec-add-field>label{width:100%}
+
+/* WSCMD: the Workshop command center (plate archhub-workshop-command-center-native.png): Work | thread | People & agents. */
+.ws{display:grid;grid-template-columns:clamp(220px,18vw,256px) minmax(0,1fr) clamp(240px,18vw,256px);min-height:0;height:100%}
+.ws-col{display:flex;flex-direction:column;min-height:0}.ws-work{border-right:1px solid #1e1e24}.ws-people{border-left:1px solid #1e1e24;padding:24px 16px}
+.ws h2{font-size:15px}.ws-work h2{font-size:17px}.ws-head{padding:24px 16px 16px;flex:none}.ws-search{margin:0 16px 12px}
+.ws-list{flex:1;padding:0 8px}.ws-group{padding-bottom:12px}.ws-group>.ws-label{padding:16px 8px 8px}
+.ws-label{font-size:11px;font-weight:600;letter-spacing:.04em;color:#9b938a}.ws-small{font-size:12px;color:#9b938a}
+.ws-link{background:none;border:0;padding:0;color:#9b938a;font-size:13px;cursor:pointer;text-align:left}.ws-link:hover{color:#ece8e0}
+.ws-foot{padding:16px;flex:none;display:grid;gap:6px;font-size:13px;color:#9b938a}.ws-foot .ws-link{margin-top:14px}
+.ws-task{display:grid;gap:4px;width:100%;text-align:left;padding:12px 16px;border-radius:6px;border-left:2px solid transparent}
+.ws-task[aria-selected="true"]{border-left-color:#d97757;background:#3a2018}
+.ws-task-title{font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis}.ws-task-state{font-size:12.5px}.ws-activity{font-size:11px;overflow-wrap:anywhere}
+.ws-progress{height:3px;background:#2a2a31;border-radius:2px}.ws-progress>i{display:block;height:100%;background:#d97757}
+.ws-thread{display:grid;grid-template-rows:auto minmax(0,1fr) auto;min-height:0}.ws-thread>header{padding:24px 32px 0}.ws-thread h1{font-size:24px}
+.ws-sub{font-size:13px;margin-top:6px;color:#9b938a}.ws-body{padding:24px 32px}.ws-stack{max-width:864px;display:grid;gap:32px}
+.ws-request{border-left:2px solid #d97757;padding:8px 20px 16px}.ws-request p{font-size:16px;line-height:24px;margin-top:12px}
+.ws-dock{padding:12px 32px 32px}.ws-dock>div{max-width:864px}
+.ws-msgs{display:grid;gap:28px}.ws-msg{display:grid;grid-template-columns:28px 1fr;gap:16px}.ws-msg.own{grid-template-columns:1fr}
+.ws-msg-body{display:grid;gap:8px}.ws-msg-body p{font-size:15px;line-height:24px;white-space:pre-wrap}.ws-msg-body b{font-size:14px}.ws-live{flex-wrap:wrap;gap:6px}
+.ws-to select{background:transparent;border:0;color:#9b938a;font-size:12px}.ws-input{background:transparent;border:0;color:#ece8e0;font-size:15px;resize:none;outline:none}
+.ws-tools{gap:28px}.ws-tools button[type=submit]{min-width:80px}.ws-result{white-space:pre-wrap}
+.ws-people-list{display:grid;gap:22px;align-content:start;max-height:45%}.ws-person{display:grid;grid-template-columns:28px 1fr;gap:12px;text-align:left;align-items:start}
+.ws-person>span{display:grid;gap:4px;min-width:0}.ws-person b{font-size:13px;font-weight:500}.ws-person.to b{font-weight:700}.ws-person .ws-small{overflow-wrap:anywhere}
+.ws-rule{border:0;border-top:1px solid #1e1e24;margin:28px 0 24px;width:100%}.ws-note{margin:8px 0 18px}

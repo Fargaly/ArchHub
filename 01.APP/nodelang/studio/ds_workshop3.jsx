@@ -1,207 +1,165 @@
-// DSYS-077 / ds_workshop3.jsx. Original two-column room, Task, Tool,
-// message hierarchy and one Approve card. Board stages follow Book chapter 4.
+// ds_workshop3.jsx: the Workshop command center (plate archhub-workshop-command-center-native.png); layout in style.css .ws-*.
+// Work | the task conversation | People & agents. Every row is live Workshop data; Send is the
+// composer's existing @mention path (/api/router/chat -> workshop_live.send_as_founder, live injection).
 (() => {
   const {executeAction} = window.ArchHubAPI;
-  const {
-    A,
-    D,
-    useData,
-    useApp,
-    Btn,
-    Card,
-    Chip,
-    Av,
-    Composer,
-    ApprovalCard,
-    Empty
-  } = window.UI;
-  // The task list groups by what it asks of you; a drop sets the group's stage. Archived shows only on its filter.
-  const today = t => !t.updated_at || new Date(t.updated_at).toDateString() === new Date().toDateString();
+  const {A, D, useData, useApp, Btn, Chip, Av, ApprovalCard, Empty} = window.UI;
+  const api = window.ArchHubAPI;
+  // The list groups by what it asks of you; a drop sets the group's stage (the Board draws the same groups).
   const groupsFor = (archived, waiting) => [
-    ['NEEDS YOU', t => t.status === 'IN REVIEW' || waiting.has(t.id), 'IN REVIEW'],
-    ['WORKING', t => (t.status === 'WIP' || t.status === 'PLANNED') && !waiting.has(t.id), 'WIP'],
-    ['DONE TODAY', t => t.status === 'DONE' && today(t), 'DONE'],
-    ...(archived ? [['ARCHIVED', t => t.status === 'ARCHIVED', 'ARCHIVED']] : [])];
-  window.UI.workshopGroups = groupsFor;  // the Board draws the same groups
+    ['NEEDS ATTENTION', t => t.status === 'IN REVIEW' || t.status === 'STOPPED' || waiting.has(t.id), 'IN REVIEW'],
+    ['IN PROGRESS', t => (t.status === 'WIP' || t.status === 'PLANNED') && !waiting.has(t.id), 'WIP'],
+    ...(archived ? [['COMPLETED AND ARCHIVED', t => t.status === 'DONE' || t.status === 'ARCHIVED', 'DONE']] : [])];
+  window.UI.workshopGroups = groupsFor;
   const color = s => s === 'IN REVIEW' ? A.warn : s === 'DONE' ? A.ok : s === 'STOPPED' ? A.err : s === 'WIP' ? A.accent : A.inkSoft;
-  function Task({
-    task,
-    on,
-    select
-  }) {
+  const statusText = s => ({'IN REVIEW': 'Waits for your OK', WIP: 'Working', PLANNED: 'Planned', DONE: 'Completed', ARCHIVED: 'Archived', STOPPED: 'Stopped'})[s] || s;
+  const sessionState = row => row.state === 'turn_ended' ? 'Turn ended' : row.state === 'tool_ended' ? 'Tool ended' : row.state === 'unassociated' ? 'Activity unassociated' : 'Working';
+  function Task({task, on, select, ownerName}) {
     const u = useApp();
-    const steps = task.steps || [],
-      completed = steps.filter(step => /^(done|complete|completed)$/i.test(step.status)).length;
-    return <button className="listbutton" aria-selected={on} onClick={() => executeAction("ui.select", select)} onKeyDown={e => {
+    const steps = task.steps || [], completed = steps.filter(step => /^(done|complete|completed)$/i.test(step.status)).length, a = task.activity;
+    return <button className="listbutton ws-task" aria-selected={on} onClick={() => executeAction("ui.select", select)} onKeyDown={e => {
       if (e.code === 'Space') {
         e.preventDefault();
         select();
-        executeAction("ui.show", u, 'Task details', {
-          id: task.id
-        });
+        executeAction("ui.show", u, 'Task details', {id: task.id});
       }
-    }} draggable onDragStart={e => e.dataTransfer.setData('task', task.id)} style={{
-      display: 'grid',
-      gridTemplateColumns: '32px 1fr auto',
-      gap: 12,
-      alignItems: 'center',
-      padding: '10px 12px'
-    }}><Av id={task.owner || 'Unassigned'} size={30} /><div style={{
-        minWidth: 0,
-        display: 'grid',
-        gap: 3
-      }}><div style={{
-          fontSize: 14,
-          fontWeight: 600,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis'
-        }}>{task.title}</div><div style={{
-          fontSize: 12.5,
-          color: color(task.status)
-        }}>{task.status === 'IN REVIEW' ? 'Waits for your OK' : task.status}</div>{task.activity && <div data-agent-activity role="status" style={{fontSize:11, overflowWrap:'anywhere'}}>
-          {task.activity.sessions.map(row => <div key={row.provider + ':' + row.session} title={row.session}>
-            {row.provider} · {row.tool} · {row.associated === false ? 'Current file unknown' + (row.file ? ' (last observed: ' + row.file + ')' : '') : row.file} · {row.state === 'turn_ended' ? 'Turn ended' : row.state === 'tool_ended' ? 'Tool ended' : row.state === 'unassociated' ? 'Activity unassociated' : 'Working'}
-            {row.association_conflict && <span> · File and session association disagree</span>}
-          </div>)}
-          {task.activity.ownership === 'unknown' && <span>Activity unknown · no owned files</span>}
-          {task.activity.touched_after_install && <strong data-touched-after-install style={{color:A.warn}}>Touched after install</strong>}
-          {task.activity.stale && <span> · Re-verify row status</span>}
-          {(task.activity.limited || task.activity.unavailable) && <span> · Observation incomplete</span>}
-        </div>}{task.status === 'WIP' && steps.length > 0 && <span role="progressbar" aria-label={task.title + ' steps'} aria-valuemin={0} aria-valuenow={completed} aria-valuemax={steps.length} style={{
-          height: 3,
-          background: '#2a2a31',
-          borderRadius: 2
-        }}><i style={{
-            display: 'block',
-            width: `${completed / steps.length * 100}%`,
-            height: '100%',
-            background: A.accent
-          }} /></span>}</div>{D.dot(color(task.status))}</button>;
+    }} draggable onDragStart={e => e.dataTransfer.setData('task', task.id)}>
+      <div className="ws-task-title">{task.title}</div><div className="ws-task-state" style={{color: color(task.status)}}>{statusText(task.status)}</div>
+      {(ownerName || task.owner) && <div className="ws-small">{ownerName || task.owner}</div>}
+      {a && <div data-agent-activity role="status" className="ws-activity">
+        {a.sessions.map(row => <div key={row.provider + ':' + row.session} title={row.session}>
+          {row.provider} · {row.tool} · {row.associated === false ? 'Current file unknown' + (row.file ? ' (last observed: ' + row.file + ')' : '') : row.file} · {sessionState(row)}
+          {row.association_conflict && <span> · File and session association disagree</span>}
+        </div>)}
+        {a.ownership === 'unknown' && <span>Activity unknown · no owned files</span>}
+        {a.touched_after_install && <strong data-touched-after-install style={{color: A.warn}}>Touched after install</strong>}
+        {a.stale && <span> · Re-verify row status</span>}
+        {(a.limited || a.unavailable) && <span> · Observation incomplete</span>}
+      </div>}
+      {task.status === 'WIP' && steps.length > 0 && <span role="progressbar" className="ws-progress" aria-label={task.title + ' steps'} aria-valuemin={0} aria-valuenow={completed} aria-valuemax={steps.length}><i style={{width: `${completed / steps.length * 100}%`}} /></span>}
+    </button>;
   }
-  function Messages({
-    task
-  }) {
-    return <div className="grid" style={{
-      gap: 18
-    }}>{task.messages.map(m => <div key={m.id} style={{
-        display: 'grid',
-        gridTemplateColumns: Boolean(m.sender_key) && m.sender_key === m.viewer_key ? '1fr' : '32px 1fr',
-        gap: 14
-      }}>{(!m.sender_key || m.sender_key !== m.viewer_key) && <Av id={m.provider || window.ArchHubAPI.getSnapshot().providers.find(p => p.name === m.who)?.id || 'claude'} size={32} />}<div style={{
-          display: 'grid',
-          gap: 8,
-          ...(Boolean(m.sender_key) && m.sender_key === m.viewer_key ? {
-            justifySelf: 'end',
-            maxWidth: 560,
-            padding: '12px 16px',
-            borderRadius: '14px 14px 4px 14px',
-            background: '#24242b'
-          } : {})
-        }}>{(!m.sender_key || m.sender_key !== m.viewer_key) && <div className="flex"><b style={{
-              fontSize: 15
-            }}>{m.who}</b><span className="muted" style={{
-              fontSize: 12
-            }}>{m.model || 'Model not reported'}</span></div>}<p style={{
-            fontSize: 15,
-            lineHeight: '24px',
-            whiteSpace: 'pre-wrap'
-          }}>{m.text}</p>{m.reply_to && <span className="muted" style={{fontSize:12}}>↳ reply</span>}{(m.live||[]).length>0 && <div className="flex" data-live-delivery style={{flexWrap:'wrap',gap:6}}>{m.live.map((d,i)=><Chip key={i} c={d.state==='delivered'?A.accent:A.warn}>{d.state==='delivered'?'✓':'✗'} {d.agent} · {d.state==='delivered'?new Date(d.at).toLocaleTimeString()+' · '+d.ms+' ms':d.reason}</Chip>)}</div>}{['pending', 'delivered', 'answered'].includes(m.state) && <span role="status" data-delivery-state={m.state} className="muted">{m.state === 'answered' ? 'Answered' : m.state === 'delivered' ? 'Delivered' : 'Pending'}{m.delivery?.some(row => row.escalated) ? ' · Coordinator notified' : ''}</span>}<window.UI.TurnUsage message={m} /><window.UI.AnswerWidget message={m} />{(!m.sender_key || m.sender_key !== m.viewer_key) && <window.UI.AnswerSources message={m} />}{m.rule && <Chip c={A.purple}>Your rule: {m.rule}</Chip>}</div></div>)}</div>;
+  function Messages({task, roles = {}}) {
+    return <div className="ws-msgs">{task.messages.map(m => {
+      const own = Boolean(m.sender_key) && m.sender_key === m.viewer_key;
+      return <div key={m.id} className={'ws-msg' + (own ? ' own' : '')}>{!own && <Av id={m.provider || window.ArchHubAPI.getSnapshot().providers.find(p => p.name === m.who)?.id || 'claude'} size={28} />}
+        <div className="ws-msg-body" style={own ? {justifySelf: 'end', maxWidth: 560, padding: '12px 16px', borderRadius: '14px 14px 4px 14px', background: '#24242b'} : {}}>
+          {!own && <div className="flex"><b>{m.who}</b>{roles[m.who] && <span className="ws-small">{roles[m.who]}</span>}</div>}<p>{m.text}</p>
+          {m.reply_to && <span className="ws-small">↳ reply</span>}
+          {(m.live || []).length > 0 && <div className="flex ws-live" data-live-delivery>{m.live.map((d, i) => <Chip key={i} c={d.state === 'delivered' ? A.accent : A.warn}>{d.state === 'delivered' ? '✓' : '✗'} {d.agent} · {d.state === 'delivered' ? new Date(d.at).toLocaleTimeString() + ' · ' + d.ms + ' ms' : d.reason}</Chip>)}</div>}
+          {['pending', 'delivered', 'answered'].includes(m.state) && <span role="status" data-delivery-state={m.state} className="ws-small">{m.state === 'answered' ? 'Answered' : m.state === 'delivered' ? 'Delivered' : 'Pending'}{m.delivery?.some(row => row.escalated) ? ' · Coordinator notified' : ''}</span>}
+          {window.UI.TurnUsage && <window.UI.TurnUsage message={m} />}{window.UI.AnswerWidget && <window.UI.AnswerWidget message={m} />}{!own && window.UI.AnswerSources && <window.UI.AnswerSources message={m} />}{m.rule && <Chip c={A.purple}>Your rule: {m.rule}</Chip>}
+        </div></div>;
+    })}</div>;
+  }
+  // "To" is a joined agent session, Everyone, or BABOOM (free first); Send goes live into the chosen session.
+  function TaskComposer({agents, to, setTo, notesOpen, setNotesOpen, sendRef}) {
+    const s = useData(), u = useApp();
+    const [text, setText] = React.useState(''), [sending, setSending] = React.useState(false), [result, setResult] = React.useState('');
+    const files = s.composerAttachments || [];
+    const send = async (body = text) => {
+      if (!body.trim()) return;
+      const prompt = (!to || new RegExp('(^|\\s)@' + to + '\\b').test(body) ? '' : '@' + to + ' ') + body +
+        (files.length ? '\nAttached project file nodes: ' + JSON.stringify(files.map(f => ({id: f.id, path: f.path}))) : '');
+      if (body === text) setText('');
+      setSending(true);
+      try {
+        const sent = await u.act(() => api.apiRouterChat(prompt, 'BABOOM'));
+        if (!sent) { if (body === text) setText(body); return; }
+        setResult(sent.answer || '');
+        files.forEach(f => api.removeComposerAttachment(f.id));
+        await api.listTasks?.();
+      } finally {
+        setSending(false);
+      }
+    };
+    sendRef.current = send;
+    return <D.Composer as="form" className="ws-composer" onSubmit={e => { e.preventDefault(); executeAction("ui.select", send); }} style={{width: '100%', padding: '14px 16px', gap: 8}}>
+      <label className="flex ws-small ws-to">To <select aria-label="Recipient" value={to} onChange={e => setTo(e.target.value)}>
+        {agents.length > 1 && <option value="everyone">Everyone</option>}
+        {agents.map(a => <option key={a.handle} value={a.handle}>{a.name}{a.task ? ' · ' + a.task.slice(0, 40) : ''}</option>)}
+        <option value="">BABOOM · free first</option>
+      </select></label>
+      {files.length > 0 && <div className="flex">{files.map(f => <button type="button" key={f.id} className="ws-link" onClick={() => executeAction("ui.select", () => u.act(() => api.removeComposerAttachment(f.id)))}>{f.name || f.path} ×</button>)}</div>}
+      <textarea className="composer-input ws-input" rows={2} aria-label="Message" placeholder="Message this task…" value={text} onChange={e => setText(e.target.value)} onKeyDown={e => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+      }} />
+      <div className="flex ws-tools">
+        {u.pickFile && <button type="button" className="ws-link" onClick={() => executeAction("ui.select", u.pickFile)}>Attach</button>}
+        <button type="button" className="ws-link" aria-pressed={notesOpen} onClick={() => executeAction("ui.select", () => setNotesOpen(!notesOpen))}>Notes</button>
+        {u.voice && api.supportsAction?.('startVoiceInput') !== false && <button type="button" className="ws-link" onClick={() => executeAction("ui.select", () => u.voice(setText))}>Voice</button>}
+        <span className="fill" /><Btn p type="submit" aria-busy={sending} disabled={!text.trim()}>Send</Btn>
+      </div>
+      {result && <p role="status" data-send-result className="ws-small ws-result">{result}</p>}
+    </D.Composer>;
   }
   function Win() {
-    const s = useData(),
-      u = useApp();
-    const [showArchived, setShowArchived] = React.useState(false), [query, setQuery] = React.useState('');
+    const s = useData(), u = useApp();
+    const [history, setHistory] = React.useState(false), [query, setQuery] = React.useState(''), [to, setTo] = React.useState(null),
+      [notesOpen, setNotesOpen] = React.useState(false), [notes, setNotes] = React.useState(''), sendRef = React.useRef(null);
     const roomScope = JSON.stringify([s.graph.id, s.profile.email, s.profile.signedIn, s.workshopMessagesScope]);
     const currentScope = React.useRef(roomScope);
     currentScope.current = roomScope;
     const [older, setOlder] = React.useState({scope: roomScope, messages: [], before: null, more: true});
     const previous = older.scope === roomScope ? older : {messages: [], before: null, more: true};
-    const task = s.tasks.find(t => t.id === u.task) || s.tasks[0];
+    const tasks = s.tasks || [], task = tasks.find(t => t.id === u.task) || tasks[0];
     const roomMessages = [...new Map([...previous.messages, ...(s.workshopMessages || [])].map(message => [message.id, message])).values()]
       .filter(message => !task?.messages.some(item => item.id === message.id));
-    const list = s.tasks.filter(t => !query || `${t.title} ${t.status}`.toLowerCase().includes(query.toLowerCase()));
-    return <div data-screen="workshop" style={{
-      display: 'grid',
-      gridTemplateColumns: '340px minmax(0,1fr)',
-      minHeight: 0
-    }}>
-  <aside className="pane" style={{
-        display: 'flex',
-        flexDirection: 'column'
-      }}><div className="spread" style={{
-          height: 64,
-          padding: '0 16px 0 22px',
-          flex: 'none'
-        }}><h1 style={{
-            fontSize: 20
-          }}>Workshop</h1><Btn sm onClick={() => executeAction("ui.show", u, 'New task')}>New task</Btn></div><input aria-label="Search tasks" placeholder="⌕ Search tasks" value={query} onChange={e => setQuery(e.target.value)} style={{
-          margin: '0 16px 10px'
-        }} />
-   <div className="scroll" style={{
-          flex: 1
-        }}>{groupsFor(showArchived, new Set(s.approvals.filter(c => c.status === 'pending').map(c => c.taskId))).map(([name, member, stage]) => <div key={name} onDragOver={e => e.preventDefault()} onDrop={e => {
-            e.preventDefault();
-            const id = e.dataTransfer.getData('task');
-            if (id) executeAction("setTaskStatus", u, id, stage);
-          }}><div className="spread label" style={{
-              padding: '16px 22px 6px'
-            }}><span>{name}</span><span>{list.filter(member).length}</span></div><div style={{
-              padding: '0 10px'
-            }}>{list.filter(member).map(t => <Task key={t.id} task={t} on={task?.id === t.id} select={() => executeAction("ui.setTask", u, t.id)} />)}</div></div>)}<label className="flex muted" style={{padding: '12px 22px'}}><input type="checkbox" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} />Show archived</label></div>
-   <Card style={{
-          margin: 12,
-          padding: 14,
-          display: 'grid',
-          gap: 10,
-          flex: 'none'
-        }}><p role="status">{s.agentSummary||'Checking running agents…'}</p>{(s.agents||[]).map(p => <button key={p.id} draggable title={'Drag ' + p.name + ' to Canvas'} onDragStart={e => e.dataTransfer.setData('node', 'Agent:' + p.runtime)} className="button-reset spread" onClick={() => executeAction("ui.show", u, 'Agent', {
-            id: p.id
-          })}><span className="flex"><Av id={p.id} size={22} /><b style={{
-                fontSize: 12
-              }}>{p.name}</b>{p.session_count > 0 && <span className="mono muted" aria-label={p.session_count + ' sessions'}>{p.session_count}</span>}</span><span className="muted" style={{
-              fontSize: 11
-            }}>{p.presence === 'working' ? 'Working · ' + p.task : p.presence === 'unknown' ? (p.status_text || 'Status unknown') : 'Idle'}</span></button>)}<Btn sm ghost onClick={() => executeAction("ui.go", u, 'colleagues')}>Team &amp; meetings</Btn></Card>
+    const list = tasks.filter(t => !query || `${t.title} ${t.status}`.toLowerCase().includes(query.toLowerCase()));
+    const waiting = new Set((s.approvals || []).filter(c => c.status === 'pending').map(c => c.taskId));
+    const agents = s.liveAgents || [];
+    // People & agents: each joined session, then running agents that have not joined, then the founder.
+    const people = [...agents.map(a => ({key: a.handle, id: a.app, name: a.name, role: (a.task || 'No task declared') + (a.status && a.status !== 'unknown' ? ' · ' + a.status : ''), handle: a.handle})),
+      ...(s.agents || []).filter(p => !agents.some(a => a.app === p.runtime)).map(p => ({key: p.id, id: p.id, name: p.name,
+        role: p.presence === 'working' ? 'Working · ' + p.task : p.presence === 'unknown' ? (p.status_text || 'Status unknown') : 'Idle'})),
+      ...(s.profile.name ? [{key: 'founder', id: s.profile.name, name: s.profile.name, role: 'Founder · workspace owner'}] : [])];
+    const roles = Object.fromEntries(agents.filter(a => a.task).map(a => [a.name, a.task]));
+    // A task's people: the joined sessions that declared it, else its runtime's provider name.
+    const sessionsOf = t => agents.filter(a => (t.declarations || []).some(d => d.agent === a.agent));
+    const nameFor = t => sessionsOf(t).map(a => a.name).join(' and ') || (s.providers || []).find(p => p.id === t.owner)?.name || t.owner;
+    const recipient = to ?? (task && (sessionsOf(task)[0] || agents.find(a => a.app === task.owner)) || agents[0])?.handle ?? '';
+    const request = task?.description || task?.messages.find(m => m.sender_key && m.sender_key === m.viewer_key)?.text;
+    return <div data-screen="workshop" className="ws">
+  <aside data-workshop-column="work" className="ws-col ws-work">
+    <div className="spread ws-head"><h2>Work</h2><button className="ws-link" onClick={() => executeAction("ui.show", u, 'New task')}>+ New task</button></div>
+    <input aria-label="Search work" className="ws-search" placeholder="Search work…" value={query} onChange={e => setQuery(e.target.value)} />
+    <div className="scroll ws-list">{groupsFor(history, waiting).map(([name, member, stage]) => {
+      const rows = list.filter(member);
+      return <div key={name} className="ws-group" data-workshop-group={name} onDragOver={e => e.preventDefault()} onDrop={e => {
+        e.preventDefault();
+        const id = e.dataTransfer.getData('task');
+        if (id) executeAction("setTaskStatus", u, id, stage);
+      }}><div className="spread ws-label"><span>{name}</span><span>{rows.length}</span></div>{rows.map(t => <Task key={t.id} task={t} ownerName={nameFor(t)} on={task?.id === t.id} select={() => executeAction("ui.setTask", u, t.id)} />)}</div>;
+    })}</div>
+    <div className="ws-foot"><span>Completed &amp; archived</span><span className="ws-small">All work stays searchable</span>
+      <button className="ws-link" aria-pressed={history} onClick={() => executeAction("ui.select", () => setHistory(!history))}>{history ? 'Hide history' : 'Show history →'}</button></div>
   </aside>
-  <main style={{
-        display: 'grid',
-        gridTemplateRows: '72px minmax(0,1fr) auto',
-        minHeight: 0,
-        background: 'radial-gradient(1200px 500px at 50% -10%,#1a1a22 0%,#0c0c0f 60%)'
-      }}>
-   <header className="spread" style={{
-          padding: '0 30px',
-          borderBottom: '1px solid ' + A.lineSoft
-        }}><div><h1 style={{
-              fontSize: 22
-            }}>{task?.title || (roomMessages.length ? 'Workshop room' : 'What should the agents do?')}</h1><p className="muted" style={{
-              fontSize: 12
-            }}>One room · {s.graph.name}{(s.liveAgents||[]).length>0 && <span data-live-agents> · Live: {s.liveAgents.map(a=>'@'+a.handle+(a.status&&a.status!=='unknown'?' ('+a.status+')':'')).join(' ')} · @everyone</span>}</p></div><div className="flex">{task && <Chip c={color(task.status)}>{task.status}</Chip>}<Btn sm onClick={async () => {
-              if(!task){executeAction("ui.go",u,"canvas");return;}
-              const opened=await executeAction("openTaskGraph",u,task.id);
-              if(opened){executeAction("ui.setSelectedNodeId",u,task.id);executeAction("ui.go",u,"canvas");}
-            }}>Open on canvas</Btn><Btn sm ghost onClick={() => executeAction("ui.show", u, 'Workshop board')}>Board</Btn><Btn sm ghost onClick={() => executeAction("ui.show", u, 'Founder inbox')}>Inbox</Btn></div></header>
-   <div className="scroll" style={{
-          padding: '22px 30px'
-        }}><div style={{
-            maxWidth: 780,
-            margin: '0 auto',
-            display: 'grid',
-            gap: 22
-          }}>{(previous.before ? previous.more : s.workshopMessagesMore) && <Btn sm ghost onClick={async () => {
-              const page = await executeAction("listWorkshopMessages", u, previous.before || s.workshopMessagesBefore);
-              if (currentScope.current === roomScope && Array.isArray(page?.messages)) setOlder({scope: roomScope, messages: [...page.messages, ...previous.messages], before: page.next_before, more: page.more});
-            }}>Older messages</Btn>}{roomMessages.length > 0 && <Messages task={{messages: roomMessages}} />}{task ? <><button className="listbutton spread" onClick={() => executeAction("ui.show", u, 'Task details', {
-                id: task.id
-              })}><span>Owner: {task.humanOwner || s.providers.find(p => p.id === task.owner)?.name || task.owner || 'Unassigned'}</span><span className="muted">Steps &amp; checkpoints →</span></button><Messages task={task} />{task.approvalId && <div style={{
-                marginLeft: 46
-              }}><ApprovalCard id={task.approvalId} /></div>}{task.status === 'STOPPED' && <Btn onClick={() => executeAction("reassignTask", u, task.id)}>Continue with another agent</Btn>}{task.status === 'DONE' && <div className="flex"><Btn onClick={() => executeAction("ui.go", u, 'watcher')}>Open result</Btn><Btn onClick={() => executeAction("ui.schedule", u, task.title)}>Repeat this</Btn></div>}</> : roomMessages.length === 0 && <Empty>Create a task to begin.</Empty>}</div></div>
-   <div style={{
-          padding: '12px 30px 22px'
-        }}><div style={{
-            maxWidth: 780,
-            margin: '0 auto'
-          }}><Composer taskId={task?.id} placeholder="Reply, or @ another agent…" /></div></div>
+  <main data-workshop-column="thread" className="ws-thread">
+    <header className="spread"><div><h1>{task?.title || (roomMessages.length ? 'Workshop room' : 'What should the agents do?')}</h1><p className="ws-sub">{task ? [nameFor(task), statusText(task.status)].filter(Boolean).join(' · ') : 'One room · ' + (s.graph.name || 'Workshop')}</p></div>
+      <button className="ws-link" onClick={() => executeAction("ui.select", async () => {
+        if (!task) { executeAction("ui.go", u, "canvas"); return; }
+        const opened = await executeAction("openTaskGraph", u, task.id);
+        if (opened) { executeAction("ui.setSelectedNodeId", u, task.id); executeAction("ui.go", u, "canvas"); }
+      })}>Open in Canvas ↗</button></header>
+    <div className="scroll ws-body"><div className="ws-stack">
+      {request && <section data-workshop-request className="ws-request"><div className="ws-label">THE REQUEST</div><p>{request}</p></section>}
+      {(previous.before ? previous.more : s.workshopMessagesMore) && <Btn sm ghost onClick={async () => {
+        const page = await executeAction("listWorkshopMessages", u, previous.before || s.workshopMessagesBefore);
+        if (currentScope.current === roomScope && Array.isArray(page?.messages)) setOlder({scope: roomScope, messages: [...page.messages, ...previous.messages], before: page.next_before, more: page.more});
+      }}>Older messages</Btn>}
+      {roomMessages.length > 0 && <Messages task={{messages: roomMessages}} roles={roles} />}
+      {task ? <><Messages task={task} roles={roles} />{task.approvalId && <ApprovalCard id={task.approvalId} />}{task.status === 'STOPPED' && <Btn onClick={() => executeAction("reassignTask", u, task.id)}>Continue with another agent</Btn>}{task.status === 'DONE' && <div className="flex"><Btn onClick={() => executeAction("ui.go", u, 'watcher')}>Open result</Btn><Btn onClick={() => executeAction("ui.schedule", u, task.title)}>Repeat this</Btn></div>}</> : roomMessages.length === 0 && <Empty>Create a task to begin.</Empty>}
+    </div></div>
+    <div className="ws-dock"><div>{D.Composer ? <TaskComposer agents={agents} to={recipient} setTo={setTo} notesOpen={notesOpen} setNotesOpen={setNotesOpen} sendRef={sendRef} /> : window.UI.Composer && <window.UI.Composer taskId={task?.id} />}</div></div>
   </main>
+  <aside data-workshop-column="people" className="ws-col ws-people">
+    <h2>People &amp; agents</h2><p className="ws-small ws-note">{agents.length ? agents.length + (agents.length === 1 ? ' session' : ' sessions') + ' joined this Workshop' : s.agentSummary || 'No agent session has joined yet'}</p>
+    <div className="scroll ws-people-list">{people.map(p => <button key={p.key} className={'button-reset ws-person' + (recipient && p.handle === recipient ? ' to' : '')} title={p.handle ? 'Send to ' + p.name : p.name} onClick={() => p.handle ? executeAction("ui.select", () => setTo(p.handle)) : executeAction("ui.show", u, 'Agent', {id: p.id})}><Av id={p.id} size={28} /><span><b>{p.name}</b><span className="ws-small">{p.role}</span></span></button>)}</div>
+    <hr className="ws-rule" />
+    <h2>Meeting input</h2><p className="ws-small ws-note">Notes for this task go to {recipient ? (agents.find(a => a.handle === recipient)?.name || 'Everyone') : 'BABOOM'}.</p>
+    {notesOpen ? <div className="grid"><textarea aria-label="Meeting notes" rows={6} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Paste meeting notes…" /><div className="flex"><Btn sm p disabled={!notes.trim()} onClick={() => executeAction("ui.select", async () => { await sendRef.current?.('Meeting notes:\n' + notes); setNotes(''); setNotesOpen(false); })}>Send notes</Btn><Btn sm ghost onClick={() => executeAction("ui.select", () => setNotesOpen(false))}>Cancel</Btn></div></div>
+      : <button className="ws-link" onClick={() => executeAction("ui.select", () => setNotesOpen(true))}>+ Paste notes</button>}
+  </aside>
  </div>;
   }
   window.UI.Workshop = Win;

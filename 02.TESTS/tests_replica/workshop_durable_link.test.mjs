@@ -19,6 +19,7 @@ process.env.WORKSHOP_STATE_DIR=path.join(home,'state');
 const connections=path.join(process.env.WORKSHOP_STATE_DIR,'connections'),sessions=path.join(home,'.claude','sessions');
 fs.mkdirSync(connections,{recursive:true});fs.mkdirSync(sessions,{recursive:true});
 for(const k of ['CODEX_APP_TOOLS_PIPE_PATH','CODEX_THREAD_ID','WORKSHOP_PRODUCT_WORKER'])delete process.env[k];
+process.env.CODEX_HOME='C:\\no-codex-home-in-courts'; // never the real Codex Desktop pipe
 const lib=path.join(import.meta.dirname,'..','..','01.APP','nodelang','workshop');
 const load=file=>import(pathToFileURL(path.join(lib,file)).href);
 const {catalog}=await load('bridge.mjs');

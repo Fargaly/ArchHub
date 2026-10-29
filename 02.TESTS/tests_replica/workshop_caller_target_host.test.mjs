@@ -24,6 +24,7 @@ process.env.HOME=home;
 process.env.WORKSHOP_STATE_DIR=path.join(home,'state');
 fs.mkdirSync(path.join(process.env.WORKSHOP_STATE_DIR,'connections'),{recursive:true});
 for(const k of ['CODEX_APP_TOOLS_PIPE_PATH','CODEX_THREAD_ID','CODEX_APP_TOOLS_CALLER_HOST_ID','WORKSHOP_PRODUCT_WORKER'])delete process.env[k];
+process.env.CODEX_HOME='C:\\no-codex-home-in-courts'; // never the real Codex Desktop pipe
 const lib=path.join(import.meta.dirname,'..','..','01.APP','nodelang','workshop');
 const load=file=>import(pathToFileURL(path.join(lib,file)).href);
 const native=await load('native.mjs');

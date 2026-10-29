@@ -27,23 +27,32 @@ export async function agCall(endpoint,method,body={}){
  if(!res.ok)throw new Error(`${endpoint.app} ${method}: HTTP ${res.status}; no automatic retry`);
  return await res.json();
 }
+// A running OpenCode registers where the plugin it loaded at start says: this Workshop folder, or
+// (an OpenCode started before the Workshop plugin was written) the older Session Link folder beside it.
+const runtimeDirs=()=>[path.join(root,'opencode-runtimes'),path.join(path.dirname(root),'session-link','opencode-runtimes')];
+const runtimeFile=id=>runtimeDirs().map(d=>path.join(d,id+'.json')).find(f=>fs.existsSync(f));
+const processAlive=pid=>{try{process.kill(pid,0);return true;}catch(e){return e.code==='EPERM';}};
 export async function pluginRpc(request,runtimeId){
- if(!Number.isInteger(runtimeId))throw new Error('Exact OpenCode runtime required');
- const cfg=JSON.parse(fs.readFileSync(path.join(root,'opencode-runtimes',runtimeId+'.json'),'utf8'));
+ if(!Number.isInteger(runtimeId)||!runtimeFile(runtimeId))throw new Error('Exact OpenCode runtime required');
+ const cfg=JSON.parse(fs.readFileSync(runtimeFile(runtimeId),'utf8'));
  const token=JSON.parse(fs.readFileSync(cfg.keyPath,'utf8')).peerToken;
  return new Promise((resolve,reject)=>{const s=net.connect(cfg.control);let data='';s.setEncoding('utf8');const timer=setTimeout(()=>{s.destroy();reject(new Error('OpenCode timeout; delivery may be uncertain'));},180000);s.on('error',e=>{clearTimeout(timer);reject(e);});s.on('connect',()=>s.write(JSON.stringify({...request,token})+'\n'));s.on('data',c=>{data+=c;if(data.length>2000000){s.destroy();clearTimeout(timer);reject(new Error('Oversized OpenCode response'));return;}if(data.includes('\n')){clearTimeout(timer);s.destroy();try{const r=JSON.parse(data);r.ok?resolve(r.result):reject(new Error(r.error));}catch(e){reject(e);}}});});
 }
 export async function discoverExtra({apps=['opencode','antigravity','antigravity-ide'],onProgress=()=>{}}={}){
  const result={opencode:[],antigravity:[],'antigravity-ide':[],adapterStatus:{}};
  result.adapterStatus.opencode='plugin not active; reload OpenCode and open a workspace';
- if(apps.includes('opencode'))try{for(const name of fs.readdirSync(path.join(root,'opencode-runtimes')).filter(n=>/^\d+\.json$/.test(n))){try{result.opencode.push(...await pluginRpc({operation:'list'},Number(name.slice(0,-5))));result.adapterStatus.opencode='live';onProgress(result);}catch{}}}catch{}
+ if(apps.includes('opencode')){
+  const ids=new Set();
+  for(const dir of runtimeDirs()){try{for(const n of fs.readdirSync(dir))if(/^\d+\.json$/.test(n))ids.add(Number(n.slice(0,-5)));}catch(e){if(e.code!=='ENOENT')process.stderr.write('workshop: '+dir+' unreadable: '+e.message+'\n');}}
+  for(const id of [...ids].filter(processAlive)){try{result.opencode.push(...await pluginRpc({operation:'list'},id));result.adapterStatus.opencode='live';onProgress(result);}catch(e){process.stderr.write('workshop: OpenCode '+id+' did not list sessions: '+e.message+'\n');}}
+ }
  if(apps.some(app=>['antigravity','antigravity-ide'].includes(app)))try{for(const p of (await agProcesses()).filter(p=>apps.includes(p.app))){
    let found=false;
    for(const port of p.ports){try{const e={app:p.app,pid:p.pid,port};let r=await agCall(e,'GetAllCascadeTrajectories');
-     if(p.app==='antigravity-ide'&&!Object.keys(r.trajectorySummaries||{}).length){
-       // GetAll lists loaded trajectories only. Hydrate the most recent saved
-       // conversation through a native read; never create or rewrite a chat.
-       const savedDir=path.join(process.env.USERPROFILE,'.gemini','antigravity-ide','conversations');
+     if(!Object.keys(r.trajectorySummaries||{}).length){
+       // GetAll lists loaded trajectories only (Antigravity 2.28's hub server loads none at start).
+       // Hydrate the most recent saved conversation through a native read; never create or rewrite a chat.
+       const savedDir=path.join(process.env.USERPROFILE,'.gemini',p.app,'conversations');
        const saved=fs.readdirSync(savedDir).filter(n=>/^[0-9a-f-]{36}\.db$/.test(n)).sort((a,b)=>fs.statSync(path.join(savedDir,b)).mtimeMs-fs.statSync(path.join(savedDir,a)).mtimeMs)[0];
        if(saved){await agCall(e,'GetCascadeTrajectory',{cascadeId:saved.slice(0,-3)});r=await agCall(e,'GetAllCascadeTrajectories');}
      }

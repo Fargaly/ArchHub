@@ -2,6 +2,7 @@ import net from 'node:net';
 import {spawnSync} from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {stateDir} from './paths.mjs';
@@ -62,12 +63,15 @@ export function assertTargetHostLoaded(row,callerHost){
 export async function postCodex(threadId,prompt,{requestId,workshopInjection=false}={}){
  const identity=typeof requestId==='string'&&requestId?{messageId:requestId}:{};
  if(admittedAttachment){if(threadId!==admittedAttachment.destination)throw new Error('Attachment destination mismatch');return await attachmentCall('attachment-post',{text:prompt,...identity});}
- if(process.env.CODEX_APP_TOOLS_PIPE_PATH&&process.env.CODEX_THREAD_ID){
-  // Direct from a Codex task: the caller is this task (its own thread and host);
-  // the target's host is read from its live row, never assumed.
-  const row=assertTargetHostLoaded(await liveCodexRow(threadId),callerHostFor(process.env.CODEX_THREAD_ID));
+ const app=codexAppContext();
+ if(app){
+  // Direct from a Codex task: the caller is this task (its own thread and host). From outside a task
+  // (the founder's Workshop chat) the message is the target's own new turn, so the target is the caller.
+  // The target's host is read from its live row, never assumed.
+  const caller=app.own?app.thread:threadId;
+  const row=assertTargetHostLoaded(await liveCodexRow(threadId),callerHostFor(caller));
   return await nativeCall('send_message_to_thread',{threadId,prompt,...(typeof row.hostId==='string'&&row.hostId?{hostId:row.hostId}:{})},
-   process.env.CODEX_THREAD_ID,identity.messageId?{requestId:identity.messageId}:{});
+   caller,identity.messageId?{requestId:identity.messageId}:{});
  }
  if(process.env.WORKSHOP_PRODUCT_WORKER==='1'&&!workshopInjection)throw new Error('Admitted native Codex app context unavailable; another caller context will not be borrowed');
  const dir=path.join(stateDir(),'connections');
@@ -145,9 +149,25 @@ export function nativeCallParams(tool,args,threadId,context={}){
   return {arguments:args,callerSource:'codex',callId:'workshop-'+request,...(hostId?{hostId}:{}),
     namespace:'codex_app',threadId,tool,turnId:'workshop-turn-'+request};
 }
-export function nativeCall(tool,args,threadId=process.env.CODEX_THREAD_ID,context={}){
+// The Codex Desktop app's own tools pipe. Inside a Codex task it is in the environment; anywhere else
+// on this machine (the founder's Workshop chat, a terminal) it is the app's one codex-app-tools pipe,
+// and the caller is the most recent Codex thread (session_index.jsonl) -- the app refuses a call that
+// names no real thread. own=false: the caller is not a task of ours, so a send names its target.
+// No Codex Desktop here is not a failure (ENOENT: absent); anything else is named on stderr.
+const unreadable=(what,error)=>{if(error?.code!=='ENOENT')process.stderr.write('workshop: Codex app context unreadable ('+what+'): '+error.message+'\n');return null;};
+export function codexAppContext(){
+ if(process.env.CODEX_APP_TOOLS_PIPE_PATH&&process.env.CODEX_THREAD_ID)
+  return {pipe:process.env.CODEX_APP_TOOLS_PIPE_PATH,thread:process.env.CODEX_THREAD_ID,own:true};
+ if(process.platform!=='win32')return null;
+ let pipe,thread;
+ try{pipe=fs.readdirSync('\\\\.\\pipe\\').find(n=>/^codex-app-tools-[0-9a-f-]{36}$/.test(n));}catch(error){return unreadable('pipes',error);}
+ const index=path.join(process.env.CODEX_HOME||path.join(os.homedir(),'.codex'),'session_index.jsonl');
+ try{thread=JSON.parse(fs.readFileSync(index,'utf8').trim().split('\n').pop()).id;}catch(error){return unreadable(index,error);}
+ return pipe&&typeof thread==='string'&&thread?{pipe:'\\\\.\\pipe\\'+pipe,thread,own:false}:null;
+}
+export function nativeCall(tool,args,threadId=codexAppContext()?.thread,context={}){
   return new Promise((resolve,reject)=>{
-    const socket=net.connect(process.env.CODEX_APP_TOOLS_PIPE_PATH);
+    const socket=net.connect(process.env.CODEX_APP_TOOLS_PIPE_PATH||codexAppContext()?.pipe||'\\\\.\\pipe\\codex-app-tools-unavailable');
     let buffer=Buffer.alloc(0),settled=false;
     const finish=(err,result)=>{if(settled)return;settled=true;clearTimeout(timer);socket.destroy();err?reject(err):resolve(result);};
     const timer=setTimeout(()=>finish(new Error('Native request timed out; delivery uncertain; do not resend automatically')),20000);

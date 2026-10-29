@@ -6,7 +6,7 @@ import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {stateDir,readMessage} from './paths.mjs';
 import {PeerEndpoint,listClaudeSessions} from './vendor/src/peer-protocol.mjs';
-import {nativeCall,hasAttachment,attachmentCall,assertTargetHostLoaded,mailboxSend} from './native.mjs';
+import {nativeCall,hasAttachment,attachmentCall,assertTargetHostLoaded,mailboxSend,codexAppContext} from './native.mjs';
 import {discoverExtra,sendExtra} from './extra-apps.mjs';
 import {ScopedAttachments} from './scoped-attachment.mjs';
 import {resumeSaved,confirmsSavedChild} from './resume.mjs';
@@ -136,7 +136,8 @@ export async function catalog({apps,onProgress,workshopInjection=false}={}){
     catch(e){adapter={status:'unavailable',reason:String(e?.message||'Codex attachment status unavailable')};}
     const extra=await discoverExtra({apps});return {...extra,claude:claudes(),codex,adapterStatus:{...extra.adapterStatus,codex:adapter}};
   }
-  if(process.env.CODEX_APP_TOOLS_PIPE_PATH&&process.env.CODEX_THREAD_ID){let r;
+  // Inside a Codex task, or anywhere the Codex Desktop app runs (its own tools pipe).
+  if(codexAppContext()){let r;
     try{r=decode(await nativeCall('list_threads',{limit:50}));}
     catch(e){const extra=await discoverExtra({apps});return {...extra,claude:claudes(),codex:[],adapterStatus:{...extra.adapterStatus,codex:{status:'unavailable',reason:'Codex app tools could not list tasks: '+publicReason(e)}}};}
     return {...await discoverExtra({apps}),claude:claudes(),codex:[...(r.pinnedThreads||[]),...(r.threads||[])].filter(t=>t.kind==='codex').map(t=>({id:t.id,title:t.title,cwd:t.cwd,app:'codex',...targetHost(t)}))};}

@@ -5,6 +5,13 @@ from contextlib import contextmanager
 from pathlib import Path
 import os
 import builtins
+import sys as _sys
+
+if __name__ == "__main__" and not _sys.argv[1:] and not os.environ.get("ARCHHUB_MCP_SUPERVISED"):
+    # The agent's own process supervises the connector before mcp/pydantic load: an install or a
+    # crash ends only the child, never the agent's connection (founder: "the brokers don't work").
+    from .mcp_supervisor import supervise
+    raise SystemExit(supervise())
 
 from .quiet_update import installed_build_id
 

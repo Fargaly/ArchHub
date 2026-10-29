@@ -9288,7 +9288,8 @@
         "requirements.txt",
         "01.APP/nodelang/mcp_share.py",
         "02.TESTS/tests_replica/test_mcp_share.py",
-        "01.APP/nodelang/client_mcp_installation.py"
+        "01.APP/nodelang/client_mcp_installation.py",
+        "01.APP/nodelang/mcp_launcher.py"
       ]
     }
   }

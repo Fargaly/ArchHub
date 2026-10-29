@@ -58,8 +58,7 @@ def test_missing_invitations_keeps_verified_account_and_billing(account_cloud):
     assert result['profile']['plan'] == 'Personal'
     assert result['billing']['remainingMessages'] == 17
     assert result['officeInvitations'] == []
-    assert result['controlErrors']['officeInvitations'] == (
-        'Signed in. Office invitations unavailable until the cloud service is updated.')
+    assert 'officeInvitations' not in result['controlErrors']  # internal deploy lag: logged, never a toast
     assert '404' not in json.dumps(result)
     assert calls == ['/v1/me', '/v1/companies/mine', '/v1/billing/plans', '/v1/companies/invites/mine']
 
@@ -67,7 +66,7 @@ def test_missing_invitations_keeps_verified_account_and_billing(account_cloud):
 def test_invitation_recovery_returns_actual_rows_and_clears_notice(account_cloud):
     owner, replies, _calls = account_cloud
     first = owner.read()
-    assert first['controlErrors']['officeInvitations']
+    assert first['officeInvitations'] == [] and 'officeInvitations' not in first['controlErrors']
     invitation = {'id': 'existing-invite', 'office': 'Actual office', 'status': 'Pending'}
     replies['/v1/companies/invites/mine'] = (200, {'invitations': [invitation]})
     result = owner.read()

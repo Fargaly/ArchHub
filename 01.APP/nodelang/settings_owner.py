@@ -585,9 +585,11 @@ class SettingsOwner:
         errors = {}
         try:
             invitations = self.cloud('GET', '/v1/companies/invites/mine').get('invitations', [])
-        except CloudRouteUnavailable:
+        except CloudRouteUnavailable as missing:
+            # A cloud deploy behind the app is ours to fix, not the founder's: no invitations, logged, no toast.
+            import logging
+            logging.getLogger(__name__).warning('cloud lacks /v1/companies/invites/mine (%s); no office invitations shown', missing)
             invitations = []
-            errors['officeInvitations'] = 'Signed in. Office invitations unavailable until the cloud service is updated.'
         return {'profile': {**profile, **prefs.get('profile', {}), 'plan': {'solo':'Personal','studio':'Office','firm':'Team','trial':'Personal'}.get(me['plan'], me['plan'])},
                 'firms': companies, 'activeFirm': active['id'] if active else '',
                 'people': [{'id': m['user_id'], 'name': m.get('full_name') or m['email'],

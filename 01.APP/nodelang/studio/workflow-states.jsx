@@ -20,7 +20,7 @@
     return <Card style={{
       padding: 22,
       marginTop: 22
-    }}><Heading title="Six ways to learn" sub="The same workflow can learn from a program, your habits, an intent or a completed session." /><div className="social-tabs">{Object.keys(s.learning.layers).map(l => <button key={l} aria-pressed={layer === l} onClick={() => executeAction("setLearningLayer", u, l)}>{l}</button>)}</div><div className="settings-grid" style={{
+    }}><Heading title="Six ways to learn" sub="The same workflow can learn from a program, your habits, an intent or a completed session." /><div className="social-tabs">{Object.keys(s.learning.layers).map(l => <button className="tab-button" key={l} aria-pressed={layer === l} onClick={() => executeAction("setLearningLayer", u, l)}>{l}</button>)}</div><div className="settings-grid" style={{
         marginTop: 18
       }}>{Object.entries(values).map(([key, value]) => <label className="parameter-row" key={key}><span>{key.replace(/([A-Z])/g, ' $1').replace(/^./, c => c.toUpperCase())}</span>{typeof value === 'boolean' ? <D.Toggle label={layer + ' ' + key} checked={value} onCheckedChange={v => executeAction("setLearningLayer", u, layer, {
             [key]: v

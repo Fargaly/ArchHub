@@ -327,7 +327,7 @@
       }}>
    <header className="flex" style={{
           height: 36,
-          padding: '0 12px',
+          padding: '0 16px',
           background: '#0f0f13',
           borderBottom: '1px solid ' + A.lineSoft,
           fontSize: 12
@@ -346,25 +346,17 @@
             s
           }, event)}>{s.update.available ? 'Relaunch to update' : <window.AHIcon name="update" />}<i /></button>}<button className="button-reset muted" onClick={event => executeAction("appShell.Control.4", {
             show
-          }, event)}>{s.workspaces.find(w => w.id === s.activeWorkspace)?.name || s.workspaces.find(w => w.builtIn)?.name || 'Add workspace'} ▾</button><button className="button-reset muted" style={{
+          }, event)}>{s.workspaces.find(w => w.id === s.activeWorkspace)?.name || s.workspaces.find(w => w.builtIn)?.name || 'Add workspace'} ▾</button><button className="button-reset" style={{
+            padding: '0 14px'
+          }} aria-label="Tray menu" title="Tray menu" onClick={event => executeAction("appShell.TrayMenu.7", {
+            show
+          }, event)}>⬡</button><button className="button-reset muted" style={{
             padding: '0 14px'
           }} onClick={event => executeAction("appShell.SearchCtrlK.5", {
             show
           }, event)} aria-label="Search · Ctrl K"><span className="flex"><window.AHIcon name="search" size={14} />Search<span className="mono">Ctrl K</span></span></button><button className="button-reset muted" aria-label="Notifications" title="Notifications" onClick={event => executeAction("appShell.Notifications.6", {
             show
-          }, event)}><window.AHIcon name="bell" size={16} /> {s.notifications.filter(n => !n.read).length}</button><button className="button-reset" style={{
-            padding: '0 14px'
-          }} aria-label="Tray menu" title="Tray menu" onClick={event => executeAction("appShell.TrayMenu.7", {
-            show
-          }, event)}>⬡</button><button className="button-reset muted" aria-label="Minimize" title="Minimize" onClick={event => executeAction("appShell.Minimize.8", {
-            act,
-            api
-          }, event)}>−</button><button className="button-reset muted" aria-label="Close window" title="Hide to tray" style={{
-            padding: '0 12px'
-          }} onClick={event => executeAction("appShell.CloseWindow.9", {
-            act,
-            api
-          }, event)}>×</button></header>
+          }, event)}><window.AHIcon name="bell" size={16} /> {s.notifications.filter(n => !n.read).length}</button></header>
    <div style={{
           display: 'grid',
           gridTemplateColumns: '64px minmax(0,1fr)',

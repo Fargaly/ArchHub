@@ -61,3 +61,14 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+ArchHub Brain store (BRAINSTORE, decision D-BRAINSTORE)
+
+sqlite-vec 0.1.9 - Copyright Alex Garcia - MIT or Apache License 2.0.
+https://github.com/asg017/sqlite-vec
+Installed from its published wheel as a loadable SQLite extension; the
+Brain's schema, ranking and embeddings are ArchHub's own.
+Graphiti (Zep, Apache-2.0): design attribution for validity windows on facts.
+Hindsight (Vectorize, MIT): design attribution for the belief/evidence split.
+Anthropic Contextual Retrieval: design attribution for context-prefixed chunks.
+No Graphiti or Hindsight code is bundled.

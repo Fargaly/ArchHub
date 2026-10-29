@@ -30,13 +30,12 @@
     template: t
   }) {
     const u = useApp();
+    const [menu, setMenu] = React.useState(false);
     const start = async () => {
-      const task = await u.act(() => window.ArchHubAPI.startTemplate(t.id));
-      if (task) {
-        u.show('Run', {id:task.id});
-      }
+      const done = await u.act(() => window.ArchHubAPI.startTemplate(t.id));
+      if (done) u.go('canvas');
     };
-    return <Card className="template-card"><button className="template-main" aria-label={'Start ' + t.title} onClick={event => executeAction("projects.ds_home2.Start.1", {start}, event)}><span className="spread"><b>{t.title}</b><span className="mono muted">{t.runs == null ? 'Draft' : t.runs + '×'}</span></span><span className="template-chain">{t.chain.slice(0, 4).map((c, i) => <React.Fragment key={c}>{i > 0 && <i />}<span>{c}</span></React.Fragment>)}{t.chain.length > 4 && <small>+{t.chain.length - 4}</small>}</span></button><div className="template-actions"><Btn sm ghost title={'Open ' + t.title + ' on canvas'} aria-label={'Open ' + t.title + ' on canvas'} onClick={event => executeAction("projects.ds_home2.AsyncAwaitUActWindow.2", {t,u}, event)}><window.AHIcon name="canvas" size={15} /></Btn><Btn sm ghost title={'Schedule ' + t.title} aria-label={'Schedule ' + t.title} onClick={event => executeAction("projects.ds_home2.UScheduleTTitle.3", {t,u}, event)}><window.AHIcon name="clock" size={15} /></Btn></div></Card>;
+    return <Card className="template-card" data-starter={t.id}><div className="spread"><b>{t.title}</b><span className="flex">{(t.needs || []).map(n => <span key={n} className="chip" data-needs={n}>Needs {n}</span>)}{t.runs > 0 && <span className="mono muted">{t.runs + '×'}</span>}<button className="icon-button" aria-label={'More for ' + t.title} aria-expanded={menu} onClick={event => executeAction("projects.ds_home2.StarterMenu.11", {menu,setMenu}, event)}>⋯</button></span></div><span className="template-chain">{t.chain.slice(0, 6).map((c, i) => <React.Fragment key={c + i}>{i > 0 && <i />}<span>{c}</span></React.Fragment>)}{t.chain.length > 6 && <small>+{t.chain.length - 6}</small>}</span>{t.stops_at && <small className="muted">{t.stops_at}</small>}{menu && <div className="template-menu" role="menu"><Btn sm ghost role="menuitem" onClick={event => executeAction("projects.ds_home2.AsyncAwaitUActWindow.2", {t,u}, event)}>Open on canvas</Btn><Btn sm ghost role="menuitem" onClick={event => executeAction("projects.ds_home2.UScheduleTTitle.3", {t,u}, event)}>Run every day</Btn></div>}<Btn sm p aria-label={'Start ' + t.title} onClick={event => executeAction("projects.ds_home2.Start.1", {start}, event)}>Start</Btn></Card>;
   }
   function Home() {
     const s = useData(), u = useApp();
@@ -69,7 +68,7 @@
             {finished.slice(0,1).map(t => <button key={t.id} className="stream-task" onClick={event => executeAction("projects.ds_home2.OpenTaskT.9", {openTask,t}, event)}><span className="stream-marker complete" /><Av id={t.owner} size={25} /><span className="fill"><b>{t.title}</b><small>Finished</small></span><window.AHIcon name="check" size={16} /></button>)}
           </div>
         </section>
-        <section className="home-start"><div className="spread"><h2>Start something</h2><button className="tab-button" aria-expanded={showTemplates} onClick={event => executeAction("projects.ds_home2.SetShowTemplatesShowTemplates.10", {setShowTemplates,showTemplates,u}, event)}>{s.templateError ? 'Retry templates' : showTemplates ? 'Fewer templates' : 'All templates'}<window.AHIcon name="arrow" size={13} /></button></div><div className="home-templates">{s.templates.slice().sort((a,b) => (b.runs??0)-(a.runs??0)).slice(0,showTemplates ? s.templates.length : 3).map(t => <Tpl key={t.id} template={t} />)}</div>{(s.templateError||!s.templates.length) && <window.UI.Empty>{s.templateError||'Save a workflow from Canvas to add your first template.'}</window.UI.Empty>}</section>
+        <section className="home-start"><div className="spread"><h2>Start something</h2><button className="tab-button" aria-expanded={showTemplates} onClick={event => executeAction("projects.ds_home2.SetShowTemplatesShowTemplates.10", {setShowTemplates,showTemplates,u}, event)}>{s.templateError ? 'Retry templates' : showTemplates ? 'Fewer' : 'More (' + Math.max(0, s.templates.length - 6) + ')'}<window.AHIcon name="arrow" size={13} /></button></div><div className="home-templates">{s.templates.slice().sort((a,b) => (b.runs??0)-(a.runs??0)).slice(0,showTemplates ? s.templates.length : 6).map(t => <Tpl key={t.id} template={t} />)}</div>{(s.templateError||!s.templates.length) && <window.UI.Empty>{s.templateError||'Save a workflow from Canvas to add your first template.'}</window.UI.Empty>}</section>
       </div>
     </main>;
   }
@@ -83,7 +82,7 @@ function projectsdshome2jsxStart1({start}, event) {
 }
 function projectsdshome2jsxAsyncAwaitUActWindow2({t,u}, event) {
   const handler = async () => {
-          const result = await u.act(() => window.ArchHubAPI.openTemplateGraph(t.id));
+          const result = await u.act(() => t.id.startsWith('starter:') ? window.ArchHubAPI.openStarter(t.id) : window.ArchHubAPI.openTemplateGraph(t.id));
           if (result) u.go('canvas');
         };
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
@@ -98,6 +97,10 @@ function projectsdshome2jsxAgentsAtWork4({u}, event) {
 }
 function projectsdshome2jsxReviewAndApprove5({pending,u}, event) {
   const handler = () => u.show('Approve', {id:pending[0].id});
+  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
+}
+function projectsdshome2jsxStarterMenu11({menu,setMenu}, event) {
+  const handler = () => setMenu(!menu);
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }
 function projectsdshome2jsxOpenResults6({u}, event) {
@@ -130,7 +133,8 @@ const PROJECT_ACTIONS = {
   "projects.ds_home2.OpenSheets.7": "projectsdshome2jsxOpenSheets7",
   "projects.ds_home2.OpenTaskT.8": "projectsdshome2jsxOpenTaskT8",
   "projects.ds_home2.OpenTaskT.9": "projectsdshome2jsxOpenTaskT9",
-  "projects.ds_home2.SetShowTemplatesShowTemplates.10": "projectsdshome2jsxSetShowTemplatesShowTemplates10"
+  "projects.ds_home2.SetShowTemplatesShowTemplates.10": "projectsdshome2jsxSetShowTemplatesShowTemplates10",
+"projects.ds_home2.StarterMenu.11": "projectsdshome2jsxStarterMenu11"
 };
-window.registerActions(PROJECT_ACTIONS, {projectsdshome2jsxStart1,projectsdshome2jsxAsyncAwaitUActWindow2,projectsdshome2jsxUScheduleTTitle3,projectsdshome2jsxAgentsAtWork4,projectsdshome2jsxReviewAndApprove5,projectsdshome2jsxOpenResults6,projectsdshome2jsxOpenSheets7,projectsdshome2jsxOpenTaskT8,projectsdshome2jsxOpenTaskT9,projectsdshome2jsxSetShowTemplatesShowTemplates10});
+window.registerActions(PROJECT_ACTIONS, {projectsdshome2jsxStarterMenu11,projectsdshome2jsxStart1,projectsdshome2jsxAsyncAwaitUActWindow2,projectsdshome2jsxUScheduleTTitle3,projectsdshome2jsxAgentsAtWork4,projectsdshome2jsxReviewAndApprove5,projectsdshome2jsxOpenResults6,projectsdshome2jsxOpenSheets7,projectsdshome2jsxOpenTaskT8,projectsdshome2jsxOpenTaskT9,projectsdshome2jsxSetShowTemplatesShowTemplates10});
 })();

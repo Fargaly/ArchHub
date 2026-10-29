@@ -194,3 +194,16 @@ def test_programs_read_one_plain_status():
     from nodelang.nograph_server import _plain_status
     assert [_plain_status(s) for s in ('connected', 'running', 'installed', 'absent', 'needs-sign-in')] == [
         'Connected', 'Installed · not running', 'Installed · not running', 'Not installed', 'Sign in to connect']
+
+def test_nine_book_starters_are_real_workflows_ending_at_an_approve_gate(server, tmp_path):
+    """Book ch.12: each built-in starter opens as its own .archhub file; no counters before real runs."""
+    from nodelang import starters
+    from nodelang.session_files import SessionFiles, read_document
+    rows = starters.listing([{'id': 'revit', 'state': 'connected'}, {'id': 'acad', 'state': 'absent'}])
+    assert [r['title'] for r in rows][:3] == ['Submittal turnaround', 'Redline QC with proof table', 'Sheets production']
+    assert len(rows) == 9 and all(r['run_count'] is None and r['stops_at'] for r in rows)
+    assert rows[3]['needs'] == ['AutoCAD'] and rows[0]['needs'] == []
+    for row in rows:
+        opened = SessionFiles(tmp_path / 'sessions').dispatch({'action': 'starter', 'id': row['id']})
+        doc = read_document(opened['path'])
+        assert doc['nodes'][-1]['type'] == 'approval.gate' and len(doc['wires']) == len(doc['nodes']) - 1

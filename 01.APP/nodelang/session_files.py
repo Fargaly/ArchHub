@@ -402,6 +402,15 @@ class SessionFiles:
             recovery = Path(held['path']) if held.get('path') else self.directory/(held['id']+'.archhub') if held else self.directory/'autosave.archhub'
             document = read_document(launch) if launch else read_document(recovery) if recovery.exists() else new_document()
             return {'ok':True,'document':document,'path':str(launch or (json.loads(current.read_text(encoding='utf-8')).get('path','') if current.exists() else ''))}
+        if action == 'starter':
+            # A built-in starter becomes the founder's own new session file (the starter itself never changes).
+            from .starters import document as starter_document
+            document = starter_document(str(body.get('id') or ''))
+            path = write_document(self.directory/(document['id']+'.archhub'), document)
+            canvas_documents.remember(path, document)
+            self.remember(path, document)
+            self._current(document['id'], path)
+            return {'ok':True,'document':document,'path':str(path)}
         if action == 'open':
             path = body.get('path')
             if not path and picker:

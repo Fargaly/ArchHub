@@ -1484,6 +1484,9 @@ api.openSession=async path=>{
   picker.oncancel=()=>{picker.remove();resolve({cancelled:true});};document.body.append(picker);picker.click();
  });
  const navigation=++fileNavigation,opened=await sessionRequest('open',{...(path?{path}:{})});if(opened.cancelled||navigation!==fileNavigation)return {cancelled:true};return adoptFile(opened.document,opened.path,navigation);};
+// Built-in starters (Book ch.12): open one as a new session file; Start also runs it to its Approve gate.
+api.openStarter=async id=>{const navigation=++fileNavigation,opened=await sessionRequest('starter',{id});return adoptFile(opened.document,opened.path,navigation);};
+api.startTemplate=async id=>{await api.openStarter(id);await api.runNode();return {ok:true};};
 api.importSession=async file=>{const navigation=++fileNavigation;if(!file.name.toLowerCase().endsWith('.archhub')||file.size>8388608)throw Error('Choose an .archhub file up to 8 MiB.');return adoptFile(JSON.parse(await file.text()),'',navigation);};
 api.saveSession=async(path=sessionPath)=>{
  if(!path)path=window.prompt('Save session as',fileDirectory+'\\'+(sessionDocument.title||'Untitled')+'.archhub');

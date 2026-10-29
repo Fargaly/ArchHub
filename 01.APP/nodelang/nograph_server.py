@@ -576,8 +576,9 @@ def r_canvas_op(s, req):
 
 def r_node_library(s, req):
     if req.query.get('templates') == ['1']:
-        # Saved templates were graph composites; .archhub sessions replace them (Recent).
-        return {'ok': True, 'templates': []}
+        # The nine built-in starters (Book ch.12); each opens as its own .archhub workflow.
+        from .starters import listing
+        return {'ok': True, 'templates': listing(s._hosts.get() or [])}
     from .library_engines import engine_categories, library_catalogue
     groups = library_catalogue()
     return {'ok': True, 'groups': groups, 'categories': engine_categories(groups), 'wire_parameters': []}

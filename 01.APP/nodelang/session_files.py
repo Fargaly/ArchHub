@@ -1,6 +1,7 @@
 """Portable Canvas documents. No CellStore, enrollment or graph lock."""
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -292,14 +293,23 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
         if node.get('frozen'):
             results[key] = {'status':'Disabled', 'output':{}}
             continue
-        blocked = next((w['from']['node'] for w in incoming[key] if w['from']['node'] not in outputs), None)
+        # A branch If/Switch did not take, and everything only it feeds, is Skipped, not an error.
+        untaken = [w for w in incoming[key] if results.get(w['from']['node'], {}).get('status') == 'Skipped' or (
+            nodes[w['from']['node']]['type'] in ('control.if', 'control.switch') and w['from']['node'] in outputs
+            and w['from']['socket'] not in outputs[w['from']['node']])]
+        # A Merge takes whichever branch arrived; it is Skipped only when none did.
+        if untaken and (node['type'] != 'control.merge' or len(untaken) == len(incoming[key])):
+            results[key] = {'status': 'Skipped', 'output': {}}
+            continue
+        wired = [w for w in incoming[key] if w not in untaken]
+        blocked = next((w['from']['node'] for w in wired if w['from']['node'] not in outputs), None)
         if blocked:
             results[key] = {'status':'Blocked', 'output':{}, 'error':'Upstream node did not produce output'}
             continue
         feeds = {}
         engine = node['type']
         try:
-            for wire in incoming[key]:
+            for wire in wired:
                 source = nodes[wire['from']['node']]
                 socket = canonical_engine_interface(source['type'], 'source', wire['from']['socket'])
                 produced = outputs[source['id']]
@@ -340,7 +350,7 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
             results[key] = {'status':'Done', 'output':produced, 'display':display}
         except Exception as error:
             results[key] = {'status':'Error', 'output':{}, 'error':str(error)}
-    return {'ok':True, 'succeeded':all(r['status'] in ('Done','Disabled') for r in results.values()), 'results':results, 'order':order}
+    return {'ok':True, 'succeeded':all(r['status'] in ('Done','Disabled','Skipped') for r in results.values()), 'results':results, 'order':order}
 
 
 class SessionFiles:
@@ -392,6 +402,31 @@ class SessionFiles:
         rows += [{'path':r['path'],'open_in_app':False,'title':r.get('title','')} for r in self.recent() if r['path'] not in {x['path'] for x in rows}]
         return rows
 
+    def import_file(self, path):
+        """A Node-RED/Langflow .json flow opens as a new .archhub beside the session files; a SKILL.md
+        becomes a Library skill. Re-importing the same source updates its nodes in place."""
+        from .flow_import import import_text, reimport
+        source = Path(str(path))
+        if not source.is_absolute() or not source.is_file() or source.suffix.lower() not in ('.json', '.md'):
+            raise ValueError('Choose a local Node-RED or Langflow .json flow, or a SKILL.md file')
+        with source.open('rb') as stream:
+            raw = stream.read(MAX_BYTES + 1)
+        if len(raw) > MAX_BYTES:
+            raise ValueError('Imported file exceeds 8 MiB')
+        kind, imported = import_text(raw.decode('utf-8-sig'), source.name)
+        if kind == 'skill':
+            target = skills_directory()/(imported['id']+'.archhub')
+        else:
+            imported['id'] = 'import-' + hashlib.sha1(str(source.resolve()).lower().encode()).hexdigest()[:16]
+            target = self.directory/(imported['id']+'.archhub')
+        with canvas_documents.locked(target):
+            existing = read_document(target) if target.exists() else None
+            document = reimport(existing, imported)
+            canvas_documents._stamp(document, existing, 'Import', 'import ' + source.name)
+            write_document(target, document)
+        self.remember(target, document)
+        return {'ok':True,'document':document,'path':str(target),'kind':kind}
+
     def dispatch(self, body, *, invoke=None, picker=None, save_picker=None, stopped=None):
         if not isinstance(body,dict) or not isinstance(body.get('action'),str):
             raise ValueError('Session file action is required')
@@ -418,9 +453,11 @@ class SessionFiles:
         if action == 'open':
             path = body.get('path')
             if not path and picker:
-                path = picker('Open session','ArchHub session (*.archhub)')
+                path = picker('Open session','ArchHub session, Node-RED or Langflow flow, skills.sh skill (*.archhub *.json SKILL.md)')
             if not path:
                 return {'ok':True,'cancelled':True}
+            if not str(path).lower().endswith('.archhub'):
+                return self.import_file(path)
             document = read_document(path)
             self.remember(local_path(path),document)
             return {'ok':True,'document':document,'path':str(local_path(path))}

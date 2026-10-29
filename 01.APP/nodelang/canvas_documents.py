@@ -96,6 +96,9 @@ def _run_model(params, feeds):
     prompt = str(feeds.get('prompt') or params.get('prompt') or '').strip()
     if not prompt:
         raise ValueError('Wire a prompt or set the prompt parameter.')
+    system = str(feeds.get('system') or params.get('system') or '').strip()
+    if system:
+        prompt = system + '\n\n' + prompt
     body = {'prompt': prompt, 'agent': 'BABOOM', 'model': str(params.get('route') or _router()['default_model'])}
     if feeds.get('temperature') not in (None, ''):
         body['temperature'] = float(feeds['temperature'])
@@ -105,7 +108,10 @@ def _run_model(params, feeds):
 
 def _run_agent(params, feeds):
     from .workshop_mailbox import call
-    task = str(feeds.get('task') or params.get('instructions') or '').strip()
+    instructions = str(params.get('instructions') or '').strip()
+    task = str(feeds.get('task') or '').strip()
+    # A wired task runs under the node's instructions (an imported skill is both).
+    task = instructions + '\n\nTask: ' + task if instructions and task else task or instructions
     if not task:
         raise ValueError('Wire a task or write instructions.')
     files = feeds.get('files')
@@ -159,11 +165,17 @@ def _run_setting(params, feeds):
     return {'value': value}, str(value)
 
 
+def _run_foreign(params, feeds):
+    # An imported node ArchHub has no engine for: untrusted foreign code never runs (flow_import.py).
+    raise ValueError('Not run: imported %s %s node. %s. Replace it with a Library node.'
+                     % (params.get('format', ''), params.get('kind', ''), params.get('reason', 'No ArchHub engine')))
+
+
 # engine -> sockets, purity, executor, and which parameter writes through to which owner.
 THING_ENGINES = {
     'thing.agent': {'pure': False, 'run': _run_agent, 'in': [_port('task'), _port('files', 'list')],
                     'out': [_port('result'), _port('messages', 'list')]},
-    'thing.model': {'pure': False, 'run': _run_model, 'in': [_port('prompt', 'string'), _port('temperature', 'number')],
+    'thing.model': {'pure': False, 'run': _run_model, 'in': [_port('prompt', 'string'), _port('temperature', 'number'), _port('system', 'string')],
                     'out': [_port('text', 'string'), _port('model', 'string')]},
     'thing.host': {'pure': True, 'run': _run_host, 'in': [], 'out': [_port('sessions', 'list'), _port('elements', 'list')]},
     'thing.workspace': {'pure': True, 'run': _run_workspace, 'in': [], 'out': [_port('path', 'string'), _port('files', 'list')]},
@@ -171,6 +183,8 @@ THING_ENGINES = {
     'thing.workshop': {'pure': True, 'run': _run_workshop, 'in': [], 'out': [_port('messages', 'list')],
                        'engine': 'thing.workshop', 'params': {'thread': 'app:workshop', 'limit': 20}},
     'thing.setting': {'pure': True, 'run': _run_setting, 'in': [_port('value')], 'out': [_port('value')]},
+    # Not a Library card: only importers place it; its sockets live on the node.
+    'import.foreign': {'pure': False, 'run': _run_foreign, 'in': [], 'out': []},
 }
 from .daily_work_nodes import DAILY_ENGINES, daily_items  # noqa: E402 - the daily-work pack shares this one contract
 THING_ENGINES.update(DAILY_ENGINES)

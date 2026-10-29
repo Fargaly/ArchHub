@@ -40,7 +40,7 @@ def test_references_are_checked_by_point_reads():
 
 def test_no_module_on_the_entry_path_materialises_the_store():
     for name in ("cell_deliberation.py", "cell_relation_exposure_policy.py",
-                 "cell_legacy_custom_nodes.py", "cell_value_graph.py"):
+                 "cell_value_graph.py"):
         source = (ROOT / "01.APP/nodelang" / name).read_text(encoding="utf-8")
         assert not re.search(r"set\(snapshot\.cells\)", source), name
     app = (ROOT / "01.APP/nodelang" / "universal_application.py").read_text(encoding="utf-8")

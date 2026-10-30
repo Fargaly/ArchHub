@@ -53,9 +53,9 @@
     })}</div>;
   }
   // "To" is a joined agent session, Everyone, or BABOOM (free first); Send goes live into the chosen session.
-  function TaskComposer({agents, to, setTo, sendRef}) {
+  function TaskComposer({choices, to, setTo, sendRef}) {
     const s = useData(), u = useApp();
-    const [text, setText] = React.useState(''), [sending, setSending] = React.useState(false);
+    const [text, setText] = React.useState(''), [sending, setSending] = React.useState(false), [listOpen, setListOpen] = React.useState(false);
     const files = s.composerAttachments || [];
     const send = async (body = text) => {
       if (!body.trim()) return;
@@ -74,11 +74,10 @@
     };
     sendRef.current = send;
     return <D.Composer as="form" className="ws-composer" onSubmit={e => { e.preventDefault(); executeAction("ui.select", send); }} style={{width: '100%', padding: '14px 16px', gap: 8}}>
-      <label className="flex ws-small ws-to">To <select aria-label="Recipient" value={to} onChange={e => setTo(e.target.value)}>
-        {agents.length > 1 && <option value="everyone">Everyone</option>}
-        {agents.map(a => <option key={a.handle} value={a.handle}>{a.name}{a.task ? ' · ' + a.task.slice(0, 40) : ''}</option>)}
-        <option value="">BABOOM · free first</option>
-      </select></label>
+      <div className="ws-to" onKeyDown={e => e.key === 'Escape' && setListOpen(false)}>
+        <button type="button" className="ws-link" aria-haspopup="listbox" aria-expanded={listOpen} aria-label="Recipient" onClick={() => executeAction("ui.select", () => setListOpen(!listOpen))}>To {choices.find(c => c.handle === to)?.name || 'BABOOM'} ▾</button>
+        {listOpen && <div role="listbox" aria-label="Recipients" className="ws-to-list">{choices.map(c => <button type="button" role="option" key={c.key} aria-selected={c.handle === to} disabled={c.handle === undefined} className="listbutton spread" title={c.handle === undefined ? c.name + ' is running but has not joined this Workshop, so it cannot receive messages yet' : 'Send to ' + c.name} onClick={() => executeAction("ui.select", () => { setTo(c.handle); setListOpen(false); })}><span>{c.name}</span><span className="ws-small">{c.detail}</span></button>)}</div>}
+      </div>
       {files.length > 0 && <div className="flex">{files.map(f => <button type="button" key={f.id} className="ws-link" onClick={() => executeAction("ui.select", () => u.act(() => api.removeComposerAttachment(f.id)))}>{f.name || f.path} ×</button>)}</div>}
       <textarea className="composer-input ws-input" rows={2} aria-label="Message" placeholder="Message this task…" value={text} onChange={e => setText(e.target.value)} onKeyDown={e => {
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
@@ -109,7 +108,11 @@
     const people = [...agents.map(a => ({key: a.handle, id: (s.providers || []).some(p => p.id === a.app) ? a.app : a.name, name: a.name, role: (a.task || 'No task declared') + (a.status && a.status !== 'unknown' ? ' · ' + a.status : ''), handle: a.handle})),
       ...(s.agents || []).filter(p => !agents.some(a => a.app === p.runtime)).map(p => ({key: p.id, id: p.id, name: p.name,
         role: p.presence === 'working' ? 'Working · ' + p.task : p.presence === 'unknown' ? (p.status_text || 'Status unknown') : 'Idle'})),
-      ...(s.profile.name ? [{key: 'founder', id: s.profile.name, name: s.profile.name, role: 'Founder · workspace owner'}] : [])];
+      {key: 'founder', id: s.profile.name || 'You', name: s.profile.name || 'You', role: 'Founder · workspace owner'}];
+    // The To list: every agent in People & agents (one not joined is shown, but cannot receive yet), Everyone, BABOOM.
+    const choices = [...(agents.length > 1 ? [{key: 'everyone', handle: 'everyone', name: 'Everyone', detail: agents.length + ' joined sessions'}] : []),
+      ...people.filter(p => p.key !== 'founder').map(p => ({key: p.key, handle: p.handle, name: p.name, detail: p.handle ? p.role : 'Not joined · cannot receive yet'})),
+      {key: 'baboom', handle: '', name: 'BABOOM', detail: 'Free models first'}];
     const roles = Object.fromEntries(agents.filter(a => a.task).map(a => [a.name, a.task]));
     // A task's people: the joined sessions that declared it, else its runtime's provider name.
     const sessionsOf = t => agents.filter(a => (t.declarations || []).some(d => d.agent === a.agent));
@@ -147,7 +150,7 @@
       {roomMessages.length > 0 && <Messages task={{messages: roomMessages}} roles={roles} />}
       {task ? <><Messages task={task} roles={roles} />{task.approvalId && <ApprovalCard id={task.approvalId} />}{task.status === 'STOPPED' && <Btn onClick={() => executeAction("reassignTask", u, task.id)}>Continue with another agent</Btn>}{task.status === 'DONE' && <div className="flex"><Btn onClick={() => executeAction("ui.go", u, 'watcher')}>Open result</Btn><Btn onClick={() => executeAction("ui.schedule", u, task.title)}>Repeat this</Btn></div>}</> : roomMessages.length === 0 && <Empty>Create a task to begin.</Empty>}
     </div></div>
-    <div className="ws-dock"><div>{D.Composer ? <TaskComposer agents={agents} to={recipient} setTo={setTo} sendRef={sendRef} /> : window.UI.Composer && <window.UI.Composer taskId={task?.id} />}</div></div>
+    <div className="ws-dock"><div>{D.Composer ? <TaskComposer choices={choices} to={recipient} setTo={setTo} sendRef={sendRef} /> : window.UI.Composer && <window.UI.Composer taskId={task?.id} />}</div></div>
   </main>
   <aside data-workshop-column="people" className="ws-col ws-people">
     <h2>People &amp; agents</h2><p className="ws-small ws-note">{people.length + ' in this Workshop · ' + agents.length + ' joined'}</p>

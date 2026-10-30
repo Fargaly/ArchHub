@@ -198,7 +198,7 @@ button{transition:background .14s,color .14s,box-shadow .14s}button:hover{filter
 .ws-dock{padding:12px 32px 32px}.ws-dock>div{max-width:864px}
 .ws-msgs{display:grid;gap:28px}.ws-msg{display:grid;grid-template-columns:28px 1fr;gap:16px}.ws-msg.own{grid-template-columns:1fr}
 .ws-msg-body{display:grid;gap:8px}.ws-msg-body p{font-size:15px;line-height:24px;white-space:pre-wrap}.ws-msg-body b{font-size:14px}.ws-live{flex-wrap:wrap;gap:6px}
-.ws-to select{background:transparent;border:0;color:#9b938a;font-size:12px}.ws-input{background:transparent;border:0;color:#ece8e0;font-size:15px;resize:none;outline:none}
+.ws-to{position:relative}.ws-to>.ws-link{font-size:12px}.ws-to-list{position:absolute;bottom:calc(100% + 6px);left:0;z-index:20;min-width:360px;max-height:320px;overflow:auto;display:grid;gap:2px;padding:6px;background:#1a1a20;border:1px solid #26262e;border-radius:10px;box-shadow:0 12px 32px #0009}.ws-to-list .listbutton{gap:16px;padding:8px 10px;border-radius:6px;text-align:left}.ws-to-list .listbutton[aria-selected="true"]{background:#3a2018}.ws-to-list .listbutton:disabled{opacity:.55;cursor:default}.ws-input{background:transparent;border:0;color:#ece8e0;font-size:15px;resize:none;outline:none}
 .ws-tools{gap:28px}.ws-tools button[type=submit]{min-width:80px}
 .ws-people-list{display:grid;gap:22px;align-content:start;max-height:45%}.ws-person{display:grid;grid-template-columns:28px 1fr;gap:12px;text-align:left;align-items:start}
 .ws-person>span{display:grid;gap:4px;min-width:0}.ws-person b{font-size:13px;font-weight:500}.ws-person.to b{font-weight:700}.ws-person .ws-small{overflow-wrap:anywhere}

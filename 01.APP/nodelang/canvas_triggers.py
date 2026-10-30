@@ -8,7 +8,8 @@ approval rules unchanged) and the outputs are saved into the same file, attribut
 Host-event triggers (trigger.host) need a host event feed; they are listed as not armed.
 
 Routines (Paperclip routines / Open Duet, research note 2026-10-30 gap 6): each fire also posts one
-Workshop message through the existing send path (param 'to', default the founder). Optional node params:
+Workshop message: param 'to' (agent handles) pushes it live through the composer's send_as_founder;
+the default (the founder) records it for his screen. Optional node params:
 'concurrency' = skip | queue (a fire while the last run is still going), 'catch_up' = skip | run_once
 (a schedule missed while the app was closed runs once at start). The last fire time is kept in the
 trigger node's result ('fired_at') inside the same file.
@@ -167,15 +168,25 @@ class TriggerService:
         return entry
 
     def _post(self, key, trigger, reason, outcome, started):
-        """One Workshop message per fire, through the same send the app's task composer uses."""
+        """One Workshop message per fire. Addressed to agents ('to' = handles), it is pushed live into their
+        sessions through the composer's @mention path; to the founder (default) it is recorded for his screen."""
+        from .workshop_live import send_as_founder
         from .workshop_mailbox import call
         path, node_id = key
         to = str((trigger.get('params') or {}).get('to') or TRIGGER_NODE['params']['workshop_to'])
         text = 'Routine %s (%s) fired, %s: %s' % (trigger.get('title') or node_id, Path(path).stem, reason, outcome)
+        handles = [part.strip().lstrip('@').casefold() for part in to.split(',') if part.strip()]
+        pushed = None
+        if not set(handles) <= {'ahmed', 'founder', 'you'}:
+            try:
+                sent = send_as_founder(text, handles)
+                return {'workshop': sent['message_id'], 'deliveries': sent['deliveries']}
+            except Exception as refused:  # noqa: BLE001 - no live agent: still recorded below, with the reason
+                pushed = str(refused)[:200]
         retry = hashlib.sha256(('%s#%s@%r' % (path, node_id, started)).encode('utf-8')).hexdigest()
         try:
             sent = call('send', {'to': to, 'text': text, 'idempotency_key': 'routine:' + retry}, {})
-            return {'workshop': sent['message_id']}
+            return {'workshop': sent['message_id'], **({'push_error': pushed} if pushed else {})}
         except Exception as refused:  # noqa: BLE001 - the run already happened; the post failure is recorded
             return {'workshop_error': str(refused)[:200]}
 

@@ -145,3 +145,20 @@ def test_routine_catch_up_policy(profile, policy, fires):
     assert calls == fires
     assert not missed_while_closed({'every_seconds': '600', 'catch_up': 'run_once'}, time.time() - 60)
     assert not missed_while_closed({'every_seconds': '600', 'catch_up': 'run_once'}, None)
+
+
+def test_routine_addressed_to_an_agent_is_pushed_live_through_the_composer_path(profile, monkeypatch):
+    import nodelang.workshop_live as live
+    from nodelang.canvas_triggers import TriggerService
+    pushed = []
+    monkeypatch.setattr(live, 'send_as_founder', lambda text, handles, reply_to=None: pushed.append((text, handles))
+                        or {'message_id': 'm1', 'deliveries': [{'agent': 'coord', 'state': 'delivered'}]})
+    path = profile / 'agent.archhub'
+    workflow(path, 'tr_schedule', {'every_seconds': '600', 'to': '@Coord'})
+    service = TriggerService()
+    try:
+        entry = service.fire((str(path), 't'), 'trigger.schedule')
+    finally:
+        service.close()
+    assert pushed == [('Routine Trigger (agent) fired, scheduled: ran', ['coord'])]
+    assert entry['workshop'] == 'm1' and entry['deliveries'][0]['state'] == 'delivered'

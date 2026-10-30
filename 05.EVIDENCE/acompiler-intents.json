@@ -9352,7 +9352,9 @@
         "requirements.txt",
         "NOTICE",
         "package-lock.json",
-        "package.json"
+        "package.json",
+        "01.APP/nodelang/site_export.py",
+        "02.TESTS/tests_replica/test_website_truth.py"
       ]
     }
   }

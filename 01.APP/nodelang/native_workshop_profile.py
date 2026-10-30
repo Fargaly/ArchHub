@@ -21,7 +21,7 @@ _MAX_CONFIG_BYTES = 32 * 1024
 # Explicit task-server files only; no recursive installation scan. This binds
 # disk inputs, not an assertion about every loaded module or the whole package.
 TASK_SOURCE_FILES = ('__init__.py', 'native_agent_mcp.py', 'native_agent_session.py',
-    'native_workshop_tools.py', 'native_agent_hooks.py',
+    'native_agent_hooks.py',
     'installed_workshop_coordination.py', 'application_machine_transport.py',
     'cell_secret_keys.py', 'agent_runtime_registry.py',
     'agent_runtime_defs/claude.py', 'agent_runtime_defs/codex.py',
@@ -265,7 +265,7 @@ def prepare_claude_workshop_profile(*, install_root, state_root, python_executab
                   "runpy.run_module('nodelang.native_agent_mcp',run_name='__main__')")
         mcp = {"mcpServers": {SERVER_NAME: {
             "type": "stdio", "command": str(python),
-            "args": ["-I", "-B", "-c", loader, str(installed), "--workshop-task", work_root],
+            "args": ["-I", "-B", "-c", loader, str(installed)],
             "env": {"ARCHHUB_AGENT_RUNTIME": "claude", "ARCHHUB_EXTERNAL_SESSION_ID": session,
                     "CLAUDE_CODE_SESSION_ID": session},
         }}}

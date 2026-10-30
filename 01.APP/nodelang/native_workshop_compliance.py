@@ -211,7 +211,7 @@ class NativeWorkshopComplianceRunner:
         from .application_machine_transport import MachinePipePeer, peer_matches_process
         from .native_workshop_execution import _reservation, _validated, _invocation
         from .native_workshop_profile import NativeWorkshopProfile, SERVER_NAME
-        from .native_workshop_tools import WORKSHOP_TASK_TOOL_NAMES
+        from .native_workshop_execution import WORKSHOP_TASK_TOOL_NAMES
         server, registry, store = self.server, self.server.universal_registry, self.server.universal_store
         with server.mutation_lock:
             session, entry, parameters, content = app._runtime_compliance_subject(

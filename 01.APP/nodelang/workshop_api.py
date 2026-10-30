@@ -542,15 +542,11 @@ class WorkshopAPI:
             "revision":self.owner.universal_store.revision}
 
     def listTasks(self):
-        from .workshop_activity import observer_for
-        reader = observer_for(self.owner)
-        if reader is not None:
-            reader.poll()
-            from .agent_declarations import declarations
-            reader.poll_opencode(getattr(self.owner, '_cloud_relay_transport', None),
-                [row['native_session_id'] for row in declarations(self.owner)
-                 if row.get('app') == 'opencode' and type(row.get('native_session_id')) is str])
-        return [self._task(row) for row in self._works()]
+        # The Work column is the Workshop tasks table, the same rows the no-graph server shows.
+        from .workshop_mailbox import application_history
+        from .workshop_tasks import column
+        with application_history() as history:
+            return column(history)
 
     def setTaskActivity(self, task, values):
         """Keep ledger ownership/install facts in this Work's existing parameters."""

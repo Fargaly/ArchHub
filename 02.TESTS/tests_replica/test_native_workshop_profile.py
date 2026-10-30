@@ -66,7 +66,6 @@ def test_profile_uses_only_installed_mcp_and_preserves_subscription_auth(tmp_pat
     mcp = json.loads((profile.cwd / "mcp.json").read_bytes())
     assert set(mcp["mcpServers"]) == {"archhub_agent_coordination"}
     server = mcp["mcpServers"][SERVER_NAME]
-    assert server["args"][-2:] == ["--workshop-task", values["work_root"]]
     assert server["args"][:3] == ["-I", "-B", "-c"]
     assert server["env"] == {"ARCHHUB_AGENT_RUNTIME": "claude", "ARCHHUB_EXTERNAL_SESSION_ID": SESSION,
         "CLAUDE_CODE_SESSION_ID": SESSION}
@@ -79,7 +78,7 @@ def test_profile_uses_only_installed_mcp_and_preserves_subscription_auth(tmp_pat
 def test_changed_installed_task_source_refuses_launch_but_owned_cleanup_remains_available(tmp_path):
     values = inputs(tmp_path)
     profile = prepare_claude_workshop_profile(**values)
-    source = values['install_root'] / 'nodelang/native_workshop_tools.py'
+    source = values['install_root'] / 'nodelang/native_agent_mcp.py'
     source.write_text('# changed task tools\n')
     with pytest.raises(NativeProfileRefused, match='task source changed'):
         profile.verify()

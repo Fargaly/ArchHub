@@ -383,29 +383,6 @@ def test_real_sdk_client_keeps_connection_after_windows_replacement(connector):
                 pass
 
 
-def test_metadata_actor_and_dynamic_unresolved_receipt_survive_repeated_refresh():
-    from nodelang import native_agent_mcp as native
-    from nodelang.native_workshop_tools import build_workshop_task_server
-    server = native.build_server(mailbox_call=lambda *args: {})
-    actor = 'app:agent-session:runtime:' + 'a' * 32
-    server.work_control.continuations[('codex', 'not-reused-on-B')] = actor
-    task = build_workshop_task_server(server.work_control, 'assembly-instance:fixture-work')
-    held = task.selected_work
-    held.pending = ('configure', 42, {'proposal':'x' * 100000})
-    held.court_response_received = True
-    server._mcpfresh_attached.update(held=held, names=[], server=server)
-    server._mcpfresh_level = 'error'
-    for _ in range(2):
-        state = json.loads(json.dumps(native._work_continuation(server)))
-        server = native.build_server(mailbox_call=lambda *args: {})
-        native._restore_work_continuation(server, state)
-        assert server.work_control.continuations[('codex', 'not-reused-on-B')] == actor
-        restored = server._mcpfresh_attached['held']
-        assert restored.pending == held.pending and restored.court_response_received
-        assert server._mcpfresh_level == 'error'
-        assert server._tool_manager.get_tool('native.work_reconcile') is not None
-
-
 @pytest.mark.parametrize('state,candidate,retired,active,expected', [
     ('unbound', None, None, 0, True), ('bound', None, None, 0, True),
     ('uncertain', None, None, 0, False), ('released', None, None, 0, False),

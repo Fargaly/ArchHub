@@ -31,9 +31,19 @@ from .cell_model_execution import (
 )
 from .cell_protocols import read_relation
 from .cell_value_graph import build_value_graph, read_value_graph
-from .native_workshop_tools import WORKSHOP_TASK_TOOL_NAMES
 from .universal_cell import InvalidCell, overlay_read_snapshot
 from .workspace_roots_catalogue import OPEN_AGENT_RUNTIMES
+
+# The graph-launched Work profile inventory; its tool module is deleted (NOGRAPH).
+WORKSHOP_TASK_TOOL_NAMES = (
+    'native.work_current', 'native.work_assignment', 'native.work_claim', 'native.work_release', 'native.work_material',
+    'native.work_plan_draft', 'native.work_plan_read', 'native.work_submit', 'native.work_configuration',
+    'native.work_configure',
+    'native.work_request_court', 'native.work_reconcile', 'native.hook_user_prompt_submit',
+    'native.hook_stop',
+    'native.work_artifact_material', 'native.work_publish_artifact',
+    'native.work_read_artifact', 'native.work_review_artifact',
+)
 
 
 PROFILE_VERSION = "native-workshop-task-v1"

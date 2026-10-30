@@ -352,6 +352,29 @@ def test_a_one_shot_cli_send_waits_for_its_push_and_persists_a_truthful_receipt(
     with workshop_mailbox.application_history() as history:
         row = history._db.execute('SELECT state FROM workshop_live_deliveries WHERE message_id=?', (slow['message_id'],)).fetchone()
     assert tuple(row) == ('uncertain',)                                          # the receipt is in the store, not only printed
+def test_an_idle_connector_does_not_re_check_every_declarations_process_each_second(monkeypatch):
+    # Founder: "the app is very slow" -- 36 idle connectors each walked every declaration's processes through psutil
+    # every second (80% of their CPU). Liveness is remembered per process incarnation; dead stays dead.
+    import psutil
+    from nodelang import agent_declarations
+    calls = []
+
+    class Process:
+        def __init__(self, pid):
+            calls.append(pid)
+            if pid == 2:
+                raise psutil.NoSuchProcess(pid)
+
+        def create_time(self):
+            return 1.0
+    monkeypatch.setattr(psutil, 'Process', Process)
+    monkeypatch.setattr(agent_declarations, '_VERDICTS', {})
+    alive, dead = {'pid': 1, 'created_at': 1.0}, {'pid': 2, 'created_at': 1.0}
+    assert [agent_declarations._alive(alive) for _ in range(5)] == [True] * 5
+    assert [agent_declarations._alive(dead) for _ in range(5)] == [False] * 5
+    assert calls == [1, 2]                                     # one psutil look per process, not one per poll
+    assert agent_declarations._alive(alive, strict=True) and calls == [1, 2, 1]   # strict callers always look again
+
 def test_an_opencode_declaration_finds_its_session_in_its_own_opencode_process(monkeypatch):
     # OpenCode gives its MCP connector no session id; the plugin's live list names the session of that process.
     from nodelang import workshop_live, workshop_mailbox

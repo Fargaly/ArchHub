@@ -137,7 +137,9 @@ def test_watcher_read_opens_no_transaction_in_revit_and_write_does(monkeypatch):
 
 
 def test_brain_remember_edit_forget_export_without_the_graph(server, tmp_path):
+    from nodelang import brain_files
     from nodelang.nograph_server import r_brain
+    from nodelang.pipeline_engines import _brain_call
 
     def brain(path, **body):
         return r_brain(server, SimpleNamespace(method='POST', path='/api/universal/' + path, body=body))
@@ -148,8 +150,10 @@ def test_brain_remember_edit_forget_export_without_the_graph(server, tmp_path):
     assert brain('brain-publish', id=fact)['ok'] is False
     assert brain('brain-forget', id=fact)['ok'] is True
     assert brain('brain-export')['facts']['held'] == 0
-    stored = json.loads((tmp_path / 'LOCALAPPDATA' / 'ArchHub' / 'settings' / 'brain.json').read_text(encoding='utf-8'))
-    assert stored['facts'][0]['forgotten'] is True   # forget is soft: the fact is kept
+    versions = json.loads(_brain_call('brain.history', {'fragment_id': fact}))['versions']
+    assert [v['text'] for v in versions] == ['Doors are 900 mm in Tower A', 'Doors are 1000 mm in Tower A']
+    assert versions[-1]['forgotten'] is True   # forget is soft: the fact is kept
+    brain_files.close()
 
 
 def test_providers_poll_starts_the_opencode_cli_once_per_30_s(server, monkeypatch):

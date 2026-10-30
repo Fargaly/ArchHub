@@ -1399,97 +1399,273 @@ def _carries_an_image(messages: Sequence) -> bool:
     return False
 
 
-def _body(
-    destination: ModelRoute,
-    messages: Sequence,
-    max_tokens: int,
-    temperature: float,
-    top_p: float,
-    tools: Sequence | None = None,
-) -> dict:
-    if destination.family == "ollama":
+# Every HTTP chat is sent by any-llm (Mozilla.ai, Apache-2.0): it owns the
+# provider's request shape, auth headers and answer normalisation. LiteLLM is
+# never used (malicious PyPI releases in 2026). The opener stays the wire, so
+# urllib refusals (HTTP status, timeouts) still reach the readers below unchanged.
+_ANY_LLM_PROVIDER = {"openrouter": "openrouter", "openai": "openai",
+                     "anthropic": "anthropic", "ollama": "ollama"}
+_ANY_LLM_NATIVE_SHAPE = frozenset({"anthropic", "ollama"})
+_DROPPED_WIRE_HEADERS = frozenset({"host", "content-length", "accept-encoding", "connection"})
+
+
+def _any_llm_request(destination, messages, max_tokens, temperature, top_p, tools=None):
+    """(any-llm provider, api_base, completion kwargs) for this destination."""
+    family = destination.family
+    provider = _ANY_LLM_PROVIDER.get(family, "openai")
+    if family == "ollama":
         if _carries_an_image(messages):
             raise ModelRouteRefused(
                 "An ollama route cannot carry an image in this build; pick a "
                 "vision model on openrouter or the cloud."
             )
-        rows, tool_names = [], {}
-        for message in messages:
-            row = dict(message)
-            if row.get("tool_calls"):
-                calls = []
-                for call in row["tool_calls"]:
-                    fn = dict(call["function"])
-                    try:
-                        arguments = json.loads(fn["arguments"])
-                    except (ValueError, TypeError) as error:
-                        raise ModelRouteRefused("Invalid Ollama tool history arguments.") from error
-                    if not isinstance(arguments, dict):
-                        raise ModelRouteRefused("Invalid Ollama tool history arguments.")
-                    fn["arguments"] = arguments
-                    tool_names[call["id"]] = fn["name"]
-                    calls.append({**call, "function": fn})
-                row["tool_calls"] = calls
-            if row["role"] == "tool" and row.get("tool_call_id") in tool_names:
-                row["tool_name"] = tool_names[row["tool_call_id"]]
-            rows.append(row)
-        body = {
-            "model": destination.model,
-            "messages": rows,
-            "stream": False,
-            "options": {"temperature": temperature, "top_p": top_p, "num_predict": max_tokens},
-        }
-        if tools:
-            body["tools"] = list(tools)
-        return body
-    if destination.family == "openai":
-        # Current OpenAI chat models take max_completion_tokens, and the
-        # reasoning families accept only their default temperature.
-        body = {
-            "model": destination.model,
-            "messages": list(messages),
-            "max_completion_tokens": max_tokens,
-        }
+        api_base = destination.url.rsplit("/api/chat", 1)[0]
+    elif family == "anthropic":
+        api_base = destination.url.rsplit("/v1/messages", 1)[0]
+    else:
+        api_base = destination.url.rsplit("/chat/completions", 1)[0]
+    kwargs: dict = {"messages": list(messages)}
+    extra: dict = {}
+    if family == "openai":
+        # any-llm sends max_completion_tokens; reasoning families take only their default temperature.
+        kwargs["max_tokens"] = max_tokens
         if destination.model.startswith(("gpt-4", "gpt-3.5")):
-            body["temperature"] = temperature
-        if tools:
-            body["tools"] = list(tools)
-        return body
-    if destination.family == "anthropic":
-        system = []
-        rows = []
-        for row in messages:
-            role = row["role"]
-            if role == "system":
-                system.append(str(row["content"]))
-            else:
-                rows.append({
-                    "role": "assistant" if role == "assistant" else "user",
-                    "content": row["content"],
-                })
-        body = {
-            "model": destination.model,
-            "messages": rows,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
+            kwargs["temperature"] = temperature
+    elif family in _ANY_LLM_NATIVE_SHAPE:
+        kwargs.update(max_tokens=max_tokens, temperature=temperature)
+        if family == "ollama":
+            kwargs["top_p"] = top_p
+    else:
+        # The default request stays byte-identical to the one free routes answer:
+        # max_tokens as sent before, top_p only when the owner changed it.
+        extra["max_tokens"] = max_tokens
+        kwargs["temperature"] = temperature
+        if top_p is not None and top_p != 1.0:
+            kwargs["top_p"] = top_p
+    if tools and family != "anthropic":
+        kwargs["tools"] = list(tools)
+        if family not in _ANY_LLM_NATIVE_SHAPE and family != "openai":
+            kwargs["tool_choice"] = "auto"
+    if extra:
+        kwargs["extra_body"] = extra
+    return provider, api_base, kwargs
+
+
+class _OpenerTransport:
+    """httpx transport whose one request goes out through the urllib-style opener."""
+
+    def __init__(self, send, timeout, byte_limit, stream_limit):
+        self.send, self.timeout = send, timeout
+        self.byte_limit, self.stream_limit = byte_limit, stream_limit
+        self.failure = None
+        self.payload = None
+
+    async def handle_async_request(self, request):
+        import asyncio  # noqa: PLC0415
+        import httpx  # noqa: PLC0415
+
+        body = await request.aread()
+        dropped = _DROPPED_WIRE_HEADERS | ({"authorization"} if self.keyless else set())
+        headers = {k: v for k, v in request.headers.items() if k.lower() not in dropped}
+        wire = urllib.request.Request(str(request.url), data=body or None, method=request.method, headers=headers)
+        try:
+            streaming = bool(body) and json.loads(body).get("stream") is True
+        except (ValueError, AttributeError):
+            streaming = False
+        stack = ExitStack()
+        try:
+            answer = stack.enter_context(await asyncio.to_thread(self.send, wire, timeout=self.timeout))
+            if streaming:
+                return httpx.Response(200, headers={"content-type": "text/event-stream"},
+                                      stream=self.lines(answer, stack, self.stream_limit, self))
+            with stack:
+                if self.byte_limit is None:
+                    raw = await asyncio.to_thread(answer.read)
+                else:
+                    raw = await asyncio.to_thread(_read_bounded_response, answer, self.byte_limit)
+                answer_headers = getattr(answer, "headers", None)
+                kind = str(answer_headers.get("Content-Type", "") if answer_headers is not None else "")
+                if "text/event-stream" in kind.casefold() or raw.lstrip().startswith(b"data:"):
+                    # The founder's cloud always streams (proxy.py: Server-Sent Events).
+                    payload = _payload_from_event_stream(raw, require_complete=self.byte_limit is not None)
+                else:
+                    payload = json.loads(raw.decode("utf-8"))
+        except BaseException as failure:
+            stack.close()
+            self.failure = failure
+            raise
+        self.payload = payload
+        return httpx.Response(200, json=_with_envelope(payload))
+
+    async def aclose(self):
+        return None
+
+
+def _with_envelope(payload):
+    """The envelope fields any-llm's readers require; small OpenAI-compatible servers omit some."""
+    if not isinstance(payload, dict):
+        return payload
+    if "choices" in payload:
+        choices = payload["choices"]
+        if isinstance(choices, list):
+            choices = [{"index": index, **row} if isinstance(row, dict) else row for index, row in enumerate(choices)]
+        usage = payload.get("usage")
+        if isinstance(usage, dict):
+            usage = {"prompt_tokens": 0, "completion_tokens": 0, **usage}
+            usage.setdefault("total_tokens", usage["prompt_tokens"] + usage["completion_tokens"])
+            payload = {**payload, "usage": usage}
+        return {"id": "archhub", "object": "chat.completion", "created": 0, "model": "", **payload, "choices": choices}
+    if isinstance(payload.get("message"), dict):  # Ollama /api/chat
+        payload = {"model": "", "created_at": "1970-01-01T00:00:00Z", "done": True, **payload,
+                   "message": {"role": "assistant", **payload["message"]}}
+        if payload["done"] is True and not payload.get("done_reason"):
+            payload["done_reason"] = "stop"
+        return payload
+    if isinstance(payload.get("content"), list) and "stop_reason" in payload:  # Anthropic /v1/messages
+        return {"id": "archhub", "type": "message", "role": "assistant", "model": "", **payload}
+    return payload
+
+
+class _OpenerLines:
+    """The streamed answer, bounded line by line (64 KiB a line, the byte limit in total)."""
+
+    def __init__(self, answer, stack, limit, owner):
+        self.answer, self.stack, self.limit, self.owner = answer, stack, limit, owner
+
+    async def __aiter__(self):
+        import asyncio  # noqa: PLC0415
+
+        size = 0
+        try:
+            while True:
+                line = await asyncio.to_thread(self.answer.readline, min(self.limit - size + 1, 65537))
+                if not line:
+                    return
+                size += len(line)
+                if size > self.limit or len(line) > 65536:
+                    raise ModelRouteRefused('Response stream exceeds its bound.', reason_code='response_incomplete')
+                if line.startswith(b"data:") and line[5:].strip() not in (b"", b"[DONE]"):
+                    line = b"data: " + json.dumps(_with_envelope(json.loads(line[5:]))).encode("utf-8") + b"\n"
+                yield line
+        except BaseException as failure:
+            if not isinstance(failure, GeneratorExit):
+                self.owner.failure = failure
+            raise
+
+    async def aclose(self):
+        self.stack.close()
+
+
+def _wire_transport(send, timeout, byte_limit, stream_limit, keyless):
+    import httpx  # noqa: PLC0415
+
+    class Transport(_OpenerTransport, httpx.AsyncBaseTransport):
+        lines = type("Lines", (_OpenerLines, httpx.AsyncByteStream), {})
+
+    transport = Transport(send, timeout, byte_limit, stream_limit)
+    transport.keyless = keyless
+    return transport
+
+
+def _any_llm_chat(destination, rows, **options):
+    """One provider call as one OpenTelemetry GenAI client span (C4: the one span stream).
+
+    Only the OpenTelemetry API is used: no exporter is configured here, so the span is
+    a no-op until the app's span stream installs a tracer provider. No prompt or answer
+    text is recorded, only the metadata request_profiles already keeps.
+    """
+    from opentelemetry import trace  # noqa: PLC0415
+
+    family = destination.family
+    with trace.get_tracer("archhub.model_router").start_as_current_span(
+            "chat %s" % destination.model, kind=trace.SpanKind.CLIENT, attributes={
+                "gen_ai.operation.name": "chat", "gen_ai.provider.name": _ANY_LLM_PROVIDER.get(family, family),
+                "gen_ai.request.model": destination.model, "gen_ai.request.max_tokens": options["max_tokens"],
+                "server.address": _host_of(destination.url)}) as span:
+        try:
+            payload = _any_llm_call(destination, rows, **options)
+        except BaseException as failure:
+            span.set_attribute("error.type", getattr(failure, "reason_code", None) or type(failure).__name__)
+            raise
+        if isinstance(payload, Mapping):
+            if isinstance(payload.get("model"), str) and payload["model"]:
+                span.set_attribute("gen_ai.response.model", payload["model"])
+            usage = payload.get("usage") if isinstance(payload.get("usage"), Mapping) else {}
+            for name, key in (("prompt_tokens", "gen_ai.usage.input_tokens"), ("completion_tokens", "gen_ai.usage.output_tokens")):
+                if type(usage.get(name)) is int:
+                    span.set_attribute(key, usage[name])
+        return payload
+
+
+def _any_llm_call(destination, rows, *, send, timeout, api_key, max_tokens, temperature, top_p,
+                  tools=None, free_only=False, reasoning_effort=None, byte_limit=None, on_delta=None):
+    """One provider call through any-llm; the answer comes back in the chat-completions shape.
+
+    Wire failures re-raise as the opener raised them (HTTPError, URLError, timeouts,
+    bounded-read refusals), so the refusal readers keep one meaning per failure.
+    """
+    import httpx  # noqa: PLC0415
+    from any_llm import AnyLLM  # noqa: PLC0415
+
+    provider, api_base, kwargs = _any_llm_request(destination, rows, max_tokens, temperature, top_p, tools=tools)
+    extra = kwargs.setdefault("extra_body", {})
+    if reasoning_effort is not None and destination.url == GOOGLE_CHAT:
+        extra["reasoning_effort"] = "high" if reasoning_effort == "xhigh" else reasoning_effort  # Gemini's OpenAI-compatible field
+    elif reasoning_effort is not None:
+        extra["reasoning"] = {"effort": reasoning_effort}
+    if free_only:
+        extra["provider"] = {
+            "max_price": {"prompt": 0, "completion": 0, "request": 0, "image": 0},
+            "allow_fallbacks": False,
         }
-        if system:
-            body["system"] = "\n".join(system)
-        return body
-    body = {
-        "model": destination.model,
-        "messages": list(messages),
-        "max_tokens": max_tokens,
-        "temperature": temperature,
-    }
-    # The default request stays byte-identical to the one free routes answer;
-    # top_p is sent only when the owner changed it.
-    if top_p is not None and top_p != 1.0:
-        body["top_p"] = top_p
-    if tools:
-        body["tools"] = list(tools)
-        body["tool_choice"] = "auto"
-    return body
+    if not extra or provider in ("anthropic", "ollama"):
+        kwargs.pop("extra_body")
+    streaming = on_delta is not None and provider not in ("anthropic", "ollama")
+    if streaming:
+        kwargs.update(stream=True, stream_options={"include_usage": True})
+    transport = _wire_transport(send, timeout, byte_limit, byte_limit or 262144, keyless=not api_key)
+    client_args = {"transport": transport} if provider == "ollama" else {
+        "http_client": httpx.AsyncClient(transport=transport), "max_retries": 0}
+    try:
+        llm = AnyLLM.create(provider, api_key=api_key or "not-required", api_base=api_base,
+                            unified_exceptions=False, **client_args)
+        answer = llm.completion(model=destination.model, **kwargs)
+        if streaming:
+            pieces, metadata, finish = [], {}, None
+            for chunk in answer:
+                if getattr(chunk, "model", None):
+                    metadata["model"] = chunk.model
+                if getattr(chunk, "usage", None) is not None:
+                    metadata["usage"] = chunk.usage.model_dump()
+                for choice in chunk.choices or ():
+                    text = choice.delta.content if choice.delta is not None else None
+                    if type(text) is str and text:
+                        on_delta(text)
+                        pieces.append(text)
+                    if choice.finish_reason:
+                        finish = choice.finish_reason
+            if type(finish) is not str or not finish:
+                raise ModelRouteRefused("The response stream did not complete.", reason_code="response_incomplete")
+            return {**metadata, "choices": [{"message": {"role": "assistant", "content": "".join(pieces)},
+                                             "finish_reason": finish}]}
+    except ModelRouteRefused:
+        raise
+    except Exception as refused:
+        if transport.failure is not None:
+            raise transport.failure from None
+        if transport.payload is not None:
+            # The provider answered, in a shape any-llm would not read: the
+            # readers below name what was wrong (error body, empty answer).
+            return transport.payload
+        raise ModelRouteRefused(
+            "%s did not answer with a readable response." % destination.provider,
+            reason_code="provider_error",
+        ) from refused
+    if destination.family in _ANY_LLM_NATIVE_SHAPE:
+        return answer.model_dump(exclude_none=True)
+    # OpenAI-shaped providers pass through any-llm unchanged; keep their exact
+    # fields (usage.cost, reasoning, actual model) for the free-only checks.
+    return transport.payload
 
 
 def _answer_text(destination: ModelRoute, payload: object) -> str:
@@ -1506,47 +1682,30 @@ def _answer_text(destination: ModelRoute, payload: object) -> str:
                     "%s: %s" % (destination.provider, message),
                     reason_code=reason,
                 )
-        if destination.family == "anthropic":
-            content = payload.get("content")
-            if isinstance(content, (list, tuple)):
-                text = "\n".join(
-                    str(part.get("text"))
-                    for part in content
-                    if isinstance(part, Mapping)
-                    and part.get("type") == "text"
-                    and part.get("text") is not None
-                )
-                if text:
-                    return text
-        if destination.family == "ollama":
-            message = payload.get("message")
-            if isinstance(message, Mapping) and message.get("content") is not None:
-                return str(message["content"])
-        else:
-            choices = payload.get("choices")
-            if isinstance(choices, (list, tuple)) and choices:
-                first = choices[0]
-                if isinstance(first, Mapping):
-                    message = first.get("message")
-                    if isinstance(message, Mapping) and isinstance(message.get("tool_calls"), (list, tuple)):
-                        return str(message.get("content") or "")
-                    if (
-                        isinstance(message, Mapping)
-                        and message.get("content") is not None
-                    ):
-                        return str(message["content"])
-                    if destination.family == "openrouter" and isinstance(message, Mapping):
-                        for name in ("reasoning", "reasoning_content"):
-                            if message.get(name):
-                                raise ModelRouteRefused(
-                                    "OpenRouter returned reasoning without an answer.",
-                                    reason_code="empty_answer",
-                                )
-                    if destination.family == "openrouter":
-                        raise ModelRouteRefused(
-                            "OpenRouter answered without message content.",
-                            reason_code="empty_answer",
-                        )
+        choices = payload.get("choices")
+        if isinstance(choices, (list, tuple)) and choices:
+            first = choices[0]
+            if isinstance(first, Mapping):
+                message = first.get("message")
+                if isinstance(message, Mapping) and isinstance(message.get("tool_calls"), (list, tuple)):
+                    return str(message.get("content") or "")
+                if (
+                    isinstance(message, Mapping)
+                    and message.get("content") is not None
+                ):
+                    return str(message["content"])
+                if destination.family == "openrouter" and isinstance(message, Mapping):
+                    for name in ("reasoning", "reasoning_content"):
+                        if message.get(name):
+                            raise ModelRouteRefused(
+                                "OpenRouter returned reasoning without an answer.",
+                                reason_code="empty_answer",
+                            )
+                if destination.family == "openrouter":
+                    raise ModelRouteRefused(
+                        "OpenRouter answered without message content.",
+                        reason_code="empty_answer",
+                    )
     raise ModelRouteRefused(
         "%s answered in a shape this app does not read." % destination.provider
     )
@@ -1558,9 +1717,7 @@ def _answer_tool_calls(_destination: ModelRoute, payload: object) -> list:
     choices = payload.get("choices")
     first = choices[0] if isinstance(choices, (list, tuple)) and choices else None
     message = first.get("message") if isinstance(first, Mapping) else None
-    if _destination.family == "ollama":
-        message = payload.get("message")
-    calls = message.get("tool_calls") if isinstance(message, Mapping) else None
+    calls =message.get("tool_calls") if isinstance(message, Mapping) else None
     if not isinstance(calls, (list, tuple)):
         return []
     result = []
@@ -2187,31 +2344,6 @@ def _payload_from_event_stream(raw: bytes, *, require_complete: bool = False) ->
     return {**metadata, "choices": [{"message": {"role": "assistant", "content": "".join(pieces)}, "finish_reason": finish}]}
 
 
-def _read_chat_stream(answer, limit, on_delta):
-    """Bound and forward real upstream deltas; the existing parser verifies completion."""
-    chunks, size = [], 0
-    while True:
-        line = answer.readline(min(limit - size + 1, 65537))
-        if not line:
-            break
-        size += len(line)
-        if size > limit or len(line) > 65536:
-            raise ModelRouteRefused('Response stream exceeds its bound.', reason_code='response_incomplete')
-        chunks.append(line)
-        if line.startswith(b'data:'):
-            data = line[5:].strip()
-            if data == b'[DONE]':
-                break
-            if data:
-                event = json.loads(data)
-                choices = event.get('choices') or []
-                if choices:
-                    text = (choices[0].get('delta') or {}).get('content')
-                    if type(text) is str and text:
-                        on_delta(text)
-    return _payload_from_event_stream(b''.join(chunks), require_complete=True)
-
-
 _LOCAL_CLI: dict = {"broker": None}
 
 
@@ -2369,28 +2501,17 @@ def _http_chat_once(
     max_tokens: int,
     temperature: float,
     top_p: float,
-    headers: Optional[Mapping[str, str]] = None,
+    api_key: Optional[str] = None,
     free_only: bool = False,
     reasoning_effort: Optional[str] = None,
     tools: Sequence | None = None,
 ) -> dict:
-    body = _body(destination, rows, max_tokens, temperature, top_p, tools=tools)
-    if reasoning_effort is not None:
-        body["reasoning"] = {"effort": reasoning_effort}
-    if free_only:
-        body["provider"] = {
-            "max_price": {"prompt": 0, "completion": 0, "request": 0, "image": 0},
-            "allow_fallbacks": False,
-        }
-    request = urllib.request.Request(
-        destination.url,
-        data=json.dumps(body).encode("utf-8"),
-        method="POST",
-        headers=dict(headers or {"Content-Type": "application/json"}),
-    )
     try:
-        with send(request, timeout=timeout) as answer:
-            payload = json.loads(answer.read().decode("utf-8"))
+        payload = _any_llm_chat(
+            destination, rows, send=send, timeout=timeout, api_key=api_key,
+            max_tokens=max_tokens, temperature=temperature, top_p=top_p, tools=tools,
+            free_only=free_only, reasoning_effort=reasoning_effort,
+        )
     except urllib.error.HTTPError as refused:
         raise _http_error_refusal(destination, refused) from refused
     except (TimeoutError, urllib.error.URLError) as uncertain:
@@ -2443,7 +2564,7 @@ def _free_only_after_first_openrouter_failure(
     remaining_openrouter: Sequence[ModelRoute],
     send: Callable,
     deadline: float,
-    headers: Mapping[str, str],
+    api_key: Optional[str],
     key_source: str,
     max_tokens: int,
     temperature: float,
@@ -2479,7 +2600,7 @@ def _free_only_after_first_openrouter_failure(
                     max_tokens=max_tokens,
                     temperature=temperature,
                     top_p=top_p,
-                    headers=headers,
+                    api_key=api_key,
                     free_only=True,
                     reasoning_effort=reasoning_effort,
                     tools=tools,
@@ -2697,20 +2818,15 @@ def route_chat(
         for row in rows:
             for call in row.get("tool_calls") or ():
                 call.setdefault("extra_content", {"google": {"thought_signature": "skip_thought_signature_validator"}})
-    headers = {"Content-Type": "application/json"}
+    api_key = None
     key_source = "not required"
     if destination.needs_key:
-        key, key_source = discover_key(
+        api_key, key_source = discover_key(
             destination.family,
             environ=environ,
             secrets_loader=secrets_loader,
             cloud_session=session if isinstance(session, Mapping) else None,
         )
-        if destination.family == "anthropic":
-            headers["x-api-key"] = key
-            headers["anthropic-version"] = "2023-06-01"
-        else:
-            headers["Authorization"] = "Bearer " + key
     trace = _FreeChatTrace(free_only and destination.family == "openrouter", environ=environ)
     send = urllib.request.urlopen if opener is None else opener
     attempts = _openrouter_free_attempts(
@@ -2732,8 +2848,6 @@ def route_chat(
         raise _openrouter_free_exhausted_refusal()
     before_dispatch_once()
     openrouter_deadline = min(deadline, time.monotonic() + _OPENROUTER_FREE_TOTAL_SECONDS)
-    def emit(text):
-        on_delta(text)
     for index, attempt in enumerate(attempts):
         attempt_timeout = (
             _remaining_timeout(openrouter_deadline)
@@ -2743,43 +2857,14 @@ def route_chat(
         if attempt_timeout <= 0 and free_only and attempt.family == "openrouter":
             trace.close("free_model_exhausted")
             raise _openrouter_free_exhausted_refusal()
-        body = _body(attempt, rows, max_tokens, temperature, top_p, tools=tool_rows)
-        if on_delta is not None:
-            body.update(stream=True, stream_options={'include_usage': True})
-        if reasoning_effort is not None and attempt.url == GOOGLE_CHAT:
-            body["reasoning_effort"] = "high" if reasoning_effort == "xhigh" else reasoning_effort  # Gemini's OpenAI-compatible field
-        elif reasoning_effort is not None:
-            body["reasoning"] = {"effort": reasoning_effort}
-        if free_only:
-            body["provider"] = {
-                "max_price": {"prompt": 0, "completion": 0, "request": 0, "image": 0},
-                "allow_fallbacks": False,
-            }
-        request = urllib.request.Request(
-            attempt.url,
-            data=json.dumps(body).encode("utf-8"),
-            method="POST",
-            headers=headers,
-        )
         attempt_started = trace.start()
         try:
-            with send(request, timeout=attempt_timeout) as answer:
-                if on_delta is not None:
-                    payload = _read_chat_stream(answer, response_byte_limit or 262144, emit)
-                    raw = None
-                else:
-                    raw = answer.read() if response_byte_limit is None else _read_bounded_response(answer, response_byte_limit)
-                answer_headers = getattr(answer, "headers", None)
-                kind = str(answer_headers.get("Content-Type", "") if answer_headers is not None else "")
-                if raw is None:
-                    pass
-                elif "text/event-stream" in kind.casefold() or raw.lstrip().startswith(b"data:"):
-                    # The founder's cloud always streams (proxy.py: Server-Sent
-                    # Events); a reader that expected one JSON document saw the
-                    # cloud family as never answering (audit 2026-09-06).
-                    payload = _payload_from_event_stream(raw, require_complete=response_byte_limit is not None)
-                else:
-                    payload = json.loads(raw.decode("utf-8"))
+            payload = _any_llm_chat(
+                attempt, rows, send=send, timeout=attempt_timeout, api_key=api_key,
+                max_tokens=max_tokens, temperature=temperature, top_p=top_p, tools=tool_rows,
+                free_only=free_only, reasoning_effort=reasoning_effort,
+                byte_limit=response_byte_limit, on_delta=on_delta,
+            )
         except ModelRouteRefused:
             raise
         except urllib.error.HTTPError as refused:
@@ -2796,7 +2881,7 @@ def route_chat(
                         send=send,
                         deadline=deadline,
                         openrouter_deadline=openrouter_deadline,
-                        headers=headers,
+                        api_key=api_key,
                         key_source=key_source,
                         max_tokens=max_tokens,
                         temperature=temperature,
@@ -2843,7 +2928,7 @@ def route_chat(
                         send=send,
                         deadline=deadline,
                         openrouter_deadline=openrouter_deadline,
-                        headers=headers,
+                        api_key=api_key,
                         key_source=key_source,
                         max_tokens=max_tokens,
                         temperature=temperature,
@@ -2859,10 +2944,6 @@ def route_chat(
             raise failure from unreadable
         choices = payload.get("choices") if isinstance(payload, Mapping) else None
         first = choices[0] if isinstance(choices, (list, tuple)) and choices else None
-        if attempt.family == "anthropic":
-            first = {"finish_reason": payload.get("stop_reason")} if isinstance(payload, Mapping) else None
-        if attempt.family == "ollama" and isinstance(payload, Mapping) and payload.get("done") is True:
-            first = {"finish_reason": payload.get("done_reason") or "stop", "message": payload.get("message")}
         if response_byte_limit is not None and (
             not isinstance(first, Mapping) or type(first.get("finish_reason")) is not str or not first["finish_reason"]
         ):
@@ -2890,7 +2971,7 @@ def route_chat(
                         send=send,
                         deadline=deadline,
                         openrouter_deadline=openrouter_deadline,
-                        headers=headers,
+                        api_key=api_key,
                         key_source=key_source,
                         max_tokens=max_tokens,
                         temperature=temperature,
@@ -2924,7 +3005,7 @@ def route_chat(
                     send=send,
                     deadline=deadline,
                     openrouter_deadline=openrouter_deadline,
-                    headers=headers,
+                    api_key=api_key,
                     key_source=key_source,
                     max_tokens=max_tokens,
                     temperature=temperature,

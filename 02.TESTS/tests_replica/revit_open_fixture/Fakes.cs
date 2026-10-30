@@ -7,7 +7,7 @@ using RevitMCPCore;
 
 namespace Autodesk.Revit.DB
 {
-    public class ElementId { }
+    public class ElementId { public ElementId() { } public ElementId(int v) { IntegerValue = v; Value = v; } public ElementId(long v) { Value = v; } public int IntegerValue; public long Value; }
     public class View { public string Name { get; set; } = "Default"; public bool IsTemplate; public ElementId Id = new ElementId(); }
     public class Document
     {

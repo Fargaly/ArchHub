@@ -196,6 +196,8 @@ class NoGraphServer:
                 print('  cloud relay: did not stop -- %s' % stuck, flush=True)
         self.httpd.shutdown()
         self.httpd.server_close()
+        from .brain_files import close as close_brain
+        close_brain()
 
     def opencode_status(self, executable):
         """OpenCode auth/run readiness off the request path, 30 s like the old server's cache: the 5 s

@@ -48,6 +48,35 @@ namespace RevitMCPCore
     }
 
     /// <summary>
+    /// The one ElementId helper every /exec script uses (scripts reference this
+    /// Core). Revit 2024 added ElementId.Value/new ElementId(long); 2026 removed
+    /// IntegerValue and the int constructor. Conditional compile per Revit year,
+    /// after bimwright rvt-mcp RevitCompat (Apache-2.0).
+    /// </summary>
+    public static class RevitIds
+    {
+        public static long Of(ElementId id)
+        {
+#if REVIT2024_OR_GREATER
+            return id.Value;
+#else
+            return id.IntegerValue;
+#endif
+        }
+
+        public static ElementId Id(long id)
+        {
+#if REVIT2024_OR_GREATER
+            return new ElementId(id);
+#else
+            if (id < int.MinValue || id > int.MaxValue)
+                throw new ArgumentOutOfRangeException(nameof(id), "Element id " + id + " is outside this Revit version's id range.");
+            return new ElementId((int)id);
+#endif
+        }
+    }
+
+    /// <summary>
     /// CoreEntry — reflection-discovered by ArchHub.Shared.CoreLoader.
     /// Method signatures must EXACTLY match the convention documented in
     /// shared/CoreLoader.cs: Start(submit, log, hostInfo) → int port,

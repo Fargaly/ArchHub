@@ -117,16 +117,23 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
         launch = Launch(app)
         launch.requested.connect(lambda _arguments: (window.showNormal(), window.raise_(), window.activateWindow()))
         threading.Thread(target=serve_launch_requests, args=(instance_lock, launch.requested.emit), daemon=True).start()
+    from .window_commands import CloseToTray, bind_window_commands
+    quit_app = app.quit
     if QSystemTrayIcon.isSystemTrayAvailable():
+        # Closing the window keeps ArchHub, its server, BABOOM and agent work running in the tray.
         tray = QSystemTrayIcon(icon, app)
+        app.setQuitOnLastWindowClosed(False)
+        stay = CloseToTray(window, tray, app.quit, Path(state_dir) / 'tray-notice-shown')
+        quit_app = stay.quit
+        open_window = lambda: (window.showNormal(), window.raise_(), window.activateWindow())
         menu = QMenu()
-        menu.addAction('Open ArchHub', lambda: (window.showNormal(), window.activateWindow()))
-        menu.addAction('Quit', app.quit)
+        menu.addAction('Open ArchHub', open_window)
+        menu.addAction('Quit ArchHub', quit_app)
         tray.setContextMenu(menu)
+        tray.activated.connect(lambda reason: reason == QSystemTrayIcon.ActivationReason.Trigger and open_window())
         tray.show()
-    from .window_commands import bind_window_commands
     from .studio_downloads import install_studio_downloads
-    window_commands = bind_window_commands(view, window, app.quit, server.public_url, title_bar)  # Studio window buttons
+    window_commands = bind_window_commands(view, window, quit_app, server.public_url, title_bar)  # Studio window buttons
     downloads = install_studio_downloads(view.page().profile(), view.page(), server.public_url, parent=window,
                                          on_status=lambda status: window.statusBar().showMessage(status['detail']))
     app.aboutToQuit.connect(downloads.close)
@@ -156,7 +163,7 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
     QTimer.singleShot(0, lambda: print('  window     : Studio opened', flush=True))
     view.loadFinished.connect(lambda ok: ok and threading.Thread(target=confirm_boot, name='archhub-update-confirm',
                                                                  daemon=True).start())
-    restart['quit'] = app.quit
+    restart['quit'] = quit_app
     code = app.exec()
     del window_commands
     server.close()

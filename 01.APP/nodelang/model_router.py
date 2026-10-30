@@ -173,11 +173,9 @@ _PROFILE_LOCK = threading.Lock()
 
 def request_profiles(record=None):
     """Metadata only; no prompt, reply, credential or provider error body."""
-    from .settings_owner import router_settings_path
-    path = router_settings_path().parent / 'router.sqlite'
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with _PROFILE_LOCK, sqlite3.connect(path) as db:
-        db.execute('CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, ts REAL, agent TEXT, model TEXT, provider TEXT, tokens INTEGER, ms INTEGER, outcome TEXT)')
+    from contextlib import closing
+    from .agent_budget import connect
+    with _PROFILE_LOCK, closing(connect()) as db, db:
         db.execute('DELETE FROM requests WHERE ts < ?', (time.time() - 20 * 86400,))
         if record is not None:
             db.execute('INSERT INTO requests VALUES (:id,:ts,:agent,:model,:provider,:tokens,:ms,:outcome)', record)
@@ -206,6 +204,9 @@ def composer_chat(body, *, on_delta=None):
     destination = resolve_model_route(route)
     if destination.family == 'openrouter' and not settings['providers']['openrouter']['enabled']:
         raise ModelRouteRefused('OpenRouter is disabled in Settings.')
+    from .agent_budget import paused
+    if paused(agent):
+        raise ModelRouteRefused('This agent reached its token cap and is paused.', reason_code='agent_paused')
     free = _is_openrouter_free_route(destination)
     started = time.monotonic()
     record = dict(id=str(uuid4()), ts=time.time(), agent=agent, model=destination.model,

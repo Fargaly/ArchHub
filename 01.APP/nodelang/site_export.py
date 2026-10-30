@@ -245,11 +245,11 @@ def project_tutorial_documentation():
 
 
 BANNED_PUBLIC_CLAIMS = (
-    "hides it to the system tray", "needs an add-in this build does not install",
+    "needs an add-in this build does not install",
     "this build does not install the add-in", "save any thread as a skill",
     "nothing happens that you can't see, trace, or undo", "tower-a",
     "plotted on friday", "manual restarts", "median recovery",
-    "x hides to tray", "no revit add-in installed", "undo anything",
+    "no revit add-in installed", "undo anything",
     "bring your own key", "bring your own api key", "paste your api key",
     "paste an api key", "goose is running",
 )

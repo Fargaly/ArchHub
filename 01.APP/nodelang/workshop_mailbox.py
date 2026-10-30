@@ -779,8 +779,12 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
             or not 0 <= store_busy_timeout_seconds <= 2):
         raise ValueError("Workshop store lock wait must be between zero and two seconds")
     required = {"send": {"to", "text"}, "read": {"since"}, "pending": set(), "seen": {"message_ids", "channel"},
-                "declare": {"task", "paths", "status", "request_id"}}
-    optional = {"send": {"reply_to", "idempotency_key", "native_control"}, "read": {"declarations_after", "include_archived"}, "declare": {"display_name", "model"}, "pending":set(), "seen":set()}
+                "declare": {"task", "paths", "status", "request_id"},
+                "task_create": {"title"}, "task_list": set(), "task_claim": {"id"}, "task_release": {"id"},
+                "task_complete": {"id"}}
+    optional = {"send": {"reply_to", "idempotency_key", "native_control"}, "read": {"declarations_after", "include_archived"}, "declare": {"display_name", "model"}, "pending":set(), "seen":set(),
+                "task_create": set(), "task_list": set(), "task_claim": {"lease_seconds"}, "task_release": set(),
+                "task_complete": {"result"}}
     if method not in required or type(body) is not dict or not required[method] <= set(body) or set(body) - required[method] - optional[method]:
         raise ValueError("Workshop mailbox arguments are invalid")
     if type(timeout_seconds) not in (int, float) or not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
@@ -817,6 +821,8 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
                     return _seen(selected, body, identity, runtime)
                 if method == "declare":
                     return _declare(selected, body, context, identity, runtime, peer, identity["sender_key"])
+                if method.startswith("task_"):
+                    return _task(selected, method, body, identity)
                 result = _send(selected, body, identity, sender_binding={"session":identity["sender_key"],
                     "runtime":runtime, "native_session_id":next(iter(context.values()), None)})
             break
@@ -855,6 +861,26 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
         {"agent": body["to"], "state": "sent", "reason": "Sent and recorded; do not send it again. "
          "Its live push into each recipient session is finishing now."}]
     return result
+
+
+def _task(history, method, body, identity):
+    from . import workshop_tasks
+    me, label = identity["sender_key"], identity["sender_label"]
+    if method == "task_create":
+        return {"task": workshop_tasks.create(history, body["title"], label)}
+    if method == "task_list":
+        return {"tasks": workshop_tasks.rows(history)}
+    task = _text(body["id"], "task id", 64)
+    if method == "task_claim":
+        won = workshop_tasks.claim(history, task, me, label, body.get("lease_seconds"))
+    elif method == "task_release":
+        won = workshop_tasks.release(history, task, me)
+    else:
+        result = body.get("result", "")
+        if type(result) is not str or len(result.encode("utf-8")) > 20000:
+            raise ValueError("Invalid task result")
+        won = workshop_tasks.complete(history, task, me, result)
+    return {"ok": won, "task": workshop_tasks.get(history, task)}
 
 
 # Sender verdicts per process incarnation (pid, start time): its ancestry cannot change while it runs.

@@ -637,9 +637,6 @@ def r_providers(s, req):
 
 
 # -- Workshop: the room is workshop/messages.sqlite3; delivery is Workshop --
-STATUS = {'working': 'WIP', 'blocked': 'PLANNED', 'review': 'IN REVIEW', 'done': 'DONE'}
-
-
 def _declarations():
     from .workshop_mailbox import application_history, read_declarations
     with application_history() as history:
@@ -647,11 +644,27 @@ def _declarations():
 
 
 def _list_tasks():
-    return [{'id': row['root'], 'title': row.get('task') or 'Task not reported', 'status': STATUS.get(row.get('status'), 'PLANNED'),
-             'owner': row.get('runtime') or row.get('app'), 'messages': [], 'steps': [], 'reviews': [], 'queuedMessages': [],
-             'declarations': [{'root': row['root'], 'agent': row.get('agent'), 'status': row.get('status')}],
-             'paths': row.get('paths', []), 'updated_at': row.get('updated_at')}
-            for row in _declarations() if row.get('current') or row.get('status') == 'done']
+    """The Work column: the Workshop tasks table (claimed atomically by agents with task.claim)."""
+    from .workshop_mailbox import application_history
+    from .workshop_tasks import UI_STATUS, rows
+    with application_history() as history:
+        found = rows(history)
+    return [{'id': row['id'], 'title': row['title'], 'owner': None if row['lease_expired'] else row['owner_label'],
+             'status': 'PLANNED' if row['lease_expired'] else UI_STATUS[row['status']], 'result': row['result'],
+             'messages': [], 'steps': [], 'reviews': [], 'queuedMessages': [], 'declarations': [],
+             'updated_at': row['updated_at']} for row in found]
+
+
+def _set_task_status(task, status):
+    from .workshop_mailbox import application_history
+    from .workshop_tasks import set_status
+    try:
+        with application_history() as history:
+            if not set_status(history, str(task), status):
+                return {'ok': False, 'error': 'No such Workshop task'}
+    except ValueError as refused:
+        return {'ok': False, 'error': str(refused)}
+    return next(row for row in _list_tasks() if row['id'] == task)
 
 
 def _list_agents():
@@ -761,6 +774,7 @@ OWNER_ACTIONS = {
 
 WORKSHOP_READS = {
     'listTasks': lambda *a: _list_tasks(),
+    'setTaskStatus': _set_task_status,
     'listAgentsWorking': lambda *a: _list_agents(),
     'listWorkshopMessages': lambda before=None, *a: _list_messages(before),
     'listApprovals': lambda *a: _watcher().reviews() + _host_skills().reviews(),

@@ -108,12 +108,12 @@ async function request(path,body=undefined,readRetry=true,signal=undefined) {
  return result;
 }
 function rows(node){return node?.properties||node?.params||[];}
-async function routerChat(prompt,agent) {
+async function routerChat(prompt,agent,replyTo) {
  const generation=++composerGeneration;let answer='';
  publish({composerAnswer:{answer:'',provider:'Routing',model:'Free model'}});
  const response=await fetch('/api/router/chat',{method:'POST',headers:{'Content-Type':'application/json',
   'X-ArchHub-Session':session?.token||'','X-ArchHub-CSRF':session?.csrf||'',
-  'X-ArchHub-Canvas-Key':window.ARCHHUB_AUTHORITY?.canvas_key||''},body:JSON.stringify({prompt,agent})});
+  'X-ArchHub-Canvas-Key':window.ARCHHUB_AUTHORITY?.canvas_key||''},body:JSON.stringify({prompt,agent,...(replyTo?{reply_to:replyTo}:{})})});
  if(!response.ok){const result=await response.json();throw Error(result.error||'The model request was refused.');}
  const reader=response.body.getReader(),decoder=new TextDecoder();let pending='',result;
  try{for(;;){const {done,value}=await reader.read();pending+=decoder.decode(value||new window.Uint8Array(),{stream:!done});
@@ -511,7 +511,7 @@ Object.assign(api,{
  getKnowledgeGraph:()=>({nodes:[],edges:[],status:'not_connected',message:'Knowledge graph is unavailable.'}),
  contextLabel:id=>state.files.find(x=>x.id===id)?.name||state.graph.nodes.find(x=>x.id===id)?.title||id,
  compatibleNodes:()=>[],getDecisionState:()=>null,
- async sendToBaboom(text,options={}){return routerChat(text,options.provider||'BABOOM');},
+ async sendToBaboom(text,options={}){return routerChat(text,options.provider||'BABOOM',undefined);},
  async setSetting(id,value){
   const row=state.settings.find(r=>r.id===id);if(!row)return unavailable('setSetting');
   if(id==='Appearance.Zoom percentage'){
@@ -995,7 +995,7 @@ api.exposeSettingsPage=async page=>{
  await commands.load();project();
  return state.graph.nodes.find(n=>n.id===result.id)||result;
 };
-api.apiRouterChat=(prompt,agent)=>routerChat(prompt,agent);
+api.apiRouterChat=(prompt,agent,replyTo)=>routerChat(prompt,agent,replyTo);  // replyTo: the Workshop message this answers
 api.refreshRouter=async()=>{const result=await request('/api/router/settings',{});publish({router:result,providerPreferences:result.providerPreferences,providers:state.providers.map(p=>({...p,...result.agents[p.id]}))});return result;};
 api.setRouterSettings=async values=>{await request('/api/router/settings',values);return api.refreshRouter();};
 api.setProviderModel=async(id,model)=>{const current=await api.refreshRouter();return api.setRouterSettings({default_model:model,providerPreferences:{...current.providerPreferences,[id]:model}});};

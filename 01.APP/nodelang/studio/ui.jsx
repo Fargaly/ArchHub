@@ -352,8 +352,31 @@
         }, event)}>Reset</button>}
  </div></div>;
   }
+  // ADAPTIVE (founder: "why is the app static … why not dynamic?"): one text renderer for every long text
+  // surface. A small markdown subset (paragraphs, lists, ``` code, `code`, **bold**) like Slack/Discord, wrapped
+  // anywhere, collapsed to `lines` with Show more when it is longer.
+  const inline = text => String(text).split(/(`[^`\n]+`|\*\*[^*\n]+\*\*)/).map((part, i) => part.startsWith('`') && part.endsWith('`') && part.length > 1 ? <code key={i}>{part.slice(1, -1)}</code> : part.startsWith('**') && part.endsWith('**') && part.length > 3 ? <b key={i}>{part.slice(2, -2)}</b> : part);
+  const blocks = text => String(text || '').split(/```[^\n]*\n?/).flatMap((chunk, i) => i % 2 ? [<pre key={'c' + i}><code>{chunk.replace(/\n$/, '')}</code></pre>] :
+    chunk.split(/\n\s*\n/).filter(p => p.trim()).map((para, j) => {
+      const lines = para.split('\n');
+      const list = lines.every(l => /^\s*([-*•]|\d+[.)])\s+/.test(l));
+      return list ? <ul key={i + '-' + j}>{lines.map((l, k) => <li key={k}>{inline(l.replace(/^\s*([-*•]|\d+[.)])\s+/, ''))}</li>)}</ul> : <p key={i + '-' + j}>{lines.map((l, k) => <React.Fragment key={k}>{k > 0 && <br />}{inline(l)}</React.Fragment>)}</p>;
+    }));
+  function Prose({text, lines = 12}) {
+    const [open, setOpen] = React.useState(false);
+    // shortcut: "long" is estimated from line breaks and length (about 80 characters a line); measure if it misfires.
+    const long = String(text || '').split('\n').length > lines || String(text || '').length > lines * 80;
+    return <div className="prose-wrap"><div className={'prose' + (long && !open ? ' clamped' : '')} style={{'--prose-lines': lines}}>{blocks(text)}</div>{long && <button type="button" className="prose-more" aria-expanded={open} onClick={event => executeAction("sharedUI.Toggle.23", {toggle: () => setOpen(!open)}, event)}>{open ? 'Show less' : 'Show more'}</button>}</div>;
+  }
+  // A short label clamped to `lines`; the full text on hover and on click.
+  function Clamp({text, lines = 2}) {
+    const [open, setOpen] = React.useState(false);
+    return <button type="button" className={'button-reset clamp' + (open ? ' open' : '')} style={{'--clamp-lines': lines}} title={text} aria-expanded={open} onClick={event => executeAction("sharedUI.Toggle.23", {toggle: () => setOpen(!open)}, event)}>{text}</button>;
+  }
   window.UI = {
     api,
+    Prose,
+    Clamp,
     A,
     D,
     Ctx,
@@ -704,7 +727,8 @@
     "sharedUI.Undo.19": "sharedUIUndo19",
     "sharedUI.Control.20": "sharedUIControl20",
     "sharedUI.Reset.21": "sharedUIReset21",
-    "sharedUI.Retry.22": "sharedUIRetry22"
+    "sharedUI.Retry.22": "sharedUIRetry22",
+    "sharedUI.Toggle.23": "sharedUIToggle23"
   };
   window.registerActions(sharedUIActions, {
     sharedUISend: ({send}) => send(),
@@ -729,6 +753,7 @@
     sharedUIUndo19,
     sharedUIControl20,
     sharedUIReset21,
-    sharedUIRetry22
+    sharedUIRetry22,
+    sharedUIToggle23: ({toggle}) => toggle()
   });
 })();

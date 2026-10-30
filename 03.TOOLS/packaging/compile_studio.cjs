@@ -24,7 +24,14 @@ const XYFLOW = {package:'@xyflow/react', version:'12.11.2', license:'MIT', upstr
 // The UMD imports react/jsx-runtime; the Studio's React is the classic UMD, so jsx/jsxs map onto createElement.
 const XYFLOW_SHIM = 'window.jsxRuntime=window.jsxRuntime||{Fragment:React.Fragment,jsx:function(t,p,k){return React.createElement(t,'
   + 'k===undefined?p:Object.assign({},p,{key:k}));}};window.jsxRuntime.jsxs=window.jsxRuntime.jsx;\n';
-const VENDOR_OUTPUTS = ['xyflow.js', 'xyflow.css'];
+// Workshop panes: resizable and collapsible panels from the pinned npm package (exactly 4.14.5). Its CJS build is wrapped
+// as a classic script exposing window.ReactResizablePanels; react/jsx-runtime map onto the Studio React (XYFLOW_SHIM).
+const PANELS = {package:'react-resizable-panels', version:'4.14.5', license:'MIT', upstream:'https://github.com/bvaughn/react-resizable-panels',
+  cjs_sha256:'2b2109483dbaa8f7e63afbfaf943a1019c98acaccdc6c2089d9206b5e0ff3fde'};
+const PANELS_HEAD = '(function(){var module={exports:{}},exports=module.exports,require=function(n){if(n===\'react\')return React;'
+  + 'if(n===\'react/jsx-runtime\')return window.jsxRuntime;throw new Error(\'Unbundled module: \'+n);};\n';
+const PANELS_TAIL = '\n;window.ReactResizablePanels=module.exports;})();\n';
+const VENDOR_OUTPUTS = ['xyflow.js', 'xyflow.css', 'react-resizable-panels.js'];
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const requireThat = (condition, message) => { if (!condition) throw new Error(message); };
 
@@ -61,21 +68,30 @@ function sourceFiles() {
     'Studio sources exceed the reviewed 2 MiB aggregate bound.');
   return files;
 }
-function vendorOutputs() {
+function packageHome(spec) {
   // node_modules of this checkout, or the selected checkout a release snapshot was taken from.
   const roots = [process.env.ARCHHUB_NODE_MODULES, path.join(root, 'node_modules')].filter(Boolean);
-  const home = roots.map(dir => path.join(dir, ...XYFLOW.package.split('/'))).find(dir => fs.existsSync(path.join(dir, 'package.json')));
-  requireThat(home, XYFLOW.package + ' is not installed; run npm ci (package-lock pins ' + XYFLOW.version + ').');
+  const home = roots.map(dir => path.join(dir, ...spec.package.split('/'))).find(dir => fs.existsSync(path.join(dir, 'package.json')));
+  requireThat(home, spec.package + ' is not installed; run npm ci (package-lock pins ' + spec.version + ').');
   const pkg = JSON.parse(readFile(path.join(home, 'package.json'), 64 * 1024).toString('utf8'));
-  requireThat(pkg.name === XYFLOW.package && pkg.version === XYFLOW.version && pkg.license === XYFLOW.license,
-    XYFLOW.package + ' must be exactly ' + XYFLOW.version + ' (' + XYFLOW.license + ').');
+  requireThat(pkg.name === spec.package && pkg.version === spec.version && pkg.license === spec.license,
+    spec.package + ' must be exactly ' + spec.version + ' (' + spec.license + ').');
+  return home;
+}
+function vendorOutputs() {
+  const home = packageHome(XYFLOW);
   const umd = readFile(path.join(home, 'dist', 'umd', 'index.js'), 1024 * 1024), css = readFile(path.join(home, 'dist', 'base.css'), 256 * 1024);
   requireThat(digest(umd) === XYFLOW.umd_sha256 && digest(css) === XYFLOW.css_sha256, XYFLOW.package + ' bytes differ from the pinned release.');
   const header = '/*! ' + XYFLOW.package + ' ' + XYFLOW.version + ' | ' + XYFLOW.license + ' | ' + XYFLOW.upstream + ' */\n';
-  return [Buffer.concat([Buffer.from(header + XYFLOW_SHIM), umd]), Buffer.concat([Buffer.from(header), css])].map((bytes, index) => ({bytes,
-    record:{output:VENDOR_OUTPUTS[index], package:XYFLOW.package, version:XYFLOW.version, license:XYFLOW.license, upstream:XYFLOW.upstream,
-      upstream_sha256:index ? XYFLOW.css_sha256 : XYFLOW.umd_sha256, bytes:bytes.length, sha256:digest(bytes),
-      integrity:'sha256-' + createHash('sha256').update(bytes).digest('base64')}}));
+  const panels = readFile(path.join(packageHome(PANELS), 'dist', 'react-resizable-panels.cjs'), 256 * 1024);
+  requireThat(digest(panels) === PANELS.cjs_sha256, PANELS.package + ' bytes differ from the pinned release.');
+  const panelsHeader = '/*! ' + PANELS.package + ' ' + PANELS.version + ' | ' + PANELS.license + ' | ' + PANELS.upstream + ' */\n';
+  const record = (bytes, output, spec, upstream) => ({bytes, record:{output, package:spec.package, version:spec.version,
+    license:spec.license, upstream:spec.upstream, upstream_sha256:upstream, bytes:bytes.length, sha256:digest(bytes),
+    integrity:'sha256-' + createHash('sha256').update(bytes).digest('base64')}});
+  return [record(Buffer.concat([Buffer.from(header + XYFLOW_SHIM), umd]), VENDOR_OUTPUTS[0], XYFLOW, XYFLOW.umd_sha256),
+    record(Buffer.concat([Buffer.from(header), css]), VENDOR_OUTPUTS[1], XYFLOW, XYFLOW.css_sha256),
+    record(Buffer.concat([Buffer.from(panelsHeader + PANELS_HEAD), panels, Buffer.from(PANELS_TAIL)]), VENDOR_OUTPUTS[2], PANELS, PANELS.cjs_sha256)];
 }
 function generatedDirectory(create) {
   if (create) fs.mkdirSync(output, {recursive:true});

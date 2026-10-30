@@ -404,7 +404,7 @@ class NoGraphServer:
             handles = [h.casefold() for h in re.findall(r'(?<![\w@])@([A-Za-z0-9][\w.-]*)', prompt)]
             if handles:
                 # The composer is the router: @agents go live into those sessions, no mention goes to a model.
-                result = _route_to_agents(prompt, handles)
+                result = _route_to_agents(prompt, handles, body.get('reply_to') or None)
             else:
                 if body.get('agent', 'BABOOM') == 'BABOOM' and _baboom_brain() is not None:
                     result = _ask_baboom(prompt)
@@ -475,13 +475,13 @@ def _ask_baboom(prompt):
             'request_id': record['id'], 'applied': [], 'steps': result.get('steps', [])}
 
 
-def _route_to_agents(prompt, handles):
+def _route_to_agents(prompt, handles, reply_to=None):
     """@mentions: one Workshop message from Ahmed, pushed live; a profiling row per recipient."""
     import uuid
     from .model_router import request_profiles
     from .workshop_live import send_as_founder
     started = time.monotonic()
-    sent = send_as_founder(prompt, handles)
+    sent = send_as_founder(prompt, handles, reply_to=reply_to)
     for row in sent['deliveries']:
         request_profiles({'id': str(uuid.uuid4()), 'ts': time.time(), 'agent': str(row.get('agent')), 'model': 'agent session',
                           'provider': 'workshop:' + str(row.get('channel')), 'tokens': None, 'ms': row.get('ms') or 0,
@@ -705,8 +705,8 @@ def _list_messages(before=None):
         # Display only: the stored "To <session label>:" header stays the routing address; the room shows who received it.
         header, newline, body = message['text'].partition('\n')
         if newline and header.startswith('To ') and header.endswith(':'):
-            labels = [names.get(label.strip(), label.strip()) for label in header[3:-1].split(',')]
-            message.update(to=', '.join(dict.fromkeys(d['agent'] for d in message['live'] if d.get('agent'))) or ', '.join(labels),
+            labels = [names.get(label.strip(), 'Everyone' if label.strip() == '*' else label.strip()) for label in header[3:-1].split(',')]
+            message.update(raw=message['text'], to=', '.join(dict.fromkeys(d['agent'] for d in message['live'] if d.get('agent'))) or ', '.join(labels),
                            text=__import__('re').sub(r'^(?:@[\w.-]+\s+)+', '', body))
         # No pending state (founder 2026-10-28): delivery is the per-recipient live rows only.
         message.pop('state', None)

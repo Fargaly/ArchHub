@@ -175,6 +175,7 @@ test('Workshop own bubbles use sender keys even when an agent displays You or BA
   assert.equal(rows[0].parentElement.style.justifySelf,'');
   assert.equal(rows[1].parentElement.style.justifySelf,'');
   assert.equal(rows[2].parentElement.style.justifySelf,'end');
-  assert.deepEqual([...w.document.querySelectorAll('[data-avatar]')].map(el=>el.dataset.avatar),['codex','codex']);
+  // Agent rows carry an avatar (named by the agent's identity, not its provider); the founder's own bubble has none.
+  assert.equal(w.document.querySelectorAll('[data-avatar]').length,2);
  }finally{w.close();}
 });

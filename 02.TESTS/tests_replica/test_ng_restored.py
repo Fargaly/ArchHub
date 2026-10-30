@@ -32,7 +32,7 @@ def test_host_skill_import_review_approve_survives_reopen(server):
     card = call(server, 'setHostSkillEnabled', row['id'], True, request_id='enable-1')
     assert card['approvalKind'] == 'hostskills' and card['status'] == 'pending'
     assert [c['id'] for c in call(server, 'listApprovals')] == [card['id']]
-    done = call(server, 'decideHostSkill', card['id'], card['input_digest'], 'approve')
+    done = call(server, 'answerApproval', 'hostskills', card['id'], card['input_digest'], 'approve')
     assert done['status'] == 'approved'
     stored = json.loads((server.state_dir / 'settings' / 'host-packages.json').read_text(encoding='utf-8'))
     record = stored['packages'][row['id']]
@@ -44,7 +44,7 @@ def test_host_package_refusals_come_back_as_reasons(server):
     bad = call(server, 'inspectConnectorBundle', {'name': 'x.json', 'base64': base64.b64encode(b'[]').decode()})
     assert bad['ok'] is False and 'bounded UTF-8 manifest' in bad['error']
     card = call(server, 'importHostSkill', {'host': 'Revit', 'text': SKILL})
-    stale = call(server, 'decideHostSkill', 'app:host-package-review:nope', 'x', 'approve')
+    stale = call(server, 'answerApproval', 'hostskills', 'app:host-package-review:nope', 'x', 'approve')
     assert stale['ok'] is False and card['id']
 
 
@@ -73,7 +73,7 @@ def test_watcher_edit_propose_approve_writes_host_and_reads_back(server, monkeyp
     card = call(server, 'proposeWatcherEdit', request_id='p1')
     assert card['approvalKind'] == 'watcher' and card['status'] == 'pending'
     assert card['id'] in [c['id'] for c in call(server, 'listApprovals')]
-    done = call(server, 'decideWatcherEdit', card['id'], card['input_digest'], 'approve')
+    done = call(server, 'answerApproval', 'watcher', card['id'], card['input_digest'], 'approve')
     assert done['status'] == 'approved' and host['writes'][0]['offsetMm'] == 30.0
     view = call(server, 'readWatcher')
     assert view['applied'] is True and view['wallY'] == 2 and len(view['dimensions']) == 1

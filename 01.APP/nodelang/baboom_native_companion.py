@@ -680,9 +680,9 @@ def baboom_approval_html(approval: Mapping[str, object], binding: str) -> str:
         'new QWebChannel(qt.webChannelTransport,function(channel){const bridge=channel.objects.baboom;'
         'const approval=' + payload + ';const binding=' + identity + ';'
         'const decide=choice=>new Promise((resolve,reject)=>{'
-        'if(choice==="decline"){bridge.decide(binding,choice);resolve();return;}'
+        'if(choice==="decline"){bridge.choose(binding,choice);resolve();return;}'
         'const settle=(id,error)=>{if(id!==binding)return;bridge.settled.disconnect(settle);error?reject(new Error(error)):resolve();};'
-        'bridge.settled.connect(settle);bridge.decide(binding,choice);});'
+        'bridge.settled.connect(settle);bridge.choose(binding,choice);});'
         'window.ARCHHUB_NATIVE_DECIDE=decide;'
         'ReactDOM.createRoot(document.getElementById("approval")).render(React.createElement(window.UI.Ctx.Provider,'
         '{value:{act:fn=>fn()}},React.createElement(window.ARCHHUB_APPROVAL_CARD,{id:approval.id||binding,compact:true})));});'
@@ -727,18 +727,12 @@ def create_baboom_native_companion_window(
         settled = pyqtSignal(str, str)
 
         @pyqtSlot(str, str)
-        def decide(self, binding, choice):
-            window = self.parent()
-            if binding != window._approval_binding or not window._pending_task_utterance:
-                self.settled.emit(binding, "This review expired. Request a fresh review.")
-                return
-            if choice == "approve":
-                window._executing_approval_binding = binding
-                window._approval_binding = ""
-                window._execute_task()
-            elif choice == "decline":
-                window._approval_binding = ""
-                window._close_interaction()
+        def choose(self, binding, choice):
+            from .hook_decision import decide
+            try:
+                decide({"approval": "baboom", "owner": self.parent(), "id": binding, "decision": choice})
+            except Exception as refused:  # a Qt slot must not raise; the card shows why
+                self.settled.emit(binding, str(refused))
 
     class CompanionWindow(QWidget):
         response_ready = pyqtSignal(object)
@@ -1364,6 +1358,18 @@ def create_baboom_native_companion_window(
             self._input.show()
             self.refresh()
             self._input.setFocus()
+
+        def apply_approval(self, binding: str, decision: str) -> None:
+            """Apply hook_decision.decide()'s Approve/Deny to the one review on screen."""
+            if binding != self._approval_binding or not self._pending_task_utterance:
+                self._approval_bridge.settled.emit(binding, "This review expired. Request a fresh review.")
+                return
+            self._approval_binding = ""
+            if decision == "approve":
+                self._executing_approval_binding = binding
+                self._execute_task()
+            else:
+                self._close_interaction()
 
         def _close_interaction(self) -> None:
             """Back to the sprite alone: no box, no stale answer."""

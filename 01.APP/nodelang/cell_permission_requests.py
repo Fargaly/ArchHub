@@ -155,7 +155,7 @@ def _validate_approvable(request: PermissionRequest, *, now: float) -> bytes:
     return canonical
 
 
-def decide_permission_request(
+def apply_permission_request(
     store: CellStore,
     assembly: AssemblyProtocol,
     operational: StateMachineProtocol,
@@ -239,5 +239,5 @@ def decide_permission_request(
 
 
 __all__ = [
-    "PermissionRequest", "read_permission_request", "decide_permission_request",
+    "PermissionRequest", "read_permission_request", "apply_permission_request",
 ]

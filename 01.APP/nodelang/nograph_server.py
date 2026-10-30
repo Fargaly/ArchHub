@@ -757,6 +757,16 @@ def _watcher(request_id=''):
     return WatcherOwner(_SERVER.state_dir, request_id)
 
 
+def _answer_approval(request_id, kind, root, digest, decision):
+    from .hook_decision import decide
+    owners = {'hostskills': _host_skills, 'watcher': _watcher}
+    if kind not in owners:
+        from .universal_cell import InvalidCell
+        raise InvalidCell('This approval kind is not served here.')
+    return decide({'approval': kind, 'owner': owners[kind](request_id), 'id': root, 'digest': digest,
+                   'decision': decision})
+
+
 # Studio action -> owner method; each owner keeps one plain file under settings/.
 OWNER_ACTIONS = {
     'importHostSkill': (_host_skills, lambda o, value: o.import_skill(value)),
@@ -765,7 +775,6 @@ OWNER_ACTIONS = {
     'installConnectorBundle': (_host_skills, lambda o, root: o.request(root, 'install')),
     'setHostSkillEnabled': (_host_skills, lambda o, root, enabled: o.set_enabled(root, enabled)),
     'auditHostSkill': (_host_skills, lambda o, root: o.audit(root)),
-    'decideHostSkill': (_host_skills, lambda o, identity, digest, decision: o.decide(identity, digest, decision)),
     'setWatcherHost': (_watcher, lambda o, host: o.set_host(host)),
     'setWatcherView': (_watcher, lambda o, view: o.set_view(view)),
     'editWall': (_watcher, lambda o, y: o.edit(y)),
@@ -774,7 +783,8 @@ OWNER_ACTIONS = {
     'addComment': (_watcher, lambda o, values: o.annotate('comment', values)),
     'proposeWatcherEdit': (_watcher, lambda o: o.propose()),
     'discardWatcherChanges': (_watcher, lambda o: o.discard()),
-    'decideWatcherEdit': (_watcher, lambda o, root, digest, decision: o.decide(root, digest, decision)),
+    # Every Approve/Deny card goes through the one decision (hook_decision.decide).
+    'answerApproval': (str, lambda request_id, kind, root, digest, decision: _answer_approval(request_id, kind, root, digest, decision)),
 }
 
 
@@ -853,6 +863,16 @@ def r_settings_action(s, req):
             result['secrets'] = []
             result['controlErrors']['secrets'] = 'Connected account index could not be read. Refresh Connections.'
         return {'ok': True, 'result': result}
+    if function in ('readPermissions', 'setPermissions'):
+        # Run mode and per-tool modes: parameters the one decision (hook_decision.decide) reads.
+        from .hook_decision import read_permissions, write_permissions, RUN_MODES, TOOL_MODES
+        path = s.settings_dir / 'permissions.json'
+        try:
+            values = (read_permissions(path=path) if function == 'readPermissions'
+                      else write_permissions(args[0] if args else None, path=path))
+        except ValueError as refused:
+            raise Refused(str(refused)) from refused
+        return {'ok': True, 'result': {**values, 'runModes': list(RUN_MODES), 'toolModes': list(TOOL_MODES)}}
     if function == 'setCompanionState':
         return {'ok': True, 'result': {'companion': companion.write({**companion.read(), **(args[0] if args else {})})}}
     if function == 'setProviderModel':

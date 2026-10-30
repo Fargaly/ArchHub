@@ -209,7 +209,7 @@ class DesktopOwner:
     def reviews(self):
         return [self.card(root) for root in self._state()['proposals']]
 
-    def decide(self, root, digest, decision):
+    def apply(self, root, digest, decision):
         from .host_brokers import watcher_write
         proposal = self.proposal(root)
         payload = proposal['payload']

@@ -139,13 +139,13 @@ def test_proposeWatcherEdit_one_approval_reopen_then_broker_write(watcher):
     assert watcher.call("listApprovals")[-1]["id"] == card["id"]
     watcher.call("postponeApproval", card["id"])
     with pytest.raises(InvalidCell):
-        watcher.call("decideWatcherEdit",card["id"],card["input_digest"],"approve")
+        watcher.call("answerApproval", "watcher", card["id"],card["input_digest"],"approve")
     watcher.call("resumeApproval", card["id"])
-    result = watcher.call("decideWatcherEdit",card["id"],card["input_digest"],"approve")
+    result = watcher.call("answerApproval", "watcher", card["id"],card["input_digest"],"approve")
     assert result["status"] == "approved" and len(watcher.effects) == 1
     assert watcher.call("readWatcher")["wallY"] == 530
     assert reopen(watcher)["applied"] is True
-    watcher.call("decideWatcherEdit",card["id"],card["input_digest"],"approve")
+    watcher.call("answerApproval", "watcher", card["id"],card["input_digest"],"approve")
     assert len(watcher.effects) == 1
 
 
@@ -158,7 +158,7 @@ def test_discardWatcherChanges_cancels_approval_and_keeps_annotations(watcher):
     assert state["comments"][0]["text"] == "Retain annotation"
     assert reopen(watcher)["pendingY"] == 510
     with pytest.raises(InvalidCell):
-        watcher.call("decideWatcherEdit",card["id"],card["input_digest"],"approve")
+        watcher.call("answerApproval", "watcher", card["id"],card["input_digest"],"approve")
     assert watcher.effects == []
 
 
@@ -173,7 +173,7 @@ def test_stale_revision_and_invalid_annotation_cannot_write(watcher):
     card = watcher.call("proposeWatcherEdit")
     watcher.model["element"]["revision"] = "changed-externally"
     with pytest.raises(InvalidCell):
-        watcher.call("decideWatcherEdit",card["id"],card["input_digest"],"approve")
+        watcher.call("answerApproval", "watcher", card["id"],card["input_digest"],"approve")
     assert watcher.effects == []
 
 
@@ -182,7 +182,7 @@ def test_autocad_source_offset_uses_same_one_approval_owner(watcher):
     assert state["host"] == "AutoCAD"
     watcher.call("editWall", 520)
     card = watcher.call("proposeWatcherEdit")
-    watcher.call("decideWatcherEdit",card["id"],card["input_digest"],"approve")
+    watcher.call("answerApproval", "watcher", card["id"],card["input_digest"],"approve")
     assert len(watcher.effects) == 1 and watcher.effects[0]["offsetMm"] == 150
     assert reopen(watcher)["wallY"] == 520
 
@@ -193,7 +193,7 @@ def test_mask_bounds_refuse_outside_edits_and_pin_follows_committed_wall(watcher
     with pytest.raises(InvalidCell): watcher.call("editWall", 550)
     watcher.call("editWall", 530)
     card = watcher.call("proposeWatcherEdit")
-    watcher.call("decideWatcherEdit",card["id"],card["input_digest"],"approve")
+    watcher.call("answerApproval", "watcher", card["id"],card["input_digest"],"approve")
     assert reopen(watcher)["comments"][0]["y"] == 530
 
 
@@ -208,13 +208,13 @@ def test_uncertain_host_completion_is_never_replayed(watcher, monkeypatch):
         return original(self,root,value,parent)
     monkeypatch.setattr(WatcherOwner,"_save",interrupted)
     with pytest.raises(RuntimeError):
-        watcher.call("decideWatcherEdit",card["id"],card["input_digest"],"approve")
+        watcher.call("answerApproval", "watcher", card["id"],card["input_digest"],"approve")
     monkeypatch.setattr(WatcherOwner,"_save",original)
     assert len(watcher.effects) == 1
     reopen(watcher)
     assert watcher.call("listApprovals")[-1]["status"] == "executing"
     with pytest.raises(InvalidCell):
-        watcher.call("decideWatcherEdit",card["id"],card["input_digest"],"approve")
+        watcher.call("answerApproval", "watcher", card["id"],card["input_digest"],"approve")
     with pytest.raises(InvalidCell): watcher.call("discardWatcherChanges")
     assert len(watcher.effects) == 1
 
@@ -223,7 +223,7 @@ def test_proposal_request_reuse_preserves_approved_history_in_memory(watcher):
     watcher.call("editWall", 530)
     card = watcher.call("proposeWatcherEdit")
     proposal_sequence = watcher.sequence
-    watcher.call("decideWatcherEdit",card["id"],card["input_digest"],"approve")
+    watcher.call("answerApproval", "watcher", card["id"],card["input_digest"],"approve")
     watcher.call("editWall", 540)
     watcher.sequence = proposal_sequence - 1
     with pytest.raises(InvalidCell): watcher.call("proposeWatcherEdit")

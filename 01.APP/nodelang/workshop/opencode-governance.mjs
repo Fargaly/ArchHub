@@ -609,6 +609,8 @@ export function createOpenCodeGovernance({decisionCommand=null,decisionTimeoutMs
     if(decisionCommand){
      const decided=await hookDecision(decisionCommand,{...event,tool_name:event.tool_name||input.tool},decisionTimeoutMs);
      if(decided?.verdict==='refuse')fail('refused: '+(decided.rules||[]).join(', '));
+     // OpenCode's hook cannot prompt: an "ask" from Settings stops the call with its reason.
+     if(decided?.verdict==='ask')fail('needs your OK (Settings): '+(decided.notes||[]).join(' '));
     }
     pending.set(key,record);
     let result;

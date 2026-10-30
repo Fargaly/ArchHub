@@ -101,12 +101,12 @@ def test_installConnectorBundle_exactly_one_approval_and_persistent_graph_effect
     assert hostskills.call("installConnectorBundle", row["id"])["id"] == card["id"]
     assert not hostskills.call("readHostSkills")["connectorBundle"]["installed"]
     reopen(hostskills)
-    result = hostskills.call("decideHostSkill", card["id"], card["input_digest"], "approve")
+    result = hostskills.call("answerApproval", "hostskills", card["id"], card["input_digest"], "approve")
     assert result["status"] == "approved"
     held = reopen(hostskills)["connectorBundle"]
     assert held["installed"] is True and held["activeDigest"] == row["digest"]
     assert held["connected"] is False
-    hostskills.call("decideHostSkill", card["id"], card["input_digest"], "approve")
+    hostskills.call("answerApproval", "hostskills", card["id"], card["input_digest"], "approve")
     assert len([r for r in hostskills.call("listApprovals") if r["id"] == card["id"]]) == 1
 
 
@@ -116,9 +116,9 @@ def test_setHostSkillEnabled_approval_controls_reusable_graph_node_and_reopens(h
     assert not next(r for r in reopen(hostskills)["hostSkills"] if r["id"] == row["id"])["enabled"]
     hostskills.call("postponeApproval", card["id"])
     with pytest.raises(InvalidCell):
-        hostskills.call("decideHostSkill", card["id"], card["input_digest"], "approve")
+        hostskills.call("answerApproval", "hostskills", card["id"], card["input_digest"], "approve")
     hostskills.call("resumeApproval", card["id"])
-    hostskills.call("decideHostSkill", card["id"], card["input_digest"], "approve")
+    hostskills.call("answerApproval", "hostskills", card["id"], card["input_digest"], "approve")
     assert next(r for r in reopen(hostskills)["hostSkills"] if r["id"] == row["id"])["enabled"]
     from nodelang.canvas_graph_owner import CanvasOwner
     ops = CanvasOwner(hostskills.store, hostskills.registry, hostskills.binding.context)
@@ -145,7 +145,7 @@ def test_changed_settings_after_review_refuses_approved_digest(hostskills):
     card = hostskills.call("installConnectorBundle", row["id"])
     hostskills.call("configureConnectorBundle", row["id"], "precision", 5)
     with pytest.raises(InvalidCell, match="changed|digest|stale"):
-        hostskills.call("decideHostSkill", card["id"], card["input_digest"], "approve")
+        hostskills.call("answerApproval", "hostskills", card["id"], card["input_digest"], "approve")
     assert not reopen(hostskills)["connectorBundle"]["installed"]
 
 
@@ -161,13 +161,13 @@ def test_hostskill_inputs_refuse_traversal_and_secrets_without_mutation(hostskil
 def test_reenable_disabled_skill_requires_fresh_single_approval(hostskills):
     row = skill(hostskills, "review-reenable")
     first = hostskills.call("setHostSkillEnabled", row["id"], True)
-    hostskills.call("decideHostSkill", first["id"], first["input_digest"], "approve")
+    hostskills.call("answerApproval", "hostskills", first["id"], first["input_digest"], "approve")
     hostskills.call("setHostSkillEnabled", row["id"], False)
     second = hostskills.call("setHostSkillEnabled", row["id"], True)
     assert second["id"] != first["id"] and second["status"] == "pending"
     assert hostskills.call("setHostSkillEnabled", row["id"], True)["id"] == second["id"]
     assert not next(r for r in reopen(hostskills)["hostSkills"] if r["id"] == row["id"])["enabled"]
-    hostskills.call("decideHostSkill", second["id"], second["input_digest"], "approve")
+    hostskills.call("answerApproval", "hostskills", second["id"], second["input_digest"], "approve")
     assert next(r for r in reopen(hostskills)["hostSkills"] if r["id"] == row["id"])["enabled"]
 
 
@@ -197,7 +197,7 @@ def test_approved_package_outputs_exact_persisted_descriptor_via_graph_runner(ho
     row = skill(hostskills, "review-output-skill") if kind == "skill" else bundle(hostskills, "review-output-connector")
     action = "setHostSkillEnabled" if kind == "skill" else "installConnectorBundle"
     card = hostskills.call(action, row["id"], True) if kind == "skill" else hostskills.call(action, row["id"])
-    hostskills.call("decideHostSkill", card["id"], card["input_digest"], "approve")
+    hostskills.call("answerApproval", "hostskills", card["id"], card["input_digest"], "approve")
     reopened = reopen(hostskills)
     files = HostSkillOwner.package_files(hostskills.store.snapshot(), row["id"])
     with commit_intent.declare(commit_intent.USER_ACTION, actor=hostskills.binding.subject_root, reason="review approved inert graph descriptor"):
@@ -218,7 +218,7 @@ def test_approved_package_outputs_exact_persisted_descriptor_via_graph_runner(ho
 def test_deactivation_clears_descriptor_even_for_direct_graph_runner(hostskills, kind):
     row = skill(hostskills, "review-disable-output") if kind == "skill" else bundle(hostskills, "review-configure-output")
     card = hostskills.call("setHostSkillEnabled", row["id"], True) if kind == "skill" else hostskills.call("installConnectorBundle", row["id"])
-    hostskills.call("decideHostSkill", card["id"], card["input_digest"], "approve")
+    hostskills.call("answerApproval", "hostskills", card["id"], card["input_digest"], "approve")
     if kind == "skill":
         hostskills.call("setHostSkillEnabled", row["id"], False)
     else:
@@ -235,7 +235,7 @@ def test_changed_package_after_approval_refuses_reusing_approved_digest(hostskil
     from nodelang.universal_cell import Cell
     row = bundle(hostskills, "review-tamper-approved")
     card = hostskills.call("installConnectorBundle", row["id"])
-    hostskills.call("decideHostSkill", card["id"], card["input_digest"], "approve")
+    hostskills.call("answerApproval", "hostskills", card["id"], card["input_digest"], "approve")
     snapshot = hostskills.store.snapshot()
     cell = snapshot.cells[row["id"] + ":host-package"]
     record = json.loads(cell.atom)
@@ -245,7 +245,7 @@ def test_changed_package_after_approval_refuses_reusing_approved_digest(hostskil
         hostskills.store.commit(snapshot.revision, replace=(changed,))
     assert next(r for r in hostskills.call("listApprovals") if r["id"] == card["id"])["status"] == "stale"
     with pytest.raises(InvalidCell, match="changed|digest|stale"):
-        hostskills.call("decideHostSkill", card["id"], card["input_digest"], "approve")
+        hostskills.call("answerApproval", "hostskills", card["id"], card["input_digest"], "approve")
     assert next(r for r in reopen(hostskills)["connectorBundles"] if r["id"] == row["id"])["digest"] == row["digest"]
 
 

@@ -14,7 +14,7 @@ import pytest
 import nodelang.cell_adapters as adapters_module
 import nodelang.cell_connector_execution as connector_module
 import nodelang.universal_application as app
-from nodelang import social_approval
+from nodelang import hook_decision, social_approval
 from nodelang.cell_authorization import AuthorizationDenied
 from nodelang.universal_cell import InvalidCell
 
@@ -66,14 +66,14 @@ BINDING = SimpleNamespace(subject_root="subject:founder", context="ctx")
 
 def test_approve_mints_the_founders_gesture_and_grants_once(monkeypatch):
     server, calls = _rig(monkeypatch)
-    answer = social_approval.decide(server, BINDING, _body())
+    answer = hook_decision.decide({"approval": "social", "server": server, "binding": BINDING, "body": _body()})
     assert answer["decision"] == "approved" and answer["account_id"] == "urn:li:person:782bbtaQ"
     assert calls["mint"] == [("permission:1", "subject:founder")] and len(calls["grant"]) == 1 and calls["revoke"] == []
 
 
 def test_deny_revokes_and_never_grants(monkeypatch):
     server, calls = _rig(monkeypatch)
-    assert social_approval.decide(server, BINDING, _body("deny"))["decision"] == "denied"
+    assert hook_decision.decide({"approval": "social", "server": server, "binding": BINDING, "body": _body("deny")})["decision"] == "denied"
     assert calls["revoke"] == ["permission:1"] and calls["grant"] == [] and calls["mint"] == []
 
 
@@ -87,7 +87,7 @@ def test_deny_revokes_and_never_grants(monkeypatch):
 def test_nothing_else_is_approved(monkeypatch, rig, body):
     server, calls = _rig(monkeypatch, **rig)
     with pytest.raises(AuthorizationDenied):
-        social_approval.decide(server, BINDING, body)
+        hook_decision.decide({"approval": "social", "server": server, "binding": BINDING, "body": body})
     assert calls["grant"] == [] and calls["revoke"] == [] and calls["mint"] == []
 
 
@@ -96,7 +96,7 @@ def test_a_malformed_decision_is_refused(monkeypatch):
     for body in ({"delegation": ROOT, "input_digest": DIGEST, "decision": "maybe"}, {"delegation": ROOT, "decision": "approve"},
                  {"delegation": "app:other:" + "a" * 32, "input_digest": DIGEST, "decision": "approve"}):
         with pytest.raises(InvalidCell):
-            social_approval.decide(server, BINDING, body)
+            hook_decision.decide({"approval": "social", "server": server, "binding": BINDING, "body": body})
 
 
 def test_the_card_and_routes_are_wired():

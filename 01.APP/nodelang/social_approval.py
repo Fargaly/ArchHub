@@ -4,7 +4,7 @@ An agent prepares a social Work (social.work_prepare) and executes it only after
 approval (social.work_execute). Nothing here sends anything. pending() lists the
 social delegations still waiting, each with the review text recomputed from the
 Work's current inputs: the operation, the target account and the exact request body,
-which carries the post text. decide() is the founder's own gesture in his
+which carries the post text. hook_decision.decide() takes the founder's own gesture in his
 authenticated browser session, the same consent primitive project approval uses
 (adapter_consent_broker.mint_from_user_gesture + grant_permission). Deny revokes the
 requested permission, so the prepared request can never be granted.
@@ -395,8 +395,8 @@ def pending(server, binding) -> list:
     return items
 
 
-def decide(server, binding, body) -> dict:
-    """Approve or deny ONE displayed request: the delegation and its exact input digest."""
+def apply(server, binding, body) -> dict:
+    """Apply hook_decision.decide()'s Approve/Deny to ONE displayed request: the delegation and its exact input digest."""
     from . import universal_application as app
     from .cell_adapters import grant_permission, read_permission, revoke_permission
     from .cell_connector_execution import read_connector_delegation, read_connector_provider
@@ -450,19 +450,19 @@ def decide(server, binding, body) -> dict:
         return {**answer, "decision": "approved", "revision": store.revision}
 
 
-def decide_watcher(api, root, digest, decision):
+def apply_watcher(api, root, digest, decision):
     """The same authenticated approval owner admits the one Watcher effect gesture."""
     from .watcher_owner import WatcherOwner
     snapshot, _, delegation, _, _ = _delegation(api, root)
     if decision == "approve":
         require_review_admission(snapshot, delegation.permission_root)
-    return WatcherOwner(api).decide(root, digest, decision)
+    return WatcherOwner(api).apply(root, digest, decision)
 
 
-def decide_desktop(api, root, digest, decision):
+def apply_desktop(api, root, digest, decision):
     """One authenticated review admission path for desktop and scheduled outcomes."""
     from .desktop_owner import DesktopOwner
     snapshot, _, delegation, _, _ = _delegation(api, root)
     if decision == 'approve':
         require_review_admission(snapshot, delegation.permission_root)
-    return DesktopOwner(api).decide(root, digest, decision)
+    return DesktopOwner(api).apply(root, digest, decision)

@@ -76,7 +76,7 @@ def _press_confirm(app, window, executed):
     window._confirm.click()
     assert window._approval.isVisible(), "Review opens the shared approval card"
     assert not executed, "Review alone must never execute"
-    window._approval_bridge.decide(window._approval_binding, "approve")
+    window._approval_bridge.choose(window._approval_binding, "approve")
     deadline = time.monotonic() + 5.0
     while not executed and time.monotonic() < deadline:
         app.processEvents()

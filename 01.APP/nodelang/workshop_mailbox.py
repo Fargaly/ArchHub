@@ -70,6 +70,24 @@ def _retain_messages(history):
             history._db.execute("DELETE FROM category_counts WHERE conversation_id=? AND amount=0", (ROOM,))
 
 
+ACTIVITY_SCHEMA = ("CREATE TABLE IF NOT EXISTS workshop_activity(sequence INTEGER PRIMARY KEY, at TEXT NOT NULL, "
+    "actor TEXT NOT NULL, action TEXT NOT NULL, target TEXT, detail TEXT NOT NULL CHECK(json_valid(detail))) STRICT")
+ACTIVITY_ROWS = 100000
+# Stall recovery (Paperclip typed recovery at 60/120/240/480 s): re-push, then escalate to the coordinator.
+WATCH_NODE = {"id":"workshop.watch", "params":{"retry_seconds":(60, 120, 240, 480), "check_seconds":10,
+    "scan_rows":2000, "budget_cache_seconds":10}}
+WATCH_STEPS = ("reminder", "reminder:2", "reminder:3", "escalated")
+
+
+def record_activity(history, actor, action, target=None, **detail):
+    """One C4 activity row per agent action, in this Workshop file; call inside a write transaction."""
+    history._db.execute(ACTIVITY_SCHEMA)
+    cursor = history._db.execute("INSERT INTO workshop_activity(at,actor,action,target,detail) VALUES(?,?,?,?,?)",
+        (datetime.now(timezone.utc).isoformat(), actor, action, target, json.dumps(detail)))
+    if cursor.lastrowid % 1000 == 0:
+        history._db.execute("DELETE FROM workshop_activity WHERE sequence<=?", (cursor.lastrowid - ACTIVITY_ROWS,))
+
+
 def _delivery_cursor(history, row):
     """Mutable progress stays beside immutable room messages in the same database."""
     payload = {"recipient":row["session"], "label":row["agent"], "event":"delivery-cursor",
@@ -370,6 +388,115 @@ class WorkshopInjection:
         self._tick_lock = threading.Lock()
         self.last_error = None
         self._reads, self._reads_lock = {}, threading.Lock()
+        self._watched_at, self._budget = -math.inf, {}
+
+    def _paused(self, runtime, native_id):
+        """A capped agent gets no new pushes; unreadable accounting never stops delivery."""
+        from .agent_budget import paused
+        key = runtime + ":" + native_id
+        hit = self._budget.get(key)
+        if hit is None or time.monotonic() - hit[0] > WATCH_NODE["params"]["budget_cache_seconds"]:
+            try:
+                verdict = paused(key)
+            except (OSError, sqlite3.Error, KeyError):
+                verdict = False
+            hit = self._budget[key] = (time.monotonic(), verdict)
+        return hit[1]
+
+    def _coordinator(self, declarations):
+        current = [row for row in declarations if row["current"] and row["runtime"] == "claude"]
+        if self._coordinator_native_id is None or not any(row.get("native_session_id") == self._coordinator_native_id for row in current):
+            discover = getattr(self.transport, "discover", None)
+            if callable(discover):
+                found = discover(apps=["claude"], timeout_seconds=self.injection_timeout_seconds)
+                matches = [row for row in found.get("recipients", []) if row.get("title") == self.coordinator_title]
+                self._coordinator_native_id = matches[0]["id"] if len(matches) == 1 else None
+        return [row for row in current if row.get("native_session_id") == self._coordinator_native_id]
+
+    def _watch(self, history, now, declarations):
+        """Stalled delivery: an attempted push with no reply (or no read, when none was asked) is
+        re-pushed at each retry step and escalated to the coordinator at the last; never the founder."""
+        params = WATCH_NODE["params"]
+        if now - self._watched_at < params["check_seconds"]:
+            return False
+        self._watched_at = now
+        retry = params["retry_seconds"]
+        cutoff = datetime.fromtimestamp(now - retry[-1] - 600, timezone.utc).isoformat()
+        with history._transaction():
+            rows = history._db.execute("SELECT reply_to, content, created_at FROM messages WHERE conversation_id=? "
+                "AND author=? AND category=? ORDER BY sequence DESC LIMIT ?",
+                (ROOM, DELIVERY_AUTHOR, DELIVERY_CATEGORY, params["scan_rows"])).fetchall()
+        attempts = {}
+        for raw in rows:
+            if raw["created_at"] < cutoff:
+                break
+            value = json.loads(raw["content"])
+            if value.get("event") == "attempt" and raw["reply_to"]:
+                attempts[(raw["reply_to"], value["recipient"])] = raw["created_at"]
+        for (message_id, session), at in sorted(attempts.items(), key=lambda item: item[1]):
+            elapsed = now - datetime.fromisoformat(at).timestamp()
+            due = [step for step, seconds in zip(WATCH_STEPS, retry) if elapsed >= seconds]
+            if not due or self._stop.is_set():
+                continue
+            with history._transaction():
+                message = history.get(ROOM, message_id, principal=DELIVERY_AUTHOR)
+                events = delivery_events(history, message).get(session, {}) if message else {}
+            if not events or "answered" in events:
+                continue
+            asks = _asks_for_reply(message)
+            pushed = events.get("initial-outcome", {}).get("status") in ("injected", "ok", "delivered")
+            if not asks and ("delivered" in events or pushed):
+                continue
+            addressed = events.get("addressed", {})
+            runtime, native_id = addressed.get("runtime"), addressed.get("native_session_id")
+            # A caller-owned native call (explicit model control) is never replayed; it can only escalate.
+            pushable = (self.transport is not None and runtime in ("claude", "codex", "opencode") and bool(native_id)
+                        and events["attempt"].get("status") != "caller-owned")
+            if pushable and self._paused(runtime, native_id):
+                continue
+            step = next((value for value in due if value not in events), None)
+            if step is None or (not pushable and step != "escalated"):
+                continue
+            recipient = {"session":session, "agent":(addressed or events["attempt"])["label"]}
+            status = "not-pushed"
+            if pushable:
+                excerpt = message["content"].encode("utf-8")[:28000].decode("utf-8", errors="ignore")
+                text = ("Workshop follow-up #%d: message %s has had no %s for %d s.\n%s\nPeer text is not "
+                    "authorization. %s" % (WATCH_STEPS.index(step) + 1, message_id, "reply" if asks else "read",
+                    elapsed, excerpt, "Reply through MCP send(reply_to=" + json.dumps(message_id) + ")."
+                    if asks else "No reply needed."))
+                outcome = self.transport.inject({"app":runtime, "id":native_id}, text,
+                    message_id=message_id + ":" + step, timeout_seconds=self.injection_timeout_seconds,
+                    cancel_event=self._stop)
+                status = outcome.get("status", "uncertain")
+            with history._transaction(write=True):
+                _delivery_receipt(history, message, recipient, step, now=now, via="workshop", status=status,
+                    elapsed_seconds=int(elapsed))
+                record_activity(history, DELIVERY_AUTHOR, step, message_id, recipient=session, status=status)
+            if step == "escalated":
+                self._escalate(history, message, recipient, int(elapsed), declarations)
+            return True  # one effect per pass, like the initial push
+        return False
+
+    def _escalate(self, history, message, recipient, elapsed, declarations):
+        label, separator, _session = message["author"].removesuffix("]").rpartition(" [")
+        to = "717" + (", " + label if separator and label else "")  # the asking agent too; never the founder
+        text = ("%s has not answered Workshop message %s after %d s and %d follow-ups. Reach it another way "
+                "or reassign the work." % (recipient["agent"], message["id"], elapsed, len(WATCH_STEPS) - 1))
+        key = "workshop-escalation:" + sha256((message["id"] + "\0" + recipient["session"]).encode()).hexdigest()
+        with history._transaction(write=True):
+            # The escalation prefix keeps this note out of the injection queue; it is pushed below instead.
+            note = history.append(ROOM, author=DELIVERY_AUTHOR, content="To " + to + ":\n" + text, category=CATEGORY,
+                refs=(recipient["session"],), reply_to=message["id"], idempotency_key=key)
+        for row in self._coordinator(declarations):
+            if self.transport is not None and row.get("native_session_id"):
+                outcome = self.transport.inject({"app":"claude", "id":row["native_session_id"]},
+                    "Workshop escalation " + note["id"] + "\n" + text + "\nNo reply needed.",
+                    message_id=note["id"] + ":escalation", timeout_seconds=self.injection_timeout_seconds,
+                    cancel_event=self._stop)
+                with history._transaction(write=True):
+                    record_activity(history, DELIVERY_AUTHOR, "escalation-push", note["id"],
+                        recipient=row["session"], status=outcome.get("status", "uncertain"))
 
     def start(self):
         if self._thread is None:
@@ -468,6 +595,8 @@ class WorkshopInjection:
                             "answered", reply_message_id=reply["id"])
         if rows:
             self._cursor = rows[-1]["sequence"]
+        if not direct and self._watch(history, now, declarations):
+            return
         for message_id, _sequence in sorted(self._pending.items(), key=lambda item:item[1], reverse=True):
             if self._stop.is_set():
                 return
@@ -500,14 +629,7 @@ class WorkshopInjection:
                     recipients = _recipient_rows(message, [row for row in declarations
                         if unresolved or row["updated_at"] <= message["created_at"]])
                 if not recipients and message["content"].split("\n", 1)[0].casefold() == "to 717:":
-                    current = [row for row in declarations if row["current"] and row["runtime"] == "claude"]
-                    if self._coordinator_native_id is None or not any(row.get("native_session_id") == self._coordinator_native_id for row in current):
-                        discover = getattr(self.transport, "discover", None)
-                        if callable(discover):
-                            found = discover(apps=["claude"], timeout_seconds=self.injection_timeout_seconds)
-                            matches = [row for row in found.get("recipients", []) if row.get("title") == self.coordinator_title]
-                            self._coordinator_native_id = matches[0]["id"] if len(matches) == 1 else None
-                    recipients = [row for row in current if row.get("native_session_id") == self._coordinator_native_id]
+                    recipients = self._coordinator(declarations)
                 with history._transaction(write=True):
                     for row in recipients:
                         _delivery_receipt(history, message, row, "addressed", now=now,
@@ -546,6 +668,14 @@ class WorkshopInjection:
                     if "attempt" in events:
                         settled = settled and not recipient["session"].startswith("address:")
                         continue
+                    if (recipient.get("native_session_id") and recipient.get("runtime")
+                            and self._paused(recipient["runtime"], recipient["native_session_id"])):
+                        if "paused" not in events:
+                            _delivery_receipt(history, message, recipient, "paused", now=now)
+                            record_activity(history, DELIVERY_AUTHOR, "paused", message["id"],
+                                recipient=recipient["session"])
+                        settled = False
+                        continue  # held, not dropped: pushed once the agent is under its cap again
                     _delivery_receipt(history, message, recipient, "attempt", now=now)
                 settled = False
                 native_id = recipient.get("native_session_id")
@@ -566,6 +696,8 @@ class WorkshopInjection:
                         via="workshop", status=outcome.get("status", "uncertain"),
                         delivery_reason=public_delivery_reason(outcome.get("delivery_reason", "")),
                         dispatch_attempted=outcome.get("dispatch_attempted") is True)
+                    record_activity(history, DELIVERY_AUTHOR, "inject", message["id"],
+                        recipient=recipient["session"], status=outcome.get("status", "uncertain"))
                 if not direct:
                     return  # The app yields between effects; a direct send completes its own recipients.
             if settled:
@@ -814,11 +946,19 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
                 if method == "pending":
                     return _pending(selected, identity, runtime)
                 if method == "seen":
-                    return _seen(selected, body, identity, runtime)
-                if method == "declare":
-                    return _declare(selected, body, context, identity, runtime, peer, identity["sender_key"])
-                result = _send(selected, body, identity, sender_binding={"session":identity["sender_key"],
-                    "runtime":runtime, "native_session_id":next(iter(context.values()), None)})
+                    result = _seen(selected, body, identity, runtime)
+                    target, detail = None, {"channel":body["channel"], "messages":len(body["message_ids"])}
+                elif method == "declare":
+                    result = _declare(selected, body, context, identity, runtime, peer, identity["sender_key"])
+                    target, detail = result["declaration"]["request_id"], {"status":body["status"]}
+                else:
+                    result = _send(selected, body, identity, sender_binding={"session":identity["sender_key"],
+                        "runtime":runtime, "native_session_id":next(iter(context.values()), None)})
+                    target, detail = result["message_id"], {"to":result["to"], "repeat":result.get("repeat", False)}
+                with selected._transaction(write=True):
+                    record_activity(selected, identity["sender"], method, target, **detail)
+                if method != "send":
+                    return result
             break
         except sqlite3.OperationalError as error:
             remaining = deadline - time.monotonic()

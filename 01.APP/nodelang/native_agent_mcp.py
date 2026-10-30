@@ -348,9 +348,14 @@ def build_server(*, session=None, mailbox_call=None):
                 failures.add((key, "pending"))
 
     def run_mailbox():
+        # An idle connector backs off (x2 up to the recovery cap); a tool call wakes a refresh at once.
+        # Polling every second in every agent session kept the founder's machine busy (founder: "the app is very slow").
+        interval = budget
         while not stopped.is_set():
-            wake.wait(budget)
+            woken = wake.wait(interval)
             wake.clear()
+            interval = budget if woken else min(interval * 2,
+                LIBRARY_ITEM_ENGINES['tool_workshop']['params']['recovery_timeout_seconds'])
             with lock:
                 pending = list(contexts.values())
             for context in pending:
@@ -618,6 +623,7 @@ class _FreshStdio:
         self.server = server
         self.poll_seconds = LIBRARY_ITEM_ENGINES['tool_workshop']['params']['instance_retry_ms'] / 1000
         self.input_poll_seconds = LIBRARY_ITEM_ENGINES['tool_workshop']['params']['host_cancel_ms'] / 1000
+        self.idle_poll_seconds = LIBRARY_ITEM_ENGINES['tool_workshop']['params']['mutation_poll_ms'] / 1000  # idle stdin poll
         self.app_dir = Path(__file__).resolve().parent.parent
         self.build = _STARTED_BUILD
         self.marker = None
@@ -704,8 +710,9 @@ class _FreshStdio:
             self.next_check = now + self.poll_seconds
             try:
                 parent = psutil.Process(self.parent['pid']) if self.parent else None
+                # status() walks every process on Windows (15% of an idle connector); there are no zombies there.
                 alive = (parent is not None and parent.create_time() == self.parent['created_at']
-                         and parent.status() != psutil.STATUS_ZOMBIE)
+                         and (os.name == 'nt' or parent.status() != psutil.STATUS_ZOMBIE))
             except psutil.NoSuchProcess:
                 alive = False
             except psutil.AccessDenied:
@@ -826,8 +833,12 @@ class _FreshStdio:
                 if b'\n' not in self.buffer:
                     data = self._read_ready()
                     if data is None:
-                        await anyio.sleep(self.input_poll_seconds)
+                        # The read-ahead must stay ours (a blocking reader could hand bytes past a build switch), so
+                        # polling stays, but backs off after ~1 s idle: 100 wakeups a second in every agent session.
+                        self.idle_polls = getattr(self, 'idle_polls', 0) + 1
+                        await anyio.sleep(self.input_poll_seconds if self.idle_polls < 100 else self.idle_poll_seconds)
                         continue
+                    self.idle_polls = 0
                     self.buffer.extend(data)
                     if data:
                         continue

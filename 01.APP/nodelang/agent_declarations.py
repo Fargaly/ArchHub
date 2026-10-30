@@ -10,14 +10,30 @@ SESSION_KEYS = {"threadId": "codex", "ai.opencode/sessionID": "opencode",
 SESSION_KEYS.update({"antigravity/sessionID": "antigravity", "antigravity-ide/sessionID": "antigravity-ide"})
 
 
+# Liveness per process incarnation: dead stays dead; alive is re-checked after session_poll_ms. Every connector
+# read every declaration's lineage through psutil each second (80% of an idle connector's CPU).
+_VERDICTS = {}
+
+
 def _alive(row, *, strict=False):
     import psutil
+    import time
+    key = (row["pid"], row["created_at"])
+    known = None if strict else _VERDICTS.get(key)
+    from .library_engines import LIBRARY_ITEM_ENGINES
+    recheck = LIBRARY_ITEM_ENGINES['tool_workshop']['params']['session_poll_ms'] / 1000
+    if known is not None and (known[0] is False or time.monotonic() - known[1] < recheck):
+        return known[0]
     try:
-        return abs(psutil.Process(row["pid"]).create_time() - row["created_at"]) < 0.00001
+        verdict = abs(psutil.Process(row["pid"]).create_time() - row["created_at"]) < 0.00001
     except (psutil.Error, OSError) as exc:
         if strict and not isinstance(exc, psutil.NoSuchProcess):
             raise
-        return False
+        verdict = False
+    if len(_VERDICTS) > 4096:
+        _VERDICTS.clear()
+    _VERDICTS[key] = (verdict, time.monotonic())
+    return verdict
 
 
 def _lineage(peer):

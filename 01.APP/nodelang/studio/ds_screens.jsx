@@ -46,11 +46,15 @@
     : /done|ran/i.test(n.status) ? ['Done', A.ink] : ['Not run', A.inkSoft];
   // Spec Wire/*: compatible cyan, affected downstream warn, rejected drag err; one stroke width (wire.strokeWidth = 2).
   const wireColor = (w, nodes) => w.rejected ? A.err : /^(Updating|Out of date)/.test(nodeState(nodes.find(n=>n.id===w.to) || {}, false)[0]) ? A.warn : A.cyan;
+  // DESIGNSYS-050 4.9 Wire: ONE stroke for the Canvas (FlowWire) and the System graph (GraphWires); Penpot Wire/Compatible, wire.strokeWidth 2.
+  function WirePath({id, state, d, color, dash, opacity}) {
+    return <path data-graph-wire={id} data-wire-state={state} d={d} stroke={color} strokeWidth="2" strokeLinecap="round" strokeDasharray={dash} opacity={opacity} fill="none" />;
+  }
   function GraphWires({paths,visibility='Visible',nodes=[]}) {
     return <>{paths.map(({w,a,b})=>{
       const portVisibility=nodes.find(n=>n.id===w.from)?.portVisibility?.[w.fromPort],
         opacity=visibility==='Hidden'||portVisibility==='Hidden' ? 0 : visibility==='Faint'||portVisibility==='Faint' ? .2 : .9;
-      return <path key={w.id} data-graph-wire={w.id} d={curve(a,b)} stroke={typeColor(w.type)} strokeWidth="2" strokeLinecap="round" strokeDasharray={w.type==='event'?'6 2':undefined} opacity={opacity} fill="none" />;
+      return <WirePath key={w.id} id={w.id} d={curve(a,b)} color={typeColor(w.type)} dash={w.type==='event'?'6 2':undefined} opacity={opacity} />;
     })}</>;
   }
   // e6e4a367 studio-lm.jsx NodeRenderer: category header, role edge and parameter body.
@@ -363,7 +367,7 @@
     // xyflow anchors at the Handle's outer edge; the spec wire meets the socket centre (Handle is 22 px wide, see SOCKET_STYLE).
     const d = curve({x: sourceX - 11, y: sourceY}, {x: targetX + 11, y: targetY});
     return <>{data.selected && <path d={d} stroke={A.ink} strokeWidth="8" opacity=".22" fill="none" />}
-      <path data-graph-wire={id} data-wire-state={data.state} d={d} stroke={data.color} strokeWidth="2" strokeLinecap="round" opacity={data.opacity} fill="none" />
+      <WirePath id={id} state={data.state} d={d} color={data.color} opacity={data.opacity} />
       <path className="react-flow__edge-interaction" d={d} stroke="transparent" strokeWidth="16" fill="none" aria-label={'Inspect wire ' + id} />
     </>;
   }

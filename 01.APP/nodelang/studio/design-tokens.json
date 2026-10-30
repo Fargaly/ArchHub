@@ -1,0 +1,1224 @@
+{
+ "archhub-original": {
+  "color": {
+   "blue": {
+    "$value": "#7898D6",
+    "$type": "color",
+    "$description": ""
+   },
+   "l_bgSoft": {
+    "$value": "#EFEAE0",
+    "$type": "color",
+    "$description": ""
+   },
+   "accentSoft": {
+    "$value": "#3A2018",
+    "$type": "color",
+    "$description": ""
+   },
+   "cyan": {
+    "$value": "#5FB3B3",
+    "$type": "color",
+    "$description": ""
+   },
+   "ink": {
+    "$value": "#ECE8E0",
+    "$type": "color",
+    "$description": ""
+   },
+   "inkMuted": {
+    "$value": "#8B837A",
+    "$type": "color",
+    "$description": ""
+   },
+   "purple": {
+    "$value": "#A98CD6",
+    "$type": "color",
+    "$description": ""
+   },
+   "bgCanvas": {
+    "$value": "#101015",
+    "$type": "color",
+    "$description": ""
+   },
+   "accentHi": {
+    "$value": "#E8896A",
+    "$type": "color",
+    "$description": ""
+   },
+   "accentPress": {
+    "$value": "#A04832",
+    "$type": "color",
+    "$description": ""
+   },
+   "err": {
+    "$value": "#E6705F",
+    "$type": "color",
+    "$description": ""
+   },
+   "accentDim": {
+    "$value": "#2A1812",
+    "$type": "color",
+    "$description": ""
+   },
+   "bgDeep": {
+    "$value": "#0A0A0D",
+    "$type": "color",
+    "$description": ""
+   },
+   "l_accent": {
+    "$value": "#C96442",
+    "$type": "color",
+    "$description": ""
+   },
+   "warn": {
+    "$value": "#E5B25A",
+    "$type": "color",
+    "$description": ""
+   },
+   "onFill": {
+    "$value": "#180F08",
+    "$type": "color",
+    "$description": ""
+   },
+   "bgPanel": {
+    "$value": "#15151A",
+    "$type": "color",
+    "$description": ""
+   },
+   "lineSoft": {
+    "$value": "#1E1E24",
+    "$type": "color",
+    "$description": ""
+   },
+   "bgHover": {
+    "$value": "#22222A",
+    "$type": "color",
+    "$description": ""
+   },
+   "inkDim": {
+    "$value": "#8A837C",
+    "$type": "color",
+    "$description": ""
+   },
+   "line": {
+    "$value": "#26262E",
+    "$type": "color",
+    "$description": ""
+   },
+   "l_inkMuted": {
+    "$value": "#9A9183",
+    "$type": "color",
+    "$description": ""
+   },
+   "l_line": {
+    "$value": "#E3DDD0",
+    "$type": "color",
+    "$description": ""
+   },
+   "bgInk": {
+    "$value": "#18181E",
+    "$type": "color",
+    "$description": ""
+   },
+   "userAv": {
+    "$value": "#D8C5A8",
+    "$type": "color",
+    "$description": ""
+   },
+   "bgSoft": {
+    "$value": "#1C1C23",
+    "$type": "color",
+    "$description": ""
+   },
+   "l_ink": {
+    "$value": "#1A1612",
+    "$type": "color",
+    "$description": ""
+   },
+   "l_bg": {
+    "$value": "#F7F4EE",
+    "$type": "color",
+    "$description": ""
+   },
+   "inkSoft": {
+    "$value": "#9B938A",
+    "$type": "color",
+    "$description": ""
+   },
+   "bg": {
+    "$value": "#0E0E11",
+    "$type": "color",
+    "$description": ""
+   },
+   "ok": {
+    "$value": "#7EC18E",
+    "$type": "color",
+    "$description": ""
+   },
+   "accent": {
+    "$value": "#D97757",
+    "$type": "color",
+    "$description": ""
+   },
+   "onUserAv": {
+    "$value": "#5A4A2A",
+    "$type": "color",
+    "$description": ""
+   },
+   "bgRaised": {
+    "$value": "#1D1D22",
+    "$type": "color",
+    "$description": ""
+   },
+   "l_bgPanel": {
+    "$value": "#FBF9F4",
+    "$type": "color",
+    "$description": ""
+   },
+   "lineHair": {
+    "$value": "#1A1A20",
+    "$type": "color",
+    "$description": ""
+   },
+   "l_inkSoft": {
+    "$value": "#6B6256",
+    "$type": "color",
+    "$description": ""
+   }
+  },
+  "radius": {
+   "sm": {
+    "$value": "5px",
+    "$type": "borderRadius",
+    "$description": ""
+   },
+   "md": {
+    "$value": "6px",
+    "$type": "borderRadius",
+    "$description": ""
+   },
+   "xl": {
+    "$value": "10px",
+    "$type": "borderRadius",
+    "$description": ""
+   },
+   "xs": {
+    "$value": "3px",
+    "$type": "borderRadius",
+    "$description": ""
+   },
+   "pill": {
+    "$value": "999px",
+    "$type": "borderRadius",
+    "$description": ""
+   },
+   "lg": {
+    "$value": "8px",
+    "$type": "borderRadius",
+    "$description": ""
+   }
+  },
+  "space": {
+   "xs": {
+    "$value": "4px",
+    "$type": "spacing",
+    "$description": ""
+   },
+   "md": {
+    "$value": "12px",
+    "$type": "spacing",
+    "$description": ""
+   },
+   "3xl": {
+    "$value": "40px",
+    "$type": "spacing",
+    "$description": ""
+   },
+   "4xl": {
+    "$value": "48px",
+    "$type": "spacing",
+    "$description": ""
+   },
+   "7xl": {
+    "$value": "96px",
+    "$type": "spacing",
+    "$description": ""
+   },
+   "2xl": {
+    "$value": "32px",
+    "$type": "spacing",
+    "$description": ""
+   },
+   "lg": {
+    "$value": "16px",
+    "$type": "spacing",
+    "$description": ""
+   },
+   "xl": {
+    "$value": "24px",
+    "$type": "spacing",
+    "$description": ""
+   },
+   "6xl": {
+    "$value": "72px",
+    "$type": "spacing",
+    "$description": ""
+   },
+   "5xl": {
+    "$value": "56px",
+    "$type": "spacing",
+    "$description": ""
+   },
+   "sm": {
+    "$value": "8px",
+    "$type": "spacing",
+    "$description": ""
+   }
+  }
+ },
+ "archhub-current": {
+  "current": {
+   "color": {
+    "ca89d94": {
+     "$value": "#a89d94",
+     "$type": "color",
+     "$description": ""
+    },
+    "ce3b09d": {
+     "$value": "#e3b09d",
+     "$type": "color",
+     "$description": ""
+    },
+    "c25252e": {
+     "$value": "#25252e",
+     "$type": "color",
+     "$description": ""
+    },
+    "c2a1d10": {
+     "$value": "#2a1d10",
+     "$type": "color",
+     "$description": ""
+    },
+    "cc69b60": {
+     "$value": "#c69b60",
+     "$type": "color",
+     "$description": ""
+    },
+    "c2b5fb8": {
+     "$value": "#2b5fb8",
+     "$type": "color",
+     "$description": ""
+    },
+    "c16161b": {
+     "$value": "#16161b",
+     "$type": "color",
+     "$description": ""
+    },
+    "caaa099": {
+     "$value": "#aaa099",
+     "$type": "color",
+     "$description": ""
+    },
+    "c9b948e": {
+     "$value": "#9b948e",
+     "$type": "color",
+     "$description": ""
+    },
+    "c24242b": {
+     "$value": "#24242b",
+     "$type": "color",
+     "$description": ""
+    },
+    "cc8c0b7": {
+     "$value": "#c8c0b7",
+     "$type": "color",
+     "$description": ""
+    },
+    "c2a292e": {
+     "$value": "#2a292e",
+     "$type": "color",
+     "$description": ""
+    },
+    "c6b675f": {
+     "$value": "#6b675f",
+     "$type": "color",
+     "$description": ""
+    },
+    "c17171c": {
+     "$value": "#17171c",
+     "$type": "color",
+     "$description": ""
+    },
+    "caaa39a": {
+     "$value": "#aaa39a",
+     "$type": "color",
+     "$description": ""
+    },
+    "c68636a": {
+     "$value": "#68636a",
+     "$type": "color",
+     "$description": ""
+    },
+    "ca69f96": {
+     "$value": "#a69f96",
+     "$type": "color",
+     "$description": ""
+    },
+    "c17120f": {
+     "$value": "#17120f",
+     "$type": "color",
+     "$description": ""
+    },
+    "ca99f94": {
+     "$value": "#a99f94",
+     "$type": "color",
+     "$description": ""
+    },
+    "c40332c": {
+     "$value": "#40332c",
+     "$type": "color",
+     "$description": ""
+    },
+    "ce7e3db": {
+     "$value": "#e7e3db",
+     "$type": "color",
+     "$description": ""
+    },
+    "c6fb58a": {
+     "$value": "#6fb58a",
+     "$type": "color",
+     "$description": ""
+    },
+    "c323038": {
+     "$value": "#323038",
+     "$type": "color",
+     "$description": ""
+    },
+    "c0c0c0f": {
+     "$value": "#0c0c0f",
+     "$type": "color",
+     "$description": ""
+    },
+    "c5c463e": {
+     "$value": "#5c463e",
+     "$type": "color",
+     "$description": ""
+    },
+    "c1c1c22": {
+     "$value": "#1c1c22",
+     "$type": "color",
+     "$description": ""
+    },
+    "cb5a89c": {
+     "$value": "#b5a89c",
+     "$type": "color",
+     "$description": ""
+    },
+    "c111115": {
+     "$value": "#111115",
+     "$type": "color",
+     "$description": ""
+    },
+    "c8d837a": {
+     "$value": "#8d837a",
+     "$type": "color",
+     "$description": ""
+    },
+    "ca39b94": {
+     "$value": "#a39b94",
+     "$type": "color",
+     "$description": ""
+    },
+    "c33333b": {
+     "$value": "#33333b",
+     "$type": "color",
+     "$description": ""
+    },
+    "c544842": {
+     "$value": "#544842",
+     "$type": "color",
+     "$description": ""
+    },
+    "c26262d": {
+     "$value": "#26262d",
+     "$type": "color",
+     "$description": ""
+    },
+    "caaa198": {
+     "$value": "#aaa198",
+     "$type": "color",
+     "$description": ""
+    },
+    "c2a2a31": {
+     "$value": "#2a2a31",
+     "$type": "color",
+     "$description": ""
+    },
+    "cffffff": {
+     "$value": "#ffffff",
+     "$type": "color",
+     "$description": ""
+    },
+    "c35291f": {
+     "$value": "#35291f",
+     "$type": "color",
+     "$description": ""
+    },
+    "c0f0f13": {
+     "$value": "#0f0f13",
+     "$type": "color",
+     "$description": ""
+    },
+    "cb4aaa0": {
+     "$value": "#b4aaa0",
+     "$type": "color",
+     "$description": ""
+    },
+    "c0e0e12": {
+     "$value": "#0e0e12",
+     "$type": "color",
+     "$description": ""
+    }
+   },
+   "radius": {
+    "p10": {
+     "$value": "10px",
+     "$type": "borderRadius",
+     "$description": ""
+    },
+    "p16": {
+     "$value": "16px",
+     "$type": "borderRadius",
+     "$description": ""
+    },
+    "p9_143": {
+     "$value": "9.143px",
+     "$type": "borderRadius",
+     "$description": ""
+    },
+    "p50": {
+     "$value": "50px",
+     "$type": "borderRadius",
+     "$description": ""
+    },
+    "p6": {
+     "$value": "6px",
+     "$type": "borderRadius",
+     "$description": ""
+    },
+    "p7": {
+     "$value": "7px",
+     "$type": "borderRadius",
+     "$description": ""
+    },
+    "p9": {
+     "$value": "9px",
+     "$type": "borderRadius",
+     "$description": ""
+    },
+    "p6_286": {
+     "$value": "6.286px",
+     "$type": "borderRadius",
+     "$description": ""
+    },
+    "p0": {
+     "$value": "0px",
+     "$type": "borderRadius",
+     "$description": ""
+    },
+    "p14": {
+     "$value": "14px",
+     "$type": "borderRadius",
+     "$description": ""
+    },
+    "p8_571": {
+     "$value": "8.571px",
+     "$type": "borderRadius",
+     "$description": ""
+    },
+    "p12": {
+     "$value": "12px",
+     "$type": "borderRadius",
+     "$description": ""
+    },
+    "p2": {
+     "$value": "2px",
+     "$type": "borderRadius",
+     "$description": ""
+    },
+    "p6_857": {
+     "$value": "6.857px",
+     "$type": "borderRadius",
+     "$description": ""
+    },
+    "p6_571": {
+     "$value": "6.571px",
+     "$type": "borderRadius",
+     "$description": ""
+    },
+    "p8": {
+     "$value": "8px",
+     "$type": "borderRadius",
+     "$description": ""
+    },
+    "p3": {
+     "$value": "3px",
+     "$type": "borderRadius",
+     "$description": ""
+    },
+    "p999": {
+     "$value": "999px",
+     "$type": "borderRadius",
+     "$description": ""
+    },
+    "p7_143": {
+     "$value": "7.143px",
+     "$type": "borderRadius",
+     "$description": ""
+    },
+    "p5": {
+     "$value": "5px",
+     "$type": "borderRadius",
+     "$description": ""
+    },
+    "p4": {
+     "$value": "4px",
+     "$type": "borderRadius",
+     "$description": ""
+    }
+   },
+   "fontSize": {
+    "p10": {
+     "$value": "10px",
+     "$type": "fontSizes",
+     "$description": ""
+    },
+    "p16": {
+     "$value": "16px",
+     "$type": "fontSizes",
+     "$description": ""
+    },
+    "p23": {
+     "$value": "23px",
+     "$type": "fontSizes",
+     "$description": ""
+    },
+    "p4_439": {
+     "$value": "4.439px",
+     "$type": "fontSizes",
+     "$description": ""
+    },
+    "p12_5": {
+     "$value": "12.5px",
+     "$type": "fontSizes",
+     "$description": ""
+    },
+    "p6": {
+     "$value": "6px",
+     "$type": "fontSizes",
+     "$description": ""
+    },
+    "p36": {
+     "$value": "36px",
+     "$type": "fontSizes",
+     "$description": ""
+    },
+    "p15": {
+     "$value": "15px",
+     "$type": "fontSizes",
+     "$description": ""
+    },
+    "p17": {
+     "$value": "17px",
+     "$type": "fontSizes",
+     "$description": ""
+    },
+    "p9": {
+     "$value": "9px",
+     "$type": "fontSizes",
+     "$description": ""
+    },
+    "p11": {
+     "$value": "11px",
+     "$type": "fontSizes",
+     "$description": ""
+    },
+    "p42": {
+     "$value": "42px",
+     "$type": "fontSizes",
+     "$description": ""
+    },
+    "p13": {
+     "$value": "13px",
+     "$type": "fontSizes",
+     "$description": ""
+    },
+    "p13_2": {
+     "$value": "13.2px",
+     "$type": "fontSizes",
+     "$description": ""
+    },
+    "p11_667": {
+     "$value": "11.667px",
+     "$type": "fontSizes",
+     "$description": ""
+    },
+    "p20": {
+     "$value": "20px",
+     "$type": "fontSizes",
+     "$description": ""
+    },
+    "p4_932": {
+     "$value": "4.932px",
+     "$type": "fontSizes",
+     "$description": ""
+    },
+    "p5_4": {
+     "$value": "5.4px",
+     "$type": "fontSizes",
+     "$description": ""
+    },
+    "p12_32": {
+     "$value": "12.32px",
+     "$type": "fontSizes",
+     "$description": ""
+    },
+    "p13_5": {
+     "$value": "13.5px",
+     "$type": "fontSizes",
+     "$description": ""
+    },
+    "p14": {
+     "$value": "14px",
+     "$type": "fontSizes",
+     "$description": ""
+    },
+    "p12": {
+     "$value": "12px",
+     "$type": "fontSizes",
+     "$description": ""
+    },
+    "p30": {
+     "$value": "30px",
+     "$type": "fontSizes",
+     "$description": ""
+    },
+    "p14_08": {
+     "$value": "14.08px",
+     "$type": "fontSizes",
+     "$description": ""
+    },
+    "p22": {
+     "$value": "22px",
+     "$type": "fontSizes",
+     "$description": ""
+    },
+    "p18": {
+     "$value": "18px",
+     "$type": "fontSizes",
+     "$description": ""
+    }
+   }
+  }
+ },
+ "archhub-shape-limits": {
+  "current": {
+   "radius": {
+    "p2_5": {
+     "$value": "2.5px",
+     "$type": "borderRadius",
+     "$description": ""
+    },
+    "p12_5": {
+     "$value": "12.5px",
+     "$type": "borderRadius",
+     "$description": ""
+    },
+    "p4_5": {
+     "$value": "4.5px",
+     "$type": "borderRadius",
+     "$description": ""
+    },
+    "p11": {
+     "$value": "11px",
+     "$type": "borderRadius",
+     "$description": ""
+    },
+    "p7_65": {
+     "$value": "7.65px",
+     "$type": "borderRadius",
+     "$description": ""
+    },
+    "p9_5": {
+     "$value": "9.5px",
+     "$type": "borderRadius",
+     "$description": ""
+    },
+    "p5_1": {
+     "$value": "5.1px",
+     "$type": "borderRadius",
+     "$description": ""
+    },
+    "p1_5": {
+     "$value": "1.5px",
+     "$type": "borderRadius",
+     "$description": ""
+    },
+    "p1": {
+     "$value": "1px",
+     "$type": "borderRadius",
+     "$description": ""
+    },
+    "p3_2": {
+     "$value": "3.2px",
+     "$type": "borderRadius",
+     "$description": ""
+    }
+   }
+  }
+ },
+ "archhub-design-parameters": {
+  "current": {
+   "color": {
+    "c141418": {
+     "$value": "#141418",
+     "$type": "color",
+     "$description": ""
+    },
+    "cd9a08a": {
+     "$value": "#d9a08a",
+     "$type": "color",
+     "$description": ""
+    },
+    "c3d3332": {
+     "$value": "#3d3332",
+     "$type": "color",
+     "$description": ""
+    },
+    "caaa095": {
+     "$value": "#aaa095",
+     "$type": "color",
+     "$description": ""
+    },
+    "c303038": {
+     "$value": "#303038",
+     "$type": "color",
+     "$description": ""
+    },
+    "cbfb4aa": {
+     "$value": "#bfb4aa",
+     "$type": "color",
+     "$description": ""
+    },
+    "c29272e": {
+     "$value": "#29272e",
+     "$type": "color",
+     "$description": ""
+    },
+    "cb6aaa0": {
+     "$value": "#b6aaa0",
+     "$type": "color",
+     "$description": ""
+    },
+    "c000000": {
+     "$value": "#000000",
+     "$type": "color",
+     "$description": ""
+    },
+    "c1e1e25": {
+     "$value": "#1e1e25",
+     "$type": "color",
+     "$description": ""
+    },
+    "c29282f": {
+     "$value": "#29282f",
+     "$type": "color",
+     "$description": ""
+    },
+    "c66544c": {
+     "$value": "#66544c",
+     "$type": "color",
+     "$description": ""
+    },
+    "c302b2d": {
+     "$value": "#302b2d",
+     "$type": "color",
+     "$description": ""
+    },
+    "c25242a": {
+     "$value": "#25242a",
+     "$type": "color",
+     "$description": ""
+    },
+    "ce9e6df": {
+     "$value": "#e9e6df",
+     "$type": "color",
+     "$description": ""
+    },
+    "c23232a": {
+     "$value": "#23232a",
+     "$type": "color",
+     "$description": ""
+    },
+    "cf0f0f0": {
+     "$value": "#f0f0f0",
+     "$type": "color",
+     "$description": ""
+    },
+    "c2b2b2b": {
+     "$value": "#2b2b2b",
+     "$type": "color",
+     "$description": ""
+    },
+    "cd2cac0": {
+     "$value": "#d2cac0",
+     "$type": "color",
+     "$description": ""
+    },
+    "c27272f": {
+     "$value": "#27272f",
+     "$type": "color",
+     "$description": ""
+    },
+    "c262229": {
+     "$value": "#262229",
+     "$type": "color",
+     "$description": ""
+    },
+    "c4c3930": {
+     "$value": "#4c3930",
+     "$type": "color",
+     "$description": ""
+    },
+    "c302c31": {
+     "$value": "#302c31",
+     "$type": "color",
+     "$description": ""
+    },
+    "cb8aea4": {
+     "$value": "#b8aea4",
+     "$type": "color",
+     "$description": ""
+    },
+    "c302e35": {
+     "$value": "#302e35",
+     "$type": "color",
+     "$description": ""
+    },
+    "c66534a": {
+     "$value": "#66534a",
+     "$type": "color",
+     "$description": ""
+    },
+    "cccc4bc": {
+     "$value": "#ccc4bc",
+     "$type": "color",
+     "$description": ""
+    },
+    "c807970": {
+     "$value": "#807970",
+     "$type": "color",
+     "$description": ""
+    },
+    "c2c292e": {
+     "$value": "#2c292e",
+     "$type": "color",
+     "$description": ""
+    },
+    "c86838a": {
+     "$value": "#86838a",
+     "$type": "color",
+     "$description": ""
+    },
+    "c25242b": {
+     "$value": "#25242b",
+     "$type": "color",
+     "$description": ""
+    },
+    "c2f2f37": {
+     "$value": "#2f2f37",
+     "$type": "color",
+     "$description": ""
+    },
+    "cbdb3a8": {
+     "$value": "#bdb3a8",
+     "$type": "color",
+     "$description": ""
+    },
+    "caaa69e": {
+     "$value": "#aaa69e",
+     "$type": "color",
+     "$description": ""
+    },
+    "c6d6d6d": {
+     "$value": "#6d6d6d",
+     "$type": "color",
+     "$description": ""
+    },
+    "caaa5a4": {
+     "$value": "#aaa5a4",
+     "$type": "color",
+     "$description": ""
+    },
+    "c101014": {
+     "$value": "#101014",
+     "$type": "color",
+     "$description": ""
+    },
+    "c8b8790": {
+     "$value": "#8b8790",
+     "$type": "color",
+     "$description": ""
+    }
+   },
+   "radius": {
+    "p20": {
+     "$value": "20px",
+     "$type": "borderRadius",
+     "$description": ""
+    },
+    "p18": {
+     "$value": "18px",
+     "$type": "borderRadius",
+     "$description": ""
+    }
+   },
+   "fontSize": {
+    "p8_317": {
+     "$value": "8.317px",
+     "$type": "fontSizes",
+     "$description": ""
+    },
+    "p24": {
+     "$value": "24px",
+     "$type": "fontSizes",
+     "$description": ""
+    },
+    "p26": {
+     "$value": "26px",
+     "$type": "fontSizes",
+     "$description": ""
+    },
+    "p7_723": {
+     "$value": "7.723px",
+     "$type": "fontSizes",
+     "$description": ""
+    },
+    "p8_911": {
+     "$value": "8.911px",
+     "$type": "fontSizes",
+     "$description": ""
+    },
+    "p9_214": {
+     "$value": "9.214px",
+     "$type": "fontSizes",
+     "$description": ""
+    },
+    "p28": {
+     "$value": "28px",
+     "$type": "fontSizes",
+     "$description": ""
+    }
+   }
+  },
+  "layout": {
+   "composerMaxWidth": {
+    "$value": "860px",
+    "$type": "dimension",
+    "$description": ""
+   },
+   "composerInset": {
+    "$value": "24px",
+    "$type": "dimension",
+    "$description": ""
+   },
+   "nodeWidth": {
+    "$value": "304px",
+    "$type": "dimension",
+    "$description": "Default full working node width; compact overview is optional."
+   },
+   "compactNodeWidth": {
+    "$value": "156px",
+    "$type": "dimension",
+    "$description": "Optional compact overview only; full working nodes use layout.nodeWidth."
+   },
+   "headerHeight": {
+    "$value": "48px",
+    "$type": "dimension",
+    "$description": ""
+   },
+   "settingsSidebarWidth": {
+    "$value": "260px",
+    "$type": "dimension",
+    "$description": ""
+   },
+   "nodeGap": {
+    "$value": "24px",
+    "$type": "spacing",
+    "$description": "Native flex gap between Canvas columns."
+   },
+   "railWidth": {
+    "$value": "64px",
+    "$type": "dimension",
+    "$description": ""
+   },
+   "nodeRowGap": {
+    "$value": "4px",
+    "$type": "spacing",
+    "$description": ""
+   },
+   "inspectorWidth": {
+    "$value": "300px",
+    "$type": "dimension",
+    "$description": ""
+   }
+  },
+  "wire": {
+   "strokeWidth": {
+    "$value": "2px",
+    "$type": "borderWidth",
+    "$description": ""
+   },
+   "span": {
+    "$value": "{layout.nodeGap}",
+    "$type": "dimension",
+    "$description": ""
+   }
+  },
+  "control": {
+   "radius": {
+    "$value": "5px",
+    "$type": "borderRadius",
+    "$description": ""
+   }
+  },
+  "node": {
+   "radius": {
+    "$value": "8px",
+    "$type": "borderRadius",
+    "$description": ""
+   }
+  }
+ },
+ "$metadata": {
+  "tokenSetOrder": [
+   "archhub-original",
+   "archhub-current",
+   "archhub-shape-limits",
+   "archhub-design-parameters"
+  ],
+  "activeThemes": [
+   "ArchHub/Current"
+  ],
+  "activeSets": [
+   "archhub-design-parameters",
+   "archhub-shape-limits",
+   "archhub-current",
+   "archhub-original"
+  ]
+ },
+ "$extensions": {
+  "penpot": {
+   "fileId": "751e8d0c-7080-8124-8008-d8e6f6eedbb6",
+   "revn": 1356,
+   "file": "ArchHub — Editable Product Design",
+   "read": "GET /api/rpc/command/get-file -> data.tokensLib (read-only; the designer owns Penpot)"
+  },
+  "archhub.blocks": {
+   "AppHeader": {
+    "penpot": {
+     "component": "4e293c18-72cc-4341-9972-e5e1c5d37bc9"
+    },
+    "code": {
+     "file": "app.jsx",
+     "symbol": "className=\"flex app-header\""
+    }
+   },
+   "WorkshopShell": {
+    "penpot": {
+     "frame": "b6444870-f024-4bb0-8fb2-a58245bf18ed"
+    },
+    "code": {
+     "file": "ds_workshop3.jsx",
+     "symbol": "function Win("
+    }
+   },
+   "AgentPicker": {
+    "penpot": {
+     "component": "87b81a24-c41d-80a8-8008-de686da7cfa9"
+    },
+    "code": {
+     "file": "ds_workshop3.jsx",
+     "symbol": "function AgentPicker("
+    }
+   },
+   "DeliveryReceipt": {
+    "penpot": {
+     "frame": "d3e839dc-c01c-804f-8008-dcd78ea1814f"
+    },
+    "code": {
+     "file": "ds_workshop3.jsx",
+     "symbol": "const receipt = ("
+    }
+   },
+   "PeoplePanel": {
+    "penpot": {
+     "component": "ad21653e-8e09-4faf-8b24-47ff8d059f9f"
+    },
+    "code": {
+     "file": "ds_workshop3.jsx",
+     "symbol": "function workshopPeople("
+    }
+   },
+   "NodeCard": {
+    "penpot": {
+     "component": "b11211e1-6053-4e72-bcb8-8c10c1a423a3"
+    },
+    "code": {
+     "file": "ds/index.jsx",
+     "symbol": "const Node = React.forwardRef("
+    }
+   },
+   "Wire": {
+    "penpot": {
+     "component": "f94f18b2-b278-4959-8349-b69b9e1eaa73"
+    },
+    "code": {
+     "file": "ds_screens.jsx",
+     "symbol": "function WirePath("
+    }
+   },
+   "Inspector": {
+    "penpot": null,
+    "code": {
+     "file": "ds_screens.jsx",
+     "symbol": "function NodeInspector("
+    }
+   },
+   "CanvasComposer": {
+    "penpot": {
+     "component": "87b81a24-c41d-80a8-8008-de4c2e85a2e3"
+    },
+    "code": {
+     "file": "ds/index.jsx",
+     "symbol": "<Tag data-ds-composer=\"\""
+    }
+   },
+   "RunModeChip": {
+    "penpot": null,
+    "code": null
+   },
+   "HostExecNode": {
+    "penpot": {
+     "component": "6f63da28-102a-80f2-8008-d8ee07ae486b"
+    },
+    "code": null
+   },
+   "ConnectorActionNode": {
+    "penpot": null,
+    "code": null
+   }
+  }
+ }
+}

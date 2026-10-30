@@ -9,6 +9,7 @@
 // Both map from the SAME canonical values below.
 
 window.AH = {
+  // design-tokens:begin colours, sp and rad are generated from design-tokens.json (Penpot set archhub-original) by compile_studio.cjs
   // ── surfaces (dark canonical) ──
   bgDeep:  '#0a0a0d',
   bg:      '#0e0e11',
@@ -76,8 +77,9 @@ window.AH = {
   mono:  "'JetBrains Mono', ui-monospace, monospace",
   arch:  "'Architects Daughter', 'Comic Sans MS', cursive",
   // ── scales ──
-  sp:  { xs:4, sm:8, md:12, lg:16, xl:24, '2xl':32, '3xl':40, '4xl':48, '5xl':56, '6xl':72, '7xl':96 },
-  rad: { xs:3, sm:5, md:6, lg:8, xl:10, pill:999 },
+  sp: {xs:4, sm:8, md:12, lg:16, xl:24, '2xl':32, '3xl':40, '4xl':48, '5xl':56, '6xl':72, '7xl':96},
+  rad: {xs:3, sm:5, md:6, lg:8, xl:10, pill:999},
+  // design-tokens:end
   fs: {
     d0:  { sz:104, ln:0.90, fam:'serif', use:'Web marketing hero — archhub.app only' },
     d1:  { sz:88,  ln:0.92, fam:'serif', use:'Cover · product hero' },

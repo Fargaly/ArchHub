@@ -74,3 +74,91 @@ def test_next_delay_interval_floor_and_daily_time():
     noon = datetime.datetime(2026, 10, 28, 12, 0)
     assert next_delay({'every_seconds': '', 'daily_at': '13:30'}, noon) == 5400
     assert next_delay({'every_seconds': '', 'daily_at': '08:00'}, noon) == 20 * 3600
+
+
+def workshop_rows():
+    from nodelang.workshop_mailbox import ROOM, application_history
+    with application_history() as history:
+        return [row[0] for row in history._db.execute(
+            'SELECT content FROM messages WHERE conversation_id=? ORDER BY sequence', (ROOM,))]
+
+
+def test_routine_one_second_schedule_fires_and_records_a_workshop_entry(profile, monkeypatch):
+    from nodelang.canvas_triggers import TRIGGER_NODE, TriggerService
+    from nodelang.session_files import read_document
+    monkeypatch.setitem(TRIGGER_NODE['params'], 'min_every_seconds', 1)
+    path = profile / 'routine.archhub'
+    workflow(path, 'tr_schedule', {'every_seconds': '1'})
+    service = TriggerService()
+    try:
+        service.refresh()
+        deadline = time.time() + 10
+        while not any(f['outcome'] == 'ran' and f.get('workshop') for f in service.fired) and time.time() < deadline:
+            time.sleep(0.2)
+        assert any(f['outcome'] == 'ran' and f.get('workshop') for f in service.fired), service.fired
+    finally:
+        service.close()
+    assert any(row.startswith('To Ahmed:\nRoutine Trigger (routine) fired, scheduled: ran') for row in workshop_rows())
+    trigger = next(n for n in read_document(path)['nodes'] if n['id'] == 't')
+    assert isinstance(trigger['result']['fired_at'], float)
+
+
+@pytest.mark.parametrize('policy, runs, outcomes', [('skip', 1, ['skipped', 'skipped']),
+                                                    ('queue', 3, ['queued', 'queued'])])
+def test_routine_concurrency_policy(profile, policy, runs, outcomes):
+    import threading
+    from nodelang.canvas_triggers import TriggerService
+    service = TriggerService(files=type('F', (), {'open_files': lambda self: []})())
+    calls, gate = [], threading.Event()
+
+    def slow_fire(key, kind, reason='scheduled'):
+        calls.append(reason)
+        gate.wait(5)
+    service.fire = slow_fire
+    key, params = ('p.archhub', 't'), {'concurrency': policy}
+    first = threading.Thread(target=service.dispatch, args=(key, 'trigger.schedule', params))
+    first.start()
+    while not calls:
+        time.sleep(0.01)
+    assert [service.dispatch(key, 'trigger.schedule', params) for _ in range(2)] == outcomes
+    gate.set()
+    first.join(5)
+    assert len(calls) == runs and key not in service.running and not service.queued
+
+
+@pytest.mark.parametrize('policy, fires', [('run_once', ['catch-up']), ('skip', [])])
+def test_routine_catch_up_policy(profile, policy, fires):
+    from nodelang.canvas_triggers import TriggerService, missed_while_closed
+    from nodelang.session_files import write_document
+    path = profile / 'missed.archhub'
+    doc = workflow(path, 'tr_schedule', {'every_seconds': '600', 'catch_up': policy})
+    doc['nodes'][0]['result'] = {'fired_at': time.time() - 1200}   # app was closed past one fire
+    write_document(path, doc)
+    service = TriggerService()
+    calls = []
+    service.fire = lambda key, kind, reason='scheduled': calls.append(reason)
+    try:
+        service.refresh()
+        time.sleep(0.5)
+    finally:
+        service.close()
+    assert calls == fires
+    assert not missed_while_closed({'every_seconds': '600', 'catch_up': 'run_once'}, time.time() - 60)
+    assert not missed_while_closed({'every_seconds': '600', 'catch_up': 'run_once'}, None)
+
+
+def test_routine_addressed_to_an_agent_is_pushed_live_through_the_composer_path(profile, monkeypatch):
+    import nodelang.workshop_live as live
+    from nodelang.canvas_triggers import TriggerService
+    pushed = []
+    monkeypatch.setattr(live, 'send_as_founder', lambda text, handles, reply_to=None: pushed.append((text, handles))
+                        or {'message_id': 'm1', 'deliveries': [{'agent': 'coord', 'state': 'delivered'}]})
+    path = profile / 'agent.archhub'
+    workflow(path, 'tr_schedule', {'every_seconds': '600', 'to': '@Coord'})
+    service = TriggerService()
+    try:
+        entry = service.fire((str(path), 't'), 'trigger.schedule')
+    finally:
+        service.close()
+    assert pushed == [('Routine Trigger (agent) fired, scheduled: ran', ['coord'])]
+    assert entry['workshop'] == 'm1' and entry['deliveries'][0]['state'] == 'delivered'

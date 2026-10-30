@@ -188,7 +188,8 @@ def request_profiles(record=None):
 def composer_chat(body, *, on_delta=None):
     """The Home/BABOOM text turn reads the one settings file on every send."""
     from .settings_owner import read_router_settings
-    if type(body) is not dict or set(body) - {'prompt', 'model', 'agent'}:
+    if type(body) is not dict or set(body) - {'prompt', 'model', 'agent', 'temperature', 'top_p', 'max_tokens'} or any(
+            type(body[k]) not in (int, float) or not 0 <= body[k] <= 1e6 for k in ('temperature', 'top_p', 'max_tokens') if k in body):
         raise ModelRouteRefused('Composer fields are invalid.')
     prompt, agent = body.get('prompt'), body.get('agent', 'BABOOM')
     if type(prompt) is not str or not prompt.strip() or len(prompt.encode('utf-8')) > 32768:
@@ -221,7 +222,9 @@ def composer_chat(body, *, on_delta=None):
             free_only=free, environ=env, secrets_loader=credential,
             fallback_routes=settings['fallback_models'] if free else None,
             on_delta=on_delta if free else None,
-            response_byte_limit=_FREE_CHAT_TRACE_BYTES, **settings['generation'])
+            # A canvas Model node may wire a typed generation value for this one call; router.json stays the default.
+            response_byte_limit=_FREE_CHAT_TRACE_BYTES, **{**settings['generation'],
+                                                           **{k: body[k] for k in ('temperature', 'top_p', 'max_tokens') if k in body}})
         record.update(model=result.get('actual_model') or result['model'],
                       provider=result['provider'], outcome='answered')
         tokens = (result.get('usage') or {}).get('total_tokens')

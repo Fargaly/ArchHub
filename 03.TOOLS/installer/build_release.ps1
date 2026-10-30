@@ -597,14 +597,11 @@ Push-Location $selectedRoot
 try {
     & $compilerPython -m tools.real_app_check.agentlink_release --profile-parent $selectedRoot --output $agentLinkEvidence
     if ($LASTEXITCODE -ne 0) { throw "AGENTLINK refused release: real message, overlap or OpenCode write proof failed." }
-    # RETURN 1: refuse observed hangs/exits and installed DONE -> candidate BROKEN regressions only.
-    $userSimEvidence = Join-Path $selectedRoot (Get-RepositoryPath ("evidence/USERSIM-RELEASE-" + $BuildId.ToUpperInvariant()))
-    # The runner retains usersim-baseline.json beside these per-build reports.
-    & $compilerPython -m tools.real_app_check.usersim --out $userSimEvidence --expected-build $BuildId
-    if ($LASTEXITCODE -eq 3) { throw 'PROFILE-WRITE-GUARD refused release: protected profile write attempted.' }
-    if ($LASTEXITCODE -eq 1) { throw 'USERSIM refused release: observed app hang/exit or regression from an installed DONE job; inspect samples and screenshots.' }
-    if ($LASTEXITCODE -ne 0) { Write-Warning 'USERSIM actor/runner UNREACHED; no app regression proved. See the release report.' }
 } finally { Pop-Location; $env:PYTHONPATH = $priorPythonPath }
+# USERSIM runs after the installer exists (below): it judges this candidate installed into a temp profile.
+$userSimRoot = $selectedRoot
+$userSimEvidence = Join-Path $selectedRoot (Get-RepositoryPath ("evidence/USERSIM-RELEASE-" + $BuildId.ToUpperInvariant()))
+$userSimPythonPath = (@($compilerSourceRoot, (Join-Path $selectedRoot '01.APP'), $selectedRoot, $priorPythonPath) | Where-Object { $_ }) -join [IO.Path]::PathSeparator
 $isCandidate = -not [string]::IsNullOrEmpty($LocalCandidateManifest)
 if ($isCandidate -ne (-not [string]::IsNullOrEmpty($LocalCandidateManifestSha256))) {
     throw 'LocalCandidateManifest and its reviewed SHA256 must be supplied together.'
@@ -932,6 +929,29 @@ $notes = @(
 )
 [IO.File]::WriteAllText((Join-Path $output 'release-notes.md'), ($notes -join "`n") + "`n", $utf8)
 [IO.File]::WriteAllText((Join-Path $output $statusName), "COMPILED: source snapshot and Studio output reconciled; nothing installed or published.`n", $utf8)
+Push-Location $userSimRoot
+$env:PYTHONPATH = $userSimPythonPath
+$userSimInstall = Join-Path ([IO.Path]::GetTempPath()) ('archhub-usersim-' + $BuildId)
+try {
+    # Baseline: the installed app's DONE jobs (reused while its BUILD_ID is unchanged); its own hang is a
+    # recorded baseline defect, never this candidate's verdict.
+    & $compilerPython -m tools.real_app_check.usersim --baseline-run --out ($userSimEvidence + '-BASELINE') --baseline (Join-Path (Split-Path -Parent $userSimEvidence) 'usersim-baseline.json')
+    if ($LASTEXITCODE -eq 3) { throw 'PROFILE-WRITE-GUARD refused release: protected profile write attempted.' }
+    if ($LASTEXITCODE -ne 0) { Write-Warning 'USERSIM baseline UNREACHED; candidate judged without installed DONE jobs.' }
+    # Candidate: this release's own installer, silently installed into a temp profile.
+    & $compilerPython -m tools.real_app_check.installed_build $output $userSimInstall --python $PythonPath
+    if ($LASTEXITCODE -ne 0) { throw "Candidate did not install into the temp profile; see $userSimInstall\setup.log." }
+    # RETURN 1: refuse observed candidate hangs/exits and installed DONE -> candidate BROKEN regressions only.
+    & $compilerPython -m tools.real_app_check.usersim --app (Join-Path $userSimInstall 'profile/Local/ArchHub') --out $userSimEvidence --expected-build $BuildId --baseline (Join-Path (Split-Path -Parent $userSimEvidence) 'usersim-baseline.json')
+    if ($LASTEXITCODE -eq 3) { throw 'PROFILE-WRITE-GUARD refused release: protected profile write attempted.' }
+    if ($LASTEXITCODE -eq 1) { throw 'USERSIM refused release: observed candidate hang/exit or regression from an installed DONE job; inspect samples and screenshots.' }
+    if ($LASTEXITCODE -ne 0) { Write-Warning 'USERSIM actor/runner UNREACHED; no app regression proved. See the release report.' }
+} finally {
+    Pop-Location; $env:PYTHONPATH = $priorPythonPath
+    if (Test-Path -LiteralPath (Join-Path $userSimInstall 'ArchHub.isolated.iss')) {
+        & $compilerPython -m tools.real_app_check.installed_build --clean $userSimInstall
+    }
+}
 if ($env:GITHUB_ACTIONS) {
     # The workflow's contents:write job publishes this exact retained artifact.
     Write-Output "Built $assetName with BUILD_ID $BuildId; automatic workflow publication follows."

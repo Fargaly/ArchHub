@@ -154,3 +154,36 @@ def test_action_boundary_rejects_native_update_stale_targets_and_keyboard_naviga
     assert.equal(inputs,0);
     """
     subprocess.run(['node','--input-type=module','-e',script,(TOOL/'usersim.mjs').as_uri()],check=True,timeout=10)
+
+
+def test_installed_baseline_freeze_is_a_recorded_defect_and_locks_no_done_job():
+    sim = load()
+    rows = [{'id':str(i), 'job':job, 'core':True, 'status':'DONE'} for i,job in enumerate(sorted(sim.CORE_JOBS))]
+    baseline = sim.baseline_role(sim.release_verdict(rows, frozen=True, complete=True))
+    assert baseline['release'] is True and baseline['baseline_defects'] == ['frozen'] and baseline['role'] == 'baseline'
+    broken = [dict(row, status='BROKEN') for row in rows]
+    assert sim.release_verdict(broken, frozen=False, complete=True, baseline=baseline)['release']
+    assert not sim.release_verdict(rows, frozen=True, complete=True, baseline=baseline)['release']  # candidate freeze refuses
+
+
+def test_other_bytes_never_qualify_the_candidate(tmp_path):
+    import argparse
+    import pytest
+    sim = load()
+    app = tmp_path / 'ArchHub'
+    app.mkdir()
+    (app / 'BUILD_ID').write_text('20261029-1822-026c260')
+    args = argparse.Namespace(app=app, out=tmp_path / 'OUT', runtime_app=None, personas=TOOL / 'USERSIM-PERSONAS.json',
+                              expected_build='20261030-0900-abcdef0', baseline=None, baseline_run=False)
+    with pytest.raises(ValueError, match='not candidate'):
+        sim.run(args)
+    assert not (tmp_path / 'OUT' / 'FIXTURE').exists()  # nothing launched
+
+
+def test_release_judges_the_candidate_installed_into_a_temp_profile():
+    script = (TOOL.parents[1] / 'installer' / 'build_release.ps1').read_text(encoding='utf-8')
+    install = script.index('tools.real_app_check.installed_build $output')
+    candidate = script.index('tools.real_app_check.usersim --app')
+    assert script.index('usersim --baseline-run') < install < candidate < script.index("'packaging/windows/publish_release.ps1') `")
+    assert '--expected-build $BuildId' in script[candidate:candidate + 300]
+    assert script.index("'release.json'") < install  # the installer this run built

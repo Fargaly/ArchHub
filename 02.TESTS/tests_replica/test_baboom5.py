@@ -221,11 +221,11 @@ def test_native_shared_approval_adapter_executes_exactly_once(tmp_path, monkeypa
         assert window._approval.isVisible()
         assert not executed
         assert "ARCHHUB_APPROVAL_CARD" in window._approval.html
-        window._approval_bridge.decide(window._approval_binding, "approve")
+        window._approval_bridge.choose(window._approval_binding, "approve")
         _wait(app, lambda: len(executed) == 1 and not window._busy)
         assert executed == ["confirm " + "a" * 32]
         assert window._report.text() == "Remembered blue in your Brain."
-        window._approval_bridge.decide("a" * 64, "approve")
+        window._approval_bridge.choose("a" * 64, "approve")
         assert len(executed) == 1
     finally:
         window.stop_projection()

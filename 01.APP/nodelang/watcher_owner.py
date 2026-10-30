@@ -251,7 +251,7 @@ class WatcherOwner:
             self._save(self.root, state)
         return self.read()
 
-    def decide(self, root, digest, decision):
+    def apply(self, root, digest, decision):
         from .host_brokers import watcher_read, watcher_write
         proposal = self.proposal(root)
         if (decision not in {"approve", "deny"} or digest != proposal["input_digest"]

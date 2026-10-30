@@ -77,12 +77,12 @@ def test_prepareDesktopAction_one_approval_reopen_and_exact_broker_effect(watche
     assert len([c for c in watcher.call('listApprovals') if c['approvalKind'] == 'desktop']) == 1
     reopen(watcher)
     watcher.call('postponeApproval', card['id'])
-    with pytest.raises(InvalidCell): watcher.call('decideDesktopAction', card['id'], card['input_digest'], 'approve')
+    with pytest.raises(InvalidCell): watcher.call('answerApproval', 'desktop', card['id'], card['input_digest'], 'approve')
     watcher.call('resumeApproval', card['id'])
-    result = watcher.call('decideDesktopAction', card['id'], card['input_digest'], 'approve')
+    result = watcher.call('answerApproval', 'desktop', card['id'], card['input_digest'], 'approve')
     assert result['status'] == 'approved' and len(watcher.effects) == 1
     assert watcher.model['element']['start'][1] == 530
-    watcher.call('decideDesktopAction', card['id'], card['input_digest'], 'approve')
+    watcher.call('answerApproval', 'desktop', card['id'], card['input_digest'], 'approve')
     assert len(watcher.effects) == 1
     assert reopen(watcher)['stage'] == 'Applied'
 
@@ -125,7 +125,7 @@ def test_reviewScheduledWork_finished_run_one_owner_card_and_reopen(watcher):
     reopen(watcher)
     assert watcher.card(card['id'])['input_digest'] == card['input_digest']
     before = copy.deepcopy(effects)
-    assert watcher.call('decideDesktopAction', card['id'], card['input_digest'], 'approve')['status'] == 'approved'
+    assert watcher.call('answerApproval', 'desktop', card['id'], card['input_digest'], 'approve')['status'] == 'approved'
     assert effects == before
     reopen(watcher)
 
@@ -136,9 +136,9 @@ def test_desktop_stale_source_and_denial_never_write(watcher):
     watcher.call('offerDesktopAction')
     card = watcher.call('prepareDesktopAction')
     watcher.model['element']['revision'] = 'changed'
-    with pytest.raises(InvalidCell): watcher.call('decideDesktopAction', card['id'], card['input_digest'], 'approve')
+    with pytest.raises(InvalidCell): watcher.call('answerApproval', 'desktop', card['id'], card['input_digest'], 'approve')
     assert watcher.effects == []
-    assert watcher.call('decideDesktopAction', card['id'], card['input_digest'], 'deny')['status'] == 'declined'
+    assert watcher.call('answerApproval', 'desktop', card['id'], card['input_digest'], 'deny')['status'] == 'declined'
 
 
 def test_one_offset_has_one_card_across_desktop_and_watcher(watcher):
@@ -148,7 +148,7 @@ def test_one_offset_has_one_card_across_desktop_and_watcher(watcher):
     card = watcher.call('prepareDesktopAction')
     with pytest.raises(InvalidCell, match='desktop approval'): watcher.call('proposeWatcherEdit')
     assert len(watcher.call('listApprovals')) == 1 and watcher.effects == []
-    watcher.call('decideDesktopAction', card['id'], card['input_digest'], 'deny')
+    watcher.call('answerApproval', 'desktop', card['id'], card['input_digest'], 'deny')
     assert watcher.call('proposeWatcherEdit')['approvalKind'] == 'watcher'
 
 
@@ -166,7 +166,7 @@ def test_read_only_desktop_plan_runs_broker_read_after_approval(watcher):
     watcher.call('setDesktopProgram', 'Revit')
     assert watcher.call('offerDesktopAction')['offers'][0]['action'] == 'read'
     card = watcher.call('prepareDesktopAction')
-    result = watcher.call('decideDesktopAction', card['id'], card['input_digest'], 'approve')
+    result = watcher.call('answerApproval', 'desktop', card['id'], card['input_digest'], 'approve')
     assert result['status'] == 'approved' and watcher.effects == []
     assert reopen(watcher)['stage'] == 'Applied'
 
@@ -186,11 +186,11 @@ def test_desktop_uncertain_effect_is_durable_and_never_replayed(watcher, monkeyp
         watcher.model['element']['start'][1] += 1
         return result
     monkeypatch.setattr(host_brokers, 'watcher_write', uncertain)
-    with pytest.raises(InvalidCell): watcher.call('decideDesktopAction', card['id'], card['input_digest'], 'approve')
+    with pytest.raises(InvalidCell): watcher.call('answerApproval', 'desktop', card['id'], card['input_digest'], 'approve')
     assert len(watcher.effects) == 1 and watcher.card(card['id'])['status'] == 'unconfirmed'
     reopen(watcher)
     assert watcher.card(card['id'])['status'] == 'unconfirmed'
-    with pytest.raises(InvalidCell): watcher.call('decideDesktopAction', card['id'], card['input_digest'], 'approve')
+    with pytest.raises(InvalidCell): watcher.call('answerApproval', 'desktop', card['id'], card['input_digest'], 'approve')
     assert len(watcher.effects) == 1
 
 

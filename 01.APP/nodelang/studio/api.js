@@ -697,36 +697,36 @@ const approveDelegation=api.approve;
 api.approve=async(id,...args)=>{
  const card=state.approvals.find(c=>c.id===id);
  if(['desktop','schedule'].includes(card?.approvalKind)){
-  const result=await workshop('decideDesktopAction',[id,card.input_digest,'approve']);
+  const result=await workshop('answerApproval',[card.approvalKind,id,card.input_digest,'approve']);
   if(result?.status!=='approved')throw Error(result?.error||'Desktop result was not confirmed.');
   await refreshDesktop();await refreshWatcher();await refreshApprovals();return result;
  }
 
  if(card?.approvalKind==='hostskills'){
-  const result=await workshop('decideHostSkill',[id,card.input_digest,'approve']);
+  const result=await workshop('answerApproval',['hostskills',id,card.input_digest,'approve']);
   if(result?.status!=='approved')throw Error(result?.error||'Package activation was not confirmed.');
   await refreshHostSkills();await refreshApprovals();return result;
  }
  if(card?.approvalKind!=='watcher')return approveDelegation(id,...args);
- const result=await workshop('decideWatcherEdit',[id,card.input_digest,'approve']);
+ const result=await workshop('answerApproval',['watcher',id,card.input_digest,'approve']);
  if(result?.status!=='approved')throw Error(result?.error||result?.message||'Host write was not confirmed.');
  await refreshWatcher();await refreshApprovals();return result;
 };
 api.decline=async id=>{
  const card=state.approvals.find(c=>c.id===id);
  if(['desktop','schedule'].includes(card?.approvalKind)){
-  const result=await workshop('decideDesktopAction',[id,card.input_digest,'deny']);
+  const result=await workshop('answerApproval',[card.approvalKind,id,card.input_digest,'deny']);
   if(result?.status!=='declined')throw Error(result?.error||'Desktop decline was not confirmed.');
   await refreshDesktop();await refreshApprovals();return result;
  }
 
  if(card?.approvalKind==='hostskills'){
-  const result=await workshop('decideHostSkill',[id,card.input_digest,'deny']);
+  const result=await workshop('answerApproval',['hostskills',id,card.input_digest,'deny']);
   if(result?.status!=='declined')throw Error(result?.error||'Package decline was not confirmed.');
   await refreshHostSkills();await refreshApprovals();return result;
  }
  if(card?.approvalKind!=='watcher')throw Error('Choose the exact Watcher proposal to decline.');
- const result=await workshop('decideWatcherEdit',[id,card.input_digest,'deny']);
+ const result=await workshop('answerApproval',['watcher',id,card.input_digest,'deny']);
  if(result?.status!=='declined')throw Error(result?.error||result?.message||'Discard was not confirmed.');
  await refreshWatcher();await refreshApprovals();return result;
 };
@@ -1002,6 +1002,8 @@ api.setProviderModel=async(id,model)=>{const current=await api.refreshRouter();r
 api.setAgentProfile=async(id,values)=>{const current=await api.refreshRouter();return api.setRouterSettings({agents:{...current.agents,[id]:{...current.agents[id],...values}}});};
 api.disconnectSecret=async id=>{const result=await settingsAction('disconnectSecret',[id]);await refreshSocialConnections();return result;};
 api.setCompanionState=values=>settingsAction('setCompanionState',[values]);
+api.readPermissions=()=>settingsAction('readPermissions');
+api.setPermissions=values=>settingsAction('setPermissions',[values]);
 api.openProgram=id=>settingsAction('openProgram',[id]);
 async function refreshSocialConnections(){
  const identity=state.profile.id,epoch=scopeEpoch;

@@ -8500,8 +8500,9 @@ class ApplicationServer(WorkspaceRootsOwner):
                         try:
                             body = self._body(max_bytes=4096)
                             owner.require_universal_http_route('POST', self.path, authentication_context=binding.context)
-                            from .social_approval import decide
-                            self._json(200, {'ok': True, **decide(owner, binding, body)})
+                            from .hook_decision import decide
+                            self._json(200, {'ok': True, **decide({'approval': 'social', 'server': owner,
+                                                                   'binding': binding, 'body': body})})
                         except AuthorizationDenied as denied:
                             self._json(403, {'ok': False, 'error': str(denied)})
                         except (InvalidCell, ValueError) as refusal:

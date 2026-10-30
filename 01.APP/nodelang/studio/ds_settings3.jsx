@@ -4,6 +4,10 @@
   const WIRE_DS_SETTINGS3_JSX_ACTIONS = {
   "settings.ds_settings3.RouterRefresh": "RouterRefresh",
   "settings.ds_settings3.RouterModel": "RouterModel",
+  "settings.ds_settings3.PermissionsSave": "PermissionsSave",
+  "settings.ds_settings3.PermissionsRefresh": "PermissionsRefresh",
+  "settings.ds_settings3.PermissionsRemove": "PermissionsRemove",
+  "settings.ds_settings3.PermissionsAdd": "PermissionsAdd",
   "settings.ds_settings3.ConnectionsAction0": "ConnectionsAction0",
   "settings.ds_settings3.ConnectionsAction1": "ConnectionsAction1",
   "settings.ds_settings3.ConnectionsAction2": "ConnectionsAction2",
@@ -95,6 +99,32 @@
     const r=s.router;
     const models=[...new Set([r.default_model,...r.fallback_models,...r.models])];
     return <Card style={{padding:18}}><window.UI.RegisteredActionStatus state={actionState} retry={retryAction} /><h2>Models &amp; request profiling</h2><label>Default free model<select aria-label="Default free model" value={model} onChange={e=>{setModel(e.target.value);runAction('settings.ds_settings3.RouterModel',e.target.value);}}>{models.map(m=><option key={m}>{m}</option>)}</select></label><p className="muted">Free first · no paid fallbacks · request metadata kept for 20 days</p><Btn sm onClick={event=>runAction('settings.ds_settings3.RouterRefresh',event)}>Refresh requests</Btn><table aria-label="Router requests"><thead><tr><th>Agent</th><th>Model</th><th>Provider</th><th>Tokens</th><th>Time</th><th>Result</th></tr></thead><tbody>{r.requests.map(row=><tr key={row.id}><td>{row.agent}</td><td>{row.model}</td><td>{row.provider}</td><td>{row.tokens??'Unknown'}</td><td>{row.ms} ms</td><td>{row.outcome}</td></tr>)}</tbody></table>{load.status==='empty'&&<p>No model requests yet.</p>}{load.status==='loaded'&&<p>{r.requests.length} recent requests</p>}<h3>Live agent processes</h3><p>{r.live_agents.complete?'Observed processes':'Process observation incomplete'}</p>{r.live_agents.processes.map(p=><p key={p.pid}>{p.runtime} · PID {p.pid}</p>)}</Card>;
+  }
+  // Run mode and per-tool modes: parameters of the one decision every agent's hook runs.
+  function Permissions() {
+    const [p,setP]=React.useState(null),[tool,setTool]=React.useState('');
+    const [attempt,setAttempt]=React.useState(0),[load,setLoad]=React.useState({status:'waiting'});
+    React.useEffect(()=>{
+      let current=true;setLoad({status:'waiting'});
+      api.readPermissions().then(r=>{if(current){setP(r);setLoad({status:Object.keys(r.tools).length?'loaded':'empty'});}},
+        error=>{if(current)setLoad({status:'error',message:error.message});});
+      return()=>{current=false;};
+    },[attempt]);
+    const save=values=>api.setPermissions(values).then(r=>{setP(r);setLoad({status:Object.keys(r.tools).length?'loaded':'empty'});return r;});
+    const {runAction,actionState,retryAction}=window.UI.useRegisteredActions(WIRE_DS_SETTINGS3_JSX_ACTIONS,{
+      PermissionsRefresh:()=>setAttempt(value=>value+1),
+      PermissionsSave:values=>save(values),
+      PermissionsRemove:name=>{const next={...p.tools};delete next[name];return save({tools:next});},
+      PermissionsAdd:()=>save({tools:{...p.tools,[tool.trim()]:'Ask'}}).then(r=>{setTool('');return r;})
+    });
+    if(load.status==='waiting')return <p role="status">Reading permissions…</p>;
+    if(load.status==='error')return <div role="alert">{load.message}<Btn sm onClick={event=>runAction('settings.ds_settings3.PermissionsRefresh',event)}>Retry permissions</Btn></div>;
+    return <Card style={{padding:18}}><window.UI.RegisteredActionStatus state={actionState} retry={retryAction} /><h2>Permissions</h2>
+      <label>Run mode<select aria-label="Run mode" value={p.runMode} onChange={e=>runAction('settings.ds_settings3.PermissionsSave',{runMode:e.target.value})}>{p.runModes.map(m=><option key={m}>{m}</option>)}</select></label>
+      <p className="muted">Routine work in your own folders never asks. Plan only: agents read and plan, nothing changes.</p>
+      {load.status==='empty'&&<p>No tool modes yet: every tool follows the run mode.</p>}
+      {load.status==='loaded'&&<table aria-label="Tool modes"><thead><tr><th>Tool</th><th>Mode</th><th /></tr></thead><tbody>{Object.entries(p.tools).map(([name,mode])=><tr key={name}><td>{name}</td><td><select aria-label={'Mode for '+name} value={mode} onChange={e=>runAction('settings.ds_settings3.PermissionsSave',{tools:{...p.tools,[name]:e.target.value}})}>{p.toolModes.map(m=><option key={m}>{m}</option>)}</select></td><td><Btn sm ghost aria-label={'Remove '+name} onClick={()=>runAction('settings.ds_settings3.PermissionsRemove',name)}>×</Btn></td></tr>)}</tbody></table>}
+      <div className="flex"><input aria-label="Tool name or pattern" placeholder="Tool name, e.g. WebFetch or mcp__slack__*" value={tool} onChange={e=>setTool(e.target.value)} /><Btn sm disabled={!tool.trim()} onClick={event=>runAction('settings.ds_settings3.PermissionsAdd',event)}>Add tool</Btn></div></Card>;
   }
   function Connections() {
     const s = useData(),
@@ -306,6 +336,7 @@ SettingsAction25: () => u.act(api.listAgentsWorking)});
     {actual === 'Account' && <Account />}<window.UI.CapabilityRows page={actual} />
     {actual === 'Connections' && <Connections />}
     {actual === 'Agents' && <RouterSettings />}
+    {actual === 'Hooks' && <Permissions />}
     {actual === 'BABOOM' && <Providers />}{actual === 'Agents' && <><Card style={{
             padding: 18
           }}><div className="spread"><h2>Agents at work</h2><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction4', event)}>Open</Btn></div><p role="status">{s.agentSummary||'Checking running agents…'}</p><p className="muted">{s.agentHealth||'Checking running agents…'}</p><Btn sm onClick={event=>runAction('settings.ds_settings3.SettingsAction25',event)}>{s.agentSummary==='Agent status is incomplete.'?'Check again':'Refresh'}</Btn>{(s.agents||[]).map(p => <div className="spread row" key={p.id}><span className="flex"><window.UI.Av id={p.id} size={24} /><span><b>{p.name}</b><small className="muted" style={{display:'block'}}>{p.title} · {p.model}</small><small style={{display:'block'}}>{p.task}</small>{p.detail&&<small className="muted" style={{display:'block'}}>{p.detail}</small>}</span></span><Chip c={p.presence === 'working' ? A.ok : p.presence === 'unknown' ? A.warn : A.inkSoft}>{p.status_text||'Status unknown'}</Chip></div>)}<button className="listbutton flex" onClick={event => runAction('settings.ds_settings3.SettingsAction5', event)}>Manage providers<window.AHIcon name="arrow" size={15} /></button></Card><Providers /></>}

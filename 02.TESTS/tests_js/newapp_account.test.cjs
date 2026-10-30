@@ -764,9 +764,9 @@ async function hostskillsAdapter() {
    if(['installConnectorBundle','setHostSkillEnabled'].includes(body.function)){
     cards=[{id:'package-review',approvalKind:'hostskills',input_digest:'sealed-digest',status:'pending',rows:[],action:body.function}];return {result:{...cards[0]}};
    }
-   if(body.function==='decideHostSkill'){
-    cards[0].status=body.args[2]==='approve'?'approved':'declined';
-    if(body.args[2]==='approve'){if(cards[0].action==='installConnectorBundle'){bundle.installed=true;bundle.status='Installed';}else row.enabled=true;}
+   if(body.function==='answerApproval'){
+    cards[0].status=body.args[3]==='approve'?'approved':'declined';
+    if(body.args[3]==='approve'){if(cards[0].action==='installConnectorBundle'){bundle.installed=true;bundle.status='Installed';}else row.enabled=true;}
     return {result:{...cards[0]}};
    }
    return {result:{ok:false}};
@@ -797,8 +797,8 @@ test('HOSTSKILLS one approval activates once and stale refusal preserves confirm
  assert.equal(rig.api.getSnapshot().approvals.length,1);assert.equal(rig.api.supportsAction('decline'),true);
  await rig.api.approve('package-review');
  assert.equal(rig.api.getSnapshot().connectorBundle.installed,true);
- const call=rig.methods.find(r=>r.function==='decideHostSkill');
- assert.deepEqual(globalThis.structuredClone(call.args),['package-review','sealed-digest','approve']);
+ const call=rig.methods.find(r=>r.function==='answerApproval');
+ assert.deepEqual(globalThis.structuredClone(call.args),['hostskills','package-review','sealed-digest','approve']);
  const before=globalThis.structuredClone(rig.api.getSnapshot().hostSkills);
  rig.refuse();await assert.rejects(()=>rig.api.auditHostSkill('skill'),/digest changed/);
  assert.deepEqual(globalThis.structuredClone(rig.api.getSnapshot().hostSkills),before);
@@ -1010,8 +1010,8 @@ async function watcherAdapter() {
     if(!cards.length)cards=[{id:'proposal',approvalKind:'watcher',input_digest:'digest',status:'pending',rows:[]}];
     return {result:globalThis.structuredClone(cards[0])};
    }
-   if(body.function==='decideWatcherEdit'){
-    if(args[2]==='approve'){writes++;held.wallY=held.pendingY;cards[0].status='approved';}
+   if(body.function==='answerApproval'){
+    if(args[3]==='approve'){writes++;held.wallY=held.pendingY;cards[0].status='approved';}
     else cards[0].status='declined';
     return {result:globalThis.structuredClone(cards[0])};
    }
@@ -1109,7 +1109,7 @@ async function desktopAdapter(){
    if(body.function==='listTasks')return {result:[]};
    if(body.function==='listApprovals')return {result:globalThis.structuredClone(cards)};
    if(body.function==='readDesktop')return {result:owner?globalThis.structuredClone(held):{ok:false,error:'Owner unavailable'}};
-   if(!['setDesktopProgram','offerDesktopAction','prepareDesktopAction','setScheduleResponsibility','reviewScheduledWork','decideDesktopAction'].includes(body.function))return {result:[]};
+   if(!['setDesktopProgram','offerDesktopAction','prepareDesktopAction','setScheduleResponsibility','reviewScheduledWork','answerApproval'].includes(body.function))return {result:[]};
    methods.push(body);if(failure)return {result:{ok:false,error:failure}};
    const args=body.args;
    if(body.function==='setDesktopProgram')Object.assign(held,{program:args[0],instance:48884});
@@ -1121,9 +1121,9 @@ async function desktopAdapter(){
     if(kind==='desktop')Object.assign(held,{stage:'Needs OK',taskId:id});
     return {result:globalThis.structuredClone(cards.find(c=>c.id===id))};
    }
-   if(body.function==='decideDesktopAction'){
-    const card=cards.find(c=>c.id===args[0]);assert.equal(args[1],card.input_digest);
-    if(args[2]==='approve'){if(card.approvalKind==='desktop')writes++;card.status='approved';held.stage='Applied';}
+   if(body.function==='answerApproval'){
+    const card=cards.find(c=>c.id===args[1]);assert.equal(args[0],card.approvalKind);assert.equal(args[2],card.input_digest);
+    if(args[3]==='approve'){if(card.approvalKind==='desktop')writes++;card.status='approved';held.stage='Applied';}
     else card.status='declined';return {result:globalThis.structuredClone(card)};
    }
    return {result:globalThis.structuredClone(held)};

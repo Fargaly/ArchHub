@@ -92,7 +92,7 @@ export async function injectWorkshop(recipient,text,messageId,{onDispatch=()=>{}
   throw new Error('Invalid Workshop injection');
  // A terminal session (any CLI, a terminal Codex) is reached through its console seat; every other app
  // outside Claude/Codex/OpenCode through its own native door (workshop-apps.mjs). One channel.
- const terminal=(recipient.pids||[]).length&&!['claude','opencode'].includes(recipient.app)&&
+ const terminal=(recipient.pids||[]).length&&!['claude','opencode','grok'].includes(recipient.app)&&
   !(recipient.app==='codex'&&recipient.desktop);
  // A Codex CLI session runs on a Codex App Server (the shared daemon, or the endpoint its TUI was started with --remote):
  // turn/steer puts the message into the turn that is running now. Only when that server cannot take it does the seat type it.

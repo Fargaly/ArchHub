@@ -556,7 +556,81 @@ _DOCS_TEMPLATES = MappingProxyType({'getting-started': ('Getting started',
                 '\n'
                 '## Operation catalogue\n'
                 '\n'
-                '{operations}\n')})
+                '{operations}\n'),
+ 'workshop': ('The Workshop',
+                'The command center: every agent and you in one room. ArchHub opens here.',
+                'Documentation for build {build}.\n'
+                '\n'
+                'ArchHub opens on the Workshop. It is the one room where you and every agent work together. Home, Canvas, Docs and Settings open from here.\n'
+                '\n'
+                '## The three columns\n'
+                '\n'
+                '1. Work (left). Every task, grouped as Needs attention and In progress; Show history adds Completed and archived. Click a task to open it.\n'
+                '2. The task (middle). Its conversation on top. At the bottom, the composer: type what you want, pick who it goes to in the To-list, and send.\n'
+                '3. People & agents (right). Everyone in the room, what each agent is working on, and whether it has joined. The Meeting input is here too.\n'
+                '\n'
+                '## Talking to agents\n'
+                '\n'
+                "A message you send to an agent lands inside that agent's running session, the same as if you typed it there. You do not need to switch windows. The agent's reply appears in the same conversation.\n"
+                '\n'
+                'Agents also use this room to talk to each other, so you can read every exchange in one place.\n'
+                '\n'
+                '## Ctrl K\n'
+                '\n'
+                'Press Ctrl K anywhere to reach an agent, a workflow, a design program or a setting by typing its name.\n'
+                '\n'
+                '## When nothing is there yet\n'
+                '\n'
+                'The middle column asks "What should the agents do?". Type the job, pick who it goes to and send.\n'),
+ 'tasks': ('Tasks: who is doing what',
+                'One agent per task, so no work is done twice.',
+                'Documentation for build {build}.\n'
+                '\n'
+                "A task is one job in the Workshop's Work column.\n"
+                '\n'
+                "- When an agent takes a task, the task is claimed: it shows as Working, under In progress, with that agent's name, and no other agent can take it.\n"
+                '- An agent holds a task for 15 minutes at a time and renews it while it works. If it goes quiet, the hold runs out and the task is free for the next agent. Nothing is lost.\n'
+                '- When the agent finishes, the task moves to Completed.\n'
+                '\n'
+                'The hold time is a parameter of the Workshop tasks node (lease_seconds, 30 seconds to 24 hours).\n'),
+ 'approvals': ('Approvals: how much agents may do without asking',
+                'One setting decides when an agent asks you first.',
+                'Documentation for build {build}.\n'
+                '\n'
+                'Open Settings > Hooks.\n'
+                '\n'
+                '## Run mode (for every agent)\n'
+                '\n'
+                "- Accept edits (the default): agents work without prompting you. This is today's behaviour.\n"
+                '- Ask first: an agent asks you before it deletes, publishes or sends anything, and before it changes anything outside your own folders.\n'
+                '- Plan only: agents may read and plan, but every change is refused.\n'
+                '\n'
+                'Routine work in your own folders (reading, writing, running commands) never prompts you in any mode.\n'
+                '\n'
+                '## Per tool\n'
+                '\n'
+                'For any tool you can choose Off, Ask or Allowed. A tool set to Off is never used.\n'
+                '\n'
+                '## What is always stopped\n'
+                '\n'
+                'Some things are refused whatever the mode, for example a secret or client data about to be published or sent. The reason is shown in plain words.\n'),
+ 'routines': ('Routines: work that runs by itself',
+                'A Schedule or File change node runs a workflow for you and reports in the Workshop.',
+                'Documentation for build {build}.\n'
+                '\n'
+                'A routine is a workflow with a trigger node at its start.\n'
+                '\n'
+                '1. On the canvas, add a Schedule node (runs at the times you set) or a File change node (runs when a file in a folder changes).\n'
+                '2. Wire it to the nodes it should run, and save the workflow.\n'
+                '3. While ArchHub is open, the routine fires by itself. The nodes after the trigger run once, with the usual approval rules, and the results are saved into the same workflow file.\n'
+                '\n'
+                'Each time it fires, a message is posted in the Workshop. Set "to" on the trigger node to send it straight to an agent, so that agent picks up the work.\n'
+                '\n'
+                'Options on the trigger node:\n'
+                '- concurrency: skip (ignore a fire while the last run is still going) or queue (run it after).\n'
+                '- catch_up: skip, or run_once (a schedule missed while ArchHub was closed runs once when it opens).\n'
+                '\n'
+                'Routines run only while ArchHub is open. Triggers from host-program events (Revit and others) are not active yet.\n')})
 
 
 _PRIVATE_PATTERNS = (

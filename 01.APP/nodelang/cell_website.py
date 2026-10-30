@@ -46,7 +46,8 @@ CORE_WEBSITE_ROUTES = (
     "/website/signin",
 )
 # One page per docs text; the public site serves /website/docs/x at /docs/x/.
-GUIDE_KEYS = ("getting-started", "composer-canvas", "brain", "account-web", "connectors")
+GUIDE_KEYS = ("getting-started", "composer-canvas", "brain", "account-web", "connectors",
+              "workshop", "tasks", "approvals", "routines")
 TUTORIAL_KEYS = tuple("tutorial-" + key for key in (
     "sheet-register", "model-table", "notion-review", "cad-inventory", "inbox-review", "titleblocks",
 ))

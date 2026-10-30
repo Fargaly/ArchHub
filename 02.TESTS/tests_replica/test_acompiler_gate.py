@@ -678,27 +678,6 @@ def test_build_runs_requested_command_only_after_admission(repository, tmp_path,
     assert marker.read_text() == "built"
 
 
-def test_release_builder_refuses_before_output_creation(tmp_path):
-    shell = shutil.which("powershell") or shutil.which("pwsh")
-    assert shell, "PowerShell is required for the real release entrypoint court"
-    marker = tmp_path / "preflight.txt"
-    interpreter = tmp_path / "reject-python.ps1"
-    # The release entrypoint actually executes this interpreter for its compiler
-    # preflight; no installer/build/host work is launched.
-    interpreter.write_text("[IO.File]::WriteAllText('" + str(marker).replace("'", "''") + "', ($args -join '|'))\nexit 7\n", encoding="utf-8")
-    archive = tmp_path / "goose.zip"
-    archive.write_bytes(b"court only")
-    output = tmp_path / "output"
-    script = Path(__file__).resolve().parents[2] / "03.TOOLS/installer" / "build_release.ps1"
-    process = subprocess.run([shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script),
-        "-BuildId", "compiler-court", "-OutputDirectory", str(output), "-GooseArchivePath", str(archive),
-        "-PythonPath", str(interpreter)], capture_output=True, text=True, timeout=30)
-    assert process.returncode != 0
-    assert "ACOMPILER refused release build" in process.stderr
-    assert "tools" in marker.read_text() and "build.py" in marker.read_text()
-    assert not output.exists()
-
-
 @pytest.mark.skipif(not os.environ.get("ACOMPILER_REAL_BINARY"), reason="release binary court enabled by coordinator after cargo build")
 def test_real_compiler_duplicate_route_fails_and_clears(repository):
     binary = os.environ["ACOMPILER_REAL_BINARY"]

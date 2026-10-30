@@ -346,8 +346,18 @@
   const RF = window.ReactFlow, CanvasContext = React.createContext(null);
   // One node component driven by node data; the card grammar inside renderNode is the designer's to replace.
   function FlowNode({id, data, selected}) {
-    const c = React.useContext(CanvasContext);
-    return <div data-graph-node={id}>{c.renderNode(data.n, selected)}</div>;
+    const c = React.useContext(CanvasContext), box = React.useRef(null), updateInternals = RF.useUpdateNodeInternals();
+    // xyflow caches Handle positions; re-measure when the card's rows/sockets change or its size changes (auto-height, field add/hide/reorder).
+    // Layout only: nothing here runs a node.
+    const n = data.n, handles = [...n.inputs, ...n.outputs].map(p => p.id).join('|') + '#' + (n.parameterSchema || []).map(p => p.key).join('|');
+    React.useLayoutEffect(() => {
+      const measure = () => updateInternals(id);
+      measure();
+      const observer = new window.ResizeObserver(measure);
+      if (box.current) observer.observe(box.current);
+      return () => observer.disconnect();
+    }, [id, handles, updateInternals]);
+    return <div ref={box} data-graph-node={id}>{c.renderNode(n, selected)}</div>;
   }
   function FlowWire({id, sourceX, sourceY, targetX, targetY, data}) {
     // xyflow anchors at the Handle's outer edge; the spec wire meets the socket centre (Handle is 22 px wide, see SOCKET_STYLE).

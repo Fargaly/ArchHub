@@ -32,8 +32,18 @@ def startup_choice(state_dir):
         return 'on'
 
 
+def shows_as_choice(state_dir):
+    """Where the companion lives: "Screen" (the pet on the desktop, default), "Tray" or "Hidden"."""
+    try:
+        choice = json.loads((Path(state_dir) / 'settings' / 'baboom.json').read_text(encoding='utf-8')).get('shows_as')
+    except (OSError, ValueError, TypeError, AttributeError):
+        choice = None
+    return choice if choice in ('Screen', 'Tray', 'Hidden') else 'Screen'
+
+
 def start(state_dir, app_root, url=''):
     """Start the Goose brain and join the Workshop. Never raises into the app; the reason is kept."""
+    _STATE['state_dir'] = state_dir
     if startup_choice(state_dir) == 'off':
         _STATE['error'] = 'BABOOM is turned off in Settings.'
         return None
@@ -174,7 +184,9 @@ class NoGraphTransport:
         ttl, now, up = COMPANION_NODE['params']['frame_seconds'], time.time(), _STATE['brain'] is not None
         context = {'revision': self.revision, 'brain': {'ok': up, 'facts': 1 if up else 0},
                    'work': {'blocked': 0, 'review': 0}, 'attention': {'blocked_obligations': 0},
-                   'workshop': {'entry_count': 0}, 'meeting_notes': {'active_sessions': 0}}
+                   'workshop': {'entry_count': 0}, 'meeting_notes': {'active_sessions': 0},
+                   # Without it the companion falls back to "Tray" and hides the on-screen pet every frame.
+                   'shows_as': shows_as_choice(_STATE.get('state_dir'))}
         directive = {'revision': self.revision, 'motion': 'working' if _STATE.get('turns') else 'idle',
                      'persona_form': 'baboom', 'message': '', 'compact_message': '', 'action': '',
                      'action_label': '', 'fingerprint': '', 'ttl_seconds': ttl}

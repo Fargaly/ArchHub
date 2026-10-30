@@ -9168,6 +9168,7 @@
         "02.TESTS/tests/zero_idle_growth_driver.py",
         "02.TESTS/tests_js/gov_eq_opencode_governance.test.cjs",
         "02.TESTS/tests_js/gov_eq_opencode_plugin.test.cjs",
+        "02.TESTS/tests_js/newapp_account.test.cjs",
         "02.TESTS/tests_js/opencode_agenttrail.test.mjs",
         "02.TESTS/tests_js/opencode_governance_native_child.test.cjs",
         "02.TESTS/tests_js/session_link_worker_exit.test.mjs",

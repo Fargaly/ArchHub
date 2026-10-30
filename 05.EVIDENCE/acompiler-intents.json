@@ -8983,6 +8983,7 @@
         "01.APP/bridges/sources/acad_mcp/AcadMCPApp.cs",
         "02.TESTS/tests_replica/test_baboom_shows_on_screen.py",
         "01.APP/nodelang/automation.py",
+        "02.TESTS/tests_js/studio_designmatch.test.cjs",
         "02.TESTS/tests_replica/test_automation_core.py",
         ".gitignore",
         "01.APP/bridges/README.md",

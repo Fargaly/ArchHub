@@ -5,7 +5,7 @@ from PyQt6.QtCore import QCoreApplication, QObject, QUrl
 
 from nodelang.window_chrome import (HTCAPTION, HTCLIENT, HTCLOSE, HTMAXBUTTON, HTMINBUTTON, HTRIGHT, HTTOP, HTTOPLEFT,
                                     clean_layout, hit_test)
-from nodelang.window_commands import WindowCommands
+from nodelang.window_commands import CloseToTray, WindowCommands
 
 HOLES = [[12, 8, 32, 32], [1080, 8, 220, 32]]  # menu mark, search
 BUTTONS = [[1302, 0, 46, 48], [1348, 0, 46, 48], [1394, 0, 46, 48]]  # minimize, maximize, close
@@ -90,3 +90,25 @@ def test_header_layout_reaches_the_title_bar_only_from_the_studio():
     commands(Window(), title_bar)[0].titleBar(48.0, HOLES, BUTTONS)
     commands(Window(), title_bar, path='/elsewhere')[0].titleBar(48.0, [], [])
     assert seen == [(48.0, HOLES, BUTTONS)]
+
+
+def test_closing_the_window_hides_it_to_the_tray_and_only_quit_ends_the_app(tmp_path):
+    from PyQt6.QtGui import QCloseEvent
+    app = QCoreApplication.instance() or QCoreApplication([])
+
+    class Win(QObject):
+        hidden = 0
+
+        def hide(self):
+            self.hidden += 1
+    window, quits, notices = Win(), [], []
+    tray = SimpleNamespace(icon=lambda: None, showMessage=lambda *a: notices.append(a[1]))
+    stay = CloseToTray(window, tray, lambda: quits.append(1), tmp_path / 'tray-notice-shown')
+    for _ in range(2):
+        close = QCloseEvent()
+        app.sendEvent(window, close)
+        assert not close.isAccepted()
+    assert window.hidden == 2 and quits == [] and notices == ['ArchHub keeps running in the tray']
+    stay.quit()
+    app.sendEvent(window, QCloseEvent())
+    assert quits == [1] and window.hidden == 2

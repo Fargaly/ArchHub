@@ -3,7 +3,7 @@ import json
 import logging
 import threading
 
-from PyQt6.QtCore import QFile, QIODevice, QObject, QTimer, QUrl, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QEvent, QFile, QIODevice, QObject, QTimer, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtWebChannel import QWebChannel
 from PyQt6.QtWebEngineCore import QWebEngineScript
 
@@ -95,6 +95,34 @@ class WindowCommands(QObject):
         """The Studio header's layout: caption height, interactive boxes, minimize/maximize/close boxes."""
         if self.title_bar is not None and self._in_studio():
             self.title_bar.layout(caption, holes, buttons)
+
+
+class CloseToTray(QObject):
+    """Closing the window (title bar x, Alt+F4, taskbar) hides it to the tray; the app keeps running.
+
+    Only quit() ends the app: the tray's Quit ArchHub and the Studio's Quit call it.
+    """
+
+    def __init__(self, window, tray, quit_application, notice_path):
+        super().__init__(window)
+        self.window, self.tray, self.quit_application, self.notice_path = window, tray, quit_application, notice_path
+        self.quitting = False
+        window.installEventFilter(self)
+
+    def quit(self):
+        self.quitting = True  # Qt 6 quit() closes windows first; a refused close would cancel it
+        self.quit_application()
+
+    def eventFilter(self, watched, event):
+        if watched is self.window and event.type() == QEvent.Type.Close and not self.quitting:
+            event.ignore()
+            self.window.hide()
+            if not self.notice_path.exists():
+                self.notice_path.parent.mkdir(parents=True, exist_ok=True)
+                self.notice_path.write_text("shown\n", encoding="utf-8")
+                self.tray.showMessage("ArchHub", "ArchHub keeps running in the tray", self.tray.icon(), 5000)
+            return True
+        return False
 
 
 def bind_window_commands(view, window, quit_application, origin, title_bar=None):

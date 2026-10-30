@@ -1,22 +1,35 @@
-"""One hook decision for every agent: Claude Code, Codex, Gemini CLI, Antigravity, OpenCode.
+"""The one decision in ArchHub: every agent's tool call and every Approve/Deny.
 
 Each agent's pre-tool hook runs ``hook_decision.py --vendor <name>`` with the event on
-stdin (OpenCode's plugin calls the same file). ``decide()`` returns one record:
+stdin (OpenCode's plugin calls the same file). For a tool call ``decide()`` returns:
 
-    verdict   allow | organize | refuse
+    verdict   allow | organize | ask | refuse
     action    read | write | shell | delete | publish | send | screen | other
-    rules     Cedar forbid ids that matched (refuse only)
-    notes     plain-language guidance for organize
+    rules     Cedar forbid ids or Settings mode ids that matched (refuse / ask)
+    notes     plain-language guidance for organize / ask
     findings  [{kind: secret|pii|trace, rule, where}]  (values never included)
     scanners  {secrets, pii, policy, trace}: ok | skipped | unavailable
+    mode      the run mode from Settings
 
 Policy is Cedar (POLICY below, any forbid wins). Secrets: Betterleaks. PII:
 Presidio. Trace rules: the Invariant lethal-trifecta and loop rules over this session's
 recent calls, in LlamaFirewall's trace shape (ALLOW / BLOCK). Governance organizes,
 never obstructs (F1/F4/A1): only a forbid refuses; a missing scanner never refuses.
+
+Settings parameters (settings/permissions.json, the Settings > Hooks page):
+    runMode  Ask first | Accept edits | Plan only   (Claude Code default/acceptEdits/plan,
+             Codex untrusted/on-request/read-only)
+    tools    {tool name or glob: Off | Ask | Allowed}  (Paperclip MCP gateway; a forbid wins)
+Accept edits (the default) adds no prompt: today's behaviour. Ask first asks before a delete,
+publish or send, and before any change outside his folders. Plan only refuses every change.
+Routine work (read, write, shell, other) in his own folders never prompts (F1/A14).
+
+An Approve/Deny is the same call with ``{"approval": kind, "decision": ...}``: decide()
+checks the word and the run mode, then the kind's owner applies the effect (APPROVALS).
 """
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import json
 import os
@@ -194,6 +207,97 @@ def _under(path: Path, root: Path) -> bool:
         return False
 
 
+# ---- Settings parameters: run mode and per-tool modes ---------------------------------
+
+RUN_MODES = ("Ask first", "Accept edits", "Plan only")
+TOOL_MODES = ("Off", "Ask", "Allowed")
+DEFAULT_PERMISSIONS = {"runMode": "Accept edits", "tools": {}}
+_ROUTINE = ("read", "write", "shell", "other")
+
+
+def _settings_dir(environment) -> Path:
+    home = Path(environment.get("USERPROFILE") or environment.get("HOME") or Path.home())
+    return Path(environment.get("LOCALAPPDATA") or home / "AppData" / "Local") / "ArchHub" / "settings"
+
+
+def checked_permissions(values) -> dict:
+    """The permissions parameters, validated; raises ValueError naming what is wrong."""
+    if type(values) is not dict or set(values) - set(DEFAULT_PERMISSIONS):
+        raise ValueError("Permissions are a run mode and a list of tool modes.")
+    values = {**DEFAULT_PERMISSIONS, **values}
+    tools = values["tools"]
+    if values["runMode"] not in RUN_MODES:
+        raise ValueError("Choose Ask first, Accept edits or Plan only.")
+    if (type(tools) is not dict or len(tools) > 200
+            or any(type(k) is not str or not k.strip() or len(k) > 200 or v not in TOOL_MODES for k, v in tools.items())):
+        raise ValueError("Each tool mode is a tool name (or pattern) set to Off, Ask or Allowed.")
+    return {"runMode": values["runMode"], "tools": dict(tools)}
+
+
+def read_permissions(environment=None, path: Path | None = None) -> dict:
+    """Settings > Hooks parameters; a missing or broken file is the default (never blocks)."""
+    environment = os.environ if environment is None else environment
+    try:
+        return checked_permissions(json.loads((path or _settings_dir(environment) / "permissions.json")
+                                              .read_text(encoding="utf-8")))
+    except (OSError, ValueError, TypeError):
+        return dict(DEFAULT_PERMISSIONS, tools={})
+
+
+def write_permissions(changes, environment=None, path: Path | None = None) -> dict:
+    environment = os.environ if environment is None else environment
+    path = path or _settings_dir(environment) / "permissions.json"
+    if type(changes) is not dict:
+        raise ValueError("Permissions are a run mode and a list of tool modes.")
+    values = checked_permissions({**read_permissions(environment, path), **changes})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    try:
+        temporary.write_text(json.dumps(values, ensure_ascii=False), encoding="utf-8")
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return values
+
+
+def own_folder(event: dict, environment) -> bool:
+    """The call's folder is one of his: his roots, a registered workspace, or temp (lane worktrees)."""
+    data = event["input"]
+    raw = str(data.get("file_path") or data.get("path") or data.get("filePath") or data.get("workdir")
+              or data.get("cwd") or event["cwd"])
+    if _PRIVATE_PATH.search(raw):
+        return False  # client and personal folders are a real boundary, never routine
+    roots = _founder_roots(environment) + [Path(environment.get("TEMP") or tempfile.gettempdir())]
+    try:  # no registered workspaces yet: his built-in roots still count
+        held = json.loads((_settings_dir(environment) / "workspaces.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        held = {}
+    rows = held.get("roots") if isinstance(held, dict) else None
+    roots += [Path(r["path"]) for r in rows or [] if isinstance(r, dict) and r.get("path")]
+    path = Path(raw) if Path(raw).is_absolute() else Path(event["cwd"]) / raw
+    try:
+        path = path.resolve()
+    except OSError:
+        return False
+    return any(_under(path, root) for root in roots)
+
+
+def mode_verdict(event: dict, action: str, permissions: dict, environment):
+    """(verdict, rule) from the Settings parameters, or None when they change nothing."""
+    tool = event["tool"].lower()
+    for pattern, mode in permissions["tools"].items():
+        if fnmatch.fnmatchcase(tool, pattern.lower()):
+            return None if mode == "Allowed" else ("refuse", "tool-off") if mode == "Off" else ("ask", "tool-ask")
+    run = permissions["runMode"]
+    if action == "read" or run == "Accept edits":  # Accept edits adds no prompt; the agent's own mode stays
+        return None
+    if run == "Plan only":
+        return "refuse", "plan-only"
+    if action in _ROUTINE and own_folder(event, environment):
+        return None  # F1/A14: his own agents' routine work in his folders never prompts
+    return "ask", "ask-first"
+
+
 # ---- scanners -----------------------------------------------------------------------
 
 def betterleaks_path(environment) -> Path | None:
@@ -310,8 +414,11 @@ def trace_rules(event, action, facts, environment):
 
 # ---- the one function ----------------------------------------------------------------
 
-def decide(payload: dict, vendor: str, *, environment=None) -> dict:
+def decide(payload: dict, vendor: str = "", *, environment=None):
+    """A tool call (pre-tool payload + vendor) or an Approve/Deny ({"approval": kind, ...})."""
     environment = os.environ if environment is None else environment
+    if "approval" in payload:
+        return _decide_approval(payload, environment)
     vendor = _ALIAS.get(vendor, vendor)
     event = normalize(payload, vendor)
     action, facts = classify(event, environment)
@@ -346,9 +453,70 @@ def decide(payload: dict, vendor: str, *, environment=None) -> dict:
         notes.append("The same call has repeated 5 times; change approach instead of retrying.")
     if scanners["secrets"] == "unavailable" and action in ("publish", "send"):
         notes.append("Secret scan unavailable (Betterleaks not found); nothing was refused for it.")
-    verdict = "refuse" if rules else "organize" if notes else "allow"
+    permissions = read_permissions(environment)
+    mode = None if rules else mode_verdict(event, action, permissions, environment)  # a forbid wins
+    if mode:
+        rules = [mode[1]]
+        if mode[0] == "ask":
+            notes.append(_REASONS[mode[1]] + "; confirm to run it.")
+    verdict = mode[0] if mode else "refuse" if rules else "organize" if notes else "allow"
     return {"verdict": verdict, "vendor": vendor, "tool": event["tool"], "action": action, "rules": rules,
-            "notes": notes, "findings": findings, "scanners": scanners}
+            "notes": notes, "findings": findings, "scanners": scanners, "mode": permissions["runMode"]}
+
+
+# ---- Approve / Deny: the same decision for every approval the founder sees ----------------
+
+_WORDS = {"approve": "approve", "deny": "deny", "decline": "deny", "reject": "deny", "cancel": "deny"}
+
+
+def _owner_apply(request, decision):
+    return request["owner"].apply(request["id"], request["digest"], decision)
+
+
+def _social(request, decision):
+    from . import social_approval
+    return social_approval.apply(request["server"], request["binding"], request["body"])
+
+
+def _desktop(request, decision):
+    from . import social_approval
+    return social_approval.apply_desktop(request["owner"], request["id"], request["digest"], decision)
+
+
+def _watcher(request, decision):
+    from . import social_approval
+    if hasattr(request["owner"], "apply"):  # NOGRAPH: the Watcher owner file itself
+        return _owner_apply(request, decision)
+    return social_approval.apply_watcher(request["owner"], request["id"], request["digest"], decision)
+
+
+def _permission_request(request, decision):
+    from .cell_permission_requests import apply_permission_request
+    return apply_permission_request(**request["arguments"])
+
+
+def _baboom(request, decision):
+    return request["owner"].apply_approval(request["id"], decision)
+
+
+# kind -> the owner that applies the decided effect in its own store.
+APPROVALS = {"social": _social, "desktop": _desktop, "schedule": _desktop, "watcher": _watcher,
+             "hostskills": _owner_apply, "permission-request": _permission_request, "baboom": _baboom}
+
+
+def _decide_approval(request: dict, environment):
+    from .universal_cell import InvalidCell
+    kind = request["approval"]
+    word = request["body"].get("decision") if kind == "social" and type(request.get("body")) is dict \
+        else request.get("decision")
+    decision = _WORDS.get(word) if type(word) is str else None
+    if kind not in APPROVALS:
+        raise InvalidCell("Choose a listed approval kind.")
+    if decision is None and kind != "social":  # social's own body check names the exact shape
+        raise InvalidCell("Decide Approve or Deny on the exact approval shown.")
+    if decision == "approve" and read_permissions(environment)["runMode"] == "Plan only":
+        raise InvalidCell("Plan only is on in Settings: nothing runs until the run mode changes.")
+    return APPROVALS[kind](request, decision)
 
 
 _REASONS = {"secret-going-public": "a secret would go public",
@@ -356,25 +524,31 @@ _REASONS = {"secret-going-public": "a secret would go public",
             "delete-founder-data": "this deletes the founder's data",
             "use-founder-screen": "this drives the founder's screen",
             "lethal-trifecta": "private data plus untrusted content would be sent out",
-            "banned-package": BANNED_REASON}
+            "banned-package": BANNED_REASON,
+            "tool-off": "this tool is Off in Settings",
+            "plan-only": "Plan only is on in Settings, so nothing changes",
+            "tool-ask": "this tool is set to Ask in Settings",
+            "ask-first": "Ask first is on in Settings and this deletes, publishes, sends or works outside your folders"}
 
 
 def render(decision: dict, vendor: str, event_name: str = "PreToolUse") -> dict:
     """The decision in each agent's own hook wire format."""
     vendor = _ALIAS.get(vendor, vendor)
     reason = "ArchHub refused: " + "; ".join(_REASONS.get(r, r) for r in decision["rules"]) + \
-             ". Everything else stays allowed." if decision["verdict"] == "refuse" else " ".join(decision["notes"])
+             ". Everything else stays allowed." if decision["verdict"] == "refuse" else \
+             "ArchHub asks: " + " ".join(decision["notes"]) if decision["verdict"] == "ask" else " ".join(decision["notes"])
     if vendor == "opencode":
         return decision
     if decision["verdict"] == "allow":
         return {}
     if vendor in ("claude-code", "codex"):
-        if decision["verdict"] == "refuse":
-            return {"hookSpecificOutput": {"hookEventName": event_name, "permissionDecision": "deny",
-                                           "permissionDecisionReason": reason}}
+        # shortcut: Codex parses "ask" but runs the call (fails open); its own approval_policy asks.
+        if decision["verdict"] in ("refuse", "ask"):
+            return {"hookSpecificOutput": {"hookEventName": event_name, "permissionDecisionReason": reason,
+                                           "permissionDecision": "deny" if decision["verdict"] == "refuse" else "ask"}}
         return {"hookSpecificOutput": {"hookEventName": event_name, "additionalContext": reason}}
-    if decision["verdict"] == "refuse":  # gemini-cli, antigravity
-        return {"decision": "deny", "reason": reason}
+    if decision["verdict"] in ("refuse", "ask"):  # gemini-cli, antigravity
+        return {"decision": "deny" if decision["verdict"] == "refuse" else "ask", "reason": reason}
     return {"systemMessage": reason}
 
 

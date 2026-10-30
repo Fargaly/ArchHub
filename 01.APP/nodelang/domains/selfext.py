@@ -573,9 +573,9 @@ def _write_element_count(arguments: Mapping[str, Any]) -> int:
     return 0
 
 
-def _blast_radius(arguments: Mapping[str, Any], element_count: int) -> dict[str, Any]:
+def _blast_radius(arguments: Mapping[str, Any], element_count: int, host: str = "revit") -> dict[str, Any]:
     return {
-        "host": "revit",
+        "host": host,
         "document": arguments.get("document") or arguments.get("instance") or "",
         "elements": element_count,
         "operation_scope": "document" if element_count == 0 else "selection",
@@ -626,7 +626,7 @@ def before_write_hooks(mods_store: CellStore | None, op_id: str, arguments: Mapp
             annotation = {
                 "mod": "blast-radius",
                 "label": "Blast radius",
-                **_blast_radius(arguments, element_count),
+                **_blast_radius(arguments, element_count, op_id.split(".", 1)[0]),
             }
             annotations.append(annotation)
             _increment_builtin_fire(mods_store, "blast-radius")

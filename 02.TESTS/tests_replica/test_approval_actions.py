@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import pytest
 
-from nodelang import commit_intent, social_approval, universal_application as app
+from nodelang import commit_intent, hook_decision, social_approval, universal_application as app
 from nodelang import application_server as server_module
 from nodelang.application_server import ApplicationServer
 from nodelang.cell_adapters import read_permission
@@ -107,8 +107,8 @@ def approvals(tmp_path, monkeypatch, request):
         def decide(self, request, decision='approve'):
             with commit_intent.declare(commit_intent.USER_ACTION, actor=self.binding.subject_root,
                     reason='explicit founder approval court'):
-                return social_approval.decide(self.server, self.binding, {
-                    'delegation':request['delegation'], 'input_digest':request['input_digest'], 'decision':decision})
+                return hook_decision.decide({'approval':'social', 'server':self.server, 'binding':self.binding, 'body':{
+                    'delegation':request['delegation'], 'input_digest':request['input_digest'], 'decision':decision}})
 
         def reopen(self, expected):
             events = {root:self.store.snapshot().cells[root] for root in expected['events']}

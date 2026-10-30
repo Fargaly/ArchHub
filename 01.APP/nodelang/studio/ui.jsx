@@ -49,7 +49,7 @@
     'Add': 'plus',
     'Open Library': 'library',
     'Open Skills': 'pin',
-    'Open Templates': 'home',
+    'Open Templates': 'library',
     'Open receipts': 'docs',
     'Settings': 'settings',
     '×': 'close',
@@ -65,11 +65,12 @@
     sm,
     ghost,
     danger,
+    plain,  // a text label (a filter chip named Settings) never becomes its action icon
     children,
     ...props
   }) => {
     const label = typeof children === 'string' ? children : null;
-    const icon = !p && label && actionIcons[label];
+    const icon = !p && !plain && label && actionIcons[label];
     return <D.Btn variant="workshop" primary={p} sm={sm} kind={danger ? 'danger' : ghost ? 'ghost' : undefined} {...props} aria-label={props['aria-label'] || (icon ? label : undefined)} title={props.title || (icon ? label : undefined)} className={[props.className, icon ? 'icon-action' : ''].filter(Boolean).join(' ')} style={{
       ...(icon ? {
         width: 30,
@@ -101,7 +102,7 @@
     const s = useData();
     const p = (s.agents||[]).find(p => p.id === id) || s.providers.find(p => p.id === id) || {
       name: id,
-      ini: id?.slice(0, 2),
+      ini: String(id || '').trim().split(/[\s._-]+/).filter(Boolean).map(w => w[0].toUpperCase()).join('').slice(0, 2),  // initials of the display name
       col: A.userAv
     };
     return <D.Avatar agent={p} size={size} />;
@@ -148,13 +149,14 @@
         ...current,[draftKey]:update(current[draftKey] || {text:'',revision:0})
       }));
     const setText = value => setDraft(current => ({text:typeof value === 'function' ? value(current.text) : value,revision:current.revision+1}));
-    const [provider, setProvider] = React.useState(''),
+    const [to, setTo] = React.useState(''),
       [sending, setSending] = React.useState(false),
       [contextOpen, setContextOpen] = React.useState(false);
     const pending = React.useRef(0);
     const send = async () => {
-      const message = text;
-      if (!message.trim()) return;
+      if (!text.trim()) return;
+      // DESIGNSYS-050 4.9: the same To-list as the Workshop; a chosen agent is @mentioned exactly as the Workshop composer does.
+      const message = (!to || new RegExp('(^|\\s)@' + to + '\\b').test(text) ? '' : '@' + to + ' ') + text;
       // Each send leaves at once: the draft clears now (a second message 1 s later is its own send)
       // and comes back only if this send fails while the box is still empty.
       setDraft(current => ({text:'',revision:current.revision+1}));
@@ -162,10 +164,10 @@
       setSending(true);
       try {
         const t = await u.act(() => {
-          if (!taskId && typeof api.apiRouterChat === 'function') return api.apiRouterChat(message, provider || 'BABOOM');
-          return api.sendToBaboom(message, {taskId, scope: u.selectedNodeId || s.graph.id, provider});
+          if (!taskId && typeof api.apiRouterChat === 'function') return api.apiRouterChat(message, 'BABOOM');
+          return api.sendToBaboom(message, {taskId, scope: u.selectedNodeId || s.graph.id});
         });
-        if (!t) setDraft(current => current.text ? current : {text:message,revision:current.revision+1});
+        if (!t) setDraft(current => current.text ? current : {text,revision:current.revision+1});
         if (t) {
           if (typeof t.answer === 'string') {
             onSent?.(t);
@@ -222,9 +224,7 @@
           api,
           tool,
           u
-        }, event)}><window.AHIcon name={icon} size={15} /></button>)}<select aria-label="Agent picker" value={provider} onChange={e => setProvider(e.target.value)} style={{
-          fontSize: 12
-        }}><option value="">BABOOM chooses · free first</option>{s.providers.filter(p => p.enabled && p.signedIn).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select><span className="fill" />{api.supportsAction?.('startVoiceInput') !== false && <Btn sm onClick={event => executeAction("sharedUI.TalkF2.8", {
+        }, event)}><window.AHIcon name={icon} size={15} /></button>)}{window.UI.AgentPicker && <window.UI.AgentPicker choices={window.UI.workshopPeople(s).choices} to={to} setTo={setTo} />}<span className="fill" />{api.supportsAction?.('startVoiceInput') !== false && <Btn sm onClick={event => executeAction("sharedUI.TalkF2.8", {
           setText,
           u
         }, event)} title="Talk · F2">🎙 Talk</Btn>}<Btn p sm type="submit" aria-label="Send ↵" title="Send · Enter" aria-busy={sending} disabled={!text.trim()}><window.AHIcon name="send" size={15} /></Btn></div>

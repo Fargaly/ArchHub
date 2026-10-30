@@ -1382,10 +1382,20 @@ def main():
             result=_merge_followup(result,followup_decision(payload,registry_directory=Path.home()/'.claude'/'sessions'))
         except Exception:
             pass
+    usage_failure = ''
+    if type(payload) is dict and args.vendor == 'claude-code':
+        # shortcut: Claude transcripts only; Codex/OpenCode usage needs their own transcript readers.
+        try:
+            from nodelang.agent_budget import record_entries
+            record_entries(_transcript_tail(payload['transcript_path']),
+                           canonical_runtime(args.vendor) + ':' + payload['session_id'])
+        except Exception as exc:
+            usage_failure = 'Token usage for this turn was not recorded (%s); it is retried next turn.' % type(exc).__name__
     try:
         notice = _declaration_notice(payload, args.vendor)
     except (OSError, ValueError, RuntimeError):
         notice = ''
+    notice = ' '.join(filter(None, (notice, usage_failure)))
     if notice:
         result = {**result, "systemMessage": " ".join(filter(None, (result.get("systemMessage"), notice)))}
     sys.stdout.write(json.dumps(result))

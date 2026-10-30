@@ -21,7 +21,7 @@ from uuid import uuid4
 import pytest
 
 from nodelang import existing_workshop_social_execution as social
-from nodelang import commit_intent, model_router, social_approval, social_custody
+from nodelang import commit_intent, hook_decision, model_router, social_approval, social_custody
 from nodelang import cloud_social_oauth, social_linkedin_signin as signin
 from nodelang import social_meta_signin as meta_signin
 from nodelang.cell_adapters import UserConsentBroker, read_permission
@@ -104,7 +104,7 @@ def prepared(name, text="Open house on Friday"):
 def _decide(server, binding, body):
     """decide() as the browser route calls it: inside the user's declared action."""
     with commit_intent.declare(commit_intent.USER_ACTION, actor=binding.subject_root, reason="founder decision"):
-        return social_approval.decide(server, binding, body)
+        return hook_decision.decide({"approval": "social", "server": server, "binding": binding, "body": body})
 
 
 def _lifecycle(delegation_root):

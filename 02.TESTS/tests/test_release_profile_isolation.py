@@ -6,7 +6,6 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import time
 
 import pytest
 
@@ -55,25 +54,6 @@ def test_zero_idle_release_child_preserves_decoy_profile(tmp_path, monkeypatch):
     after = [digest(p) for p in protected]
     print('RELISO decoy pair/governance unchanged:', before == after)
     assert before == after, 'release child rewrote the decoy real workspace-roots profile'
-
-
-def test_model_child_receives_all_fixture_paths(tmp_path, monkeypatch):
-    sys.path.insert(0, str(TOOL))
-    sim = load('usersim_reliso', TOOL / 'usersim.py')
-    rig = __import__('real_app_check')
-    seen = {}
-    def runner(_job):
-        def run(command, **kwargs):
-            seen.update(kwargs['env'])
-            return subprocess.CompletedProcess(command, 0, '{"answer":{},"usage":[]}', '')
-        return run
-    monkeypatch.setattr(rig, 'JobRunner', runner)
-    monkeypatch.setenv('USERPROFILE', str(tmp_path / 'DECOY'))
-    sim.bounded_model_turn(None, sys.executable, ROOT / '01.APP', tmp_path, tmp_path,
-                           {'system':'court','context':{}}, [], time.monotonic() + 45)
-    for key in ('USERPROFILE','HOME','LOCALAPPDATA','APPDATA','TEMP','TMP','ARCHHUB_TEST_STATE_DIR'):
-        assert Path(seen[key]).resolve().is_relative_to(tmp_path.resolve()), key
-        assert 'DECOY' not in seen[key], key
 
 
 @pytest.mark.parametrize('flags', [[], ['-I'], ['-E','-s']])

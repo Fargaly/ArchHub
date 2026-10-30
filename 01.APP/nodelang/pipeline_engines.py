@@ -357,9 +357,31 @@ def revit_read(params: Mapping[str, object], feeds: Mapping[str, object]):
     sessions = [s for s in live_sessions() if s.get("revit_version")]
     if not sessions:
         raise ValueError("no Revit session is listening")
-    answer = invoke(op, {"instance": str(params.get("session") or "").strip()})
+    # Verb inputs (elements, view_id, ...) ride along; operation/session are this node's own.
+    # A read node never carries an approval, so a write op through it stays refused.
+    arguments = {k: v for k, v in params.items()
+                 if k not in ("operation", "session", "grant", "approval", "permit")}
+    answer = invoke(op, {**arguments, "instance": str(params.get("session") or "").strip()})
     rows = answer.get("result") or []
     return {"out": rows}, "%d row(s) from %s" % (len(rows), op)
+
+
+def autocad_verb(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Run one declared AutoCAD verb (layers, linetypes) on the live AutoCAD broker.
+
+    A side-effect verb needs the approval wired into this node (grant socket or param).
+    """
+    from .clean_autocad_adapter import invoke
+
+    op = str(params.get("operation") or "autocad.layer_list").strip()
+    arguments = {k: v for k, v in params.items() if k not in ("operation", "session")}
+    grant = feeds.get("grant") if isinstance(feeds, Mapping) else None
+    if grant is not None and "grant" not in arguments:
+        arguments["grant"] = grant
+    answer = invoke(op, {**arguments, "instance": str(params.get("session") or "").strip()})
+    rows = answer.get("result")
+    return {"out": rows, **({"receipt": answer["receipt"]} if answer.get("receipt") else {})}, "%s on %s" % (
+        op, answer.get("document") or answer.get("port"))
 
 
 def is_autocad_session(session: Mapping[str, object]) -> bool:
@@ -601,6 +623,7 @@ PIPELINE_ENGINES = {
     "vision.sketch_lines": sketch_lines,
     "cad.read_lines": cad_lines,
     "cad.host_lines": cad_lines_from_host,
+    "autocad.verb": autocad_verb,
     "lines.watch": watch_lines,
     "revit.sessions": revit_sessions,
     "revit.read": revit_read,

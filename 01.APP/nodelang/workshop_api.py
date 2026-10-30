@@ -84,10 +84,6 @@ class WorkshopAPI:
         from .desktop_owner import DesktopOwner
         return DesktopOwner(self).review_schedule(root)
 
-    def decideDesktopAction(self, root, digest, decision):
-        from .social_approval import decide_desktop
-        return decide_desktop(self, root, digest, decision)
-
     def readHostSkills(self):
         from .host_skill_owner import HostSkillOwner
         return HostSkillOwner(self).read()
@@ -115,10 +111,6 @@ class WorkshopAPI:
     def auditHostSkill(self, root):
         from .host_skill_owner import HostSkillOwner
         return HostSkillOwner(self).audit(root)
-
-    def decideHostSkill(self, root, digest, decision):
-        from .host_skill_owner import HostSkillOwner
-        return HostSkillOwner(self).decide(root, digest, decision)
 
     def readWatcher(self):
         from .watcher_owner import WatcherOwner
@@ -156,9 +148,12 @@ class WorkshopAPI:
         from .watcher_owner import WatcherOwner
         return WatcherOwner(self).discard()
 
-    def decideWatcherEdit(self, root, digest, decision):
-        from .social_approval import decide_watcher
-        return decide_watcher(self, root, digest, decision)
+    def answerApproval(self, kind, root, digest, decision):
+        """Every Approve/Deny card (desktop, schedule, hostskills, watcher): the one decision."""
+        from .hook_decision import decide
+        from .host_skill_owner import HostSkillOwner
+        return decide({"approval": kind, "owner": HostSkillOwner(self) if kind == "hostskills" else self,
+                       "id": root, "digest": digest, "decision": decision})
 
     def listApprovals(self):
         from .social_approval import list_reviews
@@ -542,15 +537,11 @@ class WorkshopAPI:
             "revision":self.owner.universal_store.revision}
 
     def listTasks(self):
-        from .workshop_activity import observer_for
-        reader = observer_for(self.owner)
-        if reader is not None:
-            reader.poll()
-            from .agent_declarations import declarations
-            reader.poll_opencode(getattr(self.owner, '_cloud_relay_transport', None),
-                [row['native_session_id'] for row in declarations(self.owner)
-                 if row.get('app') == 'opencode' and type(row.get('native_session_id')) is str])
-        return [self._task(row) for row in self._works()]
+        # The Work column is the Workshop tasks table, the same rows the no-graph server shows.
+        from .workshop_mailbox import application_history
+        from .workshop_tasks import column
+        with application_history() as history:
+            return column(history)
 
     def setTaskActivity(self, task, values):
         """Keep ledger ownership/install facts in this Work's existing parameters."""
@@ -987,12 +978,12 @@ FUNCTIONS = FUNCTIONS | frozenset({"listApprovals", "postponeApproval", "resumeA
 # WIRE-agents end.
 
 FUNCTIONS = FUNCTIONS | frozenset({"readWatcher", "setWatcherHost", "setWatcherView", "editWall",
-    "addDimension", "addMark", "addComment", "proposeWatcherEdit", "discardWatcherChanges", "decideWatcherEdit"})
+    "addDimension", "addMark", "addComment", "proposeWatcherEdit", "discardWatcherChanges", "answerApproval"})
 FUNCTIONS = FUNCTIONS | frozenset({"readHostSkills", "importHostSkill", "inspectConnectorBundle",
-    "configureConnectorBundle", "installConnectorBundle", "setHostSkillEnabled", "auditHostSkill", "decideHostSkill"})
+    "configureConnectorBundle", "installConnectorBundle", "setHostSkillEnabled", "auditHostSkill"})
 
 FUNCTIONS = FUNCTIONS | frozenset({"readDesktop", "setDesktopProgram", "offerDesktopAction", "prepareDesktopAction",
-    "setScheduleResponsibility", "reviewScheduledWork", "decideDesktopAction"})
+    "setScheduleResponsibility", "reviewScheduledWork"})
 
 FUNCTIONS = FUNCTIONS | frozenset({"listNotifications", "readNotification"})
 FUNCTIONS = FUNCTIONS | frozenset({'readResearchState','runValuation','runResearchNode','setResearchReview','correctAnswerSource'})

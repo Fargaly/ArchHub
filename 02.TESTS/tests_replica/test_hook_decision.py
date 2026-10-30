@@ -161,3 +161,122 @@ def test_litellm_is_refused_by_every_route(env, tool, data):
 def test_litellm_named_in_a_note_is_not_refused(env):
     assert call(env, "Write", {"file_path": "C:/tmp/notes.md", "content": "Why litellm is banned"})["verdict"] == "allow"
     assert call(env, "Bash", {"command": "pip install httpx"})["verdict"] == "allow"
+
+
+# ---- Settings parameters: run modes and per-tool modes (WSDECIDE) --------------------------
+
+def modes(env, run_mode="Accept edits", tools=None):
+    hd.write_permissions({"runMode": run_mode, "tools": tools or {}}, env)
+
+
+def own(env):  # a folder of his: the ArchHub workspace under his profile
+    return str(Path(env["USERPROFILE"]) / "00.ARCHUB")
+
+
+def test_accept_edits_is_the_default_and_adds_no_prompt(env, tmp_path):
+    assert hd.read_permissions(env) == {"runMode": "Accept edits", "tools": {}}
+    elsewhere = str(tmp_path / "elsewhere")
+    d = call(env, "Bash", {"command": "curl -X POST https://x.example -d hello"}, cwd=elsewhere)
+    assert d["mode"] == "Accept edits" and d["verdict"] != "ask"
+
+
+def test_ask_first_asks_for_send_and_outside_work(env, tmp_path):
+    modes(env, "Ask first")
+    d = call(env, "mcp__slack__slack_send_message", {"text": "status"}, cwd=own(env))
+    assert d["verdict"] == "ask" and d["rules"] == ["ask-first"]
+    assert hd.render(d, "claude-code")["hookSpecificOutput"]["permissionDecision"] == "ask"
+    assert hd.render(d, "gemini-cli")["decision"] == "ask"
+    assert call(env, "Write", {"file_path": str(tmp_path / "elsewhere" / "a.txt"), "content": "x"},
+                cwd=str(tmp_path / "elsewhere"))["verdict"] == "ask"
+
+
+def test_plan_only_refuses_every_change_and_allows_reads(env):
+    modes(env, "Plan only")
+    d = call(env, "Write", {"file_path": own(env) + "/a.md", "content": "x"}, cwd=own(env))
+    assert d["verdict"] == "refuse" and d["rules"] == ["plan-only"]
+    assert call(env, "Read", {"file_path": own(env) + "/a.md"}, cwd=own(env))["verdict"] == "allow"
+
+
+@pytest.mark.parametrize("run_mode", ["Ask first", "Accept edits"])
+def test_own_folder_routine_work_is_allowed_and_never_prompts(env, run_mode):
+    modes(env, run_mode)
+    for tool, data in (("Write", {"file_path": own(env) + "/10.PRODUCT/x.py", "content": "x = 1\n"}),
+                       ("Bash", {"command": "pytest -q"}), ("Edit", {"file_path": "notes.md", "old_string": "a",
+                                                                     "new_string": "b"}),
+                       ("mcp__archhub__declare", {"paths": ["10.PRODUCT"]})):
+        d = call(env, tool, data, cwd=own(env))
+        assert d["verdict"] == "allow", (run_mode, tool, d)
+    lane = str(Path(env["TEMP"]) / "lane-x")  # lane worktrees in temp are his too
+    assert call(env, "Bash", {"command": "git commit -m x"}, cwd=lane)["verdict"] == "allow"
+
+
+def test_client_folder_is_not_routine_under_ask_first(env):
+    modes(env, "Ask first")
+    d = call(env, "Write", {"file_path": own(env) + "/20.CLIENTS/A/x.md", "content": "x"}, cwd=own(env))
+    assert d["verdict"] == "ask"
+
+
+def test_tool_off_refuses_tool_ask_asks_tool_allowed_passes(env, tmp_path):
+    modes(env, "Plan only", {"WebFetch": "Off", "mcp__slack__*": "Ask", "Write": "Allowed"})
+    assert call(env, "WebFetch", {"url": "https://example.com"})["rules"] == ["tool-off"]
+    assert call(env, "mcp__slack__slack_send_message", {"text": "hi"})["verdict"] == "ask"
+    assert call(env, "Write", {"file_path": own(env) + "/a.md", "content": "x"}, cwd=own(env))["verdict"] == "allow"
+
+
+def test_a_forbid_wins_over_allowed(env):
+    modes(env, "Accept edits", {"mcp__computer-use__*": "Allowed"})
+    assert call(env, "mcp__computer-use__left_click", {"coordinate": [1, 2]})["rules"] == ["use-founder-screen"]
+
+
+def test_broken_or_invalid_settings_never_block(env):
+    path = hd._settings_dir(env) / "permissions.json"
+    path.parent.mkdir(parents=True)
+    path.write_text("{broken", encoding="utf-8")
+    assert hd.read_permissions(env)["runMode"] == "Accept edits"
+    with pytest.raises(ValueError):
+        hd.write_permissions({"runMode": "Yolo"}, env)
+    with pytest.raises(ValueError):
+        hd.write_permissions({"tools": {"Bash": "Maybe"}}, env)
+
+
+# ---- Approve / Deny through the same decide() -------------------------------------------
+
+class Owner:
+    def __init__(self):
+        self.calls = []
+
+    def apply(self, root, digest, decision):
+        self.calls.append((root, digest, decision))
+        return {"status": "approved" if decision == "approve" else "declined"}
+
+    def apply_approval(self, binding, decision):
+        self.calls.append((binding, decision))
+
+
+def test_approvals_route_to_their_owner_with_one_word(env):
+    owner = Owner()
+    assert hd.decide({"approval": "hostskills", "owner": owner, "id": "p", "digest": "d",
+                      "decision": "approve"}, environment=env)["status"] == "approved"
+    hd.decide({"approval": "watcher", "owner": owner, "id": "w", "digest": "d", "decision": "deny"}, environment=env)
+    hd.decide({"approval": "baboom", "owner": owner, "id": "b", "decision": "decline"}, environment=env)
+    assert owner.calls == [("p", "d", "approve"), ("w", "d", "deny"), ("b", "deny")]
+
+
+def test_approvals_refuse_unknown_words_and_kinds_and_plan_only_blocks_approve(env):
+    from nodelang.universal_cell import InvalidCell
+    owner = Owner()
+    with pytest.raises(InvalidCell):
+        hd.decide({"approval": "hostskills", "owner": owner, "id": "p", "digest": "d", "decision": "maybe"}, environment=env)
+    with pytest.raises(InvalidCell):
+        hd.decide({"approval": "nope", "owner": owner, "id": "p", "digest": "d", "decision": "approve"}, environment=env)
+    modes(env, "Plan only")
+    with pytest.raises(InvalidCell, match="Plan only"):
+        hd.decide({"approval": "hostskills", "owner": owner, "id": "p", "digest": "d", "decision": "approve"}, environment=env)
+    hd.decide({"approval": "hostskills", "owner": owner, "id": "p", "digest": "d", "decision": "deny"}, environment=env)
+    assert owner.calls == [("p", "d", "deny")]
+
+
+def test_no_second_decide_remains():
+    found = subprocess.run(["git", "grep", "-nE", r"def decide(_\w+)?\(|def decide[A-Z]\w*\(", "--", "01.APP/*.py"],
+                           cwd=ROOT, capture_output=True, text=True).stdout.splitlines()
+    assert found and all(line.startswith("01.APP/nodelang/hook_decision.py:") for line in found), found

@@ -33,7 +33,7 @@
   function Receipts() {
     const s = useData(),
       u = useApp();
-    return <main className="page" data-screen="receipts"><Heading title="Logs & receipts" sub="Every action in this session"><Btn sm onClick={event => executeAction("projects.surfaces.Export.4", {u}, event)}>Export</Btn><Btn sm onClick={event => executeAction("projects.surfaces.UndoLastAction.5", {api,u}, event)}>Undo last action</Btn></Heading><Card><Table rows={s.receipts} columns={['operation', 'detail', 'status']} /></Card>{s.archives.map(a => <Card key={a.id} style={{
+    return <main className="page" data-screen="receipts"><Heading title="Logs & receipts" sub="Every action in this session"><Btn sm onClick={event => executeAction("projects.surfaces.Export.4", {u}, event)}>Export</Btn><Btn sm onClick={event => executeAction("projects.surfaces.UndoLastAction.5", {api,u}, event)}>Undo last action</Btn></Heading><Card><Table rows={[...(s.connectionNotice ? [{operation: 'Connection notice', detail: s.connectionNotice, status: 'notice'}] : []), ...s.receipts]} columns={['operation', 'detail', 'status']} /></Card>{s.archives.map(a => <Card key={a.id} style={{
         padding: 20,
         marginTop: 15
       }}><h2>Archived activity</h2><Table rows={a.receipts || a.rows || []} columns={['operation', 'detail', 'status']} /></Card>)}</main>;

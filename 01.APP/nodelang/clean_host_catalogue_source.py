@@ -60,6 +60,8 @@ def _read(op_id, host, label, description, output_type="row", inputs=()):
         "op_id": op_id,
         "host": host,
         "kind": "read",
+        # Node contract C2: pure re-solves on input change; side-effect waits for Run + Approve.
+        "effect": "pure",
         "label": label,
         "description": description,
         "output_type": output_type,
@@ -73,6 +75,7 @@ def _write(op_id, host, label, description, inputs, output_type="row"):
         "op_id": op_id,
         "host": host,
         "kind": "write",
+        "effect": "side-effect",
         "label": label,
         "description": description,
         "output_type": output_type,
@@ -189,6 +192,95 @@ REVIT_OPERATIONS = [
           "Every dimension, its view, and whether its value was overridden."),
     _read("revit.list_legends", "revit", "Legends",
           "Every legend view."),
+    # Geometry toolset folded from bimwright rvt-mcp (Apache-2.0); metric in and out.
+    _read("revit.get_element_bounding_box", "revit", "Element bounding box",
+          "Bounding box of each element in metres, optionally in a view.", inputs=(
+              _input("elements", "Elements", "element-rows", required=True),
+              _input("view_id", "View id", "element-id"),
+              _input("include_transform", "Include transform", "boolean"),
+          )),
+    _read("revit.get_element_geometry", "revit", "Element geometry",
+          "Solids, faces, edges, volume, area and location of each element.", inputs=(
+              _input("elements", "Elements", "element-rows", required=True),
+              _input("detail_level", "Detail level", "text"),
+              _input("include_samples", "Include vertex samples", "boolean"),
+              _input("sample_limit", "Sample limit", "number"),
+          )),
+    _read("revit.measure_distance_between_elements", "revit", "Distance between elements",
+          "Shortest distance between two elements in metres (bounding box or location).", inputs=(
+              _input("element_id_1", "First element", "element-id", required=True),
+              _input("element_id_2", "Second element", "element-id", required=True),
+              _input("strategy", "Strategy", "text"),
+          )),
+    _read("revit.clash_detection", "revit", "Clash detection",
+          "Elements of categories A that clash with categories B, box first then solid.", inputs=(
+              _input("categories_a", "Categories A", "category-names", required=True),
+              _input("categories_b", "Categories B", "category-names", required=True),
+              _input("view_id", "View id", "element-id"),
+              _input("strategy", "Strategy", "text"),
+              _input("max_pairs", "Max pairs", "number"),
+              _input("max_results", "Max results", "number"),
+          )),
+    _read("revit.raycast_from_point", "revit", "Raycast from point",
+          "The nearest element a ray hits in a 3D view; origin in metres.", inputs=(
+              _input("view3d_id", "3D view id", "element-id", required=True),
+              _input("x", "X (m)", "number", required=True),
+              _input("y", "Y (m)", "number", required=True),
+              _input("z", "Z (m)", "number", required=True),
+              _input("dir_x", "Direction X", "number", required=True),
+              _input("dir_y", "Direction Y", "number", required=True),
+              _input("dir_z", "Direction Z", "number", required=True),
+              _input("categories", "Categories", "category-names"),
+              _input("max_distance", "Max distance (m)", "number"),
+          )),
+    _read("revit.find_elements_in_volume", "revit", "Elements in a volume",
+          "Elements inside or crossing a box in metres, or a room's box.", inputs=(
+              _input("volume", "Volume {min, max} (m)", "box"),
+              _input("room_id", "Room id", "element-id"),
+              _input("categories", "Categories", "category-names"),
+              _input("view_id", "View id", "element-id"),
+              _input("match", "Match", "text"),
+              _input("limit", "Limit", "number"),
+          )),
+    _read("revit.compute_element_volume", "revit", "Element volume",
+          "Solid volume of each element and the total, in cubic metres.", inputs=(
+              _input("elements", "Elements", "element-rows", required=True),
+              _input("detail_level", "Detail level", "text"),
+          )),
+    _read("revit.compute_element_area", "revit", "Element surface area",
+          "Total face area of each element and the total, in square metres.", inputs=(
+              _input("elements", "Elements", "element-rows", required=True),
+              _input("detail_level", "Detail level", "text"),
+          )),
+    _read("revit.project_point_onto_face", "revit", "Project point onto face",
+          "Where a point in metres lands on one face of an element.", inputs=(
+              _input("element_id", "Element", "element-id", required=True),
+              _input("x", "X (m)", "number", required=True),
+              _input("y", "Y (m)", "number", required=True),
+              _input("z", "Z (m)", "number", required=True),
+              _input("face_index", "Face index", "number"),
+              _input("detail_level", "Detail level", "text"),
+          )),
+    _read("revit.find_overlapping_elements", "revit", "Overlapping elements",
+          "Pairs of one category whose bounding boxes overlap.", inputs=(
+              _input("category", "Category", "category-name", required=True),
+              _input("view_id", "View id", "element-id"),
+              _input("max_pairs", "Max pairs", "number"),
+              _input("max_results", "Max results", "number"),
+          )),
+    _read("revit.get_element_centroid", "revit", "Element centroid",
+          "Volume-weighted centroid of each element in metres, box centre as fallback.", inputs=(
+              _input("elements", "Elements", "element-rows", required=True),
+              _input("strategy", "Strategy", "text"),
+          )),
+    _read("revit.analyze_geometry_complexity", "revit", "Geometry complexity",
+          "Solid, face and curved-face counts per element, most complex first.", inputs=(
+              _input("elements", "Elements", "element-rows"),
+              _input("categories", "Categories", "category-names"),
+              _input("view_id", "View id", "element-id"),
+              _input("detail_level", "Detail level", "text"),
+              _input("limit", "Limit", "number"),
+          )),
     _write("revit.set_parameter_by_name", "revit", "Set parameter by name",
            "Write one named parameter on approved elements.", (
                _input("elements", "Elements", "element-rows", required=True),
@@ -204,6 +296,49 @@ REVIT_OPERATIONS = [
                _input("elements", "Elements", "element-rows", required=True),
                _input("number_format", "Number format", "index-format"),
                _input("name_format", "Name format", "index-format"),
+           )),
+]
+
+def _layer_name():
+    return _input("name", "Layer", "layer-name", required=True)
+
+
+# Layer and linetype verb groups folded from U-C4N Autocad-MCP (MIT);
+# clean_autocad_adapter carries them out through the signed AutoCAD broker.
+AUTOCAD_OPERATIONS = [
+    _read("autocad.layer_list", "autocad", "Layers",
+          "Every layer with its colour, linetype, lineweight and state."),
+    _read("autocad.linetype_list", "autocad", "Linetypes",
+          "Every linetype loaded in the drawing."),
+    _write("autocad.layer_create", "autocad", "Create layer",
+           "Create a layer (or update one of that name) with colour, linetype and lineweight.", (
+               _layer_name(),
+               _input("color", "Colour index", "number"),
+               _input("linetype", "Linetype", "text"),
+               _input("lineweight", "Lineweight", "number"),
+           )),
+    _write("autocad.layer_delete", "autocad", "Delete layer",
+           "Delete an unused layer; a layer in use, current, 0 or Defpoints is refused.",
+           (_layer_name(),)),
+    _write("autocad.layer_set_current", "autocad", "Set current layer",
+           "Make a layer current.", (_layer_name(),)),
+    _write("autocad.layer_modify", "autocad", "Modify layer",
+           "Change a layer's colour, linetype or lineweight.", (
+               _layer_name(),
+               _input("color", "Colour index", "number"),
+               _input("linetype", "Linetype", "text"),
+               _input("lineweight", "Lineweight", "number"),
+           )),
+    _write("autocad.layer_freeze", "autocad", "Freeze layer", "Freeze a layer.", (_layer_name(),)),
+    _write("autocad.layer_thaw", "autocad", "Thaw layer", "Thaw a layer.", (_layer_name(),)),
+    _write("autocad.layer_lock", "autocad", "Lock layer", "Lock a layer.", (_layer_name(),)),
+    _write("autocad.layer_unlock", "autocad", "Unlock layer", "Unlock a layer.", (_layer_name(),)),
+    _write("autocad.layer_hide", "autocad", "Hide layer", "Turn a layer off.", (_layer_name(),)),
+    _write("autocad.layer_show", "autocad", "Show layer", "Turn a layer on.", (_layer_name(),)),
+    _write("autocad.linetype_load", "autocad", "Load linetype",
+           "Load a linetype from acadiso.lin / acad.lin (by MEASUREMENT) or a named .lin file.", (
+               _input("name", "Linetype", "text", required=True),
+               _input("file", "Linetype file (.lin)", "text"),
            )),
 ]
 
@@ -240,9 +375,10 @@ OFFICE_OPERATIONS = [
            )),
 ]
 
-HOST_OPERATION_RECORDS = REVIT_OPERATIONS + OFFICE_OPERATIONS
+HOST_OPERATION_RECORDS = REVIT_OPERATIONS + AUTOCAD_OPERATIONS + OFFICE_OPERATIONS
 
 __all__ = [
+    "AUTOCAD_OPERATIONS",
     "HOST_OPERATION_RECORDS",
     "OFFICE_OPERATIONS",
     "REVIT_OPERATIONS",

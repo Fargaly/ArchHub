@@ -697,36 +697,36 @@ const approveDelegation=api.approve;
 api.approve=async(id,...args)=>{
  const card=state.approvals.find(c=>c.id===id);
  if(['desktop','schedule'].includes(card?.approvalKind)){
-  const result=await workshop('decideDesktopAction',[id,card.input_digest,'approve']);
+  const result=await workshop('answerApproval',[card.approvalKind,id,card.input_digest,'approve']);
   if(result?.status!=='approved')throw Error(result?.error||'Desktop result was not confirmed.');
   await refreshDesktop();await refreshWatcher();await refreshApprovals();return result;
  }
 
  if(card?.approvalKind==='hostskills'){
-  const result=await workshop('decideHostSkill',[id,card.input_digest,'approve']);
+  const result=await workshop('answerApproval',['hostskills',id,card.input_digest,'approve']);
   if(result?.status!=='approved')throw Error(result?.error||'Package activation was not confirmed.');
   await refreshHostSkills();await refreshApprovals();return result;
  }
  if(card?.approvalKind!=='watcher')return approveDelegation(id,...args);
- const result=await workshop('decideWatcherEdit',[id,card.input_digest,'approve']);
+ const result=await workshop('answerApproval',['watcher',id,card.input_digest,'approve']);
  if(result?.status!=='approved')throw Error(result?.error||result?.message||'Host write was not confirmed.');
  await refreshWatcher();await refreshApprovals();return result;
 };
 api.decline=async id=>{
  const card=state.approvals.find(c=>c.id===id);
  if(['desktop','schedule'].includes(card?.approvalKind)){
-  const result=await workshop('decideDesktopAction',[id,card.input_digest,'deny']);
+  const result=await workshop('answerApproval',[card.approvalKind,id,card.input_digest,'deny']);
   if(result?.status!=='declined')throw Error(result?.error||'Desktop decline was not confirmed.');
   await refreshDesktop();await refreshApprovals();return result;
  }
 
  if(card?.approvalKind==='hostskills'){
-  const result=await workshop('decideHostSkill',[id,card.input_digest,'deny']);
+  const result=await workshop('answerApproval',['hostskills',id,card.input_digest,'deny']);
   if(result?.status!=='declined')throw Error(result?.error||'Package decline was not confirmed.');
   await refreshHostSkills();await refreshApprovals();return result;
  }
  if(card?.approvalKind!=='watcher')throw Error('Choose the exact Watcher proposal to decline.');
- const result=await workshop('decideWatcherEdit',[id,card.input_digest,'deny']);
+ const result=await workshop('answerApproval',['watcher',id,card.input_digest,'deny']);
  if(result?.status!=='declined')throw Error(result?.error||result?.message||'Discard was not confirmed.');
  await refreshWatcher();await refreshApprovals();return result;
 };
@@ -1002,6 +1002,8 @@ api.setProviderModel=async(id,model)=>{const current=await api.refreshRouter();r
 api.setAgentProfile=async(id,values)=>{const current=await api.refreshRouter();return api.setRouterSettings({agents:{...current.agents,[id]:{...current.agents[id],...values}}});};
 api.disconnectSecret=async id=>{const result=await settingsAction('disconnectSecret',[id]);await refreshSocialConnections();return result;};
 api.setCompanionState=values=>settingsAction('setCompanionState',[values]);
+api.readPermissions=()=>settingsAction('readPermissions');
+api.setPermissions=values=>settingsAction('setPermissions',[values]);
 api.openProgram=id=>settingsAction('openProgram',[id]);
 async function refreshSocialConnections(){
  const identity=state.profile.id,epoch=scopeEpoch;
@@ -1400,7 +1402,7 @@ function fileNode(node){
  const dataset=node.type==='data.dataset'?{fields:defs,records:node.records||[]}:null;
  const feed=node.type==='data.field'&&sessionDocument.wires.find(w=>w.to.node===node.id&&w.to.socket==='column');
  const column=node.type==='data.field'?{dataset:feed?sessionDocument.nodes.find(n=>n.id===feed.from.node)?.title||'':'',field:feed?feed.from.socket.replace(/^field:/,''):'',label:(COLUMN_LABEL[node.params.type]||'Any')+'[]'}:null;
- return {id:node.id,type:node.type,dataset,column,title:node.title||item?.title||node.type,kind:node.children?'Group':item?.title||node.type,category:item?.cat||'Node',x:node.position.x,y:node.position.y,
+ return {id:node.id,type:node.type,pure:item?.pure??node.pure,budget:node.budget||item?.budget||null,loop:node.loop||item?.loop||null,settingsKeys:item?.settingsKeys||[],dataset,column,title:node.title||item?.title||node.type,kind:node.children?'Group':item?.title||node.type,category:item?.cat||'Node',x:node.position.x,y:node.position.y,
   params,defaults:item?.params||{},parameterSchema:schema,paramDefs:defs,bind,
   inputs:(ports.target||[]).map(p=>({...p,name:p.label||p.id,type:p.type==='unknown'?'any':p.type})),outputs:(ports.source||[]).map(p=>({...p,name:p.label||p.id,type:p.type==='unknown'?'any':p.type})),
   children:node.children||[],members:[],parent:node.parent||null,frozen:!!node.frozen,pinned:!!node.pinned,portVisibility:node.portVisibility||{},parameterPresentation:node.parameterPresentation||{},
@@ -1518,7 +1520,7 @@ api.addNode=async(name,position={})=>{
  const item=state.libraryPorts.find(i=>i.id===name||i.title===name);
  if(!item||item.noEngine)throw Error('Choose an executable Library node.');
  if(position.x===undefined){const detail={reserved:[],point:null,error:null};window.dispatchEvent(new CustomEvent('archhub:canvas-insertion',{detail}));if(detail.error)throw Error(detail.error);position=detail.point||{x:80,y:100};}
- const node={id:window.crypto.randomUUID(),type:item.engine,item:item.id,title:item.title,params:copy(item.params),position:{x:position.x,y:position.y??100}};
+ const node={id:window.crypto.randomUUID(),type:item.engine,item:item.id,title:item.title,pure:item.pure===true,budget:copy(item.budget||{}),...(item.loop?{loop:copy(item.loop)}:{}),params:copy(item.params),position:{x:position.x,y:position.y??100}};
  fileEdit(d=>d.nodes.push(node),[node.id]);return state.graph.nodes.find(n=>n.id===node.id);
 };
 api.moveNode=(id,position)=>api.moveNodes({[id]:position});

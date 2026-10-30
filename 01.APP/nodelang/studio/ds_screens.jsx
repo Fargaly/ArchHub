@@ -24,10 +24,10 @@
     any: A.inkSoft,
     view: A.cyan
   })[t] || A.accent;
-  function measureWires(world, wires, zoom = 1) {
+  function measureWires(world, wires) {
     if (!world) return [];
     const bounds=world.getBoundingClientRect(), sockets=new Map([...world.querySelectorAll('[data-port-key]')].map(el=>{
-      const r=el.getBoundingClientRect();return [el.dataset.portKey,{x:(r.left+r.width/2-bounds.left)/zoom,y:(r.top+r.height/2-bounds.top)/zoom}];
+      const r=el.getBoundingClientRect();return [el.dataset.portKey,{x:r.left+r.width/2-bounds.left,y:r.top+r.height/2-bounds.top}];
     }));
     return wires.map(w=>({w,a:sockets.get(`${w.from}:out:${w.fromPort}`),b:sockets.get(`${w.to}:in:${w.toPort}`)})).filter(p=>p.a&&p.b);
   }
@@ -37,23 +37,20 @@
   // Node-RED status pattern: one colour on the card edge plus one status line under it (spec State/* components).
   const nodeState = (n, rejected) => n.frozen ? ['Disabled', A.inkDim] : rejected ? ['Types do not match', A.err]
     : n.previewOff ? ['Preview off', A.inkSoft]
-    : /agent/i.test(n.status) ? ['Edited by agent', A.purple]
+    : /approval|needs you|in review/i.test(n.status) ? ['Needs you', A.warn]
+    : /agent|working|wip/i.test(n.status) ? ['Working', A.inkSoft]
     : /error|fail|refus/i.test(n.status) ? ['Failed · ' + (n.error || 'retry'), A.err]
-    : /block|held|wait|approval/i.test(n.status) ? ['Blocked · upstream', A.warn]
+    : /block|held|wait/i.test(n.status) ? ['Blocked · upstream', A.inkSoft]
     : /stale|changed|out of date/i.test(n.status) ? ['Out of date · Run', A.warn]
     : /running|updating/i.test(n.status) ? ['Updating…', A.cyan]
-    : /done|ran/i.test(n.status) ? ['Done', A.ok] : ['Not run', A.inkSoft];
+    : /done|ran/i.test(n.status) ? ['Done', A.ink] : ['Not run', A.inkSoft];
   // Spec Wire/*: compatible cyan, affected downstream warn, rejected drag err; one stroke width (wire.strokeWidth = 2).
   const wireColor = (w, nodes) => w.rejected ? A.err : /^(Updating|Out of date)/.test(nodeState(nodes.find(n=>n.id===w.to) || {}, false)[0]) ? A.warn : A.cyan;
-  function GraphWires({paths,selectedId,onSelect,visibility='Visible',nodes=[],spec=false}) {
+  function GraphWires({paths,visibility='Visible',nodes=[]}) {
     return <>{paths.map(({w,a,b})=>{
       const portVisibility=nodes.find(n=>n.id===w.from)?.portVisibility?.[w.fromPort],
-        opacity=w.rejected ? 1 : visibility==='Hidden'||portVisibility==='Hidden' ? 0 : visibility==='Faint'||portVisibility==='Faint' ? .2 : .9;
-      return <g key={w.id}>{onSelect && <path d={curve(a,b)} stroke="transparent" strokeWidth="16" fill="none" style={{pointerEvents:'stroke',cursor:'pointer'}} role="button" tabIndex={0} aria-label={'Inspect wire '+w.id}
-        onClick={e=>{e.stopPropagation();onSelect(w.id);}} onKeyDown={e=>{if(e.key==='Enter')onSelect(w.id);}} />}
-        {selectedId===w.id && visibility!=='Hidden' && <path d={curve(a,b)} stroke={A.ink} strokeWidth="8" opacity=".22" fill="none" />}
-        <path data-graph-wire={w.id} data-wire-state={spec ? w.rejected ? 'rejected' : wireColor(w,nodes)===A.warn ? 'affected' : 'compatible' : undefined} d={curve(a,b)} stroke={spec ? wireColor(w,nodes) : typeColor(w.type)} strokeWidth="2" strokeLinecap="round" strokeDasharray={!spec && w.type==='event'?'6 2':undefined} opacity={opacity} fill="none" />
-      </g>;
+        opacity=visibility==='Hidden'||portVisibility==='Hidden' ? 0 : visibility==='Faint'||portVisibility==='Faint' ? .2 : .9;
+      return <path key={w.id} data-graph-wire={w.id} d={curve(a,b)} stroke={typeColor(w.type)} strokeWidth="2" strokeLinecap="round" strokeDasharray={w.type==='event'?'6 2':undefined} opacity={opacity} fill="none" />;
     })}</>;
   }
   // e6e4a367 studio-lm.jsx NodeRenderer: category header, role edge and parameter body.
@@ -90,7 +87,9 @@
       foot={spec ? <span title={n.error || state}>{specFoot}</span> : <span title={state}>{foot + (n.error ? ' · '+n.error : '') + (n.elapsedMs ? ' · ' + n.elapsedMs + ' ms' : '')}</span>} footc={spec ? specColor : stateColor}
       ins={spec ? n.inputs.filter(p=>!(renderSocket && shownKeys.includes(p.id))) : n.inputs} outs={n.outputs} renderPort={renderPort} portsAfterContent={spec}
       headerProps={{...headerProps,style:spec ? headerProps?.style : {borderTop:'2px solid '+color,borderBottom:'1px solid '+A.lineSoft,...headerProps?.style}}}
-      headerEnd={spec && n.dataset ? <><span data-dataset-count>{n.dataset.records.length} records</span>{headerEnd}</> : headerEnd} chip={grouped && <div className="canvas-members">{(members || []).map(m=><button key={m.id} data-group-member={m.id} className="canvas-member" title={'Open '+m.title} onClick={event=>executeAction('projects.controls.activate',{handler:()=>onMember?.(m)},event)}><span style={{background:color,color:A.onFill}}>{m.title.slice(0,1)}</span>{m.title}</button>)}</div>}>
+      headerEnd={<>{typeof n.pure === 'boolean' && <span data-node-pure={String(n.pure)} style={{fontSize:10,color:n.pure ? A.inkSoft : A.warn}}
+        title={n.pure ? 'Pure: re-solves on every edit' : 'Side effect: waits for Run'}>{n.pure ? 'Pure' : 'Side effect'}</span>}
+        {spec && n.dataset && <span data-dataset-count>{n.dataset.records.length} records</span>}{headerEnd}</>} chip={grouped && <div className="canvas-members">{(members || []).map(m=><button key={m.id} data-group-member={m.id} className="canvas-member" title={'Open '+m.title} onClick={event=>executeAction('projects.controls.activate',{handler:()=>onMember?.(m)},event)}><span style={{background:color,color:A.onFill}}>{m.title.slice(0,1)}</span>{m.title}</button>)}</div>}>
       {!grouped && (compact && !expanded ? parameters.slice(0,3) : parameters).map(([key,value])=>{
         const p=n.parameterSchema?.find(p=>p.key===key), label=n.title+' '+key,
           shown=Object.hasOwn(parameterDrafts,key)?parameterDrafts[key]:value,
@@ -132,16 +131,18 @@
     return def && {dataset, def, values: dataset.dataset.records.map(r => r.cells[def.id])};
   };
   function FieldNode({n, field: {dataset, def, values}, selected, headerProps, renderSocket}) {
-    return <div data-ds-node="" data-spec="field" className={'lm-node ' + (headerProps?.className || '')} {...headerProps} style={{position: 'relative', width: 180, boxSizing: 'border-box',
-      background: SPEC.field, border: '1px solid ' + SPEC.fieldLine, borderRadius: 8, padding: '13px 12px 12px', outline: selected ? `2px solid ${A.accent}` : 'none', outlineOffset: 2}}>
-      {renderSocket && n.inputs.map(p => <span key={p.id} className="canvas-port-socket in field">{renderSocket(p, 'in')}</span>)}
-      {renderSocket && n.outputs.map(p => <span key={p.id} className="canvas-port-socket out field">{renderSocket(p, 'out')}</span>)}
-      <div data-node-card-title="" style={{height: 19, fontSize: 14, lineHeight: 1.2, color: SPEC.text, whiteSpace: 'pre'}}>{typeGlyph(def.type) && typeGlyph(def.type) + '  '}{def.name}</div>
-      <div style={{marginTop: 7, height: 16, fontSize: 11, lineHeight: 1.2, color: SPEC.typed}}>{n.column.label}{def.unit ? ' · ' + def.unit : ''}</div>
-      <div style={{marginTop: 9, height: 16, fontSize: 11, lineHeight: 1.2, color: SPEC.label}}>All records {'·'} {values.length}</div>
-      <output data-column-of={n.column.dataset + '.' + n.column.field} style={{display: 'block', marginTop: 7, height: 28, boxSizing: 'border-box', padding: '6px 9px', borderRadius: 5, background: SPEC.slot,
-        fontSize: 12, lineHeight: 1.2, color: SPEC.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>{values.map(cellText).join(' · ')}</output>
-      <div style={{marginTop: 14, height: 15, fontSize: 11, lineHeight: 1.2, color: SPEC.label}}>{'↗'} {dataset.title} {'·'} {def.name}</div>
+    // Spec FieldNode 180x92: name, typed line, record count, one value strip; sockets at the card edges (y 44).
+    const edge = side => ({position: 'absolute', [side === 'in' ? 'left' : 'right']: -11, top: 44, transform: 'translateY(-50%)', lineHeight: 0, zIndex: 2});
+    return <div data-ds-node="" data-spec="field" className={'lm-node ' + (headerProps?.className || '')} {...headerProps} title={dataset.title + ' · ' + def.name}
+      style={{position: 'relative', width: 180, height: 92, boxSizing: 'border-box', background: SPEC.field, border: '1px solid ' + SPEC.fieldLine, borderRadius: 6,
+        outline: selected ? `2px solid ${A.accent}` : 'none', outlineOffset: 2}}>
+      {renderSocket && n.inputs.map(p => <span key={p.id} style={edge('in')}>{renderSocket(p, 'in')}</span>)}
+      {renderSocket && n.outputs.map(p => <span key={p.id} style={edge('out')}>{renderSocket(p, 'out')}</span>)}
+      <div data-node-card-title="" style={{position: 'absolute', left: 12, top: 9, right: 40, fontSize: 14, lineHeight: 1.2, color: SPEC.text, whiteSpace: 'pre', overflow: 'hidden', textOverflow: 'ellipsis'}}>{typeGlyph(def.type) && typeGlyph(def.type) + '  '}{def.name}</div>
+      <span data-record-count="" style={{position: 'absolute', right: 12, top: 11, fontSize: 12.5, color: SPEC.label}} title="All records">{values.length}</span>
+      <div style={{position: 'absolute', left: 12, top: 34, fontSize: 12.5, lineHeight: 1.2, color: SPEC.typed}}>{n.column.label}{def.unit ? ' · ' + def.unit : ''}</div>
+      <output data-column-of={n.column.dataset + '.' + n.column.field} data-todo="output-summary-expanded" style={{position: 'absolute', left: 8, right: 8, top: 56, height: 24, boxSizing: 'border-box', padding: '5px 6px', borderRadius: 5,
+        background: SPEC.slot, fontSize: 12.5, lineHeight: 1.2, color: SPEC.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>{values.slice(0, 3).map(cellText).join(', ')}{values.length > 3 ? '…' : ''}  ›</output>
     </div>;
   }
   // Spec FieldTypeMenu: a listbox of the server's parameter types (node_params.py), labelled as the design names them.
@@ -206,12 +207,161 @@
   function AddParameter({n, u}) {
     const [open, setOpen] = React.useState(false);
     return <>
-      <button className="button-reset canvas-card-add" data-add-parameter aria-label={'Add parameter to ' + n.title} title="Add parameter" onClick={event => executeAction('projects.controls.activate', {handler: () => setOpen(!open)}, event)}>+</button>
+      <button className="button-reset canvas-card-add" data-add-parameter aria-label={'Add parameter to ' + n.title} title="Add parameter" onClick={event => executeAction('projects.controls.activate', {handler: () => setOpen(!open)}, event)}>+ Parameter</button>
       {open && <AddField kind="Parameter" title="Add parameter" sub="A value on this node" onClose={() => setOpen(false)} onAdd={input => u.act(() => api.addNodeParameter(n.id, input))} />}
     </>;
   }
+  // CANVASXY node grammar, archhub-canvas-build-spec.json (Penpot 1052): compact parameter nodes (LimitParameter 180x80),
+  // field nodes (FieldNode 180x92) and operation nodes with aligned typed socket rows, inline widgets, a Pure badge and a
+  // collapsed result summary (Filter / Model). Designer TODO hooks: output-summary-expanded, dataset-compact-header,
+  // field-unbound, cell-refused-feedback, node-auto-height, isolated-native-component-pngs.
+  const TYPE_NAME = {number: 'Number', integer: 'Integer', string: 'Text', text: 'Text', boolean: 'Boolean', bool: 'Boolean',
+    list: 'List', object: 'Record', file: 'File', any: 'Any', elements: 'Elements', event: 'Event', view: 'View'};
+  const typeName = p => (TYPE_NAME[p.type] || (p.type ? p.type.replace(/^./, c => c.toUpperCase()) : 'Any')) + (p.list ? '[]' : '') + (p.unit ? ' · ' + p.unit : '');
+  const summary = value => {
+    if (value === undefined || value === null || value === '' || (Array.isArray(value) && !value.length)) return '';
+    if (Array.isArray(value)) return value.length + ' item' + (value.length === 1 ? '' : 's') + ' · ' + value.slice(0, 3).map(summary).join(', ');
+    if (typeof value === 'object') return Object.entries(value).slice(0, 3).map(([k, v]) => k + ' ' + (v && typeof v === 'object' ? (Array.isArray(v) ? v.length + ' items' : 'record') : String(v))).join(' · ');
+    return String(value).slice(0, 60);
+  };
+  const HIDDEN_VALUE = /(?:[a-f0-9]{32,}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}|(?:assembly|template|node)-instance:|^\s*[\[{][\s\S]*[\]}]\s*$)/i;
+  const HIDDEN_PARAM = /(^_|(?:^|_)(?:id|hash|instance|ref)(?:_|$)|^template_|^(?:engine|responsibility|last_result|last_attempt)$)/i;
+  const LAYOUT = {nodeWidth: 280, datasetWidth: 478, inspectorWidth: 320};
+  const CARD = {background: SPEC.field, border: '1px solid ' + SPEC.fieldLine, borderRadius: 6, boxSizing: 'border-box', position: 'relative', color: SPEC.text, fontSize: 12.5, lineHeight: 1.2};
+  const SLOT = {background: SPEC.slot, borderRadius: 5, padding: '6px 9px', position: 'relative', display: 'flex', alignItems: 'center', gap: 6, minHeight: 28, boxSizing: 'border-box'};
+  const edgeSocket = (side, top, inset = 0) => ({position: 'absolute', [side === 'in' ? 'left' : 'right']: -11 - inset, top, transform: 'translateY(-50%)', lineHeight: 0, zIndex: 2});
+  function ValueWidget({n, p, value, u}) {
+    const [draft, setDraft] = React.useState(null), shown = draft ?? value, label = n.title + ' ' + p.key;
+    const save = v => { setDraft(v); return u.act(() => api.setNodeParam(n.id, p.key, v)).then(() => setDraft(null)); };
+    if (!p.editable) return <span title={String(shown)}>{summary(shown)}</span>;
+    if (p.type === 'boolean') return <D.Toggle label={label} checked={!!shown} onCheckedChange={save} />;
+    if (p.options?.length) return <select className="nodrag" aria-label={label} value={shown} onChange={e => save(e.target.value)}>{p.options.map(o => <option key={o}>{o}</option>)}</select>;
+    return <input className="nodrag" aria-label={label} title={String(shown)} type={p.type === 'number' ? 'number' : 'text'} min={p.min} max={p.max} step={p.step ?? 'any'}
+      value={typeof shown === 'object' ? JSON.stringify(shown) : shown} style={{flex: 1, minWidth: 0, width: 0, background: 'transparent', border: 0, color: SPEC.text, font: 'inherit', fontSize: 12}}
+      onChange={e => { if (p.type !== 'number' || Number.isFinite(e.target.valueAsNumber)) save(p.type === 'number' ? e.target.valueAsNumber : e.target.value); }} />;
+  }
+  function ParameterNode({n, socket, selected, u}) {
+    // LimitParameter: one typed value, inline stepper and slider, one output socket; the value lives in this node only.
+    // A value the owner does not hold (router.json without it) shows "unset", never a default.
+    const p = n.parameterSchema?.find(x => x.key === 'value') || {key: 'value', type: 'number', editable: true}, unset = typeof n.params.value !== 'number',
+      value = unset ? NaN : n.params.value, max = p.max ?? (unset || Math.abs(value) <= 2 ? 2 : Math.abs(value) * 2), min = p.min ?? 0, step = p.step ?? (max <= 2 ? .05 : 1),
+      out = n.outputs[0], save = v => u.act(() => api.setNodeParam(n.id, 'value', Math.min(max, Math.max(min, +v.toFixed(6)))));
+    return <div data-ds-node="" data-spec="parameter" className="node-header" style={{...CARD, width: 180, height: 80, outline: selected ? '2px solid ' + A.accent : 'none', outlineOffset: 2}}>
+      <div data-node-card-title="" style={{position: 'absolute', left: 12, top: 9, right: 40, color: SPEC.typed}}>#  {n.title}</div>
+      {!n.pure && <span data-node-pure="false" title="Side effect: waits for Run" style={{position: 'absolute', right: 10, top: 9, color: A.inkSoft}}>⚡</span>}
+      <div style={{position: 'absolute', left: 12, top: 32, right: 12, display: 'flex', alignItems: 'center', gap: 6, color: SPEC.typed}}>
+        {unset ? <span data-unset="" style={{flex: 1, color: SPEC.label}} title="Not set in router.json">unset</span> : <ValueWidget n={n} p={{...p, type: 'number', min, max, step}} value={value} u={u} />}
+        <span>{p.unit || ''}</span>
+        <button type="button" className="button-reset nodrag" aria-label={'Decrease ' + n.title} onClick={event => executeAction('projects.controls.activate', {handler: () => save((unset ? min : value) - step)}, event)}>◀</button>
+        <button type="button" className="button-reset nodrag" aria-label={'Increase ' + n.title} onClick={event => executeAction('projects.controls.activate', {handler: () => save((unset ? min : value) + step)}, event)}>▶</button>
+      </div>
+      <input className="nodrag" type="range" aria-label={n.title + ' slider'} min={min} max={max} step={step} value={unset ? min : value}
+        onChange={e => save(e.target.valueAsNumber)} style={{position: 'absolute', left: 12, right: 12, top: 58, width: 156, accentColor: SPEC.typed}} />
+      {out && <span style={edgeSocket('out', 34)}>{socket(out, 'out')}</span>}
+    </div>;
+  }
+  // Spec d9c0d514: one footer chip per card (Done / Not run / Out of date, or what stops it), never a second status line.
+  const FOOT = {display: 'inline-block', justifySelf: 'start', padding: '1px 8px', borderRadius: 10, border: '1px solid ' + SPEC.fieldLine};
+  function RefusedChip({refusal, onConvert}) {
+    return <div data-refused-chip="" role="status" style={{color: A.err, display: 'flex', flexWrap: 'wrap', gap: 4}}>
+      {refusal.outType === refusal.inType && refusal.reason ? <span>{refusal.reason}</span> : <><span>Needs a {refusal.outType} → {refusal.inType} converter ·</span>
+      <button type="button" className="button-reset nodrag" style={{color: A.err, textDecoration: 'underline'}} onClick={event => executeAction('projects.controls.activate', {handler: onConvert}, event)}>Insert converter</button></>}
+    </div>;
+  }
+  function FlowCard({n, s, u, selected, refusal, onConvert, socket, members, onMember, menu}) {
+    // Spec section 0b P0: the default card is full capability (every row); compact (first three rows) is an opt-in toggle.
+    const [compact, setCompact] = React.useState(false);
+    const field = n.column && fieldColumn(n, s.graph);
+    if (field) return <FieldNode n={n} field={field} selected={selected} headerProps={{className: 'node-header'}} renderSocket={socket} />;
+    const scalarParameter = ['thing.setting', 'param.value'].includes(n.type) && n.outputs.length === 1 && (typeof n.params.value === 'number' || n.params.value === null);
+    if (scalarParameter) return <ParameterNode n={n} socket={socket} selected={selected} u={u} />;
+    const [state, stateColor] = nodeState(n, !!refusal), wiresIn = s.graph.wires.filter(w => w.to === n.id),
+      sourceOf = port => { const w = wiresIn.find(x => x.toPort === port), a = w && s.graph.nodes.find(x => x.id === w.from); return a && a.title + '.' + (a.outputs.find(p => p.id === w.fromPort)?.name || w.fromPort); },
+      slotPorts = new Set(), settingsKeys = new Set(n.settingsKeys || []),
+      // Internal ids, hashes and serialized JSON stay in Properties; the face shows human values (CARDPOLISH), first three until expanded.
+      shown = (n.parameterSchema || []).filter(p => p.editable || (!HIDDEN_PARAM.test(p.key) && (n.params[p.key] === null || typeof n.params[p.key] !== 'object') && !HIDDEN_VALUE.test(String(n.params[p.key]))))
+        .filter(p => !(p.key === 'prompt' && n.inputs.some(x => x.id === 'prompt'))),
+      params = compact ? shown.slice(0, 3) : shown,
+      refusedHere = port => refusal && refusal.to.port === port && <RefusedChip refusal={refusal} onConvert={onConvert} />;
+    for (const p of params) if (n.inputs.some(x => x.id === p.key || x.id === 'param:' + p.key)) slotPorts.add(n.inputs.find(x => x.id === p.key || x.id === 'param:' + p.key).id);
+    const result = n.status === 'Done' ? summary(n.output) : '';
+    return <div data-ds-node="" className="lm-node" data-spec={n.dataset ? 'dataset' : 'operation'} data-node-state={state.split(' · ')[0]}
+      style={{...CARD, width: n.dataset ? LAYOUT.datasetWidth : LAYOUT.nodeWidth, paddingBottom: 10, border: '1px solid ' + (refusal ? A.err : SPEC.fieldLine), outline: selected ? '2px solid ' + A.accent : 'none', outlineOffset: 2}}>
+      <div className="node-header" style={{display: 'flex', alignItems: 'flex-start', gap: 8, padding: '11px 12px 0'}}>
+        <div data-node-card-title="" style={{flex: 1, minWidth: 0, fontSize: 14, overflowWrap: 'anywhere'}}>{n.title}</div>
+        {!n.pure && <span data-node-pure="false" style={{paddingTop: 2, color: A.inkSoft}}
+          title={'Side effect: waits for Run' + (n.budget ? ' · budget ' + [n.budget.seconds != null && n.budget.seconds + ' s', n.budget.calls != null && n.budget.calls + ' call(s)'].filter(Boolean).join(', ') : '')}>⚡</span>}{menu}
+      </div>
+      {members.length > 0 && <div className="canvas-members">{members.map(m => <button key={m.id} data-group-member={m.id} className="canvas-member nodrag" title={'Open ' + m.title} onClick={event => executeAction('projects.controls.activate', {handler: () => onMember(m)}, event)}><span style={{background: A.purple, color: A.onFill}}>{m.title.slice(0, 1)}</span>{m.title}</button>)}</div>}
+      <div style={{display: 'grid', gap: 8, padding: '12px 12px 0'}}>
+        {/* Full-node row (archhub-full-node-controls-native.png): name over its type, then the linked source or an inline control, then a row menu. Real data or empty. */}
+        {[...n.inputs.filter(p => !slotPorts.has(p.id)).map(p => ({key: p.id, port: p})), ...params.map(p => ({key: 'param:' + p.key, param: p, port: n.inputs.find(x => x.id === p.key || x.id === 'param:' + p.key)}))].map(({key, port, param}) => {
+          const from = port && sourceOf(port.id), name = param ? (param.label && param.label !== param.key ? param.label : param.key.replace(/_/g, ' ')) : port.name,
+            type = param ? (param.dataType || (param.options?.length ? 'enum' : param.type === 'boolean' ? 'boolean' : param.type === 'number' ? 'number' : 'string')) + (param.unit ? ' · ' + param.unit : '') + (settingsKeys.has(param.key) ? ' · From Settings' : '') : typeName(port);
+          return <React.Fragment key={key}><div data-port-row={param ? undefined : 'in'} data-parameter={param ? param.key : undefined}
+            style={{...SLOT, display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1.2fr) auto', gap: 8, padding: '4px 4px 4px 10px', alignItems: 'center'}}>
+            {port && <span style={edgeSocket('in', '50%', 12)}>{socket(port, 'in')}</span>}
+            <span style={{minWidth: 0}}><span style={{display: 'block', fontSize: 13.5, overflowWrap: 'anywhere'}} title={param ? param.label || param.key : port.name}>{name}</span>
+              <span style={{display: 'block', color: SPEC.label}}>{type}</span></span>
+            <span data-row-value="" style={{display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>
+              {from ? <span data-linked-source="" style={{color: SPEC.typed}} title={from}>↳ {from}</span>
+                : !param ? null : n.params[param.key] === null ? <span data-unset="" style={{color: SPEC.label}}>unset</span> : <ValueWidget n={n} p={param} value={n.params[param.key]} u={u} />}</span>
+            <button type="button" className="button-reset nodrag" aria-label={name + ' row actions'} style={{color: SPEC.label, padding: '0 4px'}}
+              onClick={event => executeAction('projects.controls.activate', {handler: () => u.show('Port menu', {id: n.id, port: port?.id || 'param:' + param.key, anchor: {x: event.clientX, y: event.clientY}})}, event)}>⋮</button>
+          </div>{port && refusedHere(port.id)}</React.Fragment>;
+        })}
+        {shown.length > 3 && <button type="button" className="button-reset nodrag canvas-card-more" aria-pressed={compact} style={{justifySelf: 'start', color: SPEC.label}} onClick={event => executeAction('projects.controls.activate', {handler: () => setCompact(!compact)}, event)}>{compact ? `+${shown.length - 3} more` : 'Compact'}</button>}
+        {n.loop && <div data-node-loop="" style={{color: SPEC.label}} title={'Trigger ' + n.loop.trigger + ' · stops when ' + n.loop.stop + (n.loop.evaluator ? ' · evaluator ' + n.loop.evaluator : '')}>Loop · cap {n.loop.cap} · until {n.loop.stop}</div>}
+        {n.dataset && <DatasetEditor n={n} u={u} />}
+        {!n.dataset && !n.column && n.paramDefs && api.addNodeParameter && <AddParameter n={n} u={u} />}
+        {n.outputs.map(p => <div key={p.id} data-port-row="out" style={{position: 'relative', color: SPEC.typed, minHeight: 18, display: 'flex', alignItems: 'center'}}>
+          <span>{p.name} · {typeName(p)}</span><span style={edgeSocket('out', '50%', 12)}>{socket(p, 'out')}</span></div>)}
+        {n.outputs.length > 0 && <div data-node-result="" data-todo="output-summary-expanded" style={{...SLOT, color: result ? SPEC.text : SPEC.label, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block'}} title={result}>{result ? '▸  ' + result : wiresIn.length || !n.inputs.length ? 'Run to inspect output' : 'Connect data to inspect output'}</div>}
+        <span data-node-status="" style={{...FOOT, color: stateColor}} title={n.error || state}>{state.split(' · ')[0]}</span>
+      </div>
+    </div>;
+  }
+  // DESIGNSYS-050 4.9 Inspector (plate archhub-inspector-changed-native.png): Properties of the one selected node; its Inputs and Output, editable.
+  function NodeInspector({n, s, u}) {
+    const sourceOf = port => { const w = s.graph.wires.find(x => x.to === n.id && x.toPort === port), a = w && s.graph.nodes.find(x => x.id === w.from); return a && a.title + ' · ' + (a.outputs.find(p => p.id === w.fromPort)?.name || w.fromPort); };
+    const params = (n.parameterSchema || []).filter(p => p.editable), [state] = nodeState(n, false), result = n.status === 'Done' ? summary(n.output) : '';
+    const cap = {fontSize: 12, color: SPEC.label, margin: '16px 0 6px'};
+    return <aside className="pane inspector" data-node-inspector={n.id} aria-label="Properties" style={{borderLeft: '1px solid ' + A.line, padding: 16, overflow: 'auto'}}>
+      <div className="muted" style={{fontSize: 12}}>Properties</div>
+      <h2 style={{margin: '4px 0 0', paddingLeft: 8, borderLeft: '2px solid ' + A.accent}}>{n.title}</h2>
+      <div style={{color: SPEC.label, fontSize: 12, marginTop: 2}}>{state} · {n.pure ? 'pure' : 'side effect'}{n.kind ? ' · ' + n.kind : ''}</div>
+      <div style={cap}>Inputs</div>
+      <div style={{display: 'grid', gap: 6}}>{n.inputs.filter(p => !params.some(q => q.key === p.id || 'param:' + q.key === p.id)).map(p => <div key={p.id} style={SLOT}>
+        <span style={{flex: 1, minWidth: 0}}><span style={{display: 'block', color: SPEC.label, fontSize: 11}}>{p.name} · {typeName(p)}</span>{sourceOf(p.id) || <span style={{color: SPEC.label}}>Not connected</span>}</span></div>)}
+        {params.map(p => <label key={p.key} style={SLOT}><span style={{flex: 1, minWidth: 0}}><span style={{display: 'block', color: SPEC.label, fontSize: 11}}>{p.label || p.key.replace(/_/g, ' ')}</span>
+          {n.params[p.key] === null ? <span style={{color: SPEC.label}}>unset</span> : <ValueWidget n={n} p={p} value={n.params[p.key]} u={u} />}</span></label>)}
+        {!n.inputs.length && !params.length && <span style={{color: SPEC.label}}>No inputs</span>}</div>
+      <div style={cap}>Output</div>
+      {n.outputs.map(p => <div key={p.id} style={{color: SPEC.typed}}>{p.name} · {typeName(p)}</div>)}
+      <div style={{color: result ? SPEC.text : SPEC.label, marginTop: 6, overflowWrap: 'anywhere'}}>{result || (n.outputs.length ? 'No output yet' : 'No output')}</div>
+    </aside>;
+  }
+  // CANVASXY: xyflow (React Flow 12, MIT, vendor/xyflow.js) owns pan, zoom, drag, marquee and wiring;
+  // the cards, sockets, wire colours and every file edit stay the Studio's own.
+  const RF = window.ReactFlow, CanvasContext = React.createContext(null);
+  // One node component driven by node data; the card grammar inside renderNode is the designer's to replace.
+  function FlowNode({id, data, selected}) {
+    const c = React.useContext(CanvasContext);
+    return <div data-graph-node={id}>{c.renderNode(data.n, selected)}</div>;
+  }
+  function FlowWire({id, sourceX, sourceY, targetX, targetY, data}) {
+    // xyflow anchors at the Handle's outer edge; the spec wire meets the socket centre (Handle is 22 px wide, see SOCKET_STYLE).
+    const d = curve({x: sourceX - 11, y: sourceY}, {x: targetX + 11, y: targetY});
+    return <>{data.selected && <path d={d} stroke={A.ink} strokeWidth="8" opacity=".22" fill="none" />}
+      <path data-graph-wire={id} data-wire-state={data.state} d={d} stroke={data.color} strokeWidth="2" strokeLinecap="round" opacity={data.opacity} fill="none" />
+      <path className="react-flow__edge-interaction" d={d} stroke="transparent" strokeWidth="16" fill="none" aria-label={'Inspect wire ' + id} />
+    </>;
+  }
+  const nodeTypes = {archhub: FlowNode}, edgeTypes = {archhub: FlowWire};
+  const SOCKET_STYLE = {position: 'relative', inset: 'auto', transform: 'none', display: 'inline-grid', placeItems: 'center', width: 22, height: 22,
+    minWidth: 0, minHeight: 0, background: 'transparent', border: 0, borderRadius: 0};
   function Canvas({
-    embedded = false, active = true
+    active = true
   }) {
     const s = useData(),
       u = useApp();
@@ -222,32 +372,25 @@
       [wireId, setWireId] = React.useState(null),
       [parent, setParent] = React.useState(null),
       [viewport, setViewport] = React.useState({zoom: Math.max(zoomMin, Math.min(zoomMax, (zoomRow?.value || 80) / 100)), pan: {x: 0, y: 0}}),
-      [draft, setDraft] = React.useState(null),
-      [marquee, setMarquee] = React.useState(null),
-      [from, setFrom] = React.useState(null),
-      [paths, setPaths] = React.useState([]),
       [rejected, setRejected] = React.useState(null),
       [layout, setLayout] = React.useState({scope: null, positions: {}}),
+      [flowNodes, setFlowNodes] = React.useState([]),
+      [more, setMore] = React.useState(false),
       [wireTab, setWireTab] = React.useState('Rules');
     const area = React.useRef(),
-      world = React.useRef(),
-      gesture = React.useRef(null),
       view = React.useRef(viewport),
-      space = React.useRef(false),
-      touches = React.useRef(new Map()),
+      held = React.useRef(null),
       zoomWrites = React.useRef(Promise.resolve()),
       pendingZoomWrites = React.useRef(0);
-    const fittedScope = React.useRef(null), clipId = 'canvas-wires-' + React.useId().replace(/[^a-zA-Z0-9-]/g, '');
+    const fittedScope = React.useRef(null);
     const {zoom, pan} = viewport;
     const [requestState, setRequestState] = React.useState('waiting');
     const [requestError, setRequestError] = React.useState('');
     const zoomSetting = zoomRow?.value;
     const appliedZoomSetting = React.useRef(zoomSetting);
     const zoomSaveDelay = Number(s.canvasPolicy?.viewport_commit_debounce_ms ?? 140);
-    const rejectedHold = Number(s.canvasPolicy?.rejected_wire_ms ?? A.dur.slow * 10);
     const updateView = next => { view.current = next; setViewport(next); api.setSessionViewport?.({x:next.pan.x,y:next.pan.y,zoom:next.zoom}); };
     React.useEffect(()=>{const saved=s.graph.viewport;if(saved){const next={zoom:saved.zoom,pan:{x:saved.x,y:saved.y}};view.current=next;setViewport(next);}},[s.graph.scopeKey]);
-    const setPan = next => updateView({...view.current, pan: typeof next === 'function' ? next(view.current.pan) : next});
     const zoomAt = (value, client = null) => {
       const bounds = area.current?.getBoundingClientRect();
       if (!bounds) return;
@@ -296,14 +439,15 @@
     const scope = s.graph.id + ':' + (parent || ''), sourceNodes = s.graph.nodes.filter(atLevel);
     const visible = sourceNodes.map(n => ({...n, ...(layout.scope === scope ? layout.positions[n.id] : {})})),
       node = s.graph.nodes.find(n => n.id === selected.at(-1)),
-      wire = s.graph.wires.find(w => w.id === wireId);
+      wire = s.graph.wires.find(w => w.id === wireId),
+      inspected = !wire && selected.length === 1 && s.graph.nodes.find(n => n.id === selected[0]);
     React.useLayoutEffect(() => {
       if (!active) return;
       const place = event => {
-        if (!area.current || !world.current || !['loaded','empty'].includes(requestState)) return;
+        if (!area.current || !['loaded','empty'].includes(requestState)) return;
         const {zoom:z,pan:p} = view.current, rect = area.current.getBoundingClientRect(),
           left = (8-p.x)/z, top = (8-p.y)/z, right = (rect.width-8-p.x)/z, bottom = (rect.height-8-p.y)/z;
-        const boxes = [...world.current.querySelectorAll('[data-graph-node]')].map(el => {
+        const boxes = [...area.current.querySelectorAll('[data-graph-node]')].map(el => {
           const r = el.getBoundingClientRect();
           return {id:el.dataset.graphNode,x:(r.left-rect.left-p.x)/z,y:(r.top-rect.top-p.y)/z,w:r.width/z,h:r.height/z};
         });
@@ -338,7 +482,7 @@
       return () => window.removeEventListener('archhub:canvas-insertion',place);
     }, [active, requestState, selected, scope, parent, s.graph.nodes]);
     React.useLayoutEffect(() => {
-      if (!active || requestState !== 'loaded' || !world.current) return;
+      if (!active || requestState !== 'loaded' || !area.current) return;
       const positions = {}, points = new Map(), prior = layout.scope === scope ? layout.positions : {},
         minX = Math.min(...sourceNodes.map(n => n.x), 0), rowWidth = Math.max(760, Math.ceil(Math.sqrt(sourceNodes.length)) * 310);
       for (const n of sourceNodes) {
@@ -346,7 +490,7 @@
       }
       const boxes = sourceNodes.map(n => {
         const previous = prior[n.id], unchanged = previous?.sourceX === n.x && previous?.sourceY === n.y,
-          el = world.current.querySelector('[data-graph-node="' + n.id + '"]');
+          el = area.current.querySelector('[data-graph-node="' + n.id + '"]');
         return {id:n.id,x:unchanged ? previous.x : n.x,y:unchanged ? previous.y : n.y,sourceX:n.x,sourceY:n.y,
           w:(el?.offsetWidth || el?.getBoundingClientRect().width / view.current.zoom || 224) + (isGroup(n) ? 10 : 0),
           h:(el?.offsetHeight || el?.getBoundingClientRect().height / view.current.zoom || 160) + (isGroup(n) ? 10 : 0),
@@ -367,15 +511,18 @@
       setLayout(old => old.scope === scope && JSON.stringify(old.positions) === JSON.stringify(positions) ? old : {scope,positions});
     }, [requestState, scope, s.graph.nodes, active]);
     React.useEffect(() => {
-      if (!active) { space.current=false; gesture.current=null; touches.current.clear(); return; }
+      if (!active) return;
       const listener = e => {
         if (e.target.closest?.('input,textarea,select,[contenteditable="true"],[role="textbox"]')) return;
         if (area.current?.contains(e.target)) {
-          if (e.key === ' ') { e.preventDefault(); space.current = true; }
           if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomAt(view.current.zoom * 1.2); }
           if (e.key === '-') { e.preventDefault(); zoomAt(view.current.zoom / 1.2); }
           if (e.key === '0') { e.preventDefault(); e.ctrlKey ? fit() : zoomAt(1); }
           if (e.shiftKey && (e.code === 'Digit1' || e.key === '1')) { e.preventDefault(); fit(); }
+        }
+        if (e.ctrlKey && e.key.toLowerCase() === 's') {
+          e.preventDefault();
+          u.act(() => api.saveSession());
         }
         if (e.ctrlKey && e.key.toLowerCase() === 'g') {
           e.preventDefault();
@@ -387,7 +534,7 @@
         }
         if (e.key === 'Enter' && node && isGroup(node)) openNode(node);
         if (e.key === 'Escape') {
-          setFrom(null);
+          setRejected(null);
           setSelected([]);
           setWireId(null);
           if (parent) setParent(null);
@@ -398,21 +545,36 @@
         }
       };
       window.addEventListener('keydown', listener);
-      const releaseSpace = () => { space.current = false; };
-      const keyup = e => { if (e.key === ' ') releaseSpace(); };
-      window.addEventListener('keyup', keyup);
-      window.addEventListener('blur', releaseSpace);
-      return () => {
-        window.removeEventListener('keydown', listener);
-        window.removeEventListener('keyup', keyup);
-        window.removeEventListener('blur', releaseSpace);
-      };
+      return () => window.removeEventListener('keydown', listener);
     });
-    React.useLayoutEffect(() => {
-      if (!active) return;
-      setPaths(measureWires(world.current,rejected ? [...s.graph.wires,{id:'rejected',rejected:true,from:rejected.from.id,fromPort:rejected.from.port,to:rejected.to.id,toPort:rejected.to.port}] : s.graph.wires,zoom));
-    }, [s.graph, parent, draft, requestState, layout, active, rejected]);
     React.useEffect(() => u.setSelectedNodeId(selected.at(-1) || null), [selected.join(',')]);
+    // The file is the source; xyflow keeps only what it measured (sizes) and an in-flight drag.
+    React.useEffect(() => {
+      setFlowNodes(old => {
+        const prior = new Map(old.map(f => [f.id, f]));
+        return visible.map(n => {
+          const f = prior.get(n.id);
+          // ComfyUI/Grasshopper: a card moves by its title bar; its fields and buttons keep the pointer.
+          return {id: n.id, type: 'archhub', data: {n}, dragHandle: '.node-header', selected: selected.includes(n.id), measured: f?.measured, dragging: f?.dragging,
+            position: f?.dragging ? f.position : held.current?.[n.id] || {x: n.x, y: n.y}};
+        });
+      });
+    }, [s.graph, layout, parent, selected.join(','), requestState]);
+    const onNodesChange = changes => {
+      setFlowNodes(nodes => RF.applyNodeChanges(changes.filter(c => c.type !== 'remove'), nodes));
+      const picks = changes.filter(c => c.type === 'select');
+      if (picks.length) setSelected(old => {
+        const next = new Set(old);
+        for (const c of picks) c.selected ? next.add(c.id) : next.delete(c.id);
+        const ids = [...next];
+        return ids.join(',') === old.join(',') ? old : ids;
+      });
+    };
+    const onNodeDragStop = (event, dragged, all) => {
+      const positions = Object.fromEntries((all?.length ? all : [dragged]).map(f => [f.id, {x: f.position.x, y: f.position.y}]));
+      held.current = positions;
+      Promise.resolve(u.act(() => api.moveNodes(positions))).finally(() => { if (held.current === positions) held.current = null; });
+    };
     const group = async () => {
       const g = await u.act(() => api.groupNodes(selected));
       if (g) setSelected([g.id]);
@@ -421,24 +583,19 @@
       for (const id of selected) await api.deleteNode(id);
       setSelected([]);
     });
-    const connect = async (a, b) => {
-      if (a.side === b.side || a.id === b.id) {
-        setFrom(null);
-        return;
-      }
-      const out = a.side === 'out' ? a : b,
-        input = a.side === 'in' ? a : b;
+    const connect = async (out, input) => {
+      const word = p => (TYPE_NAME[p.type] || p.type || 'any').toLowerCase();
+      if (out.id === input.id) return;
       const outputPort = s.graph.nodes.find(n=>n.id===out.id)?.outputs.find(p=>p.id===out.port),
         inputPort = s.graph.nodes.find(n=>n.id===input.id)?.inputs.find(p=>p.id===input.port);
-      if (!outputPort || !inputPort || outputPort.connectable === false || inputPort.connectable === false || outputPort.read_only || inputPort.read_only) { setFrom(null); return; }
+      if (!outputPort || !inputPort || outputPort.connectable === false || inputPort.connectable === false || outputPort.read_only || inputPort.read_only) return;
       if (outputPort.type !== inputPort.type && outputPort.type !== 'any' && inputPort.type !== 'any') {
-        // xyflow isValidConnection pattern: an invalid drop draws the rejected wire, commits nothing, then clears.
-        setRejected({from:out, to:input}); window.setTimeout(()=>setRejected(null), rejectedHold);
-        u.show('Type mismatch', {text:outputPort.type+' cannot connect to '+inputPort.type}); setFrom(null); return;
+        // Spec d9c0d514: an invalid drop draws the wire red at the drop and offers the converter on the target socket; no modal, nothing written.
+        setRejected({from:out, to:input, outType:word(outputPort), inType:word(inputPort)}); return;
       }
       const choices = outputPort.connect_choices;
       if (Array.isArray(choices) && !choices.some(p=>p.id===input.id && p.interface===input.port)) {
-        u.show('Type mismatch', {text:'These sockets do not share an admitted contract.'}); setFrom(null); return;
+        setRejected({from:out, to:input, outType:word(outputPort), inType:word(inputPort), reason:'These sockets do not share an admitted contract.'}); return;
       }
       const result = await u.act(() => api.connectSockets({
         from: out.id,
@@ -446,168 +603,58 @@
         fromPort: out.port,
         toPort: input.port
       }));
-      if (result && !result.ok) u.show('Type mismatch', result);
-      setFrom(null);
+      // A refusal from the owner lands in the same inline state as a client-side type check: red wire, converter on the socket.
+      if (result && !result.ok) setRejected({from:out, to:input, outType:word(outputPort), inType:word(inputPort), reason:result.error || result.reason || ''});
     };
-    const socket = (n, p, side) => {
-      const endpoint = {
-        id: n.id,
-        side,
-        port: p.id
-      };
-      const arm = () => {
-        if (p.connectable === false || p.read_only) return;
-        if (from) connect(from, endpoint);else setFrom(endpoint);
-      };
-      return <span data-port-key={`${n.id}:${side}:${p.id}`} data-endpoint={JSON.stringify(endpoint)} className="socket" data-port-type={p.type} data-port-list={p.list || undefined} title={`${p.name} · ${p.type}${p.list ? " list" : ""}${p.unit ? " · "+p.unit : ""}`} onContextMenu={e => {
-        e.preventDefault();
-        e.stopPropagation();
-        u.show('Port menu', {
-          id: n.id,
-          port: p.id,
-          anchor: {
-            x: e.clientX,
-            y: e.clientY
-          }
-        });
-      }} role="button" tabIndex={0} aria-disabled={p.connectable === false || p.read_only || undefined} aria-label={`${n.title} ${side} ${p.name}`} aria-pressed={from?.id === n.id && from?.side === side && from?.port === p.id} style={{
-        display: 'inline-grid',
-        placeItems: 'center',
-        width: 22,
-        height: 22
-      }} onPointerDown={e => {
-        e.stopPropagation();
-        if (p.connectable === false || p.read_only) return;
-        gesture.current = {
-          kind: 'wire',
-          sx: e.clientX,
-          sy: e.clientY,
-          start: endpoint
-        };
-        e.currentTarget.setPointerCapture(e.pointerId);
-      }} onPointerUp={e => {
-        e.stopPropagation();
-        if (gesture.current?.kind === 'wire') {
-          const end = document.elementsFromPoint(e.clientX, e.clientY).map(x => x.closest('[data-endpoint]')).find(x => x && x.dataset.endpoint !== JSON.stringify(endpoint));
-          if (end) connect(endpoint, JSON.parse(end.dataset.endpoint));else if (Math.hypot(e.clientX - gesture.current.sx, e.clientY - gesture.current.sy) > 25) {
-            const bounds = area.current.getBoundingClientRect();
-            u.show('Compatible nodes', {
-              endpoint,
-              position: {
-                x: (e.clientX - bounds.left - pan.x) / zoom,
-                y: (e.clientY - bounds.top - pan.y) / zoom
-              }
-            });
-          } else arm();
-          gesture.current = null;
-        }
-      }} onClick={e => {
-        e.stopPropagation();
-        if (e.detail === 0) arm();
-      }} onKeyDown={e => {
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          e.stopPropagation();
-          setFrom(null);
-          return;
-        }
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          e.stopPropagation();
-          arm();
-        }
-      }}><span data-socket-dot="" data-wired={side === 'out' || s.graph.wires.some(w => w.to === n.id && w.toPort === p.id) || undefined} /></span>;
-    };
-    const startNode = (e, n) => {
-      if (e.button !== 0 || e.target.closest?.('button,input,textarea,select,[contenteditable="true"],[data-endpoint]')) return;
-      e.stopPropagation();
-      setWireId(null);
-      if (e.ctrlKey) { setSelected(selected.filter(id=>id!==n.id)); return; }
-      const moving = e.shiftKey ? [...new Set([...selected, n.id])] : selected.includes(n.id) ? selected : [n.id];
-      setSelected(moving);
-      gesture.current = {
-        nodes: visible.filter(x => moving.includes(x.id)).map(x => ({
-          id: x.id,
-          x: x.x,
-          y: x.y
-        })),
-        kind: 'node',
-        id: n.id,
-        sx: e.clientX,
-        sy: e.clientY,
-        x: n.x,
-        y: n.y
-      };
-      e.currentTarget.setPointerCapture(e.pointerId);
-    };
-    const move = e => {
-      if (e.pointerType === 'touch' && touches.current.has(e.pointerId)) {
-        touches.current.set(e.pointerId, {x: e.clientX, y: e.clientY});
-        if (touches.current.size === 2 && gesture.current?.kind === 'pinch') {
-          const [a,b] = [...touches.current.values()], g = gesture.current,
-            midpoint = {x: (a.x+b.x)/2, y: (a.y+b.y)/2}, distance = Math.hypot(a.x-b.x,a.y-b.y);
-          zoomAt(view.current.zoom * distance / g.distance, g.midpoint);
-          setPan(p => ({x: p.x + midpoint.x - g.midpoint.x, y: p.y + midpoint.y - g.midpoint.y}));
-          g.distance = Math.max(1, distance); g.midpoint = midpoint;
-          return;
-        }
-      }
-      const g = gesture.current;
-      if (g?.kind === 'node') {
-        if (!g.dragging && Math.hypot(e.clientX - g.sx, e.clientY - g.sy) < 4) return;
-        g.dragging = true;
-        const dx = (e.clientX - g.sx) / zoom,
-          dy = (e.clientY - g.sy) / zoom;
-        g.draft = {
-          id: g.id,
-          x: g.x + dx,
-          y: g.y + dy,
-          positions: Object.fromEntries(g.nodes.map(n => [n.id, {
-            x: n.x + dx,
-            y: n.y + dy
-          }]))
-        };
-        setDraft(g.draft);
-      }
-      if (g?.kind === 'marquee') {
-        g.box = {
-          left: Math.min(g.sx, e.clientX),
-          top: Math.min(g.sy, e.clientY),
-          right: Math.max(g.sx, e.clientX),
-          bottom: Math.max(g.sy, e.clientY)
-        };
-        setMarquee(g.box);
-      }
-      if (g?.kind === 'pan') setPan({
-        x: g.x + e.clientX - g.sx,
-        y: g.y + e.clientY - g.sy
+    const insertConverter = async () => {
+      const r = rejected, a = r && s.graph.nodes.find(n => n.id === r.from.id), b = r && s.graph.nodes.find(n => n.id === r.to.id);
+      if (!a || !b) return;
+      setRejected(null);
+      await u.act(async () => {
+        const c = await api.addNode('data.convert', {x: (a.x + b.x) / 2, y: Math.max(a.y, b.y) + 160});
+        await api.setNodeParam(c.id, 'target_type', r.inType === 'number' ? 'number' : 'text');
+        await api.connectSockets({from: r.from.id, fromPort: r.from.port, to: c.id, toPort: 'in'});
+        return api.connectSockets({from: c.id, fromPort: 'out', to: r.to.id, toPort: r.to.port});
       });
     };
-    const end = e => {
-      if (e?.pointerType === 'touch') touches.current.delete(e.pointerId);
-      const g = gesture.current;
-      if (!g) return;
-      if (g?.kind === 'node' && g.dragging && g.draft) {
-        Promise.resolve(u.act(() => api.moveNodes(g.draft.positions))).finally(()=>setDraft(held=>held===g.draft ? null : held));
-      } else setDraft(null);
-      if (g?.kind === 'marquee') {
-        const box = g.box, inside = box ? visible.filter(n => {
-          const r = world.current.querySelector('[data-graph-node="' + n.id + '"]')?.getBoundingClientRect();
-          return r && r.right >= box.left && r.left <= box.right && r.bottom >= box.top && r.top <= box.bottom;
-        }).map(n => n.id) : [];
-        setSelected(g.remove ? g.selected.filter(id=>!inside.includes(id)) : g.add ? [...new Set([...g.selected,...inside])] : inside);
-      }
-      gesture.current = null;
-      setMarquee(null);
+    const toFlow = e => {
+      const r = area.current.getBoundingClientRect(), point = e.changedTouches?.[0] || e;
+      return {x: (point.clientX - r.left - view.current.pan.x) / view.current.zoom, y: (point.clientY - r.top - view.current.pan.y) / view.current.zoom};
     };
+    const socket = (n, p, side) => {
+      const locked = p.connectable === false || p.read_only;
+      return <RF.Handle type={side === 'out' ? 'source' : 'target'} position={side === 'out' ? RF.Position.Right : RF.Position.Left} id={p.id} isConnectable={!locked}
+        data-port-key={`${n.id}:${side}:${p.id}`} className="socket" data-port-type={p.type} data-port-list={p.list || undefined}
+        title={`${p.name} · ${p.type}${p.list ? " list" : ""}${p.unit ? " · "+p.unit : ""}`} aria-disabled={locked || undefined} aria-label={`${n.title} ${side} ${p.name}`}
+        style={SOCKET_STYLE} onContextMenu={e => {
+          e.preventDefault();
+          e.stopPropagation();
+          u.show('Port menu', {id: n.id, port: p.id, anchor: {x: e.clientX, y: e.clientY}});
+        }}><span data-socket-dot="" data-wired={side === 'out' || s.graph.wires.some(w => w.to === n.id && w.toPort === p.id) || undefined} /></RF.Handle>;
+    };
+    const renderNode = (n, isSelected) => {
+      const members = (n.children || []).map(id => s.graph.nodes.find(x => x.id === id) || n.members?.find(m => m.id === id)).filter(Boolean);
+      return <FlowCard n={n} s={s} u={u} selected={isSelected} refusal={rejected?.to.id === n.id ? rejected : null} onConvert={insertConverter} members={members} socket={(p, side = 'in') => socket(n, p, side)}
+        onMember={m=>{if (s.graph.nodes.some(row => row.id === m.id)) {setParent(n.id);setSelected([m.id]);} else {setParent(null);u.act(async()=>{await api.selectGraph(n.id);setSelected([m.id]);});}}}
+        menu={<button className="button-reset canvas-node-menu nodrag" aria-label={n.title+' menu'} title={n.title+' actions'} onClick={event=>executeAction('projects.ds_screens.NodeMenu.16',{n,openNode,setSelected,u},event)}>⋯</button>} />;
+    };
+    const stale = (s.solveStale || []).filter(id => s.graph.nodes.some(n => n.id === id)).length;
+    const shownIds = new Set(visible.map(n => n.id));
+    const edges = (rejected ? [...s.graph.wires,{id:'rejected',rejected:true,from:rejected.from.id,fromPort:rejected.from.port,to:rejected.to.id,toPort:rejected.to.port}] : s.graph.wires)
+      .filter(w => shownIds.has(w.from) && shownIds.has(w.to)).map(w => {
+        const color = w.rejected ? A.err : wireColor(w, s.graph.nodes), shown = s.graph.wireVisibility, portVisibility = s.graph.nodes.find(n=>n.id===w.from)?.portVisibility?.[w.fromPort];
+        return {id: w.id, type: 'archhub', source: w.from, target: w.to, sourceHandle: w.fromPort, targetHandle: w.toPort, selectable: false, focusable: false,
+          data: {color, state: w.rejected ? 'rejected' : color === A.warn ? 'affected' : 'compatible', selected: wireId === w.id && shown !== 'Hidden',
+            opacity: w.rejected ? 1 : shown==='Hidden'||portVisibility==='Hidden' ? 0 : shown==='Faint'||portVisibility==='Faint' ? .2 : .9}};
+      });
     const fit = () => {
       if (!visible.length || !area.current) return;
       const w = area.current.clientWidth, h = area.current.clientHeight;
-      const boxes = [...world.current.querySelectorAll('[data-graph-node]')].map(el => {
+      const boxes = [...area.current.querySelectorAll('[data-graph-node]')].map(el => {
         const n = visible.find(n => n.id === el.dataset.graphNode);
-        return {x: n.x, y: n.y, w: n.w || el.offsetWidth || el.getBoundingClientRect().width / view.current.zoom || 224,
+        return n && {x: n.x, y: n.y, w: n.w || el.offsetWidth || el.getBoundingClientRect().width / view.current.zoom || 224,
           h: n.h || el.offsetHeight || el.getBoundingClientRect().height / view.current.zoom || 160};
-      });
+      }).filter(Boolean);
       if (!boxes.length) return;
       const minX = Math.min(...boxes.map(b => b.x)), minY = Math.min(...boxes.map(b => b.y)),
         width = Math.max(...boxes.map(b => b.x+b.w)) - minX,
@@ -620,32 +667,6 @@
       fittedScope.current = scope+':'+u.libraryOpen;
       fit();
     }, [requestState, scope, layout, u.libraryOpen, active]);
-    React.useEffect(() => {
-      if (!active) return;
-      const el = area.current;
-      if (!el) return;
-      const wheel = e => {
-        if (e.target.closest?.('input,textarea,select,[contenteditable="true"]')) return;
-        e.preventDefault();
-        const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? el.clientHeight : 1,
-          dx = e.deltaX * unit, dy = e.deltaY * unit;
-        // shortcut: Chromium pinch is Ctrl+pixel-wheel without a held Ctrl key; track physical keys separately.
-        const pinch = e.ctrlKey && !physicalCtrl.current && e.deltaMode === 0;
-        if ((e.ctrlKey || e.shiftKey) && !pinch) setPan(p => ({x:p.x-dx,y:p.y-dy}));
-        else zoomAt(view.current.zoom * Math.exp(-dy * .002), {x:e.clientX,y:e.clientY});
-      };
-      el.addEventListener('wheel', wheel, {passive:false});
-      return () => el.removeEventListener('wheel', wheel);
-    }, [requestState, active]);
-    const physicalCtrl = React.useRef(false);
-    React.useEffect(() => {
-      if (!active) { physicalCtrl.current=false; return; }
-      const down = e => { if (e.key === 'Control') physicalCtrl.current = true; },
-        up = e => { if (e.key === 'Control') physicalCtrl.current = false; },
-        blur = () => { physicalCtrl.current = false; };
-      window.addEventListener('keydown', down); window.addEventListener('keyup', up); window.addEventListener('blur', blur);
-      return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); window.removeEventListener('blur', blur); };
-    }, [active]);
     const openNode = n => {
       if (n.kind.toLowerCase().includes('meeting')) u.go('meetings');else if (n.kind === 'Watch program') u.act(() => api.windowAction('hide'));else if (n.kind === 'Present') u.go('present');else if (['Community', 'Community group', 'Marketplace listing', 'Project charge'].includes(n.kind)) u.go('community');else if (n.kind === 'Interface studio' || n.kind === 'UI element') u.go('interface');else if (n.kind.startsWith('TBP ')) u.go('model-review');else if (n.kind === 'Theme') u.go('settings/Appearance');else if (n.kind === 'Workflow link') {
         if (n.params.targetGraph) u.act(() => api.selectGraph(n.params.targetGraph));else u.show('Workflows');
@@ -675,70 +696,39 @@
       '--canvas-accent': A.accent,
       '--canvas-accent-dim': A.accentDim
     }}>
-  <div data-canvas-overlay="" className="spread" style={{
+  {/* Spec d9c0d514 top bar: name · Unsaved, + Add node, ⋯, Run. Everything else lives in ⋯; saving is autosave plus Ctrl+S. */}
+  <div data-canvas-overlay="" data-canvas-topbar="" className="spread" style={{
         position:'absolute',top:12,left:u.libraryOpen ? 264 : 16,right:16,zIndex:12,
         padding: '6px 12px',borderRadius:6,border:'1px solid '+A.lineSoft,
-        background: A.bgPanel
-      }}><div className="flex"><button className="button-reset muted" onClick={event => executeAction("projects.ds_screens.NavigateHome.5", {u}, event)}>{s.graph.name} ›</button>{parent ? <Btn variant="controls" sm ghost onClick={event => executeAction("projects.ds_screens.Parent.6", {parent,s,setParent,setSelected}, event)}>← Parent</Btn> : <button className="button-reset flex" title="Workflows" aria-label="Workflows" onClick={event => executeAction("projects.ds_screens.Graphs.7", {u}, event)}>{s.graph.name}<window.AHIcon name="more" size={16} /></button>}<Chip>{visible.length} nodes</Chip>{/^(Solved|Updated by)/.test(s.sync||'') && <Chip data-solve-status>{s.sync}</Chip>}<Btn variant="controls" sm ghost onClick={event => executeAction("projects.ds_screens.Workspaces.8", {u}, event)}>Workspaces · {s.workspaces.length}</Btn></div><div className="flex"><Btn variant="controls" sm onClick={event=>executeAction("projects.controls.activate",{handler:()=>u.act(()=>api.newSession())},event)}>New</Btn><Btn variant="controls" sm onClick={event=>executeAction("projects.controls.activate",{handler:()=>u.act(()=>api.openSession())},event)}>Open</Btn><Btn variant="controls" sm onClick={event=>executeAction("projects.controls.activate",{handler:()=>u.act(()=>api.saveSession())},event)}>Save</Btn><Btn variant="controls" sm onClick={event=>executeAction("projects.controls.activate",{handler:()=>u.act(()=>api.saveSessionAs())},event)}>Save as…</Btn><button className="icon-button" aria-label="Toggle Library" title="Library" aria-expanded={u.libraryOpen} onClick={event => executeAction("projects.ds_screens.ToggleLibrary.9", {u}, event)}><window.AHIcon name="library" /></button><select aria-label="Wire visibility" value={s.graph.wireVisibility || 'Visible'} onChange={e => u.act(() => api.setWireVisibility(e.target.value))}>{['Visible', 'Faint', 'Hidden'].map(x => <option key={x}>{x}</option>)}</select><Btn variant="controls" sm title="Group · Ctrl G" onClick={event => executeAction("projects.ds_screens.Group.10", {group}, event)} disabled={selected.length < 2}>Group</Btn><Btn variant="controls" sm onClick={event => executeAction("projects.ds_screens.Undo.11", {api,u}, event)} title="Undo · Ctrl Z">↶</Btn><Btn variant="controls" sm onClick={event => executeAction("projects.ds_screens.Redo.12", {api,u}, event)} title="Redo · Ctrl Shift Z">↷</Btn><Btn variant="controls" sm onClick={event => executeAction("projects.ds_screens.Arrange.13", {api,u}, event)}>Arrange</Btn><Btn variant="controls" sm onClick={event => executeAction("projects.ds_screens.SaveSkill.14", {u}, event)}>Save skill</Btn><Btn variant="controls" p sm onClick={event => executeAction("projects.ds_screens.Run.15", {api,u}, event)}>▶ Run</Btn></div></div>
+        background: A.bgPanel, fontSize: 13
+      }}><div className="flex"><button className="button-reset" title="Workflows" aria-label="Workflows" onClick={event => executeAction("projects.ds_screens.Graphs.7", {u}, event)}>{s.graph.name} · {s.sessionDirty === false ? 'Saved' : 'Unsaved'}</button>
+        {parent && <Btn variant="controls" sm ghost onClick={event => executeAction("projects.ds_screens.Parent.6", {parent,s,setParent,setSelected}, event)}>← Parent</Btn>}
+        {stale > 0 && <span data-solve-status="" style={{color: A.warn}}>{stale} out of date · Run</span>}</div>
+      <div className="flex" style={{position:'relative'}}> <Btn variant="controls" sm ghost aria-label="More canvas actions" aria-expanded={more} onClick={event => executeAction('projects.controls.activate', {handler: () => setMore(!more)}, event)}>⋯</Btn>
+        <Btn variant="controls" p sm onClick={event => executeAction("projects.ds_screens.Run.15", {api,u}, event)}>▶ Run</Btn>
+        {more && <div role="menu" aria-label="Canvas actions" data-canvas-more="" onKeyDown={e => { if (e.key === 'Escape') setMore(false); }} style={{position:'absolute',right:0,top:'calc(100% + 6px)',display:'grid',minWidth:200,padding:6,gap:2,
+          background:A.bgPanel,border:'1px solid '+A.lineSoft,borderRadius:6,zIndex:20}}>{[
+            ['Add node · Ctrl K', () => executeAction("projects.ds_screens.AddANodeCtrlK.24", {u})], ['New', () => u.act(() => api.newSession())], ['Open…', () => u.act(() => api.openSession())], ['Save · Ctrl S', () => u.act(() => api.saveSession())],
+            ['Save as…', () => u.act(() => api.saveSessionAs())], ['Save as skill…', () => u.show('Save skill')], ['Workspaces · ' + s.workspaces.length, () => u.show('Workspaces')],
+            [(u.libraryOpen ? 'Hide' : 'Show') + ' Library', () => u.setLibraryOpen(v => !v)], ['Group · Ctrl G', group, selected.length < 2],
+            ['Undo · Ctrl Z', () => u.act(api.undo)], ['Redo · Ctrl Shift Z', () => u.act(api.redo)], ['Arrange', () => u.act(api.arrangeGraph)],
+            ['Wires: ' + (s.graph.wireVisibility || 'Visible') + ' → ' + ({Visible: 'Faint', Faint: 'Hidden', Hidden: 'Visible'})[s.graph.wireVisibility || 'Visible'],
+              () => u.act(() => api.setWireVisibility(({Visible: 'Faint', Faint: 'Hidden', Hidden: 'Visible'})[s.graph.wireVisibility || 'Visible']))],
+          ].map(([label, run, disabled]) => <button key={label} role="menuitem" type="button" className="button-reset listbutton" disabled={disabled} style={{textAlign:'left',padding:'6px 8px'}}
+            onClick={event => executeAction('projects.controls.activate', {handler: () => { setMore(false); return run(); }}, event)}>{label}</button>)}</div>}</div></div>
   <div style={{
         display: 'grid',
-        gridTemplateColumns: (u.libraryOpen ? '248px ' : '') + 'minmax(0,1fr)' + (wire ? ' 320px' : ''),
+        gridTemplateColumns: (u.libraryOpen ? '248px ' : '') + 'minmax(0,1fr)' + (wire || inspected ? ' ' + LAYOUT.inspectorWidth + 'px' : ''),
         minHeight: 0
       }}>{u.libraryOpen && <window.UI.LibraryShelf onClose={() => u.setLibraryOpen(false)} />}
-   <div ref={area} className="node-canvas" tabIndex={0} aria-label="Workflow canvas" style={{touchAction:'none',userSelect:'none'}} title="Drag to select · Shift adds · Ctrl removes · Middle or Space-drag to pan · Wheel to zoom · Double-click to fit" onPointerDownCapture={e => {
-          if (e.target.closest?.('input,textarea,select,[contenteditable="true"]')) return;
-          area.current.focus({preventScroll:true});
-          if (e.pointerType === 'touch') {
-            touches.current.set(e.pointerId, {x:e.clientX,y:e.clientY});
-            if (touches.current.size === 2) {
-              const [a,b] = [...touches.current.values()];
-              gesture.current = {kind:'pinch',distance:Math.max(1,Math.hypot(a.x-b.x,a.y-b.y)),midpoint:{x:(a.x+b.x)/2,y:(a.y+b.y)/2}};
-              setDraft(null);
-              e.currentTarget.setPointerCapture(e.pointerId); e.stopPropagation(); e.preventDefault(); return;
-            }
-          }
-          if (e.button === 1 || (e.button === 0 && space.current)) {
-            e.preventDefault(); e.stopPropagation();
-            gesture.current = {kind:'pan',sx:e.clientX,sy:e.clientY,x:view.current.pan.x,y:view.current.pan.y};
-            e.currentTarget.setPointerCapture(e.pointerId);
-          }
-        }} onPointerUpCapture={e => {
-          if (e.pointerType === 'touch') {
-            touches.current.delete(e.pointerId);
-            if (gesture.current?.kind === 'pinch') gesture.current = null;
-          }
-        }} onDoubleClick={e => {
-          if (e.target === e.currentTarget || e.target === world.current) fit();
-        }} onAuxClick={e => { if (e.button === 1) e.preventDefault(); }} onPointerDown={e => {
-          if (e.button !== 0 || touches.current.size > 1) return;
-          if (e.target === e.currentTarget || e.target === world.current) {
-            setWireId(null);
-            gesture.current = {
-              kind: 'marquee',
-              selected, add:e.shiftKey, remove:e.ctrlKey,
-              sx: e.clientX,
-              sy: e.clientY,
-              x: pan.x,
-              y: pan.y
-            };
-            e.currentTarget.setPointerCapture(e.pointerId);
-          }
-        }} onPointerMove={move} onPointerUp={end} onPointerCancel={() => {
-          touches.current.clear();
-          gesture.current = null;
-          setDraft(null);
-          setMarquee(null);
-        }} onDragOver={e => e.preventDefault()} onDrop={e => {
+   <div ref={area} className={'node-canvas' + (visible.some(n => n.status === 'Running') ? ' running-wires' : '')} tabIndex={0} aria-label="Workflow canvas" style={{position:'relative',minHeight:0,'--xy-selection-background-color':A.accent+'16','--xy-selection-border':'1px solid '+A.accent,'--xy-background-color':'transparent'}}
+        title="Drag to select · Shift adds · Middle or Space-drag to pan · Wheel to zoom · Double-click to fit"
+        onDoubleClick={e => { if (e.target.classList?.contains('react-flow__pane')) fit(); }}
+        onDragOver={e => e.preventDefault()} onDrop={e => {
           e.preventDefault();
           if(e.dataTransfer.files?.length){u.act(()=>api.importSession(e.dataTransfer.files[0]));return;}
           const name = e.dataTransfer.getData('node');
-          if (name) {
-            const r = area.current.getBoundingClientRect();
-            u.act(() => api.addNode(name, {
-              x: (e.clientX - r.left - pan.x) / zoom,
-              y: (e.clientY - r.top - pan.y) / zoom
-            }));
-          }
+          if (name) u.act(() => api.addNode(name, toFlow(e)));
         }} onContextMenu={e => {
           e.preventDefault();
           u.show('Canvas menu', {
@@ -747,65 +737,40 @@
             remove
           });
         }}>
-    {marquee && <div aria-label="Selection marquee" style={{
-            position: 'absolute',
-            pointerEvents: 'none',
-            zIndex: 8,
-            border: '1px solid ' + A.accent,
-            background: A.accent + '16',
-            left: marquee.left - (area.current?.getBoundingClientRect().left || 0),
-            top: marquee.top - (area.current?.getBoundingClientRect().top || 0),
-            width: marquee.right - marquee.left,
-            height: marquee.bottom - marquee.top
-          }} />}<div ref={world} style={{
-            position: 'absolute',
-            width: 2000,
-            height: 1600,
-            transform: `translate(${pan.x}px,${pan.y}px) scale(${zoom})`,
-            transformOrigin: '0 0'
-          }}>
-     <svg className={visible.some(n => n.status === 'Running') ? 'running-wires' : ''} width="2000" height="1600" style={{
-              position: 'absolute',
-              inset: 0,
-              overflow: 'visible',
-              pointerEvents: 'none'
-            }}><defs><clipPath id={clipId} clipPathUnits="userSpaceOnUse"><path clipRule="evenodd" d={'M-100000 -100000H100000V100000H-100000Z '+visible.map(n=>{
-              const p=draft?.positions?.[n.id] || n, b=layout.positions[n.id];
-              return `M${p.x+6} ${p.y+6}h${(b?.w || 224)-12}v${(b?.h || 160)-12}h-${(b?.w || 224)-12}Z`;
-            }).join(' ')} /></clipPath></defs><g clipPath={`url(#${clipId})`}><GraphWires spec paths={paths} selectedId={wireId} onSelect={id=>{if(id!=='rejected'){setWireId(id);setSelected([]);}}} visibility={s.graph.wireVisibility} nodes={s.graph.nodes} /></g></svg>
-     {visible.map(n => {
-       const position = draft?.positions?.[n.id] || (draft?.id === n.id ? draft : n),
-         members = (n.children || []).map(id => s.graph.nodes.find(x => x.id === id) || n.members?.find(m => m.id === id)).filter(Boolean);
-       return <div key={n.id} data-graph-node={n.id} onPointerDown={e=>startNode(e,n)} style={{position:'absolute',width:n.dataset ? 478 : n.column ? 180 : 156,left:position.x,top:position.y}} onDoubleClick={() => openNode(n)}>
-         <NodeRenderer compact n={n} catalogue={s.catalogue} selected={selected.includes(n.id)} members={members}
-           onMember={m=>{if (s.graph.nodes.some(row => row.id === m.id)) {setParent(n.id);setSelected([m.id]);} else {setParent(null);u.act(async()=>{await api.selectGraph(n.id);setSelected([m.id]);});}}}
-           rejected={rejected?.to.id === n.id} renderSocket={(p,side='in')=>socket(n,p,side)}
-           renderPort={(p,i,side)=>{
-             // Spec NodeCard: an input is a parameter slot (name over its source); an output is its type line with the socket on the card edge.
-             const feed=side==='in' && s.graph.wires.find(w=>w.to===n.id&&w.toPort===p.id), source=feed && s.graph.nodes.find(x=>x.id===feed.from);
-             return <div className={'canvas-port-row '+side} data-port-row={side}><span className={'canvas-port-socket '+side}>{socket(n,p,side)}</span>
-               {side==='in' ? <><span title={p.type}>{p.name}{p.unit ? ' · '+p.unit : ''}</span><b>{source ? 'From '+source.title : p.type}</b></>
-                 : <span title={p.name}>{n.dataset || !p.type || p.type==='any' ? p.name : p.type+(p.list ? '[]' : '')}</span>}</div>;
-           }}
-           headerProps={{className:'node-header',onPointerDown:e=>startNode(e,n),onPointerMove:move,onPointerUp:end,
-             onPointerCancel:()=>{gesture.current=null;setDraft(null);}}}
-           headerEnd={<button className="button-reset canvas-node-menu" aria-label={n.title+' menu'} title={n.title+' actions'} onClick={event=>executeAction('projects.ds_screens.NodeMenu.16',{n,openNode,setSelected,u},event)}>⋯</button>} />
-       </div>;
-     })}
-    </div>
-    {from && <Chip c={A.warn}>Choose an input socket to connect</Chip>}
+    <CanvasContext.Provider value={{renderNode, openNode}}>
+     <RF.ReactFlow nodes={flowNodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
+       viewport={{x: pan.x, y: pan.y, zoom}} onViewportChange={v => updateView({zoom: v.zoom, pan: {x: v.x, y: v.y}})} minZoom={zoomMin} maxZoom={zoomMax}
+       onNodesChange={onNodesChange} onNodeDragStop={onNodeDragStop} onNodeDoubleClick={(e, f) => openNode(f.data.n)}
+       onConnect={c => connect({id: c.source, port: c.sourceHandle}, {id: c.target, port: c.targetHandle})}
+       onConnectEnd={(e, state) => {
+         // A wire dropped on empty canvas offers the nodes that can take it (spec Compatible nodes).
+         if (!state || state.isValid || state.toHandle || !state.fromHandle || e.target.closest?.('.react-flow__node')) return;
+         u.show('Compatible nodes', {endpoint: {id: state.fromNode.id, side: state.fromHandle.type === 'source' ? 'out' : 'in', port: state.fromHandle.id}, position: toFlow(e)});
+       }}
+       onEdgeClick={(e, edge) => { if (edge.id !== 'rejected') { setWireId(edge.id); setSelected([]); } }}
+       onPaneClick={() => { setWireId(null); setRejected(null); }}
+       selectionOnDrag panOnDrag={[1]} panActivationKeyCode="Space" multiSelectionKeyCode="Shift" selectionKeyCode={null} deleteKeyCode={null}
+       zoomOnDoubleClick={false} connectionLineStyle={{stroke: A.cyan, strokeWidth: 2}} proOptions={{hideAttribution: true}} />
+    </CanvasContext.Provider>
     <div data-canvas-overlay="" className="canvas-toolbar"><Btn variant="controls" sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom">{Math.round(zoom * 100)}%</button><Btn variant="controls" sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><Btn variant="controls" sm ghost onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</Btn></div>
-    <div data-canvas-overlay="" style={{
-            position: 'absolute',
-            top: 70,
-            left: 16
-          }}><Btn variant="controls" onClick={event => executeAction("projects.ds_screens.AddANodeCtrlK.24", {u}, event)}>/ Add a node · Ctrl K</Btn></div>
    </div>
+   {inspected && <NodeInspector n={inspected} s={s} u={u} />}
    {wire && <aside className="pane inspector" style={{borderLeft:'1px solid '+A.line,padding:16}} aria-label="Wire">
      <div className="spread"><h2>Wire</h2><Btn variant="controls" sm ghost aria-label="Close wire" onClick={event=>executeAction('projects.controls.activate',{handler:()=>setWireId(null)},event)}>×</Btn></div>
      <div className="grid" style={{marginTop:16}}><div className="flex">{['Rules','Data'].map(t=><button className="tab-button" key={t} aria-pressed={wireTab===t} onClick={event=>executeAction('projects.ds_screens.SetTabT.27',{setTab:setWireTab,t},event)}>{t}</button>)}</div>
        <label className="grid">Pass when<input aria-label="Wire rule" value={wire.rule || ''} onChange={e=>u.act(()=>api.setWireRule(wire.id,e.target.value))} /></label>
-       {wireTab==='Data' && <window.UI.Table rows={[{from:s.graph.nodes.find(n=>n.id===wire.from)?.title,to:s.graph.nodes.find(n=>n.id===wire.to)?.title,type:wire.type}]} />}
+       {(() => {
+         // Wire inspection (Dynamo/Grasshopper parity): its type, both sockets and the value it carries now.
+         const a = s.graph.nodes.find(n => n.id === wire.from), b = s.graph.nodes.find(n => n.id === wire.to),
+           out = a?.outputs.find(p => p.id === wire.fromPort), into = b?.inputs.find(p => p.id === wire.toPort),
+           value = a?.status === 'Done' ? (a.output && typeof a.output === 'object' && !Array.isArray(a.output) && wire.fromPort in a.output ? a.output[wire.fromPort] : a.output) : undefined;
+         return <dl data-wire-inspection="" style={{display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '6px 12px', fontSize: 13, margin: 0}}>
+           <dt className="muted">Type</dt><dd style={{margin: 0}}>{out ? typeName(out) : wire.type}{into && out && into.type !== out.type ? ' → ' + typeName(into) : ''}</dd>
+           <dt className="muted">From</dt><dd style={{margin: 0}}>{a?.title || wire.from} · {out?.name || wire.fromPort}</dd>
+           <dt className="muted">To</dt><dd style={{margin: 0}}>{b?.title || wire.to} · {into?.name || wire.toPort}</dd>
+           <dt className="muted">Value</dt><dd style={{margin: 0, overflowWrap: 'anywhere'}}>{value === undefined ? 'Not run yet' : summary(value) || 'empty'}</dd>
+         </dl>;
+       })()}
        <Btn variant="controls" danger sm onClick={event=>executeAction('projects.ds_screens.DeleteWire.28',{api,u,wire},event)}>Delete wire…</Btn>
      </div></aside>}
 

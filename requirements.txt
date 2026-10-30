@@ -66,3 +66,23 @@ pypdfium2==5.8.0
 cedarpy==4.12.2
 presidio-analyzer==2.2.366
 spacy==3.8.18
+# The Brain's one SQLite store: vector search beside FTS5 (decision D-BRAINSTORE).
+sqlite-vec==0.1.9
+# The model router sends every HTTP chat through any-llm (Mozilla.ai, Apache-2.0):
+# one call shape for OpenRouter, OpenAI, Anthropic, Ollama and every
+# OpenAI-compatible endpoint. Never LiteLLM (malicious PyPI releases in 2026).
+# Pinned with every dependency it adds so the offline wheelhouse is exact.
+any-llm-sdk==1.40.2
+openai==3.41.0
+anthropic==0.125.0
+openresponses-types==2.4.0
+ollama==0.6.3
+rich==15.0.0
+httpx2==2.16.0
+httpcore2==2.16.0
+jiter==0.18.0
+distro==1.9.0
+docstring_parser==0.18.0
+truststore==0.10.5
+# OpenTelemetry GenAI spans for every router call (contract C4); API only, no exporter.
+opentelemetry-api==1.45.1

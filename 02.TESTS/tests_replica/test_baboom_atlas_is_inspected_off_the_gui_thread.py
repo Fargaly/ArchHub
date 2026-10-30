@@ -17,7 +17,7 @@ import pytest
 from nodelang import baboom_native_runtime as runtime
 from nodelang.baboom_visual_assets import inspect_baboom_sprite_atlas_v2
 
-LAUNCHER = Path(__file__).resolve().parents[2] / "01.APP/nodelang/launcher.py"
+LAUNCHER = Path(__file__).resolve().parents[2] / "01.APP/nodelang/nograph_launcher.py"
 
 
 def test_the_prepared_atlas_equals_a_direct_inspection_and_is_made_off_the_gui_thread():
@@ -56,12 +56,13 @@ def test_a_prepared_atlas_is_used_as_given_and_nothing_else_is_accepted(monkeypa
         runtime.create_baboom_native_projection(object(), atlas="not an atlas")
 
 
-def test_the_launcher_prepares_the_atlas_on_the_attach_worker_and_lands_with_it():
+def test_the_launcher_prepares_the_atlas_on_the_baboom_worker_and_lands_with_it():
+    # STALLFIX: the NOGRAPH launcher's land_companion decoded on the GUI thread again (USERSIM hang at ~11 s).
     tree = ast.parse(LAUNCHER.read_text(encoding="utf-8"))
     functions = {node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
-    worker = ast.unparse(functions["_keep_attaching"])
-    land = ast.unparse(functions["land"])
+    worker = ast.unparse(functions["start_baboom"])
+    land = ast.unparse(functions["land_companion"])
     assert "prepare_baboom_native_atlas(" in worker
-    assert worker.index("prepare_baboom_native_atlas(") < worker.index("ready.emit(host)")
-    assert "atlas=self.prepared_atlas" in land
+    assert worker.index("prepare_baboom_native_atlas(") < worker.index("companion['host'] =")
+    assert "atlas=companion['atlas']" in land
     assert "prepare_baboom_native_atlas(" not in land

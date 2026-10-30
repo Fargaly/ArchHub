@@ -1,5 +1,6 @@
 'use strict';
 const {setImmediate}=require('node:timers');
+const xyflow=require('./studio_xyflow.cjs'); // CANVASXY: the canvas runs on the bundled xyflow
 const {test}=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs'),path=require('node:path');
 async function adapter(account, responses={}){
  const requests=[],events=new Map();
@@ -55,9 +56,9 @@ async function mount(t, graph = fixture()) {
   page.on('pageerror',e=>errors.push(e.message));
   await page.route('**/*',r=>r.fulfill({contentType:'text/html',body:'<div id="root" style="display:grid;height:100vh"></div>'}));
   await page.goto('http://canvaslook.test/');
-  await page.addStyleTag({content:readCanvas('style.css')+'html,body{margin:0;height:100%}'});
-  for(const name of ['vendor/react.js','vendor/react-dom.js','tokens.jsx','ds/index.jsx','icons.jsx','ui.jsx'])
-    await page.addScriptTag({content:name.endsWith('.jsx')?transformSync(readCanvas(name),{loader:'jsx'}).code:readCanvas(name)});
+  await page.addStyleTag({content:xyflow.css()+readCanvas('style.css')+'html,body{margin:0;height:100%}'});
+  for(const name of ['vendor/react.js','vendor/react-dom.js','xyflow','tokens.jsx','ds/index.jsx','icons.jsx','ui.jsx'])
+    await page.addScriptTag({content:name.endsWith('.jsx')?transformSync(readCanvas(name),{loader:'jsx'}).code:name==='xyflow'?xyflow.script():readCanvas(name)});
   await page.evaluate(graph=>{
     const R=window.React,h=R.createElement;
     let state={revision:1,graph,settings:[],workspaces:[],catalogue:[{id:'level',name:'Level',description:'A level value',family:'Get',output:'text',descriptor:{engine:'Input'}},
@@ -92,7 +93,7 @@ async function mount(t, graph = fixture()) {
 async function placement(page,reserved=[]) {
  return page.evaluate(reserved=>{
   const detail={reserved,point:null,error:null};window.dispatchEvent(new CustomEvent('archhub:canvas-insertion',{detail}));
-  const area=document.querySelector('.node-canvas'),r=area.getBoundingClientRect(),world=area.querySelector(':scope > div[style*="scale"]'),m=new window.DOMMatrix(window.getComputedStyle(world).transform);
+  const area=document.querySelector('.node-canvas'),r=area.getBoundingClientRect(),world=area.querySelector('.react-flow__viewport'),m=new window.DOMMatrix(window.getComputedStyle(world).transform);
   const boxes=[...area.querySelectorAll('[data-graph-node]')].map(el=>({id:el.dataset.graphNode,...el.getBoundingClientRect().toJSON()}));
   return {detail,overlays:[...area.closest('[data-screen="canvas"]').querySelectorAll('[data-canvas-overlay]')].map(el=>el.getBoundingClientRect().toJSON()),area:r.toJSON(),matrix:{x:m.e,y:m.f,z:m.a},boxes};
  },reserved);
@@ -114,7 +115,7 @@ test('NODEPLACE actual Canvas centres, avoids occupied/repaired cards, follows s
  result=await placement(page);checkPoint(result);
  const selected=result.boxes.find(b=>b.id==='n0'),m=result.matrix;
  assert.ok(Math.abs(result.detail.point.x-((selected.x-result.area.x-m.x)/m.z+280))<.01,'beside selected');
- await page.locator('.node-canvas').evaluate(el=>{const r=el.getBoundingClientRect();el.dispatchEvent(new window.WheelEvent('wheel',{bubbles:true,cancelable:true,clientX:r.x+r.width*.7,clientY:r.y+r.height*.7,deltaX:300,deltaY:120}));});await page.waitForTimeout(60);
+ await page.locator('.node-canvas .react-flow__pane').evaluate(el=>{const r=el.getBoundingClientRect();el.dispatchEvent(new window.WheelEvent('wheel',{bubbles:true,cancelable:true,clientX:r.x+r.width*.7,clientY:r.y+r.height*.7,deltaX:300,deltaY:120}));});await page.waitForTimeout(60);
  checkPoint(await placement(page));
 
 
@@ -140,8 +141,8 @@ test('NODEPLACE explicit drops bypass placement and failed creation releases the
 async function mountReal(t) {
  const browser=await chromium.launch({channel:'chrome',headless:true});t.after(()=>browser.close());
  const page=await browser.newPage({viewport:{width:1800,height:1200}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
- await page.setContent('<div id="root" style="display:grid;height:100vh"></div>');await page.addStyleTag({content:readCanvas('style.css')+'html,body{margin:0;height:100%}'});
- for(const name of ['vendor/react.js','vendor/react-dom.js','tokens.jsx','ds/index.jsx','icons.jsx','ui.jsx'])await page.addScriptTag({content:name.endsWith('.jsx')?transformSync(readCanvas(name),{loader:'jsx'}).code:readCanvas(name)});
+ await page.setContent('<div id="root" style="display:grid;height:100vh"></div>');await page.addStyleTag({content:xyflow.css()+readCanvas('style.css')+'html,body{margin:0;height:100%}'});
+ for(const name of ['vendor/react.js','vendor/react-dom.js','xyflow','tokens.jsx','ds/index.jsx','icons.jsx','ui.jsx'])await page.addScriptTag({content:name.endsWith('.jsx')?transformSync(readCanvas(name),{loader:'jsx'}).code:name==='xyflow'?xyflow.script():readCanvas(name)});
  await page.evaluate(()=>{
   window.ARCHHUB_AUTHORITY={};window.ARCHHUB_BOOT={token:'fixture',csrf:'fixture'};
   window.realCanvas={root:'g',nodes:[{id:'far',label:'Far',x:12000,y:200,properties:[],ports:[]}],wires:[],catalog:[{id:'def',name:'Number',descriptor:{engine:'data.constant'}},{id:'tall',name:'Tall',descriptor:{engine:'data.constant'}}]};

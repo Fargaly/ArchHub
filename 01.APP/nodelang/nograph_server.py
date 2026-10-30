@@ -196,6 +196,8 @@ class NoGraphServer:
                 print('  cloud relay: did not stop -- %s' % stuck, flush=True)
         self.httpd.shutdown()
         self.httpd.server_close()
+        from .brain_files import close as close_brain
+        close_brain()
 
     def opencode_status(self, executable):
         """OpenCode auth/run readiness off the request path, 30 s like the old server's cache: the 5 s
@@ -637,9 +639,6 @@ def r_providers(s, req):
 
 
 # -- Workshop: the room is workshop/messages.sqlite3; delivery is Workshop --
-STATUS = {'working': 'WIP', 'blocked': 'PLANNED', 'review': 'IN REVIEW', 'done': 'DONE'}
-
-
 def _declarations():
     from .workshop_mailbox import application_history, read_declarations
     with application_history() as history:
@@ -647,11 +646,23 @@ def _declarations():
 
 
 def _list_tasks():
-    return [{'id': row['root'], 'title': row.get('task') or 'Task not reported', 'status': STATUS.get(row.get('status'), 'PLANNED'),
-             'owner': row.get('runtime') or row.get('app'), 'messages': [], 'steps': [], 'reviews': [], 'queuedMessages': [],
-             'declarations': [{'root': row['root'], 'agent': row.get('agent'), 'status': row.get('status')}],
-             'paths': row.get('paths', []), 'updated_at': row.get('updated_at')}
-            for row in _declarations() if row.get('current') or row.get('status') == 'done']
+    """The Work column: the Workshop tasks table (claimed atomically by agents with task.claim)."""
+    from .workshop_mailbox import application_history
+    from .workshop_tasks import column
+    with application_history() as history:
+        return column(history)
+
+
+def _set_task_status(task, status):
+    from .workshop_mailbox import application_history
+    from .workshop_tasks import set_status
+    try:
+        with application_history() as history:
+            if not set_status(history, str(task), status):
+                return {'ok': False, 'error': 'No such Workshop task'}
+    except ValueError as refused:
+        return {'ok': False, 'error': str(refused)}
+    return next(row for row in _list_tasks() if row['id'] == task)
 
 
 def _list_agents():
@@ -685,10 +696,18 @@ def _list_messages(before=None):
     page = api.listWorkshopMessages(before)
     with application_history() as history:
         live = deliveries(history, [m['id'] for m in page['messages']])
+        from .workshop_mailbox import read_declarations
+        names = {row['agent']: row.get('display_name') or row['agent'] for row in read_declarations(history._db, include_archived=True)}
     from .baboom_nograph import own_session
     baboom = own_session()
     for message in page['messages']:
         message['live'] = live.get(message['id'], [])
+        # Display only: the stored "To <session label>:" header stays the routing address; the room shows who received it.
+        header, newline, body = message['text'].partition('\n')
+        if newline and header.startswith('To ') and header.endswith(':'):
+            labels = [names.get(label.strip(), label.strip()) for label in header[3:-1].split(',')]
+            message.update(to=', '.join(dict.fromkeys(d['agent'] for d in message['live'] if d.get('agent'))) or ', '.join(labels),
+                           text=__import__('re').sub(r'^(?:@[\w.-]+\s+)+', '', body))
         # No pending state (founder 2026-10-28): delivery is the per-recipient live rows only.
         message.pop('state', None)
         message['delivery'] = []
@@ -738,6 +757,16 @@ def _watcher(request_id=''):
     return WatcherOwner(_SERVER.state_dir, request_id)
 
 
+def _answer_approval(request_id, kind, root, digest, decision):
+    from .hook_decision import decide
+    owners = {'hostskills': _host_skills, 'watcher': _watcher}
+    if kind not in owners:
+        from .universal_cell import InvalidCell
+        raise InvalidCell('This approval kind is not served here.')
+    return decide({'approval': kind, 'owner': owners[kind](request_id), 'id': root, 'digest': digest,
+                   'decision': decision})
+
+
 # Studio action -> owner method; each owner keeps one plain file under settings/.
 OWNER_ACTIONS = {
     'importHostSkill': (_host_skills, lambda o, value: o.import_skill(value)),
@@ -746,7 +775,6 @@ OWNER_ACTIONS = {
     'installConnectorBundle': (_host_skills, lambda o, root: o.request(root, 'install')),
     'setHostSkillEnabled': (_host_skills, lambda o, root, enabled: o.set_enabled(root, enabled)),
     'auditHostSkill': (_host_skills, lambda o, root: o.audit(root)),
-    'decideHostSkill': (_host_skills, lambda o, identity, digest, decision: o.decide(identity, digest, decision)),
     'setWatcherHost': (_watcher, lambda o, host: o.set_host(host)),
     'setWatcherView': (_watcher, lambda o, view: o.set_view(view)),
     'editWall': (_watcher, lambda o, y: o.edit(y)),
@@ -755,12 +783,14 @@ OWNER_ACTIONS = {
     'addComment': (_watcher, lambda o, values: o.annotate('comment', values)),
     'proposeWatcherEdit': (_watcher, lambda o: o.propose()),
     'discardWatcherChanges': (_watcher, lambda o: o.discard()),
-    'decideWatcherEdit': (_watcher, lambda o, root, digest, decision: o.decide(root, digest, decision)),
+    # Every Approve/Deny card goes through the one decision (hook_decision.decide).
+    'answerApproval': (str, lambda request_id, kind, root, digest, decision: _answer_approval(request_id, kind, root, digest, decision)),
 }
 
 
 WORKSHOP_READS = {
     'listTasks': lambda *a: _list_tasks(),
+    'setTaskStatus': _set_task_status,
     'listAgentsWorking': lambda *a: _list_agents(),
     'listWorkshopMessages': lambda before=None, *a: _list_messages(before),
     'listApprovals': lambda *a: _watcher().reviews() + _host_skills().reviews(),
@@ -833,6 +863,16 @@ def r_settings_action(s, req):
             result['secrets'] = []
             result['controlErrors']['secrets'] = 'Connected account index could not be read. Refresh Connections.'
         return {'ok': True, 'result': result}
+    if function in ('readPermissions', 'setPermissions'):
+        # Run mode and per-tool modes: parameters the one decision (hook_decision.decide) reads.
+        from .hook_decision import read_permissions, write_permissions, RUN_MODES, TOOL_MODES
+        path = s.settings_dir / 'permissions.json'
+        try:
+            values = (read_permissions(path=path) if function == 'readPermissions'
+                      else write_permissions(args[0] if args else None, path=path))
+        except ValueError as refused:
+            raise Refused(str(refused)) from refused
+        return {'ok': True, 'result': {**values, 'runModes': list(RUN_MODES), 'toolModes': list(TOOL_MODES)}}
     if function == 'setCompanionState':
         return {'ok': True, 'result': {'companion': companion.write({**companion.read(), **(args[0] if args else {})})}}
     if function == 'setProviderModel':

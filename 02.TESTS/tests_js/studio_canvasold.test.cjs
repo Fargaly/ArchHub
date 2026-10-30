@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {transformSync} = require('esbuild');
 const {chromium} = require('playwright');
+const xyflow = require('./studio_xyflow.cjs'); // CANVASXY: the canvas runs on the bundled xyflow
 const studio = path.resolve(__dirname, '../../01.APP/nodelang/studio');
 const read = name => fs.readFileSync(path.join(process.env.CANVASOLD_STUDIO || studio,name),'utf8');
 const prop = (label,value,type='number',unit='') => ({label,value,type,editor:type,unit,editable:true,relation:'property-'+label});
@@ -27,9 +28,9 @@ async function mount(t,{raw=fixture(),shell=false,system=false}={}) {
  page.on('pageerror',e=>errors.push(e.message));
  await page.route('**/*',route=>route.fulfill({contentType:'text/html',body:'<div id="root" style="display:grid;height:100vh"></div>'}));
  await page.goto('http://canvasold.test/');
- await page.addStyleTag({content:read('style.css')+'html,body{margin:0;height:100%}'});
- for(const name of ['vendor/react.js','vendor/react-dom.js','tokens.jsx','ds/index.jsx','icons.jsx'])
-  await page.addScriptTag({content:name.endsWith('.jsx')?transformSync(read(name),{loader:'jsx'}).code:read(name)});
+ await page.addStyleTag({content:xyflow.css()+read('style.css')+'html,body{margin:0;height:100%}'});
+ for(const name of ['vendor/react.js','vendor/react-dom.js','xyflow','tokens.jsx','ds/index.jsx','icons.jsx'])
+  await page.addScriptTag({content:name==='xyflow'?xyflow.script():name.endsWith('.jsx')?transformSync(read(name),{loader:'jsx'}).code:read(name)});
  await page.evaluate(raw=>{
   window.fixtureRaw=raw; window.fixtureCalls=[];
   window.fetch=async (url,options={})=>{
@@ -90,29 +91,38 @@ test('actual adapter preserves declared types, cardinality, units and real endpo
  assert.equal(n.inputs.find(p=>p.id==='filter-count').type,'number');
  assert.equal(n.inputs.find(p=>p.id==='filter-items').list,true);
  assert.equal(s.graph.nodes.find(n=>n.id==='level').outputs[0].unit,'m');
- assert.equal(await page.locator('[data-port-key="filter:in:filter-items"] [data-ds-socket] > span').evaluate(el=>el.style.transform),'rotate(45deg) scale(0.86)');
- assert.equal(await page.locator('[data-port-key="filter:out:filter-event"] svg path').count(),1);
+ // Every typed socket is an xyflow Handle carrying its real endpoint key and declared type.
+ assert.equal(await page.locator('[data-port-key="filter:in:filter-items"]').evaluate(el=>el.classList.contains('react-flow__handle')&&el.dataset.portList),'true');
+ assert.equal(await page.locator('[data-port-key="filter:out:filter-event"]').getAttribute('data-port-type'),'event');
  assert.equal(await page.locator('[data-port-key="level:out:level-value"]').count(),1);
 });
-test('restored category looks differ and every wire terminates at the real socket centers',async t=>{
+test('every wire terminates at the real socket centers',async t=>{
  const page=await mount(t);
- const looks=await page.locator('[data-graph-node] .node-header').evaluateAll(els=>els.map(el=>({id:el.closest('[data-graph-node]').dataset.graphNode,color:window.getComputedStyle(el).borderTopColor,background:window.getComputedStyle(el).backgroundColor})));
- assert.notDeepEqual(looks.find(n=>n.id==='level'),{...looks.find(n=>n.id==='filter'),id:'level'});
  const delta=await page.evaluate(()=>{
-  const wire=[...document.querySelectorAll('path[stroke-width="2"]')].find(el=>el.getAttribute('d')?.startsWith('M'));
+  const wire=document.querySelector('[data-graph-wire]');
   const nums=wire.getAttribute('d').match(/[-+]?\d*\.?\d+(?:e[-+]?\d+)?/gi).map(Number);
-  const world=document.querySelector('.node-canvas > div[style*="scale"]'),matrix=new window.DOMMatrix(window.getComputedStyle(world).transform),wr=world.getBoundingClientRect();
+  const world=document.querySelector('.node-canvas .react-flow__viewport'),matrix=new window.DOMMatrix(window.getComputedStyle(world).transform),wr=world.getBoundingClientRect();
   return [['level:out:level-value',nums[0],nums[1]],['filter:in:filter-count',nums.at(-2),nums.at(-1)]].map(([key,x,y])=>{
    const r=document.querySelector('[data-port-key="'+key+'"]').getBoundingClientRect();return Math.hypot(wr.left+x*matrix.a-(r.left+r.width/2),wr.top+y*matrix.d-(r.top+r.height/2));});
  });
  assert.ok(delta.every(d=>d<.5),JSON.stringify(delta));
 });
-test('logical type mismatch never writes a wire; compatible socket activation writes the real IDs',async t=>{
+test('clicking a wire inspects its type, both sockets and its value',async t=>{
+ const page=await mount(t);
+ await page.locator('[data-graph-wire]').first().evaluate(el=>el.parentNode.querySelector('.react-flow__edge-interaction').dispatchEvent(new window.MouseEvent('click',{bubbles:true})));
+ const text=await page.locator('[data-wire-inspection]').innerText();
+ for(const label of ['Type','From','To','Value'])assert.match(text,new RegExp(label));
+ assert.match(text,/Number/);
+});test('logical type mismatch never writes a wire; compatible socket activation writes the real IDs',async t=>{
  const page=await mount(t);
  const key=key=>page.locator('[data-port-key="'+key+'"]');
- await key('text:out:text-value').press('Enter');await key('filter:in:filter-count').press('Enter');
+ const wire=async(a,b)=>{const p=await key(a).boundingBox(),q=await key(b).boundingBox(),release=await beginDrag(page,{x:p.x+p.width/2,y:p.y+p.height/2},{x:q.x+q.width/2,y:q.y+q.height/2});await release();await page.waitForTimeout(60);};
+ await wire('text:out:text-value','filter:in:filter-count');
  assert.equal((await page.evaluate(()=>window.fixtureCalls)).filter(c=>c.action==='connect').length,0);
- await key('level:out:level-value').press('Enter');await key('filter:in:filter-count').press('Enter');
+ assert.match(await page.locator('[data-refused-chip]').innerText(),/Needs a text → number converter/,'refusal is inline on the target socket, no modal');
+ assert.equal((await page.evaluate(()=>window.fixtureCalls)).filter(c=>c.action==='show'&&c.kind==='Type mismatch').length,0);
+ await page.locator('.node-canvas').press('Escape');
+ await wire('level:out:level-value','filter:in:filter-count');
  const calls=(await page.evaluate(()=>window.fixtureCalls)).filter(c=>c.action==='connect');
  assert.equal(calls.length,1);assert.deepEqual(calls[0].wire,{from:'level',to:'filter',fromPort:'level-value',toPort:'filter-count'});
 });
@@ -222,14 +232,13 @@ async function boxSelect(page,ids,modifier=null){
   b={x:Math.max(...boxes.map(b=>b.x+b.width))+6,y:Math.max(...boxes.map(b=>b.y+b.height))+6};
  const target=await page.evaluate(a=>document.elementFromPoint(a.x,a.y)?.outerHTML.slice(0,300),a);
  const release=await beginDrag(page,a,b,modifier);
- assert.equal(await page.getByLabel('Selection marquee').count(),1,'empty-canvas drag draws its rectangle '+JSON.stringify({ids,modifier,a,b,target}));
+ assert.equal(await page.locator('.react-flow__selection').count(),1,'empty-canvas drag draws its rectangle '+JSON.stringify({ids,modifier,a,b,target}));
  await release();
 }
-test('plain box selection, Shift add, Ctrl remove, Escape and empty click give visible selection',async t=>{
+test('plain box selection, Shift-click add, Escape and empty click give visible selection',async t=>{
  const page=await mount(t);
  await boxSelect(page,['level','filter']);assert.deepEqual(await selectedIds(page),['filter','level']);
- await boxSelect(page,['text'],'Shift');assert.deepEqual(await selectedIds(page),['filter','level','text']);
- await boxSelect(page,['filter'],'Control');assert.deepEqual(await selectedIds(page),['level','text']);
+ await card(page,'text').locator('.node-header').click({modifiers:['Shift']});assert.deepEqual(await selectedIds(page),['filter','level','text']);
  await page.locator('.node-canvas').press('Escape');assert.deepEqual(await selectedIds(page),[]);
  await card(page,'level').locator('.node-header').click();assert.deepEqual(await selectedIds(page),['level']);
  const r=await page.locator('.node-canvas').boundingBox();await page.locator('.node-canvas').click({position:{x:8,y:r.height-8}});
@@ -238,7 +247,7 @@ test('plain box selection, Shift add, Ctrl remove, Escape and empty click give v
 test('node body drag and selected group drag persist through the real move adapter without snapping back',async t=>{
  const page=await mount(t),before=await card(page,'level').boundingBox();
  await page.evaluate(()=>{window.holdMove=true;});
- const drag=async(id,dx,dy)=>{const b=await card(page,id).locator('.canvas-card-param').first().boundingBox(),release=await beginDrag(page,{x:b.x+30,y:b.y+8},{x:b.x+30+dx,y:b.y+8+dy});await release();};
+ const drag=async(id,dx,dy)=>{const b=await card(page,id).locator('.node-header').first().boundingBox(),release=await beginDrag(page,{x:b.x+30,y:b.y+8},{x:b.x+30+dx,y:b.y+8+dy});await release();};
  await drag('level',35,90);await page.waitForFunction(()=>window.releaseMove);
  let after=await card(page,'level').boundingBox();assert.ok(Math.abs(after.x-before.x-35)<2&&Math.abs(after.y-before.y-90)<2,'local movement stays visible while its save is pending');
  await page.evaluate(()=>{window.holdMove=false;window.releaseMove();});await page.waitForTimeout(80);
@@ -297,23 +306,22 @@ test('CARDPOLISH bounds human rows while retaining internal parameters and every
  assert.equal(await card.locator('[data-parameter="engine"]').count(),0);
  assert.equal(await card.locator('[data-parameter="responsibility"]').count(),0,'serialized JSON stays in Properties');
  assert.equal(await card.locator('[data-parameter="last_result"]').count(),0);
- assert.equal(await card.locator('[data-parameter]').count(),3,'plate 4.3: first three human rows');
+ assert.equal(await card.locator('[data-parameter]').count(),4,'spec section 0b: the default card shows every human row');
  assert.match(await card.innerText(),/Room width/);
- assert.match(await card.innerText(),/\+1 more/);
+ assert.equal(await card.getByRole('button',{name:'Compact',exact:true}).count(),1,'compact is an opt-in toggle');
  assert.doesNotMatch(await card.innerText(),/[a-f0-9]{64}|assembly-instance:|\{"/);
  const description=card.locator('[data-parameter="description"]');
  assert.equal(await description.locator('[title]').last().getAttribute('title'),n.properties.find(p=>p.label==='description').value);
- assert.equal(await description.evaluate(el=>window.getComputedStyle(el.lastElementChild).textOverflow),'ellipsis');
+ assert.equal(await description.locator('[data-row-value]').evaluate(el=>window.getComputedStyle(el).textOverflow),'ellipsis');
  assert.equal(await card.locator('[data-port-key]').count(),1);
  const stored=await page.evaluate(()=>window.fixtureState().graph.nodes.find(n=>n.id==='level'));
  assert.equal(stored.params.template_instance,hash);
  assert.equal(stored.params.responsibility,n.properties.find(p=>p.label==='responsibility').value);
- await card.getByRole('button',{name:'+1 more',exact:true}).click();
- assert.equal(await card.locator('[data-parameter]').count(),4);
  assert.equal(await card.locator('[data-parameter="template_instance"]').count(),0);
  await card.getByRole('spinbutton',{name:'Level extra_value',exact:true}).fill('9');
- await card.getByRole('button',{name:'Show less',exact:true}).click();
+ await card.getByRole('button',{name:'Compact',exact:true}).click();
  assert.equal(await card.locator('[data-parameter]').count(),3);
+ assert.equal(await card.getByRole('button',{name:'+1 more',exact:true}).count(),1);
  await card.getByRole('spinbutton',{name:'Level room_width',exact:true}).fill('8');
  assert.ok((await page.evaluate(()=>window.fixtureCalls)).some(c=>c.action==='parameter'&&c.key==='room_width'&&c.value===8));
 });
@@ -327,12 +335,11 @@ test('CARDPOLISH declared editable text remains reachable regardless of key or v
  const page=await mount(t,{raw}),card=page.locator('[data-graph-node="level"]');
  assert.equal(await card.getByRole('textbox',{name:'Level caption',exact:true}).inputValue(),'[TBD]');
  assert.equal(await card.getByRole('textbox',{name:'Level note',exact:true}).inputValue(),'{draft}');
- await card.getByRole('button',{name:'+4 more',exact:true}).click();
  for(const key of ['caption','note','root_id','level_ref','source_hash','metadata']){
   await card.getByRole('textbox',{name:'Level '+key,exact:true}).fill('edited-'+key);
   assert.ok((await page.evaluate(()=>window.fixtureCalls)).some(c=>c.action==='parameter'&&c.key===key&&c.value==='edited-'+key));
  }
- await card.getByRole('button',{name:'Show less',exact:true}).click();
+ await card.getByRole('button',{name:'Compact',exact:true}).click();
  assert.equal(await card.locator('[data-parameter]').count(),3);
  await card.getByRole('button',{name:'+4 more',exact:true}).click();
  assert.equal(await card.getByRole('textbox',{name:'Level root_id',exact:true}).inputValue(),'edited-root_id');

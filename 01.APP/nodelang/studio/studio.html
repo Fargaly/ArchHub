@@ -22,6 +22,14 @@
   let sourceTotal=0,outputTotal=0,readyFailure;
   const names=["tokens.jsx", "ds/index.jsx", "api.js", "icons.jsx", "ui.jsx", "answer-widgets.jsx", "ds_home2.jsx", "ds_workshop3.jsx", "ds_screens.jsx", "ds_library.jsx", "ds_colleagues.jsx", "ds_baboom.jsx", "ds_settings3.jsx", "watcher-controls.jsx", "ds_watch_edit.jsx", "ds_firstrun.jsx", "surfaces.jsx", "integration-states.jsx", "project-tools.jsx", "community-tools.jsx", "agent-states.jsx", "research-surfaces.jsx", "dependencies.jsx", "workflow-states.jsx", "decision-results.jsx", "review-states.jsx", "canvas-states.jsx", "desktop.jsx", "meetings.jsx", "social.jsx", "research.jsx", "xray.jsx", "access.jsx", "account-tools.jsx", "routing.jsx", "brain.jsx", "docs.jsx", "companion.jsx", "context-menus.jsx", "app.jsx"];
   if(manifest.format!==1||manifest.files?.length!==names.length)throw Error('Studio build is invalid.');
+  // Canvas engine (xyflow, pinned npm package bundled by the Studio build): loaded first, verified by SRI.
+  for(const v of manifest.vendor||[]){
+   if(!/^[a-z0-9][a-z0-9.-]*\.(js|css)$/.test(v.output)||!/^sha256-[A-Za-z0-9+/]{43}=$/.test(v.integrity))throw Error('Studio vendor bundle is invalid.');
+   await new Promise((resolve,reject)=>{const css=v.output.endsWith('.css'),tag=document.createElement(css?'link':'script');
+    if(css){tag.rel='stylesheet';tag.href='/studio/compiled/'+v.output;}else tag.src='/studio/compiled/'+v.output;
+    tag.integrity=v.integrity;tag.crossOrigin='anonymous';tag.onload=resolve;tag.onerror=()=>reject(Error('Studio vendor bundle failed verification.'));
+    if(css)document.head.insertBefore(tag,document.querySelector('link[href="/studio/style.css"]'));else document.body.appendChild(tag);});
+  }
   for(let i=0;i<names.length;i++){
    const file=manifest.files[i];
    if(file.source!==names[i]||file.output!==names[i].replaceAll('/','-').replace(/\.jsx$/,'.js')||!/^sha256-[A-Za-z0-9+/]{43}=$/.test(file.integrity))throw Error('Studio build metadata changed.');

@@ -611,7 +611,6 @@ from .cell_state_machine import (
     transition_machine,
     transition_machine_with_new_evidence,
 )
-from .cell_permission_requests import decide_permission_request
 from .cell_device_enrollment import execute_device_enrollment
 from .cell_ui import UIProtocol, bootstrap_ui_protocol
 from .cell_view_template import (
@@ -40935,7 +40934,7 @@ def approve_universal_baboom_connector_execution(
         delegation_root,
     )
     # A social post is approved only by the founder's own gesture in his browser
-    # (social_approval.decide: the displayed request and its exact input digest),
+    # (hook_decision.decide: the displayed request and its exact input digest),
     # never by an agent session over the machine route.
     if any(root == delegation.provider_root and type(name) is str and name.startswith("social-")
            for name, root in registry.baboom_connector_provider_roots.items()):
@@ -46961,17 +46960,19 @@ def transition_universal_operational_state(
             raise InvalidCell(
                 "user decision evidence is issued only by the authenticated action"
             )
-        _, _, revision = decide_permission_request(
-            store,
-            registry.assembly_protocol,
-            operational,
-            instance_root,
+        from .hook_decision import decide
+        _, _, revision = decide({"approval": "permission-request", "decision": _text(snapshot, event_root),
+                                 "arguments": dict(
+            store=store,
+            assembly=registry.assembly_protocol,
+            operational=operational,
+            instance_root=instance_root,
             expected_definition_root=permission_definition,
             event_root=event_root,
             expected_state_root=expected_state_root,
             actor_root=identity.subject_root,
             context_roots=(view_session.root_id,),
-        )
+        )})
         return revision
     adapters = verify_adapter_catalog(
         snapshot, registry.adapter_protocol, registry.adapter_catalog_root

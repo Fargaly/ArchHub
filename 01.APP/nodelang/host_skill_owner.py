@@ -339,7 +339,7 @@ class HostSkillOwner:
     def reviews(self):
         return [self.card(proposal["id"]) for _, record in self._records() for proposal in record["proposals"]]
 
-    def decide(self, identity, digest, decision):
+    def apply(self, identity, digest, decision):
         # The founder decides in his own app; the server admits only his bootstrapped Studio session.
         root, record, proposal = self._proposal(identity)
         if (decision not in {"approve", "deny"} or digest != proposal["input_digest"]

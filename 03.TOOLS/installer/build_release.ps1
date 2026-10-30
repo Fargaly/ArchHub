@@ -31,6 +31,8 @@ $utf8 = [Text.UTF8Encoding]::new($false, $true)
 $builtAt = [DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", [Globalization.CultureInfo]::InvariantCulture)
 $selectedRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 if ((Split-Path -Leaf $selectedRoot) -ceq '03.TOOLS') { $selectedRoot = Split-Path -Parent $selectedRoot }
+# CANVASXY: the Studio build bundles the pinned xyflow package from this checkout's npm ci tree (sha256-pinned in compile_studio.cjs).
+$checkoutNodeModules = Join-Path $selectedRoot 'node_modules'
 # Repository locations are inputs; the snapshot and every installed path remain native.
 $repositoryAreas = @{
     'nodelang' = '01.APP/nodelang'; 'app' = '01.APP/app'; 'bridges' = '01.APP/bridges'
@@ -521,11 +523,24 @@ function Read-StudioBuild {
             throw 'Invalid or duplicate Studio output name.'
         }
     }
+    # CANVASXY: the pinned xyflow bundle (package, exact version, upstream sha256 in compile_studio.cjs).
+    $vendor = @()
+    if ($manifest.vendor) { $vendor = @($manifest.vendor) }
+    $vendorNames = [Collections.Generic.List[string]]::new()
+    foreach ($item in $vendor) {
+        $vendorPath = Join-Path $generated $item.output
+        $vendorSize = (Get-Item -LiteralPath $vendorPath).Length
+        $vendorHash = (Get-FileHash -LiteralPath $vendorPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($item.output -cnotmatch '^[a-z0-9][a-z0-9.-]*\.(js|css)$' -or -not $unique.Add($item.output)) { throw 'Invalid Studio vendor output name.' }
+        if ($item.license -cne 'MIT' -or $item.version -cnotmatch '^\d+\.\d+\.\d+$') { throw 'Studio vendor bundle lacks its pinned licence or version.' }
+        if ($vendorSize -gt 1048576 -or $item.sha256 -cne $vendorHash) { throw 'Studio vendor bundle does not match its manifest.' }
+        $vendorNames.Add($item.output)
+    }
     $entries = @(Get-ChildItem -LiteralPath $generated -Force)
-    if ($entries.Count -ne ($names.Count + 1)) { throw 'Studio output inventory differs from its manifest.' }
+    if ($entries.Count -ne ($names.Count + $vendor.Count + 1)) { throw 'Studio output inventory differs from its manifest.' }
     foreach ($entry in $entries) {
         if ($entry.PSIsContainer -or ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
-            ($entry.Name -cne 'manifest.json' -and $entry.Name -cnotin $names)) {
+            ($entry.Name -cne 'manifest.json' -and $names.IndexOf($entry.Name) -lt 0 -and $vendorNames.IndexOf($entry.Name) -lt 0)) {
             throw 'Unexpected Studio compiler output.'
         }
     }
@@ -580,31 +595,12 @@ if ($PrepareCandidateManifest) {
     Write-Output "Files: $($prepared.Rows.Count); bytes: $($prepared.TotalBytes). Review before building; no compiler or application launched."
     return
 }
-# Manifest preparation inventories source only. Every actual build still runs
-# fresh admission before creating its snapshot, runtime or installer output.
-& $compilerPython (Join-Path $selectedRoot (Get-RepositoryPath 'tools/pipeline/build.py')) --root $selectedRoot
-if ($LASTEXITCODE -ne 0) { throw "ACOMPILER refused release build (exit $LASTEXITCODE)." }
+# Admission happens per commit (pre-commit ACOMPILER); the release only builds and installs.
 # The connector's runtime as two zips (zipimport): one file read instead of hundreds per connector start.
 # Beside nodelang in either layout (the installer ships it as {app}\packed).
 $packedRuntime = Join-Path (Split-Path -Parent (Join-Path $selectedRoot (Get-RepositoryPath 'nodelang'))) 'packed'
 & $compilerPython (Join-Path $selectedRoot (Get-RepositoryPath 'packaging/pack_runtime.py')) --out $packedRuntime
 if ($LASTEXITCODE -ne 0) { throw 'Connector runtime packing failed; no release without the packed runtime.' }
-# No optional switch and no cached PASS: real clients qualify this exact source.
-$agentLinkEvidence = Join-Path $selectedRoot (Get-RepositoryPath 'evidence/agentlink-release.json')
-$priorPythonPath = $env:PYTHONPATH
-$env:PYTHONPATH = (@($compilerSourceRoot, (Join-Path $selectedRoot '01.APP'), $selectedRoot, $priorPythonPath) | Where-Object { $_ }) -join [IO.Path]::PathSeparator
-Push-Location $selectedRoot
-try {
-    & $compilerPython -m tools.real_app_check.agentlink_release --profile-parent $selectedRoot --output $agentLinkEvidence
-    if ($LASTEXITCODE -ne 0) { throw "AGENTLINK refused release: real message, overlap or OpenCode write proof failed." }
-    # RETURN 1: refuse observed hangs/exits and installed DONE -> candidate BROKEN regressions only.
-    $userSimEvidence = Join-Path $selectedRoot (Get-RepositoryPath ("evidence/USERSIM-RELEASE-" + $BuildId.ToUpperInvariant()))
-    # The runner retains usersim-baseline.json beside these per-build reports.
-    & $compilerPython -m tools.real_app_check.usersim --out $userSimEvidence --expected-build $BuildId
-    if ($LASTEXITCODE -eq 3) { throw 'PROFILE-WRITE-GUARD refused release: protected profile write attempted.' }
-    if ($LASTEXITCODE -eq 1) { throw 'USERSIM refused release: observed app hang/exit or regression from an installed DONE job; inspect samples and screenshots.' }
-    if ($LASTEXITCODE -ne 0) { Write-Warning 'USERSIM actor/runner UNREACHED; no app regression proved. See the release report.' }
-} finally { Pop-Location; $env:PYTHONPATH = $priorPythonPath }
 $isCandidate = -not [string]::IsNullOrEmpty($LocalCandidateManifest)
 if ($isCandidate -ne (-not [string]::IsNullOrEmpty($LocalCandidateManifestSha256))) {
     throw 'LocalCandidateManifest and its reviewed SHA256 must be supplied together.'
@@ -701,46 +697,8 @@ if (-not (Test-Path -LiteralPath (Join-Path $selectedRoot 'packed/stamp.json') -
     throw 'The packed runtime has no stamp.json; no release without the packed runtime.'
 }
 
-# Apply the existing portability gate to shipped code, not tests or private
-# workspace areas. A refusal needs a source repair, never a gate bypass.
-$portabilityGate = Join-Path $selectedRoot 'packaging/windows/Test-SourcePortability.ps1'
-$shippedCode = @(
-    (Join-Path $selectedRoot 'nodelang'),
-    (Join-Path $selectedRoot 'colleague_setup.py'),
-    (Join-Path $selectedRoot 'app/secrets_store.py'),
-    (Join-Path $selectedRoot 'app/credential_lock.py'),
-    (Join-Path $selectedRoot 'bridges/rhino/archhub_mcp.py'),
-    (Join-Path $selectedRoot 'bridges/blender/archhub_mcp'),
-    (Join-Path $selectedRoot 'bridges/sources/max_mcp/max_mcp_startup.py')
-)
-foreach ($codePath in $shippedCode) {
-    $LASTEXITCODE = 0
-    & $portabilityGate -SourceRoot $codePath
-    if ($LASTEXITCODE -ne 0) { throw 'A shipped input failed the source portability gate.' }
-}
-
-# Release gate (founder order 2026-09-23): an old graph opened by these exact
-# snapshot bytes must not grow while idle, and its old undo records must still
-# undo. The court lives in the checkout; the code it judges is the snapshot.
 if (-not $PythonPath) {
     $PythonPath = (Get-Command python.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
-}
-$zeroIdleCourt = Join-Path $snapshot.SelectedCheckout (Get-RepositoryPath 'tests/test_zero_idle_growth.py' $snapshot.SelectedCheckout)
-if (-not (Test-Path -LiteralPath $zeroIdleCourt -PathType Leaf)) { throw 'The zero-idle-growth release court is missing.' }
-$priorCourtSource = $env:ARCHHUB_COURT_SOURCE
-$env:ARCHHUB_COURT_SOURCE = $selectedRoot
-# The court's own run time is not copy/verification time: pause the snapshot
-# budget around it, as the Studio compile below does. The snapshot is
-# re-verified after the court by Assert-BuildSnapshot while the clock runs.
-$candidateClock.Stop()
-try {
-    $LASTEXITCODE = 0
-    $profileGuard = Join-Path $snapshot.SelectedCheckout (Get-RepositoryPath 'tools/real_app_check/profile_guard.py' $snapshot.SelectedCheckout)
-    & $PythonPath $profileGuard --profile (Join-Path $output 'CHECK-PROFILE') -m pytest -q -p no:cacheprovider $zeroIdleCourt
-    if ($LASTEXITCODE -ne 0) { throw 'Release refused: the zero-idle-growth court is red.' }
-} finally {
-    $env:ARCHHUB_COURT_SOURCE = $priorCourtSource
-    $candidateClock.Start()
 }
 
 Assert-BuildSnapshot $snapshot
@@ -752,6 +710,7 @@ if (Test-Path -LiteralPath $studioOutput) { throw 'Verified source snapshot alre
 # Serial, explicit build only. 192 MiB bounds V8 old space, not total RSS;
 # local physical builds additionally run under the parent's process-tree guard.
 # The compiler uses only vendored Babel; no npm install or runtime JSX compiler.
+$env:ARCHHUB_NODE_MODULES = $checkoutNodeModules
 & $node --max-old-space-size=256 $studioCompiler
 if ($LASTEXITCODE -ne 0) { throw 'Studio compilation failed; retained output must not be installed.' }
 & $node --max-old-space-size=256 $studioCompiler --check

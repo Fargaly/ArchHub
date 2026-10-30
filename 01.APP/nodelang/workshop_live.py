@@ -22,7 +22,9 @@ from pathlib import Path
 FOUNDER = 'Ahmed'
 # Live delivery node: its typed parameters.
 LIVE_NODE = {'id': 'workshop.live', 'params': {'discover_timeout_seconds': 10, 'list_cache_seconds': 30,
-                                                 'sender_wait_seconds': 0.5}}
+                                                 'sender_wait_seconds': 0.5,
+                                                 # a one-shot CLI send waits this long for its pushes (native.mjs gives it 35 s)
+                                                 'one_shot_wait_seconds': 30}}
 SCHEMA = ("CREATE TABLE IF NOT EXISTS workshop_live_deliveries (message_id TEXT NOT NULL, recipient TEXT NOT NULL, "
           "agent TEXT, app TEXT, native_session_id TEXT, channel TEXT, state TEXT NOT NULL, reason TEXT, "
           "at TEXT NOT NULL, ms INTEGER, PRIMARY KEY (message_id, recipient))")

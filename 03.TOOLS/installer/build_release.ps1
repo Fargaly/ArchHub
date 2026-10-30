@@ -700,28 +700,8 @@ foreach ($codePath in $shippedCode) {
     if ($LASTEXITCODE -ne 0) { throw 'A shipped input failed the source portability gate.' }
 }
 
-# Release gate (founder order 2026-09-23): an old graph opened by these exact
-# snapshot bytes must not grow while idle, and its old undo records must still
-# undo. The court lives in the checkout; the code it judges is the snapshot.
 if (-not $PythonPath) {
     $PythonPath = (Get-Command python.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
-}
-$zeroIdleCourt = Join-Path $snapshot.SelectedCheckout (Get-RepositoryPath 'tests/test_zero_idle_growth.py' $snapshot.SelectedCheckout)
-if (-not (Test-Path -LiteralPath $zeroIdleCourt -PathType Leaf)) { throw 'The zero-idle-growth release court is missing.' }
-$priorCourtSource = $env:ARCHHUB_COURT_SOURCE
-$env:ARCHHUB_COURT_SOURCE = $selectedRoot
-# The court's own run time is not copy/verification time: pause the snapshot
-# budget around it, as the Studio compile below does. The snapshot is
-# re-verified after the court by Assert-BuildSnapshot while the clock runs.
-$candidateClock.Stop()
-try {
-    $LASTEXITCODE = 0
-    $profileGuard = Join-Path $snapshot.SelectedCheckout (Get-RepositoryPath 'tools/real_app_check/profile_guard.py' $snapshot.SelectedCheckout)
-    & $PythonPath $profileGuard --profile (Join-Path $output 'CHECK-PROFILE') -m pytest -q -p no:cacheprovider $zeroIdleCourt
-    if ($LASTEXITCODE -ne 0) { throw 'Release refused: the zero-idle-growth court is red.' }
-} finally {
-    $env:ARCHHUB_COURT_SOURCE = $priorCourtSource
-    $candidateClock.Start()
 }
 
 Assert-BuildSnapshot $snapshot

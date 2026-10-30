@@ -21,7 +21,7 @@ import unicodedata
 from uuid import uuid4
 
 from .agent_declarations import SESSION_KEYS, _alive, _lineage, canonical_path, overlaps
-from .agent_runtime_registry import mailbox_label, observed_runtime_process
+from .agent_runtime_registry import agent_host_ancestor, mailbox_label, observed_runtime_process
 from .conversation_history import ConversationHistoryStore, WORKSHOP_CURSOR_SCHEMA
 from .workshop_transport import public_delivery_reason
 
@@ -1051,7 +1051,9 @@ def _sender_may_push(peer, wait=None):
         return _SENDER_VERDICTS[key]
 
     def walk():
-        verdict = observed_runtime_process(peer) is not None
+        # Any agent app's process tree counts (Grok Bot's local runner, Cursor, Antigravity...), not only the CLIs the
+        # runtime registry labels; a plain local process with no agent app above it is still refused.
+        verdict = observed_runtime_process(peer) is not None or agent_host_ancestor(peer) is not None
         if len(_SENDER_VERDICTS) >= _SENDER_CHECK_NODE['params']['remembered']:
             _SENDER_VERDICTS.pop(next(iter(_SENDER_VERDICTS)), None)
         _SENDER_VERDICTS[key] = verdict

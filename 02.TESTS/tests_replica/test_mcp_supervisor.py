@@ -100,3 +100,33 @@ def test_the_agent_closing_its_pipe_ends_supervisor_and_connector(tmp_path):
     _init(proc)
     proc.stdin.close()
     assert proc.wait(15) == 0
+
+
+def test_an_install_closes_the_connector_and_it_comes_back_after_without_the_agent_reconnecting(tmp_path):
+    # Setup writes .archhub-installing for the length of an install: the supervisor (outside the install, holding
+    # none of its files) closes its connector so no install file is in use, then starts it again and replays.
+    fixture = tmp_path / "fixture.py"
+    fixture.write_text(FIXTURE, encoding="utf-8")
+    marker = tmp_path / ".archhub-installing"
+    code = ("import os,sys;from pathlib import Path;sys.path.insert(0,sys.argv[1]);"
+            "from nodelang.mcp_supervisor import Supervisor;"
+            "sys.exit(Supervisor(sys.argv[3:],dict(os.environ),sys.stdin.buffer,sys.stdout.buffer,pause=Path(sys.argv[2])).run())")
+    proc = subprocess.Popen([sys.executable, "-I", "-c", code, str(APP), str(marker), sys.executable, "-I", str(fixture)],
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    try:
+        _init(proc)
+        before = _call(proc, {"jsonrpc": "2.0", "id": 2, "method": "tools/call"}, 2)["result"]["content"][0]["text"]
+        marker.write_text("build")
+        time.sleep(2.5)
+        assert "restarting" in _call(proc, {"jsonrpc": "2.0", "id": 3, "method": "tools/call"}, 3)["error"]["message"]
+        marker.unlink()
+        for attempt in range(40):
+            reply = _call(proc, {"jsonrpc": "2.0", "id": 10 + attempt, "method": "tools/call"}, 10 + attempt)
+            if "result" in reply:
+                break
+            time.sleep(0.5)
+        assert reply["result"]["content"][0]["text"] != before   # a new connector, same agent pipe
+        assert proc.poll() is None
+    finally:
+        proc.stdin.close()
+        proc.wait(10)

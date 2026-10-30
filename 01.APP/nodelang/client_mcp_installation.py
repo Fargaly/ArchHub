@@ -151,16 +151,69 @@ def _require_plain(path: Path, kind: str, *, may_be_absent: bool = False):
     return identity
 
 
+RUNTIME_FOLDER = "ArchHub-Runtime"  # beside the install, never replaced by it
+
+
+def base_python(install_root):
+    """The Python the app's venv is built on (pyvenv.cfg `executable`): outside the install, kept by every update."""
+    try:
+        text = (Path(install_root) / ".venv" / "pyvenv.cfg").read_text(encoding="utf-8")
+    except OSError as error:  # no venv yet (first setup still running): the previous entry is used
+        import logging
+        logging.getLogger(__name__).debug("venv base Python unknown: %s", error)
+        return None
+    found = re.search(r"^executable\s*=\s*(.+?)\s*$", text, re.M)
+    return Path(found.group(1)) if found and Path(found.group(1)).is_file() else None
+
+
+def deploy_supervisor(install_root, state_root):
+    """Copy the stdlib supervisor to <LocalAppData>\\ArchHub-Runtime (idempotent); its path, or None without a base Python."""
+    python = base_python(install_root)
+    if python is None:
+        return None
+    source = Path(install_root) / "nodelang" / "mcp_supervisor.py"
+    target = Path(state_root).parent / RUNTIME_FOLDER / "mcp_supervisor.py"
+    data = source.read_bytes()
+    if not target.is_file() or target.read_bytes() != data:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(target.name + ".tmp")
+        temporary.write_bytes(data)
+        os.replace(temporary, target)
+    return python, target
+
+
+def previous_entry(install_root) -> dict:
+    """The entry before ArchHub-Runtime: the agent started the install's own venv python, so an open agent held
+    install files and every update failed ("file in use"). Recognised as ours and replaced."""
+    root = Path(install_root)
+    return {"type": "stdio", "command": str(root / ".venv" / "Scripts" / "python.exe"),
+            "args": ["-I", "-B", "-c", LOADER, str(root)], "env": {"ARCHHUB_COORDINATION_VENDOR": "claude"}}
+
+
+def is_previous_entry(entry, install_root) -> bool:
+    """This install's own pre-Runtime launch (same command and arguments; env hints may differ)."""
+    old = previous_entry(install_root)
+    return (type(entry) is dict and entry.get("command") == old["command"]
+            and list(entry.get("args") or []) == old["args"])
+
+
 def managed_entry(install_root, state_root) -> dict:
-    """The one user-scope entry for this installation; no session or actor identity."""
+    """The one user-scope entry for this installation; no session or actor identity.
+
+    The agent starts the supervisor in ArchHub-Runtime with the venv's base Python; it starts the real connector
+    from the install per run, closes it while Setup runs and brings it back after (the agent never reconnects).
+    """
     root = Path(install_root)
     python = root / ".venv" / "Scripts" / "python.exe"
     _require_plain(python, "file")
     _require_plain(root / "nodelang" / "native_agent_mcp.py", "file")
+    deployed = deploy_supervisor(root, state_root)
+    if deployed is None:
+        return previous_entry(root)  # no venv base recorded yet (first setup still running)
     return {
         "type": "stdio",
-        "command": str(python),
-        "args": ["-I", "-B", "-c", LOADER, str(root)],
+        "command": str(deployed[0]),
+        "args": ["-I", "-B", str(deployed[1]), str(root)],
         # Claude Code supplies the session identity to its own MCP processes.
         "env": {"ARCHHUB_COORDINATION_VENDOR": "claude"},
     }
@@ -318,7 +371,11 @@ def readiness(install_root, state_root, *, environment=None) -> dict:
         report["claude_code"] = problem or "config_unreadable"
         return report
     legacy = report["legacy_migration_needed"]
-    if SERVER_NAME in servers and servers[SERVER_NAME] != entry:
+    if SERVER_NAME in servers and servers[SERVER_NAME] != entry and is_previous_entry(servers[SERVER_NAME], install_root):
+        # Our own pre-Runtime launch: an open agent held install files, so every update failed. Replaced on consent.
+        report.update(claude_code="migration_available", replace_own=True,
+                      reason="ArchHub's previous connector launch holds install files open; Replace starts it from ArchHub-Runtime")
+    elif SERVER_NAME in servers and servers[SERVER_NAME] != entry:
         # Semantic equality of the parsed entry, not file bytes.
         report["claude_code"] = "conflict"
     elif report["legacy_retire"]:
@@ -379,6 +436,10 @@ def register_claude_code(install_root, state_root, *, consent, environment=None,
     exit_code, reason = None, "entry_not_found_after_command"
     config, _problem = _user_config(env)
     servers = (config or {}).get("mcpServers", {})
+    if before.get("replace_own") and type(servers) is dict and is_previous_entry(servers.get(SERVER_NAME), install_root):
+        exit_code, failure = _run_claude(run, [exe, "mcp", "remove", SERVER_NAME, "--scope", "user"], env)
+        if failure:
+            reason = "claude_mcp_remove_" + failure
     if type(servers) is not dict or servers.get(SERVER_NAME) != before["entry"]:
         exit_code, failure = _run_claude(run, [exe, "mcp", "add-json", SERVER_NAME,
             json.dumps(before["entry"], separators=(",", ":")), "--scope", "user"], env)

@@ -534,10 +534,27 @@ begin
       mbCriticalError, MB_OK, IDOK);
 end;
 
+procedure CloseInstallConnectors();
+var
+  Code: Integer;
+begin
+  { Agents start the connector supervisor from ArchHub-Runtime; it closes its connector while this marker exists and
+    starts it again after, so no agent reconnects. Connectors still started from the install itself (the launch
+    before ArchHub-Runtime) are closed here so none of their files is in use. }
+  SaveStringToFile(ExpandConstant('{app}\.archhub-installing'), '{#BuildId}', False);
+  Sleep(2500);
+  Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    '-NoProfile -NonInteractive -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like ''*native_agent_mcp*'' -and $_.CommandLine -like ''*' +
+    ExpandConstant('{app}') + '*'' -and $_.CommandLine -notlike ''*mcp_supervisor.py*'' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"',
+    '', SW_HIDE, ewWaitUntilTerminated, Code);
+end;
+
 procedure DeinitializeSetup();
 begin
   { An unfinished setup puts back every host file it set aside. }
   RestoreRetiredHostFiles();
+  { Connectors come back whether setup finished or not. }
+  DeleteFile(ExpandConstant('{app}\.archhub-installing'));
 end;
 
 var
@@ -574,6 +591,7 @@ begin
     application files. The launcher independently validates the environment. }
   if CurStep = ssInstall then
   begin
+    CloseInstallConnectors();
     { v1.x left its whole code tree beside this one; sweep it once, guarded. }
     SweepLegacyV1(ExpandConstant('{app}'));
     { These stale files were never payloads of this package. Preserve exact
@@ -620,6 +638,8 @@ begin
     end;
     if ConnectorWarnings <> '' then
       Log(ConnectorWarnings);
+    { Connector entries now point at ArchHub-Runtime; the supervisors start their connectors again. }
+    DeleteFile(ExpandConstant('{app}\.archhub-installing'));
 
   end;
 end;

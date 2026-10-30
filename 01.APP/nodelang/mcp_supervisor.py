@@ -32,8 +32,9 @@ def _parse(line):
 
 
 class Supervisor:
-    def __init__(self, command, env, client_in, client_out):
+    def __init__(self, command, env, client_in, client_out, pause=None):
         self.command, self.env = command, env
+        self.pause = pause  # while this file exists (an install is running) no connector runs
         self.client_in, self.client_out = client_in, client_out
         self.lock, self.write_lock = threading.Lock(), threading.Lock()
         self.child = None
@@ -112,16 +113,33 @@ class Supervisor:
                   file=sys.stderr, flush=True)
             self._restart()
 
+    def _installing(self):
+        return self.pause is not None and self.pause.exists()
+
+    def _watch_install(self):
+        """An install starting closes the connector so no install file stays in use; this process holds none."""
+        while not self.closed:
+            time.sleep(BACKOFF[1])  # the install marker is checked once a second
+            child = self.child
+            if child is not None and self._installing():
+                print("ArchHub MCP supervisor: install running; connector closed until it finishes", file=sys.stderr, flush=True)
+                child.terminate()
+
     def _restart(self):
         attempt = 0
         while not self.closed:
+            if self._installing():
+                time.sleep(BACKOFF[1])
+                continue
             time.sleep(BACKOFF[min(attempt, len(BACKOFF) - 1)])
             attempt += 1
             if self.closed or self.start_child():
                 return
 
     def run(self):
-        if not self.start_child():
+        if self.pause is not None:
+            threading.Thread(target=self._watch_install, daemon=True, name="archhub-mcp-install-watch").start()
+        if self._installing() or not self.start_child():
             threading.Thread(target=self._restart, daemon=True, name="archhub-mcp-restart").start()
         for raw in iter(self.client_in.readline, b""):
             line = raw.rstrip(b"\r\n")
@@ -160,7 +178,26 @@ class Supervisor:
         return 0
 
 
+LOADER = ("import runpy,sys;sys.path.insert(0,sys.argv.pop(1));"
+          "runpy.run_module('nodelang.native_agent_mcp',run_name='__main__')")
+INSTALL_MARKER = ".archhub-installing"  # written by Setup for the length of an install
+
+
+def main(argv):
+    """The agent's entry, run from %LOCALAPPDATA%\\ArchHub-Runtime by the Python the app venv is built on, so
+    nothing the agent starts lives in the install folder: `python -I -B mcp_supervisor.py <install root>`."""
+    from pathlib import Path
+    root = Path(argv[0])
+    env = dict(os.environ, ARCHHUB_MCP_SUPERVISED="1")
+    command = [str(root / ".venv" / "Scripts" / "python.exe"), "-I", "-B", "-c", LOADER, str(root)]
+    return Supervisor(command, env, sys.stdin.buffer, sys.stdout.buffer, pause=root / INSTALL_MARKER).run()
+
+
 def supervise(command=None):
     """Run the connector under supervision; returns when the agent closes its pipe."""
     env = dict(os.environ, ARCHHUB_MCP_SUPERVISED="1")
     return Supervisor(command or [sys.executable, *sys.orig_argv[1:]], env, sys.stdin.buffer, sys.stdout.buffer).run()
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

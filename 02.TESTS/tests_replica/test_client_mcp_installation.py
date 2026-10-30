@@ -431,3 +431,23 @@ def test_the_shim_target_is_checked_like_any_claude_exe_mocked_reparse(tmp_path,
     report = installation.register_claude_code(root, state, consent=True, environment=environment,
                                                run=_no_process)
     assert report["claude_code"] == "launcher_untrusted"
+
+
+def test_the_agent_starts_the_supervisor_outside_the_install_and_the_old_entry_is_replaced(tmp_path):
+    # An open agent held packed\site.zip (the install's venv python imported nodelang), so every update failed
+    # "file in use". The entry now starts ArchHub-Runtime\mcp_supervisor.py with the venv's base Python.
+    root, state, home, environment = _rig(tmp_path)
+    base = tmp_path / "pythoncore" / "python.exe"
+    base.parent.mkdir()
+    base.write_bytes(b"")
+    (root / "nodelang" / "mcp_supervisor.py").write_text("def main(argv): pass\n", encoding="utf-8")
+    (root / ".venv" / "pyvenv.cfg").write_text("home = x\nexecutable = %s\n" % base, encoding="utf-8")
+    entry = installation.managed_entry(root, state)
+    runtime = state.parent / "ArchHub-Runtime" / "mcp_supervisor.py"
+    assert entry["command"] == str(base) and entry["args"] == ["-I", "-B", str(runtime), str(root)]
+    assert runtime.read_text(encoding="utf-8") == "def main(argv): pass\n"
+    assert str(root) not in entry["command"]                       # nothing the agent starts lives in the install
+    old = installation.previous_entry(root)
+    (home / ".claude.json").write_text(json.dumps({"mcpServers": {SERVER_NAME: old}}), encoding="utf-8")
+    report = installation.readiness(root, state, environment=environment)
+    assert report["claude_code"] == "migration_available" and report["replace_own"] is True

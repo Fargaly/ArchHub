@@ -33,6 +33,7 @@ from pathlib import Path
 from .client_mcp_installation import (
     LEGACY_NAMES,
     RegistrationRefused,
+    is_previous_entry,
     managed_entry,
     readiness as claude_readiness,
     register_claude_code,
@@ -253,7 +254,7 @@ def codex_readiness(install_root, state_root, environment=None) -> dict:
     if SERVER_NAME in servers:
         if servers[SERVER_NAME] == entry:
             return dict(report, state="registered")
-        if _dev_era_codex_entry(servers[SERVER_NAME]):
+        if _dev_era_codex_entry(servers[SERVER_NAME]) or is_previous_entry(servers[SERVER_NAME], install_root):
             return dict(report, state="migration_available",
                         reason="ArchHub's development-era start of this server gives it no "
                                "CODEX_THREAD_ID, so Codex cannot start it; Replace writes this install's entry")
@@ -287,7 +288,7 @@ def migrate_codex(install_root, state_root, *, consent, environment=None) -> dic
     except (ValueError, UnicodeError):
         return dict(before, state="config_unreadable")
     current = old.get("mcp_servers", {}).get(SERVER_NAME) if type(old.get("mcp_servers")) is dict else None
-    if not _dev_era_codex_entry(current):
+    if not (_dev_era_codex_entry(current) or is_previous_entry(current, install_root)):
         return dict(before, state="registered" if current == before["entry"] else "conflict",
                     reason="the entry changed after it was checked; nothing was written")
     try:
@@ -657,7 +658,7 @@ def migrate_gemini(install_root, state_root, *, consent, environment=None) -> di
     entry['env']['ARCHHUB_COORDINATION_VENDOR'] = 'gemini'
     if old == entry:
         return {'client': 'gemini-cli', 'state': 'registered'}
-    if not _dev_era_connector_entry(old, 'gemini'):
+    if not (_dev_era_connector_entry(old, 'gemini') or is_previous_entry(old, install_root)):
         return {'client': 'gemini-cli', 'state': 'conflict' if old is not None else 'not_connected'}
     servers[SERVER_NAME] = entry
     backups = Path(state_root) / 'private-client-backups'
@@ -711,7 +712,8 @@ def preflight_install_connectors(environment=None, *, warning=None):
                 raise ValueError('connector table is unreadable')
             entry = data.get(table, {}).get(SERVER_NAME)
             ownership[vendor] = ('absent' if entry is None else
-                                 'retired' if _dev_era_connector_entry(entry, vendor) else 'other')
+                                 'retired' if (_dev_era_connector_entry(entry, vendor)
+                                               or is_previous_entry(entry, install_roots(env)[0])) else 'other')
             if entry is not None and ownership[vendor] == 'other':
                 report('Connector warning: ' + str(path) + ': unknown or unmanaged entry; left untouched')
         except (OSError, ValueError, RegistrationRefused):

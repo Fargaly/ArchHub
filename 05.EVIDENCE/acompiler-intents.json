@@ -9184,6 +9184,7 @@
         "02.TESTS/tests_replica/session_link_resume.test.mjs",
         "02.TESTS/tests_replica/session_link_stdin.test.mjs",
         "02.TESTS/tests_replica/session_link_target_host_unloaded.test.mjs",
+        "02.TESTS/tests_replica/test_acompiler_gate.py",
         "02.TESTS/tests_replica/test_agenttrail.py",
         "02.TESTS/tests_replica/test_an_entry_never_streams_the_store.py",
         "02.TESTS/tests_replica/test_antigravity_native_binding.py",

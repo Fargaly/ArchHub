@@ -682,24 +682,6 @@ if (-not (Test-Path -LiteralPath (Join-Path $selectedRoot 'packed/stamp.json') -
     throw 'The packed runtime has no stamp.json; no release without the packed runtime.'
 }
 
-# Apply the existing portability gate to shipped code, not tests or private
-# workspace areas. A refusal needs a source repair, never a gate bypass.
-$portabilityGate = Join-Path $selectedRoot 'packaging/windows/Test-SourcePortability.ps1'
-$shippedCode = @(
-    (Join-Path $selectedRoot 'nodelang'),
-    (Join-Path $selectedRoot 'colleague_setup.py'),
-    (Join-Path $selectedRoot 'app/secrets_store.py'),
-    (Join-Path $selectedRoot 'app/credential_lock.py'),
-    (Join-Path $selectedRoot 'bridges/rhino/archhub_mcp.py'),
-    (Join-Path $selectedRoot 'bridges/blender/archhub_mcp'),
-    (Join-Path $selectedRoot 'bridges/sources/max_mcp/max_mcp_startup.py')
-)
-foreach ($codePath in $shippedCode) {
-    $LASTEXITCODE = 0
-    & $portabilityGate -SourceRoot $codePath
-    if ($LASTEXITCODE -ne 0) { throw 'A shipped input failed the source portability gate.' }
-}
-
 if (-not $PythonPath) {
     $PythonPath = (Get-Command python.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 }

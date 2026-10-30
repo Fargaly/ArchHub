@@ -25,7 +25,9 @@ from contextlib import contextmanager
 from pathlib import Path
 
 # The .archhub document owner node: its typed parameters.
-DOCUMENT_NODE = {'id': 'canvas.document', 'params': {'history_limit': 200, 'lock_poll_seconds': 0.02}}
+DOCUMENT_NODE = {'id': 'canvas.document', 'params': {'history_limit': 200, 'lock_poll_seconds': 0.02,
+                                                     'budget': {'seconds': 60, 'calls': 1, 'cost_usd': 0.0},
+                                                     'loop': {'trigger': 'Run', 'stop': 'list exhausted', 'evaluator': '', 'cap': 1000}}}
 _READ = re.compile(r'\.(read|info|list|search|inbox|get|query|ping|status|preview|probe)(_|$)')
 
 
@@ -40,6 +42,38 @@ def is_pure(engine):
         return THING_ENGINES[engine]['pure']
     effect = PIPELINE_ENGINES.get(engine)
     return bool(effect is not None and not getattr(effect, 'enforce_pending', False) and _READ.search(engine))
+
+
+# ------------------------------------------------------------ node contract --
+# C2: every node has typed sockets, a pure/side-effect flag and a budget; a loop node also
+# declares its trigger, stop condition, evaluator and cap. These are the catalogue defaults;
+# a THING_ENGINES row may override 'budget'. Purity is engine-owned and never read from a file.
+BUDGET_DEFAULT = DOCUMENT_NODE['params']['budget']
+BUDGET_KEYS = frozenset(BUDGET_DEFAULT)
+LOOP_ENGINES = frozenset({'library.loop', 'control.foreach'})
+LOOP_DEFAULT = DOCUMENT_NODE['params']['loop']
+
+
+def node_contract(engine):
+    """The catalogue's contract for one engine: pure, budget and (loop nodes only) loop."""
+    spec = THING_ENGINES.get(engine) or {}
+    return {'pure': is_pure(engine), 'budget': dict(spec.get('budget', BUDGET_DEFAULT)),
+            'loop': dict(LOOP_DEFAULT) if engine in LOOP_ENGINES else None}
+
+
+def check_contract(node):
+    """Refuse a malformed budget/loop in a file, and set pure from the engine."""
+    budget = node.get('budget')
+    if budget is not None and (not isinstance(budget, dict) or set(budget) - BUDGET_KEYS or any(
+            type(v) not in (int, float) or v < 0 for v in budget.values())):
+        raise ValueError('Node budget must hold non-negative seconds, calls and cost_usd')
+    loop = node.get('loop')
+    if loop is not None and (not isinstance(loop, dict) or set(loop) != set(LOOP_DEFAULT)
+                             or any(not isinstance(loop[k], str) for k in ('trigger', 'stop', 'evaluator'))
+                             or type(loop['cap']) is not int or loop['cap'] < 1):
+        raise ValueError('Node loop must declare trigger, stop, evaluator and a positive cap')
+    if 'pure' in node:  # a file may carry the flag for readers; the value is always the engine's (unknown = side effect)
+        node['pure'] = is_pure(node.get('type'))
 
 
 # ------------------------------------------------------- app things as nodes --
@@ -62,13 +96,22 @@ def _run_model(params, feeds):
     prompt = str(feeds.get('prompt') or params.get('prompt') or '').strip()
     if not prompt:
         raise ValueError('Wire a prompt or set the prompt parameter.')
-    result = composer_chat({'prompt': prompt, 'agent': 'BABOOM', 'model': str(params.get('route') or _router()['default_model'])})
+    system = str(feeds.get('system') or params.get('system') or '').strip()
+    if system:
+        prompt = system + '\n\n' + prompt
+    body = {'prompt': prompt, 'agent': 'BABOOM', 'model': str(params.get('route') or _router()['default_model'])}
+    if feeds.get('temperature') not in (None, ''):
+        body['temperature'] = float(feeds['temperature'])
+    result = composer_chat(body)
     return {'text': result['answer'], 'model': result['model']}, result['model']
 
 
 def _run_agent(params, feeds):
     from .workshop_mailbox import call
-    task = str(feeds.get('task') or params.get('instructions') or '').strip()
+    instructions = str(params.get('instructions') or '').strip()
+    task = str(feeds.get('task') or '').strip()
+    # A wired task runs under the node's instructions (an imported skill is both).
+    task = instructions + '\n\nTask: ' + task if instructions and task else task or instructions
     if not task:
         raise ValueError('Wire a task or write instructions.')
     files = feeds.get('files')
@@ -122,17 +165,26 @@ def _run_setting(params, feeds):
     return {'value': value}, str(value)
 
 
+def _run_foreign(params, feeds):
+    # An imported node ArchHub has no engine for: untrusted foreign code never runs (flow_import.py).
+    raise ValueError('Not run: imported %s %s node. %s. Replace it with a Library node.'
+                     % (params.get('format', ''), params.get('kind', ''), params.get('reason', 'No ArchHub engine')))
+
+
 # engine -> sockets, purity, executor, and which parameter writes through to which owner.
 THING_ENGINES = {
     'thing.agent': {'pure': False, 'run': _run_agent, 'in': [_port('task'), _port('files', 'list')],
                     'out': [_port('result'), _port('messages', 'list')]},
-    'thing.model': {'pure': False, 'run': _run_model, 'in': [_port('prompt', 'string')], 'out': [_port('text', 'string'), _port('model', 'string')]},
+    'thing.model': {'pure': False, 'run': _run_model, 'in': [_port('prompt', 'string'), _port('temperature', 'number'), _port('system', 'string')],
+                    'out': [_port('text', 'string'), _port('model', 'string')]},
     'thing.host': {'pure': True, 'run': _run_host, 'in': [], 'out': [_port('sessions', 'list'), _port('elements', 'list')]},
     'thing.workspace': {'pure': True, 'run': _run_workspace, 'in': [], 'out': [_port('path', 'string'), _port('files', 'list')]},
     'thing.file': {'pure': True, 'run': _run_file, 'in': [], 'out': [_port('path', 'string'), _port('text', 'string')]},
     'thing.workshop': {'pure': True, 'run': _run_workshop, 'in': [], 'out': [_port('messages', 'list')],
                        'engine': 'thing.workshop', 'params': {'thread': 'app:workshop', 'limit': 20}},
     'thing.setting': {'pure': True, 'run': _run_setting, 'in': [_port('value')], 'out': [_port('value')]},
+    # Not a Library card: only importers place it; its sockets live on the node.
+    'import.foreign': {'pure': False, 'run': _run_foreign, 'in': [], 'out': []},
 }
 from .daily_work_nodes import DAILY_ENGINES, daily_items  # noqa: E402 - the daily-work pack shares this one contract
 THING_ENGINES.update(DAILY_ENGINES)
@@ -147,10 +199,13 @@ WRITE_THROUGH = {
 
 def thing_items():
     """Library cards for every app thing, built on demand from their live owners."""
-    def card(item, cat, title, sub, engine, params):
+    def card(item, cat, title, sub, engine, params, kind=None):
         spec = THING_ENGINES[engine]
+        typed = lambda ports: [dict(p, type=kind) if kind and p['type'] == 'any' else p for p in ports]
+        # Parameters that are router.json settings show as From Settings: one authority.
+        settings = sorted(key for (owner, key) in WRITE_THROUGH if owner == engine and key in params)
         return {'id': item, 'cat': cat, 'title': title, 'sub': sub, 'engine': engine, 'params': params,
-                'ports': {'source': list(spec['out']), 'target': list(spec['in'])}}
+                'settingsKeys': settings, 'ports': {'source': typed(spec['out']), 'target': typed(spec['in'])}}
     items = []
     try:
         router = _router()
@@ -184,8 +239,16 @@ def thing_items():
     items.append(card('thing:file', 'files', 'File or folder', 'A local file or folder reference', 'thing.file', {'path': ''}))
     items.append(card('thing:workshop', 'workshop', 'Workshop thread', 'Messages in the Workshop room', 'thing.workshop',
                       dict(THING_ENGINES['thing.workshop']['params'])))
-    items.append(card('thing:setting:temperature', 'settings', 'Setting · temperature', 'Router generation setting',
-                      'thing.setting', {'value': ''}))
+    # The value is router.json's own; a profile whose router.json sets no temperature shows "unset", never a default.
+    try:
+        from .settings_owner import router_settings_path
+        _router()
+        held = json.loads(router_settings_path().read_text(encoding='utf-8'))
+        temperature = held.get('generation', {}).get('temperature') if isinstance(held, dict) else None
+    except Exception:  # noqa: BLE001 - a missing or unreadable router file leaves the parameter unset
+        temperature = None
+    items.append(card('thing:setting:temperature', 'settings', 'Temperature', 'Number parameter · router generation',
+                      'thing.setting', {'value': temperature}, kind='number'))
     items.extend(daily_items())
     return items
 

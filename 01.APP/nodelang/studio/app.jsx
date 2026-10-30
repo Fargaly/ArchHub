@@ -779,13 +779,7 @@
             u
           }, event)}>Expose on canvas</Btn></div>)}</div><Btn onClick={event => executeAction("appShell.OpenSystemGraph.73", {
         u
-      }, event)}>Open System graph</Btn></>;else if (k === 'Type mismatch') body = <><p style={{
-        color: A.warn
-      }}>{m.reason}</p><p className="muted">Insert a converter between these sockets.</p><Btn p onClick={event => executeAction("appShell.InsertConvert.74", {
-        api,
-        m,
-        saved
-      }, event)}>Insert Convert</Btn></>;else if (k === 'Trace back' || k === 'Trace forward') body = <div className="grid">{m.rows?.map(r => <button className="listbutton" key={r.id} onClick={event => executeAction("appShell.Control.75", {
+      }, event)}>Open System graph</Btn></>;else if (k === 'Trace back' || k === 'Trace forward') body = <div className="grid">{m.rows?.map(r => <button className="listbutton" key={r.id} onClick={event => executeAction("appShell.Control.75", {
         u
       }, event)}><h3>{r.title}</h3><p className="muted">{r.relation}</p></button>)}</div>;else if (k === 'Edit rule' || k === 'Remember') body = <><textarea aria-label="Learned rule" rows={3} value={text} onChange={e => setText(e.target.value)} /><Btn p disabled={!text.trim()} onClick={event => executeAction("appShell.Save.76", {
         api,
@@ -1512,14 +1506,6 @@
     const handler = () => u.go('system');
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
   }
-  function appShellInsertConvert74({
-    api,
-    m,
-    saved
-  }, event) {
-    const handler = () => saved(() => api.insertConvert(m.wire));
-    return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-  }
   function appShellControl75({
     u
   }, event) {
@@ -1828,7 +1814,6 @@
     "appShell.Delete.71": "appShellDelete71",
     "appShell.ExposeOnCanvas.72": "appShellExposeOnCanvas72",
     "appShell.OpenSystemGraph.73": "appShellOpenSystemGraph73",
-    "appShell.InsertConvert.74": "appShellInsertConvert74",
     "appShell.Control.75": "appShellControl75",
     "appShell.Save.76": "appShellSave76",
     "appShell.AddComment.77": "appShellAddComment77",
@@ -1929,7 +1914,6 @@
     appShellDelete71,
     appShellExposeOnCanvas72,
     appShellOpenSystemGraph73,
-    appShellInsertConvert74,
     appShellControl75,
     appShellSave76,
     appShellAddComment77,

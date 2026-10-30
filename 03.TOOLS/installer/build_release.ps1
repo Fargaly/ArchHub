@@ -31,6 +31,8 @@ $utf8 = [Text.UTF8Encoding]::new($false, $true)
 $builtAt = [DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", [Globalization.CultureInfo]::InvariantCulture)
 $selectedRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 if ((Split-Path -Leaf $selectedRoot) -ceq '03.TOOLS') { $selectedRoot = Split-Path -Parent $selectedRoot }
+# CANVASXY: the Studio build bundles the pinned xyflow package from this checkout's npm ci tree (sha256-pinned in compile_studio.cjs).
+$checkoutNodeModules = Join-Path $selectedRoot 'node_modules'
 # Repository locations are inputs; the snapshot and every installed path remain native.
 $repositoryAreas = @{
     'nodelang' = '01.APP/nodelang'; 'app' = '01.APP/app'; 'bridges' = '01.APP/bridges'
@@ -521,11 +523,24 @@ function Read-StudioBuild {
             throw 'Invalid or duplicate Studio output name.'
         }
     }
+    # CANVASXY: the pinned xyflow bundle (package, exact version, upstream sha256 in compile_studio.cjs).
+    $vendor = @()
+    if ($manifest.vendor) { $vendor = @($manifest.vendor) }
+    $vendorNames = [Collections.Generic.List[string]]::new()
+    foreach ($item in $vendor) {
+        $vendorPath = Join-Path $generated $item.output
+        $vendorSize = (Get-Item -LiteralPath $vendorPath).Length
+        $vendorHash = (Get-FileHash -LiteralPath $vendorPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($item.output -cnotmatch '^[a-z0-9][a-z0-9.-]*\.(js|css)$' -or -not $unique.Add($item.output)) { throw 'Invalid Studio vendor output name.' }
+        if ($item.license -cne 'MIT' -or $item.version -cnotmatch '^\d+\.\d+\.\d+$') { throw 'Studio vendor bundle lacks its pinned licence or version.' }
+        if ($vendorSize -gt 1048576 -or $item.sha256 -cne $vendorHash) { throw 'Studio vendor bundle does not match its manifest.' }
+        $vendorNames.Add($item.output)
+    }
     $entries = @(Get-ChildItem -LiteralPath $generated -Force)
-    if ($entries.Count -ne ($names.Count + 1)) { throw 'Studio output inventory differs from its manifest.' }
+    if ($entries.Count -ne ($names.Count + $vendor.Count + 1)) { throw 'Studio output inventory differs from its manifest.' }
     foreach ($entry in $entries) {
         if ($entry.PSIsContainer -or ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
-            ($entry.Name -cne 'manifest.json' -and $entry.Name -cnotin $names)) {
+            ($entry.Name -cne 'manifest.json' -and $names.IndexOf($entry.Name) -lt 0 -and $vendorNames.IndexOf($entry.Name) -lt 0)) {
             throw 'Unexpected Studio compiler output.'
         }
     }
@@ -695,6 +710,7 @@ if (Test-Path -LiteralPath $studioOutput) { throw 'Verified source snapshot alre
 # Serial, explicit build only. 192 MiB bounds V8 old space, not total RSS;
 # local physical builds additionally run under the parent's process-tree guard.
 # The compiler uses only vendored Babel; no npm install or runtime JSX compiler.
+$env:ARCHHUB_NODE_MODULES = $checkoutNodeModules
 & $node --max-old-space-size=256 $studioCompiler
 if ($LASTEXITCODE -ne 0) { throw 'Studio compilation failed; retained output must not be installed.' }
 & $node --max-old-space-size=256 $studioCompiler --check

@@ -61,3 +61,5 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+xyflow / React Flow (@xyflow/react 12.11.2) - Copyright (c) 2019-2025 webkid GmbH - MIT License. Pinned in package.json (exactly 12.11.2) and bundled by 03.TOOLS/packaging/compile_studio.cjs into the generated studio/compiled/xyflow.js (UMD plus a jsx-runtime shim for the Studio's React) and xyflow.css (base.css); upstream bytes are sha256-pinned.

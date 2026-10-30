@@ -13,6 +13,9 @@ import time
 
 from .goose_adapter import AcpTransport, GooseAdapter, GooseRefused
 
+# The private host-read extension node: how long a live server may take to report started.
+HOST_EXTENSION_NODE = {'id': 'baboom.goose.host_read', 'params': {'start_seconds': 30}}
+
 
 class GooseRuntime:
     def __init__(self, *, app_root, state_dir, control, process_factory=subprocess.Popen):
@@ -113,7 +116,9 @@ class GooseRuntime:
         self.thread = threading.Thread(target=lambda: self.http.run(sockets=[self.socket]),
                                        name="archhub-goose-host-read", daemon=True)
         self.thread.start()
-        deadline = time.monotonic() + 4
+        # A dead server thread fails at once; a live one gets time. A fixed 4 s refused BABOOM on a busy
+        # desktop (founder 2026-10-30: lifespan started, then shut down by this deadline, every launch).
+        deadline = time.monotonic() + HOST_EXTENSION_NODE['params']['start_seconds']
         while not self.http.started:
             if not self.thread.is_alive() or time.monotonic() >= deadline:
                 raise GooseRefused("The private ArchHub host read extension did not start.")

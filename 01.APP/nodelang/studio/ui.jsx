@@ -49,7 +49,7 @@
     'Add': 'plus',
     'Open Library': 'library',
     'Open Skills': 'pin',
-    'Open Templates': 'home',
+    'Open Templates': 'library',
     'Open receipts': 'docs',
     'Settings': 'settings',
     '×': 'close',

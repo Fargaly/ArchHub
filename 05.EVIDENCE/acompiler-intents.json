@@ -8982,6 +8982,9 @@
       "scope": [
         "01.APP/nodelang/client_mcp_installation.py",
         "02.TESTS/tests_replica/test_client_mcp_installation.py",
+        "01.APP/nodelang/studio/design-tokens.json",
+        "02.TESTS/tests_js/studio_design_tokens.test.cjs",
+        "03.TOOLS/packaging/pull_design_tokens.ps1",
         "02.TESTS/tests_replica/test_goose_host_extension_slow_start.py",
         "01.APP/bridges/sources/acad_mcp/AcadMCPApp.cs",
         "02.TESTS/tests_replica/test_baboom_shows_on_screen.py",

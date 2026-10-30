@@ -912,7 +912,8 @@ def main():
         import json as mailbox_json
         import sys
         body = mailbox_json.loads(sys.stdin.buffer.read(65537))
-        print(mailbox_json.dumps(_mailbox_call("read" if args.mailbox_read else "send", body, _default_context())))
+        print(mailbox_json.dumps(_mailbox_call("read" if args.mailbox_read else "send", body, _default_context(),
+                                              **({} if args.mailbox_read else {"one_shot": True}))))
         return
     server = build_server()
     # The Workshop is the gateway: hooks+rules are applied to this agent off the start path.

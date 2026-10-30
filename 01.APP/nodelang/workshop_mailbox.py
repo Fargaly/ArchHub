@@ -910,7 +910,7 @@ def _read(history, body, identity, runtime=None):
 
 
 def call(method, body, context, *, database=None, peer=None, history=None, account=None,
-         timeout_seconds: float = 30.0, store_busy_timeout_seconds: float = 2.0):
+         timeout_seconds: float = 30.0, store_busy_timeout_seconds: float = 2.0, one_shot=False):
     if (type(store_busy_timeout_seconds) not in (int, float)
             or not 0 <= store_busy_timeout_seconds <= 2):
         raise ValueError("Workshop store lock wait must be between zero and two seconds")
@@ -987,19 +987,28 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
     # Sender check: only a process running inside a real agent session (its observed runtime ancestor) pushes into
     # other sessions. Any other local process is recorded in the Workshop and never injected. The founder's own
     # chat comes through the app's authenticated Studio session (workshop_live.send_as_founder), not this call.
-    if not _sender_may_push(peer):
-        result["delivery"] = [{"agent": body["to"], "state": "failed", "reason": "Sender is not a running agent session; "
-                               "recorded in the Workshop, not pushed into any session."}]
+    # A one-shot CLI send exits when call() returns, killing every daemon thread: it waits for the existing workers.
+    from .workshop_live import LIVE_NODE
+    one_shot_wait = LIVE_NODE["params"]["one_shot_wait_seconds"] if one_shot else None
+    one_shot_end = time.monotonic() + (one_shot_wait or 0)
+    if not (_sender_may_push(peer, one_shot_wait) if one_shot else _sender_may_push(peer)):
+        reason = "Sender is not a running agent session; recorded in the Workshop, not pushed into any session."
+        result["delivery"] = (_receipt(database, result, body, "failed", reason) if one_shot
+                              else [{"agent": body["to"], "state": "failed", "reason": reason}])
         return result
     # The message is recorded; the pushes run beside the caller and each lands as its own row in the
     # Workshop (delivered, or failed with the reason). A slow or hung agent never delays the sender.
     import threading
-    from .workshop_live import LIVE_NODE
     done = {}
     worker = threading.Thread(target=lambda: done.update(rows=_deliver_now(database, result, body, identity)),
                               name="archhub-workshop-delivery", daemon=True)
     worker.start()
-    worker.join(LIVE_NODE["params"]["sender_wait_seconds"])
+    # One budget for the whole one-shot send (sender check + pushes), inside native.mjs's process timeout.
+    worker.join(max(0.01, one_shot_end - time.monotonic()) if one_shot else LIVE_NODE["params"]["sender_wait_seconds"])
+    if one_shot and "rows" not in done:
+        result["delivery"] = _receipt(database, result, body, "uncertain", "The live push did not finish in %d s; it may "
+            "still land. Recorded in the Workshop; do not send it again." % one_shot_wait, one_shot_wait)
+        return result
     # Say plainly that the message is sent: an agent told "delivering" re-sent the same reply.
     result["delivery"] = done.get("rows") if "rows" in done else [
         {"agent": body["to"], "state": "sent", "reason": "Sent and recorded; do not send it again. "
@@ -1032,7 +1041,7 @@ _SENDER_VERDICTS = {}
 _SENDER_CHECK_NODE = {'id': 'workshop.sender_check', 'params': {'deadline_seconds': 0.5, 'remembered': 256}}
 
 
-def _sender_may_push(peer):
+def _sender_may_push(peer, wait=None):
     """True only for a process inside a real agent session. Bounded: the first check of a process waits at most
     deadline_seconds for its process-tree walk; past that the message is recorded and not injected (fail safe), and the
     walk finishes beside the caller so the next send from that process has its verdict at once."""
@@ -1048,8 +1057,19 @@ def _sender_may_push(peer):
         _SENDER_VERDICTS[key] = verdict
     worker = threading.Thread(target=walk, name='archhub-workshop-sender-check', daemon=True)
     worker.start()
-    worker.join(_SENDER_CHECK_NODE['params']['deadline_seconds'])
+    worker.join(wait or _SENDER_CHECK_NODE['params']['deadline_seconds'])
     return _SENDER_VERDICTS.get(key, False)
+
+
+def _receipt(database, result, body, state, reason, waited=0):
+    """A one-shot sender's persisted receipt (failed or uncertain) for a push that did not report back: never "sent"."""
+    from .workshop_live import SCHEMA
+    with application_history(database=database) as selected:
+        selected._db.execute(SCHEMA)
+        selected._db.execute("INSERT OR IGNORE INTO workshop_live_deliveries VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (result["message_id"], body["to"], body["to"], "", "", "workshop", state, reason,
+             datetime.now(timezone.utc).isoformat(), int(waited * 1000)))
+    return [{"agent": body["to"], "state": state, "reason": reason}]
 
 
 def _deliver_now(database, result, body, identity):

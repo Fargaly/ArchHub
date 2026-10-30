@@ -336,6 +336,22 @@ def test_a_slow_sender_check_records_without_injecting_and_never_blocks_the_send
     assert time.monotonic() - started < 1.0
     time.sleep(1.2)
     assert workshop_mailbox._sender_may_push(peer) is True           # the walk finished beside the caller; remembered
+def test_a_one_shot_cli_send_waits_for_its_push_and_persists_a_truthful_receipt(monkeypatch):
+    # --mailbox-send exits when call() returns: a "sent" answer killed the delivery daemon before its row was written.
+    import time
+    from nodelang import workshop_live, workshop_mailbox
+    declare({'claude/sessionID': 'c-7'}, 'Claude Seven')
+    monkeypatch.setattr(workshop_mailbox, '_sender_may_push', lambda peer, wait=None: True)
+    monkeypatch.setitem(workshop_live.LIVE_NODE['params'], 'one_shot_wait_seconds', 1.5)
+    monkeypatch.setattr(workshop_live, 'deliver', lambda *a, **k: time.sleep(0.8) or [{'agent': 'Claude Seven', 'state': 'delivered'}])
+    done = workshop_mailbox.call('send', {'to': 'Claude Seven', 'text': 'quick'}, {}, one_shot=True)
+    assert [row['state'] for row in done['delivery']] == ['delivered']      # waited past the 0.5 s an MCP call waits
+    monkeypatch.setattr(workshop_live, 'deliver', lambda *a, **k: time.sleep(3) or [])
+    slow = workshop_mailbox.call('send', {'to': 'Claude Seven', 'text': 'slow'}, {}, one_shot=True)
+    assert slow['delivery'][0]['state'] == 'uncertain'                      # never "sent"
+    with workshop_mailbox.application_history() as history:
+        row = history._db.execute('SELECT state FROM workshop_live_deliveries WHERE message_id=?', (slow['message_id'],)).fetchone()
+    assert tuple(row) == ('uncertain',)                                          # the receipt is in the store, not only printed
 def test_an_opencode_declaration_finds_its_session_in_its_own_opencode_process(monkeypatch):
     # OpenCode gives its MCP connector no session id; the plugin's live list names the session of that process.
     from nodelang import workshop_live, workshop_mailbox

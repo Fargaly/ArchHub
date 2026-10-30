@@ -100,9 +100,26 @@ function injectSeat(recipient,text,onDispatch){
   child.stdin.end(text);
  });
 }
+// Grok Bot's agent runs in the cloud; its documented inbound door is a routine's webhook trigger
+// (docs.x.ai/grok-bot/skills-routines-and-automations: POST to the routine URL with Authorization: Bearer <key>;
+// the run lands in the Bot's chat). Grok writes its routine's URL and key here itself, through its local runner.
+const GROK_ROUTINE_FILE='grok-routine.json';
+async function injectGrok(text,messageId,onDispatch){
+ let routine;
+ try{routine=JSON.parse(fs.readFileSync(path.join(stateDir(),GROK_ROUTINE_FILE),'utf8'));}
+ catch(e){return {status:'not_sent',reason:'Grok has no Workshop routine yet ('+GROK_ROUTINE_FILE+': '+(e.code||e.message)+'); it reads the room when it next pulls'};}
+ if(typeof routine?.url!=='string'||!/^https:\/\//.test(routine.url)||typeof routine.key!=='string'||!routine.key)
+  return {status:'not_sent',reason:'Grok routine webhook record is incomplete; not sent'};
+ onDispatch();
+ let r;try{r=await fetch(routine.url,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+routine.key},
+  body:JSON.stringify({source:'ArchHub Workshop',message_id:messageId,text}),signal:AbortSignal.timeout(WORKSHOP_APPS_NODE.params.send_ms)});}
+ catch(e){return {status:'not_sent',reason:'Grok routine webhook unreachable: '+String(e.cause?.code||e.message).slice(0,120)};}
+ return r.ok?{status:'injected',note:'started its Workshop routine'}:{status:'not_sent',reason:'Grok routine webhook answered HTTP '+r.status};
+}
 export async function injectApp(recipient,text,messageId,onDispatch){
  if(recipient.app==='cursor'&&!(recipient.pids||[]).length)return injectCursor(recipient,text,onDispatch);
  if(['antigravity','antigravity-ide'].includes(recipient.app))return injectAntigravity(recipient,text,onDispatch);
  if(recipient.app==='archhub')return injectArchHub(recipient,text,messageId,onDispatch);
+ if(recipient.app==='grok')return injectGrok(text,messageId,onDispatch);
  return injectSeat(recipient,text,onDispatch);
 }

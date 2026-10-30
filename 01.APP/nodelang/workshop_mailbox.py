@@ -21,7 +21,7 @@ import unicodedata
 from uuid import uuid4
 
 from .agent_declarations import SESSION_KEYS, _alive, _lineage, canonical_path, overlaps
-from .agent_runtime_registry import agent_host_ancestor, mailbox_label, observed_runtime_process
+from .agent_runtime_registry import agent_host_ancestor, agent_host_process, mailbox_label, observed_runtime_process
 from .conversation_history import ConversationHistoryStore, WORKSHOP_CURSOR_SCHEMA
 from .workshop_transport import public_delivery_reason
 
@@ -744,6 +744,11 @@ def profile_database():
     return _profile_root() / "workshop" / "messages.sqlite3"
 
 
+def _host_process(peer, runtime):
+    host = agent_host_process(peer)
+    return {key: host[key] for key in ("runtime", "pid", "created_at")} if host and host["runtime"] == runtime else None
+
+
 def _session_alive(row):
     if _alive(row):
         return True
@@ -815,7 +820,8 @@ def _declare(history, body, context, identity, runtime, peer, native_session):
            "task": task.strip(), "request_id": request.strip(), "paths": paths, "status": body["status"],
            "runtime": runtime, "app": runtime, "native_session_id": next(iter(context.values()), None),
            "pid": peer.pid, "created_at": peer.created_at, "process_lineage": _lineage(peer),
-           "native_process": observed_runtime_process(peer)}
+           # A CLI runtime first; else the agent app above it (Grok Bot runs every tool call as a one-shot process).
+           "native_process": observed_runtime_process(peer) or _host_process(peer, runtime)}
     cutoff = (datetime.now(timezone.utc) - timedelta(days=20)).isoformat()
     expired = []
     if history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_declarations'").fetchone():

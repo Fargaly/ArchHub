@@ -96,8 +96,14 @@ AGENT_HOSTS = frozenset({'claude', 'codex', 'chatgpt', 'cursor', 'cursor-agent',
                          'grok', 'grok bot'})
 
 
-def agent_host_ancestor(peer, *, depth=12):
-    """The nearest agent app above this process (name), or None. One parent snapshot; pid reuse checked."""
+HOST_RUNTIMES = {'grok bot': 'grok', 'chatgpt': 'codex', 'language_server': 'antigravity', 'cursor-agent': 'cursor'}
+
+
+def agent_host_process(peer, *, depth=12):
+    """The nearest agent app above this process: {'host', 'runtime', 'pid', 'created_at'}, or None.
+
+    One parent snapshot; pid reuse checked. A declaration keeps it as its native process, so a session whose
+    tool calls are one-shot processes (Grok Bot's local runner) stays joined while its app runs."""
     import psutil
     try:
         process = psutil.Process(peer.pid)
@@ -107,13 +113,20 @@ def agent_host_ancestor(peer, *, depth=12):
         for _ in range(depth):
             name = Path(process.name()).stem.casefold()
             if name in AGENT_HOSTS:
-                return name
+                return {'host': name, 'runtime': HOST_RUNTIMES.get(name, name), 'pid': process.pid,
+                        'created_at': process.create_time()}
             process = parent_of(process, parents)
             if process is None:
                 return None
     except (psutil.Error, OSError) as exc:
         logging.getLogger(__name__).debug('Agent host lineage unavailable: %s', exc)
     return None
+
+
+def agent_host_ancestor(peer, *, depth=12):
+    """The nearest agent app's name above this process, or None."""
+    host = agent_host_process(peer, depth=depth)
+    return host['host'] if host else None
 
 
 def observed_runtime_process(peer, *, strict=False, parents=None):

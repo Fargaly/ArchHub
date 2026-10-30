@@ -65,11 +65,12 @@
     sm,
     ghost,
     danger,
+    plain,  // a text label (a filter chip named Settings) never becomes its action icon
     children,
     ...props
   }) => {
     const label = typeof children === 'string' ? children : null;
-    const icon = !p && label && actionIcons[label];
+    const icon = !p && !plain && label && actionIcons[label];
     return <D.Btn variant="workshop" primary={p} sm={sm} kind={danger ? 'danger' : ghost ? 'ghost' : undefined} {...props} aria-label={props['aria-label'] || (icon ? label : undefined)} title={props.title || (icon ? label : undefined)} className={[props.className, icon ? 'icon-action' : ''].filter(Boolean).join(' ')} style={{
       ...(icon ? {
         width: 30,

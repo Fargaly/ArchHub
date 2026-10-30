@@ -550,6 +550,7 @@
         saved,
         text
       }, event)}>Add parameter</Btn></>;else if (k === 'Approve') body = <window.UI.ApprovalCard id={m.id} />;else if (k === 'Search') {
+      const searchOrder = ['Agents', 'Workflows', 'Hosts', 'Settings', 'Chats', 'Pages', 'Add node'];
       const items = [...s.catalogue.map(c => ({
         label: c.name,
         group: 'Add node',
@@ -574,6 +575,10 @@
         label: a.name + (a.task ? ' · ' + a.task : ''),
         group: 'Agents',
         action: () => u.go('workshop')
+      })), ...(s.agents || []).filter(p => !(s.liveAgents || []).some(a => a.app === p.runtime)).map(p => ({
+        label: p.name + ' · not joined',
+        group: 'Agents',
+        action: () => u.go('workshop')
       })), ...(s.graphs || []).map(g => ({
         label: g.name || g.title || g.id,
         group: 'Workflows',
@@ -582,21 +587,22 @@
           u.go('canvas');
         }
       })), ...(s.hosts || []).map(h => ({
-        label: h.name + (h.state ? ' · ' + h.state : ''),
+        label: h.name + (h.state ? ' · ' + ({absent: 'Not installed', unavailable: 'Not available', 'prerequisites-ready': 'Ready to connect', 'needs-sign-in': 'Needs sign-in', installed: 'Installed', connected: 'Connected', listening: 'Connected'}[h.state] || h.state) : ''),
         group: 'Hosts',
         action: () => u.go('connections')
       })), ...(s.pages || []).map(page => ({
         label: page,
-        group: 'Settings pages',
+        group: 'Settings',
         action: () => u.openSystem(page)
       })), ...Object.entries(routeNames).map(([r, label]) => ({
         label,
         group: 'Pages',
         action: () => u.go(r)
-      }))].filter(x => (mode === 'All' || x.group === mode) && x.label.toLowerCase().includes(query.toLowerCase()));
+      }))].filter(x => (mode === 'All' || x.group === mode) && x.label.toLowerCase().includes(query.toLowerCase()))
+        .sort((a, b) => searchOrder.indexOf(a.group) - searchOrder.indexOf(b.group));  // stable: agents, workflows, hosts, settings first; nodes last
       body = <><input aria-label="Search everything" placeholder="Find an agent, workflow, program, setting, node or chat…" value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => {
           if (e.key === 'Enter') items[0]?.action();
-        }} /><div className="flex" style={{flexWrap: 'wrap'}}>{['All', 'Agents', 'Workflows', 'Hosts', 'Settings pages', 'Add node', 'Chats', 'Pages'].map(t => <Btn key={t} sm ghost aria-pressed={mode === t} onClick={event => executeAction("appShell.Control.29", {
+        }} /><div className="flex">{['All', ...searchOrder].map(t => <Btn key={t} sm ghost plain aria-pressed={mode === t} onClick={event => executeAction("appShell.Control.29", {
             setMode,
             t
           }, event)}>{t}</Btn>)}</div><div style={{

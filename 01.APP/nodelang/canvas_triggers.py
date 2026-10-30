@@ -6,17 +6,25 @@ fires, the nodes downstream of the trigger run once through the existing engines
 approval rules unchanged) and the outputs are saved into the same file, attributed
 "trigger:<kind>", so the open window shows them. Timers are rebuilt when a workflow is saved.
 Host-event triggers (trigger.host) need a host event feed; they are listed as not armed.
+
+Routines (Paperclip routines / Open Duet, research note 2026-10-30 gap 6): each fire also posts one
+Workshop message through the existing send path (param 'to', default the founder). Optional node params:
+'concurrency' = skip | queue (a fire while the last run is still going), 'catch_up' = skip | run_once
+(a schedule missed while the app was closed runs once at start). The last fire time is kept in the
+trigger node's result ('fired_at') inside the same file.
 """
 from __future__ import annotations
 
 import datetime
 import fnmatch
+import hashlib
 import os
 import threading
 import time
 from pathlib import Path
 
-TRIGGER_NODE = {'id': 'canvas.triggers', 'params': {'min_every_seconds': 10, 'file_poll_floor_seconds': 1}}
+TRIGGER_NODE = {'id': 'canvas.triggers', 'params': {'min_every_seconds': 10, 'file_poll_floor_seconds': 1,
+                                                    'queue_cap': 25, 'workshop_to': 'Ahmed'}}
 
 
 class TriggerService:
@@ -27,6 +35,8 @@ class TriggerService:
         self.timers = {}
         self.armed = []
         self.fired = []
+        self.running = set()
+        self.queued = {}
         self.stopped = threading.Event()
 
     def close(self):
@@ -56,15 +66,22 @@ class TriggerService:
                 continue
             for node in document['nodes']:
                 if node['type'] in ('trigger.schedule', 'trigger.file') and not node.get('frozen'):
-                    wanted[(path, node['id'])] = (node['type'], dict(node['params']), node.get('title', ''))
+                    wanted[(path, node['id'])] = (node['type'], dict(node['params']), node.get('title', ''),
+                                                  (node.get('result') or {}).get('fired_at'))
+        missed = []
         with self.lock:
             for key in [k for k in self.timers if k not in wanted]:
                 self.timers.pop(key).cancel()
             self.armed = [{'path': p, 'node': n, 'kind': kind, 'title': title, 'params': params}
-                          for (p, n), (kind, params, title) in wanted.items()]
-            for key, (kind, params, _title) in wanted.items():
+                          for (p, n), (kind, params, title, _last) in wanted.items()]
+            for key, (kind, params, _title, last) in wanted.items():
                 if key not in self.timers:
                     self._arm(key, kind, params, state=None)
+                    if kind == 'trigger.schedule' and missed_while_closed(params, last):
+                        missed.append((key, kind, params))
+        for key, kind, params in missed:
+            threading.Thread(target=self.dispatch, args=(key, kind, params, 'catch-up'),
+                             name='archhub-trigger-catchup', daemon=True).start()
         return self.armed
 
     def _arm(self, key, kind, params, state):
@@ -86,19 +103,48 @@ class TriggerService:
             state = snapshot
         else:
             changed = True
-        if changed:
-            self.fire(key, kind)
         with self.lock:
-            if key in self.timers:
+            if key in self.timers:  # the next fire stays on the clock while this run goes
                 self._arm(key, kind, params, state)
+        if changed:
+            self.dispatch(key, kind, params)
 
-    def fire(self, key, kind):
-        """Run the trigger's downstream nodes once and save their outputs into the workflow."""
+    def dispatch(self, key, kind, params, reason='scheduled'):
+        """Concurrency policy: a fire while this node's last run is going is skipped, or queued (capped)."""
+        with self.lock:
+            if key in self.running:
+                queue = str(params.get('concurrency') or 'skip') == 'queue'
+                if queue and self.queued.get(key, 0) < TRIGGER_NODE['params']['queue_cap']:
+                    self.queued[key] = self.queued.get(key, 0) + 1
+                    outcome = 'queued'
+                else:
+                    outcome = 'skipped'
+                self._record(key, kind, time.time(), outcome)
+                return outcome
+            self.running.add(key)
+        more = True
+        try:
+            while more:
+                self.fire(key, kind, reason=reason)
+                with self.lock:
+                    more = bool(self.queued.get(key))
+                    if more:
+                        self.queued[key] -= 1
+                reason = 'queued'
+        finally:
+            with self.lock:
+                self.running.discard(key)
+                self.queued.pop(key, None)
+        return 'ran'
+
+    def fire(self, key, kind, reason='scheduled'):
+        """Run the trigger's downstream nodes once, save their outputs into the workflow, post it to the Workshop."""
         from . import canvas_documents as docs
         from .enforce import guard_effect
         from .session_files import run_document
         path, node_id = key
         started = time.time()
+        trigger = {}
 
         def change(document):
             downstream = sorted(docs.downstream(document, [node_id]))
@@ -107,14 +153,45 @@ class TriggerService:
                 if node['id'] in ran['results']:
                     node['result'] = {k: v for k, v in ran['results'][node['id']].items()
                                       if k in ('status', 'output', 'error', 'display')}
+                if node['id'] == node_id:
+                    node['result'] = {**(node.get('result') or {}), 'fired_at': started}
+                    trigger.update(node)
             return []
         try:
             docs.edit(path, 'trigger:' + kind.split('.')[1], 'fired %s' % node_id, change, solve_changed=False)
             outcome = 'ran'
         except Exception as refused:  # noqa: BLE001 - a failed run is recorded, the timer stays armed
             outcome = 'failed: %s' % refused
-        self.fired.append({'path': path, 'node': node_id, 'kind': kind, 'at': started, 'outcome': outcome})
+        entry = self._record(key, kind, started, outcome)
+        entry.update(self._post(key, trigger, reason, outcome, started))
+        return entry
+
+    def _post(self, key, trigger, reason, outcome, started):
+        """One Workshop message per fire, through the same send the app's task composer uses."""
+        from .workshop_mailbox import call
+        path, node_id = key
+        to = str((trigger.get('params') or {}).get('to') or TRIGGER_NODE['params']['workshop_to'])
+        text = 'Routine %s (%s) fired, %s: %s' % (trigger.get('title') or node_id, Path(path).stem, reason, outcome)
+        retry = hashlib.sha256(('%s#%s@%r' % (path, node_id, started)).encode('utf-8')).hexdigest()
+        try:
+            sent = call('send', {'to': to, 'text': text, 'idempotency_key': 'routine:' + retry}, {})
+            return {'workshop': sent['message_id']}
+        except Exception as refused:  # noqa: BLE001 - the run already happened; the post failure is recorded
+            return {'workshop_error': str(refused)[:200]}
+
+    def _record(self, key, kind, at, outcome):
+        entry = {'path': key[0], 'node': key[1], 'kind': kind, 'at': at, 'outcome': outcome}
+        self.fired.append(entry)
         del self.fired[:-50]
+        return entry
+
+
+def missed_while_closed(params, last, now=None):
+    """Catch-up policy run_once: a schedule whose next fire after the last one has already passed."""
+    if str(params.get('catch_up') or 'skip') != 'run_once' or type(last) not in (int, float):
+        return False
+    due = last + next_delay(params, datetime.datetime.fromtimestamp(last))
+    return due <= (now or time.time())
 
 
 def next_delay(params, now=None):

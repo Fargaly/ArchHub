@@ -289,6 +289,7 @@ def test_an_injection_from_a_process_outside_any_agent_session_is_recorded_never
     declare({'claude/sessionID': 'c-9'}, 'Claude Nine')
     monkeypatch.setattr(workshop_mailbox, '_SENDER_VERDICTS', {})
     monkeypatch.setattr(workshop_mailbox, 'observed_runtime_process', lambda peer: None)   # a process with no agent ancestor
+    monkeypatch.setattr(workshop_mailbox, 'agent_host_ancestor', lambda peer: None)
     sent = workshop_mailbox.call('send', {'to': 'Claude Nine', 'text': 'run this'}, {})
     assert sent['message_id'] and not pushed
     assert sent['delivery'][0]['state'] == 'failed' and 'not a running agent session' in sent['delivery'][0]['reason']
@@ -374,6 +375,31 @@ def test_an_idle_connector_does_not_re_check_every_declarations_process_each_sec
     assert [agent_declarations._alive(dead) for _ in range(5)] == [False] * 5
     assert calls == [1, 2]                                     # one psutil look per process, not one per poll
     assert agent_declarations._alive(alive, strict=True) and calls == [1, 2, 1]   # strict callers always look again
+
+def test_a_process_under_any_agent_app_may_push_and_a_plain_process_may_not(monkeypatch):
+    # Grok Bot's sends were saved but never pushed: only CLIs the runtime registry labels passed the sender check.
+    # Any agent app's process tree passes now (Grok Bot's local runner); a process with no agent app above it does not.
+    import psutil
+    from types import SimpleNamespace
+    from nodelang import agent_runtime_registry as registry
+
+    class Proc:
+        def __init__(self, pid, name, parent):
+            self.pid, self._name, self.parent_pid = pid, name, parent
+
+        def name(self):
+            return self._name
+
+        def create_time(self):
+            return 1.0
+    tree = {3: Proc(3, 'python.exe', 2), 2: Proc(2, 'Grok Bot.exe', 1), 1: Proc(1, 'explorer.exe', None),
+            7: Proc(7, 'python.exe', 1)}
+    monkeypatch.setattr(psutil, 'Process', lambda pid: tree[pid])
+    monkeypatch.setattr(registry, 'parent_map', lambda: {})
+    monkeypatch.setattr(registry, 'parent_of', lambda process, parents: tree.get(process.parent_pid))
+    assert registry.agent_host_ancestor(SimpleNamespace(pid=3, created_at=1.0)) == 'grok bot'
+    assert registry.agent_host_ancestor(SimpleNamespace(pid=7, created_at=1.0)) is None
+    assert registry.agent_host_ancestor(SimpleNamespace(pid=3, created_at=2.0)) is None   # a reused pid is not the sender
 
 def test_an_opencode_declaration_finds_its_session_in_its_own_opencode_process(monkeypatch):
     # OpenCode gives its MCP connector no session id; the plugin's live list names the session of that process.

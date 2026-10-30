@@ -89,6 +89,33 @@ def parent_of(process, parents):
         return None
 
 
+# Agent apps whose own processes run their agents' tools on this PC (desktop hosts included). A process below one of
+# them acts for that agent; anything else is a plain local process. Agent-agnostic: one row adds an app.
+AGENT_HOSTS = frozenset({'claude', 'codex', 'chatgpt', 'cursor', 'cursor-agent', 'opencode', 'antigravity',
+                         'language_server', 'goose', 'gemini', 'qwen', 'copilot', 'code', 'windsurf', 'kiro',
+                         'grok', 'grok bot'})
+
+
+def agent_host_ancestor(peer, *, depth=12):
+    """The nearest agent app above this process (name), or None. One parent snapshot; pid reuse checked."""
+    import psutil
+    try:
+        process = psutil.Process(peer.pid)
+        if abs(process.create_time() - peer.created_at) > 0.00001:
+            return None
+        parents = parent_map()
+        for _ in range(depth):
+            name = Path(process.name()).stem.casefold()
+            if name in AGENT_HOSTS:
+                return name
+            process = parent_of(process, parents)
+            if process is None:
+                return None
+    except (psutil.Error, OSError) as exc:
+        logging.getLogger(__name__).debug('Agent host lineage unavailable: %s', exc)
+    return None
+
+
 def observed_runtime_process(peer, *, strict=False, parents=None):
     """Actual runtime ancestor and its generation, never a cached display claim."""
     try:

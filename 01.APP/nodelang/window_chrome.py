@@ -136,8 +136,11 @@ def install_one_title_bar(window, view):
             state = {'windowMaximized': 'true' if window.isMaximized() else 'false',
                      'windowHover': self._page_state.get('windowHover', ''), **state}
             if force or state != self._page_state:
+                # The Studio re-renders on this event, so the maximize button's name follows the window (Restore).
+                rerender = force or state['windowMaximized'] != self._page_state.get('windowMaximized')
                 self._page_state = state
-                view.page().runJavaScript(''.join("document.documentElement.dataset.%s='%s';" % item for item in state.items()))
+                view.page().runJavaScript(''.join("document.documentElement.dataset.%s='%s';" % item for item in state.items())
+                                          + ("window.dispatchEvent(new Event('archhub:capabilities'));" if rerender else ""))
 
         def hover(self, code):
             self._push(windowHover={HTMINBUTTON: 'minimize', HTMAXBUTTON: 'maximize', HTCLOSE: 'close'}.get(code, ''))

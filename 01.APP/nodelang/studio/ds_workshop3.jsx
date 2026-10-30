@@ -107,11 +107,11 @@
     // People & agents: each joined session, then running agents that have not joined, then the founder.
     const people = [...agents.map(a => ({key: a.handle, id: (s.providers || []).some(p => p.id === a.app) ? a.app : a.name, name: a.name, role: (a.task || 'No task declared') + (a.status && a.status !== 'unknown' ? ' · ' + a.status : ''), handle: a.handle})),
       ...(s.agents || []).filter(p => !agents.some(a => a.app === p.runtime)).map(p => ({key: p.id, id: p.id, name: p.name,
-        role: p.presence === 'working' ? 'Working · ' + p.task : p.presence === 'unknown' ? (p.status_text || 'Status unknown') : 'Idle'})),
-      {key: 'founder', id: s.profile.name || 'You', name: s.profile.name || 'You', role: 'Founder · workspace owner'}];
+        role: 'Not joined · ' + (p.presence === 'working' ? 'Working · ' + p.task : p.presence === 'unknown' ? (p.status_text || 'Status unknown') : 'Idle')})),
+      {key: 'founder', id: 'You', name: 'You', role: 'Founder · workspace owner'}];
     // The To list: every agent in People & agents (one not joined is shown, but cannot receive yet), Everyone, BABOOM.
     const choices = [...(agents.length > 1 ? [{key: 'everyone', handle: 'everyone', name: 'Everyone', detail: agents.length + ' joined sessions'}] : []),
-      ...people.filter(p => p.key !== 'founder').map(p => ({key: p.key, handle: p.handle, name: p.name, detail: p.handle ? p.role : 'Not joined · cannot receive yet'})),
+      ...people.filter(p => p.key !== 'founder').map(p => ({key: p.key, handle: p.handle, name: p.name, detail: p.role})),
       {key: 'baboom', handle: '', name: 'BABOOM', detail: 'Free models first'}];
     const roles = Object.fromEntries(agents.filter(a => a.task).map(a => [a.name, a.task]));
     // A task's people: the joined sessions that declared it, else its runtime's provider name.

@@ -2,6 +2,8 @@
 
 No app mocks, source overlays, paid models or writes to the installed profile.
 Only observed hangs, exits and regressions from installed DONE jobs refuse release.
+The release gate judges the candidate installed into a temp profile (installed_build.py, --app);
+the founder's installed app runs only as the baseline (--baseline-run), whose hangs are baseline defects.
 """
 from __future__ import annotations
 
@@ -106,6 +108,14 @@ def release_verdict(rows, *, frozen, complete, crashed=False, baseline=None):
     return {'release':not (frozen or crashed or regressions), 'frozen':frozen, 'crashed':crashed,
             'qualified':bool(complete), 'regressions':regressions,
             'baseline_build':(baseline or {}).get('build'), 'personas':personas}
+
+
+def baseline_role(report):
+    """The installed app only supplies DONE jobs to compare against; its own hang/exit is a recorded baseline
+    defect, never the candidate's verdict (a frozen baseline locks no DONE job)."""
+    report.update(role='baseline', baseline_defects=[name for name in ('frozen','crashed') if report.get(name)],
+                  release=True)
+    return report
 
 
 def qualification_complete(report, *, completed, same_runtime, unchanged):
@@ -365,8 +375,9 @@ def run(args, *, budget_seconds:int=1800, boot_seconds:float=120.0,
               'signing_key_before':signing_key_state(),
               'runtime_app':str(runtime), 'priority_class':ctypes.windll.kernel32.GetPriorityClass(-1)}
     if args.expected_build and report['build'] != args.expected_build:
-        report['scope_gaps'].append('Installed BUILD_ID differs from candidate '+args.expected_build+
-                                   '; this run does not qualify candidate bytes.')
+        # Judging other bytes would refuse (or pass) the candidate on the installed build's behaviour.
+        raise ValueError('app BUILD_ID '+report['build']+' is not candidate '+args.expected_build+
+                         '; install the candidate (installed_build) and pass its folder as --app')
     baseline_path = args.baseline.resolve() if args.baseline else out.parent/'usersim-baseline.json'
     baseline = None
     if baseline_path.is_file():
@@ -377,6 +388,10 @@ def run(args, *, budget_seconds:int=1800, boot_seconds:float=120.0,
         except (OSError,ValueError) as exc:
             report['scope_gaps'].append('Installed baseline unavailable: '+type(exc).__name__)
             baseline = None
+    if args.baseline_run and baseline and baseline.get('build') == report['build']:
+        print(json.dumps({'build':report['build'],'baseline':'reused '+str(baseline_path),
+                          'baseline_defects':baseline.get('baseline_defects',[])}))
+        return 0
     if baseline:
         (out/'installed-baseline.json').write_text(json.dumps(baseline,indent=2),encoding='utf-8')
     if runtime != app:
@@ -494,6 +509,8 @@ def run(args, *, budget_seconds:int=1800, boot_seconds:float=120.0,
     report.update(release_verdict(rows,frozen=frozen,crashed=app_exited(report['samples']),complete=complete,baseline=baseline),
                   elapsed_seconds=round(time.monotonic()-started,2),
                   installed_unchanged=tree_digest(app)==before)
+    if args.baseline_run:
+        baseline_role(report)
     if frozen or report['crashed']:
         shots = sorted(out.glob('*.png'),key=lambda p:p.stat().st_mtime)
         report['freeze_evidence'] = {'samples':'responsiveness.json',
@@ -502,11 +519,11 @@ def run(args, *, budget_seconds:int=1800, boot_seconds:float=120.0,
             if not row.get('evidence'):
                 row['evidence'] = report['freeze_evidence']['last_captured_frame']
     write_report(out,report)
-    if runtime==app and not args.baseline and (not baseline or baseline.get('build')!=report['build']):
+    if args.baseline_run and runtime==app:  # only the installed app's own run is the baseline, never a candidate's
         baseline_path.parent.mkdir(parents=True,exist_ok=True)
         baseline_path.write_text(json.dumps(report,indent=2),encoding='utf-8')
         (out/'installed-baseline.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
-    print(json.dumps({key:report.get(key) for key in ('build','release','frozen','elapsed_seconds','error','scope_gaps')}))
+    print(json.dumps({key:report.get(key) for key in ('build','release','frozen','elapsed_seconds','error','scope_gaps','baseline_defects')}))
     return 0 if report['release'] else 1
 
 
@@ -516,6 +533,8 @@ def main(argv=None):
     parser.add_argument('--runtime-app',type=Path,help='Historical payload diagnostic only; cannot qualify installed acceptance')
     parser.add_argument('--expected-build',help='Release gate must name the exact candidate BUILD_ID')
     parser.add_argument('--baseline',type=Path,help='Saved installed-build report; defaults beside run evidence')
+    parser.add_argument('--baseline-run',action='store_true',
+                        help='Run the installed app as the regression baseline: its hangs/exits are baseline defects, never a refusal')
     parser.add_argument('--out',type=Path)
     parser.add_argument('--personas',type=Path,default=HERE/'USERSIM-PERSONAS.json')
     parser.add_argument('--seed',type=Path)

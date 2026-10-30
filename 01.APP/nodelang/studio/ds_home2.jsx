@@ -1,16 +1,9 @@
-// DSYS-082 Home evolved into the founder-selected B+C material work stream.
+// Home (plate archhub-home-cleanup-native.png, Penpot rev 1189): Your work · Recent files · Pipeline · Meeting input.
+// Under the one AppHeader; the floating composer is the shell's. Every row is live store data.
 (() => {
-  function executeAction(...args) { return window.executeAction(...args); }
-  const {
-
-    useData,
-    useApp,
-    Btn,
-    Card,
-
-    Av,
-
-  } = window.UI;
+  const {executeAction} = window.ArchHubAPI;
+  const api = window.ArchHubAPI;
+  const {D, useData, useApp, Btn, Empty} = window.UI;
   function Sheet({
     mark = false,
     large = false
@@ -26,115 +19,74 @@
       display: 'block'
     }}><g fill="none" stroke={mark ? '#bc5a45' : '#6d695e'} strokeWidth="1" vectorEffect="non-scaling-stroke">{w.geometry.walls.map(([x1, y1, x2, y2], i) => <path key={i} d={`M${x1} ${y1}L${x2} ${y2}`} />)}</g></svg>;
   }
-  function Tpl({
-    template: t
-  }) {
-    const u = useApp();
-    const [menu, setMenu] = React.useState(false);
-    const start = async () => {
-      const done = await u.act(() => window.ArchHubAPI.startTemplate(t.id));
-      if (done) u.go('canvas');
-    };
-    return <Card className="template-card" data-starter={t.id}><div className="spread"><b>{t.title}</b><span className="flex">{(t.needs || []).map(n => <span key={n} className="chip" data-needs={n}>Needs {n}</span>)}{t.runs > 0 && <span className="mono muted">{t.runs + '×'}</span>}<button className="icon-button" aria-label={'More for ' + t.title} aria-expanded={menu} onClick={event => executeAction("projects.ds_home2.StarterMenu.11", {menu,setMenu}, event)}>⋯</button></span></div><span className="template-chain">{t.chain.slice(0, 6).map((c, i) => <React.Fragment key={c + i}>{i > 0 && <i />}<span>{c}</span></React.Fragment>)}{t.chain.length > 6 && <small>+{t.chain.length - 6}</small>}</span>{t.stops_at && <small className="muted">{t.stops_at}</small>}{menu && <div className="template-menu" role="menu"><Btn sm ghost role="menuitem" onClick={event => executeAction("projects.ds_home2.AsyncAwaitUActWindow.2", {t,u}, event)}>Open on canvas</Btn><Btn sm ghost role="menuitem" onClick={event => executeAction("projects.ds_home2.UScheduleTTitle.3", {t,u}, event)}>Run every day</Btn></div>}<Btn sm p aria-label={'Start ' + t.title} onClick={event => executeAction("projects.ds_home2.Start.1", {start}, event)}>Start</Btn></Card>;
-  }
+  const statusText = st => ({'IN REVIEW': 'Waits for your OK', WIP: 'Working', PLANNED: 'Planned', DONE: 'Completed', ARCHIVED: 'Archived', STOPPED: 'Stopped'})[st] || st;
   function Home() {
     const s = useData(), u = useApp();
-    const pending = s.approvals.filter(c => c.status === 'pending');
-    const working = [...s.tasks.filter(t => t.status === 'WIP'),...(s.declaredTasks||[])];
-    const finished = s.tasks.filter(t => t.status === 'DONE');
-    const reviewTask = s.tasks.find(t => t.id === pending[0]?.taskId);
-    const reviewOwner = (s.agents||[]).find(a=>(reviewTask?.declarations||[]).some(d=>a.sessions?.some(row=>row.root===d.root))) || s.providers.find(p => p.id === reviewTask?.owner);
-    const reviewContext = pending[0]?.target || reviewTask?.project || s.graph.name;
-    const [showTemplates, setShowTemplates] = React.useState(false);
-    const openTask = t => { u.setTask(t.declaration?'':t.id); u.go('workshop'); };
+    const [query, setQuery] = React.useState(''), [status, setStatus] = React.useState('');
+    const tasks = (s.tasks || []).filter(t => t.status !== 'ARCHIVED');
+    const list = tasks.filter(t => (!status || t.status === status) && (!query || t.title.toLowerCase().includes(query.toLowerCase())));
+    const task = tasks.find(t => t.id === u.task) || list[0];
+    const live = s.liveAgents || [];
+    // Same rows as the Workshop's People & agents: joined sessions, then running agents that have not joined.
+    const agents = [...live.map(a => ({key: a.handle, name: a.name, state: a.status && a.status !== 'unknown' ? a.status : 'Joined', detail: a.task || 'No task declared', on: true})),
+      ...(s.agents || []).filter(p => !live.some(a => a.app === p.runtime)).map(p => ({key: p.id, name: p.name, state: 'Not joined', detail: p.presence === 'working' ? 'Working · ' + p.task : p.status_text || 'Idle', on: false}))];
+    const people = live.filter(a => (task?.declarations || []).some(d => d.agent === a.agent)).map(a => a.name);
+    const by = task ? ['You', ...(people.length ? people : [(s.providers || []).find(p => p.id === task.owner)?.name || task.owner].filter(Boolean))] : [];
+    const running = (s.hosts || []).filter(h => ['connected', 'listening', 'running'].includes(h.state));
+    const m = s.meeting || {};
+    const setMeeting = patch => u.act(() => api.setMeeting(patch));
     return <main className="page home-page" data-screen="home" data-home-page="">
-      <div className="home-content">
-        <header className="home-intro">
-          <div className="eyebrow">Your workspace · {s.profile.firm}</div>
-          <h1>{working.length ? `Your agents are finishing ${working.length} thing${working.length === 1 ? '' : 's'} for you` : 'Nothing is running. Start something below.'}</h1>
-          <div className="spread"><p className="muted">{pending.length ? `${pending.length} decision${pending.length === 1 ? '' : 's'} ready for you.` : 'Tell BABOOM what you want to do.'} {(s.agents||[]).some(p=>p.presence==='working') ? 'Your agents have the rest.' : ''}</p>
-            <button className="button-reset flex home-team" onClick={event => executeAction("projects.ds_home2.AgentsAtWork.4", {u}, event)} aria-label="Agents at work">{(s.agents||[]).filter(p => p.presence==='working').slice(0,3).map(p => <Av key={p.id} id={p.id} size={24} />)}<span title={(s.agents||[]).map(p=>p.name+' · '+p.task).join(' · ')}>{s.agentSummary||'Checking running agents…'}</span><window.AHIcon name="arrow" size={15} /></button>
+      <header className="home-head"><h1>Your work</h1><div className="flex">
+        <Btn onClick={() => executeAction("ui.select", () => u.act(() => api.newSession()).then(r => r && u.go('canvas')))}>New</Btn>
+        <Btn p onClick={() => executeAction("ui.select", () => u.act(() => api.openSession()).then(r => r && !r.cancelled && u.go('canvas')))}>Open file...</Btn>
+        <Btn onClick={() => executeAction("ui.select", u.pickFlow)}>Import...</Btn>
+        <Btn onClick={() => executeAction("ui.select", () => u.go('library'))}>Library</Btn>
+      </div></header>
+      <section aria-label="Recent files"><h2 className="home-label">Recent files</h2>
+        {(s.graphs || []).length ? <div className="home-files">{s.graphs.slice(0, 2).map(g => <button key={g.id} className="button-reset home-file" title={g.path} onClick={() => executeAction("ui.select", () => u.act(() => api.openSession(g.path)).then(r => r && !r.cancelled && u.go('canvas')))}><b>{g.title || g.name}</b><small>{g.path}</small></button>)}</div>
+          : <Empty>Files you open or save appear here.</Empty>}
+      </section>
+      <section className="home-pipeline" aria-label="Pipeline"><h2>Pipeline</h2>
+        <div className="home-pipe">
+          <div className="home-tasks">
+            <label className="home-field home-search"><span>Search tasks</span><input aria-label="Search tasks" placeholder="Find a task..." value={query} onChange={e => setQuery(e.target.value)} /></label>
+            <div className="flex"><label className="home-field"><span>Status</span><select aria-label="Task status" value={status} onChange={e => setStatus(e.target.value)}><option value="">All</option>{['IN REVIEW', 'WIP', 'PLANNED', 'STOPPED', 'DONE'].map(v => <option key={v} value={v}>{statusText(v)}</option>)}</select></label>
+              <Btn onClick={() => executeAction("ui.select", () => u.show('New task'))}>New task</Btn></div>
+            <div className="home-task-rows scroll">{list.map(t => <button key={t.id} className="listbutton" aria-selected={task?.id === t.id} onClick={() => executeAction("ui.select", () => u.setTask(t.id))}><b>{t.title}</b><small>{statusText(t.status)}</small></button>)}
+              {!list.length && <p className="muted home-none">{tasks.length ? 'No task matches.' : 'No tasks yet.'}</p>}</div>
           </div>
-        </header>
-        <section className="work-stream" aria-label="Your work stream">
-          {pending.length || s.lastResult ? <article className="stream-review">
-            <span className="stream-marker attention" />
-            <div className="spread"><span className="eyebrow">{pending.length ? 'Needs your eye' : 'Latest result'}</span><span className="mono muted">{pending.length ? 'Ready to review' : s.lastResult?.status}</span></div>
-            <div className="review-focus"><div className="review-copy"><h2>{pending[0]?.title || s.lastResult?.title || 'Your latest results'}</h2><p className="muted">{reviewContext}</p><p className="review-detail">{pending.length ? 'The proposed change is ready. Take a look before it is written.' : 'Open the recorded result to inspect its node outputs.'}</p><div className="flex"><Av id={reviewOwner?.id} size={23} /><span className="muted">{reviewOwner?.name || "Your agents"}</span><span className="fill" />{pending[0] ? <Btn p onClick={event => executeAction("projects.ds_home2.ReviewAndApprove.5", {pending,u}, event)}>Review and approve</Btn> : <Btn p onClick={event => executeAction("projects.ds_home2.OpenResults.6", {u}, event)}>Open results</Btn>}</div></div>
-            <button className="preview-button focus-preview" title="Open sheets" aria-label="Open sheets" onClick={event => executeAction("projects.ds_home2.OpenSheets.7", {u}, event)}><Sheet mark large /></button></div>
-          </article> : <window.UI.Empty>Ask BABOOM below or start a template. Your results will appear here.</window.UI.Empty>}
-          <div className="stream-activity">
-            {working.slice(0,2).map(t => <button key={t.id} className="stream-task" onClick={event => executeAction("projects.ds_home2.OpenTaskT.8", {openTask,t}, event)}><span className="stream-marker working" /><Av id={t.owner} size={25} /><span className="fill"><b>{t.title}</b><small>In progress</small></span><window.AHIcon name="arrow" size={16} /></button>)}
-            {finished.slice(0,1).map(t => <button key={t.id} className="stream-task" onClick={event => executeAction("projects.ds_home2.OpenTaskT.9", {openTask,t}, event)}><span className="stream-marker complete" /><Av id={t.owner} size={25} /><span className="fill"><b>{t.title}</b><small>Finished</small></span><window.AHIcon name="check" size={16} /></button>)}
+          <div className="home-thread">{task ? <>
+            <h3>{task.title}</h3><small className="muted">{by.join(' · ')}</small>
+            {(task.messages || []).slice(-3).map(msg => <div key={msg.id} className="home-msg"><small>{msg.sender_key && msg.sender_key === msg.viewer_key ? 'You' : msg.who}</small><p>{msg.text}</p></div>)}
+            {!(task.messages || []).length && task.description && <div className="home-msg"><small>You</small><p>{task.description}</p></div>}
+            <div className="flex"><Btn onClick={() => executeAction("ui.select", async () => { if (await executeAction("openTaskGraph", u, task.id)) u.go('canvas'); })}>Review workflow</Btn><Btn onClick={() => executeAction("ui.select", () => u.go('receipts'))}>Activity &amp; receipts</Btn></div>
+          </> : <Empty>Create a task to begin.</Empty>}</div>
+          <aside className="home-side">
+            <div className="spread"><h2>Agents · {live.length} session{live.length === 1 ? '' : 's'}</h2><Btn disabled={!task} onClick={() => executeAction("ui.select", () => u.show('Task details', {id: task.id}))}>Request details</Btn></div>
+            {agents.map(a => <div key={a.key} className="home-agent" title={a.detail}><i className={a.on ? 'on' : ''} /><span className="fill">{a.name}</span><small>{a.state}</small></div>)}
+            {!agents.length && <p className="muted">{s.agentSummary || 'No agent is running.'}</p>}
+            <h3 className="home-label">Programs</h3>
+            {running.length ? running.map(h => <p key={h.id}>{h.name} · {h.file || h.state}</p>) : <p className="muted">{s.hostsProbing ? 'Checking programs…' : 'No program connected.'}</p>}
+            <h3 className="home-label">People</h3>
+            <p>{(s.people || []).map(p => p.name).join(' · ') || s.profile.name}</p>
+          </aside>
+        <div className="home-meeting" aria-label="Meeting input">
+          <div className="flex"><b>Meeting input</b><small className="muted">Transcript → reviewed decisions → owned tasks</small></div>
+          <div className="flex home-meeting-row">
+            <label className="home-field"><span>Meeting</span><select aria-label="Meeting from calendar" value={m.calendarId || ''} onChange={e => setMeeting({calendarId: e.target.value})}><option value="" disabled>Choose a calendar meeting</option>{(s.meetingCalendar || []).map(r => <option key={r.id} value={r.id}>{r.title}</option>)}</select></label>
+            <label className="home-field"><span>Connect through</span><select aria-label="Meeting program" value={m.platform || ''} onChange={e => setMeeting({platform: e.target.value})}><option value="" disabled>Choose</option>{['Teams', 'Zoom', 'Google Meet'].map(p => <option key={p}>{p}</option>)}</select></label>
+            <label className="home-field"><span>Assigned agent</span><select aria-label="Meeting agent" value={m.agent || ''} onChange={e => setMeeting({agent: e.target.value})}><option value="" disabled>Choose</option>{(s.providers || []).filter(p => p.enabled).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+            <div className="home-field home-consent"><span>Everyone consented</span><div className="spread"><span>{m.consent ? 'On' : 'Off'}</span><D.Toggle label="Meeting transcript consent" checked={!!m.consent} onCheckedChange={v => setMeeting({consent: v})} /></div></div>
+            <Btn disabled={!m.consent || !m.calendarId || m.status === 'Transcribing'} onClick={() => executeAction("ui.select", () => u.act(api.startMeetingTranscript))}>Start transcript</Btn>
+            <Btn disabled={m.status !== 'Transcribing'} onClick={() => executeAction("ui.select", () => u.act(api.stopMeetingTranscript))}>Stop</Btn>
           </div>
-        </section>
-        <section className="home-start"><div className="spread"><h2>Start something</h2><button className="tab-button" aria-expanded={showTemplates} onClick={event => executeAction("projects.ds_home2.SetShowTemplatesShowTemplates.10", {setShowTemplates,showTemplates,u}, event)}>{s.templateError ? 'Retry templates' : showTemplates ? 'Fewer' : 'More (' + Math.max(0, s.templates.length - 6) + ')'}<window.AHIcon name="arrow" size={13} /></button></div><div className="home-templates">{s.templates.slice().sort((a,b) => (b.runs??0)-(a.runs??0)).slice(0,showTemplates ? s.templates.length : 6).map(t => <Tpl key={t.id} template={t} />)}</div>{(s.templateError||!s.templates.length) && <window.UI.Empty>{s.templateError||'Save a workflow from Canvas to add your first template.'}</window.UI.Empty>}</section>
-      </div>
+          <div className="spread"><small className="muted">{m.transcript?.length ? m.transcript.length + ' transcript turns · ' + (m.actions?.length || 0) + ' decisions' : 'No transcript yet. Decisions and owners appear after the transcript is reviewed.'}</small>
+            <Btn disabled={!m.transcript?.length} onClick={() => executeAction("ui.select", async () => { const c = await u.act(api.proposeMeetingSummary); if (c) { u.setTask(c.id); u.go('workshop'); } })}>Review summary</Btn></div>
+        </div>
+        </div>
+      </section>
     </main>;
   }
   window.UI.Home = Home;
   window.UI.Sheet = Sheet;
-
-// WIRE-projects: each rendered callback is registered with its executable owner.
-function projectsdshome2jsxStart1({start}, event) {
-  const handler = start;
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-function projectsdshome2jsxAsyncAwaitUActWindow2({t,u}, event) {
-  const handler = async () => {
-          const result = await u.act(() => t.id.startsWith('starter:') ? window.ArchHubAPI.openStarter(t.id) : window.ArchHubAPI.openTemplateGraph(t.id));
-          if (result) u.go('canvas');
-        };
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-function projectsdshome2jsxUScheduleTTitle3({t,u}, event) {
-  const handler = () => u.schedule(t.title);
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-function projectsdshome2jsxAgentsAtWork4({u}, event) {
-  const handler = () => u.go('colleagues');
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-function projectsdshome2jsxReviewAndApprove5({pending,u}, event) {
-  const handler = () => u.show('Approve', {id:pending[0].id});
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-function projectsdshome2jsxStarterMenu11({menu,setMenu}, event) {
-  const handler = () => setMenu(!menu);
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-function projectsdshome2jsxOpenResults6({u}, event) {
-  const handler = () => u.go('runs');
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-function projectsdshome2jsxOpenSheets7({u}, event) {
-  const handler = () => u.go('watcher');
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-function projectsdshome2jsxOpenTaskT8({openTask,t}, event) {
-  const handler = () => openTask(t);
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-function projectsdshome2jsxOpenTaskT9({openTask,t}, event) {
-  const handler = () => openTask(t);
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-function projectsdshome2jsxSetShowTemplatesShowTemplates10({setShowTemplates,showTemplates,u}, event) {
-  const handler = () => {setShowTemplates(!showTemplates);if(window.ArchHubAPI.getSnapshot().templateError)return u.act(()=>window.ArchHubAPI.refreshProjects());return undefined;};
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
-const PROJECT_ACTIONS = {
-  "projects.ds_home2.Start.1": "projectsdshome2jsxStart1",
-  "projects.ds_home2.AsyncAwaitUActWindow.2": "projectsdshome2jsxAsyncAwaitUActWindow2",
-  "projects.ds_home2.UScheduleTTitle.3": "projectsdshome2jsxUScheduleTTitle3",
-  "projects.ds_home2.AgentsAtWork.4": "projectsdshome2jsxAgentsAtWork4",
-  "projects.ds_home2.ReviewAndApprove.5": "projectsdshome2jsxReviewAndApprove5",
-  "projects.ds_home2.OpenResults.6": "projectsdshome2jsxOpenResults6",
-  "projects.ds_home2.OpenSheets.7": "projectsdshome2jsxOpenSheets7",
-  "projects.ds_home2.OpenTaskT.8": "projectsdshome2jsxOpenTaskT8",
-  "projects.ds_home2.OpenTaskT.9": "projectsdshome2jsxOpenTaskT9",
-  "projects.ds_home2.SetShowTemplatesShowTemplates.10": "projectsdshome2jsxSetShowTemplatesShowTemplates10",
-"projects.ds_home2.StarterMenu.11": "projectsdshome2jsxStarterMenu11"
-};
-window.registerActions(PROJECT_ACTIONS, {projectsdshome2jsxStarterMenu11,projectsdshome2jsxStart1,projectsdshome2jsxAsyncAwaitUActWindow2,projectsdshome2jsxUScheduleTTitle3,projectsdshome2jsxAgentsAtWork4,projectsdshome2jsxReviewAndApprove5,projectsdshome2jsxOpenResults6,projectsdshome2jsxOpenSheets7,projectsdshome2jsxOpenTaskT8,projectsdshome2jsxOpenTaskT9,projectsdshome2jsxSetShowTemplatesShowTemplates10});
 })();

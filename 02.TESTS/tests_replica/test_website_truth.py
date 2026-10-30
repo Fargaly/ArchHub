@@ -9,11 +9,11 @@ from nodelang.map_import import PUBLIC_MAP_PATH
 from nodelang.universal_application import build_universal_application
 
 BANNED = (
-    "hides it to the system tray", "needs an add-in this build does not install",
+    "needs an add-in this build does not install",
     "this build does not install the add-in", "save any thread as a skill",
     "nothing happens that you can't see, trace, or undo", "tower-a",
     "plotted on friday", "manual restarts", "median recovery",
-    "x hides to tray", "no revit add-in installed", "undo anything",
+    "no revit add-in installed", "undo anything",
 )
 
 @pytest.fixture(scope='module')

@@ -6,6 +6,7 @@ A lease that lapses frees the task for the next agent; nothing runs on a timer.
 """
 import time
 from datetime import datetime, timezone
+from hashlib import sha256
 from uuid import uuid4
 
 SCHEMA = ("CREATE TABLE IF NOT EXISTS workshop_tasks(id TEXT PRIMARY KEY, title TEXT NOT NULL, "
@@ -59,6 +60,31 @@ def complete(history, task, owner, result=""):
     # The holder may finish after its lease lapsed, as long as nobody claimed it since.
     return _write(history, "UPDATE workshop_tasks SET status='done', lease_until=NULL, result=?, updated_at=? "
                   "WHERE id=? AND owner=? AND status='claimed'", (result, _now(), task, owner))
+
+
+def declared(history, root, request_id, title, status, owner, label):
+    """An agent's declare() is its task: working/blocked holds it, done completes it.
+
+    Re-declaring renews the lease; a session that stops declaring lets it lapse.
+    """
+    task = "declared-" + sha256((root + "\0" + request_id).encode()).hexdigest()[:32]
+    if status == "done":
+        return complete(history, task, owner)
+    _write(history, "INSERT INTO workshop_tasks(id,title,status,created_by,created_at,updated_at) "
+           "VALUES(?,?,'open',?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title WHERE status!='done'",
+           (task, _text(title, "title", 2000), label, _now(), _now()))
+    # Moving to another request gives the previous declared task back to the pool.
+    _write(history, "UPDATE workshop_tasks SET status='open', owner=NULL, owner_label=NULL, lease_until=NULL, "
+           "updated_at=? WHERE owner=? AND status='claimed' AND id LIKE 'declared-%' AND id!=?", (_now(), owner, task))
+    return claim(history, task, owner, label)
+
+
+def column(history):
+    """The Studio Work column rows; a lapsed lease shows as unowned and planned."""
+    return [{'id': row['id'], 'title': row['title'], 'owner': None if row['lease_expired'] else row['owner_label'],
+             'status': 'PLANNED' if row['lease_expired'] else UI_STATUS[row['status']], 'result': row['result'],
+             'messages': [], 'steps': [], 'reviews': [], 'queuedMessages': [], 'declarations': [],
+             'updated_at': row['updated_at']} for row in rows(history)]
 
 
 def set_status(history, task, status):

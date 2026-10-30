@@ -170,29 +170,6 @@ def backup_drives_stay_in_lane(monkeypatch):
     monkeypatch.setattr(files, '_fixed_backup_drives', lambda: [])
 
 
-def test_declines_read_real_lazy_journal_without_scanning_unrelated_cells(tmp_path, monkeypatch):
-    from types import SimpleNamespace
-    from nodelang import work_proposals
-    from nodelang.cell_value_graph import bootstrap_value_graph_protocol, build_value_graph
-    from nodelang.universal_cell import Cell, NULL_CELL_ID, _LazyHeadCellMap
-    path = tmp_path / 'declines.sqlite3'
-    record = dict(state='declined', message_id='saved-proposal', digest='d' * 64,
-        actor='founder', declined_at='court')
-    with CellStore(path) as store:
-        protocol = bootstrap_value_graph_protocol(store)
-        build_value_graph(store, protocol, record, root_id=work_proposals._decline_root(record['message_id']))
-        store.commit(store.revision, create=tuple(Cell('unrelated:' + str(i), NULL_CELL_ID,
-            NULL_CELL_ID, b'trace') for i in range(300)))
-    with CellStore(path) as store:
-        snapshot = store.snapshot()
-        def no_full_scan(_self):
-            pytest.fail('decline projection streamed the entire graph')
-        monkeypatch.setattr(_LazyHeadCellMap, '__iter__', no_full_scan)
-        assert work_proposals._declined_proposals(snapshot, SimpleNamespace(value_graph_protocol=protocol)) == {
-            record['message_id']: record}
-    print('MAINFIX_DECLINES persisted_record=True unrelated_head_scan=False')
-
-
 @pytest.mark.parametrize('hot_wal', [False, True])
 def test_old_graph_without_installer_backup_opens(isolated_profile, hot_wal):
     root = isolated_profile / 'ArchHub'

@@ -8745,12 +8745,6 @@ class ApplicationServer(WorkspaceRootsOwner):
                         host = getattr(owner, '_existing_workshop_native_host', None)
                         if host is None:
                             raise InvalidCell('Native Workshop owner is unavailable')
-                        if type(body) is dict and body.get('action') in ('bind_work_proposals', 'read_work_proposals', 'decline_work_proposals'):
-                            # The founder binds agent proposals; each is read through his
-                            # own Workshop reader, never taken from this request body.
-                            from .work_proposals import founder_bind_route
-                            self._json(200, founder_bind_route(owner, binding, body, _session_token))
-                            return
                         self._json(200, host.perform(binding, body))
                         return
                     if self.path == '/api/universal/workshop-model-approval':
@@ -14293,23 +14287,7 @@ class ApplicationServer(WorkspaceRootsOwner):
                 authentication_context=context,
                 expected_revision=snapshot.revision,
             )
-            from . import work_proposals
-            approval_snapshot = self.universal_store.snapshot()
-            bound = work_proposals._bound_keys(approval_snapshot, self.universal_registry)
-            count = 0
-            for message in page.get("messages") or ():
-                message_id = message.get("id")
-                if type(message_id) is not str:
-                    continue
-                try:
-                    work_proposals.parse(message.get("content"))
-                except InvalidCell:
-                    continue
-                if (work_proposals.KEY_PREFIX + message_id not in bound
-                        and work_proposals._read_decline(
-                            approval_snapshot, self.universal_registry, message_id
-                        ) is None):
-                    count += 1
+            count = 0  # Work proposals are retired (NOGRAPH); agents claim Workshop tasks instead.
         except Exception:
             result = None
         else:
@@ -18763,14 +18741,6 @@ class ApplicationServer(WorkspaceRootsOwner):
                     if entry_context is not context:
                         self.universal_registry.authorization.broker.revoke(entry_context)
                 from .conversation_content import workshop_message_identity
-                try:
-                    from . import work_proposals as _work_proposals
-                    _work_proposals.parse(entry.content)
-                except Exception:
-                    pass
-                else:
-                    self._adjust_baboom_pending_founder_approvals_event_count(
-                        1, self.universal_store.revision)
                 category_names = {
                     root: name
                     for name, root in (

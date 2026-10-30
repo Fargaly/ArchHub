@@ -54,3 +54,22 @@ def test_two_agents_one_winner_every_time(tmp_path, monkeypatch):
     assert column[ids[2]]["status"] == "WIP"
     assert nograph_server._set_task_status(ids[2], "PLANNED")["status"] == "PLANNED"
     assert nograph_server._set_task_status(ids[2], "WIP")["ok"] is False
+
+    # An agent's declare() is its task: working claims it, a new request frees the old one, done completes it.
+    from nodelang.workshop_mailbox import call
+    me = {"claude/sessionID": "wstask-declare"}
+    declare = lambda request, status: call("declare", {"task": "Fix " + request, "paths": [str(tmp_path)],
+                                                       "status": status, "request_id": request}, me)
+    def declared_rows():
+        return [row for row in nograph_server._list_tasks() if row["id"].startswith("declared-")]
+    declare("REQ-1", "working")
+    first = declared_rows()
+    assert len(first) == 1 and first[0]["title"] == "Fix REQ-1" and first[0]["status"] == "WIP" and first[0]["owner"]
+    declare("REQ-1", "working")                                              # re-declaring renews, no new row
+    declare("REQ-2", "working")
+    states = {row["title"]: row["status"] for row in declared_rows()}
+    assert states == {"Fix REQ-1": "PLANNED", "Fix REQ-2": "WIP"}, states
+    declare("REQ-2", "done")
+    assert {row["title"]: row["status"] for row in declared_rows()}["Fix REQ-2"] == "DONE"
+    call("declare", {"task": "Starting", "paths": [str(tmp_path)], "status": "working", "request_id": "unassigned"}, me)
+    assert len(declared_rows()) == 2                                         # no fake rows for unassigned work

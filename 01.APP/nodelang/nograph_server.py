@@ -646,13 +646,9 @@ def _declarations():
 def _list_tasks():
     """The Work column: the Workshop tasks table (claimed atomically by agents with task.claim)."""
     from .workshop_mailbox import application_history
-    from .workshop_tasks import UI_STATUS, rows
+    from .workshop_tasks import column
     with application_history() as history:
-        found = rows(history)
-    return [{'id': row['id'], 'title': row['title'], 'owner': None if row['lease_expired'] else row['owner_label'],
-             'status': 'PLANNED' if row['lease_expired'] else UI_STATUS[row['status']], 'result': row['result'],
-             'messages': [], 'steps': [], 'reviews': [], 'queuedMessages': [], 'declarations': [],
-             'updated_at': row['updated_at']} for row in found]
+        return column(history)
 
 
 def _set_task_status(task, status):

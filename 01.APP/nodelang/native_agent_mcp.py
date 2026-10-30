@@ -103,20 +103,6 @@ def _validate_index(result, client):
                 raise MachineTransportError("native Work index interface is invalid")
     return result
 
-def attach_workshop_tools(owner, selected_work: str):
-    """Attach task tools to an already bound native hook owner.
-
-    Embedded clients such as OpenCode must share their hook's owner. This does
-    not construct a session, enroll, claim Work, or grant a file permission.
-    Retain the returned server for the owner's lifetime: its selected-Work
-    adapter retains uncertain effects for work_reconcile.
-    """
-    from .native_workshop_tools import build_workshop_task_server, validate_selected_work
-    validate_selected_work(selected_work)
-    with owner.bound_client() as client:
-        control = _OwnedWorkshopClient(owner, client)
-        return build_workshop_task_server(control, selected_work)
-
 class _WorkControl:
     """Only a Work/host action needs the existing governed Work identity."""
     def __init__(self, owner=None, environment=None):
@@ -273,7 +259,7 @@ def _mailbox_call(method, body, context, **limits):
     return call(method, body, context, **limits)
 
 
-def build_server(*, session=None, workshop_task=None, mailbox_call=None):
+def build_server(*, session=None, mailbox_call=None):
     """The shared message tools are available before any Work identity is needed."""
     from contextlib import asynccontextmanager
     import logging
@@ -467,24 +453,12 @@ def build_server(*, session=None, workshop_task=None, mailbox_call=None):
         # An explicit in-process Work owner is already an authorised Work
         # composition. The ordinary CLI supplies none and starts unbound.
         control.connect()
-    if workshop_task is not None:
-        from .native_workshop_tools import build_workshop_task_server
-        task = build_workshop_task_server(control, workshop_task)
-        server.selected_work = task.selected_work
-        for tool in task._tool_manager.list_tools():
-            if server._tool_manager.get_tool(tool.name) is None:
-                server.add_tool(tool.fn, name=tool.name, description=tool.description)
-    else:
-        _register_work_tools(server, control)
+    _register_work_tools(server, control)
     from .native_host_tools import register_host_tools
     existing_tools = {tool.name for tool in server._tool_manager.list_tools()}
     register_host_tools(server)
     from .canvas_tools import register_canvas_tools
     register_canvas_tools(server)
-    # NOGRAPH: Work lived in the graph runtime, which no longer runs; these tools only refused
-    # ("existing runtime descriptor is unavailable"). Agents claim Workshop tasks with task.* instead.
-    for retired in [tool.name for tool in server._tool_manager.list_tools() if tool.name.startswith('native.work_')]:
-        server._tool_manager._tools.pop(retired)
     # A client may be given only some tools (Goose gets the Workshop and the canvas): the names or
     # name prefixes in ARCHHUB_CONNECTOR_TOOLS; every other tool is not offered to it at all.
     allowed = [part.strip() for part in os.environ.get("ARCHHUB_CONNECTOR_TOOLS", "").split(",") if part.strip()]
@@ -493,7 +467,6 @@ def build_server(*, session=None, workshop_task=None, mailbox_call=None):
                      if not any(tool.name == part or (part.endswith(".") and tool.name.startswith(part)) for part in allowed)]:
             server._tool_manager._tools.pop(name)
     server._direct_host_tools = ({tool.name for tool in server._tool_manager.list_tools()} - existing_tools) | {"hosts.status"}
-    from .native_workshop_tools import forbid_extra_arguments
     for tool in server._tool_manager.list_tools():
         forbid_extra_arguments(tool)
     _attach_pending_delivery(server, start, pages, epochs, lock)
@@ -571,10 +544,16 @@ def _record_seen(server, ids, context):
         logging.getLogger(__name__).warning("Workshop receipt unavailable; this connector still attaches each message once.")
 
 
+def forbid_extra_arguments(tool):
+    """Refuse undeclared tool fields rather than silently dropping them."""
+    model = tool.fn_metadata.arg_model
+    model.model_config.update(extra='forbid', strict=True)
+    model.model_rebuild(force=True)
+    tool.parameters = model.model_json_schema(by_alias=True)
+
+
 def _register_work_tools(server, control):
-    attached = {}
     stop_notices = set()
-    server._mcpfresh_attached = attached
 
     @server.tool(name="native.hook_stop")
     def hook_stop(ctx: Context) -> dict[str, object]:
@@ -594,9 +573,8 @@ def _register_work_tools(server, control):
 
         Read-only context delivery; does not acknowledge, approve, or execute.
         Configure this on UserPromptSubmit, after MCP connection is available.
-        With a Work attached, its context is shown.
         """
-        return user_prompt_submit_context(control, selected=attached['held'] if attached else None)
+        return user_prompt_submit_context(control, selected=None)
 
     @server.tool(name="hosts.status")
     def hosts_status() -> dict[str, object]:
@@ -618,14 +596,9 @@ def _work_continuation(server):
                           or held.expected_agent_session)
     actors = {**control.continuations,
               **{key: actor(held) for key, held in control.controls.items()}}
-    attached = getattr(server, '_mcpfresh_attached', {})
-    selected = attached.get('held') or getattr(server, 'selected_work', None)
     return {'actor': actor(control),
         'actors': [[*key, value] for key, value in actors.items()],
-        'level': server._mcpfresh_level,
-        'work': None if selected is None else {
-            'root': selected.root, 'dynamic': bool(attached), 'pending': selected.pending,
-            'release': selected.release_response_received, 'court': selected.court_response_received}}
+        'level': server._mcpfresh_level}
 
 
 def _restore_work_continuation(server, state):
@@ -633,25 +606,6 @@ def _restore_work_continuation(server, state):
     control.expected_agent_session = state['actor']
     control.continuations = {(runtime, identity): actor for runtime, identity, actor in state['actors']}
     server._mcpfresh_level = state['level']
-    work = state['work']
-    if work is None:
-        return
-    if work['dynamic']:
-        from .native_workshop_tools import build_workshop_task_server, forbid_extra_arguments
-        task = build_workshop_task_server(control, work['root'])
-        added = []
-        for tool in task._tool_manager.list_tools():
-            if server._tool_manager.get_tool(tool.name) is None:
-                server.add_tool(tool.fn, name=tool.name, description=tool.description, annotations=tool.annotations)
-                forbid_extra_arguments(server._tool_manager.get_tool(tool.name))
-                added.append(tool.name)
-        selected = task.selected_work
-        server._mcpfresh_attached.update(held=selected, names=added, server=server)
-    else:
-        selected = server.selected_work
-    selected.pending = None if work['pending'] is None else tuple(work['pending'])
-    selected.release_response_received = work['release']
-    selected.court_response_received = work['court']
 
 
 class _FreshStdio:
@@ -951,7 +905,6 @@ async def _run_fresh_stdio(server, resume):
 def main():
     import argparse
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--workshop-task")
     parser.add_argument("--mailbox-send", action="store_true", help="Legacy CLI adapter to the same Workshop mailbox; JSON on stdin")
     parser.add_argument("--mailbox-read", action="store_true", help="Native task receipt reader over the same mailbox")
     args = parser.parse_args()
@@ -961,7 +914,7 @@ def main():
         body = mailbox_json.loads(sys.stdin.buffer.read(65537))
         print(mailbox_json.dumps(_mailbox_call("read" if args.mailbox_read else "send", body, _default_context())))
         return
-    server = build_server(workshop_task=args.workshop_task)
+    server = build_server()
     # The Workshop is the gateway: hooks+rules are applied to this agent off the start path.
     import threading
     from .workshop_gateway import on_connect

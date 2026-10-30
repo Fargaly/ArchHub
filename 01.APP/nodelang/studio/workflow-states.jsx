@@ -122,7 +122,10 @@
     id
   }) {
     const u = useApp(),
+      c = useData().tasks?.find(t => t.id === id)?.control,
       [text, setText] = React.useState('');
+    // Agents take Pause/Continue as a message; it is only "requested" until the owner answers.
+    const control = !c ? null : c.state === 'acknowledged' ? `${c.request === 'Pause' ? 'Pause' : 'Continue'} acknowledged by the owner` : c.state === 'not_sent' ? `${c.request} not delivered${c.reason ? ' · ' + String(c.reason).replace(/_/g, ' ') : ''}` : c.request === 'Pause' ? "Pause requested · the agent can't be paused directly; it stops when it reads this" : 'Continue requested · waiting for the agent to read it';
     return <Card style={{
       padding: 18
     }}><h3>Steer the work</h3><div className="flex" style={{
@@ -132,7 +135,7 @@
           if (saved) executeAction("ui.state", setText, '');
         }}>Redirect</Btn></div><div className="flex" style={{
         marginTop: 12
-      }}><Btn sm onClick={() => executeAction("steerTask", u, id, 'Pause')}>Pause</Btn><Btn sm onClick={() => executeAction("steerTask", u, id, 'Continue')}>Continue</Btn></div></Card>;
+      }}><Btn sm onClick={() => executeAction("steerTask", u, id, 'Pause')}>Pause</Btn><Btn sm onClick={() => executeAction("steerTask", u, id, 'Continue')}>Continue</Btn></div>{control && <p role="status" className="muted">{control}</p>}</Card>;
   }
   function HomeAwareness() {
     const s = useData(),

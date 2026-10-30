@@ -19,7 +19,7 @@
       display: 'block'
     }}><g fill="none" stroke={mark ? '#bc5a45' : '#6d695e'} strokeWidth="1" vectorEffect="non-scaling-stroke">{w.geometry.walls.map(([x1, y1, x2, y2], i) => <path key={i} d={`M${x1} ${y1}L${x2} ${y2}`} />)}</g></svg>;
   }
-  const statusText = st => ({'IN REVIEW': 'Waits for your OK', WIP: 'Working', PLANNED: 'Planned', DONE: 'Completed', ARCHIVED: 'Archived', STOPPED: 'Stopped'})[st] || st;
+  const statusText = st => ({'IN REVIEW': 'Needs you', WIP: 'Working', PLANNED: 'Planned', DONE: 'Completed', ARCHIVED: 'Archived', STOPPED: 'Stopped'})[st] || st;
   function Home() {
     const s = useData(), u = useApp();
     const [query, setQuery] = React.useState(''), [status, setStatus] = React.useState(''), [meetingOpen, setMeetingOpen] = React.useState(null);

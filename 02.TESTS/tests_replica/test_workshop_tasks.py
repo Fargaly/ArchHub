@@ -64,12 +64,12 @@ def test_two_agents_one_winner_every_time(tmp_path, monkeypatch):
         return [row for row in nograph_server._list_tasks() if row["id"].startswith("declared-")]
     declare("REQ-1", "working")
     first = declared_rows()
-    assert len(first) == 1 and first[0]["title"] == "Fix REQ-1" and first[0]["status"] == "WIP" and first[0]["owner"]
+    assert len(first) == 1 and first[0]["description"] == "Fix REQ-1" and first[0]["title"] == "Fix" and first[0]["status"] == "WIP" and first[0]["owner"]
     declare("REQ-1", "working")                                              # re-declaring renews, no new row
     declare("REQ-2", "working")
-    states = {row["title"]: row["status"] for row in declared_rows()}
+    states = {row["description"]: row["status"] for row in declared_rows()}
     assert states == {"Fix REQ-1": "PLANNED", "Fix REQ-2": "WIP"}, states
     declare("REQ-2", "done")
-    assert {row["title"]: row["status"] for row in declared_rows()}["Fix REQ-2"] == "DONE"
+    assert {row["description"]: row["status"] for row in declared_rows()}["Fix REQ-2"] == "DONE"
     call("declare", {"task": "Starting", "paths": [str(tmp_path)], "status": "working", "request_id": "unassigned"}, me)
     assert len(declared_rows()) == 2                                         # no fake rows for unassigned work

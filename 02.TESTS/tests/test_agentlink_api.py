@@ -66,7 +66,8 @@ def test_data_functions_are_real_work_and_one_thread(api_owner):
     assert len(call(app, "listTasks")[0]["messages"]) == 2
     sent = call(app, "settleQueuedMessage", [task["id"], queued["id"], True])
     again = call(app, "settleQueuedMessage", [task["id"], queued["id"], True])
-    assert sent == again and sent["state"] == "sent"
+    # Stored once; a definitive non-dispatch re-routes that same message, never a second copy.
+    assert sent == again and sent["state"] == "stored" and sent["delivery"]["state"] == "not_sent"
     assert len(call(app, "listTasks")[0]["messages"]) == 3
     review = call(app, "addTaskReview", [task["id"], "fixture", "Exact bytes checked"])
     assert len(review["reviews"]) == 1

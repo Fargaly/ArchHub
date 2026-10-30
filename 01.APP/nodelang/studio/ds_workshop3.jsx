@@ -15,12 +15,12 @@
     ...(archived ? [['COMPLETED AND ARCHIVED', t => t.status === 'DONE' || t.status === 'ARCHIVED', 'DONE']] : [])];
   window.UI.workshopGroups = groupsFor;
   const color = s => s === 'IN REVIEW' ? A.warn : s === 'DONE' ? A.ok : s === 'STOPPED' ? A.err : s === 'WIP' ? A.ink : A.inkSoft;
-  const statusText = s => ({'IN REVIEW': 'Waits for your OK', WIP: 'Working', PLANNED: 'Planned', DONE: 'Completed', ARCHIVED: 'Archived', STOPPED: 'Stopped'})[s] || s;
+  const statusText = s => ({'IN REVIEW': 'Needs you', WIP: 'Working', PLANNED: 'Planned', DONE: 'Completed', ARCHIVED: 'Archived', STOPPED: 'Stopped'})[s] || s;
   const sessionState = row => row.state === 'turn_ended' ? 'Turn ended' : row.state === 'tool_ended' ? 'Tool ended' : row.state === 'unassociated' ? 'Activity unassociated' : 'Working';
   function Task({task, on, select, ownerName}) {
     const u = useApp();
     const steps = task.steps || [], completed = steps.filter(step => /^(done|complete|completed)$/i.test(step.status)).length, a = task.activity;
-    return <button className="listbutton ws-task" title={task.title} aria-selected={on} onClick={() => executeAction("ui.select", select)} onKeyDown={e => {
+    return <button className="listbutton ws-task" title={task.description || task.title} aria-selected={on} onClick={() => executeAction("ui.select", select)} onKeyDown={e => {
       if (e.code === 'Space') {
         e.preventDefault();
         select();

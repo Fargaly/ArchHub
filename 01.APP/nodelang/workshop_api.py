@@ -20,6 +20,39 @@ LABELS = {"claude":"Claude", "codex":"Codex", "antigravity":"Antigravity",
           "goose":"Goose", "baboom":"BABOOM"}
 STATES = {"open":"PLANNED", "claimed":"WIP", "blocked":"PLANNED",
           "review":"IN REVIEW", "complete":"DONE", "cancelled":"ARCHIVED"}
+# Definitive non-dispatch: the same stored message may be routed again.
+RETRYABLE_DELIVERY = frozenset({"not_sent", "unavailable"})
+
+
+def _delivery_of(message_id, states, saved):
+    """One stored message's delivery: its durable relay record, else what routing saved for it."""
+    found = states.get(message_id)
+    return found if found and found["state"] != "stored" else saved or {"state":"stored"}
+
+
+def _queued_rows(options, states):
+    """Queued notes still on the task: waiting ones, and stored ones until their owner replied."""
+    shown = []
+    for item in options.get("queuedMessages", []):
+        if item["state"] == "withdrawn":
+            continue
+        if item["state"] != "queued":
+            item = {**item, "delivery":_delivery_of(item.get("messageId"), states, item.get("delivery"))}
+            if item["delivery"]["state"] == "replied":
+                continue
+        shown.append(item)
+    return shown
+
+
+def _control(options, states):
+    """Pause/Continue is a request until the owner answers it; no native owner exposes execution control."""
+    control = options.get("control")
+    if not control:
+        return None
+    delivery = _delivery_of(control["messageId"], states, control.get("delivery"))
+    state = ("acknowledged" if delivery["state"] == "replied" else
+             "not_sent" if delivery["state"] in RETRYABLE_DELIVERY else "requested")
+    return {"request":control["request"], "state":state, "reason":delivery.get("reason")}
 
 
 def _message_identity(author, declared, subject_root):
@@ -481,6 +514,7 @@ class WorkshopAPI:
         interfaces = row["interfaces"]
         messages, messages_truncated = self._messages(task)
         delivery = options.get("delivery", {"state":"unassigned"})
+        states = {}
         if messages:
             from .workshop_delivery_state import project_delivery, work_pending_digests
             history = self.history()
@@ -529,7 +563,8 @@ class WorkshopAPI:
             "messagesContinuation":({"tool":"read","arguments":{"since":0},"work_root":task}
                 if messages_truncated else None), "steps":[],
             "sources":[], "usage":None, "reviews":options.get("reviews", []),
-            "queuedMessages":[item for item in options.get("queuedMessages", []) if item["state"] == "queued"], "delegate":options.get("delegate"),
+            "queuedMessages":_queued_rows(options, states), "control":_control(options, states),
+            "delegate":options.get("delegate"),
             "blocked":state == "blocked" or any(item["status"] == "blocked" for item in active),
             "declarations":active, "delivery":delivery, "activity":activity,
             # WIRE-agents: restore only saved task parameters; never claim Work completion.
@@ -723,6 +758,8 @@ class WorkshopAPI:
         return message
 
     def settleQueuedMessage(self, taskId, messageId, send):
+        """Queue settlement (stored in the Workshop) is separate from delivery: a definitive
+        non-dispatch re-routes the SAME stored message; started/uncertain/replied never replay."""
         if type(send) is not bool:
             raise InvalidCell("Queue settlement requires a boolean")
         self._work(taskId)
@@ -730,20 +767,40 @@ class WorkshopAPI:
         row = next((row for row in options["queuedMessages"] if row["id"] == messageId), None)
         if row is None:
             raise InvalidCell("Queued message is unavailable")
-        if row["state"] != "queued":
-            if (row["state"] == "sent") != send:
+        if row["state"] == "withdrawn" or not send:
+            if row["state"] != "queued" and (row["state"] == "withdrawn") == send:
                 raise InvalidCell("Queued message was already settled differently")
+            if row["state"] == "queued":
+                row.update(state="withdrawn", messageId=None)
+                self._save(taskId, options)
             return row
-        message = self._append(taskId, row["text"], key=messageId) if send else None
-        row.update(state="sent" if send else "withdrawn", messageId=message["id"] if message else None)
+        if row["state"] == "queued":
+            message = self._append(taskId, row["text"], key=messageId)
+            row.update(state="stored", messageId=message["id"])
+            self._save(taskId, options)
+        else:
+            shown = next((item for item in self._task(self._work(taskId))["queuedMessages"]
+                          if item["id"] == messageId), None)
+            if shown is None or shown["delivery"].get("state") not in RETRYABLE_DELIVERY:
+                return shown or {**row, "delivery":{"state":"replied"}}
+            message = {"id":row["messageId"]}
+        self._route(taskId, message)
+        options = self._options(taskId)
+        row = next(item for item in options["queuedMessages"] if item["id"] == messageId)
+        row["delivery"] = options.get("delivery") if options.get("dispatch_message") == message["id"] else None
         self._save(taskId, options)
-        if message:
-            self._route(taskId,message)
-        return row
+        return next((item for item in self._task(self._work(taskId))["queuedMessages"]
+                     if item["id"] == messageId), {**row, "delivery":{"state":"replied"}})
 
     def steerTask(self, id, instruction):
         message=self._append(id, instruction, key="workshop-steer:" + self.request_id)
         self._route(id,message)
+        if instruction in ("Pause", "Continue"):
+            # Native owners take this as a message, not an execution switch: it stays "requested" until they answer.
+            options=self._options(id)
+            options["control"]={"request":instruction, "messageId":message["id"],
+                "delivery":options.get("delivery") if options.get("dispatch_message")==message["id"] else None}
+            self._save(id,options)
         return self._task(self._work(id))
 
     def addTaskReview(self, id, scope, comment):
@@ -822,7 +879,7 @@ class WorkshopAPI:
         checkpoints=options.setdefault("checkpoints",[])
         key="checkpoint:"+self.request_id
         if not any(row["id"]==key for row in checkpoints):
-            checkpoints.append({"id":key,"title":"Checkpoint " + str(len(checkpoints)+1),
+            checkpoints.append({"id":key,"title":"Steps checkpoint " + str(len(checkpoints)+1),
                 "steps":options.get("steps",[]),"planMode":options.get("planMode")})
             self._save(id,options)
         return next(row for row in checkpoints if row["id"]==key)

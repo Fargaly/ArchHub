@@ -4,6 +4,7 @@ Prior art: Paperclip issues.ts checkout. A claim is one conditional UPDATE; the 
 changes only when it is free, its lease expired, or the claimant already holds it.
 A lease that lapses frees the task for the next agent; nothing runs on a timer.
 """
+import re
 import time
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -79,10 +80,39 @@ def declared(history, root, request_id, title, status, owner, label):
     return claim(history, task, owner, label)
 
 
+# A token that reads as an id, path, flag or measurement, not as words.
+_JARGON = re.compile(r"[=/\\_<>{}`]|\d{3,}|[a-z][A-Z]|^[(\[]|^[A-Z][A-Z0-9]*-?\d|^[a-f0-9]{7,}$")
+_TRAILING = {"in", "on", "at", "to", "for", "of", "and", "the", "a", "with", "from", "by"}
+
+
+def short_title(text, limit=60):
+    """A human task name: the first clause of the declared text without id/path tokens, at most `limit` chars."""
+    text = re.sub(r"^\s*[A-Z0-9][A-Z0-9-]*:\s+", "", str(text or "").strip())  # a leading lane tag ("WSFIX: ")
+    first = re.split(r"(?<=[.;:!?])\s|\n|\s[–—-]\s|\s\(", text, maxsplit=1)[0]
+    words = [w for w in first.split() if not _JARGON.search(w)]
+    while len(words) > 1 and words[-1].casefold() in _TRAILING:
+        words.pop()
+    title = " ".join(words).strip(" ,;:.-") or text[:limit]
+    return title if len(title) <= limit else title[:limit - 1].rsplit(" ", 1)[0].rstrip(" ,;:.-") + "…"
+
+
 def column(history):
-    """The Studio Work column rows; a lapsed lease shows as unowned and planned."""
-    return [{'id': row['id'], 'title': row['title'], 'owner': None if row['lease_expired'] else row['owner_label'],
-             'status': 'PLANNED' if row['lease_expired'] else UI_STATUS[row['status']], 'result': row['result'],
+    """The Studio Work rows: a short name, the full declaration as details, and the owner's live state:
+    Working while its session declares working or holds the lease, Needs you while it is blocked, Done when completed."""
+    from .workshop_mailbox import read_declarations
+    live = {"declared-" + sha256((d["root"] + "\0" + d["request_id"]).encode()).hexdigest()[:32]: d["status"]
+            for d in read_declarations(history._db)}
+    def state(row):
+        if row["status"] == "done":
+            return "DONE"
+        if live.get(row["id"]) == "blocked":
+            return "IN REVIEW"
+        if live.get(row["id"]) == "working" or (row["status"] == "claimed" and not row["lease_expired"]):
+            return "WIP"
+        return "PLANNED"
+    return [{'id': row['id'], 'title': short_title(row['title']), 'description': row['title'],
+             'owner': row['owner_label'] if row['id'] in live or not row['lease_expired'] else None,
+             'status': state(row), 'result': row['result'],
              'messages': [], 'steps': [], 'reviews': [], 'queuedMessages': [], 'declarations': [],
              'updated_at': row['updated_at']} for row in rows(history)]
 

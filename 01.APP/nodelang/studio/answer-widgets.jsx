@@ -52,8 +52,9 @@
   }
   function ActionStatus({
     action,
-    empty = 'No result yet. Run an action to read its owner.'
+    empty = ''
   }) {
+    const r = action.result;
     const ACTIONS = {
       "wire-rest.retry": "retry"
     };
@@ -64,8 +65,8 @@
     }
     return <div aria-live="polite" aria-busy={action.state === 'waiting'}>
       {action.state === 'waiting' && <p role="status">Waiting for the owner…</p>}
-      {action.state === 'empty' && <p className="muted">{empty}</p>}
-      {action.state === 'loaded' && <details><summary>Owner result</summary><pre>{JSON.stringify(action.result, null, 2)}</pre></details>}
+      {action.state === 'empty' && empty && <p className="muted">{empty}</p>}
+      {action.state === 'loaded' && <p role="status">{typeof r === 'string' ? r : r?.message || r?.status || 'Done'}</p>}
       {action.state === 'error' && <div role="alert"><p>{action.error}</p><button onClick={() => dispatch('wire-rest.retry')}>Retry action</button></div>}
     </div>;
   }

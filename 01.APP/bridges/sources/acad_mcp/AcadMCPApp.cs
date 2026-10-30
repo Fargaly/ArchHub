@@ -300,13 +300,14 @@ namespace AcadMCP
                 // Build references list — every host DLL plus minimum BCL.
                 var acmgd  = typeof(Application).Assembly.Location;     // acmgd
                 var acdbmgd = typeof(DBObject).Assembly.Location;        // acdbmgd
+                var accoremgd = typeof(Document).Assembly.Location;      // accoremgd (Document, Editor): CS0012 without it
                 var thisAsm = typeof(AcadMCPApp).Assembly.Location;
                 var sysCore = typeof(System.Linq.Enumerable).Assembly.Location;
                 var sysColl = typeof(System.Collections.Generic.List<>).Assembly.Location;
                 var mscorlib = typeof(object).Assembly.Location;
 
                 var refs = new List<string> {
-                    acmgd, acdbmgd, thisAsm,
+                    acmgd, acdbmgd, accoremgd, thisAsm,
                     mscorlib, sysCore, sysColl,
                 };
                 refs = refs.Where(File.Exists)

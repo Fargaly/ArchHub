@@ -51,7 +51,10 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
         if start(Path(state_dir), Path(__file__).resolve().parents[1], server.public_url) is None:
             return
         try:
-            companion['host'] = companion_host()
+            from .baboom_native_runtime import prepare_baboom_native_atlas
+            # Pure-Python decode of the whole sprite sheet (~7 s): on the GUI thread it hung the window at start.
+            companion['atlas'] = prepare_baboom_native_atlas()
+            companion['host'] = companion_host()  # set last: land_companion lands once the host appears
         except Exception as refused:  # noqa: BLE001 - the Studio stays; the face says why it is missing
             print('  BABOOM     : companion unavailable (%s)' % refused, flush=True)
     companion = {}
@@ -135,7 +138,7 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
             return
         try:
             from .baboom_native_runtime import create_baboom_native_projection
-            window_ = create_baboom_native_projection(host, position_path=Path(state_dir) / 'baboom-position.json',
+            window_ = create_baboom_native_projection(host, atlas=companion['atlas'], position_path=Path(state_dir) / 'baboom-position.json',
                                                       on_stop=host.request_stop)
             window_.show()
             window_.start_projection()

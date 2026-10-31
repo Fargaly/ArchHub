@@ -198,10 +198,20 @@ def discover_target(target):
     finally:
         getattr(transport, 'close', lambda: None)()
     wanted = target.strip().casefold()
+    rows = found.get('recipients', [])
+    hits = [row for row in rows if wanted in {str(row.get(k) or '').casefold() for k in ('id', 'title', 'selector')}]
+    if not hits:
+        # The app's own name ("Cursor", "Codex") addresses its live session: the first one its door lists (the most
+        # recent), so a discovered session is addressable before its agent ever declares.
+        app = APP_NAMES.get(wanted)
+        hits = [row for row in rows if row['app'] == app][:1]
     return [{'session': 'native:%s:%s' % (row['app'], row['id']), 'agent': row.get('title') or row['id'],
-             'runtime': row['app'], 'native_session_id': row['id']}
-            for row in found.get('recipients', [])
-            if wanted in {str(row.get(k) or '').casefold() for k in ('id', 'title', 'selector')}]
+             'runtime': row['app'], 'native_session_id': row['id']} for row in hits]
+
+
+# What people call each app in "to:" -> the discovery app id.
+APP_NAMES = {'claude': 'claude', 'claude code': 'claude', 'codex': 'codex', 'opencode': 'opencode',
+             'antigravity': 'antigravity', 'antigravity ide': 'antigravity-ide', 'cursor': 'cursor'}
 
 
 _LIVE = {'at': 0.0, 'ids': {}}

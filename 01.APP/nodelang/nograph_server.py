@@ -654,6 +654,17 @@ def _list_tasks():
         return column(history)
 
 
+def _open_task_graph(task, path=None):
+    """Open the task's own session file. The Workshop task row holds the path; the file holds the work."""
+    from .workshop_mailbox import application_history
+    from .workshop_tasks import open_session
+    try:
+        with application_history() as history:
+            return open_session(history, task, path)
+    except ValueError as refused:
+        return {'ok': False, 'error': str(refused)}
+
+
 def _set_task_status(task, status):
     from .workshop_mailbox import application_history
     from .workshop_tasks import set_status
@@ -791,6 +802,7 @@ OWNER_ACTIONS = {
 
 WORKSHOP_READS = {
     'listTasks': lambda *a: _list_tasks(),
+    'openTaskGraph': _open_task_graph,
     'setTaskStatus': _set_task_status,
     'listAgentsWorking': lambda *a: _list_agents(),
     'listWorkshopMessages': lambda before=None, *a: _list_messages(before),

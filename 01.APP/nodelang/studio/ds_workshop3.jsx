@@ -159,7 +159,7 @@
     currentScope.current = roomScope;
     const [older, setOlder] = React.useState({scope: roomScope, messages: [], before: null, more: true});
     const previous = older.scope === roomScope ? older : {messages: [], before: null, more: true};
-    const tasks = s.tasks || [], task = tasks.find(t => t.id === u.task) || tasks[0];
+    const tasks = s.tasks || [], focus = u.task || s.focusedTask || tasks.find(t => t.sessionOpen)?.id, task = tasks.find(t => t.id === focus) || tasks[0];
     const roomMessages = [...new Map([...previous.messages, ...(s.workshopMessages || [])].map(message => [message.id, message])).values()]
       .filter(message => !task?.messages.some(item => item.id === message.id));
     const list = tasks.filter(t => !query || `${t.title} ${t.status}`.toLowerCase().includes(query.toLowerCase()));
@@ -215,7 +215,7 @@
       <button className="ws-link" onClick={() => executeAction("ui.select", async () => {
         if (!task) { executeAction("ui.go", u, "canvas"); return; }
         const opened = await executeAction("openTaskGraph", u, task.id);
-        if (opened) { executeAction("ui.setSelectedNodeId", u, task.id); executeAction("ui.go", u, "canvas"); }
+        if (opened) { executeAction("ui.setTask", u, opened.taskId || task.id); executeAction("ui.setSelectedNodeId", u, opened.taskId || task.id); executeAction("ui.go", u, "canvas"); }
       })}>Open in Canvas ↗</button></header>
     <div className="scroll ws-body" ref={bodyRef}><div className="ws-stack">
       {request && <section data-workshop-request className="ws-request"><div className="ws-label">THE REQUEST</div><Prose text={request} lines={6} /></section>}

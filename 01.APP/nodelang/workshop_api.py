@@ -892,7 +892,18 @@ class WorkshopAPI:
         self._save(id,options)
         return self._task(self._work(id))
 
-    def openTaskGraph(self, id):
+    def openTaskGraph(self, id, path=None):
+        # A Workshop task opens its own .archhub file. A graph work node with no task row keeps the canvas it is on.
+        from .workshop_mailbox import application_history
+        from .workshop_tasks import get, open_session
+        with application_history() as history:
+            if get(history, id) is not None:
+                try:
+                    return open_session(history, id, path)
+                except ValueError as refused:
+                    raise InvalidCell(str(refused)) from refused
+        if self.owner is None:
+            raise InvalidCell("No such Workshop task")
         self._work(id)
         ops=self._surface_rows(); canvas=ops.canvas()
         ops._node(canvas,id)

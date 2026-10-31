@@ -13,7 +13,7 @@ from uuid import uuid4
 SCHEMA = ("CREATE TABLE IF NOT EXISTS workshop_tasks(id TEXT PRIMARY KEY, title TEXT NOT NULL, "
           "status TEXT NOT NULL CHECK(status IN ('open','claimed','done')), owner TEXT, owner_label TEXT, "
           "lease_until REAL, result TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL, "
-          "updated_at TEXT NOT NULL) STRICT")
+          "updated_at TEXT NOT NULL, session_path TEXT) STRICT")
 TASKS_NODE = {'id': 'workshop.tasks', 'params': {'lease_seconds': 900}}
 UI_STATUS = {"open": "PLANNED", "claimed": "WIP", "done": "DONE"}
 
@@ -22,9 +22,17 @@ def _now():
     return datetime.now(timezone.utc).isoformat()
 
 
+def _ensure(history):
+    """The task table is the association: session_path is that task's .archhub file."""
+    history._db.execute(SCHEMA)
+    names = {row[1] for row in history._db.execute("PRAGMA table_info(workshop_tasks)")}
+    if "session_path" not in names:
+        history._db.execute("ALTER TABLE workshop_tasks ADD COLUMN session_path TEXT")
+
+
 def _write(history, sql, values):
     with history._transaction(write=True):
-        history._db.execute(SCHEMA)
+        _ensure(history)
         return history._db.execute(sql, values).rowcount == 1
 
 
@@ -110,11 +118,14 @@ def column(history):
         if live.get(row["id"]) == "working" or (row["status"] == "claimed" and not row["lease_expired"]):
             return "WIP"
         return "PLANNED"
+    current = _current_session()
     return [{'id': row['id'], 'title': short_title(row['title']), 'description': row['title'],
              'owner': row['owner_label'] if row['id'] in live or not row['lease_expired'] else None,
              'status': state(row), 'result': row['result'],
              'messages': [], 'steps': [], 'reviews': [], 'queuedMessages': [], 'declarations': [],
-             'updated_at': row['updated_at']} for row in rows(history)]
+             'updated_at': row['updated_at'], 'sessionPath': row.get('session_path'),
+             'sessionOpen': bool(row.get('session_path') and row['session_path'] == current)}
+            for row in rows(history)]
 
 
 def set_status(history, task, status):
@@ -129,12 +140,13 @@ def set_status(history, task, status):
 
 
 COLUMNS = ("id", "title", "status", "owner", "owner_label", "lease_until", "result",
-           "created_by", "created_at", "updated_at")
+           "created_by", "created_at", "updated_at", "session_path")
 
 
 def rows(history, task=None):
     if not history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_tasks'").fetchone():
         return []
+    _ensure(history)
     now = time.time()
     found = [dict(zip(COLUMNS, row)) for row in history._db.execute(
         "SELECT " + ",".join(COLUMNS) + " FROM workshop_tasks WHERE ? IS NULL OR id=? "
@@ -146,3 +158,89 @@ def rows(history, task=None):
 
 def get(history, task):
     return next(iter(rows(history, task)), None)
+
+
+def _current_session():
+    """The file the canvas has open, recorded by the existing session-files owner."""
+    import json
+    import os
+    from pathlib import Path
+    root = Path(os.environ.get("LOCALAPPDATA") or "") / "ArchHub" / "sessions-files" / "current.json"
+    try:
+        held = json.loads(root.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    return held.get("path") if isinstance(held, dict) and isinstance(held.get("path"), str) else ""
+
+
+def _held_context(document):
+    props = document.get("properties") if isinstance(document.get("properties"), dict) else {}
+    held = props.get("taskContext") if isinstance(props.get("taskContext"), dict) else {}
+    nodes = document.get("nodes") or []
+    return {
+        "scope": held.get("scope") or document["id"],
+        "rules": held["rules"] if isinstance(held.get("rules"), list) else [],
+        "agents": held["agents"] if isinstance(held.get("agents"), list) else [],
+        "plan": held["plan"] if isinstance(held.get("plan"), list) else [],
+        "progress": held["progress"] if isinstance(held.get("progress"), dict) else {},
+        "workflow": [{"id": node["id"], "type": node.get("type", ""), "title": node.get("title", "")} for node in nodes],
+        "activity": [{"id": node["id"], "status": node["result"].get("status", ""), "output": node["result"].get("output")}
+                     for node in nodes if isinstance(node.get("result"), dict)],
+    }
+
+
+def _view(task, path, document):
+    return {"id": document["id"], "path": path, "taskId": task, **_held_context(document)}
+
+
+def _stamp(path, task, document):
+    """Record which task this file belongs to. Scope, rules, agents, plan and progress already in it stay."""
+    from .session_files import write_document
+    props = dict(document.get("properties") or {})
+    held = dict(props.get("taskContext") or {})
+    held["task"] = task
+    held.setdefault("scope", document["id"])
+    props["taskContext"] = held
+    document["properties"] = props
+    write_document(path, document)
+    return document
+
+
+def _show(task, path, document):
+    from .session_files import SessionFiles
+    files = SessionFiles()
+    files.remember(path, document)
+    files._current(document["id"], path)
+    return _view(task, str(path), document)
+
+
+def open_session(history, task, path=None):
+    """Open this task's own .archhub file. A first path binds it; a later open reads that same file."""
+    from .session_files import SessionFiles, local_path, new_document, read_document
+    row = get(history, task)
+    if row is None:
+        raise ValueError("No such Workshop task")
+    bound = row.get("session_path")
+    if path is not None:
+        target = str(local_path(path))
+        if bound and bound != target:
+            raise ValueError("Task already has a session file")
+        holder = history._db.execute("SELECT id FROM workshop_tasks WHERE session_path=? AND id!=?", (target, task)).fetchone()
+        if holder:
+            raise ValueError("Session file belongs to another task")
+        document = read_document(target)
+        if not bound:
+            document = _stamp(target, task, document)
+            if not _write(history, "UPDATE workshop_tasks SET session_path=?, updated_at=? WHERE id=? AND session_path IS NULL",
+                          (target, _now(), task)):
+                raise ValueError("Task already has a session file")
+        return _show(task, target, document)
+    if bound:
+        return _show(task, bound, read_document(bound))
+    document = new_document(row["title"])
+    target = str(local_path(str(SessionFiles().directory / (document["id"] + ".archhub"))))
+    document = _stamp(target, task, document)
+    if not _write(history, "UPDATE workshop_tasks SET session_path=?, updated_at=? WHERE id=? AND session_path IS NULL",
+                  (target, _now(), task)):
+        raise ValueError("Task already has a session file")
+    return _show(task, target, document)

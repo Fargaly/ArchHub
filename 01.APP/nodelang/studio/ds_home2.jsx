@@ -25,7 +25,8 @@
     const [query, setQuery] = React.useState(''), [status, setStatus] = React.useState(''), [meetingOpen, setMeetingOpen] = React.useState(null);
     const tasks = (s.tasks || []).filter(t => t.status !== 'ARCHIVED');
     const list = tasks.filter(t => (!status || t.status === status) && (!query || t.title.toLowerCase().includes(query.toLowerCase())));
-    const task = tasks.find(t => t.id === u.task) || list[0];
+    const focus = u.task || s.focusedTask || tasks.find(t => t.sessionOpen)?.id;
+    const task = tasks.find(t => t.id === focus) || list[0];
     const live = s.liveAgents || [];
     // Same rows as the Workshop's People & agents: joined sessions, then running agents that have not joined.
     // One identity everywhere: the Workshop's people rows (declared name, never a provider-merged label).
@@ -64,7 +65,7 @@
             <h3>{task.title}</h3><small className="muted">{by.join(' · ')}</small>
             {(task.messages || []).slice(-3).map(msg => <div key={msg.id} className="home-msg"><small>{msg.sender_key && msg.sender_key === msg.viewer_key ? 'You' : msg.who}</small><window.UI.Prose text={msg.text} lines={6} /></div>)}
             {!(task.messages || []).length && task.description && <div className="home-msg"><small>You</small><window.UI.Prose text={task.description} lines={6} /></div>}
-            <div className="flex"><Btn onClick={() => executeAction("ui.select", async () => { if (await executeAction("openTaskGraph", u, task.id)) u.go('canvas'); })}>Review workflow</Btn><Btn onClick={() => executeAction("ui.select", () => u.go('receipts'))}>Activity &amp; receipts</Btn></div>
+            <div className="flex"><Btn onClick={() => executeAction("ui.select", async () => { const opened = await executeAction("openTaskGraph", u, task.id); if (opened) { u.setTask(opened.taskId || task.id); u.go('canvas'); } })}>Review workflow</Btn><Btn onClick={() => executeAction("ui.select", () => u.go('receipts'))}>Activity &amp; receipts</Btn></div>
           </> : <Empty>Create a task to begin.</Empty>}</div>
           <aside className="home-side">
             <div className="spread"><h2>Agents · {live.length} session{live.length === 1 ? '' : 's'}</h2><Btn disabled={!task} onClick={() => executeAction("ui.select", () => u.show('Task details', {id: task.id}))}>Request details</Btn></div>

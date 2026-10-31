@@ -758,7 +758,7 @@ for(const wireMethod of ['setTaskPlanMode','checkpointTask','restoreTaskCheckpoi
  'setOnboarding','reviewBrainLink','setSourceEvidence','setLearningLayer','setPinnedOutput','setNodeRunPolicy','verifyOutputStamp']) {
  api[wireMethod]=async(...args)=>{const result=await workshop(wireMethod,args);if(result?.ok===false)throw Error(result.message||result.error);await commands.load();project();await refreshTasks();await refreshAgentSurface();return result;};
 }
-api.openTaskGraph=async id=>{const result=await workshop('openTaskGraph',[id]);if(result?.ok===false)throw Error(result.message||result.error);return api.selectGraph(result.id);};
+api.openTaskGraph=async id=>{const result=await workshop('openTaskGraph',[id]);if(!result||result.ok===false)throw Error(result?.message||result?.error||'This task has no session file.');const opened=await api.selectGraph(result.path||result.id);publish({focusedTask:result.taskId});return {...opened,taskId:result.taskId,path:result.path||'',scope:result.scope,progress:result.progress};};
 api.refreshOfficeAwareness=async()=>{const rows=await workshop('refreshOfficeAwareness');if(!Array.isArray(rows))throw Error(rows?.message||'Office task read failed; retry.');publish({officeItems:rows,officeUpdated:'Read from current Workshop'});return rows;};
 
 

@@ -9373,7 +9373,10 @@
         "02.TESTS/tests_replica/test_the_library_only_offers_what_runs.py",
         "02.TESTS/tests_replica/test_nodeslib_v2.py",
         "01.APP/nodelang/universal_pipeline.py",
-        "02.TESTS/tests_replica/test_wiring2_lane_repairs.py"
+        "02.TESTS/tests_replica/test_wiring2_lane_repairs.py",
+        "01.APP/nodelang/host_exec.py",
+        "01.APP/nodelang/notion_mcp.py",
+        "02.TESTS/tests/test_host_exec.py"
       ]
     }
   }

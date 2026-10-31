@@ -128,7 +128,7 @@ def host_exec(params, feeds=None):
         return {"result": None, "log": "Add code, then run.", "action": decision["action"]}, "Failed"
     try:
         result, log = _dispatch(
-            host, code, transaction_name, transaction, document, wired,
+            host, code, transaction_name, transaction, document, _bound(params, wired),
             _whole(element_limit, "the element limit"),
             _whole(sheet_limit, "the sheet limit"),
             _whole(min_free_bytes, "the free memory"),
@@ -191,6 +191,24 @@ def _dispatch(host, code, transaction_name, transaction, document, wired,
         raise ValueError(str(out.get("reason") or label or "The program did not run."))
     result = out.get("out", out) if isinstance(out, dict) else out
     return result, str(label or "")
+
+
+def _user_parameters(mapping):
+    """Parameter values a workflow can name. Built-in controls stay controls."""
+    if not isinstance(mapping, Mapping):
+        return {}
+    return {
+        str(key): value
+        for key, value in mapping.items()
+        if key not in _CONTROL and _IDENT.match(str(key))
+    }
+
+
+def _bound(params, wired):
+    """User parameters and wired feeds, as one set of code variables. A wire wins."""
+    merged = _user_parameters(params)
+    merged.update(_user_parameters(wired))
+    return merged
 
 
 def _bindings(wired):
@@ -495,14 +513,34 @@ def connector_preview(connector, action, args):
     return {"action_class": decision["action"], "preview": preview, "verdict": decision["verdict"]}
 
 
+def _action_args(args, params, wired):
+    """A parameter named args, or each other user parameter, is the action's arguments.
+
+    A wired args value wins on the same key. A wired args value that is not a
+    mapping replaces the arguments, as a direct args wire always has.
+    """
+    extras = _bound(params, wired)
+    if isinstance(args, Mapping):
+        merged = {**dict(args), **extras}
+    elif extras:
+        merged = {"value": args, **extras} if args not in (None, "") else dict(extras)
+    else:
+        merged = args
+    if isinstance(wired, Mapping) and "args" in wired:
+        incoming = wired.get("args")
+        if isinstance(merged, Mapping) and isinstance(incoming, Mapping):
+            merged = {**merged, **dict(incoming)}
+        else:
+            merged = incoming
+    return merged
+
+
 def connector_call(params, feeds=None):
     """Connector action. The action list is live. Sends and posts wait on decide()."""
     connector = str(params.get("connector") or "")
     action = str(params.get("action") or "")
-    args = params.get("args")
     wired = feeds if isinstance(feeds, Mapping) else {}
-    if "args" in wired:
-        args = wired.get("args")
+    args = _action_args(params.get("args"), params, wired)
     decision = hook_decision.decide({
         "tool_name": action,
         "tool_input": {

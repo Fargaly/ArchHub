@@ -295,3 +295,90 @@ def test_both_nodes_are_in_the_library():
     assert host["params"]["element_limit"] == 150
     assert host["params"]["transaction"] is True
     assert "host.exec" in PIPELINE_ENGINES and "connector.call" in PIPELINE_ENGINES
+
+
+def _script_result(code):
+    import re
+    bound = {}
+    for line in code.splitlines():
+        match = re.fullmatch(r"var ([A-Za-z_][A-Za-z0-9_]*) = (.*);", line.strip())
+        if not match:
+            continue
+        literal = match.group(2)
+        bound[match.group(1)] = json.loads(literal) if literal[:1] == '"' else literal
+    used = re.search(r"(?m)^result = ([A-Za-z_][A-Za-z0-9_]*);", code)
+    if used and used.group(1) in bound:
+        return bound[used.group(1)]
+    return None
+
+
+def test_user_parameters_reach_code_and_connector_args(monkeypatch, tmp_path):
+    """A param.value wired to param:<id> is a code variable; connector params fill args."""
+    import copy
+    from nodelang.enforce import guard_effect
+    from nodelang.node_params import add_param
+    from nodelang.session_files import catalogue, new_document, read_document, run_document, write_document
+
+    _mode(None)
+    calls = _broker(monkeypatch, ["Drawing", "Drawing"])
+    host_exec.host_exec(_params(code="result = sheet;", sheet="typed"))
+    assert 'var sheet = "typed";' in calls[-1][2]["code"]
+    host_exec.host_exec(_params(code="result = sheet;", sheet="typed"), {"sheet": "from-wire"})
+    assert 'var sheet = "from-wire";' in calls[-1][2]["code"]
+
+    def running(service, route, body=None, **_kwargs):
+        if route == "/info":
+            return {"ok": True, "document": "Drawing"}
+        return {"ok": True, "result": _script_result(body["code"]), "document": "Drawing"}
+
+    monkeypatch.setattr("nodelang.host_brokers.broker_call", running)
+    invoked = []
+
+    def lister():
+        return [{"name": "notion-search", "title": "Search", "inputs": ["query"]}]
+
+    def invoker(action, arguments):
+        invoked.append((action, arguments))
+        return {"ok": True, "action": action}
+
+    monkeypatch.setitem(host_exec.LISTERS, "notion", lister)
+    monkeypatch.setitem(host_exec.INVOKERS, "notion", invoker)
+
+    rows = {row["id"]: row for row in catalogue()}
+    host_item = next(row for row in rows.values() if row["engine"] == "host.exec")
+    call_item = next(row for row in rows.values() if row["engine"] == "connector.call")
+    value_item = rows["param.value"]
+    doc = new_document("Host inputs")
+
+    def place(node_id, item, x, params):
+        doc["nodes"].append({
+            "id": node_id, "item": item["id"], "type": item["engine"], "title": item["title"],
+            "params": params, "position": {"x": x, "y": 80},
+        })
+
+    place("sheet-in", value_item, 0, {"type": "text", "value": "sheet"})
+    place("host", host_item, 320, copy.deepcopy(host_item["params"]))
+    doc["nodes"][1]["params"]["code"] = "result = sheet;"
+    add_param(doc, "host", "sheet", "text", "")
+    place("query-in", value_item, 0, {"type": "text", "value": "walls"})
+    place("call-query", call_item, 320, copy.deepcopy(call_item["params"]))
+    doc["nodes"][3]["params"]["action"] = "notion-search"
+    add_param(doc, "call-query", "query", "text", "")
+    place("args-in", value_item, 0, {"type": "object", "value": {"query": "doors"}})
+    place("call-args", call_item, 320, copy.deepcopy(call_item["params"]))
+    doc["nodes"][5]["params"]["action"] = "notion-search"
+    doc["nodes"][5].setdefault("paramDefs", []).append({"id": "args", "name": "Args", "type": "object"})
+    doc["nodes"][5]["params"]["args"] = {}
+    doc["wires"] = [
+        {"id": "w-sheet", "from": {"node": "sheet-in", "socket": "value"}, "to": {"node": "host", "socket": "param:sheet"}},
+        {"id": "w-query", "from": {"node": "query-in", "socket": "value"}, "to": {"node": "call-query", "socket": "param:query"}},
+        {"id": "w-args", "from": {"node": "args-in", "socket": "value"}, "to": {"node": "call-args", "socket": "param:args"}},
+    ]
+    path = tmp_path / "inputs.archhub"
+    write_document(path, doc)
+    ran = run_document(read_document(path), invoke=lambda name, effect, params, feeds: guard_effect(name, effect, params, feeds))
+    assert ran["succeeded"], {key: row.get("error") for key, row in ran["results"].items() if row.get("error")}
+    assert ran["results"]["host"]["output"]["result"] == "sheet"
+    assert ("notion-search", {"query": "walls"}) in invoked
+    assert ("notion-search", {"query": "doors"}) in invoked
+    _mode(None)

@@ -413,3 +413,22 @@ def test_an_opencode_declaration_finds_its_session_in_its_own_opencode_process(m
     assert workshop_live.opencode_session((90, 7)) == 'ses_a'
     assert workshop_live.opencode_session((8,)) == ''      # two sessions in that process: no guess
     assert workshop_live.opencode_session(()) == ''
+
+
+def test_a_discovered_session_is_addressable_by_its_app_name_before_it_declares(monkeypatch):
+    # "to: Cursor" failed "No joined agent session matches this name": Cursor's agent never declares, and the
+    # discovery scope that named cursor was refused outright. Discovery is joining: the app's name addresses it.
+    from nodelang import workshop_live, workshop_mailbox
+    asked = {}
+
+    class Transport:
+        def discover(self, **kw):
+            asked.update(kw)
+            return {'recipients': [{'app': 'codex', 'id': 't1', 'title': 'Ping'},
+                                   {'app': 'cursor', 'id': 'c1', 'title': 'Fix the title block'},
+                                   {'app': 'cursor', 'id': 'c2', 'title': 'Older chat'}]}
+    monkeypatch.setattr(workshop_mailbox, '_local_transport', lambda *a: Transport())
+    assert [r['native_session_id'] for r in workshop_live.discover_target('Cursor')] == ['c1']
+    assert [r['native_session_id'] for r in workshop_live.discover_target('ping')] == ['t1']
+    assert workshop_live.discover_target('Nobody') == []
+    assert 'cursor' in asked['apps']

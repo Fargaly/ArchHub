@@ -109,8 +109,10 @@ export async function delegateInstance(config,instanceId,ttlSeconds=300){
  return await rpc(config,{operation:'delegate-instance',instance_id:instanceId,ttl_seconds:ttlSeconds});
 }
 export async function catalog({apps,onProgress,workshopInjection=false}={}){
-  if(apps!==undefined && (!Array.isArray(apps)||!apps.length||apps.length>5||
-    apps.some(app=>!['claude','codex','opencode','antigravity','antigravity-ide'].includes(app))))
+  // 'cursor' is listed by the worker itself (its Desktop Bridge); accepted here so a scope that names it
+  // never fails the whole discovery (every send to an undeclared session failed "No joined agent session").
+  if(apps!==undefined && (!Array.isArray(apps)||!apps.length||apps.length>6||
+    apps.some(app=>!['claude','codex','opencode','antigravity','antigravity-ide','cursor'].includes(app))))
     throw new Error('Invalid discovery app scope');
   if(onProgress){
     const selected=apps||['claude','codex','opencode','antigravity','antigravity-ide'];

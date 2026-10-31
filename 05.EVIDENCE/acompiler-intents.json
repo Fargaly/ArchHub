@@ -9368,6 +9368,7 @@
         "01.APP/nodelang/studio/answer-widgets.jsx",
         "01.APP/nodelang/studio/agent-states.jsx",
         "02.TESTS/tests/test_workshop_task_truth.py",
+        "02.TESTS/tests/test_task_context.py",
         "02.TESTS/tests_replica/test_one_library_catalogue.py",
         "02.TESTS/tests_replica/test_the_library_only_offers_what_runs.py",
         "02.TESTS/tests_replica/test_nodeslib_v2.py",

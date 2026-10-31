@@ -106,6 +106,80 @@ def _match_feeds(rows):
             row[2] = [item for item in original for _count in range(span)]
 
 
+def _split_each_wires(wired, nodes, outputs, engine, target_id):
+    """Separate foreach.each streams from inputs that stay constant."""
+    from .library_engines import canonical_engine_interface
+    from .stem_graph_evaluation import StemWire, _carry, _Refusal, foreach_each_items
+    shaped = []
+    streams = {}
+    for wire in wired:
+        source = nodes[wire['from']['node']]
+        socket = canonical_engine_interface(source['type'], 'source', wire['from']['socket'])
+        produced = outputs[source['id']]
+        if socket not in produced:
+            raise ValueError('Source socket produced no value: ' + str(socket))
+        target = canonical_engine_interface(engine, 'target', wire['to']['socket'])
+        gate = StemWire(source['id'], str(socket), target_id, wire['to']['socket'], condition=wire.get('rule', ''))
+        items = foreach_each_items(source['type'], socket, produced)
+        if items is None:
+            value = _carry(gate, _shape_carried(wire, produced[socket]))
+            if isinstance(value, _Refusal):
+                raise ValueError(value.reason)
+            shaped.append([wire, target, value])
+            continue
+        ordered = _shape_carried(wire, items)
+        if not isinstance(ordered, list):
+            ordered = [ordered]
+        carried = []
+        for item in ordered:
+            value = _carry(gate, item)
+            if isinstance(value, _Refusal):
+                raise ValueError(value.reason)
+            carried.append(value)
+        streams[target] = carried
+    return shaped, streams
+
+
+def _params_and_feeds(node, engine, feeds):
+    """Wired param:<id> sockets set those parameters. A wire wins."""
+    from .canvas_documents import THING_ENGINES
+    from .library_engines import canonical_engine_parameters
+    from .node_params import PARAM_ENGINE
+    own = {k: v for k, v in node['params'].items() if k not in {d['id'] for d in node.get('paramDefs', [])}}
+    extra = {k: v for k, v in node['params'].items() if k not in own}
+    for socket in [s for s in list(feeds) if str(s).startswith('param:')]:
+        extra[socket[6:]] = feeds.pop(socket)
+    params = own if engine in ('skill', PARAM_ENGINE) or engine in THING_ENGINES else canonical_engine_parameters(engine, own)
+    return {**params, **extra}, feeds
+
+
+def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, depth):
+    """One engine call. Effect engines receive the application invoke boundary."""
+    from .canvas_documents import THING_ENGINES, run_thing
+    from .library_engines import STEM_RUN_ENGINES
+    from .node_params import PARAM_ENGINE, bound_value, coerce
+    from .pipeline_engines import PIPELINE_ENGINES
+    from .stem_graph_evaluation import run_stem_operation
+    if engine == PARAM_ENGINE:
+        value = bound_value(document, node)
+        return {'value': coerce(node['params'].get('type', 'json'), value)}, str(value)
+    if engine in ('data.dataset', 'data.field'):
+        from .node_datasets import outputs as dataset_outputs
+        return dataset_outputs(node, feeds)
+    if engine in THING_ENGINES:
+        return run_thing(engine, params, feeds)
+    if engine == 'skill':
+        return run_skill(params, invoke=invoke, stopped=stopped, depth=depth, feeds=feeds)
+    if engine == 'note':
+        return {}, node.get('title', 'Note')
+    if engine in STEM_RUN_ENGINES:
+        return run_stem_operation(engine, params, feeds)
+    effect = PIPELINE_ENGINES[engine]
+    if invoke is None:
+        raise ValueError('This engine needs the application effect boundary')
+    return invoke(engine, effect, params, feeds)
+
+
 def new_document(title='Untitled'):
     return {'format': 'archhub', 'version': 1, 'id': str(uuid4()), 'title': title,
             'nodes': [], 'wires': [], 'groups': [], 'notes': [],
@@ -320,9 +394,9 @@ def run_skill(params, *, invoke, stopped, depth, feeds=None):
 def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, plan_only=False, cached=(), only=None):
     """Validate the whole plan before invoking existing engines in wire order."""
     from collections import deque
-    from .library_engines import canonical_engine_interface, canonical_engine_parameters, STEM_RUN_ENGINES
+    from .library_engines import STEM_RUN_ENGINES
     from .pipeline_engines import PIPELINE_ENGINES
-    from .stem_graph_evaluation import run_stem_operation, StemWire, _carry, _Refusal
+    from .stem_graph_evaluation import longest_each_plans, collect_each_runs, each_fault
     validate(document)
     nodes = {n['id']: n for n in document['nodes']}
     incoming = {key: [] for key in nodes}
@@ -359,8 +433,8 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
         raise ValueError('Cycle detected: disconnect a feedback wire before Run')
     if plan_only:
         return {'ok': True, 'order': order}
-    from .canvas_documents import THING_ENGINES, run_thing
-    from .node_params import PARAM_ENGINE, bound_value, coerce, ports as node_ports
+    from .canvas_documents import THING_ENGINES
+    from .node_params import PARAM_ENGINE, ports as node_ports
     for key in order:
         node = nodes[key]
         engine = node['type']
@@ -404,53 +478,50 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
         if blocked:
             results[key] = {'status':'Blocked', 'output':{}, 'error':'Upstream node did not produce output'}
             continue
-        feeds = {}
         engine = node['type']
         try:
-            shaped = []
-            for wire in wired:
-                source = nodes[wire['from']['node']]
-                socket = canonical_engine_interface(source['type'], 'source', wire['from']['socket'])
-                produced = outputs[source['id']]
-                if socket not in produced:
-                    raise ValueError('Source socket produced no value: '+str(socket))
-                value = _shape_carried(wire, produced[socket])
-                value = _carry(StemWire(source['id'], str(socket), key, wire['to']['socket'], condition=wire.get('rule','')), value)
-                if isinstance(value, _Refusal):
-                    raise ValueError(value.reason)
-                shaped.append([wire, canonical_engine_interface(engine, 'target', wire['to']['socket']), value])
+            shaped, streams = _split_each_wires(wired, nodes, outputs, engine, key)
             _match_feeds(shaped)
+            constants = {}
             for _wire, socket_name, value in shaped:
-                feeds[socket_name] = value
-            # A user parameter's socket sets that parameter (a wired Parameter node is the same value).
-            own = {k: v for k, v in node['params'].items() if k not in {d['id'] for d in node.get('paramDefs', [])}}
-            extra = {k: v for k, v in node['params'].items() if k not in own}
-            for socket in [s for s in list(feeds) if str(s).startswith('param:')]:
-                extra[socket[6:]] = feeds.pop(socket)
-            params = own if engine in ('skill', PARAM_ENGINE) or engine in THING_ENGINES else canonical_engine_parameters(engine, own)
-            params = {**params, **extra}
-            if engine == PARAM_ENGINE:
-                value = bound_value(document, node)
-                produced, display = {'value': coerce(node['params'].get('type', 'json'), value)}, str(value)
-            elif engine in ('data.dataset', 'data.field'):
-                from .node_datasets import outputs as dataset_outputs
-                produced, display = dataset_outputs(node, feeds)
-            elif engine in THING_ENGINES:
-                produced, display = run_thing(engine, params, feeds)
-            elif engine == 'skill':
-                produced, display = run_skill(params, invoke=invoke, stopped=stopped, depth=depth, feeds=feeds)
-            elif engine == 'note':
-                produced, display = {}, node.get('title','Note')
-            elif engine in STEM_RUN_ENGINES:
-                produced, display = run_stem_operation(engine, params, feeds)
+                constants[socket_name] = value
+            plans = longest_each_plans(streams, constants)
+
+            def run_once(plan):
+                params, bound = _params_and_feeds(node, engine, dict(plan))
+                return _dispatch_node(
+                    document, node, engine, params, bound,
+                    invoke=invoke, stopped=stopped, depth=depth)
+
+            if plans is None:
+                produced, display = run_once(constants)
+                json.dumps(produced, allow_nan=False)
+                outputs[key] = produced
+                results[key] = {'status':'Done', 'output':produced, 'display':display}
             else:
-                effect = PIPELINE_ENGINES[engine]
-                if invoke is None:
-                    raise ValueError('This engine needs the application effect boundary')
-                produced, display = invoke(engine, effect, params, feeds)
-            json.dumps(produced, allow_nan=False)
-            outputs[key] = produced
-            results[key] = {'status':'Done', 'output':produced, 'display':display}
+                # foreach.each: one run per item. decide() stays inside the effect.
+                rows = []
+                for plan in plans:
+                    if stopped is not None and stopped():
+                        rows.append((None, None, 'Stopped by you.'))
+                        continue
+                    try:
+                        produced, display = run_once(plan)
+                        json.dumps(produced, allow_nan=False)
+                        rows.append((produced, display, each_fault(produced, display)))
+                    except Exception as error:
+                        rows.append((None, None, str(error)))
+                entry = known.get(node.get('item')) or next(
+                    (r for r in known.values() if r.get('engine') == engine), None)
+                names = [
+                    p['id'] for p in node_ports(node, (entry or {}).get('ports') or {}).get('source') or []
+                    if isinstance(p, dict) and p.get('id')]
+                output, shown, error = collect_each_runs(rows, names)
+                outputs[key] = output
+                held_result = {'status': 'Error' if error else 'Done', 'output': output, 'display': shown}
+                if error:
+                    held_result['error'] = error
+                results[key] = held_result
         except Exception as error:
             results[key] = {'status':'Error', 'output':{}, 'error':str(error)}
     return {'ok':True, 'succeeded':all(r['status'] in ('Done','Disabled','Skipped') for r in results.values()), 'results':results, 'order':order}

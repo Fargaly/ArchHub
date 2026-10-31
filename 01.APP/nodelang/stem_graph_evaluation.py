@@ -457,6 +457,104 @@ def _constant_refusal(params: Mapping[str, object], value: object) -> "str | Non
     return None
 
 
+def foreach_each_items(engine, socket, output):
+    """The item stream behind a control.foreach ``each`` wire, or None.
+
+    The node's own ``each`` output stays the first item. ``results`` is the
+    list. A node wired from ``each`` runs once per item, so the stream is
+    ``results``, in source order.
+    """
+    if str(engine or "") != "control.foreach" or str(socket) != "each":
+        return None
+    if not isinstance(output, Mapping):
+        return []
+    rows = output.get("results")
+    if isinstance(rows, list):
+        return list(rows)
+    return []
+
+
+def longest_each_plans(streams, constants):
+    """One feed map per item. None when nothing is wired from foreach.each.
+
+    Grasshopper's longest-list lacing (the founder's model; the same fan-out
+    as a Node-RED split or an n8n per-item run): the node runs once per item
+    of the longest ``each`` stream, in order. A shorter stream repeats its
+    last item. Every input that is not from ``each`` is held constant.
+    """
+    if not streams:
+        return None
+    count = 0
+    for items in streams.values():
+        if len(items) > count:
+            count = len(items)
+    plans = []
+    for index in range(count):
+        plan = dict(constants)
+        for socket, items in streams.items():
+            if index < len(items):
+                plan[socket] = items[index]
+            elif items:
+                plan[socket] = items[-1]
+            else:
+                plan[socket] = None
+        plans.append(plan)
+    return plans
+
+
+def each_fault(produced, display):
+    """A per-item hold or failure from host.exec / connector.call.
+
+    Those engines call hook_decision.decide once per item. The Settings run
+    mode Accept edits, and a tool set to Allowed, admit every item, so that
+    one choice covers the batch. Ask first, and a tool set to Ask, ask on
+    each item; the hold stays in the output list.
+    """
+    if display not in ("Failed", "Waiting for you"):
+        return None
+    if isinstance(produced, Mapping):
+        note = produced.get("log")
+        if note not in (None, ""):
+            return str(note)
+    return str(display or "Failed")
+
+
+def collect_each_runs(rows, sockets=()):
+    """Stack each item's outputs into lists. A failed index is kept.
+
+    ``rows`` is ``(produced, display, error or None)`` in run order. An error
+    still contributes its index, using that item's outputs when the engine
+    returned them and None when it raised.
+    """
+    keys = []
+    for name in sockets:
+        text = str(name)
+        if text not in keys:
+            keys.append(text)
+    for produced, _display, _error in rows:
+        if not isinstance(produced, Mapping):
+            continue
+        for key in produced:
+            if key not in keys:
+                keys.append(key)
+    output = {key: [] for key in keys}
+    errors = []
+    for index, (produced, _display, error) in enumerate(rows):
+        if error:
+            errors.append("item %d: %s" % (index, error))
+        for key in keys:
+            if isinstance(produced, Mapping) and key in produced:
+                output[key].append(produced[key])
+            else:
+                output[key].append(None)
+    failed = len(errors)
+    if failed:
+        shown = "%d items, %d failed" % (len(rows), failed)
+    else:
+        shown = "%d items" % len(rows)
+    return output, shown, "; ".join(errors)
+
+
 def evaluate_stem_graph(
     nodes: Sequence[StemNode],
     wires: Sequence[StemWire],
@@ -499,6 +597,7 @@ def evaluate_stem_graph(
         visiting.add(root)
         try:
             feeds: dict[str, object] = {}
+            streams: dict[str, list] = {}
             for name, wire in (incoming.get(root) or {}).items():
                 src, src_if = wire.source, wire.source_interface
                 upstream = resolve(src)
@@ -508,11 +607,59 @@ def evaluate_stem_graph(
                 if src_if not in upstream:
                     pending[root] = "no value on %s.%s" % (src, src_if)
                     return None
+                items = foreach_each_items(by_root[src].engine, src_if, upstream)
+                if items is not None:
+                    carried_items = []
+                    for item in items:
+                        carried = _carry(wire, item)
+                        if isinstance(carried, _Refusal):
+                            pending[root] = carried.reason
+                            return None
+                        carried_items.append(carried)
+                    streams[name] = carried_items
+                    continue
                 carried = _carry(wire, upstream[src_if])
                 if isinstance(carried, _Refusal):
                     pending[root] = carried.reason
                     return None
                 feeds[name] = carried
+            plans = longest_each_plans(streams, feeds)
+            if plans is not None:
+                # One decide() per item lives inside the effect. Accept edits
+                # and tool Allowed cover the batch; Ask asks on each item.
+                effect = (effect_engines or {}).get(node.engine)
+                rows = []
+                for plan in plans:
+                    produced = None
+                    shown = ""
+                    try:
+                        if effect is not None:
+                            produced, shown = effect(dict(node.parameters), plan)
+                        else:
+                            box_display: dict[str, str] = {}
+                            box_results: dict[str, object] = {}
+                            box_pending: dict[str, str] = {}
+                            held_expr = (graph_expressions or {}).get(node.engine)
+                            if held_expr is not None:
+                                produced = _run_graph_expression(
+                                    node, held_expr, plan, box_display, box_results, box_pending
+                                )
+                            else:
+                                produced = _run_engine(
+                                    node, plan, box_display, box_results, box_pending
+                                )
+                            if produced is None:
+                                raise ValueError(box_pending.get(root) or "produced nothing")
+                            shown = box_display.get(root, "")
+                        rows.append((produced, shown, each_fault(produced, shown)))
+                    except Exception as refusal:
+                        rows.append((None, None, str(refusal)))
+                output, shown, error = collect_each_runs(rows)
+                display[root] = shown
+                outputs[root] = output
+                if error:
+                    pending[root] = error
+                return outputs[root]
             # An operation whose definition holds an expression computes from
             # that expression: the graph says what the node means (SPEC 4.1).
             # The Python engines below remain only where no released

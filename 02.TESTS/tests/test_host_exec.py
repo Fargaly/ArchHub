@@ -2,8 +2,10 @@
 
 Nothing here talks to a live Revit, AutoCAD, or Notion session.
 """
+import copy
 import json
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -487,3 +489,207 @@ def test_connector_call_lists_registered_outlook_and_gates_categorize():
         host_exec.INVOKERS.pop("outlook-fake", None)
         host_exec._LABELS.pop("outlook-fake", None)
         _mode(None)
+
+
+def _bound_literal(code, name):
+    match = re.search(r'var %s = ("(?:\\.|[^"\\])*");' % name, code)
+    assert match, code
+    return json.loads(match.group(1))
+
+
+def _revit_uppercase(monkeypatch, fail_item=None):
+    """Fake broker: the Revit script's bound item comes back upper-cased."""
+    calls = []
+
+    def fake(service, route, body=None, **_kwargs):
+        if route == "/info":
+            calls.append((route, None, None))
+            return {"ok": True, "document": "Sheet"}
+        item = _bound_literal(body["code"], "item")
+        suffix = _bound_literal(body["code"], "suffix") if "var suffix = " in body["code"] else ""
+        calls.append((route, item, suffix))
+        if fail_item is not None and item == fail_item:
+            raise ValueError("item %s refused" % item)
+        return {"ok": True, "result": str(item).upper(), "document": "Sheet"}
+
+    monkeypatch.setattr("nodelang.host_brokers.broker_call", fake)
+    return calls
+
+
+def _spy_decide(monkeypatch):
+    seen = []
+    real = host_exec.hook_decision.decide
+
+    def spy(payload, *args, **kwargs):
+        decision = real(payload, *args, **kwargs)
+        seen.append(decision)
+        return decision
+
+    monkeypatch.setattr("nodelang.hook_decision.decide", spy)
+    return seen
+
+
+def _card(item_id, node_id, x):
+    from nodelang.session_files import catalogue
+    item = {row["id"]: row for row in catalogue()}[item_id]
+    return {
+        "id": node_id, "item": item["id"], "type": item["engine"], "title": item["title"],
+        "params": copy.deepcopy(item["params"]), "position": {"x": x, "y": 0},
+    }
+
+
+def _foreach_host_document():
+    from nodelang.session_files import new_document
+    doc = new_document("Foreach host")
+    listing = _card("param.value", "list", 0)
+    listing["params"] = {"type": "list", "value": ["a", "b", "c"]}
+    mark = _card("param.value", "mark", 40)
+    mark["params"] = {"type": "text", "value": "!"}
+    batch = _card("l_foreach", "batch", 280)
+    run = _card("host_exec", "run", 560)
+    run["params"].update(_params(code="result = item;", document="Sheet", transaction=False))
+    run["paramDefs"] = [
+        {"id": "item", "name": "Item", "type": "text"},
+        {"id": "suffix", "name": "Suffix", "type": "text"},
+    ]
+    doc["nodes"] = [listing, mark, batch, run]
+    doc["wires"] = [
+        {"id": "w0", "from": {"node": "list", "socket": "value"}, "to": {"node": "batch", "socket": "items"}},
+        {"id": "w1", "from": {"node": "batch", "socket": "each"}, "to": {"node": "run", "socket": "param:item"}},
+        {"id": "w2", "from": {"node": "mark", "socket": "value"}, "to": {"node": "run", "socket": "param:suffix"}},
+    ]
+    return doc
+
+
+def _run_host_document(monkeypatch, fail_item=None):
+    from nodelang.session_files import run_document
+    _mode(None)
+    calls = _revit_uppercase(monkeypatch, fail_item)
+    seen = _spy_decide(monkeypatch)
+    ran = run_document(doc := _foreach_host_document(), invoke=lambda name, effect, params, feeds: effect(params, feeds))
+    return ran, calls, seen, doc
+
+
+def test_foreach_each_runs_host_exec_once_per_item(monkeypatch):
+    """foreach([a,b,c]) -> host.exec runs three times and stacks [A,B,C]."""
+    ran, calls, seen, _doc = _run_host_document(monkeypatch)
+    assert ran["succeeded"], ran["results"]["run"]
+    assert ran["results"]["run"]["output"]["result"] == ["A", "B", "C"]
+    execs = [item for route, item, _suffix in calls if route == "/exec"]
+    assert execs == ["a", "b", "c"]
+    assert [suffix for route, _item, suffix in calls if route == "/exec"] == ["!", "!", "!"]
+    assert len(seen) == 3
+    assert {row["verdict"] for row in seen} == {"allow"}
+    assert {row["action"] for row in seen} == {"write"}
+
+
+def test_foreach_each_runs_connector_call_once_per_item(monkeypatch):
+    """The same list reaches connector.call as three separate calls."""
+    from nodelang.session_files import new_document, run_document
+    _mode(None)
+    doc = new_document("Foreach connector")
+    listing = _card("param.value", "list", 0)
+    listing["params"] = {"type": "list", "value": ["a", "b", "c"]}
+    batch = _card("l_foreach", "batch", 280)
+    run = _card("connector_call", "run", 560)
+    run["params"]["connector"] = "batch-echo"
+    run["params"]["action"] = "echo.item"
+    doc["nodes"] = [listing, batch, run]
+    doc["wires"] = [
+        {"id": "w0", "from": {"node": "list", "socket": "value"}, "to": {"node": "batch", "socket": "items"}},
+        {"id": "w1", "from": {"node": "batch", "socket": "each"}, "to": {"node": "run", "socket": "args"}},
+    ]
+    invoked = []
+
+    def lister():
+        return [{"name": "echo.item", "title": "Echo", "inputs": ["args"]}]
+
+    def invoker(action, arguments):
+        invoked.append((action, arguments))
+        item = arguments["value"] if isinstance(arguments, dict) else arguments
+        return str(item).upper()
+
+    host_exec.register_connector("batch-echo", "Batch echo", lister, invoker)
+    seen = _spy_decide(monkeypatch)
+    try:
+        ran = run_document(doc, invoke=lambda name, effect, params, feeds: effect(params, feeds))
+    finally:
+        host_exec.LISTERS.pop("batch-echo", None)
+        host_exec.INVOKERS.pop("batch-echo", None)
+        host_exec._LABELS.pop("batch-echo", None)
+    assert ran["succeeded"], ran["results"]["run"]
+    assert invoked == [
+        ("echo.item", {"value": "a"}),
+        ("echo.item", {"value": "b"}),
+        ("echo.item", {"value": "c"}),
+    ]
+    assert ran["results"]["run"]["output"]["result"] == ["A", "B", "C"]
+    assert len(seen) == 3
+    assert {row["verdict"] for row in seen} == {"allow"}
+
+
+def test_foreach_each_records_a_failed_item_and_continues(monkeypatch):
+    """Item b is reported. a and c still run. Nothing is dropped from the list."""
+    ran, calls, seen, _doc = _run_host_document(monkeypatch, fail_item="b")
+    result = ran["results"]["run"]
+    assert result["status"] == "Error"
+    assert result["output"]["result"] == ["A", None, "C"]
+    assert "item b refused" in result["error"]
+    assert "item 1:" in result["error"]
+    execs = [item for route, item, _suffix in calls if route == "/exec"]
+    assert execs == ["a", "b", "c"]
+    assert len(seen) == 3
+
+
+def _stem_host(monkeypatch, fail_item=None):
+    from nodelang.pipeline_engines import PIPELINE_ENGINES
+    from nodelang.stem_graph_evaluation import StemNode, StemWire, evaluate_stem_graph
+    _mode(None)
+    calls = _revit_uppercase(monkeypatch, fail_item)
+    seen = _spy_decide(monkeypatch)
+    evaluation = evaluate_stem_graph(
+        [
+            StemNode("list", "data.list", {"value": '["a","b","c"]'}),
+            StemNode("mark", "data.constant", {"value": "!"}),
+            StemNode("batch", "control.foreach", {}),
+            StemNode("run", "host.exec", _params(code="result = item;", document="Sheet", transaction=False)),
+        ],
+        [
+            StemWire("list", "value", "batch", "items"),
+            StemWire("batch", "each", "run", "item"),
+            StemWire("mark", "value", "run", "suffix"),
+        ],
+        None,
+        dict(PIPELINE_ENGINES),
+    )
+    return evaluation, calls, seen
+
+
+def test_stem_evaluator_runs_host_exec_once_per_item(monkeypatch):
+    """universal_pipeline's evaluator is the same per-item rule."""
+    evaluation, calls, seen = _stem_host(monkeypatch)
+    assert evaluation.node_outputs["run"]["result"] == ["A", "B", "C"]
+    assert "run" not in evaluation.pending
+    execs = [item for route, item, _suffix in calls if route == "/exec"]
+    assert execs == ["a", "b", "c"]
+    assert len(seen) == 3
+    assert {row["verdict"] for row in seen} == {"allow"}
+
+
+def test_stem_evaluator_records_a_failed_item_and_continues(monkeypatch):
+    evaluation, calls, seen = _stem_host(monkeypatch, fail_item="b")
+    assert evaluation.node_outputs["run"]["result"] == ["A", None, "C"]
+    assert "item b refused" in evaluation.pending["run"]
+    execs = [item for route, item, _suffix in calls if route == "/exec"]
+    assert execs == ["a", "b", "c"]
+    assert len(seen) == 3
+
+
+def test_foreach_each_uses_grasshopper_longest_list():
+    from nodelang.stem_graph_evaluation import longest_each_plans, foreach_each_items
+    assert foreach_each_items("control.foreach", "results", {"each": "a", "results": ["a", "b"]}) is None
+    assert foreach_each_items("control.foreach", "each", {"each": "a", "results": ["a", "b", "c"]}) == ["a", "b", "c"]
+    plans = longest_each_plans({"item": ["a", "b", "c"], "extra": ["x"]}, {"suffix": "!"})
+    assert [row["item"] for row in plans] == ["a", "b", "c"]
+    assert [row["extra"] for row in plans] == ["x", "x", "x"]
+    assert [row["suffix"] for row in plans] == ["!", "!", "!"]

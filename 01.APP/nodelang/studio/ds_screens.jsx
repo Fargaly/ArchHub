@@ -13,6 +13,7 @@
     Chip
   } = window.UI;
   const curve = (a, b) => `M${a.x} ${a.y} C${(a.x + b.x) / 2} ${a.y},${(a.x + b.x) / 2} ${b.y},${b.x} ${b.y}`;
+  const wirePath = (a, b, kind) => kind === 'Straight' ? `M${a.x} ${a.y} L${b.x} ${b.y}` : kind === 'Step' ? `M${a.x} ${a.y} L${(a.x + b.x) / 2} ${a.y} L${(a.x + b.x) / 2} ${b.y} L${b.x} ${b.y}` : curve(a, b);
   const isGroup = n => n.children?.length > 0 || n.kind === 'Group' || n.kind === 'Workshop';
   const typeColor = t => ({
     elements: A.accent,
@@ -47,14 +48,14 @@
   // Spec Wire/*: compatible cyan, affected downstream warn, rejected drag err; one stroke width (wire.strokeWidth = 2).
   const wireColor = (w, nodes) => w.rejected ? A.err : /^(Updating|Out of date)/.test(nodeState(nodes.find(n=>n.id===w.to) || {}, false)[0]) ? A.warn : A.cyan;
   // DESIGNSYS-050 4.9 Wire: ONE stroke for the Canvas (FlowWire) and the System graph (GraphWires); Penpot Wire/Compatible, wire.strokeWidth 2.
-  function WirePath({id, state, d, color, dash, opacity}) {
-    return <path data-graph-wire={id} data-wire-state={state} d={d} stroke={color} strokeWidth="2" strokeLinecap="round" strokeDasharray={dash} opacity={opacity} fill="none" />;
+  function WirePath({id, state, d, color, dash, opacity, route}) {
+    return <path data-graph-wire={id} data-wire-state={state} data-wire-route={route || 'Bezier'} d={d} stroke={color} strokeWidth="2" strokeLinecap="round" strokeDasharray={dash} opacity={opacity} fill="none" />;
   }
   function GraphWires({paths,visibility='Visible',nodes=[]}) {
     return <>{paths.map(({w,a,b})=>{
       const portVisibility=nodes.find(n=>n.id===w.from)?.portVisibility?.[w.fromPort],
         opacity=visibility==='Hidden'||portVisibility==='Hidden' ? 0 : visibility==='Faint'||portVisibility==='Faint' ? .2 : .9;
-      return <WirePath key={w.id} id={w.id} d={curve(a,b)} color={typeColor(w.type)} dash={w.type==='event'?'6 2':undefined} opacity={opacity} />;
+      return <WirePath key={w.id} id={w.id} route={w.route} d={wirePath(a,b,w.route)} color={typeColor(w.type)} dash={w.type==='event'?'6 2':undefined} opacity={opacity} />;
     })}</>;
   }
   // e6e4a367 studio-lm.jsx NodeRenderer: category header, role edge and parameter body.
@@ -345,6 +346,37 @@
       <div style={{color: result ? SPEC.text : SPEC.label, marginTop: 6, overflowWrap: 'anywhere'}}>{result || (n.outputs.length ? 'No output yet' : 'No output')}</div>
     </aside>;
   }
+  // Connection node: the selected wire's own parameters, in the same Inspector. Tokens from design-tokens.json via AH.
+  function WireInspector({wire, s, u, onClose}) {
+    const field = {width: '100%', boxSizing: 'border-box', background: A.bgRaised, color: A.ink, border: '1px solid ' + A.line, borderRadius: window.AH.rad.md, padding: '6px 8px', font: 'inherit', fontSize: 13, lineHeight: 1.35};
+    const labelStyle = {color: A.inkMuted, fontSize: 11, lineHeight: 1.35};
+    const a = s.graph.nodes.find(n => n.id === wire.from), b = s.graph.nodes.find(n => n.id === wire.to),
+      out = a?.outputs.find(p => p.id === wire.fromPort), into = b?.inputs.find(p => p.id === wire.toPort),
+      carried = a?.status === 'Done' ? (a.output && typeof a.output === 'object' && !Array.isArray(a.output) && wire.fromPort in a.output ? a.output[wire.fromPort] : a.output) : undefined,
+      listSocket = !!(out?.list || into?.list || out?.type === 'list' || into?.type === 'list'),
+      [runLabel] = nodeState(b || {}, !!wire.rejected),
+      observed = wire.rejected || runLabel === 'Types do not match' ? 'Rejected' : runLabel === 'Not run' ? 'Not observed' : /^(Updating|Out of date)/.test(runLabel) ? 'Affected' : runLabel === 'Done' ? 'Compatible' : runLabel;
+    const shown = (name, choices) => choices.includes(wire[name]) ? wire[name] : choices[0];
+    const read = (name, text, note) => <div data-wire-param={name} style={{display: 'grid', gap: 2}}><span style={labelStyle}>{name}</span><div style={field}><span style={{color: A.ink}}>{text}</span>{note && <span style={{color: A.inkMuted}}>{' · ' + note}</span>}</div></div>;
+    return <aside className="pane inspector" style={{borderLeft: '1px solid ' + A.line, padding: 16, overflow: 'auto', minHeight: 0}} aria-label="Wire">
+      <div className="spread"><h2 style={{margin: 0, fontSize: 16, fontWeight: 500}}>Connection</h2><Btn variant="controls" sm ghost aria-label="Close wire" onClick={event=>executeAction('projects.controls.activate',{handler:onClose},event)}>×</Btn></div>
+      <div data-wire-inspection="" style={{display: 'grid', gap: window.AH.sp.sm, marginTop: window.AH.sp.md}}>
+        {read('From', (a?.title || wire.from) + '.' + (out?.name || wire.fromPort), '')}
+        {read('To', (b?.title || wire.to) + '.' + (into?.name || wire.toPort), '')}
+        <label data-wire-param="Rule" style={{display: 'grid', gap: 2}}><span style={labelStyle}>Rule</span><input aria-label="Rule" value={wire.rule || ''} placeholder="None" onChange={e=>u.act(()=>api.setWireRule(wire.id, e.target.value))} style={field} /></label>
+        {read('Data', out ? typeName(out) : (wire.type || 'Any'), 'derived')}
+        {read('Access', listSocket ? 'List' : 'Item', 'derived')}
+        {read('Direction', 'Output to input', 'derived')}
+        {(api.wireMenus || []).map(([name, choices]) => <label key={name} data-wire-param={name.slice(0,1).toUpperCase()+name.slice(1)} style={{display: 'grid', gap: 2}}>
+          <span style={labelStyle}>{name.slice(0,1).toUpperCase()+name.slice(1)}</span>
+          <select aria-label={name.slice(0,1).toUpperCase()+name.slice(1)} value={shown(name, choices)} title={name === 'units' ? 'Saved on the wire. Run does not convert units.' : name === 'route' ? 'Draws the cable. Run does not read it.' : 'Applied when the wire runs.'} onChange={e=>u.act(()=>api.setWireParam(wire.id, name, e.target.value))} style={{...field, cursor: 'pointer'}}>{choices.map(choice => <option key={choice} value={choice}>{choice}</option>)}</select>
+        </label>)}
+        {read('State', observed, 'observed')}
+        {read('Value', carried === undefined ? 'Not run yet' : summary(carried) || 'empty', '')}
+        <Btn variant="controls" danger sm onClick={event=>executeAction('projects.ds_screens.DeleteWire.28',{api,u,wire},event)}>Delete wire</Btn>
+      </div>
+    </aside>;
+  }
   // CANVASXY: xyflow (React Flow 12, MIT, vendor/xyflow.js) owns pan, zoom, drag, marquee and wiring;
   // the cards, sockets, wire colours and every file edit stay the Studio's own.
   const RF = window.ReactFlow, CanvasContext = React.createContext(null);
@@ -365,9 +397,9 @@
   }
   function FlowWire({id, sourceX, sourceY, targetX, targetY, data}) {
     // xyflow anchors at the Handle's outer edge; the spec wire meets the socket centre (Handle is 22 px wide, see SOCKET_STYLE).
-    const d = curve({x: sourceX - 11, y: sourceY}, {x: targetX + 11, y: targetY});
+    const d = wirePath({x: sourceX - 11, y: sourceY}, {x: targetX + 11, y: targetY}, data.route);
     return <>{data.selected && <path d={d} stroke={A.ink} strokeWidth="8" opacity=".22" fill="none" />}
-      <WirePath id={id} state={data.state} d={d} color={data.color} opacity={data.opacity} />
+      <WirePath id={id} state={data.state} route={data.route} d={d} color={data.color} opacity={data.opacity} />
       <path className="react-flow__edge-interaction" d={d} stroke="transparent" strokeWidth="16" fill="none" aria-label={'Inspect wire ' + id} />
     </>;
   }
@@ -389,8 +421,7 @@
       [rejected, setRejected] = React.useState(null),
       [layout, setLayout] = React.useState({scope: null, positions: {}}),
       [flowNodes, setFlowNodes] = React.useState([]),
-      [more, setMore] = React.useState(false),
-      [wireTab, setWireTab] = React.useState('Rules');
+      [more, setMore] = React.useState(false);
     const area = React.useRef(),
       view = React.useRef(viewport),
       held = React.useRef(null),
@@ -658,7 +689,7 @@
       .filter(w => shownIds.has(w.from) && shownIds.has(w.to)).map(w => {
         const color = w.rejected ? A.err : wireColor(w, s.graph.nodes), shown = s.graph.wireVisibility, portVisibility = s.graph.nodes.find(n=>n.id===w.from)?.portVisibility?.[w.fromPort];
         return {id: w.id, type: 'archhub', source: w.from, target: w.to, sourceHandle: w.fromPort, targetHandle: w.toPort, selectable: false, focusable: false,
-          data: {color, state: w.rejected ? 'rejected' : color === A.warn ? 'affected' : 'compatible', selected: wireId === w.id && shown !== 'Hidden',
+          data: {color, route: w.route, state: w.rejected ? 'rejected' : color === A.warn ? 'affected' : 'compatible', selected: wireId === w.id && shown !== 'Hidden',
             opacity: w.rejected ? 1 : shown==='Hidden'||portVisibility==='Hidden' ? 0 : shown==='Faint'||portVisibility==='Faint' ? .2 : .9}};
       });
     const fit = () => {
@@ -769,24 +800,7 @@
     <div data-canvas-overlay="" className="canvas-toolbar"><Btn variant="controls" sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom">{Math.round(zoom * 100)}%</button><Btn variant="controls" sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><Btn variant="controls" sm ghost onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</Btn></div>
    </div>
    {inspected && <NodeInspector n={inspected} s={s} u={u} />}
-   {wire && <aside className="pane inspector" style={{borderLeft:'1px solid '+A.line,padding:16}} aria-label="Wire">
-     <div className="spread"><h2>Wire</h2><Btn variant="controls" sm ghost aria-label="Close wire" onClick={event=>executeAction('projects.controls.activate',{handler:()=>setWireId(null)},event)}>×</Btn></div>
-     <div className="grid" style={{marginTop:16}}><div className="flex">{['Rules','Data'].map(t=><button className="tab-button" key={t} aria-pressed={wireTab===t} onClick={event=>executeAction('projects.ds_screens.SetTabT.27',{setTab:setWireTab,t},event)}>{t}</button>)}</div>
-       <label className="grid">Pass when<input aria-label="Wire rule" value={wire.rule || ''} onChange={e=>u.act(()=>api.setWireRule(wire.id,e.target.value))} /></label>
-       {(() => {
-         // Wire inspection (Dynamo/Grasshopper parity): its type, both sockets and the value it carries now.
-         const a = s.graph.nodes.find(n => n.id === wire.from), b = s.graph.nodes.find(n => n.id === wire.to),
-           out = a?.outputs.find(p => p.id === wire.fromPort), into = b?.inputs.find(p => p.id === wire.toPort),
-           value = a?.status === 'Done' ? (a.output && typeof a.output === 'object' && !Array.isArray(a.output) && wire.fromPort in a.output ? a.output[wire.fromPort] : a.output) : undefined;
-         return <dl data-wire-inspection="" style={{display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '6px 12px', fontSize: 13, margin: 0}}>
-           <dt className="muted">Type</dt><dd style={{margin: 0}}>{out ? typeName(out) : wire.type}{into && out && into.type !== out.type ? ' → ' + typeName(into) : ''}</dd>
-           <dt className="muted">From</dt><dd style={{margin: 0}}>{a?.title || wire.from} · {out?.name || wire.fromPort}</dd>
-           <dt className="muted">To</dt><dd style={{margin: 0}}>{b?.title || wire.to} · {into?.name || wire.toPort}</dd>
-           <dt className="muted">Value</dt><dd style={{margin: 0, overflowWrap: 'anywhere'}}>{value === undefined ? 'Not run yet' : summary(value) || 'empty'}</dd>
-         </dl>;
-       })()}
-       <Btn variant="controls" danger sm onClick={event=>executeAction('projects.ds_screens.DeleteWire.28',{api,u,wire},event)}>Delete wire…</Btn>
-     </div></aside>}
+   {wire && <WireInspector wire={wire} s={s} u={u} onClose={() => setWireId(null)} />}
 
   </div>
  </div>;
@@ -916,10 +930,6 @@ function projectsdsscreensjsxAddANodeCtrlK24({u}, event) {
   const handler = () => u.show('Search');
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }
-function projectsdsscreensjsxSetTabT27({setTab,t}, event) {
-  const handler = () => setTab(t);
-  return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
-}
 function projectsdsscreensjsxDeleteWire28({api,u,wire}, event) {
   const handler = () => u.confirm('Delete this wire?', () => api.deleteWire(wire.id));
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
@@ -954,11 +964,10 @@ const PROJECT_ACTIONS = {
   "projects.ds_screens.ZoomIn.22": "projectsdsscreensjsxZoomIn22",
   "projects.ds_screens.Fit.23": "projectsdsscreensjsxFit23",
   "projects.ds_screens.AddANodeCtrlK.24": "projectsdsscreensjsxAddANodeCtrlK24",
-  "projects.ds_screens.SetTabT.27": "projectsdsscreensjsxSetTabT27",
   "projects.ds_screens.DeleteWire.28": "projectsdsscreensjsxDeleteWire28",
   "projects.ds_screens.Settings.30": "projectsdsscreensjsxSettings30",
   "projects.ds_screens.OpenParameters.31": "projectsdsscreensjsxOpenParameters31",
   "projects.ds_screens.Open.32": "projectsdsscreensjsxOpen32"
 };
-window.registerActions(PROJECT_ACTIONS, {projectsdsscreensjsxNavigateHome5,projectsdsscreensjsxParent6,projectsdsscreensjsxGraphs7,projectsdsscreensjsxWorkspaces8,projectsdsscreensjsxToggleLibrary9,projectsdsscreensjsxGroup10,projectsdsscreensjsxUndo11,projectsdsscreensjsxRedo12,projectsdsscreensjsxArrange13,projectsdsscreensjsxSaveSkill14,projectsdsscreensjsxRun15,projectsdsscreensjsxNodeMenu16,projectsdsscreensjsxZoomOut20,projectsdsscreensjsxResetZoom21,projectsdsscreensjsxZoomIn22,projectsdsscreensjsxFit23,projectsdsscreensjsxAddANodeCtrlK24,projectsdsscreensjsxSetTabT27,projectsdsscreensjsxDeleteWire28,projectsdsscreensjsxSettings30,projectsdsscreensjsxOpenParameters31,projectsdsscreensjsxOpen32});
+window.registerActions(PROJECT_ACTIONS, {projectsdsscreensjsxNavigateHome5,projectsdsscreensjsxParent6,projectsdsscreensjsxGraphs7,projectsdsscreensjsxWorkspaces8,projectsdsscreensjsxToggleLibrary9,projectsdsscreensjsxGroup10,projectsdsscreensjsxUndo11,projectsdsscreensjsxRedo12,projectsdsscreensjsxArrange13,projectsdsscreensjsxSaveSkill14,projectsdsscreensjsxRun15,projectsdsscreensjsxNodeMenu16,projectsdsscreensjsxZoomOut20,projectsdsscreensjsxResetZoom21,projectsdsscreensjsxZoomIn22,projectsdsscreensjsxFit23,projectsdsscreensjsxAddANodeCtrlK24,projectsdsscreensjsxDeleteWire28,projectsdsscreensjsxSettings30,projectsdsscreensjsxOpenParameters31,projectsdsscreensjsxOpen32});
 })();

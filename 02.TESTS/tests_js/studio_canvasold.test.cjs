@@ -109,10 +109,24 @@ test('every wire terminates at the real socket centers',async t=>{
 });
 test('clicking a wire inspects its type, both sockets and its value',async t=>{
  const page=await mount(t);
+ // Session boot does not project the universal-canvas fixture. The connection under test is the same wire, with the parameters the inspector reads.
+ await page.evaluate(()=>{
+  if(document.querySelector('[data-graph-wire]'))return;
+  const port=(id,name,type,unit)=>({id,name,type,unit:unit||'',list:false});
+  const node=(id,title,x,inputs,outputs)=>({id,title,kind:'Input',x,y:80,params:{},status:'',application:false,parent:null,children:[],inputs,outputs});
+  const graph=window.fixtureState().graph;
+  window.fixturePublish({graph:{...graph,id:'root',system:false,name:'My work',nodes:[
+   node('level','Level',80,[],[port('level-value','value','number','m')]),
+   node('filter','Filter',470,[port('filter-count','count','number','m')],[])
+  ],wires:[{id:'wire-value',from:'level',to:'filter',fromPort:'level-value',toPort:'filter-count',type:'number',rule:''}]}});
+ });
  await page.locator('[data-graph-wire]').first().evaluate(el=>el.parentNode.querySelector('.react-flow__edge-interaction').dispatchEvent(new window.MouseEvent('click',{bubbles:true})));
  const text=await page.locator('[data-wire-inspection]').innerText();
- for(const label of ['Type','From','To','Value'])assert.match(text,new RegExp(label));
+ for(const label of ['Data','From','To','Value','Matching','Route','State'])assert.match(text,new RegExp(label));
  assert.match(text,/Number/);
+ assert.match(text,/By index/);
+ assert.match(text,/Bezier/);
+ assert.match(text,/Not observed/);
 });test('logical type mismatch never writes a wire; compatible socket activation writes the real IDs',async t=>{
  const page=await mount(t);
  const key=key=>page.locator('[data-port-key="'+key+'"]');

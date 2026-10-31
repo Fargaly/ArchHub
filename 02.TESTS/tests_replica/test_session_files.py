@@ -161,3 +161,67 @@ def test_node_contract_pure_budget_loop_are_engine_owned():
         broken = copy.deepcopy(doc); broken['nodes'][0].update(bad)
         with pytest.raises(ValueError):
             validate(broken)
+
+
+def _list_node(node_id, value, x):
+    return {'id': node_id, 'type': 'param.value', 'item': 'param.value', 'title': 'List',
+            'params': {'type': 'list', 'value': value}, 'position': {'x': x, 'y': 0}}
+
+
+def test_wire_connection_parameters_round_trip_and_old_file(tmp_path):
+    """A wire is the connection node: its parameters save in the .archhub file, and an old file still loads."""
+    from nodelang.enforce import guard_effect
+    from nodelang.session_files import wire_choice
+    doc = definition()
+    wire = doc['wires'][0]
+    chosen = {'matching': 'Longest', 'order': 'Reverse', 'missing': 'Drop', 'units': 'From target', 'conversion': 'Text'}
+    for name, value in chosen.items():
+        wire[name] = value
+    wire['route'] = 'Step'
+    path = tmp_path / 'connection.archhub'
+    write_document(path, doc)
+    saved = read_document(path)['wires'][0]
+    for name, value in chosen.items():
+        assert saved[name] == value
+    assert saved['route'] == 'Step'
+    old_path = tmp_path / 'old.archhub'
+    write_document(old_path, definition())
+    opened = read_document(old_path)
+    bare = opened['wires'][0]
+    assert set(bare) == {'id', 'from', 'to'}
+    for name, expected in (
+        ('matching', 'By index'), ('order', 'Source order'), ('missing', 'Preserve'),
+        ('units', 'From source'), ('conversion', 'None'),
+    ):
+        assert name not in bare and wire_choice(bare, name) == expected
+    assert wire_choice(bare, 'route') == 'Bezier'
+    ran = run_document(opened, invoke=lambda n, f, p, v: guard_effect(n, f, p, v))
+    assert ran['succeeded'] and ran['results']['2']['output']['out'] == 'hello'
+    refused = definition()
+    refused['wires'][0]['matching'] = 'sideways'
+    with pytest.raises(ValueError):
+        write_document(tmp_path / 'bad.archhub', refused)
+    carry = new_document('Carry')
+    carry['nodes'] = [_list_node('0', [1, None, 3], 0),
+                      {'id': '1', 'type': 'watch.preview', 'item': 'w_watch', 'title': 'Watch', 'params': {'as': 'list'}, 'position': {'x': 320, 'y': 0}}]
+    carry['wires'] = [{'id': 'a', 'from': {'node': '0', 'socket': 'value'}, 'to': {'node': '1', 'socket': 'in'},
+                       'order': 'Reverse', 'missing': 'Drop', 'conversion': 'Text'}]
+    carried = run_document(carry)
+    assert carried['succeeded'], carried
+    assert carried['results']['1']['output']['out'] == ['3', '1']
+    join = new_document('Match')
+    join['nodes'] = [_list_node('0', [1, 2, 3], 0), _list_node('1', [4, 5], 40),
+                     {'id': '2', 'type': 'shape.concat', 'item': 's_join', 'title': 'Join', 'params': {}, 'position': {'x': 320, 'y': 0}}]
+    join['wires'] = [{'id': 'a', 'from': {'node': '0', 'socket': 'value'}, 'to': {'node': '2', 'socket': 'a'}, 'matching': 'Shortest'},
+                      {'id': 'b', 'from': {'node': '1', 'socket': 'value'}, 'to': {'node': '2', 'socket': 'b'}, 'matching': 'Shortest'}]
+    matched = run_document(join)
+    assert matched['succeeded'], matched
+    assert matched['results']['2']['output']['items_out'] == [1, 2, 4, 5]
+    cross = new_document('Cross')
+    cross['nodes'] = [_list_node('0', [1, 2], 0), _list_node('1', [3, 4], 40),
+                      {'id': '2', 'type': 'shape.concat', 'item': 's_join', 'title': 'Join', 'params': {}, 'position': {'x': 320, 'y': 0}}]
+    cross['wires'] = [{'id': 'a', 'from': {'node': '0', 'socket': 'value'}, 'to': {'node': '2', 'socket': 'a'}, 'matching': 'Cross'},
+                       {'id': 'b', 'from': {'node': '1', 'socket': 'value'}, 'to': {'node': '2', 'socket': 'b'}, 'matching': 'Cross'}]
+    crossed = run_document(cross)
+    assert crossed['succeeded'], crossed
+    assert crossed['results']['2']['output']['items_out'] == [1, 1, 2, 2, 3, 3, 4, 4]

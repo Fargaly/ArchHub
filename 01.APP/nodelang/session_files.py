@@ -14,6 +14,96 @@ from . import canvas_documents
 
 MAX_BYTES = 8 * 1024 * 1024
 _SECRET = re.compile(r'(^|_)(password|secret|token|api_key|private_key|credential)(_|$)', re.I)
+# Connection-node choices on the wire record itself. The first choice is what a
+# missing field means, so an old .archhub file still loads. Mirrored in studio/api.js.
+_WIRE_MENUS = (
+    ('matching', ('By index', 'Longest', 'Shortest', 'Cross')),
+    ('order', ('Source order', 'Reverse')),
+    ('missing', ('Preserve', 'Drop', 'Blank')),
+    ('units', ('From source', 'From target')),
+    ('conversion', ('None', 'Number', 'Text')),
+    ('route', ('Bezier', 'Straight', 'Step')),
+)
+
+
+def wire_choice(wire, name):
+    """Saved choice, or the first choice when the file omits the field."""
+    choices = next(items for key, items in _WIRE_MENUS if key == name)
+    held = wire.get(name) if isinstance(wire, dict) else None
+    if held in (None, ''):
+        return choices[0]
+    if not isinstance(held, str) or held not in choices:
+        raise ValueError('Wire %s must be one of: %s' % (name, ', '.join(choices)))
+    return held
+
+
+def _blank_missing(value):
+    if value is None:
+        return ''
+    if isinstance(value, list):
+        return ['' if item is None else item for item in value]
+    return value
+
+
+def _convert_carried(kind, value):
+    if kind == 'None':
+        return value
+    if isinstance(value, list):
+        return [_convert_carried(kind, item) for item in value]
+    if kind == 'Text':
+        return '' if value is None else str(value)
+    if kind == 'Number':
+        if isinstance(value, bool) or value is None:
+            raise ValueError('Wire conversion Number cannot read %r' % (value,))
+        if isinstance(value, (int, float)):
+            return value
+        try:
+            number = float(str(value).strip())
+        except ValueError:
+            raise ValueError('Wire conversion Number cannot read %r' % (value,)) from None
+        if not math.isfinite(number):
+            raise ValueError('Wire conversion Number cannot read %r' % (value,))
+        return int(number) if number == int(number) else number
+    raise ValueError('Wire conversion %r is not one this version applies' % (kind,))
+
+
+def _shape_carried(wire, value):
+    """Order, then missing values, then conversion, on the one value this wire carries.
+
+    Units stay on the record and are not converted here. Route is the drawn path.
+    From, To, Data, Access, Direction and State are read from the sockets and the run.
+    """
+    if wire_choice(wire, 'order') == 'Reverse' and isinstance(value, list):
+        value = list(reversed(value))
+    missing = wire_choice(wire, 'missing')
+    if missing == 'Drop' and isinstance(value, list):
+        value = [item for item in value if item is not None]
+    elif missing == 'Blank':
+        value = _blank_missing(value)
+    return _convert_carried(wire_choice(wire, 'conversion'), value)
+
+
+def _match_feeds(rows):
+    """Align list feeds into one node. A single list is already indexed."""
+    lists = [row for row in rows if isinstance(row[2], list)]
+    if len(lists) < 2:
+        return
+    lengths = [len(row[2]) for row in lists]
+    shortest = min(lengths)
+    longest = max(lengths)
+    product = 1
+    for length in lengths:
+        product *= length
+    originals = [list(row[2]) for row in lists]
+    for row, original, length in zip(lists, originals, lengths):
+        mode = wire_choice(row[0], 'matching')
+        if mode == 'Shortest':
+            row[2] = original[:shortest]
+        elif mode == 'Longest' and length and length < longest:
+            row[2] = original + [original[-1]] * (longest - length)
+        elif mode == 'Cross' and length:
+            span = product // length
+            row[2] = [item for item in original for _count in range(span)]
 
 
 def new_document(title='Untitled'):
@@ -95,6 +185,11 @@ def validate(document):
         if target in inputs:
             raise ValueError('An input socket accepts one wire')
         inputs.add(target)
+        if 'rule' in wire and not isinstance(wire.get('rule'), str):
+            raise ValueError('Wire rule must be text')
+        for name, _choices in _WIRE_MENUS:
+            if name in wire:
+                wire_choice(wire, name)
     viewport = document.get('viewport', {'x':0,'y':0,'zoom':1})
     if not isinstance(viewport, dict) or any(type(viewport.get(k)) not in (int,float) or not math.isfinite(viewport[k]) for k in ('x','y','zoom')) or not 0 < viewport['zoom'] <= 10:
         raise ValueError('Invalid session viewport')
@@ -312,16 +407,21 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
         feeds = {}
         engine = node['type']
         try:
+            shaped = []
             for wire in wired:
                 source = nodes[wire['from']['node']]
                 socket = canonical_engine_interface(source['type'], 'source', wire['from']['socket'])
                 produced = outputs[source['id']]
                 if socket not in produced:
                     raise ValueError('Source socket produced no value: '+str(socket))
-                value = _carry(StemWire(source['id'], str(socket), key, wire['to']['socket'], condition=wire.get('rule','')), produced[socket])
+                value = _shape_carried(wire, produced[socket])
+                value = _carry(StemWire(source['id'], str(socket), key, wire['to']['socket'], condition=wire.get('rule','')), value)
                 if isinstance(value, _Refusal):
                     raise ValueError(value.reason)
-                feeds[canonical_engine_interface(engine, 'target', wire['to']['socket'])] = value
+                shaped.append([wire, canonical_engine_interface(engine, 'target', wire['to']['socket']), value])
+            _match_feeds(shaped)
+            for _wire, socket_name, value in shaped:
+                feeds[socket_name] = value
             # A user parameter's socket sets that parameter (a wired Parameter node is the same value).
             own = {k: v for k, v in node['params'].items() if k not in {d['id'] for d in node.get('paramDefs', [])}}
             extra = {k: v for k, v in node['params'].items() if k not in own}

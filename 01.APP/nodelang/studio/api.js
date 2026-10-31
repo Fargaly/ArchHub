@@ -1411,10 +1411,17 @@ function fileNode(node){
   children:node.children||[],members:[],parent:node.parent||null,frozen:!!node.frozen,pinned:!!node.pinned,portVisibility:node.portVisibility||{},parameterPresentation:node.parameterPresentation||{},
   output:node.result?.output||[],status:node.result?.status||'Idle',error:node.result?.error||''};
 }
+// session_files.py _WIRE_MENUS, mirrored for the inspector. First choice is the omitted-field value.
+const WIRE_MENUS=[['matching',['By index','Longest','Shortest','Cross']],['order',['Source order','Reverse']],['missing',['Preserve','Drop','Blank']],['units',['From source','From target']],['conversion',['None','Number','Text']],['route',['Bezier','Straight','Step']]];
+function projectSessionWire(w,nodes){
+ const row={id:w.id,from:w.from.node,fromPort:w.from.socket,to:w.to.node,toPort:w.to.socket,rule:w.rule||'',type:nodes.find(n=>n.id===w.from.node)?.outputs.find(p=>p.id===w.from.socket)?.type||'any'};
+ for(const [name,choices] of WIRE_MENUS)row[name]=choices.includes(w[name])?w[name]:choices[0];
+ return row;
+}
 function projectFile(){
  if(!sessionDocument)return;
  const properties=sessionDocument.properties||{}, nodes=sessionDocument.nodes.map(fileNode), graph={...properties,id:sessionDocument.id,scopeKey:sessionDocument.id+':'+scopeEpoch,name:sessionDocument.title,system:false,
-  nodes,wires:sessionDocument.wires.map(w=>({id:w.id,from:w.from.node,fromPort:w.from.socket,to:w.to.node,toPort:w.to.socket,rule:w.rule||'',type:nodes.find(n=>n.id===w.from.node)?.outputs.find(p=>p.id===w.from.socket)?.type||'any'})),viewport:sessionDocument.viewport};
+  nodes,wires:sessionDocument.wires.map(w=>projectSessionWire(w,nodes)),viewport:sessionDocument.viewport};
  publish({graph,sessionFile:sessionPath,sessionDirty:true,graphOpening:false,sync:solveNote||'Local session file'});
 }
 // Parametric (Grasshopper): an edit re-solves the pure nodes downstream of it, then stops.
@@ -1593,7 +1600,16 @@ api.groupNodes=async ids=>{const group={id:window.crypto.randomUUID(),type:'note
 api.ungroupNode=api.deleteNode;
 api.undo=async()=>{if(fileHistory.length){fileFuture.push(copy(sessionDocument));sessionDocument=fileHistory.pop();localDirty=true;runEpoch++;projectFile();queueAutosave();scheduleSolve(sessionDocument.nodes.map(n=>n.id),null);}return {ok:true};};
 api.redo=async()=>{if(fileFuture.length){fileHistory.push(copy(sessionDocument));sessionDocument=fileFuture.pop();localDirty=true;runEpoch++;projectFile();queueAutosave();scheduleSolve(sessionDocument.nodes.map(n=>n.id),null);}return {ok:true};};
+api.wireMenus=WIRE_MENUS;
 api.setWireRule=async(id,rule)=>fileEdit(d=>{const w=d.wires.find(w=>w.id===id);if(w)w.rule=rule;});
+api.setWireParam=async(id,key,value)=>{
+ if(!sessionDocument)throw Error('Open a session first.');
+ const current=sessionDocument.wires.find(w=>w.id===id);
+ if(!current)throw Error('Wire is absent');
+ const menu=WIRE_MENUS.find(row=>row[0]===key);
+ if(!menu||!menu[1].includes(value))throw Error('That is not a choice for this wire parameter');
+ return fileEdit(d=>{const w=d.wires.find(item=>item.id===id);if(value===menu[1][0])delete w[key];else w[key]=value;},[current.to.node]);
+};
 api.setWireVisibility=async value=>fileEdit(d=>{d.properties={...d.properties,wireVisibility:value};});
 api.setPortVisibility=async(id,port,value)=>fileEdit(d=>{const n=d.nodes.find(n=>n.id===id);n.portVisibility={...n.portVisibility,[port]:value};});
 api.setPromotedParameter=async(id,key,value)=>fileEdit(d=>{const n=d.nodes.find(n=>n.id===id);n.parameterPresentation={...n.parameterPresentation,[key]:value};});

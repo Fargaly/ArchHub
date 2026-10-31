@@ -108,6 +108,7 @@ def register_canvas_tools(server):
         node = {'id': str(uuid4()), 'type': item['engine'], 'item': item['id'], 'title': title or item['title'], 'pure': item['pure'], 'budget': dict(item['budget']),
                 **({'loop': dict(item['loop'])} if item['loop'] else {}),
                 'params': {**item['params'], **{k: v for k, v in (params or {}).items() if k in item['params']}},
+                **({'paramDefs': [dict(row) for row in item['paramDefs']]} if item.get('paramDefs') else {}),
                 'position': {'x': float(x), 'y': float(y)}}
         def change(document):
             document['nodes'].append(node)

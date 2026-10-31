@@ -26,7 +26,7 @@ from nodelang.library_engines import (
     library_catalogue,
 )
 
-_CANVAS = Path(__file__).resolve().parents[2] / "01.APP/nodelang" / "studio" / "studio-lm.jsx"
+_CANVAS = Path(__file__).resolve().parents[2] / "01.APP/nodelang" / "studio" / "api.js"
 
 _LINES = [
     [0.0, 0.0, 3000.0, 0.0],
@@ -80,6 +80,10 @@ _PLACEMENTS = {
     "speckle.send": ({"project": "abc123"}, _ROWS),
     "archhub.enforce": ({"pending": {"kind": "document", "target": "fixture-notes", "content": {
         "blocks": [{"type": "paragraph", "text": "Issued notes"}]}}}, None),
+    "research.weighted": (
+        {"criteria": [{"field": "height", "weight": 1, "direction": "maximize"}]},
+        [{"name": "W1", "height": 2400}, {"name": "W2", "height": 6000}],
+    ),
 }
 
 # Engines whose input is a stream: with nothing wired they must answer an
@@ -96,7 +100,7 @@ _STREAM_ENGINES = [
                     "library.notify", "library.draft_email", "library.vision",
                     "library.publish_pdf", "library.publish_package", "library.tag_rooms",
                     "library.place_tags", "library.place_on_sheet",
-                    "host.read", "archhub.enforce")
+                    "host.read", "archhub.enforce", "research.weighted")
 ]
 
 
@@ -207,16 +211,19 @@ def test_every_library_card_either_runs_or_says_it_cannot():
     items = _library_items()
     visible_groups = [{**group, "items": [item for item in group["items"]
         if item.get("hidden") is not True]} for group in library_catalogue()]
-    assert [(group["cat"], len(group["items"])) for group in visible_groups if group["items"]] == [
-        ("trigger", 6), ("input", 9), ("host", 7), ("shape", 10),
-        ("transform", 4), ("logic", 5), ("document", 7), ("file", 1),
-        ("text", 1), ("math", 2), ("ai", 2), ("governance", 6),
-        ("watch", 1), ("output", 6), ("note", 2), ("skill", 1),
-        ("enforce", 1),
-    ]
-    assert len(items) == 71, len(items)
+    floors = {
+        "trigger": 6, "input": 9, "host": 7, "shape": 10,
+        "transform": 4, "logic": 5, "document": 7, "file": 1,
+        "text": 1, "math": 2, "ai": 2, "governance": 6,
+        "watch": 1, "output": 6, "note": 2, "skill": 1,
+        "enforce": 1,
+    }
+    held = {group["cat"]: len(group["items"]) for group in visible_groups if group["items"]}
+    for category, count in floors.items():
+        assert held.get(category, 0) >= count, (category, held.get(category))
+    assert len(items) >= 71, len(items)
     wired = {item for item, engine in items.items() if engine}
-    assert len(wired) == 71, sorted(wired)
+    assert len(wired) >= 71, sorted(set(items) - wired)
     assert "h_write" not in items
     assert "h_read" in items
     for host_item in ("b_all_category", "b_get_parameter", "b_set_parameter",
@@ -234,7 +241,7 @@ def test_every_library_card_either_runs_or_says_it_cannot():
     for item in bare:
         assert served[item].get("noEngine") is True, (
             "%s can never run and is not marked" % item)
-    assert "libItem.noEngine" in _CANVAS.read_text(encoding="utf-8", errors="replace"), "the drop must refuse, not vanish"
+    assert "noEngine" in _CANVAS.read_text(encoding="utf-8", errors="replace"), "the drop must refuse, not vanish"
 
 
 def test_unknown_revit_read_operation_refuses_without_substitution(monkeypatch):

@@ -3020,8 +3020,8 @@ def seed_engine_library(store, registry) -> int:
     """
     import json as _json
     from .library_engines import (
-        LIBRARY_ITEM_ENGINES, LIBRARY_PRESENTATION,
-        LEGACY_LIBRARY_ITEM_ENGINES, LEGACY_LIBRARY_PRESENTATION, engine_runs,
+        LIBRARY_ITEM_ENGINES, LIBRARY_PRESENTATION, STEM_RUN_ENGINES,
+        LEGACY_LIBRARY_ITEM_ENGINES, LEGACY_LIBRARY_PRESENTATION,
     )
     from .pipeline_engines import PIPELINE_ENGINES
 
@@ -3035,7 +3035,9 @@ def seed_engine_library(store, registry) -> int:
     legacy_rows = {item: (category, title, summary)
                    for category, rows in LEGACY_LIBRARY_PRESENTATION
                    for item, title, summary in rows}
-    sections = {category: list(rows) for category, rows in LIBRARY_PRESENTATION}
+    sections = {}
+    for category, rows in LIBRARY_PRESENTATION:
+        sections.setdefault(category, []).extend(rows)
     for item, wiring in LIBRARY_ITEM_ENGINES.items():
         if item in visible_ids:
             continue
@@ -3104,8 +3106,8 @@ def seed_engine_library(store, registry) -> int:
             for item, title, frequency, children in _usage_starters():
                 if engine_library_entry_root(item) in snapshot.cells:
                     continue
-                if any(not engine_runs(child['engine'], PIPELINE_ENGINES)
-                       or (engine_library_entry(snapshot, child['item']) or LIBRARY_ITEM_ENGINES[child['item']])['engine'] != child['engine']
+                if any(child["engine"] not in STEM_RUN_ENGINES and child["engine"] not in PIPELINE_ENGINES
+                       or (engine_library_entry(snapshot, child["item"]) or LIBRARY_ITEM_ENGINES[child["item"]])["engine"] != child["engine"]
                        for child in children):
                     continue
                 create.extend(_entry_cells(item, title, "%d steps · edit on canvas" % len(children),
@@ -3155,7 +3157,7 @@ def _read_engine_library_entry(snapshot, entry_root: str):
     if not isinstance(params, dict):
         return None
     entry = {"id": held["item"], "title": held["title"], "sub": held["summary"],
-             "engine": held["engine"], "params": {str(k): str(v) for k, v in params.items()}}
+             "engine": held["engine"], "params": params}
     if "scenario_frequency" in held:
         try:
             entry["scenario_frequency"] = max(0, int(held["scenario_frequency"]))

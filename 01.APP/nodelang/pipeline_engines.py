@@ -745,5 +745,7 @@ PIPELINE_ENGINES["mods.run"] = _run_mod_node
 # The base catalogue's AI and Skill stems run on the same routes.
 from .library_engines import STEM_EFFECT_ENGINES as _STEM_EFFECT_ENGINES  # noqa: E402
 PIPELINE_ENGINES.update(_STEM_EFFECT_ENGINES)
+from .native_host_tools import TOOL_ENGINES as _HOST_TOOL_ENGINES  # noqa: E402
+PIPELINE_ENGINES.update(_HOST_TOOL_ENGINES)
 
 __all__ = ["PIPELINE_ENGINES", "probe_connectors"]

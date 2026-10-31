@@ -42,7 +42,7 @@ def _file_grant(path, **overrides):
 
 
 def test_palette_uses_one_engine_set_and_hides_engine_less_speckle_cards():
-    from nodelang.library_engines import LIBRARY_ITEM_ENGINES, STEM_RUN_ENGINES, library_catalogue
+    from nodelang.library_engines import LIBRARY_ITEM_ENGINES, engine_runs, library_catalogue
     from nodelang.pipeline_engines import PIPELINE_ENGINES
 
     served = {item["id"]: item for group in library_catalogue() for item in group["items"]}
@@ -59,8 +59,8 @@ def test_palette_uses_one_engine_set_and_hides_engine_less_speckle_cards():
     assert served["l_if_handoff"]["engine"] == "control.if"
     assert served["l_merge_handoff"]["engine"] == "control.merge"
     for item in served.values():
-        assert item["engine"] in PIPELINE_ENGINES or item["engine"] in STEM_RUN_ENGINES
-        assert not item.get("noEngine"), item
+        assert engine_runs(item["engine"], PIPELINE_ENGINES), item["id"]
+        assert not item.get("noEngine"), item["id"]
     assert LIBRARY_ITEM_ENGINES["t_sort"]["engine"] == "shape.sort"
 
 

@@ -578,9 +578,10 @@ def r_canvas_op(s, req):
 
 def r_node_library(s, req):
     if req.query.get('templates') == ['1']:
-        # The nine built-in starters (Book ch.12); each opens as its own .archhub workflow.
+        # Starters (Book ch.12) plus every saved skill. A skill is {id:'skill:<id>', title, path}.
         from .starters import listing
-        return {'ok': True, 'templates': listing(s._hosts.get() or [])}
+        from .session_files import skill_template_rows
+        return {'ok': True, 'templates': [*listing(s._hosts.get() or []), *skill_template_rows()]}
     from .library_engines import engine_categories, library_catalogue
     groups = library_catalogue()
     return {'ok': True, 'groups': groups, 'categories': engine_categories(groups), 'wire_parameters': []}

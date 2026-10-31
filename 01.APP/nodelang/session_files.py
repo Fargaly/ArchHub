@@ -146,25 +146,28 @@ def write_document(path, document):
 
 
 def catalogue():
+    """The one library, flat: the same cards r_node_library serves, hidden compatibility rows aside."""
     from .library_engines import library_catalogue
-    items = [item for group in library_catalogue() for item in group['items'] if not item.get('hidden')]
-    items.append({'id':'data.convert','cat':'shape','title':'Convert','sub':'Convert a wired value','engine':'data.convert','params':{'target_type':'text'},'ports':{'source':[{'id':'out','type':'any'}],'target':[{'id':'in','type':'any'}]}})
-    from .canvas_documents import thing_items
-    from .node_params import CATALOGUE_ITEM
-    from .node_datasets import CATALOGUE_ITEM as DATASET_ITEM, FIELD_ITEM
-    items.extend(thing_items())
-    items.extend(dict(item) for item in (CATALOGUE_ITEM, DATASET_ITEM, FIELD_ITEM))
+    return [item for group in library_catalogue() for item in group['items']
+            if not item.get('hidden') or item.get('id') == 'data.field']
+
+
+def load_skills():
+    """Valid skill files in skills_directory(). One reader for the catalogue and for ?templates=1."""
+    found = []
     for path in sorted(skills_directory().glob('*.archhub')):
         try:
             skill = read_document(path)
         except (OSError, ValueError):
             continue
-        items.append({'id':'skill:'+skill['id'],'cat':'skills','title':skill['title'],'sub':'Skill · %d nodes'%len(skill['nodes']),
-                      'engine':'skill','params':{'skill':skill['id']},'ports':skill_ports(skill, items)})
-    # C2 on every definition: pure (Unreal: re-solves on edit, else waits for Run), budget, loop.
-    for item in items:
-        item.update(canvas_documents.node_contract(item.get('engine')))
-    return items
+        found.append({'path': path, 'skill': skill})
+    return found
+
+
+def skill_template_rows():
+    """Each saved skill as the Library template row. id is skill:<document id>."""
+    return [{'id': 'skill:' + row['skill']['id'], 'title': row['skill']['title'], 'path': str(row['path'])}
+            for row in load_skills()]
 
 
 def skills_directory():

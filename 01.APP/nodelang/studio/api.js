@@ -1170,8 +1170,11 @@ async function refreshProjectData() {
  const [schedules,skills,library]=await Promise.all([
   canvasOperation('project_schedules',[]),canvasOperation('list_skills',[]),request('/api/universal/node-library?templates=1').catch(error=>({error:error.message}))]);
  if(!Array.isArray(schedules)||!Array.isArray(skills))throw Error('The project owner returned an invalid schedule or template list. Refresh the graph and retry.');
- const valid=Array.isArray(library.templates)&&library.templates.every(t=>Array.isArray(t.children));
- const templates=[...(valid?library.templates.map(t=>({...t,runs:t.run_count,chain:t.children.map(n=>n.title),library:true})):[]),...skills];
+ const rows=Array.isArray(library.templates)?library.templates:[];
+ const starters=rows.filter(t=>String(t.id||'').startsWith('starter:')&&Array.isArray(t.children));
+ const skillCards=rows.filter(t=>String(t.id||'').startsWith('skill:'));
+ const valid=Array.isArray(library.templates)&&starters.every(t=>Array.isArray(t.children));
+ const templates=[...starters.map(t=>({...t,runs:t.run_count,chain:t.children.map(n=>n.title),library:true})),...skillCards,...skills.filter(s=>!skillCards.some(c=>c.id===s.id))];
  await refreshTasks();
  const feedback=state.tasks.filter(t=>t.title.startsWith('Feedback: ')).map(t=>({id:t.id,text:t.title.slice('Feedback: '.length),status:t.status,
   response:t.messages.filter(m=>m.role!=='user').map(m=>m.text||m.content||'').join('\n')}));
@@ -1520,7 +1523,7 @@ api.addNode=async(name,position={})=>{
  const item=state.libraryPorts.find(i=>i.id===name||i.title===name);
  if(!item||item.noEngine)throw Error('Choose an executable Library node.');
  if(position.x===undefined){const detail={reserved:[],point:null,error:null};window.dispatchEvent(new CustomEvent('archhub:canvas-insertion',{detail}));if(detail.error)throw Error(detail.error);position=detail.point||{x:80,y:100};}
- const node={id:window.crypto.randomUUID(),type:item.engine,item:item.id,title:item.title,pure:item.pure===true,budget:copy(item.budget||{}),...(item.loop?{loop:copy(item.loop)}:{}),params:copy(item.params),position:{x:position.x,y:position.y??100}};
+ const node={id:window.crypto.randomUUID(),type:item.engine,item:item.id,title:item.title,pure:item.pure===true,budget:copy(item.budget||{}),...(item.loop?{loop:copy(item.loop)}:{}),params:copy(item.params),...(item.paramDefs?{paramDefs:copy(item.paramDefs)}:{}),position:{x:position.x,y:position.y??100}};
  fileEdit(d=>d.nodes.push(node),[node.id]);return state.graph.nodes.find(n=>n.id===node.id);
 };
 api.moveNode=(id,position)=>api.moveNodes({[id]:position});

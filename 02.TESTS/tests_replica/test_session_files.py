@@ -144,10 +144,14 @@ def test_node_contract_pure_budget_loop_are_engine_owned():
     assert items['thing:model:default']['pure'] is False and items['thing:setting:temperature']['pure'] is True
     assert items['thing:setting:temperature']['ports']['source'] == [{'id': 'value', 'type': 'number'}]
     assert {'id': 'temperature', 'type': 'number'} in items['thing:model:default']['ports']['target']
-    from nodelang.canvas_documents import node_contract
+    from nodelang.canvas_documents import BUDGET_DEFAULT, THING_ENGINES, node_contract
     assert all(set(node_contract(e)['loop']) == {'trigger', 'stop', 'evaluator', 'cap'} for e in ('library.loop', 'control.foreach'))
     assert node_contract('imported.unknown') == {'pure': False, 'budget': {'seconds': 60, 'calls': 1, 'cost_usd': 0.0}, 'loop': None}
-    assert all(row['budget'] == {'seconds': 60, 'calls': 1, 'cost_usd': 0.0} for row in items.values() if row.get('engine'))
+    for row in items.values():
+        if not row.get('engine'):
+            continue
+        expected = dict((THING_ENGINES.get(row['engine']) or {}).get('budget') or BUDGET_DEFAULT)
+        assert row['budget'] == expected, row['id']
     doc = new_document('Contract')
     doc['nodes'].append({'id': 'm', 'type': 'thing.model', 'params': {}, 'position': {'x': 0, 'y': 0}, 'pure': True,
                          'budget': {'seconds': 30, 'calls': 2}})

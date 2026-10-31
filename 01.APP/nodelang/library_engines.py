@@ -681,11 +681,17 @@ STEM_RUN_ENGINES = frozenset({
 
 
 def engine_runs(engine: str, pipeline_engines=None) -> bool:
-    """True when a listed card is executable by the stem or effect runner."""
+    """True when a listed card is executable by the stem, effect, skill or thing runner."""
     name = str(engine or "").strip()
-    return name in STEM_RUN_ENGINES or (
-        pipeline_engines is not None and name in pipeline_engines
-    )
+    if name in STEM_RUN_ENGINES or name in {"skill", "param.value", "data.dataset", "data.field"}:
+        return True
+    if pipeline_engines is not None and name in pipeline_engines:
+        return True
+    try:
+        from .canvas_documents import THING_ENGINES
+    except Exception:  # noqa: BLE001 - catalogue typing must not depend on a half-imported canvas
+        return False
+    return name in THING_ENGINES
 
 # Which library card each engine answers, and the parameters that card is
 # placed with. The studio owner reads this to give every listed item an
@@ -2079,19 +2085,339 @@ for _legacy_item, _legacy_binding in LEGACY_LIBRARY_ITEM_ENGINES.items():
     LIBRARY_ITEM_ENGINES.setdefault(_legacy_item, _legacy_binding)
 
 
+_NUMBER_NAMES = {
+    "min", "max", "step", "dx", "dy", "dz", "degrees", "cx", "cy", "factor", "offset",
+    "x", "y", "limit", "temperature", "top_p",
+}
+_BOOL_NAMES = {
+    "keep_running_in_tray", "start_with_archhub", "activate", "transaction",
+    "update_auto_apply_on_quit", "update_preview_channel",
+}
+_INTEGER_NAMES = {"count", "port", "width_px", "max_tokens", "backup_count"}
+
+
+def _param_kind(item_id, name, value, ports, explicit):
+    """The parameter's real type. Numbers are not stored as digit strings."""
+    if name in explicit:
+        return explicit[name]
+    if item_id == "n_number" and name in ("value", "min", "max", "step"):
+        return "number"
+    if item_id == "n_slider" and name in ("min", "max", "step", "value"):
+        return "number"
+    if item_id == "n_yesno" and name == "value":
+        return "bool"
+    source = {port.get("id"): port.get("type") for port in (ports or {}).get("source") or ()}
+    if name == "value" and source.get("value") == "number":
+        return "number"
+    if name == "value" and source.get("value") == "boolean":
+        return "bool"
+    if isinstance(value, bool) or name in _BOOL_NAMES:
+        return "bool"
+    if name in _INTEGER_NAMES or str(name).endswith(("_ms", "_bytes")):
+        return "integer"
+    if name in _NUMBER_NAMES or str(name).endswith(("_seconds", "_minutes", "_days")):
+        return "number"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    return "text"
+
+
+def _blank_number(name, value):
+    return name in ("min", "max") or value is None
+
+
+def _coerce_kind(kind, name, value):
+    if kind == "bool":
+        if isinstance(value, bool):
+            return value
+        token = str(value).strip().casefold()
+        if token in ("true", "1", "yes"):
+            return True
+        if token in ("false", "0", "no", ""):
+            return False
+        raise ValueError("%s must be true or false" % name)
+    if kind in ("number", "integer"):
+        if value is None or (isinstance(value, str) and not value.strip()):
+            if _blank_number(name, value):
+                return None
+            raise ValueError("%s needs a number" % name)
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            raise ValueError("%s is not a number" % name)
+        try:
+            number = float(value)
+        except ValueError:
+            raise ValueError("%s is not a number" % name) from None
+        if not math.isfinite(number):
+            raise ValueError("%s is not a finite number" % name)
+        if kind == "integer" and number != int(number):
+            raise ValueError("%s must be a whole number" % name)
+        return int(number) if number == int(number) else number
+    if value is None:
+        return ""
+    return value if isinstance(value, str) else value
+
+
+def _within(name, value, low, high):
+    if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
+        return
+    if low is not None and value < low:
+        raise ValueError("%s is below min %s" % (name, low))
+    if high is not None and value > high:
+        raise ValueError("%s is above max %s" % (name, high))
+
+
+_TYPING_SEEDS = False
+
+
+def _setting_bounds(item_id):
+    if _TYPING_SEEDS or item_id != "tool_workshop":
+        return {}
+    try:
+        from .universal_application import _APPLICATION_SETTING_SPECS
+    except Exception:  # noqa: BLE001 - bounds are checked again when the settings node runs
+        return {}
+    return _APPLICATION_SETTING_SPECS
+
+
+def _type_entry(entry):
+    """Replace stringly params with their real types and give each one a socket."""
+    explicit = entry.pop("_types", None) or {}
+    raw = entry.get("ports") or {}
+    ports = {
+        "source": [dict(port) for port in raw.get("source") or ()],
+        "target": [dict(port) for port in raw.get("target") or ()],
+    }
+    entry["ports"] = ports
+    params = dict(entry.get("params") or {})
+    bounds = _setting_bounds(entry.get("id"))
+    definitions = []
+    for name, value in params.items():
+        kind = _param_kind(entry.get("id"), name, value, ports, explicit)
+        coerced = _coerce_kind(kind, name, value)
+        spec = bounds.get(name)
+        low = high = None
+        if spec and spec[0] == "number":
+            low, high = spec[1]["min"], spec[1]["max"]
+            _within(name, coerced, low, high)
+        if entry.get("id") == "n_number" and name == "value":
+            low, high = params.get("min"), params.get("max")
+            low = None if low in ("", None) else low
+            high = None if high in ("", None) else high
+        params[name] = coerced
+        definition = {"id": name, "name": name.replace("_", " "), "type": kind}
+        if kind in ("number", "integer") and (name in ("min", "max") or coerced is None):
+            definition["optional"] = True
+        if kind in ("number", "integer") and name not in ("min", "max") and low is not None:
+            definition["min"] = low
+        if kind in ("number", "integer") and name not in ("min", "max") and high is not None:
+            definition["max"] = high
+        definitions.append(definition)
+    if entry.get("id") == "n_number":
+        _within("value", params.get("value"), params.get("min"), params.get("max"))
+        for definition in definitions:
+            if definition["id"] == "value":
+                definition["min"] = params.get("min")
+                definition["max"] = params.get("max")
+        for port in ports["source"]:
+            if port.get("id") == "value":
+                port["type"] = "number"
+        if not any(port.get("id") == "value" for port in ports["source"]):
+            ports["source"].append({"id": "value", "type": "number"})
+    entry["params"] = params
+    entry["paramDefs"] = definitions
+    from .node_params import socket_type
+    present = {port.get("id") for port in ports["target"]}
+    for definition in definitions:
+        if definition["id"] not in present and not (
+                str(entry.get("id") or "").startswith("skill:") and definition["id"] == "skill"):
+            ports["target"].append({"id": definition["id"], "type": socket_type(definition["type"])})
+            present.add(definition["id"])
+    entry["sockets"] = {
+        "source": [port["id"] for port in ports["source"]],
+        "target": [port["id"] for port in ports["target"]],
+    }
+    return entry
+
+
+def _engine_category(engine):
+    families = (
+        (("vision.", "cad."), "read"),
+        (("lines.",), "annotate"),
+        (("revit.", "max.", "rhino.", "blender.", "office.", "outlook.", "notion.",
+          "dropbox.", "acad.", "hosts."), "host"),
+        (("brain.", "ai.", "baboom."), "ai"),
+        (("tool.",), "tools"),
+        (("trigger.",), "trigger"),
+    )
+    return next((category for prefixes, category in families if str(engine).startswith(prefixes)), "logic")
+
+
+def _engine_entry(engine):
+    return {
+        "id": "engine:" + str(engine).replace(".", "_"),
+        "cat": _engine_category(engine),
+        "title": str(engine).replace(".", " ").replace("_", " "),
+        "sub": engine,
+        "engine": engine,
+        "params": {},
+        "ports": {
+            "source": [{"id": "out", "type": "any"}],
+            "target": [{"id": "in", "type": "any"}],
+        },
+    }
+
+
+def _host_entry(spec):
+    params = dict(spec["params"] if spec.get("params") is not None else {})
+    return {
+        "id": spec["id"],
+        "cat": "host",
+        "title": spec["title"],
+        "sub": spec.get("sub") or spec["title"],
+        "engine": spec["engine"],
+        "params": params,
+        "_types": dict(spec.get("types") or {}),
+        "ports": {
+            "source": [{"id": "out", "type": "any"}],
+            "target": [{"id": "in", "type": "any"}],
+        },
+    }
+
+
+def _canvas_extra_items():
+    from .canvas_documents import thing_items
+    from .node_datasets import CATALOGUE_ITEM as dataset_item, FIELD_ITEM
+    from .node_params import CATALOGUE_ITEM
+    rows = [{
+        "id": "data.convert", "cat": "shape", "title": "Convert", "sub": "Convert a wired value",
+        "engine": "data.convert", "params": {"target_type": "text"},
+        "ports": {"source": [{"id": "out", "type": "any"}], "target": [{"id": "in", "type": "any"}]},
+    }]
+    rows.extend(thing_items())
+    rows.extend(dict(item) for item in (CATALOGUE_ITEM, dataset_item, FIELD_ITEM))
+    return rows
+
+
+def _skill_entry(loaded, items):
+    from .session_files import skill_ports
+    skill, path = loaded["skill"], loaded["path"]
+    ports = skill_ports(skill, items)
+    return {
+        "id": "skill:" + skill["id"],
+        "cat": "skills",
+        "title": skill["title"],
+        "sub": "Skill · %d nodes" % len(skill["nodes"]),
+        "engine": "skill",
+        "params": {"skill": skill["id"]},
+        "path": str(path),
+        "ports": ports,
+    }
+
+
+def _complete_library(groups):
+    """One catalogue: existing cards, every pipeline engine, every host tool, every skill file."""
+    from .canvas_documents import node_contract
+    from .native_host_tools import HOST_TOOLS
+    from .pipeline_engines import PIPELINE_ENGINES
+    from .session_files import load_skills
+
+    items = [item for group in groups for item in group["items"]]
+    seen = {item["id"] for item in items}
+
+    def listed(item):
+        return not item.get("hidden") and not item.get("noEngine")
+
+    covered = {item["engine"] for item in items if listed(item)}
+
+    def add(entry):
+        _type_entry(entry)
+        if entry["id"] in seen:
+            return
+        seen.add(entry["id"])
+        items.append(entry)
+        if listed(entry):
+            covered.add(entry["engine"])
+        LIBRARY_ITEM_ENGINES.setdefault(entry["id"], {"engine": entry["engine"], "params": dict(entry["params"])})
+        if entry["engine"] not in ENGINE_SOCKETS:
+            ENGINE_SOCKETS[entry["engine"]] = {
+                "source": tuple(port["id"] for port in entry["ports"]["source"]) or ("out",),
+                "target": tuple(port["id"] for port in entry["ports"]["target"]) or ("in",),
+            }
+
+    for item in list(items):
+        _type_entry(item)
+        held = LIBRARY_ITEM_ENGINES.get(item["id"])
+        if held is not None:
+            held["params"] = dict(item["params"])
+    for entry in _canvas_extra_items():
+        add(entry)
+    for spec in HOST_TOOLS:
+        add(_host_entry(spec))
+    for engine in sorted(PIPELINE_ENGINES):
+        if engine not in covered:
+            add(_engine_entry(engine))
+            covered.add(engine)
+    for loaded in load_skills():
+        add(_skill_entry(loaded, items))
+    for item in items:
+        item.update(node_contract(item.get("engine")))
+    order, buckets = [], {}
+    for group in groups:
+        order.append(group["cat"])
+        buckets[group["cat"]] = []
+    for item in items:
+        category = item.get("cat") or "logic"
+        if category not in buckets:
+            buckets[category] = []
+            order.append(category)
+        buckets[category].append(item)
+    groups[:] = [{"cat": category, "items": buckets[category]} for category in order if buckets[category]]
+
+
+def _type_seed_params():
+    """The hand-kept card defaults become real types. Membership is filled when the catalogue is built."""
+    global _TYPING_SEEDS
+    _TYPING_SEEDS = True
+    try:
+        _type_seed_params_now()
+    finally:
+        _TYPING_SEEDS = False
+
+
+def _type_seed_params_now():
+    for item_id, wiring in LIBRARY_ITEM_ENGINES.items():
+        entry = {"id": item_id, "engine": wiring.get("engine"), "params": dict(wiring.get("params") or {}),
+                 "ports": {"source": [], "target": []}}
+        try:
+            _type_entry(entry)
+        except ValueError:
+            continue
+        wiring["params"] = entry["params"]
+
+
 def library_catalogue() -> list:
     """Canonical cards plus hidden compatibility bindings for exact old IDs.
 
-    Every row is seeded into the same graph. Ordinary projections omit hidden
-    rows before counts/search/rendering; explicit old placements keep their IDs.
+    Generated cards (engines, host tools, skills) are rebuilt on each call.
+    They are not part of the hand-kept seed, so a deleted skill file leaves
+    the catalogue. Ordinary projections omit hidden rows before counts and
+    search; explicit old placements keep their IDs.
     """
     from .pipeline_engines import PIPELINE_ENGINES
+    for item_id in [key for key in LIBRARY_ITEM_ENGINES if key not in _SEED_ITEM_IDS]:
+        del LIBRARY_ITEM_ENGINES[item_id]
     visible_ids = {item for _category, rows in LIBRARY_PRESENTATION for item, _title, _summary in rows}
     legacy_rows = {item: (category, title, summary)
                    for category, rows in LEGACY_LIBRARY_PRESENTATION
                    for item, title, summary in rows}
-    sections = {category: list(rows) for category, rows in LIBRARY_PRESENTATION}
-    for item, wiring in LIBRARY_ITEM_ENGINES.items():
+    sections = {}
+    for category, rows in LIBRARY_PRESENTATION:
+        sections.setdefault(category, []).extend(rows)
+    for item, wiring in list(LIBRARY_ITEM_ENGINES.items()):
+        if item not in _SEED_ITEM_IDS:
+            continue
         if item not in visible_ids:
             category, title, summary = legacy_rows.get(item, ("compatibility", item, "Existing graph placement binding"))
             sections.setdefault(category, []).append((item, title, summary))
@@ -2120,6 +2446,7 @@ def library_catalogue() -> list:
                 entry["reason"] = reason or "engine %s is not in this build" % wiring["engine"]
             items.append(entry)
         groups.append({"cat": category, "items": items})
+    _complete_library(groups)
     return groups
 
 
@@ -2184,7 +2511,11 @@ def engine_categories(groups=None) -> dict:
     if groups is not None:
         # The served library (graph relations) decides a card's category.
         for group in groups:
+            if group.get("cat") == "compatibility":
+                continue
             for entry in group.get("items") or ():
+                if entry.get("hidden"):
+                    continue
                 held.setdefault(entry["engine"], group["cat"])
     else:
         for category, rows in LIBRARY_PRESENTATION:
@@ -2270,3 +2601,5 @@ for _engine, _spec in _COORDINATION_NODES.items():
     _coordination_rows.append((_item, _label, _label))
 LIBRARY_PRESENTATION = (*LIBRARY_PRESENTATION, ('office', tuple(_coordination_rows)))
 LIBRARY_PRESENTATION = LIBRARY_PRESENTATION + (('logic', (('research_valuation','Weighted valuation','Score wired rows using explicit numeric criteria and weights'),)),)
+_type_seed_params()
+_SEED_ITEM_IDS = frozenset(LIBRARY_ITEM_ENGINES)

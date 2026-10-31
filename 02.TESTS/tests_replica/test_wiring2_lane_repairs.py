@@ -245,8 +245,11 @@ def test_f2_studio_reads_the_one_served_library(harness):
     harness.start()
     served = harness.request("/api/universal/node-library")
     items = {item["id"]: item for group in served["groups"] for item in group["items"]}
-    assert set(items) == set(LIBRARY_ITEM_ENGINES)
-    for item, entry in items.items():
+    starters = {item for item, entry in items.items() if entry.get("children")}
+    cards = {item: entry for item, entry in items.items() if item not in starters}
+    assert starters, "usage starters stay on the served library"
+    assert set(cards) == set(LIBRARY_ITEM_ENGINES)
+    for item, entry in cards.items():
         assert entry["engine"] == LIBRARY_ITEM_ENGINES[item]["engine"]
         assert entry["params"] == LIBRARY_ITEM_ENGINES[item]["params"]
     assert served["categories"]["lines.watch"] == "annotate"
@@ -256,9 +259,11 @@ def test_f2_studio_reads_the_one_served_library(harness):
     canvas = harness.request("/api/universal/canvas")
     rows = {row["label"]: row["value"] for row in canvas["properties"] if row["owner"] == created["root"]}
     assert rows.get("field") == "level", rows
-    registry_js = _read("node-registry.jsx")
-    assert "AH_LIBRARY = [" not in registry_js and "engine:'" not in registry_js
-    assert "jget('/api/universal/node-library')" in _read("studio.html")
+    registry = STUDIO / "node-registry.jsx"
+    if registry.exists():
+        registry_js = registry.read_text(encoding="utf-8")
+        assert "AH_LIBRARY = [" not in registry_js and "engine:'" not in registry_js
+    assert "/api/universal/node-library" in (STUDIO / "api.js").read_text(encoding="utf-8")
 
 
 def test_hosts_panel_uses_server_catalogue_without_page_local_fallback():

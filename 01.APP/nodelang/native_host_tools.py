@@ -217,4 +217,120 @@ def register_host_tools(server, control=None, *, read_only=False) -> None:
         return read(lambda: _engine("dropbox.list", path=path))
 
 
-__all__ = ["HostToolRefused", "register_host_tools"]
+def _revit_info(params, feeds=None):
+    return {"out": _broker("revit", "/info", port=params.get("port"))}, "revit info"
+
+
+def _revit_open_document(params, feeds=None):
+    _allow_effect("revit")
+    body = {"path": params.get("path") or "", "activate": bool(params.get("activate", True)),
+            "view": params.get("view") or None}
+    return {"out": _broker("revit", "/open", body, params.get("port"), EXEC_WAIT_LIMIT)}, "revit open"
+
+
+def _revit_execute_csharp(params, feeds=None):
+    _allow_effect("revit")
+    body = {"code": params.get("code") or "", "transaction_name": params.get("transaction_name") or "ArchHub"}
+    if params.get("transaction") is False:
+        body["transaction"] = False
+    return {"out": _broker("revit", "/exec", body, params.get("port"), EXEC_WAIT_LIMIT)}, "revit exec"
+
+
+def _revit_screenshot(params, feeds=None):
+    _allow_effect("revit")
+    body = {"output_path": params.get("output_path") or SCREENSHOT_PATH, "width_px": params.get("width_px")}
+    return {"out": _broker("revit", "/screenshot", body, params.get("port"), EXEC_WAIT_LIMIT)}, "revit screenshot"
+
+
+def _acad_info(params, feeds=None):
+    return {"out": _broker("acad", "/info", port=params.get("port"))}, "acad info"
+
+
+def _acad_execute_csharp(params, feeds=None):
+    _allow_effect("acad")
+    body = {"code": params.get("code") or "", "transaction_name": params.get("transaction_name") or "ArchHub"}
+    return {"out": _broker("acad", "/exec", body, params.get("port"), EXEC_WAIT_LIMIT)}, "acad exec"
+
+
+def _sessions_engine(service):
+    def engine(params, feeds=None):
+        return {"out": _sessions(service)}, service + " sessions"
+    return engine
+
+
+def _hosts_state_engine(params, feeds=None):
+    held = HOST_STATE_NODE["params"]
+    for key in ("fresh_seconds", "first_wait_seconds"):
+        if params.get(key) not in (None, ""):
+            held[key] = float(params[key])
+    return {"out": _host_state()}, "hosts"
+
+
+TOOL_ENGINES = {
+    "hosts.state": _hosts_state_engine,
+    "revit.info": _revit_info,
+    "revit.open_document": _revit_open_document,
+    "revit.execute_csharp": _revit_execute_csharp,
+    "revit.screenshot": _revit_screenshot,
+    "acad.ping": _sessions_engine("acad"),
+    "acad.info": _acad_info,
+    "acad.execute_csharp": _acad_execute_csharp,
+}
+
+# One registry: the Library node for each tool register_host_tools already exposes.
+HOST_TOOLS = (
+    {"id": "hosts_state", "title": "Hosts", "engine": "hosts.state", "sub": "Every host connector's live state",
+     "params": dict(HOST_STATE_NODE["params"]),
+     "types": {}},
+    {"id": "revit_ping", "title": "Revit ping", "engine": "revit.sessions", "sub": "Live Revit sessions",
+     "params": {}, "types": {}},
+    {"id": "revit_info", "title": "Revit info", "engine": "revit.info", "sub": "Active Revit document",
+     "params": {"port": None}, "types": {"port": "integer"}},
+    {"id": "revit_open_document", "title": "Open Revit document", "engine": "revit.open_document",
+     "sub": "Open a model in Revit",
+     "params": {"path": "", "activate": True, "view": "", "port": None},
+     "types": {"path": "text", "activate": "bool", "view": "text", "port": "integer"}},
+    {"id": "revit_execute_csharp", "title": "Revit C#", "engine": "revit.execute_csharp",
+     "sub": "Run C# in the open Revit",
+     "params": {"code": "", "transaction_name": "ArchHub", "port": None, "transaction": True},
+     "types": {"code": "text", "transaction_name": "text", "port": "integer", "transaction": "bool"}},
+    {"id": "revit_screenshot", "title": "Revit screenshot", "engine": "revit.screenshot",
+     "sub": "Export the active view as PNG",
+     "params": {"output_path": SCREENSHOT_PATH, "width_px": 1920, "port": None},
+     "types": {"output_path": "text", "width_px": "integer", "port": "integer"}},
+    {"id": "acad_ping", "title": "AutoCAD ping", "engine": "acad.ping", "sub": "Live AutoCAD sessions",
+     "params": {}, "types": {}},
+    {"id": "acad_info", "title": "AutoCAD info", "engine": "acad.info", "sub": "Active AutoCAD document",
+     "params": {"port": None}, "types": {"port": "integer"}},
+    {"id": "acad_execute_csharp", "title": "AutoCAD C#", "engine": "acad.execute_csharp",
+     "sub": "Run C# in the open AutoCAD",
+     "params": {"code": "", "transaction_name": "ArchHub", "port": None},
+     "types": {"code": "text", "transaction_name": "text", "port": "integer"}},
+    {"id": "max_ping", "title": "3ds Max ping", "engine": "max.exec", "sub": "Is 3ds Max answering",
+     "params": {"code": ""}, "types": {"code": "text"}},
+    {"id": "max_info", "title": "3ds Max info", "engine": "max.info", "sub": "3ds Max scene info",
+     "params": {}, "types": {}},
+    {"id": "max_execute_python", "title": "3ds Max Python", "engine": "max.python", "sub": "Run Python in 3ds Max",
+     "params": {"code": ""}, "types": {"code": "text"}},
+    {"id": "max_execute_maxscript", "title": "3ds Max MAXScript", "engine": "max.exec", "sub": "Run MAXScript in 3ds Max",
+     "params": {"code": ""}, "types": {"code": "text"}},
+    {"id": "blender_ping", "title": "Blender ping", "engine": "blender.exec", "sub": "Is Blender answering",
+     "params": {"code": ""}, "types": {"code": "text"}},
+    {"id": "blender_execute_python", "title": "Blender Python", "engine": "blender.exec", "sub": "Run Python in Blender",
+     "params": {"code": ""}, "types": {"code": "text"}},
+    {"id": "rhino_ping", "title": "Rhino ping", "engine": "rhino.exec", "sub": "Is Rhino answering",
+     "params": {"code": ""}, "types": {"code": "text"}},
+    {"id": "rhino_execute_python", "title": "Rhino Python", "engine": "rhino.exec", "sub": "Run Python in Rhino",
+     "params": {"code": ""}, "types": {"code": "text"}},
+    {"id": "office_read", "title": "Office read", "engine": "office.read", "sub": "Read open Excel, Word or PowerPoint",
+     "params": {"operation": "", "name": ""}, "types": {"operation": "text", "name": "text"}},
+    {"id": "outlook_inbox", "title": "Outlook inbox", "engine": "outlook.inbox", "sub": "Newest inbox items",
+     "params": {"count": 20}, "types": {"count": "integer"}},
+    {"id": "notion_search", "title": "Notion search", "engine": "notion.search", "sub": "Search the Notion workspace",
+     "params": {"query": ""}, "types": {"query": "text"}},
+    {"id": "dropbox_list", "title": "Dropbox list", "engine": "dropbox.list", "sub": "Files in Dropbox",
+     "params": {"path": ""}, "types": {"path": "text"}},
+)
+
+
+__all__ = ["HostToolRefused", "HOST_TOOLS", "TOOL_ENGINES", "register_host_tools"]

@@ -37,6 +37,9 @@ def coerce(kind, value, definition=None):
     if kind not in TYPES:
         raise ValueError('Choose a parameter type: ' + ', '.join(TYPES))
     if kind in ('number', 'integer'):
+        # Blank min/max (and any parameter marked optional) means unbounded / unset.
+        if value in ('', None) and definition.get('optional'):
+            return None
         try:
             number = float(value)
         except (TypeError, ValueError):

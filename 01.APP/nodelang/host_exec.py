@@ -1,8 +1,10 @@
 """Two generic nodes: run code in a program, or call one connector action.
 
 Both extend the runners that already exist (host brokers, rhino.exec,
-blender.exec, max.exec, office.read, notion_mcp). No second broker.
+blender.exec, max.exec, office.read, notion_mcp, and the connector engines
+already registered on those brokers). No second broker.
 Every run is admitted by hook_decision.decide before anything is sent.
+A Python run is the same write admission, in the app's own interpreter.
 """
 from __future__ import annotations
 
@@ -10,7 +12,9 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
+import sys
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
@@ -25,14 +29,14 @@ PROGRAMS = (
     ("blender", "Blender"),
     ("max", "3ds Max"),
     ("office", "Office"),
+    ("python", "Python"),
 )
-CONNECTORS = (("notion", "Notion"),)
 
 _CONTROL = frozenset({
     "host", "code", "transaction_name", "transaction", "document",
     "element_limit", "sheet_limit", "min_free_bytes", "max_hidden_core",
     "log_sentinel", "load_module", "isolate_user", "isolate_folder",
-    "connector", "action", "args",
+    "connector", "action", "args", "timeout",
 })
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _CONSOLE_NAMES = (
@@ -53,7 +57,9 @@ def programs():
 
 
 def connectors():
-    return [{"id": key, "label": label} for key, label in CONNECTORS]
+    """Every connector that has registered a live action list."""
+    _ensure_registry()
+    return [{"id": key, "label": _LABELS.get(key, key)} for key in sorted(LISTERS)]
 
 
 def _whole(value, label):
@@ -113,6 +119,7 @@ def host_exec(params, feeds=None):
     load_module = params.get("load_module")
     isolate_user = params.get("isolate_user")
     isolate_folder = params.get("isolate_folder")
+    time_limit = params.get("timeout")
     wired = feeds if isinstance(feeds, Mapping) else {}
     if wired.get("code") not in (None, ""):
         code = wired.get("code")
@@ -137,6 +144,7 @@ def host_exec(params, feeds=None):
             "" if load_module is None else str(load_module),
             "" if isolate_user is None else str(isolate_user),
             "" if isolate_folder is None else str(isolate_folder),
+            time_limit,
         )
     except (OSError, ValueError) as exc:
         return {"result": None, "log": str(exc), "action": decision["action"]}, "Failed"
@@ -145,10 +153,12 @@ def host_exec(params, feeds=None):
 
 def _dispatch(host, code, transaction_name, transaction, document, wired,
               element_limit, sheet_limit, min_free_bytes, max_hidden_core,
-              log_sentinel, load_module, isolate_user, isolate_folder):
+              log_sentinel, load_module, isolate_user, isolate_folder, time_limit):
+    bindings = _bindings(wired)
+    if host == "python":
+        return _python(code, dict(bindings), time_limit)
     from . import host_brokers as brokers
     from .clean_revit_adapter import RevitUnreachable
-    bindings = _bindings(wired)
     use_transaction = True if transaction is None else bool(transaction)
     if host == "revit":
         elements, sheets = _batch_count(wired)
@@ -429,6 +439,124 @@ def _core(code, document, bindings, min_free_bytes, max_hidden_core,
     return {"ok": True}, log
 
 
+_PYTHON_MARK = "ARCHHUB-RESULT "
+_PYTHON_RUNNER = r"""
+import json, sys
+request = json.load(sys.stdin)
+if not request.get("network"):
+    import socket
+    def _blocked(*_args, **_kwargs):
+        raise OSError("This Python run has no network.")
+    class _Socket(socket.socket):
+        def connect(self, address):
+            raise OSError("This Python run has no network.")
+        def connect_ex(self, address):
+            raise OSError("This Python run has no network.")
+    socket.socket = _Socket
+    socket.create_connection = _blocked
+namespace = {}
+namespace.update(request.get("bindings") or {})
+try:
+    exec(compile(request.get("code") or "", "<python>", "exec"), namespace, namespace)
+except Exception as exc:
+    sys.stderr.write("%s: %s\n" % (type(exc).__name__, exc))
+    sys.exit(1)
+sys.stdout.write("\n" + "ARCHHUB-RESULT ")
+json.dump(namespace.get("result"), sys.stdout, default=str)
+"""
+_CONNECTOR_CODE = re.compile(r"\b(connector_call|notion_mcp|outlook_graph|dropbox_list)\b")
+
+
+def app_python():
+    """The app venv interpreter. The running interpreter stands in until that venv exists."""
+    nodelang = Path(__file__).resolve().parent
+    names = ("python.exe", "python")
+    for root in (nodelang.parent, nodelang.parent.parent, nodelang):
+        for name in names:
+            for folder in ("Scripts", "bin"):
+                candidate = root / ".venv" / folder / name
+                if candidate.is_file():
+                    return str(candidate)
+    return sys.executable
+
+
+def _python_env(python, scratch):
+    system = os.environ.get("SYSTEMROOT") or os.environ.get("SystemRoot") or r"C:\Windows"
+    return {
+        "SYSTEMROOT": system,
+        "WINDIR": system,
+        "PATH": str(Path(python).resolve().parent) + os.pathsep + str(Path(system) / "System32"),
+        "TEMP": str(scratch),
+        "TMP": str(scratch),
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+
+
+def _json_bindings(bindings):
+    packed = {}
+    for key, value in bindings.items():
+        try:
+            json.dumps(value)
+        except TypeError as exc:
+            raise ValueError("Parameter %s cannot be sent to Python." % key) from exc
+        packed[key] = value
+    return packed
+
+
+def _python(code, bindings, time_limit):
+    """Run in the app interpreter. The caller already admitted this as a write.
+
+    The process is separate, isolated, and stopped at the node's time limit.
+    Sockets stay closed unless the code itself is a connector call.
+    """
+    seconds = _whole(time_limit, "the time limit")
+    if seconds < 1:
+        raise ValueError("The time limit must be at least 1.")
+    python = app_python()
+    if not os.path.isfile(python):
+        raise ValueError("Python is not installed.")
+    scratch = Path(tempfile.mkdtemp(prefix="archhub-python-"))
+    payload = json.dumps({
+        "code": code,
+        "bindings": _json_bindings(bindings),
+        "network": bool(_CONNECTOR_CODE.search(code)),
+    })
+    try:
+        completed = subprocess.run(
+            [python, "-I", "-B", "-c", _PYTHON_RUNNER],
+            input=payload, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=seconds, cwd=str(scratch), env=_python_env(python, scratch),
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError("The Python run timed out.") from exc
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+    lines = (completed.stdout or "").splitlines()
+    result_line = None
+    kept = []
+    for line in lines:
+        if line.startswith(_PYTHON_MARK):
+            result_line = line[len(_PYTHON_MARK):]
+        else:
+            kept.append(line)
+    err = (completed.stderr or "").strip()
+    if err:
+        kept.append(err)
+    log = "\n".join(kept).strip()
+    if completed.returncode:
+        raise ValueError(log or "Python did not run.")
+    if result_line is None:
+        raise ValueError(log or "Python did not return a result.")
+    try:
+        result = json.loads(result_line)
+    except ValueError as exc:
+        raise ValueError("Python returned a result ArchHub cannot read.") from exc
+    return result, log
+
+
 def program_state(host):
     """Plain program word for the node header. Never runs code in the document."""
     key = str(host or "")
@@ -460,6 +588,8 @@ def _state_word(host):
         return "Connected" if isinstance(out, dict) and out.get("ok") is not False else "Not installed"
     if host == "office":
         return "Connected" if brokers._com_alive("Excel.Application") else "Not installed"
+    if host == "python":
+        return "Installed" if os.path.isfile(app_python()) else "Not installed"
     return "Not available"
 
 
@@ -474,8 +604,102 @@ def _notion_invoke(action, arguments):
     return notion_mcp.call_tool(action, payload)
 
 
-LISTERS = {"notion": _notion_tools}
-INVOKERS = {"notion": _notion_invoke}
+LISTERS = {}
+INVOKERS = {}
+_LABELS = {
+    "notion": "Notion",
+    "outlook-new": "Outlook (New / Microsoft Graph)",
+    "outlook": "Outlook",
+    "outlook-imap": "Company mail",
+    "dropbox": "Dropbox",
+    "office": "Office",
+}
+_NOT_A_CONNECTOR = frozenset({"connector.rows"})
+_COM_WRITE = frozenset({"outlook.reply_draft", "outlook.forward_draft"})
+_PROGRAM_PREFIX = ("max.", "rhino.", "blender.")
+_OFFICE_PREFIX = ("excel.", "pdf.", "office.")
+
+
+def _connector_id(engine_name):
+    """Which connector an already-registered engine belongs to. Program hosts are not connectors."""
+    name = str(engine_name or "")
+    if name in _NOT_A_CONNECTOR or name in _COM_WRITE or name.startswith(_PROGRAM_PREFIX):
+        return ""
+    if name.startswith("outlook.graph."):
+        return "outlook-new"
+    if name.startswith("outlook.imap."):
+        return "outlook-imap"
+    if name.startswith("notion."):
+        return ""
+    if name.startswith(_OFFICE_PREFIX):
+        return "office"
+    head, sep, _tail = name.partition(".")
+    return head if sep else ""
+
+
+def _actions_of(connector_id):
+    def list_actions():
+        from .host_brokers import ENGINES
+        rows = []
+        for name in sorted(ENGINES):
+            if _connector_id(name) != connector_id:
+                continue
+            rows.append({"name": name, "title": name, "inputs": []})
+        if not rows:
+            raise ConnectorUnreachable("Could not read actions.")
+        return rows
+    return list_actions
+
+
+def _invoke_of(connector_id):
+    def invoke(action, arguments):
+        from .host_brokers import ENGINES
+        if _connector_id(action) != connector_id or action not in ENGINES:
+            raise ConnectorUnreachable("Choose an action from the list.")
+        payload = arguments if isinstance(arguments, Mapping) else {}
+        answer = ENGINES[action](payload, {})
+        if isinstance(answer, tuple):
+            out = answer[0]
+            label = answer[1] if len(answer) > 1 else ""
+        else:
+            out, label = answer, ""
+        if isinstance(out, dict) and out.get("ok") is False:
+            raise ValueError(str(out.get("reason") or label or "The connector did not run."))
+        if isinstance(out, dict) and "out" in out:
+            return out["out"]
+        return out
+    return invoke
+
+
+def register_connector(connector_id, label, list_actions, invoke):
+    """One connector adds itself. connector.call reads whatever is registered."""
+    key = str(connector_id or "").strip()
+    if not key:
+        raise ValueError("Name the connector.")
+    if not callable(list_actions) or not callable(invoke):
+        raise ValueError("A connector needs its action list and its call.")
+    LISTERS[key] = list_actions
+    INVOKERS[key] = invoke
+    if label:
+        _LABELS[key] = str(label)
+    return key
+
+
+def _ensure_registry():
+    """Fill any connector the brokers already registered. A prior registration is kept."""
+    if "notion" not in LISTERS:
+        LISTERS["notion"] = _notion_tools
+        INVOKERS["notion"] = _notion_invoke
+    from .host_brokers import ENGINES
+    seen = []
+    for name in ENGINES:
+        cid = _connector_id(name)
+        if cid and cid not in seen:
+            seen.append(cid)
+    for cid in seen:
+        if cid not in LISTERS:
+            LISTERS[cid] = _actions_of(cid)
+            INVOKERS[cid] = _invoke_of(cid)
 
 
 def connector_actions(connector):
@@ -483,14 +707,19 @@ def connector_actions(connector):
     name = str(connector or "").strip()
     if not name:
         return []
+    _ensure_registry()
     lister = LISTERS.get(name)
     if lister is None:
         raise ConnectorUnreachable("This connector is not connected.")
     try:
-        from . import notion_mcp
         rows = lister()
-    except (OSError, ValueError, notion_mcp.NotionNotConnected, notion_mcp.NotionToolError) as exc:
+    except (OSError, ValueError) as exc:
         raise ConnectorUnreachable("Could not read actions.") from exc
+    except Exception as exc:
+        from . import notion_mcp
+        if isinstance(exc, (notion_mcp.NotionNotConnected, notion_mcp.NotionToolError)):
+            raise ConnectorUnreachable("Could not read actions.") from exc
+        raise
     if not isinstance(rows, list):
         raise ConnectorUnreachable("Could not read actions.")
     listed = []

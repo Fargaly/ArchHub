@@ -92,7 +92,7 @@ _SHELL = re.compile(r"^(bash|powershell|shell|exec_command|run_shell_command|loc
 _UNTRUSTED = re.compile(r"(webfetch|websearch|web_fetch|web_search|fetch|browser|navigate|get_page_text|"
                         r"read_page|inbox|get_message|get_thread|slack_read|search_threads)", re.I)
 _SEND_TOOL = re.compile(r"(send|post_message|publish|upload|share|create_draft|deploy|create_comment|"
-                        r"reply|notion-create|notion-update|create_pages|tweet)", re.I)
+                        r"reply|notion-create|notion-update|create_pages|tweet|categorize)", re.I)
 _SCREEN_TOOL = re.compile(r"computer-use__(?!screenshot$|zoom$|cursor_position$|list_granted_applications$)", re.I)
 _PUBLISH_CMD = re.compile(
     r"\bgit\s+push\b|\bgh\s+(pr|issue|release|gist|repo)\s+(create|edit|comment|upload)\b|"

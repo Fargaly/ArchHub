@@ -382,3 +382,108 @@ def test_user_parameters_reach_code_and_connector_args(monkeypatch, tmp_path):
     assert ("notion-search", {"query": "walls"}) in invoked
     assert ("notion-search", {"query": "doors"}) in invoked
     _mode(None)
+
+
+def test_python_host_binds_a_parameter_and_stamps_a_pdf(tmp_path):
+    """Python runs in its own process: a bound parameter, then a pypdf stamp that leaves the source alone."""
+    from pypdf import PdfReader, PdfWriter
+
+    _mode(None)
+    produced, _display = host_exec.host_exec(_params(host="python", code="result = x * 2", timeout=30), {"x": 21})
+    assert produced["result"] == 42
+    assert produced["action"] == "write"
+
+    _mode("Plan only")
+    held, display = host_exec.host_exec(_params(host="python", code="result = x * 2", timeout=30), {"x": 21})
+    assert display == "Failed" and held["result"] is None and held["action"] == "write"
+    _mode(None)
+
+    blocked, _display = host_exec.host_exec(_params(
+        host="python", timeout=20,
+        code="import socket\nsocket.create_connection(('127.0.0.1', 9))\nresult = 'open'",
+    ))
+    assert blocked["result"] is None and "network" in blocked["log"].lower()
+
+    source = tmp_path / "sheet.pdf"
+    dest = tmp_path / "STAMPED" / "sheet.pdf"
+    made = PdfWriter()
+    made.add_blank_page(width=200, height=200)
+    with source.open("wb") as handle:
+        made.write(handle)
+    original = source.read_bytes()
+    code = (
+        "from io import BytesIO\n"
+        "from pathlib import Path\n"
+        "from pypdf import PdfReader, PdfWriter, Transformation\n"
+        "reader = PdfReader(source)\n"
+        "stamp = PdfWriter()\n"
+        "stamp.add_blank_page(width=40, height=16)\n"
+        "raw = BytesIO()\n"
+        "stamp.write(raw)\n"
+        "page = reader.pages[0]\n"
+        "page.merge_transformed_page(PdfReader(raw).pages[0], Transformation().translate(140, 30))\n"
+        "out = PdfWriter()\n"
+        "out.add_page(page)\n"
+        "target = Path(dest)\n"
+        "target.parent.mkdir(parents=True, exist_ok=True)\n"
+        "with target.open('wb') as handle:\n"
+        "    out.write(handle)\n"
+        "result = str(target)\n"
+    )
+    stamped, _display = host_exec.host_exec(
+        _params(host="python", code=code, timeout=30, document=str(tmp_path)),
+        {"source": str(source), "dest": str(dest)},
+    )
+    assert stamped["result"] == str(dest)
+    assert source.read_bytes() == original
+    assert dest.is_file() and dest.read_bytes() != original
+    assert len(PdfReader(str(dest)).pages) == 1
+    assert "Python" in [row["label"] for row in host_exec.programs()]
+    _mode(None)
+
+
+def test_connector_call_lists_registered_outlook_and_gates_categorize():
+    """Actions come from the connector registry. A categorize send waits; it is not sent."""
+    _mode(None)
+    names = {row["name"] for row in host_exec.connector_actions("outlook-new")}
+    assert "outlook.graph.categories" in names
+    assert "outlook.graph.categorize" in names
+    classic = {row["name"] for row in host_exec.connector_actions("outlook")}
+    assert "outlook.inbox" in classic
+    assert "outlook.reply_draft" not in classic and "outlook.forward_draft" not in classic
+    ids = {row["id"] for row in host_exec.connectors()}
+    assert {"notion", "outlook-new", "dropbox", "office"} <= ids
+    preview = host_exec.connector_preview("outlook-new", "outlook.graph.categorize", {"categories": ["Issued"]})
+    assert preview["action_class"] == "send"
+
+    invoked = []
+
+    def lister():
+        return [
+            {"name": "outlook.graph.categories", "title": "Categories", "inputs": ["account"]},
+            {"name": "outlook.graph.categorize", "title": "Categorize", "inputs": ["account", "categories"]},
+        ]
+
+    def invoker(action, arguments):
+        invoked.append((action, arguments))
+        return {"ok": True, "action": action}
+
+    host_exec.register_connector("outlook-fake", "Outlook", lister, invoker)
+    try:
+        listed = {row["name"] for row in host_exec.connector_actions("outlook-fake")}
+        assert listed == {"outlook.graph.categories", "outlook.graph.categorize"}
+        _mode("Ask first")
+        produced, display = host_exec.connector_call({
+            "connector": "outlook-fake",
+            "action": "outlook.graph.categorize",
+            "args": {"account": "owner@example.com", "categories": ["Issued"]},
+        })
+        assert display == "Waiting for you"
+        assert produced["action_class"] == "send"
+        assert produced["result"] is None
+        assert invoked == []
+    finally:
+        host_exec.LISTERS.pop("outlook-fake", None)
+        host_exec.INVOKERS.pop("outlook-fake", None)
+        host_exec._LABELS.pop("outlook-fake", None)
+        _mode(None)

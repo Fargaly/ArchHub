@@ -2246,7 +2246,7 @@ def _engine_category(engine):
         (("vision.", "cad."), "read"),
         (("lines.",), "annotate"),
         (("revit.", "max.", "rhino.", "blender.", "office.", "outlook.", "notion.",
-          "dropbox.", "acad.", "hosts."), "host"),
+          "dropbox.", "acad.", "hosts.", "host.", "connector."), "host"),
         (("brain.", "ai.", "baboom."), "ai"),
         (("tool.",), "tools"),
         (("trigger.",), "trigger"),
@@ -2601,5 +2601,35 @@ for _engine, _spec in _COORDINATION_NODES.items():
     _coordination_rows.append((_item, _label, _label))
 LIBRARY_PRESENTATION = (*LIBRARY_PRESENTATION, ('office', tuple(_coordination_rows)))
 LIBRARY_PRESENTATION = LIBRARY_PRESENTATION + (('logic', (('research_valuation','Weighted valuation','Score wired rows using explicit numeric criteria and weights'),)),)
+
+# Two generic nodes. Limits live here as parameters; host_exec reads them.
+from .host_exec import host_exec as _host_exec, connector_call as _connector_call
+LIBRARY_ENGINES["host.exec"] = _host_exec
+LIBRARY_ENGINES["connector.call"] = _connector_call
+LIBRARY_ITEM_ENGINES["host_exec"] = {"engine": "host.exec", "params": {
+    "host": "revit", "code": "", "transaction_name": "ArchHub", "transaction": True,
+    "document": "", "element_limit": 150, "sheet_limit": 1, "min_free_bytes": 2147483648,
+    "max_hidden_core": 1, "log_sentinel": "ARCHHUB_CORE_DONE", "load_module": "acismobj25.dbx",
+    "isolate_user": "", "isolate_folder": "",
+}}
+LIBRARY_ITEM_ENGINES["connector_call"] = {"engine": "connector.call", "params": {
+    "connector": "notion", "action": "", "args": "",
+}}
+ENGINE_SOCKETS["host.exec"] = {
+    "source": ("result", "log"),
+    "target": ("host", "code", "transaction_name", "transaction", "document",
+               "element_limit", "sheet_limit", "min_free_bytes", "max_hidden_core",
+               "log_sentinel", "load_module", "isolate_user", "isolate_folder"),
+}
+ENGINE_SOCKETS["connector.call"] = {
+    "source": ("result",),
+    "target": ("connector", "action", "args"),
+}
+LIBRARY_PRESENTATION = LIBRARY_PRESENTATION + (
+    ("host", (
+        ("host_exec", "Run in program", "Run code in the program you pick"),
+        ("connector_call", "Connector action", "Run one action from a connected account"),
+    )),
+)
 _type_seed_params()
 _SEED_ITEM_IDS = frozenset(LIBRARY_ITEM_ENGINES)

@@ -897,6 +897,27 @@ def r_settings_action(s, req):
             raise Refused('Choose an existing connected account, then retry.')
         result = revoke_social_credential({key: row[key] for key in ('vault_entry', 'provider', 'account_id')})
         return {'ok': True, 'result': {**result, 'secrets': _secrets()}}
+    if function == 'hostPrograms':
+        from .host_exec import programs
+        return {'ok': True, 'result': {'programs': programs()}}
+    if function == 'hostProgramState':
+        from .host_exec import program_state
+        return {'ok': True, 'result': program_state(args[0] if args else '')}
+    if function == 'connectorActions':
+        from .host_exec import ConnectorUnreachable, connector_actions, connectors
+        name = args[0] if args else ''
+        try:
+            actions = connector_actions(name)
+            error = ''
+        except ConnectorUnreachable as refused:
+            actions = []
+            error = str(refused)
+        return {'ok': True, 'result': {'connectors': connectors(), 'actions': actions, 'error': error}}
+    if function == 'connectorPreview':
+        from .host_exec import connector_preview
+        payload = args[0] if args and isinstance(args[0], dict) else {}
+        return {'ok': True, 'result': connector_preview(
+            payload.get('connector'), payload.get('action'), payload.get('args'))}
     if function == 'openProgram':
         # The first-run "Open Revit": start the newest installed Revit (Autodesk installs one folder per year).
         if (args[0] if args else '') != 'revit':

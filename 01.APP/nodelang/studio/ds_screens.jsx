@@ -58,6 +58,141 @@
       return <WirePath key={w.id} id={w.id} route={w.route} d={wirePath(a,b,w.route)} color={typeColor(w.type)} dash={w.type==='event'?'6 2':undefined} opacity={opacity} />;
     })}</>;
   }
+  const hostLabel = {fontSize:11, color:A.inkSoft};
+  const hostControl = {width:'100%', boxSizing:'border-box', background:A.bgSoft, color:A.ink, border:'1px solid '+A.line, borderRadius:A.rad.sm, padding:'6px 8px', font:'12px Inter, sans-serif'};
+  const hostBlock = {display:'flex', flexDirection:'column', gap:4, marginBottom:8};
+  function codeLanguage(host) {
+    if (host === 'revit' || host === 'acad') return 'C#';
+    if (host === 'acad-core') return 'LISP';
+    if (host === 'max') return 'MAXScript';
+    if (host === 'office') return 'Operation';
+    return 'Python';
+  }
+  function runWord(n) {
+    if (/running/i.test(n.status || '')) return 'Running';
+    if (n.display === 'Waiting for you') return 'Waiting for you';
+    if (n.status === 'Error' || n.display === 'Failed') return 'Failed';
+    if (n.status === 'Done') return 'Done';
+    return 'Draft';
+  }
+  function RunModeChip({waiting}) {
+    const u = useApp();
+    const [attempt, setAttempt] = React.useState(0);
+    const [load, setLoad] = React.useState({status:'waiting', runMode:'', message:''});
+    React.useEffect(() => {
+      let live = true;
+      setLoad(current => ({...current, status:'waiting'}));
+      api.readPermissions().then(result => {
+        if (!live) return;
+        const mode = result.runMode || '';
+        setLoad({status: mode ? 'loaded' : 'empty', runMode: mode, message:''});
+      }).catch(error => { if (live) setLoad({status:'error', runMode:'', message: error.message || 'Could not read the run mode.'}); });
+      return () => { live = false; };
+    }, [attempt]);
+    return <>
+      {load.status === 'waiting' && <span role="status" style={{fontSize:11, color:A.inkSoft}}>Reading run mode</span>}
+      {load.status === 'empty' && <span style={{fontSize:11, color:A.inkSoft}}>No run mode</span>}
+      {load.status === 'error' && <span role="alert" style={{fontSize:11, color:A.err}}>{load.message} <button type="button" className="button-reset" onClick={event => executeAction('projects.controls.activate', {handler:() => setAttempt(value => value + 1)}, event)}>Retry</button></span>}
+      {load.status === 'loaded' && <button type="button" data-run-mode={load.runMode} className="button-reset" onClick={event => executeAction('projects.controls.activate', {handler:() => u.go('settings/Hooks')}, event)} style={{height:20, padding:'0 8px', borderRadius:A.rad.pill, border:'1px solid '+(waiting ? A.warn : A.line), color: waiting ? A.warn : A.inkSoft, background:'transparent', fontSize:11}}>{load.runMode}</button>}
+    </>;
+  }
+  function HostExecNode({n, selected, headerProps, renderPort}) {
+    const u = useApp();
+    const params = n.params || {};
+    const [attempt, setAttempt] = React.useState(0);
+    const [load, setLoad] = React.useState({status:'waiting', programs:[], state:null, message:''});
+    React.useEffect(() => {
+      let live = true;
+      setLoad(current => ({...current, status:'waiting'}));
+      Promise.all([api.hostPrograms(), api.hostProgramState(params.host || 'revit')]).then(([programs, state]) => {
+        if (!live) return;
+        const rows = programs.programs || [];
+        setLoad({status: rows.length ? 'loaded' : 'empty', programs: rows, state, message:''});
+      }).catch(error => { if (live) setLoad({status:'error', programs:[], state:null, message: error.message || 'Could not read the program.'}); });
+      return () => { live = false; };
+    }, [attempt, params.host]);
+    const save = (key, value) => u.act(() => api.setNodeParam(n.id, key, value));
+    const reachable = !!(load.state && load.state.reachable);
+    const word = runWord(n);
+    const runLabel = reachable ? 'Run' : (load.state && load.state.state) || 'Not available';
+    const foot = <span style={{display:'flex', alignItems:'center', gap:8}}><RunModeChip waiting={word === 'Waiting for you'} /><span style={{color: word === 'Failed' ? A.err : word === 'Waiting for you' ? A.warn : A.ink}}>{word}</span></span>;
+    return <D.Node data-host-exec="" w={304} title="Run in program" sub={load.status === 'loaded' && load.state ? load.state.state : 'Run in program'} selected={selected} headerProps={headerProps} renderPort={renderPort} ins={n.inputs} outs={n.outputs} foot={foot} footc={word === 'Failed' ? A.err : word === 'Waiting for you' ? A.warn : A.inkSoft} glyph={<window.AHIcon name="folder" size={12} />} gc={A.inkSoft}>
+      {load.status === 'waiting' && <div role="status" aria-label="Loading" style={{display:'grid', gap:6}}><div style={{height:32, borderRadius:A.rad.sm, background:A.bgSoft}} /><div style={{height:32, borderRadius:A.rad.sm, background:A.bgSoft}} /></div>}
+      {load.status === 'empty' && <p style={{fontSize:12, color:A.inkSoft}}>No programs available.</p>}
+      {load.status === 'error' && <div role="alert" style={{fontSize:12, color:A.err}}>{load.message} <button type="button" className="button-reset" onClick={event => executeAction('projects.controls.activate', {handler:() => setAttempt(value => value + 1)}, event)}>Retry</button></div>}
+      {load.status === 'loaded' && <div>
+        <label style={hostBlock}><span style={hostLabel}>Program</span>
+          <select aria-label="Program" value={params.host || ''} onChange={event => save('host', event.target.value)} style={hostControl}>{load.programs.map(row => <option key={row.id} value={row.id}>{row.label}</option>)}</select>
+        </label>
+        <label style={hostBlock}><span style={hostLabel}>Code</span>
+          <textarea aria-label="Code" value={params.code || ''} onChange={event => save('code', event.target.value)} style={{...hostControl, minHeight:72, resize:'vertical'}} />
+        </label>
+        <p style={{fontSize:11, color:A.inkSoft, margin:'0 0 8px'}}>{codeLanguage(params.host)}{params.host === 'revit' ? '. Revit: ' + params.sheet_limit + ' sheet per run, up to ' + params.element_limit + ' elements.' : params.host === 'acad-core' ? '. Choose a drawing for AutoCAD (background). ' + Math.round((params.min_free_bytes || 0) / 1073741824) + ' GiB free before it starts.' : '.'}</p>
+        <label style={hostBlock}><span style={hostLabel}>Document</span>
+          <input aria-label="Document" value={params.document || ''} onChange={event => save('document', event.target.value)} style={hostControl} />
+        </label>
+        <label style={{...hostBlock, flexDirection:'row', alignItems:'center'}}><input aria-label="Use a transaction" type="checkbox" checked={!!params.transaction} onChange={event => save('transaction', event.target.checked)} /> <span style={hostLabel}>Use a transaction</span></label>
+        <label style={hostBlock}><span style={hostLabel}>Transaction name</span>
+          <input aria-label="Transaction name" value={params.transaction_name || ''} onChange={event => save('transaction_name', event.target.value)} style={hostControl} />
+        </label>
+        <button type="button" disabled={!reachable} onClick={event => executeAction('projects.controls.activate', {handler:() => reachable ? api.runNode(n.id) : undefined}, event)} style={{height:28, padding:'0 12px', borderRadius:A.rad.sm, border: reachable ? 'none' : '1px dashed '+A.line, background: reachable ? A.accent : 'transparent', color: reachable ? A.onFill : A.inkSoft, fontSize:12}}>{runLabel}</button>
+      </div>}
+    </D.Node>;
+  }
+  function ConnectorActionNode({n, selected, headerProps, renderPort}) {
+    const u = useApp();
+    const params = n.params || {};
+    const [attempt, setAttempt] = React.useState(0);
+    const [load, setLoad] = React.useState({status:'waiting', connectors:[], actions:[], message:''});
+    const [preview, setPreview] = React.useState({preview:''});
+    React.useEffect(() => {
+      let live = true;
+      setLoad(current => ({...current, status:'waiting'}));
+      api.connectorActions(params.connector || '').then(result => {
+        if (!live) return;
+        const actions = result.actions || [];
+        setLoad({status: result.error ? 'error' : actions.length ? 'loaded' : 'empty', connectors: result.connectors || [], actions, message: result.error || ''});
+      }).catch(error => { if (live) setLoad({status:'error', connectors:[], actions:[], message: error.message || 'Could not read actions.'}); });
+      return () => { live = false; };
+    }, [attempt, params.connector]);
+    React.useEffect(() => {
+      let live = true;
+      if (!params.action) { setPreview({preview:''}); return undefined; }
+      api.connectorPreview(params.connector || '', params.action, params.args).then(result => { if (live) setPreview(result); }).catch(() => { if (live) setPreview({preview:''}); });
+      return () => { live = false; };
+    }, [params.connector, params.action, params.args]);
+    const save = (key, value) => u.act(() => api.setNodeParam(n.id, key, value));
+    const chosen = load.actions.find(row => row.name === params.action);
+    const word = runWord(n);
+    const foot = <span style={{display:'flex', alignItems:'center', gap:8}}><RunModeChip waiting={word === 'Waiting for you'} /><span style={{color: word === 'Failed' ? A.err : word === 'Waiting for you' ? A.warn : A.ink}}>{word}</span></span>;
+    return <D.Node data-connector-action="" w={304} title="Connector action" sub="Connector action" selected={selected} headerProps={headerProps} renderPort={renderPort} ins={n.inputs} outs={n.outputs} foot={foot} footc={word === 'Failed' ? A.err : word === 'Waiting for you' ? A.warn : A.inkSoft} glyph={<window.AHIcon name="send" size={12} />} gc={A.inkSoft}>
+      {load.status === 'waiting' && <div role="status" aria-label="Loading" style={{display:'grid', gap:6}}><div style={{height:32, borderRadius:A.rad.sm, background:A.bgSoft}} /><div style={{height:32, borderRadius:A.rad.sm, background:A.bgSoft}} /></div>}
+      {load.status === 'empty' && <div>
+        <label style={hostBlock}><span style={hostLabel}>Connector</span>
+          <select aria-label="Connector" value={params.connector || ''} onChange={event => save('connector', event.target.value)} style={hostControl}>{(load.connectors || []).map(row => <option key={row.id} value={row.id}>{row.label}</option>)}</select>
+        </label>
+        <p style={{fontSize:12, color:A.inkSoft}}>No actions available. Connect the account, then choose an action.</p>
+      </div>}
+      {load.status === 'error' && <div role="alert" style={{fontSize:12, color:A.err}}>Could not read actions. {load.message} <button type="button" className="button-reset" onClick={event => executeAction('projects.controls.activate', {handler:() => setAttempt(value => value + 1)}, event)}>Retry</button></div>}
+      {load.status === 'loaded' && <div>
+        <label style={hostBlock}><span style={hostLabel}>Connector</span>
+          <select aria-label="Connector" value={params.connector || ''} onChange={event => save('connector', event.target.value)} style={hostControl}>{load.connectors.map(row => <option key={row.id} value={row.id}>{row.label}</option>)}</select>
+        </label>
+        <label style={hostBlock}><span style={hostLabel}>Action</span>
+          <select aria-label="Action" value={params.action || ''} onChange={event => save('action', event.target.value)} style={hostControl}><option value="">Choose an action</option>{load.actions.map(row => <option key={row.name} value={row.name}>{row.title}</option>)}</select>
+        </label>
+        {chosen && (chosen.inputs || []).length > 0 && (chosen.inputs || []).map(name => <label key={name} style={hostBlock}><span style={hostLabel}>{name}</span>
+          <input aria-label={name} value={(params.args && params.args[name]) || ''} onChange={event => save('args', {...(params.args && typeof params.args === 'object' ? params.args : {}), [name]: event.target.value})} style={hostControl} />
+        </label>)}
+        {chosen && !(chosen.inputs || []).length && <label style={hostBlock}><span style={hostLabel}>Args</span>
+          <input aria-label="Args" value={typeof params.args === 'string' ? params.args : JSON.stringify(params.args || '')} onChange={event => save('args', event.target.value)} style={hostControl} />
+        </label>}
+        {preview.preview && <div style={hostBlock}><span style={hostLabel}>Text to send</span><p style={{margin:0, whiteSpace:'pre-wrap', fontSize:12, color:A.ink}}>{preview.preview}</p></div>}
+        <div aria-label="Result" style={{fontSize:11, color:A.inkSoft, marginBottom:8}}>Result {word === 'Done' && n.output ? (typeof n.output.result === 'object' ? JSON.stringify(n.output.result) : String(n.output.result ?? '')) : ''}</div>
+        <button type="button" onClick={event => executeAction('projects.controls.activate', {handler:() => api.runNode(n.id)}, event)} style={{height:28, padding:'0 12px', borderRadius:A.rad.sm, border:'none', background:A.accent, color:A.onFill, fontSize:12}}>Run</button>
+      </div>}
+    </D.Node>;
+  }
   // e6e4a367 studio-lm.jsx NodeRenderer: category header, role edge and parameter body.
   function NodeRenderer({n, catalogue = [], selected, headerProps, headerEnd, renderPort, renderSocket, rejected, members, onMember, compact = false}) {
     const u = useApp(), s = useData(), [expanded,setExpanded] = React.useState(false), [parameterDrafts,setParameterDrafts] = React.useState({});
@@ -83,6 +218,8 @@
       slotPort = key => spec && renderSocket && n.inputs.find(p=>p.id==='param:'+key),
       field = spec && n.column && fieldColumn(n, s.graph), frame = spec && (n.column || n.dataset);
     if (field) return <FieldNode n={n} field={field} selected={selected} headerProps={headerProps} renderSocket={renderSocket} />;
+    if (n.type === 'host.exec') return <HostExecNode n={n} selected={selected} headerProps={headerProps} renderPort={renderPort} />;
+    if (n.type === 'connector.call') return <ConnectorActionNode n={n} selected={selected} headerProps={headerProps} renderPort={renderPort} />;
     return <D.Node className="lm-node" data-category={family} data-node-state={spec ? specFoot.split(' · ')[0] : undefined} data-spec={spec ? n.dataset ? 'dataset' : 'node' : undefined}
       w={spec ? n.dataset ? 478 : 156 : n.dataset ? 340 : 224} glyph={<window.AHIcon name={icon} size={12} />} gc={color}
       title={n.title} sub={grouped ? `group · ${(members || []).length} members` : category?.name || n.assembly || n.kind}

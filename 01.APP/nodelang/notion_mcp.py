@@ -216,9 +216,9 @@ def _refresh(grant: dict, save: Callable, opener: Callable | None) -> dict:
     return grant
 
 
-def call_tool(name: str, arguments: Mapping[str, object], *, opener: Callable | None = None,
-              load: Callable | None = None, save: Callable | None = None) -> dict:
-    """Call one Notion MCP tool with the held grant; refresh once if it expired."""
+def _mcp(method: str, rpc_params: Mapping[str, object], *, name: str, opener: Callable | None = None,
+         load: Callable | None = None, save: Callable | None = None) -> dict:
+    """One live MCP round trip on the held Notion grant. Nothing is cached."""
     if load is None or save is None:
         load, save = _secrets()
     grant = _load_grant(load)
@@ -234,8 +234,8 @@ def call_tool(name: str, arguments: Mapping[str, object], *, opener: Callable | 
                 "clientInfo": {"name": "ArchHub", "version": "1"}}}, auth, opener=opener)
             headers = {**auth, **({"Mcp-Session-Id": session} if session else {})}
             _post(MCP_URL, {"jsonrpc": "2.0", "method": "notifications/initialized"}, headers, opener=opener)
-            raw, _ = _post(MCP_URL, {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-                                     "params": {"name": name, "arguments": dict(arguments)}}, headers, opener=opener)
+            raw, _ = _post(MCP_URL, {"jsonrpc": "2.0", "id": 2, "method": method,
+                                     "params": dict(rpc_params)}, headers, opener=opener)
         except urllib.error.HTTPError as exc:
             if exc.code == 401 and attempt == 0:
                 grant = _refresh(grant, save, opener)
@@ -259,6 +259,32 @@ def call_tool(name: str, arguments: Mapping[str, object], *, opener: Callable | 
             raise NotionToolError(text or "Notion refused the %s call" % name)
         return result
     raise NotionNotConnected("Notion refused the refreshed sign-in")
+
+
+def call_tool(name: str, arguments: Mapping[str, object], *, opener: Callable | None = None,
+              load: Callable | None = None, save: Callable | None = None) -> dict:
+    """Call one Notion MCP tool with the held grant; refresh once if it expired."""
+    return _mcp("tools/call", {"name": name, "arguments": dict(arguments)},
+                name=name, opener=opener, load=load, save=save)
+
+
+def list_tools(*, opener: Callable | None = None, load: Callable | None = None,
+               save: Callable | None = None) -> list[dict]:
+    """The connector's own tool list, read live from Notion (MCP tools/list)."""
+    result = _mcp("tools/list", {}, name="tools/list", opener=opener, load=load, save=save)
+    tools = result.get("tools")
+    if not isinstance(tools, list):
+        raise NotionToolError("Notion answered the tool list with no tools")
+    rows = []
+    for tool in tools:
+        if isinstance(tool, Mapping) and tool.get("name"):
+            schema = tool.get("inputSchema") if isinstance(tool.get("inputSchema"), Mapping) else {}
+            properties = schema.get("properties") if isinstance(schema, Mapping) else {}
+            inputs = [str(key) for key in properties] if isinstance(properties, Mapping) else []
+            rows.append({"name": str(tool["name"]),
+                         "title": str(tool.get("title") or tool.get("description") or tool["name"]),
+                         "inputs": inputs})
+    return rows
 
 
 def search(query: str, **kw) -> list[dict]:

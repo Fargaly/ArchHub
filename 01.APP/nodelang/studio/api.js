@@ -1003,6 +1003,10 @@ api.setAgentProfile=async(id,values)=>{const current=await api.refreshRouter();r
 api.disconnectSecret=async id=>{const result=await settingsAction('disconnectSecret',[id]);await refreshSocialConnections();return result;};
 api.setCompanionState=values=>settingsAction('setCompanionState',[values]);
 api.readPermissions=()=>settingsAction('readPermissions');
+api.hostPrograms=()=>settingsAction('hostPrograms');
+api.hostProgramState=host=>settingsAction('hostProgramState',[host]);
+api.connectorActions=connector=>settingsAction('connectorActions',[connector]);
+api.connectorPreview=(connector,action,args)=>settingsAction('connectorPreview',[{connector,action,args}]);
 api.setPermissions=values=>settingsAction('setPermissions',[values]);
 api.openProgram=id=>settingsAction('openProgram',[id]);
 async function refreshSocialConnections(){
@@ -1409,7 +1413,7 @@ function fileNode(node){
   params,defaults:item?.params||{},parameterSchema:schema,paramDefs:defs,bind,
   inputs:(ports.target||[]).map(p=>({...p,name:p.label||p.id,type:p.type==='unknown'?'any':p.type})),outputs:(ports.source||[]).map(p=>({...p,name:p.label||p.id,type:p.type==='unknown'?'any':p.type})),
   children:node.children||[],members:[],parent:node.parent||null,frozen:!!node.frozen,pinned:!!node.pinned,portVisibility:node.portVisibility||{},parameterPresentation:node.parameterPresentation||{},
-  output:node.result?.output||[],status:node.result?.status||'Idle',error:node.result?.error||''};
+  output:node.result?.output||[],status:node.result?.status||'Idle',error:node.result?.error||'',display:node.result?.display||''};
 }
 // session_files.py _WIRE_MENUS, mirrored for the inspector. First choice is the omitted-field value.
 const WIRE_MENUS=[['matching',['By index','Longest','Shortest','Cross']],['order',['Source order','Reverse']],['missing',['Preserve','Drop','Blank']],['units',['From source','From target']],['conversion',['None','Number','Text']],['route',['Bezier','Straight','Step']]];

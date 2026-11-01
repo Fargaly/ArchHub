@@ -9410,7 +9410,21 @@
         "02.TESTS/tests_replica/test_workshop_presentation.py",
         "02.TESTS/tests/test_ask_card.py",
         "02.TESTS/tests_replica/test_workshop_detail.py",
-        "02.TESTS/tests_js/studio_workshop_detail.test.cjs"
+        "02.TESTS/tests_js/studio_workshop_detail.test.cjs",
+        "01.APP/nodelang/application_update.py",
+        "01.APP/nodelang/application_update_recovery.py",
+        "01.APP/nodelang/quiet_update.py",
+        "02.TESTS/tests_replica/test_autoupd.py",
+        "02.TESTS/tests_replica/test_quiet_update.py",
+        "02.TESTS/tests_replica/test_updatequiet.py",
+        "04.DOCS/CATALOGUE.md",
+        "nodelang/application_update.py",
+        "nodelang/application_update_recovery.py",
+        "nodelang/quiet_update.py",
+        "tests_replica/test_autoupd.py",
+        "tests_replica/test_quiet_update.py",
+        "tests_replica/test_updatequiet.py",
+        "docs/CATALOGUE.md"
       ]
     }
   }

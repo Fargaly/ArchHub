@@ -9390,7 +9390,14 @@
         "02.TESTS/tests_replica/test_mcp_clients_join_the_workshop.py",
         "02.TESTS/tests_replica/test_remote_agents_relay.py",
         "06.CLOUD/cloud_backend/deploy.ps1",
-        "06.CLOUD/cloud_backend/deploy.selfcheck.ps1"
+        "06.CLOUD/cloud_backend/deploy.selfcheck.ps1",
+        "01.APP/nodelang/cell_brain_reflexion.py",
+        "01.APP/nodelang/cell_brain_skills.py",
+        "01.APP/nodelang/cell_model_providers.py",
+        "02.TESTS/tests_replica/test_cell_brain_reflexion.py",
+        "02.TESTS/tests_replica/test_cell_brain_skills.py",
+        "02.TESTS/tests_replica/test_cell_model_providers.py",
+        "02.TESTS/tests_replica/test_one_http_server.py"
       ]
     }
   }

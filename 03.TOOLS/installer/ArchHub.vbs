@@ -77,6 +77,10 @@ sh.Environment("PROCESS")("PYTHONNOUSERSITE") = "1"
 py = FindPython("python")
 basePy = py
 rc = 1
+' The desktop's update timer never runs while setup is still in this process.
+' Start the existing updater now: it checks GitHub Latest, writes launcher.log,
+' and installs later when the machine is idle. A second launch finds it already running.
+StartUpdateMaintainer
 If py <> "" Then
     rc = RunAndWait("""" & py & """ -E -s """ & here & "\colleague_setup.py"" --check-ready", 0)
 End If
@@ -112,6 +116,15 @@ Function RunAndWait(command, windowStyle)
     On Error GoTo 0
     RunAndWait = result
 End Function
+
+Sub StartUpdateMaintainer()
+    Dim maintainer
+    maintainer = here & "\.venv\Scripts\pythonw.exe"
+    If Not fso.FileExists(maintainer) Then maintainer = here & "\.venv\Scripts\python.exe"
+    If Not fso.FileExists(maintainer) Then Exit Sub
+    sh.Run QuoteArgument(maintainer) & " -E -s " & QuoteArgument(here & "\nodelang\quiet_update.py") _
+        & " --maintain " & QuoteArgument(here), 0, False
+End Sub
 
 Function RecoverFailedUpdate()
     Dim stateDir, result

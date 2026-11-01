@@ -166,14 +166,20 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
     landing.timeout.connect(land_companion)
     landing.start(1000)
     window.show()
+    seen_open = {"value": False}
     def consider_update():
         update = server.application_update
         if update is None:
             return
         try:
+            if window.isVisible():
+                seen_open["value"] = True
             update.check_if_due()
             from .application_update import canvas_job_running
-            update.install_if_safe(canvas_running=canvas_job_running(server))
+            # Idle installs while the window is open. Closed to the tray installs
+            # on the next tick, including a download that was not ready at the close.
+            update.install_if_safe(closing=seen_open["value"] and not window.isVisible(),
+                                   canvas_running=canvas_job_running(server))
         except Exception as error:  # noqa: BLE001 - a failed check is shown, the window stays
             update.note_failure(error)
     update_pulse = QTimer(app)

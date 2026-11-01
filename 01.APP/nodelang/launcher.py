@@ -492,6 +492,8 @@ try:
             raise SystemExit(0)
         if _applied.get("applied"):
             print("  update     : installed build %s; relaunching" % _applied.get("build_id"), flush=True)
+            from nodelang.quiet_update import append_update_log
+            append_update_log(state_dir, "update: installed %s" % _applied.get("build_id"))
             try:
                 _instance_lock.close()
                 _update_preboot_process.Popen(["wscript.exe", str(Path(__file__).resolve().parents[1] / "ArchHub.vbs")], close_fds=True, creationflags=getattr(_update_preboot_process, "CREATE_NO_WINDOW", 0))

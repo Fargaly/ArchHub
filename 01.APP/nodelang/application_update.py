@@ -252,7 +252,9 @@ class ApplicationUpdate:
         """The existing maintenance loop calls this at boot and on each tick."""
         now = time.monotonic()
         with self._lock:
-            if self._closed or self._state in ("ready", "restarting") or now < self._next_check:
+            # A staged build used to skip every later check, so a newer GitHub
+            # release never replaced it. Restarting is the only state that waits.
+            if self._closed or self._state == "restarting" or now < self._next_check:
                 return self.status()
             policy = self._policy()
             interval = policy["check_interval_minutes"]
@@ -325,7 +327,7 @@ class ApplicationUpdate:
                 pass
 
     def _download(self):
-        from .quiet_update import installed_build_id, stage_if_newer
+        from .quiet_update import installed_build_id, note_check, stage_if_newer
         try:
             if os.name == "nt":
                 import ctypes
@@ -337,6 +339,7 @@ class ApplicationUpdate:
         except Exception as error:
             result = {"staged": False, "build_id": "", "status": "unavailable",
                 "reason": "Update download failed (" + type(error).__name__ + "). Check again to retry."}
+        note_check(self.state_dir, self.app_dir, result)
         decision = update_decision(result, installed_build_id(self.app_dir))
         with self._lock:
             self._state, self._detail = decision["state"], decision["detail"]

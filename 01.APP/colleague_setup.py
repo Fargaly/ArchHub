@@ -828,6 +828,46 @@ def verify_imports(root: Path) -> list[str]:
     return reported if result.returncode == 3 and reported else probes
 
 
+def _single_setup(root: Path):
+    """One setup for this install. A second launch waits, then opens if the first finished.
+
+    The single-instance port lives in launcher.py, which this process has not
+    reached yet. Two opens therefore both re-executed as
+    ``colleague_setup.py --owned-environment`` and both stayed there, so the
+    desktop and its update check never started.
+    """
+    if os.name != "nt" or "--owned-environment" in sys.argv:
+        return None
+    import ctypes
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
+    kernel.CreateMutexW.restype = ctypes.c_void_p
+    kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+    kernel.WaitForSingleObject.restype = ctypes.c_uint32
+    kernel.ReleaseMutex.argtypes = [ctypes.c_void_p]
+    kernel.ReleaseMutex.restype = ctypes.c_int
+    kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel.CloseHandle.restype = ctypes.c_int
+    name = "Local\\ArchHub.ColleagueSetup." + hashlib.sha256(
+        os.path.normcase(str(root.resolve())).encode("utf-8")).hexdigest()[:16]
+    handle = kernel.CreateMutexW(None, True, name)
+    if not handle:
+        return None
+    if ctypes.get_last_error() == 183:
+        waited = kernel.WaitForSingleObject(handle, 0xFFFFFFFF)
+        if waited not in (0, 0x80):
+            kernel.CloseHandle(handle)
+            print("  setup      : could not wait for the other ArchHub setup.")
+            return 1
+        if ready_for_build(root):
+            kernel.ReleaseMutex(handle)
+            kernel.CloseHandle(handle)
+            print("  setup      : the other launch finished this build. ArchHub is opening.")
+            return 0
+    _single_setup.handle = handle
+    return None
+
+
 def main():
     print("ArchHub setup")
     print("  python     :", sys.version.split()[0])
@@ -849,6 +889,9 @@ def main():
         print("  REFUSED: nodelang/launcher.py is missing from this installation.")
         return 3
     try:
+        waiting = _single_setup(root)
+        if waiting is not None:
+            return waiting
         child_status = prepare_environment(root)
         if child_status is not None:
             return child_status

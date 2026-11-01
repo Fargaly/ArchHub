@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import sys
 import re
 import shutil
 import subprocess
@@ -124,6 +125,32 @@ def _ordering_refusal(app_dir, data, current):
     return None
 
 
+def release_feed_url() -> str:
+    """GitHub Latest. A loopback ARCHHUB_UPDATE_FEED is the test feed and nothing else."""
+    override = os.environ.get("ARCHHUB_UPDATE_FEED", "").strip()
+    if not override:
+        return RELEASE_API
+    parts = urllib.parse.urlsplit(override)
+    host = (parts.hostname or "").lower()
+    if (parts.scheme == "http" and host in ("127.0.0.1", "localhost") and parts.port
+            and not parts.username and not parts.password):
+        return override
+    return RELEASE_API
+
+
+def _asset_url_allowed(url, tag, *, stable_feed) -> bool:
+    if type(url) is not str or type(tag) is not str:
+        return False
+    if stable_feed == RELEASE_API:
+        expected = ("https://github.com/Fargaly/ArchHub/releases/download/"
+                    + urllib.parse.quote(tag, safe="") + "/" + ASSET_NAME)
+        return url == expected
+    feed, asset = urllib.parse.urlsplit(stable_feed), urllib.parse.urlsplit(url)
+    return (asset.scheme == "http" and (asset.hostname or "").lower() in ("127.0.0.1", "localhost")
+            and asset.hostname == feed.hostname and asset.port == feed.port
+            and asset.path.endswith("/" + ASSET_NAME) and not asset.username and not asset.query)
+
+
 def read_latest_release(opener=urllib.request.urlopen, *, channel="stable") -> dict | None:
     """Return validated release identity and build time, or None.
 
@@ -136,7 +163,7 @@ def read_latest_release(opener=urllib.request.urlopen, *, channel="stable") -> d
     try:
         if channel not in ("stable", "preview"):
             raise ValueError("update channel must be stable or preview")
-        url = RELEASE_API if channel == "stable" else RELEASE_API.rsplit("/", 1)[0] + "?per_page=20"
+        url = release_feed_url() if channel == "stable" else RELEASE_API.rsplit("/", 1)[0] + "?per_page=20"
         request = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "ArchHub"})
         with opener(request, timeout=15) as response:
             raw = response.read(_RELEASE_BYTES + 1)
@@ -173,9 +200,10 @@ def read_latest_release(opener=urllib.request.urlopen, *, channel="stable") -> d
             built_at = _legacy_built_at(builds[0])
         asset = assets[0]
         url = asset.get("browser_download_url")
-        expected = "https://github.com/Fargaly/ArchHub/releases/download/" + urllib.parse.quote(tag, safe="") + "/" + ASSET_NAME
+        stable_feed = release_feed_url() if channel == "stable" else RELEASE_API
         size = asset.get("size")
-        if url != expected or (size is not None and (type(size) is not int or not 0 < size <= _INSTALLER_BYTES)):
+        if (not _asset_url_allowed(url, tag, stable_feed=stable_feed)
+                or (size is not None and (type(size) is not int or not 0 < size <= _INSTALLER_BYTES))):
             return None
         return {"build_id": builds[0], "built_at": built_at,
                 "sha256": hashes[0].lower(), "url": url, "tag": tag}
@@ -442,6 +470,25 @@ def staged_update(state_dir: Path, app_dir: Path) -> dict:
         return _failure(exc)
 
 
+def _keep_held_stage(held, latest) -> bool:
+    """Keep a staged installer while it is still the newest release we can see.
+
+    A package older than GitHub Latest must not block that release. An install
+    already in progress is left untouched. No release information keeps the
+    package that is already verified.
+    """
+    if held.get("status") == "applying":
+        return True
+    if not isinstance(latest, dict):
+        return True
+    if held.get("build_id") == latest.get("build_id"):
+        return True
+    held_time, latest_time = _target_build_time(held), _target_build_time(latest)
+    if held_time is not None and latest_time is not None and latest_time <= held_time:
+        return True
+    return False
+
+
 def stage_if_newer(state_dir: Path, app_dir: Path, opener=urllib.request.urlopen, *, cancellation_event=None, channel="stable") -> dict:
     """Download bounded bytes under exclusive staging ownership; never install."""
     partial = None
@@ -453,11 +500,16 @@ def stage_if_newer(state_dir: Path, app_dir: Path, opener=urllib.request.urlopen
         with _locked(state_dir) as updates:
             check_cancelled()
             held = _status(updates, app_dir)
-            if held["staged"] and held["status"] != "confirmed":
+            # A build waiting to prove boot, or an install in progress, is not
+            # replaced and is not a reason to call the release feed.
+            if held["staged"] and held["status"] in ("applying", "awaiting_boot"):
                 return held
             latest = read_latest_release(opener) if channel == "stable" else read_latest_release(opener, channel=channel)
             current = installed_build_id(app_dir)
             check_cancelled()
+            # A staged installer older than GitHub Latest must not block it.
+            if held["staged"] and held["status"] != "confirmed" and _keep_held_stage(held, latest):
+                return held
             if latest is None:
                 if channel == "stable" and _published_prerelease(opener):
                     return {"staged": False, "applied": False, "build_id": "", "status": "ignored",
@@ -509,8 +561,9 @@ def stage_if_newer(state_dir: Path, app_dir: Path, opener=urllib.request.urlopen
                         "build_id": latest["build_id"]}
             check_cancelled()
             os.replace(partial, target)
+            partial = None
             _marker(updates, {**latest, "phase": "staged"})
-            return _status(updates, app_dir)
+            return {**_status(updates, app_dir), "downloaded": True}
     except (OSError, ValueError) as exc:
         return _failure(exc)
     finally:
@@ -761,12 +814,179 @@ def apply_unattended(state_dir: Path, app_dir: Path, opener=urllib.request.urlop
     return {**result, "applied": False, "status": "failed", "reason": reason}
 
 
+def state_directory() -> Path:
+    """The same folder launcher.py writes launcher.log into."""
+    override = os.environ.get("ARCHHUB_TEST_STATE_DIR", "").strip()
+    if override:
+        return Path(override)
+    return Path(os.environ["LOCALAPPDATA"]) / "ArchHub"
+
+
+def append_update_log(state_dir: Path, line: str) -> None:
+    """One update line in launcher.log. A log failure must not hide the check."""
+    try:
+        directory = Path(state_dir)
+        directory.mkdir(parents=True, exist_ok=True)
+        with (directory / "launcher.log").open("a", encoding="utf-8", newline="\n") as stream:
+            stream.write(str(line).rstrip("\r\n") + "\n")
+            stream.flush()
+    except OSError:
+        return
+
+
+def note_check(state_dir: Path, app_dir: Path, result: dict) -> dict:
+    """Write the update lines for one finished check. The result is unchanged."""
+    installed = installed_build_id(Path(app_dir)) or "none"
+    latest = str(result.get("build_id") or "") or "none"
+    if result.get("reason") == "up to date":
+        latest = installed
+    append_update_log(state_dir, "update: checked latest=%s installed=%s" % (latest, installed))
+    if result.get("downloaded") and result.get("build_id"):
+        append_update_log(state_dir, "update: staged %s" % result["build_id"])
+    if result.get("status") in ("unavailable", "failed") or result.get("reason") == "no release information":
+        append_update_log(state_dir, "update: error %s" % (result.get("reason") or result.get("status")))
+    return result
+
+
+def check_for_update(state_dir: Path, app_dir: Path, opener=urllib.request.urlopen, *,
+                     cancellation_event=None, channel="stable") -> dict:
+    """Check GitHub Latest, stage a newer installer, and write the update lines.
+
+    This is the check the start-path maintainer runs. The desktop calls
+    stage_if_newer itself so a test can substitute that one function.
+    """
+    state_dir, app_dir = Path(state_dir), Path(app_dir)
+    try:
+        result = stage_if_newer(state_dir, app_dir, opener, cancellation_event=cancellation_event, channel=channel)
+    except Exception as exc:
+        append_update_log(state_dir, "update: error %s" % exc)
+        raise
+    return note_check(state_dir, app_dir, result)
+
+
+def _check_policy():
+    """The catalogue interval (default 30 minutes) and the idle wait."""
+    try:
+        root = str(Path(__file__).resolve().parents[1])
+        if root not in sys.path:
+            sys.path.insert(0, root)
+        from nodelang.application_update import default_update_policy
+        policy = default_update_policy()
+        interval, idle = int(policy["check_interval_minutes"]), int(policy["idle_minutes"])
+    except (OSError, ValueError, TypeError, ImportError, KeyError):
+        interval, idle = 30, 15
+    if type(interval) is not int or not 1 <= interval <= 1440:
+        interval = 30
+    if type(idle) is not int or not 1 <= idle <= 1440:
+        idle = 15
+    return interval, idle
+
+
+def _machine_is_idle(minutes: int) -> bool:
+    try:
+        root = str(Path(__file__).resolve().parents[1])
+        if root not in sys.path:
+            sys.path.insert(0, root)
+        import math
+        from nodelang.baboom_native_companion import desktop_input_idle_seconds
+        age = desktop_input_idle_seconds()
+    except (ImportError, OSError, AttributeError, TypeError, ValueError):
+        return False
+    return math.isfinite(age) and age >= minutes * 60
+
+
+def _desktop_running() -> bool:
+    """True when launcher.py holds the single-instance port. It installs itself."""
+    import socket
+    sock = socket.socket()
+    try:
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        sock.bind(("127.0.0.1", int(os.environ.get("ARCHHUB_TEST_LOCK_PORT", "48611"))))
+    except OSError:
+        return True
+    finally:
+        sock.close()
+    return False
+
+
+def _claim_maintainer(app_dir: Path) -> bool:
+    """One maintainer per install. A second start leaves the first running."""
+    if os.name != "nt":
+        return True
+    import ctypes
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
+    kernel.CreateMutexW.restype = ctypes.c_void_p
+    name = "Local\\ArchHub.UpdateMaintain." + hashlib.sha256(
+        os.path.normcase(str(Path(app_dir).resolve())).encode("utf-8")).hexdigest()[:16]
+    handle = kernel.CreateMutexW(None, True, name)
+    if not handle:
+        return True
+    if ctypes.get_last_error() == 183:
+        kernel.CloseHandle(ctypes.c_void_p(handle))
+        return False
+    _claim_maintainer.handle = handle
+    return True
+
+
+def _relaunch(app_dir: Path) -> None:
+    system = os.environ.get("SystemRoot", r"C:\Windows")
+    subprocess.Popen([str(Path(system) / "System32" / "wscript.exe"), str(Path(app_dir) / "ArchHub.vbs")],
+                     close_fds=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
+
+def maintain(app_dir: Path, opener=urllib.request.urlopen, *, sleep=time.sleep) -> int:
+    """Check on start and every N minutes. Install only when the machine is idle and the desktop is not up.
+
+    ArchHub.vbs starts this before setup. The desktop, once it is up, installs
+    on idle or when the window is closed to the tray. A second start exits.
+    """
+    app_dir = Path(app_dir)
+    if not _claim_maintainer(app_dir):
+        return 0
+    state = state_directory()
+    while True:
+        try:
+            result = check_for_update(state, app_dir, opener)
+            _interval, idle = _check_policy()
+            ready = result.get("staged") and result.get("status") == "staged" and result.get("prerelease") is not True
+            if ready and not _desktop_running() and _machine_is_idle(idle):
+                try:
+                    import psutil
+                    psutil.Process(os.getpid())
+                except ImportError as missing:
+                    append_update_log(state, "update: error installer runtime is not ready (%s)" % type(missing).__name__)
+                else:
+                    applied = apply_staged(state, app_dir, stop_runtime=stop_runtime_processes)
+                    if applied.get("applied"):
+                        append_update_log(state, "update: installed %s" % applied.get("build_id"))
+                        try:
+                            _relaunch(app_dir)
+                        except OSError as error:
+                            append_update_log(state, "update: error relaunch failed (%s)" % type(error).__name__)
+                        return 0
+                    if applied.get("status") in ("failed", "unavailable") or "fail" in str(applied.get("reason") or "").lower():
+                        append_update_log(state, "update: error %s" % applied.get("reason"))
+        except Exception as exc:
+            append_update_log(state, "update: error %s" % exc)
+        sleep(_check_policy()[0] * 60)
+    return 0
+
+
 def main(argv=None):
     import argparse
-    parser = argparse.ArgumentParser(description="Recover a failed update with the existing update owner.")
-    parser.add_argument("--recover-failed-launch", type=Path, required=True)
-    parser.add_argument("--state-dir", type=Path, required=True)
+    parser = argparse.ArgumentParser(description="Recover a failed update or keep checking GitHub Latest.")
+    parser.add_argument("--recover-failed-launch", type=Path)
+    parser.add_argument("--maintain", type=Path, help="Application directory. Check now, then every N minutes.")
+    parser.add_argument("--state-dir", type=Path)
     args = parser.parse_args(argv)
+    if args.maintain is not None:
+        if args.state_dir is not None:
+            os.environ["ARCHHUB_TEST_STATE_DIR"] = str(args.state_dir)
+        return maintain(args.maintain)
+    if args.recover_failed_launch is None or args.state_dir is None:
+        parser.error("--recover-failed-launch and --state-dir are required unless --maintain is set")
     result = recover_failed_launch(args.state_dir, args.recover_failed_launch)
     if not result.get("rolled_back"):
         return 1

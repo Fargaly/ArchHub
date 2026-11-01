@@ -481,7 +481,16 @@ try:
         _applied = _apply_staged(state_dir, Path(__file__).resolve().parents[1],
             before_apply=lambda: validate_update_ready(state_dir, Path(__file__).resolve().parents[1],
                 state_path, _update_content))
-        if _applied.get("applied") or _applied.get("rolled_back"):
+        if _applied.get("rolled_back"):
+            print("  update     : install failed: %s" % _applied.get("reason"), flush=True)
+            try:
+                _instance_lock.close()
+                _update_preboot_process.Popen(["wscript.exe", str(Path(__file__).resolve().parents[1] / "ArchHub.vbs")], close_fds=True, creationflags=getattr(_update_preboot_process, "CREATE_NO_WINDOW", 0))
+            except Exception as _relaunch_refusal:
+                print("  update     : install failed; relaunch failed (%s). Reopen ArchHub." % type(_relaunch_refusal).__name__, flush=True)
+                raise SystemExit(1) from None
+            raise SystemExit(0)
+        if _applied.get("applied"):
             print("  update     : installed build %s; relaunching" % _applied.get("build_id"), flush=True)
             try:
                 _instance_lock.close()

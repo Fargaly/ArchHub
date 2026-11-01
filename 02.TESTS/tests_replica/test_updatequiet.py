@@ -27,8 +27,9 @@ def test_quiet_setup_arguments_and_successful_relaunch_admission(tmp_path):
     assert qu.apply_staged(state, app, runner=install)['applied']
     args, options = calls[0]
     assert args == [str(state / 'updates' / qu.ASSET_NAME), '/VERYSILENT', '/SUPPRESSMSGBOXES',
-                    '/NORESTART', '/NOCLOSEAPPLICATIONS', '/NORESTARTAPPLICATIONS', '/SP-',
+                    '/NORESTART', '/CLOSEAPPLICATIONS', '/NORESTARTAPPLICATIONS', '/SP-',
                     '/LOG=' + str(state / 'updates/setup.log'), '/DIR=' + str(app)]
+    assert '/NOCLOSEAPPLICATIONS' not in args
     assert options.get('creationflags', 0) & subprocess.CREATE_NO_WINDOW
     assert options['timeout'] is None
 

@@ -31,6 +31,7 @@ Settings, card parameters and recovery read these same graph properties. Backup 
 | backup_budget_bytes | 10737418240 | {"max": 1099511627776, "min": 1048576, "step": 1048576} |
 | keep_running_in_tray | 0 | {"max": 1, "min": 0, "step": 1} |
 | update_check_interval_minutes | 30 | {"max": 1440, "min": 1, "step": 1} |
+| update_idle_minutes | 15 | {"max": 1440, "min": 1, "step": 1} |
 | update_auto_apply_on_quit | 1 | {"max": 1, "min": 0, "step": 1} |
 | update_preview_channel | 0 | {"max": 1, "min": 0, "step": 1} |
 
@@ -154,7 +155,7 @@ Settings, card parameters and recovery read these same graph properties. Backup 
 | compose | c_legend | library.make_legend | {"by": "type"} | [make_legend](../01.APP/nodelang/library_engines.py#L543) | hidden |
 | compose | c_sheet | library.place_on_sheet | {"sheet": "", "views": ""} | [place_on_sheet](../01.APP/nodelang/library_engines.py#L1129) | hidden |
 | tools | tool_studio | tool.studio | {"tool": "studio"} | [tool_settings](../01.APP/nodelang/pipeline_engines.py#L38) | hidden |
-| tools | tool_workshop | tool.workshop | {"archive_after_idle_days": "20", "backup_budget_bytes": 10737418240, "backup_count": 3, "keep_running_in_tray": false, "stale_claim_after_idle_minutes": "30", "tick_cadence_minutes": 5, "tool": "workshop", "update_auto_apply_on_quit": true, "update_check_interval_minutes": 30, "update_preview_channel": false} | [tool_settings](../01.APP/nodelang/pipeline_engines.py#L38) | hidden |
+| tools | tool_workshop | tool.workshop | {"archive_after_idle_days": "20", "backup_budget_bytes": 10737418240, "backup_count": 3, "keep_running_in_tray": false, "stale_claim_after_idle_minutes": "30", "tick_cadence_minutes": 5, "tool": "workshop", "update_auto_apply_on_quit": true, "update_check_interval_minutes": 30, "update_idle_minutes": 15, "update_preview_channel": false} | [tool_settings](../01.APP/nodelang/pipeline_engines.py#L38) | hidden |
 | tools | tool_brain | tool.brain | {"tool": "brain"} | [tool_settings](../01.APP/nodelang/pipeline_engines.py#L38) | hidden |
 | tools | tool_baboom | tool.baboom | {"start_with_archhub": true, "tool": "baboom"} | [tool_settings](../01.APP/nodelang/pipeline_engines.py#L38) | hidden |
 | tools | tool_connectors | tool.connectors | {"tool": "connectors"} | [tool_settings](../01.APP/nodelang/pipeline_engines.py#L38) | hidden |

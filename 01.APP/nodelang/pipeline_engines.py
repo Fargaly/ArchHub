@@ -109,6 +109,7 @@ def tool_settings(params: Mapping[str, object], feeds: Mapping[str, object]):
             'backup_location': params.get('backup_location'),
             'keep_running_in_tray': params.get('keep_running_in_tray'),
             'update_check_interval_minutes': params.get('update_check_interval_minutes'),
+            'update_idle_minutes': params.get('update_idle_minutes'),
             'update_auto_apply_on_quit': params.get('update_auto_apply_on_quit'),
             'update_preview_channel': params.get('update_preview_channel'),
         }

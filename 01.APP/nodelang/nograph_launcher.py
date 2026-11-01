@@ -123,7 +123,13 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
         # Closing the window keeps ArchHub, its server, BABOOM and agent work running in the tray.
         tray = QSystemTrayIcon(icon, app)
         app.setQuitOnLastWindowClosed(False)
-        stay = CloseToTray(window, tray, app.quit, Path(state_dir) / 'tray-notice-shown')
+        def install_on_close():
+            update = server.application_update
+            if update is None:
+                return False
+            from .application_update import canvas_job_running
+            return update.install_if_safe(closing=True, canvas_running=canvas_job_running(server))
+        stay = CloseToTray(window, tray, app.quit, Path(state_dir) / 'tray-notice-shown', install_on_close)
         quit_app = stay.quit
         open_window = lambda: (window.showNormal(), window.raise_(), window.activateWindow())
         menu = QMenu()
@@ -160,6 +166,21 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
     landing.timeout.connect(land_companion)
     landing.start(1000)
     window.show()
+    def consider_update():
+        update = server.application_update
+        if update is None:
+            return
+        try:
+            update.check_if_due()
+            from .application_update import canvas_job_running
+            update.install_if_safe(canvas_running=canvas_job_running(server))
+        except Exception as error:  # noqa: BLE001 - a failed check is shown, the window stays
+            update.note_failure(error)
+    update_pulse = QTimer(app)
+    update_pulse.timeout.connect(consider_update)
+    update_pulse.start(60_000)
+    app._update_pulse = update_pulse
+    QTimer.singleShot(0, consider_update)
     QTimer.singleShot(0, lambda: print('  window     : Studio opened', flush=True))
     view.loadFinished.connect(lambda ok: ok and threading.Thread(target=confirm_boot, name='archhub-update-confirm',
                                                                  daemon=True).start())

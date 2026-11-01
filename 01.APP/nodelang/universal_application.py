@@ -20398,6 +20398,7 @@ _APPLICATION_SETTING_SPECS = {
     "model_cli_request_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
     "keep_running_in_tray": ("boolean", {"min": 0, "max": 1, "step": 1}),
     "update_check_interval_minutes": ("number", {"min": 1, "max": 1440, "step": 1}),
+    "update_idle_minutes": ("number", {"min": 1, "max": 1440, "step": 1}),
     "update_auto_apply_on_quit": ("boolean", {"min": 0, "max": 1, "step": 1}),
     "update_preview_channel": ("boolean", {"min": 0, "max": 1, "step": 1}),
     "backup_location": ("text", {}),
@@ -37600,10 +37601,13 @@ def read_universal_keep_running_in_tray(snapshot: Snapshot, registry: UniversalA
 def read_universal_update_policy(snapshot: Snapshot, registry: UniversalApplicationRegistry) -> dict:
     """Same catalogue rows, property writer, sockets and defaults as Settings."""
     interval = _APPLICATION_SETTING_SPECS["update_check_interval_minutes"][1]
+    idle = _APPLICATION_SETTING_SPECS["update_idle_minutes"][1]
     auto_apply = _APPLICATION_SETTING_SPECS["update_auto_apply_on_quit"][1]
     preview = _APPLICATION_SETTING_SPECS["update_preview_channel"][1]
     return {"check_interval_minutes": _workshop_board_int_param(snapshot, registry, "update_check_interval_minutes",
                 default=_application_setting_default("update_check_interval_minutes"), lower=interval["min"], upper=interval["max"]),
+            "idle_minutes": _workshop_board_int_param(snapshot, registry, "update_idle_minutes",
+                default=_application_setting_default("update_idle_minutes"), lower=idle["min"], upper=idle["max"]),
             "auto_apply_on_quit": bool(_workshop_board_int_param(snapshot, registry, "update_auto_apply_on_quit",
                 default=_application_setting_default("update_auto_apply_on_quit"), lower=auto_apply["min"], upper=auto_apply["max"])),
             "channel": "preview" if _workshop_board_int_param(snapshot, registry, "update_preview_channel",

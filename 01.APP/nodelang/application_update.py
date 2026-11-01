@@ -20,8 +20,21 @@ def default_update_policy():
     from .library_engines import LIBRARY_ITEM_ENGINES
     params = LIBRARY_ITEM_ENGINES["tool_workshop"]["params"]
     return {"check_interval_minutes": int(params["update_check_interval_minutes"]),
+            "idle_minutes": int(params["update_idle_minutes"]),
             "auto_apply_on_quit": bool(params["update_auto_apply_on_quit"]),
             "channel": "preview" if params["update_preview_channel"] else "stable"}
+
+
+def canvas_job_running(owner) -> bool:
+    """True while a canvas run or a Workshop job still holds the desktop."""
+    if owner is None:
+        return False
+    if restart_block_reason(owner):
+        return True
+    if getattr(owner, "_canvas_jobs", 0):
+        return True
+    triggers = getattr(owner, "triggers", None)
+    return bool(getattr(triggers, "running", ()))
 
 
 def restart_block_reason(owner):
@@ -87,6 +100,9 @@ def update_decision(result, installed_build):
         return {"decision": "older", "state": "idle", "available_build": "",
             "detail": "Up to date. The latest release %s is not newer than the installed build %s." % (build, installed),
             "log": "check: latest release %s is not newer than installed %s; nothing offered" % (build, installed)}
+    if status == "ignored":
+        return {"decision": "ignored", "state": "idle", "available_build": "",
+            "detail": reason, "log": "check: " + reason}
     return {"decision": "failed", "state": "failed", "available_build": "", "detail": reason,
         "log": "check: failed -- " + reason}
 
@@ -98,6 +114,36 @@ def _seen_build(state_dir):
     except (OSError, UnicodeError):
         return ""
     return value if re.fullmatch(r"[A-Za-z0-9._-]{1,256}", value) else ""
+
+
+def _remembered_stage(state_dir):
+    """Read a failed or ready marker without hashing the installer."""
+    path = Path(state_dir) / "updates" / "staged.json"
+    try:
+        raw = path.read_bytes()
+    except OSError as error:
+        return {"staged": False, "status": "failed",
+                "reason": "Update marker could not be read (" + type(error).__name__ + ")."}
+    if len(raw) > 16384:
+        return {"staged": False, "status": "failed", "reason": "Update marker could not be read (too large)."}
+    try:
+        import json
+        data = json.loads(raw)
+    except (ValueError, UnicodeError) as error:
+        return {"staged": False, "status": "failed",
+                "reason": "Update marker could not be read (" + type(error).__name__ + ")."}
+    if not isinstance(data, dict):
+        return None
+    phase = data.get("phase")
+    if phase == "rolled_back":
+        reason = " ".join(str(data.get("rollback_reason") or "").split())[:512]
+        return {"staged": False, "status": "rolled_back",
+                "reason": "Previous build restored after a failed update; "
+                          + (reason + "; " if reason else "") + "waiting for a newer release."}
+    if phase == "staged":
+        return {"staged": True, "status": "staged", "build_id": str(data.get("build_id") or ""),
+                "prerelease": data.get("prerelease") is True}
+    return None
 
 
 def _record_seen_build(state_dir, build):
@@ -124,6 +170,8 @@ class ApplicationUpdate:
                  first_boot=False, policy=None, restart_refusal=None):
         from .quiet_update import installed_build_id
         self.state_dir, self.app_dir = Path(state_dir), Path(app_dir)
+        if initial_stage is None:
+            initial_stage = _remembered_stage(self.state_dir)
         self._request_restart = request_restart
         self._policy = policy or default_update_policy
         self._restart_refusal = restart_refusal
@@ -135,13 +183,17 @@ class ApplicationUpdate:
         self._state, self._detail = "idle", "Check for a new ArchHub release."
         self._available = ""
         self._restart_reason = ""
+        self._prerelease = False
         self._closed = False
         self._stop = threading.Event()
         # The launcher already verified staging before opening the graph. Reuse
         # that observation; never hash an installer on a UI status poll.
-        if initial_stage and initial_stage.get("staged") and initial_stage.get("status") == "staged":
+        if initial_stage and initial_stage.get("status") in ("rolled_back", "failed"):
+            self._state, self._detail = "failed", str(initial_stage.get("reason") or "Update failed.")
+        elif initial_stage and initial_stage.get("staged") and initial_stage.get("status") == "staged":
             self._available = str(initial_stage.get("build_id") or "")
             self._state, self._detail = "ready", "The downloaded update is ready to install."
+            self._prerelease = initial_stage.get("prerelease") is True
         self._updated = None
         installed, seen = installed_build_id(self.app_dir), _seen_build(self.state_dir)
         if installed and seen != installed:
@@ -209,10 +261,55 @@ class ApplicationUpdate:
             self._next_check = now + interval * 60
         return self.check()
 
+    def _auto_allowed(self):
+        policy = self._policy()
+        if policy.get("auto_apply_on_quit") is not True or self._state != "ready" or self._prerelease:
+            return False
+        return not (callable(self._restart_refusal) and self._restart_refusal())
+
+    def user_is_idle(self):
+        """True after the catalogue idle parameter with no keyboard or mouse input."""
+        import math
+        minutes = self._policy().get("idle_minutes")
+        if type(minutes) is not int or not 1 <= minutes <= 1440:
+            return False
+        try:
+            from .baboom_native_companion import desktop_input_idle_seconds
+            age = desktop_input_idle_seconds()
+        except (ImportError, OSError, AttributeError, TypeError, ValueError):
+            return False
+        return math.isfinite(age) and age >= minutes * 60
+
+    def install_if_safe(self, *, closing=False, canvas_running=False, user_idle=None):
+        """Install the verified release with no dialog when the moment is safe.
+
+        Safe means no canvas job is running, and either the user is idle or ArchHub
+        is closing to the tray or quitting. The header Update button is a separate path.
+        """
+        if canvas_running or not self._auto_allowed():
+            return False
+        if user_idle is None:
+            user_idle = self.user_is_idle()
+        if not closing and not user_idle:
+            return False
+        try:
+            self.reload()
+        except (UpdateRestartRefused, InvalidCell):
+            return False
+        return True
+
+    def note_failure(self, error):
+        """Record a failed check or install. A ready release stays ready."""
+        with self._lock:
+            if self._state in ("ready", "restarting"):
+                return self.status()
+            self._state = "failed"
+            self._detail = " ".join(str(error or "Update failed.").split())[:512]
+            return self.status()
+
     def apply_on_quit(self):
-        """A normal quit may arm the same verified release, never interrupt work."""
-        return (self._policy()["auto_apply_on_quit"] is True and self._state == "ready"
-                and not (callable(self._restart_refusal) and self._restart_refusal()))
+        """A normal quit may arm the same verified release, never a pre-release, never interrupt work."""
+        return self._auto_allowed()
 
     def refuse_restart(self, reason):
         with self._lock:
@@ -244,6 +341,7 @@ class ApplicationUpdate:
         with self._lock:
             self._state, self._detail = decision["state"], decision["detail"]
             self._available = decision["available_build"]
+            self._prerelease = result.get("prerelease") is True or result.get("status") == "ignored"
         self._say(decision["log"])
         if decision["state"] == "ready" and callable(self._on_ready):
             # The desktop page reads the ready status now; the Studio holds no update poll.

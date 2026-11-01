@@ -103,9 +103,10 @@ class CloseToTray(QObject):
     Only quit() ends the app: the tray's Quit ArchHub and the Studio's Quit call it.
     """
 
-    def __init__(self, window, tray, quit_application, notice_path):
+    def __init__(self, window, tray, quit_application, notice_path, on_close=None):
         super().__init__(window)
         self.window, self.tray, self.quit_application, self.notice_path = window, tray, quit_application, notice_path
+        self.on_close = on_close
         self.quitting = False
         window.installEventFilter(self)
 
@@ -116,6 +117,8 @@ class CloseToTray(QObject):
     def eventFilter(self, watched, event):
         if watched is self.window and event.type() == QEvent.Type.Close and not self.quitting:
             event.ignore()
+            if callable(self.on_close) and self.on_close():
+                return True
             self.window.hide()
             if not self.notice_path.exists():
                 self.notice_path.parent.mkdir(parents=True, exist_ok=True)

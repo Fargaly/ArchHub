@@ -346,12 +346,12 @@
             go
           }, event)}>{routeNames[route] || route.split('/').at(-1)}</button><span className="fill" />{window.UI.RunModeChip && <span style={{marginRight: 8}}><window.UI.RunModeChip waiting={(s.approvals || []).some(card => card.approvalKind === 'ask' && card.status === 'pending')} count={(s.approvals || []).filter(card => card.approvalKind === 'ask' && card.status === 'pending').length} /></span>}<button className="button-reset header-search" onClick={event => executeAction("appShell.SearchCtrlK.5", {
             show
-          }, event)} aria-label="Search · Ctrl K"><window.AHIcon name="search" size={15} /><span className="fill">Search...</span><kbd>Ctrl K</kbd></button>{s.update.available && <button className="button-reset header-update" title={`${s.update.installed} → ${s.update.next}. Unsent text is lost; your saved graphs and settings stay with you.`} aria-label="Update available" onClick={event => executeAction("appShell.Control.3", {
+          }, event)} aria-label="Search · Ctrl K"><window.AHIcon name="search" size={15} /><span className="fill">Search...</span><kbd>Ctrl K</kbd></button>{(s.update.available || s.update.state==='failed') && <button className="button-reset header-update" title={s.update.state==='failed' ? (s.update.detail || 'Update failed') : `${s.update.installed} → ${s.update.next}. Unsent text is lost; your saved graphs and settings stay with you.`} aria-label={s.update.state==='failed' ? (s.update.detail || 'Update failed') : 'Update available'} onClick={event => executeAction("appShell.Control.3", {
             act,
             api,
             go,
             s
-          }, event)}>Update</button>}<button className="button-reset header-icon" aria-label="Tray menu" title="Tray menu" onClick={event => executeAction("appShell.TrayMenu.7", {
+          }, event)}>{s.update.state==='failed' ? 'Update failed' : 'Update'}</button>}<button className="button-reset header-icon" aria-label="Tray menu" title="Tray menu" onClick={event => executeAction("appShell.TrayMenu.7", {
             show
           }, event)}><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3" cy="8" r="1.3" /><circle cx="8" cy="8" r="1.3" /><circle cx="13" cy="8" r="1.3" /></svg></button><button className="button-reset header-icon" aria-label="Notifications" title="Notifications" onClick={event => executeAction("appShell.Notifications.6", {
             show

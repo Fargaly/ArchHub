@@ -147,7 +147,8 @@ def _capture(state_dir, app_dir, graph_path, content_path, recovery_path):
     staged_raw, staged_identity = _small_file(updates / "staged.json", _STAGED_BYTES)
     staged = _object(staged_raw)
     if (not {"build_id", "sha256"} <= set(staged)
-            or set(staged) - {"build_id", "built_at", "sha256", "url", "tag", "phase"}
+            or set(staged) - {"build_id", "built_at", "sha256", "url", "tag", "phase", "prerelease"}
+            or ("prerelease" in staged and type(staged["prerelease"]) is not bool)
             or type(staged["build_id"]) is not str
             or _BUILD_PATTERN.fullmatch(staged["build_id"]) is None
             or type(staged["sha256"]) is not str

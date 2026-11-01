@@ -1092,7 +1092,8 @@ LIBRARY_ITEM_ENGINES.update({
                                  "model_request_ms": 90000,
                                  "model_cli_request_ms": 240000,
                                  "keep_running_in_tray": True,
-                                 "update_check_interval_minutes": 30, "update_auto_apply_on_quit": True,
+                                 "update_check_interval_minutes": 30, "update_idle_minutes": 15,
+                                 "update_auto_apply_on_quit": True,
                                  "update_preview_channel": False, "backup_location": "auto"}},
     "tool_brain": {"engine": "tool.brain",
                    "params": {"tool": "brain"}},
@@ -1571,7 +1572,7 @@ ENGINE_SOCKETS = {
     "tool.workshop": {"source": ("out",), "target": (
         "tool", "stale_claim_after_idle_minutes", "archive_after_idle_days",
         "tick_cadence_minutes", "backup_count", "backup_budget_bytes", "recovery_timeout_seconds", "instance_retry_ms", "preflight_database_ms", "broker_start_ms", "refusal_poll_ms", "quit_watchdog_ms", "account_http_ms", "session_minimum_validity_seconds", "session_poll_ms", "worker_join_ms", "host_stop_ms", "host_cancel_ms", "mutation_poll_ms", "desktop_refresh_ms", "archive_step_ms", "cloud_shutdown_ms", "update_shutdown_ms", "export_release_ms", "toast_visible_ms", "voice_hold_ms", "model_request_ms", "model_cli_request_ms", "keep_running_in_tray",
-        "home_load_ms", "update_check_interval_minutes", "update_auto_apply_on_quit", "update_preview_channel", "backup_location")},
+        "home_load_ms", "update_check_interval_minutes", "update_idle_minutes", "update_auto_apply_on_quit", "update_preview_channel", "backup_location")},
     "data.constant": {"source": ("value",), "target": ()},
     "data.list": {"source": ("value",), "target": ()},
     "input.parameter": {"source": ("value",), "target": ()},

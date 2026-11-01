@@ -510,9 +510,17 @@ def r_session_files(s, req):
     from .enforce import guard_effect
     if s.is_halted():
         raise Refused('Stopped by you. Press Resume to continue.', 403)
-    result = SessionFiles().dispatch(req.body, invoke=guard_effect, picker=s.native_file_picker,
-                                     save_picker=s.native_save_file_picker, stopped=s.is_halted)
-    if (req.body or {}).get('action') in ('save', 'autosave', 'open') and getattr(s, 'triggers', None) is not None:
+    action = (req.body or {}).get('action')
+    canvas_job = action in ('run', 'solve')
+    if canvas_job:
+        s._canvas_jobs = getattr(s, '_canvas_jobs', 0) + 1
+    try:
+        result = SessionFiles().dispatch(req.body, invoke=guard_effect, picker=s.native_file_picker,
+                                         save_picker=s.native_save_file_picker, stopped=s.is_halted)
+    finally:
+        if canvas_job:
+            s._canvas_jobs -= 1
+    if action in ('save', 'autosave', 'open') and getattr(s, 'triggers', None) is not None:
         threading.Thread(target=s.triggers.refresh, name='archhub-triggers', daemon=True).start()
     return result
 

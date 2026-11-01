@@ -129,7 +129,10 @@ def read_latest_release(opener=urllib.request.urlopen, *, channel="stable") -> d
 
     Missing chronology on an opaque old release is returned as built_at=None so
     callers can report unknown ordering without downloading its installer.
+    A pre-release is not returned. ``saw_prerelease`` records that fact for the
+    same response, so auto-update can ignore it without a second request.
     """
+    read_latest_release.saw_prerelease = False
     try:
         if channel not in ("stable", "preview"):
             raise ValueError("update channel must be stable or preview")
@@ -144,6 +147,8 @@ def read_latest_release(opener=urllib.request.urlopen, *, channel="stable") -> d
             if not isinstance(data, list):
                 return None
             data = next((item for item in data if isinstance(item, dict) and not item.get("draft")), None)
+        read_latest_release.saw_prerelease = (
+            isinstance(data, dict) and data.get("prerelease") is True and not data.get("draft"))
         if not isinstance(data, dict) or data.get("draft") or (channel == "stable" and data.get("prerelease")):
             return None
         body, assets, tag = data.get("body"), data.get("assets"), data.get("tag_name")
@@ -175,7 +180,13 @@ def read_latest_release(opener=urllib.request.urlopen, *, channel="stable") -> d
         return {"build_id": builds[0], "built_at": built_at,
                 "sha256": hashes[0].lower(), "url": url, "tag": tag}
     except (OSError, ValueError, TypeError):
+        read_latest_release.saw_prerelease = False
         return None
+
+
+def _published_prerelease(opener, channel="stable") -> bool:
+    """True when the release just read was a pre-release. Stable auto-update ignores it."""
+    return read_latest_release.saw_prerelease is True
 
 
 def _plain(path):
@@ -448,7 +459,13 @@ def stage_if_newer(state_dir: Path, app_dir: Path, opener=urllib.request.urlopen
             current = installed_build_id(app_dir)
             check_cancelled()
             if latest is None:
+                if channel == "stable" and _published_prerelease(opener):
+                    return {"staged": False, "applied": False, "build_id": "", "status": "ignored",
+                            "reason": "pre-release ignored"}
                 return {"staged": False, "build_id": "", "reason": "no release information"}
+            if channel != "stable" and _published_prerelease(opener, channel):
+                # A preview may be staged for the Update button. Auto-install refuses it.
+                latest = {**latest, "prerelease": True}
             if held.get("status") == "rolled_back" and latest["build_id"] == held["build_id"]:
                 return {**held, "staged": False}
             if not current:
@@ -502,16 +519,22 @@ def stage_if_newer(state_dir: Path, app_dir: Path, opener=urllib.request.urlopen
 
 
 def stop_runtime_processes(app_dir: Path, *, process_iter=None, wait_seconds: float = 5.0) -> list:
-    """Stop processes whose executable lives under <app>/runtime before the installer replaces it.
+    """Stop every other process started from the install folder before the installer copies.
 
-    Build 20261023-0423 rolled back: a leftover BABOOM goose.exe held runtime/goose/goose.exe,
-    the silent installer's replace failed (code 5), and /SUPPRESSMSGBOXES answered Abort.
+    A leftover executable under the install folder held a file, the silent replace failed
+    with Windows error 32 (file in use), and the suppressed dialog answered Abort.
+    The process running this update is left alive so it can start the installer.
+    A supervisor outside the install folder, including agent connectors, is not stopped
+    and is not a reason to refuse the update.
     """
     import psutil
-    root = (Path(app_dir) / "runtime").resolve()
+    root = Path(app_dir).resolve()
+    me = os.getpid()
     stopped = []
     for process in (process_iter or psutil.process_iter)(["pid", "exe"]):
         try:
+            if process.info.get("pid") == me:
+                continue
             exe = process.info.get("exe")
             if exe and Path(exe).resolve().is_relative_to(root):
                 process.terminate()
@@ -573,10 +596,11 @@ def apply_staged(state_dir: Path, app_dir: Path, runner=subprocess.run, *, befor
             if stop_runtime is not None:
                 stop_runtime(Path(app_dir))
             result = runner([data["installer"], "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
-                             "/NOCLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS",
+                             "/CLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS",
                              "/SP-", "/LOG=" + str(setup_log), "/DIR=" + str(app_dir)], **options)
-            if getattr(result, "returncode", 1) != 0 or not _installed_matches_target(app_dir, data):
-                reason = "installer did not confirm its outcome"
+            exit_code = getattr(result, "returncode", 1)
+            if exit_code != 0 or not _installed_matches_target(app_dir, data):
+                reason = ("installer failed (exit %s)" % exit_code) if exit_code != 0 else "installer did not confirm its outcome"
                 if setup_log.is_file() and not setup_log.is_symlink():
                     with setup_log.open('rb') as stream:
                         stream.seek(max(0, setup_log.stat().st_size - 1024 * 1024))
@@ -584,7 +608,7 @@ def apply_staged(state_dir: Path, app_dir: Path, runner=subprocess.run, *, befor
                     encoding = 'utf-16-le' if b'\x00' in raw[:64] else 'utf-8-sig'
                     for line in raw.decode(encoding, errors='replace').splitlines():
                         if 'ArchHub Setup refused: ' in line:
-                            reason = line.split('ArchHub Setup refused: ', 1)[1]
+                            reason = "installer failed: " + line.split('ArchHub Setup refused: ', 1)[1]
                 return {**_rollback(updates, app_dir, data, reason), "applied": False, "reason": reason}
             _marker(updates, {**data, "phase": "awaiting_boot"})
             return {"applied": True, "build_id": data["build_id"], "status": "awaiting_boot",
@@ -711,6 +735,32 @@ def recover_failed_launch(state_dir: Path, app_dir: Path, *, socket_factory=None
         lock.close()
 
 
+def apply_unattended(state_dir: Path, app_dir: Path, opener=urllib.request.urlopen, runner=subprocess.run, *,
+                      safe: bool, channel: str = "stable", stop_runtime=stop_runtime_processes) -> dict:
+    """Stage GitHub Latest and run the silent installer only at a safe moment.
+
+    ``safe`` is true when no canvas job is running and the user is idle, or ArchHub
+    is closing to the tray or quitting. A pre-release is ignored and never installed.
+    A failed installer is reported as failed; the previous build is restored.
+    """
+    staged = stage_if_newer(state_dir, app_dir, opener, channel=channel)
+    if staged.get("status") == "ignored" or staged.get("prerelease") is True:
+        return {**staged, "staged": False, "applied": False, "status": "ignored",
+                "reason": "pre-release ignored"}
+    if not staged.get("staged"):
+        return {**staged, "applied": False}
+    if not safe:
+        return {**staged, "applied": False, "status": "waiting",
+                "reason": "waiting for a safe moment"}
+    result = apply_staged(state_dir, app_dir, runner=runner, stop_runtime=stop_runtime)
+    if result.get("applied") is True:
+        return result
+    reason = str(result.get("reason") or "installer failed")
+    if "fail" not in reason.lower():
+        reason = "installer failed: " + reason
+    return {**result, "applied": False, "status": "failed", "reason": reason}
+
+
 def main(argv=None):
     import argparse
     parser = argparse.ArgumentParser(description="Recover a failed update with the existing update owner.")
@@ -726,7 +776,7 @@ def main(argv=None):
     return 0
 
 
-__all__ = ["apply_staged", "boot_acknowledgment", "installed_build_id", "read_latest_release", "stage_if_newer",
+__all__ = ["apply_staged", "apply_unattended", "boot_acknowledgment", "installed_build_id", "read_latest_release", "stage_if_newer",
            "staged_update", "confirm_applied", "begin_update_boot", "rollback_staged", "recover_failed_launch", "ASSET_NAME"]
 
 

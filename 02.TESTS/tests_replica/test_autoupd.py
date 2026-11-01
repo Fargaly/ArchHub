@@ -3,6 +3,7 @@ import ast
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 import pytest
@@ -104,7 +105,7 @@ def staged_app(tmp_path):
 
 def fixture_installer(app):
     def run(args, **kwargs):
-        assert '/NOCLOSEAPPLICATIONS' in args and '/NORESTART' in args
+        assert '/CLOSEAPPLICATIONS' in args and '/NOCLOSEAPPLICATIONS' not in args and '/NORESTART' in args
         install_identity(app, NEW)
         (app / 'nodelang' / 'product.py').write_text('new code', encoding='utf-8')
         (app / 'nodelang' / 'added.py').write_text('new module', encoding='utf-8')
@@ -194,7 +195,8 @@ def test_interval_has_one_inflight_download_and_quit_policy(tmp_path, monkeypatc
     app, state = staged_app(tmp_path)
     checks = []
     owner = ApplicationUpdate(state, app, request_restart=lambda: None,
-        policy=lambda: dict(check_interval_minutes=15, auto_apply_on_quit=False, channel='stable'))
+        initial_stage={'staged': False, 'status': 'none'},
+        policy=lambda: dict(check_interval_minutes=15, idle_minutes=15, auto_apply_on_quit=False, channel='stable'))
     monkeypatch.setattr(owner, 'check', lambda: checks.append(True))
     monkeypatch.setattr('nodelang.application_update.time.monotonic', lambda: 100)
     owner.check_if_due()
@@ -209,17 +211,17 @@ def test_catalogue_settings_write_through_the_existing_graph_property_owner():
     store, registry = app.build_universal_application(resolve_map_path())
     initial = store.revision
     assert app.read_universal_update_policy(store.snapshot(), registry) == dict(
-        check_interval_minutes=30, auto_apply_on_quit=True, channel='stable')
+        check_interval_minutes=30, idle_minutes=15, auto_apply_on_quit=True, channel='stable')
     assert store.revision == initial
     root = app._system_tool_canvas_root('tool_workshop')
     app.apply_universal_canvas_gesture(store, registry, roots=[root], focus_root=root)
     canvas = app.project_universal_canvas(store, registry)
     rows = {row['label']: row for row in canvas['properties'] if row['label'].startswith('update_')}
-    assert set(rows) == {'update_check_interval_minutes','update_auto_apply_on_quit','update_preview_channel','update_shutdown_ms'}
+    assert set(rows) == {'update_check_interval_minutes','update_idle_minutes','update_auto_apply_on_quit','update_preview_channel','update_shutdown_ms'}
     for key, value in [('update_check_interval_minutes','7'),('update_auto_apply_on_quit','false'),('update_preview_channel','true')]:
         app.edit_universal_property(store, registry, rows[key]['relation'], value)
     assert app.read_universal_update_policy(store.snapshot(), registry) == dict(
-        check_interval_minutes=7, auto_apply_on_quit=False, channel='preview')
+        check_interval_minutes=7, idle_minutes=15, auto_apply_on_quit=False, channel='preview')
     revision = store.revision
     with pytest.raises(InvalidCell, match='outside its bound'):
         app.edit_universal_property(store, registry, rows['update_check_interval_minutes']['relation'], '0')
@@ -229,10 +231,10 @@ def test_catalogue_settings_write_through_the_existing_graph_property_owner():
 def test_workshop_engine_uses_update_defaults_wired_feeds_and_the_same_settings_bounds():
     from nodelang.pipeline_engines import tool_settings
     held = tool_settings({'tool': 'workshop'}, {})[0]['out']
-    assert {key: held.get(key) for key in ('update_check_interval_minutes',
+    assert {key: held.get(key) for key in ('update_check_interval_minutes', 'update_idle_minutes',
         'update_auto_apply_on_quit', 'update_preview_channel')} == {
-        'update_check_interval_minutes': 30, 'update_auto_apply_on_quit': True,
-        'update_preview_channel': False}
+        'update_check_interval_minutes': 30, 'update_idle_minutes': 15,
+        'update_auto_apply_on_quit': True, 'update_preview_channel': False}
     held = tool_settings({'tool': 'workshop', 'update_check_interval_minutes': 15}, {
         'update_check_interval_minutes': 7, 'update_auto_apply_on_quit': 0,
         'update_preview_channel': 1})[0]['out']
@@ -444,8 +446,43 @@ def test_installer_runs_only_after_runtime_processes_are_stopped(tmp_path):
     original = psutil.wait_procs
     psutil.wait_procs = lambda procs, timeout: (procs, [])
     try:
+        self_pid = os.getpid()
         stopped = quiet_update.stop_runtime_processes(tmp_path / "app", process_iter=lambda attrs: [
-            Proc(1, str(runtime / "goose.exe")), Proc(2, str(tmp_path / "elsewhere.exe")), Proc(3, None)])
+            Proc(1, str(runtime / "goose.exe")), Proc(2, str(tmp_path / "elsewhere.exe")), Proc(3, None),
+            Proc(4, str(tmp_path / "app" / "nodelang" / "helper.exe")),
+            Proc(self_pid, str(tmp_path / "app" / "ArchHub.exe"))])
     finally:
         psutil.wait_procs = original
-    assert stopped == [1] and events == [("terminate", 1)]
+    assert stopped == [1, 4] and events == [("terminate", 1), ("terminate", 4)]
+    assert ("terminate", self_pid) not in events
+
+
+def _auto_policy():
+    return dict(check_interval_minutes=30, idle_minutes=15, auto_apply_on_quit=True, channel='stable')
+
+
+def test_safe_moment_restarts_without_a_dialog_and_refuses_a_busy_or_prerelease_update(tmp_path):
+    app, state = staged_app(tmp_path)
+    restarts = []
+    owner = ApplicationUpdate(state, app, request_restart=lambda: restarts.append(True), policy=_auto_policy)
+    assert owner.install_if_safe(canvas_running=True, user_idle=True) is False
+    assert owner.install_if_safe(user_idle=False) is False
+    assert restarts == [] and owner.status()['state'] == 'ready'
+    assert owner.install_if_safe(user_idle=True) is True
+    assert restarts == [True] and owner.status()['state'] == 'restarting'
+    closing = []
+    again = ApplicationUpdate(state, app, request_restart=lambda: closing.append(True), policy=_auto_policy)
+    assert again.install_if_safe(closing=True, user_idle=False) is True and closing == [True]
+    stage = dict(qu.staged_update(state, app), prerelease=True)
+    blocked = []
+    preview = ApplicationUpdate(state, app, request_restart=lambda: blocked.append(True),
+                                initial_stage=stage, policy=_auto_policy)
+    assert preview.install_if_safe(closing=True, user_idle=True) is False
+    assert preview.apply_on_quit() is False and blocked == []
+
+
+def test_canvas_job_counter_blocks_an_unattended_install():
+    from nodelang.application_update import canvas_job_running
+    assert canvas_job_running(SimpleNamespace(_canvas_jobs=1)) is True
+    assert canvas_job_running(SimpleNamespace(_canvas_jobs=0, triggers=SimpleNamespace(running=()))) is False
+    assert canvas_job_running(SimpleNamespace(_canvas_jobs=0, triggers=SimpleNamespace(running=('job',)))) is True

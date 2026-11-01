@@ -1,13 +1,9 @@
-"""The brain's skill library: what it learned, and what may be promoted.
+"""The brain's skill library: what it learned, held in the graph.
 
-`brain_skills` lived in the superseded app as a folder of files. A skill is not
-a file -- it is a graph-held assembly with a purpose, the work it was learned
-from, and the evidence that earned it. Promotion is the catalogue's own release
-court: a skill without evidence cannot be promoted, so "the brain learned this"
-can never be a claim.
-
-Recall is by purpose, out of the graph. Delete the library and recall returns
-nothing -- there is no second place a skill is remembered.
+A skill is a graph-held assembly with a purpose, the work it was learned
+from, and the evidence that earned it. Recall is by purpose, out of the
+graph. Delete the library and recall returns nothing -- there is no second
+place a skill is remembered.
 """
 from __future__ import annotations
 
@@ -19,8 +15,6 @@ from .cell_catalog import (
     build_definition,
     build_interface,
     read_definition,
-    release_definition,
-    verify_released_definition,
 )
 from .cell_protocols import prepare_append_relation_members, read_relation
 from .universal_cell import NULL_CELL_ID, Cell, CellStore, InvalidCell, Snapshot
@@ -120,15 +114,6 @@ def mint_skill(
     )
     store.commit(snapshot.revision, create=patch.create, replace=patch.replace)
     return skill_id
-
-
-def promote_skill(
-    store: CellStore,
-    protocol: AssemblyProtocol,
-    skill_root: str,
-) -> bytes:
-    """Promote a skill. The catalogue refuses one with no evidence."""
-    return release_definition(store, protocol, skill_root)
 
 
 def read_skill(

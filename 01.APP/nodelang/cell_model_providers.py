@@ -1,13 +1,11 @@
-"""Model providers: named, keyed by reference, cooled down, and metered.
+"""Model providers: named, keyed by reference, and metered.
 
 The superseded router held provider keys, guessed at failures, and counted
 nothing. Three separate ways to lose money or leak a key.
 
 A provider here is admitted by name and points at a secret-vault ENTRY, never at
-a key. A failure is classified rather than retried blindly, and a provider that
-is rate-limited or broken is unavailable until its cooldown passes -- the graph
-says so, not a timer in someone's memory. Every call is metered, so cost is a
-fact and not a surprise.
+a key. A failure kind is classified rather than retried blindly. Every call is
+metered, so cost is a fact and not a surprise.
 
 Time is passed in. A clock the graph cannot see is a clock the courts cannot
 test.
@@ -51,13 +49,6 @@ FAILURE_KINDS: Mapping[str, str] = MappingProxyType({
     "not-found": FATAL,
     "refused": FATAL,
 })
-
-COOLDOWN_SECONDS: Mapping[str, int] = MappingProxyType({
-    RETRYABLE: 5,
-    RATE_LIMITED: 60,
-    FATAL: 3600,
-})
-
 
 @dataclass(frozen=True, slots=True)
 class Usage:
@@ -159,17 +150,6 @@ def _require(snapshot, provider):
 def key_entry_for(snapshot, provider):
     """The vault entry, never the key."""
     return _text(snapshot, _require(snapshot, provider) + ":key-entry")
-
-
-def record_failure(store, *, provider, kind, now):
-    """Classify, then cool the provider down for as long as that class needs."""
-    severity = classify_failure(kind)
-    snapshot = store.snapshot()
-    root = _require(snapshot, provider)
-    until = int(now) + COOLDOWN_SECONDS[severity]
-    store.commit(snapshot.revision, replace=(
-        _terminal(root + ":cooldown", until),))
-    return severity, until
 
 
 def is_available(snapshot, provider, now):

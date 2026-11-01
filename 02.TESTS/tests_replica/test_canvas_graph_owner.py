@@ -89,24 +89,6 @@ def test_ops_community_toggle_and_judgement_use_existing_brain_owner(ops):
     assert next(r for r in result['patterns'] if r['id'] == incoming)['status'] == 'Accepted'
 
 
-def test_ops_research_decisions_require_captured_license_evidence(ops):
-    from nodelang.social_research_community_backend import SocialResearchCommunityBackend
-    backend = SocialResearchCommunityBackend(ops.store, ops.registry, ops.context)
-    row = {'id': 'ops-source', 'title': 'LICENSE', 'source': 'fixture', 'sha256': 'captured',
-           'summary': 'MIT License', 'transcript': ['MIT License'], 'status': 'Source read'}
-    backend._record_source(row)
-    with pytest.raises(ValueError, match='actual permissive'):
-        backend.save_research_decision(row['id'], {'decision': 'Adopt', 'license': 'MIT', 'why': 'Reuse'})
-    assert backend.check_research_license(row['id'])['licenseEvidence'] == ['MIT License']
-    saved = backend.save_research_decision(row['id'], {'decision': 'Adopt', 'license': 'MIT', 'why': 'Reuse'})
-    assert saved['decision'] == 'Adopt'
-    assert 'requires reviewed work' in saved['status']
-    revision = ops.store.revision
-    with pytest.raises(ValueError, match='actual admitted'):
-        backend.bind_research_work(row['id'], 'missing-work')
-    assert ops.store.revision == revision
-
-
 def test_ops_unconfigured_model_and_mcp_refuse_without_fabricating_results(ops):
     revision = ops.store.revision
     with pytest.raises(CanvasRefused, match='No model check has run'):

@@ -68,10 +68,6 @@ def ensure_ledger(store):
     return LEDGER_ROOT
 
 
-def _failure_root(signature, occurrence):
-    return "%s:failure:%s:%d" % (LEDGER_ROOT, signature, occurrence)
-
-
 def _read(snapshot, root):
     members = read_relation(snapshot, root, budget=10_000)
 
@@ -108,48 +104,6 @@ def occurrences(snapshot, signature):
         if entry.signature == signature:
             found.append(entry)
     return tuple(found)
-
-
-def record_failure(store, *, signature, what_happened, evidence_roots):
-    """Record a failure. A second with the same signature is a RECURRENCE."""
-    signature = signature.strip()
-    what_happened = what_happened.strip()
-    if not signature:
-        raise InvalidCell("a failure without a signature cannot recur or be found")
-    if not what_happened:
-        raise InvalidCell("a failure must say what happened")
-    evidence = tuple(dict.fromkeys(evidence_roots))
-    if not evidence:
-        raise InvalidCell("a failure without evidence is an opinion")
-    ensure_ledger(store)
-    snapshot = store.snapshot()
-    if any(root not in snapshot.cells for root in evidence):
-        raise InvalidCell("failure evidence references missing cells")
-
-    prior = occurrences(snapshot, signature)
-    root = _failure_root(signature, len(prior))
-    state = RECURRED if prior else OPEN
-    sig_root = root + ":signature"
-    narrative_root = root + ":narrative"
-    store.commit(snapshot.revision, create=(
-        _terminal(sig_root, signature),
-        _terminal(narrative_root, what_happened),
-        Cell(root, NULL_CELL_ID, NULL_CELL_ID, b"relation"),
-    ))
-    snapshot = store.snapshot()
-    members = [
-        (SIGNATURE_ROLE, sig_root),
-        (NARRATIVE_ROLE, narrative_root),
-        (STATE_ROLE, state),
-    ]
-    members.extend((EVIDENCE_ROLE, item) for item in evidence)
-    patch = prepare_append_relation_members(snapshot, root, members, budget=10_000)
-    store.commit(snapshot.revision, create=patch.create, replace=patch.replace)
-    snapshot = store.snapshot()
-    ledger = prepare_append_relation_members(
-        snapshot, LEDGER_ROOT, ((FAILURE_ROLE, root),), budget=100_000)
-    store.commit(snapshot.revision, create=ledger.create, replace=ledger.replace)
-    return root
 
 
 def control_failure(store, failure_root, *, root_cause, control_roots):

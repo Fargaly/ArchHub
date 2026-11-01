@@ -96,7 +96,6 @@ from .cell_capabilities import CAPABILITIES, missing_capabilities
 from .cell_agent_body import read_agent_session
 from .cell_model_execution import read_model_delegation
 from .cell_deliberation import (
-    append_deliberation_entry,
     append_deliberation_value_entry,
     evaluate_deliberation_gate,
     _recent_entries_from_validated_space,
@@ -136,11 +135,8 @@ from .ui_runtime import activate_ui, edit_ui_binding, project_document
 from .universal_application import (
     UNIVERSAL_APPLICATION_SCHEMA_VERSION,
     adjudicate_universal_governed_work,
-    apply_universal_canvas_gesture,
     append_universal_workshop_entry,
     assign_universal_workshop_work,
-    assign_released_universal_theme,
-    assign_released_universal_theme_to_audience,
     authorize_universal_cde_write,
     build_universal_application,
     begin_universal_runtime_agent_session,
@@ -165,17 +161,6 @@ from .universal_application import (
     create_universal_governed_work,
     attach_universal_assembly_structured_fields,
     draft_universal_baboom_work_plan,
-    submit_universal_composition_interaction,
-    remove_universal_composition_member,
-    submit_universal_history_interaction,
-    submit_universal_edit_value_interaction,
-    submit_universal_transition_interaction,
-    submit_universal_relation_member_interaction,
-    submit_universal_topology_interaction,
-    submit_universal_instantiation_interaction,
-    submit_universal_relation_form_interaction,
-    submit_universal_inspector_lens_interaction,
-    submit_universal_scope_interaction,
     edit_universal_interface_value,
     edit_universal_lifecycle_content,
     merge_universal_lifecycle_content,
@@ -193,14 +178,12 @@ from .universal_application import (
     ensure_universal_topology_interactions,
     ensure_universal_inspector_lens_interactions,
     ensure_universal_scope_interactions,
-    follow_universal_theme_audience,
     issue_universal_authority_relationship,
     move_universal_root,
     promote_universal_resource_lifecycle,
     promote_universal_theme_to_published,
     promote_universal_theme_to_shared,
     project_universal_canvas,
-    project_universal_home_frame,
     project_universal_scope_transition,
     project_universal_grand_map_work,
     project_universal_roma_requirement_tree_index,
@@ -231,7 +214,6 @@ from .universal_application import (
     list_universal_workshop_assignments,
     project_universal_device_handoffs,
     project_universal_baboom_work_claim_transfers,
-    project_universal_governed_work,
     project_universal_governed_work_index,
     project_universal_governed_work_status,
     project_universal_value_graph,
@@ -259,7 +241,6 @@ from .universal_application import (
     initiate_universal_baboom_work_claim_transfer,
     recover_universal_baboom_model_execution_failure,
     resume_universal_baboom_model_execution_failure,
-    set_universal_selection,
     sync_universal_grand_map_work,
     sync_universal_roma_requirement_tree,
     transition_universal_governed_work,
@@ -326,7 +307,6 @@ from .clean_scope_interactions import (
     clean_scope_source_digest,
     derive_clean_scope_interactions,
     open_clean_scope_interactions,
-    submit_clean_scope_interaction,
 )
 from .clean_visual_authority import open_clean_visual_system
 from .clean_visual_projection import project_clean_visual_canvas
@@ -342,7 +322,6 @@ from .cell_cloud_routes import (
 )
 from .unified_authority import (
     UnifiedAuthority,
-    validate_composition,
     verify_exact_authority_head,
 )
 
@@ -433,7 +412,6 @@ from .cell_interactions import (
     InteractionProjectionDenied,
     InteractionProjectionExpired,
     _read_interactions_with_verified_protocol,
-    execute_interaction,
     read_interaction,
     with_interaction_projection_scope,
 )
@@ -443,16 +421,12 @@ from .cell_control_bindings import (
     CAPABILITY_EDIT_VALUE,
     CAPABILITY_HISTORY,
     CAPABILITY_INSTANTIATE,
-    CAPABILITY_RELATION_FORM,
     CAPABILITY_RELATION_MEMBERS,
     CAPABILITY_SCOPE,
     CAPABILITY_TOPOLOGY,
     CAPABILITY_TRANSITION,
     CAPABILITY_VIEW_SECTION,
 )
-from .cloud_social_oauth import SocialGrantNotReady
-from .social_linkedin_signin import LinkedInNotReady
-from .social_meta_signin import MetaNotReady
 from .universal_cell import (
     NULL_CELL_ID,
     Cell,
@@ -2502,7 +2476,6 @@ class _CleanAuthorityHttpServer(WorkspaceRootsOwner):
             import uuid as _uuid
 
             from .unified_authority import (
-                adopt_definition_revision,
                 read_scope_level,
                 revise_instance,
             )
@@ -4202,16 +4175,6 @@ class _CleanAuthorityHttpServer(WorkspaceRootsOwner):
             def do_GET(self):
                 if not self._admit_local_request():
                     return
-                if self.path == "/api/universal/boot" or self.path == "/api/universal/canvas?screen=home":
-                    try:
-                        binding = owner._resolve_binding(self._token())
-                        payload = (owner._boot_status() if self.path == "/api/universal/boot"
-                                   else owner._home(binding))
-                    except (AuthorizationDenied, InvalidCell) as exc:
-                        self._json(403, {"ok": False, "error": str(exc)})
-                        return
-                    self._json(200, payload)
-                    return
                 if self.path == "/api/universal/browser-handoff":
                     self._json(403, {
                         "ok": False,
@@ -4434,73 +4397,14 @@ class _CleanAuthorityHttpServer(WorkspaceRootsOwner):
                 try:
                     body = self._body()
                     csrf_token = self._csrf()
-                    if self.path == '/api/session-files':
-                        if not owner._clean_canvas_key_matches(self.headers.get('X-ArchHub-Canvas-Key')):
-                            self._json(403, {'ok': False, 'error': 'Local desktop frame required'})
-                            return
-                        from .session_files import SessionFiles
-                        from .enforce import guard_effect
-                        try:
-                            payload = SessionFiles().dispatch(body,
-                                invoke=lambda name, effect, params, feeds: guard_effect(name, effect, params, feeds),
-                                picker=getattr(owner, 'native_file_picker', None),
-                                save_picker=getattr(owner, 'native_save_file_picker', None),
-                                stopped=is_application_halted)
-                        except (ValueError, OSError, TypeError, RecursionError) as error:
-                            self._json(400, {'ok': False, 'error': str(error)})
-                            return
-                        self._json(200, payload)
-                        return
                     if self.path != "/api/universal/session":
                         owner._await_clean_warmup()
-                    if self.path == "/api/universal/agent":
-                        from .clean_agent_conversation import run_clean_agent_conversation
-                        with owner._mutation_lock:
-                            binding = self._write_binding(csrf_token)
-                        def current_authority():
-                            current = self._write_binding(csrf_token)
-                            if (current.session_root, current.view_root) != (binding.session_root, binding.view_root):
-                                raise AuthorizationDenied('Browser binding changed during conversation')
-                        payload = run_clean_agent_conversation(owner, binding, body,
-                            revalidate=current_authority)
-                        self._json(200, payload)
-                        return
-                    if self.path == "/api/universal/gesture":
-                        try:
-                            with owner._mutation_lock:
-                                binding = self._write_binding(csrf_token)
-                                payload = owner._clean_gesture(binding, body)
-                        except CleanGestureRefused as exc:
-                            self._json(403, {"ok": False, "error": str(exc)})
-                            return
-                        self._json(200, {"ok": True, **payload})
-                        return
-                    if self.path == "/api/universal/connect":
-                        with owner._mutation_lock:
-                            binding = self._write_binding(csrf_token)
-                            payload = owner._clean_connect(binding, body)
-                        self._json(200, {"ok": True, **payload})
-                        return
-                    if self.path == "/api/universal/run-graph":
-                        # Both Studios use the same signed Run control; effects run outside the graph lock.
-                        payload = owner._clean_run_graph(
-                            self._token(), csrf_token, body)
-                        self._json(200, {"ok": True, **payload})
-                        return
                     if self.path == "/api/universal/execute-adapter":
                         with owner._mutation_lock:
                             binding = self._write_binding(csrf_token)
                             payload = owner._clean_execute_adapter(
                                 binding, body
                             )
-                        self._json(200, {"ok": True, **payload})
-                        return
-                    if self.path == "/api/universal/workspace-roots":
-                        with owner._mutation_lock:
-                            self._write_binding(csrf_token)
-                        # Signing may wait on the owner's prompt, so the
-                        # graph lock is taken inside, never held across it.
-                        payload = owner._clean_workspace_roots(body)
                         self._json(200, {"ok": True, **payload})
                         return
                     if self.path == "/api/universal/host-enabled":
@@ -4533,247 +4437,6 @@ class _CleanAuthorityHttpServer(WorkspaceRootsOwner):
                             "host": host,
                             "revision": owner.clean_store.revision,
                         })
-                        return
-                    if self.path == "/api/universal/focus":
-                        with owner._mutation_lock:
-                            binding = self._write_binding(csrf_token)
-                            owner._standing_scope(binding, expected_scope=body.get("expected_scope"))
-                            scope_root = body.get("scope_root", owner.clean_scope_root)
-                            if type(scope_root) is not str or not scope_root:
-                                raise InvalidCell("focus scope root is invalid")
-                            selected_roots = body.get("selected_roots")
-                            if type(selected_roots) is not list:
-                                raise InvalidCell("focus selection must be a list")
-                            primary_root = body.get("primary_root")
-                            if type(primary_root) is not str or not primary_root:
-                                raise InvalidCell("focus primary root is invalid")
-                            revision = body.get("revision")
-                            if type(revision) is not int:
-                                raise InvalidCell("focus request revision is invalid")
-                            command_id = body.get("command_id")
-                            if type(command_id) is not str or not command_id:
-                                raise InvalidCell("focus command id is invalid")
-                            result = revise_clean_browser_focus(
-                                owner.clean_authority,
-                                owner.clean_browser_authority,
-                                binding.session_root,
-                                scope_root=scope_root,
-                                selected_roots=selected_roots,
-                                primary_root=primary_root,
-                                caller=owner.clean_caller,
-                                command_id=command_id,
-                                expected_revision=revision,
-                            )
-                            payload = owner._canvas_after_focus_commit(
-                                binding, scope_root, result,
-                                base_revision=revision,
-                            )
-                            if payload is None:
-                                payload = owner._canvas(
-                                    binding,
-                                    scope_root=scope_root,
-                                    at_revision=result.revision,
-                                )
-                        self._json(200, {
-                            "ok": True,
-                            **payload,
-                            "accepted_revision": result.revision,
-                            "receipt": result.receipt_root,
-                            "replayed": result.replayed,
-                            "focus_root": result.root_id,
-                        })
-                        return
-                    if self.path == "/api/universal/interaction":
-                        with owner._mutation_lock:
-                            # Execute is the same Run as /api/universal/
-                            # run-graph: effects run outside the graph lock.
-                            self._write_binding(csrf_token)
-                            executes = owner._clean_control_capability(
-                                body.get("control")
-                            ) == CAPABILITY_EXECUTE
-                        if executes:
-                            payload = owner._clean_run_graph(
-                                self._token(), csrf_token, body)
-                            self._json(200, {"ok": True, **payload})
-                            return
-                        with owner._mutation_lock:
-                            # Dispatch the declared capability: executing must not silently open a scope.
-                            probe = self._write_binding(csrf_token)
-                            owner._standing_scope(probe, expected_scope=body.get("expected_scope"))
-                            capability = owner._clean_control_capability(
-                                body.get("control")
-                            )
-                            if capability == CAPABILITY_INSTANTIATE:
-                                payload = owner._clean_instantiate_definition(
-                                    probe, body, body.get("control")
-                                )
-                                self._json(200, {"ok": True, **payload})
-                                return
-                            if capability == CAPABILITY_COMPOSITION:
-                                payload = owner._clean_group_or_ungroup(
-                                    probe, body, body.get("control")
-                                )
-                                self._json(200, {"ok": True, **payload})
-                                return
-                            if capability == CAPABILITY_HISTORY:
-                                controls = owner._canvas(probe)["configuration"][
-                                    "design_system"]["control_catalog"]["controls"]
-                                control = next((item for item in controls
-                                    if item.get("owner") == body.get("control")), None)
-                                operation = (control or {}).get("activation", {}).get(
-                                    "arguments", {}).get("operation")
-                                if operation == "undo":
-                                    payload = owner._clean_undo(probe)
-                                elif operation == "redo":
-                                    payload = owner._clean_redo(probe)
-                                else:
-                                    raise InvalidCell("history control operation is not admitted")
-                                self._json(200, {"ok": True, **payload})
-                                return
-                            binding = self._write_binding(csrf_token)
-                            revision = body.get("revision")
-                            if type(revision) is not int:
-                                raise InvalidCell(
-                                    "interaction request revision is invalid"
-                                )
-                            # Use one immutable snapshot for gate, lease and submit; concurrent commits must not split them.
-                            snapshot = owner.authority.store.snapshot()
-                            current = snapshot.revision
-                            is_remove_member = (
-                                isinstance(body.get("membership"), dict)
-                                and body.get("control")
-                                == "app:control:canvas:remove-member"
-                            )
-                            if revision != current:
-                                # Rebase only if the scope/catalogue readset is unchanged (SPEC 8); otherwise re-project.
-                                if owner._interaction_read_set_unchanged(
-                                    revision, current
-                                ):
-                                    revision = current
-                                else:
-                                    # The client must re-project before retrying.
-                                    self._json(409, {
-                                        "ok": False,
-                                        "error": "expected revision %s, current revision is %s"
-                                        % (revision, current),
-                                        "code": "projection_lease_expired",
-                                    })
-                                    return
-                            interaction_root = body.get("interaction")
-                            control_root = body.get("control")
-                            event_root = body.get("event")
-                            for value, label in (
-                                (interaction_root, "interaction"),
-                                (control_root, "control"),
-                                (event_root, "event"),
-                            ):
-                                if type(value) is not str or not value:
-                                    raise InvalidCell(
-                                        "scope interaction %s is invalid" % label
-                                    )
-                            # Read the source scope from the interaction itself, even for nested-scope controls.
-                            scope_root = owner._scope_of_interaction(
-                                interaction_root
-                            )
-                            # Renew from graph-held interactions without rendering a second full canvas.
-                            owner._issue_scope_lease(
-                                binding,
-                                snapshot,
-                                scope_root,
-                            )
-                            if is_remove_member:
-                                lease = owner.clean_interaction_broker.resolve(
-                                    owner._projection_handle(binding, snapshot),
-                                    snapshot,
-                                    expected_revision=revision,
-                                    control_root=control_root,
-                                    interaction_root=interaction_root,
-                                )
-                                interaction = read_interaction(
-                                    owner._interaction_snapshot(snapshot),
-                                    owner.clean_scope_interactions.protocol,
-                                    interaction_root,
-                                )
-                                if lease.session_root != binding.session_root:
-                                    raise InvalidCell(
-                                        "interaction session drifted"
-                                    )
-                                if interaction.control_root != control_root:
-                                    raise InvalidCell(
-                                        "interaction control drifted"
-                                    )
-                                if interaction.event_root != event_root:
-                                    raise InvalidCell(
-                                        "interaction event drifted"
-                                    )
-                                if interaction.subject_root != owner.clean_caller.actor_root:
-                                    raise AuthorizationDenied(
-                                        "interaction subject does not match identity"
-                                    )
-                                payload = owner._clean_gesture(
-                                    binding,
-                                    {
-                                        "membership": body["membership"],
-                                        "expected_scope": body.get(
-                                            "expected_scope"
-                                        ),
-                                        "projection": body.get(
-                                            "projection", True
-                                        ),
-                                    },
-                                )
-                                self._json(200, {"ok": True, **payload})
-                                return
-                            result = submit_clean_scope_interaction(
-                                owner.clean_authority,
-                                owner.clean_browser_authority,
-                                owner.clean_scope_interactions,
-                                owner.clean_interaction_broker,
-                                owner._projection_handle(binding, snapshot),
-                                binding.session_root,
-                                interaction_root=interaction_root,
-                                control_root=control_root,
-                                event_root=event_root,
-                                expected_revision=revision,
-                                projected_canvas={"root": scope_root},
-                                caller=owner.clean_caller,
-                                read_snapshot=owner._interaction_snapshot(
-                                    snapshot
-                                ),
-                            )
-                            payload = owner._canvas(
-                                binding,
-                                scope_root=result.root_id,
-                                at_revision=result.revision,
-                            )
-                        self._json(200, {
-                            "ok": True,
-                            **payload,
-                            "accepted_revision": result.revision,
-                            "receipt": result.receipt_root,
-                            "replayed": result.replayed,
-                        })
-                        return
-                    if self.path == "/api/universal/session":
-                        # The header blocks cross-origin pages but cannot identify local processes.
-                        # Require the desktop page key before issuing founder authority.
-                        if not self.headers.get("X-ArchHub-Sign-In"):
-                            self._json(403, {
-                                "ok": False,
-                                "error": "sign-in requires a same-origin "
-                                         "request",
-                            })
-                            return
-                        if not owner._clean_canvas_key_matches(
-                            self.headers.get("X-ArchHub-Canvas-Key", "")
-                        ):
-                            self._json(403, {
-                                "ok": False,
-                                "error": "sign-in requires the desktop's "
-                                         "own canvas page",
-                            })
-                            return
-                        self._json(200, owner._clean_sign_in())
                         return
                     if self.path == "/api/universal/browser-handoff":
                         self._json(403, {
@@ -7024,65 +6687,6 @@ class ApplicationServer(WorkspaceRootsOwner):
                                      + str(exc),
                         })
                         return
-                if parsed.path == '/api/universal/native-agents':
-                    try:
-                        binding,session_token=self._browser_session_binding()
-                        owner.require_universal_http_route('GET',parsed.path,authentication_context=binding.context)
-                        query=parse_qs(parsed.query,keep_blank_values=True)
-                        if set(query)-{'apps','root','scope'} or any(len(v)!=1 for v in query.values()) or (('root' in query)!=('scope' in query)):
-                            raise InvalidCell('Native discovery query is invalid')
-                        from .native_contact import discover_native_agents,project_native_contacts
-                        result=discover_native_agents(owner,apps=query.get('apps',['claude'])[0].split(','))
-                        from .native_contact import workshop_metadata
-                        result['workshop']=workshop_metadata(owner,binding.context)
-                        result['revision']=owner.universal_store.revision
-                        if 'root' in query:
-                            result['contacts']=project_native_contacts(owner,binding,root=query['root'][0],scope=query['scope'][0],discovery=result)
-                        if owner._resolve_browser_session(session_token)!=binding:raise AuthorizationDenied('Native discovery browser changed')
-                        owner.require_universal_http_route('GET',parsed.path,authentication_context=binding.context,revalidate=True)
-                        self._json(200,{'ok':True,**result})
-                    except AuthorizationDenied:
-                        self._json(403,{'ok':False,'error':'Native discovery is outside this browser authority'})
-                    except (InvalidCell,ValueError,TypeError):
-                        self._json(400,{'ok':False,'error':'Native discovery request is invalid'})
-                    return
-                if parsed.path == '/api/universal/terminal':
-                    # A Terminal node reads its session output from this offset.
-                    from .terminal_sessions import TerminalRefused
-                    try:
-                        binding, _session_token = self._browser_session_binding()
-                        owner.require_universal_http_route(
-                            'GET', parsed.path, authentication_context=binding.context)
-                        if binding.subject_root != owner.universal_registry.authorization.subject_root:
-                            raise AuthorizationDenied('Terminals belong to this application owner')
-                        query = parse_qs(parsed.query)
-                        session_id = (query.get('id') or [''])[0]
-                        since = int((query.get('since') or ['0'])[0] or 0)
-                        self._json(200, {'ok': True, **owner.terminal_sessions.output(session_id, since)})
-                    except AuthorizationDenied as denied:
-                        self._json(403, {'ok': False, 'error': str(denied)})
-                    except (TerminalRefused, ValueError) as refused:
-                        self._json(409, {'ok': False, 'error': str(refused)})
-                    return
-                if parsed.path == '/api/universal/cloud-publish-consent':
-                    # The one record start_cloud_relay reads; nothing else holds this consent.
-                    try:
-                        binding, _session_token = self._browser_session_binding()
-                        owner.require_universal_http_route(
-                            'GET', parsed.path, authentication_context=binding.context)
-                        if binding.subject_root != owner.universal_registry.authorization.subject_root:
-                            raise AuthorizationDenied('Cloud publish consent belongs to this application owner')
-                        from .cloud_publish_consent import read_cloud_publish_consent
-                        from .cloud_session import signed_in_cloud_account
-                        state_dir = os.environ.get('ARCHHUB_STATE_DIR', '')
-                        if not state_dir:
-                            self._json(503, {'ok': False, 'error': 'The application state folder is unknown.'})
-                            return
-                        self._json(200, {'ok': True, **read_cloud_publish_consent(
-                            Path(state_dir), signed_in_cloud_account())})
-                    except AuthorizationDenied as denied:
-                        self._json(403, {'ok': False, 'error': str(denied)})
-                    return
                 if parsed.path in {'/api/universal/providers', '/api/universal/models'}:
                     try:
                         binding, session_token = self._browser_session_binding()
@@ -7131,41 +6735,6 @@ class ApplicationServer(WorkspaceRootsOwner):
                     except (InvalidCell, ValueError, TimeoutError) as refusal:
                         self._json(409, {'ok': False, 'error': str(refusal)})
                     return
-                if parsed.path == '/api/universal/cloud-session':
-                    # The account signed in on this machine: cloud.json, the
-                    # record the relay and the brain already trust.
-                    try:
-                        # The binding is a (binding, token) pair, as every
-                        # peer GET on this handler unpacks it.
-                        binding, _session_token = self._browser_session_binding()
-                        # The graph declares this route; the graph admits it.
-                        owner.require_universal_http_route(
-                            'GET', parsed.path,
-                            authentication_context=binding.context,
-                        )
-                    except AuthorizationDenied as denied:
-                        self._json(403, {'ok': False, 'error': str(denied)})
-                        return
-                    from .cloud_signin import session_summary
-                    self._json(200, {'ok': True, **session_summary()})
-                    return
-                if parsed.path == '/api/universal/cloud-signin':
-                    # What the sign-up dialog polls while the browser is open.
-                    try:
-                        # The binding is a (binding, token) pair, as every
-                        # peer GET on this handler unpacks it.
-                        binding, _session_token = self._browser_session_binding()
-                        # The graph declares this route; the graph admits it.
-                        owner.require_universal_http_route(
-                            'GET', parsed.path,
-                            authentication_context=binding.context,
-                        )
-                    except AuthorizationDenied as denied:
-                        self._json(403, {'ok': False, 'error': str(denied)})
-                        return
-                    from .cloud_signin import current_status
-                    self._json(200, {'ok': True, **current_status()})
-                    return
                 if parsed.path in ('/api/universal/social-connections', '/api/universal/social-connection'):
                     try:
                         binding, _session_token = self._browser_session_binding()
@@ -7185,148 +6754,6 @@ class ApplicationServer(WorkspaceRootsOwner):
                         self._json(400, {'ok': False, 'error': str(refused)})
                     except Exception:
                         self._json(503, {'ok': False, 'error': 'Social connection status unavailable; sign in to ArchHub cloud and retry.'})
-                    return
-                if parsed.path == '/api/universal/social-linkedin-signin':
-                    # What Settings polls while LinkedIn's consent page is open. No token.
-                    try:
-                        binding, _session_token = self._browser_session_binding()
-                        owner.require_universal_http_route('GET', parsed.path, authentication_context=binding.context)
-                    except AuthorizationDenied as denied:
-                        self._json(403, {'ok': False, 'error': str(denied)})
-                        return
-                    from .social_linkedin_signin import current_status as linkedin_status
-                    payload = linkedin_status()
-                    self._json(200, {'ok': True, **payload})
-                    return
-                if parsed.path == '/api/universal/social-linkedin-app':
-                    # Settings decides whether to show the LinkedIn app setup step. No secret.
-                    try:
-                        binding, _session_token = self._browser_session_binding()
-                        owner.require_universal_http_route('GET', parsed.path, authentication_context=binding.context)
-                    except AuthorizationDenied as denied:
-                        self._json(403, {'ok': False, 'error': str(denied)})
-                        return
-                    from .cloud_social_oauth import status as cloud_social_status
-                    self._json(200, {'ok': True, **cloud_social_status('linkedin')})
-                    return
-                if parsed.path == '/api/universal/social-meta-signin':
-                    # What Settings polls while Facebook Login is open. No token.
-                    try:
-                        binding, _session_token = self._browser_session_binding()
-                        owner.require_universal_http_route('GET', parsed.path, authentication_context=binding.context)
-                    except AuthorizationDenied as denied:
-                        self._json(403, {'ok': False, 'error': str(denied)})
-                        return
-                    from .social_meta_signin import current_status as meta_status
-                    payload = meta_status()
-                    self._json(200, {'ok': True, **payload})
-                    return
-                if parsed.path == '/api/universal/social-meta-app':
-                    # Settings decides whether to show Meta as configured. No secret.
-                    try:
-                        binding, _session_token = self._browser_session_binding()
-                        owner.require_universal_http_route('GET', parsed.path, authentication_context=binding.context)
-                    except AuthorizationDenied as denied:
-                        self._json(403, {'ok': False, 'error': str(denied)})
-                        return
-                    from .cloud_social_oauth import status as cloud_social_status
-                    self._json(200, {'ok': True, **cloud_social_status('meta')})
-                    return
-                if parsed.path == '/api/universal/social-credentials':
-                    # Settings lists local social account identities only. Tokens never leave custody.
-                    try:
-                        binding, _session_token = self._browser_session_binding()
-                        owner.require_universal_http_route('GET', parsed.path, authentication_context=binding.context)
-                        if binding.subject_root != owner.universal_registry.authorization.subject_root:
-                            raise AuthorizationDenied('Social credentials belong to this application owner')
-                        from .model_router import list_social_credentials
-                        self._json(200, list_social_credentials())
-                    except AuthorizationDenied as denied:
-                        self._json(403, {'ok': False, 'error': str(denied)})
-                    except Exception:
-                        self._json(503, {'ok': False, 'error': 'Saved social accounts are unavailable.'})
-                    return
-                if parsed.path == '/api/universal/social-approvals':
-                    # Social posts waiting for the founder, each with its exact request.
-                    try:
-                        binding, _session_token = self._browser_session_binding()
-                        owner.require_universal_http_route('GET', parsed.path, authentication_context=binding.context)
-                        from .social_approval import pending
-                        self._json(200, {'ok': True, 'items': pending(owner, binding)})
-                    except AuthorizationDenied as denied:
-                        self._json(403, {'ok': False, 'error': str(denied)})
-                    return
-                if parsed.path == '/api/universal/node-library':
-                    # The one node library (library_engines): every card,
-                    # its engine, defaults and sockets. Studio holds no copy.
-                    try:
-                        library_binding, _session_token = self._browser_session_binding()
-                    except AuthorizationDenied as denied:
-                        self._json(403, {'ok': False, 'error': str(denied)})
-                        return
-                    # SPEC 4.5: membership, category and order are graph
-                    # relations (universal_pipeline.read_engine_library).
-                    from .library_engines import engine_categories
-                    from .universal_pipeline import (
-                        read_engine_library, read_home_templates, wire_parameter_specs,
-                    )
-                    if parse_qs(parsed.query) == {'templates': ['1']}:
-                        with owner.mutation_lock:
-                            templates = read_home_templates(owner.universal_store.snapshot(),
-                                owner.universal_registry, subject=library_binding.subject_root)
-                        self._json(200, {'ok': True, 'templates': templates})
-                        return
-                    groups = read_engine_library(owner.universal_store.snapshot())
-                    if groups is None:
-                        self._json(503, {'ok': False, 'error':
-                            'the node library is not installed in this graph yet'})
-                        return
-                    self._json(200, {'ok': True, 'groups': groups,
-                                     'categories': engine_categories(groups),
-                                     'wire_parameters': wire_parameter_specs()})
-                    return
-                if parsed.path == '/api/universal/hosts':
-                    # The live machine, honestly: which hosts answer right
-                    # now. A port scan of the published broker range, never
-                    # a remembered list.
-                    try:
-                        binding, _session_token = self._browser_session_binding()
-                    except AuthorizationDenied as denied:
-                        self._json(403, {'ok': False, 'error': str(denied)})
-                        return
-                    try:
-                        from .connector_operation_evidence import operation_rows
-                        # The rows the 30 s background probe holds (_host_rows),
-                        # never a port scan inside this request (2026-09-24:
-                        # the scan cost Settings 5.4 s). Until the first probe
-                        # answers, say so instead of claiming an empty machine.
-                        catalogue = owner._host_rows_or_none()
-                        if catalogue is None:
-                            self._json(200, {'ok': True, 'hosts': [], 'connectors': [], 'probing': True})
-                            return
-                        self._json(200, {
-                            'ok': True,
-                            'connectors': catalogue,
-                            # Every catalogue operation: its real court, or
-                            # the exact dependency that keeps it unavailable.
-                            'operations': operation_rows(catalogue),
-                            'hosts': [
-                                {
-                                    'id': item['id'], 'name': item['name'],
-                                    'port': '', 'state': item['state'],
-                                    'file': item['detail'],
-                                }
-                                for item in catalogue
-                                if item.get('drive') and item['state'] in (
-                                    'connected', 'listening',
-                                )
-                            ],
-                        })
-                    except Exception as exc:  # noqa: BLE001
-                        self._json(503, {
-                            'ok': False, 'hosts': [], 'connectors': [],
-                            'error': str(exc),
-                        })
                     return
                 if parsed.path == '/api/universal/assistant-registration':
                     # Which of this person's assistants carry the ArchHub MCP
@@ -7635,57 +7062,6 @@ class ApplicationServer(WorkspaceRootsOwner):
                         )
                     self._json(200, payload)
                     return
-                if parsed.path == '/api/universal/canvas':
-                    if not self._universal_route('GET', parsed.path, binding):
-                        return
-                    freshness = parse_qs(parsed.query, keep_blank_values=True)
-                    if set(freshness) == {'since_revision'}:
-                        owner.require_universal_http_route('GET', parsed.path,
-                            authentication_context=binding.context, revalidate=True)
-                        current = owner._cached_browser_canvas_projection(
-                            binding, owner.universal_store.revision, include_candidates=self.headers.get('X-ArchHub-Renderer') != 'studio')
-                        if current is not None and freshness['since_revision'] == [str(current['revision'])]:
-                            self._json(200, {'ok': True, 'unchanged': True,
-                                'revision': current['revision'],
-                                'scope': current['scope']['current'],
-                                'graph_id': current['application_root']})
-                            return
-                    if parse_qs(parsed.query, keep_blank_values=True) == {'screen': ['home']}:
-                        with owner.mutation_lock:
-                            projection = project_universal_home_frame(
-                                owner.universal_store, owner.universal_registry,
-                                authentication_context=binding.context,
-                            )
-                            from .existing_workshop_conversation import canvas_workshop_scope
-                            projection['workshop_scope'] = canvas_workshop_scope(
-                                owner.universal_registry, projection,
-                                snapshot=owner.universal_store.snapshot(), subject_root=binding.subject_root,
-                                authentication_context=binding.context)
-                            from .persistence import application_backup_warning
-                            projection['backup_warning'] = application_backup_warning(owner.universal_store.database_path)
-                        self._json(200, {'ok': True, **projection})
-                        return
-                    # The projection takes the graph lock itself, and only for
-                    # its short revision-checked tail (00911b3 pattern).
-                    if owner._brain_export_active:
-                        projection = project_universal_canvas(
-                            owner.universal_store,
-                            owner.universal_registry,
-                            authentication_context=binding.context,
-                        )
-                    else:
-                        projection = owner._cached_browser_canvas_projection(
-                            binding, owner.universal_store.revision, include_candidates=self.headers.get('X-ArchHub-Renderer') != 'studio'
-                        )
-                    if projection is None:
-                        projection = owner.project_interaction_canvas(binding, include_candidates=self.headers.get('X-ArchHub-Renderer') != 'studio')
-                    owner._project_application_setting_owners(projection)
-                    payload = {
-                        'ok': True,
-                        **projection,
-                    }
-                    self._json(200, payload)
-                    return
                 if parsed.path == '/api/universal/graphs':
                     if not self._universal_route('GET', parsed.path, binding):
                         return
@@ -7698,41 +7074,6 @@ class ApplicationServer(WorkspaceRootsOwner):
                         read_at = owner.universal_store.revision
                     owner._remember_tool_hub_graph_sessions(binding, payload, read_at)
                     self._json(200, payload)
-                    return
-                if parsed.path == '/api/universal/application-update':
-                    if not self._universal_route('GET', parsed.path, binding):
-                        return
-                    from .application_update import application_update_status
-                    self._json(200, application_update_status(owner))
-                    return
-                if parsed.path == '/api/universal/workshop-native':
-                    fields = parse_qs(parsed.query, keep_blank_values=True)
-                    if set(fields) not in ({'root', 'scope'}, {'root', 'scope', 'work'}) or any(
-                        len(value) != 1 or not value[0] or len(value[0]) > 4096 for value in fields.values()
-                    ):
-                        raise InvalidCell('Workshop native query is invalid')
-                    host = getattr(owner, '_existing_workshop_native_host', None)
-                    if host is None:
-                        raise InvalidCell('Native Workshop owner is unavailable')
-                    self._json(200, host.status(binding, **{key:value[0] for key,value in fields.items()}))
-                    return
-                if parsed.path == '/api/universal/workshop-model-approval':
-                    try:
-                        binding, _session_token = self._browser_session_binding()
-                        if not self._universal_route('GET', parsed.path, binding):
-                            return
-                        query = parse_qs(parsed.query, keep_blank_values=True)
-                        if any(len(values) != 1 for values in query.values()):
-                            raise InvalidCell('Workshop approval query is ambiguous')
-                        from .existing_workshop_conversation import read_browser_workshop_model_approval
-                        with owner.mutation_lock:
-                            payload = read_browser_workshop_model_approval(owner, binding,
-                                {key:values[0] for key, values in query.items()})
-                        self._json(200, payload)
-                    except AuthorizationDenied as exc:
-                        self._json(403, {'ok':False, 'error':str(exc)})
-                    except InvalidCell as exc:
-                        self._json(400, {'ok':False, 'error':str(exc)})
                     return
                 if parsed.path == '/api/universal/workshop-transcript':
                     # Canvas live-node conversation contract: a node's Workshop transcript, read
@@ -7758,98 +7099,6 @@ class ApplicationServer(WorkspaceRootsOwner):
                     except InvalidCell as exc:
                         self._json(400, {'ok':False, 'error':str(exc)})
                         return
-                    self._json(200, payload)
-                    return
-                if parsed.path == '/api/universal/workshop':
-                    if not self._universal_route('GET', parsed.path, binding):
-                        return
-                    from .existing_workshop_conversation import read_browser_workshop
-                    query = parse_qs(parsed.query, keep_blank_values=True)
-                    if 'catalog' in query:
-                        if (set(query) not in ({'root', 'scope', 'catalog'}, {'root', 'scope', 'catalog', 'after'})
-                                or any(len(values) != 1 or not values[0] or len(values[0]) > 4096
-                                       for values in query.values()) or query['catalog'] != ['1']):
-                            self._json(400, {'ok':False, 'error':'Conversation catalog query is invalid'})
-                            return
-                        from .existing_workshop_conversation import (
-                            _admit as admit_workshop, _workshop_participant_rows)
-                        from .workshop_conversation_catalog import (
-                            list_workshop_conversations, _admit as admit_catalog)
-                        def catalog_guard():
-                            if owner._resolve_browser_session(_session_token) != binding:
-                                raise AuthorizationDenied('Conversation catalog browser changed')
-                            owner.require_universal_http_route('GET', parsed.path,
-                                authentication_context=binding.context, revalidate=True)
-                            return admit_workshop(owner, binding, query['root'][0], query['scope'][0])
-                        try:
-                            with owner.mutation_lock:
-                                current, canonical = catalog_guard()
-                                result = list_workshop_conversations(owner,
-                                    authentication_context=binding.context, expected_revision=current.revision,
-                                    after=query.get('after', [None])[0], read_guard=catalog_guard)
-                                can_create = False
-                                try:
-                                    admit_catalog(current, owner.universal_registry, binding.context, create=True)
-                                    can_create = binding.subject_root in canonical.participant_roots
-                                except AuthorizationDenied:
-                                    pass
-                                participants = [{key:row[key] for key in ('root', 'label', 'attached')}
-                                    for row in _workshop_participant_rows(owner, current, canonical, {})]
-                                from .workshop_conversation_catalog import workshop_workbench_path
-                                result.update(owner=binding.subject_root, view=binding.view_root,
-                                    self=binding.subject_root, can_create=can_create, participants=participants,
-                                    workbench_path=workshop_workbench_path(current, owner.universal_registry))
-                                latest, _ = catalog_guard()
-                                if latest.revision != result['revision']:
-                                    raise AuthorizationDenied('Conversation catalog changed during read')
-                        except AuthorizationDenied as refusal:
-                            self._json(403, {'ok':False, 'error':str(refusal)})
-                            return
-                        except (InvalidCell, ValueError) as refusal:
-                            self._json(400, {'ok':False, 'error':str(refusal)})
-                            return
-                        self._json(200, {'ok':True, **result, 'root':query['root'][0],
-                            'scope_root':query['scope'][0]})
-                        return
-                    if (not {'root', 'scope'} <= set(query)
-                            or set(query) - {'root', 'scope', 'after', 'content_after', 'before', 'feed', 'open'}
-                            or any(len(values) != 1 or not values[0]
-                                   for values in query.values())
-                            or query.get('open', ['1'])[0] != '1'):
-                        self._json(400, {'ok':False, 'error':'Workshop query fields are invalid'})
-                        return
-                    try:
-                        with owner.mutation_lock:
-                            payload = read_browser_workshop(owner, binding,
-                                root=query['root'][0], scope=query['scope'][0],
-                                after=query.get('after', [None])[0], session_token=_session_token,
-                                content_after=query.get('content_after', [None])[0],
-                                before=query.get('before', [None])[0], feed=query.get('feed', ['all'])[0])
-                    except AuthorizationDenied as exc:
-                        self._json(403, {'ok':False, 'error':str(exc)})
-                        return
-                    except InvalidCell as exc:
-                        self._json(400, {'ok':False, 'error':str(exc)})
-                        return
-                    self._json(200, payload)
-                    if 'open' in query and payload.get('storage') == 'conversation-content':
-                        # A person opened this conversation (open=1, sent only on
-                        # navigation). Recorded after the page is sent and the
-                        # owner lock released; best effort, never delays a read.
-                        owner.conversation_content.note_open(query['root'][0])
-                    return
-                if parsed.path == '/api/universal/work':
-                    if not self._universal_route('GET', parsed.path, binding):
-                        return
-                    with owner.mutation_lock:
-                        payload = {
-                            'ok': True,
-                            **project_universal_governed_work_status(
-                                owner.universal_store,
-                                owner.universal_registry,
-                                authentication_context=binding.context,
-                            ),
-                        }
                     self._json(200, payload)
                     return
                 if parsed.path == '/api/universal/grand-map-work':
@@ -8075,35 +7324,6 @@ class ApplicationServer(WorkspaceRootsOwner):
                             'error': 'runtime generation was released',
                         })
                         return
-                    if self.path == '/api/session-files':
-                        import hmac
-                        token = self.headers.get('X-ArchHub-Session') or ''
-                        csrf = self.headers.get('X-ArchHub-CSRF') or ''
-                        if (not token or not csrf
-                                or not hmac.compare_digest(token, owner.browser_session_token)
-                                or not hmac.compare_digest(csrf, owner.browser_csrf_token)):
-                            self._discard_admitted_body()
-                            self._json(403, {'ok': False, 'error': 'Local owner browser session required'})
-                            return
-                        if owner.is_halted():
-                            self._discard_admitted_body()
-                            self._json(403, {'ok': False, 'error': 'Stopped by you. Press Resume to continue.'})
-                            return
-                        from .session_files import SessionFiles
-                        from .enforce import guard_effect
-                        files = SessionFiles()
-                        body = self._body(max_bytes=9 * 1024 * 1024)
-                        try:
-                            payload = files.dispatch(body,
-                                invoke=lambda name, effect, params, feeds: guard_effect(name, effect, params, feeds),
-                                picker=getattr(owner, 'native_file_picker', None),
-                                save_picker=getattr(owner, 'native_save_file_picker', None),
-                                stopped=owner.is_halted)
-                        except (ValueError, OSError, TypeError, RecursionError) as error:
-                            self._json(400, {'ok': False, 'error': str(error)})
-                            return
-                        self._json(200, payload)
-                        return
                     try:
                         binding, _session_token = \
                             self._browser_session_binding(unsafe=True)
@@ -8113,16 +7333,6 @@ class ApplicationServer(WorkspaceRootsOwner):
                             'ok': False,
                             'error': str(exc),
                         })
-                        return
-                    if self.path == '/stop-all':
-                        self._discard_admitted_body()
-                        owner.halt_all()
-                        self._json(200, {'ok': True, 'stopped': True})
-                        return
-                    if self.path == '/resume':
-                        self._discard_admitted_body()
-                        owner.resume_all()
-                        self._json(200, {'ok': True, 'stopped': False})
                         return
                     if owner.is_halted():
                         self._discard_admitted_body()
@@ -8138,52 +7348,6 @@ class ApplicationServer(WorkspaceRootsOwner):
                             drain_denied_body=True,
                         ):
                             return
-                    if self.path == '/api/universal/workspace-roots':
-                        from .workspace_roots_catalogue import (
-                            settings_principal, normalized_picked_folder)
-                        from .private_root_grants import record_grant_event
-                        body = self._body(max_bytes=8192)
-                        if binding.subject_root != owner.universal_registry.authorization.subject_root:
-                            if isinstance(body, dict) and body.get('action') in (
-                                    'grant-private-root', 'revoke-private-root'):
-                                record_grant_event('desktop', 'refused',
-                                                   'AuthorizationDenied: not this instance owner', body)
-                            raise AuthorizationDenied('only this instance owner changes its workspaces')
-                        picker = getattr(owner, 'native_folder_picker', None)
-                        if body == {'action': 'browse'} and picker is not None:
-                            # Browse opens THIS window's own folder dialog (the
-                            # desktop's Qt thread), like pick-file; it only
-                            # fills the path in; registration uses the same owner.
-                            print('  workspace browse: opened', flush=True)
-                            try:
-                                chosen = normalized_picked_folder(picker('Choose a folder for ArchHub to govern'))
-                            except Exception as exc:
-                                print('  workspace browse: refused: ' + str(exc), flush=True)
-                                raise
-                            message = 'Folder selected' if chosen else 'Folder selection cancelled'
-                            print('  workspace browse: ' + ('selected' if chosen else 'cancelled'), flush=True)
-                            self._json(200, {'ok': True, 'path': chosen, 'cancelled': not bool(chosen),
-                                             'message': message})
-                            return
-                        receipt = isinstance(body, dict) and body.get('action') in (
-                            'grant-private-root', 'revoke-private-root')
-                        try:
-                            answer = owner._clean_workspace_roots(
-                                body, admission={'principal': settings_principal()})
-                        except Exception as exc:
-                            if isinstance(body, dict) and body.get('action') in ('browse', 'register'):
-                                print('  workspace %s: refused: %s' % (body['action'], exc), flush=True)
-                            if receipt:
-                                record_grant_event('desktop', 'refused',
-                                                   '%s: %s' % (type(exc).__name__, exc), body)
-                            raise
-                        if isinstance(body, dict) and body.get('action') == 'register':
-                            print('  workspace register: completed', flush=True)
-                        if receipt:
-                            event = answer.get('last_private_grant_event') or {}
-                            record_grant_event('desktop', 'ok', event.get('message', ''), body)
-                        self._json(200, {'ok': True, **answer})
-                        return
                     if self.path == '/api/universal/assistant-registration':
                         body = self._body(max_bytes=4096)
                         if type(body) is not dict:
@@ -8235,63 +7399,6 @@ class ApplicationServer(WorkspaceRootsOwner):
                             'revision': owner.universal_store.revision,
                         })
                         return
-                    if self.path == '/api/universal/mods':
-                        body = self._body(max_bytes=65536)
-                        if type(body) is not dict:
-                            raise InvalidCell('mods request must be an object')
-                        if binding.subject_root != owner.universal_registry.authorization.subject_root:
-                            raise AuthorizationDenied('only this instance owner changes mods')
-                        from .domains.selfext import (
-                            install_mod_package,
-                            mods_rows,
-                            remove_mod_package,
-                            review_mod_package,
-                            set_mod_enabled,
-                            set_mod_param,
-                        )
-                        action = str(body.get('action') or 'state')
-                        if action == 'browse':
-                            picker = getattr(owner, 'native_folder_picker', None)
-                            if picker is None:
-                                raise InvalidCell('folder picker is unavailable')
-                            chosen = picker('Choose an ArchHub mod folder')
-                            self._json(200, {'ok': True, 'path': str(chosen or '')})
-                            return
-                        if action == 'state':
-                            self._json(200, {'ok': True, 'mods': mods_rows(owner.universal_store)})
-                            return
-                        if action == 'review':
-                            self._json(200, {'ok': True, 'review': review_mod_package(body.get('path') or '')})
-                            return
-                        if action == 'install':
-                            row = install_mod_package(
-                                owner.universal_store, body.get('path') or '',
-                                reviewed_digest=str(body.get('reviewed_digest') or ''),
-                            )
-                            self._json(200, {'ok': True, 'mod': row, 'mods': mods_rows(owner.universal_store)})
-                            return
-                        if action == 'enable':
-                            row = set_mod_enabled(owner.universal_store, str(body.get('id') or ''), body.get('enabled'))
-                            self._json(200, {'ok': True, 'mod': row, 'mods': mods_rows(owner.universal_store)})
-                            return
-                        if action == 'param':
-                            row = set_mod_param(owner.universal_store, str(body.get('id') or ''),
-                                                str(body.get('param') or ''), body.get('value'))
-                            self._json(200, {'ok': True, 'mod': row, 'mods': mods_rows(owner.universal_store)})
-                            return
-                        if action == 'remove':
-                            removed = remove_mod_package(owner.universal_store, str(body.get('id') or ''))
-                            self._json(200, {'ok': True, 'removed': removed.get('manifest', {}).get('name', ''), 'mods': mods_rows(owner.universal_store)})
-                            return
-                        if action == 'retry':
-                            row = set_mod_enabled(owner.universal_store, str(body.get('id') or ''), True)
-                            self._json(200, {'ok': True, 'mod': row, 'mods': mods_rows(owner.universal_store)})
-                            return
-                        if action == 'draft':
-                            raise InvalidCell('mod drafting waits for the governed MODS-3 writer')
-                        raise InvalidCell('unknown mods action')
-                    # A browser POST is a person acting; retention waits for
-                    # an idle moment after the last one (reads and polls are GETs).
                     owner.last_user_action_monotonic = time.monotonic()
                     if self.path in ('/api/universal/conversation-restore',
                                      '/api/universal/conversation-archive-open'):
@@ -8320,420 +7427,7 @@ class ApplicationServer(WorkspaceRootsOwner):
                         except (InvalidCell, ValueError, TimeoutError) as refusal:
                             self._json(409, {'ok': False, 'error': str(refusal)})
                         return
-                    if self.path in ('/api/universal/provider-key', '/api/universal/social-credential', '/api/universal/social-credential-remove',
-                                     '/api/universal/social-linkedin-app', '/api/universal/social-linkedin-signin',
-                                     '/api/universal/social-linkedin-finish', '/api/universal/social-meta-app',
-                                     '/api/universal/social-meta-signin', '/api/universal/social-meta-finish',
-                                     '/api/universal/notion-connect', '/api/universal/social-connection'):
-                        from .model_router import ProviderCredentialError, save_provider_key
-                        social_enrollment = self.path == '/api/universal/social-credential'
-                        social_removal = self.path == '/api/universal/social-credential-remove'
-                        credential_context = binding.context
-                        try:
-                            body = self._body(max_bytes=32_768 if social_enrollment else 16_384)
-                        except Exception:
-                            self._json(400, {'ok': False, 'error_code': 'invalid_credential',
-                                'error': 'Credential request is invalid or exceeds its allowed size.'})
-                            return
-                        try:
-                            def require_credential_admission():
-                                # Resolving the browser also resolves its broker
-                                # context afresh, including expiry during DPAPI I/O.
-                                current_binding, current_token = self._browser_session_binding(unsafe=True)
-                                if current_binding is not binding or current_binding.context is not credential_context or current_token != _session_token:
-                                    raise AuthorizationDenied('Browser binding changed before credential admission')
-                                if owner._runtime_handoff_exit.is_set():
-                                    raise AuthorizationDenied('The application is closing')
-                                owner.require_universal_http_route('POST', self.path,
-                                    authentication_context=credential_context, revalidate=True)
-                                if binding.subject_root != owner.universal_registry.authorization.subject_root:
-                                    raise AuthorizationDenied('Credential changes require this application owner')
-                            with owner.mutation_lock, owner.universal_registry.authorization.broker.live_context(credential_context):
-                                require_credential_admission()
-                                if self.path == '/api/universal/social-connection':
-                                    from . import social_connections
-                                    if type(body) is not dict or not {'provider', 'action'} <= set(body) <= {'provider', 'action', 'account_id'}:
-                                        raise ValueError('Connections accept only provider sign-in actions; keys and tokens are not accepted')
-                                    provider, action = body['provider'], body['action']
-                                    if action == 'start' and set(body) == {'provider', 'action'}:
-                                        row = social_connections.start(provider)
-                                    elif action == 'cancel' and set(body) == {'provider', 'action'}:
-                                        row = social_connections.cancel(provider)
-                                    elif action == 'finish':
-                                        row = social_connections.finish(owner, {key: value for key, value in body.items() if key != 'action'},
-                                            require_admission=require_credential_admission)
-                                    else:
-                                        raise ValueError('Choose start, finish or cancel provider sign-in')
-                                    payload = {'ok': True, 'connection': row}
-                                elif self.path == '/api/universal/social-linkedin-app':
-                                    raise InvalidCell('LinkedIn app configuration belongs to ArchHub cloud')
-                                elif self.path == '/api/universal/social-meta-app':
-                                    raise InvalidCell('Meta app configuration belongs to ArchHub cloud')
-                                elif self.path == '/api/universal/social-linkedin-signin' and body == {'cancel': True}:
-                                    # Settings' Cancel: the waiting loopback closes.
-                                    from .social_linkedin_signin import cancel_current
-                                    payload = {'ok': True, **cancel_current()}
-                                elif self.path == '/api/universal/social-meta-signin' and body == {'cancel': True}:
-                                    # Settings' Cancel: the waiting loopback closes.
-                                    from .social_meta_signin import cancel_current
-                                    payload = {'ok': True, **cancel_current()}
-                                elif self.path == '/api/universal/social-linkedin-signin':
-                                    # Opens the ArchHub cloud broker; the publisher app lives server-side.
-                                    from .cloud_social_oauth import start as cloud_social_start
-                                    if body != {}:
-                                        raise InvalidCell('LinkedIn sign-in takes no fields, or only cancel')
-                                    payload = {'ok': True, **cloud_social_start('linkedin')}
-                                elif self.path == '/api/universal/social-meta-signin':
-                                    # Opens the ArchHub cloud broker; the publisher app lives server-side.
-                                    from .cloud_social_oauth import start as cloud_social_start
-                                    if body != {}:
-                                        raise InvalidCell('Meta sign-in takes no fields, or only cancel')
-                                    payload = {'ok': True, **cloud_social_start('meta')}
-                                elif self.path == '/api/universal/notion-connect':
-                                    # Notion's existing owner route: hosted MCP OAuth, no token paste.
-                                    from .host_brokers import notion_connect
-                                    if body != {}:
-                                        raise InvalidCell('Notion sign-in takes no fields')
-                                    out, label = notion_connect({}, {})
-                                    payload = {'ok': bool(out.get('ok', True)), 'label': label}
-                                elif self.path == '/api/universal/social-linkedin-finish':
-                                    # Enrolls the account LinkedIn itself confirmed; nothing is typed.
-                                    from .social_custody import enroll_social_account
-                                    from . import cloud_social_oauth
-                                    from . import social_linkedin_signin
-                                    cloud_attempt = cloud_social_oauth._CURRENT.get('linkedin')
-                                    with social_linkedin_signin._current_lock:
-                                        local_attempt = social_linkedin_signin._current
-                                    local_is_cloud = (
-                                        local_attempt is not None
-                                        and local_attempt.__class__.__module__ == cloud_social_oauth.__name__
-                                    )
-                                    if cloud_attempt is not None and (local_attempt is None or local_attempt is cloud_attempt or local_is_cloud):
-                                        try:
-                                            account_id, credential = cloud_social_oauth.take_verified('linkedin')
-                                        except SocialGrantNotReady as waiting:
-                                            raise LinkedInNotReady(str(waiting)) from waiting
-                                    else:
-                                        account_id, credential = social_linkedin_signin.take_verified()
-                                    payload = enroll_social_account(owner, {
-                                        'provider': 'linkedin', 'account_id': account_id,
-                                        'vault_entry': 'social-linkedin-' + account_id.rsplit(':', 1)[1],
-                                        'token': credential}, require_admission=require_credential_admission, verified=True)
-                                    credential = None
-                                elif self.path == '/api/universal/social-meta-finish':
-                                    # Enrolls the Page the founder picked from Meta's returned Page list.
-                                    from .social_custody import enroll_social_account
-                                    if type(body) is not dict or set(body) != {'page_id'}:
-                                        raise InvalidCell('Meta finish requires one selected Page')
-                                    from . import cloud_social_oauth
-                                    from . import social_meta_signin
-                                    cloud_attempt = cloud_social_oauth._CURRENT.get('meta')
-                                    with social_meta_signin._current_lock:
-                                        local_attempt = social_meta_signin._current
-                                    local_is_cloud = (
-                                        local_attempt is not None
-                                        and local_attempt.__class__.__module__ == cloud_social_oauth.__name__
-                                    )
-                                    if cloud_attempt is not None and (local_attempt is None or local_attempt is cloud_attempt or local_is_cloud):
-                                        try:
-                                            selected = cloud_social_oauth.take_verified_page(body['page_id'])
-                                        except SocialGrantNotReady as waiting:
-                                            raise MetaNotReady(str(waiting)) from waiting
-                                    else:
-                                        selected = social_meta_signin.take_verified_page(body['page_id'])
-                                    page = selected['page']
-                                    page_id = page['id']
-                                    payload = enroll_social_account(owner, {
-                                        'provider': 'meta', 'account_id': page_id,
-                                        'vault_entry': 'social-meta-page-' + page_id,
-                                        'token': selected['page_token']},
-                                        require_admission=require_credential_admission, verified=True)
-                                    payload = {**payload, 'page': page}
-                                    if 'instagram' in selected:
-                                        instagram = selected['instagram']
-                                        ig_id = instagram['id']
-                                        ig_payload = enroll_social_account(owner, {
-                                            'provider': 'meta', 'account_id': ig_id,
-                                            'vault_entry': 'social-meta-ig-' + ig_id,
-                                            'token': selected['instagram_token']},
-                                            require_admission=require_credential_admission, verified=True)
-                                        payload = {**payload, 'instagram': {**instagram,
-                                                                           'vault_entry': ig_payload['vault_entry'],
-                                                                           'account_id': ig_payload['account_id']}}
-                                    selected.clear()
-                                elif social_removal:
-                                    from .social_custody import remove_local_social_account
-                                    payload = remove_local_social_account(owner, body, require_admission=require_credential_admission)
-                                elif social_enrollment:
-                                    from .social_custody import enroll_social_account
-                                    payload = enroll_social_account(owner, body, require_admission=require_credential_admission)
-                                else:
-                                    with owner.universal_store.stable_snapshot():
-                                        payload = save_provider_key(body, before_replace=require_credential_admission)
-                            self._json(200 if payload.get('ok') is True else 409, payload)
-                        except ProviderCredentialError as exc:
-                            status = 400 if exc.reason_code in ('invalid_credential', 'invalid_social_credential', 'invalid_social_revocation') else (
-                                403 if exc.reason_code in ('save_not_admitted', 'removal_not_admitted') else (
-                                    409 if exc.reason_code in ('secure_store_changed', 'social_entry_collision', 'social_account_changed') else 503))
-                            self._json(status, {'ok': False, 'error_code': exc.reason_code, 'error': str(exc)})
-                        except AuthorizationDenied:
-                            self._json(403, {'ok': False, 'error_code': 'credential_not_admitted',
-                                'error': 'Credential changes are no longer authorized. Sign in again before retrying.'})
-                        except InvalidCell:
-                            self._json(400, {'ok': False, 'error_code': 'credential_reference_invalid',
-                                'error': 'The credential reference does not match this application custody.'})
-                        except (ValueError, SocialGrantNotReady) as refused:
-                            self._json(400, {'ok': False, 'error': str(refused)})
-                        except LinkedInNotReady as waiting:
-                            self._json(409, {'ok': False, 'error_code': 'linkedin_not_ready', 'error': str(waiting)})
-                        except MetaNotReady as waiting:
-                            self._json(409, {'ok': False, 'error_code': 'meta_not_ready', 'error': str(waiting)})
-                        except Exception:
-                            self._json(503, {'ok': False, 'error_code': 'credential_change_unconfirmed',
-                                'error': 'The credential change could not be confirmed. Check the saved account before retrying.'})
-                        finally:
-                            if type(body) is dict:
-                                body.clear()
-                        return
-                    if self.path == '/api/universal/social-approve':
-                        # The founder's own Approve or Deny of one displayed social post.
-                        try:
-                            body = self._body(max_bytes=4096)
-                            owner.require_universal_http_route('POST', self.path, authentication_context=binding.context)
-                            from .hook_decision import decide
-                            self._json(200, {'ok': True, **decide({'approval': 'social', 'server': owner,
-                                                                   'binding': binding, 'body': body})})
-                        except AuthorizationDenied as denied:
-                            self._json(403, {'ok': False, 'error': str(denied)})
-                        except (InvalidCell, ValueError) as refusal:
-                            self._json(409, {'ok': False, 'error': str(refusal)})
-                        return
                     body = self._body()
-                    if self.path == '/api/universal/agent':
-                        # Planning may wait on a provider. Lock only the context
-                        # snapshot and resulting draft edits inside the composer.
-                        from .agent_composer import run_agent_composer
-                        from .model_router import ModelRouteRefused
-                        def current_authority():
-                            current_binding, _ = self._browser_session_binding(unsafe=True)
-                            if current_binding.context is not binding.context:
-                                raise AuthorizationDenied('browser binding changed during planning')
-                            _revalidate_composer_context(owner, binding.context, self.path)
-
-                        with _composer_planning(owner):
-                            if (isinstance(body, Mapping) and body.get("graph") is True
-                                    and type(body.get("node")) is str and body.get("node").strip()):
-                                raise InvalidCell("Agent send has more than one canvas target")
-                            agent_node_kwargs = _agent_node_request_kwargs(body)
-                            persisted_turn = None
-                            if agent_node_kwargs:
-                                persisted_turn = _agent_node_conversation_binding(
-                                    owner, binding, body, current_authority)
-                                model = persisted_turn['model']
-                                agent_node_kwargs = (
-                                    {"node_root": persisted_turn["node"]}
-                                    if persisted_turn.get("node_model_capable") else {}
-                                )
-                            elif isinstance(body, Mapping) and body.get("graph") is True:
-                                persisted_turn = _agent_graph_conversation_binding(
-                                    owner, binding, body, current_authority)
-                                model = persisted_turn['model']
-                            else:
-                                with owner.mutation_lock:
-                                    model = (
-                                        str(body.get('model') or '').strip()
-                                        or owner._read_agent_model()
-                                        or owner._default_agent_model()[0]
-                                    )
-                            conversation_context = None
-                            user_message = None
-                            append_turn = None
-                            if persisted_turn is not None:
-                                from .workshop_session_start import _turn_history, _append_user
-                                request_id = _agent_node_request_id(body)
-                                prefix = 'canvas-composer:%s' % hashlib.sha256(
-                                    request_id.encode("utf-8")).hexdigest()
-                                append_turn, _lookup_turn, turn_context = _turn_history(
-                                    owner, binding, persisted_turn['conversation'], prefix, current_authority)
-                                intent_text = "Canvas node request " + hashlib.sha256(json.dumps({
-                                    "prompt": str(body.get('prompt', '')),
-                                    "model": str(model or ""),
-                                    "target": persisted_turn['node'],
-                                    "kind": persisted_turn.get("kind", "node"),
-                                    "generation": body.get('generation'),
-                                }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
-                                held_intent = _lookup_turn(":intent")
-                                if held_intent is not None and held_intent["content"] != intent_text:
-                                    raise InvalidCell("This node request changed; use a new request identity")
-                                previous_user = _lookup_turn(":user")
-                                reply = _lookup_turn(":reply")
-                                if reply is not None:
-                                    if previous_user is None:
-                                        raise InvalidCell("The saved canvas request has a reply but no user message")
-                                    reply_text = str(reply["content"])
-                                    marker = ":\n"
-                                    answer = reply_text.split(marker, 1)[1] if marker in reply_text else reply_text
-                                    self._json(200, {"ok": True, "answer": answer, "applied": [],
-                                        "delivery": {"state": "replied", "request_id": request_id,
-                                            "message_id": previous_user["id"], "reply_message_id": reply["id"]}})
-                                    return
-                                if _lookup_turn(":started") is not None:
-                                    if previous_user is None:
-                                        raise InvalidCell("The saved node request has no user message")
-                                    message = "reply not confirmed - check before sending again"
-                                    self._json(200, {"ok": True, "answer": message, "applied": [],
-                                        "delivery": {"state": "reply_not_confirmed", "request_id": request_id,
-                                            "message_id": previous_user["id"],
-                                            # The first attempt may have reached the provider; this retry did not send again.
-                                            "provider_may_have_been_called": True, "resent": False}})
-                                    return
-                                append_turn(intent_text, ":intent")
-                                user_message = _append_user(owner.universal_registry, binding,
-                                    str(body.get('prompt', '')), persisted_turn['node'], append_turn, _lookup_turn)
-                                conversation_context = turn_context(user_message['sequence'])
-                                dispatched = False
-
-                                def before_dispatch():
-                                    nonlocal dispatched
-                                    append_turn(
-                                        "The agent request started. An unrecorded outcome is unknown and is not retried automatically.",
-                                        ":started", refs=(persisted_turn['node'],),
-                                        reply_to=user_message['id'], require_new=True)
-                                    dispatched = True
-                            try:
-                                agent_result = run_agent_composer(
-                                    owner.universal_store,
-                                    owner.universal_registry,
-                                    brain_first_prompt(str(body.get('prompt', ''))),
-                                    model=model,
-                                    authentication_context=binding.context,
-                                    mutation_lock=owner.mutation_lock,
-                                    revalidate=current_authority,
-                                    host_reader=_baboom_owner_tool_bridge(
-                                        owner, authentication_context=binding.context),
-                                    grant_checker=_baboom_owner_grant_checker(
-                                        owner, authentication_context=binding.context,
-                                        browser=binding,
-                                        workflow_conversation=(
-                                            persisted_turn.get('conversation')
-                                            if persisted_turn is not None else None
-                                        )),
-                                    before_dispatch=before_dispatch if persisted_turn is not None else None,
-                                    conversation_context=conversation_context,
-                                    generation=body.get('generation') if body.get('generation') is not None else owner._read_agent_generation(),
-                                    **agent_node_kwargs,
-                                )
-                                if append_turn is not None and user_message is not None:
-                                    applied_roots = tuple(row['root'] for row in agent_result.get('applied', ())
-                                        if isinstance(row, dict) and row.get('root'))
-                                    reply_row = append_turn("Model reply from %s:\n%s" % (
-                                        str(model or 'selected model'),
-                                        str(agent_result.get('answer') or ''),
-                                    ), ':reply', refs=tuple(dict.fromkeys((persisted_turn['node'], *applied_roots))),
-                                        reply_to=user_message['id'])
-                                    agent_result = {**agent_result, "delivery": {"state": "replied",
-                                        "request_id": request_id, "message_id": user_message["id"],
-                                        "reply_message_id": reply_row["id"]}}
-                            except ModelRouteRefused as refused:
-                                self._json(200, {
-                                    'ok': False, 'error': str(refused),
-                                    'answer': str(refused), 'applied': [],
-                                })
-                                return
-                            except Exception:
-                                if persisted_turn is not None and dispatched:
-                                    message = "reply not confirmed - check before sending again"
-                                    self._json(200, {"ok": True, "answer": message, "applied": [],
-                                        "delivery": {"state": "reply_not_confirmed", "request_id": request_id,
-                                            "message_id": user_message["id"], "provider_may_have_been_called": True}})
-                                    return
-                                raise
-                        self._json(200, agent_result)
-                        return
-                    if self.path == '/api/universal/terminal':
-                        from .terminal_sessions import TerminalRefused
-                        action = body.get('action') if isinstance(body, dict) else None
-                        # The consent route's admission: the binding this request
-                        # was admitted with is still the browser's, still holds
-                        # execute, and is the owner. Checked while the context
-                        # is held live; the shell action itself runs after, so a
-                        # Stop waiting on a process never holds the broker.
-                        try:
-                            with owner.universal_registry.authorization.broker.live_context(binding.context):
-                                current_binding, _ = self._browser_session_binding(unsafe=True)
-                                if current_binding.context is not binding.context:
-                                    raise AuthorizationDenied('Browser binding changed before terminal admission')
-                                owner.require_universal_http_route(
-                                    'POST', self.path, authentication_context=binding.context,
-                                    revalidate=True)
-                                if binding.subject_root != owner.universal_registry.authorization.subject_root:
-                                    raise AuthorizationDenied('Terminals belong to this application owner')
-                        except AuthorizationDenied as denied:
-                            self._json(403, {'ok': False, 'error': str(denied)})
-                            return
-                        try:
-                            payload = owner._terminal_action(body)
-                        except TerminalRefused as refused:
-                            self._json(409, {'ok': False, 'error': str(refused)})
-                            return
-                        self._json(200, {'ok': True, **payload})
-                        return
-                    if self.path == '/api/universal/cloud-publish-consent':
-                        from .cloud_publish_consent import (
-                            read_cloud_publish_consent, record_cloud_publish_consent,
-                            withdraw_cloud_publish_consent,
-                        )
-                        allow = body.get('allow') if isinstance(body, dict) else None
-                        state_dir = os.environ.get('ARCHHUB_STATE_DIR', '')
-                        if type(allow) is not bool:
-                            self._json(400, {'ok': False, 'error': 'Consent must be allowed or withdrawn.'})
-                            return
-                        if not state_dir:
-                            self._json(503, {'ok': False, 'error': 'The application state folder is unknown.'})
-                            return
-                        with owner.mutation_lock, owner.universal_registry.authorization.broker.live_context(binding.context):
-                            current_binding, _ = self._browser_session_binding(unsafe=True)
-                            if current_binding.context is not binding.context:
-                                raise AuthorizationDenied('Browser binding changed before consent admission')
-                            if not self._universal_route('POST', self.path, current_binding):
-                                return
-                            if binding.subject_root != owner.universal_registry.authorization.subject_root:
-                                raise AuthorizationDenied('Cloud publish consent belongs to this application owner')
-                            from .cloud_session import signed_in_cloud_account
-                            waiting = object()
-                            account = signed_in_cloud_account(pending=waiting)
-                            if allow and account is waiting:
-                                self._json(409, {'ok': False, 'code': 'account_verification_pending',
-                                    'error': 'Checking your account. Try again shortly.'})
-                                return
-                            account = '' if account is waiting else account or ''
-                            if allow:
-                                if '@' not in account:
-                                    self._json(409, {'ok': False, 'error': 'Sign in before allowing cloud publish.'})
-                                    return
-                                record_cloud_publish_consent(Path(state_dir), account=account)
-                            else:
-                                withdraw_cloud_publish_consent(Path(state_dir))
-                            payload = read_cloud_publish_consent(Path(state_dir), account)
-                        if allow:
-                            owner._restart_cloud_relay()
-                        else:
-                            owner._stop_cloud_relay()
-                        self._json(200, {'ok': True, **payload})
-                        return
-                    if self.path == '/api/universal/application-update':
-                        from .application_update import application_update_action
-                        with owner.mutation_lock, owner.universal_registry.authorization.broker.live_context(binding.context):
-                            current_binding, _ = self._browser_session_binding(unsafe=True)
-                            if current_binding.context is not binding.context:
-                                raise AuthorizationDenied('Browser binding changed before update admission')
-                            if not self._universal_route('POST', self.path, current_binding):
-                                return
-                            if binding.subject_root != owner.universal_registry.authorization.subject_root:
-                                raise AuthorizationDenied('Release updates require this application owner')
-                            payload = application_update_action(owner, body)
-                        self._json(200, payload)
-                        return
                     if self.path == '/api/universal/cockpit-link':
                         # The cockpit is a lens of this app: it opens on the
                         # app's own session through the cloud's one-time
@@ -8741,172 +7435,6 @@ class ApplicationServer(WorkspaceRootsOwner):
                         # never holds the mutation lock.
                         from .cloud_signin import cockpit_link
                         self._json(200, cockpit_link())
-                        return
-                    if self.path == '/api/universal/workshop-native':
-                        host = getattr(owner, '_existing_workshop_native_host', None)
-                        if host is None:
-                            raise InvalidCell('Native Workshop owner is unavailable')
-                        self._json(200, host.perform(binding, body))
-                        return
-                    if self.path == '/api/universal/workshop-model-approval':
-                        from .existing_workshop_conversation import approve_browser_workshop_model
-                        with owner.mutation_lock:
-                            payload = approve_browser_workshop_model(owner, binding, body)
-                        self._json(200, payload)
-                        return
-                    if self.path == '/api/universal/native-contact':
-                        from .native_contact import bind_native_contact,send_native_contact
-                        if type(body) is not dict or body.get('action') not in {'bind','send'}:
-                            raise InvalidCell('Native contact action is invalid')
-                        def contact_guard():
-                            if owner._resolve_browser_session(_session_token)!=binding:
-                                raise AuthorizationDenied('Native contact browser changed')
-                            owner.require_universal_http_route('POST','/api/universal/native-contact',
-                                authentication_context=binding.context,revalidate=True)
-                        action=body['action'];arguments={key:value for key,value in body.items() if key!='action'}
-                        function=bind_native_contact if action=='bind' else send_native_contact
-                        self._json(200,function(owner,binding,arguments,browser_guard=contact_guard))
-                        return
-                    if self.path == '/api/universal/workshop':
-                        if type(body) is dict and body.get('action') == 'agent-channel':
-                            from contextlib import nullcontext
-                            from .app_agents import dispatch as dispatch_agent_surface
-                            def agent_surface_guard():
-                                current, current_token = self._browser_session_binding(unsafe=True)
-                                if current != binding or current_token != _session_token:
-                                    raise AuthorizationDenied('Agent surface browser changed')
-                                owner.require_universal_http_route('POST', self.path,
-                                    authentication_context=binding.context, revalidate=True)
-                            effect = body.get('function') in {'installAgentChannel', 'repairAgentChannel'}
-                            try:
-                                with owner.mutation_lock if effect else nullcontext():
-                                    payload = dispatch_agent_surface(owner.app_agents, body, guard=agent_surface_guard)
-                            except ValueError as exc:
-                                self._json(400, {'ok': False, 'error': str(exc)})
-                                return
-                            except RuntimeError as exc:
-                                self._json(409, {'ok': False, 'error': str(exc)})
-                                return
-                            self._json(200, payload)
-                            return
-                        if type(body) is dict and body.get('action') == 'data-api':
-                            from .workshop_api import dispatch as dispatch_workshop_data
-                            data_path=self.path
-                            def data_guard():
-                                current, current_token = self._browser_session_binding(unsafe=True)
-                                if current != binding or current_token != _session_token:
-                                    raise AuthorizationDenied('Workshop data browser changed')
-                                owner.require_universal_http_route('POST', data_path,
-                                    authentication_context=binding.context, revalidate=True)
-                            self._json(200, dispatch_workshop_data(owner, binding, body, guard=data_guard,route=data_path))
-                            return
-                        if type(body) is dict and body.get('action') in {'start-session', 'send-model'}:
-                            from .workshop_session_start import start_workshop_session, send_workshop_model_message
-                            def session_start_guard():
-                                current, current_token = self._browser_session_binding(unsafe=True)
-                                if current != binding or current_token != _session_token:
-                                    raise AuthorizationDenied('Session start browser changed')
-                                _revalidate_composer_context(owner, binding.context, self.path)
-                            with _composer_planning(owner):
-                                function = start_workshop_session if body['action'] == 'start-session' else send_workshop_model_message
-                                payload = function(owner, binding,
-                                    {key:value for key,value in body.items() if key != 'action'},
-                                    browser_guard=session_start_guard)
-                            self._json(200, payload)
-                            return
-                        if type(body) is dict and body.get('action') == 'import-clean-archive':
-                            # Plan B S4: the founder preserves the clean Workshop's delivered
-                            # messages as one archive conversation (workshop_clean_archive.py).
-                            from .workshop_clean_archive import import_clean_workshop_archive
-                            if set(body) != {'action', 'record'}:
-                                raise InvalidCell('Clean archive import fields are invalid')
-                            with owner.mutation_lock:
-                                current, current_token = self._browser_session_binding(unsafe=True)
-                                if current != binding or current_token != _session_token:
-                                    raise AuthorizationDenied('Clean archive browser changed')
-                                owner.require_universal_http_route('POST', self.path,
-                                    authentication_context=binding.context, revalidate=True)
-                                payload = import_clean_workshop_archive(owner,
-                                    authentication_context=binding.context, record=body['record'],
-                                    expected_revision=owner.universal_store.revision)
-                            self._json(200, payload)
-                            return
-                        from .workshop_workflow import ACTIONS as WORKFLOW_ACTIONS, perform_workshop_action
-                        if type(body) is dict and body.get('action') in WORKFLOW_ACTIONS:
-                            # Draft, approve and run agent-proposed workflows and
-                            # request independent review (workshop_workflow.py).
-                            def workflow_guard():
-                                current, current_token = self._browser_session_binding(unsafe=True)
-                                if current != binding or current_token != _session_token:
-                                    raise AuthorizationDenied('Workshop workflow browser changed')
-                                owner.require_universal_http_route('POST', self.path,
-                                    authentication_context=binding.context, revalidate=True)
-                            self._json(200, perform_workshop_action(owner, binding, body,
-                                browser_guard=workflow_guard))
-                            return
-                        from .workshop_presentation import ACTIONS as PRESENTATION_ACTIONS, perform_presentation_action
-                        if type(body) is dict and body.get('action') in PRESENTATION_ACTIONS:
-                            def presentation_guard():
-                                current, current_token = self._browser_session_binding(unsafe=True)
-                                if current != binding or current_token != _session_token:
-                                    raise AuthorizationDenied('Workshop presentation browser changed')
-                                owner.require_universal_http_route('POST', self.path,
-                                    authentication_context=binding.context, revalidate=True)
-                            self._json(200, perform_presentation_action(owner, binding, body,
-                                browser_guard=presentation_guard))
-                            return
-                        from .workshop_page_lifecycle import PAGE_ACTIONS, perform_browser_page_action
-                        if type(body) is dict and type(body.get('action')) is str and body['action'] in PAGE_ACTIONS:
-                            def page_guard():
-                                current, _ = self._browser_session_binding(unsafe=True)
-                                if current != binding:
-                                    raise AuthorizationDenied('Conversation page browser changed')
-                                owner.require_universal_http_route('POST', self.path,
-                                    authentication_context=binding.context, revalidate=True)
-                            result = perform_browser_page_action(owner, binding, body, browser_guard=page_guard)
-                            self._json(200, result)
-                            return
-                        if type(body) is dict and body.get('action') == 'create-conversation':
-                            required = {'action', 'root', 'scope', 'revision', 'title',
-                                'participant_roots', 'idempotency_key'}
-                            if set(body) != required:
-                                raise InvalidCell('Conversation creation fields are invalid')
-                            from .existing_workshop_conversation import _admit as admit_workshop
-                            from .workshop_conversation_catalog import create_workshop_conversation
-                            def creation_guard():
-                                current, _ = self._browser_session_binding(unsafe=True)
-                                if current != binding:
-                                    raise AuthorizationDenied('Conversation creation browser changed')
-                                owner.require_universal_http_route('POST', self.path,
-                                    authentication_context=binding.context, revalidate=True)
-                                admit_workshop(owner, binding, body['root'], body['scope'])
-                            with owner.mutation_lock:
-                                creation_guard()
-                                result = create_workshop_conversation(owner,
-                                    authentication_context=binding.context, expected_revision=body['revision'],
-                                    title=body['title'], participant_roots=body['participant_roots'],
-                                    idempotency_key=body['idempotency_key'], before_commit=creation_guard)
-                            self._json(200, {'ok':True, 'graph_id':owner.universal_registry.application_root,
-                                'scope_root':body['scope'], 'idempotency_key':body['idempotency_key'], **result})
-                            return
-                        from .existing_workshop_conversation import send_browser_workshop
-                        def workshop_send_guard():
-                            current, current_token = self._browser_session_binding(unsafe=True)
-                            if current != binding or current_token != _session_token:
-                                raise AuthorizationDenied('Workshop send browser changed')
-                            owner.require_universal_http_route('POST', self.path,
-                                authentication_context=binding.context, revalidate=True)
-                        if type(body) is dict and body.get('recipients') == []:
-                            # Broadcast may invoke a model. Its own admission/storage
-                            # sections lock; external work must not hold mutation_lock.
-                            with _composer_planning(owner):
-                                payload = send_browser_workshop(owner, binding, body,
-                                    browser_guard=workshop_send_guard)
-                        else:
-                            with owner.mutation_lock:
-                                workshop_send_guard()
-                                payload = send_browser_workshop(owner, binding, body)
-                        self._json(200, payload)
                         return
                     if self.path == '/api/universal/baboom-command':
                         if set(body) != {'utterance'}:
@@ -8977,87 +7505,6 @@ class ApplicationServer(WorkspaceRootsOwner):
                             }
                         self._json(200, payload)
                         return
-                    if self.path == '/api/universal/workshop-work-assign':
-                        # The founder assigns one Workshop Work to an agent already running
-                        # in that room: his own browser gesture, never a machine request.
-                        from .workshop_work_creation import (assign_browser_workshop_work,
-                                                             WorkshopAssignmentRefused)
-                        def current_workshop_assignment_binding():
-                            current_binding, _ = self._browser_session_binding(unsafe=True)
-                            if current_binding != binding or current_binding.context is not binding.context:
-                                raise AuthorizationDenied('Workshop browser binding changed during assignment')
-                            owner.require_universal_http_route('POST', self.path,
-                                authentication_context=binding.context, revalidate=True)
-                        try:
-                            payload = assign_browser_workshop_work(owner, binding, body,
-                                browser_guard=current_workshop_assignment_binding)
-                        except WorkshopAssignmentRefused as refusal:
-                            # Refused before the commit: nothing was written, and the
-                            # reply names the exact assignment id it refuses.
-                            self._json(refusal.status, {'ok':False, 'error':str(refusal),
-                                                        'refused':True, 'assignment':refusal.assignment,
-                                                        'reconciled_absent':refusal.reconciled_absent})
-                            return
-                        self._json(200, payload)
-                        return
-                    if self.path == '/api/universal/work':
-                        if any(field in body for field in ('workshop_root', 'workshop_scope', 'revision')):
-                            from .workshop_work_creation import create_browser_workshop_work
-                            def current_workshop_creation_binding():
-                                current_binding, _ = self._browser_session_binding(unsafe=True)
-                                if current_binding != binding or current_binding.context is not binding.context:
-                                    raise AuthorizationDenied('Workshop browser binding changed during Work creation')
-                                owner.require_universal_http_route('POST', self.path,
-                                    authentication_context=binding.context, revalidate=True)
-                            payload = create_browser_workshop_work(owner, binding, body,
-                                browser_guard=current_workshop_creation_binding)
-                            self._json(200, payload)
-                            return
-                        allowed = {
-                            'title', 'description', 'priority', 'external_key',
-                            'references', 'structured_references', 'x', 'y',
-                            'projection',
-                        }
-                        if set(body) - allowed:
-                            raise InvalidCell(
-                                'governed work request contains undeclared facts'
-                            )
-                        with owner.mutation_lock:
-                            created_root, membership_wire, revision = (
-                                create_universal_governed_work(
-                                    owner.universal_store,
-                                    owner.universal_registry,
-                                    title=body.get('title', ''),
-                                    description=body.get('description', ''),
-                                    priority=body.get('priority', 0),
-                                    external_key=body.get(
-                                        'external_key', 'unset'
-                                    ),
-                                    references=body.get('references'),
-                                    structured_references=body.get(
-                                        'structured_references'
-                                    ),
-                                    x=float(body['x']) if body.get('x') is not None else None,
-                                    y=float(body['y']) if body.get('y') is not None else None,
-                                    authentication_context=binding.context,
-                                )
-                            )
-                            payload = {
-                                'ok': True,
-                                'created_root': created_root,
-                                'membership_wire': membership_wire,
-                                'revision': revision,
-                            }
-                            if body.get('projection', True):
-                                payload.update(
-                                    project_universal_governed_work_status(
-                                        owner.universal_store,
-                                        owner.universal_registry,
-                                        authentication_context=binding.context,
-                                    )
-                                )
-                        self._json(200, payload)
-                        return
                     if self.path == '/api/universal/grand-map-work':
                         allowed = {'limit', 'include_live'}
                         if set(body) - allowed:
@@ -9103,481 +7550,6 @@ class ApplicationServer(WorkspaceRootsOwner):
                                 source=source,
                                 authentication_context=binding.context,
                             )
-                        self._json(200, payload)
-                        return
-                    if self.path == '/api/universal/interaction':
-                        is_remove_member_request = (
-                            body.get('control')
-                            == 'app:control:canvas:remove-member'
-                            and isinstance(body.get('membership'), dict)
-                        )
-                        admitted = {
-                            'interaction', 'control', 'event', 'revision',
-                            'projection_mode', 'event_facts',
-                        }
-                        if is_remove_member_request:
-                            admitted.add('membership')
-                            admitted.add('expected_scope')
-                            admitted.add('command_id')
-                        if set(body) - admitted:
-                            raise InvalidCell(
-                                'interaction request contains undeclared facts'
-                            )
-                        if any(
-                            not isinstance(body.get(name), str)
-                            or not body.get(name)
-                            for name in ('interaction', 'control', 'event')
-                        ):
-                            raise InvalidCell(
-                                'interaction request identities are invalid'
-                            )
-                        if type(body.get('revision')) is not int:
-                            raise InvalidCell(
-                                'interaction request revision is invalid'
-                            )
-                        projection_mode = body.get('projection_mode')
-                        if projection_mode not in (
-                            None,
-                            _INTERACTION_DELTA_MODE,
-                            _TOPOLOGY_DELTA_MODE,
-                            _RECEIPT_MODE,
-                        ):
-                            raise InvalidCell(
-                                'interaction projection mode is invalid'
-                            )
-                        with owner.mutation_lock:
-                            receipt_started = time.perf_counter()
-                            if (
-                                projection_mode in (
-                                    _INTERACTION_DELTA_MODE,
-                                    _TOPOLOGY_DELTA_MODE,
-                                    _RECEIPT_MODE,
-                                )
-                                and body['revision']
-                                != owner.universal_store.revision
-                                and not is_remove_member_request
-                            ):
-                                raise Conflict(
-                                    "expected revision %s, current revision is %s"
-                                    % (
-                                        body['revision'],
-                                        owner.universal_store.revision,
-                                    )
-                                )
-                            previous_projection = (
-                                owner._cached_browser_canvas_projection(
-                                    binding, body['revision']
-                                )
-                            )
-                            if (
-                                projection_mode in (
-                                    _INTERACTION_DELTA_MODE,
-                                    _TOPOLOGY_DELTA_MODE,
-                                    _RECEIPT_MODE,
-                                )
-                                and previous_projection is None
-                            ):
-                                raise InvalidCell(
-                                    'interaction projection cache is unavailable'
-                            )
-                            created_root = None
-                            scope_materialization = None
-                            reusable_scope_projection = None
-                            reusable_scope_identity = None
-                            interaction = read_interaction(
-                                owner.universal_store.snapshot(),
-                                owner.universal_registry.interaction_protocol,
-                                body['interaction'],
-                                budget=100_000,
-                            )
-                            receipt_resolved = time.perf_counter()
-                            if (
-                                interaction.action_root in (
-                                    CAPABILITY_RELATION_MEMBERS,
-                                    CAPABILITY_TOPOLOGY,
-                                    CAPABILITY_HISTORY,
-                                    CAPABILITY_SCOPE,
-                                )
-                                and projection_mode not in (
-                                    _TOPOLOGY_DELTA_MODE,
-                                    _RECEIPT_MODE,
-                                )
-                            ):
-                                raise InvalidCell(
-                                    'topology-changing interactions require a '
-                                    'topology projection delta'
-                                )
-                            if interaction.action_root in (
-                                CAPABILITY_RELATION_FORM,
-                                CAPABILITY_INSTANTIATE,
-                            ):
-                                if 'event_facts' not in body:
-                                    raise InvalidCell(
-                                        'interaction facts are missing'
-                                    )
-                                if (
-                                    interaction.action_root
-                                    == CAPABILITY_RELATION_FORM
-                                ):
-                                    created_root, touched = (
-                                        submit_universal_relation_form_interaction(
-                                            owner.universal_store,
-                                            owner.universal_registry,
-                                            owner.interaction_projection_broker,
-                                            binding.interaction_projection_handle,
-                                            interaction_root=body['interaction'],
-                                            control_root=body['control'],
-                                            event_root=body['event'],
-                                            event_facts=body['event_facts'],
-                                            expected_revision=body['revision'],
-                                            projected_canvas=previous_projection,
-                                            authentication_context=binding.context,
-                                        )
-                                    )
-                                else:
-                                    created_root, touched = (
-                                        submit_universal_instantiation_interaction(
-                                            owner.universal_store,
-                                            owner.universal_registry,
-                                            owner.interaction_projection_broker,
-                                            binding.interaction_projection_handle,
-                                            interaction_root=body['interaction'],
-                                            control_root=body['control'],
-                                            event_root=body['event'],
-                                            event_facts=body['event_facts'],
-                                            expected_revision=body['revision'],
-                                            projected_canvas=previous_projection,
-                                            authentication_context=binding.context,
-                                        )
-                                    )
-                            elif interaction.action_root == CAPABILITY_EDIT_VALUE:
-                                if 'event_facts' not in body:
-                                    raise InvalidCell(
-                                        'interaction facts are missing'
-                                    )
-                                execution = submit_universal_edit_value_interaction(
-                                    owner.universal_store,
-                                    owner.universal_registry,
-                                    owner.interaction_projection_broker,
-                                    binding.interaction_projection_handle,
-                                    interaction_root=body['interaction'],
-                                    control_root=body['control'],
-                                    event_root=body['event'],
-                                    event_facts=body['event_facts'],
-                                    expected_revision=body['revision'],
-                                    projected_canvas=previous_projection,
-                                    authentication_context=binding.context,
-                                )
-                                touched = execution.revision
-                            elif (
-                                interaction.action_root
-                                == CAPABILITY_RELATION_MEMBERS
-                            ):
-                                execution = (
-                                    submit_universal_relation_member_interaction(
-                                        owner.universal_store,
-                                        owner.universal_registry,
-                                        owner.interaction_projection_broker,
-                                        binding.interaction_projection_handle,
-                                        interaction_root=body['interaction'],
-                                        control_root=body['control'],
-                                        event_root=body['event'],
-                                        event_facts=body.get('event_facts'),
-                                        expected_revision=body['revision'],
-                                        projected_canvas=previous_projection,
-                                        authentication_context=binding.context,
-                                    )
-                                )
-                                touched = execution.revision
-                            elif interaction.action_root == CAPABILITY_TOPOLOGY:
-                                execution = submit_universal_topology_interaction(
-                                    owner.universal_store,
-                                    owner.universal_registry,
-                                    owner.interaction_projection_broker,
-                                    binding.interaction_projection_handle,
-                                    interaction_root=body['interaction'],
-                                    control_root=body['control'],
-                                    event_root=body['event'],
-                                    event_facts=body.get('event_facts'),
-                                    expected_revision=body['revision'],
-                                    projected_canvas=previous_projection,
-                                    authentication_context=binding.context,
-                                )
-                                touched = execution.revision
-                                created_root = execution.created_root
-                            elif interaction.action_root == CAPABILITY_HISTORY:
-                                execution = submit_universal_history_interaction(
-                                    owner.universal_store,
-                                    owner.universal_registry,
-                                    owner.interaction_projection_broker,
-                                    binding.interaction_projection_handle,
-                                    interaction_root=body['interaction'],
-                                    control_root=body['control'],
-                                    event_root=body['event'],
-                                    event_facts=body.get('event_facts'),
-                                    expected_revision=body['revision'],
-                                    projected_canvas=previous_projection,
-                                    authentication_context=binding.context,
-                                )
-                                touched = execution.revision
-                            elif interaction.action_root == CAPABILITY_TRANSITION:
-                                execution = submit_universal_transition_interaction(
-                                    owner.universal_store,
-                                    owner.universal_registry,
-                                    owner.interaction_projection_broker,
-                                    binding.interaction_projection_handle,
-                                    interaction_root=body['interaction'],
-                                    control_root=body['control'],
-                                    event_root=body['event'],
-                                    event_facts=body.get('event_facts'),
-                                    expected_revision=body['revision'],
-                                    projected_canvas=previous_projection,
-                                    authentication_context=binding.context,
-                                )
-                                touched = execution.revision
-                            elif interaction.action_root == CAPABILITY_COMPOSITION:
-                                if is_remove_member_request:
-                                    current = owner.universal_store.revision
-                                    expected_revision = body['revision']
-                                    member = body["membership"].get("member")
-                                    from_group = body["membership"].get("from_group")
-                                    if expected_revision != current:
-                                        previous = previous_projection or {}
-                                        held_group = next((
-                                            node for node in previous.get("nodes", [])
-                                            if node.get("id") == from_group
-                                        ), None)
-                                        held_members = held_group.get("members") if isinstance(held_group, dict) else None
-                                        held_member_ids = {
-                                            row.get("id") for row in held_members
-                                            if isinstance(row, dict)
-                                        } if isinstance(held_members, list) else set()
-                                        if member not in held_member_ids:
-                                            self._json(409, {
-                                                "ok": False,
-                                                "error": (
-                                                    "expected revision %s, current revision is %s"
-                                                    % (body['revision'], current)
-                                                ),
-                                                "code": "projection_lease_expired",
-                                            })
-                                            return
-                                    if expected_revision == current:
-                                        owner.interaction_projection_broker.resolve(
-                                            binding.interaction_projection_handle,
-                                            owner.universal_store.snapshot(),
-                                            expected_revision=expected_revision,
-                                            control_root=body['control'],
-                                            interaction_root=body['interaction'],
-                                        )
-                                    to_group = (
-                                        body["membership"].get("to_group") or ""
-                                    )
-                                    if (
-                                        type(member) is not str or not member
-                                        or type(from_group) is not str
-                                        or type(to_group) is not str
-                                        or to_group
-                                    ):
-                                        raise InvalidCell(
-                                            "membership move is invalid"
-                                        )
-                                    touched = remove_universal_composition_member(
-                                        owner.universal_store,
-                                        owner.universal_registry,
-                                        from_group,
-                                        member,
-                                        authentication_context=binding.context,
-                                    )
-                                else:
-                                    execution = submit_universal_composition_interaction(
-                                        owner.universal_store,
-                                        owner.universal_registry,
-                                        owner.interaction_projection_broker,
-                                        binding.interaction_projection_handle,
-                                        interaction_root=body['interaction'],
-                                        control_root=body['control'],
-                                        event_root=body['event'],
-                                        event_facts=body.get('event_facts'),
-                                        expected_revision=body['revision'],
-                                        projected_canvas=previous_projection,
-                                        authentication_context=binding.context,
-                                    )
-                                    touched = execution.revision
-                                    created_root = execution.created_root
-                            else:
-                                if 'event_facts' in body:
-                                    raise InvalidCell(
-                                        'interaction carries undeclared event facts'
-                                    )
-                                if interaction.action_root == CAPABILITY_SCOPE:
-                                    if len(interaction.input_roots) == 2:
-                                        reusable_scope_projection = (
-                                            owner._cached_browser_scope_projection(
-                                                binding,
-                                                interaction.input_roots[1],
-                                                expected_lineage_revision=(
-                                                    body['revision']
-                                                ),
-                                            )
-                                        )
-                                        if reusable_scope_projection is not None:
-                                            reusable_scope_identity = (
-                                                owner._cached_browser_scope_identity(
-                                                    binding,
-                                                    interaction.input_roots[1],
-                                                    expected_lineage_revision=(
-                                                        body['revision']
-                                                    ),
-                                                )
-                                            )
-                                    scope_execution = (
-                                        submit_universal_scope_interaction(
-                                        owner.universal_store,
-                                        owner.universal_registry,
-                                        owner.interaction_projection_broker,
-                                        binding.interaction_projection_handle,
-                                        interaction_root=body['interaction'],
-                                        control_root=body['control'],
-                                        event_root=body['event'],
-                                        expected_revision=body['revision'],
-                                        projected_canvas=previous_projection,
-                                        reusable_scope_projection=(
-                                            reusable_scope_projection
-                                        ),
-                                        reusable_scope_identity=(
-                                            reusable_scope_identity
-                                        ),
-                                        authentication_context=binding.context,
-                                    )
-                                    )
-                                    touched = scope_execution.revision
-                                    scope_materialization = (
-                                        scope_execution.materialization
-                                    )
-                                elif interaction.action_root == CAPABILITY_VIEW_SECTION:
-                                    touched = (
-                                        submit_universal_inspector_lens_interaction(
-                                            owner.universal_store,
-                                            owner.universal_registry,
-                                            owner.interaction_projection_broker,
-                                            binding.interaction_projection_handle,
-                                            interaction_root=body['interaction'],
-                                            control_root=body['control'],
-                                            event_root=body['event'],
-                                            expected_revision=body['revision'],
-                                            projected_canvas=previous_projection,
-                                            authentication_context=binding.context,
-                                        )
-                                    )
-                                else:
-                                    execution = execute_interaction(
-                                        owner.universal_store,
-                                        owner.universal_registry.interaction_protocol,
-                                        owner.universal_registry.transaction_protocol,
-                                        owner.universal_registry.rule_protocol,
-                                        owner.universal_registry.authorization.protocol,
-                                        owner.universal_registry.authorization.broker,
-                                        binding.context,
-                                        owner.interaction_projection_broker,
-                                        binding.interaction_projection_handle,
-                                        interaction_root=body['interaction'],
-                                        control_root=body['control'],
-                                        event_root=body['event'],
-                                        expected_revision=body['revision'],
-                                    )
-                                    touched = execution.rewrite.revision
-                            receipt_mutated = time.perf_counter()
-                            self._universal_integrity()
-                            receipt_integrity = time.perf_counter()
-                            if projection_mode == _RECEIPT_MODE:
-                                projected = {
-                                    'projection_mode': _RECEIPT_MODE,
-                                    'base_revision': body['revision'],
-                                    'committed_revision': (
-                                        owner.universal_store.revision
-                                    ),
-                                    'server_timing_ms': {
-                                        'resolve': round(
-                                            (receipt_resolved-receipt_started)
-                                            * 1000, 3
-                                        ),
-                                        'mutation': round(
-                                            (receipt_mutated-receipt_resolved)
-                                            * 1000, 3
-                                        ),
-                                        'integrity': round(
-                                            (receipt_integrity-receipt_mutated)
-                                            * 1000, 3
-                                        ),
-                                        'total': round(
-                                            (receipt_integrity-receipt_started)
-                                            * 1000, 3
-                                        ),
-                                    },
-                                }
-                            else:
-                                projection = (
-                                    owner._project_interaction_canvas(
-                                        binding,
-                                        scope_materialization=(
-                                            scope_materialization
-                                        ),
-                                        previous_projection=(
-                                            previous_projection
-                                        ),
-                                        expected_base_revision=(
-                                            body['revision']
-                                        ),
-                                    )
-                                    if (
-                                        interaction.action_root
-                                        == CAPABILITY_SCOPE
-                                        and scope_materialization is not None
-                                    )
-                                    # Composition already owns mutation_lock.
-                                    # Build once there, without optimistic
-                                    # read-only retries for its new controls.
-                                    else owner._project_interaction_canvas_scoped(
-                                        binding, include_candidates=self.headers.get('X-ArchHub-Renderer') != 'studio'
-                                    )
-                                    if interaction.action_root == CAPABILITY_COMPOSITION
-                                    else owner.project_interaction_canvas(
-                                        binding, include_candidates=self.headers.get('X-ArchHub-Renderer') != 'studio'
-                                    )
-                                )
-                                if projection_mode == _INTERACTION_DELTA_MODE:
-                                    projected = _interaction_canvas_delta(
-                                        projection,
-                                        base_revision=body['revision'],
-                                        previous_projection=previous_projection,
-                                        compact=self.headers.get('X-ArchHub-Renderer') == 'studio',
-                                    )
-                                elif projection_mode == _TOPOLOGY_DELTA_MODE:
-                                    projected = _topology_canvas_delta(
-                                        projection,
-                                        base_revision=body['revision'],
-                                        previous_projection=(
-                                            previous_projection
-                                        ),
-                                        compact=self.headers.get('X-ArchHub-Renderer') == 'studio',
-                                    )
-                                else:
-                                    projected = projection
-                            payload = {
-                                'ok': True,
-                                'touched': touched,
-                                **projected,
-                            }
-                            if projection_mode in (
-                                _INTERACTION_DELTA_MODE,
-                                _TOPOLOGY_DELTA_MODE,
-                            ):
-                                payload['committed_revision'] = (
-                                    owner.universal_store.revision
-                                )
-                            if created_root is not None:
-                                payload['created_root'] = created_root
                         self._json(200, payload)
                         return
                     if self.path == '/api/universal/theme-publish':
@@ -9667,70 +7639,7 @@ class ApplicationServer(WorkspaceRootsOwner):
                                 'error': str(refusal)[:200],
                             })
                         return
-                    if self.path == '/api/universal/brain-export':
-                        if not self._brain_owner_admitted(owner, binding):
-                            return
-                        # Outside the graph lock: the brain is another process,
-                        # and a silent brain held every graph route for up to
-                        # 30 s. The Brain tab asks with a short budget and says
-                        # "not answering"; the Export button may wait longer.
-                        import json as _json
-
-                        from .pipeline_engines import BrainSilent, _brain_call
-                        try:
-                            wanted = int((body or {}).get('limit') or 500)
-                        except (TypeError, ValueError):
-                            wanted = 500
-                        quick = (body or {}).get('quick') is True
-                        try:
-                            owner._brain_export_active += 1
-                            try:
-                                listing = str(_brain_call(
-                                    'brain.list_facts', {'limit': max(1, min(wanted, 100000))},
-                                    budget=4.0 if quick else None))
-                            finally:
-                                owner._brain_export_active -= 1
-                        except (BrainSilent, OSError) as silent:
-                            self._json(503, {'ok': False, 'error': 'Brain not answering',
-                                             'detail': str(silent)[:200]})
-                            return
-                        try:
-                            held = _json.loads(listing)
-                        except Exception:
-                            held = {'raw': listing[:200000]}
-                        self._json(200, {'ok': True, 'facts': held})
-                        return
                     # WIRE-social: I/O stays outside the mutation lock; publication rechecks browser and graph.
-                    if self.path == '/api/universal/social-surface':
-                        from .social_research_community_backend import SocialResearchCommunityBackend
-                        if type(body) is not dict or set(body) != {'op', 'args'}:
-                            raise InvalidCell('invalid social surface operation')
-                        backend = SocialResearchCommunityBackend(owner.universal_store,
-                            owner.universal_registry, binding.context, lock=owner.mutation_lock)
-                        canvas = backend.graph.canvas()
-                        social_scope = canvas.get('scope', {}).get('current') or canvas['root']
-                        def social_guard():
-                            current, token = self._browser_session_binding(unsafe=True)
-                            if current.context is not binding.context or token != _session_token:
-                                raise AuthorizationDenied('Browser changed during source reading. Refresh before retrying.')
-                            current_canvas = backend.graph.canvas()
-                            if (current_canvas.get('scope', {}).get('current') or current_canvas['root']) != social_scope:
-                                raise InvalidCell('The graph changed. Return to the source graph and read again.')
-                            owner.require_universal_http_route('POST', self.path,
-                                authentication_context=binding.context, revalidate=True)
-                        backend.guard = social_guard
-                        try:
-                            social_guard()
-                            if body['op'] == 'read_content_source':
-                                result = backend.dispatch(body['op'], body['args'])
-                            else:
-                                with owner.mutation_lock:
-                                    social_guard()
-                                    result = backend.dispatch(body['op'], body['args'])
-                        except ValueError as error:
-                            raise InvalidCell(str(error)) from error
-                        self._json(200, {'ok': True, **result})
-                        return
                     # WIRE-social end
                     # WIRE-projects: cloud waits never hold the local graph's mutation lock.
                     if self.path == '/api/universal/canvas-op' and type(body) is dict and body.get('op') in (
@@ -9808,81 +7717,7 @@ class ApplicationServer(WorkspaceRootsOwner):
                         self._json(200, payload)
                         return
                     # WIRE-projects end
-                    if self.path == '/api/universal/run-graph':
-                        # The run wire: nodes whose graph-held engine property
-                        # names an effect evaluate along their wires; answers
-                        # land as each node's status through the governed write.
-                        # The graph lock covers the plan and the landing only:
-                        # an effect (a shell, a host, a provider) may wait a
-                        # minute and never holds every graph route meanwhile.
-                        from .terminal_sessions import TerminalRefused
-                        from .universal_pipeline import run_universal_pipeline
-                        run_binding = binding
-
-                        def run_authority():
-                            current_binding, _ = self._browser_session_binding(unsafe=True)
-                            if current_binding.context is not run_binding.context:
-                                raise AuthorizationDenied('Browser binding changed during the run')
-                            owner.require_universal_http_route(
-                                'POST', '/api/universal/run-graph',
-                                authentication_context=run_binding.context, revalidate=True)
-
-                        def terminal_admission():
-                            # A Terminal card spawns only for the caller POST
-                            # /api/universal/terminal admits: execute, owner.
-                            try:
-                                with owner.universal_registry.authorization.broker.live_context(
-                                        run_binding.context):
-                                    run_authority()
-                                    owner.require_universal_http_route(
-                                        'POST', '/api/universal/terminal',
-                                        authentication_context=run_binding.context, revalidate=True)
-                                    if run_binding.subject_root != owner.universal_registry.authorization.subject_root:
-                                        raise AuthorizationDenied('not the owner')
-                            except (AuthorizationDenied, CloudRouteDenied):
-                                raise TerminalRefused(
-                                    'A terminal card runs only for this application owner '
-                                    'with the right to run commands.') from None
-
-                        # baboom.presence answers from the graph's own
-                        # presence leases (universal_pipeline._graph_engines):
-                        # the one source every BABOOM presence route reads.
-                        engines = owner._effect_engines_with_mods_store()
-                        from .host_brokers import coordination_engine_table
-                        def office_gate(_name, effect):
-                            def admitted(params, feeds):
-                                terminal_admission()
-                                return effect(params, feeds)
-                            return admitted
-                        engines.update(coordination_engine_table(office_gate))
-                        if "library.terminal" in engines:
-                            engines["library.terminal"] = (
-                                owner.terminal_sessions.admitted_engine(terminal_admission))
-
-                        run_result = run_universal_pipeline(
-                            owner.universal_store,
-                            owner.universal_registry,
-                            effect_engines=engines,
-                            authentication_context=binding.context,
-                            only_roots=body.get('roots'),
-                            mutation_lock=owner.mutation_lock,
-                            revalidate=run_authority,
-                        )
-                        self._json(200, run_result)
-                        return
                     # WIRE-settings
-                    if self.path == '/api/universal/settings-action':
-                        if type(body) is not dict or set(body) != {'function', 'args'}:
-                            raise InvalidCell('Settings requires one registered function and its argument list.')
-                        if binding.subject_root != owner.universal_registry.authorization.subject_root:
-                            raise AuthorizationDenied('Settings account actions require this application owner.')
-                        from .settings_owner import SettingsOwner
-                        with owner.mutation_lock, owner.universal_registry.authorization.broker.live_context(binding.context):
-                            result = SettingsOwner(
-                                owner.universal_store, content=owner.conversation_content, runtime=owner,
-                                authentication_context=binding.context).dispatch(body.get('function'), body.get('args', []))
-                        self._json(200, {'ok': True, 'result': result})
-                        return
                     # WIRE-settings end
                     with owner.mutation_lock:
                         if self.path.startswith('/api/universal/'):
@@ -9964,31 +7799,12 @@ class ApplicationServer(WorkspaceRootsOwner):
                                 raise InvalidCell(
                                     'interaction projection cache is unavailable'
                                 )
-                            if self.path == '/api/universal/select':
-                                touched = set_universal_selection(
+                            if self.path == '/api/universal/move':
+                                touched = move_universal_root(
                                     owner.universal_store,
                                     owner.universal_registry,
-                                    body.get('roots') or [],
-                                    focus_root=body.get('focus'),
-                                    consent_evidence_root=binding.session_root,
+                                    body['root'], float(body['x']), float(body['y']),
                                     authentication_context=binding.context)
-                            elif self.path == '/api/universal/cloud-signin':
-                                # Sign in to the cloud from the desktop: the
-                                # app opens the browser on the cloud's own
-                                # sign-in and holds a loopback for the code.
-                                from .cloud_signin import METHODS, begin
-                                method = str(body.get('method') or 'google')
-                                if method not in METHODS:
-                                    raise InvalidCell(
-                                        'sign-in method must be google')
-                                self._json(200, {'ok': True, **begin(
-                                    method, on_complete=lambda _email: owner._restart_cloud_relay())})
-                                return
-                            elif self.path == '/api/universal/cloud-signout':
-                                from .cloud_signin import sign_out
-                                owner._stop_cloud_relay()
-                                self._json(200, {'ok': True, **sign_out()})
-                                return
                             elif self.path == '/api/universal/login':
                                 from .cell_accounts import (
                                     ensure_accounts,
@@ -10059,91 +7875,12 @@ class ApplicationServer(WorkspaceRootsOwner):
                                 )
                                 self._json(200, {'ok': True, 'tier': tier})
                                 return
-                            elif self.path == '/api/universal/brain-forget':
-                                if not self._brain_owner_admitted(owner, binding):
-                                    return
-                                fact_id = str(body.get('id') or '').strip()
-                                if not fact_id:
-                                    self._json(200, {'ok': False, 'error': 'no fact id'})
-                                    return
-                                # Soft delete: forgotten, kept in the graph's history.
-                                self._json(200, self._brain_route_call(
-                                    owner, binding, 'brain.delete_fact', {'fragment_id': fact_id}))
-                                return
-                            elif self.path == '/api/universal/brain-edit':
-                                if not self._brain_owner_admitted(owner, binding):
-                                    return
-                                fact_id = str(body.get('id') or '').strip()
-                                said = str(body.get('text') or '').strip()
-                                if not fact_id or not said:
-                                    self._json(200, {'ok': False, 'error': 'need a fact id and text'})
-                                    return
-                                # In place: the old text is replaced, never duplicated.
-                                self._json(200, self._brain_route_call(
-                                    owner, binding, 'brain.edit_fact', {'fragment_id': fact_id, 'text': said}))
-                                return
-                            elif self.path == '/api/universal/brain-publish':
-                                if not self._brain_owner_admitted(owner, binding):
-                                    return
-                                fact_id = str(body.get('id') or '').strip()
-                                if not fact_id:
-                                    self._json(200, {'ok': False, 'error': 'missing fragment_id'})
-                                    return
-                                # The owner's deliberate act on one fact (ADGR-0004).
-                                self._json(200, self._brain_route_call(
-                                    owner, binding, 'brain.publish', {'fragment_id': fact_id}))
-                                return
                             elif self.path in ('/api/universal/graph-create', '/api/universal/graph-open'):
                                 # NG-NOGRAPH: Canvas is a portable .archhub session file, not the Cell graph.
                                 self._json(400, {
                                     'ok': False,
                                     'error': 'Canvas sessions use /api/session-files (New / Open / Save). The universal graph create/open path is retired.',
                                 })
-                                return
-                            elif self.path == '/api/universal/node-create':
-                                if 'template' in body:
-                                    from .universal_pipeline import create_engine_template, edit_engine_template
-                                    if (set(body) - {'template', 'expected_scope', 'update', 'delete'}
-                                            or type(body['template']) is not str or not body['template']):
-                                        raise InvalidCell('template placement payload is invalid')
-                                    if 'update' in body or 'delete' in body:
-                                        if (set(body) not in ({'template','update'}, {'template','delete'})
-                                                or ('delete' in body and body['delete'] is not True)):
-                                            raise InvalidCell('template edit payload is invalid')
-                                        self._json(200, edit_engine_template(owner.universal_store,
-                                            owner.universal_registry, body['template'], update=body.get('update'),
-                                            delete=body.get('delete', False), authentication_context=binding.context))
-                                        return
-                                    created = create_engine_template(owner.universal_store,
-                                        owner.universal_registry, body['template'],
-                                        expected_scope=body.get('expected_scope'),
-                                        authentication_context=binding.context)
-                                    self._json(200, created)
-                                    return
-                                from .universal_pipeline import create_engine_node
-                                created = create_engine_node(
-                                    owner.universal_store, owner.universal_registry,
-                                    title=str(body.get('title') or ''), engine=str(body.get('engine') or ''),
-                                    x=float(body.get('x') or 240.0), y=float(body.get('y') or 200.0),
-                                    properties=body.get('params') or {}, authentication_context=binding.context,
-                                    item=str(body.get('item') or '') or None,
-                                )
-                                self._json(200, created)
-                                return
-                            elif self.path == '/api/universal/brain-remember':
-                                if not self._brain_owner_admitted(owner, binding):
-                                    return
-                                said = str(body.get('text') or '').strip()
-                                if not said:
-                                    self._json(200, {
-                                        'ok': False,
-                                        'error': 'nothing to remember',
-                                    })
-                                    return
-                                remembered = self._brain_route_call(
-                                    owner, binding, 'brain.write',
-                                    {'ops': brain_remember_ops(said)})
-                                self._json(200, remembered)
                                 return
                             elif self.path == '/api/universal/retract':
                                 from .universal_pipeline import (
@@ -10184,60 +7921,6 @@ class ApplicationServer(WorkspaceRootsOwner):
                                 _sub.Popen(['explorer', str(target)], creationflags=getattr(_sub, "CREATE_NO_WINDOW", 0))
                                 self._json(200, {
                                     'ok': True, 'opened': str(target),
-                                })
-                                return
-                            elif self.path == '/api/universal/pick-file':
-                                picker = getattr(
-                                    owner, 'native_file_picker', None
-                                )
-                                if picker is None:
-                                    self._json(200, {
-                                        'ok': True, 'path': '',
-                                        'note': 'no native picker in this '
-                                                'runtime',
-                                    })
-                                    return
-                                chosen = picker(
-                                    str(body.get('title') or 'Choose a file'),
-                                    str(body.get('filter') or ''),
-                                )
-                                self._json(200, {
-                                    'ok': True, 'path': str(chosen or ''),
-                                })
-                                return
-                            elif self.path == '/api/universal/canvas-op':
-                                from .canvas_graph_owner import CanvasOwner
-                                if type(body) is not dict or set(body) != {'op', 'args'}:
-                                    raise InvalidCell('invalid canvas operation request')
-                                result = CanvasOwner(owner.universal_store, owner.universal_registry,
-                                    binding.context).dispatch(body['op'], body['args'])
-                                self._json(200, {'ok': True, 'result': result})
-                                return
-                            elif self.path == '/api/universal/set-property':
-                                from .universal_application import (
-                                    edit_universal_property,
-                                )
-                                value_root = edit_universal_property(
-                                    owner.universal_store,
-                                    owner.universal_registry,
-                                    str(body.get('relation') or ''),
-                                    str(body.get('value', '')),
-                                    mutation_route=(
-                                        '/api/universal/set-property'
-                                    ),
-                                    authentication_context=binding.context,
-                                )
-                                projection = owner.project_interaction_canvas(binding, include_candidates=self.headers.get('X-ArchHub-Renderer') != 'studio')
-                                projected = (_interaction_canvas_delta(projection,
-                                    base_revision=projection_revision, previous_projection=previous_projection, compact=True)
-                                    if projection_mode == _INTERACTION_DELTA_MODE else None)
-                                self._json(200, {
-                                    'ok': True,
-                                    'value_root': value_root,
-                                    'revision': (
-                                        owner.universal_store.revision
-                                    ),
-                                    **(projected if projected is not None else {'canvas': projection}),
                                 })
                                 return
                             elif self.path == '/api/universal/wire-property':
@@ -10294,39 +7977,6 @@ class ApplicationServer(WorkspaceRootsOwner):
                                 )
                                 self._json(200, seed_result)
                                 return
-                            elif self.path == '/api/universal/move':
-                                touched = move_universal_root(
-                                    owner.universal_store,
-                                    owner.universal_registry,
-                                    body['root'], float(body['x']), float(body['y']),
-                                    authentication_context=binding.context)
-                            elif self.path == '/api/universal/gesture':
-                                if (body.get('undo') or body.get('redo')) and any(
-                                    key in body for key in ('delete', 'membership', 'property')
-                                ):
-                                    raise InvalidCell('canvas history gesture cannot carry another edit')
-                                touched = apply_universal_canvas_gesture(
-                                    owner.universal_store,
-                                    owner.universal_registry,
-                                    roots=body.get('roots'),
-                                    focus_root=body.get('focus'),
-                                    positions=body.get('positions'),
-                                    viewport=body.get('viewport'),
-                                    expected_scope=body.get('expected_scope'),
-                                    placement=body.get('placement'),
-                                    undo=body.get('undo', False),
-                                    redo=body.get('redo', False),
-                                    consent_evidence_root=binding.session_root,
-                                    authentication_context=binding.context,
-                                    leased_projection=previous_projection)
-                                if layout_facts is not None:
-                                    # The committed points are the only canvas facts
-                                    # this gesture changed, so the next drag reads
-                                    # them from here instead of a projection.
-                                    owner._advance_browser_canvas_layout(
-                                        binding, layout_facts,
-                                        body.get('positions'),
-                                        owner.universal_store.revision)
                             elif self.path == '/api/universal/instantiate':
                                 raw_bindings = body.get('bindings')
                                 if body.get('primitive') is True:
@@ -13368,7 +11018,7 @@ class ApplicationServer(WorkspaceRootsOwner):
             )
             continued = session is not None
             if session is None:
-                session, revision = begin_universal_runtime_agent_session(
+                session, _revision = begin_universal_runtime_agent_session(
                     self.universal_store,
                     self.universal_registry,
                     session_root=session_root,
@@ -13388,7 +11038,7 @@ class ApplicationServer(WorkspaceRootsOwner):
                     evidence_roots=(),
                 )
             else:
-                revision = self.universal_store.revision
+                _revision = self.universal_store.revision
             session_root = session.root_id
             peer_context = _VERIFIED_MACHINE_PEER_CONTEXT.get()
             enrollment_peer = None
@@ -13624,7 +11274,7 @@ class ApplicationServer(WorkspaceRootsOwner):
                             "cloud Agent Session custody does not match DPoP device"
                         )
             return
-        session_root, binding = self._machine_agent_binding_for_request(request)
+        _session_root, binding = self._machine_agent_binding_for_request(request)
         if binding.get("device_custody") != expected_custody_root:
             raise AuthorizationDenied(
                 "cloud Agent Session custody does not match DPoP device"
@@ -19211,14 +16861,14 @@ class ApplicationServer(WorkspaceRootsOwner):
                         include_candidates=include_candidates,
                     )
                 )
-            panel_event_root, panel_interaction_roots = (
+            _panel_event_root, panel_interaction_roots = (
                 self._canvas_step(tail, ensure_universal_properties_panel_interactions)(
                     self.universal_store,
                     self.universal_registry,
                     binding.subject_root,
                 )
             )
-            form_event_root, form_interaction_roots = (
+            _form_event_root, form_interaction_roots = (
                 self._canvas_step(tail, ensure_universal_relation_form_interactions)(
                     self.universal_store,
                     self.universal_registry,
@@ -19245,7 +16895,7 @@ class ApplicationServer(WorkspaceRootsOwner):
             )
             self._project_application_setting_owners(projection)
             (
-                instantiate_event_root,
+                _instantiate_event_root,
                 instantiation_interaction_roots,
                 _event_fact_protocol,
                 instantiation_fact_specs,
@@ -19324,7 +16974,7 @@ class ApplicationServer(WorkspaceRootsOwner):
                 binding.subject_root,
                 projection,
             )
-            composition_event_root, composition_interaction_roots = (
+            _composition_event_root, composition_interaction_roots = (
                 self._canvas_step(tail, ensure_universal_composition_interactions)(
                     self.universal_store,
                     self.universal_registry,
@@ -19332,7 +16982,7 @@ class ApplicationServer(WorkspaceRootsOwner):
                     projection,
                 )
             )
-            history_event_root, history_interaction_roots = (
+            _history_event_root, history_interaction_roots = (
                 self._canvas_step(tail, ensure_universal_history_interactions)(
                     self.universal_store,
                     self.universal_registry,
@@ -19340,7 +16990,7 @@ class ApplicationServer(WorkspaceRootsOwner):
                     projection,
                 )
             )
-            lens_event_root, lens_interaction_roots = (
+            _lens_event_root, lens_interaction_roots = (
                 self._canvas_step(tail, ensure_universal_inspector_lens_interactions)(
                     self.universal_store,
                     self.universal_registry,
@@ -19349,7 +16999,7 @@ class ApplicationServer(WorkspaceRootsOwner):
                 )
             )
             (
-                scope_event_root,
+                _scope_event_root,
                 scope_interaction_roots,
                 _scope_targets,
             ) = self._canvas_step(tail, ensure_universal_scope_interactions)(

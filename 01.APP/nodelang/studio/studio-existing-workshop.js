@@ -1045,7 +1045,7 @@
         const stamp = root ? stampFor(root) : null;
         const query = new URLSearchParams({apps:apps.join(',')});
         if (stamp) { query.set('root', root); query.set('scope', stamp.scope); }
-        const result = await get('/api/universal/native-agents?' + query);
+        const result = await get('/api/universal/native-agents' + '?' + query);
         if (stamp && !current(stamp, root)) fail('The conversation changed during discovery.');
         if (!result || !['ok','unavailable'].includes(result.status) || !Array.isArray(result.rows) ||
             result.rows.length > 64 || result.rows.some(row => !allowed.includes(row.app) ||

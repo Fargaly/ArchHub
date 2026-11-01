@@ -11,10 +11,8 @@ from nodelang.cell_model_providers import (
     RATE_LIMITED,
     RETRYABLE,
     classify_failure,
-    is_available,
     key_entry_for,
     record_call,
-    record_failure,
     register_provider,
     registered,
     usage,
@@ -68,31 +66,6 @@ def test_every_failure_kind_means_something():
 def test_an_unclassified_failure_is_refused_rather_than_retried_blindly():
     with pytest.raises(InvalidCell):
         classify_failure("something-went-wrong")
-
-
-def test_a_rate_limited_provider_is_unavailable_until_its_cooldown_passes():
-    store = _store()
-    severity, until = record_failure(
-        store, provider="anthropic", kind="rate-limit", now=NOW)
-    assert severity == RATE_LIMITED
-    assert is_available(store.snapshot(), "anthropic", NOW) is False
-    assert is_available(store.snapshot(), "anthropic", until) is True
-
-
-def test_a_fatal_failure_cools_down_far_longer_than_a_retryable_one():
-    store = _store()
-    _severity, retry_until = record_failure(
-        store, provider="anthropic", kind="timeout", now=NOW)
-    _severity, fatal_until = record_failure(
-        store, provider="anthropic", kind="unauthorized", now=NOW)
-    assert fatal_until > retry_until
-
-
-def test_a_cooling_provider_must_not_be_called():
-    store = _store()
-    record_failure(store, provider="anthropic", kind="rate-limit", now=NOW)
-    with pytest.raises(InvalidCell):
-        record_call(store, provider="anthropic", tokens=10, now=NOW)
 
 
 def test_every_call_is_metered():

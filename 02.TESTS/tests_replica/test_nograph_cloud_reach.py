@@ -75,8 +75,8 @@ def test_remote_revit_read_is_answered_by_the_nograph_server(monkeypatch, tmp_pa
         assert path == cloud_relay.RESULT_PATH % "t1"
         assert body["ok"] is True
         assert json.loads(body["result"]) == {"ok": True, "sessions": SESSIONS}
-        # Host reads only: never BABOOM instructions, Workshop or session calls.
-        assert _Cloud.claims[0]["kinds"] == [cloud_relay.HOST_READ]
+        assert _Cloud.claims[0]["kinds"] == [
+            cloud_relay.HOST_READ, cloud_relay.HOST_EFFECT, cloud_relay.WORKSHOP_CALL]
     finally:
         server.close()
         cloud.shutdown()

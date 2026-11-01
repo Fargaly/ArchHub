@@ -21,6 +21,7 @@ STRANGER = "someone.else@studio.example"
 BRAIN = ["brain.health", "brain.search", "brain.list_facts"]
 HOST = {"hosts.state", "hosts.status", "revit.sessions", "connector.rows",
         "office.read", "outlook.inbox", "dropbox.list"}
+EFFECTS = {"canvas.run", "host.exec", "connector.call"}
 EFFECT_WORDS = ("exec", "screenshot", "send", "write", "draft", "categorize", "delete")
 
 
@@ -93,7 +94,8 @@ def test_only_the_founder_sees_or_calls_his_desktop_tools(client):
     """A stranger's token and no token list the brain alone; a stranger's call
     is an unknown tool and queues nothing; an unsigned call is refused."""
     assert HOST <= set(_listed(client, _token(FOUNDER)))
-    assert _listed(client, _token(STRANGER)) == BRAIN
+    stranger = set(_listed(client, _token(STRANGER)))
+    assert set(BRAIN) <= stranger and HOST.isdisjoint(stranger) and EFFECTS.isdisjoint(stranger)
     assert _listed(client) == BRAIN
     status, body = _call(client, _token(STRANGER), "hosts.status")
     assert status == 200 and body["error"]["message"] == "unknown tool"
@@ -102,10 +104,10 @@ def test_only_the_founder_sees_or_calls_his_desktop_tools(client):
     assert db.count_agent_tasks() == 0
 
 
-def test_no_listed_tool_has_an_effect(client):
-    names = _listed(client, _token(FOUNDER))
-    assert len(names) > len(BRAIN), "the founder's host group is missing"
-    assert [n for n in names if any(word in n for word in EFFECT_WORDS)] == []
+def test_reads_stay_reads_and_effects_are_the_named_three(client):
+    names = set(_listed(client, _token(FOUNDER)))
+    assert HOST <= names and EFFECTS <= names
+    assert [n for n in HOST if any(word in n for word in EFFECT_WORDS)] == []
 
 
 def test_a_live_read_is_answered_by_the_founders_desktop(client, caplog):
@@ -172,10 +174,13 @@ def test_the_desktop_claims_only_what_the_founders_accounts_queued(client):
     r = client.post("/founder/api/agent-tasks/claim", headers=auth, json=claim)
     assert r.status_code == 200 and r.json()["task"] is None
     assert db.get_agent_task(foreign["id"])["status"] == "queued"
+    other = db.enqueue_agent_task(directive='{"args":{},"tool":"hosts.status"}',
+                                  created_by="founder@example.test", kind="host-read")
     own = db.enqueue_agent_task(directive='{"args":{},"tool":"hosts.status"}',
-                                created_by="Founder@Example.test", kind="host-read")
+                                created_by=FOUNDER, kind="host-read")
     r = client.post("/founder/api/agent-tasks/claim", headers=auth, json=claim)
     assert r.json()["task"]["id"] == own["id"]
+    assert db.get_agent_task(other["id"])["status"] == "queued"
 
 
 def test_every_founder_secret_name_admits_and_none_set_admits_nobody(monkeypatch):

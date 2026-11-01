@@ -46,7 +46,7 @@ def test_every_mcp_client_runs_under_its_own_mcp_runtime():
 
 
 @pytest.mark.parametrize("method", ["run_workshop_task", "execute_workshop_task", "attach_agent",
-                                    "register_session_as", "", None, "send_message", "read_messages", "read_message",
+                                    "register_session_as", "", None, "read_message",
                                     "acknowledge_message", "list_agents", "workshop_lens"])
 def test_nothing_outside_the_workshop_allowlist_runs_and_nothing_is_enrolled(served, method):
     server, descriptor, provider = served
@@ -99,23 +99,31 @@ def test_the_relay_answers_a_workshop_step_through_the_caller_and_never_baboom(c
     assert refused["ok"] is False and _Cloud.results[-1]["ok"] is False and baboom == []
 
 
-def test_the_launcher_wires_the_workshop_caller_and_a_failure_never_stops_the_relay(monkeypatch, tmp_path):
-    """The actual launcher block: with its runtime names present the relay gets
-    McpWorkshopAgents.call; without them (the caller cannot be built) the relay
-    still starts, with Workshop steps refused."""
-    from tests_replica import test_baboom_startup_lifecycle as names_court
-    from tests_replica import test_the_cockpit_outlives_baboom as launcher_court
-    from nodelang import cloud_relay
-    from nodelang.cell_secret_keys import MemorySigningKeyProvider
-    original = names_court.launcher_names
+def test_nograph_wires_the_workshop_caller_and_a_failure_never_stops_the_app(monkeypatch, tmp_path):
+    """The running app is the file server. It claims gated effects and Workshop
+    steps; if the relay cannot start, the app still comes up."""
+    import threading
+    from types import SimpleNamespace
+    from nodelang.cloud_relay import HOST_EFFECT, HOST_READ, McpWorkshopAgents
+    from nodelang.nograph_server import NoGraphServer
 
-    def with_runtime(*names, **values):
-        return original(*names, **values, descriptor_path=tmp_path / "runtime-descriptor.json",
-                        machine_key_provider=MemorySigningKeyProvider("archhub.local.universal-runtime-pipe", b"m" * 32))
+    starts = []
 
-    monkeypatch.setattr(names_court, "launcher_names", with_runtime)
-    _ns, relay = launcher_court._start_actual_relay_block(monkeypatch)
-    assert getattr(relay.workshop_caller, "__self__", None).__class__ is cloud_relay.McpWorkshopAgents
-    monkeypatch.setattr(names_court, "launcher_names", original)
-    _ns, relay = launcher_court._start_actual_relay_block(monkeypatch)
-    assert relay.workshop_caller is None
+    def start(**kwargs):
+        relay = SimpleNamespace(**kwargs, _stop=threading.Event())
+        starts.append(relay)
+        return relay
+
+    monkeypatch.setattr("nodelang.cloud_relay.start_cloud_relay", start)
+    server = SimpleNamespace(_relay_lock=threading.Lock(), cloud_relay=None, state_dir=tmp_path)
+    relay = NoGraphServer.ensure_cloud_relay(server)
+    assert relay is starts[0]
+    assert isinstance(getattr(relay.workshop_caller, "__self__", None), McpWorkshopAgents)
+    assert relay.app_kinds == (HOST_READ, HOST_EFFECT)
+
+    def boom(**kwargs):
+        raise RuntimeError("no session")
+
+    monkeypatch.setattr("nodelang.cloud_relay.start_cloud_relay", boom)
+    server.cloud_relay = None
+    assert NoGraphServer.ensure_cloud_relay(server) is None

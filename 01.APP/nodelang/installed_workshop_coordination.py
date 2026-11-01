@@ -226,6 +226,9 @@ def _recent_mailbox_peers(history, space):
             continue
         runtime = next((name for name, definition in RUNTIMES.items()
             if label.startswith(definition["label"] + " / ")), "mcp")
+        head = label.split(" / ", 1)[0]
+        if head.startswith("mcp-"):
+            runtime = head
         peers[label] = {"label": label, "sender_key": key, "runtime": runtime,
                         "sequence": row["sequence"]}
     return list(peers.values())

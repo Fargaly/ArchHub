@@ -164,7 +164,8 @@ class NoGraphServer:
 
         Same account session (Credential Manager, by reference) and the same recorded
         cloud-publish consent as before; without both start_cloud_relay returns None.
-        Only host reads are claimed: the allowlisted read functions local agents use.
+        Host reads, gated effects (canvas.run, host.exec, connector.call) and
+        Workshop send/read are claimed. Each claimed call still passes decide().
         """
         with self._relay_lock:
             held = self.cloud_relay
@@ -176,10 +177,14 @@ class NoGraphServer:
                 except Exception as stuck:  # noqa: BLE001 - a stuck old worker must not block a new one
                     print('  cloud relay: old worker did not stop -- %s' % stuck, flush=True)
             try:
-                from .cloud_relay import HOST_READ, start_cloud_relay
+                from .cloud_relay import HOST_EFFECT, HOST_READ, McpWorkshopAgents, start_cloud_relay
+                from .workshop_mailbox import profile_database
+                agents = McpWorkshopAgents(
+                    self.state_dir / 'relay-descriptor.json', None,
+                    mailbox_path=profile_database())
                 self.cloud_relay = start_cloud_relay(
                     state_dir=self.state_dir, respond=lambda _text: {}, execute=lambda _text: {},
-                    app_kinds=(HOST_READ,))
+                    app_kinds=(HOST_READ, HOST_EFFECT), workshop_caller=agents.call)
             except Exception as refused:  # noqa: BLE001
                 print('  cloud relay: not started -- %s' % refused, flush=True)
                 self.cloud_relay = None

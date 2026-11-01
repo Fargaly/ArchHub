@@ -25,7 +25,7 @@ from test_mcp_oauth import (FOUNDER, REDIRECT, _continue, _google, _mcp, _pkce, 
                             _register, _token, client)
 
 STRANGER = "someone.else@studio.example"
-WORKSHOP = {"work.claim"}
+WORKSHOP = {"work.claim", "workshop.send", "workshop.read"}
 
 
 @pytest.fixture(autouse=True)
@@ -164,7 +164,7 @@ def test_bad_arguments_and_overlong_posts_are_refused_before_anything_is_queued(
         _status, body = _mcp(client, granted["access_token"], "tools/call",
                              {"name": "work.claim", "arguments": arguments})
         assert body["result"]["isError"] is True, arguments
-    for name in ("workshop.lens", "workshop.agents", "workshop.read", "workshop.message",
+    for name in ("workshop.lens", "workshop.agents", "workshop.message",
                  "workshop.post", "workshop.acknowledge"):
         _status, body = _mcp(client, granted["access_token"], "tools/call",
                              {"name": name, "arguments": {}})
@@ -181,7 +181,8 @@ def test_an_app_that_names_no_kinds_never_claims_a_workshop_step(client, monkeyp
     db.enqueue_agent_task(directive='{"method":"send_message"}', created_by=FOUNDER, kind=app_relay.WORKSHOP_CALL)
     import founder_cockpit
     kinds = tuple(k for k in app_relay.APP_KINDS if k != app_relay.WORKSHOP_CALL)
-    assert "workshop-call" not in kinds and set(kinds) == {"app", "app-execute", "host-read", "session-call"}
+    assert "workshop-call" not in kinds and set(kinds) == {
+        "app", "app-execute", "host-read", "host-effect", "session-call"}
     body = founder_cockpit.AgentTaskClaimReq(kinds=[])
     response = founder_cockpit.api_agent_task_claim(body, founder={"email": FOUNDER})
     assert json.loads(response.body)["task"] is None

@@ -5,7 +5,8 @@ founder's application on his machine. A question about the graph, the agents,
 the hosts, the brain or BABOOM is answered by THAT application, never invented
 by the cloud. The cloud only queues the instruction as an agent task (kind
 ``app`` to ask, ``app-execute`` to act, ``host-read`` for one read of a host
-tool, ``workshop-call`` for one Workshop step of an MCP client's own agent) and waits for the application's relay thread to claim it and post the
+tool, ``host-effect`` for canvas.run / host.exec / connector.call,
+``workshop-call`` for one Workshop step of an MCP client's own agent) and waits for the application's relay thread to claim it and post the
 answer.
 """
 from __future__ import annotations
@@ -18,9 +19,10 @@ from typing import Optional
 import db
 
 HOST_READ = "host-read"
+HOST_EFFECT = "host-effect"
 WORKSHOP_CALL = "workshop-call"
 SESSION_CALL = "session-call"
-APP_KINDS = ("app", "app-execute", HOST_READ, WORKSHOP_CALL, SESSION_CALL)
+APP_KINDS = ("app", "app-execute", HOST_READ, HOST_EFFECT, WORKSHOP_CALL, SESSION_CALL)
 # One agent_tasks.directive holds 2000 characters; a longer step is refused
 # here rather than cut into JSON the app cannot read.
 DIRECTIVE_LIMIT = 2000
@@ -109,6 +111,33 @@ def host_read(tool: str, arguments: dict, *, actor: str,
         raise DeviceOffline("device_offline: ArchHub is not open and signed in on your "
                             "desktop, so nothing was read")
     raise TimeoutError("your ArchHub app took this read but has not answered yet")
+
+
+def host_effect(tool: str, arguments: dict, *, actor: str,
+                wait_s: Optional[float] = None) -> object:
+    """One effect on the founder's desktop (canvas.run, host.exec, connector.call).
+
+    The application runs it only after hook_decision.decide() allows it.
+    """
+    directive = json.dumps({"tool": str(tool), "args": dict(arguments or {})},
+                           sort_keys=True, separators=(",", ":"))
+    if len(directive) > DIRECTIVE_LIMIT:
+        raise ValueError("this effect is too long for one relay task; shorten it")
+    task = db.enqueue_agent_task(directive=directive, created_by=actor, kind=HOST_EFFECT)
+    row = wait_for(task["id"], wait_s=wait_s) or task
+    status = str(row.get("status") or "queued")
+    result = str(row.get("result") or "")
+    if status == "done":
+        try:
+            return json.loads(result)
+        except ValueError:
+            raise RuntimeError("your ArchHub app answered with unreadable data") from None
+    if status == "failed":
+        raise RuntimeError("your ArchHub app refused: " + (result or "no reason given"))
+    if db.expire_agent_task(task["id"], "device_offline: no running ArchHub app claimed this effect"):
+        raise DeviceOffline("device_offline: ArchHub is not open and signed in on your "
+                            "desktop, so nothing was run")
+    raise TimeoutError("your ArchHub app took this effect but has not answered yet")
 
 
 def workshop_call(client: dict, method: str, params: dict, *, actor: str,

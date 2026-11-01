@@ -2165,6 +2165,7 @@ async def brain_over_mcp(req: Request,
         open_replica=_brain_read_replica,
         is_founder=_is_founder_account,
         host_read=_desktop_host_read,
+        host_effect=_desktop_host_effect,
         pushed_hosts=founder_cockpit.pushed_hosts,
         workshop_call=_desktop_workshop_call,
         session_call=_desktop_session_call,
@@ -2204,3 +2205,10 @@ def _desktop_host_read(user: dict, tool: str, arguments: dict) -> object:
     import app_relay
     return app_relay.host_read(tool, arguments,
                                actor=(user.get("email") or "").strip().lower())
+
+
+def _desktop_host_effect(user: dict, tool: str, arguments: dict) -> object:
+    """Queue one gated effect for the founder's running application."""
+    import app_relay
+    return app_relay.host_effect(tool, arguments,
+                                 actor=(user.get("email") or "").strip().lower())

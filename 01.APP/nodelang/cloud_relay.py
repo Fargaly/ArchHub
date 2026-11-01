@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import threading
 import time
@@ -37,10 +38,11 @@ HOST_READ = "host-read"
 # McpWorkshopAgents. Claimed only when this app can answer it.
 WORKSHOP_CALL = "workshop-call"
 SESSION_CALL = "session-call"
-APP_KINDS = ("app", "app-execute", HOST_READ)
+HOST_EFFECT = "host-effect"
+APP_KINDS = ("app", "app-execute", HOST_READ, HOST_EFFECT)
 # What a remote host read may run: the SAME local read functions the host
-# tools use, and nothing that executes, captures or sends. Anything else is
-# refused before a host is touched.
+# tools use. Effects are a separate kind (HOST_EFFECT) and still pass decide().
+EFFECT_TOOLS = frozenset({"canvas.run", "host.exec", "connector.call"})
 HOST_READ_TOOLS = frozenset({
     "hosts.status", "revit.sessions", "connector.rows",
     "office.read", "outlook.inbox", "dropbox.list",
@@ -589,9 +591,61 @@ def host_read(tool: object, arguments: object) -> object:
     return answer
 
 
+def remote_gate(tool: object, arguments: object, *, environment=None) -> dict:
+    """One claimed remote call through hook_decision.decide().
+
+    Ask holds, a forbid refuses, Accept edits allows. Client and personal
+    paths never leave, even when the policy scanner is down.
+    """
+    from .hook_decision import _PRIVATE_PATH, decide
+    payload = arguments if isinstance(arguments, Mapping) else {}
+    decision = decide(
+        {"tool_name": str(tool or ""), "tool_input": dict(payload),
+         "session_id": "archhub-remote-relay", "cwd": os.getcwd()},
+        "claude-code", environment=environment if environment is not None else os.environ)
+    blob = json.dumps(payload, default=str)
+    if _PRIVATE_PATH.search(blob) and decision.get("verdict") != "refuse":
+        rules = list(decision.get("rules") or [])
+        if "client-data-going-public" not in rules:
+            rules.append("client-data-going-public")
+        decision = {**decision, "verdict": "refuse", "rules": rules}
+    return decision
+
+
+def run_remote_effect(tool: object, arguments: object) -> dict:
+    """canvas.run, host.exec and connector.call on this machine, after decide()."""
+    if tool not in EFFECT_TOOLS:
+        raise PermissionError("not a remote effect: %r" % (tool,))
+    args = arguments if isinstance(arguments, Mapping) else {}
+    if tool == "canvas.run":
+        from .session_files import read_document, run_document
+        path = args.get("path")
+        if not isinstance(path, str) or not path.strip():
+            raise ValueError("canvas.run needs a path")
+        document = read_document(path)
+        node = args.get("node") if isinstance(args.get("node"), str) else ""
+        roots = None
+        if node.strip():
+            match = [item["id"] for item in document.get("nodes", [])
+                     if item.get("id") == node or item.get("title") == node]
+            roots = match[:1] or None
+        ran = run_document(document, roots=roots)
+        return {"ok": True, "results": list(ran.get("results", ()))[:20]}
+    from .host_brokers import ENGINES
+    engine = args.get("engine") if tool == "host.exec" else args.get("name")
+    if engine not in ENGINES:
+        raise PermissionError("not a host engine: %r" % (engine,))
+    params = args.get("params") if isinstance(args.get("params"), Mapping) else {}
+    out, label = ENGINES[str(engine)](dict(params), {})
+    answer = dict(out) if isinstance(out, Mapping) else {"out": out}
+    answer["ok"] = True
+    answer["label"] = str(label)
+    return answer
+
+
 # The existing remote Work claim keeps its own governed Work authorization.
 # Generic peer messages use native_agent_mcp send/read, without enrollment here.
-WORKSHOP_METHODS = frozenset({"claim_work"})
+WORKSHOP_METHODS = frozenset({"claim_work", "send_message", "read_messages"})
 MAX_MCP_AGENTS = 8
 _RENEW_MARGIN_SECONDS = 120.0
 _PRESENCE_EVERY_SECONDS = 60.0
@@ -626,9 +680,11 @@ class McpWorkshopAgents:
     """
 
     def __init__(self, descriptor_path: Path, key_provider: object, *,
-                 client_factory: Optional[Callable[[], object]] = None):
+                 client_factory: Optional[Callable[[], object]] = None,
+                 mailbox_path: Optional[Path] = None):
         self.descriptor_path = Path(descriptor_path)
         self.key_provider = key_provider
+        self.mailbox_path = None if mailbox_path is None else Path(mailbox_path)
         self._factory = client_factory
         self._agents: dict[str, tuple[object, object, str]] = {}
         self._presence_at: dict[str, float] = {}
@@ -670,17 +726,47 @@ class McpWorkshopAgents:
                 self._presence[client_id] = "not renewed: %s" % (refusal,)
             self._presence_at[client_id] = now
 
+    def _mailbox(self, method: str, params: Mapping, client_id: str, runtime: str) -> dict:
+        """Send or read in the one Workshop file, as mcp-<client>."""
+        from types import SimpleNamespace
+        from .workshop_mailbox import call
+        if self.mailbox_path is None:
+            raise RuntimeError("this app has no Workshop mailbox for remote agents")
+        if method == "send_message":
+            session = str(params.get("id") or "").strip()
+            text = str(params.get("text") or "")
+            if not session or len(session) > 256:
+                raise ValueError("an addressed session id is required")
+            if not text.strip() or len(text) > 4000:
+                raise ValueError("session message is empty")
+            body = {"to": session, "text": text}
+            mailbox_method = "send"
+        else:
+            since = params.get("since", 0)
+            body = {"since": since if type(since) is int and since >= 0 else 0}
+            mailbox_method = "read"
+        context = {"archhub/sessionID": "mcp:%s:%s" % (runtime, client_id)}
+        peer = SimpleNamespace(pid=1, created_at=1.0, cwd=str(self.mailbox_path.parent))
+        result = call(mailbox_method, body, context, database=str(self.mailbox_path), peer=peer)
+        return dict(result) if isinstance(result, Mapping) else {"answer": result}
+
     def call(self, agent: object, method: object, params: object) -> dict:
         if not isinstance(agent, Mapping):
             raise ValueError("a Workshop step names its agent")
         client_id = agent.get("client_id")
-        if (type(client_id) is not str or not re.fullmatch(r"[A-Za-z0-9._~-]{1,200}", client_id)):
+        # Dynamic-registration ids, or a Client ID Metadata Document URL (claude.ai, ChatGPT).
+        if (type(client_id) is not str or not re.fullmatch(r"[A-Za-z0-9._~:/?#&=%-]{1,200}", client_id)):
             raise ValueError("a Workshop step needs the MCP client's id")
         if method not in WORKSHOP_METHODS:
             raise PermissionError("not a Workshop step: %r" % (method,))
         if params is not None and not isinstance(params, Mapping):
             raise ValueError("Workshop parameters must be a mapping")
         client_name = str(agent.get("client_name") or "")[:200]
+        runtime = mcp_runtime(client_name)
+        if method in ("send_message", "read_messages"):
+            answer = self._mailbox(str(method), dict(params or {}), client_id, runtime)
+            extra = {"ok": True, "agent_runtime": runtime, "agent_presence": "live"}
+            return {**answer, **extra}
         with self._lock:
             for attempt in (0, 1):
                 client, workshop, runtime = self._bound(client_id, client_name)
@@ -735,11 +821,15 @@ class CloudRelay:
         session_path: Optional[Path] = None,
         consent: Optional[Callable[[], bool]] = None,
         host_reader: Optional[Callable[[object, object], object]] = None,
+        host_effect: Optional[Callable[[object, object], object]] = None,
+        environment: Optional[Mapping[str, str]] = None,
         app_kinds: tuple[str, ...] = APP_KINDS,
     ) -> None:
         self.base_url = str(base_url).rstrip("/")
         # A remote read runs this: host_read, unless a caller supplies its own.
         self.host_reader = host_reader or host_read
+        self.host_effect = host_effect or run_remote_effect
+        self.environment = environment
         self.token = str(token)
         self.respond = respond
         self.execute = execute
@@ -834,6 +924,8 @@ class CloudRelay:
             return None
         if task.get("kind") == HOST_READ:
             return self._answer_host_read(task)
+        if task.get("kind") == HOST_EFFECT:
+            return self._answer_host_effect(task)
         if task.get("kind") == WORKSHOP_CALL:
             return self._answer_workshop_call(task)
         if task.get("kind") == SESSION_CALL:
@@ -865,14 +957,46 @@ class CloudRelay:
                 self.last_error = "%s: %s" % (type(exc).__name__, exc)
         return {"task": str(task["id"]), "ok": ok, "result": text}
 
+    def _hold_or_refuse(self, tool: object, arguments: object):
+        """decide() for one claimed call. None means run it; a dict means hold."""
+        decision = remote_gate(tool, arguments, environment=self.environment)
+        if decision.get("verdict") == "refuse":
+            raise PermissionError("ArchHub refused: " + "; ".join(
+                str(rule) for rule in (decision.get("rules") or ["refuse"])))
+        if decision.get("verdict") == "ask":
+            return {"held": True, "verdict": "ask", "tool": str(tool or ""), "ran": False,
+                    "rules": list(decision.get("rules") or [])}
+        return None
+
     def _answer_host_read(self, task: Mapping[str, object]) -> dict:
         """A remote read: this machine's allowlisted read function, never BABOOM."""
         try:
             request = json.loads(str(task.get("directive") or ""))
             if not isinstance(request, Mapping):
                 raise ValueError("a host read is {tool, args}")
-            ok, text = True, bounded_json(self.host_reader(request.get("tool"), request.get("args")))
+            tool, args = request.get("tool"), request.get("args")
+            if tool not in HOST_READ_TOOLS:
+                raise PermissionError("not a remote read: %r" % (tool,))
+            held = self._hold_or_refuse(tool, args)
+            ok, text = True, bounded_json(held if held is not None else self.host_reader(tool, args))
         except Exception as exc:  # the refusal IS the answer; never a silent drop
+            ok, text = False, "%s: %s" % (type(exc).__name__, exc)
+        self._call(RESULT_PATH % str(task["id"]), {"ok": ok, "result": text[:8000]})
+        self.answered += 1
+        return {"task": str(task["id"]), "ok": ok, "result": text}
+
+    def _answer_host_effect(self, task: Mapping[str, object]) -> dict:
+        """canvas.run, host.exec or connector.call, only after decide() allows it."""
+        try:
+            request = json.loads(str(task.get("directive") or ""))
+            if not isinstance(request, Mapping):
+                raise ValueError("a host effect is {tool, args}")
+            tool, args = request.get("tool"), request.get("args")
+            if tool not in EFFECT_TOOLS:
+                raise PermissionError("not a remote effect: %r" % (tool,))
+            held = self._hold_or_refuse(tool, args)
+            ok, text = True, bounded_json(held if held is not None else self.host_effect(tool, args))
+        except Exception as exc:
             ok, text = False, "%s: %s" % (type(exc).__name__, exc)
         self._call(RESULT_PATH % str(task["id"]), {"ok": ok, "result": text[:8000]})
         self.answered += 1
@@ -886,7 +1010,8 @@ class CloudRelay:
             request = json.loads(str(task.get("directive") or ""))
             if not isinstance(request, Mapping):
                 raise ValueError("a Workshop step is {agent, method, params}")
-            ok, text = True, bounded_json(self.workshop_caller(
+            held = self._hold_or_refuse(request.get("method"), request.get("params"))
+            ok, text = True, bounded_json(held if held is not None else self.workshop_caller(
                 request.get("agent"), request.get("method"), request.get("params")))
         except Exception as exc:  # the refusal IS the answer; never a silent drop
             ok, text = False, "%s: %s" % (type(exc).__name__, exc)
@@ -906,7 +1031,8 @@ class CloudRelay:
             if not account:
                 raise ValueError("a session call requires an account")
             request_id = request.get("request_id") or task["id"]
-            ok, text = True, bounded_json(self.session_caller(
+            held = self._hold_or_refuse(request.get("method"), request.get("params"))
+            ok, text = True, bounded_json(held if held is not None else self.session_caller(
                 account, request.get("method"), request.get("params"), request_id))
         except Exception as exc:
             ok, text = False, "%s: %s" % (type(exc).__name__, exc)
@@ -1148,7 +1274,8 @@ def start_cloud_relay(
 __all__ = [
     "CloudRelay", "PINNED_BASES", "load_cloud_session", "pinned_cloud_base",
     "published_models_form", "published_offer_form",
-    "render_answer", "host_read", "bounded_json", "HOST_READ_TOOLS",
+    "render_answer", "host_read", "bounded_json", "HOST_READ_TOOLS", "HOST_EFFECT",
+    "EFFECT_TOOLS", "remote_gate", "run_remote_effect",
     "McpWorkshopAgents", "WORKSHOP_CALL", "SESSION_CALL", "WORKSHOP_METHODS", "mcp_runtime",
     "RemoteSessionCaller", "ArchHubApplicationSessions", "start_cloud_relay",
     "CLAIM_PATH", "RESULT_PATH", "MAP_PATH",

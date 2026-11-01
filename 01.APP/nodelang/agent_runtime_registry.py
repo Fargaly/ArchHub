@@ -238,6 +238,8 @@ def mailbox_label(peer, context):
     host = RUNTIMES.get(runtime, {}).get("label", {"goose":"Goose", "antigravity":"Antigravity",
         "antigravity-ide":"Antigravity", "cursor":"Cursor", "copilot":"VS Code Copilot",
         "vscode-copilot":"VS Code Copilot", "grok":"Grok Bot", "grok-bot":"Grok Bot"}.get(runtime, "Agent"))
+    if isinstance(runtime, str) and runtime.startswith("mcp-"):
+        host = runtime
     project = (Path(peer.cwd).name if peer.cwd else "Session")
     project = project.replace("\n", " ").replace("\r", " ").replace("[", "(").replace("]", ")")
     project = project.encode("utf-8")[:48].decode("utf-8", errors="ignore")

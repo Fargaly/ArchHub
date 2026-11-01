@@ -107,6 +107,31 @@ HOST_TOOLS = [
      }, "additionalProperties": False}},
 ]
 HOST_TOOL_NAMES = frozenset(tool["name"] for tool in HOST_TOOLS)
+# Effects the founder's desktop runs only after hook_decision.decide() allows them.
+EFFECT_TOOLS = [
+    {"name": "canvas.run", "description": (
+        "Run one .archhub canvas on the founder's desktop. Held or refused by "
+        "his run mode and by client-data rules before anything runs."),
+     "inputSchema": {"type": "object", "properties": {
+         "path": {"type": "string", "minLength": 1, "maxLength": 300},
+         "node": {"type": "string", "maxLength": 200},
+     }, "required": ["path"], "additionalProperties": False}},
+    {"name": "host.exec", "description": (
+        "Run one named host engine on the founder's desktop (the engines his "
+        "app already has). Gated the same way as canvas.run."),
+     "inputSchema": {"type": "object", "properties": {
+         "engine": {"type": "string", "minLength": 1, "maxLength": 80},
+         "params": {"type": "object"},
+     }, "required": ["engine"], "additionalProperties": False}},
+    {"name": "connector.call", "description": (
+        "Call one connector engine on the founder's desktop by its existing name. "
+        "Gated the same way as canvas.run."),
+     "inputSchema": {"type": "object", "properties": {
+         "name": {"type": "string", "minLength": 1, "maxLength": 80},
+         "params": {"type": "object"},
+     }, "required": ["name"], "additionalProperties": False}},
+]
+EFFECT_TOOL_NAMES = frozenset(tool["name"] for tool in EFFECT_TOOLS)
 
 # Remote governed Work claims retain OAuth consent and their separate Work actor.
 # Generic peer messaging uses the existing agent connector's shared send/read.
@@ -116,7 +141,19 @@ WORKSHOP_TOOLS = [
         "Claim one exact Governed Work (for example Work assigned to your agent). "
         "A claim grants no file writes or execution."),
      "inputSchema": {"type": "object", "properties": {"work_root": _TEXT_ID},
-                     "required": ["work_root"], "additionalProperties": False}}
+                     "required": ["work_root"], "additionalProperties": False}},
+    {"name": "workshop.send", "description": (
+        "Send one message to an addressed Workshop session as this client "
+        "(mcp-<name>). His run mode can hold it; client data is refused."),
+     "inputSchema": {"type": "object", "properties": {
+         "id": _TEXT_ID,
+         "text": {"type": "string", "minLength": 1, "maxLength": 4000},
+     }, "required": ["id", "text"], "additionalProperties": False}},
+    {"name": "workshop.read", "description": (
+        "Read Workshop messages as this client (mcp-<name>)."),
+     "inputSchema": {"type": "object", "properties": {
+         "since": {"type": "integer", "minimum": 0},
+     }, "additionalProperties": False}},
 ]
 WORKSHOP_TOOL_NAMES = frozenset(tool["name"] for tool in WORKSHOP_TOOLS)
 
@@ -146,7 +183,11 @@ SESSION_TOOLS = [
      }, "required": ["title"], "additionalProperties": False}},
 ]
 SESSION_TOOL_NAMES = frozenset(tool["name"] for tool in SESSION_TOOLS)
-WORKSHOP_METHODS = {"work.claim": "claim_work"}
+WORKSHOP_METHODS = {
+    "work.claim": "claim_work",
+    "workshop.send": "send_message",
+    "workshop.read": "read_messages",
+}
 
 WORKSHOP_SCOPE = "mcp:workshop"
 
@@ -173,6 +214,14 @@ def workshop_arguments(name: str, arguments: dict) -> dict:
     """Only the declared parameters travel to the desktop, checked and bounded."""
     if name == "work.claim":
         return {"work_root": _bounded_text(arguments, "work_root", 256)}
+    if name == "workshop.send":
+        return {"id": _bounded_text(arguments, "id", 256),
+                "text": _bounded_text(arguments, "text", 4000)}
+    if name == "workshop.read":
+        since = arguments.get("since", 0)
+        if type(since) is not int or since < 0:
+            since = 0
+        return {"since": since}
     raise KeyError(name)
 
 
@@ -278,9 +327,38 @@ def call_session_tool(user: dict, name: str, arguments: dict,
     return text_result(session_call(user, session_method(name), session_arguments(name, arguments)))
 
 
+def _effect_params(arguments: dict) -> dict:
+    raw = arguments.get("params") if isinstance(arguments.get("params"), dict) else {}
+    kept = {}
+    for key, value in list(raw.items())[:8]:
+        if isinstance(value, str):
+            kept[str(key)[:40]] = value[:300]
+        elif isinstance(value, (int, float, bool)) or value is None:
+            kept[str(key)[:40]] = value
+    return kept
+
+
+def effect_arguments(name: str, arguments: dict) -> dict:
+    if name == "canvas.run":
+        kept = {"path": _bounded_text(arguments, "path", 300)}
+        node = arguments.get("node")
+        if isinstance(node, str) and node.strip():
+            kept["node"] = node[:200]
+        return kept
+    if name == "host.exec":
+        return {"engine": _bounded_text(arguments, "engine", 80), "params": _effect_params(arguments)}
+    if name == "connector.call":
+        return {"name": _bounded_text(arguments, "name", 80), "params": _effect_params(arguments)}
+    raise KeyError(name)
+
+
 def call_host_tool(user: dict, name: str, arguments: dict, *,
-                   host_read, pushed_hosts) -> dict:
-    """One founder read of his desktop: the published snapshot, or live from his app."""
+                   host_read, pushed_hosts, host_effect=None) -> dict:
+    """One founder read or gated effect on his desktop."""
+    if name in EFFECT_TOOL_NAMES:
+        if host_effect is None:
+            raise RuntimeError("live host effects are not wired on this cloud")
+        return text_result(host_effect(user, name, effect_arguments(name, arguments)))
     if name == "hosts.state":
         if pushed_hosts is None:
             raise RuntimeError("this cloud holds no published host snapshot")
@@ -319,6 +397,7 @@ def answer(
     pushed_hosts: Callable[[], dict] | None = None,
     workshop_call: Callable[[dict, dict, str, dict], object] | None = None,
     session_call: Callable[[dict, str, dict], object] | None = None,
+    host_effect: Callable[[dict, str, dict], object] | None = None,
 ) -> tuple[int, bytes, str]:
     """Dispatch one JSON-RPC message. Returns (status, body, media type).
 
@@ -366,7 +445,7 @@ def answer(
         return 200, sse_block(rpc_id, {"result": {
             "tools": (
                 TOOLS + (SESSION_TOOLS if authenticated else []) +
-                (HOST_TOOLS + (WORKSHOP_TOOLS if workshop else []) if founder else [])
+                (HOST_TOOLS + EFFECT_TOOLS + (WORKSHOP_TOOLS if workshop else []) if founder else [])
             )}}), sse
     if method != "tools/call":
         return 200, sse_block(rpc_id, {
@@ -389,11 +468,12 @@ def answer(
     try:
         if name in SESSION_TOOL_NAMES:
             result = call_session_tool(user, name, arguments, session_call)
-        elif name in HOST_TOOL_NAMES:
+        elif name in HOST_TOOL_NAMES or name in EFFECT_TOOL_NAMES:
             if not is_founder(user):
                 raise KeyError(name)  # another account is never told they exist
             result = call_host_tool(user, name, arguments,
-                                    host_read=host_read, pushed_hosts=pushed_hosts)
+                                    host_read=host_read, pushed_hosts=pushed_hosts,
+                                    host_effect=host_effect)
         elif name in WORKSHOP_TOOL_NAMES:
             if not is_founder(user):
                 raise KeyError(name)  # another account is never told they exist

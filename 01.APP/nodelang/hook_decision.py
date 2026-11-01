@@ -87,6 +87,14 @@ _ALIAS = {"claude": "claude-code", "gemini": "gemini-cli"}
 
 _READ = re.compile(r"^(read|glob|grep|ls|list|view|read_file|read_many_files|search_file_content|"
                    r"notebookread|webfetch|websearch|web_fetch|google_web_search)$", re.I)
+# Remote reads stay reads, so Ask first does not hold them. Effect tools leave the
+# machine (the answer goes back to the remote agent), so client data forbids them.
+_REMOTE_READS = frozenset({
+    "hosts.status", "hosts.state", "revit.sessions", "connector.rows", "office.read",
+    "outlook.inbox", "dropbox.list", "list_sessions", "open_session",
+    "read_messages", "workshop.read",
+})
+_LEAVES = re.compile(r"^(host\.exec|connector\.call|canvas\.run)$", re.I)
 _WRITE = re.compile(r"^(write|edit|multiedit|notebookedit|apply_patch|write_file|replace|patch)$", re.I)
 _SHELL = re.compile(r"^(bash|powershell|shell|exec_command|run_shell_command|local_shell)$", re.I)
 _UNTRUSTED = re.compile(r"(webfetch|websearch|web_fetch|web_search|fetch|browser|navigate|get_page_text|"
@@ -170,9 +178,10 @@ def classify(event: dict, environment) -> tuple[str, dict]:
         return "shell", facts
     if _WRITE.match(tool):
         return "write", facts
-    if _READ.match(tool) or tool.lower().endswith(("_read", "_list", "_search", "_get", "ping", "info")):
+    if (tool in _REMOTE_READS or _READ.match(tool)
+            or tool.lower().endswith(("_read", "_list", "_search", "_get", "ping", "info"))):
         return "read", facts
-    if _SEND_TOOL.search(tool):
+    if _LEAVES.match(tool) or _SEND_TOOL.search(tool):
         return "send", facts
     return "other", facts
 

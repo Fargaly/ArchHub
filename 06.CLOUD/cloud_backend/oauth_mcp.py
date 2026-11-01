@@ -13,9 +13,9 @@ refresh token is consumed by one conditional UPDATE, so two concurrent redemptio
 cannot both succeed; a replay of either revokes the whole token family. Access
 tokens live one hour and are accepted only by /mcp.
 
-Dynamic Client Registration (RFC 7591) is the registration path here. The spec
-prefers Client ID Metadata Documents (SHOULD) and keeps DCR as MAY; CIMD is the
-known gap until a real client needs it.
+Dynamic Client Registration (RFC 7591) remains. Claude.ai and ChatGPT identify
+themselves with a Client ID Metadata Document (an https URL on their own host);
+xAI can also send a founder bearer in the Authorization header.
 """
 from __future__ import annotations
 
@@ -222,6 +222,9 @@ def authorization_server() -> dict:
         'token_endpoint_auth_methods_supported': ['none'],
         'scopes_supported': list(SCOPES),
         'authorization_response_iss_parameter_supported': True,
+        'client_id_metadata_document_supported': True,
+        'bearer_methods_supported': ['header'],
+        'header_bearer_endpoint': issuer() + '/oauth/bearer',
     }
 
 
@@ -289,12 +292,76 @@ async def register(request: Request):
                         status_code=201)
 
 
+# Claude.ai and ChatGPT put their client_id at an https URL on their own host.
+CIMD_HOSTS = frozenset({
+    'claude.ai', 'www.claude.ai',
+    'chatgpt.com', 'www.chatgpt.com', 'chat.openai.com',
+})
+XAI_CLIENT_ID = 'xai-header'
+CIMD_FETCH = {
+    'id': 'oauth.cimd_fetch',
+    'params': {'timeout_seconds': 5, 'byte_cap': 65536},
+}
+
+
+def fetch_cimd(url: str) -> str:
+    """GET one metadata document. Redirects are refused; tests replace this."""
+    import urllib.request
+
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+
+    opener = urllib.request.build_opener(_NoRedirect)
+    request = urllib.request.Request(url, headers={'Accept': 'application/json'})
+    cap = CIMD_FETCH['params']['byte_cap']
+    with opener.open(request, timeout=CIMD_FETCH['params']['timeout_seconds']) as answer:
+        body = answer.read(cap + 1)
+    if len(body) > cap:
+        raise ValueError('client metadata document is too large')
+    return body.decode('utf-8')
+
+
+def _cimd_client(client_id: str) -> Optional[dict]:
+    """Register a claude.ai or ChatGPT client from its metadata document, once."""
+    if type(client_id) is not str or not client_id.startswith('https://') or len(client_id) > 2048:
+        return None
+    parts = urllib.parse.urlsplit(client_id)
+    host = (parts.hostname or '').lower()
+    if host not in CIMD_HOSTS or parts.username or parts.password or parts.fragment:
+        return None
+    try:
+        document = json.loads(fetch_cimd(client_id))
+    except (OSError, ValueError) as refusal:
+        print('oauth cimd: document was not accepted (%s)' % type(refusal).__name__, flush=True)
+        return None
+    if not isinstance(document, dict) or document.get('client_id') != client_id:
+        return None
+    uris = document.get('redirect_uris')
+    if (not isinstance(uris, list) or not 0 < len(uris) <= 10 or not all(map(_redirect_allowed, uris))):
+        return None
+    if document.get('token_endpoint_auth_method', 'none') != 'none':
+        return None
+    name = document.get('client_name') if isinstance(document.get('client_name'), str) else host
+    now = int(time.time())
+    with db.connect() as con:
+        con.execute(
+            'INSERT OR IGNORE INTO oauth_clients (client_id, redirect_uris, client_name, created_at) '
+            'VALUES (?, ?, ?, ?)', (client_id, json.dumps(uris), name[:200], now))
+        row = con.execute('SELECT * FROM oauth_clients WHERE client_id = ?', (client_id,)).fetchone()
+    if row is None:
+        return None
+    client = dict(row)
+    client['redirect_uris'] = json.loads(client['redirect_uris'])
+    return client
+
+
 def _client(client_id: str) -> Optional[dict]:
     _ensure()
     with db.connect() as con:
         row = con.execute('SELECT * FROM oauth_clients WHERE client_id = ?', (client_id or '',)).fetchone()
     if row is None:
-        return None
+        return _cimd_client(client_id)
     client = dict(row)
     client['redirect_uris'] = json.loads(client['redirect_uris'])
     return client
@@ -599,7 +666,7 @@ def _consent_page(client: dict, redirect_uri: str, pending: str, csrf: str,
         '<body style="font-family:system-ui,sans-serif;max-width:34rem;margin:3rem auto;padding:0 1rem">'
         '<h1 style="font-size:1.3rem">Allow <b>%s</b> to read your ArchHub?</h1>'
         '<p>It will send you back to <b>%s</b> and may read your ArchHub brain and, for the founder, '
-        'your desktop hosts (read only). Approve only if you just started this from that application.</p>'
+        'your desktop while ArchHub is open and signed in there. Approve only if you just started this from that application.</p>'
         '%s<form method=post action="/oauth/consent">'
         '<input type=hidden name=pending value="%s"><input type=hidden name=csrf value="%s">'
         '<button name=decision value=approve>Approve</button> '
@@ -839,18 +906,56 @@ def _revoke(con, family: str) -> None:
                 (int(time.time()), family))
 
 
-def _issue(con, *, family: str, client_id: str, user_id: str, scope: str, resource: str) -> Optional[dict]:
+def _issue(con, *, family: str, client_id: str, user_id: str, scope: str, resource: str,
+           access_ttl: int = ACCESS_TTL) -> Optional[dict]:
     """Tokens for an account that may still sign in; None (and the family revoked) otherwise."""
     if con.execute('SELECT 1 FROM users WHERE id = ? AND suspended_at IS NULL', (user_id,)).fetchone() is None:
         _revoke(con, family)
         return None
     now = int(time.time())
     access, refresh = ACCESS_PREFIX + secrets.token_urlsafe(32), REFRESH_PREFIX + secrets.token_urlsafe(32)
-    for value, kind, ttl in ((access, 'access', ACCESS_TTL), (refresh, 'refresh', REFRESH_TTL)):
+    for value, kind, ttl in ((access, 'access', access_ttl), (refresh, 'refresh', REFRESH_TTL)):
         con.execute('INSERT INTO oauth_tokens VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)',
                     (_hash(value), kind, family, client_id, user_id, scope, resource, now + ttl))
-    return {'access_token': access, 'token_type': 'Bearer', 'expires_in': ACCESS_TTL,
+    return {'access_token': access, 'token_type': 'Bearer', 'expires_in': access_ttl,
             'refresh_token': refresh, 'scope': scope}
+
+
+def issue_header_bearer(user_id: str) -> Optional[dict]:
+    """A bearer xAI sends in Authorization, for this account, without a browser dance.
+
+    Same hashed storage as an OAuth access token. The plaintext is returned once.
+    """
+    _ensure()
+    now = int(time.time())
+    family = secrets.token_urlsafe(18)
+    scope = SCOPE + ' ' + WORKSHOP_SCOPE
+    with db.connect() as con:
+        con.execute(
+            'INSERT OR IGNORE INTO oauth_clients (client_id, redirect_uris, client_name, created_at) '
+            'VALUES (?, ?, ?, ?)', (XAI_CLIENT_ID, '[]', 'xAI', now))
+        con.execute('INSERT INTO oauth_families (family, revoked_at) VALUES (?, NULL)', (family,))
+        return _issue(con, family=family, client_id=XAI_CLIENT_ID, user_id=user_id,
+                      scope=scope, resource=mcp_resource(), access_ttl=REFRESH_TTL)
+
+
+@router.post('/oauth/bearer')
+def header_bearer(request: Request):
+    """The founder mints the bearer an xAI connector will send on Authorization."""
+    import config as cloud_config
+    auth = request.headers.get('authorization') or ''
+    if not auth.lower().startswith('bearer '):
+        return _error('invalid_token', 'sign in first', 401)
+    user = db.user_for_token(auth.split(None, 1)[1].strip())
+    if not user:
+        return _error('invalid_token', 'sign in first', 401)
+    email = (user.get('email') or '').strip().lower()
+    if email not in cloud_config.founder_emails():
+        return _error('access_denied', 'only the founder account can mint this bearer', 403)
+    issued = issue_header_bearer(user['id'])
+    if issued is None:
+        return _error('invalid_grant', 'this account is suspended')
+    return JSONResponse(issued, headers={'Cache-Control': 'no-store', 'Pragma': 'no-cache'})
 
 
 def _pkce_ok(verifier: str, challenge: str) -> bool:

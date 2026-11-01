@@ -9377,7 +9377,18 @@
         "01.APP/nodelang/host_exec.py",
         "01.APP/nodelang/notion_mcp.py",
         "02.TESTS/tests/test_host_exec.py",
-        "01.APP/nodelang/stem_graph_evaluation.py"
+        "01.APP/nodelang/stem_graph_evaluation.py",
+        "01.APP/nodelang/cloud_relay.py",
+        "01.APP/nodelang/installed_workshop_coordination.py",
+        "06.CLOUD/cloud_backend/app_relay.py",
+        "06.CLOUD/cloud_backend/brain_mcp.py",
+        "06.CLOUD/cloud_backend/main.py",
+        "06.CLOUD/cloud_backend/oauth_mcp.py",
+        "06.CLOUD/cloud_backend/tests/test_mcp_workshop.py",
+        "06.CLOUD/cloud_backend/tests/test_public_door_host_read.py",
+        "06.CLOUD/cloud_backend/tests/test_remote_agent_door.py",
+        "02.TESTS/tests_replica/test_mcp_clients_join_the_workshop.py",
+        "02.TESTS/tests_replica/test_remote_agents_relay.py"
       ]
     }
   }

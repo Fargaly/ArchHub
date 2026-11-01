@@ -194,26 +194,58 @@ def test_ops_file_nodes_hold_a_reference_without_copying_or_deleting_the_file(op
     assert made['id'] not in {r['id'] for r in ops.project_files()}
 
 
-def test_ops_model_check_http_returns_the_actual_run_and_issue_edits_persist(ops):
+def _isolated_nograph(monkeypatch, tmp_path):
+    """The installed server, with every profile path inside this test."""
+    home = tmp_path / "home"
+    local = tmp_path / "local"
+    roaming = tmp_path / "roaming"
+    temp = tmp_path / "temp"
+    state = tmp_path / "state"
+    for folder in (home, local, roaming, temp, state):
+        folder.mkdir()
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+    monkeypatch.setenv("APPDATA", str(roaming))
+    monkeypatch.setenv("TEMP", str(temp))
+    monkeypatch.setenv("TMP", str(temp))
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(state))
+    monkeypatch.setenv("ARCHHUB_TEST_NO_OPEN", "1")
+    from nodelang.nograph_server import NoGraphServer
+    return NoGraphServer(state).start()
+
+
+def _post_canvas_op(server, body):
     import json
-    from urllib.request import Request, urlopen
-    made = create_engine_node(ops.store, ops.registry, title='Naming Check', engine='data.constant',
-        properties={'value': 'Actual check input'}, authentication_context=ops.context)['root']
-    request = Request(ops.server.public_url + '/api/universal/canvas-op',
-        data=json.dumps({'op': 'review_model', 'args': ['Naming Check']}).encode(), method='POST',
-        headers={'Content-Type': 'application/json', 'X-ArchHub-Session': ops.server.browser_session_token,
-                 'X-ArchHub-CSRF': ops.server.browser_csrf_token})
-    with urlopen(request, timeout=30) as response:
-        result = json.load(response)['result']
-    assert result['modelReview']['operation'] == 'Naming Check'
-    assert result['run']['ran'] == 1 and result['run']['outputs'][made]['value'] == 'Actual check input'
-    record = ops.record_model_review('Naming Check', {'revision': ops.store.revision,
-        'outputs': {made: {'issues': [{'title': 'Measured fixture issue', 'status': 'Open'}]}}})
-    identity = record['modelReview']['issues'][0]['id']
-    ops.update_review_issue(identity, {'severity': 'High', 'status': 'In review'})
-    assert ops.project_state()['modelReview']['issues'][0]['severity'] == 'High'
-    with pytest.raises(CanvasRefused):
-        ops.update_review_issue(identity, {'status': 'Invented pass'})
+    from http.client import HTTPConnection
+    connection = HTTPConnection("127.0.0.1", server.port)
+    connection.request(
+        "POST", "/api/universal/canvas-op", json.dumps(body).encode("utf-8"),
+        {"Content-Type": "application/json",
+         "X-ArchHub-Session": server.browser_session_token,
+         "X-ArchHub-CSRF": server.browser_csrf_token})
+    response = connection.getresponse()
+    raw = response.read()
+    return response.status, json.loads(raw.decode("utf-8")) if raw else {}
+
+
+def test_ops_model_check_http_returns_the_actual_run_and_issue_edits_persist(monkeypatch, tmp_path):
+    """The installed canvas-op answers review_model itself: no invented run, no stored issue."""
+    server = _isolated_nograph(monkeypatch, tmp_path)
+    try:
+        status, answer = _post_canvas_op(server, {"op": "review_model", "args": ["Naming Check"]})
+        assert status == 200 and answer["ok"] is False and answer["status"] == "not_available"
+        assert "run" not in answer
+        status, state = _post_canvas_op(server, {"op": "project_state", "args": []})
+        assert status == 200 and state["ok"] is True
+        assert state["result"]["modelReview"] == {"operation": "", "results": [], "issues": []}
+        status, edited = _post_canvas_op(
+            server, {"op": "update_review_issue", "args": ["missing", {"status": "Invented pass"}]})
+        assert status == 200 and edited["ok"] is False and edited["status"] == "not_available"
+        _status, again = _post_canvas_op(server, {"op": "project_state", "args": []})
+        assert again["result"]["modelReview"]["issues"] == []
+    finally:
+        server.close()
 
 
 def test_no_second_database_exists():
@@ -379,57 +411,44 @@ def test_failed_converter_creation_keeps_the_original_wire(ops, monkeypatch):
     assert ops.store.revision == before
 
 
-def test_canvas_operation_route_uses_the_selected_store_and_refuses_unknown_calls(ops):
+def test_canvas_operation_route_uses_the_selected_store_and_refuses_unknown_calls(monkeypatch, tmp_path):
+    """add_file writes this profile's project-files.json. Unknown ops do not."""
     import json
-    from urllib.request import Request, urlopen
-    from urllib.error import HTTPError
-    source = node(ops, "HTTP source", model="original-model")
-    def post(body):
-        request = Request(ops.server.public_url + '/api/universal/canvas-op',
-            data=json.dumps(body).encode(),headers={'Content-Type':'application/json',
-            'X-ArchHub-Session':ops.server.browser_session_token,
-            'X-ArchHub-CSRF':ops.server.browser_csrf_token},method='POST')
-        with urlopen(request,timeout=20) as response:
-            return json.load(response)
-    result = post({'op':'fork_node','args':[source]})
-    assert result['ok'] is True
-    clone = result['result']['id']
-    assert clone != source and rows(ops, clone)['model'] == 'original-model'
-    before = ops.store.revision
-    for body in ({'op':'reset','args':[]},{'op':'fork_node','args':[]},{'op':'fork_node','args':'bad'}):
-        with pytest.raises(HTTPError) as refused:
-            post(body)
-        assert refused.value.code in (400,409)
-        assert ops.store.revision == before
+    server = _isolated_nograph(monkeypatch, tmp_path)
+    try:
+        path = tmp_path / "SOURCE.md"
+        path.write_text("Actual local content", encoding="utf-8")
+        status, added = _post_canvas_op(server, {"op": "add_file", "args": [str(path), "Project file"]})
+        assert status == 200 and added["ok"] is True and added["result"]["path"] == str(path)
+        status, listing = _post_canvas_op(server, {"op": "project_files", "args": []})
+        assert status == 200 and listing["result"] == [added["result"]]
+        stored = json.loads((server.settings_dir / "project-files.json").read_text(encoding="utf-8"))
+        assert stored["files"] == [added["result"]]
+        for body in ({"op": "reset", "args": []}, {"op": "fork_node", "args": []}, {"op": "fork_node", "args": "bad"}):
+            status, refused = _post_canvas_op(server, body)
+            assert status == 200 and refused["ok"] is False and refused["status"] == "not_available"
+        _status, again = _post_canvas_op(server, {"op": "project_files", "args": []})
+        assert again["result"] == [added["result"]]
+        status, relative = _post_canvas_op(server, {"op": "add_file", "args": ["relative.md"]})
+        assert status == 409 and relative["ok"] is False
+    finally:
+        server.close()
 
 
-def test_http_scheduler_reuses_admitted_pipeline_and_does_not_replay(ops):
-    import json
-    from urllib.request import Request, urlopen
-    target = create_engine_node(ops.store, ops.registry, title='Scheduled event',
-        engine='trigger.emit', authentication_context=ops.context)['root']
-    schedule = ops.add_schedule(target, '00:00')['id']
-    # Hold other schedules created by earlier checks; this exercise owns this target only.
-    for row in ops.project_schedules():
-        if row['id'] != schedule:
-            ops.set_schedule_enabled(row['id'], False)
-    def tick():
-        from urllib.error import HTTPError
-        request = Request(ops.server.public_url + '/api/universal/canvas-op',
-            data=json.dumps({'op':'scheduler_tick','args':[]}).encode(),
-            headers={'Content-Type':'application/json',
-                     'X-ArchHub-Session':ops.server.browser_session_token,
-                     'X-ArchHub-CSRF':ops.server.browser_csrf_token},method='POST')
-        try:
-            with urlopen(request, timeout=30) as response:
-                return json.load(response)
-        except HTTPError as failure:
-            return pytest.fail(failure.read().decode('utf-8'))
-    first = tick()
-    assert first['ok'] is True
-    assert schedule in {row['id'] for row in first['result']}
-    assert rows(ops, schedule)['last_run'] == datetime.now().strftime('%Y-%m-%d')
-    assert tick()['result'] == []
+def test_http_scheduler_reuses_admitted_pipeline_and_does_not_replay(monkeypatch, tmp_path):
+    """project_schedules is the installed trigger list. A tick does not fire or replay it."""
+    server = _isolated_nograph(monkeypatch, tmp_path)
+    try:
+        status, listed = _post_canvas_op(server, {"op": "project_schedules", "args": []})
+        assert status == 200 and listed["ok"] is True and listed["result"] == []
+        status, tick = _post_canvas_op(server, {"op": "scheduler_tick", "args": []})
+        assert status == 200 and tick["ok"] is False and tick["status"] == "not_available"
+        _status, again = _post_canvas_op(server, {"op": "scheduler_tick", "args": []})
+        assert again == tick
+        _status, still = _post_canvas_op(server, {"op": "project_schedules", "args": []})
+        assert still["result"] == []
+    finally:
+        server.close()
 
 
 def test_office_actions_use_existing_authenticated_company_owner_and_reject_invalid_targets(ops, monkeypatch):

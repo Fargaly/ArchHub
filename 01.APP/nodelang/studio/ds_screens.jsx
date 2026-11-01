@@ -75,7 +75,7 @@
     if (n.status === 'Done') return 'Done';
     return 'Draft';
   }
-  function RunModeChip({waiting}) {
+  function RunModeChip({waiting, count}) {
     const u = useApp();
     const [attempt, setAttempt] = React.useState(0);
     const [load, setLoad] = React.useState({status:'waiting', runMode:'', message:''});
@@ -89,11 +89,14 @@
       }).catch(error => { if (live) setLoad({status:'error', runMode:'', message: error.message || 'Could not read the run mode.'}); });
       return () => { live = false; };
     }, [attempt]);
+    const pending = Number(count) > 0;
+    const hot = !!waiting || pending;
+    const label = pending ? load.runMode + ' · ' + count : load.runMode;
     return <>
       {load.status === 'waiting' && <span role="status" style={{fontSize:11, color:A.inkSoft}}>Reading run mode</span>}
       {load.status === 'empty' && <span style={{fontSize:11, color:A.inkSoft}}>No run mode</span>}
       {load.status === 'error' && <span role="alert" style={{fontSize:11, color:A.err}}>{load.message} <button type="button" className="button-reset" onClick={event => executeAction('projects.controls.activate', {handler:() => setAttempt(value => value + 1)}, event)}>Retry</button></span>}
-      {load.status === 'loaded' && <button type="button" data-run-mode={load.runMode} className="button-reset" onClick={event => executeAction('projects.controls.activate', {handler:() => u.go('settings/Hooks')}, event)} style={{height:20, padding:'0 8px', borderRadius:A.rad.pill, border:'1px solid '+(waiting ? A.warn : A.line), color: waiting ? A.warn : A.inkSoft, background:'transparent', fontSize:11}}>{load.runMode}</button>}
+      {load.status === 'loaded' && <button type="button" data-run-mode={load.runMode} data-ask-count={pending ? count : 0} className="button-reset" onClick={event => executeAction('projects.controls.activate', {handler:() => u.go('settings/Hooks')}, event)} style={{height:20, padding:'0 8px', borderRadius:A.rad.pill, border:'1px solid '+(hot ? A.warn : A.line), color: hot ? A.warn : A.inkSoft, background:'transparent', fontSize:11}}>{label}</button>}
     </>;
   }
   function HostExecNode({n, selected, headerProps, renderPort}) {
@@ -980,6 +983,7 @@
       </div></section>)}</div>}
     </div>;
   }
+  window.UI.RunModeChip = RunModeChip;
   window.UI.Canvas = Canvas;
   window.UI.SystemGraph = SystemGraph;
 

@@ -26,9 +26,12 @@ Routine work (read, write, shell, other) in his own folders never prompts (F1/A1
 
 An Approve/Deny is the same call with ``{"approval": kind, "decision": ...}``: decide()
 checks the word and the run mode, then the kind's owner applies the effect (APPROVALS).
+An "ask" verdict is one pending card in that same path (settings/ask-approvals.json,
+listed with the other approvals). Approve releases the held action once. Deny refuses it.
 """
 from __future__ import annotations
 
+import contextvars
 import fnmatch
 import hashlib
 import json
@@ -464,13 +467,28 @@ def decide(payload: dict, vendor: str = "", *, environment=None):
         notes.append("Secret scan unavailable (Betterleaks not found); nothing was refused for it.")
     permissions = read_permissions(environment)
     mode = None if rules else mode_verdict(event, action, permissions, environment)  # a forbid wins
+    hold_id = ""
+    if mode and mode[0] == "ask":
+        # A release in progress, or a one-shot permit from Approve, runs this call.
+        # Every other ask is one pending card in the approval file.
+        if _RELEASING.get():
+            mode = None
+        else:
+            digest = _call_digest(event, action, mode[1])
+            if _take_permit(digest, environment):
+                mode = None
+            else:
+                summary = _REASONS.get(mode[1], mode[1])
+                hold_id = _remember(event, action, mode[1], digest, summary, environment)
+                notes.append(summary + "; confirm to run it.")
     if mode:
         rules = [mode[1]]
-        if mode[0] == "ask":
-            notes.append(_REASONS[mode[1]] + "; confirm to run it.")
     verdict = mode[0] if mode else "refuse" if rules else "organize" if notes else "allow"
-    return {"verdict": verdict, "vendor": vendor, "tool": event["tool"], "action": action, "rules": rules,
-            "notes": notes, "findings": findings, "scanners": scanners, "mode": permissions["runMode"]}
+    decision = {"verdict": verdict, "vendor": vendor, "tool": event["tool"], "action": action, "rules": rules,
+                "notes": notes, "findings": findings, "scanners": scanners, "mode": permissions["runMode"]}
+    if hold_id:
+        decision["hold"] = hold_id
+    return decision
 
 
 # ---- Approve / Deny: the same decision for every approval the founder sees ----------------
@@ -538,6 +556,317 @@ _REASONS = {"secret-going-public": "a secret would go public",
             "plan-only": "Plan only is on in Settings, so nothing changes",
             "tool-ask": "this tool is set to Ask in Settings",
             "ask-first": "Ask first is on in Settings and this deletes, publishes, sends or works outside your folders"}
+
+
+# Ask cards live beside permissions.json: the same settings store decide() already reads.
+_ASK_FILE = "ask-approvals.json"
+_RELEASING = contextvars.ContextVar("archhub_ask_release")
+_RELEASING.set(False)
+_ASK_TITLES = {"send": "Send", "publish": "Post", "delete": "Delete", "write": "Edit",
+               "shell": "Run a command", "screen": "Use the screen"}
+_ASK_VENDORS = {"claude-code": "Claude", "codex": "Codex", "gemini-cli": "Gemini",
+                "antigravity": "Gemini", "opencode": "OpenCode"}
+
+
+def _call_digest(event, action, rule) -> str:
+    data = event["input"] if isinstance(event["input"], dict) else {"value": event["input"]}
+    material = {"vendor": event.get("vendor") or "", "session": event.get("session") or "",
+                "tool": event["tool"], "action": action, "rule": rule, "input": data}
+    raw = json.dumps(material, sort_keys=True, default=str, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _ask_who(event, data) -> str:
+    if event.get("session") == "archhub-remote-relay":
+        return "Remote agent"
+    named = _ASK_VENDORS.get(event.get("vendor") or "")
+    if named:
+        return named
+    connector = data.get("connector") if isinstance(data, dict) else ""
+    if not connector:
+        return "This run"
+    try:
+        from .host_exec import _LABELS
+    except ImportError:
+        return str(connector)
+    return str(_LABELS.get(str(connector), connector))
+
+
+def _ask_text(action, data):
+    if action not in ("send", "publish") or not isinstance(data, dict):
+        return "", ""
+    label = "Text to post" if action == "publish" else "Text to send"
+    sources = [data]
+    arguments = data.get("arguments")
+    if isinstance(arguments, dict):
+        sources.append(arguments)
+    for source in sources:
+        for key in ("text", "body", "content", "message", "query"):
+            held = source.get(key)
+            if isinstance(held, str) and held:
+                return held, label
+    return "", label
+
+
+def _ask_replay(event, action) -> dict:
+    data = event["input"] if isinstance(event["input"], dict) else {}
+    if data.get("connector") and "arguments" in data:
+        return {"kind": "connector", "connector": str(data.get("connector") or ""),
+                "action": event["tool"], "arguments": data.get("arguments")}
+    if event.get("session") == "archhub-remote-relay":
+        return {"kind": "remote", "tool": event["tool"], "arguments": data}
+    if event["tool"] == "write" and "code" in data and data.get("host") is not None:
+        return {"kind": "host", "params": {
+            "host": data.get("host") or "", "code": data.get("code") or "",
+            "document": data.get("path") or "", "transaction_name": data.get("transaction_name") or "",
+            "transaction": True}}
+    return {"kind": "permit", "tool": event["tool"], "arguments": data}
+
+
+def _ask_path(environment) -> Path:
+    return _settings_dir(environment) / _ASK_FILE
+
+
+def _read_holds(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {"revision": 0, "holds": {}}
+    if type(data) is not dict or type(data.get("holds")) is not dict:
+        return {"revision": 0, "holds": {}}
+    return data
+
+
+def _write_holds(path: Path, data: dict) -> None:
+    closed = [(key, row) for key, row in data["holds"].items() if row.get("status") != "pending"]
+    if len(closed) > 200:
+        closed.sort(key=lambda item: item[1].get("at") or 0)
+        for key, _row in closed[:len(closed) - 200]:
+            data["holds"].pop(key, None)
+    data["revision"] = int(data.get("revision") or 0) + 1
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(data, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _with_ask_file(environment, change):
+    path = _ask_path(environment)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock = path.with_suffix(".lock")
+    held = None
+    for _ in range(40):
+        try:
+            held = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_RDWR)
+            break
+        except FileExistsError:
+            try:
+                if time.time() - lock.stat().st_mtime > 5:
+                    lock.unlink(missing_ok=True)
+                    continue
+            except OSError as busy:
+                if type(busy).__name__ == "":
+                    break
+    if held is None:
+        raise OSError("The approval file is busy.")
+    try:
+        return change(path)
+    finally:
+        os.close(held)
+        lock.unlink(missing_ok=True)
+
+
+def _ask_card(row: dict) -> dict:
+    return {"id": row["id"], "delegation": row["id"], "work": row["id"], "input_digest": row["input_digest"],
+            "approvalKind": "ask", "kind": "ask", "title": row.get("title") or "Run", "who": row.get("who") or "This run",
+            "text": row.get("text") or "", "textLabel": row.get("textLabel") or "", "summary": row.get("summary") or "",
+            "description": row.get("summary") or "", "status": row.get("status") or "pending",
+            "error": row.get("error") or "", "rows": [], "rubric": {}, "events": []}
+
+
+def _remember(event, action, rule, digest, summary, environment) -> str:
+    data = event["input"] if isinstance(event["input"], dict) else {}
+    text, label = _ask_text(action, data)
+    saved = {"id": ""}
+
+    def change(path):
+        held = _read_holds(path)
+        for row in held["holds"].values():
+            if row.get("status") == "pending" and row.get("input_digest") == digest:
+                saved["id"] = row["id"]
+                return None
+        base = "app:ask:" + digest[:24]
+        identity = base
+        if identity in held["holds"]:
+            number = 2
+            while base + ":" + str(number) in held["holds"]:
+                number += 1
+            identity = base + ":" + str(number)
+        held["holds"][identity] = {
+            "id": identity, "input_digest": digest, "status": "pending", "at": time.time(),
+            "title": _ASK_TITLES.get(action, "Run"), "who": _ask_who(event, data),
+            "text": text, "textLabel": label, "summary": summary, "permit_open": False,
+            "replay": _ask_replay(event, action)}
+        _write_holds(path, held)
+        saved["id"] = identity
+        return None
+
+    try:
+        _with_ask_file(environment, change)
+    except OSError:
+        return ""
+    return saved["id"]
+
+
+def _take_permit(digest, environment) -> bool:
+    path = _ask_path(environment)
+    if not path.is_file():
+        return False
+    found = {"ok": False}
+
+    def change(file_path):
+        held = _read_holds(file_path)
+        for row in held["holds"].values():
+            if row.get("permit_open") and row.get("input_digest") == digest and row.get("status") == "approved":
+                row["permit_open"] = False
+                _write_holds(file_path, held)
+                found["ok"] = True
+                return None
+        return None
+
+    try:
+        _with_ask_file(environment, change)
+    except OSError:
+        return False
+    return found["ok"]
+
+
+def ask_reviews(environment=None) -> list:
+    """Pending and closed Ask cards, from the same file decide() writes."""
+    environment = os.environ if environment is None else environment
+    path = _ask_path(environment)
+    if not path.is_file():
+        return []
+    try:
+        rows = list(_read_holds(path)["holds"].values())
+    except OSError:
+        return []
+    rows.sort(key=lambda row: row.get("at") or 0)
+    return [_ask_card(row) for row in rows]
+
+
+def _short_result(value) -> str:
+    try:
+        text = json.dumps(value, default=str, ensure_ascii=False)
+    except (TypeError, ValueError):
+        text = str(value)
+    return text[:400]
+
+
+def _release_ask(replay: dict):
+    from . import host_exec as host_runtime
+    kind = replay.get("kind")
+    if kind == "connector":
+        if replay.get("connector") not in host_runtime.INVOKERS:
+            host_runtime._ensure_registry()
+        invoker = host_runtime.INVOKERS.get(replay.get("connector"))
+        if invoker is None:
+            raise ValueError("This connector is not connected.")
+        arguments = replay.get("arguments")
+        if not isinstance(arguments, dict):
+            arguments = {"value": arguments}
+        return invoker(replay.get("action") or "", arguments)
+    if kind == "host":
+        from .library_engines import LIBRARY_ITEM_ENGINES
+        params = dict(LIBRARY_ITEM_ENGINES["host_exec"]["params"])
+        params.update(replay.get("params") or {})
+        produced, display = host_runtime.host_exec(params)
+        if display in ("Failed", "Waiting for you"):
+            note = produced.get("log") if isinstance(produced, dict) else ""
+            raise ValueError(note or display)
+        return produced
+    if kind == "remote":
+        from .cloud_relay import run_remote_effect
+        return run_remote_effect(replay.get("tool") or "", replay.get("arguments") or {})
+    return None
+
+
+def ask_apply(root, digest, decision, environment=None):
+    """Approve releases the held action once. Deny refuses it. A second Approve does not run it again."""
+    from .universal_cell import InvalidCell
+    environment = os.environ if environment is None else environment
+    if decision not in ("approve", "deny") or type(root) is not str or type(digest) is not str:
+        raise InvalidCell("Decide Approve or Deny on the exact approval shown.")
+    claimed = {"card": None, "row": None}
+
+    def claim(path):
+        held = _read_holds(path)
+        row = held["holds"].get(root)
+        if row is None or row.get("input_digest") != digest:
+            raise InvalidCell("Decide the exact approval shown.")
+        if row.get("status") == "approved" and decision == "approve":
+            claimed["card"] = _ask_card(row)
+            return None
+        if row.get("status") != "pending":
+            raise InvalidCell("This approval is closed.")
+        if decision == "deny":
+            row["status"] = "declined"
+            _write_holds(path, held)
+            claimed["card"] = _ask_card(row)
+            return None
+        row["status"] = "releasing"
+        _write_holds(path, held)
+        claimed["row"] = json.loads(json.dumps(row, default=str))
+        return None
+
+    try:
+        _with_ask_file(environment, claim)
+    except OSError as exc:
+        raise InvalidCell("The approval could not be saved.") from exc
+    if claimed["card"] is not None:
+        return claimed["card"]
+    token = _RELEASING.set(True)
+    status, error, permit, outcome = "approved", "", False, None
+    try:
+        replay = claimed["row"].get("replay") or {}
+        if replay.get("kind") == "permit":
+            permit = True
+        else:
+            outcome = _release_ask(replay)
+    except Exception as exc:
+        status, error, permit = "failed", str(exc), False
+    finally:
+        _RELEASING.reset(token)
+
+    def finish(path):
+        held = _read_holds(path)
+        row = held["holds"].get(root)
+        if row is None:
+            raise InvalidCell("This approval is no longer in the file.")
+        row["status"] = status
+        row["permit_open"] = bool(permit and status == "approved")
+        if error:
+            row["error"] = error
+        if outcome is not None:
+            row["result"] = _short_result(outcome)
+        _write_holds(path, held)
+        claimed["card"] = _ask_card(row)
+        return None
+
+    try:
+        _with_ask_file(environment, finish)
+    except OSError as exc:
+        raise InvalidCell("The approval could not be saved.") from exc
+    if status == "failed":
+        raise InvalidCell(error or "The held action failed.")
+    return claimed["card"]
+
+
+def _ask(request, decision):
+    return ask_apply(request.get("id"), request.get("digest"), decision)
+
+
+APPROVALS["ask"] = _ask
 
 
 def render(decision: dict, vendor: str, event_name: str = "PreToolUse") -> dict:

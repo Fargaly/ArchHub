@@ -776,12 +776,19 @@ def _watcher(request_id=''):
 
 def _answer_approval(request_id, kind, root, digest, decision):
     from .hook_decision import decide
+    if kind == 'ask':
+        return decide({'approval': 'ask', 'id': root, 'digest': digest, 'decision': decision})
     owners = {'hostskills': _host_skills, 'watcher': _watcher}
     if kind not in owners:
         from .universal_cell import InvalidCell
         raise InvalidCell('This approval kind is not served here.')
     return decide({'approval': kind, 'owner': owners[kind](request_id), 'id': root, 'digest': digest,
                    'decision': decision})
+
+
+def _list_approvals():
+    from .hook_decision import ask_reviews
+    return _watcher().reviews() + _host_skills().reviews() + ask_reviews()
 
 
 # Studio action -> owner method; each owner keeps one plain file under settings/.
@@ -811,7 +818,7 @@ WORKSHOP_READS = {
     'setTaskStatus': _set_task_status,
     'listAgentsWorking': lambda *a: _list_agents(),
     'listWorkshopMessages': lambda before=None, *a: _list_messages(before),
-    'listApprovals': lambda *a: _watcher().reviews() + _host_skills().reviews(),
+    'listApprovals': lambda *a: _list_approvals(),
     'listNotifications': lambda *a: {'notifications': []},
     'readWatcher': lambda *a: _watcher().read(),
     'readDesktop': lambda *a: _read_desktop(),

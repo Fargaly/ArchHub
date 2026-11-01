@@ -218,6 +218,7 @@
         if (opened) { executeAction("ui.setTask", u, opened.taskId || task.id); executeAction("ui.setSelectedNodeId", u, opened.taskId || task.id); executeAction("ui.go", u, "canvas"); }
       })}>Open in Canvas ↗</button></header>
     <div className="scroll ws-body" ref={bodyRef}><div className="ws-stack">
+      {(s.approvals || []).filter(card => card.approvalKind === 'ask' && card.status === 'pending' && card.id !== task?.approvalId).map(card => <ApprovalCard key={card.id} id={card.id} />)}
       {request && <section data-workshop-request className="ws-request"><div className="ws-label">THE REQUEST</div><Prose text={request} lines={6} /></section>}
       {(previous.before ? previous.more : s.workshopMessagesMore) && <Btn sm ghost onClick={async () => {
         const page = await executeAction("listWorkshopMessages", u, previous.before || s.workshopMessagesBefore);

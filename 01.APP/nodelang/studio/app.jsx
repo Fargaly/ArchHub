@@ -344,7 +344,7 @@
             show
           }, event)}><span>{s.workspaces.find(w => w.id === s.activeWorkspace)?.name || s.workspaces.find(w => w.builtIn)?.name || 'Add workspace'}</span><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true"><path d="M3 4.5l3 3 3-3" /></svg></button><i className="header-divider" /><span className="muted">/</span><button className="button-reset header-page" onClick={event => executeAction("appShell.ArchHub.2", {
             go
-          }, event)}>{routeNames[route] || route.split('/').at(-1)}</button><span className="fill" /><button className="button-reset header-search" onClick={event => executeAction("appShell.SearchCtrlK.5", {
+          }, event)}>{routeNames[route] || route.split('/').at(-1)}</button><span className="fill" />{window.UI.RunModeChip && <span style={{marginRight: 8}}><window.UI.RunModeChip waiting={(s.approvals || []).some(card => card.approvalKind === 'ask' && card.status === 'pending')} count={(s.approvals || []).filter(card => card.approvalKind === 'ask' && card.status === 'pending').length} /></span>}<button className="button-reset header-search" onClick={event => executeAction("appShell.SearchCtrlK.5", {
             show
           }, event)} aria-label="Search · Ctrl K"><window.AHIcon name="search" size={15} /><span className="fill">Search...</span><kbd>Ctrl K</kbd></button>{s.update.available && <button className="button-reset header-update" title={`${s.update.installed} → ${s.update.next}. Unsent text is lost; your saved graphs and settings stay with you.`} aria-label="Update available" onClick={event => executeAction("appShell.Control.3", {
             act,

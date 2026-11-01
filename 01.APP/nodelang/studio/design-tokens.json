@@ -1207,7 +1207,10 @@
    },
    "RunModeChip": {
     "penpot": null,
-    "code": null
+    "code": {
+     "file": "ds_screens.jsx",
+     "symbol": "function RunModeChip("
+    }
    },
    "HostExecNode": {
     "penpot": {

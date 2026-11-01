@@ -182,15 +182,16 @@ class WorkshopAPI:
         return WatcherOwner(self).discard()
 
     def answerApproval(self, kind, root, digest, decision):
-        """Every Approve/Deny card (desktop, schedule, hostskills, watcher): the one decision."""
+        """Every Approve/Deny card, including an Ask hold: the one decision."""
         from .hook_decision import decide
         from .host_skill_owner import HostSkillOwner
         return decide({"approval": kind, "owner": HostSkillOwner(self) if kind == "hostskills" else self,
                        "id": root, "digest": digest, "decision": decision})
 
     def listApprovals(self):
+        from .hook_decision import ask_reviews
         from .social_approval import list_reviews
-        return list_reviews(self)
+        return list_reviews(self) + ask_reviews()
 
     def postponeApproval(self, id):
         from .social_approval import change_review

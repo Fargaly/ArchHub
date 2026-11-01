@@ -253,6 +253,25 @@
         setBusy(false);
       }
     };
+    if (c.approvalKind === 'ask') {
+      const word = c.status === 'approved' ? 'Released' : c.status === 'declined' ? 'Refused' : c.status === 'failed' ? (c.error || 'The held action failed') : c.status;
+      return <Card data-approval={id} data-ask-card="" style={{
+        border: '1px solid ' + (c.status === 'pending' ? A.warn : A.line),
+        borderRadius: A.rad.lg,
+        padding: 16,
+        display: 'grid',
+        gap: 10
+      }}>
+        <div className="flex" style={{alignItems: 'flex-start', gap: 12}}>
+          <div className="fill"><h2 style={{fontSize: 15, margin: 0}}>{c.title}</h2><p className="muted" style={{fontSize: 12, margin: '4px 0 0'}}>{c.who} asked</p></div>
+          <Chip c={c.status === 'pending' ? A.warn : c.status === 'failed' ? A.err : A.ok}>{c.status === 'pending' ? 'Needs your OK' : word}</Chip>
+        </div>
+        {c.summary && <p style={{fontSize: 13, margin: 0, color: A.inkSoft}}>{c.summary}</p>}
+        {c.text ? <div><div style={{fontSize: 11, color: A.inkSoft, marginBottom: 4}}>{c.textLabel || 'Text'}</div><pre style={{margin: 0, whiteSpace: 'pre-wrap', font: '13px/1.45 Inter, sans-serif', background: A.bgSoft, border: '1px solid ' + A.line, borderRadius: A.rad.md, padding: '10px 12px'}}>{c.text}</pre></div> : null}
+        {decisionError && <p role="alert">{decisionError}</p>}
+        {c.status === 'pending' ? <div className="flex" style={{gap: 8}}><Btn p sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.ApproveOnce.13", {decide}, event)}>Approve</Btn><Btn sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.Decline.15", {decide}, event)}>Deny</Btn></div> : <p style={{margin: 0, color: c.status === 'approved' ? A.ok : c.status === 'failed' ? A.err : A.inkSoft}}>{word}</p>}
+      </Card>;
+    }
     return <Card data-approval={id} style={{
       border: '1px solid ' + (c.status === 'pending' ? A.warn : A.line),
       borderRadius: 14,

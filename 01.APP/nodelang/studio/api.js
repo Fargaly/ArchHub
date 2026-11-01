@@ -696,6 +696,11 @@ for(const name of hostSkillActions)api[name]=async(...args)=>{
 const approveDelegation=api.approve;
 api.approve=async(id,...args)=>{
  const card=state.approvals.find(c=>c.id===id);
+ if(card?.approvalKind==='ask'){
+  const result=await workshop('answerApproval',['ask',id,card.input_digest,'approve']);
+  if(result?.status!=='approved')throw Error(result?.error||result?.message||'The held action was not released.');
+  await refreshApprovals();return result;
+ }
  if(['desktop','schedule'].includes(card?.approvalKind)){
   const result=await workshop('answerApproval',[card.approvalKind,id,card.input_digest,'approve']);
   if(result?.status!=='approved')throw Error(result?.error||'Desktop result was not confirmed.');
@@ -714,6 +719,11 @@ api.approve=async(id,...args)=>{
 };
 api.decline=async id=>{
  const card=state.approvals.find(c=>c.id===id);
+ if(card?.approvalKind==='ask'){
+  const result=await workshop('answerApproval',['ask',id,card.input_digest,'deny']);
+  if(result?.status!=='declined')throw Error(result?.error||result?.message||'The held action was not refused.');
+  await refreshApprovals();return result;
+ }
  if(['desktop','schedule'].includes(card?.approvalKind)){
   const result=await workshop('answerApproval',[card.approvalKind,id,card.input_digest,'deny']);
   if(result?.status!=='declined')throw Error(result?.error||'Desktop decline was not confirmed.');

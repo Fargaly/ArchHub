@@ -9408,7 +9408,9 @@
         "02.TESTS/tests_replica/test_first_run_no_route.py",
         "02.TESTS/tests_replica/test_wire_social.py",
         "02.TESTS/tests_replica/test_workshop_presentation.py",
-        "02.TESTS/tests/test_ask_card.py"
+        "02.TESTS/tests/test_ask_card.py",
+        "02.TESTS/tests_replica/test_workshop_detail.py",
+        "02.TESTS/tests_js/studio_workshop_detail.test.cjs"
       ]
     }
   }

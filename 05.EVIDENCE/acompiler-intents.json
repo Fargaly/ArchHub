@@ -9377,6 +9377,7 @@
         "01.APP/nodelang/host_exec.py",
         "01.APP/nodelang/notion_mcp.py",
         "02.TESTS/tests/test_host_exec.py",
+        "02.TESTS/tests/test_brokers_restored.py",
         "01.APP/nodelang/stem_graph_evaluation.py",
         "01.APP/nodelang/cloud_relay.py",
         "01.APP/nodelang/installed_workshop_coordination.py",

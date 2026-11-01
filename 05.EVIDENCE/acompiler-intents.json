@@ -9416,6 +9416,8 @@
         "01.APP/nodelang/application_update.py",
         "01.APP/nodelang/application_update_recovery.py",
         "01.APP/nodelang/quiet_update.py",
+        "02.TESTS/tests_replica/test_installed_update_feed.py",
+        "03.TOOLS/installer/ArchHub.vbs",
         "02.TESTS/tests_replica/test_autoupd.py",
         "02.TESTS/tests_replica/test_quiet_update.py",
         "02.TESTS/tests_replica/test_updatequiet.py",

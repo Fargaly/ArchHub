@@ -454,7 +454,11 @@ def decide(payload: dict, vendor: str = "", *, environment=None):
         findings.append({"kind": "trace", "rule": "loop", "where": "session"})
     secret = any(f["kind"] == "secret" for f in findings)
     client = facts["private"] or any(f["kind"] == "pii" for f in findings)
-    context = {"secret": secret, "client_data": bool(client and action in ("publish", "send")),
+    # Categorize stays inside the mailbox. Ask first can hold it. The mailbox
+    # address is not client data leaving the machine, so the public-send forbid
+    # does not eat the hold. A real send of that data is still refused.
+    goes_public = action in ("publish", "send") and "categorize" not in event["tool"].casefold()
+    context = {"secret": secret, "client_data": bool(client and goes_public),
                "founder_data": action == "delete" and founder_data_targeted(facts["command"], event["cwd"], environment),
                "trifecta": trifecta, "banned_package": facts["banned_package"]}
     scanners["policy"], rules = cedar_forbids(action, context, vendor)

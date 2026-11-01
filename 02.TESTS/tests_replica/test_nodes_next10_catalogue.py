@@ -338,6 +338,27 @@ def test_live_revit_write_adapter_refuses_before_exec_without_verified_grant(mon
     assert exec_calls == []
 
 
+def _pending_write(operation, body):
+    """The hook admits a write only when pending_write.content is that exact body."""
+    return {
+        "operation": operation,
+        "kind": "model",
+        "target": "NOTICE",
+        "intent": "ACOMPILER",
+        "author": "fixture-human",
+        "why": "court",
+        "content": body,
+    }
+
+
+def _with_pending(operation, body):
+    return {**body, "pending_write": _pending_write(operation, body)}
+
+
+def _typed_element(identity):
+    return {"id": str(identity), "parameters": {"Comments": {"type": "string", "value": "OK"}}}
+
+
 def test_live_revit_write_adapter_returns_confirmed_receipt(monkeypatch):
     def verify(payload):
         return {"ok": True, "receipt": "fixture"}
@@ -349,11 +370,13 @@ def test_live_revit_write_adapter_returns_confirmed_receipt(monkeypatch):
     monkeypatch.setattr(clean_revit_adapter, "_call", lambda *args, **kwargs: {
         "status": "ok", "result": [{"id": 7, "changed": True}],
     })
-    request = {"elements": [{"id": 7}], "name": "Comments", "value": "OK"}
+    request = _with_pending("revit.set_parameter_by_name", {
+        "elements": [_typed_element(7)], "name": "Comments", "value": "OK",
+    })
     grant = {
         "operations": ["revit.set_parameter_by_name"], "scope": "revit.write",
         "digest": "fixture", "caller": "court", "session": "fixture",
-        "work": "fixture", "input_digest": nodeslib._digest_payload(request),
+        "work": "fixture", "input_digest": nodeslib._digest_payload(clean_revit_adapter._effect_arguments(request)),
         "action": "revit.set_parameter_by_name",
     }
 
@@ -396,11 +419,14 @@ def test_live_revit_renumber_adapter_formats_padded_index_before_exec(monkeypatc
         captured.append((route, body))
         return {"status": "ok", "result": [{"id": 7, "number": "A-001"}]}
 
-    request = {"elements": [{"id": 7}], "number_format": "A-{index:03d}", "name_format": ""}
+    request = _with_pending("revit.renumber_rename", {
+        "elements": [_typed_element(7)],
+        "number_format": "A-{index:03d}", "name_format": "",
+    })
     grant = {
         "operations": ["revit.renumber_rename"], "scope": "revit.write",
         "digest": "fixture", "caller": "court", "session": "fixture",
-        "work": "fixture", "input_digest": nodeslib._digest_payload(request),
+        "work": "fixture", "input_digest": nodeslib._digest_payload(clean_revit_adapter._effect_arguments(request)),
         "action": "revit.renumber_rename",
     }
     monkeypatch.setattr(nodeslib, "_WRITE_GRANT_VERIFIER", verify)
@@ -442,18 +468,17 @@ def _revit_write_grant(request):
     return {
         "operations": ["revit.set_parameter_by_name"], "scope": "revit.write",
         "digest": "fixture", "caller": "court", "session": "fixture",
-        "work": "fixture", "input_digest": nodeslib._digest_payload({
-            key: value for key, value in request.items() if key != "mods_store"
-        }), "action": "revit.set_parameter_by_name",
+        "work": "fixture", "input_digest": nodeslib._digest_payload(clean_revit_adapter._effect_arguments(request)),
+        "action": "revit.set_parameter_by_name",
     }
 
 
 def _revit_write_request(count, mods_store):
-    return {
-        "elements": [{"id": index + 1} for index in range(count)],
+    body = {
+        "elements": [_typed_element(index + 1) for index in range(count)],
         "name": "Comments", "value": "OK", "host": "Revit", "document": "Court.rvt",
-        "mods_store": mods_store,
     }
+    return {**_with_pending("revit.set_parameter_by_name", body), "mods_store": mods_store}
 
 
 def test_mods_before_write_hooks_run_at_revit_write_choke_point(monkeypatch, tmp_path):

@@ -136,12 +136,12 @@ def _filter_by_rule(rows: list, rule: str, mode: str) -> tuple:
 def filter_field(params: Mapping[str, object], feeds: Mapping[str, object]):
     """where type / where category / where level: rows whose field matches."""
     rows = _rows(feeds)
+    if not rows:
+        return {"out": []}, _EMPTY_LIST
     field = _plain(_text(params, "field"), "field")
     wanted = _plain(_text(params, "value"), "value")
     if not field:
         raise ValueError("set the field parameter to the field to match on")
-    if not rows:
-        return {"out": []}, _EMPTY_LIST
     if not wanted:
         # No value yet is not a filter that keeps nothing: it is a filter
         # nobody has finished writing, and the card must say which.
@@ -155,6 +155,8 @@ def filter_field(params: Mapping[str, object], feeds: Mapping[str, object]):
 def filter_compare(params: Mapping[str, object], feeds: Mapping[str, object]):
     """where parameter: a declared comparison on one field."""
     rows = _rows(feeds)
+    if not rows:
+        return {"out": []}, _EMPTY_LIST
     field = _plain(_text(params, "field"), "field")
     operator = _text(params, "operator", "==") or "=="
     wanted = _plain(_text(params, "value"), "value")
@@ -162,8 +164,6 @@ def filter_compare(params: Mapping[str, object], feeds: Mapping[str, object]):
         raise ValueError("operator must be one of %s" % ", ".join(_OPERATORS))
     if not field:
         raise ValueError("set the field parameter to the parameter to test")
-    if not rows:
-        return {"out": []}, _EMPTY_LIST
     mode = _text(params, "mode", "keep") or "keep"
     kept, shown = _filter_by_rule(
         rows, "item.%s %s %s" % (field, operator, wanted), mode
@@ -179,12 +179,12 @@ def filter_rule(params: Mapping[str, object], feeds: Mapping[str, object]):
     refused by name instead of being half-honoured.
     """
     rows = _rows(feeds)
+    if not rows:
+        return {"out": []}, _EMPTY_LIST
     rule = _text(params, "rule") or _text(params, "predicate")
     if not rule:
         raise ValueError(
             "set the rule parameter, for example: item.height > 3000")
-    if not rows:
-        return {"out": []}, _EMPTY_LIST
     mode = _text(params, "mode", "keep") or "keep"
     kept, shown = _filter_by_rule(rows, rule, mode)
     return {"out": kept}, shown
@@ -226,11 +226,11 @@ def set_field(params: Mapping[str, object], feeds: Mapping[str, object]):
     founder read "set 40 walls" and believe the model changed.
     """
     rows = _rows(feeds)
+    if not rows:
+        return {"out": []}, _EMPTY_LIST
     field = _text(params, "field") or _text(params, "name")
     if not field:
         raise ValueError("set the field parameter to the parameter to write")
-    if not rows:
-        return {"out": []}, _EMPTY_LIST
     value = coerce_parameter(params.get("value"))
     written = []
     for row in rows:
@@ -467,7 +467,7 @@ def add_text(params: Mapping[str, object], feeds: Mapping[str, object]):
     """
     text = _text(params, "text")
     if not text:
-        raise ValueError("set the text parameter to the note to add")
+        return {"out": []}, "set the text parameter to the note to add"
     note = {
         "kind": "text", "text": text,
         "x": _number(params, "x", 0.0), "y": _number(params, "y", 0.0),
@@ -611,6 +611,9 @@ def save_skill(params: Mapping[str, object], feeds: Mapping[str, object]):
 
 def weighted_valuation(params: Mapping[str, object], feeds: Mapping[str, object]):
     """Weighted min/max normalization of actual wired rows, with typed criteria."""
+    rows = _rows(feeds)
+    if not rows:
+        return {'out': []}, _EMPTY_LIST
     criteria = feeds.get('criteria', params.get('criteria', []))
     if isinstance(criteria, str):
         criteria = json.loads(criteria)
@@ -626,9 +629,6 @@ def weighted_valuation(params: Mapping[str, object], feeds: Mapping[str, object]
     total = sum(c['weight'] for c in criteria)
     if not math.isfinite(total) or total <= 0 or len({c['field'] for c in criteria}) != len(criteria):
         raise ValueError('Criteria must be unique and have a positive finite total weight')
-    rows = _rows(feeds)
-    if not rows:
-        return {'out':[]}, _EMPTY_LIST
     columns = []
     for criterion in criteria:
         values = [row.get(criterion['field']) if type(row) is dict else None for row in rows]

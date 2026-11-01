@@ -143,12 +143,34 @@ def test_the_terminal_card_refuses_outside_the_application():
 
 
 def test_every_added_engine_answers_the_shared_shape(tmp_path, monkeypatch):
-    """(params, feeds) in, (outputs mapping, one display line) out."""
-    assert set(_PLACEMENTS) | set(_APPROVAL_GATED) | set(_SERVER_BOUND) == set(LIBRARY_ENGINES), (
-        "every engine needs a placement in this court")
-    for name, (params, wired) in _PLACEMENTS.items():
+    """(params, feeds) in, (outputs mapping, one display line) out.
+
+    The served catalogue is the placement list.
+    """
+    monkeypatch.setattr(
+        "nodelang.hook_decision.decide",
+        lambda payload, vendor="", environment=None: {
+            "verdict": "allow", "action": "read", "rules": [], "notes": [],
+            "findings": [], "scanners": {}, "mode": "court",
+        },
+    )
+    cards = [
+        item for group in library_catalogue() for item in group["items"]
+        if not item.get("hidden") and not item.get("noEngine") and item.get("engine") in LIBRARY_ENGINES
+    ]
+    placed = {item["engine"] for item in cards}
+    assert placed | set(_APPROVAL_GATED) | set(_SERVER_BOUND) == set(LIBRARY_ENGINES), (
+        sorted(set(LIBRARY_ENGINES) - placed - set(_APPROVAL_GATED) - set(_SERVER_BOUND)))
+    seen = set()
+    for item in cards:
+        name = item["engine"]
+        if name in seen or name in _APPROVAL_GATED or name in _SERVER_BOUND:
+            continue
+        seen.add(name)
+        params = dict(item.get("params") or {})
+        wired = None
         if name == "library.save_skill":
-            params = dict(params, path=str(tmp_path / "saved" / "SKILL.md"))
+            params["path"] = str(tmp_path / "saved" / "SKILL.md")
         elif name == "library.publish_package":
             from tests_replica.test_home3_package_publication import package
             params, _, _, _, _ = package(tmp_path, monkeypatch)

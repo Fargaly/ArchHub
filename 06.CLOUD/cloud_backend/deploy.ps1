@@ -10,17 +10,35 @@
 # Usage:
 #   ./cloud_backend/deploy.ps1                       # interactive secret prompts
 #   ./cloud_backend/deploy.ps1 -SecretsFile <path>   # read from .env-style file
+#   ./cloud_backend/deploy.ps1 -SkipSecrets          # keep secrets already on the app
+#   ./cloud_backend/deploy.ps1 -NonInteractive       # never prompt; print the one login command
 
 [CmdletBinding()]
 param(
     [string]$SecretsFile = "",
     [switch]$SkipSecrets,
     [switch]$DnsAttach,
+    [switch]$NonInteractive,
+    [string]$PublicHealthUrl = "https://api.archhub.io/healthz",
     [string]$AppName = "archhub-cloud",
     [string]$Region  = "ord"
 )
 
 $ErrorActionPreference = "Stop"
+if (Test-Path variable:PSNativeCommandUseErrorActionPreference) {
+    $PSNativeCommandUseErrorActionPreference = $false
+}
+if (-not $PSBoundParameters.ContainsKey("NonInteractive")) {
+    $attached = [Environment]::UserInteractive
+    if ($attached) {
+        try {
+            $attached = -not [Console]::IsInputRedirected
+        } catch {
+            $attached = $false
+        }
+    }
+    if (-not $attached) { $NonInteractive = $true }
+}
 
 function Step($n, $msg) {
     Write-Host ""
@@ -29,13 +47,72 @@ function Step($n, $msg) {
 function Done($msg) { Write-Host "    OK $msg" -ForegroundColor Green }
 function Warn($msg) { Write-Host "    !! $msg" -ForegroundColor Yellow }
 
+function Get-FlyResult {
+    param([Parameter(Mandatory = $true)][string[]]$FlyArgs)
+    $outFile = [System.IO.Path]::GetTempFileName()
+    $errFile = [System.IO.Path]::GetTempFileName()
+    & flyctl @FlyArgs > $outFile 2> $errFile
+    $flyExit = $LASTEXITCODE
+    $stdoutText = [System.IO.File]::ReadAllText($outFile)
+    $stderrText = [System.IO.File]::ReadAllText($errFile)
+    Remove-Item -LiteralPath $outFile, $errFile -Force -ErrorAction SilentlyContinue
+    [pscustomobject]@{
+        ExitCode = $flyExit
+        StdOut = $stdoutText
+        StdErr = $stderrText
+    }
+}
+function Get-FlyFailureText {
+    param($Result)
+    $detail = [string]$Result.StdErr
+    if ([string]::IsNullOrWhiteSpace($detail)) { $detail = [string]$Result.StdOut }
+    $detail = (($detail -replace '\s+', ' ').Trim())
+    if (-not $detail) { $detail = "exit $($Result.ExitCode)" }
+    $detail
+}
+function Stop-IfFlyFailed {
+    param([string]$StepName, $Result)
+    if ($Result.ExitCode -ne 0) {
+        $detail = Get-FlyFailureText $Result
+        Write-Host "REFUSED: $StepName failed: $detail" -ForegroundColor Red
+        exit 1
+    }
+}
+function Convert-FlyJson {
+    param([string]$Text)
+    $trimmed = ""
+    if ($null -ne $Text) { $trimmed = $Text.Trim() }
+    if (-not $trimmed -or $trimmed -eq "[]" -or $trimmed -eq "null") { return @() }
+    @($trimmed | ConvertFrom-Json)
+}
+function Get-NewestRelease {
+    param([string]$JsonText)
+    $rows = @(Convert-FlyJson $JsonText)
+    $chosen = $null
+    foreach ($row in $rows) {
+        if ($null -eq $row) { continue }
+        $verProp = $row.PSObject.Properties["Version"]
+        if (-not $verProp) { $verProp = $row.PSObject.Properties["version"] }
+        if (-not $verProp) { continue }
+        $ver = [int]$verProp.Value
+        $statusProp = $row.PSObject.Properties["Status"]
+        if (-not $statusProp) { $statusProp = $row.PSObject.Properties["status"] }
+        $statusText = ""
+        if ($statusProp) { $statusText = [string]$statusProp.Value }
+        if ($null -eq $chosen -or $ver -gt $chosen.Version) {
+            $chosen = [pscustomobject]@{ Version = $ver; Status = $statusText }
+        }
+    }
+    $chosen
+}
+
 # ----- 0. The one address must already answer ------------------------------
 # fly.toml sets PUBLIC_URL = https://api.archhub.io, so every company invite,
 # Google return and cockpit claim this deploy builds points there. Refuse to
 # deploy unless that address answers /healthz with 200 over TLS on a live
 # certificate (no certificate bypass here, on purpose).
-Step 0 "Checking https://api.archhub.io/healthz answers 200 over TLS"
-$publicHealth = "https://api.archhub.io/healthz"
+Step 0 "Checking $PublicHealthUrl answers 200 over TLS"
+$publicHealth = $PublicHealthUrl
 try {
     $publicResp = Invoke-WebRequest -Uri $publicHealth -TimeoutSec 15 -UseBasicParsing -MaximumRedirection 0
 } catch {
@@ -66,34 +143,44 @@ Done "flyctl found at $($fly.Source)"
 
 # ----- 2. Sign in --------------------------------------------------------
 Step 2 "Verifying Fly.io sign-in"
-$signedIn = $false
-try {
-    flyctl auth whoami 2>$null | Out-Null
-    if ($LASTEXITCODE -eq 0) { $signedIn = $true }
-} catch {}
-if (-not $signedIn) {
+$who = Get-FlyResult -FlyArgs @("auth", "whoami")
+if ($who.ExitCode -ne 0) {
+    if ($NonInteractive) {
+        Write-Host "REFUSED: sign-in failed: $(Get-FlyFailureText $who)" -ForegroundColor Red
+        Write-Host "flyctl auth login"
+        exit 1
+    }
     Write-Host "    Running flyctl auth login..."
-    flyctl auth login
+    $login = Get-FlyResult -FlyArgs @("auth", "login")
+    Stop-IfFlyFailed "sign-in" $login
+    $who = Get-FlyResult -FlyArgs @("auth", "whoami")
+    Stop-IfFlyFailed "sign-in" $who
 }
-Done "signed in as $(flyctl auth whoami)"
+Done "signed in as $($who.StdOut.Trim())"
 
 # ----- 3. App + region ---------------------------------------------------
 Step 3 "App $AppName in region $Region"
-$existing = flyctl apps list --json 2>$null | ConvertFrom-Json
-$found = $existing | Where-Object { $_.Name -eq $AppName }
+$apps = Get-FlyResult -FlyArgs @("apps", "list", "--json")
+Stop-IfFlyFailed "apps" $apps
+$existing = @(Convert-FlyJson $apps.StdOut)
+$found = $existing | Where-Object { $_ -and $_.Name -eq $AppName }
 if (-not $found) {
     Write-Host "    Creating app $AppName..."
-    flyctl apps create $AppName --org personal 2>&1
+    $created = Get-FlyResult -FlyArgs @("apps", "create", $AppName, "--org", "personal")
+    Stop-IfFlyFailed "create-app" $created
 }
 Done "app ready"
 
 # ----- 4. Volume ---------------------------------------------------------
 Step 4 "Persistent volume archhub_data (1GB) in $Region"
-$vols = flyctl volumes list -a $AppName --json 2>$null | ConvertFrom-Json
-$volExists = $vols | Where-Object { $_.Name -eq "archhub_data" }
+$volsResult = Get-FlyResult -FlyArgs @("volumes", "list", "-a", $AppName, "--json")
+Stop-IfFlyFailed "volumes" $volsResult
+$vols = @(Convert-FlyJson $volsResult.StdOut)
+$volExists = $vols | Where-Object { $_ -and $_.Name -eq "archhub_data" }
 if (-not $volExists) {
     Write-Host "    Creating volume..."
-    flyctl volumes create archhub_data --size 1 --region $Region -a $AppName --yes
+    $createdVol = Get-FlyResult -FlyArgs @("volumes", "create", "archhub_data", "--size", "1", "--region", $Region, "-a", $AppName, "--yes")
+    Stop-IfFlyFailed "create-volume" $createdVol
 }
 Done "volume ready"
 
@@ -119,8 +206,10 @@ if (-not $SkipSecrets) {
             "JWT_SECRET"
         )
         foreach ($k in $required) {
-            $existing = flyctl secrets list -a $AppName --json 2>$null | ConvertFrom-Json
-            if ($existing | Where-Object { $_.Name -eq $k }) {
+            $listed = Get-FlyResult -FlyArgs @("secrets", "list", "-a", $AppName, "--json")
+            Stop-IfFlyFailed "secrets-list" $listed
+            $existing = @(Convert-FlyJson $listed.StdOut)
+            if ($existing | Where-Object { $_ -and $_.Name -eq $k }) {
                 Write-Host "    $k already set — skip"
                 continue
             }
@@ -129,11 +218,12 @@ if (-not $SkipSecrets) {
         }
     }
     if ($secrets.Count -gt 0) {
-        $args = @("secrets", "set", "-a", $AppName)
+        $flyArgs = @("secrets", "set", "-a", $AppName)
         foreach ($k in $secrets.Keys) {
-            $args += "$k=$($secrets[$k])"
+            $flyArgs += "$k=$($secrets[$k])"
         }
-        & flyctl @args
+        $written = Get-FlyResult -FlyArgs $flyArgs
+        Stop-IfFlyFailed "secrets-set" $written
         Done "$($secrets.Count) secret(s) written"
     } else {
         Warn "no new secrets set; deploy will inherit existing config"
@@ -147,8 +237,26 @@ $flyToml  = Join-Path $repoRoot "cloud_backend\fly.toml"
 # Build context is cloud_backend\ itself (the Dockerfile copies requirements.txt
 # and main.py from it), whatever directory this script is started from.
 $context  = Join-Path $repoRoot "cloud_backend"
-flyctl deploy $context --config $flyToml --dockerfile (Join-Path $context "Dockerfile") -a $AppName
-Done "deployed"
+$before = Get-FlyResult -FlyArgs @("releases", "-a", $AppName, "--json")
+Stop-IfFlyFailed "releases" $before
+$beforeNewest = Get-NewestRelease $before.StdOut
+$beforeVersion = 0
+if ($beforeNewest) { $beforeVersion = $beforeNewest.Version }
+$dockerfile = Join-Path $context "Dockerfile"
+$deployed = Get-FlyResult -FlyArgs @("deploy", $context, "--config", $flyToml, "--dockerfile", $dockerfile, "-a", $AppName)
+Stop-IfFlyFailed "deploy" $deployed
+$after = Get-FlyResult -FlyArgs @("releases", "-a", $AppName, "--json")
+Stop-IfFlyFailed "releases" $after
+$newest = Get-NewestRelease $after.StdOut
+$live = $false
+if ($newest -and $newest.Version -gt $beforeVersion -and $newest.Status -eq "complete") { $live = $true }
+if (-not $live) {
+    $shown = "no release"
+    if ($newest) { $shown = "version $($newest.Version) status $($newest.Status); previous version $beforeVersion" }
+    Write-Host "REFUSED: release failed: $shown" -ForegroundColor Red
+    exit 1
+}
+Done "deployed release v$($newest.Version) ($($newest.Status))"
 
 # ----- 7. Health check --------------------------------------------------
 Step 7 "Health check"
@@ -168,9 +276,12 @@ try {
 # ----- 8. DNS attach (optional) -----------------------------------------
 if ($DnsAttach) {
     Step 8 "Attaching custom domain api.archhub.io"
-    flyctl certs add api.archhub.io -a $AppName 2>&1
+    $certs = Get-FlyResult -FlyArgs @("certs", "add", "api.archhub.io", "-a", $AppName)
+    Stop-IfFlyFailed "certs" $certs
     Write-Host "    Add these DNS records at your DNS provider:"
-    flyctl ips list -a $AppName
+    $ips = Get-FlyResult -FlyArgs @("ips", "list", "-a", $AppName)
+    Stop-IfFlyFailed "ips" $ips
+    Write-Host $ips.StdOut
     Write-Host ""
     Write-Host "    Add an A record: api.archhub.io  →  <v4 from above>"
     Write-Host "    Add an AAAA record: api.archhub.io  →  <v6 from above>"

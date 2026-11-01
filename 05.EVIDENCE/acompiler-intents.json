@@ -9388,7 +9388,9 @@
         "06.CLOUD/cloud_backend/tests/test_public_door_host_read.py",
         "06.CLOUD/cloud_backend/tests/test_remote_agent_door.py",
         "02.TESTS/tests_replica/test_mcp_clients_join_the_workshop.py",
-        "02.TESTS/tests_replica/test_remote_agents_relay.py"
+        "02.TESTS/tests_replica/test_remote_agents_relay.py",
+        "06.CLOUD/cloud_backend/deploy.ps1",
+        "06.CLOUD/cloud_backend/deploy.selfcheck.ps1"
       ]
     }
   }

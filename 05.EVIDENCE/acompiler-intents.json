@@ -9371,6 +9371,7 @@
         "02.TESTS/tests/test_task_context.py",
         "02.TESTS/tests_replica/test_one_library_catalogue.py",
         "02.TESTS/tests_replica/test_the_library_only_offers_what_runs.py",
+        "02.TESTS/tests_replica/test_nodes_next10_catalogue.py",
         "02.TESTS/tests_replica/test_nodeslib_v2.py",
         "01.APP/nodelang/universal_pipeline.py",
         "02.TESTS/tests_replica/test_wiring2_lane_repairs.py",

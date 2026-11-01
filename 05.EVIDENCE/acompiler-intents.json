@@ -9397,7 +9397,17 @@
         "02.TESTS/tests_replica/test_cell_brain_reflexion.py",
         "02.TESTS/tests_replica/test_cell_brain_skills.py",
         "02.TESTS/tests_replica/test_cell_model_providers.py",
-        "02.TESTS/tests_replica/test_one_http_server.py"
+        "02.TESTS/tests_replica/test_one_http_server.py",
+        "01.APP/nodelang/clean_agent_conversation.py",
+        "01.APP/nodelang/social_research_community_backend.py",
+        "01.APP/nodelang/studio/studio-existing-workshop.js",
+        "01.APP/nodelang/workshop_clean_archive.py",
+        "01.APP/nodelang/workshop_page_lifecycle.py",
+        "01.APP/nodelang/workshop_presentation.py",
+        "02.TESTS/tests_replica/test_canvas_graph_owner.py",
+        "02.TESTS/tests_replica/test_first_run_no_route.py",
+        "02.TESTS/tests_replica/test_wire_social.py",
+        "02.TESTS/tests_replica/test_workshop_presentation.py"
       ]
     }
   }

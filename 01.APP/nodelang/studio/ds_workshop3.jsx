@@ -17,6 +17,8 @@
   const color = s => s === 'IN REVIEW' ? A.warn : s === 'DONE' ? A.ok : s === 'STOPPED' ? A.err : s === 'WIP' ? A.ink : A.inkSoft;
   const statusText = s => ({'IN REVIEW': 'Needs you', WIP: 'Working', PLANNED: 'Planned', DONE: 'Completed', ARCHIVED: 'Archived', STOPPED: 'Stopped'})[s] || s;
   const sessionState = row => row.state === 'turn_ended' ? 'Turn ended' : row.state === 'tool_ended' ? 'Tool ended' : row.state === 'unassociated' ? 'Activity unassociated' : 'Working';
+  const shownModel = value => { const model = String(value || '').trim(); return model && model !== 'Model not reported' ? model : ''; };
+  const oneLine = text => String(text || '').split('\n').map(line => line.trim()).find(Boolean) || '';
   function Task({task, on, select, ownerName}) {
     const u = useApp();
     const steps = task.steps || [], completed = steps.filter(step => /^(done|complete|completed)$/i.test(step.status)).length, a = task.activity;
@@ -38,6 +40,7 @@
         {a.stale && <span> · Re-verify row status</span>}
         {(a.limited || a.unavailable) && <span> · Observation incomplete</span>}
       </div>}
+      {task.status === 'DONE' && oneLine(task.result) && <span className="ws-small ws-task-outcome" data-task-outcome={task.id}>{oneLine(task.result)}</span>}
       {task.status === 'WIP' && steps.length > 0 && <span role="progressbar" className="ws-progress" aria-label={task.title + ' steps'} aria-valuemin={0} aria-valuenow={completed} aria-valuemax={steps.length}><i style={{width: `${completed / steps.length * 100}%`}} /></span>}
     </button>;
   }
@@ -92,11 +95,11 @@
           meta: [host || a.app, session && 'session ' + session.replace(/^session-/, '').slice(0, 8)].filter(Boolean).join(' · ')};
       });
       named.forEach(n => { if (named.filter(o => o.name === n.name).length > 1 && n.short) n.name += ' · ' + n.short; });
-      const row = (key, id, name, state, detail, handle, meta) => ({key, id, name, state, detail, handle, meta, role: [state, detail].filter(Boolean).join(' · ')});
-      const people = [...named.map(({a, name, meta}) => row(a.handle, name, name, a.status && a.status !== 'unknown' ? a.status : 'Joined', a.task || 'No task declared', a.handle, meta)),
+      const row = (key, id, name, state, detail, handle, meta, model) => ({key, id, name, state, detail, handle, meta, model: shownModel(model), role: [state, detail].filter(Boolean).join(' · ')});
+      const people = [...named.map(({a, name, meta}) => row(a.handle, name, name, a.status && a.status !== 'unknown' ? a.status : 'Joined', a.task || 'No task declared', a.handle, meta, a.model)),
         ...(s.agents || []).filter(p => !agents.some(a => a.app === p.runtime)).map(p => row(p.id, p.id, p.name,
-          'Not joined · ' + (p.presence === 'working' ? 'Working' : p.presence === 'unknown' ? (p.status_text || 'Status unknown') : 'Idle'), p.presence === 'working' ? p.task : '', undefined, p.runtime)),
-        row('founder', 'You', 'You', 'Founder', 'Workspace owner', undefined, '')];
+          'Not joined · ' + (p.presence === 'working' ? 'Working' : p.presence === 'unknown' ? (p.status_text || 'Status unknown') : 'Idle'), p.presence === 'working' ? p.task : '', undefined, p.runtime, p.model)),
+        row('founder', 'You', 'You', 'Founder', 'Workspace owner', undefined, '', '')];
       // A message sender or recipient label -> the same identity as its People row.
       const whoIs = (label, session) => {
         const n = named.find(x => (session && x.a.session === session) || x.a.agent === label || x.a.name === label);
@@ -225,7 +228,7 @@
         if (currentScope.current === roomScope && Array.isArray(page?.messages)) setOlder({scope: roomScope, messages: [...page.messages, ...previous.messages], before: page.next_before, more: page.more});
       }}>Older messages</Btn>}
       {roomMessages.length > 0 && <Messages task={{messages: roomMessages}} roles={roles} whoIs={whoIs} onReply={reply} />}
-      {task ? <><Messages task={task} roles={roles} whoIs={whoIs} onReply={reply} />{task.approvalId && <ApprovalCard id={task.approvalId} />}{task.status === 'STOPPED' && <Btn onClick={() => executeAction("reassignTask", u, task.id)}>Continue with another agent</Btn>}{task.status === 'DONE' && <div className="flex"><Btn onClick={() => executeAction("ui.go", u, 'watcher')}>Open result</Btn><Btn onClick={() => executeAction("ui.schedule", u, task.title)}>Repeat this</Btn></div>}</> : roomMessages.length === 0 && <Empty>Create a task to begin.</Empty>}
+      {task ? <><Messages task={task} roles={roles} whoIs={whoIs} onReply={reply} />{task.approvalId && <ApprovalCard id={task.approvalId} />}{task.status === 'STOPPED' && <Btn onClick={() => executeAction("reassignTask", u, task.id)}>Continue with another agent</Btn>}{task.status === 'DONE' && task.result && <section data-workshop-result className="ws-request"><div className="ws-label">RESULT</div><Prose text={task.result} lines={6} /></section>}{task.status === 'DONE' && <div className="flex"><Btn onClick={() => executeAction("ui.go", u, 'watcher')}>Open result</Btn><Btn onClick={() => executeAction("ui.schedule", u, task.title)}>Repeat this</Btn></div>}</> : roomMessages.length === 0 && <Empty>Create a task to begin.</Empty>}
       <i ref={stickToEnd} aria-hidden="true" />
     </div></div>
     <div className="ws-dock"><div>{D.Composer ? <TaskComposer choices={choices} to={recipient} setTo={setTo} sendRef={sendRef} replyTo={replyTo} setReplyTo={setReplyTo} /> : window.UI.Composer && <window.UI.Composer taskId={task?.id} />}</div></div>
@@ -235,7 +238,7 @@
   <Column id="people" panelRef={peopleRef} collapsible collapsedSize={RAIL} minSize={240} defaultSize={folded('people') ? RAIL : 280} groupResizeBehavior="preserve-pixel-size" onResize={rail('people')}>
   <aside id="ws-people" data-workshop-column="people" className="ws-col ws-people">
     <h2>People &amp; agents</h2><p className="ws-small ws-note">{s.liveAgents === undefined ? 'Loading agents…' : people.length + ' in this Workshop · ' + agents.length + ' joined'}</p>{s.liveAgents !== undefined && !agents.length && <p className="ws-small ws-note">No agent session has joined yet. A session that joins appears here and can be messaged.</p>}
-    <div className="scroll ws-people-list">{people.map(p => <div key={p.key} className={'ws-person' + (recipient && p.handle === recipient ? ' to' : '')}><button className="button-reset ws-person-name" title={[(p.handle ? 'Send to ' : '') + p.name, p.role, p.meta].filter(Boolean).join(' · ')} onClick={() => p.handle ? executeAction("ui.select", () => setTo(p.handle)) : executeAction("ui.show", u, 'Agent', {id: p.id})}><Av id={p.id} size={28} /><span className="pane-text"><b>{p.name}</b><span className="ws-small">{p.state}</span></span></button>{p.detail && <span className="pane-text"><Clamp text={p.detail} /></span>}</div>)}</div>
+    <div className="scroll ws-people-list">{people.map(p => <div key={p.key} className={'ws-person' + (recipient && p.handle === recipient ? ' to' : '')}><button className="button-reset ws-person-name" title={[(p.handle ? 'Send to ' : '') + p.name, p.role, p.model, p.meta].filter(Boolean).join(' · ')} onClick={() => p.handle ? executeAction("ui.select", () => setTo(p.handle)) : executeAction("ui.show", u, 'Agent', {id: p.id})}><Av id={p.id} size={28} /><span className="pane-text"><b>{p.name}</b><span className="ws-small">{p.state}</span>{p.model ? <span className="ws-small" data-agent-model={p.model}>{p.model}</span> : null}</span></button>{p.detail && <span className="pane-text"><Clamp text={p.detail} /></span>}</div>)}</div>
     <hr className="ws-rule" />
     <h2>Meeting input</h2><p className="ws-small ws-note">Notes for this task go to {recipient ? (agents.find(a => a.handle === recipient)?.name || 'Everyone') : 'BABOOM'}.</p>
     {notesOpen ? <div className="grid"><textarea aria-label="Meeting notes" rows={6} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Paste meeting notes…" /><div className="flex"><Btn sm p disabled={!notes.trim()} onClick={() => executeAction("ui.select", async () => { await sendRef.current?.('Meeting notes:\n' + notes); setNotes(''); setNotesOpen(false); })}>Send notes</Btn><Btn sm ghost onClick={() => executeAction("ui.select", () => setNotesOpen(false))}>Cancel</Btn></div></div>

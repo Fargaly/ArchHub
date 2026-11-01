@@ -712,6 +712,16 @@ class SessionFiles:
             history = document.get('properties',{}).get('history',[])
             head = {'ok':True,'revision':canvas_documents.revision(document),'path':str(path),'by':history[-1]['by'] if history else ''}
             return {**head,'document':document} if action == 'read' else head
+        if action == 'member-op':
+            # One implementation of pulling an agent out of a group and dropping it back (canvas_documents.py).
+            from . import canvas_documents
+            document = validate(body.get('document'))
+            operation = {'detach': canvas_documents.detach_member, 'attach': canvas_documents.attach_member}.get(body.get('op'))
+            args = body.get('args')
+            if operation is None or not isinstance(args, list) or len(args) < 2:
+                raise ValueError('Member operation must be detach or attach')
+            changed = operation(document, *args)
+            return {'ok': True, 'document': validate(document), 'changed': changed}
         if action == 'validate':
             return {'ok':True,'document':validate(body.get('document'))}
         if action == 'run':

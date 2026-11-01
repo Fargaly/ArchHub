@@ -104,6 +104,29 @@ def short_title(text, limit=60):
     return title if len(title) <= limit else title[:limit - 1].rsplit(" ", 1)[0].rstrip(" ,;:.-") + "…"
 
 
+def _thread_result(history, task):
+    """The last Workshop message whose refs name this task. Empty when none was recorded."""
+    if not history._db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='messages'").fetchone():
+        return ""
+    from .workshop_mailbox import ROOM
+    found = history._db.execute(
+        "SELECT content FROM messages WHERE conversation_id=? "
+        "AND EXISTS (SELECT 1 FROM json_each(refs) WHERE value=?) ORDER BY sequence",
+        (ROOM, task)).fetchall()
+    return str(found[-1][0] or "").strip() if found else ""
+
+
+def recorded_result(history, row):
+    """The result the task stored, or the final reply that names it. Never a stand-in."""
+    stored = row.get("result")
+    if isinstance(stored, str) and stored.strip():
+        return stored
+    if row.get("status") != "done":
+        return stored
+    text = _thread_result(history, row["id"])
+    return text if text else (stored if isinstance(stored, str) else "")
+
+
 def column(history):
     """The Studio Work rows: a short name, the full declaration as details, and the owner's live state:
     Working while its session declares working or holds the lease, Needs you while it is blocked, Done when completed."""
@@ -121,7 +144,7 @@ def column(history):
     current = _current_session()
     return [{'id': row['id'], 'title': short_title(row['title']), 'description': row['title'],
              'owner': row['owner_label'] if row['id'] in live or not row['lease_expired'] else None,
-             'status': state(row), 'result': row['result'],
+             'status': state(row), 'result': recorded_result(history, row),
              'messages': [], 'steps': [], 'reviews': [], 'queuedMessages': [], 'declarations': [],
              'updated_at': row['updated_at'], 'sessionPath': row.get('session_path'),
              'sessionOpen': bool(row.get('session_path') and row['session_path'] == current)}

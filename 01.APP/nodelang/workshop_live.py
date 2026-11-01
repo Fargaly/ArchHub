@@ -268,6 +268,7 @@ def live_agents(with_status=False):
         governance = read_states().get(row.get('runtime') or row.get('app'), {}).get('state', 'not checked')
         agents.append({'handle': handle, 'name': name, 'agent': row['agent'], 'app': row.get('runtime') or row.get('app'), 'governance': governance,
                        'session': row['session'], 'native_session_id': row.get('native_session_id'), 'task': row.get('task'),
+                       'model': row.get('model') if isinstance(row.get('model'), str) else '',
                        'pids': [entry['pid'] for entry in ([row['native_process']] if row.get('native_process') else [])
                                 + list(row.get('process_lineage') or [])]})
     if with_status:

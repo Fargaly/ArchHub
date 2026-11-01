@@ -266,6 +266,117 @@ def write_through(node, key, value):
     return False
 
 
+def _member_id(member):
+    if isinstance(member, str) and member:
+        return member
+    if isinstance(member, dict) and isinstance(member.get('id'), str) and member['id']:
+        return member['id']
+    return ''
+
+
+def _group_node(document, group_id):
+    found = [node for node in document.get('nodes') or [] if node.get('id') == group_id]
+    if len(found) != 1:
+        raise ValueError('Group node is absent')
+    return found[0]
+
+
+def _finite_point(value):
+    number = float(value)
+    if number != number or number in (float('inf'), float('-inf')):
+        raise ValueError('Position must be finite')
+    return number
+
+
+def _source_socket(group):
+    ports = group.get('ports') if isinstance(group.get('ports'), dict) else {}
+    source = ports.get('source') if isinstance(ports.get('source'), list) else []
+    for port in source:
+        if isinstance(port, dict) and isinstance(port.get('id'), str) and port['id']:
+            return port['id']
+    if group.get('type') == 'thing.workshop':
+        return 'messages'
+    return ''
+
+
+def detach_member(document, group_id, member, x=0, y=0):
+    """Pull one agent member out of a group into one thing.agent node on the same document.
+
+    The node keeps the member's id and agent identity. Its sockets are task in and result out.
+    A wire from the group's output into task keeps it on the same graph. Dropping it back is attach_member.
+    """
+    group = _group_node(document, group_id)
+    wanted = member.get('id') if isinstance(member, dict) else member
+    if not isinstance(wanted, str) or not wanted or wanted == group_id:
+        raise ValueError('Member id is required')
+    held = list(group.get('members') or [])
+    index = next((i for i, item in enumerate(held) if _member_id(item) == wanted), None)
+    if index is None:
+        if group.get('type') != 'thing.workshop' or not isinstance(member, dict):
+            raise ValueError('Member is not in this group')
+        record = {'id': wanted, 'title': str(member.get('title') or wanted), 'agent': str(member.get('agent') or wanted)}
+    else:
+        item = held.pop(index)
+        group['members'] = held
+        if isinstance(item, dict):
+            record = {'id': wanted, 'title': str(item.get('title') or item.get('name') or wanted),
+                      'agent': str(item.get('agent') or wanted)}
+        else:
+            record = {'id': wanted, 'title': wanted, 'agent': wanted}
+        if isinstance(member, dict):
+            if isinstance(member.get('title'), str) and member['title'].strip():
+                record['title'] = member['title'].strip()
+            if isinstance(member.get('agent'), str) and member['agent'].strip():
+                record['agent'] = member['agent'].strip()
+    if any(node.get('id') == wanted for node in document['nodes']):
+        raise ValueError('Agent node already exists')
+    created = {
+        'id': wanted,
+        'type': 'thing.agent',
+        'title': record['title'],
+        'params': {'agent': record['agent'], 'instructions': ''},
+        'position': {'x': _finite_point(x), 'y': _finite_point(y)},
+        'ports': {'source': [_port('result')], 'target': [_port('task')]},
+    }
+    document['nodes'].append(created)
+    socket = _source_socket(group)
+    if socket:
+        document.setdefault('wires', []).append({
+            'id': 'wire-' + group_id + '-' + wanted,
+            'from': {'node': group_id, 'socket': socket},
+            'to': {'node': wanted, 'socket': 'task'},
+        })
+    return [wanted]
+
+
+def attach_member(document, group_id, node_id):
+    """Put a detached agent node back in the group and remove that node from the document."""
+    group = _group_node(document, group_id)
+    if node_id == group_id:
+        raise ValueError('A group cannot contain itself')
+    node = next((item for item in document.get('nodes') or [] if item.get('id') == node_id), None)
+    if node is None:
+        raise ValueError('Agent node is absent')
+    if node.get('type') != 'thing.agent':
+        raise ValueError('Only an agent node returns to the group')
+    document['nodes'] = [item for item in document['nodes'] if item.get('id') != node_id]
+    document['wires'] = [wire for wire in document.get('wires') or []
+                         if wire.get('from', {}).get('node') != node_id and wire.get('to', {}).get('node') != node_id]
+    for item in document['nodes']:
+        if isinstance(item.get('children'), list):
+            item['children'] = [child for child in item['children'] if child != node_id]
+        if item.get('parent') == node_id:
+            item.pop('parent', None)
+    members = [item for item in list(group.get('members') or []) if _member_id(item) != node_id]
+    members.append({'id': node_id, 'title': str(node.get('title') or node_id),
+                    'agent': str((node.get('params') or {}).get('agent') or node_id)})
+    group['members'] = members
+    for listing in document.get('groups') or []:
+        if isinstance(listing, dict) and isinstance(listing.get('nodes'), list):
+            listing['nodes'] = [item for item in listing['nodes'] if item != node_id]
+    return [group_id]
+
+
 # ----------------------------------------------------------------- solve --
 def downstream(document, changed):
     out = {}

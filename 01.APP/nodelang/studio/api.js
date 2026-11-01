@@ -1422,7 +1422,7 @@ function fileNode(node){
  return {id:node.id,type:node.type,pure:item?.pure??node.pure,budget:node.budget||item?.budget||null,loop:node.loop||item?.loop||null,settingsKeys:item?.settingsKeys||[],dataset,column,title:node.title||item?.title||node.type,kind:node.children?'Group':item?.title||node.type,category:item?.cat||'Node',x:node.position.x,y:node.position.y,
   params,defaults:item?.params||{},parameterSchema:schema,paramDefs:defs,bind,
   inputs:(ports.target||[]).map(p=>({...p,name:p.label||p.id,type:p.type==='unknown'?'any':p.type})),outputs:(ports.source||[]).map(p=>({...p,name:p.label||p.id,type:p.type==='unknown'?'any':p.type})),
-  children:node.children||[],members:[],parent:node.parent||null,frozen:!!node.frozen,pinned:!!node.pinned,portVisibility:node.portVisibility||{},parameterPresentation:node.parameterPresentation||{},
+  children:node.children||[],members:(Array.isArray(node.members)?node.members:[]).filter(m=>m&&typeof m.id==='string'&&m.id).map(m=>({id:m.id,title:m.title||m.name||m.id,agent:m.agent||m.id})),parent:node.parent||null,frozen:!!node.frozen,pinned:!!node.pinned,portVisibility:node.portVisibility||{},parameterPresentation:node.parameterPresentation||{},
   output:node.result?.output||[],status:node.result?.status||'Idle',error:node.result?.error||'',display:node.result?.display||''};
 }
 // session_files.py _WIRE_MENUS, mirrored for the inspector. First choice is the omitted-field value.
@@ -1583,6 +1583,13 @@ api.addDatasetField=async(id,input={})=>{
 api.addDatasetRecord=async(id,cells={})=>{await datasetOp('add-record',[id,cells]);return state.graph.nodes.find(n=>n.id===id);};
 api.setDatasetCell=async(id,record,field,value)=>{await datasetOp('set-cell',[id,record,field,value]);return state.graph.nodes.find(n=>n.id===id);};
 api.exposeDatasetField=async(id,field)=>{const result=await datasetOp('expose-field',[id,field]);return state.graph.nodes.find(n=>n.id===result.changed[0]);};
+async function memberOp(op,args){
+ const result=await sessionRequest('member-op',{document:portableDocument(),op,args});
+ fileEdit(d=>{d.nodes=result.document.nodes;d.wires=result.document.wires;});
+ return result;
+}
+api.detachMember=async(groupId,member,point)=>memberOp('detach',[groupId,member,point&&point.x||0,point&&point.y||0]);
+api.attachMember=async(groupId,nodeId)=>memberOp('attach',[groupId,nodeId]);
 api.promoteParam=async(id,key)=>{await paramOp('promote',[id,key]);return state.graph.nodes.find(n=>n.id===id);};
 api.demoteParam=async(id,key)=>{await paramOp('demote',[id,key]);return state.graph.nodes.find(n=>n.id===id);};
 api.parameterTypes=()=>[...PARAM_TYPES];

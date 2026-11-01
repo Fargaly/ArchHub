@@ -197,7 +197,7 @@
     </D.Node>;
   }
   // e6e4a367 studio-lm.jsx NodeRenderer: category header, role edge and parameter body.
-  function NodeRenderer({n, catalogue = [], selected, headerProps, headerEnd, renderPort, renderSocket, rejected, members, onMember, compact = false}) {
+  function NodeRenderer({n, catalogue = [], selected, headerProps, headerEnd, renderPort, renderSocket, rejected, members, onMember, onDetach, compact = false}) {
     const u = useApp(), s = useData(), [expanded,setExpanded] = React.useState(false), [parameterDrafts,setParameterDrafts] = React.useState({});
     const exact = catalogue.find(c=>c.id===n.definition||c.id===n.assembly||c.name===n.assembly||c.id===n.kind||c.name===n.kind),
       engines=catalogue.filter(c=>c.descriptor?.engine===n.kind), category=exact||(engines.length===1 ? engines[0] : null),
@@ -234,7 +234,7 @@
       headerProps={{...headerProps,style:spec ? headerProps?.style : {borderTop:'2px solid '+color,borderBottom:'1px solid '+A.lineSoft,...headerProps?.style}}}
       headerEnd={<>{typeof n.pure === 'boolean' && <span data-node-pure={String(n.pure)} style={{fontSize:10,color:n.pure ? A.inkSoft : A.warn}}
         title={n.pure ? 'Pure: re-solves on every edit' : 'Side effect: waits for Run'}>{n.pure ? 'Pure' : 'Side effect'}</span>}
-        {spec && n.dataset && <span data-dataset-count>{n.dataset.records.length} records</span>}{headerEnd}</>} chip={grouped && <div className="canvas-members">{(members || []).map(m=><button key={m.id} data-group-member={m.id} className="canvas-member" title={'Open '+m.title} onClick={event=>executeAction('projects.controls.activate',{handler:()=>onMember?.(m)},event)}><span style={{background:color,color:A.onFill}}>{m.title.slice(0,1)}</span>{m.title}</button>)}</div>}>
+        {spec && n.dataset && <span data-dataset-count>{n.dataset.records.length} records</span>}{headerEnd}</>} chip={grouped && <div className="canvas-members">{(members || []).map(m=><button key={m.id} data-group-member={m.id} draggable={m.chip || undefined} className="canvas-member nodrag" title={m.chip ? 'Drag '+m.title+' out of the group' : 'Open '+m.title} onDragStart={event=>{if(!m.chip)return;event.stopPropagation();event.dataTransfer.setData('text/plain',m.id);event.dataTransfer.effectAllowed='move';event.currentTarget.dataset.dragged='1';}} onDragEnd={event=>{if(!m.chip||!onDetach)return;onDetach(m,event);}} onClick={event=>{if(event.currentTarget.dataset.dragged==='1'){event.currentTarget.dataset.dragged='';return;}executeAction('projects.controls.activate',{handler:()=>onMember?.(m)},event);}}><span style={{background:color,color:A.onFill}}>{m.title.slice(0,1)}</span>{m.title}</button>)}</div>}>
       {!grouped && (compact && !expanded ? parameters.slice(0,3) : parameters).map(([key,value])=>{
         const p=n.parameterSchema?.find(p=>p.key===key), label=n.title+' '+key,
           shown=Object.hasOwn(parameterDrafts,key)?parameterDrafts[key]:value,
@@ -413,7 +413,7 @@
       <button type="button" className="button-reset nodrag" style={{color: A.err, textDecoration: 'underline'}} onClick={event => executeAction('projects.controls.activate', {handler: onConvert}, event)}>Insert converter</button></>}
     </div>;
   }
-  function FlowCard({n, s, u, selected, refusal, onConvert, socket, members, onMember, menu}) {
+  function FlowCard({n, s, u, selected, refusal, onConvert, socket, members, onMember, onDetach, menu}) {
     // Spec section 0b P0: the default card is full capability (every row); compact (first three rows) is an opt-in toggle.
     const [compact, setCompact] = React.useState(false);
     const field = n.column && fieldColumn(n, s.graph);
@@ -437,7 +437,7 @@
         {!n.pure && <span data-node-pure="false" style={{paddingTop: 2, color: A.inkSoft}}
           title={'Side effect: waits for Run' + (n.budget ? ' · budget ' + [n.budget.seconds != null && n.budget.seconds + ' s', n.budget.calls != null && n.budget.calls + ' call(s)'].filter(Boolean).join(', ') : '')}>⚡</span>}{menu}
       </div>
-      {members.length > 0 && <div className="canvas-members">{members.map(m => <button key={m.id} data-group-member={m.id} className="canvas-member nodrag" title={'Open ' + m.title} onClick={event => executeAction('projects.controls.activate', {handler: () => onMember(m)}, event)}><span style={{background: A.purple, color: A.onFill}}>{m.title.slice(0, 1)}</span>{m.title}</button>)}</div>}
+      {members.length > 0 && <div className="canvas-members">{members.map(m => <button key={m.id} data-group-member={m.id} draggable={m.chip || undefined} className="canvas-member nodrag" title={m.chip ? 'Drag ' + m.title + ' out of the group' : 'Open ' + m.title} onDragStart={event => { if (!m.chip) return; event.stopPropagation(); event.dataTransfer.setData('text/plain', m.id); event.dataTransfer.effectAllowed = 'move'; event.currentTarget.dataset.dragged = '1'; }} onDragEnd={event => { if (!m.chip || !onDetach) return; onDetach(m, event); }} onClick={event => { if (event.currentTarget.dataset.dragged === '1') { event.currentTarget.dataset.dragged = ''; return; } executeAction('projects.controls.activate', {handler: () => onMember(m)}, event); }}><span style={{background: A.purple, color: A.onFill}}>{m.title.slice(0, 1)}</span>{m.title}</button>)}</div>}
       <div style={{display: 'grid', gap: 8, padding: '12px 12px 0'}}>
         {/* Full-node row (archhub-full-node-controls-native.png): name over its type, then the linked source or an inline control, then a row menu. Real data or empty. */}
         {[...n.inputs.filter(p => !slotPorts.has(p.id)).map(p => ({key: p.id, port: p})), ...params.map(p => ({key: 'param:' + p.key, param: p, port: n.inputs.find(x => x.id === p.key || x.id === 'param:' + p.key)}))].map(({key, port, param}) => {
@@ -756,6 +756,17 @@
       });
     };
     const onNodeDragStop = (event, dragged, all) => {
+      const point = event.changedTouches?.[0] || event;
+      const hits = point && document.elementsFromPoint ? document.elementsFromPoint(point.clientX, point.clientY) : [];
+      const host = [...hits].map(el => el.closest && el.closest('[data-graph-node]')).find(el => el && el.dataset.graphNode !== dragged.id);
+      const group = host && s.graph.nodes.find(n => n.id === host.dataset.graphNode);
+      const node = s.graph.nodes.find(n => n.id === dragged.id);
+      const grouped = group && group.id !== node?.id && (group.type === 'thing.workshop' || group.kind === 'Group' || group.kind === 'Workshop' || (group.children || []).length || (group.members || []).length);
+      if (node?.type === 'thing.agent' && grouped) {
+        held.current = null;
+        u.act(() => api.attachMember(group.id, node.id));
+        return;
+      }
       const positions = Object.fromEntries((all?.length ? all : [dragged]).map(f => [f.id, {x: f.position.x, y: f.position.y}]));
       held.current = positions;
       Promise.resolve(u.act(() => api.moveNodes(positions))).finally(() => { if (held.current === positions) held.current = null; });
@@ -818,9 +829,22 @@
         }}><span data-socket-dot="" data-wired={side === 'out' || s.graph.wires.some(w => w.to === n.id && w.toPort === p.id) || undefined} /></RF.Handle>;
     };
     const renderNode = (n, isSelected) => {
-      const members = (n.children || []).map(id => s.graph.nodes.find(x => x.id === id) || n.members?.find(m => m.id === id)).filter(Boolean);
+      const placed = new Set(s.graph.nodes.map(row => row.id));
+      for (const row of s.graph.nodes) if (row.type === 'thing.agent' && row.params?.agent) placed.add(row.params.agent);
+      const childMembers = (n.children || []).map(id => s.graph.nodes.find(x => x.id === id) || n.members?.find(m => m.id === id)).filter(Boolean);
+      const chips = (n.members || []).filter(m => m && m.id && !placed.has(m.id) && !(n.children || []).includes(m.id)).map(m => ({...m, title: m.title || m.id, chip: true}));
+      if (n.type === 'thing.workshop') {
+        for (const agent of s.liveAgents || []) {
+          const id = agent.session || agent.handle;
+          const agentId = agent.agent || id;
+          if (!id || placed.has(id) || placed.has(agentId) || chips.some(m => m.id === id || m.agent === agentId) || childMembers.some(m => m.id === id)) continue;
+          chips.push({id, title: agent.name || agentId, agent: agentId, chip: true});
+        }
+      }
+      const members = [...childMembers, ...chips];
       return <FlowCard n={n} s={s} u={u} selected={isSelected} refusal={rejected?.to.id === n.id ? rejected : null} onConvert={insertConverter} members={members} socket={(p, side = 'in') => socket(n, p, side)}
         onMember={m=>{if (s.graph.nodes.some(row => row.id === m.id)) {setParent(n.id);setSelected([m.id]);} else {setParent(null);u.act(async()=>{await api.selectGraph(n.id);setSelected([m.id]);});}}}
+        onDetach={(m, event) => { const under = document.elementFromPoint(event.clientX, event.clientY); if (under && under.closest && under.closest('[data-graph-node="' + n.id + '"]')) return; u.act(() => api.detachMember(n.id, {id: m.id, title: m.title, agent: m.agent || m.id}, toFlow(event))); }}
         menu={<button className="button-reset canvas-node-menu nodrag" aria-label={n.title+' menu'} title={n.title+' actions'} onClick={event=>executeAction('projects.ds_screens.NodeMenu.16',{n,openNode,setSelected,u},event)}>⋯</button>} />;
     };
     const stale = (s.solveStale || []).filter(id => s.graph.nodes.some(n => n.id === id)).length;

@@ -639,12 +639,12 @@ def _connector_id(engine_name):
 
 def _actions_of(connector_id):
     def list_actions():
-        from .host_brokers import ENGINES
+        from .host_brokers import ACTION_FIELDS, ENGINES
         rows = []
         for name in sorted(ENGINES):
             if _connector_id(name) != connector_id:
                 continue
-            rows.append({"name": name, "title": name, "inputs": []})
+            rows.append({"name": name, "title": name, "inputs": list(ACTION_FIELDS.get(name, ()))})
         if not rows:
             raise ConnectorUnreachable("Could not read actions.")
         return rows

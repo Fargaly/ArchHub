@@ -2354,7 +2354,16 @@ def _complete_library(groups):
             held["params"] = dict(item["params"])
     for entry in _canvas_extra_items():
         add(entry)
+    present = {item["id"]: item for item in items}
     for spec in HOST_TOOLS:
+        current = present.get(spec["id"])
+        if current is not None:
+            # The card already exists. A hidden compatibility row comes back
+            # into the one catalogue; its parameters stay the card's own.
+            if current.get("hidden"):
+                current["hidden"] = False
+                current["cat"] = "host"
+            continue
         add(_host_entry(spec))
     for engine in sorted(PIPELINE_ENGINES):
         if engine not in covered:

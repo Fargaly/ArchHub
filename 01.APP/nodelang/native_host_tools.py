@@ -7,7 +7,9 @@ from __future__ import annotations
 
 from typing import Callable
 
-from .host_brokers import ENGINES, EXEC_WAIT_LIMIT
+import inspect
+
+from .host_brokers import BROKER_ACTIONS, ENGINES, EXEC_WAIT_LIMIT
 
 # Reads must answer inside the founder <2s budget; never sit on a hung signed /info.
 INFO_WAIT = 1.5
@@ -216,6 +218,8 @@ def register_host_tools(server, control=None, *, read_only=False) -> None:
         """Files under the Dropbox folder of this profile."""
         return read(lambda: _engine("dropbox.list", path=path))
 
+    _register_restored(server, read, effect)
+
 
 def _revit_info(params, feeds=None):
     return {"out": _broker("revit", "/info", port=params.get("port"))}, "revit info"
@@ -332,5 +336,89 @@ HOST_TOOLS = (
      "params": {"path": ""}, "types": {"path": "text"}},
 )
 
+# Actions the hand-written tools above do not already expose. Same registry.
+RESTORED_BROKERS = tuple(
+    spec for spec in BROKER_ACTIONS if spec["id"] not in {row["id"] for row in HOST_TOOLS}
+)
+HOST_TOOLS = HOST_TOOLS + RESTORED_BROKERS
 
-__all__ = ["HostToolRefused", "HOST_TOOLS", "TOOL_ENGINES", "register_host_tools"]
+
+def _run_engine(name, params):
+    if name in ENGINES:
+        return _engine(name, **params)
+    from .pipeline_engines import PIPELINE_ENGINES
+    out, label = PIPELINE_ENGINES[name](params, {})
+    if isinstance(out, dict):
+        return {"ok": out.get("ok", True) is not False, "label": label, **out}
+    return {"ok": True, "label": label, "out": out}
+
+
+def _dispatch_broker(spec, arguments, read, effect):
+    """Every restored broker call is admitted by the one decision before a host is touched."""
+    import os
+    from .hook_decision import decide
+    provided = {key: value for key, value in arguments.items() if key != "ctx"}
+    decision = decide({
+        "tool_name": spec["id"],
+        "tool_input": provided,
+        "cwd": os.getcwd(),
+    })
+    if decision["verdict"] not in ("allow", "organize"):
+        return {"ok": False, "gated": True, "verdict": decision["verdict"],
+                "action": decision["action"], "out": []}
+    params = {}
+    for name, value in spec["params"].items():
+        incoming = provided.get(name, value)
+        if isinstance(value, list):
+            params[name] = list(incoming) if isinstance(incoming, list) else list(value)
+        elif isinstance(value, dict):
+            params[name] = dict(incoming) if isinstance(incoming, dict) else dict(value)
+        else:
+            params[name] = incoming
+    params["operation"] = spec["op"]
+    if spec["engine"] == "office.read":
+        for key in ("name", "workbook", "document", "presentation"):
+            if params.get(key):
+                params["name"] = params[key]
+                break
+
+    def run():
+        return _run_engine(spec["engine"], params)
+
+    if spec["kind"] == "write" and spec.get("effect_host"):
+        return effect(spec["effect_host"], run)
+    return read(run)
+
+
+_PY_TYPE = {
+    "text": str, "integer": int, "number": float, "bool": bool,
+    "list": list, "object": dict, "file": str, "path": str,
+}
+
+
+def _mcp_callable(spec, read, effect):
+    def run(**kwargs):
+        return _dispatch_broker(spec, kwargs, read, effect)
+    parameters = []
+    annotations = {"return": dict}
+    for name, kind in spec["types"].items():
+        py_type = _PY_TYPE[kind]
+        parameters.append(inspect.Parameter(
+            name, inspect.Parameter.KEYWORD_ONLY,
+            default=spec["params"][name], annotation=py_type,
+        ))
+        annotations[name] = py_type
+    run.__signature__ = inspect.Signature(parameters, return_annotation=dict)
+    run.__annotations__ = annotations
+    run.__name__ = spec["id"]
+    run.__doc__ = spec["sub"]
+    return run
+
+
+def _register_restored(server, read, effect):
+    for spec in RESTORED_BROKERS:
+        server.tool(name=spec["id"], description=spec["sub"], structured_output=False)(
+            _mcp_callable(spec, read, effect))
+
+
+__all__ = ["HostToolRefused", "HOST_TOOLS", "RESTORED_BROKERS", "TOOL_ENGINES", "register_host_tools"]

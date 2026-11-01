@@ -901,11 +901,25 @@ from .outlook_graph import inbox as _graph_inbox, status as _graph_status, categ
 from .outlook_imap import inbox as _imap_inbox, status as _imap_status, message as _imap_message
 
 
+def revit_verb(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """One declared Revit write through the signed broker. Reads stay on revit.read."""
+    from .clean_revit_adapter import invoke
+    operation = str(params.get("operation") or "")
+    arguments = {key: value for key, value in params.items() if key != "operation"}
+    if isinstance(feeds, Mapping):
+        for key, value in feeds.items():
+            if key not in arguments and value is not None:
+                arguments[key] = value
+    answer = invoke(operation, arguments)
+    return {"out": answer.get("result", answer)}, operation
+
+
 ENGINES = {
     "max.exec": max_exec, "max.info": max_info, "max.python": max_python, "rhino.exec": rhino_exec, "blender.exec": blender_exec,
     "office.read": office_read, "excel.write_range": excel_write_range, "outlook.inbox": outlook_inbox, "notion.search": notion_search,
     "notion.connect": notion_connect,
     "dropbox.list": dropbox_list, "connector.rows": connector_rows,
+    "revit.verb": revit_verb,
     "outlook.graph.inbox": _graph_inbox, "outlook.graph.status": _graph_status,
     "outlook.graph.categories": _graph_categories, "outlook.graph.categorize": _graph_categorize,
     "outlook.imap.inbox": _imap_inbox, "outlook.imap.status": _imap_status,
@@ -917,7 +931,193 @@ for _coordination_engine in ('excel.read_table', 'excel.build_workbook', 'excel.
                              'excel.share_workbook', 'excel.open', 'pdf.extract_text', 'pdf.snip'):
     ENGINES[_coordination_engine] = partial(office_coordination, _coordination_engine)
 
-__all__ = ["ENGINES", "probe_host_rows", "probe_catalogue_rows"]
+
+# One catalogue id already owns these actions. The MCP door uses that same id.
+_CATALOGUE_ID = {
+    "revit.list_walls": "r_walls",
+    "revit.list_doors": "r_doors",
+    "revit.list_windows": "r_windows",
+    "revit.list_sheets": "r_sheets",
+    "revit.list_views": "r_views",
+    "revit.list_levels": "r_levels",
+    "revit.get_selection": "r_selection",
+    "revit.list_warnings": "r_warnings",
+    "revit.set_parameter_by_name": "b_set_parameter",
+    "revit.create_sheets": "b_create_sheets",
+    "revit.renumber_rename": "b_renumber",
+    "excel.list_workbooks": "h_excel",
+    "excel.write_range": "f_write_table",
+    "excel.list_worksheets": "r_xl_sheets",
+    "excel.read_range": "r_xl_range",
+    "word.list_documents": "h_word",
+    "word.list_paragraphs": "r_doc_paras",
+    "powerpoint.list_presentations": "h_ppt",
+    "powerpoint.list_slides": "r_ppt_slides",
+}
+_LIST_INPUTS = {"element-rows", "sheet-rows", "table-rows"}
+
+
+def _typed_value(value):
+    if isinstance(value, bool):
+        return value, "bool"
+    if isinstance(value, int):
+        return value, "integer"
+    if isinstance(value, float):
+        return value, "number"
+    if isinstance(value, list):
+        return list(value), "list"
+    if isinstance(value, dict):
+        return dict(value), "object"
+    return "" if value is None else str(value), "text"
+
+
+def _input_value(item):
+    kind_name = str(item.get("type") or "text")
+    if kind_name == "number":
+        raw = item.get("default", 0)
+        try:
+            number = float(raw if raw not in ("", None) else 0)
+        except (TypeError, ValueError):
+            number = 0.0
+        return number, "number"
+    if kind_name in _LIST_INPUTS:
+        return [], "list"
+    if kind_name in ("bool", "boolean"):
+        return bool(item.get("default") or False), "bool"
+    default = item.get("default", "")
+    return "" if default is None else str(default), "text"
+
+
+def _engine_for(record):
+    operation = record["op_id"]
+    if record["host"] == "revit":
+        return "revit.read" if record["kind"] == "read" else "revit.verb"
+    if record["host"] == "autocad":
+        return "autocad.verb"
+    if operation == "excel.write_range":
+        return "excel.write_range"
+    return "office.read"
+
+
+def _broker_spec(operation, title, summary, engine, kind, params, types, effect_host=""):
+    return {
+        "id": _CATALOGUE_ID.get(operation, operation.replace(".", "_")),
+        "title": title,
+        "engine": engine,
+        "sub": summary,
+        "params": params,
+        "types": types,
+        "op": operation,
+        "kind": kind,
+        "effect_host": effect_host,
+    }
+
+
+def broker_actions():
+    """Typed broker actions the Library and the agent MCP door share.
+
+    Prior art, kept on the owners that already carry them out: Revit and
+    AutoCAD verbs in clean_host_catalogue_source (AutoCAD layers folded from
+    U-C4N Autocad-MCP, MIT); classic Outlook COM in this module; new Outlook
+    on the existing Microsoft Graph transport; Notion on notion_mcp.
+    """
+    from .clean_host_catalogue_source import HOST_OPERATION_RECORDS
+    from .clean_office_adapter import COORDINATION_NODES
+    rows = []
+    seen = set()
+
+    def add(spec):
+        if spec["op"] in seen or spec["op"] == "outlook.inbox":
+            return
+        seen.add(spec["op"])
+        rows.append(spec)
+
+    for record in HOST_OPERATION_RECORDS:
+        params, types = {}, {}
+        params["operation"] = record["op_id"]
+        types["operation"] = "text"
+        if record["host"] in ("revit", "autocad"):
+            params["session"] = ""
+            types["session"] = "text"
+        for item in record["inputs"]:
+            name = str(item["id"])
+            if name == "instance":
+                continue
+            params[name], types[name] = _input_value(item)
+        effect = {"revit": "revit", "autocad": "acad"}.get(record["host"], "")
+        add(_broker_spec(
+            record["op_id"], record["label"], record["description"],
+            _engine_for(record), record["kind"], params, types, effect,
+        ))
+    add(_broker_spec(
+        "outlook.graph.status", "Outlook 365 status",
+        "Microsoft Graph mailbox status. Sign-in is not started from a read.",
+        "outlook.graph.status", "read", {}, {},
+    ))
+    add(_broker_spec(
+        "outlook.graph.inbox", "Outlook 365 inbox",
+        "Read a mailbox through Microsoft Graph. Never launches classic Outlook.",
+        "outlook.graph.inbox", "read",
+        {"account": "", "folder": "inbox", "count": 20},
+        {"account": "text", "folder": "text", "count": "integer"},
+    ))
+    add(_broker_spec(
+        "outlook.graph.categories", "Outlook 365 categories",
+        "List categories on the named Microsoft 365 mailbox.",
+        "outlook.graph.categories", "read",
+        {"account": ""}, {"account": "text"},
+    ))
+    add(_broker_spec(
+        "outlook.graph.categorize", "Outlook 365 categorize",
+        "Preview a category change. Apply stays off unless the caller sets it.",
+        "outlook.graph.categorize", "write",
+        {"account": "", "message_id": "", "internet_message_id": "",
+         "categories": [], "expected_categories": [], "apply": False},
+        {"account": "text", "message_id": "text", "internet_message_id": "text",
+         "categories": "list", "expected_categories": "list", "apply": "bool"},
+    ))
+    add(_broker_spec(
+        "outlook.imap.status", "Company mail status",
+        "Read-only status for the company IMAP mailbox.",
+        "outlook.imap.status", "read", {"account": ""}, {"account": "text"},
+    ))
+    add(_broker_spec(
+        "outlook.imap.inbox", "Company mail inbox",
+        "Read-only inbox through the company IMAP mailbox.",
+        "outlook.imap.inbox", "read",
+        {"account": "", "count": 20}, {"account": "text", "count": "integer"},
+    ))
+    add(_broker_spec(
+        "outlook.imap.message", "Company mail message",
+        "Read one message already listed by the company inbox.",
+        "outlook.imap.message", "read",
+        {"account": "", "uid": "", "uidvalidity": ""},
+        {"account": "text", "uid": "text", "uidvalidity": "text"},
+    ))
+    add(_broker_spec(
+        "notion.connect", "Connect Notion",
+        "Start Notion's own browser sign-in. Nothing is pasted.",
+        "notion.connect", "read", {}, {},
+    ))
+    for operation, spec in COORDINATION_NODES.items():
+        if operation == "library.draft_email":
+            continue
+        params, types = {}, {}
+        for name, value in spec["params"].items():
+            if name == "grant":
+                continue
+            params[name], types[name] = _typed_value(value)
+        kind = "write" if operation.startswith((
+            "outlook.reply", "outlook.forward", "excel.build", "excel.write",
+            "excel.share", "excel.open", "pdf.snip")) else "read"
+        add(_broker_spec(operation, spec["title"], spec["title"], operation, kind, params, types))
+    return tuple(rows)
+
+
+BROKER_ACTIONS = broker_actions()
+ACTION_FIELDS = {spec["op"]: tuple(spec["params"]) for spec in BROKER_ACTIONS}
+
+__all__ = ["ENGINES", "BROKER_ACTIONS", "ACTION_FIELDS", "probe_host_rows", "probe_catalogue_rows"]
 
 
 # ---------------------------------------------------------------- open --

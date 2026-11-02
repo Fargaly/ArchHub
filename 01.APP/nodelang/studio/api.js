@@ -1707,8 +1707,9 @@ api.ready=(async()=>{
  catch {notice('The saved browser session could not be read. Reconnecting this window.');}
  if((!session?.token||!session?.csrf)&&!window.ARCHHUB_AUTHORITY?.canvas_key)await signIn();else window.__archhubSession=session;
  commands=window.ArchHubStudioAuthority.create({get:path=>request(path),post:(path,body)=>request(path,body)});
+ // Library collapse is advisory. A refused or slow settings read stays expanded and does not gate the first session file.
+ void settingsAction('readLibraryCollapsed').catch(error=>{notice(error.message||String(error));publish({libraryCollapsed:[]});});
  try{
-  await settingsAction('readLibraryCollapsed');
   await api.refreshLibraryPorts();
   const initialFile=await sessionRequest('initial');
   if(initialFile?.document){sessionDocument=copy(initialFile.document);sessionPath=initialFile.path||'';sessionRevision=sessionDocument.properties?.revision||0;projectFile();}

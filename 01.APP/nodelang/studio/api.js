@@ -790,10 +790,13 @@ api.createTask=async title=>{const result=await workshop('createTask',[title]);i
 api.setTaskSession=async(id,values)=>{
  const navigation=fileNavigation;
  if(sessionDocument)await flushAutosave();
+ // The flush snapshot: a canvas edit made while the task write is in flight stays.
+ const sent=sessionDocument?portableDocument():null, text=sent?JSON.stringify(sent):'';
  const result=await workshop('setTaskSession',[id,values]);if(!result||result.ok===false)throw Error(result?.message||result?.error||'This task session was not saved.');
- if(navigation===fileNavigation&&result.path&&sessionDocument&&sessionPath===result.path){
+ const unchanged=()=>navigation===fileNavigation&&result.path&&sessionDocument&&sessionPath===result.path&&sent&&sessionDocument.id===sent.id&&JSON.stringify(portableDocument())===text;
+ if(unchanged()){
   const read=await sessionRequest('read',{path:result.path,id:result.id});
-  if(navigation===fileNavigation&&sessionDocument&&sessionPath===result.path&&read?.document){sessionDocument=copy(read.document);sessionRevision=read.revision||read.document.properties?.revision||0;localDirty=false;projectFile();}
+  if(unchanged()&&read?.document){sessionDocument=copy(read.document);sessionRevision=read.revision||read.document.properties?.revision||0;localDirty=false;projectFile();}
  }
  return {...result,...rememberTask(result,false)};
 };

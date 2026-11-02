@@ -7,7 +7,8 @@ from pathlib import Path
 SESSION_KEYS = {"threadId": "codex", "ai.opencode/sessionID": "opencode",
                 "claude/sessionID": "claude", "gemini/sessionID": "gemini",
                 "goose/sessionID": "goose", "archhub/sessionID": "archhub"}
-SESSION_KEYS.update({"antigravity/sessionID": "antigravity", "antigravity-ide/sessionID": "antigravity-ide"})
+SESSION_KEYS.update({"antigravity/sessionID": "antigravity", "antigravity-ide/sessionID": "antigravity-ide",
+                     "cursor/conversationID": "cursor"})
 
 
 # Liveness per process incarnation: dead stays dead; alive is re-checked after session_poll_ms. Every connector

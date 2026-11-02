@@ -9,8 +9,10 @@ One channel (founder 2026-10-28, "one Workshop, one channel"): every push goes t
 Link (workshop/: worker inject -> native.mjs injectWorkshop). Workshop resolves the
 recipient against its live catalog and uses that app's own door: Claude peer pipe, Codex Desktop
 app bridge (`workshop resume --current` from a Codex Desktop task), OpenCode plugin,
-Antigravity cascade API, Cursor Desktop Bridge, the app's BABOOM turn door, or the console seat of
-a terminal session (workshop/console_seat.py, the Workshop's seat adapter). This module only records the rows.
+Antigravity cascade API, the app's BABOOM turn door, or the console seat of
+a terminal session (workshop/console_seat.py, the Workshop's seat adapter). Cursor has no console
+and its Desktop Bridge stays off: a Cursor push is queued for the chat's stop hook, which injects
+it as the next turn. This module only records the rows.
 """
 from __future__ import annotations
 
@@ -34,8 +36,9 @@ def push(app, native_id, text, message_id, *, timeout=10.0, pids=(), permission_
     """One live push, any agent, through Workshop (the one channel). Returns (state, channel, reason).
 
     Workshop resolves the recipient against its live catalog and uses that app's own door: Claude
-    peer pipe, Codex Desktop app bridge, OpenCode plugin, Antigravity cascade API, Cursor Desktop Bridge,
-    the app's BABOOM, or the console seat of a terminal session. Never waits for a reply.
+    peer pipe, Codex Desktop app bridge, OpenCode plugin, Antigravity cascade API,
+    the app's BABOOM, or the console seat of a terminal session. Cursor is queued for its stop hook.
+    Never waits for a reply.
     """
     import sys
     from .workshop_transport import public_delivery_reason
@@ -43,9 +46,12 @@ def push(app, native_id, text, message_id, *, timeout=10.0, pids=(), permission_
     env = {'WORKSHOP_PYTHON': sys.executable, 'WORKSHOP_PYTHONPATH': str(Path(__file__).resolve().parents[1])}
     if app == 'goose' and native_id == 'baboom':
         app, pids = 'archhub', ()            # the app's own BABOOM: Workshop reaches its turn door
+    # Cursor's agent process has no console. The Desktop Bridge flag stays off, so the stop hook
+    # is the door: the message waits for that chat's next turn. Never attach a console.
+    if app == 'cursor':
+        return 'queued', 'hook', 'queued for next turn via hook'
     if not native_id:
         return 'failed', 'none', 'This session has no live door; it reads the message in the Workshop.'
-    # Cursor GUI has a host pid but no console; Desktop Bridge is its door (workshop-apps injectCursor).
     recipient = {'app': app, 'id': str(native_id or ''), **({'pids': [int(p) for p in pids]} if pids and app not in ('claude', 'opencode', 'cursor') else {}),
                  **({'desktop': True} if app == 'codex' and codex_desktop_thread(native_id) else {})}
     if app == 'codex' and not recipient.get('desktop') and codex_remote(pids):

@@ -396,11 +396,11 @@ def build_server(*, session=None, mailbox_call=None):
 
     @server.tool(name="send")
     def send(to: str, text: str, ctx: Context, reply_to: str = "", idempotency_key: str = "") -> dict[str, object]:
-        """Post to the shared Workshop room; to='*' addresses everyone.
+        """Post into the Workshop. Name one peer to deliver it to that agent only.
 
-        Use a peer's sender_label as its readable address across connector restarts.
-        The local Workshop records this connection's own name. No sender override,
-        binding, enrollment or relay is accepted. All room members can read it.
+        to='*' is a room note: every reader in your project can see it, and it is injected
+        into nobody. An unknown name is returned to you with the live agents. It is never
+        delivered to a default agent. Another project's note reaches you only when it names you.
         Keep idempotency_key unchanged when retrying an uncertain send.
         """
         context = _caller_context(ctx)
@@ -534,8 +534,9 @@ def _attach_pending_delivery(server, start, pages, epochs, lock):
                     epochs[key] = epochs.get(key, 0) + 1
                     pages.pop(key, None)
                 page = pages.pop(key, {})
-                fresh = [message for message in page.get("pending", []) if message["id"] not in shown.setdefault(key, set())]
-                shown[key].update(message["id"] for message in fresh)
+                already = shown.setdefault(key, set())
+                fresh = [message for message in page.get("pending", []) if message["id"] not in already]
+                already.update(message["id"] for message in fresh)
             if fresh:
                 # Receipt: handed over once = acknowledged for this caller (every process skips it next).
                 import threading

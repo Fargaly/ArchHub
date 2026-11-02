@@ -208,10 +208,12 @@ def discover_target(target):
     rows = found.get('recipients', [])
     hits = [row for row in rows if wanted in {str(row.get(k) or '').casefold() for k in ('id', 'title', 'selector')}]
     if not hits:
-        # The app's own name ("Cursor", "Codex") addresses its live session: the first one its door lists (the most
-        # recent), so a discovered session is addressable before its agent ever declares.
+        # An app name addresses its session only when exactly one is live. Never the first of many.
         app = APP_NAMES.get(wanted)
-        hits = [row for row in rows if row['app'] == app][:1]
+        same = [row for row in rows if app and row.get('app') == app]
+        hits = same if len(same) == 1 else []
+    if len(hits) != 1:
+        return []
     return [{'session': 'native:%s:%s' % (row['app'], row['id']), 'agent': row.get('title') or row['id'],
              'runtime': row['app'], 'native_session_id': row['id']} for row in hits]
 

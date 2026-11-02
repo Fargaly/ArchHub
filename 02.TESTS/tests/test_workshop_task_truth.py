@@ -36,11 +36,11 @@ def test_column_state_follows_the_live_declaration(monkeypatch):
     workshop_tasks.declared(history, "room:declaration:a", "req-1", text, "working", "key-a", "Claude")
     workshop_tasks.declared(history, "room:declaration:b", "req-2", "Draft the brief", "working", "key-b", "Codex")
     history._db.execute("CREATE TABLE workshop_declarations(root TEXT PRIMARY KEY, record TEXT)")
-    def declare(root, request, status):
+    def declare(root, request, status, session):
         history._db.execute("INSERT OR REPLACE INTO workshop_declarations VALUES(?,?)", (root, json.dumps(
-            {"root":root, "request_id":request, "status":status, "agent":"x"})))
-    declare("room:declaration:a", "req-1", "working")
-    declare("room:declaration:b", "req-2", "blocked")
+            {"root":root, "request_id":request, "status":status, "agent":"x", "session":session})))
+    declare("room:declaration:a", "req-1", "working", "key-a")
+    declare("room:declaration:b", "req-2", "blocked", "key-b")
     history._db.execute("UPDATE workshop_tasks SET lease_until=0")  # both leases lapsed while still declared
     rows = {row["description"]: row for row in workshop_tasks.column(history)}
     assert rows[text]["title"] == "Repair the release path"

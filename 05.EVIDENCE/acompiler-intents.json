@@ -9413,6 +9413,7 @@
         "02.TESTS/tests/test_ask_card.py",
         "02.TESTS/tests_replica/test_workshop_detail.py",
         "02.TESTS/tests_js/studio_workshop_detail.test.cjs",
+        "02.TESTS/tests/test_task_session_roundtrip.py",
         "01.APP/nodelang/application_update.py",
         "01.APP/nodelang/application_update_recovery.py",
         "01.APP/nodelang/quiet_update.py",

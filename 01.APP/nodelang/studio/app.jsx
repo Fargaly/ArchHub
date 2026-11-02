@@ -22,7 +22,7 @@
   const modalActions = {'Talk':'startVoiceInput','Timesheet':'settleTimesheet','Import skill':'importHostSkill','Contest decision':'contestDecision','Add comment':'addComment','Change plan':'changePlan','Connector bundle':'inspectConnectorBundle','Notifications':'readNotification'};
   function App() {
     const s = useData();
-    const [route, setRoute] = React.useState('workshop'),  // founder: the Workshop is the command center; the app opens there
+    const [route, setRoute] = React.useState('home'),  // SPEC § and founder 2026-11-02: the app opens on Home; the task session stays on that page
       [canvasOpened, setCanvasOpened] = React.useState(false),
       [task, setTask] = React.useState(''),
       [composerDraft, setComposerDraft] = React.useState({}),
@@ -619,7 +619,7 @@
         }, event)}>Cancel</Btn><Btn danger onClick={event => executeAction("appShell.Confirm.32", {
           m,
           saved
-        }, event)}>Confirm</Btn></div></>;else if (k === 'New task') body = <><label className="grid">Task name<input aria-label="Task name" value={text} onChange={e => setText(e.target.value)} placeholder="Name this task" /></label><Btn p disabled={!text.trim()} onClick={event => executeAction("ui.select", async () => { const made = await u.act(() => api.createTask(text.trim())); if (made?.taskId) { u.setTask(made.taskId); u.go('workshop'); close(); } }, event)}>Create task</Btn></>;else if (k === 'Account') body = <><h2>{s.profile.name}</h2><p className="muted">{s.profile.firm} · {s.people.length} people</p><div className="grid">{['My profile', 'My secrets', 'My files', 'Workspaces'].map(t => <Btn key={t} onClick={event => executeAction("appShell.Control.33", {
+        }, event)}>Confirm</Btn></div></>;else if (k === 'New task') body = <><label className="grid">Task name<input aria-label="Task name" value={text} onChange={e => setText(e.target.value)} placeholder="Name this task" /></label><Btn p disabled={!text.trim()} onClick={event => executeAction("ui.select", async () => { const made = await u.act(() => api.createTask(text.trim())); if (made?.taskId) { u.setTask(made.taskId); close(); } }, event)}>Create task</Btn></>;else if (k === 'Account') body = <><h2>{s.profile.name}</h2><p className="muted">{s.profile.firm} · {s.people.length} people</p><div className="grid">{['My profile', 'My secrets', 'My files', 'Workspaces'].map(t => <Btn key={t} onClick={event => executeAction("appShell.Control.33", {
           t,
           u
         }, event)}>{t}</Btn>)}<Btn onClick={event => executeAction("appShell.AccountSettings.34", {

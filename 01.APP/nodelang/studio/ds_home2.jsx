@@ -3,6 +3,7 @@
   const {executeAction} = window.ArchHubAPI;
   const api = window.ArchHubAPI;
   const {D, useData, useApp, Btn} = window.UI;
+  const Icon = window.AHIcon;
   function Sheet({mark = false, large = false}) {
     const s = useData(), w = s.watcher;
     const points = w.geometry.walls.flatMap(line => [[line[0], line[1]], [line[2], line[3]]]);
@@ -40,6 +41,33 @@
     }
     return String(value);
   };
+  const factText = value => describe(value) || 'Not yet recorded';
+  const outputRecord = value => {
+    if (value == null || value === '') return null;
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return {name: '', excerpt: String(value), thumb: ''};
+    if (Array.isArray(value)) return outputRecord(value.find(item => item != null && item !== ''));
+    const name = ['name', 'title', 'file', 'path'].map(key => value[key]).find(item => typeof item === 'string' && item) || '';
+    const excerpt = ['excerpt', 'text', 'summary', 'preview'].map(key => value[key]).find(item => typeof item === 'string' && item) || describe(value);
+    const thumb = ['thumbnail', 'thumb', 'image'].map(key => value[key]).find(item => typeof item === 'string' && /^https?:|^data:image\//.test(item)) || '';
+    return excerpt || name || thumb ? {name, excerpt, thumb} : null;
+  };
+  const stepOf = (step, index, steps) => {
+    const raw = step && typeof step === 'object' ? String(step.status || step.state || '') : '';
+    if (/done|complete/i.test(raw)) return 'done';
+    if (/work|current|wip/i.test(raw)) return 'working';
+    if (/next|planned|wait/i.test(raw)) return 'next';
+    const marked = steps.map(item => item && typeof item === 'object' ? String(item.status || item.state || '') : '');
+    if (!marked.some(Boolean)) return '';
+    const workingAt = marked.findIndex(item => /work|current|wip/i.test(item));
+    if (workingAt < 0) return '';
+    return index < workingAt ? 'done' : index === workingAt ? 'working' : 'next';
+  };
+  const markColor = key => {
+    let hash = 0;
+    const text = String(key || 'person');
+    for (let i = 0; i < text.length; i++) hash = (hash * 33 + text.charCodeAt(i)) >>> 0;
+    return 'hsl(' + (hash % 360) + ' 42% 38%)';
+  };
   const sameList = (before, after) => {
     const left = Array.isArray(before) ? before.map(item => String(item)) : [];
     const right = Array.isArray(after) ? after.map(item => String(item)) : [];
@@ -55,7 +83,7 @@
   const Column = RP ? RP.Panel : ({children, className}) => <div className={className}>{children}</div>;
   const Separator = RP ? RP.Separator : () => null;
   const portFace = p => ({id: p.id, l: p.name || p.id, t: p.type || p.dataType || 'any', list: !!p.list});
-  function ItemList({label, items, choices, onCommit}) {
+  function ItemList({label, icon, items, choices, onCommit}) {
     const source = Array.isArray(items) ? items.map(item => String(item)) : [];
     const stamp = source.join('\u0001');
     const [hold, setHold] = React.useState({stamp, rows: source});
@@ -68,7 +96,7 @@
       return true;
     };
     return <div className="dx-fact" data-dx-list={label}>
-      <span>{label}</span>
+      <span>{icon ? <Icon name={icon} size={14} /> : null}{label}</span>
       {rows.length === 0 ? <b>Not yet recorded</b> : null}
       {rows.map((row, index) => choices ? <select key={stamp + ':' + index} aria-label={label + ' ' + (index + 1)} value={row} onChange={event => { if (event.target.value === row) return; const next = rows.slice(); next[index] = event.target.value; commit(next); }}>
         <option value="">Choose</option>
@@ -92,6 +120,7 @@
     const [to, setTo] = React.useState('');
     const [checkpoint, setCheckpoint] = React.useState('');
     const [face, setFace] = React.useState('workshop');
+    const [actions, setActions] = React.useState(false);
     const [request, setRequest] = React.useState('loaded');
     const [failure, setFailure] = React.useState('');
     const retrySave = React.useRef(() => {});
@@ -123,7 +152,7 @@
     const plan = Array.isArray(task?.plan) ? task.plan : [];
     const workflow = Array.isArray(task?.workflow) ? task.workflow : [];
     const activity = Array.isArray(task?.activity) ? task.activity : [];
-    const outputs = [task?.result, ...(activity.map(row => row.output).filter(v => v != null && v !== ''))].filter(Boolean);
+    const outputs = (Array.isArray(task?.outputs) && task.outputs.length ? task.outputs : [task?.result, ...activity.map(row => row.output)]).map(outputRecord).filter(Boolean);
     const messages = [...new Map([...(task?.fileMessages || []), ...((task?.messages || []).filter(m => m.role === 'task'))].map((m, i) => [m.id || 'file-' + i, m])).values()];
     const sameFile = !!(task?.sessionPath && s.sessionFile && task.sessionPath === s.sessionFile);
     const nodes = (sameFile ? s.graph?.nodes || [] : []).filter(n => !workflow.length || workflow.some(row => row.id === n.id));
@@ -181,7 +210,19 @@
       <span>{statusText(t.status)}</span>
       <small>{ownerOf(t)}</small>
     </button>;
-    return <div className="dx-home-root" data-screen="home" data-home-page="">
+    const taskMenu = [
+      ['Review output', 'eye', () => document.getElementById('dx-outputs')?.focus(), false],
+      ['Activity & receipts', 'clock', () => document.getElementById('dx-activity')?.focus(), false],
+      ['Canvas', 'canvas', showCanvas, !task],
+      ['New file', 'plus', () => u.act(() => api.newSession()).then(r => r && setFace('canvas')), false],
+      ['Open file…', 'folder', () => u.act(() => api.openSession()).then(r => r && !r.cancelled && setFace('canvas')), false],
+      ['Import…', 'export', () => u.pickFlow?.(), false],
+      ['Library', 'library', () => u.go('library'), false],
+      ['Save checkpoint', 'pin', () => u.act(() => api.checkpointTask(task.id)), !task],
+      ['Restore', 'undo', () => u.act(() => api.restoreTaskCheckpoint(task.id, checkpoint)), !task || !checkpoint]
+    ];
+    return <div className="dx-home-root" data-screen="home" data-home-page="" data-start={document.documentElement.dataset.start || 'cold'}>
+      {s.liveAgents === undefined ? <p role="status" data-home-loading="">Opening your tasks…</p> : null}
       {request === 'waiting' ? <p role="status">Saving</p> : null}
       {request === 'error' ? <p role="alert">{failure} <button type="button" onClick={() => executeAction('ui.select', () => retrySave.current())}>Retry</button></p> : null}
       {request === 'empty' ? <p>Not yet recorded</p> : null}
@@ -221,16 +262,11 @@
         <Separator className="pane-splitter" aria-label="Resize the Tasks pane" />
         <Column id="workspace" className="dx-col" minSize={720}>
           <div className="dx-workspace" data-dx="workspace">
-            <header className="dx-head" data-dx="head">
+            <header className="dx-head" data-dx="head" onContextMenu={event => { event.preventDefault(); setActions(true); }}>
               <h1>{task?.title || ''}</h1>
               <div className="dx-actions">
-                <button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => document.getElementById('dx-outputs')?.focus())}>Review output</button>
-                <button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => document.getElementById('dx-activity')?.focus())}>Activity &amp; receipts</button>
-                <button type="button" className="dx-quiet" disabled={!task} onClick={() => executeAction('ui.select', showCanvas)}>Canvas ↗</button>
-                <button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => u.act(() => api.newSession()).then(r => r && setFace('canvas')))}>New file</button>
-                <button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => u.act(() => api.openSession()).then(r => r && !r.cancelled && setFace('canvas')))}>Open file…</button>
-                <button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', u.pickFlow)}>Import…</button>
-                <button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => u.go('library'))}>Library</button>
+                <button type="button" className="dx-quiet" aria-label="Task actions" aria-expanded={actions} title="Task actions" disabled={!task} onClick={() => executeAction('ui.select', () => setActions(!actions))}><Icon name="more" size={16} /><span>Task actions</span></button>
+                {actions ? <div role="menu" aria-label="Task actions" className="dx-task-menu" onKeyDown={event => { if (event.key === 'Escape') setActions(false); }}>{taskMenu.map(([label, icon, run, disabled]) => <button key={label} type="button" role="menuitem" className="dx-quiet" disabled={disabled} title={label} onClick={() => executeAction('ui.select', () => { setActions(false); return run(); })}><Icon name={icon} size={15} /><span>{label}</span></button>)}</div> : null}
               </div>
             </header>
             {task?.description ? <p className="dx-desc" data-dx="description">{task.description}</p> : null}
@@ -238,22 +274,16 @@
               <Column id="params" className="dx-col" defaultSize={320} minSize={240} groupResizeBehavior="preserve-pixel-size">
                 <section className="dx-params" data-dx="params" aria-label="Task parameters">
                   <div className="dx-params-head"><h2>Task parameters</h2></div>
-                  <label className="dx-fact">Scope<input key={(task?.id || '') + ':scope:' + describe(task?.scope)} aria-label="Scope" defaultValue={describe(task?.scope)} placeholder="Not yet recorded" onBlur={e => { if (e.target.value === describe(task?.scope)) return; saveSession({scope: e.target.value}); }} /></label>
-                  <ItemList label="Rules" items={rules} onCommit={next => saveSession({rules: next})} />
-                  <ItemList label="Assigned agents" items={agents} choices={agentChoices} onCommit={next => saveSession({agents: next})} />
-                  <label className="dx-fact">Folders<b>{folders || 'Not yet recorded'}</b></label>
-                  <label className="dx-fact">References<b>{references || 'Not yet recorded'}</b></label>
-                  <label className="dx-fact">Session<b>{session || (task ? 'Association not verified' : 'Not yet recorded')}</b></label>
-                  <label className="dx-fact">Saved workflow<b>{fileName || (task ? 'File association not verified' : 'Not yet recorded')}</b></label>
-                  <label className="dx-fact">Checkpoints
+                  <label className="dx-fact"><span><Icon name="fit" size={14} />Scope</span><input key={(task?.id || '') + ':scope:' + describe(task?.scope)} aria-label="Scope" defaultValue={describe(task?.scope)} placeholder="Not yet recorded" onBlur={e => { if (e.target.value === describe(task?.scope)) return; saveSession({scope: e.target.value}); }} /></label>
+                  <ItemList label="Rules" icon="shield" items={rules} onCommit={next => saveSession({rules: next})} />
+                  <ItemList label="Assigned agents" icon="users" items={agents} choices={agentChoices} onCommit={next => saveSession({agents: next})} />
+                  <label className="dx-fact"><span><Icon name="folder" size={14} />Folders</span><b>{factText(folders)}</b></label>
+                  <label className="dx-fact"><span><Icon name="link" size={14} />References</span><b>{factText(references)}</b></label>
+                  <label className="dx-fact"><span><Icon name="clock" size={14} />Session</span><b>{factText(session)}</b></label>
+                  <label className="dx-fact"><span><Icon name="canvas" size={14} />Saved workflow</span><b>{factText(fileName)}</b></label>
+                  <label className="dx-fact"><span><Icon name="pin" size={14} />Checkpoints</span>
                     {(task?.checkpoints || []).length ? <select aria-label="Checkpoints" value={checkpoint} onChange={e => setCheckpoint(e.target.value)}><option value="">No checkpoint selected</option>{task.checkpoints.map(c => <option key={c.id} value={c.id}>{c.title || c.id}</option>)}</select> : <b>No checkpoint selected</b>}
                   </label>
-                  <div className="dx-param-actions">
-                    <button type="button" className="dx-quiet" disabled={!task} onClick={() => executeAction('ui.select', showCanvas)}>Open in Canvas</button>
-                    <button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => document.getElementById('dx-activity')?.focus())}>Activity</button>
-                    <button type="button" className="dx-quiet" disabled={!task} onClick={() => executeAction('ui.select', () => u.act(() => api.checkpointTask(task.id)))}>Save checkpoint</button>
-                    <button type="button" className="dx-quiet" disabled={!task || !checkpoint} onClick={() => executeAction('ui.select', () => u.act(() => api.restoreTaskCheckpoint(task.id, checkpoint)))}>Restore</button>
-                  </div>
                 </section>
               </Column>
               <Separator className="pane-splitter" aria-label="Resize the task parameters" />
@@ -272,7 +302,12 @@
                     </section>
                     <section className="dx-panel" data-dx="plan" aria-label="Plan and progress">
                       <h2>Plan and progress</h2>
-                      {plan.length ? plan.map((step, index) => <p key={index}><b>{describe(step)}</b><span>{ownerOf(task)}</span></p>) : <p>Not yet recorded</p>}
+                      {plan.length ? <ol className="dx-stepper">{plan.map((step, index) => {
+                        const kind = stepOf(step, index, plan);
+                        const label = typeof step === 'object' ? (step.title || step.text || step.name || step.what || describe(step)) : String(step);
+                        const owner = (step && typeof step === 'object' && (step.ownerName || step.owner || step.who)) || ownerOf(task);
+                        return <li key={index} data-step={kind || 'recorded'}><Icon name={kind === 'done' ? 'check' : kind === 'working' ? 'clock' : 'arrow'} size={14} /><b>{label}</b>{kind ? <span>{kind}</span> : null}<small>{owner}</small></li>;
+                      })}</ol> : <p>Not yet recorded</p>}
                     </section>
                   </div>
                   <div className="dx-low">
@@ -282,7 +317,7 @@
                     </section>
                     <section className="dx-panel dx-slim" id="dx-outputs" tabIndex={-1} data-dx="outputs" aria-label="Outputs">
                       <h2>Outputs</h2>
-                      {outputs.length ? outputs.map((row, index) => <p key={index}>{describe(row)}</p>) : <p>Not yet recorded</p>}
+                      {outputs.length ? outputs.map((row, index) => <article key={index} className="dx-output" data-output=""><span className="dx-output-preview">{row.thumb ? <img alt="" src={row.thumb} /> : <Icon name="docs" size={18} />}</span><div><b>{row.name || 'Output'}</b>{row.excerpt ? <p>{row.excerpt}</p> : null}</div></article>) : <p>Not yet recorded</p>}
                     </section>
                   </div>
                   <section className="dx-talk" data-dx="conversation" aria-label="Conversation">
@@ -292,7 +327,8 @@
                       const own = Boolean(m.sender_key) && m.sender_key === m.viewer_key;
                       const sender = own ? 'You' : (people.whoIs ? people.whoIs(m.who, m.sender_key).name : m.who);
                       const delivery = (m.live || []).map(d => d.state || d.reason).filter(Boolean).join(' · ');
-                      return <article key={m.id} className="dx-msg"><span aria-hidden="true">{String(sender || '?').slice(0, 2).toUpperCase()}</span><div><b>{sender}</b><p>{m.text}</p>{own && !delivery ? <small>Delivery unverified</small> : delivery ? <small>{delivery}</small> : null}</div></article>;
+                      const who = m.sender_key || m.who || sender;
+                      return <article key={m.id} className="dx-msg"><span className="dx-avatar" style={{background: markColor(who)}} aria-hidden="true" title={sender}>{String(sender || '?').slice(0, 2).toUpperCase()}</span><div><b>{sender}</b><p>{typeof m.text === 'object' ? describe(m.text) : m.text}</p>{delivery ? <small>{delivery}</small> : null}</div></article>;
                     })}
                   </section>
                   <form className="dx-composer" data-dx="composer" onSubmit={e => { e.preventDefault(); executeAction('ui.select', send); }}>

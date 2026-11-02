@@ -58,14 +58,15 @@
             <label className="home-field home-search"><span>Search tasks</span><input aria-label="Search tasks" placeholder="Find a task..." value={query} onChange={e => setQuery(e.target.value)} /></label>
             <div className="flex"><label className="home-field"><span>Status</span><select aria-label="Task status" value={status} onChange={e => setStatus(e.target.value)}><option value="">All</option>{['IN REVIEW', 'WIP', 'PLANNED', 'STOPPED', 'DONE'].map(v => <option key={v} value={v}>{statusText(v)}</option>)}</select></label>
               <Btn onClick={() => executeAction("ui.select", () => u.show('New task'))}>New task</Btn></div>
-            <div className="home-task-rows scroll">{list.map(t => <button key={t.id} className="listbutton home-task-row" title={t.title} aria-selected={task?.id === t.id} onClick={() => executeAction("ui.select", () => u.setTask(t.id))}><b>{t.title}</b><small>{statusText(t.status)}</small></button>)}
+            <div className="home-task-rows scroll">{list.map(t => <button key={t.id} className="listbutton home-task-row" title={t.title} aria-selected={task?.id === t.id} onClick={() => executeAction("ui.select", async () => { u.setTask(t.id); await executeAction("openTaskGraph", u, t.id); })}><b>{t.title}</b><small>{statusText(t.status)}</small></button>)}
               {!list.length && <p className="muted home-none">{tasks.length ? 'No task matches.' : 'No tasks yet.'}</p>}</div>
           </div>
           <div className="home-thread">{task ? <>
             <h3>{task.title}</h3><small className="muted">{by.join(' · ')}</small>
             {(task.messages || []).slice(-3).map(msg => <div key={msg.id} className="home-msg"><small>{msg.sender_key && msg.sender_key === msg.viewer_key ? 'You' : msg.who}</small><window.UI.Prose text={msg.text} lines={6} /></div>)}
             {!(task.messages || []).length && task.description && <div className="home-msg"><small>You</small><window.UI.Prose text={task.description} lines={6} /></div>}
-            <div className="flex"><Btn onClick={() => executeAction("ui.select", async () => { const opened = await executeAction("openTaskGraph", u, task.id); if (opened) { u.setTask(opened.taskId || task.id); u.go('canvas'); } })}>Review workflow</Btn><Btn onClick={() => executeAction("ui.select", () => u.go('receipts'))}>Activity &amp; receipts</Btn></div>
+            {window.UI.TaskSession && <window.UI.TaskSession task={task} />}
+            <div className="flex"><Btn onClick={() => executeAction("ui.select", async () => { const opened = await executeAction("openTaskGraph", u, task.id); if (opened) { u.setTask(opened.taskId || task.id); u.go('workshop'); } })}>Review workflow</Btn><Btn onClick={() => executeAction("ui.select", () => u.go('receipts'))}>Receipts</Btn></div>
           </> : <Empty>Create a task to begin.</Empty>}</div>
           <aside className="home-side">
             <div className="spread"><h2>Agents · {live.length} session{live.length === 1 ? '' : 's'}</h2><Btn disabled={!task} onClick={() => executeAction("ui.select", () => u.show('Task details', {id: task.id}))}>Request details</Btn></div>

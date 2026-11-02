@@ -225,9 +225,17 @@ async function refreshTasks(details=true) {
  const room=await workshop('listWorkshopMessages');
  const liveAgents=await workshop('listLiveAgents').catch(()=>[]);
  if(epoch!==scopeEpoch||binding!==JSON.stringify(workshopBinding()))return state.tasks;
- publish({tasks:tasks.map(t=>({...t,messages:t.messages||[],steps:t.steps||[],reviews:t.reviews||[],queuedMessages:t.queuedMessages||[]})),
+ const opened=new Map(state.tasks.map(t=>[t.id,t]));
+ publish({tasks:tasks.map(t=>{const old=opened.get(t.id)||{};return {...t,messages:t.messages||[],steps:t.steps||[],reviews:t.reviews||[],queuedMessages:t.queuedMessages||[],
+  workflow:old.workflow,activity:old.activity,plan:old.plan,agents:old.agents,progress:old.progress,parameters:old.parameters,
+  scope:old.scope,rules:old.rules,fileMessages:old.fileMessages,path:old.path};}),
    workshopMessages:room.messages||[],liveAgents:Array.isArray(liveAgents)?liveAgents:[],workshopMessagesMore:room.more===true,workshopMessagesBefore:room.next_before,workshopMessagesScope:binding});
  projectProviders();
+ const current=tasks.find(row=>row.sessionOpen&&row.sessionPath);
+ if(current&&!Array.isArray(opened.get(current.id)?.workflow)){
+  try{await api.openTaskGraph(current.id);}
+  catch(error){publish({connectionNotice:error.message||'This task session did not open.'});}
+ }
  if(details){await refreshApprovals();await refreshWatcher();await refreshHostSkills();await refreshDesktop();await refreshNotifications();}
  return state.tasks;
 }
@@ -768,7 +776,18 @@ for(const wireMethod of ['setTaskPlanMode','checkpointTask','restoreTaskCheckpoi
  'setOnboarding','reviewBrainLink','setSourceEvidence','setLearningLayer','setPinnedOutput','setNodeRunPolicy','verifyOutputStamp']) {
  api[wireMethod]=async(...args)=>{const result=await workshop(wireMethod,args);if(result?.ok===false)throw Error(result.message||result.error);await commands.load();project();await refreshTasks();await refreshAgentSurface();return result;};
 }
-api.openTaskGraph=async id=>{const result=await workshop('openTaskGraph',[id]);if(!result||result.ok===false)throw Error(result?.message||result?.error||'This task has no session file.');const opened=await api.selectGraph(result.path||result.id);publish({focusedTask:result.taskId});return {...opened,taskId:result.taskId,path:result.path||'',scope:result.scope,progress:result.progress};};
+function rememberTask(result){
+ if(!result||!result.taskId)return result;
+ const session={taskId:result.taskId,path:result.path||'',scope:result.scope,rules:result.rules||[],agents:result.agents||[],plan:result.plan||[],
+  progress:result.progress||{},workflow:result.workflow||[],activity:result.activity||[],parameters:result.parameters||[],fileMessages:result.messages||[]};
+ publish({focusedTask:result.taskId,tasks:state.tasks.map(t=>t.id===result.taskId?{...t,...session,sessionPath:session.path,sessionOpen:true}:{...t,sessionOpen:Boolean(t.sessionPath&&session.path&&t.sessionPath===session.path)})});
+ return session;
+}
+api.createTask=async title=>{const result=await workshop('createTask',[title]);if(!result||result.ok===false)throw Error(result?.message||result?.error||'The task was not created.');await refreshTasks();return {...result,...rememberTask(result)};};
+api.setTaskSession=async(id,values)=>{const result=await workshop('setTaskSession',[id,values]);if(!result||result.ok===false)throw Error(result?.message||result?.error||'This task session was not saved.');
+ if(result.path&&sessionDocument&&sessionPath===result.path){const read=await sessionRequest('read',{path:result.path,id:result.id});if(read?.document){sessionDocument=copy(read.document);sessionRevision=read.revision||read.document.properties?.revision||0;localDirty=false;projectFile();}}
+ return {...result,...rememberTask(result)};};
+api.openTaskGraph=async id=>{const result=await workshop('openTaskGraph',[id]);if(!result||result.ok===false)throw Error(result?.message||result?.error||'This task has no session file.');const opened=await api.selectGraph(result.path||result.id);return {...opened,...rememberTask(result)};};
 api.refreshOfficeAwareness=async()=>{const rows=await workshop('refreshOfficeAwareness');if(!Array.isArray(rows))throw Error(rows?.message||'Office task read failed; retry.');publish({officeItems:rows,officeUpdated:'Read from current Workshop'});return rows;};
 
 

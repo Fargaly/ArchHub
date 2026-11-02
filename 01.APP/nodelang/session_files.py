@@ -714,7 +714,6 @@ class SessionFiles:
             return {**head,'document':document} if action == 'read' else head
         if action == 'member-op':
             # One implementation of pulling an agent out of a group and dropping it back (canvas_documents.py).
-            from . import canvas_documents
             document = validate(body.get('document'))
             operation = {'detach': canvas_documents.detach_member, 'attach': canvas_documents.attach_member}.get(body.get('op'))
             args = body.get('args')

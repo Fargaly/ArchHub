@@ -55,3 +55,27 @@ test('a completed task row shows its recorded result and a blank result stays bl
   }));
   assert.equal(blank.includes('data-task-outcome'), false);
 });
+
+test('the task view shows workflow nodes and activity together', () => {
+  const html = renderToStaticMarkup(React.createElement(window.UI.TaskSession, {
+    task: {
+      id: 'a',
+      workflow: [{id: 'node-a', type: 'note', title: 'Alpha'}],
+      parameters: [{id: 'node-a', params: {span: 12}}],
+      activity: [{id: 'node-a', status: 'Done', output: 'alpha-out'}],
+      plan: ['Alpha plan'],
+      agents: ['Grove'],
+      progress: {step: 'one'},
+      fileMessages: [{id: 'm', who: 'Grove', text: 'Alpha is moving'}],
+    },
+  }));
+  assert.match(html, /data-task-session="a"/);
+  assert.match(html, /data-workflow-node="node-a"/);
+  assert.match(html, /Alpha/);
+  assert.match(html, /data-node-param="span"/);
+  assert.match(html, /data-activity-row="node-a"/);
+  assert.match(html, /alpha-out/);
+  assert.match(html, /Alpha plan/);
+  assert.match(html, /Grove/);
+  assert.match(html, /Alpha is moving/);
+});

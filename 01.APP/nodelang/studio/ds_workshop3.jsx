@@ -19,6 +19,25 @@
   const sessionState = row => row.state === 'turn_ended' ? 'Turn ended' : row.state === 'tool_ended' ? 'Tool ended' : row.state === 'unassociated' ? 'Activity unassociated' : 'Working';
   const shownModel = value => { const model = String(value || '').trim(); return model && model !== 'Model not reported' ? model : ''; };
   const oneLine = text => String(text || '').split('\n').map(line => line.trim()).find(Boolean) || '';
+  function TaskSession({task}) {
+    const nodes = task.workflow || [], activity = task.activity || [], plan = task.plan || [], agents = task.agents || [];
+    const progress = task.progress && typeof task.progress === 'object' ? task.progress : {};
+    const parameters = new Map((task.parameters || []).map(row => [row.id, row.params || {}]));
+    const notes = task.fileMessages || [];
+    const shown = nodes.length || activity.length || plan.length || agents.length || Object.keys(progress).length || notes.length;
+    if (!shown) return null;
+    const text = value => value == null || typeof value === 'object' ? JSON.stringify(value) : String(value);
+    return <section data-task-session={task.id} className="ws-flow">
+      {nodes.length > 0 && <div><div className="ws-label">WORKFLOW</div><div className="ws-nodes">{nodes.map(node => <div key={node.id} className="ws-node" data-workflow-node={node.id}><b>{node.title || node.type}</b><span className="ws-small">{node.type}</span>{Object.entries(parameters.get(node.id) || {}).map(([key, value]) => <span key={key} className="ws-small" data-node-param={key}>{key}: {text(value)}</span>)}</div>)}</div></div>}
+      <div data-task-activity><div className="ws-label">ACTIVITY</div>
+        {agents.length > 0 && <p className="ws-small">Agents · {agents.join(', ')}</p>}
+        {plan.length > 0 && <ol className="ws-plan">{plan.map((step, index) => <li key={index}>{step}</li>)}</ol>}
+        {Object.keys(progress).length > 0 && <p className="ws-small" data-task-progress>{Object.entries(progress).map(([key, value]) => key + ' ' + text(value)).join(' · ')}</p>}
+        {activity.map(row => <p key={row.id} className="ws-small" data-activity-row={row.id}>{row.status}{row.output != null && row.output !== '' ? ' · ' + text(row.output) : ''}</p>)}
+        {notes.map(note => <div key={note.id} className="home-msg"><small>{note.who || 'Agent'}</small><p>{note.text}</p></div>)}
+      </div>
+    </section>;
+  }
   function Task({task, on, select, ownerName}) {
     const u = useApp();
     const steps = task.steps || [], completed = steps.filter(step => /^(done|complete|completed)$/i.test(step.status)).length, a = task.activity;
@@ -204,7 +223,7 @@
         e.preventDefault();
         const id = e.dataTransfer.getData('task');
         if (id) executeAction("setTaskStatus", u, id, stage);
-      }}><div className="spread ws-label"><span>{name}</span><span>{rows.length}</span></div>{rows.map(t => <Task key={t.id} task={t} ownerName={nameFor(t)} on={task?.id === t.id} select={() => executeAction("ui.setTask", u, t.id)} />)}</div>;
+      }}><div className="spread ws-label"><span>{name}</span><span>{rows.length}</span></div>{rows.map(t => <Task key={t.id} task={t} ownerName={nameFor(t)} on={task?.id === t.id} select={async () => { executeAction("ui.setTask", u, t.id); await executeAction("openTaskGraph", u, t.id); }} />)}</div>;
     })}</div>
     <div className="ws-foot"><span>Completed &amp; archived</span><span className="ws-small">All work stays searchable</span>
       <button className="ws-link" aria-pressed={history} onClick={() => executeAction("ui.select", () => setHistory(!history))}>{history ? 'Hide history' : 'Show history →'}</button>
@@ -223,6 +242,7 @@
     <div className="scroll ws-body" ref={bodyRef}><div className="ws-stack">
       {(s.approvals || []).filter(card => card.approvalKind === 'ask' && card.status === 'pending' && card.id !== task?.approvalId).map(card => <ApprovalCard key={card.id} id={card.id} />)}
       {request && <section data-workshop-request className="ws-request"><div className="ws-label">THE REQUEST</div><Prose text={request} lines={6} /></section>}
+      {task && <TaskSession task={task} />}
       {(previous.before ? previous.more : s.workshopMessagesMore) && <Btn sm ghost onClick={async () => {
         const page = await executeAction("listWorkshopMessages", u, previous.before || s.workshopMessagesBefore);
         if (currentScope.current === roomScope && Array.isArray(page?.messages)) setOlder({scope: roomScope, messages: [...page.messages, ...previous.messages], before: page.next_before, more: page.more});
@@ -248,6 +268,7 @@
  </Group>;
   }
   window.UI.Workshop = Win;
+  window.UI.TaskSession = TaskSession;
   window.UI.AgentPicker = AgentPicker;
   window.UI.workshopPeople = workshopPeople;
   window.UI.Messages = Messages;

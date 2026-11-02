@@ -678,6 +678,28 @@ def _open_task_graph(task, path=None):
         return {'ok': False, 'error': str(refused)}
 
 
+def _create_task(title):
+    """The studio's new task: one Workshop row and the .archhub file that is its session."""
+    from .workshop_mailbox import application_history
+    from .workshop_tasks import create_session
+    try:
+        with application_history() as history:
+            return create_session(history, title)
+    except ValueError as refused:
+        return {'ok': False, 'error': str(refused)}
+
+
+def _set_task_session(task, values):
+    """Parameters, plan, agents and progress land in that task's file."""
+    from .workshop_mailbox import application_history
+    from .workshop_tasks import update_session
+    try:
+        with application_history() as history:
+            return update_session(history, task, values)
+    except ValueError as refused:
+        return {'ok': False, 'error': str(refused)}
+
+
 def _set_task_status(task, status):
     from .workshop_mailbox import application_history
     from .workshop_tasks import set_status
@@ -822,7 +844,9 @@ OWNER_ACTIONS = {
 
 WORKSHOP_READS = {
     'listTasks': lambda *a: _list_tasks(),
+    'createTask': _create_task,
     'openTaskGraph': _open_task_graph,
+    'setTaskSession': _set_task_session,
     'setTaskStatus': _set_task_status,
     'listAgentsWorking': lambda *a: _list_agents(),
     'listWorkshopMessages': lambda before=None, *a: _list_messages(before),

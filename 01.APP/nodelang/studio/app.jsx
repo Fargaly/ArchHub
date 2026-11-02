@@ -618,10 +618,7 @@
         }, event)}>Cancel</Btn><Btn danger onClick={event => executeAction("appShell.Confirm.32", {
           m,
           saved
-        }, event)}>Confirm</Btn></div></>;else if (k === 'New task') body = <window.UI.Composer onSent={t => {
-      u.setTask(t.id);
-      u.go('workshop');
-    }} />;else if (k === 'Account') body = <><h2>{s.profile.name}</h2><p className="muted">{s.profile.firm} · {s.people.length} people</p><div className="grid">{['My profile', 'My secrets', 'My files', 'Workspaces'].map(t => <Btn key={t} onClick={event => executeAction("appShell.Control.33", {
+        }, event)}>Confirm</Btn></div></>;else if (k === 'New task') body = <><label className="grid">Task name<input aria-label="Task name" value={text} onChange={e => setText(e.target.value)} placeholder="Name this task" /></label><Btn p disabled={!text.trim()} onClick={event => executeAction("ui.select", async () => { const made = await u.act(() => api.createTask(text.trim())); if (made?.taskId) { u.setTask(made.taskId); u.go('workshop'); close(); } }, event)}>Create task</Btn></>;else if (k === 'Account') body = <><h2>{s.profile.name}</h2><p className="muted">{s.profile.firm} · {s.people.length} people</p><div className="grid">{['My profile', 'My secrets', 'My files', 'Workspaces'].map(t => <Btn key={t} onClick={event => executeAction("appShell.Control.33", {
           t,
           u
         }, event)}>{t}</Btn>)}<Btn onClick={event => executeAction("appShell.AccountSettings.34", {

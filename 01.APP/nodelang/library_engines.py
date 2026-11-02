@@ -2620,7 +2620,7 @@ LIBRARY_ITEM_ENGINES["host_exec"] = {"engine": "host.exec", "params": {
     "host": "revit", "code": "", "transaction_name": "ArchHub", "transaction": True,
     "document": "", "element_limit": 150, "sheet_limit": 1, "min_free_bytes": 2147483648,
     "max_hidden_core": 1, "log_sentinel": "ARCHHUB_CORE_DONE", "load_module": "acismobj25.dbx",
-    "isolate_user": "", "isolate_folder": "", "timeout": 30,
+    "isolate_user": "", "isolate_folder": "", "timeout": 900,
 }}
 LIBRARY_ITEM_ENGINES["connector_call"] = {"engine": "connector.call", "params": {
     "connector": "notion", "action": "", "args": "",

@@ -46,6 +46,7 @@ _CONSOLE_NAMES = (
 )
 _ADMITTED = ("allow", "organize")
 _REACHABLE = {"Connected", "Installed", "Ready to connect"}
+_TIMED_OUT = object()
 
 
 class ConnectorUnreachable(ValueError):
@@ -69,6 +70,44 @@ def _whole(value, label):
         return int(value)
     except (TypeError, ValueError) as exc:
         raise ValueError("%s must be a whole number." % label) from exc
+
+
+def _node_timeout():
+    """The host.exec timeout parameter. Empty runs use this, not a second literal."""
+    from .library_engines import LIBRARY_ITEM_ENGINES
+    return LIBRARY_ITEM_ENGINES["host_exec"]["params"]["timeout"]
+
+
+def _limit_seconds(time_limit):
+    """Node time limit. An empty value uses the host.exec timeout parameter."""
+    if time_limit is None or time_limit == "":
+        time_limit = _node_timeout()
+    seconds = _whole(time_limit, "the time limit")
+    if seconds < 1:
+        raise ValueError("The time limit must be at least 1.")
+    return seconds
+
+
+def _captured(value):
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", "replace")
+    return str(value)
+
+
+def _wait_timed_out(exc):
+    if isinstance(exc, (TimeoutError, subprocess.TimeoutExpired)):
+        return True
+    return isinstance(getattr(exc, "reason", None), TimeoutError)
+
+
+def _timeout_log(exc):
+    text = _captured(getattr(exc, "stdout", None)) + _captured(getattr(exc, "stderr", None))
+    if text.strip():
+        return text
+    reason = getattr(exc, "reason", None)
+    return _captured(reason if reason is not None else exc)
 
 
 def _preview_text(args):
@@ -134,6 +173,7 @@ def host_exec(params, feeds=None):
     if not code.strip():
         return {"result": None, "log": "Add code, then run.", "action": decision["action"]}, "Failed"
     try:
+        seconds = _limit_seconds(time_limit)
         result, log = _dispatch(
             host, code, transaction_name, transaction, document, _bound(params, wired),
             _whole(element_limit, "the element limit"),
@@ -144,19 +184,21 @@ def host_exec(params, feeds=None):
             "" if load_module is None else str(load_module),
             "" if isolate_user is None else str(isolate_user),
             "" if isolate_folder is None else str(isolate_folder),
-            time_limit,
+            seconds,
         )
     except (OSError, ValueError) as exc:
         return {"result": None, "log": str(exc), "action": decision["action"]}, "Failed"
+    if result is _TIMED_OUT:
+        return {"result": "Timed out", "log": log, "action": decision["action"]}, "Timed out"
     return {"result": result, "log": log, "action": decision["action"]}, log or host
 
 
 def _dispatch(host, code, transaction_name, transaction, document, wired,
               element_limit, sheet_limit, min_free_bytes, max_hidden_core,
-              log_sentinel, load_module, isolate_user, isolate_folder, time_limit):
+              log_sentinel, load_module, isolate_user, isolate_folder, seconds):
     bindings = _bindings(wired)
     if host == "python":
-        return _python(code, dict(bindings), time_limit)
+        return _python(code, dict(bindings), seconds)
     from . import host_brokers as brokers
     from .clean_revit_adapter import RevitUnreachable
     use_transaction = True if transaction is None else bool(transaction)
@@ -172,7 +214,12 @@ def _dispatch(host, code, transaction_name, transaction, document, wired,
             script = _script(host, code, bindings, log_sentinel)
             body = {"code": script, "transaction_name": transaction_name,
                     "transaction": use_transaction}
-            answer = brokers.broker_call(host, "/exec", body)
+            try:
+                answer = brokers.broker_call(host, "/exec", body, timeout=seconds)
+            except OSError as exc:
+                if not _wait_timed_out(exc):
+                    raise
+                return _TIMED_OUT, _timeout_log(exc)
             result = answer.get("result", answer) if isinstance(answer, dict) else answer
             if host == "revit":
                 made, made_sheets = _result_count(result)
@@ -182,7 +229,7 @@ def _dispatch(host, code, transaction_name, transaction, document, wired,
             return result, log
         if host == "acad-core":
             return _core(code, document, bindings, min_free_bytes, max_hidden_core,
-                         log_sentinel, load_module, isolate_user, isolate_folder)
+                         log_sentinel, load_module, isolate_user, isolate_folder, seconds)
         script = _script(host, code, bindings, log_sentinel)
         if host == "rhino":
             out, label = brokers.rhino_exec({"code": script}, {})
@@ -391,15 +438,22 @@ def hash_file(path):
     return digest.hexdigest()
 
 
-def launch_console(argv, creationflags):
-    completed = subprocess.run(
-        list(argv), creationflags=int(creationflags), capture_output=True, text=True,
-    )
-    return (completed.stdout or "") + (completed.stderr or ""), int(completed.returncode)
+def launch_console(argv, creationflags, timeout=None):
+    """Run one owned console. The time limit stops that process and no other."""
+    seconds = _limit_seconds(timeout)
+    try:
+        completed = subprocess.run(
+            list(argv), creationflags=int(creationflags), capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        # subprocess.run already called kill() on this Popen only.
+        return _timeout_log(exc), "timed_out"
+    return _captured(completed.stdout) + _captured(completed.stderr), int(completed.returncode)
 
 
 def _core(code, document, bindings, min_free_bytes, max_hidden_core,
-          log_sentinel, load_module, isolate_user, isolate_folder):
+          log_sentinel, load_module, isolate_user, isolate_folder, seconds):
     if hidden_cores() >= max_hidden_core:
         raise ValueError("A background AutoCAD is already running.")
     if free_bytes() < min_free_bytes:
@@ -433,7 +487,9 @@ def _core(code, document, bindings, min_free_bytes, max_hidden_core,
         raise ValueError("The drawing or script changed before the run. It was not started.")
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     argv = [exe, "/isolate", user, str(folder), "/loadmodule", load_module, "/i", drawing, "/s", str(script_path)]
-    log, _status = launch_console(argv, flags)
+    log, status = launch_console(argv, flags, seconds)
+    if status == "timed_out":
+        return _TIMED_OUT, log
     if log_sentinel not in log:
         raise ValueError("The background run finished without its log mark.")
     return {"ok": True}, log
@@ -505,15 +561,13 @@ def _json_bindings(bindings):
     return packed
 
 
-def _python(code, bindings, time_limit):
+def _python(code, bindings, seconds):
     """Run in the app interpreter. The caller already admitted this as a write.
 
     The process is separate, isolated, and stopped at the node's time limit.
     Sockets stay closed unless the code itself is a connector call.
     """
-    seconds = _whole(time_limit, "the time limit")
-    if seconds < 1:
-        raise ValueError("The time limit must be at least 1.")
+    seconds = _limit_seconds(seconds)
     python = app_python()
     if not os.path.isfile(python):
         raise ValueError("Python is not installed.")

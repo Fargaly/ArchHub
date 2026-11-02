@@ -72,13 +72,32 @@ test('rules and agents round-trip without splitting on periods', () => {
   assert.equal(ui.homeCommitList(['1.5'], ['1', '5'], value => saved.push(value)), true);
   assert.deepEqual(saved, [['1', '5']]);
   assert.match(ui.homeDescribe({title: 'Design', output: {path: 'sheet.pdf'}}), /sheet\.pdf/);
+  assert.match(home, /ItemList label="Rules"/);
+  assert.match(home, /ItemList label="Assigned agents"/);
+  assert.match(home, /choices \? <select/);
+  assert.equal(home.includes("join('. ')"), false);
+  assert.match(home, /event\.target\.value === row\) return/);
+  assert.match(home, /useState\('home'\)|data-screen="home"/);
+  assert.equal(fs.readFileSync(path.join(studio, 'app.jsx'), 'utf8').includes("useState('workshop')"), false);
+  assert.match(fs.readFileSync(path.join(studio, 'app.jsx'), 'utf8'), /useState\('home'\)/);
+  assert.match(fs.readFileSync(path.join(studio, 'studio.html'), 'utf8'), /Opening ArchHub/);
+  assert.match(fs.readFileSync(path.join(studio, 'style.css'), 'utf8'), /#studio-boot\{position:fixed/);
+  const screens = fs.readFileSync(path.join(studio, 'ds_screens.jsx'), 'utf8');
+  assert.match(screens, /datasetWidth: 340/);
+  assert.equal(screens.includes('datasetWidth: 478'), false);
+  assert.equal(screens.includes('minmax(0,1fr)) 80px'), false);
+  assert.match(screens, /data-dataset-grid/);
+  assert.match(screens, /FIELD_WIDTH = \{text: 70, number: 92, integer: 108, point: 112/);
 });
 
 test('in progress lists started work and planned work stays out', () => {
   const groups = Object.fromEntries(window.UI.workshopGroups(false, new Set()).map(([name, member]) => [name, member]));
   assert.equal(groups['IN PROGRESS']({status: 'WIP'}), true);
   assert.equal(groups['IN PROGRESS']({status: 'PLANNED'}), false);
+  assert.equal(groups['IN PROGRESS']({status: 'WIP', started: false}), false);
+  assert.equal(groups['IN PROGRESS']({status: 'WIP', wsRoute: 'planned'}), false);
   assert.equal(groups.PLANNED({status: 'PLANNED'}), true);
+  assert.equal(groups.PLANNED({status: 'WIP', started: false}), true);
   assert.equal(groups.PLANNED({status: 'WIP'}), false);
 });
 

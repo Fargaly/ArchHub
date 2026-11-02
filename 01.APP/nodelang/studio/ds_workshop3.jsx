@@ -9,10 +9,16 @@
   const Clamp = props => window.UI.Clamp ? React.createElement(window.UI.Clamp, props) : <span className="ws-small">{props.text}</span>;
   const api = window.ArchHubAPI;
   // The list groups by what it asks of you; a drop sets the group's stage (the Board draws the same groups).
+  const laneOf = t => {
+    const route = String(t.wsRoute || t.route || '');
+    if (route === 'planned' || route === 'PLANNED' || t.started === false) return 'PLANNED';
+    if (route === 'started' || route === 'WIP') return 'WIP';
+    return t.status;
+  };
   const groupsFor = (archived, waiting) => [
     ['NEEDS ATTENTION', t => t.status === 'IN REVIEW' || t.status === 'STOPPED' || waiting.has(t.id), 'IN REVIEW'],
-    ['IN PROGRESS', t => t.status === 'WIP' && !waiting.has(t.id), 'WIP'],
-    ['PLANNED', t => t.status === 'PLANNED' && !waiting.has(t.id), 'PLANNED'],
+    ['IN PROGRESS', t => laneOf(t) === 'WIP' && t.status !== 'PLANNED' && !waiting.has(t.id), 'WIP'],
+    ['PLANNED', t => (laneOf(t) === 'PLANNED' || t.status === 'PLANNED') && !waiting.has(t.id), 'PLANNED'],
     ...(archived ? [['COMPLETED AND ARCHIVED', t => t.status === 'DONE' || t.status === 'ARCHIVED', 'DONE']] : [])];
   window.UI.workshopGroups = groupsFor;
   const color = s => s === 'IN REVIEW' ? A.warn : s === 'DONE' ? A.ok : s === 'STOPPED' ? A.err : s === 'WIP' ? A.ink : A.inkSoft;

@@ -110,8 +110,10 @@ _PUBLISH_CMD = re.compile(
     r"\bgh\s+api\b.*-X\s*(POST|PUT|PATCH)|\bnpm\s+publish\b|\btwine\s+upload\b|\bcargo\s+publish\b|"
     r"\bcurl\b.*\s(-d|--data\S*|-F|--form|-T|--upload-file|-X\s*(POST|PUT|PATCH))\b|"
     r"\bInvoke-(WebRequest|RestMethod)\b.*-(Method\s+(Post|Put|Patch)|Body|InFile)\b|\bscp\b", re.I)
-_DELETE_CMD = re.compile(r"(^|[\s;&|(])(rm|del|erase|rmdir|rd|Remove-Item|ri)\b|\bgit\s+clean\s+-\S*f|"
-                         r"\bgit\s+reset\s+--hard\b|\bshutil\.rmtree\b|\bformat\s+[a-z]:", re.I)
+_DELETE_CMD = re.compile(
+    r"(^|[\s;&|(])(rm|del|erase|rmdir|rd|Remove-Item|ri)\b|\bgit\s+clean\s+-\S*f|"
+    r"\bgit\s+reset\s+--hard\b|\bshutil\.rmtree\b|\bformat\s+[a-z]:|"
+    r"\[(?:System\.)?IO\.(?:Directory|File)\]::Delete\b", re.I)
 _PRIVATE_PATH = re.compile(r"(20\.CLIENTS|60\.PERSONAL|62\.LIFE-AREAS)", re.I)
 # S0 (F20): LiteLLM is banned. PyPI litellm 1.82.7 and 1.82.8 (March 2026) shipped a
 # credential stealer; no agent installs or declares it, by any route.
@@ -189,24 +191,468 @@ def classify(event: dict, environment) -> tuple[str, dict]:
     return "other", facts
 
 
-def founder_data_targeted(command: str, cwd: str, environment) -> bool:
-    """A delete aimed at the founder's data; temp folders and lane worktrees are free."""
-    temp = [Path(environment.get("TEMP") or tempfile.gettempdir()).resolve()]
-    roots = _founder_roots(environment)
-    paths = re.findall(r"""["']([^"']+)["']|(\S*[\\/]\S*)""", command)
-    candidates = [Path(a or b) for a, b in paths if (a or b)]
-    if re.search(r"\bgit\s+(clean|reset)\b", command, re.I) or not candidates:
-        candidates.append(Path(cwd))
-    for raw in candidates:
-        text = str(raw).replace("~", str(roots[0].parent), 1) if str(raw).startswith("~") else str(raw)
-        path = Path(text) if Path(text).is_absolute() else Path(cwd) / text
+# Machine cleanup allowlist. Paths live in the file; this is only where to read them.
+# Override with the cleanup_candidates argument or ARCHHUB_CLEANUP_CANDIDATES.
+_CLEANUP_CANDIDATES = Path(
+    r"C:\Users\fargaly\00.ARCHUB\00.GOVERNANCE\05.WORKSPACE-REPORTS"
+    r"\machine-cleanup-candidates-2026-11-02.json")
+_DELETE_VERBS = {"rm", "del", "erase", "rmdir", "rd", "remove-item", "ri"}
+_LIST_VERBS = {"get-childitem", "gci", "ls", "dir"}
+_UNIX_SWITCHES = {
+    "-r", "-R", "-f", "-rf", "-fr", "-rr", "-i", "-I", "-v", "-d", "-x", "-X",
+    "--recursive", "--force", "--dir", "--dry-run", "--preserve-root",
+    "--no-preserve-root", "--one-file-system",
+}
+_PATH_PARAMS = ("literalpath", "path", "pspath")
+_PATTERN_PARAMS = ("filter", "include", "exclude")
+_VALUE_PARAMS = (
+    "erroraction", "ea", "warningaction", "wa", "errorvariable", "ev",
+    "warningvariable", "wv", "outvariable", "ov", "outbuffer", "ob",
+    "pipelinevariable", "pv", "informationaction", "infa", "informationvariable", "iv",
+    "depth", "attributes", "credential", "encoding",
+)
+_SWITCH_PARAMS = (
+    "recurse", "force", "whatif", "verbose", "debug", "file", "directory", "hidden",
+    "readonly", "system", "name", "container", "followsymlink", "casesensitive", "confirm",
+)
+_QUOTED_DELETE = re.compile(
+    r"""(?:\[(?:System\.)?IO\.(?:Directory|File)\]::Delete|shutil\.rmtree)\s*\(\s*r?(?P<q>['"])(?P<path>.*?)(?P=q)""",
+    re.I)
+_FORMAT_DRIVE = re.compile(r"\bformat\s+([a-zA-Z]):", re.I)
+_STATEMENT = {";", "&&", "||", "\n"}
+
+
+def _expand_braces(text: str) -> list[str]:
+    match = re.search(r"\{([^{}]+)\}", text)
+    if not match:
+        return [text]
+    prefix, suffix = text[:match.start()], text[match.end():]
+    expanded = []
+    for part in match.group(1).split(","):
+        part = part.strip()
+        if part:
+            expanded.extend(_expand_braces(prefix + part + suffix))
+    return expanded or [text]
+
+
+def _allowlist_entries(environment, cleanup_candidates) -> list[str]:
+    """Candidate paths from the cleanup file. OtherReview stays preserved."""
+    if cleanup_candidates is not None:
+        source = cleanup_candidates
+    else:
+        source = environment.get("ARCHHUB_CLEANUP_CANDIDATES") or _CLEANUP_CANDIDATES
+    try:
+        data = json.loads(Path(source).read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, TypeError):
+        return []
+    rows = data.get("Candidates") if isinstance(data, dict) else None
+    entries = []
+    for row in rows or []:
+        raw = row.get("Path") if isinstance(row, dict) else None
+        if raw:
+            entries.extend(_expand_braces(str(raw)))
+    return entries
+
+
+def _disposable_roots(environment) -> list[Path]:
+    """Temp, crash dumps, and regenerable caches. Project folders are not in this list."""
+    home = Path(environment.get("USERPROFILE") or environment.get("HOME") or Path.home())
+    local = Path(environment.get("LOCALAPPDATA") or home / "AppData" / "Local")
+    roaming = Path(environment.get("APPDATA") or home / "AppData" / "Roaming")
+    roots = []
+    for key in ("TEMP", "TMP"):
+        if environment.get(key):
+            roots.append(Path(environment[key]))
+    if not roots:
+        roots.append(Path(tempfile.gettempdir()))
+    roots.extend([
+        local / "Temp", local / "CrashDumps", local / "npm-cache", roaming / "npm-cache",
+        local / "ms-playwright", local / "pip" / "Cache", local / "pip" / "cache",
+        roaming / "pip" / "Cache", roaming / "pip" / "cache", home / ".cache" / "pip",
+        home / ".cache" / "pytest", local / "pytest-cache", local / "node-compile-cache",
+        local / "Temp" / "node-compile-cache", local / "Temp" / "playwright-transform-cache",
+    ])
+    return roots
+
+
+def _norm(path: Path) -> str:
+    try:
+        text = os.path.abspath(os.fspath(path))
+    except (OSError, ValueError):
+        text = os.fspath(path)
+    text = os.path.normcase(os.path.normpath(text))
+    if os.name == "nt" and len(text) == 2 and text[1] == ":":
+        return text + os.sep
+    if text.endswith(os.sep) and not (os.name == "nt" and len(text) == 3 and text[1] == ":"):
+        return text.rstrip(os.sep)
+    return text
+
+
+def _same_tree(path: Path, root: Path) -> bool:
+    left, right = _norm(path), _norm(root)
+    return bool(left) and bool(right) and (left == right or left.startswith(right + os.sep))
+
+
+def _tokenize(command: str) -> list[str]:
+    tokens, i, n = [], 0, len(command)
+    while i < n:
+        ch = command[i]
+        if ch in "\r\n":
+            while i < n and command[i] in "\r\n":
+                i += 1
+            tokens.append("\n")
+            continue
+        if ch.isspace():
+            i += 1
+            continue
+        if command.startswith("&&", i) or command.startswith("||", i):
+            tokens.append(command[i:i + 2])
+            i += 2
+            continue
+        if ch in "|;":
+            tokens.append(ch)
+            i += 1
+            continue
+        if ch in "'\"":
+            quote = ch
+            i += 1
+            start = i
+            while i < n and command[i] != quote:
+                i += 1
+            tokens.append(command[start:i])
+            i = i + 1 if i < n else i
+            continue
+        start = i
+        while i < n and not command[i].isspace() and command[i] not in "|;\r\n\"'" \
+                and not command.startswith("&&", i) and not command.startswith("||", i):
+            i += 1
+        tokens.append(command[start:i])
+    return tokens
+
+
+def _groups(tokens: list[str], separators: set[str]) -> list[list[str]]:
+    groups, current = [], []
+    for token in tokens:
+        if token in separators:
+            if current:
+                groups.append(current)
+            current = []
+        else:
+            current.append(token)
+    if current:
+        groups.append(current)
+    return groups
+
+
+def _command_name(token: str) -> str | None:
+    """A command word. Path arguments, even ones whose leaf is `rd`, are not commands."""
+    if not token or token[0] in "-/$'\"()":
+        return None
+    if any(ch in token for ch in "()[]{}$"):
+        return None
+    leaf = token.rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
+    executable = leaf.lower().endswith((".exe", ".cmd", ".bat", ".ps1"))
+    if ("\\" in token or "/" in token or ":" in token) and not executable:
+        return None
+    if executable:
+        leaf = leaf.rsplit(".", 1)[0]
+    return leaf.lower()
+
+
+def _is_path_token(token: str) -> bool:
+    if not token or token in {".", ".."}:
+        return token in {".", ".."}
+    if token.startswith("-") or re.fullmatch(r"/[a-zA-Z](?::.*)?", token):
+        return False
+    if any(ch in token for ch in "()[]{}") or ("$" in token and not re.match(r"(?i)^\$env:\w+", token)):
+        return False
+    if "::" in token or token.startswith(">") or token.startswith("2>"):
+        return False
+    # (Get-PSDrive C).Free/1GB and similar member expressions, not .\relative paths.
+    if token.startswith(".") and not token.startswith(("./", ".\\", "../", "..\\")):
+        if "/" in token or "\\" in token:
+            return False
+    return True
+
+
+def _unique_param(name: str, options: tuple[str, ...]) -> str | None:
+    if name in options:
+        return name
+    hits = [item for item in options if item.startswith(name)]
+    return hits[0] if len(hits) == 1 else None
+
+
+def _param_kind(name: str) -> str:
+    if _unique_param(name, _PATH_PARAMS):
+        return "path"
+    if _unique_param(name, _PATTERN_PARAMS):
+        return "pattern"
+    if _unique_param(name, _VALUE_PARAMS):
+        return "value"
+    return "switch"
+
+
+def _split_param(token: str) -> tuple[str, str | None]:
+    body = token[2:] if token.startswith("--") else token[1:]
+    for sep in (":", "="):
+        if sep in body:
+            name, value = body.split(sep, 1)
+            return name.lower(), value
+    return body.lower(), None
+
+
+def _parse_paths(tokens: list[str]) -> list[str]:
+    """Path arguments only. -Filter/-Include/-Exclude and other flags are not paths."""
+    paths, i = [], 0
+    while i < len(tokens):
+        token = tokens[i]
+        if token == "--":
+            paths.extend(item for item in tokens[i + 1:] if _is_path_token(item))
+            break
+        if token in _UNIX_SWITCHES or re.fullmatch(r"/[a-zA-Z](?::.*)?", token):
+            i += 1
+            continue
+        if token.startswith("-"):
+            name, inline = _split_param(token)
+            kind = _param_kind(name)
+            if kind == "path":
+                value = inline if inline else (tokens[i + 1] if i + 1 < len(tokens) else "")
+                if not inline and value:
+                    i += 1
+                if value and _is_path_token(value):
+                    paths.append(value)
+            elif kind in ("pattern", "value") and not inline and i + 1 < len(tokens) \
+                    and not tokens[i + 1].startswith("-"):
+                i += 1
+            i += 1
+            continue
+        if _is_path_token(token):
+            paths.append(token)
+        i += 1
+    return paths
+
+
+def _parse_git(tokens: list[str], index: int, cwd: str):
+    """git clean / git reset --hard. -e patterns are not paths. No path means the repo."""
+    i = index + 1
+    repo = None
+    while i < len(tokens):
+        token = tokens[i]
+        if token == "-C" and i + 1 < len(tokens):
+            repo = tokens[i + 1]
+            i += 2
+            continue
+        if token == "--work-tree" and i + 1 < len(tokens):
+            repo = tokens[i + 1]
+            i += 2
+            continue
+        if token.startswith("-"):
+            i += 1
+            continue
+        break
+    if i >= len(tokens):
+        return None
+    sub = tokens[i].lower()
+    i += 1
+    if sub == "clean":
+        paths = []
+        while i < len(tokens):
+            token = tokens[i]
+            if token == "--":
+                paths.extend(item for item in tokens[i + 1:] if _is_path_token(item))
+                break
+            if token in ("-e", "--exclude"):
+                i += 2
+                continue
+            if token.startswith("--exclude="):
+                i += 1
+                continue
+            if token.startswith("-"):
+                i += 1
+                continue
+            if _is_path_token(token):
+                paths.append(token)
+            i += 1
+        return "git-clean", paths, repo or cwd
+    if sub == "reset":
+        hard = False
+        paths = []
+        while i < len(tokens) and tokens[i] != "--":
+            if tokens[i] == "--hard":
+                hard = True
+            elif not tokens[i].startswith("-") and _is_path_token(tokens[i]):
+                paths.append(tokens[i])
+            i += 1
+        if tokens[i:i + 1] == ["--"]:
+            paths.extend(item for item in tokens[i + 1:] if _is_path_token(item))
+        if hard:
+            return "git-reset", paths, repo or cwd
+    return None
+
+
+def _classify_stage(tokens: list[str], cwd: str):
+    named = [(i, name) for i, token in enumerate(tokens) if (name := _command_name(token))]
+    for index, name in named:
+        if name == "git":
+            parsed = _parse_git(tokens, index, cwd)
+            if parsed:
+                return parsed
+    for index, name in named:
+        if name in _DELETE_VERBS:
+            return "delete", _parse_paths(tokens[index + 1:]), None
+    for index, name in named:
+        if name in _LIST_VERBS:
+            return "list", _parse_paths(tokens[index + 1:]), None
+    return "other", [], None
+
+
+def _delete_targets(command: str, cwd: str) -> list[str]:
+    """Paths a delete will actually remove. Filters, expressions, and other quotes are ignored."""
+    targets = [match.group("path") for match in _QUOTED_DELETE.finditer(command)]
+    targets += ["%s:\\" % match.group(1) for match in _FORMAT_DRIVE.finditer(command)]
+    for statement in _groups(_tokenize(command), _STATEMENT):
+        previous = None
+        for stage in _groups(statement, {"|"}):
+            kind, paths, repo = _classify_stage(stage, cwd)
+            if kind == "list":
+                previous = paths
+            elif kind == "delete":
+                if paths:
+                    targets.extend(paths)
+                elif previous is not None:
+                    # Get-ChildItem/ls with no path lists the current directory.
+                    targets.extend(previous or [cwd])
+                previous = None
+            elif kind in ("git-clean", "git-reset"):
+                targets.extend(paths or [repo or cwd])
+                previous = None
+    return targets
+
+
+def _resolve_target(raw: str, cwd: str, environment) -> Path:
+    text = str(raw).strip()
+
+    def repl(match):
+        return str(environment.get(match.group(1), match.group(0)))
+
+    text = re.sub(r"%([^%]+)%", repl, text)
+    text = re.sub(r"\$env:(\w+)", repl, text, flags=re.I)
+    if text == "~" or text.startswith(("~/", "~\\")):
+        home = environment.get("USERPROFILE") or environment.get("HOME") or str(Path.home())
+        text = str(home) + text[1:]
+    path = Path(text)
+    if not path.is_absolute():
+        path = Path(cwd) / path
+    return path
+
+
+def _is_free(path: Path, disposable: list[Path], allowlist: list[str]) -> bool:
+    if any(_same_tree(path, root) for root in disposable):
+        return True
+    norm = _norm(path)
+    for entry in allowlist:
+        if any(ch in entry for ch in "*?"):
+            if fnmatch.fnmatch(norm, os.path.normcase(os.path.normpath(entry))):
+                return True
+            continue
+        if _same_tree(path, Path(entry)):
+            return True
+    return False
+
+
+def _inside_protected_repo(path: Path, disposable: list[Path]) -> bool:
+    """Repo sources stay protected. A git worktree under temp is disposable."""
+    cursor = path
+    for _ in range(64):
         try:
-            path = path.resolve()
+            tracked = (cursor / ".git").exists()
         except OSError:
+            return False
+        if tracked:
+            return not any(_same_tree(cursor, root) for root in disposable)
+        parent = cursor.parent
+        if parent == cursor:
+            return False
+        cursor = parent
+    return False
+
+
+# Plot-and-Publish CSVs are regenerable logs. The isolate profile and the
+# Autodesk local folder also hold PAT/hatch, settings, profiles, models, first90.
+_PLOT_LOG_ROOT = Path(r"E:\01.PERSONAL\BBC4\00-OUT\10.WIP-408\_STAGING\_CORE_PROFILE")
+_KEEP_NEWEST_PLOT_LOGS = re.compile(
+    r"sort-object\b[\s\S]{0,240}?lastwritetime\b[\s\S]{0,160}?-descending\b[\s\S]{0,160}?"
+    r"select(?:-object)?\b[\s\S]{0,80}?-skip\b\s+3\b",
+    re.I)
+_PLOT_FILTER = re.compile(r"plotandpublish\*\.csv", re.I)
+_PLOT_CSV = re.compile(r"plotandpublish.*\.csv$", re.I)
+_PROTECTED_ARTIFACT = re.compile(
+    r"(?:^|[\\/])first90(?:[\\/]|$)"
+    r"|(?:^|[\\/])settings(?:[\\/]|$)"
+    r"|(?:^|[\\/])active-?profiles?(?:[\\/]|$)"
+    r"|\.(?:pat|dwg|dxf|dgn|rvt|rfa|rte|ifc|arg|aws)\b"
+    r"|hatch",
+    re.I)
+_FILTER_ARG = re.compile(r"-(?:filter|include)\b\s+[\"']?([^\s\"']+)", re.I)
+
+
+def _plot_log_roots(environment) -> list[Path]:
+    home = Path(environment.get("USERPROFILE") or environment.get("HOME") or Path.home())
+    local = Path(environment.get("LOCALAPPDATA") or home / "AppData" / "Local")
+    return [_PLOT_LOG_ROOT, local / "Autodesk"]
+
+
+def _plot_publish_override(command: str, cwd: str, environment) -> bool | None:
+    """False when old PlotandPublish logs are deleted and the newest 3 stay.
+
+    True when the delete hits PAT/hatch, settings, an active profile, a model,
+    or first90 under the isolate profile or the Autodesk local folder.
+    """
+    roots = _plot_log_roots(environment)
+    resolved = [_resolve_target(raw, cwd, environment) for raw in _delete_targets(command, cwd)]
+    under = [path for path in resolved if any(_same_tree(path, root) for root in roots)]
+    if not under:
+        return None
+    filters = _FILTER_ARG.findall(command)
+    protected = any(_PROTECTED_ARTIFACT.search(str(path)) for path in under) or any(
+        _PROTECTED_ARTIFACT.search(item) for item in filters)
+    if protected:
+        return True
+    keeps_newest = _PLOT_FILTER.search(command) and _KEEP_NEWEST_PLOT_LOGS.search(command)
+    if keeps_newest and len(under) == len(resolved):
+        return False
+    if resolved and all(_PLOT_CSV.search(str(path)) for path in resolved):
+        return not bool(_KEEP_NEWEST_PLOT_LOGS.search(command))
+    if any(_norm(path) == _norm(root) for path in resolved for root in roots):
+        return True
+    return None
+
+
+def founder_data_targeted(command: str, cwd: str, environment, cleanup_candidates=None) -> bool:
+    """A delete aimed at the founder's data.
+
+    Only the delete verb's path arguments count, plus the path of a Get-ChildItem/ls
+    that pipes into Remove-Item. Temp, crash dumps, regenerable caches, and paths
+    from the cleanup-candidate file are free. Old PlotandPublish logs are free when
+    the newest three are kept. Client, personal, and ArchHub data, repo sources
+    outside temp, and PAT/hatch, settings, profiles, models, and first90 stay protected.
+    """
+    plot = _plot_publish_override(command, cwd, environment)
+    if plot is not None:
+        return plot
+    disposable = _disposable_roots(environment)
+    allowlist = _allowlist_entries(environment, cleanup_candidates)
+    roots = _founder_roots(environment)
+    for raw in _delete_targets(command, cwd):
+        path = _resolve_target(raw, cwd, environment)
+        inside = any(_same_tree(path, root) for root in roots)
+        contains = any(_same_tree(root, path) for root in roots)
+        # A cache that sits inside a client or project folder is still his data.
+        if _is_free(path, disposable, allowlist) and not inside and not contains:
             continue
-        if any(_under(path, t) for t in temp):
-            continue
-        if any(_under(path, r) for r in roots):
+        if inside or contains:
+            return True
+        if _inside_protected_repo(path, disposable):
             return True
     return False
 

@@ -104,6 +104,119 @@ def test_delete_founder_data_refused_temp_delete_allowed(env):
     assert d["verdict"] == "allow"
 
 
+def _fill(command, paths):
+    for key, value in paths.items():
+        command = command.replace("{" + key + "}", str(value))
+    return command
+
+
+@pytest.mark.parametrize("tool,command,refused", [
+    ("PowerShell",
+     r"Get-ChildItem 'C:\Users\fargaly\AppData\Local\Temp' -Filter 'nograph-out-*' | Remove-Item -Recurse",
+     False),
+    ("PowerShell",
+     r"Get-ChildItem 'C:\Users\fargaly\AppData\Local\Temp' -Filter 'nograph-out-*' | Remove-Item -Recurse; (Get-PSDrive C).Free/1GB",
+     False),
+    ("Bash", "rm -rf \"{clients}\"", True),
+    ("Bash", "rm -rf \"{personal}\"", True),
+    ("Bash", "rm -rf \"{archhub_test}\"", True),
+    ("Bash", "git clean -fdx", True),
+    ("PowerShell", "Remove-Item -LiteralPath \"{crash}\" -Recurse", False),
+    ("PowerShell", "Remove-Item -LiteralPath \"{npm}\" -Recurse", False),
+    ("PowerShell", "[IO.Directory]::Delete('{clients}', $true)", True),
+    ("Bash", "rm -rf \"{pytest_cache}\"", True),
+    ("PowerShell",
+     r"Get-ChildItem 'E:\01.PERSONAL\BBC4\00-OUT\10.WIP-408\_STAGING\_CORE_PROFILE' -Recurse -Filter 'PlotandPublish*.csv' | Sort-Object LastWriteTime -Descending | Select-Object -Skip 3 | Remove-Item",
+     False),
+    ("PowerShell",
+     r"Get-ChildItem '{autodesk}' -Recurse -Filter 'PlotandPublish*.csv' | Sort-Object LastWriteTime -Descending | Select-Object -Skip 3 | Remove-Item",
+     False),
+    ("PowerShell",
+     r"Get-ChildItem 'E:\01.PERSONAL\BBC4\00-OUT\10.WIP-408\_STAGING\_CORE_PROFILE' -Recurse -Filter 'PlotandPublish*.csv' | Remove-Item",
+     True),
+    ("PowerShell",
+     r"Remove-Item -LiteralPath 'E:\01.PERSONAL\BBC4\00-OUT\10.WIP-408\_STAGING\_CORE_PROFILE\support\acad.pat'",
+     True),
+    ("PowerShell",
+     r"Remove-Item -LiteralPath 'E:\01.PERSONAL\BBC4\00-OUT\10.WIP-408\_STAGING\_CORE_PROFILE\first90\plan.dwg'",
+     True),
+    ("PowerShell", r"Remove-Item -LiteralPath '{autodesk}\hatch\brick.pat'", True),
+    ("PowerShell", r"Remove-Item -LiteralPath '{autodesk}\settings\profile.aws'", True),
+    ("PowerShell", r"Remove-Item -Recurse -LiteralPath '{autodesk}'", True),
+])
+def test_disposable_cleanup_is_not_founder_data(env, tool, command, refused):
+    # Pytest's own tmp lives under the real Temp. A profile there would make the
+    # literal Temp command look like it contains founder data. Keep this profile outside it.
+    env = dict(env)
+    home = Path(r"C:\GuardfixNotTemp\home")
+    env["USERPROFILE"] = env["HOME"] = str(home)
+    env["LOCALAPPDATA"] = str(home / "AppData" / "Local")
+    env["TEMP"] = env["TMP"] = r"C:\Users\fargaly\AppData\Local\Temp"
+    archub = home / "00.ARCHUB"
+    local = Path(env["LOCALAPPDATA"])
+    command = _fill(command, {
+        "clients": archub / "20.CLIENTS" / "tower" / "fees.xlsx",
+        "personal": archub / "60.PERSONAL" / "notes.txt",
+        "archhub_test": local / "ArchHub-Test" / "workshop.db",
+        "crash": local / "CrashDumps" / "old.dmp",
+        "npm": local / "npm-cache" / "content",
+        "pytest_cache": archub / "20.CLIENTS" / "tower" / ".pytest_cache",
+        "autodesk": local / "Autodesk",
+    })
+    decision = call(env, tool, {"command": command}, cwd=str(archub))
+    assert ("delete-founder-data" in decision["rules"]) is refused, (command, decision["verdict"], decision["rules"])
+    if not refused:
+        assert decision["verdict"] == "allow"
+
+
+def test_caches_and_temp_worktrees_are_free_source_repos_are_not(env, tmp_path):
+    home = Path(env["USERPROFILE"])
+    local = Path(env["LOCALAPPDATA"])
+    work = Path(env["TEMP"]) / "lane-work"
+    free_roots = [
+        local / "CrashDumps", local / "npm-cache", local / "ms-playwright",
+        local / "pip" / "Cache", local / "Temp" / "node-compile-cache",
+        home / ".cache" / "pytest", work,
+    ]
+    for root in free_roots:
+        root.mkdir(parents=True)
+        (root / ".git").write_text("gitdir: elsewhere\n", encoding="utf-8")
+        decision = call(env, "Bash", {"command": "rm -rf \"%s\"" % (root / "cache.bin")},
+                        cwd=str(home / "00.ARCHUB"))
+        assert decision["verdict"] == "allow", root
+        assert "delete-founder-data" not in decision["rules"]
+    decision = call(env, "Bash", {"command": "git clean -fdx"}, cwd=str(work))
+    assert decision["verdict"] == "allow"
+    source = tmp_path / "source-repo"
+    source.mkdir()
+    (source / ".git").mkdir()
+    decision = call(env, "Bash", {"command": "git clean -fdx"}, cwd=str(source))
+    assert decision["rules"] == ["delete-founder-data"]
+
+
+def test_cleanup_candidate_file_frees_listed_paths_only(env, tmp_path):
+    home = Path(env["USERPROFILE"])
+    listed = tmp_path / "brace-root" / "cache-one"
+    listed.mkdir(parents=True)
+    (listed / ".git").write_text("gitdir: elsewhere\n", encoding="utf-8")
+    kept = tmp_path / "kept-repo"
+    kept.mkdir()
+    (kept / ".git").mkdir()
+    catalog = tmp_path / "candidates.json"
+    catalog.write_text(json.dumps({
+        "Candidates": [{"Path": str(tmp_path / "brace-root" / "cache-{one,two}")}],
+        "OtherReview": {"Path": str(kept), "State": "PRESERVED_UNVERIFIED_BACKUP_CUSTODY"},
+    }), encoding="utf-8")
+    env = dict(env)
+    env["ARCHHUB_CLEANUP_CANDIDATES"] = str(catalog)
+    cwd = str(home / "00.ARCHUB")
+    allowed = call(env, "Bash", {"command": "rm -rf \"%s\"" % (listed / "old.bin")}, cwd=cwd)
+    preserved = call(env, "Bash", {"command": "rm -rf \"%s\"" % (kept / "src.py")}, cwd=cwd)
+    assert allowed["verdict"] == "allow"
+    assert "delete-founder-data" not in allowed["rules"]
+    assert preserved["rules"] == ["delete-founder-data"]
+
+
 def test_screen_use_refused_screenshot_allowed(env):
     assert call(env, "mcp__computer-use__left_click", {"coordinate": [1, 2]})["rules"] == ["use-founder-screen"]
     assert call(env, "mcp__computer-use__screenshot", {})["verdict"] == "allow"

@@ -114,7 +114,23 @@ _DELETE_CMD = re.compile(
     r"(^|[\s;&|(])(rm|del|erase|rmdir|rd|Remove-Item|ri)\b|\bgit\s+clean\s+-\S*f|"
     r"\bgit\s+reset\s+--hard\b|\bshutil\.rmtree\b|\bformat\s+[a-z]:|"
     r"\[(?:System\.)?IO\.(?:Directory|File)\]::Delete\b", re.I)
+# A Python `del` drops a name. It is not a shell verb and not a path.
+_PY_DEL_STMT = re.compile(
+    r"(?im)(?<![\w.\\/])del[ \t]+(?:\([^)\n;]*\)|[A-Za-z_][\w]*(?:[ \t]*\.[ \t]*[A-Za-z_][\w]*"
+    r"|[ \t]*\[[^\]\n;]*\])*(?:[ \t]*,[ \t]*[A-Za-z_][\w]*(?:[ \t]*\.[ \t]*[A-Za-z_][\w]*"
+    r"|[ \t]*\[[^\]\n;]*\])*)*)[ \t]*(?=[#;]|$)")
+_FILE_REMOVAL_CALL = re.compile(
+    r"(?ix)(?:\bos\s*\.\s*(?:remove|unlink|removedirs|rmdir)\s*\("
+    r"|\bshutil\s*\.\s*rmtree\s*\("
+    r"|(?:pathlib\s*\.\s*)?Path\s*\([^)\n;]*[/\\][^)\n;]*\)\s*\.unlink\s*\()")
+_PY_REMOVAL_PATH = re.compile(
+    r"(?ix)(?:os\s*\.\s*(?:remove|unlink|removedirs|rmdir)|shutil\s*\.\s*rmtree)"
+    r"\s*\(\s*r?(?P<q>['\"])(?P<path>.*?)(?P=q)"
+    r"|(?:pathlib\s*\.\s*)?Path\s*\(\s*r?(?P<q2>['\"])(?P<path2>.*?)(?P=q2)\s*\)\s*\.unlink\s*\(")
 _PRIVATE_PATH = re.compile(r"(20\.CLIENTS|60\.PERSONAL|62\.LIFE-AREAS)", re.I)
+# 60.PERSONAL is his identity and branding. Client project folders (20.CLIENTS)
+# and other people's records stay the data that must not go public.
+_OTHERS_PATH = re.compile(r"(20\.CLIENTS|62\.LIFE-AREAS)", re.I)
 # S0 (F20): LiteLLM is banned. PyPI litellm 1.82.7 and 1.82.8 (March 2026) shipped a
 # credential stealer; no agent installs or declares it, by any route.
 BANNED_PACKAGES = re.compile(r"(?<![\w.-])litellm(?![\w.-])", re.I)
@@ -160,6 +176,85 @@ def normalize(payload: dict, vendor: str) -> dict:
             "cwd": str(payload.get("cwd") or os.getcwd())}
 
 
+_DEST_KEYS = ("page_id", "page_url", "url", "parent", "parent_id", "database_id",
+              "target", "to", "recipient", "channel", "file_id")
+_EMAIL_ADDR = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.I)
+
+
+def _destination_blob(data) -> str:
+    if not isinstance(data, dict):
+        return ""
+    parts = []
+    for key in _DEST_KEYS:
+        held = data.get(key)
+        if isinstance(held, str):
+            parts.append(held)
+    nested = data.get("arguments")
+    if isinstance(nested, dict):
+        parts.append(_destination_blob(nested))
+    return "\n".join(parts)
+
+
+def _public_target(data) -> bool:
+    """A published page or an explicit public share. His notion.so page is still his."""
+    if isinstance(data, dict):
+        if data.get("public") is True:
+            return True
+        for key in ("visibility", "permission", "permissions", "access", "share"):
+            held = data.get(key)
+            if isinstance(held, str) and re.search(r"\b(public|anyone)\b", held, re.I):
+                return True
+    blob = _destination_blob(data)
+    if re.search(r"notion\.site\b", blob, re.I):
+        return True
+    return bool(re.search(r"https?://(?!(?:www\.)?notion\.so(?:/|$))", blob, re.I))
+
+
+def _outside_recipient(value) -> bool:
+    text = value if isinstance(value, str) else ""
+    return bool(_EMAIL_ADDR.search(text) or re.search(r"https?://", text, re.I))
+
+
+def _own_workspace(tool: str, data) -> bool:
+    """His Notion, his Drive, his mailbox drafts, his Workshop. Not a public send.
+
+    A Workshop message that names a folder is not the file leaving his account.
+    """
+    name = tool.casefold()
+    if "categorize" in name:
+        return True
+    connector = str(data.get("connector") or "").casefold() if isinstance(data, dict) else ""
+    if "workshop" in name or connector == "workshop":
+        return True
+    leaf = re.split(r"[._]", name.split("__")[-1])[-1]
+    body = data.get("text") or data.get("message") or data.get("body") if isinstance(data, dict) else None
+    if (leaf == "send" and isinstance(data, dict) and "to" in data and isinstance(body, str)
+            and not _outside_recipient(data.get("to"))):
+        return True
+    if "draft" in name and not re.search(r"send[-_]?draft|submit", name):
+        return True
+    if re.search(r"google[-_]?drive|gdrive", name) or re.search(r"(?:^|[._])drive(?:[._]|$)", name):
+        if re.search(r"share|permission|publish", name) or _public_target(data):
+            return False
+        return True
+    if "notion" in name:
+        return not _public_target(data)
+    return False
+
+
+def _untrusted_content(tool: str) -> bool:
+    """Outside web and mail. Fetching his Notion page is not untrusted web content."""
+    name = tool.casefold()
+    if "notion" in name and re.search(r"fetch|read|get|search|query", name):
+        return False
+    return bool(_UNTRUSTED.search(tool))
+
+
+def _leaves_his_account(action: str, tool: str, data) -> bool:
+    """Public web, a public repo, a public post, or a recipient outside his account."""
+    return action in ("publish", "send") and not _own_workspace(tool, data)
+
+
 def classify(event: dict, environment) -> tuple[str, dict]:
     tool, data = event["tool"], event["input"]
     text = "\n".join(_strings(data))
@@ -171,14 +266,16 @@ def classify(event: dict, environment) -> tuple[str, dict]:
                   or (_DEPENDENCY_FILE.search(target) and BANNED_PACKAGES.search(text))
                   or (tool.lower() == "apply_patch" and re.search(r"(requirements|pyproject|\.lock)", text, re.I)
                       and re.search(r"^\+.*" + BANNED_PACKAGES.pattern, text, re.I | re.M)))
-    facts = {"banned_package": banned, "text": text, "command": command, "untrusted": bool(_UNTRUSTED.search(tool)),
-             "private": bool(_PRIVATE_PATH.search(text))}
+    facts = {"banned_package": banned, "text": text, "command": command,
+             "untrusted": _untrusted_content(tool),
+             "private": bool(_PRIVATE_PATH.search(text)),
+             "others": bool(_OTHERS_PATH.search(text))}
     if _SCREEN_TOOL.search(tool):
         return "screen", facts
     if _SHELL.match(tool):
         if _PUBLISH_CMD.search(command):
             return "publish", facts
-        if _DELETE_CMD.search(command):
+        if _deletes_files(command):
             return "delete", facts
         return "shell", facts
     if _WRITE.match(tool):
@@ -506,9 +603,75 @@ def _classify_stage(tokens: list[str], cwd: str):
     return "other", [], None
 
 
+def _blank(chars: list[str], start: int, end: int) -> None:
+    for index in range(start, min(end, len(chars))):
+        if chars[index] != "\n":
+            chars[index] = " "
+
+
+def _blank_quoted(chars: list[str], command: str, start: int) -> int:
+    """Blank one quoted, here-string, or bare argument. Returns the index after it."""
+    if start >= len(command):
+        return start
+    if command.startswith(('@"', "@'"), start):
+        mark = command[start + 1] + "@"
+        end = command.find(mark, start + 2)
+        end = len(command) if end < 0 else end + 2
+        _blank(chars, start, end)
+        return end
+    if command[start] in "'\"":
+        quote = command[start]
+        index = start + 1
+        while index < len(command):
+            if command[index] == "\\" and quote == '"':
+                index += 2
+                continue
+            if command[index] == quote:
+                index += 1
+                break
+            index += 1
+        _blank(chars, start, index)
+        return index
+    index = start
+    while index < len(command) and not command[index].isspace():
+        index += 1
+    _blank(chars, start, index)
+    return index
+
+
+def _python_regions_blanked(command: str) -> str:
+    """Python -c text, a heredoc, or a here-string is source, not a shell delete verb."""
+    chars = list(command)
+    for match in re.finditer(r"<<-?\s*['\"]?(\w+)['\"]?", command):
+        newline = command.find("\n", match.end())
+        if newline < 0:
+            continue
+        close = re.search(r"(?m)^%s\s*$" % re.escape(match.group(1)), command[newline + 1:])
+        if close:
+            _blank(chars, newline + 1, newline + 1 + close.start())
+    for match in re.finditer(r"(?i)\b(?:python(?:3)?|py)\b[^\n]*?\s-c\s+", command):
+        _blank_quoted(chars, command, match.end())
+    return "".join(chars)
+
+
+def _deletes_files(command: str) -> bool:
+    """Real deletes only: a shell verb at command position, or a file-removal call with a path.
+
+    A Python ``del`` of a name, inside python -c, a heredoc, or a script, is not one of those.
+    """
+    if _FILE_REMOVAL_CALL.search(command):
+        return True
+    shell = _python_regions_blanked(command)
+    if re.search(r"(?i)\b(?:import|from|def|class)\b|\bopen\s*\(|\bpathlib\b", command):
+        shell = _PY_DEL_STMT.sub(" ", shell)
+    return bool(_DELETE_CMD.search(shell))
+
+
 def _delete_targets(command: str, cwd: str) -> list[str]:
     """Paths a delete will actually remove. Filters, expressions, and other quotes are ignored."""
     targets = [match.group("path") for match in _QUOTED_DELETE.finditer(command)]
+    for match in _PY_REMOVAL_PATH.finditer(command):
+        targets.append(match.group("path") or match.group("path2"))
     targets += ["%s:\\" % match.group(1) for match in _FORMAT_DRIVE.finditer(command)]
     for statement in _groups(_tokenize(command), _STATEMENT):
         previous = None
@@ -858,7 +1021,9 @@ def trace_rules(event, action, facts, environment):
     key = hashlib.sha256((event["tool"] + "\0" + json.dumps(event["input"], sort_keys=True, default=str)).encode()).hexdigest()
     private = facts["private"] or any(t.get("private") for t in trace)
     untrusted = facts["untrusted"] or any(t.get("untrusted") for t in trace)
-    trifecta = action in ("publish", "send") and private and untrusted
+    # His own workspace is not the outbound leg. The trifecta is private data,
+    # untrusted web content, and a public or external send.
+    trifecta = _leaves_his_account(action, event["tool"], event["input"]) and private and untrusted
     looping = sum(1 for t in trace[-9:] if t.get("key") == key) >= 4
     trace = (trace + [{"at": time.time(), "tool": event["tool"], "action": action, "key": key,
                        "private": facts["private"], "untrusted": facts["untrusted"]}])[-50:]
@@ -899,11 +1064,11 @@ def decide(payload: dict, vendor: str = "", *, environment=None):
     if looping:
         findings.append({"kind": "trace", "rule": "loop", "where": "session"})
     secret = any(f["kind"] == "secret" for f in findings)
-    client = facts["private"] or any(f["kind"] == "pii" for f in findings)
-    # Categorize stays inside the mailbox. Ask first can hold it. The mailbox
-    # address is not client data leaving the machine, so the public-send forbid
-    # does not eat the hold. A real send of that data is still refused.
-    goes_public = action in ("publish", "send") and "categorize" not in event["tool"].casefold()
+    # 60.PERSONAL is his. Client folders, other people's records, and PII are not.
+    client = facts["others"] or any(f["kind"] == "pii" for f in findings)
+    # Categorize, drafts, his Drive, his Notion and Workshop stay in his account.
+    # A secret on any outbound send is still refused. Ask first can hold a real send.
+    goes_public = _leaves_his_account(action, event["tool"], event["input"])
     context = {"secret": secret, "client_data": bool(client and goes_public),
                "founder_data": action == "delete" and founder_data_targeted(facts["command"], event["cwd"], environment),
                "trifecta": trifecta, "banned_package": facts["banned_package"]}

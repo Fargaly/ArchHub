@@ -78,6 +78,38 @@ def set_native_click_through(handle: int, idle: bool) -> None:
     set_style(ctypes.c_void_p(handle), -20, style | 0x20 if idle else style & ~0x20)
 
 
+def baboom_pixel_opaque(image: Any, x: int, y: int, *, alpha_floor: int = 16) -> bool:
+    """True when this sprite pixel is visible enough to take a click."""
+    if image is None or x < 0 or y < 0 or x >= image.width() or y >= image.height():
+        return False
+    return image.pixelColor(x, y).alpha() > alpha_floor
+
+
+def baboom_opaque_hit_region(image: Any, origin_x: int = 0, origin_y: int = 0, *, alpha_floor: int = 16) -> Any:
+    """Window region of one frame: opaque sprite pixels only.
+
+    Transparent pixels are left out so the desktop underneath receives the click.
+    """
+    from PyQt6.QtCore import QRect
+    from PyQt6.QtGui import QRegion
+
+    region = QRegion()
+    if image is None:
+        return region
+    width = image.width()
+    height = image.height()
+    for y in range(height):
+        run: int | None = None
+        for x in range(width + 1):
+            opaque = x < width and baboom_pixel_opaque(image, x, y, alpha_floor=alpha_floor)
+            if opaque and run is None:
+                run = x
+            elif not opaque and run is not None:
+                region = region.united(QRegion(QRect(origin_x + run, origin_y + y, x - run, 1)))
+                run = None
+    return region
+
+
 def foreground_window_rect_windows() -> Rect | None:
     """Read only the foreground window bounds; never capture its content."""
     try:
@@ -894,6 +926,18 @@ def create_baboom_native_companion_window(
             # restless. It breathes, it does not fidget.
             self._animation_timer.setInterval(900)
             self._animation_timer.timeout.connect(self._advance_animation)
+            # A single click opens the reply box. The same interval Windows
+            # uses for a double-click lets that second click open ArchHub
+            # instead, without the box flashing open first.
+            from PyQt6.QtWidgets import QApplication
+            self._quiet_click = QTimer(self)
+            self._quiet_click.setSingleShot(True)
+            app = QApplication.instance()
+            interval = 400
+            if app is not None:
+                interval = max(200, int(app.styleHints().mouseDoubleClickInterval()))
+            self._quiet_click.setInterval(interval)
+            self._quiet_click.timeout.connect(self._open_from_click)
             self.response_ready.connect(self._apply_response)
             self.execution_ready.connect(self._apply_execution)
             self.voice_ready.connect(self._apply_voice)
@@ -986,12 +1030,11 @@ def create_baboom_native_companion_window(
             if self._shows_as != "Screen" or (active and foreign_foreground_window() and not approaching):
                 self.hide()
                 return
-            # Deliberate hover wakes the sprite for click/drag; away from it,
-            # WS_EX_TRANSPARENT passes input to the application underneath.
-            hover = self.geometry().contains(cursor)
-            self._hover_since = (self._hover_since if self._hover_since is not None else time.monotonic()) if hover else None
-            idle = self._hover_since is None or time.monotonic() - self._hover_since < .6
-            set_native_click_through(int(self.winId()), idle)
+            # The mask is the hit target. Opaque sprite pixels take the click;
+            # transparent pixels are not part of the window, so they fall
+            # through to the desktop. The whole window is never click-through.
+            self._apply_hit_mask()
+            set_native_click_through(int(self.winId()), False)
             self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
             if not self.isVisible():
                 self.show()
@@ -1130,6 +1173,7 @@ def create_baboom_native_companion_window(
             )
             self._frame = frame
             self._sprite = render_baboom_native_sprite(self._atlas, frame)
+            self._apply_hit_mask()
             self.update()
 
         def refresh(self) -> None:
@@ -1278,6 +1322,7 @@ def create_baboom_native_companion_window(
                             panel_rect.right() - 78 - 62, band_y, 56, 22
                         )
                         self._cancel.raise_()
+            self._apply_hit_mask()
             if not self.isVisible():
                 self.show()
             self.update()
@@ -1585,8 +1630,48 @@ def create_baboom_native_companion_window(
                     self._projection_timer.start()
                     self._animation_timer.start()
 
+        def _pointer_hits(self, point) -> bool:
+            """A click counts only on the visible sprite or an open reply control."""
+            mask = self.mask()
+            if mask.isEmpty():
+                return False
+            return mask.contains(point)
+
+        def _apply_hit_mask(self) -> None:
+            """Keep the window region on this frame's opaque pixels, plus open controls."""
+            from PyQt6.QtGui import QRegion
+
+            if self._sprite is None:
+                return
+            region = baboom_opaque_hit_region(
+                self._sprite, self._sprite_rect.x(), self._sprite_rect.y()
+            )
+            for widget in (
+                self._report, self._input, self._talk, self._send,
+                self._confirm, self._cancel, self._connection_status,
+            ):
+                if widget.isVisible():
+                    region = region.united(QRegion(widget.geometry()))
+            if self._approval is not None and self._approval.isVisible():
+                region = region.united(QRegion(self._approval.geometry()))
+            if region.isEmpty():
+                return
+            self.setMask(region)
+
+        def _open_from_click(self) -> None:
+            """A quiet click that was not a double-click opens the reply box."""
+            if self._dragged or self._dismissed or self._stopped:
+                return
+            if self._input.isVisible() or self._transient_report is not None:
+                return
+            self._open_interaction()
+
         def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt callback name
             if event.button() == Qt.MouseButton.LeftButton:
+                if not self._pointer_hits(event.position().toPoint()):
+                    event.ignore()
+                    return
+                self._quiet_click.stop()
                 self._press_global = event.globalPosition().toPoint()
                 self._press_window_pos = self.pos()
                 self._dragged = False
@@ -1601,14 +1686,16 @@ def create_baboom_native_companion_window(
                 # slightly shaky click still opens the ask box.
                 if self._dragged or delta.manhattanLength() > 4:
                     self._dragged = True
+                    self._quiet_click.stop()
                     self.move(self._press_window_pos + delta)
             super().mouseMoveEvent(event)
 
         def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt callback name
-            if (
-                event.button() == Qt.MouseButton.LeftButton
-                and self._press_global is not None
-            ):
+            if event.button() == Qt.MouseButton.LeftButton:
+                if self._press_global is None:
+                    if not self._pointer_hits(event.position().toPoint()):
+                        event.ignore()
+                    return
                 if self._dragged:
                     origin = self.pos() + self._sprite_rect.topLeft()
                     self._dragged = False
@@ -1616,12 +1703,26 @@ def create_baboom_native_companion_window(
                     self._save_position(origin.x(), origin.y())
                     self.refresh()
                 elif self._input.isVisible() or self._transient_report is not None:
+                    self._quiet_click.stop()
                     self._close_interaction()
                 else:
-                    self._open_archhub()
+                    self._quiet_click.start()
                 self._press_global = None
                 self._dragged = False
             super().mouseReleaseEvent(event)
+
+        def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802 - Qt callback name
+            if (
+                event.button() == Qt.MouseButton.LeftButton
+                and self._pointer_hits(event.position().toPoint())
+            ):
+                self._quiet_click.stop()
+                self._press_global = None
+                self._dragged = False
+                self._open_archhub()
+                event.accept()
+                return
+            super().mouseDoubleClickEvent(event)
 
         def _submit_input(self) -> None:
             utterance = self._input.text().strip()

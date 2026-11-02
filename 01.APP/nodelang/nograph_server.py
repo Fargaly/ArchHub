@@ -151,6 +151,8 @@ class NoGraphServer:
     def start(self):
         self.thread = threading.Thread(target=self.httpd.serve_forever, name='archhub-nograph-http', daemon=True)
         self.thread.start()
+        port_file = self.state_dir / "nograph-http-port"
+        port_file.write_text("%d\n" % self.port, encoding="ascii")
         self._hosts.get()
         self._local.get()
         self.ensure_cloud_relay()
@@ -201,6 +203,10 @@ class NoGraphServer:
                 print('  cloud relay: did not stop -- %s' % stuck, flush=True)
         self.httpd.shutdown()
         self.httpd.server_close()
+        try:
+            (self.state_dir / "nograph-http-port").unlink(missing_ok=True)
+        except OSError as stuck:
+            print('  nograph    : live port was not cleared (%s)' % type(stuck).__name__, flush=True)
         from .brain_files import close as close_brain
         close_brain()
 
@@ -285,6 +291,11 @@ class NoGraphServer:
                 parsed = urlparse(self.path)
                 path = parsed.path
                 try:
+                    if method == "GET" and path == "/api/alive":
+                        # Loopback liveness for a second launch. No session, no body.
+                        self.send_response(204)
+                        self.end_headers()
+                        return
                     denied = local_browser_admission_error(self.headers, owner.port)
                     if denied:
                         raise Refused(denied, 403)

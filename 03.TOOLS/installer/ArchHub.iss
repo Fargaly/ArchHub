@@ -597,8 +597,9 @@ begin
     { These stale files were never payloads of this package. Preserve exact
       known v1 bytes in an archive; do not remove unknown/user-edited docs. }
     ArchiveLegacyDocs(ExpandConstant('{app}'));
-    { A running Revit/AutoCAD/3ds Max holds its broker: set it aside, never abort. }
-    RetireLockedHostFiles(ExpandConstant('{app}'), '{#BuildId}');
+    { Bridge DLLs for this build land in bridges\<host>\<year>\{#BuildId}\.
+      A running Revit or AutoCAD keeps the DLL it already mapped. This setup
+      does not replace that file, move it, or ask Restart Manager to close the host. }
     ReadyPath := ExpandConstant('{app}\.archhub-ready');
     if FileExists(ReadyPath) then
       if (not LoadStringFromFile(ReadyPath, ReadyIdentity)) or
@@ -613,6 +614,17 @@ begin
   begin
     if not SaveStringToFile(ExpandConstant('{app}\BUILD_ID'), '{#BuildId}', False) then
       RaiseException('The ArchHub build identity could not be saved. Run setup again.');
+    { Point RevitMCP.addin and the AutoCAD bundle at the DLLs just installed.
+      A refusal leaves the previous registration, which still names a DLL this
+      setup did not replace. It must not fail the install. }
+    if FindPython() <> '' then
+    begin
+      if not Exec(FindPython(), '-u -E -s -B "' + ExpandConstant('{app}') + '\nodelang\host_addin_retarget.py" "' + ExpandConstant('{app}') + '"',
+          ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ConnectorCode) then
+        Log('Host add-in retarget could not start. The previous registration still names the bridge its host has loaded.')
+      else if ConnectorCode <> 0 then
+        Log('Host add-in retarget exited ' + IntToStr(ConnectorCode) + '. The previous registration still names the bridge its host has loaded.');
+    end;
     { After BUILD_ID: the task script recognises an installed tree by it. }
     RemoveRetiredRuntimeTask(CleanCoordinationTask);
     RemoveRetiredRuntimeTask(UniversalRuntimeTask);

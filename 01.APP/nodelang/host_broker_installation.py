@@ -29,9 +29,11 @@ loaded. The generated registration carries the identity as AddInId.
 Manifest JSON, schema archhub-host-artifacts/v1:
 * source_revision: reviewed 40-64 lowercase hexadecimal revision;
 * host: revit; host_version: selected year;
-* assembly: bridges/revit/<year>/RevitMCP.dll;
+* assembly: bridges/revit/<year>/RevitMCP.dll, or
+  bridges/revit/<year>/<build-id>/RevitMCP.dll when the release installs the
+  broker beside the copy a running Revit already loaded;
 * files: complete reviewed runtime closure, each {path, size, sha256}; only
-  bridges/revit/<year>/ and bin/csc/ relative paths, no traversal/duplicates;
+  that assembly's directory and bin/csc/ relative paths, no traversal/duplicates;
 * runtime_closure_reviewed: true, established during release review;
 * host_api: RevitAPI.dll and RevitAPIUI.dll, each {size, sha256}, matched against
   the selected host installation, never redistributed;
@@ -72,8 +74,10 @@ eligibility, paths, or existing registrations prevent publication. failed means
 an I/O attempt did not publish our registration. partial_failure reports a
 remaining temporary file or a post-publication failure, with registered and
 cleanup_pending describing the observed result. Empty created directories may
-remain after a failed attempt. Differing registrations require a separate
-reviewed migration; this function never overwrites or removes them.
+remain after a failed attempt. A RevitMCP.addin this install already published
+(same AddInId, FullClassName and VendorId, Assembly under this install's
+bridges/revit/<year>/) is pointed at the newest reviewed assembly. Any other
+differing registration is left in place.
 """
 from __future__ import annotations
 
@@ -100,6 +104,7 @@ MAX_ARTIFACT = 256 * 1024 * 1024
 MAX_CLOSURE = 512 * 1024 * 1024
 # Windows scanners hold fresh files briefly; bounded retries before reporting residue.
 _CLEANUP_BACKOFF = (0.0, 0.05, 0.15)
+_BUILD_SEGMENT = re.compile(r"[A-Za-z0-9._-]{1,128}")
 
 
 def _digest(value):
@@ -140,6 +145,24 @@ def _verify_file(path, row):
         raise _refuse("artifact digest or identity mismatch", path)
 
 
+def _bridge_folder(year, assembly):
+    """Relative directory of the reviewed Revit broker, with a trailing slash, else None.
+
+    The legacy layout is bridges/revit/<year>/. A release that must not replace
+    a DLL Revit has loaded uses bridges/revit/<year>/<build-id>/.
+    """
+    prefix = f"bridges/revit/{year}/"
+    if assembly == prefix + "RevitMCP.dll":
+        return prefix
+    suffix = "/RevitMCP.dll"
+    if not isinstance(assembly, str) or not assembly.startswith(prefix) or not assembly.endswith(suffix):
+        return None
+    middle = assembly[len(prefix):-len(suffix)]
+    if "/" in middle or _BUILD_SEGMENT.fullmatch(middle) is None:
+        return None
+    return prefix + middle + "/"
+
+
 def _manifest(root, path, expected, year, host):
     raw = _read(path, MAX_MANIFEST)
     if hashlib.sha256(raw).hexdigest() != expected:
@@ -157,8 +180,8 @@ def _manifest(root, path, expected, year, host):
         raise _refuse("broker custody is not reviewed for activation", path)
     if value.get("runtime_closure_reviewed") is not True:
         raise _refuse("runtime closure has not been reviewed", path)
-    prefix = f"bridges/revit/{year}/"
-    if value.get("assembly") != prefix + "RevitMCP.dll":
+    folder = _bridge_folder(year, value.get("assembly"))
+    if folder is None:
         raise _refuse("unexpected broker entry assembly", path)
     rows = value.get("files")
     if not isinstance(rows, list) or not 2 <= len(rows) <= 256:
@@ -170,7 +193,8 @@ def _manifest(root, path, expected, year, host):
             raise _refuse("invalid artifact entry", path)
         relative = row.get("path")
         # Judged on the raw manifest string; an escaping entry is never resolved.
-        if not isinstance(relative, str) or "\\" in relative or ":" in relative or any(p in ("", ".", "..") for p in relative.split("/")) or not (relative.startswith(prefix) or relative.startswith("bin/csc/")):
+        in_folder = isinstance(relative, str) and relative.startswith(folder) and "/" not in relative[len(folder):]
+        if not isinstance(relative, str) or "\\" in relative or ":" in relative or any(p in ("", ".", "..") for p in relative.split("/")) or not (in_folder or relative.startswith("bin/csc/")):
             raise _refuse("artifact path escapes selected payload", relative)
         if relative.casefold() in seen:
             raise _refuse("duplicate artifact path", relative)
@@ -179,7 +203,7 @@ def _manifest(root, path, expected, year, host):
         total += row["size"]
         if total > MAX_CLOSURE:
             raise _refuse("artifact closure exceeds budget", path)
-    if not {prefix.lower() + "revitmcp.dll", prefix.lower() + "revitmcpcore.dll"} <= seen:
+    if not {folder.lower() + "revitmcp.dll", folder.lower() + "revitmcpcore.dll"} <= seen:
         raise _refuse("broker shim or core is absent from closure", path)
     api = value.get("host_api")
     if not isinstance(api, dict) or set(api) != {"RevitAPI.dll", "RevitAPIUI.dll"}:
@@ -249,7 +273,36 @@ def _parse_registration(candidate, text):
         raise _refuse("unreadable foreign registration", candidate) from None
 
 
-def _check_registrations(directory, destination, expected):
+def _under_our_year(assembly_text, root, year):
+    """True when Assembly is an absolute file under this install's bridges/revit/<year>/."""
+    if not isinstance(assembly_text, str) or not assembly_text.strip():
+        return False
+    raw = Path(assembly_text.strip())
+    if not raw.is_absolute() or any(part in ("", ".", "..") for part in raw.parts):
+        return False
+    base = root / "bridges" / "revit" / year
+    base_parts = [part.casefold() for part in base.parts]
+    path_parts = [part.casefold() for part in raw.parts]
+    return len(path_parts) > len(base_parts) and path_parts[:len(base_parts)] == base_parts
+
+
+def _our_bridge_pointer(candidate, root, year):
+    """Our RevitMCP.addin whose Assembly still names a DLL under this install's year folder."""
+    try:
+        _raw, text = _read_registration(candidate)
+        entry = next(_parse_registration(candidate, text).iter("AddIn"), None)
+    except RegistrationRefused:
+        return False
+    if entry is None or not _same_id(entry.findtext("AddInId", "")):
+        return False
+    if entry.findtext("FullClassName", "").strip() != CLASS_NAME:
+        return False
+    if (entry.findtext("VendorId") or "").strip() != VENDOR_ID:
+        return False
+    return _under_our_year(entry.findtext("Assembly") or "", root, year)
+
+
+def _check_registrations(directory, destination, expected, replaceable=None):
     if _require_plain(directory, "directory", may_be_absent=True) is None:
         return
     candidates = [c for c in sorted(directory.iterdir()) if c.suffix.casefold() == ".addin"]
@@ -264,6 +317,8 @@ def _check_registrations(directory, destination, expected):
                 raise _refuse("conflicting existing RevitMCP registration", candidate) from None
             raise
         if candidate == destination and raw == expected:
+            continue
+        if replaceable is not None and candidate == replaceable:
             continue
         if ours:
             raise _refuse("conflicting existing RevitMCP registration", candidate)
@@ -305,8 +360,9 @@ def install_revit_broker(*, package_root, manifest_path, expected_manifest_sha25
 
     Roots are Autodesk/Revit/Addins for the selected user and machine; the user
     root must be inside user_profile_root and the machine root outside it.
-    Inspect both, write only the user's selected year. Differing prior
-    registrations need an explicit migration; this function never overwrites them.
+    Inspect both, write only the user's selected year. Our own RevitMCP.addin
+    is retargeted when its Assembly stays under this install's year folder.
+    Every other differing registration is left in place.
     """
     result = {"status": "refused", "registered": False,
               "host_loaded": False, "execution_authority": False,
@@ -338,14 +394,15 @@ def install_revit_broker(*, package_root, manifest_path, expected_manifest_sha25
         machine = machine_root / host_version
         destination = target = user / "RevitMCP.addin"
         expected = _registration(assembly)
+        replaceable = destination if destination.is_file() and _our_bridge_pointer(destination, root, host_version) else None
         _check_registrations(machine, destination, expected)
-        _check_registrations(user, destination, expected)
+        _check_registrations(user, destination, expected, replaceable=replaceable)
         result["registration_path"] = str(destination)
-        if destination.exists():
-            if _read(destination, MAX_REGISTRATION) != expected:
-                raise _refuse("registration changed during verification", destination)
+        if destination.exists() and _read(destination, MAX_REGISTRATION) == expected:
             result.update(status="unchanged_pending_host_restart", registered=True)
             return result
+        if destination.exists() and replaceable is None:
+            raise _refuse("registration changed during verification", destination)
         user.mkdir(parents=True, exist_ok=True)
         _require_plain(user, "directory")
         descriptor, temporary = tempfile.mkstemp(prefix=".archhub-addin-", suffix=".tmp", dir=user)
@@ -353,11 +410,15 @@ def install_revit_broker(*, package_root, manifest_path, expected_manifest_sha25
             stream.write(expected)
             stream.flush()
             os.fsync(stream.fileno())
-        # Hard-link publication is atomic and fails if another writer won.
-        # Never replace an existing registration, including during a race.
+        # A new registration is a hard link, which fails if another writer won.
+        # Our own previous pointer is replaced so the next Revit start loads the
+        # newest side-by-side DLL. The running host keeps the file it mapped.
         _check_registrations(machine, destination, expected)
-        _check_registrations(user, destination, expected)
-        os.link(temporary, destination)
+        _check_registrations(user, destination, expected, replaceable=replaceable)
+        if replaceable is None:
+            os.link(temporary, destination)
+        else:
+            os.replace(temporary, destination)
         linked = True
         result.update(status="registered_pending_host_restart", registered=True)
     except RegistrationRefused as error:

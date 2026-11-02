@@ -134,6 +134,30 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
         open_window = lambda: (window.showNormal(), window.raise_(), window.activateWindow())
         menu = QMenu()
         menu.addAction('Open ArchHub', open_window)
+        restart_update = {'action': None}
+
+        def show_restart_item():
+            update = getattr(server, 'application_update', None)
+            ready = False
+            if update is not None:
+                try:
+                    status = update.status()
+                    ready = status.get('state') == 'ready' and bool(status.get('available_build'))
+                except Exception:
+                    ready = False
+            action = restart_update['action']
+            if ready and action is None:
+                def restart():
+                    try:
+                        update.reload()
+                    except Exception as error:
+                        print('  update     : restart refused (%s)' % error, flush=True)
+                restart_update['action'] = menu.addAction('Restart to update', restart)
+            elif action is not None and not ready:
+                menu.removeAction(action)
+                restart_update['action'] = None
+
+        show_restart_item()
         menu.addAction('Quit ArchHub', quit_app)
         tray.setContextMenu(menu)
         tray.activated.connect(lambda reason: reason == QSystemTrayIcon.ActivationReason.Trigger and open_window())
@@ -180,6 +204,8 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
             # on the next tick, including a download that was not ready at the close.
             update.install_if_safe(closing=seen_open["value"] and not window.isVisible(),
                                    canvas_running=canvas_job_running(server))
+            if QSystemTrayIcon.isSystemTrayAvailable():
+                show_restart_item()
         except Exception as error:  # noqa: BLE001 - a failed check is shown, the window stays
             update.note_failure(error)
     update_pulse = QTimer(app)
@@ -198,9 +224,24 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
     return code
 
 
+def _apply_staged_after_quit(app_root):
+    """Install the staged build after Quit, without opening the window and without waiting for machine idle."""
+    import subprocess
+    import sys
+    python = Path(sys.executable)
+    if python.name.lower() == "python.exe":
+        windowless = python.with_name("pythonw.exe")
+        if windowless.is_file():
+            python = windowless
+    subprocess.Popen(
+        [str(python), "-E", "-s", str(Path(app_root) / "nodelang" / "quiet_update.py"),
+         "--apply-staged", str(app_root)],
+        close_fds=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
+
 def _arm_staged_update(update, state_dir, app_root, instance_lock, *, relaunch):
-    """After the last window closed: arm the confirmed (or quit-applied) staged build for the next boot, which
-    installs it (launcher.py begin_update_boot / apply_staged); relaunch when the founder asked to reload."""
+    """After the last window closed: arm the staged build. Restart relaunches into it.
+    Quit installs it in a helper that does not open the window."""
     if update is None:
         return
     try:
@@ -210,12 +251,14 @@ def _arm_staged_update(update, state_dir, app_root, instance_lock, *, relaunch):
             database = application_database_path(state_dir)
             arm_update(state_dir, app_root, database, application_content_path(database), expected_build=update.confirmed_build)
             print('  update     : staged build armed for the next start', flush=True)
+            if instance_lock is not None:
+                instance_lock.close()
+            import subprocess
             if relaunch:
-                import subprocess
-                if instance_lock is not None:
-                    instance_lock.close()
                 subprocess.Popen(['wscript.exe', str(app_root / 'ArchHub.vbs')], close_fds=True,
                                  creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            else:
+                _apply_staged_after_quit(app_root)
     except Exception as refused:  # noqa: BLE001 - the staged package stays; the next check offers it again
         print('  update     : not armed (%s: %s)' % (type(refused).__name__, refused), flush=True)
     finally:

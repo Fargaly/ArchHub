@@ -105,7 +105,7 @@ def staged_app(tmp_path):
 
 def fixture_installer(app):
     def run(args, **kwargs):
-        assert '/CLOSEAPPLICATIONS' in args and '/NOCLOSEAPPLICATIONS' not in args and '/NORESTART' in args
+        assert '/NOCLOSEAPPLICATIONS' in args and '/CLOSEAPPLICATIONS' not in args and '/FORCECLOSEAPPLICATIONS' not in args and '/NORESTART' in args
         install_identity(app, NEW)
         (app / 'nodelang' / 'product.py').write_text('new code', encoding='utf-8')
         (app / 'nodelang' / 'added.py').write_text('new module', encoding='utf-8')
@@ -113,43 +113,43 @@ def fixture_installer(app):
     return run
 
 
-def test_stage_apply_confirm_retains_previous_build(tmp_path):
+def test_stage_apply_confirm_does_not_keep_a_rollback_archive(tmp_path):
     app, state = staged_app(tmp_path)
     assert qu.apply_staged(state, app, runner=fixture_installer(app), before_apply=lambda: None)['applied']
     assert qu.begin_update_boot(state, app)['status'] == 'awaiting_boot'
     assert qu.confirm_applied(state, app)['confirmed']
-    assert (state / 'updates' / 'previous-build.zip').is_file()
+    assert not (state / 'updates' / 'previous-build.zip').exists()
     assert qu.begin_update_boot(state, app)['status'] == 'confirmed'
     assert (app / 'state' / 'graph.db').read_bytes() == b'USER GRAPH'
 
 
-def test_failed_confirm_restores_previous_product_without_touching_graph(tmp_path):
+def test_failed_confirm_leaves_the_graph_and_keeps_no_rollback_archive(tmp_path):
     app, state = staged_app(tmp_path)
     assert qu.apply_staged(state, app, runner=fixture_installer(app))['applied']
     (app / 'BUILD_METADATA.json').write_text('{}', encoding='utf-8')
     result = qu.confirm_applied(state, app)
-    assert not result['confirmed'] and result['rolled_back'], result
-    assert qu.installed_build_id(app) == OLD[0]
-    assert (app / 'nodelang' / 'product.py').read_text(encoding='utf-8') == 'old code'
-    assert not (app / 'nodelang' / 'added.py').exists()
+    assert not result['confirmed'] and not result.get('rolled_back'), result
+    assert not (state / 'updates' / 'previous-build.zip').exists()
     assert (app / 'state' / 'graph.db').read_bytes() == b'USER GRAPH'
-    assert not qu.stage_if_newer(state, app, release_fixture(tmp_path))['staged'], 'failed build must not loop'
 
 
-def test_unconfirmed_boot_is_rolled_back_on_next_start(tmp_path):
+def test_unconfirmed_boot_stays_on_the_installed_build(tmp_path):
     app, state = staged_app(tmp_path)
     assert qu.apply_staged(state, app, runner=fixture_installer(app))['applied']
     assert not qu.begin_update_boot(state, app).get('rolled_back')
-    assert qu.begin_update_boot(state, app)['rolled_back']
-    assert qu.installed_build_id(app) == OLD[0]
+    assert not qu.begin_update_boot(state, app).get('rolled_back')
+    assert qu.installed_build_id(app) == NEW[0]
+    assert not (state / 'updates' / 'previous-build.zip').exists()
 
 
-def test_corrupt_previous_build_refuses_boot_instead_of_opening_partial_code(tmp_path):
+def test_a_leftover_rollback_archive_is_discarded_and_boot_continues(tmp_path):
     app, state = staged_app(tmp_path)
     assert qu.apply_staged(state, app, runner=fixture_installer(app))['applied']
     qu.begin_update_boot(state, app)
     (state / 'updates' / 'previous-build.zip').write_bytes(b'corrupt')
-    assert qu.begin_update_boot(state, app)['status'] == 'applying'
+    assert qu.begin_update_boot(state, app)['status'] == 'awaiting_boot'
+    assert not (state / 'updates' / 'previous-build.zip').exists()
+    assert qu.installed_build_id(app) == NEW[0]
 
 
 @pytest.mark.parametrize('reason', ['Save unsaved work before restarting.', 'A Workshop job is running; restart when it finishes.'])
@@ -253,17 +253,18 @@ def test_failed_installer_restores_previous_build_immediately(tmp_path):
         install(args, **kwargs)
         return SimpleNamespace(returncode=1)
     result = qu.apply_staged(state, app, runner=failed)
-    assert not result['applied'] and result['rolled_back']
-    assert qu.installed_build_id(app) == OLD[0]
+    assert not result['applied'] and not result.get('rolled_back')
+    assert not (state / 'updates' / 'previous-build.zip').exists()
     assert (app / 'state' / 'graph.db').read_bytes() == b'USER GRAPH'
 
 
-def test_failed_confirm_with_a_missing_installer_still_restores_previous_build(tmp_path):
+def test_failed_confirm_with_a_missing_installer_keeps_no_rollback_archive(tmp_path):
     app, state = staged_app(tmp_path)
     assert qu.apply_staged(state, app, runner=fixture_installer(app))['applied']
     (state / 'updates' / qu.ASSET_NAME).unlink()
-    assert qu.confirm_applied(state, app)['rolled_back']
-    assert qu.installed_build_id(app) == OLD[0]
+    assert not qu.confirm_applied(state, app).get('rolled_back')
+    assert not (state / 'updates' / 'previous-build.zip').exists()
+    assert (app / 'state' / 'graph.db').read_bytes() == b'USER GRAPH'
 
 
 def test_preview_channel_is_opt_in_and_uses_the_same_digest_verifier(tmp_path):
@@ -298,8 +299,9 @@ def test_emergency_recovery_uses_only_stdlib_and_refuses_a_running_owner(tmp_pat
     assert not owner['recover_failed_launch'](state, app, socket_factory=lambda: socket)['rolled_back']
     assert qu.installed_build_id(app) == NEW[0]
     socket.busy = False
-    assert owner['recover_failed_launch'](state, app, socket_factory=lambda: socket)['rolled_back']
-    assert qu.installed_build_id(app) == OLD[0]
+    assert not owner['recover_failed_launch'](state, app, socket_factory=lambda: socket)['rolled_back']
+    assert qu.installed_build_id(app) == NEW[0]
+    assert not (state / 'updates' / 'previous-build.zip').exists()
 
 
 def test_windows_bootstrap_maps_launch_exceptions_to_the_same_recovery_path(tmp_path):

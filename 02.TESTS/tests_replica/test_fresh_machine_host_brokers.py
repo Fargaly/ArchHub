@@ -254,6 +254,40 @@ def test_a_bundle_setup_did_not_place_is_left_alone(acad):
     assert (acad.bundle / "PackageContents.xml").read_text() == "<ApplicationPackage/>"
 
 
+def test_a_newer_autocad_build_is_added_beside_the_module_already_registered(acad):
+    def package(build, body):
+        payload = acad.install / "bridges" / "autocad" / "2025" / build
+        payload.mkdir(parents=True, exist_ok=True)
+        (payload / "AcadMCP.dll").write_bytes(body)
+        (payload / "Newtonsoft.Json.dll").write_bytes(b"MZ json " + build.encode())
+        row = {"assembly": "bridges/autocad/2025/%s/AcadMCP.dll" % build,
+               "files": [{"path": "bridges/autocad/2025/%s/%s" % (build, name), **_pin(payload / name)}
+                         for name in ("AcadMCP.dll", "Newtonsoft.Json.dll")],
+               "host_api": {name: _pin(acad.host / name) for name in ("acmgd.dll", "acdbmgd.dll", "accoremgd.dll")},
+               "framework": "net8.0-windows", "reviewed": True,
+               "activation": {"eligibility": "reviewed-authenticated-broker", "review_sha256": "d" * 64}}
+        index_path = acad.install / "HOST_ARTIFACTS.json"
+        index = json.loads(index_path.read_text()) if index_path.exists() else {"revit": {}, "autocad": {}}
+        index["autocad"]["2025"] = row
+        index_path.write_text(json.dumps(index))
+
+    package("build-a", b"MZ acadmcp a")
+    rows = colleague_setup.register_autocad_add_ins(acad.install, environment=acad.env, detected_years=["2025"])
+    assert rows[0]["status"] == "registered_pending_host_restart", rows
+    module = ET.parse(acad.bundle / "PackageContents.xml").getroot().find("./Components/ComponentEntry")
+    assert module.get("ModuleName") == "./Contents/2025/build-a/AcadMCP.dll"
+    old = acad.bundle / "Contents" / "2025" / "build-a" / "AcadMCP.dll"
+    package("build-b", b"MZ acadmcp b")
+    rows = colleague_setup.register_autocad_add_ins(acad.install, environment=acad.env, detected_years=["2025"])
+    assert rows[0]["status"] == "registered_pending_host_restart", rows
+    assert old.read_bytes() == b"MZ acadmcp a"
+    assert (acad.bundle / "Contents" / "2025" / "build-b" / "AcadMCP.dll").read_bytes() == b"MZ acadmcp b"
+    module = ET.parse(acad.bundle / "PackageContents.xml").getroot().find("./Components/ComponentEntry")
+    assert module.get("ModuleName") == "./Contents/2025/build-b/AcadMCP.dll"
+    again = colleague_setup.register_autocad_add_ins(acad.install, environment=acad.env, detected_years=["2025"])
+    assert again[0]["status"] == "unchanged_pending_host_restart", again
+
+
 def test_an_upgrade_replaces_only_the_bundle_this_install_placed(acad):
     _acad_package(acad)
     colleague_setup.register_autocad_add_ins(acad.install, environment=acad.env, detected_years=["2025"])

@@ -79,8 +79,8 @@ def test_apply_runs_the_staged_installer_silently_and_retains_its_receipt(tmp_pa
         return _Done()
     out = qu.apply_staged(tmp_path / "state", app, runner=runner)
     assert out["applied"] and out["build_id"] == "new"
-    assert calls and calls[0][1:] == ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS", "/SP-", "/LOG=" + str(updates / "setup.log"), "/DIR=" + str(app)]
-    assert "/NOCLOSEAPPLICATIONS" not in calls[0]
+    assert calls and calls[0][1:] == ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/NOCLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS", "/SP-", "/LOG=" + str(updates / "setup.log"), "/DIR=" + str(app)]
+    assert "/CLOSEAPPLICATIONS" not in calls[0] and "/FORCECLOSEAPPLICATIONS" not in calls[0]
     assert (updates / qu.ASSET_NAME).is_file() and qu.staged_update(tmp_path / "state", app)["status"] == "awaiting_boot"
 
 
@@ -126,7 +126,7 @@ def test_the_app_has_one_close_owner_and_optional_tray(monkeypatch):
     runpy.run_path(str(court))['test_window_close_requests_quit_and_arms_a_bounded_watchdog'](monkeypatch)
 
 
-_SILENT = ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS", "/SP-"]
+_SILENT = ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/NOCLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS", "/SP-"]
 
 
 def _watch(release, asset):
@@ -166,7 +166,7 @@ def test_unattended_newer_release_is_verified_and_installed_only_when_safe(tmp_p
     installed = qu.apply_unattended(state, app, opener=opener, runner=runner, safe=True, stop_runtime=lambda *_: [])
     assert installed["applied"] is True and installed["build_id"] == "20260904-1200"
     assert calls and calls[0][1:7] == _SILENT
-    assert "/NOCLOSEAPPLICATIONS" not in calls[0]
+    assert "/CLOSEAPPLICATIONS" not in calls[0] and "/FORCECLOSEAPPLICATIONS" not in calls[0]
 
 
 def test_unattended_same_version_does_nothing(tmp_path):

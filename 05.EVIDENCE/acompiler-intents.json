@@ -9261,6 +9261,7 @@
         "02.TESTS/tests_replica/test_codex_hook_powershell.py",
         "02.TESTS/tests_replica/test_console_seat.py",
         "02.TESTS/tests_replica/test_court_answers_with_its_bounded_verdict.py",
+        "02.TESTS/tests_replica/test_cursor_workshop_hook.py",
         "02.TESTS/tests_replica/test_daily_work_heavy.py",
         "02.TESTS/tests_replica/test_daily_work_nodes.py",
         "02.TESTS/tests_replica/test_flow_import.py",

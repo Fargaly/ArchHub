@@ -15,7 +15,12 @@ param(
     # (nodelang/host_broker_installation.py, colleague_setup.register_max_startup);
     # this script never invents one.
     [string]$BrokerReviewPath,
-    [string]$DotnetPath
+    [string]$DotnetPath,
+    # One path segment. DLLs land in bridges/<host>/<year>/<BuildId>/ so an
+    # install never overwrites a DLL a running Revit or AutoCAD has loaded.
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern('^[A-Za-z0-9._-]{1,128}$')]
+    [string]$BuildId
 )
 
 # Build the authenticated host bridges once per host year installed on this
@@ -128,7 +133,8 @@ foreach ($year in 2020..2030) {
     if (-not ((Test-Path -LiteralPath $api -PathType Leaf) -and (Test-Path -LiteralPath $apiUi -PathType Leaf))) { continue }
     $framework = Get-Framework $year 2024
     $work = Join-Path $output ".build-revit-$year"
-    $payload = Join-Path $output "bridges/revit/$year"
+    $folder = "bridges/revit/$year/$BuildId"
+    $payload = Join-Path $output $folder
     New-Item -ItemType Directory -Path $payload -Force | Out-Null
     foreach ($project in 'revit_mcp_core/RevitMCPCore.csproj', 'revit_mcp/RevitMCP.csproj') {
         Build-Project $project @("-p:TargetFramework=$framework", "-p:RevitYear=$year", "-p:RevitInstallDir=$hostDir") $payload $work
@@ -139,15 +145,15 @@ foreach ($year in 2020..2030) {
         source_revision = $SourceRevision
         host            = 'revit'
         host_version    = "$year"
-        assembly        = "bridges/revit/$year/RevitMCP.dll"
-        files           = (Get-Closure $payload "bridges/revit/$year")
+        assembly        = "$folder/RevitMCP.dll"
+        files           = (Get-Closure $payload $folder)
         host_api        = [ordered]@{ 'RevitAPI.dll' = (Get-Pin $api); 'RevitAPIUI.dll' = (Get-Pin $apiUi) }
     }
     if ($review) {
         $manifest.runtime_closure_reviewed = $true
         $manifest.activation = $review
     }
-    $manifestPath = Join-Path $payload 'host-artifacts.json'
+    $manifestPath = Join-Path $output "bridges/revit/$year/host-artifacts.json"
     [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 6) + "`n", $utf8)
     $index.revit["$year"] = [ordered]@{
         manifest  = "bridges/revit/$year/host-artifacts.json"
@@ -163,15 +169,16 @@ foreach ($year in 2020..2030) {
     if (@($apis | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) }).Count -ne 0) { continue }
     $framework = Get-Framework $year 2024
     $work = Join-Path $output ".build-autocad-$year"
-    $payload = Join-Path $output "bridges/autocad/$year"
+    $folder = "bridges/autocad/$year/$BuildId"
+    $payload = Join-Path $output $folder
     New-Item -ItemType Directory -Path $payload -Force | Out-Null
     Build-Project 'acad_mcp/AcadMCP.csproj' @("-p:TargetFramework=$framework", "-p:AcadYear=$year", "-p:AcadInstallDir=$hostDir") $payload $work
     Remove-BuildScratch $work
     $hostApi = [ordered]@{}
     foreach ($api in $apis) { $hostApi[[IO.Path]::GetFileName($api)] = Get-Pin $api }
     $index.autocad["$year"] = [ordered]@{
-        assembly  = "bridges/autocad/$year/AcadMCP.dll"
-        files     = (Get-Closure $payload "bridges/autocad/$year")
+        assembly  = "$folder/AcadMCP.dll"
+        files     = (Get-Closure $payload $folder)
         host_api  = $hostApi
         framework = $framework
         reviewed  = [bool]$review

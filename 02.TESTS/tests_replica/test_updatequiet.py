@@ -13,7 +13,7 @@ import pytest
 from nodelang import assistant_registration as registration, quiet_update as qu
 from nodelang.application_update import update_decision
 from nodelang.native_workshop_profile import SERVER_NAME
-from tests_replica.test_autoupd import staged_app, fixture_installer, launcher_function, install_identity, OLD
+from tests_replica.test_autoupd import staged_app, fixture_installer, launcher_function, install_identity, OLD, NEW
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -27,9 +27,9 @@ def test_quiet_setup_arguments_and_successful_relaunch_admission(tmp_path):
     assert qu.apply_staged(state, app, runner=install)['applied']
     args, options = calls[0]
     assert args == [str(state / 'updates' / qu.ASSET_NAME), '/VERYSILENT', '/SUPPRESSMSGBOXES',
-                    '/NORESTART', '/CLOSEAPPLICATIONS', '/NORESTARTAPPLICATIONS', '/SP-',
+                    '/NORESTART', '/NOCLOSEAPPLICATIONS', '/NORESTARTAPPLICATIONS', '/SP-',
                     '/LOG=' + str(state / 'updates/setup.log'), '/DIR=' + str(app)]
-    assert '/NOCLOSEAPPLICATIONS' not in args
+    assert '/CLOSEAPPLICATIONS' not in args and '/FORCECLOSEAPPLICATIONS' not in args
     assert options.get('creationflags', 0) & subprocess.CREATE_NO_WINDOW
     assert options['timeout'] is None
 
@@ -89,14 +89,16 @@ def test_build22_slow_graph_never_rolls_back_a_booted_studio(tmp_path, monkeypat
     assert json.loads((state / 'updates/staged.json').read_text())['phase'] == 'confirmed'
 
 
-def test_real_rollback_reason_survives_the_next_launcher_check(tmp_path):
+def test_an_unconfirmed_boot_keeps_the_new_build_and_no_rollback_archive(tmp_path):
     app, state = staged_app(tmp_path)
     assert qu.apply_staged(state, app, runner=fixture_installer(app))['applied']
     assert qu.begin_update_boot(state, app)['status'] == 'awaiting_boot'
-    rolled = qu.begin_update_boot(state, app)
-    assert rolled['rolled_back']
+    again = qu.begin_update_boot(state, app)
+    assert not again.get('rolled_back')
+    assert qu.installed_build_id(app) == NEW[0]
+    assert not (state / 'updates' / 'previous-build.zip').exists()
     checked = update_decision(qu.staged_update(state, app), qu.installed_build_id(app))
-    assert 'previous update boot did not confirm' in checked['log']
+    assert 'previous update boot did not confirm' not in checked['log']
     assert '\n' not in checked['log']
 
 

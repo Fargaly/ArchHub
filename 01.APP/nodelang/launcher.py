@@ -369,6 +369,129 @@ def _verified_launch_owner(port):
     return None
 
 
+def _lock_takeover_decision(owner_admitted, owner_running, answers, age_seconds, listener_present):
+    """One launcher. A dead or silent holder is replaced; a live answering one stays.
+
+    A foreign program on the lock port is left alone. A launcher that has not
+    had time to open its server is left alone so a slow boot is not killed.
+    """
+    if owner_admitted and owner_running and answers:
+        return "leave"
+    if owner_admitted and owner_running and age_seconds < 45:
+        return "leave"
+    if owner_admitted and owner_running:
+        return "stop"
+    if not listener_present:
+        return "bind"
+    return "leave"
+
+
+def _lock_listener_present(port):
+    import psutil
+    try:
+        for connection in psutil.net_connections(kind="tcp"):
+            if (connection.status == psutil.CONN_LISTEN
+                    and connection.laddr == ("127.0.0.1", port)):
+                return True
+    except (psutil.Error, OSError):
+        return True
+    return False
+
+
+def _holder_answers(port, state_dir):
+    """True when this user's launcher is up and its loopback server answers."""
+    owner = _verified_launch_owner(port)
+    if owner is None:
+        return False
+    try:
+        if not owner.is_running():
+            return False
+    except Exception:
+        return False
+    try:
+        text = (Path(state_dir) / "nograph-http-port").read_text(encoding="ascii")
+        http_port = int(text.strip())
+    except (OSError, ValueError):
+        return False
+    if not 1 <= http_port <= 65535 or http_port == port:
+        return False
+    import urllib.request
+    try:
+        with urllib.request.urlopen(
+                "http://127.0.0.1:%d/api/alive" % http_port,
+                timeout=_launcher_seconds("account_http_ms")) as response:
+            return response.status == 204
+    except (OSError, ValueError):
+        return False
+
+
+def _release_unanswering_holder(port, state_dir):
+    """Stop our own launcher when it holds the lock and is not answering.
+
+    Returns True when this launch should bind the port and open the window.
+    Revit, AutoCAD, and any other program are never stopped.
+    """
+    import psutil
+    owner = _verified_launch_owner(port)
+    admitted = owner is not None
+    running = False
+    age = 0.0
+    if owner is not None:
+        try:
+            running = bool(owner.is_running())
+            age = max(0.0, time.time() - owner.create_time())
+        except (psutil.Error, OSError, ValueError):
+            running = False
+    decision = _lock_takeover_decision(
+        admitted, running, _holder_answers(port, state_dir) if running else False,
+        age, _lock_listener_present(port))
+    if decision == "bind":
+        print("  lock       : no live holder on port %d; opening" % port, flush=True)
+        return True
+    if decision != "stop" or owner is None:
+        return False
+    print("  lock       : holder on port %d is not answering; taking over" % port, flush=True)
+    try:
+        owner.terminate()
+        owner.wait(timeout=_launcher_seconds("worker_join_ms"))
+    except psutil.TimeoutExpired:
+        try:
+            owner.kill()
+            owner.wait(timeout=_launcher_seconds("quit_watchdog_ms"))
+        except (psutil.Error, OSError):
+            return False
+    except (psutil.Error, OSError):
+        return False
+    try:
+        return not owner.is_running()
+    except (psutil.Error, OSError):
+        return True
+
+
+def _stop_duplicate_launchers():
+    """The process that holds the lock is the one launcher. Other copies of it exit."""
+    import psutil
+    from nodelang.application_machine_transport import _observe_machine_process, _desktop_launch_is_admitted
+    try:
+        me = psutil.Process()
+    except (psutil.Error, OSError):
+        return
+    root = Path(__file__).resolve().parents[1]
+    for process in psutil.process_iter(["pid"]):
+        if process.pid == me.pid:
+            continue
+        try:
+            if process.username() != me.username():
+                continue
+            observed = _observe_machine_process(process.pid)
+            if observed is None or not _desktop_launch_is_admitted(observed, product_root=root):
+                continue
+            process.terminate()
+            print("  lock       : stopped duplicate launcher pid %d" % process.pid, flush=True)
+        except (psutil.Error, OSError, ValueError):
+            continue
+
+
 def _forward_launch_arguments(port, arguments):
     """Deliver a second launch to the existing process without opening a store."""
     import json
@@ -444,15 +567,33 @@ for _attempt in range(12):
 else:
     # Say so in the log AND on the screen: a launch that exits without a word
     # leaves an orphan header, reads as a crash, and gives the person nothing
-    # to act on.
+    # to act on. A dead or silent holder is not "already running": take the
+    # port and open the window. A live launcher that answers is left as the
+    # one instance.
     print("  lock       : port %d is already held" % _lock_port, flush=True)
-    _forward_launch_arguments(_lock_port, sys.argv[1:])
-    print("  window     : %s"
-          % _held_port_outcome(_lock_port, _front_running_archhub, _message_box),
-          flush=True)
-    sys.exit(0)
+    if not _release_unanswering_holder(_lock_port, state_dir):
+        _forward_launch_arguments(_lock_port, sys.argv[1:])
+        print("  window     : %s"
+              % _held_port_outcome(_lock_port, _front_running_archhub, _message_box),
+              flush=True)
+        sys.exit(0)
+    bound = False
+    for _again in range(12):
+        try:
+            _instance_lock.bind(("127.0.0.1", _lock_port))
+            bound = True
+            break
+        except OSError:
+            time.sleep(_launcher_seconds("instance_retry_ms"))
+    if not bound:
+        _forward_launch_arguments(_lock_port, sys.argv[1:])
+        print("  window     : %s"
+              % _held_port_outcome(_lock_port, _front_running_archhub, _message_box),
+              flush=True)
+        sys.exit(0)
 
 _instance_lock.listen(8)
+_stop_duplicate_launchers()
 
 import subprocess as _update_preboot_process
 # Apply only a verified release armed by the preceding owner's final recovery.

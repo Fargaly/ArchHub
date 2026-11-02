@@ -135,6 +135,30 @@ def rig(tmp_path):
 
 # --- happy path and identity pins (B5, Type/VendorId/Name minor) -----------
 
+def test_our_addin_is_pointed_at_the_newest_side_by_side_dll(rig):
+    args, manifest, seal = rig
+    first = install(args)
+    assert first["status"] == "registered_pending_host_restart", first
+    target = Path(first["registration_path"])
+    previous = ET.fromstring(target.read_bytes()).findtext("AddIn/Assembly")
+    root = args["package_root"]
+    build = root / "bridges" / "revit" / "2026" / "build-2"
+    build.mkdir()
+    rows = []
+    for name in ("RevitMCP.dll", "RevitMCPCore.dll", "System.Text.Json.dll"):
+        dest = build / name
+        dest.write_bytes((root / "bridges" / "revit" / "2026" / name).read_bytes())
+        rows.append({"path": "bridges/revit/2026/build-2/" + name, **pin(dest)})
+    manifest["assembly"] = "bridges/revit/2026/build-2/RevitMCP.dll"
+    manifest["files"] = rows
+    seal()
+    again = install(args)
+    assert again["status"] == "registered_pending_host_restart", again
+    assert ET.fromstring(target.read_bytes()).findtext("AddIn/Assembly") == str(build / "RevitMCP.dll")
+    assert previous != str(build / "RevitMCP.dll")
+    assert (root / "bridges" / "revit" / "2026" / "RevitMCP.dll").read_bytes() == b"RevitMCP.dll"
+
+
 def test_install_exact_path_and_repeat_without_rewrite(rig):
     args, _, _ = rig
     result = install(args)

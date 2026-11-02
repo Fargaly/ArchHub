@@ -14,7 +14,8 @@ Each year is registered only when:
 * its activation is {eligibility: reviewed-authenticated-broker,
   review_sha256: <64 hex>}, the release's custody review (never invented here);
 * every file of its closure matches its size and SHA-256 pin, and the closure
-  holds only bridges/autocad/<year>/ paths including AcadMCP.dll;
+  holds only bridges/autocad/<year>/ or bridges/autocad/<year>/<build-id>/
+  paths including AcadMCP.dll;
 * the installed AutoCAD <year> acmgd/acdbmgd/accoremgd match the reviewed pins;
 * its release series is known (SERIES); an unknown year is refused, not guessed.
 The verified closure is copied into Contents/<year>/, so AutoCAD loads the
@@ -46,7 +47,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 
 from .client_mcp_installation import RegistrationRefused, _require_plain
-from .host_broker_installation import _describe, _digest, _refuse, _verify_file
+from .host_broker_installation import _BUILD_SEGMENT, _describe, _digest, _refuse, _verify_file
 
 BUNDLE = "ArchHub.AcadMCP.bundle"
 RECEIPT = "archhub-bundle.sha256"
@@ -63,6 +64,20 @@ MAX_FILES = 256
 MAX_INVENTORY = 1024
 
 
+def _autocad_folder(year, assembly):
+    """Relative directory of the reviewed AutoCAD broker, with a trailing slash, else None."""
+    prefix = "bridges/autocad/%s/" % year
+    if assembly == prefix + "AcadMCP.dll":
+        return prefix
+    suffix = "/AcadMCP.dll"
+    if not isinstance(assembly, str) or not assembly.startswith(prefix) or not assembly.endswith(suffix):
+        return None
+    middle = assembly[len(prefix):-len(suffix)]
+    if "/" in middle or _BUILD_SEGMENT.fullmatch(middle) is None:
+        return None
+    return prefix + middle + "/"
+
+
 def _verify_year(root, year, row, program_files):
     """[(bundle relative path, pinned bytes)] of one reviewed year, else RegistrationRefused."""
     if not re.fullmatch(r"20[0-9]{2}", year):
@@ -75,18 +90,20 @@ def _verify_year(root, year, row, program_files):
     if (not isinstance(activation, dict) or activation.get("eligibility") != "reviewed-authenticated-broker"
             or not _digest(activation.get("review_sha256"))):
         raise RegistrationRefused("AutoCAD add-in custody is not reviewed for activation")
-    prefix = "bridges/autocad/%s/" % year
-    if row.get("assembly") != prefix + "AcadMCP.dll":
+    folder = _autocad_folder(year, row.get("assembly"))
+    if folder is None:
         raise RegistrationRefused("unexpected AutoCAD add-in entry assembly")
     files = row.get("files")
     if not isinstance(files, list) or not 1 <= len(files) <= MAX_FILES:
         raise RegistrationRefused("AutoCAD artifact closure is missing or outside budget")
     placed, seen = [], set()
+    extra = folder[len("bridges/autocad/%s/" % year):]
     for entry in files:
         relative = entry.get("path") if isinstance(entry, dict) else None
+        in_folder = isinstance(relative, str) and relative.startswith(folder) and "/" not in relative[len(folder):]
         if (not isinstance(relative, str) or "\\" in relative or ":" in relative
                 or any(part in ("", ".", "..") for part in relative.split("/"))
-                or not relative.startswith(prefix) or relative.count("/") != 3):
+                or not in_folder):
             raise _refuse("artifact path escapes selected payload", relative)
         if relative.casefold() in seen:
             raise _refuse("duplicate artifact path", relative)
@@ -96,8 +113,8 @@ def _verify_year(root, year, row, program_files):
         data = source.read_bytes()
         if hashlib.sha256(data).hexdigest() != entry["sha256"]:
             raise _refuse("artifact changed during verification", source)
-        placed.append(("Contents/%s/%s" % (year, relative.rsplit("/", 1)[1]), data))
-    if (prefix + "acadmcp.dll").casefold() not in seen:
+        placed.append(("Contents/%s/%s%s" % (year, extra, relative.rsplit("/", 1)[1]), data))
+    if (folder + "acadmcp.dll").casefold() not in seen:
         raise RegistrationRefused("AcadMCP.dll is absent from the AutoCAD closure")
     api = row.get("host_api")
     if not isinstance(api, dict) or set(api) != set(HOST_API):
@@ -113,16 +130,16 @@ def _verify_year(root, year, row, program_files):
     return placed
 
 
-def _package_contents(years):
+def _package_contents(modules):
     package = ET.Element("ApplicationPackage", SchemaVersion="1.0", AutodeskProduct="AutoCAD",
                          ProductType="Application", Name="ArchHub AcadMCP", AppVersion="1.0.0",
                          Description="ArchHub AutoCAD broker", Author="Fargaly",
                          ProductCode=PRODUCT_CODE, UpgradeCode=UPGRADE_CODE)
     ET.SubElement(package, "CompanyDetails", Name="Fargaly")
     components = ET.SubElement(package, "Components")
-    for year in years:
+    for year, module in modules:
         entry = ET.SubElement(components, "ComponentEntry", AppName="ArchHubAcadMCP",
-                              ModuleName="./Contents/%s/AcadMCP.dll" % year,
+                              ModuleName=module,
                               AppDescription="ArchHub AutoCAD broker", AppType=".Net",
                               LoadOnAutoCADStartup="True")
         ET.SubElement(entry, "RuntimeRequirements", OS="Win64", SeriesMin=SERIES[year], SeriesMax=SERIES[year])
@@ -163,6 +180,41 @@ def _check_other_bundles(roots, bundle):
                 continue
             if PRODUCT_CODE.casefold() in text.casefold():
                 raise _refuse("AcadMCP already registered by another bundle", other)
+
+
+def _replace_file(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, name = tempfile.mkstemp(prefix=".archhub-bundle-", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(name, path)
+    finally:
+        Path(name).unlink(missing_ok=True)
+
+
+def _write_beside(bundle, files):
+    """Add a new build's modules beside files a running AutoCAD may still have loaded.
+
+    PackageContents.xml and the receipt are the only files replaced. A DLL that
+    already exists is never opened for write.
+    """
+    for relative, data in files.items():
+        target = bundle / PurePosixPath(relative)
+        if target.is_file() and target.read_bytes() == data:
+            continue
+        if target.exists():
+            if relative not in ("PackageContents.xml", RECEIPT):
+                raise RegistrationRefused("refusing to overwrite a host file that may be loaded: %s" % target)
+            _replace_file(target, data)
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with open(target, "xb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
 
 
 def _write_tree(directory, files):
@@ -255,11 +307,43 @@ def install_autocad_broker(*, package_root, rows, program_files, user_profile_ro
             raise _refuse("user plug-in root must be inside, machine root outside, the profile", plugins)
         years = sorted(placed)
         files = {path: data for year in years for path, data in placed[year]}
-        files["PackageContents.xml"] = _package_contents(years)
+        modules = []
+        for year in years:
+            module = next((rel for rel, _data in placed[year] if rel.lower().endswith("/acadmcp.dll")), None)
+            if module is None:
+                raise RegistrationRefused("AcadMCP.dll is absent from the AutoCAD closure")
+            modules.append((year, "./" + module))
+        files["PackageContents.xml"] = _package_contents(modules)
+        # Contents/<year>/<build-id>/<file> has more than two slashes. That build
+        # is written beside the DLL AutoCAD already loaded; the old file stays.
+        side_by_side = any(path.count("/") > 2 for path in files if path != "PackageContents.xml")
+        _check_other_bundles((plugins, machine), bundle)
+        bundle_ready = _require_plain(bundle, "directory", may_be_absent=True) is not None
+        if side_by_side and bundle_ready:
+            owned = _owned_listing(bundle, record_path)
+            for rel, digest in owned.items():
+                if rel == "PackageContents.xml" or rel in files:
+                    continue
+                source = bundle / PurePosixPath(rel)
+                data = source.read_bytes()
+                if hashlib.sha256(data).hexdigest() != digest:
+                    raise _refuse("existing bundle was not placed by ArchHub or was changed; left unchanged", bundle)
+                files[rel] = data
+            files[RECEIPT] = _receipt({path: data for path, data in files.items() if path != RECEIPT})
+            wanted = {path: hashlib.sha256(data).hexdigest() for path, data in files.items() if path != RECEIPT}
+            if _owned_listing(bundle, record_path) == wanted:
+                outcome["status"] = "unchanged_pending_host_restart"
+                return _finish(results, placed, outcome)
+            _write_beside(bundle, files)
+            outcome["status"] = "registered_pending_host_restart"
+            try:
+                _write_record(record_path, bundle, files[RECEIPT])
+            except OSError as error:
+                outcome.update(status="partial_failure", record_pending=True, reason=_describe(error, record_path))
+            return _finish(results, placed, outcome)
         wanted = {path: hashlib.sha256(data).hexdigest() for path, data in files.items()}
         files[RECEIPT] = _receipt(files)
-        _check_other_bundles((plugins, machine), bundle)
-        if _require_plain(bundle, "directory", may_be_absent=True) is not None:
+        if bundle_ready:
             if _owned_listing(bundle, record_path) == wanted:
                 outcome["status"] = "unchanged_pending_host_restart"
                 return _finish(results, placed, outcome)

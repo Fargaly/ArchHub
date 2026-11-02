@@ -776,7 +776,7 @@ $hostPayload = Join-Path $output 'hostpayload'
 $revision = (& git -C $snapshot.SelectedCheckout rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'The source revision for the Revit add-in could not be read.' }
 $reviewCheck = Join-Path $selectedRoot 'nodelang/host_artifact_review.py'
-$bridgeArgs = @{ SourceRoot = (Join-Path $selectedRoot 'bridges/sources'); OutputRoot = $hostPayload; SourceRevision = $revision }
+$bridgeArgs = @{ SourceRoot = (Join-Path $selectedRoot 'bridges/sources'); OutputRoot = $hostPayload; SourceRevision = $revision; BuildId = $BuildId }
 if ($BrokerReviewPath) { $bridgeArgs.BrokerReviewPath = $BrokerReviewPath }
 & (Join-Path $selectedRoot 'installer/build_host_bridges.ps1') @bridgeArgs
 # Release check: the review must decide these exact bridge bytes, and every

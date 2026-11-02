@@ -400,6 +400,18 @@ def _setup_compiler_candidates(root: Path) -> bool:
     return any(path.is_file() for path in candidates)
 
 
+def _payload_has_bridge(payload: Path, names: tuple[str, ...]) -> bool:
+    """True when the year folder, or one bridges/<host>/<year>/<build-id>/ folder, holds the DLLs."""
+    if all((payload / name).is_file() for name in names):
+        return True
+    if not payload.is_dir():
+        return False
+    for child in payload.iterdir():
+        if child.is_dir() and re.fullmatch(r"[A-Za-z0-9._-]{1,128}", child.name) and all((child / name).is_file() for name in names):
+            return True
+    return False
+
+
 def host_installation_readiness(root: Path) -> list[dict]:
     """Passive setup evidence, never permission or a claim of live execution readiness."""
     installations = _setup_host_installations()
@@ -423,7 +435,7 @@ def host_installation_readiness(root: Path) -> list[dict]:
             if host in ("revit", "autocad"):
                 names = ("RevitMCP.dll", "RevitMCPCore.dll") if host == "revit" else ("AcadMCP.dll",)
                 payload = root / "bridges" / host / version
-                if all((payload / name).is_file() for name in names):
+                if _payload_has_bridge(payload, names):
                     row["packaged"] = "payload-files-present-unverified"
                     row["detail"] = "Payload files exist; release closure, matching host registration and compiler compatibility need verification. A host restart may be needed after deployment."
                 else:
@@ -937,6 +949,11 @@ def main():
         register_autocad_add_ins(Path(os.path.abspath(__file__)).parent)
     except Exception as exc:  # noqa: BLE001 - evidence only; the build must still become ready
         print("  autocad    : not registered (%s)" % type(exc).__name__)
+    from nodelang.host_addin_retarget import main as retarget_host_addins
+    try:
+        retarget_host_addins([str(Path(os.path.abspath(__file__)).parent)])
+    except Exception as exc:  # noqa: BLE001 - the installer post-step is the same registration
+        print("  host add-in: not retargeted (%s)" % type(exc).__name__)
     try:
         report_rhino_blender(root)
     except Exception as exc:  # noqa: BLE001 - evidence only; the build must still become ready

@@ -192,7 +192,9 @@ class ApplicationUpdate:
             self._state, self._detail = "failed", str(initial_stage.get("reason") or "Update failed.")
         elif initial_stage and initial_stage.get("staged") and initial_stage.get("status") == "staged":
             self._available = str(initial_stage.get("build_id") or "")
-            self._state, self._detail = "ready", "The downloaded update is ready to install."
+            self._state = "ready"
+            self._detail = ("Build %s is downloaded and verified. Restart to update." % self._available
+                            if self._available else "The downloaded update is ready to install.")
             self._prerelease = initial_stage.get("prerelease") is True
         self._updated = None
         installed, seen = installed_build_id(self.app_dir), _seen_build(self.state_dir)

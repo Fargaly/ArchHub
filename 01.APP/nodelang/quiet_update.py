@@ -11,7 +11,6 @@ import os
 from pathlib import Path
 import sys
 import re
-import shutil
 import subprocess
 import tempfile
 import threading
@@ -320,81 +319,18 @@ def _payload_files(app):
                 yield path
 
 
-def _retain_previous(updates, app):
-    files = list(_payload_files(app))
-    size = sum(path.stat().st_size for path in files)
-    if size > _ROLLBACK_BYTES or shutil.disk_usage(updates).free < size + 256 * 1024 * 1024:
-        raise ValueError("previous build cannot be retained within the update disk budget")
-    target = updates / "previous-build.zip"
+def _discard_rollback_copy(updates):
+    """Do not keep a product-sized rollback archive on this machine."""
+    target = Path(updates) / "previous-build.zip"
     _plain(target)
-    descriptor, name = tempfile.mkstemp(prefix=".previous-build-", suffix=".tmp", dir=updates)
-    os.close(descriptor)
-    temporary = Path(name)
-    try:
-        with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_STORED) as archive:
-            for path in files:
-                archive.write(path, path.relative_to(app).as_posix())
-        os.replace(temporary, target)
-        digest = _archive_digest(target)
-        return {"build_id": installed_build_id(app), "sha256": digest}
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
-def _archive_digest(path):
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(65536), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    target.unlink(missing_ok=True)
 
 
 def _rollback(updates, app, data, reason):
-    """Restore the retained product, leaving all user data and recovery intact."""
-    previous = data.get("previous")
-    if not isinstance(previous, dict):
-        return {**data, "confirmed": False, "rolled_back": False, "reason": reason}
-    archive_path = updates / "previous-build.zip"
-    _plain(archive_path)
-    if _archive_digest(archive_path) != previous.get("sha256"):
-        raise ValueError("previous build digest changed; rollback refused")
-    app = Path(app)
-    with zipfile.ZipFile(archive_path) as archive:
-        names = archive.namelist()
-        if len(names) != len(set(names)) or sum(entry.file_size for entry in archive.infolist()) > _ROLLBACK_BYTES:
-            raise ValueError("previous build inventory is invalid")
-        for name in names:
-            parts = name.split("/")
-            if (any(part in ("", ".", "..") or ":" in part or "\\" in part for part in parts)
-                    or not (name in _PAYLOAD_FILES or parts[0] in _PAYLOAD_DIRS)):
-                raise ValueError("previous build path is outside the product")
-            _plain(app / name)
-        # Validate the whole archive before the first write.
-        if archive.testzip() is not None or archive.read("BUILD_ID").decode("utf-8").strip() != previous["build_id"]:
-            raise ValueError("previous build identity is invalid")
-        extras = [path for path in _payload_files(app) if path.relative_to(app).as_posix() not in names]
-        for name in names:
-            target = app / name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            fd, temporary = tempfile.mkstemp(prefix=".rollback-", dir=target.parent)
-            try:
-                with os.fdopen(fd, "wb") as out, archive.open(name) as source:
-                    shutil.copyfileobj(source, out, 65536)
-                    out.flush()
-                    os.fsync(out.fileno())
-                os.replace(temporary, target)
-            finally:
-                Path(temporary).unlink(missing_ok=True)
-        for path in extras:
-            path.unlink()
-        # Do not reuse bytecode compiled from the failed release.
-        for root in _PAYLOAD_DIRS:
-            for path in (app / root).rglob("*.pyc"):
-                _plain(path)
-                path.unlink()
-    _marker(updates, {**data, "phase": "rolled_back", "rollback_reason": reason})
-    return {"staged": False, "confirmed": False, "rolled_back": True, "status": "rolled_back",
-            "build_id": previous["build_id"], "reason": reason + "; previous build restored"}
+    """Report the failure and drop any rollback archive. Product bytes are not rewritten."""
+    del app
+    _discard_rollback_copy(updates)
+    return {**data, "confirmed": False, "rolled_back": False, "reason": reason}
 
 
 def _status(updates, app_dir, *, verify_confirmed=False):
@@ -638,7 +574,7 @@ def apply_staged(state_dir: Path, app_dir: Path, runner=subprocess.run, *, befor
             refusal = _ordering_refusal(app_dir, data, installed_build_id(app_dir))
             if refusal:
                 return {**data, "staged": False, "applied": False, "status": "not_ready", "reason": refusal}
-            data = {**data, "previous": _retain_previous(updates, Path(app_dir))}
+            _discard_rollback_copy(updates)
             _marker(updates, {**data, "phase": "applying"})
             attempted_build = data["build_id"]
             # Setup may hash/copy several large closed journals. Wait for its
@@ -648,8 +584,12 @@ def apply_staged(state_dir: Path, app_dir: Path, runner=subprocess.run, *, befor
             setup_log.unlink(missing_ok=True)
             if stop_runtime is not None:
                 stop_runtime(Path(app_dir))
+            # /NOCLOSEAPPLICATIONS wins over the script default. /CLOSEAPPLICATIONS
+            # and /FORCECLOSEAPPLICATIONS make Restart Manager ask every process
+            # that holds a file under the install directory to quit. Revit holds
+            # its bridge DLL there; that flag closed the founder's Revit.
             result = runner([data["installer"], "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
-                             "/CLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS",
+                             "/NOCLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS",
                              "/SP-", "/LOG=" + str(setup_log), "/DIR=" + str(app_dir)], **options)
             exit_code = getattr(result, "returncode", 1)
             if exit_code != 0 or not _installed_matches_target(app_dir, data):
@@ -662,7 +602,9 @@ def apply_staged(state_dir: Path, app_dir: Path, runner=subprocess.run, *, befor
                     for line in raw.decode(encoding, errors='replace').splitlines():
                         if 'ArchHub Setup refused: ' in line:
                             reason = "installer failed: " + line.split('ArchHub Setup refused: ', 1)[1]
-                return {**_rollback(updates, app_dir, data, reason), "applied": False, "reason": reason}
+                _marker(updates, {**data, "phase": "staged"})
+                return {"staged": True, "applied": False, "rolled_back": False, "status": "failed",
+                        "build_id": data["build_id"], "reason": reason}
             _marker(updates, {**data, "phase": "awaiting_boot"})
             return {"applied": True, "build_id": data["build_id"], "status": "awaiting_boot",
                     "reason": "installer completed; successful new boot acknowledgment required"}
@@ -686,19 +628,19 @@ def rollback_staged(state_dir: Path, app_dir: Path) -> dict:
 
 
 def begin_update_boot(state_dir: Path, app_dir: Path) -> dict:
-    """Reserve one boot attempt; the next unconfirmed boot restores the old code."""
+    """Reserve one boot attempt. An unconfirmed boot stays on the installed build."""
     try:
         with _locked(state_dir) as updates:
+            _discard_rollback_copy(updates)
             data = _status(updates, app_dir)
             # Setup wrote BUILD_ID after copying; the owner may have exited
             # before recording its result. Let the matching new app prove boot.
+            # There is no product-sized rollback copy, so an unconfirmed boot
+            # stays on the installed build instead of restoring one.
             if (data.get("status") == "applying" and data.get("bytes_verified")
                     and _installed_matches_target(app_dir, data)):
                 _marker(updates, {**data, "phase": "awaiting_boot", "boot_started": True})
                 return {**data, "status": "awaiting_boot", "boot_started": True}
-            if data.get("previous") and (data.get("status") == "applying" or (
-                    data.get("status") == "awaiting_boot" and data.get("boot_started"))):
-                return _rollback(updates, app_dir, data, "previous update boot did not confirm")
             if data.get("status") == "awaiting_boot":
                 _marker(updates, {**data, "phase": "awaiting_boot", "boot_started": True})
             return data
@@ -740,6 +682,7 @@ def confirm_applied(state_dir: Path, app_dir: Path, *, rollback=True) -> dict:
                     return _rollback(updates, app_dir, data, "installed build metadata does not match the staged release")
                 return {**data, "confirmed": False,
                         "reason": "installed build metadata does not match the staged release; reconciliation required"}
+            _discard_rollback_copy(updates)
             _marker(updates, {**data, "phase": "confirmed"})
             return {**data, "confirmed": True, "status": "confirmed", "reason": "successful boot acknowledged"}
     except (OSError, ValueError) as exc:
@@ -794,7 +737,7 @@ def apply_unattended(state_dir: Path, app_dir: Path, opener=urllib.request.urlop
 
     ``safe`` is true when no canvas job is running and the user is idle, or ArchHub
     is closing to the tray or quitting. A pre-release is ignored and never installed.
-    A failed installer is reported as failed; the previous build is restored.
+    A failed installer is reported as failed. No product-sized rollback copy is kept.
     """
     staged = stage_if_newer(state_dir, app_dir, opener, channel=channel)
     if staged.get("status") == "ignored" or staged.get("prerelease") is True:
@@ -937,10 +880,11 @@ def _relaunch(app_dir: Path) -> None:
 
 
 def maintain(app_dir: Path, opener=urllib.request.urlopen, *, sleep=time.sleep) -> int:
-    """Check on start and every N minutes. Install only when the machine is idle and the desktop is not up.
+    """Check on start and every N minutes. Install when the desktop is not open.
 
-    ArchHub.vbs starts this before setup. The desktop, once it is up, installs
-    on idle or when the window is closed to the tray. A second start exits.
+    A founder who keeps ArchHub open is not installed over: the next start,
+    before the window, and Quit from the tray apply the staged build. Machine
+    idle is not required once the desktop lock is free. A second start exits.
     """
     app_dir = Path(app_dir)
     if not _claim_maintainer(app_dir):
@@ -949,9 +893,8 @@ def maintain(app_dir: Path, opener=urllib.request.urlopen, *, sleep=time.sleep) 
     while True:
         try:
             result = check_for_update(state, app_dir, opener)
-            _interval, idle = _check_policy()
             ready = result.get("staged") and result.get("status") == "staged" and result.get("prerelease") is not True
-            if ready and not _desktop_running() and _machine_is_idle(idle):
+            if ready and not _desktop_running():
                 try:
                     import psutil
                     psutil.Process(os.getpid())
@@ -979,8 +922,21 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Recover a failed update or keep checking GitHub Latest.")
     parser.add_argument("--recover-failed-launch", type=Path)
     parser.add_argument("--maintain", type=Path, help="Application directory. Check now, then every N minutes.")
+    parser.add_argument("--apply-staged", type=Path, help="Install a staged build when the desktop is not open, then exit.")
     parser.add_argument("--state-dir", type=Path)
     args = parser.parse_args(argv)
+    if args.apply_staged is not None:
+        if _desktop_running():
+            append_update_log(state_directory(), "update: desktop is open; install waits until quit or the next start")
+            return 0
+        if args.state_dir is not None:
+            os.environ["ARCHHUB_TEST_STATE_DIR"] = str(args.state_dir)
+        applied = apply_staged(state_directory(), args.apply_staged, stop_runtime=stop_runtime_processes)
+        if applied.get("applied"):
+            append_update_log(state_directory(), "update: installed %s" % applied.get("build_id"))
+        elif applied.get("reason"):
+            append_update_log(state_directory(), "update: %s" % applied.get("reason"))
+        return 0 if applied.get("applied") or applied.get("status") != "failed" else 1
     if args.maintain is not None:
         if args.state_dir is not None:
             os.environ["ARCHHUB_TEST_STATE_DIR"] = str(args.state_dir)

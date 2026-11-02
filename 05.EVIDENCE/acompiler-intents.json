@@ -9446,7 +9446,10 @@
         "02.TESTS/tests_replica/test_installer_locked_host_files.py",
         "03.TOOLS/installer/build_host_bridges.ps1",
         "03.TOOLS/installer/host_file_staging.iss",
-        "02.TESTS/tests_replica/test_hangfix_one_launcher.py"
+        "02.TESTS/tests_replica/test_hangfix_one_launcher.py",
+        "01.APP/nodelang/baboom_work_presence.py",
+        "02.TESTS/tests_replica/test_baboom_native_companion.py",
+        "02.TESTS/tests_replica/test_baboom_work_presence.py"
       ]
     }
   }

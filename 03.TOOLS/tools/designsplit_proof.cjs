@@ -7,7 +7,7 @@ const {chromium} = require('playwright');
 const root = process.cwd(), stage = process.argv[2] || 'settings';
 const scratch = path.join(root, '.cache/designsplit');
 const profile = path.join(scratch, 'profile');
-const proof = 'C:/Users/fargaly/AppData/Local/Temp/designsplit-proof';
+const proof = 'C:/Users/fargaly/AppData/Local/Temp/designexact-proof';
 for (const dir of [scratch, profile, proof, 'local', 'roaming', 'temp'].map(dir => path.isAbsolute(dir) ? dir : path.join(profile, dir))) fs.mkdirSync(dir, {recursive:true});
 const env = {...process.env, PYTHONPATH:path.join(root,'01.APP'), PYTHONUTF8:'1', USERPROFILE:profile, HOME:profile,
   LOCALAPPDATA:path.join(profile,'local'), APPDATA:path.join(profile,'roaming'), TEMP:path.join(profile,'temp'), TMP:path.join(profile,'temp')};
@@ -46,11 +46,45 @@ let browser;
     await reference.evaluate(()=>document.fonts.ready);
     await reference.screenshot({path:path.join(scratch,name+'-svg.png')});await reference.close();
     execFileSync('python',['-c',`from PIL import Image;a=Image.open(${JSON.stringify(path.join(scratch,name+'-svg.png'))});b=Image.open(${JSON.stringify(path.join(scratch,name+'-app.png'))});o=Image.new('RGB',(a.width+b.width,max(a.height,b.height)));o.paste(a,(0,0));o.paste(b,(a.width,0));o.save(${JSON.stringify(path.join(proof,name+'.png'))})`],{env,windowsHide:true});
-    await page.setViewportSize({width:1440,height:893});
+    if(name.startsWith('settings-')){
+      const geometry=await page.evaluate(()=>{
+        const sheet=document.querySelector('.settings-sheet');
+        const field=sheet.querySelector('.sheet-field');
+        const action=sheet.querySelector('.sheet-action');
+        const cols=window.getComputedStyle(sheet.querySelector('.sheet-columns'));
+        const box=el=>el.getBoundingClientRect();
+        const label=field&&field.querySelector('span');
+        return {width:box(sheet).width,height:box(sheet).height,title:window.getComputedStyle(sheet.querySelector('h1')).fontSize,section:window.getComputedStyle(sheet.querySelector('h2')).fontSize,body:window.getComputedStyle(sheet.querySelector('p')).fontSize,meta:label?window.getComputedStyle(label).fontSize:null,row:field?box(field).height:null,action:box(action).height,gap:cols.columnGap,pad:window.getComputedStyle(sheet).paddingLeft,columns:cols.gridTemplateColumns};
+      });
+      assert.ok(Math.abs(geometry.width-1280)<1,JSON.stringify(geometry));
+      assert.ok(geometry.height>=672,JSON.stringify(geometry));
+      assert.equal(geometry.title,'24px');
+      assert.equal(geometry.section,'18px');
+      assert.equal(geometry.body,'14px');
+      if(geometry.meta)assert.equal(geometry.meta,'13px');
+      if(geometry.row!==null)assert.ok(Math.abs(geometry.row-64)<1,JSON.stringify(geometry));
+      assert.ok(Math.abs(geometry.action-36)<1,JSON.stringify(geometry));
+      assert.equal(geometry.gap,'32px');
+      assert.equal(geometry.pad,'32px');
+      metrics.push({name,geometry});
+    }
+    await page.setViewportSize({width:1440,height:900});
     await page.screenshot({path:path.join(proof,name+'-1440.png')});
-    const measure=await page.evaluate(()=>({viewport:window.innerWidth,document:document.documentElement.scrollWidth,main:[...document.querySelectorAll('[data-screen^="settings/"]>main,.settings-sheet,.library-shelf,.docs-article')].map(e=>({width:e.clientWidth,scroll:e.scrollWidth}))}));
+    const measure=await page.evaluate(()=>{
+      const frame=document.querySelector('.app-window').getBoundingClientRect();
+      const stage=document.querySelector('.settings-sheet-stage')||document.querySelector('.screen-with-composer');
+      const stageBox=stage.getBoundingClientRect();
+      const offenders=[];
+      for(const el of stage.querySelectorAll('*')){
+        const box=el.getBoundingClientRect();
+        if(box.width<1||box.height<1)continue;
+        if(box.left<stageBox.left-1||box.right>stageBox.right+1)offenders.push((el.className&&el.className.toString())||el.tagName);
+      }
+      return {viewport:window.innerWidth,document:document.documentElement.scrollWidth,frame:frame.width,offenders:offenders.slice(0,8),main:[...document.querySelectorAll('.settings-sheet,.library-shelf,.docs-article')].map(e=>({width:e.clientWidth,scroll:e.scrollWidth}))};
+    });
     assert.ok(measure.document<=1440,JSON.stringify(measure));
-    assert.ok(measure.main.every(e=>e.scroll<=e.width),JSON.stringify(measure));
+    assert.deepEqual(measure.offenders,[],JSON.stringify(measure));
+    assert.ok(measure.main.every(e=>e.scroll<=e.width+1),JSON.stringify(measure));
     metrics.push({name,...measure});await page.setViewportSize({width:1680,height:893});
   }
   if(stage==='settings'||stage==='all'){
@@ -64,7 +98,7 @@ let browser;
       await capture('settings-'+name,'archhub-current-settings-'+name+'.svg');
     }
     await page.locator('.settings-section').getByText('Automation & Brain',{exact:true}).click();
-    await page.locator('.sheet-below').getByText('Agents',{exact:true}).click();
+    await page.getByRole('button',{name:'Advanced',exact:true}).click();
     await page.getByRole('table',{name:'Router requests'}).waitFor({});
     assert.equal(await page.getByRole('table',{name:'Router requests'}).locator('tfoot').innerText(),'Total\t0\tNot reported\tNot measured');
     await page.screenshot({path:path.join(proof,'settings-agents.png')});

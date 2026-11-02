@@ -45,7 +45,8 @@ def push(app, native_id, text, message_id, *, timeout=10.0, pids=(), permission_
         app, pids = 'archhub', ()            # the app's own BABOOM: Workshop reaches its turn door
     if not native_id:
         return 'failed', 'none', 'This session has no live door; it reads the message in the Workshop.'
-    recipient = {'app': app, 'id': str(native_id or ''), **({'pids': [int(p) for p in pids]} if pids and app not in ('claude', 'opencode') else {}),
+    # Cursor GUI has a host pid but no console; Desktop Bridge is its door (workshop-apps injectCursor).
+    recipient = {'app': app, 'id': str(native_id or ''), **({'pids': [int(p) for p in pids]} if pids and app not in ('claude', 'opencode', 'cursor') else {}),
                  **({'desktop': True} if app == 'codex' and codex_desktop_thread(native_id) else {})}
     if app == 'codex' and not recipient.get('desktop') and codex_remote(pids):
         recipient['remote'] = codex_remote(pids)   # its TUI runs on this App Server (--remote), not the shared daemon

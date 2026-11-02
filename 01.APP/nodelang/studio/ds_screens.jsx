@@ -307,7 +307,7 @@
     const [name, setName] = React.useState(''), [type, setType] = React.useState('number'), [value, setValue] = React.useState(''), [options, setOptions] = React.useState(''),
       [limits, setLimits] = React.useState({min: '', max: '', step: '', unit: ''}), [asNode, setAsNode] = React.useState(false);
     const numeric = ['number', 'integer'].includes(type),
-      limit = (key, text) => <label key={key}>{text}<input className="spec-input small" aria-label={kind + ' ' + key} value={limits[key]} onChange={e => setLimits(old => ({...old, [key]: e.target.value}))} /></label>;
+      limit = (key, text) => <label key={key}>{text}<input className="spec-input small" aria-label={kind + ' ' + key} type="number" step="any" placeholder={key === 'step' ? 'Auto' : 'Unbounded'} value={limits[key]} onChange={e => setLimits(old => ({...old, [key]: e.target.value === '' ? '' : e.target.valueAsNumber}))} /></label>;
     return <div data-add-field-form role="dialog" aria-label={title} className="spec-add-field" onPointerDown={e => e.stopPropagation()} onKeyDown={e => { if (e.key === 'Escape') onClose(); }}>
       <b>{title}</b><p>{sub}</p>
       <div className="spec-add-row"><label>Name<input className="spec-input" aria-label={kind + ' name'} placeholder="Width" value={name} onChange={e => setName(e.target.value)} /></label>
@@ -382,20 +382,20 @@
     if (p.type === 'boolean') return <D.Toggle label={label} checked={!!shown} onCheckedChange={save} />;
     if (p.options?.length) return <select className="nodrag" aria-label={label} value={shown} onChange={e => save(e.target.value)}>{p.options.map(o => <option key={o}>{o}</option>)}</select>;
     return <input className="nodrag" aria-label={label} title={String(shown)} type={p.type === 'number' ? 'number' : 'text'} min={p.min} max={p.max} step={p.step ?? 'any'}
-      value={typeof shown === 'object' ? JSON.stringify(shown) : shown} style={{flex: 1, minWidth: 0, width: 0, background: 'transparent', border: 0, color: SPEC.text, font: 'inherit', fontSize: 12}}
-      onChange={e => { if (p.type !== 'number' || Number.isFinite(e.target.valueAsNumber)) save(p.type === 'number' ? e.target.valueAsNumber : e.target.value); }} />;
+      value={shown == null ? '' : typeof shown === 'object' ? JSON.stringify(shown) : shown} style={{flex: 1, minWidth: 0, width: 0, background: 'transparent', border: 0, color: SPEC.text, font: 'inherit', fontSize: 12}}
+      onChange={e => { if (p.type !== 'number') save(e.target.value); else if (e.target.value === '') save(null); else if (Number.isFinite(e.target.valueAsNumber)) save(e.target.valueAsNumber); }} />;
   }
   function ParameterNode({n, socket, selected, u}) {
     // LimitParameter: one typed value, inline stepper and slider, one output socket; the value lives in this node only.
     // A value the owner does not hold (router.json without it) shows "unset", never a default.
     const p = n.parameterSchema?.find(x => x.key === 'value') || {key: 'value', type: 'number', editable: true}, unset = typeof n.params.value !== 'number',
-      value = unset ? NaN : n.params.value, max = p.max ?? (unset || Math.abs(value) <= 2 ? 2 : Math.abs(value) * 2), min = p.min ?? 0, step = p.step ?? (max <= 2 ? .05 : 1),
-      out = n.outputs[0], save = v => u.act(() => api.setNodeParam(n.id, 'value', Math.min(max, Math.max(min, +v.toFixed(6)))));
+      value = unset ? NaN : n.params.value, max = p.max ?? (unset || Math.abs(value) <= 2 ? 2 : Math.abs(value) * 2), min = p.min ?? Math.min(0, unset ? 0 : value), step = p.step ?? (max <= 2 ? .05 : 1),
+      out = n.outputs[0], save = v => Number.isFinite(v) ? u.act(() => api.setNodeParam(n.id, 'value', Math.min(p.max ?? Infinity, Math.max(p.min ?? -Infinity, v)))) : undefined;
     return <div data-ds-node="" data-spec="parameter" className="node-header" style={{...CARD, width: 180, height: 80, outline: selected ? '2px solid ' + A.accent : 'none', outlineOffset: 2}}>
       <div data-node-card-title="" style={{position: 'absolute', left: 12, top: 9, right: 40, color: SPEC.typed}}>#  {n.title}</div>
       {!n.pure && <span data-node-pure="false" title="Side effect: waits for Run" style={{position: 'absolute', right: 10, top: 9, color: A.inkSoft}}>⚡</span>}
       <div style={{position: 'absolute', left: 12, top: 32, right: 12, display: 'flex', alignItems: 'center', gap: 6, color: SPEC.typed}}>
-        {unset ? <span data-unset="" style={{flex: 1, color: SPEC.label}} title="Not set in router.json">unset</span> : <ValueWidget n={n} p={{...p, type: 'number', min, max, step}} value={value} u={u} />}
+        {unset ? <span data-unset="" style={{flex: 1, color: SPEC.label}} title="Not set in router.json">unset</span> : <ValueWidget n={n} p={{...p, type: 'number', step}} value={value} u={u} />}
         <span>{p.unit || ''}</span>
         <button type="button" className="button-reset nodrag" aria-label={'Decrease ' + n.title} onClick={event => executeAction('projects.controls.activate', {handler: () => save((unset ? min : value) - step)}, event)}>◀</button>
         <button type="button" className="button-reset nodrag" aria-label={'Increase ' + n.title} onClick={event => executeAction('projects.controls.activate', {handler: () => save((unset ? min : value) + step)}, event)}>▶</button>
@@ -405,7 +405,7 @@
       {out && <span style={edgeSocket('out', 34)}>{socket(out, 'out')}</span>}
     </div>;
   }
-  // Spec d9c0d514: one footer chip per card (Done / Not run / Out of date, or what stops it), never a second status line.
+  // Successful output speaks for itself; the footer carries only actionable states.
   const FOOT = {display: 'inline-block', justifySelf: 'start', padding: '1px 8px', borderRadius: 10, border: '1px solid ' + SPEC.fieldLine};
   function RefusedChip({refusal, onConvert}) {
     return <div data-refused-chip="" role="status" style={{color: A.err, display: 'flex', flexWrap: 'wrap', gap: 4}}>
@@ -428,8 +428,9 @@
         .filter(p => !(p.key === 'prompt' && n.inputs.some(x => x.id === 'prompt'))),
       params = compact ? shown.slice(0, 3) : shown,
       refusedHere = port => refusal && refusal.to.port === port && <RefusedChip refusal={refusal} onConvert={onConvert} />;
-    for (const p of params) if (n.inputs.some(x => x.id === p.key || x.id === 'param:' + p.key)) slotPorts.add(n.inputs.find(x => x.id === p.key || x.id === 'param:' + p.key).id);
-    const result = n.status === 'Done' ? summary(n.output) : '';
+    for (const p of params) for (const port of n.inputs.filter(x => x.id === p.key || x.id === 'param:' + p.key)) slotPorts.add(port.id);
+    const repeatedValue = shown.some(p=>p.key==='value') && !wiresIn.some(wire=>['value','param:value'].includes(wire.toPort)) && (Object.is(n.output,n.params.value) || (n.output && typeof n.output==='object' && Object.keys(n.output).length===1 && Object.hasOwn(n.output,'value') && Object.is(n.output.value,n.params.value)));
+    const result = n.status === 'Done' && !repeatedValue ? summary(n.output) : '';
     return <div data-ds-node="" className="lm-node" data-spec={n.dataset ? 'dataset' : 'operation'} data-node-state={state.split(' · ')[0]}
       style={{...CARD, width: n.dataset ? LAYOUT.datasetWidth : LAYOUT.nodeWidth, paddingBottom: 10, border: '1px solid ' + (refusal ? A.err : SPEC.fieldLine), outline: selected ? '2px solid ' + A.accent : 'none', outlineOffset: 2}}>
       <div className="node-header" style={{display: 'flex', alignItems: 'flex-start', gap: 8, padding: '11px 12px 0'}}>
@@ -440,20 +441,21 @@
       {members.length > 0 && <div className="canvas-members">{members.map(m => <button key={m.id} data-group-member={m.id} draggable={m.chip || undefined} className="canvas-member nodrag" title={m.chip ? 'Drag ' + m.title + ' out of the group' : 'Open ' + m.title} onDragStart={event => { if (!m.chip) return; event.stopPropagation(); event.dataTransfer.setData('text/plain', m.id); event.dataTransfer.effectAllowed = 'move'; event.currentTarget.dataset.dragged = '1'; }} onDragEnd={event => { if (!m.chip || !onDetach) return; onDetach(m, event); }} onClick={event => { if (event.currentTarget.dataset.dragged === '1') { event.currentTarget.dataset.dragged = ''; return; } executeAction('projects.controls.activate', {handler: () => onMember(m)}, event); }}><span style={{background: A.purple, color: A.onFill}}>{m.title.slice(0, 1)}</span>{m.title}</button>)}</div>}
       <div style={{display: 'grid', gap: 8, padding: '12px 12px 0'}}>
         {/* Full-node row (archhub-full-node-controls-native.png): name over its type, then the linked source or an inline control, then a row menu. Real data or empty. */}
-        {[...n.inputs.filter(p => !slotPorts.has(p.id)).map(p => ({key: p.id, port: p})), ...params.map(p => ({key: 'param:' + p.key, param: p, port: n.inputs.find(x => x.id === p.key || x.id === 'param:' + p.key)}))].map(({key, port, param}) => {
-          const from = port && sourceOf(port.id), name = param ? (param.label && param.label !== param.key ? param.label : param.key.replace(/_/g, ' ')) : port.name,
+        {[...n.inputs.filter(p => !slotPorts.has(p.id)).map(p => ({key: p.id, port: p})), ...params.map(p => ({key: 'param:' + p.key, param: p, port: n.inputs.find(x => (x.id === p.key || x.id === 'param:' + p.key) && wiresIn.some(wire=>wire.toPort===x.id)) || n.inputs.find(x => x.id === 'param:' + p.key) || n.inputs.find(x => x.id === p.key)}))].map(({key, port, param}) => {
+          const ports = param ? n.inputs.filter(x => x.id === param.key || x.id === 'param:' + param.key) : port ? [port] : [];
+          const from = ports.map(alias=>sourceOf(alias.id)).filter(Boolean).join(' · '), name = param ? (param.label && param.label !== param.key ? param.label : param.key.replace(/_/g, ' ')) : port.name,
             type = param ? (param.dataType || (param.options?.length ? 'enum' : param.type === 'boolean' ? 'boolean' : param.type === 'number' ? 'number' : 'string')) + (param.unit ? ' · ' + param.unit : '') + (settingsKeys.has(param.key) ? ' · From Settings' : '') : typeName(port);
           return <React.Fragment key={key}><div data-port-row={param ? undefined : 'in'} data-parameter={param ? param.key : undefined}
             style={{...SLOT, display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1.2fr) auto', gap: 8, padding: '4px 4px 4px 10px', alignItems: 'center'}}>
-            {port && <span style={edgeSocket('in', '50%', 12)}>{socket(port, 'in')}</span>}
+            {ports.map(alias=><span key={alias.id} aria-hidden={alias.id!==port.id||undefined} style={{...edgeSocket('in', '50%', 12),opacity:alias.id===port.id?1:0,pointerEvents:alias.id===port.id?undefined:'none'}}>{socket(alias, 'in')}</span>)}
             <span style={{minWidth: 0}}><span style={{display: 'block', fontSize: 13.5, overflowWrap: 'anywhere'}} title={param ? param.label || param.key : port.name}>{name}</span>
               <span style={{display: 'block', color: SPEC.label}}>{type}</span></span>
             <span data-row-value="" style={{display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>
               {from ? <span data-linked-source="" style={{color: SPEC.typed}} title={from}>↳ {from}</span>
-                : !param ? null : n.params[param.key] === null ? <span data-unset="" style={{color: SPEC.label}}>unset</span> : <ValueWidget n={n} p={param} value={n.params[param.key]} u={u} />}</span>
+                : !param ? null : n.params[param.key] === null && !(param.type === 'number' && ['min','max'].includes(param.key)) ? <span data-unset="" style={{color: SPEC.label}}>unset</span> : <ValueWidget n={n} p={param} value={n.params[param.key]} u={u} />}</span>
             <button type="button" className="button-reset nodrag" aria-label={name + ' row actions'} style={{color: SPEC.label, padding: '0 4px'}}
               onClick={event => executeAction('projects.controls.activate', {handler: () => u.show('Port menu', {id: n.id, port: port?.id || 'param:' + param.key, anchor: {x: event.clientX, y: event.clientY}})}, event)}>⋮</button>
-          </div>{port && refusedHere(port.id)}</React.Fragment>;
+          </div>{ports.map(alias=><React.Fragment key={alias.id}>{refusedHere(alias.id)}</React.Fragment>)}</React.Fragment>;
         })}
         {shown.length > 3 && <button type="button" className="button-reset nodrag canvas-card-more" aria-pressed={compact} style={{justifySelf: 'start', color: SPEC.label}} onClick={event => executeAction('projects.controls.activate', {handler: () => setCompact(!compact)}, event)}>{compact ? `+${shown.length - 3} more` : 'Compact'}</button>}
         {n.loop && <div data-node-loop="" style={{color: SPEC.label}} title={'Trigger ' + n.loop.trigger + ' · stops when ' + n.loop.stop + (n.loop.evaluator ? ' · evaluator ' + n.loop.evaluator : '')}>Loop · cap {n.loop.cap} · until {n.loop.stop}</div>}
@@ -461,8 +463,8 @@
         {!n.dataset && !n.column && n.paramDefs && api.addNodeParameter && <AddParameter n={n} u={u} />}
         {n.outputs.map(p => <div key={p.id} data-port-row="out" style={{position: 'relative', color: SPEC.typed, minHeight: 18, display: 'flex', alignItems: 'center'}}>
           <span>{p.name} · {typeName(p)}</span><span style={edgeSocket('out', '50%', 12)}>{socket(p, 'out')}</span></div>)}
-        {n.outputs.length > 0 && <div data-node-result="" data-todo="output-summary-expanded" style={{...SLOT, color: result ? SPEC.text : SPEC.label, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block'}} title={result}>{result ? '▸  ' + result : wiresIn.length || !n.inputs.length ? 'Run to inspect output' : 'Connect data to inspect output'}</div>}
-        <span data-node-status="" style={{...FOOT, color: stateColor}} title={n.error || state}>{state.split(' · ')[0]}</span>
+        {n.outputs.length > 0 && !repeatedValue && <div data-node-result="" data-todo="output-summary-expanded" style={{...SLOT, color: result ? SPEC.text : SPEC.label, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block'}} title={result}>{result ? '▸  ' + result : wiresIn.length || !n.inputs.length ? 'Run to inspect output' : 'Connect data to inspect output'}</div>}
+        {state !== 'Done' && <span data-node-status="" style={{...FOOT, color: stateColor}} title={n.error || state}>{state.split(' · ')[0]}</span>}
       </div>
     </div>;
   }
@@ -479,7 +481,7 @@
       <div style={{display: 'grid', gap: 6}}>{n.inputs.filter(p => !params.some(q => q.key === p.id || 'param:' + q.key === p.id)).map(p => <div key={p.id} style={SLOT}>
         <span style={{flex: 1, minWidth: 0}}><span style={{display: 'block', color: SPEC.label, fontSize: 11}}>{p.name} · {typeName(p)}</span>{sourceOf(p.id) || <span style={{color: SPEC.label}}>Not connected</span>}</span></div>)}
         {params.map(p => <label key={p.key} style={SLOT}><span style={{flex: 1, minWidth: 0}}><span style={{display: 'block', color: SPEC.label, fontSize: 11}}>{p.label || p.key.replace(/_/g, ' ')}</span>
-          {n.params[p.key] === null ? <span style={{color: SPEC.label}}>unset</span> : <ValueWidget n={n} p={p} value={n.params[p.key]} u={u} />}</span></label>)}
+          {n.params[p.key] === null && !(p.type === 'number' && ['min','max'].includes(p.key)) ? <span style={{color: SPEC.label}}>unset</span> : <ValueWidget n={n} p={p} value={n.params[p.key]} u={u} />}</span></label>)}
         {!n.inputs.length && !params.length && <span style={{color: SPEC.label}}>No inputs</span>}</div>
       <div style={cap}>Output</div>
       {n.outputs.map(p => <div key={p.id} style={{color: SPEC.typed}}>{p.name} · {typeName(p)}</div>)}

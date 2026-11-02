@@ -48,7 +48,7 @@ let browser;
     execFileSync('python',['-c',`from PIL import Image;a=Image.open(${JSON.stringify(path.join(scratch,name+'-svg.png'))});b=Image.open(${JSON.stringify(path.join(scratch,name+'-app.png'))});o=Image.new('RGB',(a.width+b.width,max(a.height,b.height)));o.paste(a,(0,0));o.paste(b,(a.width,0));o.save(${JSON.stringify(path.join(proof,name+'.png'))})`],{env,windowsHide:true});
     await page.setViewportSize({width:1440,height:893});
     await page.screenshot({path:path.join(proof,name+'-1440.png')});
-    const measure=await page.evaluate(()=>({viewport:window.innerWidth,document:document.documentElement.scrollWidth,main:[...document.querySelectorAll('[data-screen^="settings/"]>main,.settings-sheet,.docs-article')].map(e=>({width:e.clientWidth,scroll:e.scrollWidth}))}));
+    const measure=await page.evaluate(()=>({viewport:window.innerWidth,document:document.documentElement.scrollWidth,main:[...document.querySelectorAll('[data-screen^="settings/"]>main,.settings-sheet,.library-shelf,.docs-article')].map(e=>({width:e.clientWidth,scroll:e.scrollWidth}))}));
     assert.ok(measure.document<=1440,JSON.stringify(measure));
     assert.ok(measure.main.every(e=>e.scroll<=e.width),JSON.stringify(measure));
     metrics.push({name,...measure});await page.setViewportSize({width:1680,height:893});
@@ -68,6 +68,92 @@ let browser;
     await page.getByRole('table',{name:'Router requests'}).waitFor({});
     assert.equal(await page.getByRole('table',{name:'Router requests'}).locator('tfoot').innerText(),'Total\t0\tNot reported\tNot measured');
     await page.screenshot({path:path.join(proof,'settings-agents.png')});
+  }
+  if(stage==='library'){
+    await page.evaluate(()=>window.ArchHubAPI.setLibraryCollapsed([]));
+    await page.getByRole('button',{name:'Canvas',exact:true}).click();
+    const shelf=page.getByRole('complementary',{name:'Library shelf'});
+    if(!await shelf.isVisible()){
+      await page.getByRole('button',{name:'More canvas actions'}).click();
+      await page.getByRole('button',{name:'Show Library',exact:true}).click();
+    }
+    await shelf.waitFor();
+    const first=shelf.locator('.shelf-category').first();
+    await first.click();
+    await page.waitForFunction(()=>document.querySelector('.shelf-category')?.getAttribute('aria-expanded')==='false');
+    assert.equal(await first.getAttribute('aria-expanded'),'false');
+    await page.getByRole('button',{name:'Settings',exact:true}).click();
+    await page.getByRole('button',{name:'Canvas',exact:true}).click();
+    assert.equal(await shelf.locator('.shelf-category').first().getAttribute('aria-expanded'),'false');
+    await page.reload();await page.waitForSelector('.app-window');
+    await page.getByRole('button',{name:'Canvas',exact:true}).click();
+    if(!await shelf.isVisible()){
+      await page.getByRole('button',{name:'More canvas actions'}).click();
+      await page.getByRole('button',{name:'Show Library',exact:true}).click();
+    }
+    assert.equal(await shelf.locator('.shelf-category').first().getAttribute('aria-expanded'),'false');
+    await shelf.locator('.shelf-category').first().click();
+    await page.waitForFunction(()=>document.querySelector('.shelf-category')?.getAttribute('aria-expanded')==='true');
+    const previous=await page.evaluate(()=>window.ArchHubAPI.getSnapshot().graph.id);
+    await shelf.getByRole('button',{name:'New canvas session',exact:true}).click();
+    await page.waitForFunction(id=>window.ArchHubAPI.getSnapshot().graph.id!==id,previous);
+    const catalogue=await page.evaluate(()=>window.ArchHubAPI.getSnapshot().catalogue.map(row=>({id:row.id,name:row.name})));
+    const operation=catalogue.find(row=>/^(Filter|Add|Format|Text)$/i.test(row.name))||catalogue.find(row=>!/(Number|Temperature|Dataset|Field)/i.test(row.name));
+    assert.ok(operation,'The real node catalogue must be available');
+    await page.evaluate(id=>window.ArchHubAPI.addNode(id,{x:360,y:120}),operation.id);
+    const addParameter=page.getByRole('button',{name:/Add parameter to/}).first();
+    if(await addParameter.count()){
+      await addParameter.click();
+      const min=page.getByRole('spinbutton',{name:'Parameter min',exact:true}),max=page.getByRole('spinbutton',{name:'Parameter max',exact:true});
+      assert.equal(await min.inputValue(),'');assert.equal(await max.inputValue(),'');
+      await page.getByRole('textbox',{name:'Parameter name',exact:true}).fill('Limit');
+      await page.getByRole('spinbutton',{name:'Parameter value',exact:true}).fill('0');
+      await min.fill('-5');await max.fill('10');
+      await page.getByRole('button',{name:'Add parameter',exact:true}).click();
+      await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().graph.nodes.some(node=>node.paramDefs?.some(def=>def.name==='Limit'&&def.min===-5&&def.max===10)));
+      const another=page.getByRole('button',{name:/Add parameter to/}).first();await another.click();
+      await page.getByRole('textbox',{name:'Parameter name',exact:true}).fill('Unbounded');
+      await page.getByRole('spinbutton',{name:'Parameter value',exact:true}).fill('-17');
+      await page.getByRole('button',{name:'Add parameter',exact:true}).click();
+      await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().graph.nodes.some(node=>node.paramDefs?.some(def=>def.name==='Unbounded'&&def.min===undefined&&def.max===undefined)));
+    }else throw Error('The selected operation must expose the real Add parameter editor');
+    const numberId=await page.evaluate(async()=>{
+      const node=await window.ArchHubAPI.addNode('n_number',{x:680,y:120});
+      await window.ArchHubAPI.setNodeParam(node.id,'value',0);
+      await window.ArchHubAPI.runNode(node.id);
+      return node.id;
+    });
+    const numberCard=page.locator(`.react-flow__node[data-id="${numberId}"]`);
+    await numberCard.waitFor();
+    const minimum=numberCard.getByRole('spinbutton',{name:'Number min',exact:true});
+    const maximum=numberCard.getByRole('spinbutton',{name:'Number max',exact:true});
+    assert.equal(await minimum.inputValue(),'');assert.equal(await maximum.inputValue(),'');
+    await minimum.fill('-5');
+    await page.waitForFunction(id=>window.ArchHubAPI.getSnapshot().graph.nodes.find(node=>node.id===id).params.min===-5,numberId);
+    await maximum.fill('10');
+    await page.waitForFunction(id=>window.ArchHubAPI.getSnapshot().graph.nodes.find(node=>node.id===id).params.max===10,numberId);
+    await minimum.clear();
+    await page.waitForFunction(id=>window.ArchHubAPI.getSnapshot().graph.nodes.find(node=>node.id===id).params.min===null,numberId);
+    await maximum.clear();
+    await page.waitForFunction(id=>window.ArchHubAPI.getSnapshot().graph.nodes.find(node=>node.id===id).params.max===null,numberId);
+    assert.equal(await numberCard.locator('[data-parameter="value"]').count(),1);
+    assert.equal(await numberCard.locator('[data-port-row="in"]').count(),0);
+    assert.equal(await numberCard.locator('[data-node-result]').count(),0);
+    assert.equal(await numberCard.locator('[data-node-status]').filter({hasText:'Done'}).count(),0);
+    const linked=await page.evaluate(async source=>{
+      const api=window.ArchHubAPI;
+      const parameter=await api.addNode('n_number',{x:1040,y:120});
+      const input=await api.addNode('n_number',{x:680,y:390});
+      await api.connectSockets({from:source,fromPort:'value',to:parameter.id,toPort:'param:value'});
+      await api.connectSockets({from:source,fromPort:'value',to:input.id,toPort:'value'});
+      await api.setNodeParam(source,'value',7);await api.runNode();
+      return [parameter.id,input.id];
+    },numberId);
+    const wired=await page.evaluate(ids=>ids.map(id=>window.ArchHubAPI.getSnapshot().graph.nodes.find(node=>node.id===id).output.value),linked);
+    assert.deepEqual(wired,[7,7]);
+    for(const id of linked)assert.equal(await page.locator(`.react-flow__node[data-id="${id}"] [data-node-result]`).count(),1);
+    assert.equal(await page.locator('.react-flow__edge').count(),2);
+    await capture('library','archhub-current-canvas-full-nodes.svg');
   }
   console.log(JSON.stringify({stage,metrics,errors},null,2));
   fs.writeFileSync(path.join(proof,stage+'-checks.json'),JSON.stringify({stage,metrics,errors},null,2));

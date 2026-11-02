@@ -9430,7 +9430,17 @@
         "tests_replica/test_autoupd.py",
         "tests_replica/test_quiet_update.py",
         "tests_replica/test_updatequiet.py",
-        "docs/CATALOGUE.md"
+        "docs/CATALOGUE.md",
+        "01.APP/nodelang/host_addin_retarget.py",
+        "01.APP/nodelang/host_broker_installation.py",
+        "01.APP/nodelang/autocad_broker_installation.py",
+        "02.TESTS/tests_replica/host_staging_harness.iss",
+        "02.TESTS/tests_replica/test_fresh_machine_host_brokers.py",
+        "02.TESTS/tests_replica/test_host_broker_installation.py",
+        "02.TESTS/tests_replica/test_installer_locked_host_files.py",
+        "03.TOOLS/installer/build_host_bridges.ps1",
+        "03.TOOLS/installer/host_file_staging.iss",
+        "02.TESTS/tests_replica/test_hangfix_one_launcher.py"
       ]
     }
   }

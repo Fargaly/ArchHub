@@ -96,6 +96,36 @@ def test_pii_going_public_is_refused(env):
     assert d["verdict"] == "refuse"
 
 
+def test_python_del_of_a_name_is_not_a_file_delete(env):
+    home = Path(env["USERPROFILE"])
+    project = home / "00.ARCHUB" / "10.PRODUCT"
+    new_file = str(project / "fresh.txt")
+    commands = [
+        "python -c \"x = 1; del x; open(r'%s', 'w').write('new')\"" % new_file,
+        "python - <<'PY'\nx = 1\ndel x\nopen(r'%s', 'w').write('new')\nPY" % new_file,
+        "x = 1\ndel x\nopen(r'%s', 'w').write('new')\n" % new_file,
+        "python -c @\"\nx = 1\ndel x\nopen(r'%s', 'w').write('new')\n\"@" % new_file,
+    ]
+    for command in commands:
+        decision = call(env, "PowerShell", {"command": command}, cwd=str(project))
+        assert decision["action"] != "delete", (command, decision)
+        assert "delete-founder-data" not in decision["rules"]
+        assert decision["verdict"] == "allow", (command, decision)
+
+
+def test_file_removal_of_a_project_file_is_refused(env):
+    home = Path(env["USERPROFILE"])
+    kept = str(home / "00.ARCHUB" / "10.PRODUCT" / "kept.txt")
+    commands = [
+        "python -c \"import os; os.remove(r'%s')\"" % kept,
+        "python -c \"from pathlib import Path; Path(r'%s').unlink()\"" % kept,
+    ]
+    for command in commands:
+        decision = call(env, "PowerShell", {"command": command}, cwd=str(home / "00.ARCHUB"))
+        assert decision["action"] == "delete", (command, decision)
+        assert decision["rules"] == ["delete-founder-data"], (command, decision)
+
+
 def test_delete_founder_data_refused_temp_delete_allowed(env):
     home = Path(env["USERPROFILE"])
     d = call(env, "PowerShell", {"command": 'Remove-Item -Recurse "%s"' % (home / "00.ARCHUB" / "40.DATA")})
@@ -227,6 +257,73 @@ def test_lethal_trifecta_refused_after_private_and_untrusted_reads(env):
     call(env, "WebFetch", {"url": "https://example.com"}, session="tri")
     d = call(env, "mcp__slack__slack_send_message", {"text": "summary attached"}, session="tri")
     assert "lethal-trifecta" in d["rules"]
+
+
+@needs_scanner
+def test_founder_own_workspace_table(env):
+    """His identity on his own Notion is allowed. Client data, secrets and the real trifecta stay refused."""
+    token = fake_github_token()
+    brand = ("IDENTITY SYSTEM — Ahmed Fargaly. Colours: ink and paper. Font: Newsreader. "
+             "Writing: short sentences. Source folder 60.PERSONAL/identity.")
+    table = [
+        ("a", [
+            ("Read", {"file_path": "C:/Users/fargaly/00.ARCHUB/60.PERSONAL/identity/brand.md"}),
+            ("notion-fetch", {"id": "identity-system-ahmed-fargaly"}),
+            ("WebFetch", {"url": "https://fonts.google.com/specimen/Newsreader"}),
+            ("notion-update-page", {
+                "page_id": "identity-system-ahmed-fargaly",
+                "command": "update_content",
+                "content_updates": [{"old_str": "Colours", "new_str": brand}],
+            }),
+        ], "allow"),
+        ("b", [
+            ("notion-update-page", {
+                "page_id": "https://studio.notion.site/Public-credits",
+                "command": "replace_content",
+                "new_str": "Excerpt from C:/Users/fargaly/00.ARCHUB/20.CLIENTS/TOWER-A/fees.xlsx: retainer line.",
+            }),
+        ], "client-data-going-public"),
+        ("c", [
+            ("notion-update-page", {
+                "page_id": "identity-system-ahmed-fargaly",
+                "command": "update_content",
+                "content_updates": [{"old_str": "token", "new_str": token}],
+            }),
+        ], "secret-going-public"),
+        ("d", [
+            ("send", {"to": "717", "text": "Workshop report: the notes live in 60.PERSONAL/identity."}),
+        ], "allow"),
+        ("e", [
+            ("Read", {"file_path": "C:/Users/fargaly/00.ARCHUB/60.PERSONAL/identity/brand.md"}),
+            ("WebFetch", {"url": "https://example.com/specimen"}),
+            ("mcp__slack__slack_send_message", {"channel": "#public", "text": "notes attached"}),
+        ], "lethal-trifecta"),
+        ("assets", [
+            ("Read", {"file_path": "C:/Users/fargaly/00.ARCHUB/60.PERSONAL/identity/design-system/assets/signature.png"}),
+            ("WebFetch", {"url": "https://fonts.google.com/specimen/Newsreader"}),
+            ("notion-update-page", {
+                "page_id": "identity-system-ahmed-fargaly",
+                "command": "update_content",
+                "content_updates": [{"old_str": "Signature",
+                                     "new_str": "Signature C:/Users/fargaly/00.ARCHUB/60.PERSONAL/identity/design-system/assets/signature.png "
+                                                "font C:/Users/fargaly/00.ARCHUB/60.PERSONAL/identity/design-system/assets/Newsreader.otf"}],
+            }),
+            ("notion-upload-file", {
+                "page_id": "identity-system-ahmed-fargaly",
+                "file_path": "C:/Users/fargaly/00.ARCHUB/60.PERSONAL/identity/design-system/assets/signature.png",
+            }),
+        ], "allow"),
+    ]
+    for name, steps, expect in table:
+        decision = None
+        for tool, data in steps:
+            decision = call(env, tool, data, session="own-" + name)
+            if expect == "allow":
+                assert decision["verdict"] == "allow" and not decision["rules"], (name, tool, decision)
+        if expect != "allow":
+            assert decision["verdict"] == "refuse" and expect in decision["rules"], (name, decision)
+        if name == "c":
+            assert token not in json.dumps(decision)
 
 
 def test_loop_is_organized_never_blocked(env):

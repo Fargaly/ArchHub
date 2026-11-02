@@ -97,10 +97,39 @@ def _delivery_cursor(history, row):
         "json_extract(workshop_delivery_cursors.record,'$.since')", (row["session"], json.dumps(payload)))
 
 
-def agent_addressed(message):
+# A room post is visible to every reader. It names nobody, so it is injected into nobody.
+_ROOM_TARGETS = {"", "*", "everyone", "all", "room", "workshop", "founder", "ahmed", "you"}
+_GENERIC_ALIASES = {"claude", "claude code", "codex", "opencode", "cursor", "copilot", "grok", "gemini",
+                    "goose", "antigravity", "antigravity ide", "mcp"}
+
+
+def project_of(cwd, paths=()):
+    """ArchHub product is ArchHub. A client workspace (BBC4/Borouge) is its own project."""
+    places = [str(cwd or "")] + [str(path) for path in paths or ()]
+    segments = []
+    for place in places:
+        segments.extend(part for part in place.replace("\\", "/").casefold().split("/") if part)
+    if "bbc4" in segments or "borouge" in segments:
+        return "BBC4"
+    if "10.product" in segments or "00.archub" in segments or "archhub" in segments:
+        return "ArchHub"
+    for place in places:
+        name = Path(place.replace("\\", "/")).name
+        if name:
+            return name
+    return "ArchHub"
+
+
+def _header_targets(message):
     header, separator, _body = message.get("content", "").partition("\n")
-    return bool(separator and header.startswith("To ") and header.endswith(":")
-        and any(target.strip().casefold() not in ("", "founder") for target in header[3:-1].split(",")))
+    if not separator or not header.startswith("To ") or not header.endswith(":"):
+        return []
+    return [target.strip() for target in header[3:-1].split(",")]
+
+
+def agent_addressed(message):
+    """True only when the note names a specific agent. '*' and a bare status name nobody."""
+    return any(target.casefold() not in _ROOM_TARGETS for target in _header_targets(message))
 
 
 def _aliases(identity, declaration=None):
@@ -122,15 +151,50 @@ def _aliases(identity, declaration=None):
 def _addressed(message, identity, declaration=None):
     if message.get("category") != CATEGORY or message.get("author") == identity.get("sender"):
         return False
-    header, separator, _body = message.get("content", "").partition("\n")
-    if not separator or not header.startswith("To ") or not header.endswith(":"):
-        return False
     declaration = declaration or {}
     aliases = _aliases(identity, declaration)
     native = str(declaration.get("native_session_id") or "").casefold()
-    return any(target.strip().casefold() in aliases | {"*"} or
-        (re.fullmatch(r"[0-9a-f]{3,}", target.strip().casefold()) is not None
-         and native.startswith(target.strip().casefold())) for target in header[3:-1].split(","))
+    return any(target.casefold() not in _ROOM_TARGETS and (target.casefold() in aliases or
+        (re.fullmatch(r"[0-9a-f]{3,}", target.casefold()) is not None
+         and native.startswith(target.casefold()))) for target in _header_targets(message))
+
+
+def _personal_aliases(identity, declaration=None):
+    """Names that pick this agent out, not the runtime shared with every session of that app."""
+    return {alias for alias in _aliases(identity, declaration) if alias not in _GENERIC_ALIASES}
+
+
+def _personally_addressed(message, identity, declaration=None):
+    declaration = declaration or {}
+    aliases = _personal_aliases(identity, declaration)
+    native = str(declaration.get("native_session_id") or "").casefold()
+    return any(target.casefold() not in _ROOM_TARGETS and (target.casefold() in aliases or
+        (re.fullmatch(r"[0-9a-f]{3,}", target.casefold()) is not None
+         and native.startswith(target.casefold()))) for target in _header_targets(message))
+
+
+def _message_project(message):
+    return str((_routing(message) or {}).get("project") or "")
+
+
+def _room_visible(message, identity, declaration):
+    """Another project's notes stay out of this room unless they name this agent."""
+    project = _message_project(message)
+    caller = str((declaration or {}).get("project") or "")
+    if project and caller and project != caller and not _personally_addressed(message, identity, declaration):
+        return False
+    return True
+
+
+def _deliver_to(message, identity, declaration=None):
+    """Inject only a note that names this agent. Another project's note must name this agent, not its app."""
+    if not _addressed(message, identity, declaration):
+        return False
+    message_project = _message_project(message)
+    caller = str((declaration or {}).get("project") or "")
+    if not message_project or not caller or message_project == caller:
+        return True
+    return _personally_addressed(message, identity, declaration)
 
 
 def _declaration(history, identity, runtime=None):
@@ -175,6 +239,9 @@ def _asks_for_reply(message):
         r"[^\n]*?(?:[.!?؟](?:[ \t]+|$)|$)",
         "", body, flags=re.IGNORECASE | re.MULTILINE)
     # shortcut: lexical requests; add a replay court and marker for each missed ask.
+    plain = " ".join(body.split()).strip(" .!")
+    if re.fullmatch(r"(?i)(ack|acknowledged|noted|got it|received|thanks|thank you|ok|okay|seen)", plain or ""):
+        return False
     return "?" in body or "؟" in body or bool(re.search(
         r"\b(?:please|kindly)\b|\blet[ \t]+me[ \t]+know\b|\byour[ \t]+task[ \t]*:|"
         r"من[ \t]+فضلك|لو[ \t]+سمحت|\bممكن\b|\b(?:can|could|would|will)[ \t]+you\b|"
@@ -193,8 +260,10 @@ def _asks_for_reply(message):
 
 
 def _recipient_rows(message, declarations):
-    """Runtime mentions broadcast; shortened native IDs must resolve uniquely."""
-    targets = [value.strip().casefold() for value in message["content"].split("\n", 1)[0][3:-1].split(",")]
+    """Each named agent, and only that agent. A room post and an unknown name match nobody."""
+    if not agent_addressed(message):
+        return []
+    targets = [value.casefold() for value in _header_targets(message) if value.casefold() not in _ROOM_TARGETS]
     ambiguous = {target for target in targets if re.fullmatch(r"[0-9a-f]{3,}", target)
         and len({row.get("native_session_id") for row in declarations
             if str(row.get("native_session_id") or "").casefold().startswith(target)}) > 1}
@@ -202,10 +271,20 @@ def _recipient_rows(message, declarations):
         message = {**message, "content":"To " + ", ".join(target for target in targets if target not in ambiguous)
             + ":\n" + message["content"].partition("\n")[2]}
     author = str(message.get("author") or "")
-    return [row for row in declarations if row.get("current")
+    matched = [row for row in declarations if row.get("current")
         and "[" + row["session"] + "]" not in author and _addressed(message,
         {"sender":row["agent"] + " [" + row["session"] + "]", "sender_label":row["agent"],
          "sender_key":row["session"]}, row)]
+    project = _message_project(message)
+    if not project:
+        return matched
+    kept = []
+    for row in matched:
+        identity = {"sender": row["agent"] + " [" + row["session"] + "]", "sender_label": row["agent"],
+                    "sender_key": row["session"]}
+        if str(row.get("project") or "") in ("", project) or _personally_addressed(message, identity, row):
+            kept.append(row)
+    return kept
 
 
 def _reply_recipients(history, message, identity, declaration, declarations, reply=None):
@@ -327,7 +406,7 @@ def _pending(history, identity, runtime):
             (identity["sender_key"],)).fetchone()
         since = json.loads(cursor[0])["since"] if cursor else 0
     native = str(declaration.get("native_session_id") or "").casefold()
-    aliases = sorted({value.replace(" ", "").replace("\t", "") for value in _aliases(identity, declaration) | {"*"}}
+    aliases = sorted({value.replace(" ", "").replace("\t", "") for value in _aliases(identity, declaration)}
         | {native[:length] for length in range(3, len(native) + 1) if re.fullmatch(r"[0-9a-f]+", native[:length])})
     header = "replace(replace(lower(substr(content,4,instr(content,char(10))-5)),' ',''),char(9),'')"
     marks = ",".join("?" for _ in aliases)
@@ -344,6 +423,8 @@ def _pending(history, identity, runtime):
     with closing(cursor):
         for raw in cursor:
             message = history._message(raw)
+            if not _deliver_to(message, identity, declaration):
+                continue
             if not _can_ack(history, message, identity, declaration, declarations):
                 continue
             all_events = delivery_events(history, message)
@@ -623,20 +704,17 @@ class WorkshopInjection:
                 "runtime":row["runtime"], "native_session_id":row.get("native_session_id")}
                 for row in snapshots]
             if not snapshots:
-                unresolved = any(key.startswith("address:") for key in recorded)
-                recipients = routing["recipients"] if routing else []
-                if not recipients:
+                if routing is not None:
+                    recipients = list(routing.get("recipients") or [])
+                elif agent_addressed(message):
                     recipients = _recipient_rows(message, [row for row in declarations
-                        if unresolved or row["updated_at"] <= message["created_at"]])
-                if not recipients and message["content"].split("\n", 1)[0].casefold() == "to 717:":
-                    recipients = self._coordinator(declarations)
+                        if row.get("updated_at", "") <= message["created_at"]])
+                else:
+                    recipients = []
                 with history._transaction(write=True):
                     for row in recipients:
                         _delivery_receipt(history, message, row, "addressed", now=now,
                             runtime=row["runtime"], native_session_id=row.get("native_session_id"))
-            if not recipients:
-                target = message["content"].split("\n", 1)[0][3:-1]
-                recipients = [{"session":"address:" + target.casefold(), "agent":target, "runtime":"mcp"}]
             controls = [events["native-control"] for events in recorded.values() if "native-control" in events]
             asks_for_reply = _asks_for_reply(message)
             settled = True
@@ -818,6 +896,7 @@ def _declare(history, body, context, identity, runtime, peer, native_session):
     root = ROOM + ":declaration:" + sha256(native_session.encode()).hexdigest()
     row = {"root": root, "agent": identity["sender_label"], "session": identity["sender_key"],
            "task": task.strip(), "request_id": request.strip(), "paths": paths, "status": body["status"],
+           "project": project_of(getattr(peer, "cwd", ""), paths), "cwd": str(getattr(peer, "cwd", "") or ""),
            "runtime": runtime, "app": runtime, "native_session_id": next(iter(context.values()), None),
            "pid": peer.pid, "created_at": peer.created_at, "process_lineage": _lineage(peer),
            # A CLI runtime first; else the agent app above it (Grok Bot runs every tool call as a one-shot process).
@@ -848,7 +927,7 @@ def _declare(history, body, context, identity, runtime, peer, native_session):
     if row["request_id"] != "unassigned":
         from .workshop_tasks import declared
         declared(history, root, row["request_id"], row["task"], row["status"],
-                 identity["sender_key"], identity["sender_label"])
+                 identity["sender_key"], identity["sender_label"], row["project"])
     notices = []
     if changed and row["status"] != "done" and row["request_id"] != "unassigned":
         for other in read_declarations(history._db):
@@ -887,7 +966,11 @@ def _read(history, body, identity, runtime=None):
               "declarations_more": False, "declarations_after": ""}
     # Reserve cursor/count space once; each row is serialized once.
     size = len(json.dumps(result).encode()) + 1024
+    caller = _declaration(history, identity, runtime)
     for message in messages:
+        if not _room_visible(message, identity, caller):
+            result["next_since"] = message["sequence"]
+            continue
         row_size = len(json.dumps(message).encode()) + 2
         if size + row_size > 240000:
             if not result["messages"]:
@@ -1087,6 +1170,9 @@ def _deliver_now(database, result, body, identity):
         recipients = [row for row in (_routing(message) or {}).get("recipients", [])
                       if row.get("session") != identity["sender_key"]]
         founder = body["to"].strip().casefold() in ("ahmed", "founder", "you")
+        parts = {part.strip().casefold() for part in body["to"].split(",") if part.strip()}
+        if parts and parts <= _ROOM_TARGETS:
+            return []
         if not recipients and not founder:
             # Display names and @handles address agents too (the composer and agents use the same names).
             from .workshop_live import live_agents
@@ -1094,10 +1180,11 @@ def _deliver_now(database, result, body, identity):
             recipients = [{"session": a["session"], "agent": a["name"], "runtime": a["app"],
                            "native_session_id": a["native_session_id"]} for a in live_agents()
                           if a["session"] != identity["sender_key"]
-                          and wanted & {a["name"].casefold(), a["handle"], a["agent"].casefold(), "everyone"}]
+                          and wanted & {a["name"].casefold(), a["handle"], a["agent"].casefold()}]
             if not recipients:
                 from .workshop_live import discover_target
-                recipients = discover_target(body["to"])
+                found = discover_target(body["to"])
+                recipients = found if len(found) == 1 else []
         # The sender passed the agent-session check in call(): one of the founder's own agents, so its message lands
         # mid-turn like his chat does ('prompting' is held for approval in a bypass-mode Claude session).
         rows = deliver(selected, result["message_id"], recipients, identity["sender_label"], body["text"],
@@ -1105,11 +1192,11 @@ def _deliver_now(database, result, body, identity):
         if not recipients and not founder:
             from .workshop_live import SCHEMA
             selected._db.execute(SCHEMA)
-            reason = "No joined agent session matches this name"
+            reason = "No live agent matches this name; returned to the sender"
             selected._db.execute("INSERT OR IGNORE INTO workshop_live_deliveries VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (result["message_id"], body["to"], body["to"], "", "", "none", "failed", reason,
+                (result["message_id"], body["to"], body["to"], "", "", "none", "returned", reason,
                  datetime.now(timezone.utc).isoformat(), 0))
-            rows = [{"agent": body["to"], "state": "failed", "reason": reason}]
+            rows = [{"agent": body["to"], "state": "returned", "reason": reason}]
     return rows
 
 
@@ -1179,14 +1266,17 @@ def _send(history, body, identity, *, queued=(), sender_binding=None):
     target, text, control, reply, retry_key = _validate_send(body)
     retry_key = sha256((identity["sender_key"] + ":" + retry_key).encode()).hexdigest()
     declarations = read_declarations(history._db)
+    sender = _declaration(history, identity)
+    project = sender.get("project") or (sender_binding or {}).get("project") or ""
+    probe = {"content": "To " + target + ":\n" + text, "category": CATEGORY, "author": identity["sender"],
+             "evidence": [ROUTING_EVIDENCE, json.dumps({"project": project})]}
     with history._transaction(write=True):
         routing = {"recipients":[{key: row.get(key) for key in
-            ("session", "agent", "runtime", "native_session_id")} for row in _recipient_rows(
-                {"content":"To " + target + ":\n" + text, "category":CATEGORY,
-                 "author":identity["sender"]}, declarations)],
+            ("session", "agent", "runtime", "native_session_id")} for row in _recipient_rows(probe, declarations)],
+            "project": project,
             "native_control":control,
-            "sender": {key: value for key, value in (sender_binding or _declaration(history, identity)).items()
-                if key in ("session", "runtime", "native_session_id")}}
+            "sender": {key: value for key, value in (sender_binding or sender).items()
+                if key in ("session", "runtime", "native_session_id", "project")}}
         encoded = json.dumps(routing, ensure_ascii=True)
         prior = history._db.execute("SELECT evidence FROM messages WHERE conversation_id=? AND idempotency_key=?",
             (ROOM, retry_key)).fetchone()
@@ -1203,4 +1293,15 @@ def _send(history, body, identity, *, queued=(), sender_binding=None):
             evidence=evidence,
             reply_principal=identity["sender"],
             idempotency_key=retry_key)
+        missing = [] if reply else [part for part in _header_targets(probe) if part.casefold() not in _ROOM_TARGETS
+                   and not _recipient_rows({"content": "To " + part + ":\nx", "category": CATEGORY,
+                       "author": identity["sender"], "evidence": probe["evidence"]}, declarations)]
+        if missing:
+            live = [row["agent"] + " (" + str(row.get("project") or "unassigned") + ")"
+                    for row in declarations if row.get("current")]
+            notice = ("No live agent matches " + ", ".join(missing) + ". Live agents: "
+                      + (", ".join(live) or "none") + ". No reply needed.")
+            history.append(ROOM, author="Workshop", content="To " + identity["sender_label"] + ":\n" + notice,
+                category=CATEGORY, refs=(identity["sender_key"],),
+                idempotency_key="workshop-unresolved:" + retry_key)
         return {**identity, "to": target, "text": text, "message_id": message["id"], "sequence": message["sequence"]}

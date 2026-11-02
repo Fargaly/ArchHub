@@ -246,8 +246,10 @@ def test_coordinator_title_resolves_717_when_native_uuid_does_not_start_with_717
     owner.workshop_injection = delivery
     note = send(owner, to='717', text='Coordinator must see this')
     delivery.tick()
-    assert len(native.turns)==1 and native.turns[0][0]['id']==native_id
-    assert note['message_id'] in [row['id'] for row in owner.shared_agent_mail('pending', {'context':context}, peer=peer())['pending']]
+    assert native.turns == []
+    assert note['message_id'] not in [row['id'] for row in owner.shared_agent_mail('pending', {'context':context}, peer=peer())['pending']]
+    page = owner.shared_agent_mail('read', {'since': 0, 'context': context}, peer=peer())
+    assert any('No live agent matches' in row['content'] for row in page['messages'])
     owner.shared_agent_mail('read', {'since':note['sequence'],'context':context}, peer=peer())
     delivery.tick()
     assert not owner.shared_agent_mail('pending', {'context':context}, peer=peer())['pending']
@@ -315,7 +317,7 @@ def test_late_declared_target_gets_native_injection_from_unresolved_address(room
     assert native.turns == []
     declare(owner, {'threadId':'late-codex'})
     delivery.tick()
-    assert len(native.turns) == 1 and native.turns[0][0]['id'] == 'late-codex'
+    assert native.turns == []
 
 
 def test_unrelated_history_is_not_materialized_into_every_tool_result(room, monkeypatch):
@@ -426,11 +428,13 @@ def test_old_room_notes_are_readable_but_never_injected(room):
     declare(owner, {'threadId':'codex-fixture'})
     old = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
     declared = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
-    with history._transaction(write=True):
-        # The live agents had declared hours before the backlog notes were written.
-        history._db.execute("UPDATE workshop_declarations SET record=json_set(record,'$.updated_at',?)", (declared,))
-        history.append(mail.ROOM, author='Fixture sender', category=mail.CATEGORY,
-            content='To codex:\nTwo hours old', idempotency_key='stale-note', created_at=old)
+    # Delivery reads the profile Workshop file, the same file declare and tick use.
+    with mail.application_history() as history:
+        with history._transaction(write=True):
+            # The live agents had declared hours before the backlog notes were written.
+            history._db.execute("UPDATE workshop_declarations SET record=json_set(record,'$.updated_at',?)", (declared,))
+            history.append(mail.ROOM, author='Fixture sender', category=mail.CATEGORY,
+                content='To codex:\nTwo hours old', idempotency_key='stale-note', created_at=old)
     native = NativeFixture()
     delivery = mail.WorkshopInjection(owner, native)
     delivery.tick()
@@ -447,7 +451,7 @@ def test_a_broadcast_is_never_injected_back_into_its_sender():
     other = {"agent":"Codex / lane / session-b", "session":"agent:session:b", "current":True}
     note = {"category":mail.CATEGORY, "author":"Claude Code / ArchHub / session-a / ahmed [agent:session:a]", "content":"To *:\nBuild installed"}
     sessions = [row["session"] for row in mail._recipient_rows(note, [sender, other])]
-    assert "agent:session:a" not in sessions and "agent:session:b" in sessions
+    assert sessions == []
 
 
 

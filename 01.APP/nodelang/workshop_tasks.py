@@ -6,15 +6,15 @@ A lease that lapses frees the task for the next agent; nothing runs on a timer.
 """
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from uuid import uuid4
 
 SCHEMA = ("CREATE TABLE IF NOT EXISTS workshop_tasks(id TEXT PRIMARY KEY, title TEXT NOT NULL, "
           "status TEXT NOT NULL CHECK(status IN ('open','claimed','done')), owner TEXT, owner_label TEXT, "
           "lease_until REAL, result TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL, "
-          "updated_at TEXT NOT NULL, session_path TEXT) STRICT")
-TASKS_NODE = {'id': 'workshop.tasks', 'params': {'lease_seconds': 900}}
+          "updated_at TEXT NOT NULL, session_path TEXT, purpose TEXT, project TEXT) STRICT")
+TASKS_NODE = {'id': 'workshop.tasks', 'params': {'lease_seconds': 900, 'stale_hours': 24}}
 UI_STATUS = {"open": "PLANNED", "claimed": "WIP", "done": "DONE"}
 
 
@@ -28,6 +28,10 @@ def _ensure(history):
     names = {row[1] for row in history._db.execute("PRAGMA table_info(workshop_tasks)")}
     if "session_path" not in names:
         history._db.execute("ALTER TABLE workshop_tasks ADD COLUMN session_path TEXT")
+    if "purpose" not in names:
+        history._db.execute("ALTER TABLE workshop_tasks ADD COLUMN purpose TEXT")
+    if "project" not in names:
+        history._db.execute("ALTER TABLE workshop_tasks ADD COLUMN project TEXT")
 
 
 def _write(history, sql, values):
@@ -71,20 +75,33 @@ def complete(history, task, owner, result=""):
                   "WHERE id=? AND owner=? AND status='claimed'", (result, _now(), task, owner))
 
 
-def declared(history, root, request_id, title, status, owner, label):
-    """An agent's declare() is its task: working/blocked holds it, done completes it.
+def _declared_id(owner):
+    """One declared task row per agent identity."""
+    return "declared-" + sha256(("agent\0" + owner).encode()).hexdigest()[:32]
 
-    Re-declaring renews the lease; a session that stops declaring lets it lapse.
-    """
-    task = "declared-" + sha256((root + "\0" + request_id).encode()).hexdigest()[:32]
+
+def declared(history, root, request_id, title, status, owner, label, project=""):
+    """One declared task per agent. Re-declare updates it. A new purpose closes the previous one as done."""
+    task = _declared_id(owner)
+    title = _text(title, "title", 2000)
     if status == "done":
         return complete(history, task, owner)
-    _write(history, "INSERT INTO workshop_tasks(id,title,status,created_by,created_at,updated_at) "
-           "VALUES(?,?,'open',?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title WHERE status!='done'",
-           (task, _text(title, "title", 2000), label, _now(), _now()))
-    # Moving to another request gives the previous declared task back to the pool.
-    _write(history, "UPDATE workshop_tasks SET status='open', owner=NULL, owner_label=NULL, lease_until=NULL, "
-           "updated_at=? WHERE owner=? AND status='claimed' AND id LIKE 'declared-%' AND id!=?", (_now(), owner, task))
+    existing = get(history, task)
+    if existing and existing.get("purpose") not in (None, "", request_id):
+        archive = "declared-" + sha256((owner + "\0" + str(existing.get("purpose") or "") + "\0"
+                                        + str(existing.get("created_at") or "")).encode()).hexdigest()[:32]
+        if get(history, archive) is None:
+            _write(history, "INSERT INTO workshop_tasks(id,title,status,owner,owner_label,result,created_by,"
+                   "created_at,updated_at,purpose,project) VALUES(?,?,'done',?,?,?,?,?,?,?,?)",
+                   (archive, existing["title"], existing["owner"], existing["owner_label"], "closed: new purpose",
+                    existing["created_by"], existing["created_at"], _now(), existing.get("purpose"), existing.get("project")))
+        if existing["status"] == "done":
+            _write(history, "UPDATE workshop_tasks SET status='open', owner=NULL, owner_label=NULL, lease_until=NULL, "
+                   "result=NULL, updated_at=? WHERE id=? AND status='done'", (_now(), task))
+    _write(history, "INSERT INTO workshop_tasks(id,title,status,created_by,created_at,updated_at,purpose,project) "
+           "VALUES(?,?,'open',?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title, "
+           "purpose=excluded.purpose, project=excluded.project, updated_at=excluded.updated_at WHERE status!='done'",
+           (task, title, label, _now(), _now(), request_id, project or None))
     return claim(history, task, owner, label)
 
 
@@ -127,13 +144,53 @@ def recorded_result(history, row):
     return text if text else (stored if isinstance(stored, str) else "")
 
 
-def column(history):
-    """The Studio Work rows: a short name, the full declaration as details, and the owner's live state:
-    Working while its session declares working or holds the lease, Needs you while it is blocked, Done when completed."""
+def _bound_messages(history, task):
+    """Messages whose refs name this task. Traffic addressed only to the owner stays out."""
+    from .workshop_mailbox import DELIVERY_AUTHOR, DELIVERY_CATEGORY, ROOM
+    if not history._db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='messages'").fetchone():
+        return []
+    return [{"id": row[0], "who": row[1], "text": row[2]} for row in history._db.execute(
+        "SELECT id, author, content FROM messages WHERE conversation_id=? AND author!=? AND category!=? "
+        "AND EXISTS (SELECT 1 FROM json_each(refs) WHERE value=?) ORDER BY sequence",
+        (ROOM, DELIVERY_AUTHOR, DELIVERY_CATEGORY, task))]
+
+
+def _is_stale(row, declarations, hours):
+    """A declared task whose owner has not been live for `hours`. Never deleted."""
+    if not str(row["id"]).startswith("declared-") or row["status"] == "done":
+        return False
+    mine = [item for item in declarations if item.get("session") == row.get("owner")]
+    if any(item.get("current") for item in mine):
+        return False
+    latest = max([row.get("updated_at") or ""] + [item.get("updated_at") or "" for item in mine])
+    if not latest:
+        return True
+    seen = datetime.fromisoformat(latest)
+    if seen.tzinfo is None:
+        seen = seen.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - seen >= timedelta(hours=hours)
+
+
+def _summary(title, status, result):
+    """One plain line each: what it is, state, latest result, next step."""
+    state = {"WIP": "In progress", "PLANNED": "Planned, not started", "DONE": "Done",
+             "IN REVIEW": "Needs you", "stale": "Stale, not in progress"}.get(status, status)
+    latest = (result or "").split("\n", 1)[0].strip() or "No result yet"
+    nxt = {"stale": "Still searchable; nobody is working on it", "DONE": "Nothing further",
+           "PLANNED": "Not started", "IN REVIEW": "Waiting for a decision"}.get(status, "Keep going")
+    return "\n".join((short_title(title) or "Untitled task", state, latest[:200], nxt))
+
+
+def column(history, project=None, stale_hours=None):
+    """The Studio Work rows. Stale declared work leaves in-progress. A project shows only its own tasks."""
     from .workshop_mailbox import read_declarations
-    live = {"declared-" + sha256((d["root"] + "\0" + d["request_id"]).encode()).hexdigest()[:32]: d["status"]
-            for d in read_declarations(history._db)}
+    hours = TASKS_NODE["params"]["stale_hours"] if stale_hours is None else stale_hours
+    declarations = read_declarations(history._db, include_archived=True)
+    live = {_declared_id(item["session"]): item["status"]
+            for item in declarations if item.get("current") and item.get("session")}
     def state(row):
+        if _is_stale(row, declarations, hours):
+            return "stale"
         if row["status"] == "done":
             return "DONE"
         if live.get(row["id"]) == "blocked":
@@ -142,13 +199,22 @@ def column(history):
             return "WIP"
         return "PLANNED"
     current = _current_session()
-    return [{'id': row['id'], 'title': short_title(row['title']), 'description': row['title'],
+    built = []
+    for row in rows(history):
+        if project and row.get("project") != project:
+            continue
+        shown = state(row)
+        result = recorded_result(history, row)
+        bound = _bound_messages(history, row["id"])
+        built.append({'id': row['id'], 'title': short_title(row['title']), 'description': row['title'],
              'owner': row['owner_label'] if row['id'] in live or not row['lease_expired'] else None,
-             'status': state(row), 'result': recorded_result(history, row),
-             'messages': [], 'steps': [], 'reviews': [], 'queuedMessages': [], 'declarations': [],
+             'status': shown, 'stale': shown == "stale", 'result': result, 'project': row.get('project') or '',
+             'summary': _summary(row['title'], shown, result),
+             'messages': [], 'agentLog': bound, 'steps': [], 'reviews': [], 'queuedMessages': [], 'declarations': [],
              'updated_at': row['updated_at'], 'sessionPath': row.get('session_path'),
-             'sessionOpen': bool(row.get('session_path') and row['session_path'] == current)}
-            for row in rows(history)]
+             'sessionOpen': bool(row.get('session_path') and row['session_path'] == current),
+             'inProgress': shown in ("WIP", "PLANNED", "IN REVIEW")})
+    return built
 
 
 def set_status(history, task, status):
@@ -163,7 +229,7 @@ def set_status(history, task, status):
 
 
 COLUMNS = ("id", "title", "status", "owner", "owner_label", "lease_until", "result",
-           "created_by", "created_at", "updated_at", "session_path")
+           "created_by", "created_at", "updated_at", "session_path", "purpose", "project")
 
 
 def rows(history, task=None):

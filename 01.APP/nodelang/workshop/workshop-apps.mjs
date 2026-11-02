@@ -9,12 +9,12 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import {spawn} from 'node:child_process';
+import {execFileSync,spawn} from 'node:child_process';
 import {agCall} from './extra-apps.mjs';
 import {stateDir} from './paths.mjs';
 
 // The adapters' timings, one place (milliseconds).
-const WORKSHOP_APPS_NODE={id:'workshop.apps',params:{list_ms:5000,send_ms:10000,seat_ms:30000,baboom_ms:10000}};
+const WORKSHOP_APPS_NODE={id:'workshop.apps',params:{list_ms:5000,send_ms:10000,seat_ms:30000,baboom_ms:10000,bridge_gate_ms:2000}};
 const CURSOR_OFF='Cursor Desktop Bridge is off: turn on Settings > Beta > "Allow CLI to access desktop agents" and restart Cursor';
 const alive=pid=>{try{process.kill(pid,0);return true;}catch(e){return e.code==='EPERM';}};
 function records(folder){
@@ -45,9 +45,25 @@ export async function cursorThreads(){
  }
  return out;
 }
+function cursorBridgeGateOff(){
+ // Cursor keeps a server-side gate separate from Settings > Beta. When it is false, listThreads/sendMessage
+ // stay empty even with a live desktop-bridge record and desktopBridgeUserEnabled=true.
+ try{
+  const dbPath=path.join(process.env.APPDATA||path.join(os.homedir(),'AppData','Roaming'),'Cursor','User','globalStorage','state.vscdb');
+  const py=process.env.WORKSHOP_PYTHON;
+  if(!py||!fs.existsSync(dbPath))return false;
+  const script="import sqlite3,sys;c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True);r=c.execute(\"select value from ItemTable where key='cursor.desktopBridge.enabled'\").fetchone();print((r[0].decode() if isinstance(r[0],(bytes,bytearray)) else r[0]) if r else '')";
+  const out=execFileSync(py,['-I','-B','-c',script,dbPath],{timeout:WORKSHOP_APPS_NODE.params.bridge_gate_ms,windowsHide:true,encoding:'utf8'});
+  return String(out).trim().toLowerCase()==='false';
+ }catch(error){
+  process.stderr.write('workshop: Cursor Desktop Bridge gate check failed: '+error.message+'\n');
+  return false;
+ }
+}
 async function injectCursor(recipient,text,onDispatch){
  const found=records(process.env.CURSOR_DESKTOP_BRIDGE_DIR||path.join(os.homedir(),'.cursor','desktop-bridge'));
  if(!found.length)return {status:'not_sent',reason:CURSOR_OFF};
+ if(cursorBridgeGateOff())return {status:'not_sent',reason:'Cursor Desktop Bridge account gate is off (cursor.desktopBridge.enabled=false); user Beta toggle alone cannot open the door'};
  let last='unknown-thread';
  for(const record of found){
   onDispatch();
@@ -117,7 +133,10 @@ async function injectGrok(text,messageId,onDispatch){
  return r.ok?{status:'injected',note:'started its Workshop routine'}:{status:'not_sent',reason:'Grok routine webhook answered HTTP '+r.status};
 }
 export async function injectApp(recipient,text,messageId,onDispatch){
- if(recipient.app==='cursor'&&!(recipient.pids||[]).length)return injectCursor(recipient,text,onDispatch);
+ // Cursor Desktop Bridge is the only inbound door for GUI Cursor. Pids on the declaration are the
+ // Cursor.exe host process, not a console seat; routing those pids into injectSeat caused
+ // console_unavailable and blocked Workshop delivery into Cursor chats.
+ if(recipient.app==='cursor')return injectCursor(recipient,text,onDispatch);
  if(['antigravity','antigravity-ide'].includes(recipient.app))return injectAntigravity(recipient,text,onDispatch);
  if(recipient.app==='archhub')return injectArchHub(recipient,text,messageId,onDispatch);
  if(recipient.app==='grok')return injectGrok(text,messageId,onDispatch);

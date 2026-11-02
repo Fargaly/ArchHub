@@ -57,8 +57,33 @@ class Supervisor:
         child.stdin.write(line + b"\n")
         child.stdin.flush()
 
+    def _stop_child(self, child):
+        """Reap one connector so a restart never leaves an orphan holding the install."""
+        if child is None:
+            return
+        try:
+            if child.stdin is not None:
+                child.stdin.close()
+        except OSError as error:
+            print("ArchHub MCP supervisor: connector stdin close failed: %s" % error, file=sys.stderr, flush=True)
+        try:
+            child.terminate()
+            child.wait(2)
+            return
+        except (OSError, subprocess.TimeoutExpired) as error:
+            print("ArchHub MCP supervisor: connector terminate failed: %s; killing" % error, file=sys.stderr, flush=True)
+        try:
+            child.kill()
+            child.wait(2)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            print("ArchHub MCP supervisor: connector kill failed: %s" % error, file=sys.stderr, flush=True)
+            raise
+
     def start_child(self):
         """Start the connector and replay the agent's handshake into it. False when it could not start."""
+        with self.lock:
+            previous, self.child = self.child, None
+        self._stop_child(previous)  # Cursor can open many MCP hosts; never stack connectors under one supervisor
         try:
             child = subprocess.Popen(self.command, env=self.env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                      stderr=None, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))

@@ -853,23 +853,40 @@ def _desktop_running() -> bool:
     return False
 
 
+_MAINTAINER_MUTEX = None
+
+
 def _claim_maintainer(app_dir: Path) -> bool:
-    """One maintainer per install. A second start leaves the first running."""
+    """One maintainer per install. A second start leaves the first running.
+
+    A failed claim does not start another copy. The handle stays open for
+    the life of this process so the mutex is not abandoned while it runs.
+    """
+    global _MAINTAINER_MUTEX
     if os.name != "nt":
         return True
     import ctypes
+    from ctypes import wintypes
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
-    kernel.CreateMutexW.restype = ctypes.c_void_p
+    kernel.SetLastError.argtypes = [wintypes.DWORD]
+    kernel.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, ctypes.c_wchar_p]
+    kernel.CreateMutexW.restype = wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
     name = "Local\\ArchHub.UpdateMaintain." + hashlib.sha256(
         os.path.normcase(str(Path(app_dir).resolve())).encode("utf-8")).hexdigest()[:16]
+    kernel.SetLastError(0)
     handle = kernel.CreateMutexW(None, True, name)
     if not handle:
-        return True
-    if ctypes.get_last_error() == 183:
-        kernel.CloseHandle(ctypes.c_void_p(handle))
         return False
-    _claim_maintainer.handle = handle
+    if ctypes.get_last_error() == 183:
+        waited = kernel.WaitForSingleObject(handle, 0)
+        if waited not in (0, 0x80):
+            kernel.CloseHandle(handle)
+            return False
+    _MAINTAINER_MUTEX = handle
     return True
 
 

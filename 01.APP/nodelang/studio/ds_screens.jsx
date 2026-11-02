@@ -232,12 +232,12 @@
     if (n.type === 'host.exec') return <HostExecNode n={n} selected={selected} headerProps={headerProps} renderPort={renderPort} />;
     if (n.type === 'connector.call') return <ConnectorActionNode n={n} selected={selected} headerProps={headerProps} renderPort={renderPort} />;
     return <D.Node className="lm-node" data-category={family} data-node-state={spec ? specFoot.split(' · ')[0] : undefined} data-spec={spec ? n.dataset ? 'dataset' : 'node' : undefined}
-      w={spec ? n.dataset ? 478 : 156 : n.dataset ? 340 : 224} glyph={<window.AHIcon name={icon} size={12} />} gc={color}
+      w={spec ? n.dataset ? 340 : 156 : n.dataset ? 340 : 224} glyph={<window.AHIcon name={icon} size={12} />} gc={color}
       title={n.title} sub={grouped ? `group · ${(members || []).length} members` : category?.name || n.assembly || n.kind}
       style={spec ? {background:frame ? SPEC.panel : SPEC.node,border:frame ? 0 : '1px solid '+specColor,borderRadius:frame ? 12 : 8} : {borderTop:'2px solid '+color}} stacked={grouped}
       edge={spec ? undefined : !n.inputs.length && n.outputs.length ? 'l' : n.inputs.length && !n.outputs.length ? 'r' : undefined}
       selected={selected} run={!spec && /running/i.test(state)} dashed={!spec && n.frozen}
-      foot={spec ? <span title={n.error || state}>{specFoot}</span> : <span title={state}>{foot + (n.error ? ' · '+n.error : '') + (n.elapsedMs ? ' · ' + n.elapsedMs + ' ms' : '')}</span>} footc={spec ? specColor : stateColor}
+      foot={spec ? (specFoot === 'Done' ? null : <span title={n.error || state}>{specFoot}</span>) : (/^done\b/i.test(foot) ? null : <span title={state}>{foot + (n.error ? ' · '+n.error : '') + (n.elapsedMs ? ' · ' + n.elapsedMs + ' ms' : '')}</span>)} footc={spec ? specColor : stateColor}
       ins={spec ? n.inputs.filter(p=>!(renderSocket && shownKeys.includes(p.id))) : n.inputs} outs={n.outputs} renderPort={renderPort} portsAfterContent={spec}
       headerProps={{...headerProps,style:spec ? headerProps?.style : {borderTop:'2px solid '+color,borderBottom:'1px solid '+A.lineSoft,...headerProps?.style}}}
       headerEnd={<>{typeof n.pure === 'boolean' && <span data-node-pure={String(n.pure)} style={{fontSize:10,color:n.pure ? A.inkSoft : A.warn}}
@@ -343,15 +343,20 @@
         onChange={e => setDrafts(old => ({...old, [key]: e.target.value}))} onBlur={e => Object.hasOwn(drafts, key) && save(e.target.value)}
         onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }} />;
     };
-    return <div data-dataset-editor onPointerDown={e => e.stopPropagation()} style={{gridTemplateColumns: `repeat(${fields.length}, minmax(0,1fr)) 80px`}}>
-      {fields.map(f => <button key={f.id} type="button" className="button-reset" data-field={f.id} data-exposed={exposed(f) || undefined} aria-label={'Show field ' + f.name + ' as node'}
-        title={exposed(f) ? 'Shown as node' : 'Show as node: the whole column as a typed list'} onClick={event => executeAction('projects.controls.activate', {handler: () => exposed(f) || u.act(() => api.exposeDatasetField(n.id, f.id))}, event)}>
-        {typeGlyph(f.type) && typeGlyph(f.type) + ' '}{f.name}{exposed(f) ? ' ↗' : ''}</button>)}
-      <button type="button" className="button-reset" data-dataset-link aria-label={'Add field to ' + n.title} onClick={event => executeAction('projects.controls.activate', {handler: () => setAdding(!adding)}, event)}>+ Field</button>
-      {records.map((r, index) => <React.Fragment key={r.id}>{fields.map(f => <span key={f.id} data-record={index} data-cell-type={f.type} data-exposed={exposed(f) || undefined}>{cell(index, f)}</span>)}<span data-record={index} /></React.Fragment>)}
-      {fields.map((f, i) => <small key={f.id}>{i === 0 && <button type="button" className="button-reset" data-dataset-link aria-label={'Add record to ' + n.title} disabled={!fields.length}
-        onClick={event => executeAction('projects.controls.activate', {handler: () => u.act(() => api.addDatasetRecord(n.id))}, event)}>+ Record</button>}{f.unit}</small>)}
-      {!fields.length && <small />}<small />
+    const columns = fields.map(fieldWidth).join('px ') + (fields.length ? 'px ' : '') + '80px';
+    return <div data-dataset-editor onPointerDown={e => e.stopPropagation()}>
+      <div data-dataset-grid style={{gridTemplateColumns: columns}}>
+        {fields.map(f => <button key={f.id} type="button" className="button-reset" data-field={f.id} data-exposed={exposed(f) || undefined} aria-label={'Show field ' + f.name + ' as node'}
+          title={exposed(f) ? 'Shown as node' : 'Show as node: the whole column as a typed list'} onClick={event => executeAction('projects.controls.activate', {handler: () => exposed(f) || u.act(() => api.exposeDatasetField(n.id, f.id))}, event)}>
+          {typeGlyph(f.type) && typeGlyph(f.type) + ' '}{f.name}{exposed(f) ? ' ↗' : ''}</button>)}
+        <button type="button" className="button-reset" data-dataset-link aria-label={'Add field to ' + n.title} onClick={event => executeAction('projects.controls.activate', {handler: () => setAdding(!adding)}, event)}>+ Field</button>
+        {records.map((r, index) => <React.Fragment key={r.id}>{fields.map(f => <span key={f.id} data-record={index} data-cell-type={f.type} data-exposed={exposed(f) || undefined}>{cell(index, f)}</span>)}<span data-record={index} /></React.Fragment>)}
+      </div>
+      <div data-dataset-foot>
+        <button type="button" className="button-reset" data-dataset-link aria-label={'Add record to ' + n.title} disabled={!fields.length}
+          onClick={event => executeAction('projects.controls.activate', {handler: () => u.act(() => api.addDatasetRecord(n.id))}, event)}>+ Record</button>
+        {fields.map(f => <small key={f.id}>{f.unit}</small>)}
+      </div>
       {adding && <AddField kind="Field" title="Add field" sub="A column shared by every record" onClose={() => setAdding(false)}
         onAdd={input => u.act(() => api.addDatasetField(n.id, input))} />}
     </div>;
@@ -379,7 +384,15 @@
   };
   const HIDDEN_VALUE = /(?:[a-f0-9]{32,}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}|(?:assembly|template|node)-instance:|^\s*[\[{][\s\S]*[\]}]\s*$)/i;
   const HIDDEN_PARAM = /(^_|(?:^|_)(?:id|hash|instance|ref)(?:_|$)|^template_|^(?:engine|responsibility|last_result|last_attempt)$)/i;
-  const LAYOUT = {nodeWidth: 280, datasetWidth: 478, inspectorWidth: 320};
+  const LAYOUT = {nodeWidth: 280, datasetWidth: 340, inspectorWidth: 320};
+  const FIELD_WIDTH = {text: 70, number: 92, integer: 108, point: 112, object: 112, bool: 70, choice: 108, date: 108, file: 112, folder: 112, list: 112};
+  const NAMED_WIDTH = {id: 70, width: 92, position: 112, height: 108};
+  const fieldWidth = field => {
+    const given = Number(field && field.width);
+    if (Number.isFinite(given) && given > 0) return given;
+    const name = String(field && (field.name || field.id) || '').toLowerCase();
+    return NAMED_WIDTH[name] || FIELD_WIDTH[field && field.type] || 92;
+  };
   const CARD = {background: SPEC.field, border: '1px solid ' + SPEC.fieldLine, borderRadius: 6, boxSizing: 'border-box', position: 'relative', color: SPEC.text, fontSize: 12.5, lineHeight: 1.2};
   const SLOT = {background: SPEC.slot, borderRadius: 5, padding: '6px 9px', position: 'relative', display: 'flex', alignItems: 'center', gap: 6, minHeight: 28, boxSizing: 'border-box'};
   const edgeSocket = (side, top, inset = 0) => ({position: 'absolute', [side === 'in' ? 'left' : 'right']: -11 - inset, top, transform: 'translateY(-50%)', lineHeight: 0, zIndex: 2});
@@ -389,7 +402,8 @@
     if (!p.editable) return <span title={String(shown)}>{summary(shown)}</span>;
     if (p.type === 'boolean') return <D.Toggle label={label} checked={!!shown} onCheckedChange={save} />;
     if (p.options?.length) return <select className="nodrag" aria-label={label} value={shown} onChange={e => save(e.target.value)}>{p.options.map(o => <option key={o}>{o}</option>)}</select>;
-    return <input className="nodrag" aria-label={label} title={String(shown)} type={p.type === 'number' ? 'number' : 'text'} min={p.min} max={p.max} step={p.step ?? 'any'}
+    const unbounded = ['min', 'max'].includes(p.key) && (shown == null || shown === '');
+    return <input className="nodrag" aria-label={label} title={unbounded ? 'Unbounded' : String(shown)} type={p.type === 'number' ? 'number' : 'text'} min={p.min} max={p.max} step={p.step ?? 'any'} placeholder={unbounded ? 'Unbounded' : undefined}
       value={shown == null ? '' : typeof shown === 'object' ? JSON.stringify(shown) : shown} style={{flex: 1, minWidth: 0, width: 0, background: 'transparent', border: 0, color: SPEC.text, font: 'inherit', fontSize: 12}}
       onChange={e => { if (p.type !== 'number') save(e.target.value); else if (e.target.value === '') save(null); else if (Number.isFinite(e.target.valueAsNumber)) save(e.target.valueAsNumber); }} />;
   }
@@ -437,7 +451,8 @@
       params = compact ? shown.slice(0, 3) : shown,
       refusedHere = port => refusal && refusal.to.port === port && <RefusedChip refusal={refusal} onConvert={onConvert} />;
     for (const p of params) for (const port of n.inputs.filter(x => x.id === p.key || x.id === 'param:' + p.key)) slotPorts.add(port.id);
-    const repeatedValue = shown.some(p=>p.key==='value') && !wiresIn.some(wire=>['value','param:value'].includes(wire.toPort)) && (Object.is(n.output,n.params.value) || (n.output && typeof n.output==='object' && Object.keys(n.output).length===1 && Object.hasOwn(n.output,'value') && Object.is(n.output.value,n.params.value)));
+    const repeatsValue = (output, value) => Object.is(output, value) || (typeof output === 'string' && output.trim() === String(value)) || (output && typeof output === 'object' && !Array.isArray(output) && Object.keys(output).length === 1 && Object.hasOwn(output, 'value') && (Object.is(output.value, value) || String(output.value) === String(value))) || (Array.isArray(output) && output.length === 1 && (Object.is(output[0], value) || String(output[0]) === String(value)));
+    const repeatedValue = shown.some(p=>p.key==='value') && !wiresIn.some(wire=>['value','param:value'].includes(wire.toPort)) && repeatsValue(n.output, n.params.value);
     const result = n.status === 'Done' && !repeatedValue ? summary(n.output) : '';
     return <div data-ds-node="" className="lm-node" data-spec={n.dataset ? 'dataset' : 'operation'} data-node-state={state.split(' · ')[0]}
       style={{...CARD, width: n.dataset ? LAYOUT.datasetWidth : LAYOUT.nodeWidth, paddingBottom: 10, border: '1px solid ' + (refusal ? A.err : SPEC.fieldLine), outline: selected ? '2px solid ' + A.accent : 'none', outlineOffset: 2}}>
@@ -452,7 +467,7 @@
         {[...n.inputs.filter(p => !slotPorts.has(p.id)).map(p => ({key: p.id, port: p})), ...params.map(p => ({key: 'param:' + p.key, param: p, port: n.inputs.find(x => (x.id === p.key || x.id === 'param:' + p.key) && wiresIn.some(wire=>wire.toPort===x.id)) || n.inputs.find(x => x.id === 'param:' + p.key) || n.inputs.find(x => x.id === p.key)}))].map(({key, port, param}) => {
           const ports = param ? n.inputs.filter(x => x.id === param.key || x.id === 'param:' + param.key) : port ? [port] : [];
           const from = ports.map(alias=>sourceOf(alias.id)).filter(Boolean).join(' · '), name = param ? (param.label && param.label !== param.key ? param.label : param.key.replace(/_/g, ' ')) : port.name,
-            type = param ? (param.dataType || (param.options?.length ? 'enum' : param.type === 'boolean' ? 'boolean' : param.type === 'number' ? 'number' : 'string')) + (param.unit ? ' · ' + param.unit : '') + (settingsKeys.has(param.key) ? ' · From Settings' : '') : typeName(port);
+            type = param ? ((['min', 'max', 'step'].includes(param.key) || param.type === 'number' || ['number', 'integer'].includes(param.dataType)) ? 'number' : (param.dataType || (param.options?.length ? 'enum' : param.type === 'boolean' ? 'boolean' : 'string'))) + (param.unit ? ' · ' + param.unit : '') + (settingsKeys.has(param.key) ? ' · From Settings' : '') : typeName(port);
           return <React.Fragment key={key}><div data-port-row={param ? undefined : 'in'} data-parameter={param ? param.key : undefined}
             style={{...SLOT, display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1.2fr) auto', gap: 8, padding: '4px 4px 4px 10px', alignItems: 'center'}}>
             {ports.map(alias=><span key={alias.id} aria-hidden={alias.id!==port.id||undefined} style={{...edgeSocket('in', '50%', 12),opacity:alias.id===port.id?1:0,pointerEvents:alias.id===port.id?undefined:'none'}}>{socket(alias, 'in')}</span>)}

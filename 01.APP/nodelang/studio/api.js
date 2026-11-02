@@ -1452,7 +1452,7 @@ function fileNode(node){
  const params=bind?{type:node.params.type,value:owner?.params[bind.param]}:{...node.params};
  const typeOf=key=>bind&&key==='value'?node.params.type:node.type==='param.value'&&key==='value'?node.params.type:defs.find(d=>d.id===key)?.type;
  const schema=Object.keys(params).map(key=>{const kind=typeOf(key),def=defs.find(d=>d.id===key)||(bind&&owner?.paramDefs?.find(d=>d.id===bind.param))||{};
-  return {key,label:node.type==='param.value'&&key==='type'?'Type':def.name||key,type:PARAM_EDITOR[kind]||(kind?'text':typeof params[key]==='number'?'number':typeof params[key]==='boolean'?'boolean':'text'),
+   return {key,label:node.type==='param.value'&&key==='type'?'Type':def.name||key,type:(['min','max','step'].includes(key)||kind==='number'||kind==='integer')?'number':PARAM_EDITOR[kind]||(kind?'text':typeof params[key]==='number'?'number':typeof params[key]==='boolean'?'boolean':'text'),
    dataType:kind||'',min:def.min,max:def.max,step:def.step??(kind==='integer'?1:undefined),unit:node.type==='param.value'&&key==='type'?'':def.unit||'',options:['enum','choice'].includes(kind)?def.options||[]:undefined,
    editable:!(['param.value','data.field'].includes(node.type)&&key==='type'),userParam:!!defs.find(d=>d.id===key),promoted:defs.find(d=>d.id===key)?.promoted||null,
    linkedTo:bind&&key==='value'?(owner?.title||'')+' \u00b7 '+(owner?.paramDefs?.find(d=>d.id===bind.param)?.name||bind.param):''};});

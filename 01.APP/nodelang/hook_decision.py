@@ -1343,11 +1343,15 @@ def render(decision: dict, vendor: str, event_name: str = "PreToolUse") -> dict:
 def main(argv=None) -> int:
     import argparse
     parser = argparse.ArgumentParser(description="ArchHub hook decision (one function for every agent)")
-    parser.add_argument("--vendor", required=True, choices=VENDORS + tuple(_ALIAS))
+    parser.add_argument("--vendor", required=True, choices=VENDORS + tuple(_ALIAS) + ("cursor",))
     args = parser.parse_args(argv)
     try:
         raw = sys.stdin.buffer.read(4 * 1024 * 1024 + 1)
         payload = json.loads(raw or b"{}")
+        if (args.vendor == "cursor" and type(payload) is dict
+                and payload.get("hook_event_name") in ("stop", "beforeSubmitPrompt")):
+            from .native_agent_hooks import emit_cursor_hook
+            return emit_cursor_hook(payload)
         decision = decide(payload, args.vendor)
         out = render(decision, args.vendor, payload.get("hook_event_name") or "PreToolUse")
     except Exception as exc:  # organize, never obstruct: a broken check never stops work

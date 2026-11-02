@@ -16,6 +16,10 @@ import time
 import uuid
 from multiprocessing.connection import Client
 
+if not globals().get("__package__"):
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    __package__ = "nodelang"
+
 SERVICE = 'ArchHub.NativeStop.v1'
 UNAVAILABLE = {'decision':'block','reason':'Native Stop authority is unavailable. Continue through the existing native session to reconcile; do not create a replacement session.'}
 # The CDE write gate is a separate command-hook process. While this owner holds
@@ -1354,6 +1358,17 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--vendor',default='claude-code')
     args=parser.parse_args()
+    if args.vendor == 'cursor':
+        raw=sys.stdin.buffer.read(65537)
+        if len(raw)>65536:
+            sys.stdout.write('{}\n')
+            return 0
+        try:
+            payload=json.loads(raw or b'{}')
+        except ValueError:
+            payload={}
+        from .native_agent_hooks import emit_cursor_hook
+        return emit_cursor_hook(payload if type(payload) is dict else {})
     payload=None
     try:
         raw=sys.stdin.buffer.read(65537)

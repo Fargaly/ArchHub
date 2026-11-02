@@ -219,13 +219,22 @@ def _held_context(document):
     }
 
 
+_TASK_ROLE = "task"
+
+
+def _task_message(note):
+    """A task chat line is a note marked role task. Canvas annotations are not."""
+    return isinstance(note, dict) and note.get("role") == _TASK_ROLE
+
+
 def _file_messages(document):
     found = []
     for index, note in enumerate(document.get("notes") or []):
-        if isinstance(note, dict) and isinstance(note.get("text"), str):
-            found.append({"id": note["id"] if isinstance(note.get("id"), str) and note["id"] else "note-%d" % index,
-                          "who": note["who"] if isinstance(note.get("who"), str) and note["who"] else "Agent",
-                          "text": note["text"]})
+        if not _task_message(note) or not isinstance(note.get("text"), str):
+            continue
+        found.append({"id": note["id"] if isinstance(note.get("id"), str) and note["id"] else "note-%d" % index,
+                      "who": note["who"] if isinstance(note.get("who"), str) and note["who"] else "Agent",
+                      "text": note["text"]})
     return found
 
 
@@ -392,15 +401,16 @@ def _apply_parameters(document, rows):
 def _apply_messages(document, rows):
     if type(rows) is not list or len(rows) > 80:
         raise ValueError("Task messages must be a short list")
-    notes = []
+    messages = []
     for index, row in enumerate(rows):
         if type(row) is not dict:
             raise ValueError("Each message needs text")
         text = _short_text(row.get("text"), "message", 4000)
         who = _short_text(row.get("who") or "Agent", "message author", 80)
         note_id = row.get("id") if type(row.get("id")) is str and row["id"] and len(row["id"]) <= 80 else "msg-%d" % index
-        notes.append({"id": note_id, "who": who, "text": text})
-    document["notes"] = notes
+        messages.append({"id": note_id, "role": _TASK_ROLE, "who": who, "text": text})
+    kept = [note for note in (document.get("notes") or []) if not _task_message(note)]
+    document["notes"] = kept + messages
 
 
 def update_session(history, task, values):

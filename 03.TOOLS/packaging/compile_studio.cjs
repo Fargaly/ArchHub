@@ -80,11 +80,16 @@ function designTokens() {
       if (key.startsWith('$')) continue;
       const name = prefix + key;
       if (value && Object.prototype.hasOwnProperty.call(value, '$value')) {
-        const raw = String(value.$value);
-        const color = value.$type === 'color', alias = /^\{([\w.]+)\}$/.exec(raw);
-        requireThat(alias || (color ? /^#[0-9a-fA-F]{6}$/.test(raw) : /^\d+(\.\d+)?(px)?$/.test(raw)),
+        const font = value.$type === 'fontFamily' || value.$type === 'fontFamilies';
+        const raw = font
+          ? (Array.isArray(value.$value) ? value.$value.join(' ') : String(value.$value))
+          : String(value.$value);
+        const color = value.$type === 'color';
+        const alias = /^\{([\w.]+)\}$/.exec(raw);
+        requireThat(alias || (color ? /^#[0-9a-fA-F]{6}$/.test(raw) : font ? /^[A-Za-z0-9 ]+$/.test(raw) : /^\d+(\.\d+)?(px)?$/.test(raw)),
           'Design token ' + name + ' has an unsupported value: ' + raw);
-        tokens.set(name, {type:value.$type, value:color ? raw.toLowerCase() : raw, alias:alias && alias[1]});
+        const css = font && raw.includes(' ') ? '"' + raw + '"' : raw;
+        tokens.set(name, {type:value.$type, value:color ? raw.toLowerCase() : css, alias:alias && alias[1]});
       } else if (value && typeof value === 'object') walk(value, name + '.');
     }
   };

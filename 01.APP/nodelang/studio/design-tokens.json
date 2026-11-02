@@ -970,6 +970,61 @@
      "$value": "#8b8790",
      "$type": "color",
      "$description": ""
+    },
+    "c19191f": {
+     "$value": "#19191f",
+     "$type": "color",
+     "$description": ""
+    },
+    "c393941": {
+     "$value": "#393941",
+     "$type": "color",
+     "$description": ""
+    },
+    "c80bfc0": {
+     "$value": "#80bfc0",
+     "$type": "color",
+     "$description": ""
+    },
+    "c202027": {
+     "$value": "#202027",
+     "$type": "color",
+     "$description": ""
+    },
+    "c24242c": {
+     "$value": "#24242c",
+     "$type": "color",
+     "$description": ""
+    },
+    "caaa5ad": {
+     "$value": "#aaa5ad",
+     "$type": "color",
+     "$description": ""
+    },
+    "c8e8b94": {
+     "$value": "#8e8b94",
+     "$type": "color",
+     "$description": ""
+    },
+    "c141419": {
+     "$value": "#141419",
+     "$type": "color",
+     "$description": ""
+    },
+    "c303039": {
+     "$value": "#303039",
+     "$type": "color",
+     "$description": ""
+    },
+    "c36343b": {
+     "$value": "#36343b",
+     "$type": "color",
+     "$description": ""
+    },
+    "c72b9c6": {
+     "$value": "#72b9c6",
+     "$type": "color",
+     "$description": ""
     }
    },
    "radius": {
@@ -1099,6 +1154,84 @@
     "$type": "borderRadius",
     "$description": ""
    }
+  },
+  "type": {
+   "family": {
+    "ui": {
+     "$value": "Inter",
+     "$type": "fontFamilies",
+     "$description": ""
+    },
+    "code": {
+     "$value": "JetBrains Mono",
+     "$type": "fontFamilies",
+     "$description": ""
+    }
+   },
+   "weight": {
+    "w400": {
+     "$value": "400",
+     "$type": "fontWeights",
+     "$description": ""
+    },
+    "w500": {
+     "$value": "500",
+     "$type": "fontWeights",
+     "$description": ""
+    },
+    "w600": {
+     "$value": "600",
+     "$type": "fontWeights",
+     "$description": ""
+    },
+    "w700": {
+     "$value": "700",
+     "$type": "fontWeights",
+     "$description": ""
+    },
+    "w800": {
+     "$value": "800",
+     "$type": "fontWeights",
+     "$description": ""
+    }
+   }
+  },
+  "companion": {
+   "spriteWidth": {
+    "$value": "144px",
+    "$type": "dimension",
+    "$description": ""
+   },
+   "spriteHeight": {
+    "$value": "156px",
+    "$type": "dimension",
+    "$description": ""
+   },
+   "replyWidth": {
+    "$value": "360px",
+    "$type": "dimension",
+    "$description": ""
+   },
+   "composerHeight": {
+    "$value": "128px",
+    "$type": "dimension",
+    "$description": ""
+   },
+   "replyHeight": {
+    "$value": "208px",
+    "$type": "dimension",
+    "$description": ""
+   },
+   "atlasWidth": {
+    "$value": "1152px",
+    "$type": "dimension",
+    "$description": ""
+   },
+   "atlasHeight": {
+    "$value": "1716px",
+    "$type": "dimension",
+    "$description": ""
+   }
   }
  },
  "$metadata": {
@@ -1121,9 +1254,9 @@
  "$extensions": {
   "penpot": {
    "fileId": "751e8d0c-7080-8124-8008-d8e6f6eedbb6",
-   "revn": 1356,
+   "revn": 1436,
    "file": "ArchHub — Editable Product Design",
-   "read": "GET /api/rpc/command/get-file -> data.tokensLib (read-only; the designer owns Penpot)"
+   "read": "DTCG handoff grouped into the Penpot token sets compile_studio already reads"
   },
   "archhub.blocks": {
    "AppHeader": {

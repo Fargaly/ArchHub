@@ -9432,7 +9432,9 @@
         "tests_replica/test_updatequiet.py",
         "docs/CATALOGUE.md",
         "02.TESTS/tests/test_task_session_keeps_canvas.py",
-        "tests/test_task_session_keeps_canvas.py"
+        "tests/test_task_session_keeps_canvas.py",
+        "02.TESTS/tests_js/studio_task_session_race.test.cjs",
+        "tests_js/studio_task_session_race.test.cjs"
       ]
     }
   }

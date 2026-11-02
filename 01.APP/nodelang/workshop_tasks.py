@@ -28,6 +28,8 @@ def _ensure(history):
     names = {row[1] for row in history._db.execute("PRAGMA table_info(workshop_tasks)")}
     if "session_path" not in names:
         history._db.execute("ALTER TABLE workshop_tasks ADD COLUMN session_path TEXT")
+    if "archived" not in names:
+        history._db.execute("ALTER TABLE workshop_tasks ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
 
 
 def _write(history, sql, values):
@@ -69,6 +71,14 @@ def complete(history, task, owner, result=""):
     # The holder may finish after its lease lapsed, as long as nobody claimed it since.
     return _write(history, "UPDATE workshop_tasks SET status='done', lease_until=NULL, result=?, updated_at=? "
                   "WHERE id=? AND owner=? AND status='claimed'", (result, _now(), task, owner))
+
+
+def archive(history, task):
+    """Close a task so it leaves the active list. Its .archhub file stays readable."""
+    if get(history, task) is None:
+        raise ValueError("No such Workshop task")
+    return _write(history, "UPDATE workshop_tasks SET status='done', archived=1, lease_until=NULL, updated_at=? WHERE id=?",
+                  (_now(), task))
 
 
 def declared(history, root, request_id, title, status, owner, label):
@@ -148,7 +158,7 @@ def column(history):
              'messages': [], 'steps': [], 'reviews': [], 'queuedMessages': [], 'declarations': [],
              'updated_at': row['updated_at'], 'sessionPath': row.get('session_path'),
              'sessionOpen': bool(row.get('session_path') and row['session_path'] == current)}
-            for row in rows(history)]
+            for row in rows(history, include_archived=False)]
 
 
 def set_status(history, task, status):
@@ -163,17 +173,19 @@ def set_status(history, task, status):
 
 
 COLUMNS = ("id", "title", "status", "owner", "owner_label", "lease_until", "result",
-           "created_by", "created_at", "updated_at", "session_path")
+           "created_by", "created_at", "updated_at", "session_path", "archived")
 
 
-def rows(history, task=None):
+def rows(history, task=None, *, include_archived=True):
     if not history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_tasks'").fetchone():
         return []
     _ensure(history)
     now = time.time()
+    # A lookup by id still finds an archived task. A list hides it unless asked.
+    show = 1 if include_archived or task is not None else 0
     found = [dict(zip(COLUMNS, row)) for row in history._db.execute(
-        "SELECT " + ",".join(COLUMNS) + " FROM workshop_tasks WHERE ? IS NULL OR id=? "
-        "ORDER BY created_at DESC LIMIT 500", (task, task))]
+        "SELECT " + ",".join(COLUMNS) + " FROM workshop_tasks WHERE (? IS NULL OR id=?) "
+        "AND (? OR IFNULL(archived,0)=0) ORDER BY created_at DESC LIMIT 500", (task, task, show))]
     for row in found:
         row["lease_expired"] = row["status"] == "claimed" and row["lease_until"] < now
     return found
@@ -299,10 +311,10 @@ def open_session(history, task, path=None, *, select=True):
     return _show(task, target, document, select=select)
 
 
-def create_session(history, title, creator="founder"):
+def create_session(history, title, creator="founder", *, select=True):
     """A new task and the .archhub file that holds its session."""
     row = create(history, title, creator)
-    return open_session(history, row["id"])
+    return open_session(history, row["id"], select=select)
 
 
 _SESSION_FIELDS = {"scope", "rules", "agents", "plan", "progress", "nodes", "parameters", "messages", "folders", "references"}

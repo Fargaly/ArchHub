@@ -426,7 +426,7 @@ def build_server(*, session=None, mailbox_call=None):
     # Workshop tasks: one table in the Workshop store; a claim is one conditional UPDATE (ok false = another agent holds it).
     @server.tool(name="task.create")
     def task_create(title: str, ctx: Context) -> dict[str, object]:
-        """Add an open task to the Workshop Work column. Any agent may then claim it."""
+        """Add an open task and the .archhub file that holds its session. Does not switch the open canvas."""
         return call("task_create", {"title": title}, _caller_context(ctx))
 
     @server.tool(name="task.list", annotations=ToolAnnotations(destructiveHint=False))
@@ -451,6 +451,31 @@ def build_server(*, session=None, mailbox_call=None):
     def task_complete(id: str, ctx: Context, result: str = "") -> dict[str, object]:
         """Mark your claimed task done, with a one-line result."""
         return call("task_complete", {"id": id, "result": result}, _caller_context(ctx))
+
+    @server.tool(name="task.set_session")
+    def task_set_session(id: str, ctx: Context, scope: str = "", rules: list[str] | None = None,
+                         agents: list[str] | None = None, plan: list[str] | None = None,
+                         progress: dict[str, str] | None = None, folders: list[str] | None = None,
+                         references: list[str] | None = None) -> dict[str, object]:
+        """Write this task's session fields into its .archhub file. Does not switch the open canvas."""
+        values: dict[str, object] = {}
+        if scope:
+            values["scope"] = scope
+        for key, value in (("rules", rules), ("agents", agents), ("plan", plan), ("progress", progress),
+                           ("folders", folders), ("references", references)):
+            if value is not None:
+                values[key] = value
+        return call("task_set_session", {"id": id, **values}, _caller_context(ctx))
+
+    @server.tool(name="task.open")
+    def task_open(id: str, ctx: Context) -> dict[str, object]:
+        """Open this task's .archhub session and return its fields."""
+        return call("task_open", {"id": id}, _caller_context(ctx))
+
+    @server.tool(name="task.archive")
+    def task_archive(id: str, ctx: Context) -> dict[str, object]:
+        """Close a task so it leaves the active list. Its session file stays readable."""
+        return call("task_archive", {"id": id}, _caller_context(ctx))
 
     control = _WorkControl(session)
     server.work_control = control

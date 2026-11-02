@@ -9364,7 +9364,6 @@
         "NOTICE",
         "package-lock.json",
         "package.json",
-        "01.APP/nodelang/site_export.py",
         "02.TESTS/tests_replica/test_website_truth.py",
         "01.APP/nodelang/studio/answer-widgets.jsx",
         "01.APP/nodelang/studio/agent-states.jsx",
@@ -9437,7 +9436,17 @@
         "02.TESTS/tests_js/studio_task_session_race.test.cjs",
         "tests_js/studio_task_session_race.test.cjs",
         "02.TESTS/tests_js/studio_designsplit.test.cjs",
-        "03.TOOLS/tools/designsplit_proof.cjs"
+        "03.TOOLS/tools/designsplit_proof.cjs",
+        "01.APP/nodelang/host_addin_retarget.py",
+        "01.APP/nodelang/host_broker_installation.py",
+        "01.APP/nodelang/autocad_broker_installation.py",
+        "02.TESTS/tests_replica/host_staging_harness.iss",
+        "02.TESTS/tests_replica/test_fresh_machine_host_brokers.py",
+        "02.TESTS/tests_replica/test_host_broker_installation.py",
+        "02.TESTS/tests_replica/test_installer_locked_host_files.py",
+        "03.TOOLS/installer/build_host_bridges.ps1",
+        "03.TOOLS/installer/host_file_staging.iss",
+        "02.TESTS/tests_replica/test_hangfix_one_launcher.py"
       ]
     }
   }

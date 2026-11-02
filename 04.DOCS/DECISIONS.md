@@ -403,3 +403,8 @@ Prior art: pypdf (BSD-3-Clause, pure Python) -> merge a stamp page onto each pag
 Decision: add pypdf (pinned at 6.21.4, current release on 2026-10-28, no native code) as the PDF write library. It is used ONLY behind the generic blocks (host.exec host `python`, and connector.call for the accounts those recipes also touch); there is no per-task "stamp" engine. The stamp is a composite: pdf.extract_text / pdf.snip (pypdfium2) find the clear box -> the Python host runs pypdf (`merge_transformed_page`) and writes the stamped copy -> the output goes to a new file under the chosen folder (never overwrites the source). Classic Outlook COM write stays out of connector.call; Outlook Graph categories and categorize are actions of the registered Graph connector.
 Replaces: nothing. pypdfium2 stays as the reader and renderer; pypdf only writes.
 Budget: one pure-Python wheel. PyPI publishes `pypdf-6.21.4-py3-none-any.whl` (401 KB); that wheel installs on CPython 3.14, which has no separate cp314 build because the library has no native code. The lane test stamps a one-page PDF in a temp folder through host.exec `python` and leaves the source bytes unchanged. pip check on a fresh release venv, and installed-app acceptance, remain with 717.
+
+## D-023 BABOOM reads the existing Workshop file; no second store (2026-11-02, Cursor Grok lane BABOOMDESK)
+Request: F20
+Prior art: workshop_tasks.rows -> the existing Workshop messages.sqlite3 task table; Windows SystemParametersInfo SPI_GETCLIENTAREAANIMATION -> a static pose when animations are off
+Replaces: nothing exists

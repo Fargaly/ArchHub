@@ -20,8 +20,18 @@ from .baboom_speech import compose_baboom_speech
 from .baboom_visual_assets import BaboomSpriteAtlas
 
 
+# Released sheet rows: idle, walk, run, wave, crouch, think, talk, cast, turn.
+# The older directive names stay on the rows they already used.
 _MOTION_ROWS = {
     "idle": 0,
+    "walk": 1,
+    "run": 2,
+    "wave": 3,
+    "crouch": 4,
+    "think": 5,
+    "talk": 6,
+    "cast": 7,
+    "turn": 8,
     "warning": 6,
     "working": 7,
     "review": 8,

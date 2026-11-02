@@ -308,7 +308,8 @@
             const flow = recipe ? null : JSON.parse(content);
             const r = await act(() => recipe ? api.importRecipe(content) : api.importFlow(flow));
             if (r) {
-              go('canvas');
+              if (route === 'home') window.dispatchEvent(new CustomEvent('archhub:home-view', {detail: 'canvas'}));
+              else go('canvas');
               setToast(r.count ? r.count + ' nodes imported' : 'Recipe added as a node');
             }
           } catch (error) {
@@ -400,7 +401,7 @@
               fontWeight: 700,
               fontSize: 12,
               flex: 'none'
-            }}>{s.profile.name.split(' ').map(n => n[0]).join('').slice(0, 2)}</button></nav><div className={'screen-with-composer ' + (route !== 'home' ? 'has-local-composer' : '')} style={{'--canvas-library-width':libraryOpen ? '248px' : '0px'}}>{(canvasOpened || route==='canvas') && <div hidden={route!=='canvas'} ref={element=>{element?.toggleAttribute('inert',route!=='canvas'||!!s.graphOpening);}} style={{display:route==='canvas'?'grid':'none',minHeight:0,height:'100%'}}><window.UI.Canvas key={s.graph.scopeKey || s.graph.id} active={route==='canvas'&&!s.graphOpening} /></div>}{screen}{route === 'canvas' && <div className="canvas-status" role="status"><span>{s.connectionNotice && s.connectionNotice !== 'Checking for updates…' ? '1 notice · see Receipts' : s.connectionNotice || '● Local session'}</span><span>{(s.agentSummary||'Checking running agents…')} · {(n => n ? n + ' wait for you' : 'Nothing waiting for you')(s.approvals.filter(c=>c.status==='pending').length)}</span>{agentLoad.status==='error' && <button className="button-reset" onClick={event=>executeAction('appShell.RetryWorkshop',{reloadWorkshop},event)}>Retry Workshop connection</button>}</div>}{['home','canvas'].includes(route) && <div className={'global-composer'+(route==='canvas'?' canvas-composer':'')}><window.UI.Composer compact /></div>}</div></div>
+            }}>{s.profile.name.split(' ').map(n => n[0]).join('').slice(0, 2)}</button></nav><div className="screen-with-composer has-local-composer" style={{'--canvas-library-width':libraryOpen ? '248px' : '0px'}}>{(canvasOpened || route==='canvas') && <div hidden={route!=='canvas'} ref={element=>{element?.toggleAttribute('inert',route!=='canvas'||!!s.graphOpening);}} style={{display:route==='canvas'?'grid':'none',minHeight:0,height:'100%'}}><window.UI.Canvas key={s.graph.scopeKey || s.graph.id} active={route==='canvas'&&!s.graphOpening} /></div>}{screen}{route === 'canvas' && <div className="canvas-status" role="status"><span>{s.connectionNotice && s.connectionNotice !== 'Checking for updates…' ? '1 notice · see Receipts' : s.connectionNotice || '● Local session'}</span><span>{(s.agentSummary||'Checking running agents…')} · {(n => n ? n + ' wait for you' : 'Nothing waiting for you')(s.approvals.filter(c=>c.status==='pending').length)}</span>{agentLoad.status==='error' && <button className="button-reset" onClick={event=>executeAction('appShell.RetryWorkshop',{reloadWorkshop},event)}>Retry Workshop connection</button>}</div>}{route === 'canvas' && <div className="global-composer canvas-composer"><window.UI.Composer compact /></div>}</div></div>
    {route !== 'canvas' && <footer className="flex" style={{
           fontSize: 11,
           gap: 16,

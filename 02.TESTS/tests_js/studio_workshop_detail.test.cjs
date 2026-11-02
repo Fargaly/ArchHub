@@ -56,6 +56,32 @@ test('a completed task row shows its recorded result and a blank result stays bl
   assert.equal(blank.includes('data-task-outcome'), false);
 });
 
+test('rules and agents round-trip without splitting on periods', () => {
+  const home = fs.readFileSync(path.join(studio, 'ds_home2.jsx'), 'utf8');
+  assert.equal(home.includes('split(/\\s*\\.\\s*/)'), false);
+  const ui = {};
+  vm.runInNewContext(transformSync(home, {loader: 'jsx', jsx: 'transform'}).code, {
+    window: {UI: ui, ArchHubAPI: {executeAction() {}}, addEventListener() {}, removeEventListener() {}},
+    React, document: {getElementById() { return null; }}, console,
+  });
+  const agents = ['Claude Code / 00.ARCHUB / session-abc'];
+  const saved = [];
+  assert.equal(ui.homeListSame(agents, agents), true);
+  assert.equal(ui.homeCommitList(agents, agents, value => saved.push(value)), false);
+  assert.equal(ui.homeCommitList(['1.5'], ['1.5'], value => saved.push(value)), false);
+  assert.equal(ui.homeCommitList(['1.5'], ['1', '5'], value => saved.push(value)), true);
+  assert.deepEqual(saved, [['1', '5']]);
+  assert.match(ui.homeDescribe({title: 'Design', output: {path: 'sheet.pdf'}}), /sheet\.pdf/);
+});
+
+test('in progress lists started work and planned work stays out', () => {
+  const groups = Object.fromEntries(window.UI.workshopGroups(false, new Set()).map(([name, member]) => [name, member]));
+  assert.equal(groups['IN PROGRESS']({status: 'WIP'}), true);
+  assert.equal(groups['IN PROGRESS']({status: 'PLANNED'}), false);
+  assert.equal(groups.PLANNED({status: 'PLANNED'}), true);
+  assert.equal(groups.PLANNED({status: 'WIP'}), false);
+});
+
 test('the task view shows workflow nodes and activity together', () => {
   const html = renderToStaticMarkup(React.createElement(window.UI.TaskSession, {
     task: {

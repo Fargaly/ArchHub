@@ -11,7 +11,8 @@
   // The list groups by what it asks of you; a drop sets the group's stage (the Board draws the same groups).
   const groupsFor = (archived, waiting) => [
     ['NEEDS ATTENTION', t => t.status === 'IN REVIEW' || t.status === 'STOPPED' || waiting.has(t.id), 'IN REVIEW'],
-    ['IN PROGRESS', t => (t.status === 'WIP' || t.status === 'PLANNED') && !waiting.has(t.id), 'WIP'],
+    ['IN PROGRESS', t => t.status === 'WIP' && !waiting.has(t.id), 'WIP'],
+    ['PLANNED', t => t.status === 'PLANNED' && !waiting.has(t.id), 'PLANNED'],
     ...(archived ? [['COMPLETED AND ARCHIVED', t => t.status === 'DONE' || t.status === 'ARCHIVED', 'DONE']] : [])];
   window.UI.workshopGroups = groupsFor;
   const color = s => s === 'IN REVIEW' ? A.warn : s === 'DONE' ? A.ok : s === 'STOPPED' ? A.err : s === 'WIP' ? A.ink : A.inkSoft;
@@ -74,6 +75,26 @@
   const subscribeWidth = notify => { if (!window.addEventListener) return () => {}; window.addEventListener('resize', notify); return () => window.removeEventListener('resize', notify); };
   // Receipt words (designer 01a18ba7): Stored in the Workshop, Started in the session, Replied, Unavailable (no door), Uncertain.
   const receipt = (d, replied) => replied ? 'Replied' : d.state === 'delivered' ? 'Started' : /no live door|not a running|no joined agent|reads the message in the Workshop/i.test(d.reason || '') ? 'Unavailable' : 'Uncertain';
+  const ownMessage = message => Boolean(message?.sender_key) && message.sender_key === message.viewer_key || message?.who === 'You' || message?.role === 'task';
+  function TaskBrief({task}) {
+    const what = oneLine(task.description || task.title);
+    const result = oneLine(task.result);
+    const next = (Array.isArray(task.plan) ? task.plan : task.steps || []).map(step => oneLine(typeof step === 'string' ? step : (step?.title || step?.text || step?.name || step?.what || ''))).find(Boolean);
+    return <section data-task-summary className="ws-summary">
+      <p><b>What</b> {what || 'Not yet recorded'}</p>
+      <p><b>State</b> {statusText(task.status)}</p>
+      <p><b>Latest result</b> {result || 'Not yet recorded'}</p>
+      <p><b>Next</b> {next || 'Not yet recorded'}</p>
+    </section>;
+  }
+  function AgentLog({messages, extra}) {
+    const [open, setOpen] = React.useState(false);
+    if (!messages.length && !extra) return null;
+    return <section data-agent-log className="ws-agent-log">
+      <button type="button" className="ws-link" aria-expanded={open} onClick={() => executeAction('ui.select', () => setOpen(!open))}>Agent log</button>
+      {open && <div className="ws-agent-log-body">{extra}{messages.map(message => <article key={message.id}><b>{message.who || 'Agent'}</b><p>{message.text}</p></article>)}</div>}
+    </section>;
+  }
   function Messages({task, roles = {}, whoIs = who => ({name: who || 'Agent', detail: '', meta: ''}), onReply}) {
     const [inspect, setInspect] = React.useState(null);
     const all = task.messages;
@@ -211,6 +232,9 @@
     const nameFor = t => sessionsOf(t).map(a => a.name).join(' and ') || (s.providers || []).find(p => p.id === t.owner)?.name || t.owner;
     const recipient = to ?? (task && (sessionsOf(task)[0] || agents.find(a => a.app === task.owner)) || agents[0])?.handle ?? '';
     const request = task?.description || task?.messages.find(m => m.sender_key && m.sender_key === m.viewer_key)?.text;
+    const taskMessages = [...(task?.fileMessages || []), ...(task?.messages || [])];
+    const briefMessages = taskMessages.filter(message => message.role === 'task' || ownMessage(message) || (!message.sender_key && !message.to)).map(message => ({...message, text: oneLine(message.text)}));
+    const agentLog = [...(task ? roomMessages : []), ...(task?.messages || []).filter(message => message.role !== 'task' && !ownMessage(message))];
     return <Group key={layoutEpoch + ':' + narrow.work + narrow.people} id="workshop-layout" orientation="horizontal" data-screen="workshop" className={'ws' + (rails.work ? ' l-rail' : '') + (rails.people ? ' r-rail' : '')}
       defaultLayout={narrow.work || narrow.people || folded('work') || folded('people') ? undefined : saved.layout} onLayoutChanged={keepLayout}>
   <Column id="work" panelRef={workRef} collapsible collapsedSize={RAIL} minSize={200} defaultSize={folded('work') ? RAIL : 248} groupResizeBehavior="preserve-pixel-size" onResize={rail('work')}>
@@ -241,14 +265,10 @@
       })}>Open in Canvas ↗</button></header>
     <div className="scroll ws-body" ref={bodyRef}><div className="ws-stack">
       {(s.approvals || []).filter(card => card.approvalKind === 'ask' && card.status === 'pending' && card.id !== task?.approvalId).map(card => <ApprovalCard key={card.id} id={card.id} />)}
-      {request && <section data-workshop-request className="ws-request"><div className="ws-label">THE REQUEST</div><Prose text={request} lines={6} /></section>}
-      {task && <TaskSession task={task} />}
-      {(previous.before ? previous.more : s.workshopMessagesMore) && <Btn sm ghost onClick={async () => {
+      {task ? <><TaskBrief task={{...task, description: request || task.description}} /><Messages task={{...task, messages: briefMessages}} roles={roles} whoIs={whoIs} onReply={reply} /><AgentLog messages={agentLog} extra={(previous.before ? previous.more : s.workshopMessagesMore) ? <Btn sm ghost onClick={async () => {
         const page = await executeAction("listWorkshopMessages", u, previous.before || s.workshopMessagesBefore);
         if (currentScope.current === roomScope && Array.isArray(page?.messages)) setOlder({scope: roomScope, messages: [...page.messages, ...previous.messages], before: page.next_before, more: page.more});
-      }}>Older messages</Btn>}
-      {roomMessages.length > 0 && <Messages task={{messages: roomMessages}} roles={roles} whoIs={whoIs} onReply={reply} />}
-      {task ? <><Messages task={task} roles={roles} whoIs={whoIs} onReply={reply} />{task.approvalId && <ApprovalCard id={task.approvalId} />}{task.status === 'STOPPED' && <Btn onClick={() => executeAction("reassignTask", u, task.id)}>Continue with another agent</Btn>}{task.status === 'DONE' && task.result && <section data-workshop-result className="ws-request"><div className="ws-label">RESULT</div><Prose text={task.result} lines={6} /></section>}{task.status === 'DONE' && <div className="flex"><Btn onClick={() => executeAction("ui.go", u, 'watcher')}>Open result</Btn><Btn onClick={() => executeAction("ui.schedule", u, task.title)}>Repeat this</Btn></div>}</> : roomMessages.length === 0 && <Empty>Create a task to begin.</Empty>}
+      }}>Older messages</Btn> : null} />{task.approvalId && <ApprovalCard id={task.approvalId} />}{task.status === 'STOPPED' && <Btn onClick={() => executeAction("reassignTask", u, task.id)}>Continue with another agent</Btn>}{task.status === 'DONE' && <div className="flex"><Btn onClick={() => executeAction("ui.go", u, 'watcher')}>Open result</Btn><Btn onClick={() => executeAction("ui.schedule", u, task.title)}>Repeat this</Btn></div>}</> : <Empty>Create a task to begin.</Empty>}
       <i ref={stickToEnd} aria-hidden="true" />
     </div></div>
     <div className="ws-dock"><div>{D.Composer ? <TaskComposer choices={choices} to={recipient} setTo={setTo} sendRef={sendRef} replyTo={replyTo} setReplyTo={setReplyTo} /> : window.UI.Composer && <window.UI.Composer taskId={task?.id} />}</div></div>

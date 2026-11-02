@@ -32,7 +32,8 @@ test('failed Studio startup keeps its error visible and offers one explicit relo
     assert.match(failure.textContent,/Owner is unavailable/);
     const retry=failure.querySelector('button');
     assert.ok(retry,'startup offers recovery');
-    assert.equal(retry.textContent,'Retry opening ArchHub');
+    assert.equal(retry.textContent,'Retry');
+    assert.equal(failure.querySelector('.boot-receipts').textContent,'See receipts');
     assert.equal(reloads,0,'no automatic retry');
     retry.click();retry.click();
     assert.equal(reloads,1,'one explicit reload; double-click cannot replay');

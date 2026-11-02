@@ -31,9 +31,11 @@ let browser;
   const context=await browser.newContext({viewport:{width:1680,height:893},deviceScaleFactor:1});
   const page=await context.newPage(), errors=[];
   page.on('pageerror',error=>errors.push(error.message));
-  await page.goto(url);
-  await page.waitForSelector('.app-window');
-  await page.evaluate(()=>window.ArchHubAPI.ready);
+  if(stage!=='loading'){
+    await page.goto(url);
+    await page.waitForSelector('.app-window');
+    await page.evaluate(()=>window.ArchHubAPI.ready);
+  }
   const source='C:/Users/fargaly/00.ARCHUB/30.KNOWLEDGE/35.DESIGN-SYSTEM/35.02-APP-DESIGN/01.WIP';
   const metrics=[];
   async function capture(name,svg){
@@ -70,6 +72,24 @@ let browser;
     }
     await page.setViewportSize({width:1440,height:900});
     await page.screenshot({path:path.join(proof,name+'-1440.png')});
+    if(name.startsWith('loading-')){
+      const clip=await page.evaluate(()=>{
+        const view=window.innerWidth;
+        const offenders=[];
+        for(const el of document.querySelectorAll('#studio-boot .boot-mark,#studio-boot .boot-title,#studio-boot .boot-detail,#studio-boot .boot-track,#studio-boot .boot-retry,#studio-boot .boot-receipts')){
+          if(el.closest('[hidden]'))continue;
+          const box=el.getBoundingClientRect();
+          if(box.width<1||box.height<1)continue;
+          if(box.left<0||box.right>view+1)offenders.push(el.className&&el.className.toString());
+        }
+        return {viewport:window.innerWidth,offenders};
+      });
+      assert.equal(clip.viewport,1440,JSON.stringify(clip));
+      assert.deepEqual(clip.offenders,[],JSON.stringify(clip));
+      metrics.push({name,...clip});
+      await page.setViewportSize({width:1680,height:893});
+      return;
+    }
     const measure=await page.evaluate(()=>{
       const frame=document.querySelector('.app-window').getBoundingClientRect();
       const stage=document.querySelector('.settings-sheet-stage')||document.querySelector('.screen-with-composer');
@@ -86,6 +106,47 @@ let browser;
     assert.deepEqual(measure.offenders,[],JSON.stringify(measure));
     assert.ok(measure.main.every(e=>e.scroll<=e.width+1),JSON.stringify(measure));
     metrics.push({name,...measure});await page.setViewportSize({width:1680,height:893});
+  }
+  if(stage==='loading'){
+    for(const [name,detail] of [['cold','Starting ArchHub'],['warm','Opening Home'],['recovery','Restoring your last task'],['error','ArchHub could not start']]){
+      await page.goto(url+'&boot='+name);
+      await page.locator('#studio-boot[data-boot-phase="'+name+'"]').waitFor();
+      await page.waitForFunction(()=>window.getComputedStyle(document.querySelector('#studio-boot')).paddingTop==='304px');
+      await page.evaluate(()=>document.fonts.ready);
+      const geometry=await page.evaluate(()=>{
+        const boot=document.querySelector('#studio-boot');
+        const box=el=>{const r=el.getBoundingClientRect();return {top:r.top,left:r.left,width:r.width,height:r.height};};
+        const mark=box(boot.querySelector('.boot-mark'));
+        const title=boot.querySelector('.boot-title');
+        const status=boot.querySelector('.boot-detail');
+        const track=boot.querySelector('.boot-track');
+        const retry=box(boot.querySelector('.boot-retry'));
+        const receipts=box(boot.querySelector('.boot-receipts'));
+        return {phase:boot.dataset.bootPhase,detail:status.textContent,mark,title:window.getComputedStyle(title).fontSize,titleLine:window.getComputedStyle(title).lineHeight,statusSize:window.getComputedStyle(status).fontSize,track:{...box(track),hidden:track.hidden},retry,receipts,actionsHidden:boot.querySelector('.boot-actions').hidden};
+      });
+      assert.equal(geometry.phase,name);
+      assert.equal(geometry.detail,detail);
+      assert.ok(Math.abs(geometry.mark.top-304)<2,JSON.stringify(geometry.mark));
+      assert.ok(Math.abs(geometry.mark.left-(1680-48)/2)<2,JSON.stringify(geometry.mark));
+      assert.ok(Math.abs(geometry.mark.width-48)<1&&Math.abs(geometry.mark.height-48)<1,JSON.stringify(geometry.mark));
+      assert.equal(geometry.title,'22px');
+      assert.equal(geometry.titleLine,'26px');
+      assert.equal(geometry.statusSize,'13px');
+      if(name==='error'){
+        assert.equal(geometry.track.hidden,true);
+        assert.equal(geometry.actionsHidden,false);
+        assert.ok(Math.abs(geometry.retry.width-88)<1&&Math.abs(geometry.retry.height-32)<1,JSON.stringify(geometry.retry));
+        assert.ok(Math.abs(geometry.receipts.width-128)<1&&Math.abs(geometry.receipts.height-32)<1,JSON.stringify(geometry.receipts));
+        assert.ok(Math.abs((geometry.receipts.left)-(geometry.retry.left+geometry.retry.width)-12)<2,JSON.stringify(geometry));
+        assert.ok(Math.abs(geometry.retry.top-470)<3,JSON.stringify(geometry.retry));
+      }else{
+        assert.equal(geometry.actionsHidden,true);
+        assert.equal(geometry.track.hidden,false);
+        assert.ok(Math.abs(geometry.track.top-470)<3&&Math.abs(geometry.track.width-320)<1&&Math.abs(geometry.track.height-4)<1,JSON.stringify(geometry.track));
+      }
+      await capture('loading-'+name,'archhub-current-loading-'+name+'.svg');
+      metrics.push({name:'loading-'+name,geometry});
+    }
   }
   if(stage==='settings'||stage==='all'){
     await page.getByRole('button',{name:'Settings',exact:true}).click();
@@ -219,6 +280,6 @@ let browser;
   const manifest=require('node:crypto').createHash('sha256').update(fs.readFileSync(path.join(root,'01.APP/nodelang/studio/compiled/manifest.json'))).digest('hex');
   const report={stage,source_revision:revision,tracked_source_clean:clean,browser_version:browser.version(),build_manifest_sha256:manifest,metrics,errors};
   console.log(JSON.stringify(report,null,2));
-  for(const screen of ['settings','library','docs']){const scoped=metrics.filter(row=>row.name.startsWith(screen));if(scoped.length)fs.writeFileSync(path.join(proof,screen+'-checks.json'),JSON.stringify({...report,stage:screen,metrics:scoped},null,2));}
+  for(const screen of ['settings','library','docs','loading']){const scoped=metrics.filter(row=>row.name.startsWith(screen));if(scoped.length)fs.writeFileSync(path.join(proof,screen+'-checks.json'),JSON.stringify({...report,stage:screen,metrics:scoped},null,2));}
   assert.deepEqual(errors,[]);
 })().catch(error=>{console.error(error);process.exitCode=1;}).finally(async()=>{if(browser)await browser.close();server.kill();});

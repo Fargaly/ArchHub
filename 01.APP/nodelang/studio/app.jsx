@@ -109,6 +109,11 @@
       window.addEventListener("archhub:notice", notice);
       return () => window.removeEventListener("archhub:notice", notice);
     }, []);
+    React.useEffect(() => {
+      const openHome = () => { api.setActiveSurface?.('home'); setRoute('home'); setModal(null); };
+      window.addEventListener('archhub:open-home', openHome);
+      return () => window.removeEventListener('archhub:open-home', openHome);
+    }, []);
     const go = r => {
       if (r === 'system') r = 'settings/System graph';
       if (r === 'baboom') {

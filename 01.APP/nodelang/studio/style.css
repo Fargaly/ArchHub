@@ -429,14 +429,25 @@ button{transition:background .14s,color .14s,box-shadow .14s}button:hover{filter
 .sheet-diagnostics{margin-top:16px!important;font-size:13px!important}
 .router-table-scroll{overflow-x:auto;margin:18px 0}.router-requests{border-collapse:collapse;width:100%;font-size:12px;text-align:left;line-height:1.6}.router-requests th,.router-requests td{padding:12px 14px;border-bottom:1px solid var(--color-line-soft);overflow-wrap:anywhere}.router-requests thead,.router-requests tfoot{background:var(--color-bg-soft)}.router-requests thead th{font-weight:500;color:var(--color-ink-soft)}.router-requests tbody th{font-weight:500;min-width:100px}.router-requests tfoot{font-weight:600}
 .visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
-#studio-boot{position:fixed;inset:0;z-index:10000;display:grid;place-items:center;background:#0f0f13;color:#d9d6d2;font:500 16px/1.4 Inter,sans-serif}
-#studio-boot .boot-card{display:grid;justify-items:center;gap:8px}
-#studio-boot .boot-title{margin:8px 0 0;font-size:18px}
-#studio-boot .boot-detail{margin:0;color:#a7a3a0;font-size:13px}
-#studio-boot[role="alert"] .boot-detail{color:#e07070}
-#studio-boot button{margin-top:12px;height:32px;padding:0 14px;border:0;border-radius:6px;background:#d97757;color:#1a100c;font:600 13px Inter,sans-serif}
+/* boot-screen */
+#studio-boot{position:fixed;inset:0;z-index:10000;display:flex;flex-direction:column;align-items:center;padding-top:304px;box-sizing:border-box;background:#0e0e11;color:#ece8e0;font-family:Inter,system-ui,sans-serif}
+#studio-boot .boot-card{display:flex;flex-direction:column;align-items:center;width:320px}
+#studio-boot .boot-mark{width:48px;height:48px;flex:none}
+#studio-boot .boot-title{margin:24px 0 0;font-size:22px;line-height:26px;font-weight:400;letter-spacing:0}
+#studio-boot .boot-detail{margin:17px 0 0;font-size:13px;line-height:16px;color:#9b938a;text-align:center}
+#studio-boot .boot-evidence{margin:8px 0 0;max-width:320px;font-size:13px;line-height:16px;color:#e6705f;text-align:center}
+#studio-boot .boot-track{width:320px;height:4px;margin-top:35px;border-radius:2px;background:#26262e;overflow:hidden}
+#studio-boot .boot-run{display:block;width:64px;height:4px;background:#d97757;animation:boot-run 1.2s ease-in-out infinite}
+@keyframes boot-run{from{transform:translateX(0)}to{transform:translateX(256px)}}
+@media (prefers-reduced-motion:reduce){#studio-boot .boot-run{animation:none}}
+#studio-boot .boot-actions{display:flex;gap:12px;margin-top:35px}
+#studio-boot .boot-track[hidden],#studio-boot .boot-actions[hidden],#studio-boot .boot-evidence[hidden]{display:none}
+#studio-boot .boot-actions button{height:32px;padding:0;border:0;border-radius:5px;font:500 13px Inter,sans-serif}
+#studio-boot .boot-retry{width:88px;background:#d97757;color:#1a100c}
+#studio-boot .boot-receipts{width:128px;background:#26262e;color:#ece8e0}
 #studio-boot button:focus-visible{outline:2px solid #fff;outline-offset:2px}
 #studio-boot button:disabled{opacity:.45}
+/* boot-end */
 
 /* The Library keeps its five existing families and the file-session owner. */
 .library-shelf .shelf-new-session{font-size:12px;min-height:32px;padding:7px 8px;border:1px solid var(--canvas-line,var(--color-line));border-radius:5px;color:var(--color-ink)}.shelf-category{width:100%;border:0;background:none;color:var(--color-ink-soft);font:11px Inter,system-ui,sans-serif;cursor:pointer;text-align:left;min-height:32px}.shelf-category:hover{color:var(--color-ink)}.shelf-category:focus-visible{outline:2px solid var(--color-accent);outline-offset:-2px}.library-shelf .shelf-node{padding:8px;min-height:38px;gap:8px;align-items:flex-start}.library-shelf .shelf-node>.flex{min-width:0;align-items:flex-start;gap:8px}.library-shelf .shelf-node-copy{display:grid;gap:3px;min-width:0}.library-shelf .shelf-node-copy b{font-size:12px;font-weight:500;line-height:16px}.library-shelf .shelf-node-copy small{font-size:11px;line-height:15px;color:var(--color-ink-soft);overflow-wrap:anywhere}.library-shelf .shelf-node>svg{flex:none;margin-top:2px}.library-shelf .shelf-node:hover{background:var(--canvas-hover,var(--color-bg-hover))}

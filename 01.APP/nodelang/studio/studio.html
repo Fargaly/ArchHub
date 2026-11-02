@@ -1,8 +1,8 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>ArchHub</title>
 <link rel="stylesheet" href="/assets/fonts.css"/><link rel="stylesheet" href="/studio/style.css"/>
-</head><body><div id="root"></div><div id="studio-boot" role="status" data-boot-phase="loading"><div class="boot-card"><svg class="boot-mark" viewBox="0 0 64 64" width="48" height="48" aria-hidden="true"><path d="M10 56 V32 a22 22 0 0 1 44 0 V56" fill="none" stroke="#d97757" stroke-width="4.5" stroke-linecap="square"/><circle cx="32" cy="22" r="5.2" fill="#0e0e11" stroke="#d97757" stroke-width="2.4"/><circle cx="32" cy="22" r="1.8" fill="#d97757"/><path d="M6 58 H58" stroke="#d97757" stroke-width="1.5" stroke-linecap="round"/></svg><p class="boot-title">Opening ArchHub</p><p class="boot-detail">Loading Home</p></div></div>
-<script>window.ARCHHUB_AUTHORITY = /*__ARCHHUB_AUTHORITY__*/ null; window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;try{document.documentElement.dataset.start=sessionStorage.getItem('archhub.studio.session')?'warm':'cold';}catch(e){document.documentElement.dataset.start='cold';}</script>
+</head><body><div id="root"></div><div id="studio-boot" role="status" data-boot-phase="cold"><div class="boot-card"><svg class="boot-mark" viewBox="0 0 64 64" width="48" height="48" aria-hidden="true"><path d="M10 56 V32 a22 22 0 0 1 44 0 V56" fill="none" stroke="#d97757" stroke-width="4.5" stroke-linecap="square"/><circle cx="32" cy="22" r="5.2" fill="#0e0e11" stroke="#d97757" stroke-width="2.4"/><circle cx="32" cy="22" r="1.8" fill="#d97757"/><path d="M6 58 H58" stroke="#d97757" stroke-width="1.5" stroke-linecap="round"/></svg><p class="boot-title">ArchHub</p><p class="boot-detail">Starting ArchHub</p><div class="boot-track" aria-hidden="true"><span class="boot-run"></span></div><div class="boot-actions" hidden><button type="button" class="boot-retry">Retry</button><button type="button" class="boot-receipts">See receipts</button></div><p class="boot-evidence" tabindex="-1" hidden></p></div></div>
+<script>window.ARCHHUB_AUTHORITY = /*__ARCHHUB_AUTHORITY__*/ null; window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;(function(){var phase='cold',detail='Starting ArchHub',saved=null;var asked=new URLSearchParams(location.search).get('boot');if(asked==='cold'||asked==='warm'||asked==='recovery'||asked==='error')phase=asked;else{try{saved=JSON.parse(sessionStorage.getItem('archhub.studio.session')||'null');}catch(e){saved=null;}if(saved&&saved.lastGraphId)phase='recovery';else if(saved)phase='warm';}if(phase==='warm')detail='Opening Home';if(phase==='recovery')detail='Restoring your last task';if(phase==='error')detail='ArchHub could not start';var boot=document.getElementById('studio-boot');boot.dataset.bootPhase=phase;if(asked)boot.dataset.hold='1';document.documentElement.dataset.start=phase==='cold'?'cold':'warm';boot.querySelector('.boot-detail').textContent=detail;if(phase==='error'){boot.setAttribute('role','alert');boot.querySelector('.boot-track').hidden=true;boot.querySelector('.boot-actions').hidden=false;}})();</script>
 <script src="/studio/vendor/react.js"></script><script src="/studio/vendor/react-dom.js"></script><script src="/studio/studio-authority.js"></script>
 <script>
 (async () => {
@@ -46,16 +46,21 @@
   }
   if(readyFailure)throw readyFailure;
   await window.ArchHubAPI.ready;
+  if(boot.dataset.hold==='1')return;
   boot.remove();
  })().catch((bootFailure) => {
   document.body.prepend(boot);
+  boot.dataset.bootPhase='error';
   boot.setAttribute('role','alert');
-  const message=document.createElement('p');
-  message.textContent=bootFailure.message || 'Could not open ArchHub.';
-  const retry=document.createElement('button');
-  retry.type='button';retry.textContent='Retry opening ArchHub';
+  boot.querySelector('.boot-detail').textContent='ArchHub could not start';
+  const evidence=boot.querySelector('.boot-evidence');
+  evidence.hidden=false;
+  evidence.textContent=bootFailure.message || 'ArchHub could not start';
+  boot.querySelector('.boot-track').hidden=true;
+  boot.querySelector('.boot-actions').hidden=false;
+  const retry=boot.querySelector('.boot-retry');
   retry.addEventListener('click',()=>{retry.disabled=true;window.location.reload();},{once:true});
-  boot.replaceChildren(message,retry);
+  boot.querySelector('.boot-receipts').addEventListener('click',()=>{try{sessionStorage.setItem('archhub.startup.failure',evidence.textContent);}catch(storageFailure){evidence.textContent=storageFailure.message||'Startup evidence could not be stored.';}evidence.hidden=false;evidence.focus();},{once:true});
  });
 })();
 </script></body></html>

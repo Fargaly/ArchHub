@@ -80,7 +80,7 @@ test('rules and agents round-trip without splitting on periods', () => {
   assert.match(home, /useState\('home'\)|data-screen="home"/);
   assert.equal(fs.readFileSync(path.join(studio, 'app.jsx'), 'utf8').includes("useState('workshop')"), false);
   assert.match(fs.readFileSync(path.join(studio, 'app.jsx'), 'utf8'), /useState\('home'\)/);
-  assert.match(fs.readFileSync(path.join(studio, 'studio.html'), 'utf8'), /Opening ArchHub/);
+  assert.match(fs.readFileSync(path.join(studio, 'studio.html'), 'utf8'), /Starting ArchHub/);
   assert.match(fs.readFileSync(path.join(studio, 'style.css'), 'utf8'), /#studio-boot\{position:fixed/);
   const screens = fs.readFileSync(path.join(studio, 'ds_screens.jsx'), 'utf8');
   assert.match(screens, /datasetWidth: 340/);

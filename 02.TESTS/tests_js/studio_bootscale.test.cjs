@@ -43,7 +43,7 @@ for(const entry of ['launcher','clean','legacy'])test(`${entry}: Home shell pain
   if(entry==='clean')assert.equal(await page.evaluate(()=>window.ARCHHUB_BOOT?.home_load_ms),290000);
   await page.waitForTimeout(150);
   assert.ok(await page.evaluate(()=>window.bootTimeouts.includes(290000)),'Home uses a numeric 290 s deadline');
-  assert.equal(await page.getByRole('button',{name:'Retry opening ArchHub'}).count(),0);
+  assert.equal(await page.getByRole('button',{name:'Retry'}).count(),0);
   assert.equal(release,false);assert.ok(await page.locator('[data-screen="home"]').isVisible());
   await page.getByRole('button',{name:'Canvas',exact:true}).click();
   if(process.env.BOOTSCALE_EVIDENCE)await page.screenshot({path:path.join(process.env.BOOTSCALE_EVIDENCE,'EARLY-CANVAS.png')});
@@ -93,11 +93,11 @@ for(const hung of [false,true])test(hung?'never-returning Home read shows retry 
    return route.fulfill({contentType:file.endsWith('.html')?'text/html':file.endsWith('.css')?'text/css':file.endsWith('.json')?'application/json':'text/javascript',body});
   });
   const start=Date.now();await page.goto('https://bootscale.test/studio');
-  await page.getByRole('button',{name:'Retry opening ArchHub'}).waitFor({state:'visible',timeout:hung?65000:10000});
+  await page.getByRole('button',{name:'Retry'}).waitFor({state:'visible',timeout:hung?65000:10000});
   const elapsed=Date.now()-start;
   if(hung){assert.ok(elapsed>=59000&&elapsed<65000);assert.equal(logs.length,1);console.log(JSON.stringify({hung_home_retry_ms:elapsed,timeout_log_lines:logs.length}));}
   if(process.env.BOOTSCALE_EVIDENCE)await page.screenshot({path:path.join(process.env.BOOTSCALE_EVIDENCE,hung?'HUNG-HOME.png':'FAILED-HOME.png')});
-  assert.ok(await page.getByRole('button',{name:'Retry opening ArchHub'}).evaluate(element=>{
+  assert.ok(await page.getByRole('button',{name:'Retry'}).evaluate(element=>{
    const box=element.getBoundingClientRect();return box.top>=0&&box.bottom<=window.innerHeight;
   }),'retry stays within the visible viewport after the shell mounts');
   assert.match(await page.locator('#studio-boot').innerText(),hung?/Home load timed out/:/Saved graph temporarily unavailable/);

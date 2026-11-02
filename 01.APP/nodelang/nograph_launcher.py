@@ -12,15 +12,80 @@ import time
 from pathlib import Path
 
 
+def _native_boot_document():
+    """The same #studio-boot card, with no script, so the window can paint before the server exists."""
+    studio = Path(__file__).resolve().parent / 'studio'
+    page = (studio / 'studio.html').read_text(encoding='utf-8')
+    card_at = page.index('<div id="studio-boot"')
+    card = page[card_at:page.index('<script>', card_at)].strip()
+    css = (studio / 'style.css').read_text(encoding='utf-8')
+    rules = css[css.index('/* boot-screen */'):css.index('/* boot-end */')]
+    return ('<!doctype html><html><head><meta charset="utf-8"><style>'
+            'html,body{margin:0;height:100%;background:#0e0e11}' + rules +
+            '</style></head><body>' + card + '</body></html>')
+
+
 def run(state_dir, instance_lock=None, serve_launch_requests=None):
-    from .nograph_server import NoGraphServer
-    from .pipeline_engines import PIPELINE_ENGINES
-    started = time.perf_counter()
-    server = NoGraphServer(state_dir, port=int(os.environ.get('ARCHHUB_TEST_HTTP_PORT', '0')),
-                           engines=PIPELINE_ENGINES).start()
-    print('  nograph    : server up in %.2fs at %s (no graph opened)' % (time.perf_counter() - started, server.public_url), flush=True)
     app_root = Path(__file__).resolve().parents[1]
     restart = {'requested': False, 'quit': None}
+    app = window = view = icon = title_bar = None
+    if not os.environ.get('ARCHHUB_TEST_NO_OPEN'):
+        # Cold start shows the loading card before the server and pipeline import.
+        from PyQt6.QtGui import QColor, QIcon
+        from PyQt6.QtWebEngineCore import QWebEngineProfile
+        from PyQt6.QtWebEngineWidgets import QWebEngineView
+        from PyQt6.QtWidgets import QApplication, QMainWindow
+        if os.name == 'nt':
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('ArchHub.ArchHub')
+        app = QApplication(sys.argv)
+        app.setApplicationName('ArchHub')
+        profile_root = Path(state_dir) / 'web-profile'
+        profile_root.mkdir(parents=True, exist_ok=True)
+        QWebEngineProfile.defaultProfile().setPersistentStoragePath(str(profile_root))
+        icon_path = app_root / 'archhub.ico'
+        icon = QIcon(str(icon_path)) if icon_path.is_file() else QIcon()
+        app.setWindowIcon(icon)
+        window = QMainWindow()
+        window.setWindowTitle('ArchHub')
+        view = QWebEngineView(window)
+        window.setCentralWidget(view)
+        window.resize(1440, 900)
+        from .window_chrome import install_one_title_bar
+        title_bar = install_one_title_bar(window, view)
+        from .studio_window import lock_studio_navigation
+        lock_studio_navigation(view)
+        view.page().setBackgroundColor(QColor('#0e0e11'))
+        view.setHtml(_native_boot_document())
+        window.show()
+        app.processEvents()
+    started = time.perf_counter()
+
+    def boot_server():
+        from .nograph_server import NoGraphServer
+        from .pipeline_engines import PIPELINE_ENGINES
+        return NoGraphServer(state_dir, port=int(os.environ.get('ARCHHUB_TEST_HTTP_PORT', '0')),
+                             engines=PIPELINE_ENGINES).start()
+
+    if app is None:
+        server = boot_server()
+    else:
+        box = {}
+
+        def serve():
+            try:
+                box['server'] = boot_server()
+            except Exception as failure:  # noqa: BLE001 - the GUI thread reports the start failure
+                box['error'] = failure
+        worker = threading.Thread(target=serve, name='archhub-nograph-http-boot', daemon=True)
+        worker.start()
+        while worker.is_alive():
+            app.processEvents()
+            worker.join(0.05)
+        if 'error' in box:
+            raise box['error']
+        server = box['server']
+    print('  nograph    : server up in %.2fs at %s (no graph opened)' % (time.perf_counter() - started, server.public_url), flush=True)
 
     def request_restart():
         # "Update and reload": close the window; after the event loop ends the staged build is armed and relaunched.
@@ -63,33 +128,13 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
         threading.Event().wait()
         return 0
     from PyQt6.QtCore import QObject, QTimer, QUrl, pyqtSignal
-    from PyQt6.QtGui import QIcon
-    from PyQt6.QtWebEngineCore import QWebEngineProfile
-    from PyQt6.QtWebEngineWidgets import QWebEngineView
-    from PyQt6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMenu, QSystemTrayIcon
+    from PyQt6.QtWidgets import QFileDialog, QMenu, QSystemTrayIcon
 
-    if os.name == 'nt':
-        # Taskbar identity: without an AppUserModelID Windows groups pythonw under a generic icon; the
-        # installer's shortcuts carry the same id and archhub.ico.
-        import ctypes
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('ArchHub.ArchHub')
-    app = QApplication(sys.argv)
-    app.setApplicationName('ArchHub')
-    profile_root = Path(state_dir) / 'web-profile'
-    profile_root.mkdir(parents=True, exist_ok=True)
-    QWebEngineProfile.defaultProfile().setPersistentStoragePath(str(profile_root))
-    icon_path = Path(__file__).resolve().parents[1] / 'archhub.ico'
-    icon = QIcon(str(icon_path)) if icon_path.is_file() else QIcon()
-    app.setWindowIcon(icon)
-    window = QMainWindow()
-    window.setWindowTitle('ArchHub')
-    view = QWebEngineView(window)
-    window.setCentralWidget(view)
-    window.resize(1440, 900)
-    from .window_chrome import install_one_title_bar
-    title_bar = install_one_title_bar(window, view)  # the Studio header is the only title bar
-    from .studio_window import lock_studio_navigation
-    lock_studio_navigation(view)  # one page in this window: the Studio
+    def show_home():
+        window.showNormal()
+        window.raise_()
+        window.activateWindow()
+        view.page().runJavaScript("window.dispatchEvent(new CustomEvent('archhub:open-home'))")
 
     class Asker(QObject):
         ask = pyqtSignal(object)
@@ -115,7 +160,7 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
         class Launch(QObject):
             requested = pyqtSignal(list)
         launch = Launch(app)
-        launch.requested.connect(lambda _arguments: (window.showNormal(), window.raise_(), window.activateWindow()))
+        launch.requested.connect(lambda _arguments: show_home())
         threading.Thread(target=serve_launch_requests, args=(instance_lock, launch.requested.emit), daemon=True).start()
     from .window_commands import CloseToTray, bind_window_commands
     quit_app = app.quit
@@ -131,7 +176,7 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
             return update.install_if_safe(closing=True, canvas_running=canvas_job_running(server))
         stay = CloseToTray(window, tray, app.quit, Path(state_dir) / 'tray-notice-shown', install_on_close)
         quit_app = stay.quit
-        open_window = lambda: (window.showNormal(), window.raise_(), window.activateWindow())
+        open_window = show_home
         menu = QMenu()
         menu.addAction('Open ArchHub', open_window)
         restart_update = {'action': None}

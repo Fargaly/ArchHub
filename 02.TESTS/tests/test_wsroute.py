@@ -1,5 +1,6 @@
 """Workshop routing: delivery only to the named agent, one task per agent, project rooms."""
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 
 import psutil
 import pytest
@@ -100,3 +101,25 @@ def test_bbc4_traffic_stays_out_of_the_archhub_room_unless_it_names_the_agent(ro
         arch_tasks = workshop_tasks.column(history, project="ArchHub")
         assert arch_tasks and all(row["project"] != "BBC4" for row in arch_tasks)
         assert any(row["project"] == "BBC4" for row in workshop_tasks.column(history, project="BBC4"))
+
+
+def test_declare_returns_rules_and_arabic_reply_to_the_founder_is_corrected(room, monkeypatch):
+    root, peer = room
+    rules = root / "gov" / ".rulesync" / "rules"
+    rules.mkdir(parents=True)
+    sheet = "# ArchHub founder rules\n\n- **LANG** Reply in English.\n"
+    (rules / "archhub-ledger.md").write_text(sheet, encoding="utf-8")
+    monkeypatch.setenv("ARCHHUB_GOVERNANCE_HOOKS_DIR", str(root / "gov"))
+    ctx = {"threadId": "agent-x"}
+    joined = _declare(peer, root, ctx, "Agent X", "RX", "10.PRODUCT/x")
+    assert sheet.strip() in joined["rules"]["text"]
+    assert "reply in English" in joined["rules"]["text"]
+    assert joined["rules"]["version"] == sha256(sheet.encode("utf-8")).hexdigest()[:12]
+    call("send", {"to": "founder", "text": "تم التنفيذ بالكامل"}, ctx, peer=peer)
+    page = call("pending", {}, ctx, peer=peer)
+    assert any("Workshop correction" in row["content"] and "reply in English" in row["content"] for row in page["pending"])
+    assert joined["rules"]["version"] in page["rules_reminder"]
+    call("send", {"to": "Agent Y", "text": "ملاحظة داخلية"}, ctx, peer=peer)
+    call("send", {"to": "founder", "text": "Done. The sheet is filed."}, ctx, peer=peer)
+    again = call("pending", {}, ctx, peer=peer)["pending"]
+    assert sum("Workshop correction" in row["content"] for row in again) == 1

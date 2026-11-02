@@ -73,3 +73,73 @@ def test_switching_tasks_keeps_each_file_scope_and_progress(tmp_path, monkeypatc
     assert held[task_b]["sessionPath"] == again_b["path"] and held[task_b]["sessionOpen"] is False
     on_disk = json.loads(Path(path_b).read_text(encoding="utf-8"))["properties"]["taskContext"]
     assert on_disk["scope"] == "scope-b" and on_disk["progress"]["note"] == "beta" and on_disk["task"] == task_b
+
+
+def test_mcp_tools_round_trip_session_fields_and_drop_archived_tasks(tmp_path, monkeypatch):
+    """The MCP task tools create a session, write every field, archive, and reopen."""
+    _isolate(monkeypatch, tmp_path)
+    import asyncio
+    from mcp import types
+    from mcp.server.lowlevel.server import request_ctx
+    from mcp.shared.context import RequestContext
+    from nodelang.native_agent_mcp import build_server
+
+    server = build_server()
+    context = {"threadId": "taskfix-mcp"}
+
+    async def notify(**_kwargs):
+        return None
+
+    async def call(name, arguments):
+        token = request_ctx.set(RequestContext(
+            request_id=1, meta=types.RequestParams.Meta(**context),
+            session=SimpleNamespace(send_log_message=notify), lifespan_context={}))
+        try:
+            result = (await server._mcp_server.request_handlers[types.CallToolRequest](
+                types.CallToolRequest(method="tools/call", params=types.CallToolRequestParams(
+                    name=name, arguments=arguments)))).root
+        finally:
+            request_ctx.reset(token)
+        assert not result.isError, result
+        return json.loads(result.content[0].text)
+
+    async def scenario():
+        made_a = await call("task.create", {"title": "Alpha"})
+        made_b = await call("task.create", {"title": "Beta"})
+        fields = {
+            "Alpha": {"scope": "scope-a", "rules": ["rule-a"], "agents": ["agent-a"], "plan": ["plan-a"],
+                      "progress": {"step": "one"}, "folders": ["C:/work/alpha"], "references": ["sheet-a"]},
+            "Beta": {"scope": "scope-b", "rules": ["rule-b"], "agents": ["agent-b"], "plan": ["plan-b"],
+                     "progress": {"step": "two"}, "folders": ["C:/work/beta"], "references": ["sheet-b"]},
+        }
+        written = {}
+        for made, name in ((made_a, "Alpha"), (made_b, "Beta")):
+            written[name] = await call("task.set_session", {"id": made["task"]["id"], **fields[name]})
+        current = tmp_path / "LOCALAPPDATA" / "ArchHub" / "sessions-files" / "current.json"
+        kept_selection = not current.exists()
+        archived_a = await call("task.archive", {"id": made_a["task"]["id"]})
+        listed = await call("task.list", {})
+        reopened_a = await call("task.open", {"id": made_a["task"]["id"]})
+        archived_b = await call("task.archive", {"id": made_b["task"]["id"]})
+        listed_after = await call("task.list", {})
+        reopened_b = await call("task.open", {"id": made_b["task"]["id"]})
+        return made_a, made_b, written, kept_selection, archived_a, listed, reopened_a, archived_b, listed_after, reopened_b
+
+    made_a, made_b, written, kept_selection, archived_a, listed, reopened_a, archived_b, listed_after, reopened_b = asyncio.run(scenario())
+    assert made_a["session"]["taskId"] == made_a["task"]["id"]
+    assert made_b["session"]["path"] and made_a["session"]["path"] != made_b["session"]["path"]
+    assert kept_selection
+    ids = {row["id"] for row in listed["tasks"]}
+    assert made_a["task"]["id"] not in ids and made_b["task"]["id"] in ids
+    assert archived_a["ok"] is True and archived_b["ok"] is True
+    assert {row["id"] for row in listed_after["tasks"]}.isdisjoint({made_a["task"]["id"], made_b["task"]["id"]})
+    for name, reopened, saved in (("Alpha", reopened_a, written["Alpha"]), ("Beta", reopened_b, written["Beta"])):
+        session = reopened["session"]
+        assert session["id"] == saved["session"]["id"] and session["path"] == saved["session"]["path"]
+        assert session["scope"] == "scope-" + name[0].lower()
+        assert session["rules"] == ["rule-" + name[0].lower()]
+        assert session["agents"] == ["agent-" + name[0].lower()]
+        assert session["plan"] == ["plan-" + name[0].lower()]
+        assert session["progress"] == {"step": "one" if name == "Alpha" else "two"}
+        assert session["folders"] == ["C:/work/" + name.lower()]
+        assert session["references"] == ["sheet-" + name[0].lower()]

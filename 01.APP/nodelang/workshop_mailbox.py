@@ -923,10 +923,12 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
     required = {"send": {"to", "text"}, "read": {"since"}, "pending": set(), "seen": {"message_ids", "channel"},
                 "declare": {"task", "paths", "status", "request_id"},
                 "task_create": {"title"}, "task_list": set(), "task_claim": {"id"}, "task_release": {"id"},
-                "task_complete": {"id"}}
+                "task_complete": {"id"}, "task_set_session": {"id"}, "task_open": {"id"}, "task_archive": {"id"}}
     optional = {"send": {"reply_to", "idempotency_key", "native_control"}, "read": {"declarations_after", "include_archived"}, "declare": {"display_name", "model"}, "pending":set(), "seen":set(),
                 "task_create": set(), "task_list": set(), "task_claim": {"lease_seconds"}, "task_release": set(),
-                "task_complete": {"result"}}
+                "task_complete": {"result"},
+                "task_set_session": {"scope", "rules", "agents", "plan", "progress", "folders", "references"},
+                "task_open": set(), "task_archive": set()}
     if method not in required or type(body) is not dict or not required[method] <= set(body) or set(body) - required[method] - optional[method]:
         raise ValueError("Workshop mailbox arguments are invalid")
     if type(timeout_seconds) not in (int, float) or not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
@@ -1026,10 +1028,19 @@ def _task(history, method, body, identity):
     from . import workshop_tasks
     me, label = identity["sender_key"], identity["sender_label"]
     if method == "task_create":
-        return {"task": workshop_tasks.create(history, body["title"], label)}
+        view = workshop_tasks.create_session(history, body["title"], label, select=False)
+        return {"task": workshop_tasks.get(history, view["taskId"]), "session": view}
     if method == "task_list":
-        return {"tasks": workshop_tasks.rows(history)}
+        return {"tasks": workshop_tasks.rows(history, include_archived=False)}
     task = _text(body["id"], "task id", 64)
+    if method == "task_set_session":
+        fields = ("scope", "rules", "agents", "plan", "progress", "folders", "references")
+        return {"session": workshop_tasks.update_session(history, task, {key: body[key] for key in fields if key in body})}
+    if method == "task_open":
+        return {"session": workshop_tasks.open_session(history, task)}
+    if method == "task_archive":
+        won = workshop_tasks.archive(history, task)
+        return {"ok": won, "task": workshop_tasks.get(history, task)}
     if method == "task_claim":
         won = workshop_tasks.claim(history, task, me, label, body.get("lease_seconds"))
     elif method == "task_release":

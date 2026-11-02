@@ -1,6 +1,7 @@
 """Courts for the transparent physical BABOOM companion projection."""
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import time
@@ -9,7 +10,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QColor, QImage, QPainter
-from PyQt6.QtCore import QRect, Qt
+from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, Qt
+from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtTest import QTest
 
 from nodelang.baboom_companion_placement import BaboomCompanionLayout, Rect
@@ -826,6 +828,137 @@ def test_t13_item3_talk_is_a_labelled_mic_icon(tmp_path):
         assert not window._talk.icon().isNull(), "Talk must carry the lucide mic icon"
         assert window._talk.accessibleName() == "Talk"
         assert window._talk.text() == "", "Talk is an icon, not a text button"
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+class _ScreenTransport(_Transport):
+    def baboom_native_frame(self, **kwargs):
+        frame = super().baboom_native_frame(**kwargs)
+        frame["context"] = dict(frame["context"], shows_as="Screen")
+        return frame
+
+
+def _screen_companion(tmp_path, monkeypatch, name):
+    """A visible companion on the offscreen desktop, with every pose painted."""
+    import nodelang.baboom_native_companion as companion
+
+    monkeypatch.setattr(companion, "foreign_foreground_window", lambda: False)
+    monkeypatch.setattr(companion, "desktop_input_idle_seconds", lambda: 30.0)
+    app = QApplication.instance() or QApplication([])
+    atlas_image = QImage(1536, 2288, QImage.Format.Format_ARGB32_Premultiplied)
+    atlas_image.fill(QColor(0, 0, 0, 0))
+    painter = QPainter(atlas_image)
+    for row in range(11):
+        for column in range(8):
+            painter.fillRect(column * 192 + 48, row * 208 + 50, 96, 120, QColor(28, 187, 171, 255))
+    painter.end()
+    atlas_path = tmp_path / name
+    assert atlas_image.save(str(atlas_path))
+    atlas = BaboomSpriteAtlas(
+        path=atlas_path, width=1536, height=2288, columns=8, rows=11,
+        cell_width=192, cell_height=208,
+    )
+    host = BaboomNativeHost(
+        _ScreenTransport(),
+        external_session_id="companion-hit-court",
+        device_credential_provider=lambda challenge: {"proof": "approved"},
+    )
+    host.connect()
+    controller = BaboomNativeCompanionController(host, atlas, occupied_provider=lambda: ())
+    opened: list[str] = []
+    window = create_baboom_native_companion_window(controller, on_open=lambda: opened.append("archhub"))
+    window.start_projection()
+    app.processEvents()
+    window.refresh()
+    app.processEvents()
+    assert window.isVisible()
+    assert window._sprite is not None
+    return app, window, opened
+
+
+def _sprite_points(window):
+    sprite = window._sprite
+    origin = window._sprite_rect.topLeft()
+    transparent = opaque = None
+    for y in range(sprite.height()):
+        for x in range(sprite.width()):
+            point = origin + QPoint(x, y)
+            if sprite.pixelColor(x, y).alpha() == 0 and transparent is None:
+                transparent = point
+            elif sprite.pixelColor(x, y).alpha() > 16 and opaque is None:
+                opaque = point
+        if transparent is not None and opaque is not None:
+            break
+    assert transparent is not None and opaque is not None
+    return transparent, opaque
+
+
+def test_transparent_pixel_is_not_accepted_and_sprite_click_opens_the_reply_box(tmp_path, monkeypatch):
+    """A click on empty pixels falls through. A click on the character opens the reply box, not ArchHub."""
+    app, window, opened = _screen_companion(tmp_path, monkeypatch, "hit.png")
+    try:
+        transparent, opaque = _sprite_points(window)
+        assert not window.mask().contains(transparent)
+        assert window.mask().contains(opaque)
+        press = QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            QPointF(transparent),
+            QPointF(window.mapToGlobal(transparent)),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        app.sendEvent(window, press)
+        assert not press.isAccepted()
+        assert not window._input.isVisible()
+        assert opened == []
+
+        QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=opaque)
+        QTest.qWait(window._quiet_click.interval() + 80)
+        app.processEvents()
+        assert window._input.isVisible()
+        assert opened == []
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_double_click_opens_archhub_and_a_drag_keeps_the_pinned_corner(tmp_path, monkeypatch):
+    """Double-click is the explicit Open ArchHub action. A drag past 4px still pins the sprite."""
+    app, window, opened = _screen_companion(tmp_path, monkeypatch, "drag.png")
+    try:
+        _transparent, opaque = _sprite_points(window)
+        QTest.mouseDClick(window, Qt.MouseButton.LeftButton, pos=opaque)
+        QTest.qWait(window._quiet_click.interval() + 80)
+        app.processEvents()
+        assert opened == ["archhub"]
+        assert not window._input.isVisible()
+
+        opened.clear()
+        position_path = tmp_path / "baboom-position.json"
+        window._position_path = position_path
+        start = window.pos() + window._sprite_rect.topLeft()
+        held = Qt.MouseButton.LeftButton
+
+        def send(kind, point):
+            event = QMouseEvent(
+                kind, QPointF(point), QPointF(window.mapToGlobal(point)),
+                held, held, Qt.KeyboardModifier.NoModifier,
+            )
+            app.sendEvent(window, event)
+
+        send(QEvent.Type.MouseButtonPress, opaque)
+        send(QEvent.Type.MouseMove, opaque + QPoint(12, 0))
+        send(QEvent.Type.MouseButtonRelease, opaque + QPoint(12, 0))
+        app.processEvents()
+        saved = json.loads(position_path.read_text(encoding="utf-8"))
+        assert abs(saved["x"] - start.x()) > 4
+        assert opened == []
+        assert not window._input.isVisible()
     finally:
         window.close()
         window.deleteLater()

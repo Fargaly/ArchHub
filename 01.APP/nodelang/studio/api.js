@@ -1089,7 +1089,7 @@ async function settingsAction(functionName, args=[]) {
  if(functionName==='readControls'&&generation!==controlsGeneration)return result;
  if(['readOperations','setGraphWorkspaces'].includes(functionName)&&graph!==state.graph.id)throw Error('The graph changed while Settings ran. Refresh Settings before retrying.');
  const values={};
- for(const key of ['firms','activeFirm','people','billing','dependencies','officeInvitations','settingsScope','activeWorkspace','devices','activeDevice','backups','companion','secrets','providerPreferences','providerModels'])if(Object.hasOwn(result,key))values[key]=result[key];
+ for(const key of ['firms','activeFirm','people','billing','dependencies','officeInvitations','settingsScope','activeWorkspace','devices','activeDevice','backups','companion','secrets','providerPreferences','providerModels','libraryCollapsed'])if(Object.hasOwn(result,key))values[key]=result[key];
  if(result.controlErrors){
   values.controlErrors={...state.controlErrors};
   for(const key of functionName==='read'?['officeInvitations']:['secrets','providerModels'])delete values.controlErrors[key];
@@ -1550,6 +1550,10 @@ api.setSessionViewport=viewport=>{if(!sessionDocument)return;sessionDocument.vie
 api.addGraph=api.newSession;
 api.selectGraph=path=>path===sessionDocument?.id?Promise.resolve(state.graph):api.openSession(path);
 api.getGraph=()=>copy(state.graph);
+api.setLibraryCollapsed=async groups=>{
+ if(!Array.isArray(groups)||groups.some(name=>!['Start','Programs','Change','Decide','Deliver'].includes(name)))throw Error('Unknown Library category.');
+ return settingsAction('setLibraryCollapsed',[groups]);
+};
 api.refreshProjects=async()=>{if(!ready)await api.ready;projectFile();return copy(state.graph);};
 api.tickSchedules=async()=>[];
 api.refreshLibraryPorts=async()=>{
@@ -1683,6 +1687,7 @@ api.ready=(async()=>{
  if((!session?.token||!session?.csrf)&&!window.ARCHHUB_AUTHORITY?.canvas_key)await signIn();else window.__archhubSession=session;
  commands=window.ArchHubStudioAuthority.create({get:path=>request(path),post:(path,body)=>request(path,body)});
  try{
+  await settingsAction('readLibraryCollapsed');
   await api.refreshLibraryPorts();
   const initialFile=await sessionRequest('initial');
   if(initialFile?.document){sessionDocument=copy(initialFile.document);sessionPath=initialFile.path||'';sessionRevision=sessionDocument.properties?.revision||0;projectFile();}

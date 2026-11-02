@@ -911,6 +911,14 @@ def r_settings_action(s, req):
     function, args = body.get('function'), body.get('args') or []
     companion = s.files['companion']
     settings = s.files['settings']
+    if function in ('readLibraryCollapsed', 'setLibraryCollapsed'):
+        if function == 'setLibraryCollapsed':
+            groups = args[0] if args else None
+            if (not isinstance(groups, list) or len(groups) > 5 or any(
+                    group not in ('Start', 'Programs', 'Change', 'Decide', 'Deliver') for group in groups)):
+                raise Refused('Choose valid Library categories.')
+            settings.write({**settings.read(), 'libraryCollapsed': list(dict.fromkeys(groups))})
+        return {'ok': True, 'result': {'libraryCollapsed': settings.read().get('libraryCollapsed', [])}}
     if function == 'readControls':
         result = {'companion': companion.read(), 'providerPreferences': read_router_settings()['providerPreferences'],
                   'controlErrors': {}, 'providerModels': {}}

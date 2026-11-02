@@ -141,12 +141,15 @@ def _split_each_wires(wired, nodes, outputs, engine, target_id):
 
 
 def _params_and_feeds(node, engine, feeds):
-    """Wired param:<id> sockets set those parameters. A wire wins."""
+    """Base sockets and param:<id> set the same value; param:<id> takes precedence."""
     from .canvas_documents import THING_ENGINES
     from .library_engines import canonical_engine_parameters
     from .node_params import PARAM_ENGINE
     own = {k: v for k, v in node['params'].items() if k not in {d['id'] for d in node.get('paramDefs', [])}}
     extra = {k: v for k, v in node['params'].items() if k not in own}
+    for definition in node.get('paramDefs', []):
+        if definition['id'] in feeds:
+            extra[definition['id']] = feeds[definition['id']]
     for socket in [s for s in list(feeds) if str(s).startswith('param:')]:
         extra[socket[6:]] = feeds.pop(socket)
     params = own if engine in ('skill', PARAM_ENGINE) or engine in THING_ENGINES else canonical_engine_parameters(engine, own)

@@ -157,8 +157,8 @@ def test_background_autocad_guards(monkeypatch, tmp_path):
     launched = []
     real_hash = host_exec.hash_file
 
-    def launch(argv, creationflags):
-        launched.append((list(argv), creationflags))
+    def launch(argv, creationflags, timeout):
+        launched.append((list(argv), creationflags, timeout))
         return "ARCHHUB_CORE_DONE\n", 0
 
     monkeypatch.setattr("nodelang.host_exec.launch_console", launch)
@@ -171,7 +171,8 @@ def test_background_autocad_guards(monkeypatch, tmp_path):
     produced, log = host_exec.host_exec(_params(
         host="acad-core", code='(princ "hi")', document=str(drawing), isolate_folder=str(folder),
     ))
-    argv, flags = launched[0]
+    argv, flags, limit = launched[0]
+    assert limit == 900
     assert flags == subprocess.CREATE_NO_WINDOW
     assert argv[1:6] == ["/isolate", "tester", str(folder), "/loadmodule", "acismobj25.dbx"]
     assert "/i" in argv and "/s" in argv
@@ -207,8 +208,8 @@ def test_background_autocad_guards(monkeypatch, tmp_path):
     ))
     assert produced["result"] is None and len(launched) == 1
 
-    def quiet(argv, creationflags):
-        launched.append((list(argv), creationflags))
+    def quiet(argv, creationflags, timeout):
+        launched.append((list(argv), creationflags, timeout))
         return "no mark\n", 0
 
     monkeypatch.setattr("nodelang.host_exec.launch_console", quiet)
@@ -225,6 +226,200 @@ def test_background_autocad_guards(monkeypatch, tmp_path):
     ))
     assert produced["result"] is None
     assert "local file" in produced["log"]
+
+
+def _alive(pid):
+    import ctypes
+    kernel = ctypes.windll.kernel32
+    handle = kernel.OpenProcess(0x1000, False, int(pid))
+    if not handle:
+        return False
+    code = ctypes.c_ulong()
+    ok = kernel.GetExitCodeProcess(handle, ctypes.byref(code))
+    kernel.CloseHandle(handle)
+    return bool(ok) and code.value == 259
+
+
+def _stop_owned(pid, image):
+    """Stop this stand-in pid only, and only when its image name matches."""
+    if not _alive(pid):
+        return
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.windll.kernel32
+    handle = kernel.OpenProcess(0x1001, False, int(pid))
+    if not handle:
+        return
+    try:
+        buffer = ctypes.create_unicode_buffer(32768)
+        size = wintypes.DWORD(len(buffer))
+        query = kernel.QueryFullProcessImageNameW
+        query.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+        query.restype = wintypes.BOOL
+        if not query(handle, 0, buffer, ctypes.byref(size)):
+            return
+        if Path(buffer.value).name.casefold() != image.casefold():
+            return
+        kernel.TerminateProcess(handle, 1)
+    finally:
+        kernel.CloseHandle(handle)
+
+
+def _compile_stand_in(tmp_path):
+    windir = Path(os.environ.get("WINDIR") or r"C:\Windows")
+    compilers = [
+        windir / "Microsoft.NET" / "Framework64" / "v4.0.30319" / "csc.exe",
+        windir / "Microsoft.NET" / "Framework" / "v4.0.30319" / "csc.exe",
+    ]
+    csc = next((path for path in compilers if path.is_file()), None)
+    assert csc is not None
+    source = tmp_path / "standin.cs"
+    source.write_text(
+        "using System; using System.Diagnostics; using System.IO; using System.Reflection; using System.Threading;"
+        "class StandIn { static void Main() {"
+        "string dir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);"
+        "File.WriteAllText(Path.Combine(dir, \"child.pid\"), Process.GetCurrentProcess().Id.ToString());"
+        "Console.Out.WriteLine(\"PARTIAL-LOG\"); Console.Out.Flush();"
+        "Thread.Sleep(Timeout.Infinite); } }",
+        encoding="utf-8",
+    )
+    exe = tmp_path / "standin-console.exe"
+    compiled = subprocess.run(
+        [str(csc), "/nologo", "/t:exe", "/out:" + str(exe), str(source)],
+        capture_output=True, text=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    assert compiled.returncode == 0, compiled.stderr or compiled.stdout
+    return exe
+
+
+def test_acad_core_stand_in_times_out_and_keeps_the_claim(monkeypatch, tmp_path):
+    import time
+    from nodelang.library_engines import LIBRARY_ITEM_ENGINES
+    assert LIBRARY_ITEM_ENGINES["host_exec"]["params"]["timeout"] == 900
+    _mode(None)
+    drawing = tmp_path / "plan.dwg"
+    drawing.write_bytes(b"dwg")
+    exe = _compile_stand_in(tmp_path)
+    pid_path = tmp_path / "child.pid"
+    monkeypatch.setattr("nodelang.host_exec.find_console", lambda explicit: str(exe))
+    monkeypatch.setattr("nodelang.host_exec.hidden_cores", lambda: 0)
+    monkeypatch.setattr("nodelang.host_exec.free_bytes", lambda: 4 * 2147483648)
+    folder = tmp_path / "isolate"
+    params = _params(
+        host="acad-core", code='(princ "hi")', document=str(drawing),
+        isolate_folder=str(folder), timeout=30,
+    )
+    try:
+        started = time.monotonic()
+        produced, display = host_exec.host_exec(params)
+        elapsed = time.monotonic() - started
+        assert display == "Timed out"
+        assert produced["result"] == "Timed out"
+        assert "PARTIAL-LOG" in produced["log"]
+        assert 20 <= elapsed <= 45
+        assert pid_path.is_file()
+        pid = int(pid_path.read_text(encoding="utf-8").strip())
+        assert _alive(pid) is False
+        claims = list((folder / "claims").glob("*.claim"))
+        assert len(claims) == 1
+        claim_text = claims[0].read_text(encoding="utf-8")
+        replay_started = time.monotonic()
+        replay, _display = host_exec.host_exec(params)
+        assert time.monotonic() - replay_started < 5
+        assert replay["result"] is None and "claim" in replay["log"]
+        assert claims[0].is_file()
+        assert claims[0].read_text(encoding="utf-8") == claim_text
+        assert _alive(pid) is False
+    finally:
+        if pid_path.is_file():
+            _stop_owned(int(pid_path.read_text(encoding="utf-8").strip() or "0"), exe.name)
+
+
+def _hang_server():
+    import socket
+    import threading
+    import time
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(8)
+    listener.settimeout(0.2)
+    stop = threading.Event()
+
+    def handle(conn):
+        try:
+            conn.settimeout(2)
+            data = b""
+            while b"\r\n\r\n" not in data and len(data) < 65536:
+                chunk = conn.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+            first = data.split(b"\r\n", 1)[0].decode("latin1", "replace")
+            path = first.split(" ")[1] if " " in first else ""
+            if path == "/exec":
+                while not stop.is_set():
+                    time.sleep(0.1)
+                return
+            body = b'{"status":"ok","document":"Drawing","document_title":"Drawing"}'
+            head = (
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n"
+                b"Connection: close\r\n\r\n" % len(body)
+            )
+            conn.sendall(head + body)
+        except OSError:
+            pass
+        finally:
+            try:
+                conn.close()
+            except OSError:
+                pass
+
+    def accept():
+        while not stop.is_set():
+            try:
+                conn, _addr = listener.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            threading.Thread(target=handle, args=(conn,), daemon=True).start()
+
+    threading.Thread(target=accept, args=(), daemon=True).start()
+    return listener, stop, listener.getsockname()[1]
+
+
+def test_revit_and_acad_broker_exec_times_out(monkeypatch):
+    import time
+    _mode(None)
+    listener, stop, port = _hang_server()
+    monkeypatch.setattr("nodelang.clean_revit_adapter.BROKER_HOST", "127.0.0.1")
+    monkeypatch.setattr("nodelang.host_bridge_auth.ensure_secret", lambda: "k" * 32)
+
+    def sessions(service, include_document=True):
+        return [{
+            "port": port,
+            "pid": 1,
+            "service": "acad-mcp" if service == "acad" else "revit-mcp",
+            "revit_version": "2026" if service == "revit" else "",
+            "acad_version": "2026" if service == "acad" else "",
+            "document": "Drawing",
+        }]
+
+    monkeypatch.setattr("nodelang.host_brokers.broker_sessions", sessions)
+    try:
+        for host in ("revit", "acad"):
+            started = time.monotonic()
+            produced, display = host_exec.host_exec(_params(
+                host=host, code="return;", document="Drawing", timeout=2,
+            ))
+            elapsed = time.monotonic() - started
+            assert display == "Timed out", (host, display, produced)
+            assert produced["result"] == "Timed out"
+            assert 1 <= elapsed <= 8, (host, elapsed)
+    finally:
+        stop.set()
+        listener.close()
 
 
 def test_program_state_does_not_execute(monkeypatch):

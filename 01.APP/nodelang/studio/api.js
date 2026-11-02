@@ -176,7 +176,7 @@ function project() {
  const profile={...state.profile};
  const graphs=state.graphs.some(g=>g.id===graph.id)?state.graphs.map(g=>g.id===graph.id?{...g,...graph}:g):[...state.graphs,graph];
  publish({profile,graph,graphs,settings,canvasPolicy:copy(canvas.interaction_policy||{}),runtimeParameters:copy(canvas.runtime_parameters||{}),catalogue,capabilities:catalogue.map(c=>({...c,nodeKind:c.name,page:'System graph',params:{},defaults:{},enabled:true})),
- docs:[...(canvas.documentation?.tutorials||[]).map(d=>({id:d.id,category:d.id.startsWith('tutorial-')?'Tutorial':'Guide',title:d.title,summary:d.description||'',steps:String(d.text||'').split(/\n+/).map(line=>line.trim()).filter(Boolean),route:({'getting-started':'home','composer-canvas':'canvas','brain':'brain','connectors':'watcher','account-web':'settings/Account','workshop':'workshop','tasks':'workshop','approvals':'settings/Hooks','routines':'canvas'})[d.id]||'canvas',bookSource:'ArchHub documentation'})),...(canvas.documentation?.nodes||[]).map(d=>({id:d.id,category:d.category,title:d.title,summary:d.detail||'',steps:[],route:'canvas'}))],
+ docs:[...documentationTutorials(canvas.documentation?.tutorials||[]),...(canvas.documentation?.nodes||[]).map(d=>({id:d.id,category:d.category,title:d.title,summary:d.detail||'',steps:[],route:'canvas'}))],
  sync:'Local session'});
  if(state.social?.research?.length)publish({docs:[...state.docs,...state.social.research.map(researchDoc)]});
 }
@@ -1025,6 +1025,14 @@ api.exposeSettingsPage=async page=>{
  return state.graph.nodes.find(n=>n.id===result.id)||result;
 };
 api.apiRouterChat=(prompt,agent,replyTo)=>routerChat(prompt,agent,replyTo);  // replyTo: the Workshop message this answers
+function documentationTutorials(rows){return rows.map(d=>({id:d.id,category:d.id.startsWith('tutorial-')?'Tutorial':'Guide',title:d.title,summary:d.description||'',steps:String(d.text||'').split(/\n+/).map(line=>line.trim()).filter(Boolean),route:({'getting-started':'home','composer-canvas':'canvas','brain':'brain','connectors':'watcher','account-web':'settings/Account','workshop':'workshop','tasks':'workshop','approvals':'settings/Hooks','routines':'canvas'})[d.id]||'canvas',bookSource:'ArchHub documentation'}));}
+api.refreshDocs=async()=>{
+ const result=await request('/api/documentation');
+ if(!Array.isArray(result.tutorials)||!Array.isArray(result.glossary))throw Error('Documentation could not be read. Retry the guide.');
+ const docs=documentationTutorials(result.tutorials);
+ publish({docs,bookGlossary:result.glossary.map(entry=>`| ${entry.term} | ${entry.definition} |`)});
+ return docs;
+};
 api.refreshRouter=async()=>{const result=await request('/api/router/settings',{});publish({router:result,providerPreferences:result.providerPreferences,providers:state.providers.map(p=>({...p,...result.agents[p.id]}))});return result;};
 api.setRouterSettings=async values=>{await request('/api/router/settings',values);return api.refreshRouter();};
 api.setProviderModel=async(id,model)=>{const current=await api.refreshRouter();return api.setRouterSettings({default_model:model,providerPreferences:{...current.providerPreferences,[id]:model}});};

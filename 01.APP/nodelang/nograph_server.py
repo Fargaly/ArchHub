@@ -525,6 +525,17 @@ def r_session_files(s, req):
     return result
 
 
+def r_documentation(s, req):
+    from .site_export import project_documentation
+    import re
+    root = Path(__file__).resolve().parents[1]
+    source = root.parent / '04.DOCS' / 'SPEC.md' if root.name == '01.APP' else root / 'docs' / 'SPEC.md'
+    text = source.read_text(encoding='utf-8').split('## 2. Terms', 1)[1].split('\n## ', 1)[0]
+    glossary = [{'term': term, 'definition': ' '.join(definition.split())}
+                for term, definition in re.findall(r'^- \*\*([^*]+):\*\* (.*?)(?=\n- \*\*|\Z)', text, re.M | re.S)]
+    return {'ok': True, **project_documentation(), 'glossary': glossary}
+
+
 def r_router_settings(s, req):
     from .settings_owner import SettingsOwner
     owner = SettingsOwner(None, dependencies=object())
@@ -1296,6 +1307,7 @@ BRAIN = ('Brain', r_brain)
 # path -> (owner, handler). Every route the Studio calls (studio/api.js + screens).
 ROUTES = {
     '/api/router/settings': ('settings/router.json + router.sqlite', r_router_settings),
+    '/api/documentation': ('site_export + SPEC.md terms', r_documentation),
     '/api/session-files': ('session_files (.archhub)', r_session_files),
     '/api/universal/canvas': ('System graph (logic only)', r_canvas),
     '/api/universal/canvas-op': ('session reads + settings/project-files.json', r_canvas_op),

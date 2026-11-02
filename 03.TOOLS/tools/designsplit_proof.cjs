@@ -53,7 +53,7 @@ let browser;
     assert.ok(measure.main.every(e=>e.scroll<=e.width),JSON.stringify(measure));
     metrics.push({name,...measure});await page.setViewportSize({width:1680,height:893});
   }
-  if(stage==='settings'){
+  if(stage==='settings'||stage==='all'){
     await page.getByRole('button',{name:'Settings',exact:true}).click();
     await page.waitForSelector('[data-screen="settings/Account"]');
     await page.getByText('Reading settings…',{exact:true}).waitFor({state:'hidden'});
@@ -69,7 +69,7 @@ let browser;
     assert.equal(await page.getByRole('table',{name:'Router requests'}).locator('tfoot').innerText(),'Total\t0\tNot reported\tNot measured');
     await page.screenshot({path:path.join(proof,'settings-agents.png')});
   }
-  if(stage==='library'){
+  if(stage==='library'||stage==='all'){
     await page.evaluate(()=>window.ArchHubAPI.setLibraryCollapsed([]));
     await page.getByRole('button',{name:'Canvas',exact:true}).click();
     const shelf=page.getByRole('complementary',{name:'Library shelf'});
@@ -155,7 +155,36 @@ let browser;
     assert.equal(await page.locator('.react-flow__edge').count(),2);
     await capture('library','archhub-current-canvas-full-nodes.svg');
   }
-  console.log(JSON.stringify({stage,metrics,errors},null,2));
-  fs.writeFileSync(path.join(proof,stage+'-checks.json'),JSON.stringify({stage,metrics,errors},null,2));
+
+  if(stage==='docs'||stage==='all'){
+    await page.getByRole('button',{name:'Docs',exact:true}).click();
+    await page.locator('.docs-guide-content').waitFor();
+    const data=await page.evaluate(()=>({title:window.ArchHubAPI.getSnapshot().docs.find(page=>page.id==='getting-started').title,pages:window.ArchHubAPI.getSnapshot().docs.length,terms:window.ArchHubAPI.getSnapshot().bookGlossary.length}));
+    await page.locator('.docs-article').getByRole('heading',{name:data.title,exact:true}).waitFor();
+    assert.equal(await page.getByRole('heading',{name:/No guide matches/}).count(),0);
+    const search=page.getByRole('textbox',{name:'Search docs'});
+    await search.fill('no-such-guide-designsplit');
+    await page.getByRole('heading',{name:/No guide matches/}).waitFor();
+    await search.fill('   ');
+    await page.locator('.docs-article').getByRole('heading',{name:data.title,exact:true}).waitFor();
+    assert.equal(await page.locator('.docs-toc .listbutton').count(),data.pages+2);
+    await search.fill('');
+    await page.locator('.docs-toc').getByRole('button',{name:/^Glossary/}).click();
+    await page.locator('.docs-glossary').waitFor();
+    assert.ok(data.terms>0);assert.equal(await page.locator('.docs-glossary dt').count(),data.terms);
+    await search.fill('Socket');
+    assert.equal(await page.locator('.docs-glossary dt').filter({hasText:/^Socket$/}).count(),1);
+    await search.fill('');
+    await page.locator('.docs-toc').getByRole('button',{name:data.title,exact:true}).click();
+    await page.locator('.docs-guide-content').waitFor();
+    await capture('docs','archhub-current-docs.svg');
+    metrics.push({name:'docs-data',guide_pages:data.pages,glossary_terms:data.terms});
+  }
+  const revision=execFileSync('git',['-c','core.fsmonitor=false','rev-parse','HEAD'],{cwd:root,encoding:'utf8',windowsHide:true}).trim();
+  const clean=!execFileSync('git',['-c','core.fsmonitor=false','status','--porcelain','--untracked-files=no'],{cwd:root,encoding:'utf8',windowsHide:true}).trim();
+  const manifest=require('node:crypto').createHash('sha256').update(fs.readFileSync(path.join(root,'01.APP/nodelang/studio/compiled/manifest.json'))).digest('hex');
+  const report={stage,source_revision:revision,tracked_source_clean:clean,browser_version:browser.version(),build_manifest_sha256:manifest,metrics,errors};
+  console.log(JSON.stringify(report,null,2));
+  for(const screen of ['settings','library','docs']){const scoped=metrics.filter(row=>row.name.startsWith(screen));if(scoped.length)fs.writeFileSync(path.join(proof,screen+'-checks.json'),JSON.stringify({...report,stage:screen,metrics:scoped},null,2));}
   assert.deepEqual(errors,[]);
 })().catch(error=>{console.error(error);process.exitCode=1;}).finally(async()=>{if(browser)await browser.close();server.kill();});

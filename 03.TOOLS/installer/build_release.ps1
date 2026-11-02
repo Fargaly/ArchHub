@@ -38,7 +38,7 @@ $repositoryAreas = @{
     'nodelang' = '01.APP/nodelang'; 'app' = '01.APP/app'; 'bridges' = '01.APP/bridges'
     'colleague_setup.py' = '01.APP/colleague_setup.py'; 'archhub.ico' = '01.APP/archhub.ico'
     'tools' = '03.TOOLS/tools'; 'installer' = '03.TOOLS/installer'; 'packaging' = '03.TOOLS/packaging'
-    'evidence' = '05.EVIDENCE'; 'tests' = '02.TESTS/tests'
+    'evidence' = '05.EVIDENCE'; 'tests' = '02.TESTS/tests'; 'docs' = '04.DOCS'
 }
 function Get-RepositoryPath([string]$Path, [string]$Checkout = $selectedRoot) {
     if (-not (Test-Path -LiteralPath (Join-Path $Checkout '01.APP/nodelang') -PathType Container)) { return $Path }
@@ -51,6 +51,7 @@ function Get-RepositoryPath([string]$Path, [string]$Checkout = $selectedRoot) {
     return $Path
 }
 function Get-PayloadPath([string]$Path) {
+    if ($Path.StartsWith('04.DOCS/', [StringComparison]::Ordinal)) { return 'docs/' + $Path.Substring(8) }
     foreach ($area in @('01.APP/', '03.TOOLS/')) {
         if ($Path.StartsWith($area, [StringComparison]::Ordinal)) { return $Path.Substring($area.Length) }
     }
@@ -75,7 +76,7 @@ $acompilerInputs = @(
     'tools/archhub-compiler/licenses/tree-sitter-typescript-0.23.2-LICENSE.txt'
 )
 $selectedInputs = @(
-    'nodelang', 'nodelang/outlook_graph.ps1', 'colleague_setup.py',
+    'nodelang', 'nodelang/outlook_graph.ps1', 'colleague_setup.py', 'docs/SPEC.md',
     'requirements.txt', 'installer', 'packaging/windows/Test-SourcePortability.ps1',
     'packaging/windows/publish_release.ps1', 'packaging/windows/check_update_offer.py',
     'package.json', 'packaging/compile_studio.cjs',
@@ -188,7 +189,7 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
         if ($Path.StartsWith('nodelang/studio/compiled/', [StringComparison]::OrdinalIgnoreCase)) { return $false }
         if ($Path -cin @(
             'nodelang/launcher.py', 'nodelang/studio/style.css', 'nodelang/studio/design-tokens.json', 'colleague_setup.py', 'requirements.txt',
-            'NOTICE', 'packaging/windows/goose-pin.json', 'packaging/windows/stage_goose.py',
+            'NOTICE', 'docs/SPEC.md', 'packaging/windows/goose-pin.json', 'packaging/windows/stage_goose.py',
             'package.json', 'packaging/compile_studio.cjs',
     'tools/real_app_check/real_app_check.py', 'tools/real_app_check/profile_guard.py',
             'installer/ArchHub.iss', 'installer/ArchHub.bat', 'installer/ArchHub.vbs', 'installer/README.md', 'nodelang/README.md', 'app/README.md',
@@ -286,7 +287,7 @@ function Read-CandidateManifest([string]$Path) {
         })
     }
     $required = @(
-        'selected/nodelang/launcher.py', 'selected/colleague_setup.py', 'selected/requirements.txt',
+        'selected/nodelang/launcher.py', 'selected/colleague_setup.py', 'selected/requirements.txt', 'selected/docs/SPEC.md',
         'selected/installer/ArchHub.iss', 'selected/installer/ArchHub.bat', 'selected/installer/ArchHub.vbs',
         'selected/installer/legacy_sweep.iss', 'selected/installer/legacy_doc_files.iss', 'selected/installer/legacy_v1_files.iss', 'selected/installer/host_file_staging.iss',
         'selected/installer/build_release.ps1', 'selected/packaging/windows/Test-SourcePortability.ps1',

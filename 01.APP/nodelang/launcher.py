@@ -425,11 +425,58 @@ def _holder_answers(port, state_dir):
         return False
 
 
+def _launcher_family_pids(process):
+    """This process, its parents, and its children.
+
+    .venv\\Scripts\\pythonw.exe is a redirector. It stays as the parent, with the
+    same command line as the interpreter that actually runs this file, and it
+    puts that interpreter in a job that is destroyed when the redirector exits.
+    Stopping the redirector as a second launcher stops the only launch.
+    """
+    import psutil
+    protected = set()
+    try:
+        protected.add(process.pid)
+    except (psutil.Error, OSError):
+        return protected
+    current = process
+    while True:
+        try:
+            parent = current.parent()
+        except (psutil.Error, OSError):
+            break
+        if parent is None or parent.pid in protected:
+            break
+        protected.add(parent.pid)
+        current = parent
+    try:
+        for child in process.children(recursive=True):
+            protected.add(child.pid)
+    except (psutil.Error, OSError) as error:
+        print("  lock       : could not list child processes: %s" % error, flush=True)
+    return protected
+
+
+def _lock_listener_pid(port):
+    import psutil
+    try:
+        for connection in psutil.net_connections(kind="tcp"):
+            if (connection.status == psutil.CONN_LISTEN
+                    and connection.laddr == ("127.0.0.1", port)
+                    and connection.pid):
+                return int(connection.pid)
+    except (psutil.Error, OSError) as error:
+        print("  lock       : could not read the lock listener: %s" % error, flush=True)
+        return None
+    return None
+
+
 def _release_unanswering_holder(port, state_dir):
     """Stop our own launcher when it holds the lock and is not answering.
 
     Returns True when this launch should bind the port and open the window.
-    Revit, AutoCAD, and any other program are never stopped.
+    Revit, AutoCAD, and any other program are never stopped. This process
+    chain is never stopped either: that is the launch which must open.
     """
     import psutil
     owner = _verified_launch_owner(port)
@@ -450,6 +497,11 @@ def _release_unanswering_holder(port, state_dir):
         return True
     if decision != "stop" or owner is None:
         return False
+    try:
+        if owner.pid in _launcher_family_pids(psutil.Process()):
+            return False
+    except (psutil.Error, OSError):
+        return False
     print("  lock       : holder on port %d is not answering; taking over" % port, flush=True)
     try:
         owner.terminate()
@@ -469,16 +521,30 @@ def _release_unanswering_holder(port, state_dir):
 
 
 def _stop_duplicate_launchers():
-    """The process that holds the lock is the one launcher. Other copies of it exit."""
+    """Stop one different launcher only when it is silent.
+
+    A live launcher that answers stays. This process, its parents, its
+    children, and the process that holds the lock stay as well. After a
+    takeover the caller continues and opens the window.
+    """
     import psutil
     from nodelang.application_machine_transport import _observe_machine_process, _desktop_launch_is_admitted
     try:
         me = psutil.Process()
     except (psutil.Error, OSError):
         return
+    protected = _launcher_family_pids(me)
+    listener = _lock_listener_pid(_lock_port)
+    if listener:
+        protected.add(listener)
+        try:
+            protected.update(_launcher_family_pids(psutil.Process(listener)))
+        except (psutil.Error, OSError) as error:
+            print("  lock       : could not protect the lock owner's process chain: %s" % error, flush=True)
+    answering = _holder_answers(_lock_port, state_dir)
     root = Path(__file__).resolve().parents[1]
     for process in psutil.process_iter(["pid"]):
-        if process.pid == me.pid:
+        if process.pid in protected:
             continue
         try:
             if process.username() != me.username():
@@ -486,10 +552,30 @@ def _stop_duplicate_launchers():
             observed = _observe_machine_process(process.pid)
             if observed is None or not _desktop_launch_is_admitted(observed, product_root=root):
                 continue
+            if answering or not process.is_running():
+                continue
+            age = max(0.0, time.time() - process.create_time())
+            if _lock_takeover_decision(True, True, False, age, True) != "stop":
+                continue
+            if process.pid in protected:
+                continue
             process.terminate()
             print("  lock       : stopped duplicate launcher pid %d" % process.pid, flush=True)
         except (psutil.Error, OSError, ValueError):
             continue
+
+
+def _exit_while_port_is_held():
+    """The port is still held. Leave an answering launcher, and say so when it is not ours."""
+    if _holder_answers(_lock_port, state_dir):
+        _forward_launch_arguments(_lock_port, sys.argv[1:])
+        print("  lock       : live launcher on port %d is answering; leaving it alone" % _lock_port, flush=True)
+        raise SystemExit(0)
+    _forward_launch_arguments(_lock_port, sys.argv[1:])
+    print("  window     : %s"
+          % _held_port_outcome(_lock_port, _front_running_archhub, _message_box),
+          flush=True)
+    raise SystemExit(0)
 
 
 def _forward_launch_arguments(port, arguments):
@@ -572,11 +658,7 @@ else:
     # one instance.
     print("  lock       : port %d is already held" % _lock_port, flush=True)
     if not _release_unanswering_holder(_lock_port, state_dir):
-        _forward_launch_arguments(_lock_port, sys.argv[1:])
-        print("  window     : %s"
-              % _held_port_outcome(_lock_port, _front_running_archhub, _message_box),
-              flush=True)
-        sys.exit(0)
+        _exit_while_port_is_held()
     bound = False
     for _again in range(12):
         try:
@@ -586,11 +668,7 @@ else:
         except OSError:
             time.sleep(_launcher_seconds("instance_retry_ms"))
     if not bound:
-        _forward_launch_arguments(_lock_port, sys.argv[1:])
-        print("  window     : %s"
-              % _held_port_outcome(_lock_port, _front_running_archhub, _message_box),
-              flush=True)
-        sys.exit(0)
+        _exit_while_port_is_held()
 
 _instance_lock.listen(8)
 _stop_duplicate_launchers()

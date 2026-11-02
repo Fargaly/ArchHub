@@ -118,12 +118,43 @@ Function RunAndWait(command, windowStyle)
 End Function
 
 Sub StartUpdateMaintainer()
-    Dim maintainer
+    Dim maintainer, homePy, cfgPath, cfgFile, line, trimmed, eq, homeDir
     maintainer = here & "\.venv\Scripts\pythonw.exe"
     If Not fso.FileExists(maintainer) Then maintainer = here & "\.venv\Scripts\python.exe"
     If Not fso.FileExists(maintainer) Then Exit Sub
-    sh.Run QuoteArgument(maintainer) & " -E -s " & QuoteArgument(here & "\nodelang\quiet_update.py") _
+    homePy = maintainer
+    cfgPath = here & "\.venv\pyvenv.cfg"
+    If fso.FileExists(cfgPath) Then
+        Set cfgFile = fso.OpenTextFile(cfgPath, 1, False)
+        Do While Not cfgFile.AtEndOfStream
+            line = cfgFile.ReadLine
+            trimmed = LTrim(line)
+            eq = InStr(1, trimmed, "=", 1)
+            If eq > 1 Then
+                If LCase(Trim(Left(trimmed, eq - 1))) = "home" Then
+                    homeDir = Trim(Mid(trimmed, eq + 1))
+                    If fso.FileExists(homeDir & "\pythonw.exe") Then
+                        homePy = homeDir & "\pythonw.exe"
+                    ElseIf fso.FileExists(homeDir & "\python.exe") Then
+                        homePy = homeDir & "\python.exe"
+                    End If
+                    Exit Do
+                End If
+            End If
+        Loop
+        cfgFile.Close
+    End If
+    ' The venv pythonw redirector remains a second process with this same
+    ' command line for the whole run. The base interpreter is one process,
+    ' still bound to this install by __PYVENV_LAUNCHER__.
+    If StrComp(homePy, maintainer, vbTextCompare) <> 0 Then
+        sh.Environment("PROCESS")("__PYVENV_LAUNCHER__") = maintainer
+    End If
+    sh.Run QuoteArgument(homePy) & " -E -s " & QuoteArgument(here & "\nodelang\quiet_update.py") _
         & " --maintain " & QuoteArgument(here), 0, False
+    If StrComp(homePy, maintainer, vbTextCompare) <> 0 Then
+        sh.Environment("PROCESS").Remove "__PYVENV_LAUNCHER__"
+    End If
 End Sub
 
 Function RecoverFailedUpdate()

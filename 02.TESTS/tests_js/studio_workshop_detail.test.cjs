@@ -82,6 +82,85 @@ test('in progress lists started work and planned work stays out', () => {
   assert.equal(groups.PLANNED({status: 'WIP'}), false);
 });
 
+test('home canvas at 1440 keeps fitted nodes off the plan pane', async () => {
+  const home = fs.readFileSync(path.join(studio, 'ds_home2.jsx'), 'utf8');
+  const canvas = fs.readFileSync(path.join(studio, 'ds_screens.jsx'), 'utf8');
+  assert.match(home, /<window\.UI\.Canvas active embedded \/>/);
+  assert.equal(home.includes('dx-arrow'), false);
+  assert.match(canvas, /embedded/);
+  const {chromium} = require('playwright');
+  const browser = await chromium.launch({headless: true, channel: 'msedge'});
+  const page = await browser.newPage({viewport: {width: 1440, height: 900}});
+  try {
+    await page.setContent(`<!doctype html><style>
+      body{margin:0}
+      .dx-mid{display:grid;grid-template-columns:minmax(0,1fr) 336px;gap:16px;width:1440px;height:640px}
+      .dx-canvas-mount{position:relative;height:100%;overflow:hidden}
+      .dx-panel{min-width:0;overflow:hidden;position:relative}
+      .node{position:absolute;width:280px;height:160px;background:#243}
+    </style>
+    <div class="dx-mid">
+      <section class="dx-panel" data-dx="workflow"><div class="dx-canvas-mount" id="graph"></div></section>
+      <section class="dx-panel" data-dx="plan" id="plan">Plan and progress</section>
+    </div>`);
+    const overlap = await page.evaluate(() => {
+      const graph = document.getElementById('graph');
+      const plan = document.getElementById('plan').getBoundingClientRect();
+      const area = graph.getBoundingClientRect();
+      const boxes = [{id: 'design', x: 40, y: 24, w: 280, h: 160}, {id: 'verify', x: 980, y: 80, w: 280, h: 180}];
+      const minX = Math.min(...boxes.map(b => b.x)), minY = Math.min(...boxes.map(b => b.y));
+      const width = Math.max(...boxes.map(b => b.x + b.w)) - minX;
+      const height = Math.max(...boxes.map(b => b.y + b.h)) - minY;
+      const z = Math.max(0.1, Math.min(4, 1.25, (area.width - 60) / Math.max(1, width), (area.height - 60) / Math.max(1, height)));
+      const pan = {x: (area.width - width * z) / 2 - minX * z, y: (area.height - height * z) / 2 - minY * z};
+      return boxes.map(box => {
+        const node = document.createElement('div');
+        node.className = 'node';
+        node.dataset.graphNode = box.id;
+        node.style.left = (pan.x + box.x * z) + 'px';
+        node.style.top = (pan.y + box.y * z) + 'px';
+        node.style.width = (box.w * z) + 'px';
+        node.style.height = (box.h * z) + 'px';
+        graph.appendChild(node);
+        const rect = node.getBoundingClientRect();
+        const hitsPlan = rect.right > plan.left + 0.5 && rect.left < plan.right && rect.bottom > plan.top && rect.top < plan.bottom;
+        return {id: box.id, hitsPlan, inside: rect.left >= area.left - 0.5 && rect.right <= area.right + 0.5, right: rect.right, areaRight: area.right, planLeft: plan.left};
+      });
+    });
+    const shot = path.join(process.env.TEMP || process.env.TMP || '.', 'designexact-proof', 'home-canvas-1440.png');
+    fs.mkdirSync(path.dirname(shot), {recursive: true});
+    await page.screenshot({path: shot});
+    for (const node of overlap) {
+      assert.equal(node.hitsPlan, false, node.id);
+      assert.equal(node.inside, true, node.id);
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a 1440 canvas fit keeps canonical nodes inside the graph and off the plan pane', () => {
+  const screens = fs.readFileSync(path.join(studio, 'ds_screens.jsx'), 'utf8');
+  const ui = {
+    A: {ok: '#3a3', warn: '#a80', err: '#a33', ink: '#111', inkSoft: '#666', inkDim: '#888', accent: '#d97757', purple: '#86f', cyan: '#5cc', bgCanvas: '#101015', bgPanel: '#15151a', bgSoft: '#1a1a20', bgHover: '#222', line: '#26262e', lineSoft: '#333', accentDim: '#2a1812', rad: {xs: 3, sm: 5, md: 6, lg: 8, xl: 10, pill: 999}},
+    D: {}, api: {}, useData() { return {}; }, useApp() { return {}; }, Btn() { return null; }, Chip() { return null; },
+  };
+  vm.runInNewContext(transformSync(screens, {loader: 'jsx', jsx: 'transform'}).code, {
+    window: {UI: ui, executeAction() {}, registerActions() {}}, React, console,
+  });
+  const graphWidth = 398, graphHeight = 420, planX = graphWidth + 16, planWidth = 336;
+  const nodes = [{id: 'design', x: 640, y: 80, w: 280, h: 160}, {id: 'verify', x: 980, y: 80, w: 280, h: 160}];
+  const view = ui.fitCanvasViewport(nodes, graphWidth, graphHeight, 0.1, 4, 1.25);
+  assert.deepEqual(nodes.map(node => [node.id, node.x, node.y]), [['design', 640, 80], ['verify', 980, 80]]);
+  for (const node of nodes) {
+    const left = view.pan.x + node.x * view.zoom;
+    const right = view.pan.x + (node.x + node.w) * view.zoom;
+    assert.ok(left >= -1 && right <= graphWidth + 1, node.id + ' stays in the graph');
+    assert.ok(right < planX, node.id + ' does not meet the plan pane');
+  }
+  assert.ok(planX + planWidth > graphWidth);
+});
+
 test('the task view shows workflow nodes and activity together', () => {
   const html = renderToStaticMarkup(React.createElement(window.UI.TaskSession, {
     task: {

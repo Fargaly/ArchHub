@@ -268,7 +268,7 @@
                     <section className="dx-panel" data-dx="workflow" data-home-face={face} aria-label={face === 'canvas' ? 'Canvas · same task' : 'Workflow'}>
                       <h2>{face === 'canvas' ? 'Canvas · same task' : 'Workflow'}</h2>
                       {face === 'canvas' ? <p className="dx-logic-label">Workflow · logic</p> : null}
-                      {nodes.length ? <div className={face === 'canvas' ? 'dx-logic' : 'dx-nodes'}>{nodes.map((n, index) => <React.Fragment key={n.id}>{face === 'canvas' && index > 0 && <span className="dx-arrow" aria-hidden="true">→</span>}<NodeFace n={n} owner={ownerOf(task)} /></React.Fragment>)}</div> : <p className="dx-empty">No nodes in this workflow yet.</p>}
+                      {face === 'canvas' ? <div className="dx-canvas-mount" data-dx="graph">{window.UI.Canvas ? <window.UI.Canvas active embedded /> : <p className="dx-empty">No nodes in this workflow yet.</p>}</div> : nodes.length ? <div className="dx-nodes">{nodes.map(n => <NodeFace key={n.id} n={n} owner={ownerOf(task)} />)}</div> : <p className="dx-empty">No nodes in this workflow yet.</p>}
                     </section>
                     <section className="dx-panel" data-dx="plan" aria-label="Plan and progress">
                       <h2>Plan and progress</h2>

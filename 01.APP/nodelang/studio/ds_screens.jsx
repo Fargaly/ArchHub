@@ -15,6 +15,14 @@
   const curve = (a, b) => `M${a.x} ${a.y} C${(a.x + b.x) / 2} ${a.y},${(a.x + b.x) / 2} ${b.y},${b.x} ${b.y}`;
   const wirePath = (a, b, kind) => kind === 'Straight' ? `M${a.x} ${a.y} L${b.x} ${b.y}` : kind === 'Step' ? `M${a.x} ${a.y} L${(a.x + b.x) / 2} ${a.y} L${(a.x + b.x) / 2} ${b.y} L${b.x} ${b.y}` : curve(a, b);
   const isGroup = n => n.children?.length > 0 || n.kind === 'Group' || n.kind === 'Workshop';
+  function fitCanvasViewport(boxes, width, height, zoomMin, zoomMax, zoomFitMax) {
+    if (!boxes.length || !(width > 0) || !(height > 0)) return null;
+    const minX = Math.min(...boxes.map(box => box.x)), minY = Math.min(...boxes.map(box => box.y));
+    const spanW = Math.max(...boxes.map(box => box.x + box.w)) - minX;
+    const spanH = Math.max(...boxes.map(box => box.y + box.h)) - minY;
+    const zoom = Math.max(zoomMin, Math.min(zoomMax, zoomFitMax, (width - 60) / Math.max(1, spanW), (height - 60) / Math.max(1, spanH)));
+    return {zoom, pan: {x: (width - spanW * zoom) / 2 - minX * zoom, y: (height - spanH * zoom) / 2 - minY * zoom}};
+  }
   const typeColor = t => ({
     elements: A.accent,
     text: A.inkSoft,
@@ -549,7 +557,8 @@
   const SOCKET_STYLE = {position: 'relative', inset: 'auto', transform: 'none', display: 'inline-grid', placeItems: 'center', width: 22, height: 22,
     minWidth: 0, minHeight: 0, background: 'transparent', border: 0, borderRadius: 0};
   function Canvas({
-    active = true
+    active = true,
+    embedded = false
   }) {
     const s = useData(),
       u = useApp();
@@ -576,8 +585,8 @@
     const zoomSetting = zoomRow?.value;
     const appliedZoomSetting = React.useRef(zoomSetting);
     const zoomSaveDelay = Number(s.canvasPolicy?.viewport_commit_debounce_ms ?? 140);
-    const updateView = next => { view.current = next; setViewport(next); api.setSessionViewport?.({x:next.pan.x,y:next.pan.y,zoom:next.zoom}); };
-    React.useEffect(()=>{const saved=s.graph.viewport;if(saved){const next={zoom:saved.zoom,pan:{x:saved.x,y:saved.y}};view.current=next;setViewport(next);}},[s.graph.scopeKey]);
+    const updateView = next => { view.current = next; setViewport(next); if (!embedded) api.setSessionViewport?.({x:next.pan.x,y:next.pan.y,zoom:next.zoom}); };
+    React.useEffect(()=>{if (embedded) return; const saved=s.graph.viewport;if(saved){const next={zoom:saved.zoom,pan:{x:saved.x,y:saved.y}};view.current=next;setViewport(next);}},[s.graph.scopeKey, embedded]);
     const zoomAt = (value, client = null) => {
       const bounds = area.current?.getBoundingClientRect();
       if (!bounds) return;
@@ -587,7 +596,7 @@
       updateView({zoom: next, pan: {x: x - (x - old.pan.x) * next / old.zoom, y: y - (y - old.pan.y) * next / old.zoom}});
     };
     React.useEffect(() => {
-      if (!active || Object.is(appliedZoomSetting.current,zoomSetting)) return;
+      if (embedded || !active || Object.is(appliedZoomSetting.current,zoomSetting)) return;
       if (pendingZoomWrites.current) { appliedZoomSetting.current=zoomSetting; return; }
       if (!Number.isFinite(Number(zoomSetting))) return;
       appliedZoomSetting.current=zoomSetting;
@@ -595,7 +604,7 @@
     }, [zoomSetting, requestState, active]);
     React.useEffect(() => {
       const percent = Math.round(zoom * 100);
-      if (!active) return;
+      if (embedded || !active) return;
       if (!['loaded','empty'].includes(requestState) || zoomSetting === undefined || percent === Number(zoomSetting)) return;
       const timer = setTimeout(() => {
         pendingZoomWrites.current++;
@@ -867,17 +876,22 @@
           h: n.h || el.offsetHeight || el.getBoundingClientRect().height / view.current.zoom || 160};
       }).filter(Boolean);
       if (!boxes.length) return;
-      const minX = Math.min(...boxes.map(b => b.x)), minY = Math.min(...boxes.map(b => b.y)),
-        width = Math.max(...boxes.map(b => b.x+b.w)) - minX,
-        height = Math.max(...boxes.map(b => b.y+b.h)) - minY,
-        z = Math.max(zoomMin, Math.min(zoomMax, Number(s.canvasPolicy?.zoom_fit_max ?? 1.25), (w-60) / Math.max(1,width), (h-60) / Math.max(1,height)));
-      updateView({zoom: z, pan: {x: (w-width*z)/2-minX*z, y: (h-height*z)/2-minY*z}});
+      const fitted = fitCanvasViewport(boxes, w, h, zoomMin, zoomMax, Number(s.canvasPolicy?.zoom_fit_max ?? 1.25));
+      if (fitted) updateView(fitted);
     };
     React.useEffect(() => {
-      if (s.graph.viewport || !active || requestState !== 'loaded' || layout.scope !== scope || fittedScope.current === scope+':'+u.libraryOpen) return;
+      if (embedded || s.graph.viewport || !active || requestState !== 'loaded' || layout.scope !== scope || fittedScope.current === scope+':'+u.libraryOpen) return;
       fittedScope.current = scope+':'+u.libraryOpen;
       fit();
-    }, [requestState, scope, layout, u.libraryOpen, active]);
+    }, [requestState, scope, layout, u.libraryOpen, active, embedded]);
+    React.useEffect(() => {
+      if (!embedded || !active || requestState !== 'loaded' || !area.current) return;
+      const run = () => fit();
+      const frame = requestAnimationFrame(run);
+      const observer = new window.ResizeObserver(run);
+      observer.observe(area.current);
+      return () => { cancelAnimationFrame(frame); observer.disconnect(); };
+    }, [embedded, active, requestState, scope, layout]);
     const openNode = n => {
       if (n.kind.toLowerCase().includes('meeting')) u.go('meetings');else if (n.kind === 'Watch program') u.act(() => api.windowAction('hide'));else if (n.kind === 'Present') u.go('present');else if (['Community', 'Community group', 'Marketplace listing', 'Project charge'].includes(n.kind)) u.go('community');else if (n.kind === 'Interface studio' || n.kind === 'UI element') u.go('interface');else if (n.kind.startsWith('TBP ')) u.go('model-review');else if (n.kind === 'Theme') u.go('settings/Appearance');else if (n.kind === 'Workflow link') {
         if (n.params.targetGraph) u.act(() => api.selectGraph(n.params.targetGraph));else u.show('Workflows');
@@ -896,6 +910,7 @@
       gridTemplateRows: 'minmax(0,1fr)',
       position: 'relative',
       minHeight: 0,
+      height: embedded ? '100%' : undefined,
       '--canvas-bg': A.bgCanvas,
       '--canvas-panel': A.bgPanel,
       '--canvas-soft': A.bgSoft,
@@ -908,7 +923,7 @@
       '--canvas-accent-dim': A.accentDim
     }}>
   {/* Spec d9c0d514 top bar: name · Unsaved, + Add node, ⋯, Run. Everything else lives in ⋯; saving is autosave plus Ctrl+S. */}
-  <div data-canvas-overlay="" data-canvas-topbar="" className="spread" style={{
+  <div data-canvas-overlay="" data-canvas-topbar="" hidden={embedded || undefined} className="spread" style={{
         position:'absolute',top:12,left:u.libraryOpen ? 264 : 16,right:16,zIndex:12,
         padding: '6px 12px',borderRadius:6,border:'1px solid '+A.lineSoft,
         background: A.bgPanel, fontSize: 13
@@ -929,9 +944,9 @@
             onClick={event => executeAction('projects.controls.activate', {handler: () => { setMore(false); return run(); }}, event)}>{label}</button>)}</div>}</div></div>
   <div style={{
         display: 'grid',
-        gridTemplateColumns: (u.libraryOpen ? '248px ' : '') + 'minmax(0,1fr)' + (wire || inspected ? ' ' + LAYOUT.inspectorWidth + 'px' : ''),
+        gridTemplateColumns: (!embedded && u.libraryOpen ? '248px ' : '') + 'minmax(0,1fr)' + (!embedded && (wire || inspected) ? ' ' + LAYOUT.inspectorWidth + 'px' : ''),
         minHeight: 0
-      }}>{u.libraryOpen && <window.UI.LibraryShelf onClose={() => u.setLibraryOpen(false)} />}
+      }}>{!embedded && u.libraryOpen && <window.UI.LibraryShelf onClose={() => u.setLibraryOpen(false)} />}
    <div ref={area} className={'node-canvas' + (visible.some(n => n.status === 'Running') ? ' running-wires' : '')} tabIndex={0} aria-label="Workflow canvas" style={{position:'relative',minHeight:0,'--xy-selection-background-color':A.accent+'16','--xy-selection-border':'1px solid '+A.accent,'--xy-background-color':'transparent'}}
         title="Drag to select · Shift adds · Middle or Space-drag to pan · Wheel to zoom · Double-click to fit"
         onDoubleClick={e => { if (e.target.classList?.contains('react-flow__pane')) fit(); }}
@@ -1011,6 +1026,7 @@
   }
   window.UI.RunModeChip = RunModeChip;
   window.UI.Canvas = Canvas;
+  window.UI.fitCanvasViewport = fitCanvasViewport;
   window.UI.SystemGraph = SystemGraph;
 
 // WIRE-projects: each rendered callback is registered with its executable owner.

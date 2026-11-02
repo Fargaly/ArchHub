@@ -299,6 +299,11 @@ button{transition:background .14s,color .14s,box-shadow .14s}button:hover{filter
 .dx-toggle span{margin-left:auto;color:var(--color-ink-soft);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dx-mid,.dx-low{display:grid;grid-template-columns:minmax(0,1fr) 336px;gap:16px;min-width:0}
 .dx-panel{background:var(--color-bg-canvas);padding:14px 16px;min-width:0;overflow:hidden}
+.dx-panel[data-home-face="canvas"]{display:flex;flex-direction:column;min-height:360px}
+.dx-canvas-mount{position:relative;flex:1;height:min(560px,52vh);min-height:320px;overflow:hidden;contain:paint}
+.dx-canvas-mount [data-screen="canvas"]{height:100%;min-height:0}
+.dx-panel[data-dx="workflow"],.dx-panel[data-dx="plan"]{position:relative;min-width:0}
+.dx-panel[data-dx="plan"]{position:relative;z-index:1}
 .dx-panel p,.dx-talk p{margin:6px 0 0;font-size:13px;line-height:1.4;color:var(--color-ink);overflow:hidden;text-overflow:ellipsis}
 .dx-nodes,.dx-logic{display:flex;flex-wrap:wrap;align-items:flex-start;gap:12px;min-width:0}
 .dx-logic{padding-top:8px}

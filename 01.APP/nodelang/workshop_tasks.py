@@ -216,6 +216,8 @@ def _held_context(document):
         "parameters": [{"id": node["id"], "params": node.get("params") or {}} for node in nodes],
         "activity": [{"id": node["id"], "status": node["result"].get("status", ""), "output": node["result"].get("output")}
                      for node in nodes if isinstance(node.get("result"), dict)],
+        "folders": list(held["folders"]) if isinstance(held.get("folders"), list) else [],
+        "references": list(held["references"]) if isinstance(held.get("references"), list) else [],
     }
 
 
@@ -255,15 +257,17 @@ def _stamp(path, task, document):
     return document
 
 
-def _show(task, path, document):
+def _show(task, path, document, *, select=True):
+    """Remember the file. Only an explicit open moves the canvas the founder has selected."""
     from .session_files import SessionFiles
     files = SessionFiles()
     files.remember(path, document)
-    files._current(document["id"], path)
+    if select:
+        files._current(document["id"], path)
     return _view(task, str(path), document)
 
 
-def open_session(history, task, path=None):
+def open_session(history, task, path=None, *, select=True):
     """Open this task's own .archhub file. A first path binds it; a later open reads that same file."""
     from .session_files import SessionFiles, local_path, new_document, read_document
     row = get(history, task)
@@ -283,16 +287,16 @@ def open_session(history, task, path=None):
             if not _write(history, "UPDATE workshop_tasks SET session_path=?, updated_at=? WHERE id=? AND session_path IS NULL",
                           (target, _now(), task)):
                 raise ValueError("Task already has a session file")
-        return _show(task, target, document)
+        return _show(task, target, document, select=select)
     if bound:
-        return _show(task, bound, read_document(bound))
+        return _show(task, bound, read_document(bound), select=select)
     document = new_document(row["title"])
     target = str(local_path(str(SessionFiles().directory / (document["id"] + ".archhub"))))
     document = _stamp(target, task, document)
     if not _write(history, "UPDATE workshop_tasks SET session_path=?, updated_at=? WHERE id=? AND session_path IS NULL",
                   (target, _now(), task)):
         raise ValueError("Task already has a session file")
-    return _show(task, target, document)
+    return _show(task, target, document, select=select)
 
 
 def create_session(history, title, creator="founder"):
@@ -301,7 +305,7 @@ def create_session(history, title, creator="founder"):
     return open_session(history, row["id"])
 
 
-_SESSION_FIELDS = {"scope", "rules", "agents", "plan", "progress", "nodes", "parameters", "messages"}
+_SESSION_FIELDS = {"scope", "rules", "agents", "plan", "progress", "nodes", "parameters", "messages", "folders", "references"}
 _NODE_TYPES = {"note", "thing.agent"}
 _SECRET_NAME = re.compile(r"(^|_)(password|secret|token|api_key|private_key|credential)(_|$)", re.I)
 
@@ -340,6 +344,12 @@ def _text_list(value, label):
     if type(value) is not list or len(value) > 40:
         raise ValueError("Task " + label + " must be a short list")
     return [_short_text(item, label, 500) for item in value]
+
+
+def _session_list(value, label):
+    if type(value) is not list or len(value) > 40:
+        raise ValueError("Task " + label + " must be a short list")
+    return [_plain(item) for item in value]
 
 
 def _merge_params(node, params):
@@ -422,7 +432,7 @@ def update_session(history, task, values):
     if row is None:
         raise ValueError("No such Workshop task")
     if not row.get("session_path"):
-        open_session(history, task)
+        open_session(history, task, select=False)
         row = get(history, task)
     path = row["session_path"]
     document = read_document(path)
@@ -436,6 +446,10 @@ def update_session(history, task, values):
         held["agents"] = _text_list(values["agents"], "agents")
     if "plan" in values:
         held["plan"] = _text_list(values["plan"], "plan")
+    if "folders" in values:
+        held["folders"] = _session_list(values["folders"], "folders")
+    if "references" in values:
+        held["references"] = _session_list(values["references"], "references")
     if "progress" in values:
         progress = values["progress"]
         if type(progress) is not dict:
@@ -452,4 +466,4 @@ def update_session(history, task, values):
         _apply_messages(document, values["messages"])
     validate(document)
     write_document(path, document)
-    return _show(task, path, read_document(path))
+    return _show(task, path, read_document(path), select=False)

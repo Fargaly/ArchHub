@@ -80,6 +80,26 @@
     'Updates & About': 'updates',
     'Advanced': 'system'
   };
+  const sections = [
+    {name:'Account', pages:['Account','Privacy'], tabs:['Profile','Privacy']},
+    {name:'Connections', pages:['Connections'], tabs:['Connections']},
+    {name:'Automation & Brain', pages:['BABOOM','Agents','Brain','Workshop','Automations'], tabs:['Preferences','Agents','Brain','Workshop','Automations']},
+    {name:'Interface', pages:['Appearance'], tabs:['Preferences']},
+    {name:'System', pages:['System graph','Library & Mods','Hooks','Dependencies','Updates & About','Advanced'], tabs:['Preferences','Library & Mods','Hooks','Dependencies','Updates & About','Advanced']}
+  ];
+  function requestGroups(requests, agents, providers) {
+    const groups = new Map();
+    for (const row of requests) {
+      const identity = [...agents,...providers].find(agent => agent.id === row.agent || agent.name === row.agent || agent.sessions?.some(session=>session.root===row.agent));
+      const agent = identity?.name || row.agent_name || (/^(BABOOM|Claude Code|Codex|OpenCode|Gemini|Goose)$/i.test(row.agent||'') ? row.agent : 'Unidentified agent');
+      const key = JSON.stringify([identity?.id||row.agent||agent,row.model,row.provider]);
+      if (!groups.has(key)) groups.set(key,{key,agent,model:row.model,provider:row.provider,count:0,tokens:0,measuredTokens:0,ms:0,measuredTime:0});
+      const group = groups.get(key); group.count++;
+      if (Number.isFinite(row.tokens)) {group.tokens+=row.tokens;group.measuredTokens++;}
+      if (Number.isFinite(row.ms) && row.ms > 0) {group.ms+=row.ms;group.measuredTime++;}
+    }
+    return [...groups.values()];
+  }
   function RouterSettings() {
     const s=useData(),u=useApp();
     const [model,setModel]=React.useState('');
@@ -98,7 +118,11 @@
     if(load.status==='error')return <div role="alert">{load.message}<Btn sm onClick={event=>runAction('settings.ds_settings3.RouterRefresh',event)}>Retry router</Btn></div>;
     const r=s.router;
     const models=[...new Set([r.default_model,...r.fallback_models,...r.models])];
-    return <Card style={{padding:18}}><window.UI.RegisteredActionStatus state={actionState} retry={retryAction} /><h2>Models &amp; request profiling</h2><label>Default free model<select aria-label="Default free model" value={model} onChange={e=>{setModel(e.target.value);runAction('settings.ds_settings3.RouterModel',e.target.value);}}>{models.map(m=><option key={m}>{m}</option>)}</select></label><p className="muted">Free first · no paid fallbacks · request metadata kept for 20 days</p><Btn sm onClick={event=>runAction('settings.ds_settings3.RouterRefresh',event)}>Refresh requests</Btn><table aria-label="Router requests"><thead><tr><th>Agent</th><th>Model</th><th>Provider</th><th>Tokens</th><th>Time</th><th>Result</th></tr></thead><tbody>{r.requests.map(row=><tr key={row.id}><td>{row.agent}</td><td>{row.model}</td><td>{row.provider}</td><td>{row.tokens??'Unknown'}</td><td>{row.ms} ms</td><td>{row.outcome}</td></tr>)}</tbody></table>{load.status==='empty'&&<p>No model requests yet.</p>}{load.status==='loaded'&&<p>{r.requests.length} recent requests</p>}<h3>Live agent processes</h3><p>{r.live_agents.complete?'Observed processes':'Process observation incomplete'}</p>{r.live_agents.processes.map(p=><p key={p.pid}>{p.runtime} · PID {p.pid}</p>)}</Card>;
+    const groups=requestGroups(r.requests,s.agents||[],s.providers||[]);
+    const total=groups.reduce((sum,row)=>({count:sum.count+row.count,tokens:sum.tokens+row.tokens,ms:sum.ms+row.ms,measuredTokens:sum.measuredTokens+row.measuredTokens,measuredTime:sum.measuredTime+row.measuredTime}),{count:0,tokens:0,ms:0,measuredTokens:0,measuredTime:0});
+    const time=row=>row.measuredTime ? `${row.ms.toLocaleString()} ms${row.measuredTime<row.count ? ' (partial)' : ''}` : 'Not measured';
+    const tokens=row=>row.measuredTokens ? `${row.tokens.toLocaleString()}${row.measuredTokens<row.count ? ' (partial)' : ''}` : 'Not reported';
+    return <Card style={{padding:18}}><window.UI.RegisteredActionStatus state={actionState} retry={retryAction} /><h2>Models &amp; request profiling</h2><label>Default free model<select aria-label="Default free model" value={model} onChange={e=>{setModel(e.target.value);runAction('settings.ds_settings3.RouterModel',e.target.value);}}>{models.map(m=><option key={m}>{m}</option>)}</select></label><p className="muted">Free first · no paid fallbacks · request metadata kept for 20 days</p><Btn sm onClick={event=>runAction('settings.ds_settings3.RouterRefresh',event)}>Refresh requests</Btn><div className="router-table-scroll"><table className="router-requests" aria-label="Router requests"><thead><tr><th scope="col">Agent</th><th scope="col">Model</th><th scope="col">Provider</th><th scope="col">Requests</th><th scope="col">Tokens</th><th scope="col">Measured time</th></tr></thead><tbody>{groups.map(row=><tr key={row.key}><th scope="row">{row.agent}</th><td>{row.model}</td><td>{row.provider}</td><td>{row.count}</td><td>{tokens(row)}</td><td>{time(row)}</td></tr>)}</tbody><tfoot><tr><th scope="row" colSpan={3}>Total</th><td>{total.count}</td><td>{tokens(total)}</td><td>{time(total)}</td></tr></tfoot></table></div>{load.status==='empty'&&<p>No model requests yet.</p>}{load.status==='loaded'&&<p>{r.requests.length} recent requests</p>}<h3>Live agent processes</h3><p>{r.live_agents.complete?'Observed processes':'Process observation incomplete'}</p>{r.live_agents.processes.map(p=><p key={p.pid}>{p.runtime} · PID {p.pid}</p>)}</Card>;
   }
   // Run mode and per-tool modes: parameters of the one decision every agent's hook runs.
   function Permissions() {
@@ -227,7 +251,7 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
       gap: 12
     }}><h2>Where your work lives</h2><p className="muted">Workflows and settings stay with your account. Client work stays on this machine.</p><div className="flex">{api.supportsAction?.('archiveActivity') !== false && <Btn sm onClick={event => runAction('settings.ds_settings3.StorageAction0', event)}>Archive old activity</Btn>}<Btn sm onClick={event => runAction('settings.ds_settings3.StorageAction1', event)}>Back up now</Btn></div>{s.backups.map(b => <div className="spread" key={b.id}><span>{b.name}</span><Btn sm onClick={event => runAction('settings.ds_settings3.StorageAction2', b, event)}>Roll back</Btn></div>)}</Card></>;
   }
-  function Settings({
+  function AdvancedSettings({
     page = 'Account',
     full = false
   }) {
@@ -235,7 +259,8 @@ StorageAction2: (b, event) => (() => u.confirm('Prepare this verified backup for
       u = useApp();
     const [query, setQuery] = React.useState(''),
       [changed, setChanged] = React.useState(false);
-    const actual = s.pages.includes(page) ? page : 'Account';
+    const actual = s.pages.includes(page) ? page : sections.find(section=>section.name===page)?.pages[0] || 'Account';
+    const section = sections.find(section=>section.pages.includes(actual));
     const matched = [...s.settings, ...s.capabilities.map(c => ({
       id: c.id,
       page: c.page,
@@ -285,7 +310,7 @@ SettingsAction24: (event) => (() => u.go('docs'))(event),
 SettingsAction25: () => u.act(api.listAgentsWorking)});
     return <><window.UI.RegisteredActionStatus state={actionState} retry={retryAction} /><div data-screen={'settings/' + actual} style={{
       display: 'grid',
-      gridTemplateColumns: full ? 'minmax(0,1fr)' : '260px minmax(0,1fr)',
+      gridTemplateColumns: full ? 'minmax(0,1fr)' : 'var(--layout-settings-sidebar-width) minmax(0,1fr)',
       minHeight: 0
     }}>
   {!full && <aside className="pane settings-side" style={{
@@ -303,17 +328,12 @@ SettingsAction25: () => u.act(api.listAgentsWorking)});
         }}><span>Show advanced</span><D.Toggle variant="settings" label="Show advanced" checked={u.advanced} onCheckedChange={u.setAdvanced} /></div>
    {query ? <div className="grid">{matched.map(r => <button key={r.id} className="listbutton" onClick={event => runAction('settings.ds_settings3.SettingsAction0', r, event)}><b>{r.label}</b><p className="muted" style={{
               fontSize: 11
-            }}>{r.page} › {r.group}</p></button>)}{!matched.length && <Empty>No matching setting.</Empty>}</div> : s.pages.map((p, i) => <button className="listbutton flex" aria-label={p} key={p} aria-selected={actual === p} onClick={event => runAction('settings.ds_settings3.SettingsAction1', p, event)} style={{
-          height: 34,
-          fontSize: 13.5,
-          padding: '0 12px'
-        }}><span style={{
-            width: 18
-          }}><window.AHIcon name={["user", "link", "voice", "users", "brain", "canvas", "workshop", "library", "clock", "shield", "code", "shield", "palette", "update", "settings"][i]} size={16} /></span>{p}</button>)}
+            }}>{r.page} › {r.group}</p></button>)}{!matched.length && <Empty>No matching setting.</Empty>}</div> : sections.map(group => <button className="listbutton flex settings-section" key={group.name} aria-selected={section===group} onClick={event => runAction('settings.ds_settings3.SettingsAction1', group.pages[0], event)}>{group.name}</button>)}
+  <div className="settings-subpages">{section.pages.map((p,i)=><button className="listbutton" key={p} aria-selected={actual===p} onClick={event=>runAction('settings.ds_settings3.SettingsAction1',p,event)}>{p==='System graph'?'Live wiring':p}</button>)}</div>
   </aside>}
-  <main className={'page' + (actual === 'Account' ? ' account-settings' : '')} style={{
+  <main className={'page penpot-settings' + (actual === 'Account' ? ' account-settings' : '')} style={{
         padding: '22px 32px'
-      }}><span className="settings-page-header-icon"><window.AHIcon name={["user", "link", "voice", "users", "brain", "canvas", "workshop", "library", "clock", "shield", "code", "shield", "palette", "update", "settings"][s.pages.indexOf(actual)]} size={21} /></span><Heading title={actual} sub={{
+      }}><nav className="settings-tabs" aria-label={section.name}>{section.pages.map((p,i)=><button className="tab-button" aria-current={actual===p?'page':undefined} key={p} onClick={event=>runAction('settings.ds_settings3.SettingsAction1',p,event)}>{section.tabs[i]}</button>)}{actual==='Account'&&<><button className="tab-button" onClick={event=>runAction('settings.ds_settings3.SettingsAction2',event)}>Plan &amp; access</button><button className="tab-button" onClick={event=>runAction('settings.ds_settings3.SettingsAction12',event)}>First run</button></>}{actual==='Appearance'&&<button className="tab-button" onClick={()=>u.go('interface')}>Interface studio</button>}</nav><div className="settings-title"><span className="settings-page-header-icon"><window.AHIcon name={["user", "link", "voice", "users", "brain", "canvas", "workshop", "library", "clock", "shield", "code", "shield", "palette", "update", "settings"][s.pages.indexOf(actual)]} size={21} /></span><Heading title={actual==='System graph'?'Live wiring':actual} sub={{
           Account: 'Your identity, workspaces and project files.',
           Connections: 'The programs and accounts your agents can work with.',
           BABOOM: 'Your companion’s providers, voice, presence and boundaries.',
@@ -323,10 +343,10 @@ SettingsAction25: () => u.act(api.listAgentsWorking)});
           Advanced: 'Fine control over loading, performance and connection limits.',
           Privacy: 'Control what stays local and what can leave your workspace.',
           'Updates & About': 'One update, with your work kept intact.'
-        }[actual] || 'Your preferences for ' + actual.toLowerCase() + '.'}><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction2', event)}>{actual === 'System graph' ? 'Open workflow' : actual === 'BABOOM' ? 'Open BABOOM' : 'Open'}</Btn><Btn sm ghost onClick={event => runAction('settings.ds_settings3.SettingsAction3', event)}>Reset</Btn></Heading>
+        }[actual] || 'Your preferences for ' + actual.toLowerCase() + '.'}><Btn sm onClick={event => runAction('settings.ds_settings3.SettingsAction2', event)}>{actual === 'System graph' ? 'Open workflow' : actual === 'BABOOM' ? 'Open BABOOM' : 'Show as node'}</Btn><Btn sm ghost onClick={event => runAction('settings.ds_settings3.SettingsAction3', event)}>Reset preferences</Btn></Heading></div>
    {u.advanced && <div className="flex settings-scope" style={{
           marginBottom: 14
-        }}><label className="flex muted">Scope<select aria-label="Settings scope" value={s.settingsScope} onChange={e => u.act(() => api.setSettingsScope(e.target.value))}><option>User</option><option>Workspace</option></select></label><span className="fill" /><span className="muted">{s.settingsScope === 'Workspace' ? s.workspaces.find(w => w.id === s.activeWorkspace)?.name : 'Your account'}</span></div>}<div className="settings-health"><span className="status-dot" /><span>{actual === 'Connections' ? (s.connections.filter(c => c.connected).length+(s.hosts||[]).filter(c=>['connected','listening'].includes(c.state)).length) + ' accounts and programs connected' : actual === 'BABOOM' ? s.providers.filter(p => p.enabled && p.signedIn).length + ' providers ready' : actual === 'Agents' ? s.agentHealth||'Checking running agents…' : actual === 'Account' ? s.profile.firm + ' · ' + s.workspaces.length + ' workspace' : actual === 'Updates & About' ? s.update.available ? 'An update is ready' : s.update.detail || 'Update status unavailable' : 'Available backend preferences'}</span></div><div className="flex settings-filter" style={{
+        }}><label className="flex muted">Scope<select aria-label="Settings scope" value={s.settingsScope} onChange={e => u.act(() => api.setSettingsScope(e.target.value))}><option>User</option><option>Workspace</option></select></label><span className="fill" /><span className="muted">{s.settingsScope === 'Workspace' ? s.workspaces.find(w => w.id === s.activeWorkspace)?.name : 'Your account'}</span></div>}<div className="settings-health"><span className="status-dot" /><span>{actual === 'Connections' ? (s.connections.filter(c => c.connected).length+(s.hosts||[]).filter(c=>['connected','listening'].includes(c.state)).length) + ' accounts and programs connected' : actual === 'BABOOM' ? s.providers.filter(p => p.enabled && p.signedIn).length + ' providers ready' : actual === 'Agents' ? s.agentHealth||'Checking running agents…' : actual === 'Account' ? s.profile.firm + ' · ' + s.workspaces.length + ' workspace' : actual === 'Updates & About' ? s.update.available ? 'An update is ready' : s.update.detail || 'Update status unavailable' : 'Preferences'}</span></div><div className="flex settings-filter" style={{
           marginBottom: 14
         }}><D.Toggle label="Changed only" checked={changed} onCheckedChange={setChanged} /><span className="muted" style={{
             fontSize: 12
@@ -368,7 +388,38 @@ SettingsAction25: () => u.act(api.listAgentsWorking)});
   </main>
  </div></>;
   }
+  const SHEET_ACTIONS = {'settings.sheet.Refresh':'Refresh'};
+  function executeAction(...args) {return window.executeAction(...args);}
+  function SheetField({label,value,children,onClick}) {
+    return <div className="sheet-field"><span>{label}</span><div>{children || (onClick ? <button className="button-reset" onClick={event=>executeAction('projects.controls.activate',{handler:onClick},event)}>{value}</button> : <span>{value ?? 'Not reported'}</span>)}</div></div>;
+  }
+  function SheetPreference({label,match}) {
+    const s=useData(),u=useApp(),row=s.settings.find(match || (r=>r.label===label));
+    return <SheetField label={label}>{row ? <SettingControl row={row} /> : <button className="button-reset muted" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.go('settings/Advanced')},event)}>Not available</button>}</SheetField>;
+  }
+  function Settings({page='Account',full=false}) {
+    const s=useData(),u=useApp();
+    const group=sections.find(section=>section.name===page || section.pages.includes(page)) || sections[0];
+    const [advanced,setAdvanced]=React.useState(!sections.some(section=>section.name===page || section.pages[0]===page));
+    const [router,setRouter]=React.useState(null),[attempt,setAttempt]=React.useState(0),[load,setLoad]=React.useState({status:'waiting'});
+    const {runAction,actionState,retryAction}=window.UI.useRegisteredActions(SHEET_ACTIONS,{Refresh:()=>setAttempt(value=>value+1)});
+    React.useEffect(()=>{let current=true;setLoad({status:'waiting'});Promise.allSettled([api.refreshRouter(),api.readHostAvailability(),api.listAgentsWorking(),api.refreshSettingsControls()]).then(results=>{if(!current)return;const model=results[0],errors=results.filter(result=>result.status==='rejected').map(result=>result.reason.message);if(model.status==='fulfilled')setRouter(model.value);setLoad(errors.length?{status:'error',message:errors.join(' ')}:{status:results[2].value?.length||results[1].value?.length?'loaded':'empty'});});return()=>{current=false;};},[attempt]);
+    if(advanced)return <div className="settings-detailed"><button className="settings-return" onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAdvanced(false)},event)}>← Everyday settings</button><AdvancedSettings page={sections.some(section=>section.name===page)?group.pages[0]:page} full={full} /></div>;
+    const go=route=>u.go(route),act=fn=>u.act(fn),connected=(s.hosts||[]).filter(host=>['connected','listening'].includes(host.state));
+    const status=(s.agents||[]).map(agent=>`${agent.session_count ?? agent.sessions?.length ?? 0} ${agent.name} sessions ${agent.presence||'unknown'}`).join(' · ');
+    const preference=(label,match=undefined)=><SheetPreference key={label} label={label} match={match} />;
+    return <div data-screen={'settings/'+group.pages[0]} className="settings-sheet-stage"><section className="settings-sheet" aria-label="Settings"><header><h1>Settings</h1><Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('workshop')},event)}>Done</Btn></header><nav className="sheet-tabs" aria-label="Settings pages">{sections.map(section=><button className="settings-section" aria-current={group===section?'page':undefined} key={section.name} onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('settings/'+section.pages[0])},event)}>{section.name}</button>)}</nav>
+      <window.UI.RegisteredActionStatus state={actionState} retry={retryAction}/>{load.status==='waiting'&&<p role="status">Reading settings…</p>}{load.status==='error'&&<div role="alert">{load.message}<Btn sm onClick={event=>runAction('settings.sheet.Refresh',event)}>Retry settings</Btn></div>}{load.status==='empty'&&<span className="visually-hidden">No connected programs or agent sessions reported.</span>}{load.status==='loaded'&&<span className="visually-hidden">Settings loaded.</span>}
+      <div className="sheet-columns">
+      {group.name==='Account'&&<><section><h2>Your identity</h2><div className="sheet-fields"><SheetField label="Name" value={s.profile.name||'Add a name'} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.show('My profile')},event)} /><SheetField label="Email" value={s.profile.email||'Add an email'} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.show('My profile')},event)} /></div><h2 className="sheet-section-gap">Files &amp; workspaces</h2><SheetField label="Workspace folder" value={s.workspaces.find(w=>w.id===s.activeWorkspace)?.path||'Choose a folder'} onClick={event=>executeAction('projects.controls.activate',{handler:()=>act(api.addWorkspace)},event)} /><p>Workflow files travel with you. Local paths stay editable.</p></section><section><h2>Privacy</h2><div className="sheet-fields">{preference('Review before sharing')}{preference('Ask before meeting transcription')}</div><p className="sheet-section-gap">Secrets stay in protected connections, never in .archhub files.</p><Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('settings/Connections')},event)}>Manage protected connections</Btn></section></>}
+      {group.name==='Connections'&&<><section><h2>Programs</h2><p>Live program status, document and current agent use.</p><div className="sheet-programs">{(s.hosts||[]).map(host=><div className="sheet-program" key={host.id}><span className="status-dot" style={{background:host.state==='connected'?A.ok:A.inkSoft}}/><div><b>{host.name}</b><p>Document · {host.document||host.document_name||host.detail||'No document reported'}</p><p>Agents using it · {host.agents?.map(a=>a.name||a).join(', ')||'not reported'}</p></div><span style={{color:host.state==='connected'?A.ok:A.inkSoft}}>{host.state}</span></div>)}{!s.hosts?.length&&<p>No running programs reported.</p>}</div><div className="sheet-program-access"><h2>Direct program access</h2><p>Inspect a program, its document and current agent use.</p><Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('settings/System graph')},event)}>Live wiring</Btn></div></section><section><h2>Agent sessions</h2><div className="sheet-agents">{(s.agents||[]).map(agent=><div key={agent.id}><b>{agent.name}</b><span style={{color:agent.presence==='working'?A.ok:A.inkSoft}}>{agent.session_count??agent.sessions?.length??0} {agent.presence||'unknown'}</span></div>)}{!s.agents?.length&&<p>No agent sessions reported.</p>}</div><p className="sheet-divider">Agents reach programs directly. No sign-in queue.</p>{s.connections?.length>0&&<button className="button-reset" onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAdvanced(true)},event)}>Manage connected accounts</button>}</section></>}
+      {group.name==='Automation & Brain'&&<><section><h2>Models</h2><p>Free models first. Changes apply on the next message.</p><div className="sheet-fields sheet-models"><SheetField label="Default model">{router?<select aria-label="Default model" value={router.default_model} onChange={event=>act(()=>api.setRouterSettings({default_model:event.target.value})).then(result=>{if(result)setRouter(result);})}>{[...new Set([router.default_model,...router.models,...router.fallback_models])].map(model=><option key={model}>{model}</option>)}</select>:<span role="status">{load.status==='error'?load.message:'Reading models…'}</span>}</SheetField><SheetField label="Fallback order" value={router?.fallback_models.join(' → ')} /><SheetField label="Prefer free models">{router?<div className="spread"><span>{router.free_first?'On':'Off'}</span><D.Toggle label="Prefer free models" checked={router.free_first} onCheckedChange={value=>act(()=>api.setRouterSettings({free_first:value})).then(result=>{if(result)setRouter(result);})}/></div>:<span>Reading…</span>}</SheetField></div><p className="sheet-session-summary">{status||'No agent sessions reported.'}</p></section><section><h2>Follow through</h2><div className="sheet-fields">{preference('Finish and report')}{preference('Only notify when action is needed')}</div><h2 className="sheet-knowledge">Knowledge</h2><SheetField label="Conversation retention" value={s.settings.find(row=>row.label==='Conversation retention')?.value} /><p>Digest conversations into knowledge, then remove them.</p></section></>}
+      {group.name==='Interface'&&<><section><h2>Theme &amp; colour</h2><p>Keep the same language across your workspace.</p><div className="sheet-themes">{['Dark','Light','System'].map(theme=><button key={theme} className={'sheet-theme theme-'+theme.toLowerCase()} aria-label={theme+' theme'} onClick={event=>executeAction('projects.controls.activate',{handler:()=>{const row=s.settings.find(r=>r.page==='Appearance'&&r.label==='Theme');row?act(()=>api.setSetting(row.id,theme)):setAdvanced(true);}},event)}><span/><b>{theme}</b></button>)}</div>{preference('Accent colour')}</section><section><h2>Reading &amp; motion</h2><div className="sheet-fields">{preference('Text scale')}{preference('Reduce motion')}{preference('High contrast')}</div></section><section className="sheet-canvas-defaults"><h2>Canvas defaults</h2><div>{preference('Show grid',r=>r.page==='Appearance'&&r.label==='Canvas grid')}{preference('Default zoom',r=>r.page==='Appearance'&&r.label==='Zoom percentage')}</div></section></>}
+      {group.name==='System'&&<><section><h2>Live wiring</h2><p>Drawn from the running app. These are not stored records.</p><div className="sheet-wiring"><button onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('settings/Agents')},event)}><b>Agents</b><small>{status||'No sessions reported'}</small></button><button onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('settings/Agents')},event)}><b>Router</b><small>{router?.default_model||'Reading router…'}</small></button><button onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('workshop')},event)}><b>Workshop</b><small>Session Link</small></button><button onClick={event=>executeAction('projects.controls.activate',{handler:()=>go('settings/Connections')},event)}><b>Programs</b><small>{connected.map(host=>host.name).join(' · ')||'No programs connected'}</small></button></div>{preference('Keep running in tray')}</section><section><h2>Tools &amp; diagnostics</h2><div className="sheet-tools">{[['Dependencies','dependencies'],['Hooks','settings/Hooks'],['Updates','settings/Updates & About'],['Diagnostics','receipts']].map(([label,route])=><Btn key={label} onClick={event=>executeAction('projects.controls.activate',{handler:()=>go(route)},event)}>{label}</Btn>)}</div><p className="sheet-diagnostics">Loading, failed and stopped states stay local to the affected tool.</p></section></>}
+      </div><footer>Everyday controls first. Detailed parameters remain available.</footer></section><div className="sheet-below"><div className="flex">{(group.name==='Account'?[['Plan & access','access'],['Usage & billing','access'],['Setup','first-run']]:group.name==='Automation & Brain'?[['Agents','settings/Agents'],['Brain','settings/Brain'],['Automations','settings/Automations']]:group.name==='Interface'?[['Elements & Mods','settings/Library & Mods']]:[]).map(([label,route])=><Btn sm key={label} onClick={event=>executeAction('projects.controls.activate',{handler:()=>go(route)},event)}>{label}</Btn>)}</div><button className="button-reset" onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAdvanced(true)},event)}>Advanced parameters</button></div></div>;
+  }
   window.UI.Settings = Settings;
+  window.UI.requestGroups = requestGroups;
   window.UI.Account = Account;
   window.UI.Connections = Connections;
   window.UI.WorkspaceRows = WorkspaceRows;

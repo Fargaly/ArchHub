@@ -604,8 +604,10 @@ class WorkshopAPI:
                     "AND category=? AND public=1 AND (? IS NULL OR sequence<?) ORDER BY sequence DESC LIMIT 101",
                     ("app:workshop", CATEGORY, before, before)), 100, 180000)
                 events = {row["id"]: delivery_events(history, row) for row in rows}
+        from .workshop_mailbox import _routing
         messages = [{"id":row["id"], **_message_identity(row["author"], declared, self.binding.subject_root), "text":row["content"],
             "reply_to":row["reply_to"], "sequence":row["sequence"], "created_at":row["created_at"],
+            "project": (_routing(row) or {}).get("project") or "",
             **project_injection_delivery(events[row["id"]], addressed=agent_addressed(row))}
             for row in reversed(rows)]
         return {"messages":messages, "more":more, "next_before":rows[-1]["sequence"] if rows else None}

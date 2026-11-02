@@ -10,8 +10,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QColor, QImage, QPainter
-from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, Qt
-from PyQt6.QtGui import QMouseEvent
+from PyQt6.QtCore import QEvent, QMimeData, QPoint, QPointF, QRect, Qt, QUrl
+from PyQt6.QtGui import QDropEvent, QMouseEvent
 from PyQt6.QtTest import QTest
 
 from nodelang.baboom_companion_placement import BaboomCompanionLayout, Rect
@@ -959,6 +959,131 @@ def test_double_click_opens_archhub_and_a_drag_keeps_the_pinned_corner(tmp_path,
         assert abs(saved["x"] - start.x()) > 4
         assert opened == []
         assert not window._input.isVisible()
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_reduced_motion_keeps_a_static_think_frame(tmp_path, monkeypatch):
+    """Reduced motion stays on the first think cell and does not advance."""
+    app, window, opened = _screen_companion(tmp_path, monkeypatch, "still.png")
+    try:
+        window._reduced_motion = True
+        window._work_rows = lambda: [{
+            "status": "WIP",
+            "title": "Index the sheets",
+            "updated_at": "2026-11-02T12:00:00+00:00",
+        }]
+        window.refresh()
+        app.processEvents()
+        assert window._frame.motion == "think"
+        assert window._frame.source.x == 0
+        assert window._state_bubble.isVisible()
+        assert window._state_bubble.text() == "Index the sheets"
+        before = window._frame.source
+        window._advance_animation()
+        assert window._frame.source == before
+        assert window._frame.motion == "think"
+        assert opened == []
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_hiding_the_companion_stops_its_timers(tmp_path, monkeypatch):
+    """An explicit hide pauses projection and animation."""
+    app, window, _opened = _screen_companion(tmp_path, monkeypatch, "timers.png")
+    try:
+        window._animation_timer.start()
+        window._projection_timer.start()
+        assert window._animation_timer.isActive()
+        assert window._projection_timer.isActive()
+        assert window._presence_hold is False
+        window.hide()
+        app.processEvents()
+        assert window._animation_timer.isActive() is False
+        assert window._projection_timer.isActive() is False
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def _write_skill(folder, filename, title, skill_id, note, spoken):
+    from nodelang.session_files import new_document, write_document
+
+    document = new_document(title)
+    document["id"] = skill_id
+    document["notes"] = [{"text": note}]
+    document["nodes"] = [
+        {
+            "id": "file",
+            "type": "param.value",
+            "title": "File",
+            "params": {"type": "text", "value": ""},
+            "position": {"x": 0, "y": 0},
+        },
+        {
+            "id": "said",
+            "type": "note",
+            "title": spoken,
+            "params": {},
+            "position": {"x": 40, "y": 0},
+        },
+    ]
+    write_document(folder / filename, document)
+
+
+def test_a_dropped_file_offers_the_matching_skill_and_run_reports_it(tmp_path, monkeypatch):
+    """Dropping a file offers the matching saved skill. Run reports in the reply box."""
+    app, window, opened = _screen_companion(tmp_path, monkeypatch, "drop.png")
+    try:
+        folder = tmp_path / "skills"
+        folder.mkdir()
+        _write_skill(folder, "read-pdf.archhub", "Read PDF", "read-pdf", "pdf drawings", "Read the sheet")
+        _write_skill(folder, "walls.archhub", "Walls", "walls", "masonry", "Lay the course")
+        window._skills_directory = lambda: folder
+        unknown = tmp_path / "zzzz.bin"
+        unknown.write_bytes(b"bin")
+        pdf = tmp_path / "plan.pdf"
+        pdf.write_bytes(b"%PDF")
+
+        _transparent, opaque = _sprite_points(window)
+
+        def drop(path):
+            mime = QMimeData()
+            mime.setUrls([QUrl.fromLocalFile(str(path))])
+            event = QDropEvent(
+                QPointF(opaque),
+                Qt.DropAction.CopyAction,
+                mime,
+                Qt.MouseButton.LeftButton,
+                Qt.KeyboardModifier.NoModifier,
+            )
+            # Qt does not deliver a hand-built QDropEvent through sendEvent.
+            # The handler is what a real desktop drop calls.
+            window.dropEvent(event)
+            assert event.isAccepted()
+
+        drop(unknown)
+        app.processEvents()
+        assert "No saved skill matches zzzz.bin." in window._report.text()
+        assert window._skill_run.isVisible() is False
+
+        _transparent, opaque = _sprite_points(window)
+        drop(pdf)
+        app.processEvents()
+        assert window._skill_run.isVisible()
+        assert window._skill_run.text() == "Run"
+        assert "Read PDF" in window._report.text()
+        assert "plan.pdf" in window._report.text()
+        window._skill_run.click()
+        app.processEvents()
+        assert "Read the sheet" in window._report.text()
+        assert "Lay the course" not in window._report.text()
+        assert opened == []
     finally:
         window.close()
         window.deleteLater()

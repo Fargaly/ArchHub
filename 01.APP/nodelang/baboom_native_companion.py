@@ -729,6 +729,9 @@ def create_baboom_native_companion_window(
     position_path: Path | None = None,
     on_stop: Callable[[], None] | None = None,
     on_open: Callable[[], None] | None = None,
+    reduced_motion: bool | None = None,
+    work_rows: Callable[[], object] | None = None,
+    skills_directory: Callable[[], Path] | None = None,
 ) -> Any:
     """Create, but never show or start, the one transparent companion window."""
     if type(controller) is not BaboomNativeCompanionController:
@@ -737,6 +740,15 @@ def create_baboom_native_companion_window(
         raise ValueError("BABOOM native companion response callback is invalid")
     if voice_input is not None and type(voice_input) is not BaboomVoiceInput:
         raise ValueError("BABOOM native companion voice input is invalid")
+    if reduced_motion is not None and type(reduced_motion) is not bool:
+        raise ValueError("BABOOM reduced motion parameter is invalid")
+    if work_rows is not None and not callable(work_rows):
+        raise ValueError("BABOOM work rows provider is invalid")
+    if skills_directory is not None and not callable(skills_directory):
+        raise ValueError("BABOOM skills directory provider is invalid")
+    if work_rows is None:
+        from .baboom_work_presence import read_workshop_task_rows
+        work_rows = read_workshop_task_rows
     try:
         from PyQt6.QtCore import QEvent, QObject, QPoint, QRect, QTimer, Qt, QUrl, pyqtSignal, pyqtSlot
         from PyQt6.QtGui import QCursor, QFont, QFontDatabase, QIcon, QImage, QPainter, QPixmap, QColor
@@ -820,6 +832,13 @@ def create_baboom_native_companion_window(
             self._press_global: Any = None
             self._press_window_pos: Any = None
             self._dragged = False
+            self._work_presence = None
+            self._transition_left = 0
+            self._reduced_motion = reduced_motion
+            self._work_rows = work_rows
+            self._skills_directory = skills_directory
+            self._skill_offer: dict[str, str] | None = None
+            self._presence_hold = False
             self._position_path = position_path
             self._voice_input = voice_input or BaboomVoiceInput()
             self._voice_cancel: threading.Event | None = None
@@ -908,6 +927,34 @@ def create_baboom_native_companion_window(
             )
             self._cancel.clicked.connect(self._close_interaction)
             self._cancel.hide()
+            self._state_bubble = QLabel(self)
+            self._state_bubble.setFont(self._companion_font)
+            self._state_bubble.setWordWrap(True)
+            self._state_bubble.setStyleSheet(
+                "background:%s;color:%s;border:0;padding:4px;font-size:11px;"
+                % (_theme["bg_raised"], _theme["ink"])
+            )
+            self._state_bubble.hide()
+            self._state_badge = QLabel("!", self)
+            self._state_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._state_badge.setAccessibleName("BABOOM needs you")
+            self._state_badge.setStyleSheet(
+                "background:%s;color:%s;border:0;border-radius:8px;font-size:11px;font-weight:600;"
+                % (_theme["accent"], _theme["on_fill"])
+            )
+            self._state_badge.hide()
+            self._skill_run = QToolButton(self)
+            self._skill_run.setText("Run")
+            self._skill_run.setAccessibleName("Run the matching skill")
+            self._skill_run.setToolTip("Run the saved skill on the dropped file")
+            self._skill_run.setStyleSheet(
+                "background:%s;color:%s;border:0;border-radius:4px;padding:0 8px;"
+                "font-size:11px;font-weight:600;"
+                % (_theme["accent"], _theme["on_fill"])
+            )
+            self._skill_run.clicked.connect(self._run_offered_skill)
+            self._skill_run.hide()
+            self.setAcceptDrops(True)
             self.setWindowFlags(
                 Qt.WindowType.Tool
                 | Qt.WindowType.FramelessWindowHint
@@ -998,6 +1045,134 @@ def create_baboom_native_companion_window(
             self._connection_status.setVisible(stale and self._shows_as == "Screen" and not self._details_open)
             self._connection_status.setToolTip(self._tray.toolTip())
 
+        def _motion_reduced(self) -> bool:
+            from .baboom_work_presence import baboom_reduced_motion
+            return baboom_reduced_motion(parameter=self._reduced_motion)
+
+        def _timers_active(self) -> bool:
+            presence = self._work_presence
+            working = presence is not None and presence.state != "idle"
+            reporting = self._frame is not None and self._frame.report is not None
+            return bool(
+                self._details_open or self._interaction_requested or reporting
+                or working or self._transition_left > 0 or self._skill_offer is not None
+            )
+
+        def _sync_resource_timers(self) -> None:
+            """Pause while hidden. Idle keeps a slow projection and no pose timer."""
+            if self._dismissed or self._stopped or not self.isVisible() or self.isMinimized():
+                self._projection_timer.stop()
+                self._animation_timer.stop()
+                return
+            self._projection_timer.setInterval(750 if self._timers_active() else 5000)
+            if not self._projection_timer.isActive():
+                self._projection_timer.start()
+            if self._motion_reduced() or not self._timers_active():
+                self._animation_timer.stop()
+                return
+            self._animation_timer.setInterval(125 if self._transition_left > 0 else 900)
+            if not self._animation_timer.isActive():
+                self._animation_timer.start()
+
+        def _overlay_work_pose(self, frame):
+            from .baboom_work_presence import BaboomWorkPresence, baboom_work_presence
+            previous = self._work_presence.state if self._work_presence is not None else "idle"
+            reduced = self._motion_reduced()
+            try:
+                presence = baboom_work_presence(self._work_rows())
+            except Exception:
+                presence = BaboomWorkPresence("idle", "", "idle", False, "")
+            if reduced:
+                self._transition_left = 0
+            elif presence.state != previous:
+                self._transition_left = 4
+            self._work_presence = presence
+            return self._posed_frame(frame, bump=False)
+
+        def _posed_frame(self, frame, *, bump: bool):
+            from .baboom_native_visual import _MOTION_ROWS, baboom_sprite_source
+            from .baboom_work_presence import baboom_pose_motion
+            reduced = self._motion_reduced()
+            if bump and not reduced:
+                controller.next_sprite_source("idle")
+            presence = self._work_presence
+            state = presence.state if presence is not None else "idle"
+            if reduced:
+                self._transition_left = 0
+            motion = baboom_pose_motion(
+                state,
+                controller._animation_tick,
+                reduced_motion=reduced,
+                transitioning=self._transition_left > 0 and not reduced,
+            )
+            shown = 0 if reduced else controller._animation_tick
+            source = baboom_sprite_source(
+                controller._atlas, motion=motion, animation_tick=shown
+            )
+            row = _MOTION_ROWS[motion]
+            count = controller._atlas.frames_in_row(row)
+            raw = controller._atlas.orb_point(row, shown % count)
+            sprite = frame.layout.sprite
+            orb = None if raw is None else (
+                round(raw[0] * sprite.width / controller._atlas.cell_width),
+                round(raw[1] * sprite.height / controller._atlas.cell_height),
+            )
+            return replace(frame, motion=motion, source=source, orb=orb)
+
+        def _place_idle_chrome(self, x: int, y: int, size: int, edge: str) -> None:
+            """Keep the glyph on the edge. A state bubble sits inward of it."""
+            presence = self._work_presence
+            text = ""
+            badge = False
+            if presence is not None and presence.state != "idle":
+                text = presence.bubble
+                badge = presence.badge
+            self._state_bubble.hide()
+            self._state_badge.hide()
+            bubble_w = bubble_h = 0
+            if text:
+                self._state_bubble.setText(text)
+                bubble_w = min(200, max(80, self._state_bubble.fontMetrics().horizontalAdvance(text) + 16))
+                bubble_h = max(24, int(self._state_bubble.heightForWidth(bubble_w) or 24))
+            gap = 6
+            if text and edge == "right":
+                origin_x, origin_y = x - gap - bubble_w, y
+                sprite_x, sprite_y = gap + bubble_w, 0
+                bubble_x, bubble_y = 0, 0
+                win_w, win_h = size + gap + bubble_w, max(size, bubble_h)
+            elif text and edge == "left":
+                origin_x, origin_y = x, y
+                sprite_x, sprite_y = 0, 0
+                bubble_x, bubble_y = size + gap, 0
+                win_w, win_h = size + gap + bubble_w, max(size, bubble_h)
+            elif text and edge == "bottom":
+                origin_x, origin_y = x, y - gap - bubble_h
+                sprite_x, sprite_y = 0, gap + bubble_h
+                bubble_x, bubble_y = 0, 0
+                win_w, win_h = max(size, bubble_w), size + gap + bubble_h
+            elif text:
+                origin_x, origin_y = x, y
+                sprite_x, sprite_y = 0, 0
+                bubble_x, bubble_y = 0, size + gap
+                win_w, win_h = max(size, bubble_w), size + gap + bubble_h
+            else:
+                origin_x, origin_y = x, y
+                sprite_x = sprite_y = 0
+                win_w = win_h = size
+            self.setGeometry(origin_x, origin_y, win_w, win_h)
+            self._sprite_rect = QRect(sprite_x, sprite_y, size, size)
+            self._connection_status.setGeometry(
+                self._sprite_rect.right() - 12, self._sprite_rect.bottom() - 12, 8, 8
+            )
+            if text:
+                self._state_bubble.setGeometry(bubble_x, bubble_y, bubble_w, bubble_h)
+                self._state_bubble.show()
+                self._state_bubble.raise_()
+            if badge:
+                self._state_badge.setGeometry(self._sprite_rect.right() - 16, self._sprite_rect.top(), 16, 16)
+                self._state_badge.show()
+                self._state_badge.raise_()
+
         def _idle_presence(self, screen, frame) -> None:
             # One small glyph, always at an edge; never search through work areas.
             size = 56
@@ -1014,21 +1189,30 @@ def create_baboom_native_companion_window(
             self._layout = replace(frame.layout, sprite=sprite, message=None, edge=edge)
             self._frame = replace(frame, layout=self._layout, report=None)
             self._sprite = render_baboom_native_sprite(self._atlas, self._frame)
-            self._sprite_rect = QRect(0, 0, size, size)
             self._message_rect = None
-            for widget in (self._report, self._input, self._talk, self._send, self._confirm, self._cancel):
+            for widget in (
+                self._report, self._input, self._talk, self._send,
+                self._confirm, self._cancel, self._skill_run,
+            ):
                 widget.hide()
             if self._approval is not None:
                 self._approval.hide()
-            self.setGeometry(x, y, size, size)
-            self._connection_status.setGeometry(size - 12, size - 12, 8, 8)
+            self._place_idle_chrome(x, y, size, edge)
             cursor = QCursor.pos()
             # A visible sprite remains reachable while approached. A hidden one
             # must not reappear underneath input intended for another program.
             approaching = self.isVisible() and self.geometry().adjusted(-24, -24, 24, 24).contains(cursor)
             active = desktop_input_idle_seconds() < 2.0
             if self._shows_as != "Screen" or (active and foreign_foreground_window() and not approaching):
-                self.hide()
+                self._state_bubble.hide()
+                self._state_badge.hide()
+                self._animation_timer.stop()
+                if self.isVisible():
+                    self._presence_hold = True
+                    self.hide()
+                else:
+                    self._presence_hold = False
+                    self._projection_timer.stop()
                 return
             # The mask is the hit target. Opaque sprite pixels take the click;
             # transparent pixels are not part of the window, so they fall
@@ -1038,6 +1222,7 @@ def create_baboom_native_companion_window(
             self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
             if not self.isVisible():
                 self.show()
+            self._sync_resource_timers()
             self.update()
 
         def start_projection(self) -> None:
@@ -1160,20 +1345,25 @@ def create_baboom_native_companion_window(
         def _advance_animation(self) -> None:
             if self._frame is None or self._sprite is None or not self.isVisible():
                 return
-            # A companion that flips through poses while it has nothing to
-            # say reads as broken, not alive. It breathes only when there
-            # IS something: a report, or the founder talking to it.
-            if self._frame.report is None and not self._interaction_requested:
+            if self._motion_reduced():
                 return
+            # A companion that flips through poses while it has nothing to
+            # say reads as broken, not alive. It breathes for a report, a
+            # conversation, a Workshop state, or the walk between states.
+            if self._frame.report is None and not self._timers_active():
+                return
+            frame = self._posed_frame(self._frame, bump=True)
+            if self._transition_left > 0:
+                self._transition_left -= 1
+            self._frame = frame
             sprite = self._frame.layout.sprite
-            frame = replace(
+            self._frame = replace(
                 self._frame,
-                source=controller.next_sprite_source(self._frame.motion),
                 orb=controller.orb_for(self._frame.motion, (sprite.width, sprite.height)),
             )
-            self._frame = frame
-            self._sprite = render_baboom_native_sprite(self._atlas, frame)
+            self._sprite = render_baboom_native_sprite(self._atlas, self._frame)
             self._apply_hit_mask()
+            self._sync_resource_timers()
             self.update()
 
         def refresh(self) -> None:
@@ -1187,9 +1377,14 @@ def create_baboom_native_companion_window(
             if screen is None:
                 return
             frame = controller.next_frame(screen)
+            if frame is not None:
+                frame = self._overlay_work_pose(frame)
             self._presence(frame)
             if frame is None:
                 self.hide()
+                if not self.isVisible():
+                    self._projection_timer.stop()
+                    self._animation_timer.stop()
                 return
             if self._shows_as == "Hidden":
                 self._details_open = False
@@ -1200,6 +1395,8 @@ def create_baboom_native_companion_window(
                     self._cancel.hide()
                 self._idle_presence(screen, frame)
                 return
+            self._state_bubble.hide()
+            self._state_badge.hide()
             if (
                 self._transient_revision is not None
                 and self._transient_revision != frame.revision
@@ -1255,7 +1452,7 @@ def create_baboom_native_companion_window(
             # A pending act shows Confirm and Cancel on their own row beneath the
             # question, so the buttons never sit on top of the words. Reserve that
             # row in the window bounds while the buttons are up.
-            if self._confirm.isVisible() and layout.message is not None:
+            if (self._confirm.isVisible() or self._skill_run.isVisible()) and layout.message is not None:
                 bottom = max(bounds.bottom, message.bottom) + 34
             self._origin = QPoint(left, top)
             window_rect = QRect(left, top, right - left, bottom - top)
@@ -1273,6 +1470,7 @@ def create_baboom_native_companion_window(
                 self._send.hide()
                 self._confirm.hide()
                 self._cancel.hide()
+                self._skill_run.hide()
                 self._pending_task_utterance = None
                 self._act_progress = ""
                 self._interaction_requested = False
@@ -1286,7 +1484,7 @@ def create_baboom_native_companion_window(
                 # its bg_raised fill covers Confirm and Cancel -- nothing behind the
                 # buttons is ever the transparent desktop.
                 panel_rect = message_rect
-                if self._confirm.isVisible():
+                if self._confirm.isVisible() or self._skill_run.isVisible():
                     panel_rect = QRect(
                         message_rect.x(), message_rect.y(),
                         message_rect.width(), message_rect.height() + 34,
@@ -1322,7 +1520,17 @@ def create_baboom_native_companion_window(
                             panel_rect.right() - 78 - 62, band_y, 56, 22
                         )
                         self._cancel.raise_()
+                elif self._skill_run.isVisible():
+                    band_y = panel_rect.bottom() - 28
+                    self._skill_run.setGeometry(panel_rect.right() - 78, band_y, 72, 22)
+                    self._skill_run.raise_()
+                    if self._cancel.isVisible():
+                        self._cancel.setGeometry(
+                            panel_rect.right() - 78 - 62, band_y, 56, 22
+                        )
+                        self._cancel.raise_()
             self._apply_hit_mask()
+            self._sync_resource_timers()
             if not self.isVisible():
                 self.show()
             self.update()
@@ -1374,6 +1582,25 @@ def create_baboom_native_companion_window(
                 dwm.DwmSetWindowAttribute(ctypes.c_void_p(hwnd), 34, ctypes.byref(border), 4)
             except Exception:
                 pass
+            if not self._dismissed and not self._stopped:
+                self._sync_resource_timers()
+
+        def hideEvent(self, event) -> None:  # noqa: N802 - Qt callback name
+            super().hideEvent(event)
+            if self._presence_hold:
+                self._presence_hold = False
+                self._animation_timer.stop()
+                if not self._dismissed and not self._stopped:
+                    self._projection_timer.setInterval(5000)
+                    self._projection_timer.start()
+                return
+            self._projection_timer.stop()
+            self._animation_timer.stop()
+
+        def changeEvent(self, event) -> None:  # noqa: N802 - Qt callback name
+            super().changeEvent(event)
+            if event.type() == QEvent.Type.WindowStateChange and not self._dismissed:
+                self._sync_resource_timers()
 
         def _open_interaction(self) -> None:
             """Show the ask box: BABOOM is listening."""
@@ -1393,6 +1620,8 @@ def create_baboom_native_companion_window(
             self._pending_task_utterance = None
             self._confirm.hide()
             self._cancel.hide()
+            self._skill_offer = None
+            self._skill_run.hide()
             self._transient_report = None
             self._transient_revision = None
             self._interaction_requested = True
@@ -1441,6 +1670,8 @@ def create_baboom_native_companion_window(
             self._send.hide()
             self._confirm.hide()
             self._cancel.hide()
+            self._skill_offer = None
+            self._skill_run.hide()
             self._report.hide()
             self.refresh()
 
@@ -1626,9 +1857,7 @@ def create_baboom_native_companion_window(
             try:
                 menu.exec(event.globalPos())
             finally:
-                if not self._dismissed and not self._stopped:
-                    self._projection_timer.start()
-                    self._animation_timer.start()
+                self._sync_resource_timers()
 
         def _pointer_hits(self, point) -> bool:
             """A click counts only on the visible sprite or an open reply control."""
@@ -1649,6 +1878,7 @@ def create_baboom_native_companion_window(
             for widget in (
                 self._report, self._input, self._talk, self._send,
                 self._confirm, self._cancel, self._connection_status,
+                self._state_bubble, self._state_badge, self._skill_run,
             ):
                 if widget.isVisible():
                     region = region.united(QRegion(widget.geometry()))
@@ -1723,6 +1953,83 @@ def create_baboom_native_companion_window(
                 event.accept()
                 return
             super().mouseDoubleClickEvent(event)
+
+        def _skills_folder(self) -> Path:
+            if self._skills_directory is not None:
+                return Path(self._skills_directory())
+            from .session_files import skills_directory
+            return skills_directory()
+
+        def _offer_dropped_file(self, path: Path) -> None:
+            from .baboom_work_presence import load_saved_skills, match_saved_skill
+            if self._frame is None or self._busy or self._dismissed or self._stopped:
+                return
+            match = match_saved_skill(path, load_saved_skills(self._skills_folder()))
+            self._details_open = True
+            self._interaction_requested = True
+            self._result_visible = False
+            self._input.hide()
+            self._confirm.hide()
+            self._talk.hide()
+            self._send.hide()
+            self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, False)
+            set_native_click_through(int(self.winId()), False)
+            if match is None:
+                self._skill_offer = None
+                self._skill_run.hide()
+                self._cancel.hide()
+                self._transient_report = "No saved skill matches %s." % path.name
+            else:
+                title = str(match.get("title") or match.get("id") or "skill")
+                self._skill_offer = {
+                    "prompt": "Run %s on %s?" % (title, path.name),
+                    "skill_path": str(match["path"]),
+                    "file": str(path),
+                    "title": title,
+                }
+                self._transient_report = self._skill_offer["prompt"]
+                self._skill_run.show()
+                self._cancel.show()
+            self._transient_revision = None
+            self.refresh()
+
+        def _run_offered_skill(self) -> None:
+            offer = self._skill_offer
+            if offer is None or self._busy:
+                return
+            from .baboom_work_presence import execute_saved_skill
+            try:
+                text = execute_saved_skill(offer["skill_path"], offer["file"])
+            except Exception:
+                text = "Skill failed: the skill did not finish."
+            self._skill_offer = None
+            self._skill_run.hide()
+            self._cancel.hide()
+            self._input.hide()
+            self._transient_report = text
+            self._transient_revision = None
+            self.refresh()
+
+        def _accept_file_drop(self, event) -> str:
+            urls = event.mimeData().urls() if event.mimeData() is not None else []
+            local = next((url.toLocalFile() for url in urls if url.isLocalFile()), "")
+            if not local:
+                event.ignore()
+                return ""
+            event.setDropAction(Qt.DropAction.CopyAction)
+            event.accept()
+            return local
+
+        def dragEnterEvent(self, event) -> None:  # noqa: N802 - Qt callback name
+            self._accept_file_drop(event)
+
+        def dragMoveEvent(self, event) -> None:  # noqa: N802 - Qt callback name
+            self._accept_file_drop(event)
+
+        def dropEvent(self, event) -> None:  # noqa: N802 - Qt callback name
+            local = self._accept_file_drop(event)
+            if local:
+                self._offer_dropped_file(Path(local))
 
         def _submit_input(self) -> None:
             utterance = self._input.text().strip()

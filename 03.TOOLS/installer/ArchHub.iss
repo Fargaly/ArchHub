@@ -111,6 +111,7 @@ Source: "{#NodeRuntimePath}"; DestDir: "{app}\runtime"; DestName: "node.exe"; Fl
 Source: "{#NodeLicensePath}"; DestDir: "{app}\runtime"; DestName: "Node-LICENSE.txt"; Flags: ignoreversion
 Source: "{#GoosePayloadPath}\*"; DestDir: "{app}\runtime\goose"; Flags: recursesubdirs ignoreversion
 Source: "..\NOTICE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\docs\SPEC.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "..\packaging\windows\licenses\Goose-Apache-2.0.txt"; DestDir: "{app}\licenses"; Flags: ignoreversion
 Source: "..\packaging\windows\licenses\Hermes-MIT.txt"; DestDir: "{app}\licenses"; Flags: ignoreversion
 Source: "..\nodelang\*"; DestDir: "{app}\nodelang"; Excludes: "{#PayloadExcludes}"; Flags: recursesubdirs ignoreversion

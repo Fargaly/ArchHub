@@ -252,11 +252,11 @@
               {planned.map(t => <TaskRow key={t.id} t={t} />)}
               {history && done.map(t => <TaskRow key={t.id} t={t} />)}
             </div>
-            <footer className="dx-tasks-foot">
+            <div className="dx-tasks-foot">
               <b>Completed &amp; archived</b>
               <span>All work stays searchable</span>
               <button type="button" className="dx-link" aria-pressed={history} onClick={() => executeAction('ui.select', () => setHistory(!history))}>History →</button>
-            </footer>
+            </div>
           </aside>
         </Column>
         <Separator className="pane-splitter" aria-label="Resize the Tasks pane" />

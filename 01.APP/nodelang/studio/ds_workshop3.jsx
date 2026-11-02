@@ -271,10 +271,15 @@
       })}>Open in Canvas ↗</button></header>
     <div className="scroll ws-body" ref={bodyRef}><div className="ws-stack">
       {(s.approvals || []).filter(card => card.approvalKind === 'ask' && card.status === 'pending' && card.id !== task?.approvalId).map(card => <ApprovalCard key={card.id} id={card.id} />)}
+      {!task && (previous.before ? previous.more : s.workshopMessagesMore) && <Btn sm ghost onClick={async () => {
+        const page = await executeAction("listWorkshopMessages", u, previous.before || s.workshopMessagesBefore);
+        if (currentScope.current === roomScope && Array.isArray(page?.messages)) setOlder({scope: roomScope, messages: [...page.messages, ...previous.messages], before: page.next_before, more: page.more});
+      }}>Older messages</Btn>}
+      {!task && roomMessages.length > 0 && <Messages task={{messages: roomMessages}} roles={roles} whoIs={whoIs} onReply={reply} />}
       {task ? <><TaskBrief task={{...task, description: request || task.description}} /><Messages task={{...task, messages: briefMessages}} roles={roles} whoIs={whoIs} onReply={reply} /><AgentLog messages={agentLog} extra={(previous.before ? previous.more : s.workshopMessagesMore) ? <Btn sm ghost onClick={async () => {
         const page = await executeAction("listWorkshopMessages", u, previous.before || s.workshopMessagesBefore);
         if (currentScope.current === roomScope && Array.isArray(page?.messages)) setOlder({scope: roomScope, messages: [...page.messages, ...previous.messages], before: page.next_before, more: page.more});
-      }}>Older messages</Btn> : null} />{task.approvalId && <ApprovalCard id={task.approvalId} />}{task.status === 'STOPPED' && <Btn onClick={() => executeAction("reassignTask", u, task.id)}>Continue with another agent</Btn>}{task.status === 'DONE' && <div className="flex"><Btn onClick={() => executeAction("ui.go", u, 'watcher')}>Open result</Btn><Btn onClick={() => executeAction("ui.schedule", u, task.title)}>Repeat this</Btn></div>}</> : <Empty>Create a task to begin.</Empty>}
+      }}>Older messages</Btn> : null} />{task.approvalId && <ApprovalCard id={task.approvalId} />}{task.status === 'STOPPED' && <Btn onClick={() => executeAction("reassignTask", u, task.id)}>Continue with another agent</Btn>}{task.status === 'DONE' && <div className="flex"><Btn onClick={() => executeAction("ui.go", u, 'watcher')}>Open result</Btn><Btn onClick={() => executeAction("ui.schedule", u, task.title)}>Repeat this</Btn></div>}</> : roomMessages.length === 0 && <Empty>Create a task to begin.</Empty>}
       <i ref={stickToEnd} aria-hidden="true" />
     </div></div>
     <div className="ws-dock"><div>{D.Composer ? <TaskComposer choices={choices} to={recipient} setTo={setTo} sendRef={sendRef} replyTo={replyTo} setReplyTo={setReplyTo} /> : window.UI.Composer && <window.UI.Composer taskId={task?.id} />}</div></div>

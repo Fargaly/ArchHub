@@ -1708,14 +1708,15 @@ api.ready=(async()=>{
  if((!session?.token||!session?.csrf)&&!window.ARCHHUB_AUTHORITY?.canvas_key)await signIn();else window.__archhubSession=session;
  commands=window.ArchHubStudioAuthority.create({get:path=>request(path),post:(path,body)=>request(path,body)});
  // Library collapse is advisory. A refused or slow settings read stays expanded and does not gate the first session file.
- void settingsAction('readLibraryCollapsed').catch(error=>{notice(error.message||String(error));publish({libraryCollapsed:[]});});
+ // The refusal still belongs on the status footer; a later update read must not erase it.
+ void settingsAction('readLibraryCollapsed').catch(error=>{const message=error.message||String(error);notice(message);publish({libraryCollapsed:[],connectionNotice:state.connectionNotice&&state.connectionNotice!=='Checking for updates…'?state.connectionNotice:message});});
  try{
   await api.refreshLibraryPorts();
   const initialFile=await sessionRequest('initial');
   if(initialFile?.document){sessionDocument=copy(initialFile.document);sessionPath=initialFile.path||'';sessionRevision=sessionDocument.properties?.revision||0;projectFile();}
   else await api.newSession();
  }catch(error){notice(error.message||String(error));try{await api.newSession();}catch(inner){notice(inner.message||String(inner));}}
- publish({learning:{...state.learning,layer:'Host'},connectionNotice:''});
+ publish({learning:{...state.learning,layer:'Host'},connectionNotice:state.connectionNotice||''});
  ready=true;watchRefresh();
  void api.refreshLibraryPorts().catch(error=>notice(error.message));
  void api.refreshRouter?.().catch(error=>notice(error.message));

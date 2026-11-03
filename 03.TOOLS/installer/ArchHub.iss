@@ -35,6 +35,9 @@
 #ifndef GoosePayloadPath
 #error Build with installer/build_release.ps1: pinned GoosePayloadPath is required.
 #endif
+#ifndef BetterleaksPayloadPath
+#error Build with installer/build_release.ps1: pinned BetterleaksPayloadPath is required.
+#endif
 #ifndef CompilerPayloadPath
 #error Build with installer/build_release.ps1: verified CompilerPayloadPath is required.
 #endif
@@ -110,6 +113,9 @@ Source: "..\nodelang\conversation_trace_shapes.py"; Flags: dontcopy
 Source: "{#NodeRuntimePath}"; DestDir: "{app}\runtime"; DestName: "node.exe"; Flags: ignoreversion; Check: NodeRuntimeNeedsInstall
 Source: "{#NodeLicensePath}"; DestDir: "{app}\runtime"; DestName: "Node-LICENSE.txt"; Flags: ignoreversion
 Source: "{#GoosePayloadPath}\*"; DestDir: "{app}\runtime\goose"; Flags: recursesubdirs ignoreversion
+Source: "{#BetterleaksPayloadPath}\betterleaks.exe"; DestDir: "{app}\runtime\betterleaks"; DestName: "betterleaks.exe"; Flags: ignoreversion
+Source: "{#BetterleaksPayloadPath}\manifest.json"; DestDir: "{app}\runtime\betterleaks"; Flags: ignoreversion
+Source: "..\packaging\windows\licenses\Betterleaks-MIT.txt"; DestDir: "{app}\licenses"; Flags: ignoreversion
 Source: "..\NOTICE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\docs\SPEC.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "..\packaging\windows\licenses\Goose-Apache-2.0.txt"; DestDir: "{app}\licenses"; Flags: ignoreversion

@@ -226,9 +226,10 @@ async function refreshTasks(details=true) {
  const liveAgents=await workshop('listLiveAgents').catch(()=>[]);
  if(epoch!==scopeEpoch||binding!==JSON.stringify(workshopBinding()))return state.tasks;
  const opened=new Map(state.tasks.map(t=>[t.id,t]));
- publish({tasks:tasks.map(t=>{const old=opened.get(t.id)||{};const kept=key=>{const previous=old[key];if(Array.isArray(previous))return previous.length?previous:(t[key]??previous);if(previous!=null&&previous!=='')return previous;return t[key];};return {...t,messages:t.messages||[],steps:t.steps||[],reviews:t.reviews||[],queuedMessages:t.queuedMessages||[],
-  workflow:kept('workflow'),activity:kept('activity'),plan:kept('plan'),agents:kept('agents'),progress:kept('progress'),parameters:kept('parameters'),
-  scope:kept('scope'),rules:kept('rules'),fileMessages:kept('fileMessages'),path:kept('path'),folders:kept('folders'),references:kept('references'),sessionId:kept('sessionId')};}),
+ const fileOwned=['fileMessages','path','sessionId','parameters'];
+ publish({tasks:tasks.map(t=>{const old=opened.get(t.id)||{};const projected=key=>Object.hasOwn(t,key)?t[key]:(fileOwned.includes(key)?old[key]:undefined);return {...t,messages:t.messages||[],steps:t.steps||[],reviews:t.reviews||[],queuedMessages:t.queuedMessages||[],
+  workflow:projected('workflow'),activity:projected('activity'),plan:projected('plan'),agents:projected('agents'),progress:projected('progress'),parameters:projected('parameters'),
+  scope:projected('scope'),rules:projected('rules'),fileMessages:projected('fileMessages'),path:projected('path'),folders:projected('folders'),references:projected('references'),sessionId:projected('sessionId')};}),
    workshopMessages:room.messages||[],liveAgents:Array.isArray(liveAgents)?liveAgents:[],workshopMessagesMore:room.more===true,workshopMessagesBefore:room.next_before,workshopMessagesScope:binding});
  projectProviders();
  const current=tasks.find(row=>row.sessionOpen&&row.sessionPath);

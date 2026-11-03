@@ -568,6 +568,13 @@ class SessionFiles:
             if os.path.exists(temporary):
                 os.unlink(temporary)
 
+    def current_path(self):
+        """The file the founder has open. Every reader asks here; none of them writes this choice."""
+        for row in self.open_files():
+            if row.get('open_in_app') and isinstance(row.get('path'), str):
+                return row['path']
+        return ''
+
     def open_files(self):
         """The file the app has open now (agents edit the same file), then recent files."""
         rows = []

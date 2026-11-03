@@ -254,16 +254,12 @@ def get(history, task):
 
 
 def _current_session():
-    """The file the canvas has open, recorded by the existing session-files owner."""
-    import json
-    import os
-    from pathlib import Path
-    root = Path(os.environ.get("LOCALAPPDATA") or "") / "ArchHub" / "sessions-files" / "current.json"
+    """The file the founder has open. SessionFiles is the only owner of that choice."""
+    from .session_files import SessionFiles
     try:
-        held = json.loads(root.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        return SessionFiles().current_path()
+    except (OSError, ValueError, KeyError, TypeError):
         return ""
-    return held.get("path") if isinstance(held, dict) and isinstance(held.get("path"), str) else ""
 
 
 def _held_context(document):

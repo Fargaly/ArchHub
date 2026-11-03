@@ -92,7 +92,7 @@ def register_canvas_tools(server):
 
     @server.tool(name='canvas.open')
     def canvas_open(path: str) -> dict:
-        """Open an .archhub file and return its nodes, sockets, wires, params and outputs."""
+        """Read an .archhub file for the agent. This does not change the file the founder has open."""
         return _summary(docs.read(_path(path)))
 
     @server.tool(name='canvas.read')

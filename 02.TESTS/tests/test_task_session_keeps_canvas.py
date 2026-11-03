@@ -91,3 +91,37 @@ def test_context_edit_keeps_canvas_edit_and_the_open_file(tmp_path, monkeypatch)
     assert again["folders"] == ["C:/work/alpha"]
     assert again["id"] == opened_a["id"]
     assert Path(_current(tmp_path)["path"]) == Path(opened_a["path"])
+
+
+def test_canvas_open_leaves_the_founders_file_selected(tmp_path, monkeypatch):
+    _isolate(monkeypatch, tmp_path)
+    from nodelang.canvas_tools import register_canvas_tools
+    from nodelang.session_files import SessionFiles, read_document
+    from nodelang.workshop_tasks import _current_session
+
+    folder = tmp_path / "files"
+    folder.mkdir()
+    path_a = _file(folder, "Alpha", "node-a")
+    path_b = _file(folder, "Beta", "node-b")
+    held = read_document(path_a)
+    SessionFiles()._current(held["id"], path_a)
+    before = _current(tmp_path)
+
+    class Tools:
+        def __init__(self):
+            self.tools = {}
+
+        def tool(self, name=None):
+            def wrap(fn):
+                self.tools[name] = fn
+                return fn
+            return wrap
+
+    tools = Tools()
+    register_canvas_tools(tools)
+    opened = tools.tools["canvas.open"](path_b)
+    assert opened["title"] == "Beta"
+    assert _current(tmp_path) == before
+    assert Path(_current_session()) == Path(path_a)
+    assert "current.json" not in Path("01.APP/nodelang/workshop_tasks.py").read_text(encoding="utf-8")
+    assert "current.json" not in Path("01.APP/nodelang/canvas_tools.py").read_text(encoding="utf-8")

@@ -63,6 +63,7 @@ async function mount(server,{holdBootDelay=false}={}) {
     let data={ok:true};
     if(url==='/api/universal/canvas')data={root:'graph',nodes:[],wires:[],catalog:[],...(server.workshop?{scope:{current:'graph'},workshops:[{root:'workshop'}]}:{})};
     if(url==='/api/universal/cloud-session')data={ok:true,signed_in:false};
+    if(url==='/api/universal/settings-action' && server.settings) data=await server.settings(JSON.parse(options.body||'{}'));
     if(url==='/api/universal/workshop'){
       const body=JSON.parse(options.body);
       data=server.workshop?await server.workshop(body):{ok:true,result:[]};
@@ -398,4 +399,26 @@ test('STUDIOFIX task replies own separate drafts and late replies preserve newer
   await select('Task A');assert.equal(message().value,'A newer reply','late task receipt must preserve newer text');
   await select('Task B');assert.equal(message().value,'B reply');
  }finally{pending.resolve({ok:true,result:tasks[0]});v.close();}
+});
+
+test('the File menu is file-only and Workshop leads with the thread',async()=>{
+ const v=await mount({get:()=>status('idle'),settings:body=>body.function==='readPermissions'?{ok:true,result:{runMode:''}}:{ok:true,result:{}},workshop:body=>{
+  if(body.function==='getAgentSurface')return {ok:true,result:{agentProfiles:{},learning:{layers:{}}}};
+  if(body.function==='getGraphMetadata')return {ok:true,result:{}};
+  return {ok:true,result:[]};
+ }});
+ try{
+  await v.settle(()=>v.doc.querySelector('[data-run-mode]')?.textContent.includes('Run mode: not reported'),'unknown run mode is reported as not reported');
+  assert.equal(v.doc.querySelector('[data-dx="canvas-commands"]'),null,'canvas commands stay off the Workshop face');
+  assert.ok(v.doc.querySelector('[data-dx="conversation"]'),'Workshop leads with the conversation');
+  assert.equal(v.doc.querySelector('[data-dx="workflow"]'),null,'Workshop hides the workflow');
+  await v.click(v.doc.querySelector('[aria-label="File"]'));
+  const menu=v.doc.querySelector('[data-dx="file-menu"]');
+  assert.ok(menu);
+  const labels=[...menu.querySelectorAll('[role="menuitem"], .dx-file-recent p')].map(node=>node.textContent.trim());
+  assert.deepEqual(labels,['NewCtrl N','Open…Ctrl O','Import…','SaveCtrl S','Save as…Ctrl Shift S','Recent files','No recent files reported']);
+  assert.doesNotMatch(menu.textContent,/Library|Search|Activity|Add node|Overview|needs recovery/);
+  assert.match(read('01.APP/nodelang/studio/style.css'),/\.dx-file-menu\{[^}]*width:300px;height:360px/);
+  assert.match(read('01.APP/nodelang/studio/ds_home2.jsx'),/data-dx="canvas-commands"[\s\S]*\+ Add node[\s\S]*Library[\s\S]*Program view[\s\S]*Present[\s\S]*Model review[\s\S]*Overview/);
+ }finally{v.close();}
 });

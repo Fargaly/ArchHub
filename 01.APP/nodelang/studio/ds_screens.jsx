@@ -46,8 +46,10 @@
   // Node-RED status pattern: one colour on the card edge plus one status line under it (spec State/* components).
   const nodeState = (n, rejected) => n.frozen ? ['Disabled', A.inkDim] : rejected ? ['Types do not match', A.err]
     : n.previewOff ? ['Preview off', A.inkSoft]
+    : /saved/i.test(n.status) ? ['Saved', A.ok]
+    : /await/i.test(n.status) ? ['Awaiting', A.inkSoft]
     : /approval|needs you|in review/i.test(n.status) ? ['Needs you', A.warn]
-    : /agent|working|wip/i.test(n.status) ? ['Working', A.inkSoft]
+    : /agent|working|wip/i.test(n.status) ? ['Working', A.accent]
     : /error|fail|refus/i.test(n.status) ? ['Failed · ' + (n.error || 'retry'), A.err]
     : /block|held|wait/i.test(n.status) ? ['Blocked · upstream', A.inkSoft]
     : /stale|changed|out of date/i.test(n.status) ? ['Out of date · Run', A.warn]
@@ -102,7 +104,7 @@
     const label = pending ? load.runMode + ' · ' + count : load.runMode;
     return <>
       {load.status === 'waiting' && <span role="status" style={{fontSize:11, color:A.inkSoft}}>Reading run mode</span>}
-      {load.status === 'empty' && <span style={{fontSize:11, color:A.inkSoft}}>No run mode</span>}
+      {load.status === 'empty' && <span data-run-mode="" style={{fontSize:11, color:A.inkSoft}}>Run mode: not reported</span>}
       {load.status === 'error' && <span role="alert" style={{fontSize:11, color:A.err}}>{load.message} <button type="button" className="button-reset" onClick={event => executeAction('projects.controls.activate', {handler:() => setAttempt(value => value + 1)}, event)}>Retry</button></span>}
       {load.status === 'loaded' && <button type="button" data-run-mode={load.runMode} data-ask-count={pending ? count : 0} className="button-reset" onClick={event => executeAction('projects.controls.activate', {handler:() => u.go('settings/Hooks')}, event)} style={{height:20, padding:'0 8px', borderRadius:A.rad.pill, border:'1px solid '+(hot ? A.warn : A.line), color: hot ? A.warn : A.inkSoft, background:'transparent', fontSize:11}}>{label}</button>}
     </>;
@@ -216,7 +218,7 @@
         decide:[A.purple,'brain'],logic:[A.purple,'code'],ai:[A.purple,'brain'],agent:[A.purple,'user'],
         see:[A.ok,'eye'],watch:[A.ok,'eye'],watcher:[A.ok,'eye'],check:[A.ok,'check'],send:[A.ok,'send'],output:[A.ok,'export']})[family] || [A.blue,'canvas'],
       state = n.frozen ? 'Disabled' : n.previewOff ? 'Preview off' : n.status || 'Idle',
-      stateColor = /error|fail|refus/i.test(state) ? A.err : /approval|wait|warning|changed/i.test(state) ? A.warn : /running/i.test(state) ? A.accent : /done|ran/i.test(state) ? A.ok : A.inkSoft;
+      stateColor = /error|fail|refus/i.test(state) ? A.err : /await/i.test(state) ? A.inkSoft : /saved/i.test(state) ? A.ok : /working|wip/i.test(state) ? A.accent : /approval|wait|warning|changed/i.test(state) ? A.warn : /running/i.test(state) ? A.accent : /done|ran/i.test(state) ? A.ok : A.inkSoft;
     // Plate 4.3: only the first three human values; Properties keeps every parameter.
     const parameters = Object.entries(n.params).filter(([key,value])=>!compact || n.parameterSchema?.some(p=>p.key===key && p.editable) ||
       (!/(^_|(?:^|_)(?:id|hash|instance|ref)(?:_|$)|^template_|^(?:engine|responsibility|last_result|last_attempt)$)/i.test(key) &&
@@ -900,6 +902,11 @@
       fit();
     }, [requestState, scope, layout, u.libraryOpen, active, embedded]);
     React.useEffect(() => {
+      if (!active) return undefined;
+      window.UI.requestCanvasFit = fit;
+      return () => { if (window.UI.requestCanvasFit === fit) window.UI.requestCanvasFit = null; };
+    });
+    React.useEffect(() => {
       if (!embedded || !active || requestState !== 'loaded' || !area.current) return;
       const run = () => fit();
       const frame = requestAnimationFrame(run);
@@ -959,9 +966,9 @@
             onClick={event => executeAction('projects.controls.activate', {handler: () => { setMore(false); return run(); }}, event)}>{label}</button>)}</div>}</div></div>
   <div style={{
         display: 'grid',
-        gridTemplateColumns: (!embedded && u.libraryOpen ? '248px ' : '') + 'minmax(0,1fr)' + (!embedded && (wire || inspected) ? ' ' + LAYOUT.inspectorWidth + 'px' : ''),
+        gridTemplateColumns: (u.libraryOpen ? '248px ' : '') + 'minmax(0,1fr)' + (!embedded && (wire || inspected) ? ' ' + LAYOUT.inspectorWidth + 'px' : ''),
         minHeight: 0
-      }}>{!embedded && u.libraryOpen && <window.UI.LibraryShelf onClose={() => u.setLibraryOpen(false)} />}
+      }}>{u.libraryOpen && <window.UI.LibraryShelf onClose={() => u.setLibraryOpen(false)} />}
    <div ref={area} className={'node-canvas' + (visible.some(n => n.status === 'Running') ? ' running-wires' : '')} tabIndex={0} aria-label="Workflow canvas" style={{position:'relative',minHeight:0,'--xy-selection-background-color':A.accent+'16','--xy-selection-border':'1px solid '+A.accent,'--xy-background-color':'transparent'}}
         title="Drag to select · Shift adds · Middle or Space-drag to pan · Wheel to zoom · Double-click to fit"
         onDoubleClick={e => { if (e.target.classList?.contains('react-flow__pane')) fit(); }}

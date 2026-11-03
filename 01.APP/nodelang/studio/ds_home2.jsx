@@ -53,7 +53,8 @@
   };
   const stepOf = (step, index, steps) => {
     const raw = step && typeof step === 'object' ? String(step.status || step.state || '') : '';
-    if (/done|complete/i.test(raw)) return 'done';
+    if (/done|complete|saved/i.test(raw)) return 'done';
+    if (/await/i.test(raw)) return 'awaiting';
     if (/work|current|wip/i.test(raw)) return 'working';
     if (/next|planned|wait/i.test(raw)) return 'next';
     const marked = steps.map(item => item && typeof item === 'object' ? String(item.status || item.state || '') : '');
@@ -115,10 +116,28 @@
     const [to, setTo] = React.useState('');
     const [checkpoint, setCheckpoint] = React.useState('');
     const [face, setFace] = React.useState('workshop');
-    const [actions, setActions] = React.useState(false);
+    const [fileOpen, setFileOpen] = React.useState(false);
+    const [detailId, setDetailId] = React.useState('');
+    const [runMode, setRunMode] = React.useState({status: 'waiting', value: '', message: ''});
     const [request, setRequest] = React.useState('loaded');
     const [failure, setFailure] = React.useState('');
     const retrySave = React.useRef(() => {});
+    React.useEffect(() => {
+      let live = true;
+      if (typeof api.readPermissions !== 'function') {
+        setRunMode({status: 'empty', value: '', message: ''});
+        return undefined;
+      }
+      api.readPermissions().then(result => {
+        if (!live) return;
+        const mode = result && typeof result.runMode === 'string' ? result.runMode : '';
+        setRunMode({status: mode ? 'loaded' : 'empty', value: mode, message: ''});
+      }).catch(error => {
+        if (!live) return;
+        setRunMode({status: 'error', value: '', message: error instanceof Error ? error.message : String(error)});
+      });
+      return () => { live = false; };
+    }, []);
     homeSetFace = setFace;
     ensureHomeView();
     const saved = readLayout();
@@ -214,18 +233,31 @@
       <span>{statusText(t.status)}</span>
       <small>{ownerOf(t)}</small>
     </button>;
-    const taskMenu = [
-      ['Review output', 'eye', () => document.getElementById('dx-outputs')?.focus(), false],
-      ['Activity & receipts', 'clock', () => document.getElementById('dx-activity')?.focus(), false],
-      ['Canvas', 'canvas', showCanvas, !task],
-      ['New file', 'plus', () => u.act(() => api.newSession()).then(r => r && setFace('canvas')), false],
-      ['Open file…', 'folder', () => u.act(() => api.openSession()).then(r => r && !r.cancelled && setFace('canvas')), false],
-      ['Import…', 'export', () => u.pickFlow?.(), false],
-      ['Library', 'library', () => u.go('library'), false],
-      ['Save checkpoint', 'pin', () => u.act(() => api.checkpointTask(task.id)), !task],
-      ['Restore', 'undo', () => u.act(() => api.restoreTaskCheckpoint(task.id, checkpoint)), !task || !checkpoint]
-    ];
-    return <div className="dx-home-root" data-screen="home" data-home-page="" data-start={document.documentElement.dataset.start || 'cold'}>
+    const recentFiles = (Array.isArray(s.graphs) ? s.graphs : []).filter(row => row && (row.path || row.id));
+    const closeFile = () => setFileOpen(false);
+    const makeFile = () => { closeFile(); return u.act(() => api.newSession()).then(result => { if (result && !result.cancelled) setFace('canvas'); return result; }); };
+    const openFile = () => { closeFile(); return u.act(() => api.openSession()).then(result => { if (result && !result.cancelled) setFace('canvas'); return result; }); };
+    const saveFile = asCopy => { closeFile(); return u.act(() => asCopy ? api.saveSessionAs() : api.saveSession()); };
+    const importFile = () => { closeFile(); return u.pickFlow?.(); };
+    const openRecent = row => { closeFile(); return u.act(() => api.openSession(row.path || row.id)).then(result => { if (result && !result.cancelled) setFace('canvas'); return result; }); };
+    const fileKeys = event => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+      const tag = event.target && event.target.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (event.target && event.target.isContentEditable)) return;
+      const key = String(event.key || '').toLowerCase();
+      if (key === 'n') { event.preventDefault(); makeFile(); }
+      else if (key === 'o') { event.preventDefault(); openFile(); }
+      else if (key === 's') { event.preventDefault(); saveFile(event.shiftKey); }
+    };
+    const runLabel = runMode.status === 'loaded' ? 'Run mode: ' + runMode.value : runMode.status === 'error' ? runMode.message : runMode.status === 'waiting' ? 'Reading run mode' : 'Run mode: not reported';
+    const replyToMessage = message => {
+      const sender = message.sender_key || message.who || '';
+      const choice = choices.find(item => item.handle === sender || item.name === sender || item.key === sender);
+      if (choice && choice.handle) setTo(choice.handle);
+      const field = document.querySelector('.dx-composer textarea');
+      if (field) field.focus();
+    };
+    return <div className="dx-home-root" data-screen="home" data-home-page="" data-start={document.documentElement.dataset.start || 'cold'} onKeyDown={fileKeys}>
       {s.liveAgents === undefined ? <p role="status" data-home-loading="">Opening your tasks…</p> : null}
       {request === 'waiting' ? <p role="status">Saving</p> : null}
       {request === 'error' ? <p role="alert">{failure} <button type="button" onClick={() => executeAction('ui.select', () => retrySave.current())}>Retry</button></p> : null}
@@ -266,11 +298,24 @@
         <Separator className="pane-splitter" aria-label="Resize the Tasks pane" />
         <Column id="workspace" className="dx-col" minSize={720}>
           <div className="dx-workspace" data-dx="workspace">
-            <header className="dx-head" data-dx="head" onContextMenu={event => { event.preventDefault(); setActions(true); }}>
+            <header className="dx-head" data-dx="head" onContextMenu={event => { event.preventDefault(); setFileOpen(true); }}>
               <h1>{task?.title || ''}</h1>
               <div className="dx-actions">
-                <button type="button" className="dx-quiet" aria-label="Task actions" aria-expanded={actions} title="Task actions" disabled={!task} onClick={() => executeAction('ui.select', () => setActions(!actions))}><Icon name="more" size={16} /><span>Task actions</span></button>
-                {actions ? <div role="menu" aria-label="Task actions" className="dx-task-menu" onKeyDown={event => { if (event.key === 'Escape') setActions(false); }}>{taskMenu.map(([label, icon, run, disabled]) => <button key={label} type="button" role="menuitem" className="dx-quiet" disabled={disabled} title={label} onClick={() => executeAction('ui.select', () => { setActions(false); return run(); })}><Icon name={icon} size={15} /><span>{label}</span></button>)}</div> : null}
+                <button type="button" className="dx-quiet" aria-label="File" aria-expanded={fileOpen} title="File" onClick={() => executeAction('ui.select', () => setFileOpen(!fileOpen))}><span>File</span></button>
+                <div className="dx-runmode" data-run-mode={runMode.status === 'loaded' ? runMode.value : 'unreported'} role={runMode.status === 'error' ? 'alert' : 'status'}>{runLabel}{runMode.status === 'error' ? <button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => { setRunMode({status: 'waiting', value: '', message: ''}); api.readPermissions().then(result => { const mode = result && typeof result.runMode === 'string' ? result.runMode : ''; setRunMode({status: mode ? 'loaded' : 'empty', value: mode, message: ''}); }).catch(error => setRunMode({status: 'error', value: '', message: error instanceof Error ? error.message : String(error)})); })}>Retry</button> : null}</div>
+                {fileOpen ? <div role="menu" aria-label="File" className="dx-file-menu" data-dx="file-menu" onKeyDown={event => { if (event.key === 'Escape') setFileOpen(false); }}>
+                  <p className="dx-file-kicker">File</p>
+                  <button type="button" role="menuitem" className="dx-file-item" onClick={() => executeAction('ui.select', makeFile)}><span>New</span><kbd>Ctrl N</kbd></button>
+                  <button type="button" role="menuitem" className="dx-file-item" onClick={() => executeAction('ui.select', openFile)}><span>Open…</span><kbd>Ctrl O</kbd></button>
+                  <button type="button" role="menuitem" className="dx-file-item" onClick={() => executeAction('ui.select', importFile)}><span>Import…</span></button>
+                  <button type="button" role="menuitem" className="dx-file-item" onClick={() => executeAction('ui.select', () => saveFile(false))}><span>Save</span><kbd>Ctrl S</kbd></button>
+                  <button type="button" role="menuitem" className="dx-file-item" onClick={() => executeAction('ui.select', () => saveFile(true))}><span>Save as…</span><kbd>Ctrl Shift S</kbd></button>
+                  <hr className="dx-file-rule" />
+                  <div className="dx-file-recent" role="group" aria-label="Recent files">
+                    <p>Recent files</p>
+                    {recentFiles.length ? recentFiles.map(row => <button key={row.path || row.id} type="button" role="menuitem" className="dx-file-item" onClick={() => executeAction('ui.select', () => openRecent(row))}><span>{row.title || row.name || row.path}</span></button>) : <p>No recent files reported</p>}
+                  </div>
+                </div> : null}
               </div>
             </header>
             {shortSource ? <p className="dx-desc" data-dx="description">{shortSource}</p> : null}
@@ -286,7 +331,11 @@
                   <label className="dx-fact"><span><Icon name="clock" size={14} />Session</span><b>{factText(session)}</b></label>
                   <label className="dx-fact"><span><Icon name="canvas" size={14} />Saved workflow</span><b>{factText(fileName)}</b></label>
                   <label className="dx-fact"><span><Icon name="pin" size={14} />Checkpoints</span>
-                    {(task?.checkpoints || []).length ? <select aria-label="Checkpoints" value={checkpoint} onChange={e => setCheckpoint(e.target.value)}><option value="">No checkpoint selected</option>{task.checkpoints.map(c => <option key={c.id} value={c.id}>{c.title || c.id}</option>)}</select> : <b>No checkpoint selected</b>}
+                    <span className="dx-checkpoint-row">
+                      {(task?.checkpoints || []).length ? <select aria-label="Checkpoints" value={checkpoint} onChange={e => setCheckpoint(e.target.value)}><option value="">No checkpoint selected</option>{task.checkpoints.map(c => <option key={c.id} value={c.id}>{c.title || c.id}</option>)}</select> : <b>No checkpoint selected</b>}
+                      <button type="button" className="dx-quiet" disabled={!task} onClick={() => executeAction('ui.select', () => u.act(() => api.checkpointTask(task.id)))}>Save checkpoint</button>
+                      <button type="button" className="dx-quiet" disabled={!task || !checkpoint} onClick={() => executeAction('ui.select', () => u.act(() => api.restoreTaskCheckpoint(task.id, checkpoint)))}>Restore</button>
+                    </span>
                   </label>
                 </section>
               </Column>
@@ -296,24 +345,30 @@
                   <div className="dx-toggle" data-dx="views" role="group" aria-label="Task view">
                     <button type="button" aria-label="Workshop view" aria-pressed={face === 'workshop'} onClick={() => executeAction('ui.select', () => setFace('workshop'))}>Workshop</button>
                     <button type="button" aria-label="Canvas view" aria-pressed={face === 'canvas'} onClick={() => executeAction('ui.select', showCanvas)}>Canvas</button>
-                    <span>{task ? statusText(task.status) : ''}</span>
                   </div>
-                  {face === 'workshop' ? <section className="dx-talk dx-thread" data-dx="conversation" aria-label="Conversation">
-                    <h2>Conversation</h2>
-                    {messages.map(m => {
-                      const own = Boolean(m.sender_key) && m.sender_key === m.viewer_key;
-                      const sender = own ? 'You' : (people.whoIs ? people.whoIs(m.who, m.sender_key).name : m.who);
-                      const delivery = (m.live || []).map(d => d.state || d.reason).filter(Boolean).join(' · ');
-                      const who = m.sender_key || m.who || sender;
-                      return <article key={m.id} className="dx-msg"><span className="dx-avatar" style={{background: markColor(who)}} aria-hidden="true" title={sender}>{String(sender || '?').slice(0, 2).toUpperCase()}</span><div><b>{sender}</b><p>{typeof m.text === 'object' ? describe(m.text) : m.text}</p>{delivery ? <small>{delivery}</small> : null}</div></article>;
-                    })}
-                  </section> : null}
+                  {face === 'canvas' ? <div className="dx-board" data-dx="canvas-commands" role="toolbar" aria-label="Canvas commands">
+                    <button type="button" onClick={() => executeAction('ui.select', () => u.show('Search'))}>+ Add node</button>
+                    <button type="button" aria-pressed={!!u.libraryOpen} onClick={() => executeAction('ui.select', () => u.setLibraryOpen(value => !value))}>Library</button>
+                    <button type="button" onClick={() => executeAction('ui.select', () => u.go('watcher'))}>Program view</button>
+                    <button type="button" onClick={() => executeAction('ui.select', () => u.go('present'))}>Present</button>
+                    <button type="button" onClick={() => executeAction('ui.select', () => u.go('model-review'))}>Model review</button>
+                    <button type="button" onClick={() => executeAction('ui.select', () => { const fit = window.UI.requestCanvasFit; return typeof fit === 'function' ? fit() : false; })}>Overview</button>
+                  </div> : null}
                   <div className="dx-mid">
-                    {face === 'canvas' ? <section className="dx-panel" data-dx="workflow" data-home-face={face} aria-label="Canvas · same task">
-                      <h2>Canvas · same task</h2>
-                      <p className="dx-logic-label">Workflow · logic</p>
+                    {face === 'workshop' ? <section className="dx-talk dx-thread" data-dx="conversation" aria-label="Conversation">
+                      <h2>Conversation</h2>
+                      {messages.map(m => {
+                        const own = Boolean(m.sender_key) && m.sender_key === m.viewer_key;
+                        const sender = own ? 'You' : (people.whoIs ? people.whoIs(m.who, m.sender_key).name : m.who);
+                        const delivery = (m.live || []).map(d => d.state || d.reason).filter(Boolean).join(' · ');
+                        const who = m.sender_key || m.who || sender;
+                        const open = detailId === (m.id || who);
+                        return <article key={m.id} className="dx-msg"><span className="dx-avatar" style={{background: markColor(who)}} aria-hidden="true" title={sender}>{String(sender || '?').slice(0, 2).toUpperCase()}</span><div className="dx-msg-line"><div><b>{sender}</b><p>{typeof m.text === 'object' ? describe(m.text) : m.text}</p><p className="dx-delivery">{delivery || 'Delivery unverified'}</p>{open ? <p className="dx-delivery">{[m.id, m.created_at, delivery].filter(Boolean).join(' · ') || 'No delivery record'}</p> : null}</div><span className="dx-msg-actions"><button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => replyToMessage(m))}>Reply</button><button type="button" className="dx-quiet" aria-expanded={open} onClick={() => executeAction('ui.select', () => setDetailId(open ? '' : (m.id || who)))}>Details</button></span></div></article>;
+                      })}
+                    </section> : <section className="dx-panel" data-dx="workflow" data-home-face={face} aria-label="Workflow">
+                      <h2>Workflow · logic</h2>
                       <div className="dx-canvas-mount" data-dx="graph">{window.UI.Canvas ? <window.UI.Canvas active embedded /> : <p className="dx-empty">No nodes in this workflow yet.</p>}</div>
-                    </section> : null}
+                    </section>}
                     <section className="dx-panel" data-dx="plan" aria-label="Plan and progress">
                       <h2>Plan and progress</h2>
                       {plan.length ? <ol className="dx-stepper">{plan.map((step, index) => {
@@ -334,16 +389,6 @@
                       {outputs.length ? outputs.map((row, index) => <article key={index} className="dx-output" data-output=""><span className="dx-output-preview">{row.thumb ? <img alt="" src={row.thumb} /> : <Icon name="docs" size={18} />}</span><div><b>{row.name || 'Output'}</b>{row.excerpt ? <p>{row.excerpt}</p> : null}</div></article>) : <p>Not yet recorded</p>}
                     </section>
                   </div>
-                  {face === 'canvas' ? <section className="dx-talk" data-dx="conversation" aria-label="Conversation">
-                    <h2>Conversation</h2>
-                    {messages.map(m => {
-                      const own = Boolean(m.sender_key) && m.sender_key === m.viewer_key;
-                      const sender = own ? 'You' : (people.whoIs ? people.whoIs(m.who, m.sender_key).name : m.who);
-                      const delivery = (m.live || []).map(d => d.state || d.reason).filter(Boolean).join(' · ');
-                      const who = m.sender_key || m.who || sender;
-                      return <article key={m.id} className="dx-msg"><span className="dx-avatar" style={{background: markColor(who)}} aria-hidden="true" title={sender}>{String(sender || '?').slice(0, 2).toUpperCase()}</span><div><b>{sender}</b><p>{typeof m.text === 'object' ? describe(m.text) : m.text}</p>{delivery ? <small>{delivery}</small> : null}</div></article>;
-                    })}
-                  </section> : null}
                   <form className="dx-composer" data-dx="composer" onSubmit={e => { e.preventDefault(); executeAction('ui.select', send); }}>
                     <label className="dx-to">To
                       <select aria-label="Recipient" value={recipient} onChange={e => setTo(e.target.value)}>

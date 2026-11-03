@@ -44,6 +44,17 @@ def _text(value, label, maximum):
     return value.strip()
 
 
+def rename(history, task, title):
+    """The founder edits the task name. The row keeps the full text; the list shows the short name."""
+    row = get(history, task)
+    if row is None:
+        raise ValueError("No such Workshop task")
+    text = _text(title, "title", 2000)
+    if text != row["title"] and not _write(history, "UPDATE workshop_tasks SET title=?, updated_at=? WHERE id=?", (text, _now(), task)):
+        raise ValueError("The task title was not saved")
+    return {"ok": True, "id": task, "title": short_title(text), "description": text}
+
+
 def create(history, title, creator):
     task = uuid4().hex
     _write(history, "INSERT INTO workshop_tasks(id,title,status,created_by,created_at,updated_at) "

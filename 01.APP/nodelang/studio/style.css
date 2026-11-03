@@ -264,9 +264,9 @@ button{transition:background .14s,color .14s,box-shadow .14s}button:hover{filter
 .dx-home-root,.dx-home,.dx-split,.dx-col,.dx-workspace,.dx-main{min-width:0;min-height:0}
 .dx-home-root{height:100%;display:flex;background:var(--color-bg);color:var(--color-ink);font-family:var(--type-family-ui),Inter,sans-serif;overflow:hidden}
 .dx-home,.dx-split{flex:1;height:100%;overflow:hidden}
-.dx-workspace{display:flex;flex-direction:column;height:100%;padding:24px 24px 8px;gap:12px;overflow:hidden}
-.dx-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 12px;min-width:0}
-.dx-head h1{flex:1 1 160px;min-width:0;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 20px/1.3 var(--type-family-ui),Inter,sans-serif;letter-spacing:-.02em}
+.dx-workspace{display:flex;flex-direction:column;height:100%;padding:16px 16px 8px;gap:8px;overflow:hidden}
+.dx-head{display:flex;flex-wrap:nowrap;align-items:center;justify-content:space-between;gap:8px 12px;min-width:0}
+.dx-head h1,.dx-title{flex:1 1 160px;min-width:0;height:32px;margin:0;padding:0;border:0;background:transparent;color:var(--color-ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 16px/32px var(--type-family-ui),Inter,sans-serif;letter-spacing:-.02em}
 .dx-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;margin-left:auto;max-width:100%;position:relative}
 .dx-quiet{display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 12px;border:0;border-radius:var(--radius-md);background:var(--current-color-c24242c);color:var(--color-ink);font:400 13px/1 var(--type-family-ui),Inter,sans-serif;white-space:nowrap}
 .dx-quiet:hover{background:var(--color-bg-hover)}
@@ -284,8 +284,9 @@ button{transition:background .14s,color .14s,box-shadow .14s}button:hover{filter
 .dx-board{display:flex;flex-wrap:wrap;align-items:center;gap:16px;min-height:32px;padding:0 4px}
 .dx-board button{border:0;background:none;color:var(--color-ink);font:500 13px/1 var(--type-family-ui),Inter,sans-serif;padding:0}
 .dx-board button[aria-pressed="true"]{color:var(--color-accent)}
-.dx-checkpoint-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
-.dx-checkpoint-row select,.dx-checkpoint-row b{flex:1 1 120px;min-width:0}
+.dx-checkpoint-row{display:flex;flex-wrap:nowrap;align-items:center;gap:6px;min-width:0}
+.dx-checkpoint-row select,.dx-checkpoint-row b{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dx-checkpoint-row .dx-quiet{height:28px;padding:0 8px;font-size:12px}
 .dx-link{display:inline-flex;align-items:center;gap:6px;border:0;background:none;color:var(--color-ink-soft);font:400 13px/1.3 var(--type-family-ui),Inter,sans-serif;padding:0}
 .dx-link:hover{color:var(--color-ink)}
 .dx-link:focus-visible{outline:2px solid var(--color-accent);outline-offset:2px}
@@ -296,9 +297,10 @@ button{transition:background .14s,color .14s,box-shadow .14s}button:hover{filter
 .dx-tasks{display:flex;flex-direction:column;height:100%;background:var(--color-bg-canvas);color:var(--color-ink);overflow:hidden}
 .dx-tasks-head,.dx-find,.dx-tasks-foot,.dx-params-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:16px 16px 0}
 .dx-tasks h2,.dx-params h2,.dx-panel h2,.dx-talk h2{margin:0;font:600 16px/1.3 var(--type-family-ui),Inter,sans-serif;color:var(--color-ink)}
-.dx-find{padding-top:12px}
-.dx-find input,.dx-status{height:36px;background:var(--color-bg-panel);border:0;border-radius:var(--radius-md);color:var(--color-ink);font-size:13px}
-.dx-find input{flex:1;min-width:0;padding:0 12px}
+.dx-find{flex-direction:column;align-items:stretch;padding:12px 12px 0}
+.dx-find input,.dx-status{height:36px;background:var(--color-bg-panel);border:0;border-radius:var(--radius-md);color:var(--color-ink);font-size:14px}
+.dx-find input{width:100%;min-width:0;padding:0 12px}
+.dx-find input::placeholder{color:var(--color-ink-soft);opacity:1}
 .dx-status{display:flex;align-items:center;gap:6px;padding:0 8px;color:var(--color-ink-soft);font-size:12px}
 .dx-status select{background:transparent;border:0;color:var(--color-ink);padding:0;font-size:13px;width:auto}
 .dx-tasks-list{flex:1;min-height:0;overflow:auto;padding:16px 8px}
@@ -317,15 +319,18 @@ button{transition:background .14s,color .14s,box-shadow .14s}button:hover{filter
 .dx-fact input,.dx-fact select{width:100%;background:transparent;border:0;border-radius:0;padding:0;min-width:0}
 .dx-files{display:flex;flex-direction:column;align-items:flex-start;gap:4px}
 .dx-param-actions{display:flex;flex-wrap:wrap;gap:8px;padding:8px}
-.dx-main{display:flex;flex-direction:column;gap:12px;height:100%;min-width:0;overflow:auto;padding-bottom:8px}
+.dx-main{display:flex;flex-direction:column;gap:8px;height:100%;min-width:0;overflow:hidden;padding-bottom:8px}
 .dx-toggle{display:flex;align-items:center;gap:16px;height:32px;padding:0 12px;background:var(--color-bg-canvas);flex:none}
 .dx-toggle button{border:0;background:none;color:var(--color-ink-soft);font:400 13px/1 var(--type-family-ui),Inter,sans-serif;padding:0}
 .dx-toggle button[aria-pressed="true"]{color:var(--color-ink);font-weight:600}
 .dx-toggle span{margin-left:auto;color:var(--color-ink-soft);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dx-mid,.dx-low{display:grid;grid-template-columns:minmax(0,1fr) minmax(180px,336px);gap:16px;min-width:0;overflow:hidden}
+.dx-mid,.dx-low{display:grid;gap:12px;min-width:0;overflow:hidden}
+.dx-mid{flex:1 1 auto;min-height:0;grid-template-columns:minmax(0,1fr) minmax(140px,200px)}
+.dx-mid[data-plan="hidden"]{grid-template-columns:minmax(0,1fr)}
+.dx-low{flex:0 0 auto;max-height:112px;grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
 .dx-panel{background:var(--color-bg-canvas);padding:14px 16px;min-width:0;overflow:hidden}
-.dx-panel[data-home-face="canvas"]{display:flex;flex-direction:column;min-height:360px}
-.dx-canvas-mount{position:relative;flex:1;height:min(560px,52vh);min-height:320px;overflow:hidden;contain:paint}
+.dx-panel[data-home-face="canvas"]{display:flex;flex-direction:column;min-height:0;height:100%}
+.dx-canvas-mount{position:relative;flex:1;height:100%;min-height:0;overflow:hidden;contain:paint}
 .dx-canvas-mount [data-screen="canvas"]{height:100%;min-height:0}
 .dx-panel[data-dx="workflow"],.dx-panel[data-dx="plan"]{position:relative;min-width:0;overflow:hidden}
 .dx-panel[data-dx="plan"]{z-index:0}
@@ -353,7 +358,8 @@ button{transition:background .14s,color .14s,box-shadow .14s}button:hover{filter
 .dx-panel [data-ds-node]{flex:none;max-width:100%}
 .dx-panel span,.dx-slim p{color:var(--color-ink-soft);font-size:12px}
 .dx-talk{min-width:0}
-.dx-main[data-home-face="workshop"] .dx-thread{min-height:220px;overflow:auto}
+.dx-main[data-home-face="workshop"] .dx-thread,.dx-main[data-home-face="canvas"] .dx-panel{min-height:0;height:100%;overflow:auto}
+.dx-path{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dx-msg-line{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;min-width:0}
 .dx-msg-actions{display:flex;gap:8px;flex:none}
 .dx-delivery{margin:4px 0 0;border:0;background:transparent;color:var(--color-ink-soft);font-size:12px}
@@ -371,7 +377,7 @@ button{transition:background .14s,color .14s,box-shadow .14s}button:hover{filter
 .dx-model b{font:400 13px/1.2 var(--type-family-ui),Inter,sans-serif;color:var(--color-ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px}
 .dx-model small{color:var(--color-ink-soft);font-size:11px}
 .dx-foot{margin:0;color:var(--color-ink-soft);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dx-mid,.dx-low{grid-template-columns:minmax(0,1fr) minmax(180px,336px)}
+.dx-empty-task{margin:8px;color:var(--color-ink-soft);font-size:13px;line-height:1.4}
 /* Home: the page never scrolls; its panes do. The meeting input opens in place when needed. */
 .home-page{overflow:hidden;height:100%;max-height:100%}.home-pipeline{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}.home-pipe{flex:1 1 auto;min-height:0;grid-template-rows:minmax(0,1fr) auto}
 .home-tasks{min-height:0;grid-template-rows:auto auto minmax(0,1fr)}.home-task-rows{min-height:0;overflow:auto}.home-thread,.home-side{min-height:0;max-height:100%;overflow:auto}.home-task-rows .home-task-row{grid-template-columns:minmax(0,1fr) auto;align-items:baseline}.home-task-row b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.home-task-row[aria-selected="true"] b{white-space:normal}.home-meeting-open{margin-top:var(--space-md)}

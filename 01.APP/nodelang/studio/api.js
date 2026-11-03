@@ -788,6 +788,7 @@ function rememberTask(result, select=true){
  return session;
 }
 api.createTask=async title=>{const result=await workshop('createTask',[title]);if(!result||result.ok===false)throw Error(result?.message||result?.error||'The task was not created.');await refreshTasks();return {...result,...rememberTask(result)};};
+api.renameTask=async(id,title)=>{const result=await workshop('renameTask',[id,title]);if(!result||result.ok===false)throw Error(result?.message||result?.error||'The task title was not saved.');await refreshTasks(false);return result;};
 api.setTaskSession=async(id,values)=>{
  const navigation=fileNavigation;
  if(sessionDocument)await flushAutosave();

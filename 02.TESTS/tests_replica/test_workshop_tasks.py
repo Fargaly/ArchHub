@@ -80,3 +80,12 @@ def test_two_agents_one_winner_every_time(tmp_path, monkeypatch):
     assert {row["description"]: row["status"] for row in declared_rows()}["Fix REQ-2"] == "DONE"
     call("declare", {"task": "Starting", "paths": [str(tmp_path)], "status": "working", "request_id": "unassigned"}, me)
     assert len(declared_rows()) == 2                                         # no fake rows for unassigned work
+
+
+def test_rename_records_the_title_the_founder_typed(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(tmp_path))
+    with application_history() as history:
+        task = workshop_tasks.create(history, "Old hall", "founder")["id"]
+        renamed = workshop_tasks.rename(history, task, "North hall")
+        assert renamed["ok"] is True and renamed["title"] == "North hall" and renamed["description"] == "North hall"
+        assert workshop_tasks.get(history, task)["title"] == "North hall"

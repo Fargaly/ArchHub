@@ -700,6 +700,17 @@ def _open_task_graph(task, path=None):
         return {'ok': False, 'error': str(refused)}
 
 
+def _rename_task(task, title):
+    """The founder renames the selected task. The row title is the record."""
+    from .workshop_mailbox import application_history
+    from .workshop_tasks import rename
+    try:
+        with application_history() as history:
+            return rename(history, task, title)
+    except ValueError as refused:
+        return {'ok': False, 'error': str(refused)}
+
+
 def _create_task(title):
     """The studio's new task: one Workshop row and the .archhub file that is its session."""
     from .workshop_mailbox import application_history
@@ -867,6 +878,7 @@ OWNER_ACTIONS = {
 WORKSHOP_READS = {
     'listTasks': lambda *a: _list_tasks(),
     'createTask': _create_task,
+    'renameTask': _rename_task,
     'openTaskGraph': _open_task_graph,
     'setTaskSession': _set_task_session,
     'setTaskStatus': _set_task_status,

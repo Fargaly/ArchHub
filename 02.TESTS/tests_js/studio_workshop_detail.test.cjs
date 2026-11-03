@@ -113,7 +113,7 @@ test('home canvas at 1440 keeps fitted nodes off the plan pane', async () => {
   try {
     await page.setContent(`<!doctype html><style>
       body{margin:0}
-      .dx-mid{display:grid;grid-template-columns:minmax(0,1fr) 336px;gap:16px;width:1440px;height:640px}
+      .dx-mid{display:grid;grid-template-columns:minmax(0,1fr) 200px;gap:16px;width:1440px;height:640px}
       .dx-canvas-mount{position:relative;height:100%;overflow:hidden}
       .dx-panel{min-width:0;overflow:hidden;position:relative}
       .node{position:absolute;width:280px;height:160px;background:#243}
@@ -294,6 +294,47 @@ test('the workshop face shows task-file messages and refreshes them when the tas
   assert.match(home, /openTaskGraph\(id\)/);
   assert.match(home, /openTaskGraph\(task\.id\)/);
   assert.equal(opened.length, 0);
+});
+
+test('home at 1440 keeps the conversation dominant and says an empty task once', () => {
+  const longPath = 'C:/Users/fargaly/00.ARCHUB/30.KNOWLEDGE/35.DESIGN-SYSTEM/sessions/north-hall.archhub';
+  const request = 'Please draw the north hall and keep this request in one place.';
+  let current = {id: 't1', title: 'North hall', status: 'PLANNED', description: 'North hall', plan: [], messages: []};
+  const ui = {
+    useData() {
+      return {tasks: [current], liveAgents: [], approvals: [], hosts: [], providers: []};
+    },
+    useApp() { return {task: 't1', act: fn => fn(), setTask() {}, go() {}, libraryOpen: false, setLibraryOpen() {}, show() {}}; },
+    Btn(props) { return React.createElement('button', props, props.children); },
+  };
+  vm.runInNewContext(transformSync(fs.readFileSync(path.join(studio, 'ds_home2.jsx'), 'utf8'), {loader: 'jsx', jsx: 'transform'}).code, {
+    window: {UI: ui, AHIcon() { return null; }, ArchHubAPI: {executeAction() {}}, addEventListener() {}, removeEventListener() {}, localStorage: {getItem() { return null; }, setItem() {}}},
+    React, document: {documentElement: {dataset: {}}, getElementById() { return null; }, querySelector() { return null; }}, console,
+  });
+  const shown = ui.homeMiddle(longPath);
+  assert.equal(String(shown).includes('\u2026'), true);
+  assert.equal(String(shown).startsWith(longPath.slice(0, 18)), true);
+  assert.equal(String(shown).endsWith(longPath.slice(-18)), true);
+  const empty = renderToStaticMarkup(React.createElement(ui.Home));
+  assert.equal(empty.includes('Not yet recorded'), false);
+  assert.match(empty, /aria-label="Find a task"/);
+  assert.match(empty, /placeholder="Find a task…"/);
+  assert.match(empty, /Save checkpoint/);
+  assert.match(empty, /aria-label="Task title"/);
+  assert.match(empty, /data-dx="empty"/);
+  current = {id: 't1', title: 'North hall', status: 'PLANNED', description: request, plan: [], messages: [], session: longPath};
+  const html = renderToStaticMarkup(React.createElement(ui.Home));
+  assert.equal(html.includes('Not yet recorded'), false);
+  assert.equal(html.includes('data-dx="empty"'), false);
+  assert.equal(html.split(request).length - 1, 1);
+  assert.match(html, /title="[^"]*north-hall\.archhub"/);
+  const home = fs.readFileSync(path.join(studio, 'ds_home2.jsx'), 'utf8');
+  const css = fs.readFileSync(path.join(studio, 'style.css'), 'utf8');
+  assert.match(home, /id="tasks" className="dx-col" defaultSize=\{224\}/);
+  assert.match(home, /id="params" className="dx-col" defaultSize=\{256\}/);
+  assert.match(css, /\.dx-checkpoint-row\{display:flex;flex-wrap:nowrap/);
+  assert.match(css, /\.dx-mid\{flex:1 1 auto/);
+  assert.match(css, /minmax\(140px,200px\)/);
 });
 
 test('the task view shows workflow nodes and activity together', () => {

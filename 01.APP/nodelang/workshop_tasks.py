@@ -137,12 +137,33 @@ def recorded_result(history, row):
     return text if text else (stored if isinstance(stored, str) else "")
 
 
+def _declaration_task_id(declaration):
+    return "declared-" + sha256((declaration["root"] + "\0" + declaration["request_id"]).encode()).hexdigest()[:32]
+
+
+def _session_context(path):
+    """Task-session fields already stored in the task file. A missing file leaves them empty."""
+    if not isinstance(path, str) or not path:
+        return {}
+    try:
+        from .session_files import read_document
+        document = read_document(path)
+        context = _held_context(document)
+    except (OSError, ValueError, KeyError, TypeError):
+        return {}
+    if context.get("scope") == document.get("id"):
+        context["scope"] = ""
+    return context
+
+
 def column(history):
     """The Studio Work rows: a short name, the full declaration as details, and the owner's live state:
-    Working while its session declares working or holds the lease, Needs you while it is blocked, Done when completed."""
+    Working while its session declares working or holds the lease, Needs you while it is blocked, Done when completed.
+    Scope, agents, folders, session, plan and activity come from that declaration and the task file."""
     from .workshop_mailbox import read_declarations
-    live = {"declared-" + sha256((d["root"] + "\0" + d["request_id"]).encode()).hexdigest()[:32]: d["status"]
-            for d in read_declarations(history._db)}
+    declarations = read_declarations(history._db, include_archived=True)
+    by_task = {_declaration_task_id(item): item for item in declarations}
+    live = {task_id: item["status"] for task_id, item in by_task.items() if item.get("current")}
     def state(row):
         if row["status"] == "done":
             return "DONE"
@@ -152,13 +173,38 @@ def column(history):
             return "WIP"
         return "PLANNED"
     current = _current_session()
-    return [{'id': row['id'], 'title': short_title(row['title']), 'description': row['title'],
-             'owner': row['owner_label'] if row['id'] in live or not row['lease_expired'] else None,
-             'status': state(row), 'result': recorded_result(history, row),
-             'messages': [], 'steps': [], 'reviews': [], 'queuedMessages': [], 'declarations': [],
+    found = []
+    for row in rows(history, include_archived=False):
+        declaration = by_task.get(row["id"])
+        session = _session_context(row.get("session_path"))
+        paths = [item for item in ((declaration or {}).get("paths") or []) if isinstance(item, str)]
+        owner = row["owner_label"] if row["id"] in live or not row["lease_expired"] else None
+        agents = [item for item in session.get("agents") or [] if isinstance(item, str) and item]
+        label = owner or ((declaration or {}).get("agent") if declaration else None)
+        if isinstance(label, str) and label and label not in agents:
+            agents.insert(0, label)
+        shown = state(row)
+        plan = list(session.get("plan") or [])
+        if not plan and (declaration or owner or shown in ("WIP", "IN REVIEW", "DONE")):
+            plan = [{"title": short_title(row["title"]), "status": {"WIP": "working", "IN REVIEW": "blocked", "DONE": "done"}.get(shown, "")}]
+        activity = list(session.get("activity") or [])
+        if not activity and (declaration or row.get("result") or owner):
+            activity = [{"id": row["id"], "status": shown, "output": row.get("result") or ""}]
+        found.append({'id': row['id'], 'title': short_title(row['title']), 'description': row['title'],
+             'owner': owner,
+             'status': shown, 'result': recorded_result(history, row),
+             'messages': [], 'steps': [], 'reviews': [], 'queuedMessages': [],
+             'declarations': [declaration] if declaration else [],
+             'scope': session.get("scope") or (" · ".join(paths) if paths else ""),
+             'rules': list(session.get("rules") or []),
+             'agents': agents, 'folders': list(session.get("folders") or []) or paths,
+             'references': list(session.get("references") or []),
+             'session': row.get("session_path") or ((declaration or {}).get("session") if declaration else "") or "",
+             'plan': plan, 'progress': session.get("progress") or {},
+             'workflow': list(session.get("workflow") or []), 'activity': activity,
              'updated_at': row['updated_at'], 'sessionPath': row.get('session_path'),
-             'sessionOpen': bool(row.get('session_path') and row['session_path'] == current)}
-            for row in rows(history, include_archived=False)]
+             'sessionOpen': bool(row.get('session_path') and row['session_path'] == current)})
+    return found
 
 
 def set_status(history, task, status):

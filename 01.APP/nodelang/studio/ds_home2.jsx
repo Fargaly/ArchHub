@@ -2,7 +2,7 @@
 (() => {
   const {executeAction} = window.ArchHubAPI;
   const api = window.ArchHubAPI;
-  const {D, useData, useApp, Btn} = window.UI;
+  const {useData, useApp, Btn} = window.UI;
   const Icon = window.AHIcon;
   function Sheet({mark = false, large = false}) {
     const s = useData(), w = s.watcher;
@@ -82,7 +82,6 @@
   const Group = RP ? RP.Group : ({children, className, id}) => <div id={id} className={className}>{children}</div>;
   const Column = RP ? RP.Panel : ({children, className}) => <div className={className}>{children}</div>;
   const Separator = RP ? RP.Separator : () => null;
-  const portFace = p => ({id: p.id, l: p.name || p.id, t: p.type || p.dataType || 'any', list: !!p.list});
   function ItemList({label, icon, items, choices, onCommit}) {
     const source = Array.isArray(items) ? items.map(item => String(item)) : [];
     const stamp = source.join('\u0001');
@@ -106,16 +105,12 @@
       <button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => setRows(current => [...current, '']))}>{choices ? '+ Add agent' : '+ Add'}</button>
     </div>;
   }
-  function NodeFace({n, owner}) {
-    const state = n.status || n.result?.status || '';
-    return <D.Node data-workflow-node={n.id} title={n.title || n.type || 'Node'} sub={n.type || ''} glyph={String(n.title || n.type || '?').trim().charAt(0).toUpperCase()} gc="var(--color-accent)" w={280} ins={(n.inputs || []).map(portFace)} outs={(n.outputs || []).map(portFace)} foot={[state, owner].filter(Boolean).join(' · ')} footc={state === 'Done' ? 'var(--color-ok)' : state ? 'var(--color-warn)' : undefined} />;
-  }
   function Home() {
     const s = useData(), u = useApp();
     const [query, setQuery] = React.useState('');
     const [status, setStatus] = React.useState('');
     const [history, setHistory] = React.useState(false);
-    const [text, setText] = React.useState('');
+    const [drafts, setDrafts] = React.useState({});
     const [sending, setSending] = React.useState(false);
     const [to, setTo] = React.useState('');
     const [checkpoint, setCheckpoint] = React.useState('');
@@ -143,19 +138,28 @@
     const working = list.filter(t => t.status === 'WIP' && !waiting.has(t.id));
     const planned = list.filter(t => t.status === 'PLANNED' && !waiting.has(t.id));
     const done = history ? list.filter(t => t.status === 'DONE' || t.status === 'ARCHIVED') : [];
+    const declared = (Array.isArray(task?.declarations) ? task.declarations : []).find(item => item && typeof item === 'object') || null;
+    const declaredPaths = Array.isArray(declared?.paths) ? declared.paths.filter(item => typeof item === 'string' && item) : [];
     const rules = Array.isArray(task?.rules) ? task.rules.map(item => typeof item === 'string' ? item : describe(item)) : [];
-    const agents = Array.isArray(task?.agents) ? task.agents.map(item => typeof item === 'string' ? item : describe(item)) : [];
-    const folders = describe(task?.folders);
+    const recordedAgents = Array.isArray(task?.agents) ? task.agents.map(item => typeof item === 'string' ? item : describe(item)).filter(Boolean) : [];
+    const agents = recordedAgents.length ? recordedAgents : [ownerOf(task) || declared?.agent].filter(item => typeof item === 'string' && item);
+    const folders = describe(task?.folders) || declaredPaths.join(' · ');
     const references = describe(task?.references);
-    const session = task?.sessionPath || '';
-    const fileName = session ? session.split(/[/\\]/).pop() : '';
-    const plan = Array.isArray(task?.plan) ? task.plan : [];
-    const workflow = Array.isArray(task?.workflow) ? task.workflow : [];
-    const activity = Array.isArray(task?.activity) ? task.activity : [];
+    const scopeValue = describe(task?.scope) || declaredPaths.join(' · ');
+    const session = task?.sessionPath || (typeof task?.session === 'string' ? task.session : '') || (typeof declared?.session === 'string' ? declared.session : '');
+    const fileName = task?.sessionPath ? task.sessionPath.split(/[/\\]/).pop() : '';
+    const recordedPlan = Array.isArray(task?.plan) ? task.plan : [];
+    const plan = recordedPlan.length ? recordedPlan : (task && (ownerOf(task) || declared || ['WIP', 'IN REVIEW', 'DONE'].includes(task.status)) ? [{title: task.title, status: task.status === 'WIP' ? 'working' : task.status === 'IN REVIEW' ? 'blocked' : task.status === 'DONE' ? 'done' : task.status}] : []);
+    const recordedActivity = Array.isArray(task?.activity) ? task.activity : [];
+    const activity = recordedActivity.length ? recordedActivity : (task && (task.result || ownerOf(task) || declared) ? [{id: task.id, status: statusText(task.status), output: task.result || ''}] : []);
     const outputs = (Array.isArray(task?.outputs) && task.outputs.length ? task.outputs : [task?.result, ...activity.map(row => row.output)]).map(outputRecord).filter(Boolean);
+    const source = String(task?.description || '').trim();
+    const sourceSentence = source && source !== task?.title ? source.split(/(?<=[.!?])\s/)[0] : '';
+    const shortSource = sourceSentence.length > 140 ? sourceSentence.slice(0, 139).replace(/\s+\S*$/, '').replace(/[,\s;:]+$/, '') + '…' : sourceSentence;
+    const draftKey = task?.id || '';
+    const text = drafts[draftKey] || '';
+    const setText = value => setDrafts(current => ({...current, [draftKey]: typeof value === 'function' ? value(current[draftKey] || '') : value}));
     const messages = [...new Map([...(task?.fileMessages || []), ...((task?.messages || []).filter(m => m.role === 'task'))].map((m, i) => [m.id || 'file-' + i, m])).values()];
-    const sameFile = !!(task?.sessionPath && s.sessionFile && task.sessionPath === s.sessionFile);
-    const nodes = (sameFile ? s.graph?.nodes || [] : []).filter(n => !workflow.length || workflow.some(row => row.id === n.id));
     const showCanvas = async () => { setFace('canvas'); if (task) await u.act(() => api.openTaskGraph(task.id)); };
     const choices = people.choices?.length ? people.choices : [{key: 'baboom', handle: '', name: 'BABOOM'}];
     const recipient = to || (task && (s.liveAgents || []).find(a => a.agent === task.owner)?.handle) || choices[0]?.handle || '';
@@ -269,12 +273,12 @@
                 {actions ? <div role="menu" aria-label="Task actions" className="dx-task-menu" onKeyDown={event => { if (event.key === 'Escape') setActions(false); }}>{taskMenu.map(([label, icon, run, disabled]) => <button key={label} type="button" role="menuitem" className="dx-quiet" disabled={disabled} title={label} onClick={() => executeAction('ui.select', () => { setActions(false); return run(); })}><Icon name={icon} size={15} /><span>{label}</span></button>)}</div> : null}
               </div>
             </header>
-            {task?.description ? <p className="dx-desc" data-dx="description">{task.description}</p> : null}
+            {shortSource ? <p className="dx-desc" data-dx="description">{shortSource}</p> : null}
             <Group id="home-context" className="dx-split" orientation="horizontal" defaultLayout={saved.inner} onLayoutChanged={(layout, meta) => { if (meta?.isUserInteraction) persistLayout({...readLayout(), inner: layout}); }}>
               <Column id="params" className="dx-col" defaultSize={320} minSize={240} groupResizeBehavior="preserve-pixel-size">
                 <section className="dx-params" data-dx="params" aria-label="Task parameters">
                   <div className="dx-params-head"><h2>Task parameters</h2></div>
-                  <label className="dx-fact"><span><Icon name="fit" size={14} />Scope</span><input key={(task?.id || '') + ':scope:' + describe(task?.scope)} aria-label="Scope" defaultValue={describe(task?.scope)} placeholder="Not yet recorded" onBlur={e => { if (e.target.value === describe(task?.scope)) return; saveSession({scope: e.target.value}); }} /></label>
+                  <label className="dx-fact"><span><Icon name="fit" size={14} />Scope</span><input key={(task?.id || '') + ':scope:' + scopeValue} aria-label="Scope" defaultValue={scopeValue} placeholder="Not yet recorded" onBlur={e => { if (e.target.value === scopeValue) return; saveSession({scope: e.target.value}); }} /></label>
                   <ItemList label="Rules" icon="shield" items={rules} onCommit={next => saveSession({rules: next})} />
                   <ItemList label="Assigned agents" icon="users" items={agents} choices={agentChoices} onCommit={next => saveSession({agents: next})} />
                   <label className="dx-fact"><span><Icon name="folder" size={14} />Folders</span><b>{factText(folders)}</b></label>
@@ -288,18 +292,28 @@
               </Column>
               <Separator className="pane-splitter" aria-label="Resize the task parameters" />
               <Column id="main" className="dx-col" minSize={480}>
-                <div className="dx-main" data-dx="main">
+                <div className="dx-main" data-dx="main" data-home-face={face}>
                   <div className="dx-toggle" data-dx="views" role="group" aria-label="Task view">
-                    <button type="button" aria-pressed={face === 'workshop'} onClick={() => executeAction('ui.select', () => setFace('workshop'))}>Workshop</button>
-                    <button type="button" aria-pressed={face === 'canvas'} onClick={() => executeAction('ui.select', showCanvas)}>Canvas</button>
+                    <button type="button" aria-label="Workshop view" aria-pressed={face === 'workshop'} onClick={() => executeAction('ui.select', () => setFace('workshop'))}>Workshop</button>
+                    <button type="button" aria-label="Canvas view" aria-pressed={face === 'canvas'} onClick={() => executeAction('ui.select', showCanvas)}>Canvas</button>
                     <span>{task ? statusText(task.status) : ''}</span>
                   </div>
+                  {face === 'workshop' ? <section className="dx-talk dx-thread" data-dx="conversation" aria-label="Conversation">
+                    <h2>Conversation</h2>
+                    {messages.map(m => {
+                      const own = Boolean(m.sender_key) && m.sender_key === m.viewer_key;
+                      const sender = own ? 'You' : (people.whoIs ? people.whoIs(m.who, m.sender_key).name : m.who);
+                      const delivery = (m.live || []).map(d => d.state || d.reason).filter(Boolean).join(' · ');
+                      const who = m.sender_key || m.who || sender;
+                      return <article key={m.id} className="dx-msg"><span className="dx-avatar" style={{background: markColor(who)}} aria-hidden="true" title={sender}>{String(sender || '?').slice(0, 2).toUpperCase()}</span><div><b>{sender}</b><p>{typeof m.text === 'object' ? describe(m.text) : m.text}</p>{delivery ? <small>{delivery}</small> : null}</div></article>;
+                    })}
+                  </section> : null}
                   <div className="dx-mid">
-                    <section className="dx-panel" data-dx="workflow" data-home-face={face} aria-label={face === 'canvas' ? 'Canvas · same task' : 'Workflow'}>
-                      <h2>{face === 'canvas' ? 'Canvas · same task' : 'Workflow'}</h2>
-                      {face === 'canvas' ? <p className="dx-logic-label">Workflow · logic</p> : null}
-                      {face === 'canvas' ? <div className="dx-canvas-mount" data-dx="graph">{window.UI.Canvas ? <window.UI.Canvas active embedded /> : <p className="dx-empty">No nodes in this workflow yet.</p>}</div> : nodes.length ? <div className="dx-nodes">{nodes.map(n => <NodeFace key={n.id} n={n} owner={ownerOf(task)} />)}</div> : <p className="dx-empty">No nodes in this workflow yet.</p>}
-                    </section>
+                    {face === 'canvas' ? <section className="dx-panel" data-dx="workflow" data-home-face={face} aria-label="Canvas · same task">
+                      <h2>Canvas · same task</h2>
+                      <p className="dx-logic-label">Workflow · logic</p>
+                      <div className="dx-canvas-mount" data-dx="graph">{window.UI.Canvas ? <window.UI.Canvas active embedded /> : <p className="dx-empty">No nodes in this workflow yet.</p>}</div>
+                    </section> : null}
                     <section className="dx-panel" data-dx="plan" aria-label="Plan and progress">
                       <h2>Plan and progress</h2>
                       {plan.length ? <ol className="dx-stepper">{plan.map((step, index) => {
@@ -320,9 +334,8 @@
                       {outputs.length ? outputs.map((row, index) => <article key={index} className="dx-output" data-output=""><span className="dx-output-preview">{row.thumb ? <img alt="" src={row.thumb} /> : <Icon name="docs" size={18} />}</span><div><b>{row.name || 'Output'}</b>{row.excerpt ? <p>{row.excerpt}</p> : null}</div></article>) : <p>Not yet recorded</p>}
                     </section>
                   </div>
-                  <section className="dx-talk" data-dx="conversation" aria-label="Conversation">
+                  {face === 'canvas' ? <section className="dx-talk" data-dx="conversation" aria-label="Conversation">
                     <h2>Conversation</h2>
-                    {task?.description ? <article className="dx-msg"><b>Your request</b><p>{task.description}</p></article> : null}
                     {messages.map(m => {
                       const own = Boolean(m.sender_key) && m.sender_key === m.viewer_key;
                       const sender = own ? 'You' : (people.whoIs ? people.whoIs(m.who, m.sender_key).name : m.who);
@@ -330,7 +343,7 @@
                       const who = m.sender_key || m.who || sender;
                       return <article key={m.id} className="dx-msg"><span className="dx-avatar" style={{background: markColor(who)}} aria-hidden="true" title={sender}>{String(sender || '?').slice(0, 2).toUpperCase()}</span><div><b>{sender}</b><p>{typeof m.text === 'object' ? describe(m.text) : m.text}</p>{delivery ? <small>{delivery}</small> : null}</div></article>;
                     })}
-                  </section>
+                  </section> : null}
                   <form className="dx-composer" data-dx="composer" onSubmit={e => { e.preventDefault(); executeAction('ui.select', send); }}>
                     <label className="dx-to">To
                       <select aria-label="Recipient" value={recipient} onChange={e => setTo(e.target.value)}>

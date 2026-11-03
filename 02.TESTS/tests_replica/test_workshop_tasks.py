@@ -69,6 +69,13 @@ def test_two_agents_one_winner_every_time(tmp_path, monkeypatch):
     declare("REQ-2", "working")
     states = {row["description"]: row["status"] for row in declared_rows()}
     assert states == {"Fix REQ-1": "PLANNED", "Fix REQ-2": "WIP"}, states
+    bound = next(row for row in declared_rows() if row["description"] == "Fix REQ-2")
+    assert bound["owner"]
+    assert bound["agents"] == [bound["owner"]]
+    assert bound["folders"] and bound["scope"] == bound["folders"][0]
+    assert bound["plan"][0]["status"] == "working"
+    assert bound["activity"][0]["status"] == "WIP"
+    assert bound["session"]
     declare("REQ-2", "done")
     assert {row["description"]: row["status"] for row in declared_rows()}["Fix REQ-2"] == "DONE"
     call("declare", {"task": "Starting", "paths": [str(tmp_path)], "status": "working", "request_id": "unassigned"}, me)

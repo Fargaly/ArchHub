@@ -338,6 +338,8 @@ button{transition:background .14s,color .14s,box-shadow .14s}button:hover{filter
 .dx-panel [data-ds-node]{flex:none;max-width:100%}
 .dx-panel span,.dx-slim p{color:var(--color-ink-soft);font-size:12px}
 .dx-talk{min-width:0}
+.dx-main[data-home-face="workshop"] .dx-thread{flex:1 1 auto;min-height:220px;overflow:auto}
+.dx-main[data-home-face="workshop"] .dx-mid{grid-template-columns:minmax(0,1fr)}
 .dx-talk h2{font-size:15px}
 .dx-msg{display:flex;gap:12px;margin-top:10px;min-width:0}
 .dx-msg>span{display:grid;place-items:center;width:28px;height:28px;flex:none;border-radius:var(--radius-md);background:var(--color-bg-hover);color:var(--color-ink);font-size:11px;font-weight:600}

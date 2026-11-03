@@ -340,16 +340,16 @@ test('STUDIOFIX an auxiliary Composer edits and sends without replacing the prim
   return {ok:true,result:[]};
  }});
  try{
-  await v.click(v.doc.querySelector('[aria-label="Workshop"]'));await v.settle(()=>!!v.button('New task'),'Workshop opens');
   const primary=v.doc.querySelector('textarea[aria-label="Message"]');
-  const type=(field,text)=>{Object.getOwnPropertyDescriptor(v.win.HTMLTextAreaElement.prototype,'value').set.call(field,text);field.dispatchEvent(new v.win.Event('input',{bubbles:true}));field.dispatchEvent(new v.win.Event('change',{bubbles:true}));};
-  type(primary,'Primary unsent draft');await pause();await v.click(v.button('New task'));
-  const auxiliary=v.doc.querySelector('[role="dialog"] textarea[aria-label="Message"]');assert.ok(auxiliary);
-  assert.equal(auxiliary.value,'','a new task owns its own empty draft');
-  type(auxiliary,'Auxiliary request');await pause();assert.equal(primary.value,'Primary unsent draft');
-  auxiliary.closest('form').dispatchEvent(new v.win.Event('submit',{bubbles:true,cancelable:true}));
-  await v.settle(()=>sends.length===1&&!v.doc.querySelector('[role="dialog"]'),'auxiliary send confirmed');
-  assert.equal(v.doc.querySelector('textarea[aria-label="Message"]').value,'Primary unsent draft');
+  const type=(field,text)=>{const proto=field.tagName==='TEXTAREA'?v.win.HTMLTextAreaElement.prototype:v.win.HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,'value').set.call(field,text);field.dispatchEvent(new v.win.Event('input',{bubbles:true}));field.dispatchEvent(new v.win.Event('change',{bubbles:true}));};
+  type(primary,'Primary unsent draft');await pause();
+  await v.click([...v.doc.querySelectorAll('button')].find(b=>b.textContent.trim()==='+ New task'));
+  await v.settle(()=>!!v.doc.querySelector('[role="dialog"] [aria-label="Task name"]'),'New task opens on Home');
+  const auxiliary=v.doc.querySelector('[role="dialog"] [aria-label="Task name"]');
+  assert.equal(auxiliary.value,'','a new task opens with an empty name');
+  type(auxiliary,'Auxiliary request');await pause();
+  assert.equal(primary.value,'Primary unsent draft');
+  assert.equal(sends.length,0,'naming a task does not send the primary draft');
  }finally{v.close();}
 });
 
@@ -363,16 +363,14 @@ test('STUDIOFIX Home and Workshop reply drafts are separate across navigation',a
  const type=async text=>{const field=message();Object.getOwnPropertyDescriptor(v.win.HTMLTextAreaElement.prototype,'value').set.call(field,text);field.dispatchEvent(new v.win.Event('input',{bubbles:true}));field.dispatchEvent(new v.win.Event('change',{bubbles:true}));await pause();};
  try{
   await type('Home draft');
-  await v.click(v.doc.querySelector('[aria-label="Workshop"]'));
-  await v.settle(()=>v.doc.title.includes('Workshop'),'Workshop opens');
-  assert.equal(message().value,'','Workshop has its own draft');
-  await type('Reply draft');
-  await v.click(v.doc.querySelector('[aria-label="Home"]'));
-  await v.settle(()=>v.doc.title.includes('Home'),'Home opens');
+  assert.equal(v.doc.querySelector('nav [aria-label="Workshop"]'),null);
+  assert.equal(v.doc.querySelector('nav [aria-label="Canvas"]'),null);
+  const view=name=>[...v.doc.querySelectorAll('[data-dx="views"] button')].find(b=>b.textContent.trim()===name);
+  assert.equal(view('Workshop').getAttribute('aria-pressed'),'true');
+  assert.ok(view('Canvas'));
+  await v.click(view('Workshop'));
+  assert.equal(v.doc.title.includes('Home'),true);
   assert.equal(message().value,'Home draft');
-  await v.click(v.doc.querySelector('[aria-label="Workshop"]'));
-  await v.settle(()=>v.doc.title.includes('Workshop'),'Workshop reopens');
-  assert.equal(message().value,'Reply draft');
  }finally{v.close();}
 });
 
@@ -387,17 +385,16 @@ test('STUDIOFIX task replies own separate drafts and late replies preserve newer
  }});
  const message=()=>v.doc.querySelector('textarea[aria-label="Message"]');
  const type=async text=>{const field=message();Object.getOwnPropertyDescriptor(v.win.HTMLTextAreaElement.prototype,'value').set.call(field,text);field.dispatchEvent(new v.win.Event('input',{bubbles:true}));field.dispatchEvent(new v.win.Event('change',{bubbles:true}));await pause();};
- const select=async title=>{await v.click([...v.doc.querySelectorAll('button.listbutton')].find(b=>b.textContent.includes(title)));};
+  const select=async title=>{await v.click([...v.doc.querySelectorAll('button.dx-task')].find(b=>b.textContent.includes(title)));};
  try{
-  await v.click(v.doc.querySelector('[aria-label="Workshop"]'));
-  await v.settle(()=>!!message(),'Workshop opens');
+  await v.settle(()=>!!message(),'Home task composer opens');
   await type('A reply');
   message().closest('form').dispatchEvent(new v.win.Event('submit',{bubbles:true,cancelable:true}));
   await pause();await type('A newer reply');
   await select('Task B');assert.equal(message().value,'','task B owns a separate draft');
   await type('B reply');
   pending.resolve({ok:true,result:tasks[0]});
-  await v.settle(()=>!v.doc.querySelector('[aria-label="Send ↵"]').disabled,'late task send completed');
+  await v.settle(()=>message().closest('form').querySelector('button[type="submit"]').getAttribute('aria-busy')!=='true','late task send completed');
   await select('Task A');assert.equal(message().value,'A newer reply','late task receipt must preserve newer text');
   await select('Task B');assert.equal(message().value,'B reply');
  }finally{pending.resolve({ok:true,result:tasks[0]});v.close();}

@@ -85,7 +85,9 @@ $selectedInputs = @(
     'packaging/windows/licenses/Node-v24.13.0-LICENSE.txt',
     'packaging/windows/licenses/ArchHub-components-MIT.txt',
     'packaging/windows/stage_goose.py', 'packaging/windows/goose-pin.json',
-    'packaging/windows/licenses/Goose-Apache-2.0.txt', 'packaging/windows/licenses/Hermes-MIT.txt'
+    'packaging/windows/stage_betterleaks.py', 'packaging/windows/betterleaks-pin.json',
+    'packaging/windows/licenses/Goose-Apache-2.0.txt', 'packaging/windows/licenses/Hermes-MIT.txt',
+    'packaging/windows/licenses/Betterleaks-MIT.txt'
 ) + $acompilerInputs
 
 function Assert-TrackedInputs([string]$Checkout, [string[]]$Inputs) {
@@ -190,6 +192,7 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
         if ($Path -cin @(
             'nodelang/launcher.py', 'nodelang/studio/style.css', 'nodelang/studio/design-tokens.json', 'colleague_setup.py', 'requirements.txt',
             'NOTICE', 'docs/SPEC.md', 'packaging/windows/goose-pin.json', 'packaging/windows/stage_goose.py',
+            'packaging/windows/betterleaks-pin.json', 'packaging/windows/stage_betterleaks.py',
             'package.json', 'packaging/compile_studio.cjs',
     'tools/real_app_check/real_app_check.py', 'tools/real_app_check/profile_guard.py',
             'installer/ArchHub.iss', 'installer/ArchHub.bat', 'installer/ArchHub.vbs', 'installer/README.md', 'nodelang/README.md', 'app/README.md',
@@ -199,6 +202,7 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
             'packaging/windows/licenses/Node-v24.13.0-LICENSE.txt',
             'packaging/windows/licenses/ArchHub-components-MIT.txt',
             'packaging/windows/licenses/Goose-Apache-2.0.txt', 'packaging/windows/licenses/Hermes-MIT.txt',
+            'packaging/windows/licenses/Betterleaks-MIT.txt',
             'app/secrets_store.py', 'app/credential_lock.py', 'app/__init__.py', 'archhub.ico',
             'bridges/rhino/archhub_mcp.py', 'bridges/blender/archhub_mcp/__init__.py',
             'bridges/sources/max_mcp/max_mcp_startup.py',
@@ -224,6 +228,24 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
         return $Path -cmatch '^nodelang/.+\.(py|jsx|js|mjs|cjs|html|png)$'
     }
     return $false
+}
+
+function Get-BetterleaksPayload([string]$PinPath, [string]$StagedDirectory) {
+    # Runtime payload allowlist: the installed scanner, and only that path.
+    $allowed = @('runtime/betterleaks/betterleaks.exe')
+    $pin = [IO.File]::ReadAllText($PinPath) | ConvertFrom-Json
+    $exe = Join-Path $StagedDirectory 'betterleaks.exe'
+    if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'Betterleaks payload is missing betterleaks.exe.' }
+    $sha = [Security.Cryptography.SHA256]::Create()
+    $stream = [IO.File]::Open($exe, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    try { $hash = ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '').ToLowerInvariant() }
+    finally { $stream.Dispose(); $sha.Dispose() }
+    if ($hash -cne $pin.executable_sha256) { throw 'Betterleaks executable SHA-256 differs from the pin.' }
+    $manifest = [IO.File]::ReadAllText((Join-Path $StagedDirectory 'manifest.json')) | ConvertFrom-Json
+    if ($manifest.version -cne $pin.version -or $manifest.archive_sha256 -cne $pin.sha256 -or $manifest.executable_sha256 -cne $hash) {
+        throw 'Betterleaks manifest does not match the pin.'
+    }
+    return @($allowed | ForEach-Object { "$_`t$hash" })
 }
 
 function Read-CandidateManifest([string]$Path) {
@@ -794,12 +816,21 @@ if ($BrokerReviewPath) {
 $goosePayload = Join-Path $output 'goose-payload'
 & $PythonPath -E -s (Join-Path $selectedRoot 'packaging/windows/stage_goose.py') $GooseArchivePath $goosePayload
 if ($LASTEXITCODE -ne 0) { throw 'Pinned Goose staging failed; no installer was compiled.' }
+$betterleaksPayload = Join-Path $output 'betterleaks-payload'
+& $PythonPath -E -s (Join-Path $selectedRoot 'packaging/windows/stage_betterleaks.py') $betterleaksPayload
+if ($LASTEXITCODE -ne 0) { throw 'Pinned Betterleaks fetch failed; no installer was compiled.' }
+$betterleaksPin = Join-Path $selectedRoot 'packaging/windows/betterleaks-pin.json'
+$betterleaksRows = @(Get-BetterleaksPayload $betterleaksPin $betterleaksPayload)
+if ($betterleaksRows.Count -ne 1 -or $betterleaksRows[0] -cnotmatch '^runtime/betterleaks/betterleaks.exe\t[0-9a-f]{64}$') {
+    throw 'Betterleaks payload check did not list runtime/betterleaks/betterleaks.exe with the pinned hash.'
+}
+$betterleaksManifest = [IO.File]::ReadAllText((Join-Path $betterleaksPayload 'manifest.json')) | ConvertFrom-Json
 foreach ($name in 'site.zip', 'stdlib.zip', 'stamp.json') {
     if (-not (Test-Path -LiteralPath (Join-Path $selectedRoot "packed/$name") -PathType Leaf)) {
         throw "The installer snapshot lacks packed/$name; no installer was compiled."
     }
 }
-& $compiler "/DBuildId=$BuildId" "/DRequirementsSha256=$requirementsSha" "/DBuildMetadataPath=$buildMetadataPath" "/DNodeRuntimePath=$node" "/DNodeLicensePath=$nodeLicense" "/DGoosePayloadPath=$goosePayload" "/DCompilerPayloadPath=$(Join-Path $selectedRoot 'runtime/acompiler')" "/DWheelhousePath=$wheelhouse" "/DHostPayloadPath=$hostPayload" "/O$output" $installer
+& $compiler "/DBuildId=$BuildId" "/DRequirementsSha256=$requirementsSha" "/DBuildMetadataPath=$buildMetadataPath" "/DNodeRuntimePath=$node" "/DNodeLicensePath=$nodeLicense" "/DGoosePayloadPath=$goosePayload" "/DBetterleaksPayloadPath=$betterleaksPayload" "/DCompilerPayloadPath=$(Join-Path $selectedRoot 'runtime/acompiler')" "/DWheelhousePath=$wheelhouse" "/DHostPayloadPath=$hostPayload" "/O$output" $installer
 if ($LASTEXITCODE -ne 0) { throw "Selected installer compilation failed with exit code $LASTEXITCODE." }
 if ((Get-FileHash -LiteralPath $node -Algorithm SHA256).Hash.ToLowerInvariant() -cne $nodeRuntimeSha) {
     throw 'Node runtime changed during installer compilation; retain artifact for inspection only.'
@@ -842,6 +873,9 @@ if ($candidate) {
         acompiler_provenance_sha256 = $compilerProvenanceSha
         acompiler_executable_sha256 = $compilerPayload.executable_sha256
         acompiler_source_sha256 = $compilerPayload.source_sha256
+        betterleaks_version = $betterleaksManifest.version
+        betterleaks_sha256 = $betterleaksManifest.archive_sha256
+        betterleaks_executable_sha256 = $betterleaksManifest.executable_sha256
         studio_manifest = 'studio-build.json'
         studio_manifest_sha256 = $studioBuild.Sha256
         studio_files = $studioBuild.Files
@@ -868,6 +902,9 @@ $metadata = [ordered]@{
     acompiler_provenance_sha256 = $compilerProvenanceSha
     acompiler_executable_sha256 = $compilerPayload.executable_sha256
     acompiler_source_sha256 = $compilerPayload.source_sha256
+    betterleaks_version = $betterleaksManifest.version
+    betterleaks_sha256 = $betterleaksManifest.archive_sha256
+    betterleaks_executable_sha256 = $betterleaksManifest.executable_sha256
     payload_manifest = $sourceManifestName
     payload_manifest_sha256 = $snapshot.Sha256
     payload_files = $snapshot.Rows.Count

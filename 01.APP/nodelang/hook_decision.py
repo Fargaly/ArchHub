@@ -929,11 +929,30 @@ def betterleaks_path(environment) -> Path | None:
     return None
 
 
+_SCANNER_VERSIONS: dict[str, str] = {}
+
+
+def scanner_version(exe: Path) -> str:
+    """The installed Betterleaks version, cached for this hook process."""
+    key = str(exe)
+    if key not in _SCANNER_VERSIONS:
+        try:
+            run = subprocess.run([key, "version"], capture_output=True)
+            match = re.search(r"(\d+\.\d+\.\d+)", (run.stdout or b"").decode("utf-8", "replace"))
+            _SCANNER_VERSIONS[key] = match.group(1) if match and run.returncode == 0 else ""
+        except OSError:
+            _SCANNER_VERSIONS[key] = ""
+    return _SCANNER_VERSIONS[key]
+
+
 def scan_secrets(text: str, environment, *, git_cwd: str | None = None):
-    """Betterleaks on the text (stdin) or on the commits a push would publish."""
+    """Betterleaks on the text (stdin) or on the commits a push would publish.
+
+    Returns (state, findings, version). version is empty unless the scan ran.
+    """
     exe = betterleaks_path(environment)
     if exe is None:
-        return "unavailable", []
+        return "unavailable", [], ""
     with tempfile.TemporaryDirectory(prefix="archhub-hook-") as tmp:
         report = Path(tmp) / "report.json"
         base = [str(exe), "--no-banner", "-f", "json", "-r", str(report), "--redact"]
@@ -948,9 +967,9 @@ def scan_secrets(text: str, environment, *, git_cwd: str | None = None):
             run = subprocess.run([str(exe), "stdin"] + base[1:], input=text.encode("utf-8", "replace"),
                                  capture_output=True)
         if run.returncode not in (0, 1) or not report.exists():
-            return "unavailable", []
+            return "unavailable", [], ""
         found = json.loads(report.read_text(encoding="utf-8") or "[]") or []
-    return "ok", [{"kind": "secret", "rule": f.get("RuleID"), "where": f.get("File") or "input"} for f in found]
+    return "ok", [{"kind": "secret", "rule": f.get("RuleID"), "where": f.get("File") or "input"} for f in found], scanner_version(exe)
 
 
 _ANALYZER = None
@@ -1047,12 +1066,15 @@ def decide(payload: dict, vendor: str = "", *, environment=None):
     action, facts = classify(event, environment)
     scanners = {"secrets": "skipped", "pii": "skipped", "policy": "skipped", "trace": "skipped"}
     findings, notes = [], []
+    secret_version = ""
     if action in ("write", "publish", "send", "shell", "other") and facts["text"]:
         git_cwd = event["cwd"] if action == "publish" and re.search(r"\bgit\s+push\b", facts["command"]) else None
-        scanners["secrets"], found = scan_secrets(facts["text"], environment)
+        scanners["secrets"], found, seen = scan_secrets(facts["text"], environment)
+        secret_version = seen or secret_version
         findings += found
         if git_cwd and scanners["secrets"] == "ok":  # the commits a push would publish
-            scanners["secrets"], found = scan_secrets("", environment, git_cwd=git_cwd)
+            scanners["secrets"], found, seen = scan_secrets("", environment, git_cwd=git_cwd)
+            secret_version = seen or secret_version
             findings += found
     # Presidio costs ~7 s to load per hook process; text with no @, + or digit run has no PII it finds.
     if action in ("publish", "send") and re.search(r"@|\+\d|\d{4,}", facts["text"]):
@@ -1080,6 +1102,8 @@ def decide(payload: dict, vendor: str = "", *, environment=None):
         notes.append("The same call has repeated 5 times; change approach instead of retrying.")
     if scanners["secrets"] == "unavailable" and action in ("publish", "send"):
         notes.append("Secret scan unavailable (Betterleaks not found); nothing was refused for it.")
+    elif secret_version and scanners["secrets"] == "ok":
+        notes.append("Secret scan: Betterleaks %s." % secret_version)
     permissions = read_permissions(environment)
     mode = None if rules else mode_verdict(event, action, permissions, environment)  # a forbid wins
     hold_id = ""
@@ -1098,7 +1122,9 @@ def decide(payload: dict, vendor: str = "", *, environment=None):
                 notes.append(summary + "; confirm to run it.")
     if mode:
         rules = [mode[1]]
-    verdict = mode[0] if mode else "refuse" if rules else "organize" if notes else "allow"
+    # The version line records which scanner ran. It is not a reason to hold the call.
+    substantive = [note for note in notes if not note.startswith("Secret scan: Betterleaks ")]
+    verdict = mode[0] if mode else "refuse" if rules else "organize" if substantive else "allow"
     decision = {"verdict": verdict, "vendor": vendor, "tool": event["tool"], "action": action, "rules": rules,
                 "notes": notes, "findings": findings, "scanners": scanners, "mode": permissions["runMode"]}
     if hold_id:

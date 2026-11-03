@@ -1,0 +1,10 @@
+{
+  "version": "1.9.0",
+  "asset": "betterleaks_1.9.0_windows_x64.zip",
+  "url": "https://github.com/betterleaks/betterleaks/releases/download/v1.9.0/betterleaks_1.9.0_windows_x64.zip",
+  "checksums_url": "https://github.com/betterleaks/betterleaks/releases/download/v1.9.0/checksums.txt",
+  "sha256": "b765daec9fda475b031b5a5159798cbe4294a3f2a50683cbc0471226e376d3da",
+  "executable_sha256": "41a3dc5e75712d52d25aa7203b0b6bc2fa9c796fe5109d3835c60226a9a69352",
+  "license": "MIT",
+  "license_url": "https://github.com/betterleaks/betterleaks/blob/v1.9.0/LICENSE"
+}

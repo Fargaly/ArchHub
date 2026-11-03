@@ -73,6 +73,8 @@
     }
     return null;
   };
+  const taskNotes = rows => (Array.isArray(rows) ? rows : []).filter(item => item && typeof item === 'object' && (!item.role || item.role === 'task'));
+  const taskMessages = task => [...new Map([...taskNotes(task && task.fileMessages), ...taskNotes(task && task.messages)].map((item, index) => [item.id || 'file-' + index, item])).values()];
   const homeDestination = route => {
     if (route === 'workshop' || route === 'canvas') return {route: 'home', face: route, library: false};
     if (route === 'library' || route === 'skills') return {route: 'home', face: 'canvas', library: true};
@@ -207,7 +209,21 @@
     const draftKey = task?.id || '';
     const text = drafts[draftKey] || '';
     const setText = value => setDrafts(current => ({...current, [draftKey]: typeof value === 'function' ? value(current[draftKey] || '') : value}));
-    const messages = [...new Map([...(task?.fileMessages || []), ...((task?.messages || []).filter(m => m.role === 'task'))].map((m, i) => [m.id || 'file-' + i, m])).values()];
+    const messages = taskMessages(task);
+    const seenTask = React.useRef('');
+    React.useEffect(() => {
+      let live = true;
+      if (task?.id && typeof api.openTaskGraph === 'function' && seenTask.current && seenTask.current !== task.id) {
+        const id = task.id;
+        u.act(() => api.openTaskGraph(id)).catch(error => {
+          if (!live) return;
+          setFailure(error instanceof Error ? error.message : String(error));
+          setRequest('error');
+        });
+      }
+      if (task?.id) seenTask.current = task.id;
+      return () => { live = false; };
+    }, [task?.id]);
     const showCanvas = async () => { u.go('canvas'); if (task) await u.act(() => api.openTaskGraph(task.id)); };
     const choices = people.choices?.length ? people.choices : [{key: 'baboom', handle: '', name: 'BABOOM'}];
     const recipient = to || (task && (s.liveAgents || []).find(a => a.agent === task.owner)?.handle) || choices[0]?.handle || '';
@@ -447,4 +463,5 @@
   window.UI.homeDescribe = describe;
   window.UI.homeStepOf = stepOf;
   window.UI.homeDestination = homeDestination;
+  window.UI.homeTaskMessages = taskMessages;
 })();

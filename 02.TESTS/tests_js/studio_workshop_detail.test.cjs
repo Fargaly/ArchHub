@@ -267,6 +267,35 @@ test('workshop and canvas routes open that face of the selected task on Home', (
   assert.match(home, /ArchHubHomeFace === 'canvas'/);
 });
 
+test('the workshop face shows task-file messages and refreshes them when the task opens', () => {
+  const opened = [];
+  const task = {
+    id: 't1', title: 'Ship the hall', status: 'WIP', description: 'Ship the hall', plan: [],
+    fileMessages: [{id: 'file-1', role: 'task', who: 'Grove', text: 'The hall drawing is in the file'}],
+    messages: [{id: 'room-1', role: 'room', who: 'Room', text: 'This room line stays out'}, {id: 'task-2', role: 'task', who: 'Ada', text: 'Ada wrote on the task'}],
+  };
+  const ui = {
+    useData() { return {tasks: [task], liveAgents: [], approvals: [], hosts: [], providers: []}; },
+    useApp() { return {task: 't1', act: fn => fn(), setTask() {}, go() {}, libraryOpen: false, setLibraryOpen() {}, show() {}}; },
+    Btn(props) { return React.createElement('button', props, props.children); },
+  };
+  const api = {executeAction() {}, openTaskGraph(id) { opened.push(id); return Promise.resolve({taskId: id, messages: task.fileMessages}); }};
+  vm.runInNewContext(transformSync(fs.readFileSync(path.join(studio, 'ds_home2.jsx'), 'utf8'), {loader: 'jsx', jsx: 'transform'}).code, {
+    window: {UI: ui, AHIcon() { return null; }, ArchHubAPI: api, addEventListener() {}, removeEventListener() {}, localStorage: {getItem() { return null; }, setItem() {}}},
+    React, document: {documentElement: {dataset: {}}, getElementById() { return null; }, querySelector() { return null; }}, console,
+  });
+  assert.equal(Array.from(ui.homeTaskMessages(task), item => String(item.text)).join('|'), 'The hall drawing is in the file|Ada wrote on the task');
+  const html = renderToStaticMarkup(React.createElement(ui.Home));
+  assert.match(html, /data-dx="conversation"/);
+  assert.match(html, /The hall drawing is in the file/);
+  assert.match(html, /Ada wrote on the task/);
+  assert.equal(html.includes('This room line stays out'), false);
+  const home = fs.readFileSync(path.join(studio, 'ds_home2.jsx'), 'utf8');
+  assert.match(home, /openTaskGraph\(id\)/);
+  assert.match(home, /openTaskGraph\(task\.id\)/);
+  assert.equal(opened.length, 0);
+});
+
 test('the task view shows workflow nodes and activity together', () => {
   const html = renderToStaticMarkup(React.createElement(window.UI.TaskSession, {
     task: {

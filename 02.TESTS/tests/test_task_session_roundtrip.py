@@ -162,7 +162,7 @@ def test_tasks_a_and_b_round_trip_through_the_studio_server(tmp_path, monkeypatc
                   "activity": [{"id": "node-a", "status": "Done", "output": "alpha-out"}],
                   "parameters": [{"id": "node-a", "params": {"span": 18}},
                                  {"id": "agent-a", "params": {"agent": "Grove", "instructions": "Hold the alpha plan"}}],
-                  "messages": [{"id": "msg-a", "who": "Grove", "text": "Alpha is moving"}]}
+                  "messages": [{"id": "msg-a", "role": "task", "who": "Grove", "text": "Alpha is moving"}]}
         spec_b = {"taskId": beta["taskId"], "path": beta["path"], "id": beta["id"], "scope": "scope-b",
                   "rules": ["Beta rule"], "agents": ["Ada"], "plan": ["Beta plan"],
                   "progress": {"step": "two", "note": "beta"},
@@ -171,7 +171,7 @@ def test_tasks_a_and_b_round_trip_through_the_studio_server(tmp_path, monkeypatc
                   "activity": [{"id": "node-b", "status": "Working", "output": "beta-out"}],
                   "parameters": [{"id": "node-b", "params": {"span": 7}},
                                  {"id": "agent-b", "params": {"agent": "Ada", "instructions": "Hold the beta plan"}}],
-                  "messages": [{"id": "msg-b", "who": "Ada", "text": "Beta is moving"}]}
+                  "messages": [{"id": "msg-b", "role": "task", "who": "Ada", "text": "Beta is moving"}]}
 
         _expect(studio.workshop("openTaskGraph", beta["taskId"]), spec_b)
         _expect(studio.workshop("openTaskGraph", alpha["taskId"]), spec_a)
@@ -181,6 +181,8 @@ def test_tasks_a_and_b_round_trip_through_the_studio_server(tmp_path, monkeypatc
         assert listed[beta["taskId"]]["sessionPath"] == beta["path"]
         assert listed[alpha["taskId"]]["sessionOpen"] is True
         assert listed[beta["taskId"]]["sessionOpen"] is False
+        assert listed[alpha["taskId"]]["fileMessages"] == spec_a["messages"]
+        assert listed[beta["taskId"]]["fileMessages"] == spec_b["messages"]
 
         studio.close()
         stop(server)

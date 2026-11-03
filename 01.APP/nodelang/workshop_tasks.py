@@ -153,6 +153,7 @@ def _session_context(path):
         return {}
     if context.get("scope") == document.get("id"):
         context["scope"] = ""
+    context["fileMessages"] = _file_messages(document)
     return context
 
 
@@ -193,7 +194,7 @@ def column(history):
         found.append({'id': row['id'], 'title': short_title(row['title']), 'description': row['title'],
              'owner': owner,
              'status': shown, 'result': recorded_result(history, row),
-             'messages': [], 'steps': [], 'reviews': [], 'queuedMessages': [],
+             'messages': [], 'fileMessages': list(session.get("fileMessages") or []), 'steps': [], 'reviews': [], 'queuedMessages': [],
              'declarations': [declaration] if declaration else [],
              'scope': session.get("scope") or (" · ".join(paths) if paths else ""),
              'rules': list(session.get("rules") or []),
@@ -293,6 +294,7 @@ def _file_messages(document):
         if not _task_message(note) or not isinstance(note.get("text"), str):
             continue
         found.append({"id": note["id"] if isinstance(note.get("id"), str) and note["id"] else "note-%d" % index,
+                      "role": _TASK_ROLE,
                       "who": note["who"] if isinstance(note.get("who"), str) and note["who"] else "Agent",
                       "text": note["text"]})
     return found

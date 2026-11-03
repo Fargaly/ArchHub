@@ -51,17 +51,39 @@
     const thumb = ['thumbnail', 'thumb', 'image'].map(key => value[key]).find(item => typeof item === 'string' && /^https?:|^data:image\//.test(item)) || '';
     return excerpt || name || thumb ? {name, excerpt, thumb} : null;
   };
-  const stepOf = (step, index, steps) => {
-    const raw = step && typeof step === 'object' ? String(step.status || step.state || '') : '';
-    if (/done|complete|saved/i.test(raw)) return 'done';
-    if (/await/i.test(raw)) return 'awaiting';
-    if (/work|current|wip/i.test(raw)) return 'working';
-    if (/next|planned|wait/i.test(raw)) return 'next';
-    const marked = steps.map(item => item && typeof item === 'object' ? String(item.status || item.state || '') : '');
-    if (!marked.some(Boolean)) return '';
-    const workingAt = marked.findIndex(item => /work|current|wip/i.test(item));
-    if (workingAt < 0) return '';
-    return index < workingAt ? 'done' : index === workingAt ? 'working' : 'next';
+  const stepKeys = step => {
+    if (step == null) return [];
+    if (typeof step !== 'object') return [String(step)];
+    return [step.id, step.key, step.title, step.name, step.what, step.text].filter(item => typeof item === 'string' && item);
+  };
+  const progressBag = progress => {
+    if (!progress || typeof progress !== 'object' || Array.isArray(progress)) return null;
+    const nested = progress.steps;
+    if (nested && typeof nested === 'object' && !Array.isArray(nested)) return nested;
+    return progress;
+  };
+  const recordedStep = (step, progress) => {
+    const bag = progressBag(progress);
+    if (!bag) return null;
+    for (const key of stepKeys(step)) {
+      if (Object.hasOwn(bag, key)) return bag[key];
+    }
+    return null;
+  };
+  const stepOf = (step, progress) => {
+    const recorded = recordedStep(step, progress);
+    const raw = recorded == null || recorded === '' ? '' : (typeof recorded === 'object' ? String(recorded.status || recorded.state || '') : String(recorded));
+    const named = source => source && typeof source === 'object' ? String(source.ownerName || source.owner || source.agent || source.who || '').trim() : '';
+    const owner = (recorded && typeof recorded === 'object' && named(recorded)) || named(step) || 'not reported';
+    const text = raw.trim();
+    if (!text) return {kind: 'unreported', label: 'not reported', owner};
+    if (/error|fail/i.test(text)) return {kind: 'error', label: 'error', owner};
+    if (/block/i.test(text)) return {kind: 'blocked', label: 'blocked', owner};
+    if (/done|complete|saved/i.test(text)) return {kind: 'done', label: 'done', owner};
+    if (/await/i.test(text)) return {kind: 'awaiting', label: 'awaiting', owner};
+    if (/work|current|wip/i.test(text)) return {kind: 'working', label: 'working', owner};
+    if (/next|planned/i.test(text)) return {kind: 'next', label: text, owner};
+    return {kind: 'recorded', label: text, owner};
   };
   const markColor = key => {
     let hash = 0;
@@ -167,8 +189,7 @@
     const scopeValue = describe(task?.scope) || declaredPaths.join(' · ');
     const session = task?.sessionPath || (typeof task?.session === 'string' ? task.session : '') || (typeof declared?.session === 'string' ? declared.session : '');
     const fileName = task?.sessionPath ? task.sessionPath.split(/[/\\]/).pop() : '';
-    const recordedPlan = Array.isArray(task?.plan) ? task.plan : [];
-    const plan = recordedPlan.length ? recordedPlan : (task && (ownerOf(task) || declared || ['WIP', 'IN REVIEW', 'DONE'].includes(task.status)) ? [{title: task.title, status: task.status === 'WIP' ? 'working' : task.status === 'IN REVIEW' ? 'blocked' : task.status === 'DONE' ? 'done' : task.status}] : []);
+    const plan = Array.isArray(task?.plan) ? task.plan : [];
     const recordedActivity = Array.isArray(task?.activity) ? task.activity : [];
     const activity = recordedActivity.length ? recordedActivity : (task && (task.result || ownerOf(task) || declared) ? [{id: task.id, status: statusText(task.status), output: task.result || ''}] : []);
     const outputs = (Array.isArray(task?.outputs) && task.outputs.length ? task.outputs : [task?.result, ...activity.map(row => row.output)]).map(outputRecord).filter(Boolean);
@@ -372,10 +393,9 @@
                     <section className="dx-panel" data-dx="plan" aria-label="Plan and progress">
                       <h2>Plan and progress</h2>
                       {plan.length ? <ol className="dx-stepper">{plan.map((step, index) => {
-                        const kind = stepOf(step, index, plan);
+                        const recorded = stepOf(step, task?.progress);
                         const label = typeof step === 'object' ? (step.title || step.text || step.name || step.what || describe(step)) : String(step);
-                        const owner = (step && typeof step === 'object' && (step.ownerName || step.owner || step.who)) || ownerOf(task);
-                        return <li key={index} data-step={kind || 'recorded'}><Icon name={kind === 'done' ? 'check' : kind === 'working' ? 'clock' : 'arrow'} size={14} /><b>{label}</b>{kind ? <span>{kind}</span> : null}<small>{owner}</small></li>;
+                        return <li key={index} data-step={recorded.kind}><Icon name={recorded.kind === 'done' ? 'check' : recorded.kind === 'working' ? 'clock' : 'arrow'} size={14} /><b>{label}</b><span>{recorded.label}</span><small>{recorded.owner}</small></li>;
                       })}</ol> : <p>Not yet recorded</p>}
                     </section>
                   </div>
@@ -417,4 +437,5 @@
   window.UI.homeListSame = sameList;
   window.UI.homeCommitList = commitList;
   window.UI.homeDescribe = describe;
+  window.UI.homeStepOf = stepOf;
 })();

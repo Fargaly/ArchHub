@@ -180,6 +180,54 @@ test('a 1440 canvas fit keeps canonical nodes inside the graph and off the plan 
   assert.ok(planX + planWidth > graphWidth);
 });
 
+test('a step shows only the status the progress dict recorded', () => {
+  const plan = [
+    {id: 'draw', title: 'Draw', owner: 'Grove'},
+    {id: 'check', title: 'Check', owner: 'Bea'},
+    {id: 'file', title: 'File', owner: 'Nia'},
+    {id: 'ship', title: 'Ship', status: 'done', owner: 'Grove'},
+  ];
+  const progress = {draw: 'working', check: 'blocked', file: {status: 'error', agent: 'Ada'}};
+  const ui = {
+    useData() {
+      return {tasks: [{id: 't1', title: 'Ship the hall', status: 'WIP', description: 'Ship the hall', plan, progress, messages: []}], liveAgents: [], approvals: [], hosts: [], providers: []};
+    },
+    useApp() { return {task: 't1', act: fn => fn(), setTask() {}, go() {}, libraryOpen: false, setLibraryOpen() {}, show() {}}; },
+    Btn(props) { return React.createElement('button', props, props.children); },
+  };
+  vm.runInNewContext(transformSync(fs.readFileSync(path.join(studio, 'ds_home2.jsx'), 'utf8'), {loader: 'jsx', jsx: 'transform'}).code, {
+    window: {UI: ui, AHIcon() { return null; }, ArchHubAPI: {executeAction() {}}, addEventListener() {}, removeEventListener() {}, localStorage: {getItem() { return null; }, setItem() {}}},
+    React, document: {documentElement: {dataset: {}}, getElementById() { return null; }, querySelector() { return null; }}, console,
+  });
+  const recorded = (step, bag) => ui.homeStepOf(step, bag);
+  const draw = recorded(plan[0], progress);
+  const check = recorded(plan[1], progress);
+  const file = recorded(plan[2], progress);
+  const ship = recorded(plan[3], progress);
+  assert.equal(draw.kind, 'working');
+  assert.equal(draw.label, 'working');
+  assert.equal(draw.owner, 'Grove');
+  assert.equal(check.kind, 'blocked');
+  assert.equal(check.label, 'blocked');
+  assert.equal(check.owner, 'Bea');
+  assert.equal(file.kind, 'error');
+  assert.equal(file.label, 'error');
+  assert.equal(file.owner, 'Ada');
+  assert.equal(ship.kind, 'unreported');
+  assert.equal(ship.label, 'not reported');
+  assert.equal(ship.owner, 'Grove');
+  assert.equal(recorded(plan[0], {}).label, 'not reported');
+  assert.equal(recorded({id: 'later', title: 'Later'}, {draw: 'working'}).kind, 'unreported');
+  const shown = renderToStaticMarkup(React.createElement(ui.Home));
+  assert.match(shown, /data-step="working"/);
+  assert.match(shown, /data-step="blocked"/);
+  assert.match(shown, /data-step="error"/);
+  assert.match(shown, /data-step="unreported"/);
+  assert.match(shown, /not reported/);
+  assert.match(shown, /Ada/);
+  assert.equal(shown.includes('data-step="done"'), false);
+});
+
 test('the task view shows workflow nodes and activity together', () => {
   const html = renderToStaticMarkup(React.createElement(window.UI.TaskSession, {
     task: {

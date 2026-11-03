@@ -19,7 +19,10 @@
     if (ensureHomeView.bound) return;
     ensureHomeView.bound = true;
     window.addEventListener('archhub:home-view', event => {
-      if (event.detail === 'canvas' || event.detail === 'workshop') homeSetFace(event.detail);
+      if (event.detail === 'canvas' || event.detail === 'workshop') {
+        window.ArchHubHomeFace = event.detail;
+        homeSetFace(event.detail);
+      }
     });
   };
   const writeLayout = value => {
@@ -68,6 +71,11 @@
     for (const key of stepKeys(step)) {
       if (Object.hasOwn(bag, key)) return bag[key];
     }
+    return null;
+  };
+  const homeDestination = route => {
+    if (route === 'workshop' || route === 'canvas') return {route: 'home', face: route, library: false};
+    if (route === 'library' || route === 'skills') return {route: 'home', face: 'canvas', library: true};
     return null;
   };
   const stepOf = (step, progress) => {
@@ -137,7 +145,7 @@
     const [sending, setSending] = React.useState(false);
     const [to, setTo] = React.useState('');
     const [checkpoint, setCheckpoint] = React.useState('');
-    const [face, setFace] = React.useState('workshop');
+    const [face, setFace] = React.useState(() => window.ArchHubHomeFace === 'canvas' ? 'canvas' : 'workshop');
     const [fileOpen, setFileOpen] = React.useState(false);
     const [detailId, setDetailId] = React.useState('');
     const [runMode, setRunMode] = React.useState({status: 'waiting', value: '', message: ''});
@@ -200,7 +208,7 @@
     const text = drafts[draftKey] || '';
     const setText = value => setDrafts(current => ({...current, [draftKey]: typeof value === 'function' ? value(current[draftKey] || '') : value}));
     const messages = [...new Map([...(task?.fileMessages || []), ...((task?.messages || []).filter(m => m.role === 'task'))].map((m, i) => [m.id || 'file-' + i, m])).values()];
-    const showCanvas = async () => { setFace('canvas'); if (task) await u.act(() => api.openTaskGraph(task.id)); };
+    const showCanvas = async () => { u.go('canvas'); if (task) await u.act(() => api.openTaskGraph(task.id)); };
     const choices = people.choices?.length ? people.choices : [{key: 'baboom', handle: '', name: 'BABOOM'}];
     const recipient = to || (task && (s.liveAgents || []).find(a => a.agent === task.owner)?.handle) || choices[0]?.handle || '';
     const model = (people.people || []).find(p => p.handle && p.handle === recipient)?.model || '';
@@ -438,4 +446,5 @@
   window.UI.homeCommitList = commitList;
   window.UI.homeDescribe = describe;
   window.UI.homeStepOf = stepOf;
+  window.UI.homeDestination = homeDestination;
 })();

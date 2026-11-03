@@ -228,6 +228,45 @@ test('a step shows only the status the progress dict recorded', () => {
   assert.equal(shown.includes('data-step="done"'), false);
 });
 
+test('workshop and canvas routes open that face of the selected task on Home', () => {
+  const ui = {
+    useData() {
+      return {tasks: [{id: 't1', title: 'Ship the hall', status: 'WIP', description: 'Ship the hall', plan: [], messages: []}], liveAgents: [], approvals: [], hosts: []};
+    },
+    useApp() { return {task: 't1', act: fn => fn(), setTask() {}, go() {}, libraryOpen: false, setLibraryOpen() {}, show() {}}; },
+    Btn(props) { return React.createElement('button', props, props.children); },
+  };
+  const win = {UI: ui, ArchHubHomeFace: 'canvas', AHIcon() { return null; }, ArchHubAPI: {executeAction() {}}, addEventListener() {}, removeEventListener() {}, localStorage: {getItem() { return null; }, setItem() {}}};
+  vm.runInNewContext(transformSync(fs.readFileSync(path.join(studio, 'ds_home2.jsx'), 'utf8'), {loader: 'jsx', jsx: 'transform'}).code, {
+    window: win, React, document: {documentElement: {dataset: {}}, getElementById() { return null; }, querySelector() { return null; }}, console,
+  });
+  const face = route => ui.homeDestination(route);
+  assert.equal(face('workshop').route, 'home');
+  assert.equal(face('workshop').face, 'workshop');
+  assert.equal(face('workshop').library, false);
+  assert.equal(face('canvas').route, 'home');
+  assert.equal(face('canvas').face, 'canvas');
+  assert.equal(face('library').face, 'canvas');
+  assert.equal(face('library').library, true);
+  assert.equal(face('skills').face, 'canvas');
+  assert.equal(face('skills').library, true);
+  assert.equal(face('docs'), null);
+  assert.equal(face('settings/Agents'), null);
+  const canvas = renderToStaticMarkup(React.createElement(ui.Home));
+  assert.match(canvas, /data-home-face="canvas"/);
+  assert.match(canvas, /aria-label="Canvas view" aria-pressed="true"/);
+  const app = fs.readFileSync(path.join(studio, 'app.jsx'), 'utf8');
+  const home = fs.readFileSync(path.join(studio, 'ds_home2.jsx'), 'utf8');
+  assert.match(app, /window\.UI\.homeDestination\?\.\(r\)/);
+  assert.match(app, /ArchHubHomeFace = home\.face/);
+  assert.match(app, /setRoute\('home'\)/);
+  assert.equal(app.includes("r = 'canvas'"), false);
+  assert.match(app, /u\.go\('workshop'\)/);
+  assert.match(app, /u\.go\('canvas'\)/);
+  assert.match(home, /u\.go\('canvas'\)/);
+  assert.match(home, /ArchHubHomeFace === 'canvas'/);
+});
+
 test('the task view shows workflow nodes and activity together', () => {
   const html = renderToStaticMarkup(React.createElement(window.UI.TaskSession, {
     task: {

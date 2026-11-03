@@ -121,14 +121,21 @@
         setModal(null);
         return;
       }
-      if (r === 'library' || r === 'skills') {
-        r = 'canvas';
-        setLibraryOpen(true);
+      const home = window.UI.homeDestination?.(r);
+      if (home) {
+        window.ArchHubHomeFace = home.face;
+        if (home.library) setLibraryOpen(true);
+        window.dispatchEvent(new CustomEvent('archhub:home-view', {detail: home.face}));
+        api.setActiveSurface?.('home');
+        setRoute('home');
+        setModal(null);
+        return;
       }
       if(r==='canvas')setCanvasOpened(true);
       api.setActiveSurface?.(r);
       setRoute(r);
       setModal(null);
+      return;
     };
     const show = (kind, data = {}) => {
       if (modalActions[kind] && !api.supportsAction(modalActions[kind])) return;

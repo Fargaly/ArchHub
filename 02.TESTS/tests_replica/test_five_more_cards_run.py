@@ -113,7 +113,10 @@ def test_draft_email_opens_a_draft_and_never_sends(monkeypatch):
     monkeypatch.setattr(L, "_OUTLOOK", [lambda: outlook])
     out, said = L.draft_email({"to": "eng@firm.example.test", "subject": "Sheets"}, {"in": "Set 03 attached"})
     assert outlook.mail.To == "eng@firm.example.test"
-    assert outlook.mail.HTMLBody == "<html><body><p>Set 03 attached</p></body></html>"
+    body = outlook.mail.HTMLBody
+    assert body.count("Thank you and best regards") == 1
+    assert body.find("Dear,") < body.find("<p>Set 03 attached</p>") < body.find("Thank you and best regards")
+    assert "font-family:Calibri" in body and "font-size:11pt" in body and "#1F497D" in body
     assert outlook.mail.Subject == "SHEETS"
     assert outlook.mail.calls == ["Save"], "save the draft, no Display by default, never Send"
     assert out["out"]["id"] == "synthetic-draft" and out["out"]["draft_only"] is True

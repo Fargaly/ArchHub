@@ -6,7 +6,6 @@ Workshop file, or keeps a second task store.
 from __future__ import annotations
 
 import ctypes
-import hashlib
 import json
 import os
 import re
@@ -183,6 +182,8 @@ def read_workshop_task_rows() -> list[dict[str, object]]:
     Pytest stays off the founder's Workshop file unless a test points
     ARCHHUB_TEST_STATE_DIR at its own directory and opts in.
     """
+    from .workshop_tasks import _declaration_for
+
     if os.environ.get("PYTEST_CURRENT_TEST") and not os.environ.get("ARCHHUB_BABOOM_READ_WORKSHOP"):
         return []
     root = os.environ.get("ARCHHUB_TEST_STATE_DIR")
@@ -202,7 +203,7 @@ def read_workshop_task_rows() -> list[dict[str, object]]:
         if connection.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_tasks'").fetchone() is None:
             return []
         present = {row[1] for row in connection.execute("PRAGMA table_info(workshop_tasks)")}
-        wanted = ["id", "title", "status", "owner", "owner_label", "lease_until", "result", "updated_at", "archived"]
+        wanted = ["id", "title", "status", "owner", "owner_label", "lease_until", "result", "updated_at", "archived", "purpose"]
         columns = [name for name in wanted if name in present]
         if "id" not in columns or "status" not in columns:
             return []
@@ -217,7 +218,7 @@ def read_workshop_task_rows() -> list[dict[str, object]]:
         for row in found:
             lease = row.get("lease_until")
             row["lease_expired"] = row.get("status") == "claimed" and isinstance(lease, (int, float)) and lease < clock
-        live: dict[str, str] = {}
+        declarations = []
         if connection.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_declarations'").fetchone():
             for (record,) in connection.execute("SELECT record FROM workshop_declarations"):
                 try:
@@ -226,12 +227,10 @@ def read_workshop_task_rows() -> list[dict[str, object]]:
                     continue
                 if not isinstance(item, dict) or item.get("status") not in ("working", "blocked", "done"):
                     continue
-                task = "declared-" + hashlib.sha256(
-                    (str(item.get("root") or "") + "\0" + str(item.get("request_id") or "")).encode()
-                ).hexdigest()[:32]
-                live[task] = str(item.get("status"))
+                declarations.append(item)
         for row in found:
-            declared = live.get(str(row.get("id")))
+            declaration = _declaration_for(row, declarations)
+            declared = (declaration or {}).get("status")
             if declared == "blocked":
                 row["status"] = "IN REVIEW"
             elif declared == "working" or (row.get("status") == "claimed" and not row.get("lease_expired")):

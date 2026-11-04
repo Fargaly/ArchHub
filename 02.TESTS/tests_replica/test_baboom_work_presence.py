@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import json
-import sqlite3
-from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
-from nodelang import workshop_mailbox, workshop_tasks
+import pytest
+from mcp import types
+
+from nodelang import workshop_tasks
 from nodelang.baboom_work_presence import (
     baboom_pose_motion,
     baboom_reduced_motion,
@@ -19,16 +21,6 @@ from nodelang.baboom_work_presence import (
 )
 from nodelang.session_files import new_document, write_document
 from nodelang.workshop_mailbox import application_history
-
-
-class _History:
-    def __init__(self):
-        self._db = sqlite3.connect(":memory:")
-
-    @contextmanager
-    def _transaction(self, write=False):
-        with self._db:
-            yield
 
 
 def _skill(folder, filename, title, skill_id, note, spoken):
@@ -107,24 +99,41 @@ def error_row(history):
     return next(row for row in workshop_tasks.rows(history) if str(row.get("result") or "").startswith("failed"))
 
 
-def test_a_blocked_declaration_needs_the_founder(monkeypatch):
-    monkeypatch.setattr(workshop_mailbox, "_session_alive", lambda row: True)
-    history = _History()
-    workshop_tasks.declared(
-        history, "room:desk", "req-9", "Hold the sheet", "working", "agent", "Agent"
-    )
-    history._db.execute("CREATE TABLE workshop_declarations(root TEXT PRIMARY KEY, record TEXT)")
-    history._db.execute(
-        "INSERT INTO workshop_declarations VALUES(?,?)",
-        ("room:desk", json.dumps({
-            "root": "room:desk", "request_id": "req-9", "status": "blocked", "agent": "x",
-        })),
-    )
-    shown = baboom_work_presence(workshop_tasks.column(history))
+@pytest.mark.parametrize("legacy", [False, True], ids=["agent-id", "legacy-root-id"])
+def test_a_blocked_declaration_needs_the_founder(tmp_path, monkeypatch, legacy):
+    from nodelang import native_agent_mcp
+
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("ARCHHUB_BABOOM_READ_WORKSHOP", "1")
+    server = native_agent_mcp.build_server()
+    # Only the explicit declare call is under test, not the connector's background refresh.
+    server._mailbox_stop()
+    declare = server._tool_manager.get_tool("declare").fn
+    context = SimpleNamespace(request_context=SimpleNamespace(
+        meta=types.RequestParams.Meta(**{"threadId": "baboom-declaration-fixture"})))
+    result = declare("Hold the sheet", [str(tmp_path)], "blocked", "req-9", context)
+    declaration = result["declaration"]
+    with application_history() as history:
+        if legacy:
+            with history._transaction(write=True):
+                history._db.execute("UPDATE workshop_tasks SET id=?", (
+                    workshop_tasks._declaration_task_id(declaration),))
+                declaration.pop("session")
+                history._db.execute("UPDATE workshop_declarations SET record=?", (json.dumps(declaration),))
+        column = workshop_tasks.column(history)
+    assert column[0]["status"] == "IN REVIEW"
+    assert column[0]["declarations"]
+    shown = baboom_work_presence(read_workshop_task_rows())
     assert shown.state == "needs-you"
     assert shown.badge is True
     assert shown.motion == "wave"
     assert shown.task_name == "Hold the sheet"
+
+    if not legacy:
+        with application_history() as history:
+            with history._transaction(write=True):
+                history._db.execute("UPDATE workshop_tasks SET purpose='another-request'")
+        assert baboom_work_presence(read_workshop_task_rows()).state == "thinking"
 
 
 def test_reduced_motion_holds_the_first_frame():

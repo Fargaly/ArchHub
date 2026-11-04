@@ -18,8 +18,8 @@ SCHEMA = ("CREATE TABLE IF NOT EXISTS workshop_tasks(id TEXT PRIMARY KEY, title 
           "lease_until REAL, result TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL, "
           "updated_at TEXT NOT NULL, session_path TEXT, purpose TEXT, project TEXT, "
           "archived INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL DEFAULT 0, "
-          "outcome TEXT, write_open INTEGER NOT NULL DEFAULT 0) STRICT")
-TASKS_NODE = {'id': 'workshop.tasks', 'params': {'lease_seconds': 900, 'stale_hours': 24}}
+          "outcome TEXT, write_open INTEGER NOT NULL DEFAULT 0, capacity TEXT) STRICT")
+TASKS_NODE = {'id': 'workshop.tasks', 'params': {'lease_seconds': 900, 'stale_hours': 24, 'max_runs': 2}}
 UI_STATUS = {"open": "PLANNED", "claimed": "WIP", "done": "DONE"}
 
 
@@ -51,6 +51,15 @@ class TaskLeaseLost(Exception):
         super().__init__("Task lease lost")
 
 
+class TaskLimitReached(Exception):
+    """Another run would pass the capacity parameter."""
+    code = "LIMIT_REACHED"
+
+    def __init__(self, task):
+        self.task = task
+        super().__init__("LIMIT_REACHED")
+
+
 def _now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -73,6 +82,8 @@ def _ensure(history):
         history._db.execute("ALTER TABLE workshop_tasks ADD COLUMN outcome TEXT")
     if "write_open" not in names:
         history._db.execute("ALTER TABLE workshop_tasks ADD COLUMN write_open INTEGER NOT NULL DEFAULT 0")
+    if "capacity" not in names:
+        history._db.execute("ALTER TABLE workshop_tasks ADD COLUMN capacity TEXT")
 
 
 def _write(history, sql, values):
@@ -213,6 +224,49 @@ def complete(history, task, owner, result="", revision=None):
                 "revision=revision+1 WHERE id=? AND revision=? AND owner=? AND status='claimed'",
                 (result, _now(), task, expected, owner))
     return _update(history, task, revision, statement, holder=owner)
+
+
+def begin_run(history, task, owner, label, revision=None, lease_seconds=None):
+    """Start one agent run when a slot is free. The next one waits with LIMIT_REACHED."""
+    lease_seconds = TASKS_NODE['params']['lease_seconds'] if lease_seconds is None else lease_seconds
+    if type(lease_seconds) is not int or not 30 <= lease_seconds <= 86400:
+        raise ValueError("Lease must be 30 to 86400 seconds")
+    cap = TASKS_NODE['params']['max_runs']
+    if type(cap) is not int or cap < 1:
+        raise ValueError("Capacity must be a positive number of runs")
+    _settle_lapsed(history)
+    now = time.time()
+    over_cap = False
+    with history._transaction(write=True):
+        row = _locked(history, task)
+        if row is None:
+            raise TaskNotFound(task)
+        if revision is not None and int(revision) != row["revision"]:
+            raise TaskConflict(task, revision)
+        expected = row["revision"] if revision is None else int(revision)
+        running = history._db.execute(
+            "SELECT COUNT(*) FROM workshop_tasks WHERE status='claimed' AND lease_until IS NOT NULL "
+            "AND lease_until>=? AND id!=?", (now, task)).fetchone()[0]
+        holds = row["status"] == "claimed" and row["owner"] == owner
+        if running >= cap and not holds:
+            changed = history._db.execute(
+                "UPDATE workshop_tasks SET capacity='LIMIT_REACHED', updated_at=?, revision=revision+1 "
+                "WHERE id=? AND revision=? AND status!='done'",
+                (_now(), task, expected)).rowcount == 1
+            if not changed:
+                raise TaskConflict(task, expected)
+            over_cap = True
+        else:
+            changed = history._db.execute(
+                "UPDATE workshop_tasks SET status='claimed', owner=?, owner_label=?, lease_until=?, "
+                "outcome=NULL, write_open=0, capacity=NULL, updated_at=?, revision=revision+1 "
+                "WHERE id=? AND revision=? AND status!='done' AND (owner IS NULL OR owner=?)",
+                (owner, label, now + lease_seconds, _now(), task, expected, owner)).rowcount == 1
+            if not changed:
+                raise TaskConflict(task, expected)
+    if over_cap:
+        raise TaskLimitReached(task)
+    return True
 
 
 def archive(history, task, revision=None):
@@ -400,7 +454,8 @@ def column(history, project=None, stale_hours=None):
         paths = [item for item in ((declaration or {}).get("paths") or []) if isinstance(item, str)]
         shown = state(row)
         result = recorded_result(history, row)
-        waiting = row.get("outcome") if shown == "PLANNED" and row.get("outcome") in ("interrupted", "unknown") else ""
+        waiting = "limit reached" if row.get("capacity") == "LIMIT_REACHED" and shown == "PLANNED" else (
+            row.get("outcome") if shown == "PLANNED" and row.get("outcome") in ("interrupted", "unknown") else "")
         bound = _bound_messages(history, row["id"])
         owner = row["owner_label"] if row["id"] in live or not row["lease_expired"] else None
         agents = [item for item in session.get("agents") or [] if isinstance(item, str) and item]
@@ -416,6 +471,7 @@ def column(history, project=None, stale_hours=None):
         built.append({'id': row['id'], 'title': short_title(row['title']), 'description': row['title'],
              'owner': owner, 'revision': row.get('revision') or 0,
              'status': shown, 'rowState': waiting, 'outcome': row.get('outcome') or '',
+             'capacity': row.get('capacity') or '',
              'stale': shown == "stale", 'result': result, 'project': row.get('project') or '',
              'summary': _summary(row['title'], shown, result),
              'messages': [], 'fileMessages': list(session.get("fileMessages") or []), 'agentLog': bound, 'steps': [], 'reviews': [], 'queuedMessages': [],
@@ -452,7 +508,7 @@ def set_status(history, task, status, revision=None):
 
 COLUMNS = ("id", "title", "status", "owner", "owner_label", "lease_until", "result",
            "created_by", "created_at", "updated_at", "session_path", "archived", "purpose", "project",
-           "revision", "outcome", "write_open")
+           "revision", "outcome", "write_open", "capacity")
 
 
 def rows(history, task=None, *, include_archived=True):

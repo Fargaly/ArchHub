@@ -2014,12 +2014,12 @@ def _append_free_chat_trace_line(environ: Optional[Mapping[str, str]], row: Mapp
     state = _application_state_dir(environ)
     if state is None:
         return
-    path = state / "free-chat-trace.jsonl"
+    path = state / "logs" / "free-chat-trace.jsonl"
     try:
-        state.mkdir(parents=True, exist_ok=True)
-        if path.exists() and path.stat().st_size > _FREE_CHAT_TRACE_BYTES:
-            path.write_text("", encoding="utf-8")
-        with path.open("a", encoding="utf-8") as stream:
+        from contextlib import closing
+        from .log_rotation import RotatingLog
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with closing(RotatingLog(path, max_bytes=_FREE_CHAT_TRACE_BYTES)) as stream:
             stream.write(json.dumps(dict(row), ensure_ascii=True, separators=(",", ":")) + "\n")
     except OSError:
         return

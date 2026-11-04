@@ -161,6 +161,23 @@ class NoGraphServer:
         threading.Thread(target=self.triggers.refresh, name='archhub-triggers', daemon=True).start()
         return self
 
+    def health_check(self):
+        import sqlite3
+        from urllib.request import urlopen
+        from .session_files import sessions_directory
+        from .library_engines import LIBRARY_ITEM_ENGINES
+        limits = LIBRARY_ITEM_ENGINES['tool_workshop']['params']
+        for path in self.settings_dir.glob('*.json'):
+            json.loads(path.read_text(encoding='utf-8'))
+        sessions_directory()
+        database = self.state_dir / 'workshop' / 'messages.sqlite3'
+        if database.exists():
+            with sqlite3.connect(database.as_uri() + '?mode=ro', uri=True, timeout=limits['preflight_database_ms'] / 1000) as connection:
+                if connection.execute('PRAGMA quick_check').fetchone() != ('ok',):
+                    return False
+        with urlopen(self.public_url + '/api/alive', timeout=limits['worker_join_ms'] / 1000) as response:
+            return response.status == 204 and self.thread.is_alive()
+
     def ensure_cloud_relay(self, *, restart=False):
         """Remote agents reach this PC's brokers through the existing cloud relay (cloud_relay.py).
 
@@ -557,7 +574,7 @@ def r_router_settings(s, req):
 
 # The System graph is logic only: the owners of this server, wired by what feeds what.
 SYSTEM_OWNERS = (
-    ('owner:canvas', 'Canvas', 'Session files', 'sessions-files/*.archhub', ['workshop']),
+    ('owner:canvas', 'Canvas', 'Session files', 'Documents/ArchHub/*.archhub (Settings: sessions folder)', ['workshop']),
     ('owner:library', 'Node library', 'Session files', 'library_engines + pipeline_engines', ['canvas']),
     ('owner:workshop', 'Workshop', 'Workshop', 'workshop/messages.sqlite3', ['router']),
     ('owner:workshop', 'Workshop', 'Workshop', 'workshop/ (native injection)', ['workshop']),
@@ -945,6 +962,16 @@ def r_settings_action(s, req):
     function, args = body.get('function'), body.get('args') or []
     companion = s.files['companion']
     settings = s.files['settings']
+    if function in ('readSessionsFolder', 'setSessionsFolder'):
+        from .session_files import sessions_directory, set_sessions_directory
+        moved = []
+        if function == 'setSessionsFolder':
+            path = args[0] if args else None
+            if not path and s.native_folder_picker:
+                path = s.native_folder_picker('Sessions folder')
+            if path:
+                moved = set_sessions_directory(path)
+        return {'ok': True, 'result': {'sessionsFolder': str(sessions_directory()), 'moved': moved}}
     if function in ('readLibraryCollapsed', 'setLibraryCollapsed'):
         if function == 'setLibraryCollapsed':
             groups = args[0] if args else None

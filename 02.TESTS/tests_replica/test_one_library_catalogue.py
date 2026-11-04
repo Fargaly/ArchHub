@@ -10,14 +10,14 @@ from nodelang.native_host_tools import HOST_TOOLS
 from nodelang.node_params import TYPES, coerce
 from nodelang.nograph_server import r_node_library
 from nodelang.pipeline_engines import PIPELINE_ENGINES
-from nodelang.session_files import catalogue, new_document, skills_directory, write_document
+from nodelang.session_files import catalogue, new_document, sessions_directory, write_document
 
 
 def test_the_real_catalogue_lists_every_engine_and_skill_with_typed_parameters(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     skill = new_document("Wall schedule")
     skill["id"] = "wallschedule"
-    folder = skills_directory()
+    folder = sessions_directory()
     write_document(str(folder / "wallschedule.archhub"), skill)
     (folder / "broken.archhub").write_text("{", encoding="utf-8")
 

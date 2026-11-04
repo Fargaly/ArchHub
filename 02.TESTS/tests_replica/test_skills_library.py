@@ -27,7 +27,7 @@ def test_installer_ships_no_builder_home_skills():
     # The builder's ~/.claude and ~/.codex skill folders are private to that
     # machine (AGENTS.md hard rule 7); the catalogue still reads a shipped
     # {app}/skills library when one is packaged from governed source.
-    iss = (Path(engines.__file__).resolve().parents[2] / "installer" / "ArchHub.iss").read_text(encoding="utf-8")
+    iss = (Path(engines.__file__).resolve().parents[2] / "03.TOOLS" / "installer" / "ArchHub.iss").read_text(encoding="utf-8")
     assert r'.claude\skills' not in iss
     assert r'.codex\skills' not in iss
     assert 'GetEnv("USERPROFILE")' not in iss

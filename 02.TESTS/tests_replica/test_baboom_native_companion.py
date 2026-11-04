@@ -1044,7 +1044,7 @@ def test_a_dropped_file_offers_the_matching_skill_and_run_reports_it(tmp_path, m
         folder.mkdir()
         _write_skill(folder, "read-pdf.archhub", "Read PDF", "read-pdf", "pdf drawings", "Read the sheet")
         _write_skill(folder, "walls.archhub", "Walls", "walls", "masonry", "Lay the course")
-        window._skills_directory = lambda: folder
+        window._sessions_directory = lambda: folder
         unknown = tmp_path / "zzzz.bin"
         unknown.write_bytes(b"bin")
         pdf = tmp_path / "plan.pdf"

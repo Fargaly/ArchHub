@@ -435,7 +435,8 @@ def solve(document, changed, *, invoke=None, stopped=None):
 
 # ----------------------------------------------------- shared file edits --
 def _lock_path(path):
-    root = Path(os.environ['LOCALAPPDATA']) / 'ArchHub' / 'sessions-files' / 'locks'
+    from .session_files import profile_directory
+    root = profile_directory() / 'data' / 'sessions' / 'locks'
     root.mkdir(parents=True, exist_ok=True)
     return root / (hashlib.sha1(str(Path(path).resolve()).lower().encode()).hexdigest() + '.lock')
 

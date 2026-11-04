@@ -27,6 +27,13 @@ def _native_boot_document():
 
 def run(state_dir, instance_lock=None, serve_launch_requests=None):
     app_root = Path(__file__).resolve().parents[1]
+    from .quiet_update import stage_app_folder, finish_app_folder
+    from .session_files import migrate_sessions
+    import atexit
+    # A crash before health is acknowledged restores the staged entries on next launch.
+    stage_app_folder(state_dir)
+    atexit.register(finish_app_folder, state_dir, healthy=False)
+    migrate_sessions(state_dir)
     restart = {'requested': False, 'quit': None}
     app = window = view = icon = title_bar = None
     if not os.environ.get('ARCHHUB_TEST_NO_OPEN'):
@@ -103,6 +110,15 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
     def confirm_boot():
         # A build installed by the updater must acknowledge this boot, or the next start restores the old code.
         from .quiet_update import confirm_when_free
+        try:
+            healthy = server.health_check()
+        except Exception as error:
+            healthy = False
+            print('  cleanup    : health check failed (%s)' % error, flush=True)
+        finish_app_folder(state_dir, healthy=healthy)
+        if not healthy:
+            print('  cleanup    : staged entries restored', flush=True)
+            return
         result = confirm_when_free(Path(state_dir), app_root)
         if result.get('confirmed'):
             print('  update     : build %s confirmed after boot' % result.get('build_id'), flush=True)
@@ -125,6 +141,7 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
     companion = {}
     threading.Thread(target=start_baboom, name='archhub-baboom', daemon=True).start()
     if os.environ.get('ARCHHUB_TEST_NO_OPEN'):
+        confirm_boot()
         threading.Event().wait()
         return 0
     from PyQt6.QtCore import QObject, QTimer, QUrl, pyqtSignal
@@ -153,8 +170,8 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
 
     server.native_file_picker = lambda title, name_filter='': on_gui(
         lambda: QFileDialog.getOpenFileName(window, title, '', name_filter or 'All files (*.*)')[0], 600) or ''
-    server.native_save_file_picker = lambda title, name_filter='': on_gui(
-        lambda: QFileDialog.getSaveFileName(window, title, '', name_filter or 'All files (*.*)')[0], 600) or ''
+    server.native_save_file_picker = lambda title, name_filter='', default_path='': on_gui(
+        lambda: QFileDialog.getSaveFileName(window, title, default_path, name_filter or 'All files (*.*)')[0], 600) or ''
     server.native_folder_picker = lambda title: on_gui(lambda: QFileDialog.getExistingDirectory(window, title, ''), 600) or ''
     if instance_lock is not None and serve_launch_requests is not None:
         class Launch(QObject):
@@ -259,8 +276,7 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
     app._update_pulse = update_pulse
     QTimer.singleShot(0, consider_update)
     QTimer.singleShot(0, lambda: print('  window     : Studio opened', flush=True))
-    view.loadFinished.connect(lambda ok: ok and threading.Thread(target=confirm_boot, name='archhub-update-confirm',
-                                                                 daemon=True).start())
+    view.loadFinished.connect(lambda ok: threading.Thread(target=confirm_boot if ok else lambda: finish_app_folder(state_dir, healthy=False), name='archhub-update-confirm', daemon=True).start())
     restart['quit'] = quit_app
     code = app.exec()
     del window_commands
@@ -291,11 +307,8 @@ def _arm_staged_update(update, state_dir, app_root, instance_lock, *, relaunch):
         return
     try:
         if relaunch or update.apply_on_quit():
-            from .application_update_recovery import arm_update
-            from .persistence import application_content_path, application_database_path
-            database = application_database_path(state_dir)
-            arm_update(state_dir, app_root, database, application_content_path(database), expected_build=update.confirmed_build)
-            print('  update     : staged build armed for the next start', flush=True)
+            # Canvas files and settings are not installer payloads; the updater
+            # verifies the installer under its existing exclusive lock.
             if instance_lock is not None:
                 instance_lock.close()
             import subprocess

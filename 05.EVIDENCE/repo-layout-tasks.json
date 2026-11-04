@@ -1,0 +1,12 @@
+{
+  "matches": [
+    {
+      "task": "\\ArchHub Universal Desktop OneShot",
+      "references": [
+        "11.ARCHHUB-APP"
+      ],
+      "state": "Ready"
+    }
+  ],
+  "method": "Get-ScheduledTask; action path tokens only; arguments never recorded"
+}

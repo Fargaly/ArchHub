@@ -1,0 +1,12 @@
+  File "C:\Users\fargaly\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\olefile\olefile2.py", line 277
+    MAXREGSECT = 0xFFFFFFFAL; # maximum SECT
+                          ^
+SyntaxError: invalid hexadecimal literal
+
+packed 211 site entries and the standard library into C:\Users\fargaly\AppData\Local\Temp\lane-repolayout\01.APP\packed
+Exception: C:\Users\fargaly\AppData\Local\Temp\lane-repolayout\03.TOOLS\installer\build_release.ps1:642
+Line |
+ 642 |      throw 'Release refused: -BrokerReviewPath (archhub-broker-review/ …
+     |      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | Release refused: -BrokerReviewPath (archhub-broker-review/v1) is required; without it no host broker activates
+     | on a colleague machine.

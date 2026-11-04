@@ -1,0 +1,112 @@
+{
+  "directories": [
+    {
+      "path": "app",
+      "present": true
+    },
+    {
+      "path": "nodelang",
+      "present": true
+    },
+    {
+      "path": "bridges",
+      "present": true
+    },
+    {
+      "path": "tools",
+      "present": true
+    },
+    {
+      "path": "installer",
+      "present": false
+    },
+    {
+      "path": "packaging",
+      "present": true
+    },
+    {
+      "path": "docs",
+      "present": true
+    },
+    {
+      "path": "packed",
+      "present": true
+    },
+    {
+      "path": "goose",
+      "present": true
+    },
+    {
+      "path": "licenses",
+      "present": true
+    },
+    {
+      "path": "bin",
+      "present": true
+    },
+    {
+      "path": "runtime",
+      "present": true
+    }
+  ],
+  "method": "Read-only presence check of native release directories; no profile or live store opened",
+  "root": "%LOCALAPPDATA%/ArchHub",
+  "source_area_names": [
+    {
+      "path": "01.APP",
+      "present": false
+    },
+    {
+      "path": "02.TESTS",
+      "present": false
+    },
+    {
+      "path": "03.TOOLS",
+      "present": false
+    },
+    {
+      "path": "04.DOCS",
+      "present": false
+    },
+    {
+      "path": "05.EVIDENCE",
+      "present": false
+    },
+    {
+      "path": "06.CLOUD",
+      "present": false
+    },
+    {
+      "path": "11.APP",
+      "present": false
+    },
+    {
+      "path": "12.WEBSITE",
+      "present": false
+    },
+    {
+      "path": "13.CLOUD",
+      "present": false
+    },
+    {
+      "path": "14.DOCS",
+      "present": false
+    },
+    {
+      "path": "15.RELEASES",
+      "present": false
+    },
+    {
+      "path": "16.TESTS",
+      "present": false
+    },
+    {
+      "path": "17.BUILD-TOOLS",
+      "present": false
+    },
+    {
+      "path": "18.EVIDENCE",
+      "present": false
+    }
+  ]
+}

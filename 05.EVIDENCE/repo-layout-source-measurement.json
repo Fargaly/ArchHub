@@ -1,0 +1,10 @@
+{
+  "release_script_sha256": "fad1fa417e1d56b7029c20fdcf5474fd5d79683b50f0a814e779dc41014d5066",
+  "source_revision": "8866b397f29f88cb005852618cc700c0ecd8aa0c",
+  "method": "Exact read-only Read-ReleaseSnapshotManifest from build_release.ps1; excludes generated runtime and compiler outputs",
+  "bytes": 22180710,
+  "manifest_sha256": "79fce07d66ff353dde3d2d550b54c8880a05b4809351938b9b75e3f73a6cde38",
+  "files": 578,
+  "native_rows_sha256": "8d9a57ef13309840c87bcaf6a046414ee96e3770d9842ac647a1d18e05b6465e",
+  "observed_wall_clock_s": 11.4374151
+}

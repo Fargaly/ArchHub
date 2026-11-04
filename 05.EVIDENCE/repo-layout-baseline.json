@@ -1,0 +1,10 @@
+{
+  "success": false,
+  "payload_manifest_sha256": null,
+  "error": "Release refused: -BrokerReviewPath (archhub-broker-review/v1) is required; without it no host broker activates on a colleague machine.",
+  "output": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\repolayout-baseline-20261104-190324",
+  "build_script": "03.TOOLS/installer/build_release.ps1",
+  "installed": false,
+  "base_sha": "8866b397f29f88cb005852618cc700c0ecd8aa0c",
+  "observed_wall_clock_s": 177.6878578
+}

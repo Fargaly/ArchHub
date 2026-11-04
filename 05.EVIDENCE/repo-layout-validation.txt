@@ -1,0 +1,7 @@
+PASS PowerShell parse: repo-layout-baseline.ps1
+PASS PowerShell parse: repo-layout-measure-source.ps1
+PASS JSON records and NOGRAPH registration
+PASS inventory: 1909 text files, zero read errors
+PASS source payload: 578 native paths, 22180710 bytes, every SHA matches source
+PASS raw manifest SHA and sorted native payload SHA
+NOT RUN application tests: Phase 1 evidence only; no product source changed

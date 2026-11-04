@@ -89,3 +89,35 @@ def test_rename_records_the_title_the_founder_typed(tmp_path, monkeypatch):
         renamed = workshop_tasks.rename(history, task, "North hall")
         assert renamed["ok"] is True and renamed["title"] == "North hall" and renamed["description"] == "North hall"
         assert workshop_tasks.get(history, task)["title"] == "North hall"
+
+
+def test_stale_write_conflicts_and_typed_errors_name_the_miss(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(tmp_path))
+    with application_history() as history:
+        created = workshop_tasks.create(history, "Hall", "founder")
+        task, seen = created["id"], created["revision"]
+        assert seen == 0
+        workshop_tasks.rename(history, task, "North hall", revision=seen)
+        try:
+            workshop_tasks.rename(history, task, "South hall", revision=seen)
+        except workshop_tasks.TaskConflict as error:
+            assert error.code == "CONFLICT"
+        else:
+            raise AssertionError("stale write overwrote the task")
+        assert workshop_tasks.get(history, task)["title"] == "North hall"
+        try:
+            workshop_tasks.rename(history, "missing-task", "Nowhere", revision=0)
+        except workshop_tasks.TaskNotFound as error:
+            assert error.code == "NOT_FOUND"
+        else:
+            raise AssertionError("missing task was written")
+        current = workshop_tasks.get(history, task)
+        workshop_tasks.claim(history, task, "agent-a", "Agent A", revision=current["revision"])
+        held = workshop_tasks.get(history, task)
+        try:
+            workshop_tasks.release(history, task, "agent-b", revision=held["revision"])
+        except workshop_tasks.TaskLeaseLost as error:
+            assert error.code == "LEASE_LOST"
+        else:
+            raise AssertionError("a non-holder released the lease")
+        assert workshop_tasks.get(history, task)["owner"] == "agent-a"

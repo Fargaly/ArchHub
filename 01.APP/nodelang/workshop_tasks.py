@@ -3,6 +3,9 @@
 Prior art: Paperclip issues.ts checkout. A claim is one conditional UPDATE; the row
 changes only when it is free, its lease expired, or the claimant already holds it.
 A lease that lapses frees the task for the next agent; nothing runs on a timer.
+
+Adapted from DeepSeek Harness 8bd07339 (MIT, (c) 2026 DeepSeek).
+Every task write names the revision it read. A stale revision conflicts.
 """
 import re
 import time
@@ -14,9 +17,37 @@ SCHEMA = ("CREATE TABLE IF NOT EXISTS workshop_tasks(id TEXT PRIMARY KEY, title 
           "status TEXT NOT NULL CHECK(status IN ('open','claimed','done')), owner TEXT, owner_label TEXT, "
           "lease_until REAL, result TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL, "
           "updated_at TEXT NOT NULL, session_path TEXT, purpose TEXT, project TEXT, "
-          "archived INTEGER NOT NULL DEFAULT 0) STRICT")
+          "archived INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL DEFAULT 0) STRICT")
 TASKS_NODE = {'id': 'workshop.tasks', 'params': {'lease_seconds': 900, 'stale_hours': 24}}
 UI_STATUS = {"open": "PLANNED", "claimed": "WIP", "done": "DONE"}
+
+
+class TaskNotFound(ValueError):
+    """The task id is not in the Workshop table."""
+    code = "NOT_FOUND"
+
+    def __init__(self, task):
+        self.task = task
+        super().__init__("No such Workshop task")
+
+
+class TaskConflict(Exception):
+    """The write named a revision that is no longer the row's revision."""
+    code = "CONFLICT"
+
+    def __init__(self, task, revision):
+        self.task = task
+        self.revision = revision
+        super().__init__("Task write conflict")
+
+
+class TaskLeaseLost(Exception):
+    """The owner no longer holds the lease this write relies on."""
+    code = "LEASE_LOST"
+
+    def __init__(self, task):
+        self.task = task
+        super().__init__("Task lease lost")
 
 
 def _now():
@@ -35,6 +66,8 @@ def _ensure(history):
         history._db.execute("ALTER TABLE workshop_tasks ADD COLUMN purpose TEXT")
     if "project" not in names:
         history._db.execute("ALTER TABLE workshop_tasks ADD COLUMN project TEXT")
+    if "revision" not in names:
+        history._db.execute("ALTER TABLE workshop_tasks ADD COLUMN revision INTEGER NOT NULL DEFAULT 0")
 
 
 def _write(history, sql, values):
@@ -43,20 +76,74 @@ def _write(history, sql, values):
         return history._db.execute(sql, values).rowcount == 1
 
 
+def _locked(history, task):
+    _ensure(history)
+    found = history._db.execute(
+        "SELECT revision, status, owner FROM workshop_tasks WHERE id=?", (task,)).fetchone()
+    if found is None:
+        return None
+    return {"revision": found[0], "status": found[1], "owner": found[2]}
+
+
+def _update(history, task, revision, statement, *, holder=None):
+    """Apply statement(revision) only when that revision is still current.
+
+    statement returns (sql, values). The sql names the revision it read.
+    A missing row is not-found. A moved revision is a conflict. A matching
+    revision whose holder no longer has the lease is lease-lost.
+    """
+    with history._transaction(write=True):
+        row = _locked(history, task)
+        if row is None:
+            if revision is None:
+                return False
+            raise TaskNotFound(task)
+        if revision is not None and int(revision) != row["revision"]:
+            raise TaskConflict(task, revision)
+        if holder is not None and (row["status"] != "claimed" or row["owner"] != holder):
+            if revision is None:
+                return False
+            raise TaskLeaseLost(task)
+        expected = row["revision"] if revision is None else int(revision)
+        sql, values = statement(expected)
+        if history._db.execute(sql, values).rowcount == 1:
+            return True
+        again = _locked(history, task)
+        if again is None:
+            raise TaskNotFound(task)
+        if again["revision"] != expected:
+            if revision is None:
+                return False
+            raise TaskConflict(task, revision)
+        if holder is not None:
+            if revision is None:
+                return False
+            raise TaskLeaseLost(task)
+        if revision is None:
+            return False
+        raise TaskConflict(task, revision)
+
+
 def _text(value, label, maximum):
     if type(value) is not str or not value.strip() or "\0" in value or len(value.encode("utf-8")) > maximum:
         raise ValueError("Invalid task " + label)
     return value.strip()
 
 
-def rename(history, task, title):
+def rename(history, task, title, revision=None):
     """The founder edits the task name. The row keeps the full text; the list shows the short name."""
     row = get(history, task)
     if row is None:
-        raise ValueError("No such Workshop task")
+        raise TaskNotFound(task)
     text = _text(title, "title", 2000)
-    if text != row["title"] and not _write(history, "UPDATE workshop_tasks SET title=?, updated_at=? WHERE id=?", (text, _now(), task)):
-        raise ValueError("The task title was not saved")
+    if revision is not None and int(revision) != row["revision"]:
+        raise TaskConflict(task, revision)
+    if text != row["title"]:
+        def statement(expected):
+            return ("UPDATE workshop_tasks SET title=?, updated_at=?, revision=revision+1 WHERE id=? AND revision=?",
+                    (text, _now(), task, expected))
+        if not _update(history, task, revision, statement):
+            raise TaskConflict(task, revision if revision is not None else row["revision"])
     return {"ok": True, "id": task, "title": short_title(text), "description": text}
 
 
@@ -67,34 +154,47 @@ def create(history, title, creator):
     return get(history, task)
 
 
-def claim(history, task, owner, label, lease_seconds=None):
+def claim(history, task, owner, label, lease_seconds=None, revision=None):
     """True when this owner holds the task after the call; False when another holds it."""
     lease_seconds = TASKS_NODE['params']['lease_seconds'] if lease_seconds is None else lease_seconds
     if type(lease_seconds) is not int or not 30 <= lease_seconds <= 86400:
         raise ValueError("Lease must be 30 to 86400 seconds")
     now = time.time()
-    return _write(history, "UPDATE workshop_tasks SET status='claimed', owner=?, owner_label=?, lease_until=?, "
-                  "updated_at=? WHERE id=? AND status!='done' AND (owner IS NULL OR owner=? OR lease_until<?)",
-                  (owner, label, now + lease_seconds, _now(), task, owner, now))
+
+    def statement(expected):
+        return ("UPDATE workshop_tasks SET status='claimed', owner=?, owner_label=?, lease_until=?, "
+                "updated_at=?, revision=revision+1 WHERE id=? AND revision=? AND status!='done' "
+                "AND (owner IS NULL OR owner=? OR lease_until<?)",
+                (owner, label, now + lease_seconds, _now(), task, expected, owner, now))
+    return _update(history, task, revision, statement)
 
 
-def release(history, task, owner):
-    return _write(history, "UPDATE workshop_tasks SET status='open', owner=NULL, owner_label=NULL, lease_until=NULL, "
-                  "updated_at=? WHERE id=? AND owner=? AND status='claimed'", (_now(), task, owner))
+def release(history, task, owner, revision=None):
+    def statement(expected):
+        return ("UPDATE workshop_tasks SET status='open', owner=NULL, owner_label=NULL, lease_until=NULL, "
+                "updated_at=?, revision=revision+1 WHERE id=? AND revision=? AND owner=? AND status='claimed'",
+                (_now(), task, expected, owner))
+    return _update(history, task, revision, statement, holder=owner)
 
 
-def complete(history, task, owner, result=""):
+def complete(history, task, owner, result="", revision=None):
     # The holder may finish after its lease lapsed, as long as nobody claimed it since.
-    return _write(history, "UPDATE workshop_tasks SET status='done', lease_until=NULL, result=?, updated_at=? "
-                  "WHERE id=? AND owner=? AND status='claimed'", (result, _now(), task, owner))
+    def statement(expected):
+        return ("UPDATE workshop_tasks SET status='done', lease_until=NULL, result=?, updated_at=?, "
+                "revision=revision+1 WHERE id=? AND revision=? AND owner=? AND status='claimed'",
+                (result, _now(), task, expected, owner))
+    return _update(history, task, revision, statement, holder=owner)
 
 
-def archive(history, task):
+def archive(history, task, revision=None):
     """Close a task so it leaves the active list. Its .archhub file stays readable."""
     if get(history, task) is None:
-        raise ValueError("No such Workshop task")
-    return _write(history, "UPDATE workshop_tasks SET status='done', archived=1, lease_until=NULL, updated_at=? WHERE id=?",
-                  (_now(), task))
+        raise TaskNotFound(task)
+    def statement(expected):
+        return ("UPDATE workshop_tasks SET status='done', archived=1, lease_until=NULL, updated_at=?, "
+                "revision=revision+1 WHERE id=? AND revision=?",
+                (_now(), task, expected))
+    return _update(history, task, revision, statement)
 
 
 def _declared_id(owner):
@@ -119,10 +219,11 @@ def declared(history, root, request_id, title, status, owner, label, project="")
                     existing["created_by"], existing["created_at"], _now(), existing.get("purpose"), existing.get("project")))
         if existing["status"] == "done":
             _write(history, "UPDATE workshop_tasks SET status='open', owner=NULL, owner_label=NULL, lease_until=NULL, "
-                   "result=NULL, updated_at=? WHERE id=? AND status='done'", (_now(), task))
+                   "result=NULL, updated_at=?, revision=revision+1 WHERE id=? AND status='done'", (_now(), task))
     _write(history, "INSERT INTO workshop_tasks(id,title,status,created_by,created_at,updated_at,purpose,project) "
            "VALUES(?,?,'open',?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title, "
-           "purpose=excluded.purpose, project=excluded.project, updated_at=excluded.updated_at WHERE status!='done'",
+           "purpose=excluded.purpose, project=excluded.project, updated_at=excluded.updated_at, "
+           "revision=workshop_tasks.revision+1 WHERE status!='done'",
            (task, title, label, _now(), _now(), request_id, project or None))
     return claim(history, task, owner, label)
 
@@ -283,7 +384,7 @@ def column(history, project=None, stale_hours=None):
         if not activity and (declaration or row.get("result") or owner):
             activity = [{"id": row["id"], "status": shown, "output": row.get("result") or ""}]
         built.append({'id': row['id'], 'title': short_title(row['title']), 'description': row['title'],
-             'owner': owner,
+             'owner': owner, 'revision': row.get('revision') or 0,
              'status': shown, 'stale': shown == "stale", 'result': result, 'project': row.get('project') or '',
              'summary': _summary(row['title'], shown, result),
              'messages': [], 'fileMessages': list(session.get("fileMessages") or []), 'agentLog': bound, 'steps': [], 'reviews': [], 'queuedMessages': [],
@@ -301,19 +402,25 @@ def column(history, project=None, stale_hours=None):
     return built
 
 
-def set_status(history, task, status):
+def set_status(history, task, status, revision=None):
     """The founder's board move: PLANNED frees the task, DONE closes it, whoever holds it."""
     if status == "PLANNED":
-        return _write(history, "UPDATE workshop_tasks SET status='open', owner=NULL, owner_label=NULL, "
-                      "lease_until=NULL, updated_at=? WHERE id=?", (_now(), task))
+        def planned(expected):
+            return ("UPDATE workshop_tasks SET status='open', owner=NULL, owner_label=NULL, "
+                    "lease_until=NULL, updated_at=?, revision=revision+1 WHERE id=? AND revision=?",
+                    (_now(), task, expected))
+        return _update(history, task, revision, planned)
     if status == "DONE":
-        return _write(history, "UPDATE workshop_tasks SET status='done', lease_until=NULL, updated_at=? "
-                      "WHERE id=?", (_now(), task))
+        def finished(expected):
+            return ("UPDATE workshop_tasks SET status='done', lease_until=NULL, updated_at=?, "
+                    "revision=revision+1 WHERE id=? AND revision=?",
+                    (_now(), task, expected))
+        return _update(history, task, revision, finished)
     raise ValueError("An agent claims a task; the board sets PLANNED or DONE")
 
 
 COLUMNS = ("id", "title", "status", "owner", "owner_label", "lease_until", "result",
-           "created_by", "created_at", "updated_at", "session_path", "archived", "purpose", "project")
+           "created_by", "created_at", "updated_at", "session_path", "archived", "purpose", "project", "revision")
 
 
 def rows(history, task=None, *, include_archived=True):
@@ -416,6 +523,15 @@ def _show(task, path, document, *, select=True):
     return _view(task, str(path), document)
 
 
+def _bind_session(history, task, revision, target):
+    def statement(expected, target=target):
+        return ("UPDATE workshop_tasks SET session_path=?, updated_at=?, revision=revision+1 "
+                "WHERE id=? AND revision=? AND session_path IS NULL",
+                (target, _now(), task, expected))
+    if not _update(history, task, revision, statement):
+        raise ValueError("Task already has a session file")
+
+
 def open_session(history, task, path=None, *, select=True):
     """Open this task's own .archhub file. A first path binds it; a later open reads that same file."""
     from .session_files import SessionFiles, local_path, new_document, read_document
@@ -433,18 +549,14 @@ def open_session(history, task, path=None, *, select=True):
         document = read_document(target)
         if not bound:
             document = _stamp(target, task, document)
-            if not _write(history, "UPDATE workshop_tasks SET session_path=?, updated_at=? WHERE id=? AND session_path IS NULL",
-                          (target, _now(), task)):
-                raise ValueError("Task already has a session file")
+            _bind_session(history, task, row.get("revision"), target)
         return _show(task, target, document, select=select)
     if bound:
         return _show(task, bound, read_document(bound), select=select)
     document = new_document(row["title"])
     target = str(local_path(str(SessionFiles().directory / (document["id"] + ".archhub"))))
     document = _stamp(target, task, document)
-    if not _write(history, "UPDATE workshop_tasks SET session_path=?, updated_at=? WHERE id=? AND session_path IS NULL",
-                  (target, _now(), task)):
-        raise ValueError("Task already has a session file")
+    _bind_session(history, task, row.get("revision"), target)
     return _show(task, target, document, select=select)
 
 

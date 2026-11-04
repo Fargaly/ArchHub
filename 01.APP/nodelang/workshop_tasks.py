@@ -17,7 +17,8 @@ SCHEMA = ("CREATE TABLE IF NOT EXISTS workshop_tasks(id TEXT PRIMARY KEY, title 
           "status TEXT NOT NULL CHECK(status IN ('open','claimed','done')), owner TEXT, owner_label TEXT, "
           "lease_until REAL, result TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL, "
           "updated_at TEXT NOT NULL, session_path TEXT, purpose TEXT, project TEXT, "
-          "archived INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL DEFAULT 0) STRICT")
+          "archived INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL DEFAULT 0, "
+          "outcome TEXT, write_open INTEGER NOT NULL DEFAULT 0) STRICT")
 TASKS_NODE = {'id': 'workshop.tasks', 'params': {'lease_seconds': 900, 'stale_hours': 24}}
 UI_STATUS = {"open": "PLANNED", "claimed": "WIP", "done": "DONE"}
 
@@ -68,6 +69,10 @@ def _ensure(history):
         history._db.execute("ALTER TABLE workshop_tasks ADD COLUMN project TEXT")
     if "revision" not in names:
         history._db.execute("ALTER TABLE workshop_tasks ADD COLUMN revision INTEGER NOT NULL DEFAULT 0")
+    if "outcome" not in names:
+        history._db.execute("ALTER TABLE workshop_tasks ADD COLUMN outcome TEXT")
+    if "write_open" not in names:
+        history._db.execute("ALTER TABLE workshop_tasks ADD COLUMN write_open INTEGER NOT NULL DEFAULT 0")
 
 
 def _write(history, sql, values):
@@ -124,6 +129,27 @@ def _update(history, task, revision, statement, *, holder=None):
         raise TaskConflict(task, revision)
 
 
+def _settle_lapsed(history):
+    """A claimed row whose lease has passed is closed, then returned to the queue.
+
+    Interrupted when the owner was between writes. Unknown when a write was still open.
+    """
+    now = time.time()
+    _write(history, "UPDATE workshop_tasks SET outcome=CASE WHEN IFNULL(write_open,0)=1 THEN 'unknown' "
+           "ELSE 'interrupted' END, status='open', owner=NULL, owner_label=NULL, lease_until=NULL, "
+           "write_open=0, updated_at=?, revision=revision+1 WHERE status='claimed' AND lease_until IS NOT NULL "
+           "AND lease_until<?", (_now(), now))
+
+
+def mark_writing(history, task, owner, revision=None):
+    """The holder has started a write. A lease that lapses before it finishes is outcome unknown."""
+    def writing(expected):
+        return ("UPDATE workshop_tasks SET write_open=1, updated_at=?, revision=revision+1 "
+                "WHERE id=? AND revision=? AND owner=? AND status='claimed'",
+                (_now(), task, expected, owner))
+    return _update(history, task, revision, writing, holder=owner)
+
+
 def _text(value, label, maximum):
     if type(value) is not str or not value.strip() or "\0" in value or len(value.encode("utf-8")) > maximum:
         raise ValueError("Invalid task " + label)
@@ -160,12 +186,13 @@ def claim(history, task, owner, label, lease_seconds=None, revision=None):
     if type(lease_seconds) is not int or not 30 <= lease_seconds <= 86400:
         raise ValueError("Lease must be 30 to 86400 seconds")
     now = time.time()
+    _settle_lapsed(history)
 
     def statement(expected):
         return ("UPDATE workshop_tasks SET status='claimed', owner=?, owner_label=?, lease_until=?, "
-                "updated_at=?, revision=revision+1 WHERE id=? AND revision=? AND status!='done' "
-                "AND (owner IS NULL OR owner=? OR lease_until<?)",
-                (owner, label, now + lease_seconds, _now(), task, expected, owner, now))
+                "outcome=NULL, write_open=0, updated_at=?, revision=revision+1 WHERE id=? AND revision=? "
+                "AND status!='done' AND (owner IS NULL OR owner=?)",
+                (owner, label, now + lease_seconds, _now(), task, expected, owner))
     return _update(history, task, revision, statement)
 
 
@@ -178,9 +205,11 @@ def release(history, task, owner, revision=None):
 
 
 def complete(history, task, owner, result="", revision=None):
-    # The holder may finish after its lease lapsed, as long as nobody claimed it since.
+    """Finish only while this owner still holds the lease. A lapsed lease is already closed."""
+    _settle_lapsed(history)
+
     def statement(expected):
-        return ("UPDATE workshop_tasks SET status='done', lease_until=NULL, result=?, updated_at=?, "
+        return ("UPDATE workshop_tasks SET status='done', lease_until=NULL, write_open=0, result=?, updated_at=?, "
                 "revision=revision+1 WHERE id=? AND revision=? AND owner=? AND status='claimed'",
                 (result, _now(), task, expected, owner))
     return _update(history, task, revision, statement, holder=owner)
@@ -371,6 +400,7 @@ def column(history, project=None, stale_hours=None):
         paths = [item for item in ((declaration or {}).get("paths") or []) if isinstance(item, str)]
         shown = state(row)
         result = recorded_result(history, row)
+        waiting = row.get("outcome") if shown == "PLANNED" and row.get("outcome") in ("interrupted", "unknown") else ""
         bound = _bound_messages(history, row["id"])
         owner = row["owner_label"] if row["id"] in live or not row["lease_expired"] else None
         agents = [item for item in session.get("agents") or [] if isinstance(item, str) and item]
@@ -385,7 +415,8 @@ def column(history, project=None, stale_hours=None):
             activity = [{"id": row["id"], "status": shown, "output": row.get("result") or ""}]
         built.append({'id': row['id'], 'title': short_title(row['title']), 'description': row['title'],
              'owner': owner, 'revision': row.get('revision') or 0,
-             'status': shown, 'stale': shown == "stale", 'result': result, 'project': row.get('project') or '',
+             'status': shown, 'rowState': waiting, 'outcome': row.get('outcome') or '',
+             'stale': shown == "stale", 'result': result, 'project': row.get('project') or '',
              'summary': _summary(row['title'], shown, result),
              'messages': [], 'fileMessages': list(session.get("fileMessages") or []), 'agentLog': bound, 'steps': [], 'reviews': [], 'queuedMessages': [],
              'declarations': [declaration] if declaration else [],
@@ -420,12 +451,14 @@ def set_status(history, task, status, revision=None):
 
 
 COLUMNS = ("id", "title", "status", "owner", "owner_label", "lease_until", "result",
-           "created_by", "created_at", "updated_at", "session_path", "archived", "purpose", "project", "revision")
+           "created_by", "created_at", "updated_at", "session_path", "archived", "purpose", "project",
+           "revision", "outcome", "write_open")
 
 
 def rows(history, task=None, *, include_archived=True):
     if not history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_tasks'").fetchone():
         return []
+    _settle_lapsed(history)
     _ensure(history)
     now = time.time()
     # A lookup by id still finds an archived task. A list hides it unless asked.

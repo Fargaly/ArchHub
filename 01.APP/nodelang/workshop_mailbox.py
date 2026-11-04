@@ -426,8 +426,23 @@ def _seen(history, body, identity, runtime):
     at = datetime.now(timezone.utc).isoformat()
     with history._transaction(write=True):
         history._db.execute(SCHEMA)
+        declaration = _declaration(history, identity, runtime)
+        declarations = read_declarations(history._db)
         for message_id in ids:
-            history._db.execute("INSERT OR IGNORE INTO workshop_live_deliveries VALUES (?,?,?,?,?,?,?,?,?,?)",
+            message = history.get(ROOM, message_id, principal=DELIVERY_AUTHOR)
+            if not message or not _deliver_to(message, identity, declaration) or not _can_ack(
+                    history, message, identity, declaration, declarations):
+                continue
+            # Resolve only this recipient's provisional aliases; other recipients retain their receipts.
+            for row in history._db.execute("SELECT recipient FROM workshop_live_deliveries "
+                    "WHERE message_id=? AND state='pending' AND recipient!=?",
+                    (message_id, identity["sender_key"])).fetchall():
+                if _deliver_to({**message, "content": "To " + row["recipient"] + ":\nx"}, identity, declaration):
+                    history._db.execute("DELETE FROM workshop_live_deliveries WHERE message_id=? AND recipient=?",
+                        (message_id, row["recipient"]))
+            history._db.execute("INSERT INTO workshop_live_deliveries VALUES (?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(message_id, recipient) DO UPDATE SET state=excluded.state, channel=excluded.channel, "
+                "reason=excluded.reason, at=excluded.at, ms=excluded.ms WHERE workshop_live_deliveries.state!='delivered'",
                 (message_id, identity["sender_key"], identity["sender_label"], runtime, None, body["channel"],
                  "delivered", "handed over in " + body["channel"], at, 0))
     return {"seen": ids}

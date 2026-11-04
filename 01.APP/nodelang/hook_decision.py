@@ -28,6 +28,10 @@ An Approve/Deny is the same call with ``{"approval": kind, "decision": ...}``: d
 checks the word and the run mode, then the kind's owner applies the effect (APPROVALS).
 An "ask" verdict is one pending card in that same path (settings/ask-approvals.json,
 listed with the other approvals). Approve releases the held action once. Deny refuses it.
+
+Adapted from DeepSeek Harness 8bd07339 (MIT, (c) 2026 DeepSeek).
+Approval outcomes are approved, denied, expired or withdrawn. Each approval keeps
+the asked record and the decided record. Run modes stay as they are.
 """
 from __future__ import annotations
 
@@ -1242,6 +1246,8 @@ _REASONS = {"secret-going-public": "a secret would go public",
 
 # Ask cards live beside permissions.json: the same settings store decide() already reads.
 _ASK_FILE = "ask-approvals.json"
+APPROVAL_OUTCOMES = ("approved", "denied", "expired", "withdrawn")
+APPROVAL_NODE = {"id": "workshop.approvals", "params": {"expire_seconds": 86400}}
 _RELEASING = contextvars.ContextVar("archhub_ask_release")
 _RELEASING.set(False)
 _ASK_TITLES = {"send": "Send", "publish": "Post", "delete": "Delete", "write": "Edit",
@@ -1358,12 +1364,109 @@ def _with_ask_file(environment, change):
         lock.unlink(missing_ok=True)
 
 
+def _approval_now():
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _approval_record(row):
+    record = row.get("record") if isinstance(row.get("record"), dict) else {}
+    asked = record.get("asked") if isinstance(record.get("asked"), dict) else {
+        "who": row.get("who") or "This run",
+        "when": _approval_now(),
+        "what": row.get("summary") or row.get("title") or ""}
+    decided = record.get("decided") if isinstance(record.get("decided"), dict) else None
+    return {"asked": {"who": asked.get("who") or "", "when": asked.get("when") or "", "what": asked.get("what") or ""},
+            "decided": decided}
+
+
+def _stamp_decision(row, who, outcome):
+    if outcome not in APPROVAL_OUTCOMES:
+        raise ValueError("Approval outcome must be approved, denied, expired or withdrawn")
+    record = _approval_record(row)
+    record["decided"] = {"who": who, "when": _approval_now(), "outcome": outcome}
+    row["record"] = record
+    row["outcome"] = outcome
+
+
+def approval_record(environment, hold_id):
+    """The durable asked/decided pair for one approval."""
+    environment = os.environ if environment is None else environment
+    path = _ask_path(environment)
+    if not path.is_file():
+        raise KeyError(hold_id)
+    row = _read_holds(path)["holds"].get(hold_id)
+    if row is None:
+        raise KeyError(hold_id)
+    return _approval_record(row)
+
+
 def _ask_card(row: dict) -> dict:
     return {"id": row["id"], "delegation": row["id"], "work": row["id"], "input_digest": row["input_digest"],
             "approvalKind": "ask", "kind": "ask", "title": row.get("title") or "Run", "who": row.get("who") or "This run",
             "text": row.get("text") or "", "textLabel": row.get("textLabel") or "", "summary": row.get("summary") or "",
             "description": row.get("summary") or "", "status": row.get("status") or "pending",
             "error": row.get("error") or "", "rows": [], "rubric": {}, "events": []}
+
+
+def expire_approval(environment, hold_id, who="clock"):
+    """Close a still-open approval because its time ran out. Nothing runs."""
+    return _close_approval(environment, hold_id, "expired", who)
+
+
+def withdraw_approval(environment, hold_id, who):
+    """The asker takes the approval back. Nothing runs."""
+    return _close_approval(environment, hold_id, "withdrawn", who)
+
+
+def settle_approvals(environment, now=None):
+    """Pending approvals older than the expiry parameter become expired."""
+    environment = os.environ if environment is None else environment
+    moment = time.time() if now is None else now
+    limit = APPROVAL_NODE["params"]["expire_seconds"]
+    closed = []
+
+    def change(path):
+        held = _read_holds(path)
+        for row in held["holds"].values():
+            if row.get("status") != "pending":
+                continue
+            opened = row.get("at") or 0
+            if moment - opened < limit:
+                continue
+            _stamp_decision(row, "clock", "expired")
+            row["status"] = "expired"
+            closed.append(row["id"])
+        if closed:
+            _write_holds(path, held)
+        return None
+
+    path = _ask_path(environment)
+    if path.is_file():
+        _with_ask_file(environment, change)
+    return closed
+
+
+def _close_approval(environment, hold_id, outcome, who):
+    environment = os.environ if environment is None else environment
+    if outcome not in ("expired", "withdrawn") or type(hold_id) is not str or type(who) is not str or not who.strip():
+        raise ValueError("Approval outcome must be approved, denied, expired or withdrawn")
+    saved = {}
+
+    def change(path):
+        held = _read_holds(path)
+        row = held["holds"].get(hold_id)
+        if row is None:
+            raise KeyError(hold_id)
+        if row.get("status") != "pending":
+            raise ValueError("This approval is closed.")
+        _stamp_decision(row, who, outcome)
+        row["status"] = outcome
+        _write_holds(path, held)
+        saved["record"] = _approval_record(row)
+        return None
+
+    _with_ask_file(environment, change)
+    return saved["record"]
 
 
 def _remember(event, action, rule, digest, summary, environment) -> str:
@@ -1384,11 +1487,14 @@ def _remember(event, action, rule, digest, summary, environment) -> str:
             while base + ":" + str(number) in held["holds"]:
                 number += 1
             identity = base + ":" + str(number)
+        who = _ask_who(event, data)
         held["holds"][identity] = {
             "id": identity, "input_digest": digest, "status": "pending", "at": time.time(),
-            "title": _ASK_TITLES.get(action, "Run"), "who": _ask_who(event, data),
+            "title": _ASK_TITLES.get(action, "Run"), "who": who,
             "text": text, "textLabel": label, "summary": summary, "permit_open": False,
-            "replay": _ask_replay(event, action)}
+            "replay": _ask_replay(event, action),
+            "record": {"asked": {"who": who, "when": _approval_now(), "what": summary or text or ""},
+                       "decided": None}}
         _write_holds(path, held)
         saved["id"] = identity
         return None
@@ -1473,12 +1579,14 @@ def _release_ask(replay: dict):
     return None
 
 
-def ask_apply(root, digest, decision, environment=None):
+def ask_apply(root, digest, decision, environment=None, decided_by="founder"):
     """Approve releases the held action once. Deny refuses it. A second Approve does not run it again."""
     from .universal_cell import InvalidCell
     environment = os.environ if environment is None else environment
     if decision not in ("approve", "deny") or type(root) is not str or type(digest) is not str:
         raise InvalidCell("Decide Approve or Deny on the exact approval shown.")
+    if type(decided_by) is not str or not decided_by.strip():
+        raise InvalidCell("Name who decided this approval.")
     claimed = {"card": None, "row": None}
 
     def claim(path):
@@ -1492,10 +1600,12 @@ def ask_apply(root, digest, decision, environment=None):
         if row.get("status") != "pending":
             raise InvalidCell("This approval is closed.")
         if decision == "deny":
+            _stamp_decision(row, decided_by, "denied")
             row["status"] = "declined"
             _write_holds(path, held)
             claimed["card"] = _ask_card(row)
             return None
+        _stamp_decision(row, decided_by, "approved")
         row["status"] = "releasing"
         _write_holds(path, held)
         claimed["row"] = json.loads(json.dumps(row, default=str))

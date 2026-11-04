@@ -310,6 +310,8 @@ function Read-CandidateManifest([string]$Path) {
     }
     $required = @(
         'selected/nodelang/launcher.py', 'selected/colleague_setup.py', 'selected/requirements.txt', 'selected/docs/SPEC.md',
+        'selected/nodelang/agent_onboard.py', 'selected/nodelang/hook_decision.py',
+        'selected/nodelang/native_stop_hook.py', 'selected/nodelang/workshop_config.py',
         'selected/installer/ArchHub.iss', 'selected/installer/ArchHub.bat', 'selected/installer/ArchHub.vbs',
         'selected/installer/legacy_sweep.iss', 'selected/installer/legacy_doc_files.iss', 'selected/installer/legacy_v1_files.iss', 'selected/installer/host_file_staging.iss',
         'selected/installer/build_release.ps1', 'selected/packaging/windows/Test-SourcePortability.ps1',

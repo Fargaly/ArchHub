@@ -751,6 +751,8 @@ def connect_hooks_on_setup(*, consent, environment=None) -> list:
                     continue
                 done = _repair_hooks(client, consent=True, plan_digest=plan["plan_digest"],
                                      environment=env, include_gate=False, migrate=False)
+                from .agent_onboard import install_rules
+                install_rules(client, install_roots(env)[0], env)
                 results.append({"client": client, "state": "configured", "changed": done["changed"]})
             except (WorkshopConfigRefused, RegistrationRefused, OSError, ValueError):
                 results.append({"client": client, "state": "not_connected"})

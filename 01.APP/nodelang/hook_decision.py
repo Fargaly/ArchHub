@@ -139,6 +139,18 @@ _DEPENDENCY_FILE = re.compile(r"(requirements[^/\\]*\.(txt|in)|pyproject\.toml|s
                               r"[^/\\]*\.lock|pylock[^/\\]*\.toml|environment\.ya?ml)$", re.I)
 BANNED_REASON = ("LiteLLM is banned (PyPI litellm 1.82.7 and 1.82.8, March 2026, carried a credential stealer); "
                  "route models through nodelang/model_router.py instead")
+# House mail (founder, 2026-10-14): agents do not drive Outlook COM. The Email draft
+# node fills the Dear, / Thank you and best regards, skeleton. Sending stays his ask.
+RAW_OUTLOOK_REASON = (
+    "Use the Email draft node (it fills his signature template); sending only when he asks.")
+_HTMLBODY_SET = re.compile(r"(?i)(?:\.|\b)HTMLBody\s*=")
+_MAIL_BODY_SET = re.compile(r"(?i)\.Body\s*=")
+_MAIL_SEND = re.compile(r"(?i)\.Send\b")
+_OUTLOOK_COM = re.compile(
+    r"(?i)(win32com|outlook\s*\.\s*application|comobject\s+outlook|mailitem|createitem\s*\()")
+_DRAFT_NODE_CALL = re.compile(
+    r"(?i)\b(library\.draft_email|outlook\.reply_draft|outlook\.forward_draft)\b")
+_DRAFT_NODES = ("library.draft_email", "outlook.reply_draft", "outlook.forward_draft")
 _PII_PUBLIC = {"EMAIL_ADDRESS", "PHONE_NUMBER", "CREDIT_CARD", "IBAN_CODE", "US_SSN", "US_PASSPORT", "UK_NHS"}
 
 
@@ -255,6 +267,29 @@ def _leaves_his_account(action: str, tool: str, data) -> bool:
     return action in ("publish", "send") and not _own_workspace(tool, data)
 
 
+def _draft_node_tool(tool: str) -> bool:
+    name = tool.casefold()
+    return any(node in name for node in _DRAFT_NODES)
+
+
+def _outlook_mail_mutation(command: str) -> bool:
+    """A shell/COM/script write of a MailItem body, or a send through Outlook."""
+    if _HTMLBODY_SET.search(command):
+        return True
+    if not _OUTLOOK_COM.search(command):
+        return False
+    return bool(_MAIL_BODY_SET.search(command) or _MAIL_SEND.search(command))
+
+
+def _raw_outlook_mail(tool: str, command: str) -> bool:
+    """True when this call writes Outlook mail outside the Email draft node."""
+    if _draft_node_tool(tool) or not command:
+        return False
+    if _DRAFT_NODE_CALL.search(command) and not _outlook_mail_mutation(command):
+        return False
+    return _outlook_mail_mutation(command)
+
+
 def classify(event: dict, environment) -> tuple[str, dict]:
     tool, data = event["tool"], event["input"]
     text = "\n".join(_strings(data))
@@ -269,7 +304,8 @@ def classify(event: dict, environment) -> tuple[str, dict]:
     facts = {"banned_package": banned, "text": text, "command": command,
              "untrusted": _untrusted_content(tool),
              "private": bool(_PRIVATE_PATH.search(text)),
-             "others": bool(_OTHERS_PATH.search(text))}
+             "others": bool(_OTHERS_PATH.search(text)),
+             "raw_outlook": _raw_outlook_mail(tool, command)}
     if _SCREEN_TOOL.search(tool):
         return "screen", facts
     if _SHELL.match(tool):
@@ -1104,6 +1140,10 @@ def decide(payload: dict, vendor: str = "", *, environment=None):
         notes.append("Secret scan unavailable (Betterleaks not found); nothing was refused for it.")
     elif secret_version and scanners["secrets"] == "ok":
         notes.append("Secret scan: Betterleaks %s." % secret_version)
+    if facts["raw_outlook"]:
+        if "raw-outlook-mail" not in rules:
+            rules = [*rules, "raw-outlook-mail"]
+        notes.append(RAW_OUTLOOK_REASON)
     permissions = read_permissions(environment)
     mode = None if rules else mode_verdict(event, action, permissions, environment)  # a forbid wins
     hold_id = ""
@@ -1193,6 +1233,7 @@ _REASONS = {"secret-going-public": "a secret would go public",
             "use-founder-screen": "this drives the founder's screen",
             "lethal-trifecta": "private data plus untrusted content would be sent out",
             "banned-package": BANNED_REASON,
+            "raw-outlook-mail": RAW_OUTLOOK_REASON,
             "tool-off": "this tool is Off in Settings",
             "plan-only": "Plan only is on in Settings, so nothing changes",
             "tool-ask": "this tool is set to Ask in Settings",

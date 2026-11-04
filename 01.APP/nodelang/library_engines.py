@@ -27,6 +27,7 @@ from __future__ import annotations
 from typing import Mapping
 import json
 import math
+import re
 
 from .stem_graph_evaluation import (
     as_list,
@@ -939,8 +940,92 @@ def _draft_url_labels(content):
     return content
 
 
+# House format, binding since 2026-10-14: the letter sits inside his signature
+# skeleton. One greeting, one close, one font. A broken draft is not saved.
+_HOUSE_STYLE = 'font-family:Calibri;font-size:11pt;color:#1F497D'
+_HOUSE_CLOSE = 'Thank you and best regards'
+_HOUSE_GREETING = 'Dear,'
+
+
+def _house_style(tag: str) -> bool:
+    return re.search(
+        r'(?i)font-family\s*:\s*[\'"]?Calibri[\'"]?\s*;\s*font-size\s*:\s*11pt\s*;\s*color\s*:\s*#1F497D\b',
+        tag,
+    ) is not None
+
+
+def _greeting_index(html: str) -> int:
+    for match in re.finditer(re.escape(_HOUSE_GREETING), html):
+        comment = html.rfind('<!--', 0, match.start())
+        if comment != -1 and html.rfind('-->', 0, match.start()) < comment:
+            continue
+        return match.start()
+    return -1
+
+
+def _visible_mail_text(html: str) -> str:
+    html = re.sub(r'(?is)<(script|style|head)\b[^>]*>.*?</\1>', ' ', html)
+    html = re.sub(r'(?is)<!--.*?-->', ' ', html)
+    html = re.sub(r'(?is)<[^>]+>', ' ', html)
+    html = html.replace('\xa0', ' ')
+    html = re.sub(r'(?i)&nbsp;|&#160;|&#xa0;', ' ', html)
+    return html
+
+
+def _house_line(text: str, *, body: bool = False) -> str:
+    marker = ' data-archhub-body="1"' if body else ''
+    return '<div%s style="%s">%s</div>' % (marker, _HOUSE_STYLE, text)
+
+
+def _insert_after_greeting(signature: str, styled: str) -> str:
+    at = _greeting_index(signature)
+    if at < 0:
+        return styled + signature
+    after = at + len(_HOUSE_GREETING)
+    tag = re.match(r'(?is)\s*(?:</[^>]+>\s*)+', signature[after:])
+    if tag:
+        after += tag.end()
+    return signature[:after] + styled + signature[after:]
+
+
+def _compose_house(signature: str, content: str) -> str:
+    """Put the letter inside Dear, / Thank you and best regards, never above it."""
+    styled = _house_line(content, body=True)
+    if signature and _HOUSE_GREETING in signature and _HOUSE_CLOSE in signature:
+        if '{{body}}' in signature:
+            return signature.replace('{{body}}', styled)
+        return _insert_after_greeting(signature, styled)
+    tail = ''
+    if signature:
+        tail = re.sub(r'(?i)</?(?:html|body)\b[^>]*>', '', signature.replace('{{body}}', ''))
+    return '<html><body>' + _house_line(_HOUSE_GREETING) + styled + _house_line(
+        _HOUSE_CLOSE + ',') + tail + '</body></html>'
+
+
+def _house_draft_error(composed: str) -> str:
+    """Named refusal. Empty means the skeleton is intact and may be saved."""
+    closes = composed.count(_HOUSE_CLOSE)
+    if closes != 1:
+        return 'double-close' if closes > 1 else 'missing-close'
+    at = _greeting_index(composed)
+    if at < 0:
+        return 'missing-greeting'
+    if _visible_mail_text(composed[:at]).strip():
+        return 'text-above-greeting'
+    close_at = composed.find(_HOUSE_CLOSE)
+    middle = composed[at + len(_HOUSE_GREETING):close_at]
+    match = re.search(r'<div\b[^>]*data-archhub-body="1"[^>]*>', middle, re.I)
+    if match is None or not _house_style(match.group(0)):
+        return 'body-outside-skeleton'
+    return ''
+
+
 def draft_email(params: Mapping[str, object], feeds: Mapping[str, object]):
-    """Save a house-format draft; sending is deliberately not an operation."""
+    """Save a house-format draft; sending is deliberately not an operation.
+
+    The body sits inside Dear, / Thank you and best regards, in Calibri 11 #1F497D.
+    A second close, or any text above the greeting, is a named error and is not saved.
+    """
     import html
     import os
     import re
@@ -1012,15 +1097,12 @@ def draft_email(params: Mapping[str, object], feeds: Mapping[str, object]):
                 subject = subject.upper()
         mail.Subject = subject
         mail.BodyFormat = 2
-        if signature:
-            composed = signature.replace('{{body}}', content) if '{{body}}' in signature else re.sub(
-                r'(<body\b[^>]*>)', lambda m: m[1] + content, signature, count=1, flags=re.I)
-            if composed == signature:
-                composed = content + signature
-        else:
-            composed = '<html><body>' + content + '</body></html>'
+        composed = _compose_house(signature, content)
         if not re.search(r'<body\b', composed, flags=re.I):
             composed = '<html><body>' + composed + '</body></html>'
+        problem = _house_draft_error(composed)
+        if problem:
+            return {"out": [], "ok": False, "error": problem}, problem
         if quoted:
             quoted = re.sub(r'</?(?:html|body)\b[^>]*>', '', quoted, flags=re.I)
             composed = re.sub(r'</body>', lambda _: '<br>' + quoted + '</body>', composed, count=1, flags=re.I)

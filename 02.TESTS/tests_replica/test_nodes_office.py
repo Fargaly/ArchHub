@@ -623,6 +623,63 @@ def test_workbook_formula_like_header_is_literal_text(tmp_path, file_authority):
         book.close()
 
 
+def test_double_close_is_a_named_error_and_nothing_is_saved(outlook):
+    mail, created = outlook
+    broken = run('library.draft_email', {'body': 'The sheet is ready.\nThank you and best regards,'})
+    assert broken['ok'] is False and broken['error'] == 'double-close'
+    assert created[-1].saved is False
+    assert 'Thank you and best regards' not in created[-1].HTMLBody
+    reply = run('outlook.reply_draft', {'message_id': mail.EntryID,
+                 'body': 'The sheet is ready.\nThank you and best regards,'})
+    assert reply['ok'] is False and reply['error'] == 'double-close'
+    assert mail.reply.saved is False
+
+
+def test_house_skeleton_is_saved(outlook, tmp_path):
+    mail, created = outlook
+    signature = tmp_path / 'HOUSE.htm'
+    signature.write_text(
+        '<html><body>'
+        '<div style="font-family:Calibri;font-size:11pt;color:#1F497D">Dear,</div>'
+        '{{body}}'
+        '<div style="font-family:Calibri;font-size:11pt;color:#1F497D">Thank you and best regards,</div>'
+        '<b>HOUSE SIGNATURE</b></body></html>')
+    answer = run('library.draft_email', {
+        'to': 'team@example.invalid', 'subject': 'sheet', 'body': 'The sheet is ready.',
+        'signature': 'HOUSE', 'signature_dir': str(tmp_path)})
+    draft = created[-1]
+    assert answer['out']['draft_only'] is True and draft.saved
+    body = draft.HTMLBody
+    assert body.count('Thank you and best regards') == 1
+    assert 'Dear,' in body and body.find('Dear,') < body.find('The sheet is ready.') < body.find('Thank you and best regards')
+    assert 'font-family:Calibri' in body and 'font-size:11pt' in body and '#1F497D' in body
+    assert '<b>HOUSE SIGNATURE</b>' in body
+    assert _visible_before_greeting(body) == ''
+    reply = run('outlook.reply_draft', {'message_id': mail.EntryID, 'body': 'The sheet is ready.',
+                 'signature': 'HOUSE', 'signature_dir': str(tmp_path)})
+    assert reply['out']['draft_only'] is True and mail.reply.saved
+    assert mail.reply.HTMLBody.count('Thank you and best regards') == 1
+    assert 'QUOTED' in mail.reply.HTMLBody
+
+
+def _visible_before_greeting(html):
+    import re
+    at = html.find('Dear,')
+    prefix = re.sub(r'(?is)<[^>]+>', ' ', html[:at])
+    return prefix.strip()
+
+
+def test_text_above_the_greeting_is_not_saved(outlook, tmp_path):
+    _mail, created = outlook
+    signature = tmp_path / 'HOUSE.htm'
+    signature.write_text(
+        '<html><body><p>Dear Ms. Rana</p><p>Best regards</p>'
+        '<p>Dear,</p><p>Thank you and best regards,</p></body></html>')
+    answer = run('library.draft_email', {'body': 'Inside.', 'signature': 'HOUSE', 'signature_dir': str(tmp_path)})
+    assert answer['ok'] is False and answer['error'] == 'text-above-greeting'
+    assert created[-1].saved is False
+
+
 @pytest.mark.parametrize('engine', ['library.draft_email', 'outlook.reply_draft', 'outlook.forward_draft'])
 @pytest.mark.parametrize('name', ['Send', 'SEND', 'sEnD'])
 @pytest.mark.parametrize('source', ['params', 'feeds'])

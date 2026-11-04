@@ -373,6 +373,37 @@ def test_litellm_named_in_a_note_is_not_refused(env):
     assert call(env, "Bash", {"command": "pip install httpx"})["verdict"] == "allow"
 
 
+_DRAFT_NODE = "Use the Email draft node (it fills his signature template); sending only when he asks."
+
+
+@pytest.mark.parametrize("tool,data,refused", [
+    ("Bash", {"command": "python -c \"import win32com.client; mail = win32com.client.Dispatch('Outlook.Application').CreateItem(0); mail.HTMLBody = '<p>Dear Ms. Rana</p>'\""}, True),
+    ("PowerShell", {"command": "python -c \"import win32com.client; MailItem.HTMLBody = '<p>Dear Ms. Rana</p>'; MailItem.Body = 'Dear Ms. Rana'\""}, True),
+    ("Bash", {"command": "python -c \"import win32com.client; mail = win32com.client.Dispatch('Outlook.Application').CreateItem(0); mail.Send()\""}, True),
+    ("PowerShell", {"command": "$ol = New-Object -ComObject Outlook.Application; $mail = $ol.CreateItem(0); $mail.Send()"}, True),
+    ("library.draft_email", {"body": "The revised sheet is attached."}, False),
+    ("outlook.reply_draft", {"message_id": "message-1", "body": "The revised sheet is attached."}, False),
+    ("Bash", {"command": "python -c \"from nodelang.library_engines import draft_email\""}, False),
+])
+def test_raw_outlook_mail_is_refused_and_the_draft_node_is_allowed(env, tool, data, refused):
+    decision = call(env, tool, data)
+    if refused:
+        assert decision["verdict"] == "refuse", decision
+        assert decision["rules"] == ["raw-outlook-mail"]
+        assert _DRAFT_NODE in decision["notes"]
+        reason = hd.render(decision, "claude-code")["hookSpecificOutput"]["permissionDecisionReason"]
+        assert _DRAFT_NODE in reason
+    else:
+        assert "raw-outlook-mail" not in decision["rules"]
+        # A missing secret scanner notes every send, including a reply draft, and
+        # does not refuse it. With the scanner present the draft node is allow.
+        scanner = "Secret scan unavailable (Betterleaks not found); nothing was refused for it."
+        if decision["verdict"] == "organize":
+            assert decision["notes"] == [scanner]
+        else:
+            assert decision["verdict"] == "allow", decision
+
+
 # ---- Settings parameters: run modes and per-tool modes (WSDECIDE) --------------------------
 
 def modes(env, run_mode="Accept edits", tools=None):

@@ -143,3 +143,27 @@ def test_lapsed_lease_is_interrupted_and_requeued(tmp_path, monkeypatch):
     from nodelang import nograph_server
     shown = {row["id"]: row for row in nograph_server._list_tasks()}
     assert shown[noisy]["status"] == "PLANNED" and shown[noisy]["rowState"] == "unknown"
+
+
+def test_third_run_waits_when_capacity_is_reached(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(tmp_path))
+    with application_history() as history:
+        ids = [workshop_tasks.create(history, "Run %d" % n, "founder")["id"] for n in range(3)]
+        assert workshop_tasks.TASKS_NODE["params"]["max_runs"] == 2
+        assert workshop_tasks.begin_run(history, ids[0], "agent-a", "Agent A", lease_seconds=30)
+        assert workshop_tasks.begin_run(history, ids[1], "agent-b", "Agent B", lease_seconds=30)
+        try:
+            workshop_tasks.begin_run(history, ids[2], "agent-c", "Agent C", lease_seconds=30)
+        except workshop_tasks.TaskLimitReached as error:
+            assert error.code == "LIMIT_REACHED"
+        else:
+            raise AssertionError("a third run started")
+        waiting = workshop_tasks.get(history, ids[2])
+        assert waiting["status"] == "open" and waiting["capacity"] == "LIMIT_REACHED"
+        assert workshop_tasks.complete(history, ids[0], "agent-a", "done")
+        assert workshop_tasks.begin_run(history, ids[2], "agent-c", "Agent C", lease_seconds=30)
+        admitted = workshop_tasks.get(history, ids[2])
+        assert admitted["status"] == "claimed" and admitted["owner"] == "agent-c" and admitted["capacity"] is None
+    from nodelang import nograph_server
+    shown = {row["id"]: row for row in nograph_server._list_tasks()}
+    assert shown[ids[2]]["status"] == "WIP"

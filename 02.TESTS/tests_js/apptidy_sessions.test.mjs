@@ -23,7 +23,21 @@ try {
   await shelf.getByRole('button', {name: 'Facade study', exact: true}).click();
   await page.waitForFunction(expected => window.ArchHubAPI.getSessionPath() === expected, input.path);
   assert.equal(await page.evaluate(() => window.ArchHubAPI.getSessionDocument().title), 'Facade study');
-  console.log('APPTIDY rendered Library open and .archhub export PASS');
+  const started = await page.evaluate(() => window.ArchHubAPI.startTemplate('skill:' + window.ArchHubAPI.getSessionDocument().id));
+  assert.equal(started.ok, true);
+  assert.equal(await page.evaluate(() => window.ArchHubAPI.getSessionPath()), input.path);
+  const saved = await page.evaluate(async () => {
+    const saving = window.ArchHubAPI.saveSessionAs();
+    await new Promise(resolve => setTimeout(resolve, 200));
+    window.ArchHubAPI.setSessionViewport({x: 5, y: 7, zoom: 1});
+    const result = await saving;
+    await window.ArchHubAPI.saveSession();
+    return result;
+  });
+  assert.equal(saved.path, input.saveAs);
+  assert.equal(await page.evaluate(() => window.ArchHubAPI.getSessionDocument().title), 'Shared study');
+  assert.equal(await page.evaluate(() => window.ArchHubAPI.getGraph().name), 'Shared study');
+  console.log('APPTIDY rendered Library open, Run, Save As and .archhub export PASS');
 } finally {
   await browser.close();
 }

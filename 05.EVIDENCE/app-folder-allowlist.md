@@ -111,21 +111,28 @@ Source search: `candidate-`, `live-*.log`, `bak_` in shipped Python/PowerShell/V
 
 Tests run only against disposable profiles. Actual health uses the HTTP `/api/alive` response, live server thread, parseable settings, selected sessions folder and Workshop SQLite `PRAGMA quick_check`. The cleanup court covers success, failure, interrupted boot, a real Windows sharing violation, junction refusal, new user data appearing after staging, byte-identical migration, in-place migration, folder changes, readable title renames and a forced cross-volume branch with write exclusion.
 
-The product installer has not been built or installed by this lane. Installed root state, release packaging, external host applications and the founder desktop remain unmodified. Protected user data and credentials are explicit exceptions to removal; protection is not represented as an active-code usage claim.
+The product installer has not been built or installed by this lane. The installed payload and user documents were not moved or deleted by the builder; release packaging, external host applications and the founder desktop were not exercised. Protected user data and credentials are explicit exceptions to removal; protection is not represented as an active-code usage claim.
 
-Final scoped run (existing product Python dependencies, bytecode writes disabled; Qt offscreen and an isolated cached headless browser):
+Scoped run before the final Save As concurrency fix (existing product Python dependencies, bytecode writes disabled; Qt offscreen and an isolated cached headless browser):
 
 ```text
 42 passed, 2 warnings in 72.58s (0:01:12)
 PROFILE-WRITE-GUARD: protected write attempts=0
 ```
 
+Final delayed-picker browser regression after the save-queue fix:
+
+```text
+1 passed in 80.63s (0:01:20)
+PROFILE-WRITE-GUARD: protected write attempts=0
+```
+
 Studio compile:
 
 ```json
-{"ok":true,"action":"compile","files":40,"output_bytes":1796116,"manifest_sha256":"ae25789242ce2faed50285d87d02244dbcffcb44e12d1e69fcdd2f310bb296bd","babel_version":"7.29.0"}
+{"ok":true,"action":"compile","files":40,"output_bytes":1798153,"manifest_sha256":"c148b7237810364c55b2bfd4eda44f15a4bdecc7f2f8b621f35464933d4d2775","babel_version":"7.29.0"}
 ```
 
-The rendered test serves the actual compiled Studio from NoGraphServer against disposable .archhub files. It opens Library -> Sessions -> the saved document on Canvas and verifies .archhub export content. Folder rollback tests include a pointer-write fault and an interrupted move recovered by the next reader. Provider trace assertions compare emitted steps to the independent fake HTTP requests, so a cold dependency import consuming the existing routing budget does not require an unattempted model to appear in the log.
+The rendered test serves the actual compiled Studio from NoGraphServer against disposable .archhub files. It opens Library -> Sessions -> the saved document on Canvas, runs that saved session, verifies .archhub export content, and checks Save As title/file persistence with an edit arriving during a delayed native picker. Explicit saves share the autosave queue; queued snapshots are captured when executed so they use the current path, title and revision. Folder rollback tests include a pointer-write fault and an interrupted move recovered by the next reader. Provider trace assertions compare emitted steps to the independent fake HTTP requests, so a cold dependency import consuming the existing routing budget does not require an unattempted model to appear in the log.
 
 The exploratory legacy updater run reported `7 failed, 45 passed`; four filename/server/path cases were adapted to current owners. Three assertions against removed private launcher functions remain outside the final scoped run (`test_the_app_has_one_close_owner_and_optional_tray`, `test_the_launcher_keeps_the_one_brain_owner_and_no_retired_daemon`, `test_build22_slow_graph_never_rolls_back_a_booted_studio`). This lane does not claim a full-suite or installer/installed-app PASS. The provider SDK emitted two deprecation warnings in the final run.

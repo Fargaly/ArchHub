@@ -1506,9 +1506,10 @@ async function runSolve(){
  return solved;
 }
 function saveNow(){
- const sent=portableDocument(),path=sessionPath,base=sessionRevision,text=JSON.stringify(sent);
+ const id=sessionDocument?.id;
  fileWrites=fileWrites.catch(()=>{}).then(async()=>{
-  const currentPath=sessionDocument?.id===sent.id?sessionPath:path;
+  if(sessionDocument?.id!==id)return {cancelled:true};
+  const sent=portableDocument(),currentPath=sessionPath,base=sessionRevision,text=JSON.stringify(sent);
   const saved=await sessionRequest('autosave',{document:sent,path:currentPath,base_revision:base});
   if(sessionDocument?.id===sent.id&&sessionPath===currentPath){sessionPath=saved.path;publish({sessionFile:sessionPath});}
   // Adopt the merged file only if nothing changed here meanwhile; otherwise the next save merges from the same base.
@@ -1556,11 +1557,16 @@ api.openSession=async path=>{
  const navigation=++fileNavigation,opened=await sessionRequest('open',{...(path?{path}:{})});if(opened.cancelled||navigation!==fileNavigation)return {cancelled:true};return adoptFile(opened.document,opened.path,navigation);};
 // Built-in starters (Book ch.12): open one as a new session file; Start also runs it to its Approve gate.
 api.openStarter=async id=>{const navigation=++fileNavigation,opened=await sessionRequest('starter',{id});return adoptFile(opened.document,opened.path,navigation);};
-api.startTemplate=async id=>{await api.openStarter(id);await api.runNode();return {ok:true};};
+api.startTemplate=async id=>{const opened=await api.openTemplateGraph(id);if(opened?.cancelled)return opened;await api.runNode();return {ok:true};};
 api.importSession=async file=>{const navigation=++fileNavigation;if(!file.name.toLowerCase().endsWith('.archhub')||file.size>8388608)throw Error('Choose an .archhub file up to 8 MiB.');return adoptFile(JSON.parse(await file.text()),'',navigation);};
 api.saveSession=async(path=sessionPath,saveAs=false)=>{
- const document=portableDocument(),navigation=fileNavigation,saved=await sessionRequest('save',{path,document,save_as:saveAs});
- if(saved.cancelled)return saved;if(navigation===fileNavigation&&sessionDocument.id===document.id){sessionPath=saved.path;if(saveAs&&sessionDocument.title===document.title)sessionDocument.title=saved.document.title;publish({sessionFile:sessionPath,sessionDirty:JSON.stringify(portableDocument())!==JSON.stringify(document)});queueAutosave();}await refreshGraphs();return saved;
+ const navigation=fileNavigation,previousPath=sessionPath;await flushAutosave();
+ if(navigation!==fileNavigation)return {cancelled:true};if(!saveAs&&path===previousPath)path=sessionPath;
+ fileWrites=fileWrites.catch(()=>{}).then(async()=>{
+ if(navigation!==fileNavigation)return {cancelled:true};
+ const document=portableDocument(),saved=await sessionRequest('save',{path,document,save_as:saveAs});
+ if(saved.cancelled)return saved;if(navigation===fileNavigation&&sessionDocument.id===document.id){sessionPath=saved.path;if(saveAs&&sessionDocument.title===document.title){sessionDocument.title=saved.document.title;projectFile();}publish({sessionFile:sessionPath,sessionDirty:JSON.stringify(portableDocument())!==JSON.stringify(document)});queueAutosave();}return saved;
+ });const saved=await fileWrites;await refreshGraphs();return saved;
 };
 api.saveSessionAs=()=>api.saveSession('',true);
 api.getSessionDocument=()=>copy(portableDocument());

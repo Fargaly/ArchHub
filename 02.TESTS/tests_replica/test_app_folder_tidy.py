@@ -301,6 +301,12 @@ def test_rendered_library_opens_the_real_session_and_exports_archhub(profile):
     owner = session_files.SessionFiles()
     saved = owner.dispatch({'action': 'save', 'document': session_files.new_document('Facade study')})
     server = NoGraphServer(profile)
+    save_as = profile.parent / "Shared study.archhub"
+    def delayed_save_picker(title, name_filter="", default_path=""):
+        import time
+        time.sleep(1)  # An edit can arrive while the native Save As dialog is open.
+        return str(save_as)
+    server.native_save_file_picker = delayed_save_picker
     server._hosts.get = lambda: []
     server._local.get = lambda: []
     server.thread = threading.Thread(target=server.httpd.serve_forever, daemon=True)
@@ -308,10 +314,11 @@ def test_rendered_library_opens_the_real_session_and_exports_archhub(profile):
     try:
         result = subprocess.run(['node', '02.TESTS/tests_js/apptidy_sessions.test.mjs'],
                                 input=json.dumps({'url': server.public_url + '/studio/?bootstrap=' + server.browser_bootstrap_token,
-                                                  'path': saved['path']}),
+                                                  'path': saved['path'], 'saveAs': str(save_as)}),
                                 text=True, encoding='utf-8', capture_output=True, timeout=90)
         assert result.returncode == 0, result.stdout + result.stderr
-        assert 'APPTIDY rendered Library open and .archhub export PASS' in result.stdout
+        assert 'APPTIDY rendered Library open, Run, Save As and .archhub export PASS' in result.stdout
+        assert json.loads(save_as.read_text(encoding='utf-8'))['title'] == 'Shared study'
     finally:
         server.httpd.shutdown()
         server.httpd.server_close()

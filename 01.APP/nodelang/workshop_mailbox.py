@@ -1241,11 +1241,11 @@ def _deliver_now(database, result, body, identity):
         if not recipients and not founder:
             from .workshop_live import SCHEMA
             selected._db.execute(SCHEMA)
-            reason = "No live agent matches this name; returned to the sender"
+            reason = "queued until " + body["to"] + " next starts"
             selected._db.execute("INSERT OR IGNORE INTO workshop_live_deliveries VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (result["message_id"], body["to"], body["to"], "", "", "none", "returned", reason,
+                (result["message_id"], body["to"], body["to"], "", "", "workshop", "pending", reason,
                  datetime.now(timezone.utc).isoformat(), 0))
-            rows = [{"agent": body["to"], "state": "returned", "reason": reason}]
+            rows = [{"agent": body["to"], "state": "pending", "reason": reason, "delivery_note": "queued"}]
     return rows
 
 

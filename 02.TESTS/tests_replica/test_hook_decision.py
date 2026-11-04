@@ -517,6 +517,37 @@ def test_approvals_refuse_unknown_words_and_kinds_and_plan_only_blocks_approve(e
     assert owner.calls == [("p", "d", "deny")]
 
 
+def test_approval_record_round_trips(env):
+    event = {"vendor": "codex", "session": "lane", "tool": "shell", "input": {"command": "echo hi"}}
+    digest = hd._call_digest(event, "shell", "tool-ask")
+    hold = hd._remember(event, "shell", "tool-ask", digest, "Run echo", env)
+    asked = hd.approval_record(env, hold)
+    assert asked["asked"]["who"] == "Codex"
+    assert asked["asked"]["when"]
+    assert asked["asked"]["what"] == "Run echo"
+    assert asked["decided"] is None
+    hd.ask_apply(hold, digest, "deny", environment=env, decided_by="founder")
+    denied = hd.approval_record(env, hold)
+    assert denied["asked"] == asked["asked"]
+    assert denied["decided"]["who"] == "founder" and denied["decided"]["outcome"] == "denied"
+    assert denied["decided"]["when"]
+    second = hd._call_digest({**event, "input": {"command": "echo later"}}, "shell", "tool-ask")
+    later = hd._remember(event, "shell", "tool-ask", second, "Run later", env)
+    withdrawn = hd.withdraw_approval(env, later, "Codex")
+    assert withdrawn["decided"]["outcome"] == "withdrawn" and withdrawn["decided"]["who"] == "Codex"
+    assert hd.approval_record(env, later)["decided"]["outcome"] == "withdrawn"
+    third = hd._call_digest({**event, "input": {"command": "echo old"}}, "shell", "tool-ask")
+    old = hd._remember(event, "shell", "tool-ask", third, "Run old", env)
+    path = hd._ask_path(env)
+    held = hd._read_holds(path)
+    held["holds"][old]["at"] = 1
+    hd._write_holds(path, held)
+    assert old in hd.settle_approvals(env, now=held["holds"][old]["at"] + hd.APPROVAL_NODE["params"]["expire_seconds"])
+    assert hd.approval_record(env, old)["decided"]["outcome"] == "expired"
+    assert hd.DEFAULT_PERMISSIONS["runMode"] == "Accept edits"
+    assert set(hd.APPROVAL_OUTCOMES) == {"approved", "denied", "expired", "withdrawn"}
+
+
 def test_no_second_decide_remains():
     found = subprocess.run(["git", "grep", "-nE", r"def decide(_\w+)?\(|def decide[A-Z]\w*\(", "--", "01.APP/*.py"],
                            cwd=ROOT, capture_output=True, text=True).stdout.splitlines()

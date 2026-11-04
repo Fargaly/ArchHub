@@ -9459,7 +9459,14 @@
         "02.TESTS/tests_replica/test_baboom_native_companion.py",
         "02.TESTS/tests_replica/test_baboom_work_presence.py",
         "02.TESTS/tests_replica/test_nodes_office.py",
-        "02.TESTS/tests_replica/test_five_more_cards_run.py"
+        "02.TESTS/tests_replica/test_five_more_cards_run.py",
+        "05.EVIDENCE/apptidy-intent.json",
+        "05.EVIDENCE/app-folder-allowlist.md",
+        "02.TESTS/tests_replica/test_app_folder_tidy.py",
+        "02.TESTS/tests_replica/test_skills_library.py",
+        "02.TESTS/tests/test_universal_agent_plain_send.py",
+        "02.TESTS/tests_replica/test_the_router_sends_it_where_it_says.py",
+        "02.TESTS/tests_js/apptidy_sessions.test.mjs"
       ]
     }
   }

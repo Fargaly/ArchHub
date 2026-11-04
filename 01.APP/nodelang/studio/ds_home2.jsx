@@ -85,6 +85,12 @@
     if (route === 'library' || route === 'skills') return {route: 'home', face: 'canvas', library: true};
     return null;
   };
+  const stepStatusText = (step, progress) => {
+    const recorded = recordedStep(step, progress);
+    if (recorded == null || recorded === '') return '';
+    const raw = typeof recorded === 'object' ? String(recorded.status || recorded.state || '') : String(recorded);
+    return raw.trim();
+  };
   const stepOf = (step, progress) => {
     const recorded = recordedStep(step, progress);
     const raw = recorded == null || recorded === '' ? '' : (typeof recorded === 'object' ? String(recorded.status || recorded.state || '') : String(recorded));
@@ -149,9 +155,11 @@
     const [history, setHistory] = React.useState(false);
     const [drafts, setDrafts] = React.useState({});
     const [sending, setSending] = React.useState(false);
+    const sendingRef = React.useRef(false);
     const [to, setTo] = React.useState('');
     const [checkpoint, setCheckpoint] = React.useState('');
     const [face, setFace] = React.useState(() => window.ArchHubHomeFace === 'canvas' ? 'canvas' : 'workshop');
+    const [router, setRouter] = React.useState(null);
     const [detailId, setDetailId] = React.useState('');
     const [runMode, setRunMode] = React.useState({status: 'waiting', value: '', message: ''});
     const [request, setRequest] = React.useState('loaded');
@@ -171,6 +179,12 @@
         if (!live) return;
         setRunMode({status: 'error', value: '', message: error instanceof Error ? error.message : String(error)});
       });
+      return () => { live = false; };
+    }, []);
+    React.useEffect(() => {
+      if (typeof api.refreshRouter !== 'function') return undefined;
+      let live = true;
+      api.refreshRouter().then(result => { if (live && result) setRouter(result); }).catch(() => { if (live) setRouter(null); });
       return () => { live = false; };
     }, []);
     homeSetFace = setFace;
@@ -229,7 +243,9 @@
     const showCanvas = async () => { u.go('canvas'); if (task) await u.act(() => api.openTaskGraph(task.id)); };
     const choices = people.choices?.length ? people.choices : [{key: 'baboom', handle: '', name: 'BABOOM'}];
     const recipient = to || (task && (s.liveAgents || []).find(a => a.agent === task.owner)?.handle) || choices[0]?.handle || '';
-    const model = (people.people || []).find(p => p.handle && p.handle === recipient)?.model || '';
+    const personModel = (people.people || []).find(p => p.handle && p.handle === recipient)?.model || '';
+    const models = router ? [...new Set([router.default_model, ...(router.models || []), ...(router.fallback_models || [])].filter(Boolean))] : [];
+    const modelName = router?.default_model || personModel || '';
     const running = (s.hosts || []).filter(h => ['connected', 'listening', 'running'].includes(h.state));
     const footer = (running.length ? running.map(h => [h.name, h.file].filter(Boolean).join(' · ')).join(' · ') : 'No program selected.') + ' Model policy: Free first.';
     const persistLayout = value => {
@@ -268,18 +284,45 @@
     const openTask = async t => { u.setTask(t.id); await u.act(() => api.openTaskGraph(t.id)); };
     const send = async () => {
       const body = text.trim();
-      if (!body || sending) return;
+      if (!body || sendingRef.current) return;
+      sendingRef.current = true;
+      setSending(true);
       const prompt = (!recipient || new RegExp('(^|\\s)@' + recipient + '\\b').test(body) ? '' : '@' + recipient + ' ') + body;
       setText('');
-      setSending(true);
-      try { await u.act(() => api.apiRouterChat(prompt, 'BABOOM')); await api.listTasks?.(); }
-      finally { setSending(false); }
+      try {
+        const result = await u.act(() => api.apiRouterChat(prompt, 'BABOOM'));
+        if (result == null) setText(current => current && String(current).trim() ? current : body);
+        else await api.listTasks?.();
+      } finally {
+        sendingRef.current = false;
+        setSending(false);
+      }
     };
-    const TaskRow = ({t}) => <button type="button" className={task?.id === t.id ? 'dx-task on' : 'dx-task'} aria-selected={task?.id === t.id} onClick={() => executeAction('ui.select', () => openTask(t))}>
-      <b>{t.title}</b>
-      <span>{statusText(t.status)}</span>
-      <small>{ownerOf(t)}</small>
-    </button>;
+    const reasonOf = t => {
+      const review = Array.isArray(t.reviews) ? t.reviews.find(item => item && (item.summary || item.title || item.text || item.reason)) : null;
+      const text = review ? (review.summary || review.title || review.text || review.reason) : (t.summary || t.detail || t.note || '');
+      return typeof text === 'string' && text.trim() ? text.trim() : statusText(t.status);
+    };
+    const toneOf = t => t.status === 'IN REVIEW' || waiting.has(t.id) ? 'review' : t.status === 'WIP' ? 'working' : t.status === 'STOPPED' ? 'stopped' : t.status === 'PLANNED' ? 'planned' : 'done';
+    const openEvidence = async t => {
+      await openTask(t);
+      const card = (s.approvals || []).find(item => item.taskId === t.id || item.task_id === t.id);
+      if (card) return u.show('Action evidence', {id: card.id});
+      const node = document.querySelector('[data-dx="outputs"]') || document.querySelector('[data-dx="activity"]');
+      if (node) node.focus();
+      return true;
+    };
+    const TaskRow = ({t}) => {
+      const needsEvidence = t.status === 'IN REVIEW' || t.status === 'STOPPED' || waiting.has(t.id);
+      return <div className={'dx-task-row' + (task?.id === t.id ? ' on' : '')} data-status={toneOf(t)}>
+        <button type="button" className="dx-task" aria-selected={task?.id === t.id} onClick={() => executeAction('ui.select', () => openTask(t))}>
+          <b>{t.title}</b>
+          <span data-line="reason">{reasonOf(t)}</span>
+          <small>{[ownerOf(t), t.status === 'WIP' ? statusText(t.status) : ''].filter(Boolean).join(' · ')}</small>
+        </button>
+        {needsEvidence ? <button type="button" className="dx-evidence" onClick={() => executeAction('ui.select', () => openEvidence(t))}>Evidence</button> : null}
+      </div>;
+    };
     const makeFile = () => u.act(() => api.newSession()).then(result => { if (result && !result.cancelled) setFace('canvas'); return result; });
     const openFile = () => u.act(() => api.openSession()).then(result => { if (result && !result.cancelled) setFace('canvas'); return result; });
     const saveFile = asCopy => u.act(() => asCopy ? api.saveSessionAs() : api.saveSession());
@@ -314,7 +357,7 @@
           <aside className="dx-tasks" data-dx="tasks" aria-label="Tasks">
             <div className="dx-tasks-head">
               <h2>Tasks</h2>
-              <button type="button" className="dx-link" onClick={() => executeAction('ui.show', u, 'New task')}>+ New task</button>
+              <button type="button" className="dx-new-task" onClick={() => executeAction('ui.show', u, 'New task')}>+ New task</button>
             </div>
             <div className="dx-find">
               <input aria-label="Find a task" placeholder="Find a task…" value={query} onChange={e => setQuery(e.target.value)} />
@@ -414,6 +457,16 @@
                     <button type="button" onClick={() => executeAction('ui.select', () => { const fit = window.UI.requestCanvasFit; return typeof fit === 'function' ? fit() : false; })}>Overview</button>
                   </div> : null}
                   <div className="dx-mid" data-plan={plan.length ? 'shown' : 'hidden'}>
+                    <div className="dx-stage">
+                    {face === 'workshop' && plan.length ? <section className="dx-cards" data-dx="workflow" aria-label="Workflow">
+                      <h2>Workflow</h2>
+                      <div className="dx-card-row">{plan.map((step, index) => {
+                        const recorded = stepOf(step, task?.progress);
+                        const label = typeof step === 'object' ? (step.title || step.text || step.name || step.what || describe(step)) : String(step);
+                        const statusWord = stepStatusText(step, task?.progress) || recorded.label;
+                        return <article key={index} className="dx-flow-card" data-step={recorded.kind}><span className="dx-flow-icon" aria-hidden="true"><Icon name="docs" size={14} /></span><b>{label}</b><small>{recorded.owner}</small><span className="dx-flow-status">{statusWord}</span><i className="dx-flow-dot" aria-hidden="true" /></article>;
+                      })}</div>
+                    </section> : null}
                     {face === 'workshop' ? <section className="dx-talk dx-thread" data-dx="conversation" aria-label="Conversation">
                       <h2>Conversation</h2>
                       {!messages.length && !plan.length && !activity.length && !outputs.length && !scopeValue && !rules.length && !agents.length && !folders && !references && !session && !fileName ? <p className="dx-empty-task" data-dx="empty">Nothing recorded for this task yet.</p> : null}
@@ -429,6 +482,7 @@
                       <h2>Workflow · logic</h2>
                       <div className="dx-canvas-mount" data-dx="graph">{window.UI.Canvas ? <window.UI.Canvas active embedded /> : <p className="dx-empty">No nodes in this workflow yet.</p>}</div>
                     </section>}
+                    </div>
                     {plan.length ? <section className="dx-panel" data-dx="plan" aria-label="Plan and progress">
                       <h2>Plan and progress</h2>
                       <ol className="dx-stepper">{plan.map((step, index) => {
@@ -458,7 +512,16 @@
                     <div className="dx-tools">
                       {u.pickFile && <button type="button" className="dx-link" onClick={() => executeAction('ui.select', u.pickFile)}>Attach</button>}
                       {u.voice && <button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => u.voice(setText))}>Voice</button>}
-                      <span className="dx-model"><b>{model ? 'Model · ' + model : 'Model'}</b><small>Free models first</small></span>
+                      <label className="dx-model">Model
+                        <select aria-label="Model" value={modelName} disabled={!models.length} onChange={event => {
+                          const value = event.target.value;
+                          u.act(() => api.setRouterSettings({default_model: value})).then(result => { if (result) setRouter(result); });
+                        }}>
+                          {models.map(item => <option key={item} value={item}>{item}</option>)}
+                          {!models.length ? <option value={modelName}>{modelName || 'Unavailable'}</option> : null}
+                        </select>
+                        <small>Free models first</small>
+                      </label>
                       <Btn p type="submit" aria-busy={sending} disabled={!text.trim()}>Send</Btn>
                     </div>
                   </form>

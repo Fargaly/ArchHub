@@ -61,7 +61,14 @@ async function mount(server,{holdBootDelay=false}={}) {
   };
   win.fetch=async(url,options={})=>{
     let data={ok:true};
-    if(url==='/api/universal/canvas')data={root:'graph',nodes:[],wires:[],catalog:[],...(server.workshop?{scope:{current:'graph'},workshops:[{root:'workshop'}]}:{})};
+    if(url==='/api/universal/canvas')data={root:'graph',nodes:server.nodes||[],wires:[],catalog:[],...(server.workshop?{scope:{current:'graph'},workshops:[{root:'workshop'}]}:{})};
+    if(url==='/api/router/chat'){
+      const body=JSON.parse(options.body||'{}');
+      const answer=server.chat?await server.chat(body):{ok:true,result:{answer:'ok'}};
+      const encoded=new TextEncoder().encode('data: '+JSON.stringify({result:answer.result||{answer:'ok'}})+'\n\n');
+      let sent=false;
+      return {ok:answer.ok!==false,status:answer.ok===false?409:200,json:async()=>plain(answer),body:{getReader(){return {async read(){if(sent)return {done:true,value:undefined};sent=true;return {done:false,value:encoded};},releaseLock(){}}}}};
+    }
     if(url==='/api/universal/cloud-session')data={ok:true,signed_in:false};
     if(url==='/api/universal/settings-action' && server.settings) data=await server.settings(JSON.parse(options.body||'{}'));
     if(url==='/api/universal/workshop'){
@@ -138,31 +145,36 @@ test('a loaded graph opens without waiting for an artificial splash timer',async
   try{assert.ok(v.doc.querySelector('[aria-label="Main navigation"]'));}finally{v.close();}
 });
 
-test('repeated composer submission sends one request and retains refused text',async()=>{
-  const pending=deferred(),sends=[];
-  const v=await mount({get:()=>status('idle'),workshop:body=>{
-    if(body.function==='sendToBaboom'){sends.push(body);return pending.promise;}
+test('Home composer admits one chat request and restores a refused draft only when nothing newer is typed',async()=>{
+  let gate=deferred();const chats=[];
+  const v=await mount({get:()=>status('idle'),chat:async body=>{chats.push(body);return gate.promise;},workshop:body=>{
     if(body.function==='getAgentSurface')return {ok:true,result:{agentProfiles:{},learning:{layers:{}}}};
     if(body.function==='getGraphMetadata')return {ok:true,result:{}};
     return {ok:true,result:[]};
   }});
+  const message=()=>v.doc.querySelector('.dx-composer textarea[aria-label="Message"]');
+  const type=text=>{const field=message();Object.getOwnPropertyDescriptor(v.win.HTMLTextAreaElement.prototype,'value').set.call(field,text);field.dispatchEvent(new v.win.Event('input',{bubbles:true}));field.dispatchEvent(new v.win.Event('change',{bubbles:true}));};
+  const submit=()=>{const form=message().closest('form');form.dispatchEvent(new v.win.Event('submit',{bubbles:true,cancelable:true}));};
   try{
-    const message=v.doc.querySelector('textarea[aria-label="Message"]');
-    Object.getOwnPropertyDescriptor(v.win.HTMLTextAreaElement.prototype,'value').set.call(message,'Review this graph');
-    message.dispatchEvent(new v.win.Event('input',{bubbles:true}));
-    message.dispatchEvent(new v.win.Event('change',{bubbles:true}));
-    await v.settle(()=>!v.doc.querySelector('[aria-label="Send ↵"]').disabled,'message reaches the controlled composer');
-    const form=message.closest('form');
-    form.dispatchEvent(new v.win.Event('submit',{bubbles:true,cancelable:true}));
-    form.dispatchEvent(new v.win.Event('submit',{bubbles:true,cancelable:true}));
-    await pause();
-    assert.equal(sends.length,1,v.doc.body.textContent);
-    pending.resolve({ok:false,error:'Workshop refused this request. Review its connection.'});
-    await v.settle(()=>!v.doc.querySelector('[aria-label="Send ↵"]').disabled,'composer becomes usable after refusal');
-    assert.equal(message.value,'Review this graph');
-    assert.match(v.doc.body.textContent,/Workshop refused this request/);
-    assert.equal(sends.length,1);
-  }finally{pending.resolve({ok:false,error:'Test closed'});v.close();}
+    type('Review this graph');
+    await v.settle(()=>message().closest('form').querySelector('button[type="submit"]').disabled===false,'Home draft is ready');
+    submit();submit();
+    await v.settle(()=>chats.length===1,'a same-tick duplicate sends one /api/router/chat request');
+    gate.resolve({ok:false,error:'The model request was refused.'});
+    await v.settle(()=>message().value==='Review this graph','a refusal restores the draft when nothing newer is typed');
+    assert.equal(chats.length,1);
+    gate=deferred();
+    submit();
+    await v.settle(()=>chats.length===2,'retry sends the restored draft');
+    type('A newer request');
+    gate.resolve({ok:false,error:'The model request was refused.'});
+    await v.settle(()=>message().value==='A newer request','a refusal keeps newer text');
+    gate=deferred();
+    submit();
+    await v.settle(()=>chats.length===3,'a later send uses the newer draft');
+    gate.resolve({ok:true,result:{answer:'done'}});
+    await v.settle(()=>message().value==='','a completed send clears only its own draft');
+  }finally{gate.resolve({ok:false,error:'closed'});v.close();}
 });
 
 test('idle Studio needs no update timer and a native ready push reads once',async()=>{
@@ -412,12 +424,67 @@ test('the File menu is file-only and Workshop leads with the thread',async()=>{
   assert.equal(v.doc.querySelector('[data-run-mode]').textContent.includes('Accept edits'),false,'the header has no Accept edits pill');
   assert.equal(v.doc.querySelector('[data-dx="canvas-commands"]'),null,'canvas commands stay off the Workshop face');
   assert.ok(v.doc.querySelector('[data-dx="conversation"]'),'Workshop leads with the conversation');
-  assert.equal(v.doc.querySelector('[data-dx="workflow"]'),null,'Workshop hides the workflow');
+  assert.equal(v.doc.querySelector('[data-dx="workflow"]'),null,'Workshop hides workflow cards until a plan is recorded');
+  assert.equal(v.doc.querySelector('.dx-new-task').textContent,'+ New task');
+  assert.equal(v.doc.querySelector('.dx-model select').getAttribute('aria-label'),'Model');
+  assert.match(v.doc.querySelector('.dx-model').textContent,/Free models first/);
   const menu=v.doc.querySelector('[data-dx="file-menu"]');
   assert.equal(menu.getAttribute('aria-label'),'File');
   const labels=[...menu.querySelectorAll('[role="menuitem"]')].map(node=>node.textContent.trim());
   assert.deepEqual(labels,['New file','Open file…','Import…','Library']);
   assert.doesNotMatch(menu.textContent,/Search|Activity|Add node|Overview|Save as/);
   assert.match(read('01.APP/nodelang/studio/ds_home2.jsx'),/data-dx="canvas-commands"[\s\S]*\+ Add node[\s\S]*Library[\s\S]*Program view[\s\S]*Present[\s\S]*Model review[\s\S]*Overview/);
+  const library=[...menu.querySelectorAll('[role="menuitem"]')].find(node=>node.textContent.trim()==='Library');
+  await v.click(library);
+  await v.settle(()=>!!v.doc.querySelector('[aria-label="Library shelf"]'),'Library from Workshop opens the shelf');
+ }finally{v.close();}
+});
+
+test('Workshop plan steps are cards beside the conversation and review rows keep Evidence',async()=>{
+ const tasks=[{id:'review',title:'Header and buttons',status:'IN REVIEW',owner:'717',summary:'Needs a visual check',reviews:[{summary:'Needs a visual check'}],plan:['Study the task'],progress:{'Study the task':'Saved'}},{id:'work',title:'Unify task workspace',status:'WIP',owner:'designer',summary:'Layout and interactions',plan:['Unify Home','Verify installed app'],progress:{'Unify Home':'Working','Verify installed app':'Awaiting verification'}}];
+ const v=await mount({get:()=>status('idle'),workshop:body=>{
+  if(body.function==='listTasks')return {ok:true,result:tasks};
+  if(body.function==='getAgentSurface')return {ok:true,result:{agentProfiles:{},learning:{layers:{}}}};
+  if(body.function==='getGraphMetadata')return {ok:true,result:{}};
+  if(body.function==='openTaskGraph')return {ok:true,result:{}};
+  return {ok:true,result:[]};
+ }});
+ try{
+  await v.settle(()=>v.doc.querySelector('[data-dx="workflow"]'),'a recorded plan draws workflow cards');
+  const cards=[...v.doc.querySelectorAll('.dx-flow-card')];
+  assert.equal(cards.length,1,'the selected task shows only its own steps');
+  assert.match(cards[0].textContent,/Study the task/);
+  assert.match(cards[0].textContent,/Saved/);
+  assert.ok(v.doc.querySelector('[data-dx="conversation"]'),'the conversation stays beside the cards');
+  const review=v.doc.querySelector('.dx-task-row[data-status="review"]');
+  assert.ok(review,'a review row carries its status line');
+  assert.equal(review.querySelector('.dx-evidence').textContent,'Evidence');
+  assert.match(review.textContent,/Needs a visual check/);
+  await v.click([...v.doc.querySelectorAll('button.dx-task')].find(node=>node.textContent.includes('Unify task workspace')));
+  await v.settle(()=>v.doc.querySelectorAll('.dx-flow-card').length===2,'the working task shows its own cards');
+  const words=[...v.doc.querySelectorAll('.dx-flow-status')].map(node=>node.textContent);
+  assert.deepEqual(words,['Working','Awaiting verification']);
+ }finally{v.close();}
+});
+
+test('Settings search shows values and Advanced rows, then reveals the control in place',async()=>{
+ const nodes=[{id:'n1',label:'Appearance',properties:[{label:'Text scale',value:100,editor:'number',setting:{kind:'theme'},relation:'n1',editable:true}]}];
+ const v=await mount({get:()=>status('idle'),nodes,workshop:body=>{
+  if(body.function==='getAgentSurface')return {ok:true,result:{agentProfiles:{},learning:{layers:{}}}};
+  if(body.function==='getGraphMetadata')return {ok:true,result:{}};
+  return {ok:true,result:[]};
+ }});
+ try{
+  await v.click(v.doc.querySelector('[aria-label="Settings"]'));
+  await v.settle(()=>!!v.doc.querySelector('[aria-label="Search settings"]'),'Settings search is on the sheet');
+  const field=v.doc.querySelector('[aria-label="Search settings"]');
+  Object.getOwnPropertyDescriptor(v.win.HTMLInputElement.prototype,'value').set.call(field,'100');
+  field.dispatchEvent(new v.win.Event('input',{bubbles:true}));
+  field.dispatchEvent(new v.win.Event('change',{bubbles:true}));
+  await v.settle(()=>!![...v.doc.querySelectorAll('.sheet-result')].find(node=>node.textContent.includes('Text scale')&&node.textContent.includes('100')&&node.textContent.includes('Advanced')),'the value and Advanced row are in the results');
+  await v.click([...v.doc.querySelectorAll('.sheet-result')].find(node=>node.textContent.includes('Text scale')));
+  await v.settle(()=>!!v.doc.querySelector('[data-setting="n1:Text scale"]')&&!v.doc.querySelector('[aria-label="Search settings"]').value,'selecting the result reveals that control and keeps Settings open');
+  assert.equal(v.doc.querySelector('[data-screen]').getAttribute('data-screen').startsWith('settings/'),true);
+  assert.equal(v.doc.querySelector('[aria-expanded="true"]').textContent,'Advanced');
  }finally{v.close();}
 });

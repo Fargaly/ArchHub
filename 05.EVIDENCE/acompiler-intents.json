@@ -9457,7 +9457,9 @@
         "02.TESTS/tests_replica/test_hangfix_one_launcher.py",
         "01.APP/nodelang/baboom_work_presence.py",
         "02.TESTS/tests_replica/test_baboom_native_companion.py",
-        "02.TESTS/tests_replica/test_baboom_work_presence.py"
+        "02.TESTS/tests_replica/test_baboom_work_presence.py",
+        "02.TESTS/tests_replica/test_nodes_office.py",
+        "02.TESTS/tests_replica/test_five_more_cards_run.py"
       ]
     }
   }

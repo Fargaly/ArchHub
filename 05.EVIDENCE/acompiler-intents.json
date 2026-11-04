@@ -9459,7 +9459,11 @@
         "02.TESTS/tests_replica/test_baboom_native_companion.py",
         "02.TESTS/tests_replica/test_baboom_work_presence.py",
         "02.TESTS/tests_replica/test_nodes_office.py",
-        "02.TESTS/tests_replica/test_five_more_cards_run.py"
+        "02.TESTS/tests_replica/test_five_more_cards_run.py",
+        "01.APP/nodelang/model_catalogue.py",
+        "02.TESTS/tests_replica/test_slowhome.py",
+        "02.TESTS/tests_js/slowhome_browser.cjs",
+        "01.APP/nodelang/cloud_signin.py"
       ]
     }
   }

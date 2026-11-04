@@ -86,22 +86,30 @@ class Cached:
     def __init__(self, seconds, probe):
         self.seconds, self.probe, self.value, self.at, self.running = seconds, probe, None, 0.0, False
         self.lock = threading.Lock()
+        self.generation = 0
 
     def get(self):
         with self.lock:
             stale = time.time() - self.at >= self.seconds
             if stale and not self.running:
                 self.running = True
-                threading.Thread(target=self._run, name='archhub-nograph-probe', daemon=True).start()
+                threading.Thread(target=self._run, args=(self.generation,), name='archhub-nograph-probe', daemon=True).start()
         return self.value
 
-    def _run(self):
+    def reset(self, value):
+        with self.lock:
+            self.generation += 1
+            self.value, self.at = value, 0.0
+
+    def _run(self, generation):
         try:
             value = self.probe()
         except Exception:  # noqa: BLE001 - a failed probe keeps the last answer
             value = self.value
         with self.lock:
-            self.value, self.at, self.running = value, time.time(), False
+            if generation == self.generation:
+                self.value, self.at = value, time.time()
+            self.running = False
 
 
 class NoGraphServer:
@@ -129,6 +137,15 @@ class NoGraphServer:
             ('settings', {'settingsScope': 'User'}))}
         self._hosts = Cached(30.0, self._probe_hosts)
         self._local = Cached(10.0, self._probe_local)
+        self._account_key = None
+        self._account = None
+        self._account_lock = threading.Lock()
+        self._session = Cached(30.0, self._probe_session)
+        self._live_agents = Cached(5.0, self._probe_agents)
+        self._providers = Cached(30.0, self._probe_providers)
+        self._models = Cached(45.0, self._probe_models)
+        self._workshop_agents = Cached(5.0, self._probe_workshop_agents)
+        self._messages = Cached(1.0, _list_messages)
         self._opencode = {}
         self._terminals = None
         self._agents_api = None
@@ -149,6 +166,16 @@ class NoGraphServer:
         return 'http://127.0.0.1:%d' % self.port
 
     def start(self):
+        # Load read owners before accepting HTTP, rather than on the first click.
+        from importlib import import_module
+        for module in ('workshop_api', 'baboom_nograph', 'settings_owner', 'session_files', 'model_catalogue',
+                       'model_router', 'agent_runtime_registry', 'host_exec', 'site_export'):
+            import_module('.' + module, __package__)
+        from .model_router import request_profiles
+        request_profiles()
+        self._messages.value = _list_messages()
+        self._messages.at = time.time()
+        self._session.value = self._read_session()
         self.thread = threading.Thread(target=self.httpd.serve_forever, name='archhub-nograph-http', daemon=True)
         self.thread.start()
         port_file = self.state_dir / "nograph-http-port"
@@ -228,6 +255,84 @@ class NoGraphServer:
 
     # -- probes -------------------------------------------------------------
     @staticmethod
+    def _probe_agents():
+        from .agent_runtime_registry import discover_runtime_processes
+        return discover_runtime_processes()
+
+    @staticmethod
+    def _probe_workshop_agents():
+        from .workshop_live import live_agents
+        return live_agents(with_status=True)
+
+    @staticmethod
+    def _probe_models():
+        from .cloud_relay import load_cloud_session
+        from .model_catalogue import groups_with_routes, held_model_groups
+        held = held_model_groups(load_cloud_session())
+        return groups_with_routes(held) if held is not None else {'ok': True, 'groups': [], 'count': 0}
+
+    def _probe_providers(self):
+        from .model_router import provider_rows, find_assistant
+        from .cloud_relay import load_cloud_session
+        states = self._local.get()
+        return provider_rows(cloud_session=load_cloud_session(),
+            local_probe=lambda _host, port: None if states is None else states.get(int(port)),
+            cli_probe=find_assistant, opencode_status_probe=self.opencode_status)
+
+    def _probe_session(self):
+        from .cloud_signin import session_summary
+        summary = session_summary()
+        if summary.get('signed_in'):
+            self.ensure_cloud_relay()
+        return self._read_session()
+
+    @staticmethod
+    def _read_session():
+        from .cloud_signin import read_cloud_session, sign_in_state
+        from .cloud_session import _account_key, cloud_session_path
+        held = read_cloud_session(cloud_session_path())
+        state = sign_in_state(session=held)
+        return {**state, '_cache_key': _account_key(held)
+                if state.get('signed_in') else ''}
+
+    def account_read(self):
+        with self._account_lock:
+            return self._account_read()
+
+    def _account_read(self):
+        from .settings_owner import AccountFiles, SettingsOwner, cloud_call
+        from .cloud_signin import read_cloud_session
+        from .cloud_session import cloud_session_path, _account_key
+        state = self._session.get() or {}
+        key = state.get('_cache_key', '') if state.get('signed_in') else ''
+        if not key:
+            self._account_key, self._account = None, None
+            return {'accountChecking': self._session.running}
+        if self._account_key != key:
+            store = AccountFiles(self.settings_dir / 'account.json')
+            root = 'cached-read:' + key
+
+            def refresh():
+                held = read_cloud_session(cloud_session_path())
+                if not held.get('token') or _account_key(held) != key:
+                    raise Refused('Account changed during refresh.')
+                value = SettingsOwner(store, cloud=lambda *args, **kwargs: cloud_call(
+                    *args, **kwargs, session=held)).read()
+                if self._read_session().get('_cache_key') != key:
+                    raise Refused('Account changed during refresh.')
+                try:
+                    store.write(root, value)
+                except (OSError, ValueError):
+                    value = {**value, 'controlErrors': {**value.get('controlErrors', {}),
+                             'accountCache': 'Account read succeeded; its offline copy could not be saved.'}}
+                return value
+
+            self._account = Cached(30.0, refresh)
+            self._account.value = store.read(root)
+            self._account_key = key
+        return {**(self._account.get() or {}), 'accountChecking': self._account.running}
+
+    @staticmethod
     def _probe_hosts():
         from .pipeline_engines import probe_connectors
         return list(probe_connectors())
@@ -243,6 +348,7 @@ class NoGraphServer:
 
         class Handler(BaseHTTPRequestHandler):
             protocol_version = 'HTTP/1.1'
+            disable_nagle_algorithm = True
 
             def log_message(self, *_args):
                 return
@@ -551,7 +657,7 @@ def r_router_settings(s, req):
     from .settings_owner import SettingsOwner
     owner = SettingsOwner(None, dependencies=object())
     if req.method == 'GET' or not req.body:
-        return {'ok': True, **owner.routerSettings()}
+        return {'ok': True, **owner.routerSettings(), 'live_agents': s._live_agents.get() or {'processes': [], 'complete': False}}
     return {'ok': True, **owner.setRouterSettings(req.body)}
 
 
@@ -657,21 +763,13 @@ def _plain_status(state):
 
 
 def r_providers(s, req):
-    from .model_router import provider_rows, find_assistant
-    from .cloud_relay import load_cloud_session
-    states = s._local.get()
     if req.path.endswith('/models'):
         from .settings_owner import read_router_settings
-        from .model_catalogue import groups_with_routes, held_model_groups
-        session = load_cloud_session()
-        held = held_model_groups(session)
-        result = groups_with_routes(held) if held is not None else {'ok': True, 'groups': [], 'count': 0}
+        result = s._models.get() or {'ok': True, 'groups': [], 'count': 0}
         route = read_router_settings()['default_model']  # same pair application_server._default_agent_model answers
-        return {**result, 'selected_route': route, 'default_route': route, 'default_source': ROUTER_FILE}
-    return {'ok': True, 'providers': provider_rows(
-        cloud_session=load_cloud_session(),
-        local_probe=lambda _host, port: None if states is None else states.get(int(port)),
-        cli_probe=find_assistant, opencode_status_probe=s.opencode_status)}
+        return {**result, 'selected_route': route, 'default_route': route, 'default_source': ROUTER_FILE,
+                'refreshing': s._models.running}
+    return {'ok': True, 'providers': s._providers.get() or [], 'refreshing': s._providers.running}
 
 
 # -- Workshop: the room is workshop/messages.sqlite3; delivery is Workshop --
@@ -746,8 +844,8 @@ def _set_task_status(task, status):
 
 
 def _list_agents():
-    from .agent_runtime_registry import RUNTIMES, discover_runtime_processes
-    observed = discover_runtime_processes()
+    from .agent_runtime_registry import RUNTIMES
+    observed = _SERVER._live_agents.get() or {'processes': [], 'complete': False}
     declared = [row for row in _declarations() if row.get('current')]
     rows = {}
     for process in observed['processes']:
@@ -883,7 +981,8 @@ WORKSHOP_READS = {
     'setTaskSession': _set_task_session,
     'setTaskStatus': _set_task_status,
     'listAgentsWorking': lambda *a: _list_agents(),
-    'listWorkshopMessages': lambda before=None, *a: _list_messages(before),
+    'listWorkshopMessages': lambda before=None, *a: (_SERVER._messages.get()
+        if before is None else _list_messages(before)),
     'listApprovals': lambda *a: _list_approvals(),
     'listNotifications': lambda *a: {'notifications': []},
     'readWatcher': lambda *a: _watcher().read(),
@@ -893,13 +992,13 @@ WORKSHOP_READS = {
     'getGraphMetadata': lambda *a: {},
     'refreshOfficeAwareness': lambda *a: [],
     'sendToBaboom': _send_to_baboom,
-    'listLiveAgents': lambda *a: __import__('nodelang.workshop_live', fromlist=['live_agents']).live_agents(with_status=True),
+    'listLiveAgents': lambda *a: _SERVER._workshop_agents.get() or [],
 }
 
 
 def r_workshop(s, req):
     if req.method == 'GET':
-        return {'ok': True, **_list_messages()}
+        return {'ok': True, **s._messages.get(), 'refreshing': s._messages.running}
     action, body = _action(req)
     if action == 'data-api':
         function = body.get('function')
@@ -987,8 +1086,15 @@ def r_settings_action(s, req):
         from .host_exec import programs
         return {'ok': True, 'result': {'programs': programs()}}
     if function == 'hostProgramState':
-        from .host_exec import program_state
-        return {'ok': True, 'result': program_state(args[0] if args else '')}
+        from .host_exec import programs as program_choices, program_state
+        key = args[0] if args else ''
+        if key in ('python', 'acad-core'):
+            return {'ok': True, 'result': program_state(key)}  # Local executable paths only.
+        row = next((row for row in s._hosts.get() or [] if row['id'] == {'acad': 'autocad', 'office': 'excel'}.get(key, key)), {})
+        label = next((row['label'] for row in program_choices() if row['id'] == key), '')
+        state = _plain_status(row.get('state')) if row else 'Checking'
+        return {'ok': True, 'result': {'id': key, 'label': label, 'state': state,
+                                     'reachable': row.get('state') == 'connected'}}
     if function == 'connectorActions':
         from .host_exec import ConnectorUnreachable, connector_actions, connectors
         name = args[0] if args else ''
@@ -1020,15 +1126,18 @@ def r_settings_action(s, req):
     if function == 'readOperations':
         return {'ok': True, 'result': {**local, 'dependencies': []}}
     if function in SettingsOwner.ACCOUNT:
+        if function == 'read':
+            return {'ok': True, 'result': {**local, **s.account_read()}}
         # Account, office, team and billing are the ArchHub cloud's; local preferences are one plain file.
         from .settings_owner import AccountFiles, CloudRouteUnavailable
         from .universal_cell import InvalidCell
         owner = SettingsOwner(AccountFiles(s.settings_dir / 'account.json'))
         try:
-            return {'ok': True, 'result': {**(local if function == 'read' else {}), **owner.dispatch(function, list(args))}}
+            result = owner.dispatch(function, list(args))
+            if s._account is not None:
+                s._account.at = 0.0
+            return {'ok': True, 'result': result}
         except (InvalidCell, CloudRouteUnavailable, OSError) as refused:
-            if function == 'read':   # signed out: Settings still opens with the local values
-                return {'ok': True, 'result': {**local, 'dependencies': [], 'controlErrors': {'account': str(refused)}}}
             raise Refused(str(refused)) from refused
     return {'ok': True, 'result': not_available('Settings "%s"' % function)}
 
@@ -1132,17 +1241,19 @@ def r_application_update(s, req):
 
 
 def r_cloud_session(s, req):
-    from .cloud_signin import session_summary
-    summary = session_summary()
-    if summary.get('signed_in'):
-        s.ensure_cloud_relay()  # a sign-in made after start begins remote reach here
-    return {'ok': True, **summary}
+    summary = s._session.get() or {'signed_in': False, 'email': '', 'state': 'signed_out'}
+    return {'ok': True, **{key: value for key, value in summary.items() if key != '_cache_key'},
+            'checking': s._session.running}
 
 
 def r_cloud_signin(s, req):
     from .cloud_signin import METHODS, begin, current_status
     if req.method == 'GET':
-        return {'ok': True, **current_status()}
+        status = current_status()
+        if status.get('phase') == 'done':
+            s._session.at = 0.0
+            s._session.get()
+        return {'ok': True, **status}
     method = str((req.body or {}).get('method') or 'google')
     if method not in METHODS:
         raise Refused('sign-in method must be google')
@@ -1151,7 +1262,11 @@ def r_cloud_signin(s, req):
 
 def r_cloud_signout(s, req):
     from .cloud_signin import sign_out
-    return {'ok': True, **sign_out()}
+    result = sign_out()
+    with s._account_lock:
+        s._session.reset({'signed_in': False, 'email': '', 'state': 'signed_out', '_cache_key': ''})
+        s._account_key, s._account = None, None
+    return {'ok': True, **result}
 
 
 def r_cloud_publish_consent(s, req):

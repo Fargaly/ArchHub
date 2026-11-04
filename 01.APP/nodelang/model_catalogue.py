@@ -14,6 +14,9 @@ was really everything (2026-09-05). It was a hard-coded list.
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
+import tempfile
 import copy
 import hashlib
 import threading
@@ -68,6 +71,59 @@ _lock = threading.Lock()
 _cache: dict[str, object] = {"at": 0.0, "value": None, "identity": None}
 # Accounts with a refresh already running behind an answer already given.
 _refreshing: set[bytes] = set()
+_router_refreshes: dict[Path, tuple[float, bool, str]] = {}
+
+
+def cached_free_routes():
+    """Disposable public catalogue; a cold or stale read never waits for HTTP."""
+    from .model_router import _OPENROUTER_FREE_MODELS_DEFAULT
+    path = Path(os.environ['LOCALAPPDATA']) / 'ArchHub' / 'settings' / 'openrouter-catalogue.json'
+    held = {}
+    cache_error = ''
+    try:
+        held = json.loads(path.read_text(encoding='utf-8'))
+        if (not isinstance(held, dict) or not isinstance(held.get('at'), (int, float))
+                or not isinstance(held.get('routes'), list)
+                or any(not isinstance(route, str) or '/' not in route or any(char.isspace() for char in route)
+                       for route in held['routes'])):
+            held = {}
+    except FileNotFoundError:
+        held = {}
+    except (OSError, ValueError):
+        cache_error = 'Saved model list could not be read. Using built-in free models; discovery retries automatically.'
+    with _lock:
+        attempted, running, error = _router_refreshes.get(path, (0.0, False, ''))
+        if time.time() - held.get('at', 0) >= _CACHE_SECONDS and not running and time.monotonic() - attempted >= _FRESH_SECONDS:
+            _router_refreshes[path] = (time.monotonic(), True, error)
+            threading.Thread(target=_refresh_free_routes, args=(path,), name='archhub-router-catalogue', daemon=True).start()
+            running = True
+    return {'models': ['openrouter/free', *['openrouter/' + route for route in
+            held.get('routes') or _OPENROUTER_FREE_MODELS_DEFAULT]], 'refreshing': running,
+            'catalogue_error': error or cache_error}
+
+
+def _refresh_free_routes(path):
+    from .model_router import _FREE_ROTATION_ATTEMPT_SECONDS
+    temporary = None
+    error = ''
+    try:
+        rows = openrouter_models(opener=urllib.request.urlopen, timeout=_FREE_ROTATION_ATTEMPT_SECONDS)
+        routes = openrouter_free_chat_routes({'groups': [{'name': BYO_GROUP, 'items': rows}]})
+        if not routes:
+            error = 'OpenRouter returned no free chat models. Using the saved list; discovery retries automatically.'
+            return  # A failed/empty catalogue never replaces a useful last answer.
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(dir=path.parent, suffix='.tmp')
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            json.dump({'at': time.time(), 'routes': routes}, stream)
+        os.replace(temporary, path)
+    except (OSError, ValueError):
+        error = 'OpenRouter is unavailable. Using saved or built-in free models; discovery retries automatically.'
+    finally:
+        if temporary is not None:
+            Path(temporary).unlink(missing_ok=True)
+        with _lock:
+            _router_refreshes[path] = (time.monotonic(), False, error)
 
 
 def _get_json(url: str, *, headers: Optional[Mapping[str, str]] = None, timeout: float, opener: Callable) -> object:

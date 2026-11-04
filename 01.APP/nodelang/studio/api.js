@@ -305,7 +305,7 @@ async function refreshAccount() {
  }
  publish({profile:{...state.profile,id:account.signed_in===true?(account.user_id||account.email||''):'',
   name:account.signed_in===true?(account.display_name||account.name||account.email||'Account'):'Account',
-  email:account.email||'',signedIn:account.signed_in===true,
+  email:account.email||'',signedIn:account.signed_in===true,checking:account.checking===true,
   isFounder:account.signed_in===true&&account.founder===true},
   sync:account.signed_in===true?'Account connected':accountSignInPending?'Complete sign-in in your browser':account.state==='expired'?'Sign in again':'Signed out',
   ...(attempt?.phase==='failed'?{connectionNotice:attempt.error||'Sign-in failed. Try again.'}:{})});
@@ -1112,6 +1112,7 @@ async function settingsAction(functionName, args=[]) {
  if(functionName==='readControls'&&generation!==controlsGeneration)return result;
  if(['readOperations','setGraphWorkspaces'].includes(functionName)&&graph!==state.graph.id)throw Error('The graph changed while Settings ran. Refresh Settings before retrying.');
  const values={};
+ if(Object.hasOwn(result,'accountChecking'))values.profile={...state.profile,checking:result.accountChecking};
  for(const key of ['firms','activeFirm','people','billing','dependencies','officeInvitations','settingsScope','activeWorkspace','devices','activeDevice','backups','companion','secrets','providerPreferences','providerModels','libraryCollapsed'])if(Object.hasOwn(result,key))values[key]=result[key];
  if(result.controlErrors){
   values.controlErrors={...state.controlErrors};
@@ -1120,7 +1121,7 @@ async function settingsAction(functionName, args=[]) {
  }
  if(result.workspacePolicies)values.workspaces=state.workspaces.map(row=>({...row,...result.workspacePolicies[row.id]}));
  if(result.workspaceIds)values.graph={...state.graph,workspaceIds:result.workspaceIds};
- if(result.profile){settingsProfile={...settingsProfile,...Object.fromEntries(Object.entries(result.profile).filter(([key])=>['name','firm','plan'].includes(key)))};values.profile={...state.profile,...settingsProfile};}
+ if(result.profile){settingsProfile={...settingsProfile,...Object.fromEntries(Object.entries(result.profile).filter(([key])=>['name','firm','plan'].includes(key)))};values.profile={...(values.profile||state.profile),...settingsProfile};}
  publish(values);
  if(result.controlErrors&&Object.keys(result.controlErrors).length)notice(Object.values(result.controlErrors).join(' '));
  if(result.message)notice(result.message);
@@ -1167,8 +1168,8 @@ refreshAccount=async()=>{
  if(profile.id!==settingsAccountIdentity){
   settingsAccountIdentity=profile.id;settingsProfile={};
   publish({profile:{...state.profile,firm:'',plan:''},firms:[],activeFirm:'',people:[],officeInvitations:[],controlErrors:{},settingsScope:'User',activeWorkspace:'',activeDevice:'',devices:[],backups:[],workspaces:[],graph:{...state.graph,workspaceIds:[]},billing:{status:'',requestedPlan:'',cycle:'',checkout:null,invoices:[],plans:[]}});
-  if(profile.signedIn)await api.refreshSettingsAccount().catch(error=>publish({connectionNotice:error.message}));
  }else if(profile.signedIn){publish({profile:{...state.profile,...settingsProfile}});}
+ if(profile.signedIn)await api.refreshSettingsAccount().catch(error=>publish({connectionNotice:error.message}));
  return copy(state.profile);
 };
 api.syncAccount=async()=>{await refreshAccount();if(state.profile.signedIn){await api.refreshSettingsAccount();await api.listWorkspaces();}return copy(state.profile);};

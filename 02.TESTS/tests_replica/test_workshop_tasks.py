@@ -40,11 +40,12 @@ def test_two_agents_one_winner_every_time(tmp_path, monkeypatch):
         assert not workshop_tasks.complete(history, task, holder)             # a former holder cannot finish it
         assert workshop_tasks.complete(history, task, other, "shipped")
         assert not workshop_tasks.claim(history, task, holder, holder)        # done stays done
-        # A lapsed lease frees the task for the next agent.
+        # A lapsed lease closes the attempt, then the task is planned for the next agent.
+        before = history._db.execute("SELECT owner FROM workshop_tasks WHERE id=?", (ids[1],)).fetchone()[0]
         history._db.execute("UPDATE workshop_tasks SET lease_until=0 WHERE id=?", (ids[1],))
         stale = workshop_tasks.get(history, ids[1])
-        assert stale["lease_expired"]
-        newcomer = ({"agent-a", "agent-b"} - {stale["owner"]}).pop()
+        assert stale["status"] == "open" and stale["outcome"] == "interrupted" and stale["owner"] is None
+        newcomer = ({"agent-a", "agent-b"} - {before}).pop()
         assert workshop_tasks.claim(history, ids[1], newcomer, newcomer)
 
     from nodelang import nograph_server
@@ -121,3 +122,24 @@ def test_stale_write_conflicts_and_typed_errors_name_the_miss(tmp_path, monkeypa
         else:
             raise AssertionError("a non-holder released the lease")
         assert workshop_tasks.get(history, task)["owner"] == "agent-a"
+
+
+def test_lapsed_lease_is_interrupted_and_requeued(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(tmp_path))
+    with application_history() as history:
+        quiet = workshop_tasks.create(history, "Quiet hall", "founder")["id"]
+        noisy = workshop_tasks.create(history, "Noisy hall", "founder")["id"]
+        assert workshop_tasks.claim(history, quiet, "agent-a", "Agent A", lease_seconds=30)
+        assert workshop_tasks.claim(history, noisy, "agent-a", "Agent A", lease_seconds=30)
+        assert workshop_tasks.mark_writing(history, noisy, "agent-a")
+        history._db.execute("UPDATE workshop_tasks SET lease_until=0 WHERE id IN (?,?)", (quiet, noisy))
+        closed = {row["id"]: row for row in (workshop_tasks.get(history, quiet), workshop_tasks.get(history, noisy))}
+        assert closed[quiet]["status"] == "open" and closed[quiet]["outcome"] == "interrupted"
+        assert closed[quiet]["owner"] is None
+        assert closed[noisy]["status"] == "open" and closed[noisy]["outcome"] == "unknown"
+        assert workshop_tasks.claim(history, quiet, "agent-b", "Agent B", lease_seconds=30)
+        again = workshop_tasks.get(history, quiet)
+        assert again["status"] == "claimed" and again["owner"] == "agent-b" and again["outcome"] is None
+    from nodelang import nograph_server
+    shown = {row["id"]: row for row in nograph_server._list_tasks()}
+    assert shown[noisy]["status"] == "PLANNED" and shown[noisy]["rowState"] == "unknown"

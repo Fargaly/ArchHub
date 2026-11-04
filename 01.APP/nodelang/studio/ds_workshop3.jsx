@@ -28,6 +28,17 @@
   const sessionState = row => row.state === 'turn_ended' ? 'Turn ended' : row.state === 'tool_ended' ? 'Tool ended' : row.state === 'unassociated' ? 'Activity unassociated' : 'Working';
   const shownModel = value => { const model = String(value || '').trim(); return model && model !== 'Model not reported' ? model : ''; };
   const oneLine = text => String(text || '').split('\n').map(line => line.trim()).find(Boolean) || '';
+  const rowNote = task => {
+    if (task.blockedBy) return 'blocked by ' + task.blockedBy;
+    if (task.rowState === 'interrupted' || task.outcome === 'interrupted') return 'interrupted';
+    if (task.rowState === 'limit reached' || task.capacity === 'LIMIT_REACHED') return 'limit reached';
+    return '';
+  };
+  const gateLine = (gate, breaches) => {
+    const gateText = gate === 'live' ? 'Gate live' : gate === 'missing' ? 'Gate missing' : gate === 'unavailable' ? 'Gate unavailable' : '';
+    const breachText = breaches === 'unavailable' ? 'Breaches unavailable' : Number.isFinite(breaches) ? (breaches === 0 ? '0 breaches' : breaches + ' breaches') : '';
+    return [gateText, breachText].filter(Boolean).join(' · ');
+  };
   function TaskSession({task}) {
     const nodes = task.workflow || [], activity = task.activity || [], plan = task.plan || [], agents = task.agents || [];
     const progress = task.progress && typeof task.progress === 'object' ? task.progress : {};
@@ -57,7 +68,7 @@
         executeAction("ui.show", u, 'Task details', {id: task.id});
       }
     }} draggable onDragStart={e => e.dataTransfer.setData('task', task.id)}>
-      <span className="ws-task-icon" aria-hidden="true">{String(task.title || '?').trim().charAt(0).toUpperCase()}</span><div className="ws-task-line"><span className="ws-task-title">{task.title}</span>{(ownerName || task.owner) && <span className="ws-small ws-task-owner">{ownerName || task.owner}</span>}<span className="ws-task-state" style={{color: color(task.status)}}>{statusText(task.status)}</span></div>
+      <span className="ws-task-icon" aria-hidden="true">{String(task.title || '?').trim().charAt(0).toUpperCase()}</span><div className="ws-task-line"><span className="ws-task-title">{task.title}</span>{(ownerName || task.owner) && <span className="ws-small ws-task-owner">{ownerName || task.owner}</span>}<span className="ws-task-state" style={{color: color(task.status)}}>{statusText(task.status)}</span>{rowNote(task) && <span className="ws-small" data-task-row-state={rowNote(task)}>{rowNote(task)}</span>}</div>
       {a && <div data-agent-activity role="status" className="ws-activity">
         {a.sessions.map(row => <div key={row.provider + ':' + row.session} title={row.session}>
           {row.provider} · {row.tool} · {row.associated === false ? 'Current file unknown' + (row.file ? ' (last observed: ' + row.file + ')' : '') : row.file} · {sessionState(row)}
@@ -143,11 +154,11 @@
           meta: [host || a.app, session && 'session ' + session.replace(/^session-/, '').slice(0, 8)].filter(Boolean).join(' · ')};
       });
       named.forEach(n => { if (named.filter(o => o.name === n.name).length > 1 && n.short) n.name += ' · ' + n.short; });
-      const row = (key, id, name, state, detail, handle, meta, model) => ({key, id, name, state, detail, handle, meta, model: shownModel(model), role: [state, detail].filter(Boolean).join(' · ')});
-      const people = [...named.map(({a, name, meta}) => row(a.handle, name, name, a.status && a.status !== 'unknown' ? a.status : 'Joined', a.task || 'No task declared', a.handle, meta, a.model)),
+      const row = (key, id, name, state, detail, handle, meta, model, gate, breaches) => ({key, id, name, state, detail, handle, meta, model: shownModel(model), gate: gate || '', breaches, role: [state, detail].filter(Boolean).join(' · ')});
+      const people = [...named.map(({a, name, meta}) => row(a.handle, name, name, a.status && a.status !== 'unknown' ? a.status : 'Joined', a.task || 'No task declared', a.handle, meta, a.model, a.gate, a.breaches)),
         ...(s.agents || []).filter(p => !agents.some(a => a.app === p.runtime)).map(p => row(p.id, p.id, p.name,
-          'Not joined · ' + (p.presence === 'working' ? 'Working' : p.presence === 'unknown' ? (p.status_text || 'Status unknown') : 'Idle'), p.presence === 'working' ? p.task : '', undefined, p.runtime, p.model)),
-        row('founder', 'You', 'You', 'Founder', 'Workspace owner', undefined, '', '')];
+          'Not joined · ' + (p.presence === 'working' ? 'Working' : p.presence === 'unknown' ? (p.status_text || 'Status unknown') : 'Idle'), p.presence === 'working' ? p.task : '', undefined, p.runtime, p.model, p.gate, p.breaches)),
+        row('founder', 'You', 'You', 'Founder', 'Workspace owner', undefined, '', '', '', null)];
       // A message sender or recipient label -> the same identity as its People row.
       const whoIs = (label, session) => {
         const n = named.find(x => (session && x.a.session === session) || x.a.agent === label || x.a.name === label);
@@ -155,15 +166,15 @@
       };
       // The To list: every agent in People & agents (one not joined is shown, but cannot receive yet), Everyone, BABOOM.
       const choices = [...(agents.length > 1 ? [{key: 'everyone', handle: 'everyone', name: 'Everyone', detail: agents.length + ' joined sessions'}] : []),
-        ...people.filter(p => p.key !== 'founder').map(p => ({key: p.key, handle: p.handle, name: p.name, detail: p.role})),
+        ...people.filter(p => p.key !== 'founder').map(p => ({key: p.key, handle: p.handle, name: p.name, detail: p.role, gate: p.gate, breaches: p.breaches})),
         {key: 'baboom', handle: '', name: 'BABOOM', detail: 'Free models first'}];
       return {agents, people, choices, whoIs};
   }  // DESIGNSYS-050 4.9 AgentPicker: one styled To-list; an agent that has not joined is shown but cannot receive yet.
-  function AgentPicker({choices, to, setTo}) {
-    const [listOpen, setListOpen] = React.useState(false);
+  function AgentPicker({choices, to, setTo, startOpen = false}) {
+    const [listOpen, setListOpen] = React.useState(startOpen);
     return <div className="ws-to" onKeyDown={e => e.key === 'Escape' && setListOpen(false)}>
       <button type="button" className="ws-link" aria-haspopup="listbox" aria-expanded={listOpen} aria-label="Recipient" onClick={() => executeAction("ui.select", () => setListOpen(!listOpen))}>To {choices.find(c => c.handle === to)?.name || 'BABOOM'} ▾</button>
-      {listOpen && <div role="listbox" aria-label="Recipients" className="ws-to-list">{choices.map(c => <button type="button" role="option" key={c.key} aria-selected={c.handle === to} disabled={c.handle === undefined} className="listbutton spread" title={c.handle === undefined ? c.name + ' is running but has not joined this Workshop, so it cannot receive messages yet' : 'Send to ' + c.name} onClick={() => executeAction("ui.select", () => { setTo(c.handle); setListOpen(false); })}><span>{c.name}</span><span className="ws-small">{c.detail}</span></button>)}</div>}
+      {listOpen && <div role="listbox" aria-label="Recipients" className="ws-to-list">{choices.map(c => <button type="button" role="option" key={c.key} aria-selected={c.handle === to} disabled={c.handle === undefined} className="listbutton spread" title={c.handle === undefined ? c.name + ' is running but has not joined this Workshop, so it cannot receive messages yet' : 'Send to ' + c.name} onClick={() => executeAction("ui.select", () => { setTo(c.handle); setListOpen(false); })}><span>{c.name}</span><span className="ws-small" data-agent-gate={c.gate || undefined} data-agent-breaches={c.breaches == null ? undefined : String(c.breaches)}>{[c.detail, gateLine(c.gate, c.breaches)].filter(Boolean).join(' · ')}</span></button>)}</div>}
     </div>;
   }
   function TaskComposer({choices, to, setTo, sendRef, replyTo, setReplyTo}) {

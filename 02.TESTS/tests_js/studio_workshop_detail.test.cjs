@@ -101,6 +101,32 @@ test('in progress lists started work and planned work stays out', () => {
   assert.equal(groups.PLANNED({status: 'WIP'}), false);
 });
 
+test('task rows show blocked, interrupted and limit reached, and the picker shows gate and breaches', () => {
+  const markup = task => renderToStaticMarkup(React.createElement(window.UI.Task, {
+    task: {id: task.id, title: task.title, status: 'PLANNED', messages: [], ...task},
+    on: false, select() {},
+  }));
+  assert.match(markup({id: 'b', title: 'Wait', blockedBy: 'Foundation'}), /blocked by Foundation/);
+  assert.match(markup({id: 'i', title: 'Cut', outcome: 'interrupted'}), /data-task-row-state="interrupted"/);
+  assert.match(markup({id: 'l', title: 'Hold', capacity: 'LIMIT_REACHED'}), /data-task-row-state="limit reached"/);
+  const {choices} = window.UI.workshopPeople({
+    liveAgents: [
+      {handle: 'live', name: 'Live', agent: 'host / live', app: 'claude', status: 'working', gate: 'live', breaches: 0},
+      {handle: 'missing', name: 'Missing', agent: 'host / missing', app: 'codex', status: 'working', gate: 'missing', breaches: 2},
+      {handle: 'down', name: 'Down', agent: 'host / down', app: 'cursor', status: 'working', gate: 'unavailable', breaches: 'unavailable'},
+    ],
+  });
+  const picker = renderToStaticMarkup(React.createElement(window.UI.AgentPicker, {
+    choices, to: '', setTo() {}, startOpen: true,
+  }));
+  assert.match(picker, /Gate live/);
+  assert.match(picker, /0 breaches/);
+  assert.match(picker, /Gate missing/);
+  assert.match(picker, /2 breaches/);
+  assert.match(picker, /Gate unavailable/);
+  assert.match(picker, /Breaches unavailable/);
+});
+
 test('home canvas at 1440 keeps fitted nodes off the plan pane', async () => {
   const home = fs.readFileSync(path.join(studio, 'ds_home2.jsx'), 'utf8');
   const canvas = fs.readFileSync(path.join(studio, 'ds_screens.jsx'), 'utf8');

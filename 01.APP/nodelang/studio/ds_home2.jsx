@@ -152,7 +152,6 @@
     const [to, setTo] = React.useState('');
     const [checkpoint, setCheckpoint] = React.useState('');
     const [face, setFace] = React.useState(() => window.ArchHubHomeFace === 'canvas' ? 'canvas' : 'workshop');
-    const [fileOpen, setFileOpen] = React.useState(false);
     const [detailId, setDetailId] = React.useState('');
     const [runMode, setRunMode] = React.useState({status: 'waiting', value: '', message: ''});
     const [request, setRequest] = React.useState('loaded');
@@ -281,13 +280,11 @@
       <span>{statusText(t.status)}</span>
       <small>{ownerOf(t)}</small>
     </button>;
-    const recentFiles = (Array.isArray(s.graphs) ? s.graphs : []).filter(row => row && (row.path || row.id));
-    const closeFile = () => setFileOpen(false);
-    const makeFile = () => { closeFile(); return u.act(() => api.newSession()).then(result => { if (result && !result.cancelled) setFace('canvas'); return result; }); };
-    const openFile = () => { closeFile(); return u.act(() => api.openSession()).then(result => { if (result && !result.cancelled) setFace('canvas'); return result; }); };
-    const saveFile = asCopy => { closeFile(); return u.act(() => asCopy ? api.saveSessionAs() : api.saveSession()); };
-    const importFile = () => { closeFile(); return u.pickFlow?.(); };
-    const openRecent = row => { closeFile(); return u.act(() => api.openSession(row.path || row.id)).then(result => { if (result && !result.cancelled) setFace('canvas'); return result; }); };
+    const makeFile = () => u.act(() => api.newSession()).then(result => { if (result && !result.cancelled) setFace('canvas'); return result; });
+    const openFile = () => u.act(() => api.openSession()).then(result => { if (result && !result.cancelled) setFace('canvas'); return result; });
+    const saveFile = asCopy => u.act(() => asCopy ? api.saveSessionAs() : api.saveSession());
+    const importFile = () => u.pickFlow?.();
+    const openLibrary = () => typeof u.setLibraryOpen === 'function' ? u.setLibraryOpen(value => !value) : u.go('library');
     const fileKeys = event => {
       if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
       const tag = event.target && event.target.tagName;
@@ -297,7 +294,8 @@
       else if (key === 'o') { event.preventDefault(); openFile(); }
       else if (key === 's') { event.preventDefault(); saveFile(event.shiftKey); }
     };
-    const runLabel = runMode.status === 'loaded' ? 'Run mode: ' + runMode.value : runMode.status === 'error' ? runMode.message : runMode.status === 'waiting' ? 'Reading run mode' : 'Run mode: not reported';
+    const namedMode = runMode.status === 'loaded' && runMode.value && runMode.value !== 'Accept edits' ? runMode.value : '';
+    const runLabel = runMode.status === 'error' ? runMode.message : namedMode || 'Mode unavailable';
     const replyToMessage = message => {
       const sender = message.sender_key || message.who || '';
       const choice = choices.find(item => item.handle === sender || item.name === sender || item.key === sender);
@@ -346,7 +344,7 @@
         <Separator className="pane-splitter" aria-label="Resize the Tasks pane" />
         <Column id="workspace" className="dx-col" minSize={720}>
           <div className="dx-workspace" data-dx="workspace">
-            <header className="dx-head" data-dx="head" onContextMenu={event => { event.preventDefault(); setFileOpen(true); }}>
+            <header className="dx-head" data-dx="head">
               <input className="dx-title" aria-label="Task title" key={(task?.id || '') + ':' + (task?.title || '')} defaultValue={task?.title || ''} disabled={!task} onBlur={event => {
                 if (!task) return false;
                 const title = event.target.value.trim();
@@ -370,22 +368,12 @@
                   return {ok: false, error: error instanceof Error ? error.message : String(error)};
                 });
               }} />
-              <div className="dx-actions">
-                <button type="button" className="dx-quiet" aria-label="File" aria-expanded={fileOpen} title="File" onClick={() => executeAction('ui.select', () => setFileOpen(!fileOpen))}><span>File</span></button>
-                <div className="dx-runmode" data-run-mode={runMode.status === 'loaded' ? runMode.value : 'unreported'} role={runMode.status === 'error' ? 'alert' : 'status'}>{runLabel}{runMode.status === 'error' ? <button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => { setRunMode({status: 'waiting', value: '', message: ''}); api.readPermissions().then(result => { const mode = result && typeof result.runMode === 'string' ? result.runMode : ''; setRunMode({status: mode ? 'loaded' : 'empty', value: mode, message: ''}); }).catch(error => setRunMode({status: 'error', value: '', message: error instanceof Error ? error.message : String(error)})); })}>Retry</button> : null}</div>
-                {fileOpen ? <div role="menu" aria-label="File" className="dx-file-menu" data-dx="file-menu" onKeyDown={event => { if (event.key === 'Escape') setFileOpen(false); }}>
-                  <p className="dx-file-kicker">File</p>
-                  <button type="button" role="menuitem" className="dx-file-item" onClick={() => executeAction('ui.select', makeFile)}><span>New</span><kbd>Ctrl N</kbd></button>
-                  <button type="button" role="menuitem" className="dx-file-item" onClick={() => executeAction('ui.select', openFile)}><span>Open…</span><kbd>Ctrl O</kbd></button>
-                  <button type="button" role="menuitem" className="dx-file-item" onClick={() => executeAction('ui.select', importFile)}><span>Import…</span></button>
-                  <button type="button" role="menuitem" className="dx-file-item" onClick={() => executeAction('ui.select', () => saveFile(false))}><span>Save</span><kbd>Ctrl S</kbd></button>
-                  <button type="button" role="menuitem" className="dx-file-item" onClick={() => executeAction('ui.select', () => saveFile(true))}><span>Save as…</span><kbd>Ctrl Shift S</kbd></button>
-                  <hr className="dx-file-rule" />
-                  <div className="dx-file-recent" role="group" aria-label="Recent files">
-                    <p>Recent files</p>
-                    {recentFiles.length ? recentFiles.map(row => <button key={row.path || row.id} type="button" role="menuitem" className="dx-file-item" onClick={() => executeAction('ui.select', () => openRecent(row))}><span>{row.title || row.name || row.path}</span></button>) : <p>No recent files reported</p>}
-                  </div>
-                </div> : null}
+              <div className="dx-actions" role="menu" aria-label="File" data-dx="file-menu">
+                <button type="button" role="menuitem" className="dx-file-link" onClick={() => executeAction('ui.select', makeFile)}>New file</button>
+                <button type="button" role="menuitem" className="dx-file-link" onClick={() => executeAction('ui.select', openFile)}>Open file…</button>
+                <button type="button" role="menuitem" className="dx-file-link" onClick={() => executeAction('ui.select', importFile)}>Import…</button>
+                <button type="button" role="menuitem" className="dx-file-link" onClick={() => executeAction('ui.select', openLibrary)}>Library</button>
+                <div className="dx-runmode" data-run-mode={namedMode || 'unavailable'} role={runMode.status === 'error' ? 'alert' : 'status'}>{runLabel}{runMode.status === 'error' ? <button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => { setRunMode({status: 'waiting', value: '', message: ''}); api.readPermissions().then(result => { const mode = result && typeof result.runMode === 'string' ? result.runMode : ''; setRunMode({status: mode ? 'loaded' : 'empty', value: mode, message: ''}); }).catch(error => setRunMode({status: 'error', value: '', message: error instanceof Error ? error.message : String(error)})); })}>Retry</button> : null}</div>
               </div>
             </header>
             {shortSource ? <p className="dx-desc" data-dx="description">{shortSource}</p> : null}

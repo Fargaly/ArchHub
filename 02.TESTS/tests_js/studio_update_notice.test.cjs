@@ -408,17 +408,16 @@ test('the File menu is file-only and Workshop leads with the thread',async()=>{
   return {ok:true,result:[]};
  }});
  try{
-  await v.settle(()=>v.doc.querySelector('[data-run-mode]')?.textContent.includes('Run mode: not reported'),'unknown run mode is reported as not reported');
+  await v.settle(()=>v.doc.querySelector('[data-run-mode]')?.textContent.includes('Mode unavailable'),'an unreported run mode stays Mode unavailable');
+  assert.equal(v.doc.querySelector('[data-run-mode]').textContent.includes('Accept edits'),false,'the header has no Accept edits pill');
   assert.equal(v.doc.querySelector('[data-dx="canvas-commands"]'),null,'canvas commands stay off the Workshop face');
   assert.ok(v.doc.querySelector('[data-dx="conversation"]'),'Workshop leads with the conversation');
   assert.equal(v.doc.querySelector('[data-dx="workflow"]'),null,'Workshop hides the workflow');
-  await v.click(v.doc.querySelector('[aria-label="File"]'));
   const menu=v.doc.querySelector('[data-dx="file-menu"]');
-  assert.ok(menu);
-  const labels=[...menu.querySelectorAll('[role="menuitem"], .dx-file-recent p')].map(node=>node.textContent.trim());
-  assert.deepEqual(labels,['NewCtrl N','Open…Ctrl O','Import…','SaveCtrl S','Save as…Ctrl Shift S','Recent files','No recent files reported']);
-  assert.doesNotMatch(menu.textContent,/Library|Search|Activity|Add node|Overview|needs recovery/);
-  assert.match(read('01.APP/nodelang/studio/style.css'),/\.dx-file-menu\{[^}]*width:300px;height:360px/);
+  assert.equal(menu.getAttribute('aria-label'),'File');
+  const labels=[...menu.querySelectorAll('[role="menuitem"]')].map(node=>node.textContent.trim());
+  assert.deepEqual(labels,['New file','Open file…','Import…','Library']);
+  assert.doesNotMatch(menu.textContent,/Search|Activity|Add node|Overview|Save as/);
   assert.match(read('01.APP/nodelang/studio/ds_home2.jsx'),/data-dx="canvas-commands"[\s\S]*\+ Add node[\s\S]*Library[\s\S]*Program view[\s\S]*Present[\s\S]*Model review[\s\S]*Overview/);
  }finally{v.close();}
 });

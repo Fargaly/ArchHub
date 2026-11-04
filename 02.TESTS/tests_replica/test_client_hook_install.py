@@ -10,7 +10,7 @@ from nodelang import workshop_config as config
 @pytest.fixture
 def inputs(tmp_path):
     home = tmp_path / "home"
-    gate = tmp_path / "00.GOVERNANCE" / "hooks" / "agent_scope_gate.py"
+    gate = tmp_path / "00.GOVERNANCE" / "03.AGENT-HOOKS" / "agent_scope_gate.py"
     python = tmp_path / "runtime" / "python.exe"
     for path in (gate, python):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -31,6 +31,8 @@ def installed(tmp_path, monkeypatch):
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text("# court fixture; never executed\n", encoding="utf-8")
     (root / "BUILD_METADATA.json").write_text("{}", encoding="utf-8")
+    (root / 'docs').mkdir()
+    (root / 'docs/SPEC.md').write_text('1. Product rules.\n', encoding='utf-8')
     state = tmp_path / "state"
     monkeypatch.setattr(registration, "install_roots", lambda environment=None: (root, state))
     return root
@@ -353,8 +355,7 @@ def test_claude_unquoted_backslash_hook_is_repair_available_and_repairs_to_a_bas
         tmp_path, inputs, installed):
     import subprocess, sys
     from nodelang import assistant_registration as registration
-    home, _, _, _ = inputs
-    gate = tmp_path / "00.GOVERNANCE" / "hooks" / "agent_scope_gate.py"
+    home, gate, _, _ = inputs
     marker = tmp_path / "gate-ran.txt"
     gate.write_text("import pathlib, sys\npathlib.Path(%r).write_text(' '.join(sys.argv[1:]))\n"
                     % str(marker), encoding="utf-8")
@@ -483,11 +484,11 @@ def test_setup_leaves_the_workspace_gate_byte_identical_and_adds_only_the_stop_h
     gate_hooks["PreToolUse"][0]["hooks"].append(broken)
     target = home / ".claude" / "settings.json"
     target.write_text(json.dumps({"hooks": gate_hooks}, indent=2), encoding="utf-8")
-    env = {"USERPROFILE": str(home)}
+    env = {"USERPROFILE": str(home), "PATH": ""}
     results = registration.connect_hooks_on_setup(consent=True, environment=env)
     assert {r["client"]: r["state"] for r in results} == {
         "claude-code": "configured", "codex": "configured", "gemini-cli": "configured",
-        "opencode": "not_installed"}
+        "antigravity": "not_installed", "opencode": "not_installed"}
     after = json.loads(target.read_text(encoding="utf-8"))
     assert after["hooks"]["PreToolUse"] == gate_hooks["PreToolUse"]
     assert after["hooks"]["PostToolUse"] == gate_hooks["PostToolUse"]
@@ -619,6 +620,8 @@ def test_every_written_hook_and_the_mcp_server_run_under_the_installed_venv(tmp_
     for name in ("__init__.py", "secrets_store.py", "credential_lock.py"):
         shutil.copy2(source / "01.APP/app" / name, root / "app" / name)
     shutil.copy2(source / "requirements.txt", root / "requirements.txt")
+    (root / 'docs').mkdir()
+    shutil.copy2(source / '04.DOCS/SPEC.md', root / 'docs/SPEC.md')
     (root / "BUILD_METADATA.json").write_text("{}", encoding="utf-8")
     # The wheelhouse stands in as this interpreter's site-packages; the venv itself is new.
     subprocess.run([sys.executable, "-m", "venv", "--without-pip", "--system-site-packages",

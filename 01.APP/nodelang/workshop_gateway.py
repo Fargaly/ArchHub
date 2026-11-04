@@ -1,12 +1,11 @@
 """The Workshop is the gateway: an agent that connects gets the hooks and rules applied.
 
 Founder 2026-10-28: any agent on the PC that connects to the Workshop gets the hooks
-and rules applied automatically. On connector start this checks the runtime's
-governance stamp (sha256 of .rulesync/hooks.jsonc + .rulesync/rules/archhub-ledger.md).
-If it is not current, it starts the existing agent_onboard.py (owned by 717)
-detached at BelowNormal and never waits for it. A detached finisher records the
-outcome in settings/governance-stamps.json and posts one Workshop line
-"<agent> joined - rules+hooks applied (35 rules, N hooks)". The agent is never blocked.
+and rules applied automatically. The installed product specification and hook
+renderers are the default source on every PC. An explicit governance override
+can select the workspace onboarder. A detached finisher records saved settings
+in settings/governance-stamps.json; native activation remains unverified.
+The agent is never blocked.
 """
 from __future__ import annotations
 
@@ -28,11 +27,13 @@ def governance_dir():
     override = os.environ.get('ARCHHUB_GOVERNANCE_HOOKS_DIR')
     if override:
         return Path(override)
-    from .workspace_roots_catalogue import built_in_path
-    return Path(built_in_path()) / '00.GOVERNANCE' / '03.AGENT-HOOKS'
+    return Path(__file__).resolve().parent
 
 
 def _sources():
+    if governance_dir() == Path(__file__).resolve().parent:
+        from .agent_onboard import sources
+        return sources(Path(__file__).resolve().parents[1])
     root = governance_dir() / '.rulesync'
     return root / 'hooks.jsonc', root / 'rules' / 'archhub-ledger.md'
 
@@ -45,6 +46,10 @@ def stamp():
 
 
 def counts():
+    if governance_dir() == Path(__file__).resolve().parent:
+        from .agent_onboard import rule_body
+        rules = rule_body(Path(__file__).resolve().parents[1])
+        return len(re.findall(r'^\d+\. ', rules, flags=re.M)), 2
     hooks, rules = _sources()
     text = re.sub(r'^\s*//.*$', '', hooks.read_text(encoding='utf-8'), flags=re.M)
     hook_count = len(re.findall(r'"command"\s*:', text))
@@ -130,7 +135,10 @@ def apply(runtime, current):
     """Detached: run the existing onboarder, then record the outcome and the Workshop join line."""
     onboard = governance_dir() / 'agent_onboard.py'
     try:
-        done = subprocess.run([sys.executable, str(onboard)], capture_output=True, text=True, timeout=GATEWAY_NODE['params']['onboard_timeout_seconds'],
+        command = [sys.executable, str(onboard)]
+        if governance_dir() == Path(__file__).resolve().parent:
+            command = [sys.executable, '-E', '-s', '-m', 'nodelang.agent_onboard', runtime]
+        done = subprocess.run(command, cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, timeout=GATEWAY_NODE['params']['onboard_timeout_seconds'],
                               creationflags=0x00004000 | 0x08000000 if os.name == 'nt' else 0)
         ok = done.returncode == 0
         reason = '' if ok else (done.stderr or done.stdout or 'agent_onboard.py exit %d' % done.returncode).strip()[-300:]
@@ -138,7 +146,7 @@ def apply(runtime, current):
         ok, reason = False, str(error)[:300]
     rules, hooks = counts()
     _write_state(runtime, stamp=current, state='current' if ok else 'failed', reason=reason, rules=rules, hooks=hooks)
-    line = ('%s joined - rules+hooks applied (%d rules, %d hooks, stamp %s)' % (runtime, rules, hooks, current[:12]) if ok
+    line = ('%s joined - rules+hooks saved; native activation unverified (%d rules, %d hooks, stamp %s)' % (runtime, rules, hooks, current[:12]) if ok
             else '%s joined - governance failed: %s' % (runtime, reason[:160]))
     from .workshop_mailbox import application_history, ROOM, CATEGORY
     with application_history() as history:

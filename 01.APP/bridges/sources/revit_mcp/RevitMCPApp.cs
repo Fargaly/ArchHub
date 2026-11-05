@@ -12,6 +12,7 @@ using System.IO;
 using System.Reflection;
 using System.Threading.Tasks;
 using Autodesk.Revit.UI;
+using Autodesk.Revit.UI.Events;
 using ArchHub.Shared;
 
 namespace RevitMCP
@@ -36,9 +37,10 @@ namespace RevitMCP
                 InstallAssemblyResolver();
                 Log("Shim OnStartup begin; revit_version=" + _revitVersion);
 
-                _handler = new RevitEventHandler();
+                _handler = new RevitEventHandler(Log);
                 _externalEvent = ExternalEvent.Create(_handler);
                 _handler.AttachEvent(_externalEvent);
+                app.DialogBoxShowing += OnDialogShowing;
 
                 var addinDir = Path.GetDirectoryName(typeof(RevitMCPApp).Assembly.Location);
                 var corePath = Path.Combine(addinDir, "RevitMCPCore.dll");
@@ -62,10 +64,24 @@ namespace RevitMCP
 
         public Result OnShutdown(UIControlledApplication app)
         {
+            app.DialogBoxShowing -= OnDialogShowing;
             try { _loader?.Unload(); } catch { }
             try { _externalEvent?.Dispose(); } catch { }
             _loader = null;
             return Result.Succeeded;
+        }
+
+        private void OnDialogShowing(object sender, DialogBoxShowingEventArgs args)
+        {
+            if (_handler == null || !_handler.HasWork) return;
+            var answer = RevitEventHandler.SafeDialogAnswer(args.DialogId);
+            if (!answer.HasValue)
+            {
+                Log("Broker blocked by dialog " + args.DialogId + "; unknown dialogs stay open");
+                return;
+            }
+            Log("Broker dialog " + args.DialogId + "; safe cancel=" + answer.Value
+                + "; accepted=" + args.OverrideResult(answer.Value));
         }
 
         private void LoadCoreInto(string corePath, IDictionary<string, byte[]> verified = null)

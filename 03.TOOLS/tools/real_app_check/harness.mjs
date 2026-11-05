@@ -1,28 +1,27 @@
-// Drives the REAL ArchHub window (QtWebEngine) over raw CDP for real_app_check.py.
+// Drives the REAL ArchHub window (QtWebEngine) through Playwright for real_app_check.py.
 // A scenario module exports `default async function (ctx)` and calls ctx.step(asked, fn) per step.
 // Every step writes one row (asked -> what the real window did -> screenshot) and one PNG.
 // Clicks are real CDP mouse events at the element's on-screen centre.
 // Native dialogs: ctx.native({kind:'pick-folder', title, folder}) asks real_app_check.py, which
-// answers the dialog on the hidden desktop with winapp.
+// answers the dialog on the hidden desktop with pywinauto.
+import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { pathToFileURL } from 'node:url';
-import { refuseSigning, stepVerdict } from './guards.mjs';
+import { stepVerdict } from './guards.mjs';
 
 
 const lines = readline.createInterface({ input: process.stdin })[Symbol.asyncIterator]();
 const setup = JSON.parse((await lines.next()).value);
 const out = setup.out;
-const targets = await (await fetch('http://127.0.0.1:' + setup.cdp + '/json')).json();
-const target = targets.find(t => t.type === 'page' && t.url.includes('/studio')) || targets.find(t => t.type === 'page');
-if (!target) { console.log('DONE ' + JSON.stringify(['no page to drive'])); process.exit(2); }
-const ws = new WebSocket(target.webSocketDebuggerUrl);
-await new Promise(resolve => ws.addEventListener('open', resolve, { once: true }));
-let id = 0; const waiting = new Map(); const failed = [], fileActions = new Map(), fileFailures = [];
-ws.addEventListener('message', event => {
-  const m = JSON.parse(event.data);
-  if (m.id && waiting.has(m.id)) { waiting.get(m.id)(m); waiting.delete(m.id); }
+const browser = await chromium.connectOverCDP('http://127.0.0.1:' + setup.cdp);
+const context = browser.contexts()[0];
+const page = context.pages().find(p => p.url().includes('/studio')) || context.pages()[0];
+if (!page) { console.log('DONE ' + JSON.stringify(['no page to drive'])); process.exit(2); }
+const session = await context.newCDPSession(page);
+const failed = [], fileActions = new Map(), fileFailures = [];
+const observe = m => {
   if (m.method === 'Network.requestWillBeSent' && new URL(m.params.request.url).pathname === '/api/session-files') {
     try {
       const action = JSON.parse(m.params.request.postData || '{}').action;
@@ -34,13 +33,9 @@ ws.addEventListener('message', event => {
     if (fileActions.has(m.params.requestId)) fileFailures.push({status:m.params.response.status,action:fileActions.get(m.params.requestId)});
   }
   if (m.method === 'Network.loadingFinished' || m.method === 'Network.loadingFailed') fileActions.delete(m.params.requestId);
-});
-const cdp = (method, params = {}, timeoutMs = 10000) => new Promise((resolve, reject) => {
-  const i = ++id;
-  const timer = setTimeout(() => { waiting.delete(i); reject(new Error('CDP timed out: ' + method)); }, timeoutMs);
-  waiting.set(i, message => { clearTimeout(timer); message.error ? reject(new Error(message.error.message)) : resolve(message); });
-  ws.send(JSON.stringify({ id: i, method, params }));
-});
+};
+for (const method of ['Network.requestWillBeSent', 'Network.responseReceived', 'Network.loadingFinished', 'Network.loadingFailed']) session.on(method, params => observe({method, params}));
+const cdp = async (method, params = {}) => ({result: await session.send(method, params)});
 const js = async expression => {
   const r = await cdp('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
   if (r.result?.exceptionDetails) throw new Error((r.result.exceptionDetails.exception?.description || r.result.exceptionDetails.text || 'page error').slice(0, 300));
@@ -60,14 +55,12 @@ const shot = async name => {
 const until = async (read, ok, tries = 40, ms = 500) => { let value; for (let i = 0; i < tries; i++) { value = await read(); if (ok(value)) return value; await sleep(ms); } return value; };
 const rectOf = expression => js(`(() => { const e = ${expression}; if (!e) return null; const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + Math.min(r.height / 2, 14), w: r.width, h: r.height, text: (e.innerText || e.getAttribute('aria-label') || '').trim().slice(0, 80) }; })()`);
 const mouse = async (point, button = 'left', clickCount = 1) => {
-  if (point) refuseSigning(point.text);
   await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: point.x, y: point.y });
   await cdp('Input.dispatchMouseEvent', { type: 'mousePressed', x: point.x, y: point.y, button, clickCount });
   await cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', x: point.x, y: point.y, button, clickCount });
 };
 // Click the visible element whose own text, aria-label or title is exactly `text`, with the real mouse.
 const clickText = async (text, selector = 'button,[role=button],[role=tab],a') => {
-  refuseSigning(text);
   const point = await rectOf(`[...document.querySelectorAll(${JSON.stringify(selector)})].find(e => e.getClientRects().length && [(e.innerText||'').trim(), (e.getAttribute('aria-label')||'').trim(), (e.title||'').trim()].includes(${JSON.stringify(text)}))`);
   if (!point) return false;
   await mouse(point);
@@ -104,5 +97,5 @@ try {
 }
 fs.writeFileSync(path.join(out, 'steps.json'), JSON.stringify(results, null, 1));
 console.log('DONE ' + JSON.stringify(results.map(row => row.asked + ': ' + row.result)));
-ws.close();
+await browser.close();
 process.exit(0);

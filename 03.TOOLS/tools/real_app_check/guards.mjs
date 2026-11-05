@@ -1,18 +1,6 @@
 // Rules the real-app harness applies to every scenario. Kept apart from the CDP driver so courts
 // can load them without a window.
 
-// The controls that sign with the Windows user's protected Workspaces key. Pressing one creates that
-// key (a Windows prompt on the founder's desktop, outside any isolation) or uses it. The harness never
-// presses them; real_app_check.py also reads the key's state before and after a run.
-export const SIGNING_CONTROLS = Object.freeze(['Add', 'Remove', 'Republish', 'Stop governing']);
-
-export function refuseSigning(text) {
-  const label = String(text ?? '').trim();
-  if (SIGNING_CONTROLS.includes(label)) {
-    throw new Error('refused: "' + label + '" signs with the protected Workspaces key');
-  }
-}
-
 // A step passes only when its function returned {pass: true}, gave no failure reason, and every HTTP
 // error seen during the step is one it named in expected_http (an expected refusal, by prefix such as
 // "400 /api/universal/workshop"). Anything else, including undefined, null or {}, fails.

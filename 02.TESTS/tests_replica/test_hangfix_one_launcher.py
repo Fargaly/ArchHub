@@ -310,3 +310,15 @@ def test_real_entry_chain_opens_one_window(tmp_path):
                 pass
         _kill_pids(_matching_pids(app, "launcher.py") + _matching_pids(app, "quiet_update.py")
                    + _matching_pids(app, "ArchHub.vbs"))
+
+
+def test_launcher_lock_is_profile_scoped_and_unknown_profiles_cannot_take_over(tmp_path):
+    functions = _functions()
+    port = functions['_profile_lock_port']
+    first = {'LOCALAPPDATA': str(tmp_path / 'one')}
+    second = {'LOCALAPPDATA': str(tmp_path / 'two')}
+    assert port(first) == port(dict(first))
+    assert port(first) != port(second)
+    assert functions['_launcher_profile']({}) is None
+    assert functions['_launcher_profile'](first) != functions['_launcher_profile'](second)
+    assert port({**first, 'ARCHHUB_TEST_LOCK_PORT': '54321'}) == 54321

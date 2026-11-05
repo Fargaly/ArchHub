@@ -3,7 +3,7 @@
 The founder's rule: no ArchHub task is handed over or accepted without real-app evidence. That means
 the installed build, run isolated on a hidden Windows desktop, with one screenshot per step showing
 what was asked, what the real window did, and the screenshot. Courts are review evidence, never done
-evidence. Every agent uses this one tool.
+evidence. Every agent uses this one tool, including F212 VERSIONSMOKE. Studio uses Playwright; native folder dialogs use pywinauto on the rig desktop.
 
 ## Run
 
@@ -23,7 +23,6 @@ Options:
   `.jsx` files, the copy's compiled Studio is rebuilt with this repository's
   `03.TOOLS/packaging/compile_studio.cjs`. Re-run without an overlay once the change is installed.
 - `--input <json>`: data handed to the scenario as `ctx.input`.
-- `--winapp <exe>` or `ARCHHUB_WINAPP`: the winapp CLI that answers native Windows dialogs.
 - `--boot-seconds` and `--probe-seconds`: bounds on app start and on the whole scenario.
 
 Heavy runs go through the machine queue (`run-heavy.ps1`) like any test batch.
@@ -35,14 +34,14 @@ The `--out` folder must be new or empty. It receives:
 - `steps.json`: one row per step, holding the label, what was asked, PASS or FAIL, what the window did,
   the data read, the HTTP errors, the expected refusals, and the screenshot path.
 - One PNG per step.
-- `native-folder-dialog.png`, when a step answers the Windows folder dialog.
+- `native-folder-request.json`, containing only the rig desktop, owned PIDs and folder selection.
 - `launcher-stdout.log`.
 - `report.json`, which holds:
   - the label, build and overlay files;
   - the run-unique desktop name and the app windows found on it;
   - the state files the app wrote in the run folder;
   - the boot time and the native dialog transcript;
-  - the signing-key state before and after;
+  - `not-used-nograph` for signing-key checks; the runner never opens a signing store;
   - the installed-code digest before and after;
   - the overall result.
 
@@ -55,10 +54,9 @@ error during the step is one it listed in `expected_http`. Any other return fail
 A step this isolated run cannot honestly exercise returns `{not_exercised: '<why>'}` and is reported
 as `NOT EXERCISED`, never as a pass. Such a run is `INCOMPLETE` (exit code 2).
 
-Today smoke reports one such step:
-
-- **Add.** It signs with the Windows user's protected key, which cannot be isolated, so it is never
-  pressed.
+The runner uses the NoGraph server port recorded by the isolated launcher and requires Studio to open.
+It does not poll a retired graph's `/health` or require a graph ID. Profile checks and Job ownership
+still apply. The launcher lock is scoped to the profile; foreign profile processes are never stopped.
 
 The probe must finish. A scenario exports its step names as `steps`, and the harness prints them as
 `DECLARED` before running. The run fails, whatever the step rows say, if any of these happen:
@@ -77,12 +75,12 @@ The run passes only when all of these hold:
 - the app's window was on this run's own desktop;
 - the app wrote its state in the run folder;
 - the installed code is byte-identical before and after;
-- the signing key is exactly and unchanged `absent` or `present:<hash>` (any other read fails).
+- the disposable run never reads a signing key.
 
 ## Guarantees
 
 - **Hidden desktop.** `CreateDesktopW` creates a new desktop with a run-unique name; an existing name is
-  refused. Nothing draws on the founder's screen. Native dialogs open there and winapp drives them
+  refused. Nothing draws on the founder's screen. Native dialogs open there and pywinauto drives them
   there.
 - **Isolated profile.** APPDATA, LOCALAPPDATA, USERPROFILE (with its shell folders), HOME, TEMP,
   CLAUDE_CONFIG_DIR and ARCHHUB_TEST_STATE_DIR all point into the run folder. The launch directory is
@@ -94,11 +92,10 @@ The run passes only when all of these hold:
   - Every wait is bounded.
   - The Job is terminated in `finally` on every exit path.
   - No process is ever killed by number.
-- **No protected key.** The Workspaces signing key (`ArchHub-workspace-roots-v1`) lives in the Windows
-  user's key store, which no environment variable isolates. Creating it shows a Windows prompt on the
-  founder's desktop. The harness refuses to press Add, Remove, Republish and Stop governing
-  (`guards.mjs`). The key is read silently (`NCRYPT_SILENT_FLAG`) before and after the run. Only
-  `NTE_BAD_KEYSET` reads as absent; any other code is kept and fails the run.
+- **No protected key.** NoGraph uses plain workspace settings. The rig never opens the Windows
+  signing store; its report records `not-used-nograph`.
+- **Native driver.** The existing desktop dependency manifest ships pywinauto and comtypes.
+  Generated COM wrappers stay under the rig's LOCALAPPDATA, outside the installed environment.
 
 ## Scenarios
 

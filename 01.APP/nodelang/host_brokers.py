@@ -440,7 +440,33 @@ def _outlook_application():
     return client.GetActiveObject("Outlook.Application")
 
 
+_COM_PROBES = {}
+_COM_PROBE_LOCK = threading.Lock()
+
+
 def _com_alive(prog_id: str) -> bool:
+    """Bound COM discovery; a hung Office call gets one worker, never a pileup."""
+    if os.name != 'nt':
+        return False
+    with _COM_PROBE_LOCK:
+        held = _COM_PROBES.get(prog_id)
+        if held is None or (held['done'].is_set() and time.monotonic() - held['at'] >= 30):
+            held = {'done': threading.Event(), 'value': False, 'at': time.monotonic()}
+            _COM_PROBES[prog_id] = held
+
+            def probe():
+                try:
+                    held['value'] = _com_probe(prog_id)
+                finally:
+                    held['at'] = time.monotonic()
+                    held['done'].set()
+
+            threading.Thread(target=probe, name='archhub-office-probe', daemon=True).start()
+    held['done'].wait(0.2)
+    return held['value']
+
+
+def _com_probe(prog_id: str) -> bool:
     """True when the application is already open (never launches it)."""
     if os.name != "nt":
         return False

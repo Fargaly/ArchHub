@@ -17,6 +17,7 @@ from .universal_cell import Cell, NULL_CELL_ID, InvalidCell
 from .cell_accounts import upsert_account, ensure_accounts
 
 _ROUTER_LOCK = threading.RLock()
+_ACCOUNT_FILE_LOCK = threading.RLock()
 
 
 def router_settings_path():
@@ -126,11 +127,17 @@ class AccountFiles:
             return {}
 
     def write(self, root, values):
+        with _ACCOUNT_FILE_LOCK:
+            self._write(root, values)
+
+    def _write(self, root, values):
         import tempfile
         try:
             data = json.loads(self.path.read_text(encoding='utf-8'))
         except FileNotFoundError:
             data = {}
+        if root.startswith('cached-read:'):
+            data = {key: value for key, value in data.items() if not key.startswith('cached-read:')}
         data[root] = values
         encoded = json.dumps(data, ensure_ascii=False, allow_nan=False, indent=1)
         if len(encoded.encode('utf-8')) > 65536:
@@ -265,17 +272,9 @@ class SettingsOwner:
                 **read_router_settings()['providerPreferences'], id: model}})
 
     def routerSettings(self):
-        from .model_router import request_profiles, _FREE_ROTATION_ATTEMPT_SECONDS
-        from .agent_runtime_registry import discover_runtime_processes
-        from .model_catalogue import openrouter_models, openrouter_free_chat_routes, BYO_GROUP
-        try:
-            rows = openrouter_models(opener=urlopen, timeout=_FREE_ROTATION_ATTEMPT_SECONDS, prices={})
-            models = ['openrouter/' + model for model in openrouter_free_chat_routes(
-                {'groups': [{'name': BYO_GROUP, 'items': rows}]})]
-        except Exception:
-            models = []
-        return {**read_router_settings(), 'models': ['openrouter/free', *models], 'requests': request_profiles(),
-                'live_agents': discover_runtime_processes()}
+        from .model_router import request_profiles
+        from .model_catalogue import cached_free_routes
+        return {**read_router_settings(), **cached_free_routes(), 'requests': request_profiles()}
 
     def setRouterSettings(self, changes):
         if type(changes) is not dict:
@@ -735,11 +734,11 @@ class SettingsOwner:
         return self.manageDependency(id, 'Repair' if row['state'] == 'Needs repair' else 'Install')
 
 
-def cloud_call(method, path, body=None, *, timeout_seconds=15):
+def cloud_call(method, path, body=None, *, timeout_seconds=15, session=None):
     from .cloud_session import cloud_session_path, _pinned_base
     from .cloud_signin import read_cloud_session
     try:
-        held = read_cloud_session(cloud_session_path())
+        held = session if session is not None else read_cloud_session(cloud_session_path())
     except (OSError, ValueError):
         raise InvalidCell('Not signed in. Sign in with your browser, then retry.') from None
     if not held.get('token'):

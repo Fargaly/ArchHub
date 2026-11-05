@@ -9,11 +9,14 @@ import os
 from pathlib import Path
 import re
 import tempfile
+import threading
 from uuid import uuid4
 
 from . import canvas_documents
 
 MAX_BYTES = 8 * 1024 * 1024
+# Windows readers must close metadata handles before another request replaces the file.
+_METADATA_LOCK = threading.RLock()
 _SECRET = re.compile(r'(^|_)(password|secret|token|api_key|private_key|credential)(_|$)', re.I)
 # Connection-node choices on the wire record itself. The first choice is what a
 # missing field means, so an old .archhub file still loads. Mirrored in studio/api.js.
@@ -362,7 +365,8 @@ def _default_sessions_directory():
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
                                 r'Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders') as key:
                 documents = Path(os.path.expandvars(winreg.QueryValueEx(key, 'Personal')[0]))
-            if documents.resolve() != (home / 'Documents').resolve():
+            # A redirected folder may be an offline network share; compare registry paths without probing it.
+            if documents != home / 'Documents':
                 logging.getLogger(__name__).info('Documents is redirected; default sessions stay under the user profile')
         except OSError as error:
             logging.getLogger(__name__).debug('Documents redirection lookup unavailable: %s', error)
@@ -432,14 +436,15 @@ def _restore_folder_move(owner):
                         if error.errno != errno.EXDEV and getattr(error, 'winerror', None) != 17:
                             raise
                         _copy_session_across_volumes(new, old)
-    for snapshot in pending['metadata']:
-        path = profile_directory() / snapshot['path']
-        if snapshot['path'] not in ('settings/settings.json', 'data/sessions/current.json', 'data/sessions/recent.json'):
-            raise ValueError('Invalid folder recovery metadata')
-        if snapshot['existed']:
-            JsonFile(path, {}).write(snapshot['value'])
-        else:
-            path.unlink(missing_ok=True)
+    with _METADATA_LOCK:
+        for snapshot in pending['metadata']:
+            path = profile_directory() / snapshot['path']
+            if snapshot['path'] not in ('settings/settings.json', 'data/sessions/current.json', 'data/sessions/recent.json'):
+                raise ValueError('Invalid folder recovery metadata')
+            if snapshot['existed']:
+                JsonFile(path, {}).write(snapshot['value'])
+            else:
+                path.unlink(missing_ok=True)
     owner.path.unlink()
 
 
@@ -458,9 +463,10 @@ def set_sessions_directory(target):
         if previous.resolve() == target.resolve():
             return []
         metadata = []
-        for name, default in (('settings/settings.json', {}), ('data/sessions/current.json', {}), ('data/sessions/recent.json', [])):
-            path = profile_directory() / name
-            metadata.append({'path': name, 'existed': path.exists(), 'value': JsonFile(path, default).read()})
+        with _METADATA_LOCK:
+            for name, default in (('settings/settings.json', {}), ('data/sessions/current.json', {}), ('data/sessions/recent.json', [])):
+                path = profile_directory() / name
+                metadata.append({'path': name, 'existed': path.exists(), 'value': JsonFile(path, default).read()})
         pending = {'moves': [], 'metadata': metadata}
         owner.write(pending)
         def before_move(old, new):
@@ -479,16 +485,17 @@ def set_sessions_directory(target):
 
 
 def _relocate_pointers(state_dir, moved):
-    from .nograph_server import JsonFile
-    replacements = dict(moved)
-    for name in ('recent.json', 'current.json'):
-        owner = JsonFile(Path(state_dir) / 'data/sessions' / name, [] if name == 'recent.json' else {})
-        value = owner.read()
-        for row in value if isinstance(value, list) else [value]:
-            if isinstance(row, dict) and row.get('path') in replacements:
-                row['path'] = replacements[row['path']]
-        if owner.path.exists():
-            owner.write(value)
+    with _METADATA_LOCK:
+        from .nograph_server import JsonFile
+        replacements = dict(moved)
+        for name in ('recent.json', 'current.json'):
+            owner = JsonFile(Path(state_dir) / 'data/sessions' / name, [] if name == 'recent.json' else {})
+            value = owner.read()
+            for row in value if isinstance(value, list) else [value]:
+                if isinstance(row, dict) and row.get('path') in replacements:
+                    row['path'] = replacements[row['path']]
+            if owner.path.exists():
+                owner.write(value)
 
 
 def move_session(path, destination, *, before_move=None):
@@ -573,31 +580,32 @@ def migrate_sessions(state_dir):
                 moved.append((str(path), target))
         except (OSError, ValueError):
             continue
-    for name in ('recent.json', 'current.json'):
-        old = source / name
-        if not old.is_file() or not _cleanup_plain(old):
-            continue
-        try:
-            value = json.loads(old.read_text(encoding='utf-8'))
-            replacements = dict(moved)
-            def update(row):
-                if isinstance(row, dict) and row.get('path') in replacements:
-                    row['path'] = replacements[row['path']]
-                return row
-            if isinstance(value, list):
-                value = [update(row) for row in value]
-            else:
-                if not value.get('path') and value.get('id'):
-                    value['path'] = str(source / (value['id'] + '.archhub'))
-                update(value)
-            from .nograph_server import JsonFile
-            target = Path(state_dir) / 'data' / 'sessions' / name
-            if not target.exists():
-                JsonFile(target, {}).write(value)
-            if json.loads(target.read_text(encoding='utf-8')) == value:
-                old.unlink()
-        except (OSError, ValueError, AttributeError):
-            continue
+    with _METADATA_LOCK:
+        for name in ('recent.json', 'current.json'):
+            old = source / name
+            if not old.is_file() or not _cleanup_plain(old):
+                continue
+            try:
+                value = json.loads(old.read_text(encoding='utf-8'))
+                replacements = dict(moved)
+                def update(row):
+                    if isinstance(row, dict) and row.get('path') in replacements:
+                        row['path'] = replacements[row['path']]
+                    return row
+                if isinstance(value, list):
+                    value = [update(row) for row in value]
+                else:
+                    if not value.get('path') and value.get('id'):
+                        value['path'] = str(source / (value['id'] + '.archhub'))
+                    update(value)
+                from .nograph_server import JsonFile
+                target = Path(state_dir) / 'data' / 'sessions' / name
+                if not target.exists():
+                    JsonFile(target, {}).write(value)
+                if json.loads(target.read_text(encoding='utf-8')) == value:
+                    old.unlink()
+            except (OSError, ValueError, AttributeError):
+                continue
     try:
         (source / 'skills').rmdir()
     except OSError as error:
@@ -806,36 +814,39 @@ class SessionFiles:
         self.metadata.mkdir(parents=True, exist_ok=True)
 
     def recent(self):
-        path = self.metadata/'recent.json'
-        if not path.exists():
-            return []
-        rows = json.loads(path.read_text(encoding='utf-8'))
-        if not isinstance(rows, list):
-            raise ValueError('Recent session list is invalid')
-        return rows
+        with _METADATA_LOCK:
+            path = self.metadata/'recent.json'
+            if not path.exists():
+                return []
+            rows = json.loads(path.read_text(encoding='utf-8'))
+            if not isinstance(rows, list):
+                raise ValueError('Recent session list is invalid')
+            return rows
 
     def remember(self, path, document):
-        rows = [{'id':str(path), 'path':str(path), 'name':document['title'], 'title':document['title']}] + [r for r in self.recent() if r['path'] != str(path)]
-        target = self.metadata/'recent.json'
-        with tempfile.NamedTemporaryFile(dir=self.metadata, suffix='.tmp', delete=False, mode='w', encoding='utf-8') as stream:
-            temporary = stream.name
-            json.dump(rows[:20],stream)
-        try:
-            os.replace(temporary,target)
-        finally:
-            if os.path.exists(temporary):
-                os.unlink(temporary)
+        with _METADATA_LOCK:
+            rows = [{'id':str(path), 'path':str(path), 'name':document['title'], 'title':document['title']}] + [r for r in self.recent() if r['path'] != str(path)]
+            target = self.metadata/'recent.json'
+            with tempfile.NamedTemporaryFile(dir=self.metadata, suffix='.tmp', delete=False, mode='w', encoding='utf-8') as stream:
+                temporary = stream.name
+                json.dump(rows[:20],stream)
+            try:
+                os.replace(temporary,target)
+            finally:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
 
     def _current(self, identity, path):
-        current = self.metadata/'current.json'
-        with tempfile.NamedTemporaryFile(dir=self.metadata, suffix='.tmp', delete=False, mode='w', encoding='utf-8') as stream:
-            temporary = stream.name
-            json.dump({'id':identity,'path':str(local_path(path)) if path else ''},stream)
-        try:
-            os.replace(temporary,current)
-        finally:
-            if os.path.exists(temporary):
-                os.unlink(temporary)
+        with _METADATA_LOCK:
+            current = self.metadata/'current.json'
+            with tempfile.NamedTemporaryFile(dir=self.metadata, suffix='.tmp', delete=False, mode='w', encoding='utf-8') as stream:
+                temporary = stream.name
+                json.dump({'id':identity,'path':str(local_path(path)) if path else ''},stream)
+            try:
+                os.replace(temporary,current)
+            finally:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
 
     def current_path(self):
         """The file the founder has open. Every reader asks here; none of them writes this choice."""
@@ -846,14 +857,15 @@ class SessionFiles:
 
     def open_files(self):
         """The file the app has open now (agents edit the same file), then recent files."""
-        rows = []
-        current = self.metadata/'current.json'
-        if current.exists():
-            held = json.loads(current.read_text(encoding='utf-8'))
-            path = held.get('path') or str(self.directory/(held['id']+'.archhub'))
-            rows.append({'path':path,'open_in_app':True})
-        rows += [{'path':r['path'],'open_in_app':False,'title':r.get('title','')} for r in self.recent() if r['path'] not in {x['path'] for x in rows}]
-        return rows
+        with _METADATA_LOCK:
+            rows = []
+            current = self.metadata/'current.json'
+            if current.exists():
+                held = json.loads(current.read_text(encoding='utf-8'))
+                path = held.get('path') or str(self.directory/(held['id']+'.archhub'))
+                rows.append({'path':path,'open_in_app':True})
+            rows += [{'path':r['path'],'open_in_app':False,'title':r.get('title','')} for r in self.recent() if r['path'] not in {x['path'] for x in rows}]
+            return rows
 
     def import_file(self, path):
         """A Node-RED/Langflow .json flow opens as a new .archhub beside the session files; a SKILL.md
@@ -889,10 +901,11 @@ class SessionFiles:
             import sys
             launch = next((a for a in sys.argv[1:] if str(a).lower().endswith('.archhub')), None)
             current = self.metadata/'current.json'
-            held = json.loads(current.read_text(encoding='utf-8')) if current.exists() else {}
+            with _METADATA_LOCK:
+                held = json.loads(current.read_text(encoding='utf-8')) if current.exists() else {}
             recovery = Path(held['path']) if held.get('path') else self.directory/(held['id']+'.archhub') if held else self.directory/'autosave.archhub'
             document = read_document(launch) if launch else read_document(recovery) if recovery.exists() else new_document()
-            return {'ok':True,'document':document,'path':str(launch or (json.loads(current.read_text(encoding='utf-8')).get('path','') if current.exists() else ''))}
+            return {'ok':True,'document':document,'path':str(launch or held.get('path', ''))}
         if action == 'starter':
             # A built-in starter becomes the founder's own new session file (the starter itself never changes).
             from .starters import document as starter_document

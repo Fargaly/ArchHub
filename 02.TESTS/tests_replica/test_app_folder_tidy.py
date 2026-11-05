@@ -296,7 +296,6 @@ def test_cross_volume_fallback_excludes_writers_and_preserves_bytes(profile, mon
 
 def test_rendered_library_opens_the_real_session_and_exports_archhub(profile):
     import subprocess
-    import threading
     from nodelang.nograph_server import NoGraphServer
     root = Path(__file__).resolve().parents[2]
     subprocess.run(['node', '--max-old-space-size=512', str(root / '03.TOOLS/packaging/compile_studio.cjs')],
@@ -312,8 +311,7 @@ def test_rendered_library_opens_the_real_session_and_exports_archhub(profile):
     server.native_save_file_picker = delayed_save_picker
     server._hosts.get = lambda: []
     server._local.get = lambda: []
-    server.thread = threading.Thread(target=server.httpd.serve_forever, daemon=True)
-    server.thread.start()
+    server.start()
     try:
         result = subprocess.run(['node', '02.TESTS/tests_js/apptidy_sessions.test.mjs'],
                                 input=json.dumps({'url': server.public_url + '/studio/?bootstrap=' + server.browser_bootstrap_token,
@@ -370,10 +368,51 @@ def test_redirected_documents_are_detected_but_never_used_by_default(profile, tm
             return str(redirected), winreg.REG_EXPAND_SZ
         return query(key, name)
     monkeypatch.setattr(winreg, 'QueryValueEx', redirected_documents)
-    with caplog.at_level('INFO', logger='nodelang.session_files'):
+    resolve = Path.resolve
+    def no_redirected_probe(path, *args, **kwargs):
+        if path == redirected:
+            raise AssertionError('Default selection must not probe redirected Documents')
+        return resolve(path, *args, **kwargs)
+    with monkeypatch.context() as patch, caplog.at_level('INFO', logger='nodelang.session_files'):
+        patch.setattr(Path, 'resolve', no_redirected_probe)
         folder = session_files.sessions_directory()
     assert calls and 'Documents is redirected' in caplog.text
     assert folder == Path(os.environ['USERPROFILE']) / 'ArchHub/Sessions'
     assert not redirected.exists()
     session_files.set_sessions_directory(redirected)
     assert session_files.sessions_directory() == redirected
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows reader handle excludes replacement')
+def test_background_metadata_reader_does_not_break_current_file_replace(profile, monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError
+    owner = session_files.SessionFiles()
+    saved = owner.dispatch({'action': 'save', 'document': session_files.new_document('Original')})
+    current = owner.metadata / 'current.json'
+    entered, release, writing = threading.Event(), threading.Event(), threading.Event()
+    read_text = Path.read_text
+    def held_read(path, *args, **kwargs):
+        if path == current and threading.current_thread().name.startswith('metadata-reader'):
+            with path.open('r', encoding='utf-8') as stream:
+                entered.set()
+                assert release.wait(3)
+                return stream.read()
+        return read_text(path, *args, **kwargs)
+    monkeypatch.setattr(Path, 'read_text', held_read)
+    def write_current():
+        writing.set()
+        owner._current('updated', saved['path'])
+    with ThreadPoolExecutor(1, thread_name_prefix='metadata-reader') as readers, ThreadPoolExecutor(1) as writers:
+        reader = readers.submit(session_files.SessionFiles().open_files)
+        try:
+            assert entered.wait(1)
+            writer = writers.submit(write_current)
+            assert writing.wait(1)
+            with pytest.raises(TimeoutError):
+                writer.result(timeout=.05)
+        finally:
+            release.set()
+        assert reader.result(timeout=2)[0]['path'] == saved['path']
+        writer.result(timeout=2)
+    assert json.loads(current.read_text(encoding='utf-8'))['id'] == 'updated'

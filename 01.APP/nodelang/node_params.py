@@ -144,6 +144,10 @@ def bound_value(document, node):
 def set_value(document, node_ref, key, value):
     """Set a parameter; a bound Parameter node writes its owner's value (one identity). Returns changed ids."""
     node = _node(document, node_ref)
+    if node['type'] == 'thing.setting' and node['params'].get('setting') and key == 'value':
+        from .canvas_documents import write_through
+        write_through(node, key, value)
+        return [node['id']]
     if node['type'] == PARAM_ENGINE and node.get('bind') and key == 'value':
         owner = _node(document, node['bind']['node'])
         param = node['bind']['param']

@@ -43,5 +43,34 @@ try {
   await page.waitForFunction(() => window.ArchHubAPI.getSessionDocument().nodes.length === 0);
   await page.waitForFunction(() => document.querySelectorAll('[data-graph-node]').length === 0);
   assert.equal(await page.locator('[data-graph-node]').count(),0);
+  await key('z',90,2);
+  await page.locator('[data-graph-node="list"]').waitFor();
+  await canvas.focus();
+  await key('Escape',27);
+  await page.evaluate(()=>new Promise(requestAnimationFrame));
+  const selectWire=async(index)=>{
+    await page.locator('.react-flow__edge').nth(index).focus();
+    await key('Enter',13);
+  };
+  await selectWire(0);
+  await input.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Shift',code:'ShiftLeft',windowsVirtualKeyCode:16,modifiers:8});
+  await selectWire(1);
+  await input.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Shift',code:'ShiftLeft',windowsVirtualKeyCode:16,modifiers:0});
+  await canvas.focus();
+  await key('Delete',46);
+  await page.getByRole('button',{name:'Confirm',exact:true}).click();
+  await page.waitForFunction(()=>window.ArchHubAPI.getSessionDocument().wires.length===0);
+  assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSessionDocument().nodes.length),3);
+  await key('z',90,2);
+  await page.waitForFunction(()=>window.ArchHubAPI.getSessionDocument().wires.length===2);
+  assert.deepEqual(await page.evaluate(()=>window.ArchHubAPI.getSessionDocument().wires),before.wires);
+  await selectWire(0);
+  await key('Escape',27);
+  await canvas.focus();
+  await page.evaluate(()=>new Promise(requestAnimationFrame));
+  await key('Delete',46);
+  assert.equal(await page.getByRole('button',{name:'Confirm',exact:true}).count(),0);
+  assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSessionDocument().wires.length),2);
+  console.log('MULTI-DELETE rendered wires: two selected wires removed in one step; one Undo restored endpoints; Escape cleared selection');
   console.log('MULTI-DELETE rendered: Delete removed all; one Undo restored identical ids/endpoints/types/params; Redo removed all');
 } finally { await browser.close(); }

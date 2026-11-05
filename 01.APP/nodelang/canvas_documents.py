@@ -161,7 +161,11 @@ def _run_workshop(params, feeds):
 
 
 def _run_setting(params, feeds):
-    value = feeds.get('value', params.get('value'))
+    if params.get('setting'):
+        from .settings_owner import appearance_setting
+        value = appearance_setting(params['setting'])['value']
+    else:
+        value = feeds.get('value', params.get('value'))
     return {'value': value}, str(value)
 
 
@@ -249,6 +253,15 @@ def thing_items():
         temperature = None
     items.append(card('thing:setting:temperature', 'settings', 'Temperature', 'Number parameter · router generation',
                       'thing.setting', {'value': temperature}, kind='number'))
+    from .settings_owner import appearance_settings
+    from .node_params import socket_type
+    for row in appearance_settings()['appearanceSettings']:
+        kind = {'boolean': 'bool'}.get(row['type'], row['type'])
+        item = card('thing:setting:' + row['id'], 'settings', row['label'], 'From Settings · ' + row['page'],
+                    'thing.setting', {'setting': row['id']}, kind=socket_type(kind))
+        item['setting'] = row
+        item['settingsKeys'] = ['value']
+        items.append(item)
     items.extend(daily_items())
     return items
 
@@ -259,6 +272,13 @@ def run_thing(engine, params, feeds):
 
 def write_through(node, key, value):
     """A parameter of an app-thing node is the owner's setting; write it there."""
+    if node.get('type') == 'thing.setting' and node.get('params', {}).get('setting') and key == 'value':
+        from .settings_owner import appearance_setting, appearance_settings
+        from .node_params import coerce
+        row = appearance_setting(node['params']['setting'])
+        kind = 'bool' if type(row['default']) is bool else 'integer' if type(row['default']) is int else row['type']
+        appearance_settings('setAppearance', [row['id'], coerce(kind, value, row)])
+        return True
     writer = WRITE_THROUGH.get((node.get('type'), key))
     if writer is not None:
         writer(value)
@@ -512,10 +532,13 @@ def edit(path, by, op, change, *, create_title=None, solve_changed=True):
             raise FileNotFoundError('No .archhub file at ' + str(path))
         document = copy.deepcopy(before) if before else new_document(create_title or Path(path).stem)
         touched = change(document) or []
+        mutated = document != before
         validate(document)
         solved = None
         if solve_changed and touched:
             solved = solve(document, touched, invoke=guard_effect)
+        if not mutated:
+            return document, solved
         _stamp(document, before, by, op)
         write_document(path, document)
     return document, solved

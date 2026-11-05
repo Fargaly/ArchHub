@@ -1089,6 +1089,10 @@ def r_settings_action(s, req):
     function, args = body.get('function'), body.get('args') or []
     companion = s.files['companion']
     settings = s.files['settings']
+    if function == 'exposeSettingsPage':
+        if len(args) != 1:
+            raise Refused('Choose a Settings page.')
+        return {'ok': True, 'result': SettingsOwner.exposeSettingsPage(args[0])}
     if function in ('readSessionsFolder', 'setSessionsFolder'):
         from .session_files import sessions_directory, set_sessions_directory
         moved = []
@@ -1108,56 +1112,11 @@ def r_settings_action(s, req):
             settings.update({'libraryCollapsed': list(dict.fromkeys(groups))})
         return {'ok': True, 'result': {'libraryCollapsed': settings.read().get('libraryCollapsed', [])}}
     if function in ('readControls', 'setAppearance'):
-        import re
-        tokens = json.loads((Path(__file__).with_name('studio') / 'design-tokens.json').read_text(encoding='utf-8'))
-        design = tokens['archhub-design-parameters']
-        dimensions = {
-            'appearanceInspectorWidth': {'min': 280, 'max': 480, 'tokenId': 'layout.inspectorWidth'},
-            'appearanceRowSpacing': {'min': 0, 'max': 16, 'tokenId': 'layout.nodeRowGap'},
-            'appearanceNodeRadius': {'min': 0, 'max': 24, 'tokenId': 'node.radius'},
-            'appearanceNodeHeader': {'tokenId': 'color.bgPanel'},
-        }
-        appearance = {
-            'Appearance.Theme': ('appearanceTheme', 'Theme', 'Dark', ('Dark', 'Light', 'System')),
-            'Appearance.High contrast': ('appearanceContrast', 'High contrast', False, ()),
-            'Appearance.Canvas grid': ('appearanceGrid', 'Canvas grid', True, ()),
-            'Appearance.Reduce motion': ('appearanceReduceMotion', 'Reduce motion', False, ()),
-            'Appearance.Accent colour': ('appearanceAccent', 'Accent colour', '#d97757', ()),
-            'Appearance.Text scale': ('appearanceTextScale', 'Text scale', 100, ()),
-            'Appearance.Default zoom': ('appearanceDefaultZoom', 'Default zoom', 100, ()),
-            'Appearance.Inspector width': ('appearanceInspectorWidth', 'Inspector width', int(design['layout']['inspectorWidth']['$value'].removesuffix('px')), ()),
-            'Appearance.Row spacing': ('appearanceRowSpacing', 'Row spacing', int(design['layout']['nodeRowGap']['$value'].removesuffix('px')), ()),
-            'Appearance.Node radius': ('appearanceNodeRadius', 'Node radius', int(design['node']['radius']['$value'].removesuffix('px')), ()),
-            'Appearance.Node header colour': ('appearanceNodeHeader', 'Node header colour', tokens['archhub-original']['color']['bgPanel']['$value'], ()),
-        }
-        preferences = settings.read()
+        from .settings_owner import appearance_settings
+        appearance = appearance_settings(function, args, settings)
+        rows = appearance['appearanceSettings']
         if function == 'setAppearance':
-            if len(args) != 2 or not isinstance(args[0], str) or args[0] not in appearance:
-                raise Refused('Choose a supported Appearance setting.')
-            key, _label, default, choices = appearance[args[0]]
-            value = args[1]
-            if (choices and value not in choices) or (type(default) is bool and type(value) is not bool):
-                raise Refused('Choose a valid value for this Appearance setting.')
-            if key in ('appearanceAccent', 'appearanceNodeHeader') and (not isinstance(value, str) or not re.fullmatch(r'#[0-9a-fA-F]{6}', value)):
-                raise Refused('Choose a six-digit accent colour.')
-            if key == 'appearanceTextScale' and (type(value) is not int or not 75 <= value <= 150):
-                raise Refused('Choose a text scale from 75 to 150 percent.')
-            if key == 'appearanceDefaultZoom' and (type(value) is not int or not 10 <= value <= 400):
-                raise Refused('Choose a default zoom from 10 to 400 percent.')
-            limits = dimensions.get(key, {})
-            if 'min' in limits and (type(value) is not int or not limits['min'] <= value <= limits['max']):
-                raise Refused('Choose a value within the Appearance setting limits.')
-            preferences = settings.update({key: value}, remove=('homeLayout',) if key == 'appearanceInspectorWidth' else ())
-        rows = [{'id': id, 'page': 'Appearance', 'label': label, 'default': default,
-                 'type': 'enum' if choices else 'boolean' if type(default) is bool else 'number' if type(default) is int else 'color',
-                 'value': preferences.get(key, default), 'overridden': key in preferences,
-                 **dimensions.get(key, {}),
-                 **({'min': 75, 'max': 150} if key == 'appearanceTextScale' else {}),
-                 **({'min': 10, 'max': 400} if key == 'appearanceDefaultZoom' else {}),
-                 **({'options': list(choices)} if choices else {})}
-                for id, (key, label, default, choices) in appearance.items()]
-        if function == 'setAppearance':
-            return {'ok': True, 'result': {'appearanceSettings': rows, 'homeLayout': preferences.get('homeLayout', {})}}
+            return {'ok': True, 'result': appearance}
     if function == 'readControls':
         result = {'companion': companion.read(), 'providerPreferences': read_router_settings()['providerPreferences'],
                   'controlErrors': {}, 'providerModels': {},

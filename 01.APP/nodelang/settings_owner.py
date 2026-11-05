@@ -359,26 +359,16 @@ class SettingsOwner:
         return result
 
     @staticmethod
-    def _setting_page(parameter):
-        kind = (parameter.get('setting') or {}).get('kind', 'property')
-        return ('Appearance' if kind == 'theme' else 'BABOOM' if kind == 'baboom' else
-                'Agents' if 'model' in kind or kind == 'generation' else
-                'Library & Mods' if kind.startswith('mod') else 'System graph')
-
-    def exposeSettingsPage(self, page):
-        from .canvas_graph_owner import CanvasOwner
-        from .universal_application import select_universal_root
-        self._subject()
-        canvas = CanvasOwner(self.store, self.runtime.universal_registry, self.authentication_context).canvas()
-        matches = [node for node in canvas['nodes'] if node.get('application') and any(
-            self._setting_page(parameter) == page for parameter in node.get('properties', node.get('params', [])))]
-        if not matches:
-            raise InvalidCell('This page has no application node in the current scope. Open its graph first.')
-        # Multiple parameters may share a page; focus its first existing application owner, never a copy.
-        node = matches[0]
-        select_universal_root(self.store, self.runtime.universal_registry, node['id'],
-                              authentication_context=self.authentication_context)
-        return {'id': node['id'], 'page': page, 'revision': self.store.revision}
+    def exposeSettingsPage(page):
+        from .canvas_documents import thing_items
+        items = [row for row in thing_items() if (row.get('setting') or {}).get('page') == page]
+        if not items:
+            raise InvalidCell('This page has no editable Settings rows.')
+        nodes = [{'id': 'setting:' + row['setting']['id'], 'item': row['id'], 'type': 'thing.setting',
+                  'title': row['title'], 'params': {'setting': row['setting']['id']},
+                  'position': {'x': 80 + i % 3 * 320, 'y': 100 + i // 3 * 240}}
+                 for i, row in enumerate(items)]
+        return {'id': nodes[0]['id'], 'page': page, 'nodes': nodes}
 
     def _roots(self):
         if self.workspace_roots is not None:
@@ -760,3 +750,66 @@ def cloud_call(method, path, body=None, *, timeout_seconds=15, session=None):
     if not isinstance(result, dict) or result.get('ok') is False:
         raise InvalidCell('Cloud backend returned an unconfirmed response. Refresh account status before retrying.')
     return result
+
+
+def appearance_settings(function='readControls', args=(), settings=None):
+    """Appearance rows and node bindings use the same validated settings owner."""
+    from .nograph_server import JsonFile, Refused
+    from .session_files import profile_directory
+    settings = settings or JsonFile(profile_directory() / 'settings/settings.json', {})
+    import re
+    tokens = json.loads((Path(__file__).with_name('studio') / 'design-tokens.json').read_text(encoding='utf-8'))
+    design = tokens['archhub-design-parameters']
+    dimensions = {
+        'appearanceInspectorWidth': {'min': 280, 'max': 480, 'tokenId': 'layout.inspectorWidth'},
+        'appearanceRowSpacing': {'min': 0, 'max': 16, 'tokenId': 'layout.nodeRowGap'},
+        'appearanceNodeRadius': {'min': 0, 'max': 24, 'tokenId': 'node.radius'},
+        'appearanceNodeHeader': {'tokenId': 'color.bgPanel'},
+    }
+    appearance = {
+        'Appearance.Theme': ('appearanceTheme', 'Theme', 'Dark', ('Dark', 'Light', 'System')),
+        'Appearance.High contrast': ('appearanceContrast', 'High contrast', False, ()),
+        'Appearance.Canvas grid': ('appearanceGrid', 'Canvas grid', True, ()),
+        'Appearance.Reduce motion': ('appearanceReduceMotion', 'Reduce motion', False, ()),
+        'Appearance.Accent colour': ('appearanceAccent', 'Accent colour', '#d97757', ()),
+        'Appearance.Text scale': ('appearanceTextScale', 'Text scale', 100, ()),
+        'Appearance.Default zoom': ('appearanceDefaultZoom', 'Default zoom', 100, ()),
+        'Appearance.Inspector width': ('appearanceInspectorWidth', 'Inspector width', int(design['layout']['inspectorWidth']['$value'].removesuffix('px')), ()),
+        'Appearance.Row spacing': ('appearanceRowSpacing', 'Row spacing', int(design['layout']['nodeRowGap']['$value'].removesuffix('px')), ()),
+        'Appearance.Node radius': ('appearanceNodeRadius', 'Node radius', int(design['node']['radius']['$value'].removesuffix('px')), ()),
+        'Appearance.Node header colour': ('appearanceNodeHeader', 'Node header colour', tokens['archhub-original']['color']['bgPanel']['$value'], ()),
+    }
+    preferences = settings.read()
+    if function == 'setAppearance':
+        if len(args) != 2 or not isinstance(args[0], str) or args[0] not in appearance:
+            raise Refused('Choose a supported Appearance setting.')
+        key, _label, default, choices = appearance[args[0]]
+        value = args[1]
+        if (choices and value not in choices) or (type(default) is bool and type(value) is not bool):
+            raise Refused('Choose a valid value for this Appearance setting.')
+        if key in ('appearanceAccent', 'appearanceNodeHeader') and (not isinstance(value, str) or not re.fullmatch(r'#[0-9a-fA-F]{6}', value)):
+            raise Refused('Choose a six-digit accent colour.')
+        if key == 'appearanceTextScale' and (type(value) is not int or not 75 <= value <= 150):
+            raise Refused('Choose a text scale from 75 to 150 percent.')
+        if key == 'appearanceDefaultZoom' and (type(value) is not int or not 10 <= value <= 400):
+            raise Refused('Choose a default zoom from 10 to 400 percent.')
+        limits = dimensions.get(key, {})
+        if 'min' in limits and (type(value) is not int or not limits['min'] <= value <= limits['max']):
+            raise Refused('Choose a value within the Appearance setting limits.')
+        preferences = settings.update({key: value}, remove=('homeLayout',) if key == 'appearanceInspectorWidth' else ())
+    rows = [{'id': id, 'page': 'Appearance', 'label': label, 'default': default,
+             'type': 'enum' if choices else 'boolean' if type(default) is bool else 'number' if type(default) is int else 'color',
+             'value': preferences.get(key, default), 'overridden': key in preferences,
+             **dimensions.get(key, {}),
+             **({'min': 75, 'max': 150} if key == 'appearanceTextScale' else {}),
+             **({'min': 10, 'max': 400} if key == 'appearanceDefaultZoom' else {}),
+             **({'options': list(choices)} if choices else {})}
+            for id, (key, label, default, choices) in appearance.items()]
+    return {'appearanceSettings': rows, 'homeLayout': preferences.get('homeLayout', {})}
+
+
+def appearance_setting(identity):
+    row = next((row for row in appearance_settings()['appearanceSettings'] if row['id'] == identity), None)
+    if row is None:
+        raise ValueError('This Settings row no longer exists: %s' % identity)
+    return row

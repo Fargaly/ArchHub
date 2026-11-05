@@ -1042,7 +1042,9 @@ api.exposeSettingsPage=async page=>{
  const epoch=scopeEpoch;
  const result=await settingsAction('exposeSettingsPage',[page]);
  if(epoch!==scopeEpoch)throw Error('The graph changed. Open Settings again.');
- await commands.load();project();
+ if(window.ARCHHUB_BOOT?.nograph){
+  fileEdit(d=>{for(const node of result.nodes)if(!d.nodes.some(n=>n.type==='thing.setting'&&n.params.setting===node.params.setting))d.nodes.push(node);},result.nodes.map(n=>n.id));
+ }else{await commands.load();project();}
  return state.graph.nodes.find(n=>n.id===result.id)||result;
 };
 api.apiRouterChat=(prompt,agent,replyTo)=>routerChat(prompt,agent,replyTo);  // replyTo: the Workshop message this answers
@@ -1121,6 +1123,7 @@ async function settingsAction(functionName, args=[]) {
  if(Array.isArray(result.appearanceSettings)){
   const ids=new Set(result.appearanceSettings.map(row=>row.id));
   values.settings=[...state.settings.filter(row=>!ids.has(row.id)),...result.appearanceSettings];
+  values.libraryPorts=state.libraryPorts.map(item=>item.setting?{...item,setting:result.appearanceSettings.find(row=>row.id===item.setting.id)||item.setting}:item);
  }
 
  if(Object.hasOwn(result,'accountChecking'))values.profile={...state.profile,checking:result.accountChecking};
@@ -1134,6 +1137,7 @@ async function settingsAction(functionName, args=[]) {
  if(result.workspaceIds)values.graph={...state.graph,workspaceIds:result.workspaceIds};
  if(result.profile){settingsProfile={...settingsProfile,...Object.fromEntries(Object.entries(result.profile).filter(([key])=>['name','firm','plan'].includes(key)))};values.profile={...(values.profile||state.profile),...settingsProfile};}
  publish(values);
+ if(result.appearanceSettings&&sessionDocument)projectFile();
  if(result.controlErrors&&Object.keys(result.controlErrors).length)notice(Object.values(result.controlErrors).join(' '));
  if(result.message)notice(result.message);
  if(result.open_url){
@@ -1153,7 +1157,11 @@ function setAppearance(id,value){
  const identity=state.profile.id;
  const write=appearanceWrites.then(()=>{if(identity!==state.profile.id)throw Error('Your account changed. Retry this appearance edit.');return settingsAction('setAppearance',[id,value]);});
  appearanceWrites=write.catch(()=>{});
- return write;
+ return write.then(result=>{
+  const changed=(sessionDocument?.nodes||[]).filter(n=>n.type==='thing.setting'&&n.params.setting===id).map(n=>n.id);
+  if(changed.length)scheduleSolve(changed,null);
+  return result;
+ });
 }
 api.setInspectorWidth=value=>setAppearance('Appearance.Inspector width',value);
 api.setSettingsScope=async scope=>{const result=await settingsAction('setSettingsScope',[scope,state.activeWorkspace||state.graph.workspaceIds?.[0]||'',state.graph.id]);scopeEpoch++;publish({hostSkillsReady:false,hostSkills:[],connectorBundle:null});await commands.load();project();await api.refreshSettingsOperations();await refreshHostSkills();return result;};
@@ -1473,9 +1481,9 @@ function fileNode(node){
  const defs=(node.paramDefs||[]).map(d=>node.type==='param.value'&&d.id==='value'?{...d,type:node.params.type}:d), bind=node.type==='param.value'?node.bind:null, owner=bind&&sessionDocument.nodes.find(n=>n.id===bind.node);
  const ports=datasetPorts(node)||{source:node.type==='param.value'?[{id:'value',type:PARAM_SOCKET[node.params.type]||'any'}]:base.source||[],
   target:[...(base.target||[]).map(p=>node.type==='param.value'&&p.id==='value'?{...p,type:PARAM_SOCKET[node.params.type]||'any'}:p),...defs.map(d=>({id:'param:'+d.id,type:PARAM_SOCKET[d.type]||'any',label:d.name}))]};
- const params=bind?{type:node.params.type,value:owner?.params[bind.param]}:{...node.params};
- const typeOf=key=>bind&&key==='value'?node.params.type:node.type==='param.value'&&key==='value'?node.params.type:defs.find(d=>d.id===key)?.type||ports.target.find(port=>port.id===key)?.type;
- const schema=Object.keys(params).map(key=>{const kind=typeOf(key),def=defs.find(d=>d.id===key)||(bind&&owner?.paramDefs?.find(d=>d.id===bind.param))||{};
+ const params=bind?{type:node.params.type,value:owner?.params[bind.param]}:item?.setting?{value:item.setting.value}:{...node.params};
+ const typeOf=key=>item?.setting&&key==='value'?({'boolean':'bool'}[item.setting.type]||item.setting.type):bind&&key==='value'?node.params.type:node.type==='param.value'&&key==='value'?node.params.type:defs.find(d=>d.id===key)?.type||ports.target.find(port=>port.id===key)?.type;
+ const schema=Object.keys(params).map(key=>{const kind=typeOf(key),def=item?.setting||defs.find(d=>d.id===key)||(bind&&owner?.paramDefs?.find(d=>d.id===bind.param))||{};
    return {key,label:node.type==='param.value'&&key==='type'?'Type':def.name||key,type:(['min','max','step'].includes(key)||kind==='number'||kind==='integer')?'number':PARAM_EDITOR[kind]||(kind?'text':typeof params[key]==='number'?'number':typeof params[key]==='boolean'?'boolean':'text'),
    dataType:kind||'',min:def.min,max:def.max,step:def.step??(kind==='integer'?1:undefined),unit:node.type==='param.value'&&key==='type'?'':def.unit||'',options:['enum','choice'].includes(kind)?def.options||[]:undefined,
    editable:!(['param.value','data.field'].includes(node.type)&&key==='type'),userParam:!!defs.find(d=>d.id===key),promoted:defs.find(d=>d.id===key)?.promoted||null,
@@ -1639,6 +1647,7 @@ api.moveNodes=async positions=>fileEdit(d=>{for(const [id,point] of Object.entri
 api.setNodeParam=async(id,key,value)=>{
  if(!sessionDocument.nodes.some(n=>n.id===id)&&systemProjection?.nodes.some(n=>n.id===id)){try{await commands.adopt(systemProjection);const result=await nodeProperty(id,key,value);systemProjection=commands.getSnapshot().canvas;publish({systemRevision:(state.systemRevision||0)+1});return result;}finally{projectFile();}}
  const held=sessionDocument.nodes.find(n=>n.id===id);
+ if(held?.type==='thing.setting'&&held.params.setting&&key==='value'){await api.setSetting(held.params.setting,value);return state.graph.nodes.find(n=>n.id===id);}
  if(held&&(held.type==='param.value'||(held.paramDefs||[]).some(d=>d.id===key))){await paramOp('set',[id,key,value]);return state.graph.nodes.find(n=>n.id===id);}
  fileEdit(d=>{const n=d.nodes.find(n=>n.id===id);if(!n||!Object.hasOwn(n.params,key))throw Error('Parameter is absent');n.params[key]=value;},[id],{node:id,key,value});return state.graph.nodes.find(n=>n.id===id);};
 async function paramOp(op,args){

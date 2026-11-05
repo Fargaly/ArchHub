@@ -145,7 +145,8 @@ def register_canvas_tools(server):
             from .node_params import set_value
             held, _ = _end(document, node + '.x')
             changed = set_value(document, held['id'], key, value)
-            docs.write_through(held, key, value)
+            if held['type'] != 'thing.setting' or not held['params'].get('setting'):
+                docs.write_through(held, key, value)
             return changed
         document, solved = docs.edit(_path(path), _who(ctx), 'set %s.%s' % (node, key), change)
         return _summary(document, solved)

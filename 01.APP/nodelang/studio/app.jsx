@@ -1364,7 +1364,7 @@
     t,
     u
   }, event) {
-    const handler = () => u.schedule(t.title);
+    const handler = () => u.schedule(t.id);
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
   }
   function appShellOutput55({

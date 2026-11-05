@@ -4,12 +4,11 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const vm = require('node:vm');
+const {execFileSync} = require('node:child_process');
 const {chromium} = require('playwright');
 const studio = path.resolve(__dirname, '../../01.APP/nodelang/studio');
-const compiler = vm.createContext({});
-vm.runInContext(fs.readFileSync(path.join(studio, 'vendor/babel.js'), 'utf8'), compiler);
-const compiled = name => compiler.Babel.transform(fs.readFileSync(path.join(studio, name), 'utf8'), {presets: ['react']}).code;
+process.stdout.write(execFileSync(process.execPath, ['--max-old-space-size=512', path.resolve(__dirname, '../../03.TOOLS/packaging/compile_studio.cjs')], {windowsHide: true}));
+const compiled = name => fs.readFileSync(path.join(studio, 'compiled', name.replace(/\//g, '-').replace(/\.jsx$/, '.js')), 'utf8');
 const sources = ['tokens.jsx', 'ds/index.jsx', 'icons.jsx', 'ui.jsx', 'ds_home2.jsx', 'surfaces.jsx', 'app.jsx'].map(compiled);
 
 test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation clicks', async () => {
@@ -19,7 +18,7 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
   const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || (process.platform === 'win32' && shell ? path.join(cache, shell, 'chrome-headless-shell-win64/chrome-headless-shell.exe') : undefined);
   const browser = await chromium.launch({headless: true, executablePath});
   try {
-    for (const mode of ['selected', 'clicked', 'last', 'first', 'empty', 'refused', 'cancelled']) {
+    for (const mode of ['selected', 'clicked', 'last', 'first', 'empty', 'refused', 'cancelled', 'repeat']) {
       const page = await browser.newPage({viewport: {width: 1440, height: 900}});
       const errors = [];
       page.on('pageerror', error => errors.push(error.message));
@@ -29,7 +28,7 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
       await page.addStyleTag({content: 'html,body,#root{height:100%;margin:0}'});
       for (const name of ['react.js', 'react-dom.js']) await page.addScriptTag({path: path.join(studio, 'vendor', name)});
       await page.evaluate(() => { window.fetch = () => new Promise(() => {}); });
-      await page.addScriptTag({path: path.join(studio, 'api.js')});
+      await page.addScriptTag({path: path.join(studio, 'compiled/api.js')});
       await page.evaluate(mode => {
         window.fixture = window.structuredClone(window.ArchHubAPI.getSnapshot());
         const s = window.fixture;
@@ -37,13 +36,19 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
           {id: 'recent', title: 'Recent task', status: 'WIP', sessionPath: 'recent.archhub', messages: []},
           {id: 'selected', title: 'Selected task', status: 'WIP', sessionPath: 'selected.archhub', sessionOpen: mode === 'last', messages: []}
         ];
-        s.focusedTask = mode === 'selected' || mode === 'refused' ? 'selected' : '';
+        s.focusedTask = ['selected', 'refused', 'cancelled'].includes(mode) ? 'selected' : '';
+        if (mode === 'repeat') {
+          s.tasks.forEach(t => { t.title = 'Same task'; });
+          s.templates = s.tasks.map(t => ({...t, chain: []}));
+        }
         s.schedules = [{id: 'trigger', title: 'Repeat recent task', path: 'recent.archhub', enabled: true, time: '09:00'}];
         window.openedTasks = [];
+        window.scheduledTasks = [];
         window.ArchHubAPI = {...window.ArchHubAPI, getSnapshot: () => s, subscribe: () => () => {},
           executeAction: (id, callback) => { if (id === 'ui.select') return callback(); throw Error('Unexpected action: ' + id); },
           setActiveSurface: () => {}, supportsAction: () => true,
           refreshAgentSurface: async () => null,
+          addSchedule: async (id, time) => { window.scheduledTasks.push({id, time}); return {ok: true}; },
           openTaskGraph: async id => { window.openedTasks.push(id); if (mode === 'refused') throw Error('Fixture task open refused'); return mode === 'cancelled' ? {cancelled: true} : {ok: true}; }};
       }, mode);
       for (let i = 0; i < sources.length - 1; i++) await page.addScriptTag({content: sources[i]});
@@ -51,7 +56,11 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
         const blank = () => null;
         Object.assign(window.UI, {BaboomSprite: blank, ScheduleResponsibility: blank,
           Canvas: () => React.createElement('div', {'data-fixture-canvas': true}, 'Task canvas'),
-          Docs: () => React.createElement('div', null, 'Docs'), Settings: blank});
+          Docs: () => {
+            const u = window.UI.useApp();
+            return React.createElement('div', null, ...window.fixture.tasks.map(t =>
+              React.createElement('button', {key: t.id, onClick: () => u.show('Skill', {id: t.id})}, 'Repeat ' + t.id)));
+          }, Settings: blank});
       });
       await page.addScriptTag({content: sources.at(-1)});
       const nav = page.getByRole('navigation', {name: 'Main navigation'});
@@ -60,6 +69,23 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
       assert.deepEqual(await nav.getByRole('button').evaluateAll(buttons => buttons.slice(0, 6).map(b => b.getAttribute('aria-label'))), labels);
       assert.equal(await page.locator('[data-home-face]').count(), 0, 'Home starts with the task list');
       assert.deepEqual(await page.evaluate(() => window.openedTasks), []);
+      if (mode === 'repeat') {
+        await nav.getByRole('button', {name: 'Docs', exact: true}).click();
+        for (const id of ['recent', 'selected']) {
+          await page.getByRole('button', {name: 'Repeat ' + id, exact: true}).click();
+          await page.getByRole('dialog', {name: 'Skill', exact: true}).waitFor();
+          await page.getByRole('button', {name: 'Run every day', exact: true}).click();
+          await page.getByRole('textbox', {name: 'Schedule time', exact: true}).fill('09:17');
+          await page.getByRole('button', {name: 'Add schedule', exact: true}).click();
+          await page.getByRole('dialog').waitFor({state: 'hidden'});
+        }
+        assert.deepEqual(await page.evaluate(() => window.scheduledTasks),
+          ['recent', 'selected'].map(id => ({id, time: '09:17'})));
+        assert.deepEqual(errors, []);
+        console.log('PASS repeat: same-named tasks keep distinct IDs through the recurrence modal');
+        await page.close();
+        continue;
+      }
       if (mode === 'clicked') {
         await page.locator('.dx-task').filter({hasText: 'Selected task'}).dblclick();
         await page.locator('.dx-main[data-home-face="workshop"]').waitFor();
@@ -69,7 +95,7 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
       boxes.forEach((box, index) => { assert.ok(box && box.height > 0); if (index) assert.ok(box.y >= boxes[index - 1].y + boxes[index - 1].height, labelAt(index)); });
       for (const face of ['Workshop', 'Canvas']) {
         await nav.getByRole('button', {name: face, exact: true}).click();
-        if (['empty', 'first', 'last', 'cancelled'].includes(mode)) {
+        if (['empty', 'first', 'last'].includes(mode)) {
           await page.getByRole('alert').filter({hasText: 'Pick a task on Home.'}).waitFor();
           assert.deepEqual(await page.evaluate(() => window.openedTasks), []);
           assert.equal(await nav.getByRole('button', {name: 'Home', exact: true}).getAttribute('aria-current'), 'page');

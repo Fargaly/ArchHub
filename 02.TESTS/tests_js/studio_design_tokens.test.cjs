@@ -8,7 +8,7 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..', '..');
 const studio = path.join(root, '01.APP/nodelang/studio');
 const read = name => fs.readFileSync(path.join(studio, name), 'utf8');
-const {designTokens, tokenCss, cssName, CSS_BEGIN, CSS_END} = require(path.join(root, '03.TOOLS/packaging/compile_studio.cjs'));
+const {designTokens, tokenCss, withTokenCss, cssName, CSS_BEGIN, CSS_END} = require(path.join(root, '03.TOOLS/packaging/compile_studio.cjs'));
 
 const css = read('style.css');
 const block = css.slice(0, css.indexOf(CSS_END) + CSS_END.length);
@@ -64,5 +64,19 @@ test('each DESIGNSYS-050 4.9 building block maps to one Penpot design and exists
     if (!code) continue;
     const where = sources.filter(([, text]) => text.includes(code.symbol)).map(([f]) => f);
     assert.deepEqual(where, [code.file], name + ' is defined once, in ' + code.file);
+  }
+});
+
+
+test('generated token prefix replaces CRLF or LF once and stays byte-identical', () => {
+  const tokens = designTokens();
+  for (const newline of ['\n','\r\n']) {
+    const body = 'body { color: var(--color-ink); }' + newline;
+    const before = tokenCss(tokens).replaceAll('\n', newline) + body;
+    const first = withTokenCss(before, tokens), second = withTokenCss(first, tokens);
+    assert.equal(first, tokenCss(tokens) + body);
+    assert.equal(first, second);
+    assert.equal(first.split(CSS_BEGIN.trimEnd()).length - 1, 1);
+    assert.throws(() => withTokenCss(CSS_BEGIN.trimEnd() + newline + ':root{}', tokens), /unterminated/);
   }
 });

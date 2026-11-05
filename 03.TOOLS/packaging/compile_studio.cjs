@@ -110,8 +110,13 @@ function tokenCss(tokens) {
   return CSS_BEGIN + ':root{' + [...tokens].map(([name, token]) => cssName(name) + ':' + token.value).join(';') + '}\n' + CSS_END;
 }
 function withTokenCss(css, tokens) {
-  const body = css.startsWith(CSS_BEGIN) ? css.slice(css.indexOf(CSS_END) + CSS_END.length) : css;
-  requireThat(!css.startsWith(CSS_BEGIN) || css.includes(CSS_END), 'style.css has an unterminated design-token block.');
+  const begin = CSS_BEGIN.trimEnd(), end = CSS_END.trimEnd();
+  let body = css;
+  if (css.startsWith(begin)) {
+    const offset = css.indexOf(end, begin.length);
+    requireThat(offset >= 0, 'style.css has an unterminated design-token block.');
+    body = css.slice(offset + end.length).replace(/^\r?\n/, '');
+  }
   return tokenCss(tokens) + body;
 }
 function withTokenPalette(js, tokens) {
@@ -288,7 +293,7 @@ function main() {
   console.log(JSON.stringify({ok:true, action:'compile', files:names.length, output_bytes:outputBytes,
     manifest_sha256:digest(manifestBytes), babel_version:version}));
 }
-module.exports = {designTokens, tokenCss, cssName, CSS_BEGIN, CSS_END};
+module.exports = {designTokens, tokenCss, withTokenCss, cssName, CSS_BEGIN, CSS_END};
 if (require.main === module) {
   try { main(); } catch (error) {
     console.error('Studio precompile refused: ' + error.message);

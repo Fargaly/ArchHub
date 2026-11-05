@@ -506,6 +506,30 @@ def install_cursor_hook_entries(home, command=None):
     return path
 
 
+def declare_session(payload, vendor, *, database=None):
+    """Best-effort session-start registration; identity still comes from the real caller."""
+    from .agent_declarations import SESSION_KEYS
+    from .workshop_mailbox import call, _role
+    session = payload.get("session_id") or payload.get("conversation_id") or payload.get("thread_id")
+    if not session:
+        return None
+    runtime = {"claude-code": "claude", "codexcli": "codex", "geminicli": "gemini"}.get(vendor, vendor)
+    if runtime == "auto":
+        from .workshop_mailbox import _identity
+        runtime = _identity({}, None)[1]
+    key = next((key for key, value in SESSION_KEYS.items() if value == runtime), "archhub/sessionID")
+    cwd = str(payload.get("cwd") or os.getcwd())
+    role = _role(payload.get("role") or os.environ.get("ARCHHUB_WORKSHOP_ROLE"))
+    if not role:
+        lane = Path(cwd).name
+        role = "builder:" + lane[5:] if lane.startswith("lane-") else "builder:" + runtime.replace("-", "_") + "-" + hashlib.sha256(str(session).encode()).hexdigest()[:8]
+    body = {"task": "Session start", "paths": [cwd], "status": "working", "request_id": "unassigned", "role": role}
+    for field in ("display_name", "title"):
+        if payload.get(field):
+            body[field] = payload[field]
+    return call("declare", body, {key: str(session)}, database=database)
+
+
 def main(argv=None):
     import argparse
     from .native_stop_hook import OwnerWriteDenied

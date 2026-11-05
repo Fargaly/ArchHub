@@ -376,7 +376,7 @@ def build_server(*, session=None, mailbox_call=None):
 
     @server.tool(name="declare")
     def declare(task: str, paths: list[str], status: str, request_id: str, ctx: Context,
-                display_name: str = "", model: str = "") -> dict[str, object]:
+                display_name: str = "", model: str = "", role: str = "", title: str = "") -> dict[str, object]:
         """Keep your Workshop node current: plain task, exact paths/hosts, founder request id,
         and working/blocked/done. Call at start and whenever scope or status changes.
         Overlaps post a shared coordination thread; they never lock anyone's work.
@@ -386,7 +386,8 @@ def build_server(*, session=None, mailbox_call=None):
         context = _caller_context(ctx)
         body = {"task": task, "paths": paths, "status": status,
                 "request_id": request_id, **({"display_name": display_name} if display_name else {}),
-                **({"model": model} if model else {})}
+                **({"model": model} if model else {}), **({"role": role} if role else {}),
+                **({"title": title} if title else {})}
         result = call("declare", body, context)
         with lock:
             declarations[tuple(context.items())] = body

@@ -20,7 +20,7 @@ class WorkshopCourt(unittest.TestCase):
         self.addCleanup(self.fixture.cleanup)
         self.env = patch.dict(os.environ, {'LOCALAPPDATA': self.fixture.name,
             'ARCHHUB_TEST_STATE_DIR': self.fixture.name,
-            'ARCHHUB_COORDINATION_ENDPOINT': 'http://127.0.0.1:1/coordination'})
+            'ARCHHUB_COORDINATION_ENDPOINT': 'http://127.0.0.1:1/coordination', 'APPDATA': self.fixture.name, 'TEMP': self.fixture.name, 'TMP': self.fixture.name})
         self.env.start()
         self.addCleanup(self.env.stop)
         self.context = {'threadId': 'ng-codex'}
@@ -215,3 +215,89 @@ for i in range(100):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+# WSROLES exercises real mailbox functions against a disposable database.
+
+from nodelang import workshop_mailbox as mb
+import pytest
+from test_newapp_mailbox import peer
+
+
+@pytest.fixture
+def database(tmp_path):
+    path = tmp_path / 'messages.sqlite3'
+    with mb.application_history(database=path):
+        pass
+    return path
+
+
+def application_call(method, body, context, *, database, peer):
+    return mb.call(method, body, context, database=database, peer=peer)
+
+
+def declare(database, session, role, **extra):
+    return application_call('declare', {'task': 'Role test', 'paths': [os.getcwd()], 'status': 'working',
+        'request_id': 'unassigned', 'role': role, **extra}, {'threadId': session}, database=database, peer=peer())
+
+
+def ident(row):
+    return {key: row[key] for key in ('sender_key', 'sender_label', 'sender')}
+
+
+def test_display_name_role_title_and_once(database, monkeypatch):
+    holder = declare(database, 'holder', 'coordinator', display_name='717', title='Desktop coordinator')
+    sender = {'sender_key': 'writer', 'sender_label': 'Writer', 'sender': 'Writer [writer]'}
+    with mb.application_history(database=database) as history:
+        sent = [mb._send(history, {'to': name, 'text': 'hello', 'idempotency_key': name}, sender)
+                for name in ('717', 'coordinator', 'Desktop coordinator')]
+        ids = [row['message_id'] for row in sent]
+        pending = mb._pending(history, ident(holder), 'codex')['pending']
+        assert {m['id'] for m in pending} == set(ids)
+        mb._seen(history, {'message_ids': ids, 'channel': 'hook'}, ident(holder), 'codex')
+        assert mb._pending(history, ident(holder), 'codex')['pending'] == []
+    from nodelang import workshop_live
+    pushes = []
+    monkeypatch.setattr(workshop_live, 'push', lambda *a, **k: pushes.append(a) or ('delivered', 'test', ''))
+    body = {'to': '717', 'text': 'unread live delivery'}
+    with mb.application_history(database=database) as history:
+        unread = mb._send(history, body, sender)
+    assert mb._deliver_now(database, unread, body, sender)[0]['state'] == 'delivered'
+    mb._deliver_now(database, unread, body, sender)
+    assert len(pushes) == 1
+
+
+def test_queue_and_handover_100_messages(database):
+    old = declare(database, 'old-design', 'design', display_name='retired designer')
+    sender = {'sender_key': 'writer', 'sender_label': 'Writer', 'sender': 'Writer [writer]'}
+    with mb.application_history(database=database) as history:
+        record = dict(old['declaration'], status='done')
+        history._db.execute('UPDATE workshop_declarations SET record=? WHERE root=?',
+                            (json.dumps(record), record['root']))
+        ids = [mb._send(history, {'to': ('design', '717', 'retired designer', old['sender_key'])[i % 4],
+                                'text': 'replay ' + str(i)}, sender)['message_id'] for i in range(100)]
+    design = declare(database, 'next-design', 'design')
+    coordinator = declare(database, 'next-717', '717')
+    delivered = []
+    with mb.application_history(database=database) as history:
+        for holder in (design, coordinator):
+            while True:
+                pending = mb._pending(history, ident(holder), 'codex')['pending']
+                if not pending:
+                    break
+                batch = [m['id'] for m in pending]
+                delivered.extend(batch)
+                mb._seen(history, {'message_ids': batch, 'channel': 'hook'}, ident(holder), 'codex')
+        assert len(delivered) == len(set(delivered)) == 100
+        assert set(delivered) == set(ids)
+        assert not history._db.execute("SELECT 1 FROM messages WHERE idempotency_key LIKE 'workshop-unresolved:%'").fetchone()
+
+
+def test_session_start_declares_role(tmp_path, monkeypatch, database):
+    from nodelang.native_agent_hooks import declare_session
+    monkeypatch.setenv('ARCHHUB_WORKSHOP_ROLE', 'research')
+    value = declare_session({'session_id': 'auto', 'cwd': str(tmp_path)}, 'codex', database=database)
+    assert value['declaration']['role'] == 'research'
+    monkeypatch.delenv('ARCHHUB_WORKSHOP_ROLE')
+    again = declare_session({'session_id': 'auto', 'cwd': str(tmp_path)}, 'codex', database=database)
+    assert again['declaration']['role'] == 'research'

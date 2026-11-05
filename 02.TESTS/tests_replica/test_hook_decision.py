@@ -37,7 +37,7 @@ def env(tmp_path):
     home = tmp_path / "home"
     (home / "00.ARCHUB").mkdir(parents=True)
     e = {"USERPROFILE": str(home), "HOME": str(home), "LOCALAPPDATA": str(home / "AppData" / "Local"),
-         "TEMP": str(tmp_path / "tmp"), "ARCHHUB_HOOK_STATE": str(tmp_path / "state")}
+         "TEMP": str(tmp_path / "tmp"), "ARCHHUB_HOOK_STATE": str(tmp_path / "state"), "APPDATA": str(home / "AppData" / "Roaming"), "TMP": str(tmp_path / "tmp")}
     (tmp_path / "tmp").mkdir()
     if BETTERLEAKS:
         e["ARCHHUB_BETTERLEAKS"] = BETTERLEAKS
@@ -374,6 +374,12 @@ def test_litellm_named_in_a_note_is_not_refused(env):
 
 
 _DRAFT_NODE = "Use the Email draft node (it fills his signature template); sending only when he asks."
+
+
+@pytest.mark.parametrize('attribute', ['HTMLBody', 'Body'])
+def test_non_outlook_body_assignment_is_allowed(env, attribute):
+    decision = call(env, 'Bash', {'command': f'python -c "page.{attribute} = 123"'})
+    assert decision['verdict'] == 'allow', decision
 
 
 @pytest.mark.parametrize("tool,data,refused", [

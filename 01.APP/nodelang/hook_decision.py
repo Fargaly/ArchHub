@@ -151,7 +151,7 @@ _HTMLBODY_SET = re.compile(r"(?i)(?:\.|\b)HTMLBody\s*=")
 _MAIL_BODY_SET = re.compile(r"(?i)\.Body\s*=")
 _MAIL_SEND = re.compile(r"(?i)\.Send\b")
 _OUTLOOK_COM = re.compile(
-    r"(?i)(win32com|outlook\s*\.\s*application|comobject\s+outlook|mailitem|createitem\s*\()")
+    r"(?i)(win32com|outlook\s*\.\s*application|comobject\s+outlook|mailitem|\bolMail\b)")
 _DRAFT_NODE_CALL = re.compile(
     r"(?i)\b(library\.draft_email|outlook\.reply_draft|outlook\.forward_draft)\b")
 _DRAFT_NODES = ("library.draft_email", "outlook.reply_draft", "outlook.forward_draft")
@@ -282,11 +282,9 @@ def _draft_node_tool(tool: str) -> bool:
 
 def _outlook_mail_mutation(command: str) -> bool:
     """A shell/COM/script write of a MailItem body, or a send through Outlook."""
-    if _HTMLBODY_SET.search(command):
-        return True
     if not _OUTLOOK_COM.search(command):
         return False
-    return bool(_MAIL_BODY_SET.search(command) or _MAIL_SEND.search(command))
+    return bool(_HTMLBODY_SET.search(command) or _MAIL_BODY_SET.search(command) or _MAIL_SEND.search(command))
 
 
 def _raw_outlook_mail(tool: str, command: str) -> bool:

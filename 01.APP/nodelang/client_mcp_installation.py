@@ -154,8 +154,8 @@ def _require_plain(path: Path, kind: str, *, may_be_absent: bool = False):
 def managed_entry(install_root, state_root, route="claude-code") -> dict:
     """The one user-scope entry for this installation; no session or actor identity.
 
-    Once the runtime is provisioned, the entry is the stable launcher (in ArchHub-Runtime, outside
-    the folder installs replace) that forwards to the host; ``route`` names the agent in its URL.
+    Once the runtime is provisioned, the entry is the one loopback URL. ``route`` names the agent
+    whose bearer token is written. No stdio shim is launched.
     """
     root = Path(install_root)
     python = root / ".venv" / "Scripts" / "python.exe"
@@ -165,11 +165,10 @@ def managed_entry(install_root, state_root, route="claude-code") -> dict:
     if runtime:
         from .mcp_share import agent_token, load_secret
         port = json.loads(runtime["config"].read_text(encoding="utf-8"))["limits"]["port"]
-        return {"type": "stdio", "command": str(runtime["python"]),
-                "args": ["-I", "-B", str(runtime["launcher"]),
-                         "http://127.0.0.1:%d/%s/%s/mcp" % (port, CONNECTOR, route),
-                         agent_token(load_secret(runtime["secret"]), route), *session_env_names()],
-                "env": {"ARCHHUB_COORDINATION_VENDOR": VENDORS.get(route, route)}}
+        # One URL for every agent. No stdio shim: the host answers Workshop, brokers and canvas itself.
+        client = route if route in ("claude-code", "codex", "cursor", "opencode", "gemini-cli", "antigravity") else "cursor"
+        return gateway_entry(client, "http://127.0.0.1:%d/mcp" % port,
+                             agent_token(load_secret(runtime["secret"]), route))
     return {
         "type": "stdio",
         "command": str(python),
@@ -441,44 +440,42 @@ def session_env_names():
 
 
 def runtime_files(env):
-    """The runtime's files when it is fully provisioned (venv with mcp-proxy, host, launcher, config, secret)."""
+    """The runtime's files when the host is provisioned (python, config, secret). No proxy and no shim."""
     base = Path(env["LOCALAPPDATA"], RUNTIME_FOLDER) if env.get("LOCALAPPDATA") else None
     files = None if base is None else {
         "dir": base, "python": base / "venv" / "Scripts" / "python.exe",
-        "launcher": base / "mcpshare" / "mcp_launcher.py", "config": base / "mcp-share.json",
-        "secret": base / "secret.txt"}
-    return files if files and all(files[k].is_file() for k in ("python", "launcher", "config", "secret")) else None
+        "config": base / "mcp-share.json", "secret": base / "secret.txt"}
+    return files if files and all(files[k].is_file() for k in ("python", "config", "secret")) else None
 
 
 def deploy_runtime(install_root, env, limits, servers=None) -> Path:
-    """Copy the host and launcher out of the install, write the host's config and secret. Idempotent.
+    """Copy the host out of the install and write its config and secret. Idempotent.
 
-    The venv holding mcp-proxy is built by build_proxy. servers adds specs beside the connector.
+    The connector is native (no child). ``servers`` are third-party specs our own stdio front
+    starts lazily. mcp-proxy is not installed and not spawned.
     """
     import shutil
-    from . import http_server, mcp_launcher, mcp_share
-    from .mcp_share import load_secret
+    from . import http_server, mcp_share
+    from .mcp_share import STATEFUL, load_secret
     base = Path(env["LOCALAPPDATA"], RUNTIME_FOLDER)
     package = base / "mcpshare"
     package.mkdir(parents=True, exist_ok=True)
     (package / "__init__.py").touch()
-    for module in (mcp_share, http_server, mcp_launcher):  # the three files the runtime runs, stdlib-only
+    for module in (mcp_share, http_server):
         shutil.copyfile(module.__file__, package / Path(module.__file__).name)
     root = Path(install_root)
-    connector = {"command": str(root / ".venv" / "Scripts" / "python.exe"),
-                 "args": ["-I", "-B", "-c", LOADER, str(root)], "env": {},
-                 "session_env": session_env_names(),
-                 "agent_env": {route: {"ARCHHUB_COORDINATION_VENDOR": VENDORS.get(route, route)} for route in ROUTES}}
-    config = {"proxy": [str(base / "venv" / "Scripts" / "python.exe"), "-m", "mcp_proxy"],
-              "secret_file": str(base / "secret.txt"), "spans": str(base / "spans.jsonl"),
-              "shared": [], "servers": {CONNECTOR: connector, **(servers or {})}, "limits": dict(limits)}
+    specs = {k: v for k, v in dict(servers or {}).items() if k != CONNECTOR}
+    config = {"secret_file": str(base / "secret.txt"), "spans": str(base / "spans.jsonl"),
+              "shared": [name for name in specs if name not in STATEFUL and not specs[name].get("stateful")],
+              "stateful": sorted(STATEFUL), "native": True, "app_root": str(root),
+              "agents": list(ROUTES), "servers": specs, "limits": dict(limits)}
     load_secret(config["secret_file"])
     _atomic_write(base / "mcp-share.json", json.dumps(config, indent=2))
     return base
 
 
 def build_proxy(env, base_python, proxy_source, run=subprocess.run) -> bool:
-    """Create the runtime venv and install mcp-proxy from a source checkout. True when both steps exit 0."""
+    """Retained so older callers import. The host no longer installs or spawns mcp-proxy."""
     venv = Path(env["LOCALAPPDATA"], RUNTIME_FOLDER, "venv")
     python = venv / "Scripts" / "python.exe"
     return (run([base_python, "-m", "venv", str(venv)]).returncode == 0
@@ -670,7 +667,7 @@ def install_gateway(client, base_url, specs, token, *, receipt=None, replace=Fal
     current, problem = _read_servers(client, env)
     if current is None:
         return {**result, "state": problem}
-    add = {GATEWAY_PREFIX + n: gateway_entry(client, "%s/%s/%s/mcp" % (base_url, n, client), token)
+    add = {GATEWAY_PREFIX + n: gateway_entry(client, "%s/s/%s/mcp" % (base_url.rstrip("/"), n), token)
            for n in specs}
     originals = {n: current[n] for n in specs if replace and _same_launch(current.get(n), specs[n])}
     failure = _apply(client, env, add, list(originals), run)

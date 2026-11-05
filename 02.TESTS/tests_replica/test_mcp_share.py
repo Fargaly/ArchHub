@@ -1,8 +1,7 @@
-"""Court: one local MCP host, lazy and reaped, shared only where stateless, behind a token; six agents' entries.
+"""Court: one loopback MCP endpoint. Native tools spawn nothing. Stateless stdio is one process.
 
-Real HTTP and real child processes. The upstream is a stand-in that speaks mcp-proxy's argv and answers
-POST /mcp with its pid and a call counter, so shared (one pid) and per-agent (a pid each, own counter)
-are observable. Agent configs are copies in a temp profile; nothing of the person's is touched.
+The upstream is a stand-in child that speaks newline JSON-RPC on stdin, so a shared server is one
+pid and a stateful server is one pid per MCP session. Agent configs are copies in a temp profile.
 """
 from __future__ import annotations
 
@@ -18,22 +17,37 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from nodelang import client_mcp_installation as inst  # noqa: E402
+import importlib.util
+import time
+
 from nodelang.mcp_share import McpHost, agent_token  # noqa: E402
 
 FAKE = textwrap.dedent('''
     import json, os, sys
-    from http.server import BaseHTTPRequestHandler, HTTPServer
-    port = int(sys.argv[sys.argv.index("--port") + 1]); n = [0]
-    class H(BaseHTTPRequestHandler):
-        def log_message(self, *a): pass
-        def do_POST(self):
-            self.rfile.read(int(self.headers.get("Content-Length") or 0)); n[0] += 1
-            body = json.dumps({"pid": os.getpid(), "n": n[0], "auth": self.headers.get("Authorization"), "sess": os.environ.get("CLAUDE_CODE_SESSION_ID"),
-                               "vendor": os.environ.get("ARCHHUB_COORDINATION_VENDOR"), "hdr": self.headers.get("X-ArchHub-Session"),
-                               "origin": self.headers.get("Origin")}).encode()
-            self.send_response(200); self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
-    HTTPServer(("127.0.0.1", port), H).serve_forever()
+    pid = os.getpid()
+    n = 0
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            break
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            continue
+        if "id" not in msg:
+            continue
+        n += 1
+        method = msg.get("method")
+        if method == "initialize":
+            result = {"protocolVersion": "2025-03-26", "capabilities": {}, "serverInfo": {"name": "fake", "version": "0"}}
+        elif method == "tools/list":
+            result = {"tools": [{"name": "ping", "description": "p", "inputSchema": {"type": "object"}}]}
+        else:
+            result = {"content": [{"type": "text", "text": json.dumps({
+                "pid": pid, "n": n, "session": os.environ.get("ARCHHUB_MCP_SESSION"),
+                "auth": os.environ.get("AUTHORIZATION")})}]}
+        sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": result}) + "\\n")
+        sys.stdout.flush()
 ''')
 
 
@@ -41,101 +55,144 @@ LIMITS = {"port": 0, "idle_seconds": 0.2, "start_timeout": 30, "upstream_timeout
           "reap_every": 30, "poll": 0.1, "stop_wait": 5}
 
 
+class Desk:
+    """In-process Workshop, brokers and canvas. One object for every agent."""
+
+    def __init__(self):
+        self.instance = "native-1"
+
+    def tools(self):
+        return [
+            {"name": "declare", "description": "Workshop", "inputSchema": {"type": "object"}},
+            {"name": "hosts_state", "description": "Brokers", "inputSchema": {"type": "object"}},
+            {"name": "canvas.list_open", "description": "Canvas", "inputSchema": {"type": "object"}},
+        ]
+
+    def call(self, name, arguments, agent, session):
+        return {"instance": self.instance, "name": name, "agent": agent, "session": session}
+
+
 @pytest.fixture
 def host(tmp_path):
-    script = tmp_path / "fake_proxy.py"
+    script = tmp_path / "fake_stdio.py"
     script.write_text(FAKE)
     spans = []
-    h = McpHost({"notion": {"command": "x"}, "screen": {"command": "y"},
-                 "connector": {"command": "z", "session_env": ["CLAUDE_CODE_SESSION_ID"],
-                               "agent_env": {"claude-code": {"ARCHHUB_COORDINATION_VENDOR": "claude"}}}},
-                {"notion"}, "s3cret",
-                [sys.executable, str(script)], LIMITS, span=spans.append).start()
+    spec = {"command": sys.executable, "args": ["-u", str(script)]}
+    h = McpHost({"notion": dict(spec), "screen": {**spec, "stateful": True},
+                 "cua": {**spec, "stateful": True}},
+                {"notion"}, "s3cret", LIMITS, span=spans.append, native=Desk()).start()
     h.spans = spans
+    time.sleep(0.05)
+    assert h.httpd.server_address[0] == "127.0.0.1"
     yield h
     h.close()
 
 
-def call(h, name, agent, token="ok", **headers):
+def post(h, path, agent, method, params=None, token="ok", session=None, **headers):
     port = h.httpd.server_address[1]
-    token = agent_token("s3cret", agent) if token == "ok" else token
+    if token == "ok":
+        token = agent_token("s3cret", agent)
+    hdrs = {"Host": "127.0.0.1:%d" % port, "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream"}
+    if token is not None:
+        hdrs["Authorization"] = "Bearer " + token
+    if session:
+        hdrs["Mcp-Session-Id"] = session
+    hdrs.update(headers)
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}})
     conn = http.client.HTTPConnection("127.0.0.1", port)
-    conn.request("POST", "/%s/%s/mcp" % (name, agent), b"{}",
-                 {"Authorization": "Bearer " + token, "Host": "127.0.0.1:%d" % port, **headers})
-    r = conn.getresponse()
-    return r.status, r.read()
+    conn.request("POST", path, body.encode(), hdrs)
+    reply = conn.getresponse()
+    return reply.status, reply.getheader("Mcp-Session-Id"), reply.read()
+
+
+def opened(h, path, agent, **headers):
+    status, sid, body = post(h, path, agent, "initialize", {
+        "protocolVersion": "2025-03-26", "capabilities": {},
+        "clientInfo": {"name": agent, "version": "0"}}, **headers)
+    assert status == 200, body
+    return sid
+
+
+def called(h, path, agent, sid, name="ping"):
+    status, _, body = post(h, path, agent, "tools/call", {"name": name, "arguments": {}}, session=sid)
+    assert status == 200, body
+    payload = json.loads(body)
+    assert "error" not in payload, payload
+    return json.loads(payload["result"]["content"][0]["text"])
 
 
 def test_nothing_runs_until_the_first_call(host):
     assert host.running() == []
-    assert call(host, "notion", "codex")[0] == 200
+    sid = opened(host, "/s/notion/mcp", "codex")
+    assert host.running() == []
+    assert called(host, "/s/notion/mcp", "codex", sid)["pid"] > 0
     assert host.running() == [("notion",)]
 
 
 def test_stateless_server_is_one_process_for_all_agents(host):
-    pids = {json.loads(call(host, "notion", a)[1])["pid"] for a in ("codex", "cursor", "claude-code")}
+    pids = set()
+    for agent in ("codex", "cursor", "claude-code"):
+        sid = opened(host, "/s/notion/mcp", agent)
+        pids.add(called(host, "/s/notion/mcp", agent, sid)["pid"])
     assert len(pids) == 1 and len(host.running()) == 1
 
 
-def test_stateful_server_gets_a_copy_per_agent_with_no_crosstalk(host):
-    a = [json.loads(call(host, "screen", "codex")[1]) for _ in range(3)]
-    b = [json.loads(call(host, "screen", "cursor")[1]) for _ in range(3)]
-    assert {x["pid"] for x in a}.isdisjoint({x["pid"] for x in b})
-    assert [x["n"] for x in a] == [1, 2, 3] and [x["n"] for x in b] == [1, 2, 3]
+def test_stateful_server_is_one_process_per_session(host):
+    first = opened(host, "/s/screen/mcp", "codex")
+    second = opened(host, "/s/screen/mcp", "cursor")
+    a = called(host, "/s/screen/mcp", "codex", first)
+    b = called(host, "/s/screen/mcp", "cursor", second)
+    again = called(host, "/s/screen/mcp", "codex", first)
+    assert a["pid"] != b["pid"] and again["pid"] == a["pid"]
+    assert a["session"] != b["session"] and a["auth"] is None
 
 
 def test_idle_upstream_is_reaped_and_restarts_on_the_next_call(host):
-    first = json.loads(call(host, "notion", "codex")[1])["pid"]
+    sid = opened(host, "/s/notion/mcp", "codex")
+    first = called(host, "/s/notion/mcp", "codex", sid)["pid"]
     assert host.reap(now=1e12) == [("notion",)] and host.running() == []
-    assert json.loads(call(host, "notion", "codex")[1])["pid"] != first
-    assert [e["event"] for e in host.spans] == ["start", "stop", "start"]
+    assert called(host, "/s/notion/mcp", "codex", sid)["pid"] != first
+    assert [event["event"] for event in host.spans] == ["start", "stop", "start"]
 
 
-def test_token_and_origin_are_enforced_and_the_token_never_reaches_the_server(host):
-    assert call(host, "notion", "codex", token="wrong")[0] == 401
-    assert call(host, "notion", "codex", token=agent_token("s3cret", "cursor"))[0] == 401  # another agent's
-    assert call(host, "notion", "codex", Origin="http://evil.example")[0] == 403
-    assert call(host, "notion", "codex", Host="evil.example")[0] == 403
-    assert host.running() == [], "refused calls must not start anything"
-    seen = json.loads(call(host, "notion", "codex")[1])
-    assert seen["auth"] is None and seen["origin"] is None
-
-
-def session_call(h, session, agent="claude-code"):
-    port = h.httpd.server_address[1]
-    conn = http.client.HTTPConnection("127.0.0.1", port)
-    conn.request("POST", "/connector/%s/mcp" % agent, b"{}", {
-        "Authorization": "Bearer " + agent_token("s3cret", agent), "Host": "127.0.0.1:%d" % port,
-        "X-ArchHub-Session": session})
-    r = conn.getresponse()
-    return r.status, r.read()
-
-
-def test_connector_copy_is_per_session_and_gets_that_sessions_identity(host):
-    a = json.loads(session_call(host, "CLAUDE_CODE_SESSION_ID=aaa")[1])
-    b = json.loads(session_call(host, "CLAUDE_CODE_SESSION_ID=bbb")[1])
-    again = json.loads(session_call(host, "CLAUDE_CODE_SESSION_ID=aaa")[1])
-    assert (a["sess"], b["sess"]) == ("aaa", "bbb") and a["pid"] != b["pid"] and again["pid"] == a["pid"]
-    assert a["vendor"] == "claude" and a["hdr"] is None, "vendor comes from the agent route; header never forwarded"
-
-
-def test_session_header_is_validated(host):
-    assert session_call(host, "")[0] == 400
-    assert session_call(host, "PATH=aaa")[0] == 400  # only the spec's own variables
-    assert session_call(host, "CLAUDE_CODE_SESSION_ID=a b;c")[0] == 400
+def test_token_host_and_origin_are_refused_before_anything_starts(host):
+    assert post(host, "/mcp", "codex", "initialize", token=None)[0] == 401
+    assert post(host, "/s/notion/mcp", "codex", "initialize", token="wrong")[0] == 401
+    assert post(host, "/s/notion/mcp", "codex", "initialize", token="not-a-token")[0] == 401
+    assert post(host, "/mcp", "codex", "initialize", Origin="http://evil.example")[0] == 403
+    assert post(host, "/mcp", "codex", "initialize", Host="evil.example")[0] == 403
     assert host.running() == []
 
 
-def test_launcher_sends_the_identity_it_was_spawned_with():
-    from nodelang.mcp_launcher import build_command
-    cmd = build_command(["http://u/connector/codex/mcp", "tok", "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID"],
-                        {"CODEX_THREAD_ID": "t-1"}, "py")
-    assert cmd == ["py", "-m", "mcp_proxy", "--headers", "Authorization", "Bearer tok",
-                   "--headers", "X-ArchHub-Session", "CODEX_THREAD_ID=t-1", "http://u/connector/codex/mcp"]
-    assert "X-ArchHub-Session" not in build_command(["u", "tok", "A"], {}, "py")
+def test_session_end_reaps_that_stateful_copy_only(host):
+    kept = opened(host, "/s/cua/mcp", "codex")
+    gone = opened(host, "/s/cua/mcp", "codex")
+    live = called(host, "/s/cua/mcp", "codex", kept)
+    called(host, "/s/cua/mcp", "codex", gone)
+    port = host.httpd.server_address[1]
+    conn = http.client.HTTPConnection("127.0.0.1", port)
+    conn.request("DELETE", "/s/cua/mcp", headers={
+        "Authorization": "Bearer " + agent_token("s3cret", "codex"),
+        "Host": "127.0.0.1:%d" % port, "Mcp-Session-Id": gone})
+    assert conn.getresponse().status == 200
+    assert host.running() == [("cua", "codex", kept)]
+    assert called(host, "/s/cua/mcp", "codex", kept)["pid"] == live["pid"]
 
 
-def test_runtime_lives_outside_the_install_and_entries_point_at_it(tmp_path, monkeypatch):
+def test_native_workshop_brokers_and_canvas_are_one_instance_and_spawn_nothing(host):
+    left = opened(host, "/mcp", "codex")
+    right = opened(host, "/mcp", "cursor")
+    listed = json.loads(post(host, "/mcp", "codex", "tools/list", session=left)[2])
+    names = {tool["name"] for tool in listed["result"]["tools"]}
+    assert {"declare", "hosts_state", "canvas.list_open"} <= names
+    a = called(host, "/mcp", "codex", left, "declare")
+    b = called(host, "/mcp", "cursor", right, "send")
+    assert a["instance"] == b["instance"] == "native-1"
+    assert host.running() == []
+
+
+def test_runtime_entry_is_the_url_and_the_connector_is_not_a_child(tmp_path, monkeypatch):
     install = tmp_path / "ArchHub"
     (install / ".venv" / "Scripts").mkdir(parents=True)
     (install / ".venv" / "Scripts" / "python.exe").write_bytes(b"MZ")
@@ -151,11 +208,57 @@ def test_runtime_lives_outside_the_install_and_entries_point_at_it(tmp_path, mon
     (runtime / "venv" / "Scripts" / "python.exe").write_bytes(b"MZ")
     assert inst.ensure_runtime(env, popen=lambda *a, **k: None) == "started"
     entry = inst.managed_entry(install, tmp_path, "codex")
-    assert str(install) not in json.dumps(entry) and str(runtime) in entry["command"]
-    assert entry["args"][3] == "http://127.0.0.1:47831/connector/codex/mcp"
-    assert "CODEX_THREAD_ID" in entry["args"] and entry["env"]["ARCHHUB_COORDINATION_VENDOR"] == "codex"
-    cfg = json.loads((runtime / "mcp-share.json").read_text())
-    assert cfg["servers"]["connector"]["command"].startswith(str(install))  # only the host's child uses the install
+    assert entry["url"] == "http://127.0.0.1:47831/mcp"
+    assert entry["http_headers"]["Authorization"].startswith("Bearer ")
+    assert "command" not in entry and str(install) not in json.dumps(entry)
+    cfg = json.loads((runtime / "mcp-share.json").read_text(encoding="utf-8"))
+    assert cfg["native"] is True and "proxy" not in cfg and "connector" not in cfg["servers"]
+    assert "mcp_proxy" not in json.dumps(cfg)
+
+
+def test_agent_onboard_verify_proves_one_url_and_stdio_is_gone(tmp_path):
+    home = tmp_path / "home"
+    for sub in (".cursor", ".gemini", ".gemini/antigravity", ".config/opencode", ".codex", ".claude"):
+        (home / sub).mkdir(parents=True)
+    shim = {"command": "python.exe", "args": ["-c", "runpy.run_module('nodelang.native_agent_mcp')"]}
+    other = {"command": "keep-me"}
+    for rel, key in ((".claude.json", "mcpServers"), (".cursor/mcp.json", "mcpServers"),
+                     (".gemini/settings.json", "mcpServers"),
+                     (".gemini/antigravity/mcp_config.json", "mcpServers"),
+                     (".config/opencode/opencode.json", "mcp")):
+        (home / rel).parent.mkdir(parents=True, exist_ok=True)
+        (home / rel).write_text(json.dumps({"theme": "dark", key: {
+            "archhub-agent": shim, "archhub-old": shim, "other": other}}), encoding="utf-8")
+    (home / ".codex" / "config.toml").write_text(
+        'model = "x"\n\n[mcp_servers.archhub-agent]\ncommand = "python.exe"\n'
+        'args = ["nodelang.native_agent_mcp"]\n\n[mcp_servers.other]\ncommand = "keep-me"\n',
+        encoding="utf-8")
+    secret = tmp_path / "secret.txt"
+    secret.write_text("s3cret", encoding="ascii")
+    cfg_path = tmp_path / "mcp-share.json"
+    cfg_path.write_text(json.dumps({"secret_file": str(secret), "limits": {"port": 47831}, "native": True}),
+                        encoding="utf-8")
+    spec = importlib.util.spec_from_file_location(
+        "mcp_share_config",
+        Path(r"C:\Users\fargaly\00.ARCHUB\00.GOVERNANCE\03.AGENT-HOOKS\mcp_share_config.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    env = {"ARCHHUB_MCP_SHARE_CONFIG": str(cfg_path), "LOCALAPPDATA": str(tmp_path)}
+    report = mod.publish(home, "http://127.0.0.1:47831/mcp", "s3cret")
+    assert "cursor" in report["wrote"] and any(item.endswith(":archhub-old") for item in report["removed"])
+    lines = mod.sync(home, env, write=False)
+    assert lines == ["verify: mcp share ok claude-code,cursor,gemini-cli,antigravity,opencode,codex"]
+    for rel in (".claude.json", ".cursor/mcp.json", ".gemini/settings.json",
+                ".config/opencode/opencode.json"):
+        text = (home / rel).read_text(encoding="utf-8")
+        assert "http://127.0.0.1:47831/mcp" in text and "native_agent_mcp" not in text and "keep-me" in text
+        assert json.loads(text)["theme"] == "dark"
+    toml = (home / ".codex" / "config.toml").read_text(encoding="utf-8")
+    assert 'model = "x"' in toml and "keep-me" in toml and "native_agent_mcp" not in toml
+    assert "http://127.0.0.1:47831/mcp" in toml
+    onboard = Path(r"C:\Users\fargaly\00.ARCHUB\00.GOVERNANCE\03.AGENT-HOOKS\agent_onboard.py").read_text(encoding="utf-8")
+    assert "_mcp_share_lines(home, write=False)" in onboard
+    assert 'if "--verify" in sys.argv[1:]' in onboard
 
 
 # ---- the writer: six agents, copies only ------------------------------------------------------
@@ -188,7 +291,7 @@ def test_entry_is_added_original_replaced_other_kept_and_restored(profile, clien
     assert r["state"] == "registered" and r["added"] == ["archhub-notion"] and r["replaced"] == ["notion"]
     path = inst._codex_toml(env) if client == "codex" else inst._gateway_file(client, env)[0]
     text = path.read_text()
-    assert BASE + "/notion/%s/mcp" % client in text and "keep-me" in text and "notion-mcp" not in text
+    assert BASE + "/s/notion/mcp" in text and "keep-me" in text and "notion-mcp" not in text
     if client != "codex":
         assert json.loads(text)["theme"] == "dark"
     else:

@@ -71,6 +71,53 @@ def test_save_and_reopen_keep_the_identity(profile):
     assert all(n['type'] != 'param.value' for n in again['nodes']) and 'promoted' not in again['nodes'][1]['paramDefs'][0]
 
 
+@pytest.mark.parametrize('socket', ['count', 'param:count'])
+def test_promotion_preserves_an_existing_parameter_input(socket):
+    from nodelang import node_params
+    from nodelang.session_files import validate
+
+    doc = workflow()
+    doc['nodes'].append({'id': 'source', 'item': 'n_number', 'type': 'data.constant',
+                         'title': 'Count source', 'params': {'value': 3}, 'position': {'x': 0, 'y': 200}})
+    if socket.startswith('param:'):
+        doc['nodes'][1]['paramDefs'] = [{'id': 'count', 'name': 'Count', 'type': 'integer'}]
+    doc['wires'].append({'id': 'input', 'from': {'node': 'source', 'socket': 'value'},
+                         'to': {'node': 'slice', 'socket': socket}})
+    validate(doc)
+    before = copy.deepcopy(doc)
+
+    with pytest.raises(ValueError, match='Disconnect the existing input wire first'):
+        node_params.promote(doc, 'slice', 'count')
+
+    assert doc == before
+
+
+@pytest.mark.parametrize('value', [2, 2.5])
+def test_legacy_number_promotes_with_its_declared_type(profile, value):
+    from nodelang import node_params
+    from nodelang.session_files import catalogue, new_document, read_document, write_document
+
+    item = next(row for row in catalogue() if row['id'] == 'n_number')
+    doc = new_document('Legacy Number')
+    doc['nodes'].append({
+        'id': 'number', 'item': item['id'], 'type': item['engine'], 'title': item['title'],
+        'params': {'value': value}, 'position': {'x': 0, 'y': 0},
+    })
+    param = node_params.promote(doc, 'number', 'value')[0]
+    node_params.set_value(doc, param, 'value', 7.25)
+    path = profile / 'legacy-number.archhub'
+    write_document(path, doc)
+    reopened = read_document(path)
+    binding = next(node for node in reopened['nodes'] if node['id'] == param)
+    assert binding['params']['type'] == 'number'
+    assert node_params.bound_value(reopened, binding) == 7.25
+    node_params.demote(reopened, 'number', 'value')
+    write_document(path, reopened)
+    restored = read_document(path)
+    assert len(restored['nodes']) == 1 and not restored['wires']
+    assert restored['nodes'][0]['params']['value'] == 7.25
+
+
 def test_agent_tools_add_promote_set_and_reject_wrong_type(profile):
     from nodelang.native_agent_mcp import build_server
     from nodelang.session_files import write_document

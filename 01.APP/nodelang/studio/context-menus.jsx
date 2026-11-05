@@ -10,6 +10,7 @@
     kind,
     nodeId,
     port,
+    paramKey,
     open,
     selected = [],
     group,
@@ -28,7 +29,13 @@
       });else if (result) close();
     };
     let groups = [];
-    if (kind === 'Port menu' && n) groups = [[...['Visible', 'Faint', 'Hidden'].map((v) => [v + ' wires', 'link', '', () => actionState.run(() => api.setPortVisibility(n.id, port, v))])]];else if (kind === 'Node menu' && n) groups = [[['Open', 'arrow', 'Enter', () => {
+    if (kind === 'Port menu' && n) {
+      const param = !n.bind && n.parameterSchema?.find(p =>
+        p.editable && p.key !== 'engine' && (paramKey === p.key || port === 'param:' + p.key));
+      groups = [['Visible', 'Faint', 'Hidden'].map(v => [v + ' wires', 'link', '', () => actionState.run(() => api.setPortVisibility(n.id, port, v))])];
+      if (param && api.promoteParam) groups.unshift([[param.promoted ? 'Return to inline parameter' : 'Expose as node', 'link', '', () =>
+        run(() => param.promoted ? api.demoteParam(n.id, param.key) : api.promoteParam(n.id, param.key))]]);
+    } else if (kind === 'Node menu' && n) groups = [[['Open', 'arrow', 'Enter', () => {
       close();
       if (open) open();else u.go('canvas');
     }], ['Properties', 'settings', '', () => {

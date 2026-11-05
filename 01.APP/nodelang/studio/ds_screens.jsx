@@ -479,7 +479,7 @@
               {from ? <span data-linked-source="" style={{color: SPEC.typed}} title={from}>↳ {from}</span>
                 : !param ? null : n.params[param.key] === null && !(param.type === 'number' && ['min','max'].includes(param.key)) ? <span data-unset="" style={{color: SPEC.label}}>unset</span> : <ValueWidget n={n} p={param} value={n.params[param.key]} u={u} />}</span>
             <button type="button" className="button-reset nodrag" aria-label={name + ' row actions'} style={{color: SPEC.label, padding: '0 4px'}}
-              onClick={event => executeAction('projects.controls.activate', {handler: () => u.show('Port menu', {id: n.id, port: port?.id || 'param:' + param.key, anchor: {x: event.clientX, y: event.clientY}})}, event)}>⋮</button>
+              onClick={event => executeAction('projects.controls.activate', {handler: () => u.show('Port menu', {id: n.id, port: port?.id || 'param:' + param.key, paramKey: param?.key, anchor: {x: event.clientX, y: event.clientY}})}, event)}>⋮</button>
           </div>{ports.map(alias=><React.Fragment key={alias.id}>{refusedHere(alias.id)}</React.Fragment>)}</React.Fragment>;
         })}
         {shown.length > 3 && <button type="button" className="button-reset nodrag canvas-card-more" aria-pressed={compact} style={{justifySelf: 'start', color: SPEC.label}} onClick={event => executeAction('projects.controls.activate', {handler: () => setCompact(!compact)}, event)}>{compact ? `+${shown.length - 3} more` : 'Compact'}</button>}
@@ -946,13 +946,13 @@
     }}>
   {/* Spec d9c0d514 top bar: name · Unsaved, + Add node, ⋯, Run. Everything else lives in ⋯; saving is autosave plus Ctrl+S. */}
   <div data-canvas-overlay="" data-canvas-topbar="" hidden={embedded || undefined} className="spread" style={{
-        position:'absolute',top:12,left:u.libraryOpen ? 264 : 16,right:16,zIndex:12,
-        padding: '6px 12px',borderRadius:6,border:'1px solid '+A.lineSoft,
+        position:'absolute',top:12,left:u.libraryOpen ? 264 : 16,right:16 + (wire || inspected ? LAYOUT.inspectorWidth : 0),zIndex:12,
+        minWidth:0,padding: '6px 12px',borderRadius:6,border:'1px solid '+A.lineSoft,
         background: A.bgPanel, fontSize: 13
-      }}><div className="flex"><button className="button-reset" title="Workflows" aria-label="Workflows" onClick={event => executeAction("projects.ds_screens.Graphs.7", {u}, event)}>{s.graph.name} · {s.sessionDirty === false ? 'Saved' : 'Unsaved'}</button>
+      }}><div className="flex" style={{minWidth:0}}><button className="button-reset" title={s.graph.name} aria-label="Workflows" style={{minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} onClick={event => executeAction("projects.ds_screens.Graphs.7", {u}, event)}>{s.graph.name} · {s.sessionDirty === false ? 'Saved' : 'Unsaved'}</button>
         {parent && <Btn variant="controls" sm ghost onClick={event => executeAction("projects.ds_screens.Parent.6", {parent,s,setParent,setSelected}, event)}>← Parent</Btn>}
         {stale > 0 && <span data-solve-status="" style={{color: A.warn}}>{stale} out of date · Run</span>}</div>
-      <div className="flex" style={{position:'relative'}}> <Btn variant="controls" sm ghost aria-label="More canvas actions" aria-expanded={more} onClick={event => executeAction('projects.controls.activate', {handler: () => setMore(!more)}, event)}>⋯</Btn>
+      <div className="flex" style={{position:'relative',flexShrink:0}}> <Btn variant="controls" sm ghost aria-label="More canvas actions" aria-expanded={more} onClick={event => executeAction('projects.controls.activate', {handler: () => setMore(!more)}, event)}>⋯</Btn>
         <Btn variant="controls" p sm onClick={event => executeAction("projects.ds_screens.Run.15", {api,u}, event)}>▶ Run</Btn>
         {more && <div role="menu" aria-label="Canvas actions" data-canvas-more="" onKeyDown={e => { if (e.key === 'Escape') setMore(false); }} style={{position:'absolute',right:0,top:'calc(100% + 6px)',display:'grid',minWidth:200,padding:6,gap:2,
           background:A.bgPanel,border:'1px solid '+A.lineSoft,borderRadius:6,zIndex:20}}>{[

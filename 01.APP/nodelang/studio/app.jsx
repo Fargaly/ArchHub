@@ -899,7 +899,7 @@
       }, event)}>Updates &amp; About</Btn></>;else if (k === 'Ask why') body = <p>The read-only steps find untagged doors and check the prefix before the write step. Approve once runs that proposed change.</p>;else if (k === 'Website') body = <><h2>ArchHub</h2><p>The same catalogue powers the app and its documentation.</p><Btn onClick={event => executeAction("appShell.OpenDocs.97", {
         u
       }, event)}>Open docs</Btn></>;else body = <p>{m.text || 'Choose an action from the app.'}</p>;
-    if (['Node menu', 'Canvas menu', 'App menu', 'Tray', 'Port menu'].includes(k)) return <window.UI.ContextMenu kind={k} nodeId={m.id} port={m.port} open={m.open} selected={m.selected} group={m.group} remove={m.remove} anchor={m.anchor} close={close} />;
+    if (['Node menu', 'Canvas menu', 'App menu', 'Tray', 'Port menu'].includes(k)) return <window.UI.ContextMenu kind={k} nodeId={m.id} port={m.port} paramKey={m.paramKey} open={m.open} selected={m.selected} group={m.group} remove={m.remove} anchor={m.anchor} close={close} />;
     return <div className="overlay" onMouseDown={e => {
       if (e.target === e.currentTarget) close();
     }}><section ref={ref} className="dialog" role="dialog" aria-modal="true" aria-label={k} style={{

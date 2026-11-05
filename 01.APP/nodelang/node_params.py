@@ -84,6 +84,8 @@ def coerce(kind, value, definition=None):
 def infer(value):
     if isinstance(value, bool) or str(value).casefold() in ('true', 'false'):
         return 'bool'
+    if isinstance(value, float):
+        return 'number'
     for kind, cast in (('integer', int), ('number', float)):
         try:
             cast(value)
@@ -158,19 +160,26 @@ def set_value(document, node_ref, key, value):
 def promote(document, node_ref, param):
     """Expose a parameter as a Parameter node wired into the owner's typed socket."""
     owner = _node(document, node_ref)
-    if param in owner['params'] and not any(d['id'] == param for d in owner.get('paramDefs', [])):
-        # A built-in parameter becomes typed (from its value) the first time it is exposed.
-        owner.setdefault('paramDefs', []).append({'id': param, 'name': param.replace('_', ' ').capitalize(),
-                                                   'type': infer(owner['params'][param]), 'builtin': True})
-    entry = definition(owner, param)
-    if entry.get('promoted'):
+    existing = next((d for d in owner.get('paramDefs', []) if d['id'] == param), None)
+    if existing and existing.get('promoted'):
         raise ValueError('This parameter is already a node.')
+    socket = 'param:' + param
+    if any(w['to']['node'] == owner['id'] and w['to']['socket'] in (param, socket)
+           for w in document['wires']):
+        raise ValueError('Disconnect the existing input wire first.')
+    if param in owner['params'] and existing is None:
+        from .session_files import catalogue
+        item = next((row for row in catalogue() if row['id'] == owner.get('item')), {})
+        declared = next((d['type'] for d in item.get('paramDefs', []) if d['id'] == param), None)
+        owner.setdefault('paramDefs', []).append({'id': param, 'name': param.replace('_', ' ').capitalize(),
+                                                   'type': declared or infer(owner['params'][param]), 'builtin': True})
+    entry = definition(owner, param)
     node = {'id': str(uuid4()), 'type': PARAM_ENGINE, 'item': PARAM_ENGINE, 'title': entry['name'],
             'params': {'type': entry['type']}, 'bind': {'node': owner['id'], 'param': param},
             'position': {'x': owner['position']['x'], 'y': owner['position']['y'] + 300 + 40 * len(owner.get('paramDefs', []))}}
     document['nodes'].append(node)
     document['wires'].append({'id': str(uuid4()), 'from': {'node': node['id'], 'socket': 'value'},
-                              'to': {'node': owner['id'], 'socket': 'param:' + param}})
+                              'to': {'node': owner['id'], 'socket': socket}})
     entry['promoted'] = node['id']
     return [node['id'], owner['id']]
 

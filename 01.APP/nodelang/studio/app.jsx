@@ -365,7 +365,7 @@
         height: '100%',
         display: 'grid',
         gridTemplateColumns: 'minmax(0,1fr)',
-        gridTemplateRows: route === 'canvas' ? '48px minmax(0,1fr)' : '48px minmax(0,1fr) 22px'
+        gridTemplateRows: ['home', 'canvas'].includes(route) ? '48px minmax(0,1fr)' : '48px minmax(0,1fr) 22px'
       }}>
    <header className="flex app-header" data-window-caption style={{
           height: 48,
@@ -382,7 +382,7 @@
             show
           }, event)}><span>{s.workspaces.find(w => w.id === s.activeWorkspace)?.name || s.workspaces.find(w => w.builtIn)?.name || 'Add workspace'}</span><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true"><path d="M3 4.5l3 3 3-3" /></svg></button><i className="header-divider" /><span className="muted">/</span><button className="button-reset header-page" onClick={event => executeAction("appShell.ArchHub.2", {
             go
-          }, event)}>{(route === "task-file" ? "Task file" : routeNames[route]) || route.split('/').at(-1)}</button><span className="fill" />{window.UI.RunModeChip && <span style={{marginRight: 8}}><window.UI.RunModeChip waiting={(s.approvals || []).some(card => card.approvalKind === 'ask' && card.status === 'pending')} count={(s.approvals || []).filter(card => card.approvalKind === 'ask' && card.status === 'pending').length} /></span>}<button className="button-reset header-search" onClick={event => executeAction("appShell.SearchCtrlK.5", {
+          }, event)}>{(route === "task-file" ? "Task file" : routeNames[route]) || route.split('/').at(-1)}</button><span className="fill" /><button className="button-reset header-search" onClick={event => executeAction("appShell.SearchCtrlK.5", {
             show
           }, event)} aria-label="Search · Ctrl K"><window.AHIcon name="search" size={15} /><span className="fill">Search...</span><kbd>Ctrl K</kbd></button>{(s.update.available || s.update.state==='failed') && <button className="button-reset header-update" title={s.update.state==='failed' ? (s.update.detail || 'Update failed') : `${s.update.installed} → ${s.update.next}. Unsent text is lost; your saved graphs and settings stay with you.`} aria-label={s.update.state==='failed' ? (s.update.detail || 'Update failed') : 'Update available'} onClick={event => executeAction("appShell.Control.3", {
             act,
@@ -399,7 +399,7 @@
           }, event)}><span aria-hidden="true">{action === 'maximize' ? <><span className="when-normal">{glyph}</span><span className="when-maximized">{'\uE923'}</span></> : glyph}</span></button>)}</div>}</header>
    <div style={{
           display: 'grid',
-          gridTemplateColumns: '44px minmax(0,1fr)',
+          gridTemplateColumns: '64px minmax(0,1fr)',
           minHeight: 0
         }}><nav className="app-rail" aria-label="Main navigation" style={{
             background: A.bgDeep,
@@ -408,21 +408,21 @@
             flexDirection: 'column',
             alignItems: 'center',
             padding: '10px 0 8px',
-            gap: 4,
+            gap: 0,
             overflow: 'auto'
-          }}>{rail.map(([g, l, r]) => <D.Rail key={r} variant="compact" glyph={r === "home" ? <ArchMark size={15} /> : <window.AHIcon name={g} size={15} />} label={l} active={route === r || (route === "task-file" && r === taskFace)} onDragOver={e => {
+          }}>{rail.map(([g, l, r]) => <D.Rail key={r} variant="home" glyph={<window.AHIcon name={g} size={18} />} label={l} active={route === r || (route === "task-file" && r === taskFace)} onDragOver={e => {
               if (r === 'canvas') e.preventDefault();
             }} onDragEnter={() => {
               if (r === 'canvas') go(r);
             }} onClick={event => executeAction("appShell.Control.10", {
               go,
               r
-            }, event)} badge={r === 'workshop' ? s.tasks.filter(t => !['DONE','ARCHIVED'].includes(t.status)).length + (s.declaredTasks || []).length : undefined} style={{
-              flex: 'none'
-            }} />)}<span className="fill" /><D.Rail variant="compact" glyph={<window.AHIcon name="settings" size={15} />} label="Settings" active={route.startsWith('settings/')} onClick={event => executeAction("appShell.Control.11", {
+            }, event)} badge={r === 'workshop' ? s.tasks.filter(t => t.status === 'IN REVIEW').length || undefined : undefined} style={{
+              flex: 'none', width: 64, height: 58
+            }} />)}<span className="fill" /><D.Rail variant="home" glyph={<window.AHIcon name="settings" size={18} />} label="Settings" active={route.startsWith('settings/')} onClick={event => executeAction("appShell.Control.11", {
               go
             }, event)} style={{
-              flex: 'none'
+              flex: 'none', width: 64, height: 58
             }} /><button className="button-reset" aria-label="Your account" title="Your account" onClick={event => executeAction("appShell.YourAccount.12", {
               show
             }, event)} style={{
@@ -435,8 +435,8 @@
               fontWeight: 700,
               fontSize: 12,
               flex: 'none'
-            }}>{s.profile.name.split(' ').map(n => n[0]).join('').slice(0, 2)}</button></nav><div className="screen-with-composer has-local-composer" style={{'--canvas-library-width':libraryOpen ? '248px' : '0px'}}>{(canvasOpened || route==='canvas') && <div hidden={route!=='canvas'} ref={element=>{element?.toggleAttribute('inert',route!=='canvas'||!!s.graphOpening);}} style={{display:route==='canvas'?'grid':'none',minHeight:0,height:'100%'}}><window.UI.Canvas key={s.graph.scopeKey || s.graph.id} active={route==='canvas'&&!s.graphOpening} /></div>}{libraryOpen && route==='home' && window.UI.LibraryShelf ? <window.UI.LibraryShelf onClose={() => setLibraryOpen(false)} /> : null}{screen}{route === 'canvas' && <div className="canvas-status" role="status"><span>{s.connectionNotice && s.connectionNotice !== 'Checking for updates…' ? '1 notice · see Receipts' : s.connectionNotice || '● Local session'}</span><span>{(s.agentSummary||'Checking running agents…')} · {(n => n ? n + ' wait for you' : 'Nothing waiting for you')(s.approvals.filter(c=>c.status==='pending').length)}</span>{agentLoad.status==='error' && <button className="button-reset" onClick={event=>executeAction('appShell.RetryWorkshop',{reloadWorkshop},event)}>Retry Workshop connection</button>}</div>}{route === 'canvas' && <div className="global-composer canvas-composer"><window.UI.Composer compact /></div>}</div></div>
-   {route !== 'canvas' && <footer className="flex" style={{
+            }}>{s.profile.name.split(' ').map(n => n[0]).join('').slice(0, 2)}</button></nav><div className="screen-with-composer has-local-composer" style={{'--canvas-library-width':libraryOpen ? '248px' : '0px'}}>{(canvasOpened || route==='canvas') && <div hidden={route!=='canvas'} ref={element=>{element?.toggleAttribute('inert',route!=='canvas'||!!s.graphOpening);}} style={{display:route==='canvas'?'grid':'none',minHeight:0,height:'100%'}}><window.UI.Canvas key={s.graph.scopeKey || s.graph.id} active={route==='canvas'&&!s.graphOpening} /></div>}{screen}{route === 'canvas' && <div className="canvas-status" role="status"><span>{s.connectionNotice && s.connectionNotice !== 'Checking for updates…' ? '1 notice · see Receipts' : s.connectionNotice || '● Local session'}</span><span>{(s.agentSummary||'Checking running agents…')} · {(n => n ? n + ' wait for you' : 'Nothing waiting for you')(s.approvals.filter(c=>c.status==='pending').length)}</span>{agentLoad.status==='error' && <button className="button-reset" onClick={event=>executeAction('appShell.RetryWorkshop',{reloadWorkshop},event)}>Retry Workshop connection</button>}</div>}{route === 'canvas' && <div className="global-composer canvas-composer"><window.UI.Composer compact /></div>}</div></div>
+    {!['home', 'canvas'].includes(route) && <footer className="flex" style={{
           fontSize: 11,
           gap: 16,
           padding: '0 14px',

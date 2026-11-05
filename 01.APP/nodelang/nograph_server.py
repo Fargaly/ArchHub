@@ -1096,6 +1096,17 @@ def r_settings_action(s, req):
             'Appearance.Text scale': ('appearanceTextScale', 'Text scale', 100, ()),
             'Appearance.Default zoom': ('appearanceDefaultZoom', 'Default zoom', 100, ()),
         }
+        if function == 'setAppearance' and args[:1] == ['Appearance.Home layout']:
+            layout = args[1] if len(args) == 2 else None
+            if (not isinstance(layout, dict) or set(layout) - {'inner'}
+                    or not isinstance(layout.get('inner'), dict)
+                    or set(layout['inner']) != {'params', 'main'}
+                    or any(type(value) not in (int, float) or not 0 <= value <= 100
+                           for value in layout['inner'].values())
+                    or abs(sum(layout['inner'].values()) - 100) > 0.1):
+                raise Refused('Choose valid task pane sizes.')
+            held = settings.write({**settings.read(), 'homeLayout': layout})
+            return {'ok': True, 'result': {'homeLayout': held['homeLayout']}}
         preferences = settings.read()
         if function == 'setAppearance':
             if len(args) != 2 or not isinstance(args[0], str) or args[0] not in appearance:
@@ -1123,7 +1134,7 @@ def r_settings_action(s, req):
     if function == 'readControls':
         result = {'companion': companion.read(), 'providerPreferences': read_router_settings()['providerPreferences'],
                   'controlErrors': {}, 'providerModels': {},
-                  'appearanceSettings': rows}
+                  'appearanceSettings': rows, 'homeLayout': settings.read().get('homeLayout', {})}
         try:
             result['secrets'] = _secrets()
         except Exception:  # noqa: BLE001

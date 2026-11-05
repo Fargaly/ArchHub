@@ -1119,7 +1119,7 @@ async function settingsAction(functionName, args=[]) {
  }
 
  if(Object.hasOwn(result,'accountChecking'))values.profile={...state.profile,checking:result.accountChecking};
- for(const key of ['firms','activeFirm','people','billing','dependencies','officeInvitations','settingsScope','activeWorkspace','devices','activeDevice','backups','companion','secrets','providerPreferences','providerModels','libraryCollapsed'])if(Object.hasOwn(result,key))values[key]=result[key];
+ for(const key of ['firms','activeFirm','people','billing','dependencies','officeInvitations','settingsScope','activeWorkspace','devices','activeDevice','backups','companion','secrets','providerPreferences','providerModels','libraryCollapsed','homeLayout'])if(Object.hasOwn(result,key))values[key]=result[key];
  if(result.controlErrors){
   values.controlErrors={...state.controlErrors};
   for(const key of functionName==='read'?['officeInvitations']:['secrets','providerModels'])delete values.controlErrors[key];
@@ -1144,6 +1144,7 @@ for(const functionName of ['updateProfile','invitePerson','selectFirm','setTeamA
 }
 api.refreshSettingsOperations=()=>settingsAction('readOperations',[state.graph.id]);
 api.setGraphWorkspaces=ids=>settingsAction('setGraphWorkspaces',[state.graph.id,ids]);
+api.setHomeLayout=value=>settingsAction('setAppearance',['Appearance.Home layout',value]);
 api.setSettingsScope=async scope=>{const result=await settingsAction('setSettingsScope',[scope,state.activeWorkspace||state.graph.workspaceIds?.[0]||'',state.graph.id]);scopeEpoch++;publish({hostSkillsReady:false,hostSkills:[],connectorBundle:null});await commands.load();project();await api.refreshSettingsOperations();await refreshHostSkills();return result;};
 const settingsListWorkspaces=api.listWorkspaces;
 api.listWorkspaces=async()=>{await settingsListWorkspaces();if(state.profile.signedIn)await api.refreshSettingsOperations();return copy(state.workspaces);};

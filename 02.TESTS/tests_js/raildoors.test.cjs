@@ -15,12 +15,14 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
   // Pytest isolates LOCALAPPDATA; browser binaries remain in the OS account's cache.
   const cache = process.env.PLAYWRIGHT_BROWSERS_PATH || path.join(os.userInfo().homedir, 'AppData/Local/ms-playwright');
   const shell = fs.existsSync(cache) && fs.readdirSync(cache).filter(name => /^chromium_headless_shell-\d+$/.test(name)).sort((a, b) => Number(b.split('-').at(-1)) - Number(a.split('-').at(-1)))[0];
-  const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || (process.platform === 'win32' && shell ? path.join(cache, shell, 'chrome-headless-shell-win64/chrome-headless-shell.exe') : undefined);
+  const full=fs.readdirSync(cache).filter(name=>/^chromium-\d+$/.test(name)).sort((a,b)=>Number(b.split('-').at(-1))-Number(a.split('-').at(-1)))[0];
+  const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || (process.platform === 'win32' && (shell || full) ? path.join(cache, shell || full, shell ? 'chrome-headless-shell-win64/chrome-headless-shell.exe' : 'chrome-win64/chrome.exe') : undefined);
   const browser = await chromium.launch({headless: true, executablePath});
   try {
     for (const mode of ['selected', 'clicked', 'last', 'first', 'empty', 'refused', 'cancelled', 'repeat', 'uxflow']) {
       const page = await browser.newPage({viewport: {width: 1440, height: 900}});
       const errors = [];
+      let homeLayout = {};
       page.on('pageerror', error => errors.push(error.message));
       await page.route('**/*', route => route.fulfill({contentType: 'text/html', body: '<div id="root"></div>'}));
       await page.goto('http://raildoors.test');
@@ -32,9 +34,10 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
         await page.addScriptTag({path: path.join(studio, 'compiled/react-resizable-panels.js')});
         await page.evaluate(() => { window.fetch = () => new Promise(() => {}); });
         await page.addScriptTag({path: path.join(studio, 'compiled/api.js')});
-        await page.evaluate(mode => {
+        await page.evaluate(({mode, homeLayout}) => {
           window.fixture = window.structuredClone(window.ArchHubAPI.getSnapshot());
           const s = window.fixture;
+          s.homeLayout = homeLayout;
           s.tasks = mode === 'empty' ? [] : [
             {id: 'recent', title: 'Recent task', status: 'WIP', sessionPath: 'recent.archhub', messages: []},
             {id: 'selected', title: 'Selected task', status: 'WIP', sessionPath: 'selected.archhub', sessionOpen: mode === 'last', messages: []}
@@ -45,10 +48,11 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
             s.templates = s.tasks.map(t => ({...t, chain: []}));
           }
           if (mode === 'uxflow') {
+            s.liveAgents = [{agent:'codex-reviewer',handle:'design-reviewer',name:'Design reviewer',gate:'missing',breaches:2}];
             s.tasks[1].messages = [{id: 'long', who: 'Fixture agent', text: 'x'.repeat(900)}];
             s.tasks.push(...['interrupted', 'limit reached', 'LIMIT_REACHED', 'blocked'].map((rowState, i) => ({
               id: 'state-' + i, title: 'State ' + rowState, status: 'PLANNED', rowState,
-              summary: 'Planned, not started', blockedBy: 'Unsupported dependency', messages: []
+              reason: 'Planned, not started', summary: 'Planned, not started', blockedBy: 'Unsupported dependency', messages: []
             })));
           }
           s.schedules = [{id: 'trigger', title: 'Repeat recent task', path: 'recent.archhub', enabled: true, time: '09:00'}];
@@ -57,10 +61,11 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
           window.ArchHubAPI = {...window.ArchHubAPI, getSnapshot: () => s, subscribe: () => () => {},
             executeAction: (id, callback) => { if (id === 'ui.select') return callback(); throw Error('Unexpected action: ' + id); },
             setActiveSurface: () => {}, supportsAction: () => true,
+            setHomeLayout: async value => { s.homeLayout = value; return {ok: true, homeLayout: value}; },
             refreshAgentSurface: async () => null, apiRouterChat: async () => window.holdSend ? new Promise(resolve => { window.finishSend = resolve; }) : null,
             addSchedule: async (id, time) => { window.scheduledTasks.push({id, time}); return {ok: true}; },
             openTaskGraph: async id => { window.openedTasks.push(id); if (mode === 'refused') throw Error('Fixture task open refused'); return mode === 'cancelled' ? {cancelled: true} : {ok: true}; }};
-        }, mode);
+        }, {mode, homeLayout});
         for (let i = 0; i < sources.length - 1; i++) await page.addScriptTag({content: sources[i]});
         await page.evaluate(() => {
           const blank = () => null;
@@ -123,6 +128,10 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
           await page.getByRole('button', {name: 'Workshop view', exact: true}).click();
         };
         await open('Selected task');
+        await page.getByRole('button', {name: 'Recipient', exact:true}).click();
+        const reviewer=page.getByRole('option', {name: /Design reviewer.*Gate missing.*2 breaches/});
+        assert.equal(await reviewer.isEnabled(),true);
+        await reviewer.click();
         const separator = page.getByRole('separator', {name: 'Resize the task parameters'});
         const params = page.locator('#params');
         const before = await params.boundingBox(), handle = await separator.boundingBox();
@@ -138,7 +147,8 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
         await input.detach();
         const after = await params.boundingBox();
         assert.ok(after.width > before.width + 60, JSON.stringify({before, after}));
-        await page.waitForFunction(() => JSON.parse(localStorage.getItem('archhub.home.layout.v1'))?.inner?.params > 0);
+        await page.waitForFunction(() => window.fixture.homeLayout?.inner?.params > 0);
+        homeLayout = await page.evaluate(() => window.fixture.homeLayout);
         await page.reload(); await mount(); await open('Selected task');
         const restored = await params.boundingBox();
         assert.ok(Math.abs(restored.width - after.width) < 1, JSON.stringify({after, restored}));

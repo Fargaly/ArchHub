@@ -165,10 +165,10 @@
         {key: 'baboom', handle: '', name: 'BABOOM', detail: 'Free models first'}];
       return {agents, people, choices, whoIs};
   }  // DESIGNSYS-050 4.9 AgentPicker: one styled To-list; an agent that has not joined is shown but cannot receive yet.
-  function AgentPicker({choices, to, setTo, startOpen = false}) {
+  function AgentPicker({choices, to, setTo, startOpen = false, label = 'Recipient'}) {
     const [listOpen, setListOpen] = React.useState(startOpen);
     return <div className="ws-to" onKeyDown={e => e.key === 'Escape' && setListOpen(false)}>
-      <button type="button" className="ws-link" aria-haspopup="listbox" aria-expanded={listOpen} aria-label="Recipient" onClick={() => executeAction("ui.select", () => setListOpen(!listOpen))}>To {choices.find(c => c.handle === to)?.name || 'BABOOM'} ▾</button>
+      <button type="button" className="ws-link" aria-haspopup="listbox" aria-expanded={listOpen} aria-label={label} onClick={() => executeAction("ui.select", () => setListOpen(!listOpen))}>{label === 'Recipient' ? 'To ' : ''}{choices.find(c => c.handle === to)?.name || to || 'BABOOM'} ▾</button>
       {listOpen && <div role="listbox" aria-label="Recipients" className="ws-to-list">{choices.map(c => <button type="button" role="option" key={c.key} aria-selected={c.handle === to} disabled={c.handle === undefined} className="listbutton spread" title={c.handle === undefined ? c.name + ' is running but has not joined this Workshop, so it cannot receive messages yet' : 'Send to ' + c.name} onClick={() => executeAction("ui.select", () => { setTo(c.handle); setListOpen(false); })}><span>{c.name}</span><span className="ws-small" data-agent-gate={c.gate || undefined} data-agent-breaches={c.breaches == null ? undefined : String(c.breaches)}>{[c.detail, gateLine(c.gate, c.breaches)].filter(Boolean).join(' · ')}</span></button>)}</div>}
     </div>;
   }

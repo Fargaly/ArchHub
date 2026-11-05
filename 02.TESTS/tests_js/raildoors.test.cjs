@@ -22,7 +22,7 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
     for (const mode of ['selected', 'clicked', 'last', 'first', 'empty', 'refused', 'cancelled', 'repeat', 'uxflow']) {
       const page = await browser.newPage({viewport: {width: 1440, height: 900}});
       const errors = [];
-      let homeLayout = {};
+      let inspectorWidth = 320;
       page.on('pageerror', error => errors.push(error.message));
       await page.route('**/*', route => route.fulfill({contentType: 'text/html', body: '<div id="root"></div>'}));
       await page.goto('http://raildoors.test');
@@ -34,10 +34,10 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
         await page.addScriptTag({path: path.join(studio, 'compiled/react-resizable-panels.js')});
         await page.evaluate(() => { window.fetch = () => new Promise(() => {}); });
         await page.addScriptTag({path: path.join(studio, 'compiled/api.js')});
-        await page.evaluate(({mode, homeLayout}) => {
+        await page.evaluate(({mode, inspectorWidth}) => {
           window.fixture = window.structuredClone(window.ArchHubAPI.getSnapshot());
           const s = window.fixture;
-          s.homeLayout = homeLayout;
+          s.settings.push({id:'Appearance.Inspector width',value:inspectorWidth,overridden:true});
           s.tasks = mode === 'empty' ? [] : [
             {id: 'recent', title: 'Recent task', status: 'WIP', sessionPath: 'recent.archhub', messages: []},
             {id: 'selected', title: 'Selected task', status: 'WIP', sessionPath: 'selected.archhub', sessionOpen: mode === 'last', messages: []}
@@ -61,11 +61,11 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
           window.ArchHubAPI = {...window.ArchHubAPI, getSnapshot: () => s, subscribe: () => () => {},
             executeAction: (id, callback) => { if (id === 'ui.select') return callback(); throw Error('Unexpected action: ' + id); },
             setActiveSurface: () => {}, supportsAction: () => true,
-            setHomeLayout: async value => { s.homeLayout = value; return {ok: true, homeLayout: value}; },
+            setInspectorWidth: async value => { s.settings.find(row=>row.id==='Appearance.Inspector width').value=value; return {ok:true}; },
             refreshAgentSurface: async () => null, apiRouterChat: async () => window.holdSend ? new Promise(resolve => { window.finishSend = resolve; }) : null,
             addSchedule: async (id, time) => { window.scheduledTasks.push({id, time}); return {ok: true}; },
             openTaskGraph: async id => { window.openedTasks.push(id); if (mode === 'refused') throw Error('Fixture task open refused'); return mode === 'cancelled' ? {cancelled: true} : {ok: true}; }};
-        }, {mode, homeLayout});
+        }, {mode, inspectorWidth});
         for (let i = 0; i < sources.length - 1; i++) await page.addScriptTag({content: sources[i]});
         await page.evaluate(() => {
           const blank = () => null;
@@ -135,7 +135,7 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
         await page.getByRole('button',{name:'Recipient',exact:true}).click();
         await page.getByRole('option',{name:/BABOOM/}).click();
         assert.match(await page.getByRole('button',{name:'Recipient',exact:true}).innerText(),/BABOOM/);
-        const separator = page.getByRole('separator', {name: 'Resize the task parameters'});
+        const separator = page.getByRole('separator', {name: 'Resize the Properties pane'});
         const params = page.locator('#params');
         const before = await params.boundingBox(), handle = await separator.boundingBox();
         assert.ok(handle.width >= 6);
@@ -150,8 +150,8 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
         await input.detach();
         const after = await params.boundingBox();
         assert.ok(after.width > before.width + 60, JSON.stringify({before, after}));
-        await page.waitForFunction(() => window.fixture.homeLayout?.inner?.params > 0);
-        homeLayout = await page.evaluate(() => window.fixture.homeLayout);
+        await page.waitForFunction(() => window.fixture.settings.find(row=>row.id==='Appearance.Inspector width').value > 320);
+        inspectorWidth = await page.evaluate(() => window.fixture.settings.find(row=>row.id==='Appearance.Inspector width').value);
         await page.reload(); await mount(); await open('Selected task');
         const restored = await params.boundingBox();
         assert.ok(Math.abs(restored.width - after.width) < 1, JSON.stringify({after, restored}));
@@ -209,7 +209,7 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
           assert.equal(await page.locator('[data-home-face="canvas"]').count(), 0);
         } else {
           assert.deepEqual(errors, []);
-          await page.locator('.dx-main[data-home-face="' + face.toLowerCase() + '"]').waitFor();
+          await page.locator('.dx-workspace[data-task-face="' + face.toLowerCase() + '"]').waitFor();
           assert.equal(await page.getByRole('textbox', {name: 'Task title', exact: true}).inputValue(), mode === 'first' ? 'Recent task' : 'Selected task');
           assert.equal(await page.evaluate(() => window.openedTasks.at(-1)), mode === 'first' ? 'recent' : 'selected');
           assert.equal(await nav.getByRole('button', {name: face, exact: true}).getAttribute('aria-current'), 'page');
@@ -221,17 +221,17 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
         await page.locator('.dx-task').filter({hasText: 'Recent task'}).dblclick();
         await page.locator('.dx-main[data-home-face="workshop"]').waitFor();
         await nav.getByRole('button', {name: 'Canvas', exact: true}).click();
-        await page.locator('.dx-main[data-home-face="canvas"]').waitFor();
+        await page.locator('.dx-workspace[data-task-face="canvas"]').waitFor();
         await nav.getByRole('button', {name: 'Home', exact: true}).click();
         await page.locator('.dx-task').filter({hasText: 'Selected task'}).dblclick();
         await page.locator('.dx-main[data-home-face="workshop"]').waitFor();
         await nav.getByRole('button', {name: 'Home', exact: true}).click();
         await page.locator('.dx-task').filter({hasText: 'Recent task'}).dblclick();
-        await page.locator('.dx-main[data-home-face="canvas"]').waitFor();
+        await page.locator('.dx-workspace[data-task-face="canvas"]').waitFor();
         console.log('PASS per-task faces: new task Workshop; selected Workshop; recent Canvas');
         await nav.getByRole('button', {name: 'Automations', exact: true}).click();
         await page.getByRole('button', {name: 'Repeat recent task', exact: true}).click();
-        await page.locator('.dx-main[data-home-face="canvas"]').waitFor();
+        await page.locator('.dx-workspace[data-task-face="canvas"]').waitFor();
         assert.equal(await page.getByRole('textbox', {name: 'Task title', exact: true}).inputValue(), 'Recent task');
         assert.equal(await page.evaluate(() => window.openedTasks.at(-1)), 'recent');
       }

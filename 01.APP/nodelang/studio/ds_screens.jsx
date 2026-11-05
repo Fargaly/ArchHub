@@ -40,9 +40,9 @@
     }));
     return wires.map(w=>({w,a:sockets.get(`${w.from}:out:${w.fromPort}`),b:sockets.get(`${w.to}:in:${w.toPort}`)})).filter(p=>p.a&&p.b);
   }
-  // Ping rev1047 canvas spec (archhub-canvas-build-spec.json): raw fills the spec does not tokenise.
-  const SPEC = {node:'#17171c', line:'#2b2b34', slot:'#202026', hollow:'#77727f', panel:'#15151a', field:'#1D1D23', fieldLine:'#36343B',
-    text:'#D9D6D2', label:'#A7A3A0', count:'#96918C', link:'#F09272', number:'#F2D9CC', typed:'#75BDBA', rule:'#2B292D', exposed:'#2D2624'};
+  // Saved NodeCard colours come from the shared Penpot palette.
+  const SPEC = {node:A.bgPanel,line:A.line,slot:A.bgSoft,hollow:A.inkMuted,panel:A.bgPanel,field:A.bgPanel,fieldLine:A.line,
+    text:A.ink,label:A.inkSoft,count:A.inkMuted,link:A.accentHi,number:A.ink,typed:A.cyan,rule:A.bgRaised,exposed:A.accentDim};
   // Node-RED status pattern: one colour on the card edge plus one status line under it (spec State/* components).
   const nodeState = (n, rejected) => n.frozen ? ['Disabled', A.inkDim] : rejected ? ['Types do not match', A.err]
     : n.previewOff ? ['Preview off', A.inkSoft]
@@ -386,7 +386,7 @@
   };
   const HIDDEN_VALUE = /(?:[a-f0-9]{32,}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}|(?:assembly|template|node)-instance:|^\s*[\[{][\s\S]*[\]}]\s*$)/i;
   const HIDDEN_PARAM = /(^_|(?:^|_)(?:id|hash|instance|ref)(?:_|$)|^template_|^(?:engine|responsibility|last_result|last_attempt)$)/i;
-  const LAYOUT = {nodeWidth: 280, datasetWidth: 340, inspectorWidth: 320};
+  const LAYOUT = {nodeWidth: 304, datasetWidth: 340, inspectorWidth: 320};
   const FIELD_WIDTH = {text: 70, number: 92, integer: 108, point: 112, object: 112, bool: 70, choice: 108, date: 108, file: 112, folder: 112, list: 112};
   const NAMED_WIDTH = {id: 70, width: 92, position: 112, height: 108};
   const fieldWidth = field => {
@@ -406,7 +406,7 @@
     if (p.options?.length) return <select className="nodrag" aria-label={label} value={shown} onChange={e => save(e.target.value)}>{p.options.map(o => <option key={o}>{o}</option>)}</select>;
     const unbounded = ['min', 'max'].includes(p.key) && (shown == null || shown === '');
     return <input className="nodrag" aria-label={label} title={unbounded ? 'Unbounded' : String(shown)} type={p.type === 'number' ? 'number' : 'text'} min={p.min} max={p.max} step={p.step ?? 'any'} placeholder={unbounded ? 'Unbounded' : undefined}
-      value={shown == null ? '' : typeof shown === 'object' ? JSON.stringify(shown) : shown} style={{flex: 1, minWidth: 0, width: 0, background: 'transparent', border: 0, color: SPEC.text, font: 'inherit', fontSize: 12}}
+      value={shown == null ? '' : typeof shown === 'object' ? JSON.stringify(shown) : shown} style={{flex: 1, minWidth: 0, width: 0, background: 'transparent', border: 0, color: SPEC.text, font: 'inherit', fontSize: 13}}
       onChange={e => { if (p.type !== 'number') save(e.target.value); else if (e.target.value === '') save(null); else if (Number.isFinite(e.target.valueAsNumber)) save(e.target.valueAsNumber); }} />;
   }
   function ParameterNode({n, socket, selected, u}) {
@@ -456,24 +456,27 @@
     const repeatsValue = (output, value) => Object.is(output, value) || (typeof output === 'string' && output.trim() === String(value)) || (output && typeof output === 'object' && !Array.isArray(output) && Object.keys(output).length === 1 && Object.hasOwn(output, 'value') && (Object.is(output.value, value) || String(output.value) === String(value))) || (Array.isArray(output) && output.length === 1 && (Object.is(output[0], value) || String(output[0]) === String(value)));
     const repeatedValue = shown.some(p=>p.key==='value') && !wiresIn.some(wire=>['value','param:value'].includes(wire.toPort)) && repeatsValue(n.output, n.params.value);
     const result = n.status === 'Done' && !repeatedValue ? summary(n.output) : '';
+    const headerColor = n.color || s.settings.find(row => row.id === 'Appearance.Node header colour')?.value;
+    const luminance = headerColor && headerColor.slice(1).match(/../g).map(hex => {const channel=parseInt(hex,16)/255;return channel<=0.04045?channel/12.92:((channel+0.055)/1.055)**2.4;}).reduce((sum,channel,index)=>sum+channel*[0.2126,0.7152,0.0722][index],0);
     return <div data-ds-node="" className="lm-node" data-spec={n.dataset ? 'dataset' : 'operation'} data-node-state={state.split(' · ')[0]}
-      style={{...CARD, width: n.dataset ? LAYOUT.datasetWidth : LAYOUT.nodeWidth, paddingBottom: 10, border: '1px solid ' + (refusal ? A.err : SPEC.fieldLine), outline: selected ? '2px solid ' + A.accent : 'none', outlineOffset: 2}}>
-      <div className="node-header" style={{display: 'flex', alignItems: 'flex-start', gap: 8, padding: '11px 12px 0'}}>
-        <div data-node-card-title="" style={{flex: 1, minWidth: 0, fontSize: 14, overflowWrap: 'anywhere'}}>{n.title}</div>
+      style={{...CARD, width: n.dataset ? LAYOUT.datasetWidth : LAYOUT.nodeWidth, borderRadius:'var(--node-radius,8px)', paddingBottom: 10, border: '1px solid ' + (refusal ? A.err : SPEC.fieldLine), outline: selected ? '2px solid ' + A.accent : 'none', outlineOffset: 2}}>
+      <div className="node-header" style={{display: 'flex', alignItems: 'flex-start', gap: 8, padding: '12px 12px 0', background: headerColor, color: headerColor && headerColor.toLowerCase() !== A.bgPanel.toLowerCase() ? luminance > 0.179 ? '#000000' : '#ffffff' : SPEC.text}}>
+        {n.icon && <window.AHIcon name={n.icon} size={18} />}<div data-node-card-title="" style={{flex: 1, minWidth: 0, fontSize: 15, fontWeight: 600, lineHeight: 1.25, overflowWrap: 'anywhere'}}>{n.title}</div>
         {!n.pure && <span data-node-pure="false" style={{paddingTop: 2, color: A.inkSoft}}
           title={'Side effect: waits for Run' + (n.budget ? ' · budget ' + [n.budget.seconds != null && n.budget.seconds + ' s', n.budget.calls != null && n.budget.calls + ' call(s)'].filter(Boolean).join(', ') : '')}>⚡</span>}{menu}
       </div>
+      {(n.category || n.kind) && <div data-node-kind="" style={{fontSize:12.5,lineHeight:1.25,color:SPEC.label,margin:'7px 12px 0'}}>{n.category && n.category !== 'Node' ? n.category : n.kind}</div>}
       {members.length > 0 && <div className="canvas-members">{members.map(m => <button key={m.id} data-group-member={m.id} draggable={m.chip || undefined} className="canvas-member nodrag" title={m.chip ? 'Drag ' + m.title + ' out of the group' : 'Open ' + m.title} onDragStart={event => { if (!m.chip) return; event.stopPropagation(); event.dataTransfer.setData('text/plain', m.id); event.dataTransfer.effectAllowed = 'move'; event.currentTarget.dataset.dragged = '1'; }} onDragEnd={event => { if (!m.chip || !onDetach) return; onDetach(m, event); }} onClick={event => { if (event.currentTarget.dataset.dragged === '1') { event.currentTarget.dataset.dragged = ''; return; } executeAction('projects.controls.activate', {handler: () => onMember(m)}, event); }}><span style={{background: A.purple, color: A.onFill}}>{m.title.slice(0, 1)}</span>{m.title}</button>)}</div>}
-      <div style={{display: 'grid', gap: 8, padding: '12px 12px 0'}}>
+      <div style={{display: 'grid', gap: 'var(--layout-node-row-gap,4px)', padding: '8px 12px 0'}}>
         {/* Full-node row (archhub-full-node-controls-native.png): name over its type, then the linked source or an inline control, then a row menu. Real data or empty. */}
         {[...n.inputs.filter(p => !slotPorts.has(p.id)).map(p => ({key: p.id, port: p})), ...params.map(p => ({key: 'param:' + p.key, param: p, port: n.inputs.find(x => (x.id === p.key || x.id === 'param:' + p.key) && wiresIn.some(wire=>wire.toPort===x.id)) || n.inputs.find(x => x.id === 'param:' + p.key) || n.inputs.find(x => x.id === p.key)}))].map(({key, port, param}) => {
           const ports = param ? n.inputs.filter(x => x.id === param.key || x.id === 'param:' + param.key) : port ? [port] : [];
           const from = ports.map(alias=>sourceOf(alias.id)).filter(Boolean).join(' · '), name = param ? (param.label && param.label !== param.key ? param.label : param.key.replace(/_/g, ' ')) : port.name,
             type = param ? ((['min', 'max', 'step'].includes(param.key) || param.type === 'number' || ['number', 'integer'].includes(param.dataType)) ? 'number' : (param.dataType || (param.options?.length ? 'enum' : param.type === 'boolean' ? 'boolean' : 'string'))) + (param.unit ? ' · ' + param.unit : '') + (settingsKeys.has(param.key) ? ' · From Settings' : '') : typeName(port);
           return <React.Fragment key={key}><div data-port-row={param ? undefined : 'in'} data-parameter={param ? param.key : undefined}
-            style={{...SLOT, display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1.2fr) auto', gap: 8, padding: '4px 4px 4px 10px', alignItems: 'center'}}>
+            style={{...SLOT, display: 'grid', gridTemplateColumns: '88px minmax(0,1fr) 16px', minHeight:36, gap: 6, padding: '4px 10px', alignItems: 'center'}}>
             {ports.map(alias=><span key={alias.id} aria-hidden={alias.id!==port.id||undefined} style={{...edgeSocket('in', '50%', 12),opacity:alias.id===port.id?1:0,pointerEvents:alias.id===port.id?undefined:'none'}}>{socket(alias, 'in')}</span>)}
-            <span style={{minWidth: 0}}><span style={{display: 'block', fontSize: 13.5, overflowWrap: 'anywhere'}} title={param ? param.label || param.key : port.name}>{name}</span>
+            <span style={{minWidth: 0}}><span style={{display: 'block', fontSize: 12.5, lineHeight: 1.25, overflowWrap: 'anywhere'}} title={param ? param.label || param.key : port.name}>{name}</span>
               <span style={{display: 'block', color: SPEC.label}}>{type}</span></span>
             <span data-row-value="" style={{display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>
               {from ? <span data-linked-source="" style={{color: SPEC.typed}} title={from}>↳ {from}</span>
@@ -489,32 +492,39 @@
         {n.outputs.map(p => <div key={p.id} data-port-row="out" style={{position: 'relative', color: SPEC.typed, minHeight: 18, display: 'flex', alignItems: 'center'}}>
           <span>{p.name} · {typeName(p)}</span><span style={edgeSocket('out', '50%', 12)}>{socket(p, 'out')}</span></div>)}
         {n.outputs.length > 0 && !repeatedValue && <div data-node-result="" data-todo="output-summary-expanded" style={{...SLOT, color: result ? SPEC.text : SPEC.label, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block'}} title={result}>{result ? '▸  ' + result : wiresIn.length || !n.inputs.length ? 'Run to inspect output' : 'Connect data to inspect output'}</div>}
-        {state !== 'Done' && <span data-node-status="" style={{...FOOT, color: stateColor}} title={n.error || state}>{state.split(' · ')[0]}</span>}
+        {<span data-node-status="" style={{...FOOT, fontSize: 13, lineHeight: 1.2, color: stateColor}} title={n.error || state}>{state === 'Done' ? 'Complete' : state.split(' · ')[0]}</span>}
       </div>
     </div>;
   }
   // DESIGNSYS-050 4.9 Inspector (plate archhub-inspector-changed-native.png): Properties of the one selected node; its Inputs and Output, editable.
-  function NodeInspector({n, s, u}) {
+  function NodeInspector({n, s, u, embedded = false}) {
+    const Tag = embedded ? 'section' : 'aside';
     const sourceOf = port => { const w = s.graph.wires.find(x => x.to === n.id && x.toPort === port), a = w && s.graph.nodes.find(x => x.id === w.from); return a && a.title + ' · ' + (a.outputs.find(p => p.id === w.fromPort)?.name || w.fromPort); };
     const params = (n.parameterSchema || []).filter(p => p.editable), [state] = nodeState(n, false), result = n.status === 'Done' ? summary(n.output) : '';
     const cap = {fontSize: 12, color: SPEC.label, margin: '16px 0 6px'};
-    return <aside className="pane inspector" data-node-inspector={n.id} aria-label="Properties" style={{borderLeft: '1px solid ' + A.line, padding: 16, overflow: 'auto'}}>
-      <div className="muted" style={{fontSize: 12}}>Properties</div>
+    return <Tag className={embedded ? "inspector-content" : "pane inspector"} data-node-inspector={n.id} aria-label="Properties" style={{borderLeft: embedded ? 0 : '1px solid ' + A.line, padding: embedded ? 0 : 16, overflow: 'auto'}}>
+      {!embedded && <div className="muted" style={{fontSize: 12}}>Properties</div>}
       <h2 style={{margin: '4px 0 0', paddingLeft: 8, borderLeft: '2px solid ' + A.accent}}>{n.title}</h2>
       <div style={{color: SPEC.label, fontSize: 12, marginTop: 2}}>{state} · {n.pure ? 'pure' : 'side effect'}{n.kind ? ' · ' + n.kind : ''}</div>
+      <div className="node-presentation" style={{display:'grid',gap:8,marginTop:16}}>
+        <label>Label<input aria-label="Node label" key={n.id+':'+n.title} defaultValue={n.title} onBlur={event=>{const title=event.target.value.trim();if(title && title!==n.title)u.act(()=>api.renameNode(n.id,title));else event.target.value=n.title;}} /></label>
+        <label>Icon<select aria-label="Node icon" value={n.icon || ''} onChange={event=>u.act(()=>api.setNodePresentation(n.id,{icon:event.target.value}))}><option value="">Default</option>{api.nodeIcons.map(name=><option key={name} value={name}>{name}</option>)}</select></label>
+        <label>Colour<input type="color" aria-label="Node colour" value={n.color || s.settings.find(row=>row.id==='Appearance.Node header colour')?.value || '#252b35'} onChange={event=>u.act(()=>api.setNodePresentation(n.id,{color:event.target.value}))} /></label>
+      </div>
       <div style={cap}>Inputs</div>
       <div style={{display: 'grid', gap: 6}}>{n.inputs.filter(p => !params.some(q => q.key === p.id || 'param:' + q.key === p.id)).map(p => <div key={p.id} style={SLOT}>
-        <span style={{flex: 1, minWidth: 0}}><span style={{display: 'block', color: SPEC.label, fontSize: 11}}>{p.name} · {typeName(p)}</span>{sourceOf(p.id) || <span style={{color: SPEC.label}}>Not connected</span>}</span></div>)}
+        <span style={{flex: 1, minWidth: 0}}><span style={{display: 'block', color: SPEC.label, fontSize: 11}}>{p.name} · {typeName(p)}</span>{sourceOf(p.id) ? <span data-linked-source="">{sourceOf(p.id)}</span> : <span style={{color: SPEC.label}}>Not connected</span>}</span></div>)}
         {params.map(p => <label key={p.key} style={SLOT}><span style={{flex: 1, minWidth: 0}}><span style={{display: 'block', color: SPEC.label, fontSize: 11}}>{p.label || p.key.replace(/_/g, ' ')}</span>
-          {n.params[p.key] === null && !(p.type === 'number' && ['min','max'].includes(p.key)) ? <span style={{color: SPEC.label}}>unset</span> : <ValueWidget n={n} p={p} value={n.params[p.key]} u={u} />}</span></label>)}
+          {sourceOf('param:' + p.key) || sourceOf(p.key) ? <span data-linked-source="">{sourceOf('param:' + p.key) || sourceOf(p.key)}</span> : n.params[p.key] === null && !(p.type === 'number' && ['min','max'].includes(p.key)) ? <span style={{color: SPEC.label}}>unset</span> : <ValueWidget n={n} p={p} value={n.params[p.key]} u={u} />}</span></label>)}
         {!n.inputs.length && !params.length && <span style={{color: SPEC.label}}>No inputs</span>}</div>
       <div style={cap}>Output</div>
       {n.outputs.map(p => <div key={p.id} style={{color: SPEC.typed}}>{p.name} · {typeName(p)}</div>)}
       <div style={{color: result ? SPEC.text : SPEC.label, marginTop: 6, overflowWrap: 'anywhere'}}>{result || (n.outputs.length ? 'No output yet' : 'No output')}</div>
-    </aside>;
+    </Tag>;
   }
   // Connection node: the selected wire's own parameters, in the same Inspector. Tokens from design-tokens.json via AH.
-  function WireInspector({wire, s, u, onClose}) {
+  function WireInspector({wire, s, u, onClose, embedded = false}) {
+    const Tag = embedded ? 'section' : 'aside';
     const field = {width: '100%', boxSizing: 'border-box', background: A.bgRaised, color: A.ink, border: '1px solid ' + A.line, borderRadius: window.AH.rad.md, padding: '6px 8px', font: 'inherit', fontSize: 13, lineHeight: 1.35};
     const labelStyle = {color: A.inkMuted, fontSize: 11, lineHeight: 1.35};
     const a = s.graph.nodes.find(n => n.id === wire.from), b = s.graph.nodes.find(n => n.id === wire.to),
@@ -525,7 +535,7 @@
       observed = wire.rejected || runLabel === 'Types do not match' ? 'Rejected' : runLabel === 'Not run' ? 'Not observed' : /^(Updating|Out of date)/.test(runLabel) ? 'Affected' : runLabel === 'Done' ? 'Compatible' : runLabel;
     const shown = (name, choices) => choices.includes(wire[name]) ? wire[name] : choices[0];
     const read = (name, text, note) => <div data-wire-param={name} style={{display: 'grid', gap: 2}}><span style={labelStyle}>{name}</span><div style={field}><span style={{color: A.ink}}>{text}</span>{note && <span style={{color: A.inkMuted}}>{' · ' + note}</span>}</div></div>;
-    return <aside className="pane inspector" style={{borderLeft: '1px solid ' + A.line, padding: 16, overflow: 'auto', minHeight: 0}} aria-label="Wire">
+    return <Tag className={embedded ? "inspector-content" : "pane inspector"} style={{borderLeft: embedded ? 0 : '1px solid ' + A.line, padding: embedded ? 0 : 16, overflow: 'auto', minHeight: 0}} aria-label="Wire">
       <div className="spread" style={{position:'sticky',top:0,zIndex:1,background:A.bgRaised}}><h2 style={{margin: 0, fontSize: 16, fontWeight: 500}}>Connection</h2><Btn variant="controls" sm ghost aria-label="Close wire" onClick={event=>executeAction('projects.controls.activate',{handler:onClose},event)}>×</Btn></div>
       <div data-wire-inspection="" style={{display: 'grid', gap: window.AH.sp.sm, marginTop: window.AH.sp.md}}>
         {read('From', (a?.title || wire.from) + '.' + (out?.name || wire.fromPort), '')}
@@ -542,7 +552,7 @@
         {read('Value', carried === undefined ? 'Not run yet' : summary(carried) || 'empty', '')}
         <Btn variant="controls" danger sm onClick={event=>executeAction('projects.ds_screens.DeleteWire.28',{api,u,wire},event)}>Delete wire</Btn>
       </div>
-    </aside>;
+    </Tag>;
   }
   // CANVASXY: xyflow (React Flow 12, MIT, vendor/xyflow.js) owns pan, zoom, drag, marquee and wiring;
   // the cards, sockets, wire colours and every file edit stay the Studio's own.
@@ -575,17 +585,21 @@
     minWidth: 0, minHeight: 0, background: 'transparent', border: 0, borderRadius: 0};
   function Canvas({
     active = true,
-    embedded = false
+    embedded = false,
+    externalInspector = false,
+    onInspect,
+    onHandoff,
+    controlsRef
   }) {
     const s = useData(),
       u = useApp();
-    const zoomRow = s.settings.find(r => r.page === 'Appearance' && (r.label === 'Zoom percentage' || r.key === 'Zoom percentage'))
+    const zoomRow = s.settings.find(r => r.id === 'Appearance.Default zoom') || s.settings.find(r => r.page === 'Appearance' && (r.label === 'Zoom percentage' || r.key === 'Zoom percentage'))
       || s.settings.find(r => r.id === 'Appearance.Zoom percentage');
     const zoomMin = Number(s.canvasPolicy?.zoom_min ?? .1), zoomMax = Number(s.canvasPolicy?.zoom_max ?? 4);
     const [selected, setSelected] = React.useState(u.selectedNodeId && s.graph.nodes.some(n => n.id === u.selectedNodeId) ? [u.selectedNodeId] : []),
       [wireId, setWireId] = React.useState(null),
       [parent, setParent] = React.useState(null),
-      [viewport, setViewport] = React.useState({zoom: Math.max(zoomMin, Math.min(zoomMax, (zoomRow?.value || 80) / 100)), pan: {x: 0, y: 0}}),
+      [viewport, setViewport] = React.useState({zoom: Math.max(zoomMin, Math.min(zoomMax, (zoomRow?.value || 100) / 100)), pan: embedded ? {x:32,y:120} : {x:0,y:0}}),
       [rejected, setRejected] = React.useState(null),
       [layout, setLayout] = React.useState({scope: null, positions: {}}),
       [flowNodes, setFlowNodes] = React.useState([]),
@@ -667,6 +681,9 @@
       node = s.graph.nodes.find(n => n.id === selected.at(-1)),
       wire = s.graph.wires.find(w => w.id === wireId),
       inspected = !wire && selected.length === 1 && s.graph.nodes.find(n => n.id === selected[0]);
+    React.useLayoutEffect(() => {
+      onInspect?.({nodeId: inspected?.id || null, wireId: wire?.id || null});
+    }, [inspected?.id, wire?.id]);
     React.useLayoutEffect(() => {
       if (!active) return;
       const place = event => {
@@ -907,7 +924,7 @@
         return n && {x: n.x, y: n.y, w: el.offsetWidth || n.w || 224, h: el.offsetHeight || n.h || 160};
       }).filter(Boolean);
       if (!boxes.length) return;
-      const fitted = fitCanvasViewport(boxes, w, h, zoomMin, zoomMax, Number(s.canvasPolicy?.zoom_fit_max ?? 1.25));
+      const fitted = fitCanvasViewport(boxes, w, h, zoomMin, zoomMax, embedded ? 1 : Number(s.canvasPolicy?.zoom_fit_max ?? 1.25));
       if (fitted) updateView(fitted, persist);
     };
     React.useEffect(() => {
@@ -920,14 +937,6 @@
       window.UI.requestCanvasFit = fit;
       return () => { if (window.UI.requestCanvasFit === fit) window.UI.requestCanvasFit = null; };
     });
-    React.useEffect(() => {
-      if (!embedded || !active || requestState !== 'loaded' || !area.current) return;
-      const run = () => { if (!userViewport.current) fit(false); };
-      const frame = requestAnimationFrame(run);
-      const observer = new window.ResizeObserver(run);
-      observer.observe(area.current);
-      return () => { cancelAnimationFrame(frame); observer.disconnect(); };
-    }, [embedded, active, requestState, scope, layout]);
     const openNode = n => {
       if (n.kind.toLowerCase().includes('meeting')) u.go('meetings');else if (n.kind === 'Watch program') u.act(() => api.windowAction('hide'));else if (n.kind === 'Present') u.go('present');else if (['Community', 'Community group', 'Marketplace listing', 'Project charge'].includes(n.kind)) u.go('community');else if (n.kind === 'Interface studio' || n.kind === 'UI element') u.go('interface');else if (n.kind.startsWith('TBP ')) u.go('model-review');else if (n.kind === 'Theme') u.go('settings/Appearance');else if (n.kind === 'Workflow link') {
         if (n.params.targetGraph) u.act(() => api.selectGraph(n.params.targetGraph));else u.show('Workflows');
@@ -941,6 +950,26 @@
         id: n.id
       });
     };
+    React.useImperativeHandle(controlsRef, () => ({
+      clearSelection: () => { setSelected([]); setWireId(null); },
+      addNode: () => u.setLibraryOpen(true),
+      run: () => executeAction('projects.ds_screens.Run.15', {api, u}),
+      connections: () => { setSelected([]); setWireId(s.graph.wires[0]?.id || null); u.setToast(s.graph.wires.length ? 'Select a connection to inspect its declared types.' : 'This workflow has no connections.'); },
+      fit: () => fit(),
+      more: () => setMore(value => !value)
+    }));
+    const stateCounts=new Map();
+    for(const node of visible){const state=nodeState(node,false)[0],label=state==='Done'?'complete':state.toLowerCase();stateCounts.set(label,(stateCounts.get(label)||0)+1);}
+    const actionsMenu = <> {more && <div role="menu" aria-label="Canvas actions" data-canvas-more="" onKeyDown={e => { if (e.key === 'Escape') setMore(false); }} style={{position:'absolute',right:0,top:8,display:'grid',minWidth:200,maxHeight:'calc(100% - 16px)',overflow:'auto',padding:6,gap:2,
+          background:A.bgPanel,border:'1px solid '+A.lineSoft,borderRadius:6,zIndex:20}}>{[
+            ['Add node · Ctrl K', () => executeAction("projects.ds_screens.AddANodeCtrlK.24", {u})], ['New', () => u.act(() => api.newSession())], ['Open…', () => u.act(() => api.openSession())], ['Save · Ctrl S', () => u.act(() => api.saveSession())],
+            ['Save as…', () => u.act(() => api.saveSessionAs())], ['Save as skill…', () => u.show('Save skill')], ['Workspaces · ' + s.workspaces.length, () => u.show('Workspaces')],
+            [(u.libraryOpen ? 'Hide' : 'Show') + ' Library', () => u.setLibraryOpen(v => !v)], ['Group · Ctrl G', group, selected.length < 2],
+            ['Undo · Ctrl Z', () => u.act(api.undo)], ['Redo · Ctrl Shift Z', () => u.act(api.redo)], ['Arrange', () => u.act(api.arrangeGraph)],
+            ['Wires: ' + (s.graph.wireVisibility || 'Visible') + ' → ' + ({Visible: 'Faint', Faint: 'Hidden', Hidden: 'Visible'})[s.graph.wireVisibility || 'Visible'],
+              () => u.act(() => api.setWireVisibility(({Visible: 'Faint', Faint: 'Hidden', Hidden: 'Visible'})[s.graph.wireVisibility || 'Visible']))],
+          ].map(([label, run, disabled]) => <button key={label} role="menuitem" type="button" className="button-reset listbutton" disabled={disabled} style={{textAlign:'left',padding:'6px 8px'}}
+            onClick={event => executeAction('projects.controls.activate', {handler: () => { setMore(false); return run(); }}, event)}>{label}</button>)}</div>} </>;
     const body = <div data-screen="canvas" style={{
       display: 'grid',
       gridTemplateRows: 'minmax(0,1fr)',
@@ -959,7 +988,7 @@
       '--canvas-accent-dim': A.accentDim
     }}>
   {/* Spec d9c0d514 top bar: name · Unsaved, + Add node, ⋯, Run. Everything else lives in ⋯; saving is autosave plus Ctrl+S. */}
-  <div data-canvas-overlay="" data-canvas-topbar="" hidden={embedded || undefined} className="spread" style={{
+  {!embedded && <div data-canvas-overlay="" data-canvas-topbar="" className="spread" style={{
         position:'absolute',top:12,left:u.libraryOpen ? 264 : 16,right:16 + (wire || inspected ? LAYOUT.inspectorWidth : 0),zIndex:12,
         minWidth:0,padding: '6px 12px',borderRadius:6,border:'1px solid '+A.lineSoft,
         background: A.bgPanel, fontSize: 13
@@ -968,19 +997,11 @@
         {stale > 0 && <span data-solve-status="" style={{color: A.warn}}>{stale} out of date · Run</span>}</div>
       <div className="flex" style={{position:'relative',flexShrink:0}}> <Btn variant="controls" sm ghost aria-label="More canvas actions" aria-expanded={more} onClick={event => executeAction('projects.controls.activate', {handler: () => setMore(!more)}, event)}>⋯</Btn>
         <Btn variant="controls" p sm onClick={event => executeAction("projects.ds_screens.Run.15", {api,u}, event)}>▶ Run</Btn>
-        {more && <div role="menu" aria-label="Canvas actions" data-canvas-more="" onKeyDown={e => { if (e.key === 'Escape') setMore(false); }} style={{position:'absolute',right:0,top:'calc(100% + 6px)',display:'grid',minWidth:200,padding:6,gap:2,
-          background:A.bgPanel,border:'1px solid '+A.lineSoft,borderRadius:6,zIndex:20}}>{[
-            ['Add node · Ctrl K', () => executeAction("projects.ds_screens.AddANodeCtrlK.24", {u})], ['New', () => u.act(() => api.newSession())], ['Open…', () => u.act(() => api.openSession())], ['Save · Ctrl S', () => u.act(() => api.saveSession())],
-            ['Save as…', () => u.act(() => api.saveSessionAs())], ['Workspaces · ' + s.workspaces.length, () => u.show('Workspaces')],
-            [(u.libraryOpen ? 'Hide' : 'Show') + ' Library', () => u.setLibraryOpen(v => !v)], ['Group · Ctrl G', group, selected.length < 2],
-            ['Undo · Ctrl Z', () => u.act(api.undo)], ['Redo · Ctrl Shift Z', () => u.act(api.redo)], ['Arrange', () => u.act(api.arrangeGraph)],
-            ['Wires: ' + (s.graph.wireVisibility || 'Visible') + ' → ' + ({Visible: 'Faint', Faint: 'Hidden', Hidden: 'Visible'})[s.graph.wireVisibility || 'Visible'],
-              () => u.act(() => api.setWireVisibility(({Visible: 'Faint', Faint: 'Hidden', Hidden: 'Visible'})[s.graph.wireVisibility || 'Visible']))],
-          ].map(([label, run, disabled]) => <button key={label} role="menuitem" type="button" className="button-reset listbutton" disabled={disabled} style={{textAlign:'left',padding:'6px 8px'}}
-            onClick={event => executeAction('projects.controls.activate', {handler: () => { setMore(false); return run(); }}, event)}>{label}</button>)}</div>}</div></div>
+</div></div>}
+  {actionsMenu}
   <div className="canvas-panes" data-compact-inspection={!embedded && !!(wire || inspected) ? '' : undefined} style={{
         display: 'grid',
-        '--canvas-pane-columns': (u.libraryOpen ? '248px ' : '') + 'minmax(0,1fr)' + (!embedded && (wire || inspected) ? ' ' + LAYOUT.inspectorWidth + 'px' : ''),
+        '--canvas-pane-columns': (u.libraryOpen ? '248px ' : '') + 'minmax(0,1fr)' + (!externalInspector && (wire || inspected) ? ' var(--layout-inspector-width,320px)' : ''),
         minHeight: 0
       }}>{u.libraryOpen && <window.UI.LibraryShelf onClose={() => u.setLibraryOpen(false)} />}
    <div ref={area} className={'node-canvas' + (visible.some(n => n.status === 'Running') ? ' running-wires' : '')} tabIndex={0} aria-label="Workflow canvas" style={{position:'relative',minHeight:0,'--xy-selection-background-color':A.accent+'16','--xy-selection-border':'1px solid '+A.accent,'--xy-background-color':'transparent'}}
@@ -1003,7 +1024,7 @@
      <RF.ReactFlow nodes={flowNodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
        viewport={{x: pan.x, y: pan.y, zoom}} onViewportChange={v => updateView({zoom: v.zoom, pan: {x: v.x, y: v.y}}, false)}
        onMoveEnd={(event, v) => { if (event instanceof window.Event) persistView(v); }} minZoom={zoomMin} maxZoom={zoomMax}
-       onNodesChange={onNodesChange} onNodeDragStop={onNodeDragStop} onNodeDoubleClick={(e, f) => openNode(f.data.n)}
+       onNodesChange={onNodesChange} onNodeClick={(event,node)=>onInspect?.({nodeId:node.id,wireId:null})} onNodeDragStop={onNodeDragStop} onNodeDoubleClick={(e, f) => openNode(f.data.n)}
        onConnect={c => connect({id: c.source, port: c.sourceHandle}, {id: c.target, port: c.targetHandle})}
        onConnectEnd={(e, state) => {
          // A wire dropped on empty canvas offers the nodes that can take it (spec Compatible nodes).
@@ -1011,14 +1032,15 @@
          u.show('Compatible nodes', {endpoint: {id: state.fromNode.id, side: state.fromHandle.type === 'source' ? 'out' : 'in', port: state.fromHandle.id}, position: toFlow(e)});
        }}
        onEdgeClick={(e, edge) => { if (edge.id !== 'rejected') { setWireId(edge.id); setSelected([]); } }}
-       onPaneClick={() => { setWireId(null); setRejected(null); }}
+       onPaneClick={() => { setSelected([]); setWireId(null); setRejected(null); }}
        selectionOnDrag panOnDrag={[1]} panActivationKeyCode="Space" multiSelectionKeyCode="Shift" selectionKeyCode={null} deleteKeyCode={null}
        zoomOnDoubleClick={false} connectionLineStyle={{stroke: A.cyan, strokeWidth: 2}} proOptions={{hideAttribution: true}} />
     </CanvasContext.Provider>
-    <div data-canvas-overlay="" className="canvas-toolbar"><Btn variant="controls" sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom">{Math.round(zoom * 100)}%</button><Btn variant="controls" sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><Btn variant="controls" sm ghost onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</Btn></div>
+    <div data-canvas-overlay="" className="canvas-toolbar"><Btn variant="controls" sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom">{Math.round(zoom * 100)}%</button><Btn variant="controls" sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><button type="button" className="dx-quiet" onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</button>{embedded && onHandoff && <button type="button" className="dx-quiet" onClick={event=>executeAction("projects.controls.activate",{handler:onHandoff},event)}>Handoff map</button>}</div>
+    {embedded && <><div data-workflow-label="">Workflow</div><div data-canvas-summary="" aria-label="Workflow status">{[...stateCounts].map(([label,count])=>count+' '+label).join(' · ')}</div></>}
    </div>
-   {inspected && <NodeInspector n={inspected} s={s} u={u} />}
-   {wire && <WireInspector wire={wire} s={s} u={u} onClose={() => setWireId(null)} />}
+   {!externalInspector && inspected && <NodeInspector n={inspected} s={s} u={u} />}
+   {!externalInspector && wire && <WireInspector wire={wire} s={s} u={u} onClose={() => setWireId(null)} />}
 
   </div>
  </div>;
@@ -1063,6 +1085,8 @@
   }
   window.UI.RunModeChip = RunModeChip;
   window.UI.Canvas = Canvas;
+  window.UI.NodeInspector = NodeInspector;
+  window.UI.WireInspector = WireInspector;
   window.UI.fitCanvasViewport = fitCanvasViewport;
   window.UI.SystemGraph = SystemGraph;
 

@@ -13,7 +13,6 @@
   }
   const statusText = st => ({'IN REVIEW': 'Needs you', WIP: 'Working', PLANNED: 'Planned', DONE: 'Completed', ARCHIVED: 'Archived', STOPPED: 'Stopped'})[st] || st || '';
   const KEY = 'archhub.home.layout.v1';
-  const readLayout = () => api.getSnapshot().homeLayout || {};
   let homeSetFace = detail => { void detail; };
   const ensureHomeView = () => {
     if (ensureHomeView.bound) return;
@@ -25,7 +24,7 @@
       }
     });
   };
-  const writeLayout = value => api.setHomeLayout(value);
+  const writeInspectorWidth = value => api.setInspectorWidth(value);
   const describe = value => {
     if (value == null || value === '') return '';
     if (Array.isArray(value)) return value.map(describe).filter(Boolean).join(' · ');
@@ -144,22 +143,43 @@
     const [failure, setFailure] = React.useState('');
     const [layoutReady, setLayoutReady] = React.useState(false);
     const retrySave = React.useRef(() => {});
+    const inspectorRef = React.useRef(null), canvasRef = React.useRef(null);
+    const inspectorSetting = s.settings.find(row => row.id === 'Appearance.Inspector width');
+    const inspectorWidth = inspectorSetting?.value ?? 320;
+    const [inspection, setInspection] = React.useState({nodeId: null, wireId: null});
+    const [propertyTab, setPropertyTab] = React.useState('Task');
+    const inspectedNode = s.graph.nodes.find(node => node.id === inspection.nodeId);
+    const inspectedWire = s.graph.wires.find(wire => wire.id === inspection.wireId);
+    const inspect = value => {
+      setInspection(value);
+      setPropertyTab(value.nodeId || value.wireId ? 'Selection' : 'Task');
+    };
+    const clearInspection = () => { canvasRef.current?.clearSelection(); inspect({nodeId:null,wireId:null}); };
     React.useEffect(() => {
-      if (s.homeLayout === undefined || layoutReady) return;
+      if (!inspectorSetting || layoutReady) return;
       const migrate = async () => {
         try {
-          const legacy = JSON.parse(window.localStorage.getItem(KEY) || 'null');
-          if (legacy?.inner && !s.homeLayout.inner) await writeLayout({inner: legacy.inner});
+          const legacy = s.homeLayout?.inner || JSON.parse(window.localStorage.getItem(KEY) || 'null')?.inner;
+          if (legacy) {
+            const width = inspectorSetting.overridden ? inspectorWidth : Math.max(280, Math.min(480, Math.round((window.innerWidth - 64) * legacy.params / 100)));
+            const result = await writeInspectorWidth(width);
+            if (result?.ok === false) throw Error(result.error || 'Could not migrate the Properties width.');
+          }
           window.localStorage.removeItem(KEY);
           setLayoutReady(true);
         } catch (error) {
           setFailure(error instanceof Error ? error.message : String(error));
-          setRequest('error');
-          retrySave.current = migrate;
+          setRequest('error'); retrySave.current = migrate;
         }
       };
       migrate();
-    }, [s.homeLayout, layoutReady]);
+    }, [inspectorSetting, s.homeLayout, layoutReady]);
+    React.useLayoutEffect(() => {
+      if (layoutReady) inspectorRef.current?.resize(inspectorWidth);
+    }, [inspectorWidth, layoutReady, fileWorkspace, face]);
+    React.useEffect(() => {
+      if (face !== 'canvas') {u.setSelectedNodeId(null);inspect({nodeId:null,wireId:null});}
+    }, [face]);
     React.useEffect(() => {
       let live = true;
       if (typeof api.readPermissions !== 'function') {
@@ -184,7 +204,6 @@
     }, []);
     homeSetFace = setFace;
     ensureHomeView();
-    const saved = readLayout();
     const tasks = (s.tasks || []).filter(t => history || t.status !== 'ARCHIVED');
     const waiting = new Set((s.approvals || []).filter(c => c.status === 'pending').map(c => c.taskId));
     const list = tasks.filter(t => (!status || t.status === status) && (!query || `${t.title} ${t.status}`.toLowerCase().includes(query.toLowerCase())));
@@ -210,9 +229,6 @@
     const plan = Array.isArray(task?.plan) ? task.plan : [];
     const activity = Array.isArray(task?.activity) ? task.activity : [];
     const outputs = (Array.isArray(task?.outputs) && task.outputs.length ? task.outputs : [task?.result, ...activity.map(row => row.output)]).map(outputRecord).filter(Boolean);
-    const source = String(task?.description || '').trim();
-    const sourceSentence = source && source !== task?.title ? source.split(/(?<=[.!?])\s/)[0] : '';
-    const shortSource = sourceSentence.length > 140 ? sourceSentence.slice(0, 139).replace(/\s+\S*$/, '').replace(/[,\s;:]+$/, '') + '…' : sourceSentence;
     const draftKey = JSON.stringify(['task-file', task?.id || '']);
     const text = u.composerDraft[draftKey]?.text || '';
     const setText = value => u.setComposerDraft(current => {
@@ -228,15 +244,15 @@
     const modelName = router?.default_model || personModel || '';
     const running = (s.hosts || []).filter(h => ['connected', 'listening', 'running'].includes(h.state));
     const footer = (running.length ? running.map(h => [h.name, h.file].filter(Boolean).join(' · ')).join(' · ') : 'No program selected.') + ' Model policy: Free first.';
-    const persistLayout = async value => {
+    const persistWidth = async value => {
       setRequest('waiting');
       let result;
-      try { result = await writeLayout(value); }
+      try { result = await writeInspectorWidth(value); }
       catch (error) { result = {ok: false, error: error instanceof Error ? error.message : String(error)}; }
       if (result == null || result.ok === false) {
-        setFailure(result.error || 'Could not save the layout.');
+        setFailure(result?.error || 'Could not save the Properties width.');
         setRequest('error');
-        retrySave.current = () => persistLayout(value);
+        retrySave.current = () => persistWidth(value);
         return result;
       }
       setFailure('');
@@ -341,7 +357,7 @@
                   <ItemList action={fileWorkspace ? "Add" : "Edit"} label="Rules" icon="shield" items={rules} onCommit={next => saveSession({rules: next})} />
                   <ItemList action={fileWorkspace ? "Add" : "Edit"} label="Assigned agents" icon="users" items={agents} choices={agentChoices} onCommit={next => saveSession({agents: next})} />
                   {!fileWorkspace && <ItemList label="Folders" icon="folder" items={folders} onCommit={next => saveSession({folders: next})} />}
-                  <ItemList action={fileWorkspace ? "Open" : "Edit"} label="References" icon="link" items={references} onCommit={next => saveSession({references: next})} />
+                  <ItemList action="Edit references" label="References" icon="link" items={references} onCommit={next => saveSession({references: next})} />
                   {[[fileWorkspace ? "Saved node" : "Session & saved workflow", (fileName || session) && task?.title ? task.title + '.archhub' : 'Not saved']].map(([label, value]) => {
                     const full = factText(value);
                     return fileWorkspace ? <details className="dx-fact dx-edit-field" key={label}><summary><span>{label}</span><span className="dx-edit-label">Details</span><b>{middle(full)}</b></summary><p>{(task?.workflow || []).length} nodes · {(task?.parameters || []).length} parameter groups</p><button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => setFace('canvas'))}>Open workflow</button></details> : <label className="dx-fact" key={label}><span>{label}</span><b className="dx-path" title={full}>{middle(full)}</b></label>;
@@ -353,18 +369,30 @@
                       <button type="button" className="dx-quiet" disabled={!task || !checkpoint} onClick={() => executeAction('ui.select', () => u.act(() => api.restoreTaskCheckpoint(task.id, checkpoint)))}>Restore</button>
                     </span>
                   </details>
-                  {fileWorkspace && <><ItemList action="Name…" label="Folders" icon="folder" items={folders} onCommit={next => saveSession({folders: next})} /><div className="dx-fact"><span>Recurrence</span><b>{(s.schedules || []).find(row => row.taskId === task?.id)?.time || "Not scheduled"}</b><button type="button" className="dx-link" onClick={() => executeAction("ui.select", () => u.schedule(task.id))}>Edit</button></div></>}
-                  <div className="dx-plan-summary"><span>Plan and progress</span><b>{plan.length ? plan.filter(step => stepOf(step, task?.progress).kind === 'done').length + ' of ' + plan.length + ' steps complete' : 'No plan recorded'}</b></div>
+                  {fileWorkspace && <><ItemList action="Edit folders" label="Folders" icon="folder" items={folders} onCommit={next => saveSession({folders: next})} /><div className="dx-fact"><span>Recurrence</span><b>{(s.schedules || []).find(row => row.taskId === task?.id)?.time || "Not scheduled"}</b><button type="button" className="dx-link" onClick={() => executeAction("ui.select", () => u.schedule(task.id))}>Edit</button></div></>}
+                  <details className="dx-plan-summary"><summary><span>Plan and progress</span><b>{plan.length ? plan.filter(step => stepOf(step, task?.progress).kind === 'done').length + ' of ' + plan.length + ' steps complete' : 'No plan recorded'}</b></summary><ol className="dx-stepper">{plan.map((step, index) => {
+                        const recorded = stepOf(step, task?.progress);
+                        const label = typeof step === 'object' ? (step.title || step.text || step.name || step.what || describe(step)) : String(step);
+                        return <li key={index} data-step={recorded.kind}><Icon name={recorded.kind === 'done' ? 'check' : recorded.kind === 'working' ? 'clock' : 'arrow'} size={14} /><b>{label}</b><span>{recorded.label}</span><small>{recorded.owner}</small></li>;
+                      })}</ol></details>
                 </section>);
-    return <div className="dx-home-root" data-screen={fileWorkspace ? "task-file" : "home"} data-home-page={fileWorkspace ? undefined : ""} data-start={document.documentElement.dataset.start || 'cold'} onKeyDown={fileKeys}>
+    const propertiesPane = <aside className="shared-properties" data-properties-pane="" aria-label="Properties">
+      <header className="shared-properties-head"><h2>Properties</h2><div role="tablist" aria-label="Properties view">{['Task','Selection'].map(tab => <button type="button" role="tab" aria-selected={propertyTab === tab} key={tab} onClick={() => executeAction('ui.select', () => setPropertyTab(tab))}>{tab}</button>)}</div></header>
+      <div className="shared-properties-task" hidden={propertyTab !== 'Task'}>{task ? <><div className="properties-task-context"><h3>{task.title}</h3><span>{statusText(task.status)}</span></div>{taskParameters}{!fileWorkspace && <div className="dx-preview-actions">
+              <Btn sm p style={{height:32, width:145, borderRadius:0, background:'var(--color-accent-dim)', color:'var(--color-accent)', border:0, fontWeight:600}} onClick={() => executeAction('ui.select', () => u.openTaskFile(task.id, 'canvas'))}>Open workflow</Btn>
+              <Btn sm ghost style={{height:32, width:152, borderRadius:0, background:'transparent', border:0, fontWeight:600}} onClick={() => executeAction('ui.select', () => u.openTaskFile(task.id, 'workshop'))}>Open Workshop</Btn>
+            </div>}</> : <p>Select a task to see its properties.</p>}</div>
+      <div className="shared-properties-selection" hidden={propertyTab !== 'Selection'}>{inspectedWire ? <window.UI.WireInspector embedded wire={inspectedWire} s={s} u={u} onClose={clearInspection} /> : inspectedNode ? <window.UI.NodeInspector embedded n={inspectedNode} s={s} u={u} /> : <p>Select a node or wire.</p>}</div>
+    </aside>;
+    return <div className="dx-home-root" data-screen={fileWorkspace ? "task-file" : "home"} data-home-page={fileWorkspace ? undefined : ""} data-start={document.documentElement.dataset.start || 'cold'} onKeyDown={event => { if(event.key === 'Escape' && (inspection.nodeId || inspection.wireId)) {event.preventDefault();event.stopPropagation();clearInspection();} else fileKeys(event);}}>
       {s.liveAgents === undefined ? <p role="status" data-home-loading="">Opening your tasks…</p> : null}
       {request === 'waiting' ? <p role="status">Saving</p> : null}
       {request === 'error' ? <p role="alert">{failure} <button type="button" onClick={() => executeAction('ui.select', () => retrySave.current())}>Retry</button></p> : null}
       {request === 'empty' ? <p role="status">No tasks yet.</p> : null}
       {request === 'loaded' ? <span data-home-ready="" /> : null}
       <div className="dx-home">
-        {!fileWorkspace ? <div className="dx-home-landing"><div className="dx-task-index">
-          <aside className="dx-tasks" data-dx="tasks" aria-label="Tasks">
+        {!fileWorkspace ? <Group id="home-context" className="dx-home-landing dx-split" orientation="horizontal" onLayoutChanged={(_, meta) => {if(meta?.isUserInteraction && inspectorRef.current) persistWidth(Math.round(inspectorRef.current.getSize().inPixels));}}>
+          <Column id="main" className="dx-task-index" minSize={320}><div className="dx-home-list">          <aside className="dx-tasks" data-dx="tasks" aria-label="Tasks">
             <div className="dx-tasks-head">
               <h2>Tasks</h2>
             </div>
@@ -385,16 +413,13 @@
             <div className="dx-tasks-list">
               {list.map(t => <TaskRow key={t.id} t={t} />)}
             </div>
-          </aside>
-        </div><aside className="dx-home-preview" aria-label="Selected task properties">
-          {task ? <><header><small>TASK PROPERTIES</small><h2>{task.title}</h2><span>{statusText(task.status)}</span></header>
-            {taskParameters}
-            <div className="dx-preview-actions">
-              <Btn sm p style={{height:32, width:145, borderRadius:0, background:'var(--color-accent-dim)', color:'var(--color-accent)', border:0, fontWeight:600}} onClick={() => executeAction('ui.select', () => u.openTaskFile(task.id, 'canvas'))}>Open workflow</Btn>
-              <Btn sm ghost style={{height:32, width:152, borderRadius:0, background:'transparent', border:0, fontWeight:600}} onClick={() => executeAction('ui.select', () => u.openTaskFile(task.id, 'workshop'))}>Open Workshop</Btn>
-            </div></> : <p>Select a task to see its properties.</p>}
-        </aside></div> :
+          </aside></div></Column>
+          <Separator className="pane-splitter" aria-label="Resize the Properties pane" />
+          <Column id="params" className="dx-home-preview" panelRef={inspectorRef} defaultSize={inspectorWidth} minSize={280} maxSize={480} groupResizeBehavior="preserve-pixel-size">{propertiesPane}</Column>
+        </Group> :
           <div className="dx-workspace" data-dx="workspace" data-task-face={face}>
+            <Group key={layoutReady ? 'saved' : 'loading'} id="home-context" className="dx-split" orientation="horizontal" onLayoutChanged={(_, meta) => { if (meta?.isUserInteraction && inspectorRef.current) persistWidth(Math.round(inspectorRef.current.getSize().inPixels)); }}>
+              <Column id="main" className="dx-col dx-task-column" minSize={320}>
             <header className="dx-head" data-dx="head">
               <input className="dx-title" aria-label="Task title" key={(task?.id || '') + ':' + (task?.title || '')} defaultValue={task?.title || ''} disabled={!task} onBlur={event => {
                 if (!task) return false;
@@ -428,24 +453,14 @@
               </div></details>
             </header>
             <p className="dx-session-meta">{task?.title && (fileName || session) ? task.title + ".archhub" : "Unsaved workflow"}{task?.sessionPath ? s.sessionDirty ? " · Unsaved changes" : " · Saved" : ""}</p>
-            <div className="dx-task-toolbar"><div className="dx-toggle" data-dx="views" role="group" aria-label="Task view"><button type="button" aria-label="Canvas view" aria-pressed={face === "canvas"} onClick={() => executeAction("ui.select", showCanvas)}>Canvas</button><button type="button" aria-label="Workshop view" aria-pressed={face === "workshop"} onClick={() => executeAction("ui.select", () => setFace("workshop"))}>Workshop</button></div><div className="dx-toolbar-actions"><button type="button" className="dx-quiet" title="Open this task workflow and its real Agent/Workshop nodes" onClick={() => executeAction("ui.select", showCanvas)}>Handoff map</button><button type="button" className="dx-quiet" onClick={() => executeAction("ui.select", () => document.querySelector(".dx-composer textarea")?.focus())}>Ask agent</button></div></div>
-            {shortSource ? <p className="dx-desc" data-dx="description">{shortSource}</p> : null}
-            <Group key={layoutReady ? 'saved' : 'loading'} id="home-context" className="dx-split" orientation="horizontal" defaultLayout={saved.inner} onLayoutChanged={(layout, meta) => { if (meta?.isUserInteraction) persistLayout({...readLayout(), inner: layout}); }}>
-              <Column id="main" className="dx-col" minSize={480}>
-                <div className="dx-main" data-dx="main" data-home-face={face}>
-                  {face === 'canvas' ? <div className="dx-board" data-dx="canvas-commands" role="toolbar" aria-label="Canvas commands">
-                    <button type="button" onClick={() => executeAction('ui.select', () => u.show('Search'))}>+ Add node</button>
-                    <button type="button" aria-pressed={!!u.libraryOpen} onClick={() => executeAction('ui.select', () => u.setLibraryOpen(value => !value))}>Library</button>
-                    <button type="button" onClick={() => executeAction('ui.select', () => u.go('watcher'))}>Program view</button>
-                    <button type="button" onClick={() => executeAction('ui.select', () => u.go('present'))}>Present</button>
-                    <button type="button" onClick={() => executeAction('ui.select', () => u.go('model-review'))}>Model review</button>
-                    <button type="button" onClick={() => executeAction('ui.select', () => { const fit = window.UI.requestCanvasFit; return typeof fit === 'function' ? fit() : false; })}>Overview</button>
-                  </div> : null}
+            <div className="dx-task-toolbar"><div className="dx-toggle" data-dx="views" role="group" aria-label="Task view"><button type="button" aria-label="Canvas view" aria-pressed={face === "canvas"} onClick={() => executeAction("ui.select", showCanvas)}>Canvas</button><button type="button" aria-label="Workshop view" aria-pressed={face === "workshop"} onClick={() => executeAction("ui.select", () => setFace("workshop"))}>Workshop</button></div><div className="dx-toolbar-actions">{face === 'canvas' && <><button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => canvasRef.current?.addNode())}>Add node</button><button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => canvasRef.current?.connections())}>Connection checks</button><button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => u.schedule(task.id))}>Repeat…</button><button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => canvasRef.current?.run())}>Run</button><button type="button" className="dx-quiet" aria-label="More canvas actions" onClick={() => executeAction('ui.select', () => canvasRef.current?.more())}>⋯</button></>}{face === 'workshop' && <button type="button" className="dx-quiet" title="Open this task workflow and its real Agent/Workshop nodes" onClick={() => executeAction("ui.select", showCanvas)}>Handoff map</button>}{face === 'workshop' && <button type="button" className="dx-quiet" onClick={() => executeAction("ui.select", () => document.querySelector(".dx-composer textarea")?.focus())}>Ask agent</button>}</div></div>
+
+                <div className="dx-surface-body">{face === 'canvas' ? <window.UI.Canvas active embedded externalInspector controlsRef={canvasRef} onInspect={inspect} onHandoff={showCanvas} /> : <div className="dx-main" data-dx="main" data-home-face={face}>
                   <div className="dx-thread-layout"><aside className="dx-threads" aria-label="Threads"><header><h2>Threads</h2><button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => u.go('home'))}>All tasks</button></header>{tasks.map(t => <button type="button" className="dx-thread-row" key={t.id} aria-selected={t.id === task?.id} onClick={() => executeAction('ui.select', () => u.openTaskFile(t.id, 'workshop'))}><b>{t.title}</b>{ownerOf(t) ? <span>You → {ownerOf(t)}</span> : null}<span>{window.UI.taskRowReason(t) || statusText(t.status)}{reasonOf(t) ? ' · ' + reasonOf(t) : ''}</span></button>)}</aside>
                   <div className="dx-work-scroll">
                   <div className="dx-mid" data-plan={plan.length ? 'shown' : 'hidden'}>
                     <div className="dx-stage">
-                    {face === 'workshop' ? <section className="dx-talk dx-thread" data-dx="conversation" aria-label="Conversation">
+                    <section className="dx-talk dx-thread" data-dx="conversation" aria-label="Conversation">
                       <h2>Thread activity</h2><p className="dx-thread-status">{ownerOf(task) ? "You → " + ownerOf(task) + " · " : ""}{statusText(task?.status)}</p>
                       {window.UI.taskRowReason(task || {}) === 'interrupted' ? <div className="dx-task-notice" role="status"><p>Interrupted · outcome unknown{reasonOf(task) ? ' · ' + reasonOf(task) : ''}</p><button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => u.go('receipts'))}>View activity</button></div> : null}
                       {window.UI.taskRowReason(task || {}) === 'limit reached' ? <div className="dx-task-notice" role="status"><p>Limit reached{task?.limits ? ' · ' + describe(task.limits) : ''}{reasonOf(task) ? ' · ' + reasonOf(task) : ''}</p><button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => u.go('runs'))}>View active runs</button></div> : null}
@@ -459,10 +474,7 @@
                         const open = detailId === (m.id || who);
                         return <article key={m.id} className="dx-msg"><span className="dx-avatar" style={{background:'var(--color-accent-dim)',color:'var(--color-accent)'}} aria-hidden="true" title={sender}>{String(own ? s.profile.name || sender : sender || '?').trim().split(/\s+/).map(word => word[0]).join('').slice(0,2).toUpperCase()}</span><div className="dx-msg-line"><div><b>{sender}</b><p>{typeof m.text === 'object' ? describe(m.text) : m.text}</p><p className="dx-delivery">{delivery || 'Delivery unverified'}</p>{m.event ? <p className="dx-delivery">Task event: {describe(m.event)}</p> : null}{open ? <p className="dx-delivery">{[m.id, m.created_at, delivery].filter(Boolean).join(' · ') || 'No delivery record'}</p> : null}</div><span className="dx-msg-actions"><button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => replyToMessage(m))}>Reply</button><button type="button" className="dx-quiet" aria-expanded={open} onClick={() => executeAction('ui.select', () => setDetailId(open ? '' : (m.id || who)))}>Details</button></span></div></article>;
                       })}
-                    </section> : <section className="dx-panel" data-dx="workflow" data-home-face={face} aria-label="Workflow">
-                      <h2>Workflow · logic</h2>
-                      <div className="dx-canvas-mount" data-dx="graph">{window.UI.Canvas ? <window.UI.Canvas active embedded /> : <p className="dx-empty">No nodes in this workflow yet.</p>}</div>
-                    </section>}
+                    </section>
                     </div>
                   </div>
                   {(activity.length || outputs.length) ? <div className="dx-low">
@@ -473,15 +485,7 @@
                   </div> : null}
                   </div>
                   </div>
-                  <div className="dx-plan-activity">
-                    {plan.length ? <section className="dx-panel" data-dx="plan" aria-label="Plan and progress">
-                      <h2>Plan and progress</h2>
-                      <ol className="dx-stepper">{plan.map((step, index) => {
-                        const recorded = stepOf(step, task?.progress);
-                        const label = typeof step === 'object' ? (step.title || step.text || step.name || step.what || describe(step)) : String(step);
-                        return <li key={index} data-step={recorded.kind}><Icon name={recorded.kind === 'done' ? 'check' : recorded.kind === 'working' ? 'clock' : 'arrow'} size={14} /><b>{label}</b><span>{recorded.label}</span><small>{recorded.owner}</small></li>;
-                      })}</ol>
-                    </section> : null}
+                  <div className="dx-task-activity">
                     <section className="dx-panel" data-dx="activity" aria-label="Activity"><h2>Activity</h2>{activity.length ? activity.map(row => <p key={row.id}>{[statusText(row.status),describe(row.output)].filter(Boolean).join(' · ')}</p>) : <p>No activity recorded.</p>}</section></div>
                   {face === "workshop" && <form className="dx-composer" data-dx="composer" onSubmit={e => { e.preventDefault(); executeAction('ui.select', send); }}>
                     <window.UI.AgentPicker choices={choices} to={recipient} setTo={setTo} />
@@ -503,11 +507,11 @@
                     </div>
                   </form>}
                   <p className="dx-foot" data-dx="footer">{footer}</p>
-                </div>
+                </div>}</div>
               </Column>
-              <Separator className="pane-splitter" aria-label="Resize the task parameters" />
-              <Column id="params" className="dx-col" defaultSize={366} minSize={200} groupResizeBehavior="preserve-pixel-size">
-                {taskParameters}
+              <Separator className="pane-splitter" aria-label="Resize the Properties pane" />
+              <Column id="params" className="dx-col dx-properties-column" panelRef={inspectorRef} defaultSize={inspectorWidth} minSize={280} maxSize={480} groupResizeBehavior="preserve-pixel-size">
+                {propertiesPane}
               </Column>
             </Group>
           </div>

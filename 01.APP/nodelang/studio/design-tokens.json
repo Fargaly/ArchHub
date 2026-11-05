@@ -1124,9 +1124,9 @@
     "$description": ""
    },
    "inspectorWidth": {
-    "$value": "300px",
+    "$value": "320px",
     "$type": "dimension",
-    "$description": ""
+    "$description": "One stable right Properties pane across Home, Workshop and Canvas. Task is default; selection changes its content. User-resizable 280–480px; one saved app-level width."
    }
   },
   "wire": {
@@ -1254,7 +1254,7 @@
  "$extensions": {
   "penpot": {
    "fileId": "751e8d0c-7080-8124-8008-d8e6f6eedbb6",
-   "revn": 1436,
+   "revn": 1968,
    "file": "ArchHub — Editable Product Design",
    "read": "DTCG handoff grouped into the Penpot token sets compile_studio already reads"
   },

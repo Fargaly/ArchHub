@@ -5,10 +5,10 @@ from pathlib import Path
 import subprocess
 import pytest
 
-from test_task_session_roundtrip import _isolate, _Studio
+from test_task_session_roundtrip import _isolate, _Studio, _post
 
 
-@pytest.mark.parametrize("board", ["home", "workshop"])
+@pytest.mark.parametrize("board", ["home", "workshop", "canvas"])
 def test_designbuild_board(tmp_path, monkeypatch, board):
     browser_cache = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '')
     if not browser_cache:
@@ -30,6 +30,22 @@ def test_designbuild_board(tmp_path, monkeypatch, board):
             'progress': {'Read sheet index': 'done', 'Review drawings': 'done'},
             'messages': [{'id':'review-complete','who':'Drawing coordinator','text':'Review is complete. The drawing index matches the reviewed set.'},{'id':'ask-export','who':'You','text':'What is holding up the export?'}],
         })
+        if board == 'canvas':
+            import copy
+            from nodelang.session_files import catalogue
+            items = {row['id']: row for row in catalogue()}
+            nodes = [{'id': key, 'item': item, 'type': items[item]['engine'], 'title': items[item]['title'],
+                      'params': copy.deepcopy(items[item]['params']), 'position': {'x': x, 'y': 0}}
+                     for key, item, x in [('list','n_list',0),('slice','s_slice',350),('count','s_count',700),('pdf','o_pdf_handoff',1050)]]
+            nodes[0]['params']['value'] = '[10, 20, 30, 40, 50]'
+            nodes[1]['params']['count'] = '3'
+            view = client.workshop('openTaskGraph', task['taskId'])
+            opened = client.files('read', path=view['path'], id=view['id'])
+            opened['document']['nodes'] = nodes
+            opened['document']['wires'] = [
+                {'id':'first','from':{'node':'list','socket':'value'},'to':{'node':'slice','socket':'items'}},
+                {'id':'second','from':{'node':'slice','socket':'items_out'},'to':{'node':'count','socket':'items'}}]
+            client.files('save', path=view['path'], document=opened['document'])
         for title in ['Sheet index check', 'Export issue package', 'Update drawing references', 'Model view audit']:
             client.workshop('createTask', title)
         client.workshop('openTaskGraph', task['taskId'])
@@ -47,8 +63,40 @@ def test_designbuild_board(tmp_path, monkeypatch, board):
         assert reopened['rules'] == ['Review every sheet before export']
         assert reopened['references'] == ['Current drawing index']
         assert reopened['folders'] == ['Dated issue folder renamed']
-        if board == 'home':
-            assert json.loads((state / 'settings' / 'settings.json').read_text(encoding='utf8'))['homeLayout']['inner']['params'] == 30
+
+    finally:
+        client.close()
+        server.close()
+
+
+def test_designbuild_appearance_owner(tmp_path, monkeypatch):
+    _isolate(monkeypatch, tmp_path / 'desk')
+    from nodelang.nograph_server import NoGraphServer
+    state = tmp_path / 'desk' / 'LOCALAPPDATA' / 'ArchHub'
+    (state / 'settings').mkdir(parents=True)
+    owner = state / 'settings' / 'settings.json'
+    owner.write_text(json.dumps({'homeLayout': {'inner': {'params': 30, 'main': 70}}}), encoding='utf8')
+    monkeypatch.setenv('ARCHHUB_TEST_STATE_DIR', str(state))
+    server = NoGraphServer(state).start()
+    client = _Studio(server)
+    try:
+        def setting(function, *args):
+            return _post(client.connection, '/api/universal/settings-action', {'function': function, 'args': list(args)}, client.headers)
+        status, body = setting('readControls')
+        assert status == 200 and body['ok']
+        rows = {row['id']: row for row in body['result']['appearanceSettings']}
+        assert rows['Appearance.Inspector width']['value'] == 320
+        assert rows['Appearance.Inspector width']['tokenId'] == 'layout.inspectorWidth'
+        assert rows['Appearance.Row spacing']['value'] == 4
+        status, body = setting('setAppearance', 'Appearance.Inspector width', 400)
+        assert status == 200 and body['ok']
+        saved = json.loads(owner.read_text(encoding='utf8'))
+        assert saved['appearanceInspectorWidth'] == 400 and 'homeLayout' not in saved
+        before = owner.read_bytes()
+        for name, value in [('Inspector width', 481), ('Inspector width', True), ('Row spacing', -1), ('Node radius', 25), ('Node header colour', 'red')]:
+            status, body = setting('setAppearance', 'Appearance.' + name, value)
+            assert status >= 400 or body.get('ok') is False
+            assert owner.read_bytes() == before
     finally:
         client.close()
         server.close()

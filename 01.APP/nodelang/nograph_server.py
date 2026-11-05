@@ -861,6 +861,18 @@ def _set_task_session(task, values):
         return {'ok': False, 'error': str(refused)}
 
 
+def _checkpoint_task(task, checkpoint=None, label=None, *, restore=False):
+    from .workshop_mailbox import application_history
+    from .workshop_tasks import checkpoint_session
+    try:
+        if restore and (not isinstance(checkpoint, str) or not checkpoint):
+            raise ValueError('Choose a checkpoint to restore')
+        with application_history() as history:
+            return checkpoint_session(history, task, checkpoint, label)
+    except ValueError as refused:
+        return {'ok': False, 'error': str(refused)}
+
+
 def _set_task_status(task, status):
     from .workshop_mailbox import application_history
     from .workshop_tasks import set_status
@@ -1008,6 +1020,8 @@ WORKSHOP_READS = {
     'renameTask': _rename_task,
     'openTaskGraph': _open_task_graph,
     'setTaskSession': _set_task_session,
+    'checkpointTask': lambda task, label=None: _checkpoint_task(task, label=label),
+    'restoreTaskCheckpoint': lambda task, checkpoint: _checkpoint_task(task, checkpoint, restore=True),
     'setTaskStatus': _set_task_status,
     'listAgentsWorking': lambda *a: _list_agents(),
     'listWorkshopMessages': lambda before=None, *a: (_SERVER._messages.get()

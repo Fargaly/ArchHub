@@ -30,7 +30,7 @@ def _call(function, *args):
 
 
 def _current(root):
-    path = root / "LOCALAPPDATA" / "ArchHub" / "sessions-files" / "current.json"
+    path = root / "LOCALAPPDATA" / "ArchHub" / "data" / "sessions" / "current.json"
     return json.loads(path.read_text(encoding="utf-8"))
 
 

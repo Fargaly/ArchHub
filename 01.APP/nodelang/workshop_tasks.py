@@ -480,6 +480,7 @@ def column(history, project=None, stale_hours=None):
              'references': list(session.get("references") or []),
              'session': row.get("session_path") or ((declaration or {}).get("session") if declaration else "") or "",
              'plan': plan, 'progress': session.get("progress") or {},
+             'checkpoints': list(session.get("checkpoints") or []),
              'workflow': list(session.get("workflow") or []), 'activity': activity,
              'updated_at': row['updated_at'], 'sessionPath': row.get('session_path'),
              'sessionOpen': bool(row.get('session_path') and row['session_path'] == current),
@@ -561,6 +562,7 @@ def _held_context(document):
                      for node in nodes if isinstance(node.get("result"), dict)],
         "folders": list(held["folders"]) if isinstance(held.get("folders"), list) else [],
         "references": list(held["references"]) if isinstance(held.get("references"), list) else [],
+        "checkpoints": [{key: row[key] for key in ("id", "title", "at")} for row in props.get("checkpoints", [])],
     }
 
 
@@ -665,6 +667,16 @@ def open_session(history, task, path=None, *, select=True, zoom=1):
     document = _stamp(target, task, document)
     _bind_session(history, task, row.get("revision"), target)
     return _show(task, target, document, select=select)
+
+
+def checkpoint_session(history, task, identity=None, label=None):
+    """Checkpoint the task's existing session through the document owner."""
+    from .session_files import checkpoint, restore_checkpoint
+    view = open_session(history, task, select=False)
+    if identity is None:
+        return checkpoint(view["path"], label)
+    document = restore_checkpoint(view["path"], identity)
+    return _show(task, view["path"], document, select=False)
 
 
 def create_session(history, title, creator="founder", *, select=True, zoom=1):

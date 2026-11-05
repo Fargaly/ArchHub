@@ -591,7 +591,7 @@ def commit_ui(path, document, base_revision, by='You'):
             remember(path, current)
             return current
         document['properties'] = {**(current or {}).get('properties', {}), **{k: v for k, v in (document.get('properties') or {}).items()
-                                                                          if k not in ('revision', 'history')}}
+                                                                          if k not in ('revision', 'history', 'checkpoints')}}
         _stamp(document, current, by, 'edit in ArchHub')
         write_document(path, document)
         remember(path, document)

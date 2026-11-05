@@ -37,7 +37,7 @@ test('a canvas edit during an in-flight task save keeps the edited nodes and vie
     fetch: async (url, init = {}) => {
       const body = init.body ? JSON.parse(init.body) : null;
       calls.push({url, body});
-      let data = {ok: true, result: [], items: [], recent: [], directory: 'mem', messages: [], agents: [], providers: []};
+      let data = {ok: true, result: [], items: [], recent: [], directory: 'mem', sessions: [], messages: [], agents: [], providers: []};
       if (url === '/api/universal/settings-action' && body?.function === 'readLibraryCollapsed') data = {ok: true, result: {libraryCollapsed: []}};
       else if (url === '/api/session-files' && body?.action === 'initial') data = {ok: true, document: structuredClone(file), path: 'C:/isolated/alpha.archhub'};
       else if (url === '/api/session-files' && body?.action === 'autosave') data = {ok: true, path: body.path, revision: (body.document.properties?.revision || 0) + 1, document: body.document};
@@ -103,7 +103,7 @@ test('a refused or slow library-collapse read still opens the initial session ex
         await settingsGate;
         return {ok: true, status: 200, json: async () => ({ok: true, result: []})};
       }
-      let data = {ok: true, result: [], items: [], recent: [], directory: 'mem', messages: [], agents: [], providers: []};
+      let data = {ok: true, result: [], items: [], recent: [], directory: 'mem', sessions: [], messages: [], agents: [], providers: []};
       if (url === '/api/session-files' && body?.action === 'initial') {
         initialSeen = true;
         data = {ok: true, document: structuredClone(file), path: 'C:/isolated/alpha.archhub'};
@@ -158,11 +158,11 @@ test('a task refresh replaces recorded context and keeps file state only when th
     fetch: async (url, init = {}) => {
       const body = init.body ? JSON.parse(init.body) : null;
       calls.push(body && body.function);
-      let data = {ok: true, result: [], items: [], recent: [], directory: 'mem', messages: [], agents: [], providers: [], document: structuredClone(blank), path: 'C:/isolated/boot.archhub', revision: 1};
+      let data = {ok: true, result: [], items: [], recent: [], directory: 'mem', sessions: [], messages: [], agents: [], providers: [], document: structuredClone(blank), path: 'C:/isolated/boot.archhub', revision: 1};
       if (url === '/api/session-files' && body?.action === 'initial') data = {ok: true, document: structuredClone(blank), path: 'C:/isolated/boot.archhub'};
       else if (url === '/api/session-files' && body?.action === 'validate') data = {ok: true, document: body.document};
       else if (url === '/api/session-files' && body?.action === 'autosave') data = {ok: true, path: body.path, revision: 2, document: body.document};
-      else if (url === '/api/session-files' && body?.action === 'catalogue') data = {ok: true, items: [], recent: [], directory: 'mem'};
+      else if (url === '/api/session-files' && body?.action === 'catalogue') data = {ok: true, items: [], recent: [], directory: 'mem', sessions: []};
       else if (url === '/api/universal/settings-action' && body?.function === 'readLibraryCollapsed') data = {ok: true, result: {libraryCollapsed: []}};
       else if (url === '/api/universal/workshop' && body?.function === 'listWorkshopMessages') data = {ok: true, result: {messages: []}};
       else if (url === '/api/universal/workshop' && body?.function === 'listLiveAgents') data = {ok: true, result: []};

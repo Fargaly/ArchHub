@@ -775,7 +775,7 @@ async function refreshAgentSurface() {
   providers:state.providers.map(p=>({...p,...agentProfiles[p.id]})),graph:{...state.graph,...metadata}});
  return surface;
 }
-for(const wireMethod of ['setTaskPlanMode','checkpointTask','restoreTaskCheckpoint','setIntakeRule',
+for(const wireMethod of ['setTaskPlanMode','setIntakeRule',
  'setOnboarding','reviewBrainLink','setSourceEvidence','setLearningLayer','setPinnedOutput','setNodeRunPolicy','verifyOutputStamp']) {
  api[wireMethod]=async(...args)=>{const result=await workshop(wireMethod,args);if(result?.ok===false)throw Error(result.message||result.error);await commands.load();project();await refreshTasks();await refreshAgentSurface();return result;};
 }
@@ -791,19 +791,23 @@ function rememberTask(result, select=true){
 }
 api.createTask=async title=>{const result=await workshop('createTask',[title]);if(!result||result.ok===false)throw Error(result?.message||result?.error||'The task was not created.');await refreshTasks();return {...result,...rememberTask(result)};};
 api.renameTask=async(id,title)=>{const result=await workshop('renameTask',[id,title]);if(!result||result.ok===false)throw Error(result?.message||result?.error||'The task title was not saved.');await refreshTasks(false);return result;};
-api.setTaskSession=async(id,values)=>{
+async function taskFileAction(method,id,...args){
  const navigation=fileNavigation;
  if(sessionDocument)await flushAutosave();
  // The flush snapshot: a canvas edit made while the task write is in flight stays.
  const sent=sessionDocument?portableDocument():null, text=sent?JSON.stringify(sent):'';
- const result=await workshop('setTaskSession',[id,values]);if(!result||result.ok===false)throw Error(result?.message||result?.error||'This task session was not saved.');
- const unchanged=()=>navigation===fileNavigation&&result.path&&sessionDocument&&sessionPath===result.path&&sent&&sessionDocument.id===sent.id&&JSON.stringify(portableDocument())===text;
+ const path=state.tasks.find(task=>task.id===id)?.sessionPath;
+ const result=await workshop(method,[id,...args]);if(!result||result.ok===false)throw Error(result?.message||result?.error||'This task session was not saved.');
+ const target=result.taskId?result.path:path;
+ const unchanged=()=>navigation===fileNavigation&&target&&sessionDocument&&sessionPath===target&&sent&&sessionDocument.id===sent.id&&JSON.stringify(portableDocument())===text;
  if(unchanged()){
-  const read=await sessionRequest('read',{path:result.path,id:result.id});
+  const read=await sessionRequest('read',{path:target,id:sent.id});
   if(unchanged()&&read?.document){sessionDocument=copy(read.document);sessionRevision=read.revision||read.document.properties?.revision||0;localDirty=false;projectFile();}
  }
  return {...result,...rememberTask(result,false)};
-};
+}
+api.setTaskSession=(id,values)=>taskFileAction('setTaskSession',id,values);
+for(const method of ['checkpointTask','restoreTaskCheckpoint'])api[method]=async(id,...args)=>{const result=await taskFileAction(method,id,...args);await refreshTasks(false);return result;};
 api.openTaskGraph=async id=>{const result=await workshop('openTaskGraph',[id]);if(!result||result.ok===false)throw Error(result?.message||result?.error||'This task has no session file.');const opened=await api.selectGraph(result.path||result.id);return {...opened,...rememberTask(result)};};
 api.refreshOfficeAwareness=async()=>{const rows=await workshop('refreshOfficeAwareness');if(!Array.isArray(rows))throw Error(rows?.message||'Office task read failed; retry.');publish({officeItems:rows,officeUpdated:'Read from current Workshop'});return rows;};
 

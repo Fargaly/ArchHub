@@ -66,12 +66,95 @@ def _edit(studio, task_id, **values):
     return studio.workshop("setTaskSession", task_id, values)
 
 
+def test_checkpoint_save_restore_and_reopen(tmp_path, monkeypatch):
+    _isolate(monkeypatch, tmp_path / "checkpoint")
+    from nodelang.nograph_server import NoGraphServer
+
+    state = tmp_path / "checkpoint/LOCALAPPDATA/ArchHub"
+    server = NoGraphServer(state).start()
+    studio = _Studio(server)
+    try:
+        task = studio.workshop("createTask", "Checkpoint task")
+        task_id = task["taskId"]
+        _edit(studio, task_id, plan=["Original plan"], progress={"step": 1},
+              nodes=[{"id": "original", "type": "note", "title": "Original", "params": {"text": "before"}}],
+              messages=[{"id": "message", "who": "You", "text": "Original message"}])
+        original = studio.files("read", path=task["path"], id=task["id"])["document"]
+        saved = studio.workshop("checkpointTask", task_id)
+        assert saved["id"] and saved["title"] and saved["at"], saved
+        listed = next(row for row in studio.workshop("listTasks") if row["id"] == task_id)
+        assert listed["checkpoints"] == [saved]
+        # A canvas still holding the pre-checkpoint revision must not erase it.
+        original["viewport"]["x"] = 8
+        studio.files("autosave", path=task["path"], document=original,
+                     base_revision=original.get("properties", {}).get("revision", 0))
+        original["viewport"]["x"] = 0
+        assert next(row for row in studio.workshop("listTasks") if row["id"] == task_id)["checkpoints"] == [saved]
+        _edit(studio, task_id, plan=["Changed plan"], progress={"step": 2},
+              parameters=[{"id": "original", "params": {"text": "after"}}])
+    finally:
+        studio.close()
+        server.close()
+
+    server = NoGraphServer(state).start()
+    studio = _Studio(server)
+    try:
+        listed = next(row for row in studio.workshop("listTasks") if row["id"] == task_id)
+        assert listed["checkpoints"] == [saved]
+        restored = studio.workshop("restoreTaskCheckpoint", task_id, saved["id"])
+        assert restored["taskId"] == task_id
+        document = studio.files("read", path=task["path"], id=task["id"])["document"]
+        assert {k: v for k, v in document.items() if k != "properties"} == {k: v for k, v in original.items() if k != "properties"}
+        assert document["properties"]["taskContext"] == original["properties"]["taskContext"]
+        assert next(row for row in studio.workshop("listTasks") if row["id"] == task_id)["checkpoints"] == [saved]
+        before = Path(task["path"]).read_bytes()
+        status, refused = _post(studio.connection, "/api/universal/workshop", {
+            "action": "data-api", "function": "restoreTaskCheckpoint", "args": [task_id, "missing"]}, studio.headers)
+        assert status == 200 and refused["result"]["ok"] is False
+        assert Path(task["path"]).read_bytes() == before
+    finally:
+        studio.close()
+        server.close()
+
+    server = NoGraphServer(state).start()
+    studio = _Studio(server)
+    try:
+        reopened = studio.workshop("openTaskGraph", task_id)
+        assert reopened["plan"] == ["Original plan"] and reopened["progress"] == {"step": 1}
+        assert reopened["checkpoints"] == [saved]
+    finally:
+        studio.close()
+        server.close()
+
+
 def _save(studio, view):
     opened = studio.files("read", path=view["path"], id=view["id"])
     assert opened["document"]["id"] == view["id"]
     saved = studio.files("save", path=view["path"], document=opened["document"])
     assert Path(saved["path"]) == Path(view["path"])
     return saved["path"]
+
+
+def test_rendered_checkpoint(tmp_path, monkeypatch):
+    import os
+    import subprocess
+    root = Path(__file__).resolve().parents[2]
+    subprocess.run(["node", "--max-old-space-size=512", "03.TOOLS/packaging/compile_studio.cjs"],
+                   cwd=root, check=True, capture_output=True, timeout=180)
+    _isolate(monkeypatch, tmp_path / "rendered")
+    from nodelang import host_brokers
+    from nodelang.nograph_server import NoGraphServer
+    monkeypatch.setattr(host_brokers, "_com_probe", lambda _prog: False)
+    server = NoGraphServer(tmp_path / "rendered/LOCALAPPDATA/ArchHub").start()
+    try:
+        result = subprocess.run(["node", "--test", "02.TESTS/tests_js/checkpoint_browser.cjs"], cwd=root,
+                                env={**os.environ, "CHECKPOINT_URL": server.public_url + "/studio/?bootstrap=" + server.browser_bootstrap_token},
+                                capture_output=True, text=True, encoding="utf-8", timeout=120,
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        print(result.stdout)
+        assert result.returncode == 0, result.stdout + result.stderr
+    finally:
+        server.close()
 
 
 def _expect(view, spec):

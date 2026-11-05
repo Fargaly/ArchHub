@@ -321,6 +321,49 @@ def write_document(path, document):
     return str(target)
 
 
+def checkpoint(path, label=None):
+    """Keep a non-recursive document snapshot in its own portable file."""
+    import copy
+    from datetime import datetime, timezone
+    saved = None
+
+    def change(document):
+        nonlocal saved
+        snapshot = copy.deepcopy(document)
+        props = snapshot.setdefault('properties', {})
+        for key in ('checkpoints', 'history', 'revision'):
+            props.pop(key, None)
+        at = datetime.now(timezone.utc).isoformat()
+        title = label if label is not None else 'Checkpoint ' + at
+        if not isinstance(title, str) or not title.strip() or len(title) > 200:
+            raise ValueError('Checkpoint label must be 1 to 200 characters')
+        saved = {'id': str(uuid4()), 'title': title.strip(), 'at': at}
+        document.setdefault('properties', {}).setdefault('checkpoints', []).append({**saved, 'document': snapshot})
+
+    canvas_documents.edit(path, 'You', 'save checkpoint', change, solve_changed=False)
+    return saved
+
+
+def restore_checkpoint(path, identity):
+    """Restore content as a new revision; keep checkpoints and attributed history."""
+    import copy
+
+    def change(document):
+        props = document.get('properties') or {}
+        saved = next((row for row in props.get('checkpoints', []) if row.get('id') == identity), None)
+        if saved is None:
+            raise ValueError('No such checkpoint')
+        snapshot = copy.deepcopy(validate(saved['document']))
+        if snapshot['id'] != document['id']:
+            raise ValueError('Checkpoint belongs to another document')
+        snapshot.setdefault('properties', {}).update({key: props[key] for key in ('checkpoints', 'history', 'revision') if key in props})
+        document.clear()
+        document.update(snapshot)
+
+    document, _ = canvas_documents.edit(path, 'You', 'restore checkpoint', change, solve_changed=False)
+    return document
+
+
 def catalogue():
     """The one library, flat: the same cards r_node_library serves, hidden compatibility rows aside."""
     from .library_engines import library_catalogue

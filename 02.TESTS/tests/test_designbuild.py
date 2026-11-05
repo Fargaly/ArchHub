@@ -8,7 +8,7 @@ import pytest
 from test_task_session_roundtrip import _isolate, _Studio, _post
 
 
-@pytest.mark.parametrize("board", ["home", "workshop", "canvas"])
+@pytest.mark.parametrize("board", ["home", "workshop", "canvas", "settings"])
 def test_designbuild_board(tmp_path, monkeypatch, board):
     browser_cache = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '')
     if not browser_cache:
@@ -97,6 +97,22 @@ def test_designbuild_appearance_owner(tmp_path, monkeypatch):
             status, body = setting('setAppearance', 'Appearance.' + name, value)
             assert status >= 400 or body.get('ok') is False
             assert owner.read_bytes() == before
+        from concurrent.futures import ThreadPoolExecutor
+        def edit_many(spec):
+            name, start = spec
+            peer = _Studio(server)
+            try:
+                for offset in range(16):
+                    status, reply = _post(peer.connection, '/api/universal/settings-action',
+                                          {'function':'setAppearance','args':['Appearance.'+name,start+offset]},peer.headers)
+                    assert status == 200 and reply['ok']
+            finally:
+                peer.close()
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            list(pool.map(edit_many,[('Inspector width',350),('Row spacing',0),('Node radius',0),('Text scale',100),('Default zoom',100)]))
+        saved = json.loads(owner.read_text(encoding='utf8'))
+        for key, value in [('appearanceInspectorWidth',365),('appearanceRowSpacing',15),('appearanceNodeRadius',15),('appearanceTextScale',115),('appearanceDefaultZoom',115)]:
+            assert saved[key] == value
     finally:
         client.close()
         server.close()

@@ -41,8 +41,8 @@
     return wires.map(w=>({w,a:sockets.get(`${w.from}:out:${w.fromPort}`),b:sockets.get(`${w.to}:in:${w.toPort}`)})).filter(p=>p.a&&p.b);
   }
   // Saved NodeCard colours come from the shared Penpot palette.
-  const SPEC = {node:A.bgPanel,line:A.line,slot:A.bgSoft,hollow:A.inkMuted,panel:A.bgPanel,field:A.bgPanel,fieldLine:A.line,
-    text:A.ink,label:A.inkSoft,count:A.inkMuted,link:A.accentHi,number:A.ink,typed:A.cyan,rule:A.bgRaised,exposed:A.accentDim};
+  const SPEC = {node:'var(--color-bg-panel)',line:'var(--color-line)',slot:'var(--color-bg-soft)',hollow:'var(--color-ink-muted)',panel:'var(--color-bg-panel)',field:'var(--color-bg-panel)',fieldLine:'var(--color-line)',
+    text:'var(--color-ink)',label:'var(--color-ink-soft)',count:'var(--color-ink-muted)',link:'var(--color-accent-hi)',number:'var(--color-ink)',typed:'var(--color-cyan)',rule:'var(--color-bg-raised)',exposed:'var(--color-accent-dim)'};
   // Node-RED status pattern: one colour on the card edge plus one status line under it (spec State/* components).
   const nodeState = (n, rejected) => n.frozen ? ['Disabled', A.inkDim] : rejected ? ['Types do not match', A.err]
     : n.previewOff ? ['Preview off', A.inkSoft]
@@ -68,7 +68,7 @@
       return <WirePath key={w.id} id={w.id} route={w.route} d={wirePath(a,b,w.route)} color={typeColor(w.type)} dash={w.type==='event'?'6 2':undefined} opacity={opacity} />;
     })}</>;
   }
-  const hostLabel = {fontSize:11, color:A.inkSoft};
+  const hostLabel = {fontSize: 'calc(11px * var(--text-scale,1))', color:A.inkSoft};
   const hostControl = {width:'100%', boxSizing:'border-box', background:A.bgSoft, color:A.ink, border:'1px solid '+A.line, borderRadius:A.rad.sm, padding:'6px 8px', font:'12px Inter, sans-serif'};
   const hostBlock = {display:'flex', flexDirection:'column', gap:4, marginBottom:8};
   function codeLanguage(host) {
@@ -103,10 +103,10 @@
     const hot = !!waiting || pending;
     const label = pending ? load.runMode + ' · ' + count : load.runMode;
     return <>
-      {load.status === 'waiting' && <span role="status" style={{fontSize:11, color:A.inkSoft}}>Reading run mode</span>}
-      {load.status === 'empty' && <span data-run-mode="" style={{fontSize:11, color:A.inkSoft}}>Run mode: not reported</span>}
-      {load.status === 'error' && <span role="alert" style={{fontSize:11, color:A.err}}>{load.message} <button type="button" className="button-reset" onClick={event => executeAction('projects.controls.activate', {handler:() => setAttempt(value => value + 1)}, event)}>Retry</button></span>}
-      {load.status === 'loaded' && <button type="button" data-run-mode={load.runMode} data-ask-count={pending ? count : 0} className="button-reset" onClick={event => executeAction('projects.controls.activate', {handler:() => u.go('settings/Hooks')}, event)} style={{height:20, padding:'0 8px', borderRadius:A.rad.pill, border:'1px solid '+(hot ? A.warn : A.line), color: hot ? A.warn : A.inkSoft, background:'transparent', fontSize:11}}>{label}</button>}
+      {load.status === 'waiting' && <span role="status" style={{fontSize: 'calc(11px * var(--text-scale,1))', color:A.inkSoft}}>Reading run mode</span>}
+      {load.status === 'empty' && <span data-run-mode="" style={{fontSize: 'calc(11px * var(--text-scale,1))', color:A.inkSoft}}>Run mode: not reported</span>}
+      {load.status === 'error' && <span role="alert" style={{fontSize: 'calc(11px * var(--text-scale,1))', color:A.err}}>{load.message} <button type="button" className="button-reset" onClick={event => executeAction('projects.controls.activate', {handler:() => setAttempt(value => value + 1)}, event)}>Retry</button></span>}
+      {load.status === 'loaded' && <button type="button" data-run-mode={load.runMode} data-ask-count={pending ? count : 0} className="button-reset" onClick={event => executeAction('projects.controls.activate', {handler:() => u.go('settings/Hooks')}, event)} style={{height:20, padding:'0 8px', borderRadius:A.rad.pill, border:'1px solid '+(hot ? A.warn : A.line), color: hot ? A.warn : A.inkSoft, background:'transparent', fontSize: 'calc(11px * var(--text-scale,1))'}}>{label}</button>}
     </>;
   }
   function HostExecNode({n, selected, headerProps, renderPort}) {
@@ -131,8 +131,8 @@
     const foot = <span style={{display:'flex', alignItems:'center', gap:8}}><RunModeChip waiting={word === 'Waiting for you'} /><span style={{color: word === 'Failed' ? A.err : word === 'Waiting for you' ? A.warn : A.ink}}>{word}</span></span>;
     return <D.Node data-host-exec="" w={304} title="Run in program" sub={load.status === 'loaded' && load.state ? load.state.state : 'Run in program'} selected={selected} headerProps={headerProps} renderPort={renderPort} ins={n.inputs} outs={n.outputs} foot={foot} footc={word === 'Failed' ? A.err : word === 'Waiting for you' ? A.warn : A.inkSoft} glyph={<window.AHIcon name="folder" size={12} />} gc={A.inkSoft}>
       {load.status === 'waiting' && <div role="status" aria-label="Loading" style={{display:'grid', gap:6}}><div style={{height:32, borderRadius:A.rad.sm, background:A.bgSoft}} /><div style={{height:32, borderRadius:A.rad.sm, background:A.bgSoft}} /></div>}
-      {load.status === 'empty' && <p style={{fontSize:12, color:A.inkSoft}}>No programs available.</p>}
-      {load.status === 'error' && <div role="alert" style={{fontSize:12, color:A.err}}>{load.message} <button type="button" className="button-reset" onClick={event => executeAction('projects.controls.activate', {handler:() => setAttempt(value => value + 1)}, event)}>Retry</button></div>}
+      {load.status === 'empty' && <p style={{fontSize: 'calc(12px * var(--text-scale,1))', color:A.inkSoft}}>No programs available.</p>}
+      {load.status === 'error' && <div role="alert" style={{fontSize: 'calc(12px * var(--text-scale,1))', color:A.err}}>{load.message} <button type="button" className="button-reset" onClick={event => executeAction('projects.controls.activate', {handler:() => setAttempt(value => value + 1)}, event)}>Retry</button></div>}
       {load.status === 'loaded' && <div>
         <label style={hostBlock}><span style={hostLabel}>Program</span>
           <select aria-label="Program" value={params.host || ''} onChange={event => save('host', event.target.value)} style={hostControl}>{load.programs.map(row => <option key={row.id} value={row.id}>{row.label}</option>)}</select>
@@ -140,7 +140,7 @@
         <label style={hostBlock}><span style={hostLabel}>Code</span>
           <textarea aria-label="Code" value={params.code || ''} onChange={event => save('code', event.target.value)} style={{...hostControl, minHeight:72, resize:'vertical'}} />
         </label>
-        <p style={{fontSize:11, color:A.inkSoft, margin:'0 0 8px'}}>{codeLanguage(params.host)}{params.host === 'revit' ? '. Revit: ' + params.sheet_limit + ' sheet per run, up to ' + params.element_limit + ' elements.' : params.host === 'acad-core' ? '. Choose a drawing for AutoCAD (background). ' + Math.round((params.min_free_bytes || 0) / 1073741824) + ' GiB free before it starts.' : '.'}</p>
+        <p style={{fontSize: 'calc(11px * var(--text-scale,1))', color:A.inkSoft, margin:'0 0 8px'}}>{codeLanguage(params.host)}{params.host === 'revit' ? '. Revit: ' + params.sheet_limit + ' sheet per run, up to ' + params.element_limit + ' elements.' : params.host === 'acad-core' ? '. Choose a drawing for AutoCAD (background). ' + Math.round((params.min_free_bytes || 0) / 1073741824) + ' GiB free before it starts.' : '.'}</p>
         <label style={hostBlock}><span style={hostLabel}>Document</span>
           <input aria-label="Document" value={params.document || ''} onChange={event => save('document', event.target.value)} style={hostControl} />
         </label>
@@ -148,7 +148,7 @@
         <label style={hostBlock}><span style={hostLabel}>Transaction name</span>
           <input aria-label="Transaction name" value={params.transaction_name || ''} onChange={event => save('transaction_name', event.target.value)} style={hostControl} />
         </label>
-        <button type="button" disabled={!reachable} onClick={event => executeAction('projects.controls.activate', {handler:() => reachable ? api.runNode(n.id) : undefined}, event)} style={{height:28, padding:'0 12px', borderRadius:A.rad.sm, border: reachable ? 'none' : '1px dashed '+A.line, background: reachable ? A.accent : 'transparent', color: reachable ? A.onFill : A.inkSoft, fontSize:12}}>{runLabel}</button>
+        <button type="button" disabled={!reachable} onClick={event => executeAction('projects.controls.activate', {handler:() => reachable ? api.runNode(n.id) : undefined}, event)} style={{height:28, padding:'0 12px', borderRadius:A.rad.sm, border: reachable ? 'none' : '1px dashed '+A.line, background: reachable ? A.accent : 'transparent', color: reachable ? A.onFill : A.inkSoft, fontSize: 'calc(12px * var(--text-scale,1))'}}>{runLabel}</button>
       </div>}
     </D.Node>;
   }
@@ -184,9 +184,9 @@
         <label style={hostBlock}><span style={hostLabel}>Connector</span>
           <select aria-label="Connector" value={params.connector || ''} onChange={event => save('connector', event.target.value)} style={hostControl}>{(load.connectors || []).map(row => <option key={row.id} value={row.id}>{row.label}</option>)}</select>
         </label>
-        <p style={{fontSize:12, color:A.inkSoft}}>No actions available. Connect the account, then choose an action.</p>
+        <p style={{fontSize: 'calc(12px * var(--text-scale,1))', color:A.inkSoft}}>No actions available. Connect the account, then choose an action.</p>
       </div>}
-      {load.status === 'error' && <div role="alert" style={{fontSize:12, color:A.err}}>Could not read actions. {load.message} <button type="button" className="button-reset" onClick={event => executeAction('projects.controls.activate', {handler:() => setAttempt(value => value + 1)}, event)}>Retry</button></div>}
+      {load.status === 'error' && <div role="alert" style={{fontSize: 'calc(12px * var(--text-scale,1))', color:A.err}}>Could not read actions. {load.message} <button type="button" className="button-reset" onClick={event => executeAction('projects.controls.activate', {handler:() => setAttempt(value => value + 1)}, event)}>Retry</button></div>}
       {load.status === 'loaded' && <div>
         <label style={hostBlock}><span style={hostLabel}>Connector</span>
           <select aria-label="Connector" value={params.connector || ''} onChange={event => save('connector', event.target.value)} style={hostControl}>{load.connectors.map(row => <option key={row.id} value={row.id}>{row.label}</option>)}</select>
@@ -200,9 +200,9 @@
         {chosen && !(chosen.inputs || []).length && <label style={hostBlock}><span style={hostLabel}>Args</span>
           <input aria-label="Args" value={typeof params.args === 'string' ? params.args : JSON.stringify(params.args || '')} onChange={event => save('args', event.target.value)} style={hostControl} />
         </label>}
-        {preview.preview && <div style={hostBlock}><span style={hostLabel}>Text to send</span><p style={{margin:0, whiteSpace:'pre-wrap', fontSize:12, color:A.ink}}>{preview.preview}</p></div>}
-        <div aria-label="Result" style={{fontSize:11, color:A.inkSoft, marginBottom:8}}>Result {word === 'Done' && n.output ? (typeof n.output.result === 'object' ? JSON.stringify(n.output.result) : String(n.output.result ?? '')) : ''}</div>
-        <button type="button" onClick={event => executeAction('projects.controls.activate', {handler:() => api.runNode(n.id)}, event)} style={{height:28, padding:'0 12px', borderRadius:A.rad.sm, border:'none', background:A.accent, color:A.onFill, fontSize:12}}>Run</button>
+        {preview.preview && <div style={hostBlock}><span style={hostLabel}>Text to send</span><p style={{margin:0, whiteSpace:'pre-wrap', fontSize: 'calc(12px * var(--text-scale,1))', color:A.ink}}>{preview.preview}</p></div>}
+        <div aria-label="Result" style={{fontSize: 'calc(11px * var(--text-scale,1))', color:A.inkSoft, marginBottom:8}}>Result {word === 'Done' && n.output ? (typeof n.output.result === 'object' ? JSON.stringify(n.output.result) : String(n.output.result ?? '')) : ''}</div>
+        <button type="button" onClick={event => executeAction('projects.controls.activate', {handler:() => api.runNode(n.id)}, event)} style={{height:28, padding:'0 12px', borderRadius:A.rad.sm, border:'none', background:A.accent, color:A.onFill, fontSize: 'calc(12px * var(--text-scale,1))'}}>Run</button>
       </div>}
     </D.Node>;
   }
@@ -242,7 +242,7 @@
       foot={spec ? (specFoot === 'Done' ? null : <span title={n.error || state}>{specFoot}</span>) : (/^done\b/i.test(foot) ? null : <span title={state}>{foot + (n.error ? ' · '+n.error : '') + (n.elapsedMs ? ' · ' + n.elapsedMs + ' ms' : '')}</span>)} footc={spec ? specColor : stateColor}
       ins={spec ? n.inputs.filter(p=>!(renderSocket && shownKeys.includes(p.id))) : n.inputs} outs={n.outputs} renderPort={renderPort} portsAfterContent={spec}
       headerProps={{...headerProps,style:spec ? headerProps?.style : {borderTop:'2px solid '+color,borderBottom:'1px solid '+A.lineSoft,...headerProps?.style}}}
-      headerEnd={<>{typeof n.pure === 'boolean' && <span data-node-pure={String(n.pure)} style={{fontSize:10,color:n.pure ? A.inkSoft : A.warn}}
+      headerEnd={<>{typeof n.pure === 'boolean' && <span data-node-pure={String(n.pure)} style={{fontSize: 'calc(10px * var(--text-scale,1))',color:n.pure ? A.inkSoft : A.warn}}
         title={n.pure ? 'Pure: re-solves on every edit' : 'Side effect: waits for Run'}>{n.pure ? 'Pure' : 'Side effect'}</span>}
         {spec && n.dataset && <span data-dataset-count>{n.dataset.records.length} records</span>}{headerEnd}</>} chip={grouped && <div className="canvas-members">{(members || []).map(m=><button key={m.id} data-group-member={m.id} draggable={m.chip || undefined} className="canvas-member nodrag" title={m.chip ? 'Drag '+m.title+' out of the group' : 'Open '+m.title} onDragStart={event=>{if(!m.chip)return;event.stopPropagation();event.dataTransfer.setData('text/plain',m.id);event.dataTransfer.effectAllowed='move';event.currentTarget.dataset.dragged='1';}} onDragEnd={event=>{if(!m.chip||!onDetach)return;onDetach(m,event);}} onClick={event=>{if(event.currentTarget.dataset.dragged==='1'){event.currentTarget.dataset.dragged='';return;}executeAction('projects.controls.activate',{handler:()=>onMember?.(m)},event);}}><span style={{background:color,color:A.onFill}}>{m.title.slice(0,1)}</span>{m.title}</button>)}</div>}>
       {!grouped && (compact && !expanded ? parameters.slice(0,3) : parameters).map(([key,value])=>{
@@ -293,11 +293,11 @@
         outline: selected ? `2px solid ${A.accent}` : 'none', outlineOffset: 2}}>
       {renderSocket && n.inputs.map(p => <span key={p.id} style={edge('in')}>{renderSocket(p, 'in')}</span>)}
       {renderSocket && n.outputs.map(p => <span key={p.id} style={edge('out')}>{renderSocket(p, 'out')}</span>)}
-      <div data-node-card-title="" style={{position: 'absolute', left: 12, top: 9, right: 40, fontSize: 14, lineHeight: 1.2, color: SPEC.text, whiteSpace: 'pre', overflow: 'hidden', textOverflow: 'ellipsis'}}>{typeGlyph(def.type) && typeGlyph(def.type) + '  '}{def.name}</div>
-      <span data-record-count="" style={{position: 'absolute', right: 12, top: 11, fontSize: 12.5, color: SPEC.label}} title="All records">{values.length}</span>
-      <div style={{position: 'absolute', left: 12, top: 34, fontSize: 12.5, lineHeight: 1.2, color: SPEC.typed}}>{n.column.label}{def.unit ? ' · ' + def.unit : ''}</div>
+      <div data-node-card-title="" style={{position: 'absolute', left: 12, top: 9, right: 40, fontSize: 'calc(14px * var(--text-scale,1))', lineHeight: 1.2, color: SPEC.text, whiteSpace: 'pre', overflow: 'hidden', textOverflow: 'ellipsis'}}>{typeGlyph(def.type) && typeGlyph(def.type) + '  '}{def.name}</div>
+      <span data-record-count="" style={{position: 'absolute', right: 12, top: 11, fontSize: 'calc(12.5px * var(--text-scale,1))', color: SPEC.label}} title="All records">{values.length}</span>
+      <div style={{position: 'absolute', left: 12, top: 34, fontSize: 'calc(12.5px * var(--text-scale,1))', lineHeight: 1.2, color: SPEC.typed}}>{n.column.label}{def.unit ? ' · ' + def.unit : ''}</div>
       <output data-column-of={n.column.dataset + '.' + n.column.field} data-todo="output-summary-expanded" style={{position: 'absolute', left: 8, right: 8, top: 56, height: 24, boxSizing: 'border-box', padding: '5px 6px', borderRadius: 5,
-        background: SPEC.slot, fontSize: 12.5, lineHeight: 1.2, color: SPEC.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>{values.slice(0, 3).map(cellText).join(', ')}{values.length > 3 ? '…' : ''}  ›</output>
+        background: SPEC.slot, fontSize: 'calc(12.5px * var(--text-scale,1))', lineHeight: 1.2, color: SPEC.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>{values.slice(0, 3).map(cellText).join(', ')}{values.length > 3 ? '…' : ''}  ›</output>
     </div>;
   }
   // Spec FieldTypeMenu: a listbox of the server's parameter types (node_params.py), labelled as the design names them.
@@ -395,7 +395,7 @@
     const name = String(field && (field.name || field.id) || '').toLowerCase();
     return NAMED_WIDTH[name] || FIELD_WIDTH[field && field.type] || 92;
   };
-  const CARD = {background: SPEC.field, border: '1px solid ' + SPEC.fieldLine, borderRadius: 6, boxSizing: 'border-box', position: 'relative', color: SPEC.text, fontSize: 12.5, lineHeight: 1.2};
+  const CARD = {background: SPEC.field, border: '1px solid ' + SPEC.fieldLine, borderRadius: 6, boxSizing: 'border-box', position: 'relative', color: SPEC.text, fontSize: 'calc(12.5px * var(--text-scale,1))', lineHeight: 1.2};
   const SLOT = {background: SPEC.slot, borderRadius: 5, padding: '6px 9px', position: 'relative', display: 'flex', alignItems: 'center', gap: 6, minHeight: 28, boxSizing: 'border-box'};
   const edgeSocket = (side, top, inset = 0) => ({position: 'absolute', [side === 'in' ? 'left' : 'right']: -11 - inset, top, transform: 'translateY(-50%)', lineHeight: 0, zIndex: 2});
   function ValueWidget({n, p, value, u}) {
@@ -406,7 +406,7 @@
     if (p.options?.length) return <select className="nodrag" aria-label={label} value={shown} onChange={e => save(e.target.value)}>{p.options.map(o => <option key={o}>{o}</option>)}</select>;
     const unbounded = ['min', 'max'].includes(p.key) && (shown == null || shown === '');
     return <input className="nodrag" aria-label={label} title={unbounded ? 'Unbounded' : String(shown)} type={p.type === 'number' ? 'number' : 'text'} min={p.min} max={p.max} step={p.step ?? 'any'} placeholder={unbounded ? 'Unbounded' : undefined}
-      value={shown == null ? '' : typeof shown === 'object' ? JSON.stringify(shown) : shown} style={{flex: 1, minWidth: 0, width: 0, background: 'transparent', border: 0, color: SPEC.text, font: 'inherit', fontSize: 13}}
+      value={shown == null ? '' : typeof shown === 'object' ? JSON.stringify(shown) : shown} style={{flex: 1, minWidth: 0, width: 0, background: 'transparent', border: 0, color: SPEC.text, font: 'inherit', fontSize: 'calc(13px * var(--text-scale,1))'}}
       onChange={e => { if (p.type !== 'number') save(e.target.value); else if (e.target.value === '') save(null); else if (Number.isFinite(e.target.valueAsNumber)) save(e.target.valueAsNumber); }} />;
   }
   function ParameterNode({n, socket, selected, u}) {
@@ -456,16 +456,18 @@
     const repeatsValue = (output, value) => Object.is(output, value) || (typeof output === 'string' && output.trim() === String(value)) || (output && typeof output === 'object' && !Array.isArray(output) && Object.keys(output).length === 1 && Object.hasOwn(output, 'value') && (Object.is(output.value, value) || String(output.value) === String(value))) || (Array.isArray(output) && output.length === 1 && (Object.is(output[0], value) || String(output[0]) === String(value)));
     const repeatedValue = shown.some(p=>p.key==='value') && !wiresIn.some(wire=>['value','param:value'].includes(wire.toPort)) && repeatsValue(n.output, n.params.value);
     const result = n.status === 'Done' && !repeatedValue ? summary(n.output) : '';
-    const headerColor = n.color || s.settings.find(row => row.id === 'Appearance.Node header colour')?.value;
+    const headerSetting=s.settings.find(row=>row.id==='Appearance.Node header colour');
+    const requestedHeader=n.color || (headerSetting?.value!==headerSetting?.default ? headerSetting?.value : '');
+    const headerColor=typeof requestedHeader==='string'&&/^#[0-9a-f]{6}$/i.test(requestedHeader)?requestedHeader:undefined;
     const luminance = headerColor && headerColor.slice(1).match(/../g).map(hex => {const channel=parseInt(hex,16)/255;return channel<=0.04045?channel/12.92:((channel+0.055)/1.055)**2.4;}).reduce((sum,channel,index)=>sum+channel*[0.2126,0.7152,0.0722][index],0);
     return <div data-ds-node="" className="lm-node" data-spec={n.dataset ? 'dataset' : 'operation'} data-node-state={state.split(' · ')[0]}
       style={{...CARD, width: n.dataset ? LAYOUT.datasetWidth : LAYOUT.nodeWidth, borderRadius:'var(--node-radius,8px)', paddingBottom: 10, border: '1px solid ' + (refusal ? A.err : SPEC.fieldLine), outline: selected ? '2px solid ' + A.accent : 'none', outlineOffset: 2}}>
-      <div className="node-header" style={{display: 'flex', alignItems: 'flex-start', gap: 8, padding: '12px 12px 0', background: headerColor, color: headerColor && headerColor.toLowerCase() !== A.bgPanel.toLowerCase() ? luminance > 0.179 ? '#000000' : '#ffffff' : SPEC.text}}>
-        {n.icon && <window.AHIcon name={n.icon} size={18} />}<div data-node-card-title="" style={{flex: 1, minWidth: 0, fontSize: 15, fontWeight: 600, lineHeight: 1.25, overflowWrap: 'anywhere'}}>{n.title}</div>
+      <div className="node-header" style={{display: 'flex', alignItems: 'flex-start', gap: 8, padding: '12px 12px 0', background: headerColor, color: headerColor ? luminance > 0.179 ? '#000000' : '#ffffff' : SPEC.text}}>
+        {n.icon && <window.AHIcon name={n.icon} size={18} />}<div data-node-card-title="" style={{flex: 1, minWidth: 0, fontSize: 'calc(15px * var(--text-scale,1))', fontWeight: 600, lineHeight: 1.25, overflowWrap: 'anywhere'}}>{n.title}</div>
         {!n.pure && <span data-node-pure="false" style={{paddingTop: 2, color: A.inkSoft}}
           title={'Side effect: waits for Run' + (n.budget ? ' · budget ' + [n.budget.seconds != null && n.budget.seconds + ' s', n.budget.calls != null && n.budget.calls + ' call(s)'].filter(Boolean).join(', ') : '')}>⚡</span>}{menu}
       </div>
-      {(n.category || n.kind) && <div data-node-kind="" style={{fontSize:12.5,lineHeight:1.25,color:SPEC.label,margin:'7px 12px 0'}}>{n.category && n.category !== 'Node' ? n.category : n.kind}</div>}
+      {(n.category || n.kind) && <div data-node-kind="" style={{fontSize: 'calc(12.5px * var(--text-scale,1))',lineHeight:1.25,color:SPEC.label,margin:'7px 12px 0'}}>{n.category && n.category !== 'Node' ? n.category : n.kind}</div>}
       {members.length > 0 && <div className="canvas-members">{members.map(m => <button key={m.id} data-group-member={m.id} draggable={m.chip || undefined} className="canvas-member nodrag" title={m.chip ? 'Drag ' + m.title + ' out of the group' : 'Open ' + m.title} onDragStart={event => { if (!m.chip) return; event.stopPropagation(); event.dataTransfer.setData('text/plain', m.id); event.dataTransfer.effectAllowed = 'move'; event.currentTarget.dataset.dragged = '1'; }} onDragEnd={event => { if (!m.chip || !onDetach) return; onDetach(m, event); }} onClick={event => { if (event.currentTarget.dataset.dragged === '1') { event.currentTarget.dataset.dragged = ''; return; } executeAction('projects.controls.activate', {handler: () => onMember(m)}, event); }}><span style={{background: A.purple, color: A.onFill}}>{m.title.slice(0, 1)}</span>{m.title}</button>)}</div>}
       <div style={{display: 'grid', gap: 'var(--layout-node-row-gap,4px)', padding: '8px 12px 0'}}>
         {/* Full-node row (archhub-full-node-controls-native.png): name over its type, then the linked source or an inline control, then a row menu. Real data or empty. */}
@@ -476,7 +478,7 @@
           return <React.Fragment key={key}><div data-port-row={param ? undefined : 'in'} data-parameter={param ? param.key : undefined}
             style={{...SLOT, display: 'grid', gridTemplateColumns: '88px minmax(0,1fr) 16px', minHeight:36, gap: 6, padding: '4px 10px', alignItems: 'center'}}>
             {ports.map(alias=><span key={alias.id} aria-hidden={alias.id!==port.id||undefined} style={{...edgeSocket('in', '50%', 12),opacity:alias.id===port.id?1:0,pointerEvents:alias.id===port.id?undefined:'none'}}>{socket(alias, 'in')}</span>)}
-            <span style={{minWidth: 0}}><span style={{display: 'block', fontSize: 12.5, lineHeight: 1.25, overflowWrap: 'anywhere'}} title={param ? param.label || param.key : port.name}>{name}</span>
+            <span style={{minWidth: 0}}><span style={{display: 'block', fontSize: 'calc(12.5px * var(--text-scale,1))', lineHeight: 1.25, overflowWrap: 'anywhere'}} title={param ? param.label || param.key : port.name}>{name}</span>
               <span style={{display: 'block', color: SPEC.label}}>{type}</span></span>
             <span data-row-value="" style={{display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>
               {from ? <span data-linked-source="" style={{color: SPEC.typed}} title={from}>↳ {from}</span>
@@ -492,7 +494,7 @@
         {n.outputs.map(p => <div key={p.id} data-port-row="out" style={{position: 'relative', color: SPEC.typed, minHeight: 18, display: 'flex', alignItems: 'center'}}>
           <span>{p.name} · {typeName(p)}</span><span style={edgeSocket('out', '50%', 12)}>{socket(p, 'out')}</span></div>)}
         {n.outputs.length > 0 && !repeatedValue && <div data-node-result="" data-todo="output-summary-expanded" style={{...SLOT, color: result ? SPEC.text : SPEC.label, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block'}} title={result}>{result ? '▸  ' + result : wiresIn.length || !n.inputs.length ? 'Run to inspect output' : 'Connect data to inspect output'}</div>}
-        {<span data-node-status="" style={{...FOOT, fontSize: 13, lineHeight: 1.2, color: stateColor}} title={n.error || state}>{state === 'Done' ? 'Complete' : state.split(' · ')[0]}</span>}
+        {<span data-node-status="" style={{...FOOT, fontSize: 'calc(13px * var(--text-scale,1))', lineHeight: 1.2, color: stateColor}} title={n.error || state}>{state === 'Done' ? 'Complete' : state.split(' · ')[0]}</span>}
       </div>
     </div>;
   }
@@ -501,20 +503,22 @@
     const Tag = embedded ? 'section' : 'aside';
     const sourceOf = port => { const w = s.graph.wires.find(x => x.to === n.id && x.toPort === port), a = w && s.graph.nodes.find(x => x.id === w.from); return a && a.title + ' · ' + (a.outputs.find(p => p.id === w.fromPort)?.name || w.fromPort); };
     const params = (n.parameterSchema || []).filter(p => p.editable), [state] = nodeState(n, false), result = n.status === 'Done' ? summary(n.output) : '';
-    const cap = {fontSize: 12, color: SPEC.label, margin: '16px 0 6px'};
+    const headerSetting=s.settings.find(row=>row.id==='Appearance.Node header colour');
+    const defaultColor=headerSetting?.value!==headerSetting?.default ? headerSetting?.value : window.getComputedStyle(document.documentElement).getPropertyValue('--color-bg-panel').trim() || A.bgPanel;
+    const cap = {fontSize: 'calc(12px * var(--text-scale,1))', color: SPEC.label, margin: '16px 0 6px'};
     return <Tag className={embedded ? "inspector-content" : "pane inspector"} data-node-inspector={n.id} aria-label="Properties" style={{borderLeft: embedded ? 0 : '1px solid ' + A.line, padding: embedded ? 0 : 16, overflow: 'auto'}}>
-      {!embedded && <div className="muted" style={{fontSize: 12}}>Properties</div>}
+      {!embedded && <div className="muted" style={{fontSize: 'calc(12px * var(--text-scale,1))'}}>Properties</div>}
       <h2 style={{margin: '4px 0 0', paddingLeft: 8, borderLeft: '2px solid ' + A.accent}}>{n.title}</h2>
-      <div style={{color: SPEC.label, fontSize: 12, marginTop: 2}}>{state} · {n.pure ? 'pure' : 'side effect'}{n.kind ? ' · ' + n.kind : ''}</div>
+      <div style={{color: SPEC.label, fontSize: 'calc(12px * var(--text-scale,1))', marginTop: 2}}>{state} · {n.pure ? 'pure' : 'side effect'}{n.kind ? ' · ' + n.kind : ''}</div>
       <div className="node-presentation" style={{display:'grid',gap:8,marginTop:16}}>
         <label>Label<input aria-label="Node label" key={n.id+':'+n.title} defaultValue={n.title} onBlur={event=>{const title=event.target.value.trim();if(title && title!==n.title)u.act(()=>api.renameNode(n.id,title));else event.target.value=n.title;}} /></label>
         <label>Icon<select aria-label="Node icon" value={n.icon || ''} onChange={event=>u.act(()=>api.setNodePresentation(n.id,{icon:event.target.value}))}><option value="">Default</option>{api.nodeIcons.map(name=><option key={name} value={name}>{name}</option>)}</select></label>
-        <label>Colour<input type="color" aria-label="Node colour" value={n.color || s.settings.find(row=>row.id==='Appearance.Node header colour')?.value || '#252b35'} onChange={event=>u.act(()=>api.setNodePresentation(n.id,{color:event.target.value}))} /></label>
+        <label>Colour<input type="color" aria-label="Node colour" value={n.color || defaultColor} onChange={event=>u.act(()=>api.setNodePresentation(n.id,{color:event.target.value}))} /></label>
       </div>
       <div style={cap}>Inputs</div>
       <div style={{display: 'grid', gap: 6}}>{n.inputs.filter(p => !params.some(q => q.key === p.id || 'param:' + q.key === p.id)).map(p => <div key={p.id} style={SLOT}>
-        <span style={{flex: 1, minWidth: 0}}><span style={{display: 'block', color: SPEC.label, fontSize: 11}}>{p.name} · {typeName(p)}</span>{sourceOf(p.id) ? <span data-linked-source="">{sourceOf(p.id)}</span> : <span style={{color: SPEC.label}}>Not connected</span>}</span></div>)}
-        {params.map(p => <label key={p.key} style={SLOT}><span style={{flex: 1, minWidth: 0}}><span style={{display: 'block', color: SPEC.label, fontSize: 11}}>{p.label || p.key.replace(/_/g, ' ')}</span>
+        <span style={{flex: 1, minWidth: 0}}><span style={{display: 'block', color: SPEC.label, fontSize: 'calc(11px * var(--text-scale,1))'}}>{p.name} · {typeName(p)}</span>{sourceOf(p.id) ? <span data-linked-source="">{sourceOf(p.id)}</span> : <span style={{color: SPEC.label}}>Not connected</span>}</span></div>)}
+        {params.map(p => <label key={p.key} style={SLOT}><span style={{flex: 1, minWidth: 0}}><span style={{display: 'block', color: SPEC.label, fontSize: 'calc(11px * var(--text-scale,1))'}}>{p.label || p.key.replace(/_/g, ' ')}</span>
           {sourceOf('param:' + p.key) || sourceOf(p.key) ? <span data-linked-source="">{sourceOf('param:' + p.key) || sourceOf(p.key)}</span> : n.params[p.key] === null && !(p.type === 'number' && ['min','max'].includes(p.key)) ? <span style={{color: SPEC.label}}>unset</span> : <ValueWidget n={n} p={p} value={n.params[p.key]} u={u} />}</span></label>)}
         {!n.inputs.length && !params.length && <span style={{color: SPEC.label}}>No inputs</span>}</div>
       <div style={cap}>Output</div>
@@ -525,8 +529,8 @@
   // Connection node: the selected wire's own parameters, in the same Inspector. Tokens from design-tokens.json via AH.
   function WireInspector({wire, s, u, onClose, embedded = false}) {
     const Tag = embedded ? 'section' : 'aside';
-    const field = {width: '100%', boxSizing: 'border-box', background: A.bgRaised, color: A.ink, border: '1px solid ' + A.line, borderRadius: window.AH.rad.md, padding: '6px 8px', font: 'inherit', fontSize: 13, lineHeight: 1.35};
-    const labelStyle = {color: A.inkMuted, fontSize: 11, lineHeight: 1.35};
+    const field = {width: '100%', boxSizing: 'border-box', background: A.bgRaised, color: A.ink, border: '1px solid ' + A.line, borderRadius: window.AH.rad.md, padding: '6px 8px', font: 'inherit', fontSize: 'calc(13px * var(--text-scale,1))', lineHeight: 1.35};
+    const labelStyle = {color: A.inkMuted, fontSize: 'calc(11px * var(--text-scale,1))', lineHeight: 1.35};
     const a = s.graph.nodes.find(n => n.id === wire.from), b = s.graph.nodes.find(n => n.id === wire.to),
       out = a?.outputs.find(p => p.id === wire.fromPort), into = b?.inputs.find(p => p.id === wire.toPort),
       carried = a?.status === 'Done' ? (a.output && typeof a.output === 'object' && !Array.isArray(a.output) && wire.fromPort in a.output ? a.output[wire.fromPort] : a.output) : undefined,
@@ -536,7 +540,7 @@
     const shown = (name, choices) => choices.includes(wire[name]) ? wire[name] : choices[0];
     const read = (name, text, note) => <div data-wire-param={name} style={{display: 'grid', gap: 2}}><span style={labelStyle}>{name}</span><div style={field}><span style={{color: A.ink}}>{text}</span>{note && <span style={{color: A.inkMuted}}>{' · ' + note}</span>}</div></div>;
     return <Tag className={embedded ? "inspector-content" : "pane inspector"} style={{borderLeft: embedded ? 0 : '1px solid ' + A.line, padding: embedded ? 0 : 16, overflow: 'auto', minHeight: 0}} aria-label="Wire">
-      <div className="spread" style={{position:'sticky',top:0,zIndex:1,background:A.bgRaised}}><h2 style={{margin: 0, fontSize: 16, fontWeight: 500}}>Connection</h2><Btn variant="controls" sm ghost aria-label="Close wire" onClick={event=>executeAction('projects.controls.activate',{handler:onClose},event)}>×</Btn></div>
+      <div className="spread" style={{position:'sticky',top:0,zIndex:1,background:A.bgRaised}}><h2 style={{margin: 0, fontSize: 'calc(16px * var(--text-scale,1))', fontWeight: 500}}>Connection</h2><Btn variant="controls" sm ghost aria-label="Close wire" onClick={event=>executeAction('projects.controls.activate',{handler:onClose},event)}>×</Btn></div>
       <div data-wire-inspection="" style={{display: 'grid', gap: window.AH.sp.sm, marginTop: window.AH.sp.md}}>
         {read('From', (a?.title || wire.from) + '.' + (out?.name || wire.fromPort), '')}
         {read('To', (b?.title || wire.to) + '.' + (into?.name || wire.toPort), '')}
@@ -991,7 +995,7 @@
   {!embedded && <div data-canvas-overlay="" data-canvas-topbar="" className="spread" style={{
         position:'absolute',top:12,left:u.libraryOpen ? 264 : 16,right:16 + (wire || inspected ? LAYOUT.inspectorWidth : 0),zIndex:12,
         minWidth:0,padding: '6px 12px',borderRadius:6,border:'1px solid '+A.lineSoft,
-        background: A.bgPanel, fontSize: 13
+        background: A.bgPanel, fontSize: 'calc(13px * var(--text-scale,1))'
       }}><div className="flex" style={{minWidth:0}}><button className="button-reset" title={s.graph.name} aria-label="Workflows" style={{minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} onClick={event => executeAction("projects.ds_screens.Graphs.7", {u}, event)}>{s.graph.name} · {s.sessionDirty === false ? 'Saved' : 'Unsaved'}</button>
         {parent && <Btn variant="controls" sm ghost onClick={event => executeAction("projects.ds_screens.Parent.6", {parent,s,setParent,setSelected}, event)}>← Parent</Btn>}
         {stale > 0 && <span data-solve-status="" style={{color: A.warn}}>{stale} out of date · Run</span>}</div>
@@ -1078,7 +1082,7 @@
         {nodes.filter(n=>(n.frame||n.category||'System')===group).map(n=><div key={n.id} data-graph-node={n.id} style={{position:'relative',zIndex:1}}>
           <NodeRenderer n={n} catalogue={s.catalogue} headerProps={{className:'node-header'}}
             headerEnd={<Btn sm ghost onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.show('Node',{id:n.id})},event)}>Open</Btn>}
-            renderPort={(p,i,side)=><div className="canvas-port-row" style={{position:'relative',height:22,display:'flex',alignItems:'center',justifyContent:side==='out'?'flex-end':undefined,padding:'0 12px',fontSize:12}}><span data-port-key={`${n.id}:${side}:${p.id}`} style={{position:'absolute',[side==='in'?'left':'right']:-6}}><D.Socket t={p.type} list={p.list} /></span>{p.name}{p.unit ? ' · '+p.unit : ''}</div>} />
+            renderPort={(p,i,side)=><div className="canvas-port-row" style={{position:'relative',height:22,display:'flex',alignItems:'center',justifyContent:side==='out'?'flex-end':undefined,padding:'0 12px',fontSize: 'calc(12px * var(--text-scale,1))'}}><span data-port-key={`${n.id}:${side}:${p.id}`} style={{position:'absolute',[side==='in'?'left':'right']:-6}}><D.Socket t={p.type} list={p.list} /></span>{p.name}{p.unit ? ' · '+p.unit : ''}</div>} />
         </div>)}
       </div></section>)}</div>}
     </div>;

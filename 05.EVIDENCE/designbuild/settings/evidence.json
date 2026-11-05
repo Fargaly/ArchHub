@@ -1,0 +1,15 @@
+{
+  "board": "settings",
+  "penpotFile": "751e8d0c-7080-8124-8008-d8e6f6eedbb6",
+  "referenceRevision": 1963,
+  "referenceSha256": "9de01c8c6a6a6512c5ccd673fbfa2201f369512fad0aff398c59a34934841df9",
+  "viewport": {
+    "width": 1680,
+    "height": 893
+  },
+  "compiledManifestSha256": "cb3507b51a70ea2f99745fed0c2608db4dd3d1756dfd0d7b361125b7baa168fc",
+  "profile": "real isolated temporary owners",
+  "installedVerified": false,
+  "observedNodeMode": "not applicable",
+  "openItems": []
+}

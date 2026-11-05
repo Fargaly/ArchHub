@@ -279,7 +279,7 @@ html[data-reduced-motion="true"] *::after{transition:none!important;animation:no
 .ws-agent-log{margin-top:12px}.ws-agent-log-body article{margin-top:10px}.ws-agent-log-body p{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;line-height:1.45}
 .dx-list-gap{display:grid;gap:4px}
 /* Window splitter (APG): 1px rule, wider grab area, visible focus. */
-.pane-splitter{flex:0 0 1px;background:var(--color-line-soft);outline:none}.pane-splitter:hover,.pane-splitter:focus-visible,.pane-splitter[data-separator="active"]{background:var(--current-color-c33333b)}
+.pane-splitter{width:6px;min-width:6px;cursor:col-resize;background:linear-gradient(to right,transparent 2px,var(--color-line-soft) 2px,var(--color-line-soft) 3px,transparent 3px);outline:none}.pane-splitter:hover,.pane-splitter:focus-visible,.pane-splitter[data-separator="active"]{background:var(--current-color-c33333b)}
 .app-window>header{background:var(--color-bg)!important;border-bottom:1px solid var(--color-line)!important;backdrop-filter:none!important;font-family:var(--type-family-ui),Inter,sans-serif!important}
 .app-window nav[aria-label="Main navigation"]{background:var(--color-bg)!important;border-right-color:var(--color-line)!important}
 .app-window:has(.dx-home-root){grid-template-rows:var(--layout-header-height) minmax(0,1fr)!important}
@@ -419,6 +419,9 @@ html[data-reduced-motion="true"] *::after{transition:none!important;animation:no
 .dx-main[data-home-face="workshop"] .dx-thread,.dx-main[data-home-face="canvas"] .dx-panel{min-height:0;height:100%;overflow:auto}
 .dx-path{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dx-msg-line{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;min-width:0}
+.dx-msg-line p{overflow-wrap:anywhere}
+.dx-msg-line pre{max-width:100%;overflow:auto}
+.dx-msg-line code{white-space:pre-wrap;overflow-wrap:anywhere}
 .dx-msg-actions{display:flex;gap:8px;flex:none}
 .dx-delivery{margin:4px 0 0;border:0;background:transparent;color:var(--color-ink-soft);font-size:12px}
 .dx-talk h2{font-size:15px}

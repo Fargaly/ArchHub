@@ -28,12 +28,7 @@
   const sessionState = row => row.state === 'turn_ended' ? 'Turn ended' : row.state === 'tool_ended' ? 'Tool ended' : row.state === 'unassociated' ? 'Activity unassociated' : 'Working';
   const shownModel = value => { const model = String(value || '').trim(); return model && model !== 'Model not reported' ? model : ''; };
   const oneLine = text => String(text || '').split('\n').map(line => line.trim()).find(Boolean) || '';
-  const rowNote = task => {
-    if (task.blockedBy) return 'blocked by ' + task.blockedBy;
-    if (task.rowState === 'interrupted' || task.outcome === 'interrupted') return 'interrupted';
-    if (task.rowState === 'limit reached' || task.capacity === 'LIMIT_REACHED') return 'limit reached';
-    return '';
-  };
+  const rowNote = window.UI.taskRowReason;
   const gateLine = (gate, breaches) => {
     const gateText = gate === 'live' ? 'Gate live' : gate === 'missing' ? 'Gate missing' : gate === 'unavailable' ? 'Gate unavailable' : '';
     const breachText = breaches === 'unavailable' ? 'Breaches unavailable' : Number.isFinite(breaches) ? (breaches === 0 ? '0 breaches' : breaches + ' breaches') : '';

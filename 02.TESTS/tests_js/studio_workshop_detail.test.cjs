@@ -10,9 +10,13 @@ const {transformSync} = require('esbuild');
 const studio = path.resolve(__dirname, '../../01.APP/nodelang/studio');
 const source = fs.readFileSync(path.join(studio, 'ds_workshop3.jsx'), 'utf8');
 const js = transformSync(source, {loader: 'jsx', jsx: 'transform'}).code;
+const sharedWindow = {ArchHubAPI: {}, AH: {}, AH_DS: {}, registerActions() {}};
+vm.runInNewContext(transformSync(fs.readFileSync(path.join(studio, 'ui.jsx'), 'utf8'), {loader: 'jsx', jsx: 'transform'}).code,
+  {window: sharedWindow, React, console});
 const window = {
   ArchHubAPI: {executeAction() {}},
   UI: {
+    taskRowReason: sharedWindow.UI.taskRowReason,
     A: {ok: '#3a3', warn: '#a80', err: '#a33', ink: '#111', inkSoft: '#666'},
     D: {},
     useData() { return {}; },
@@ -101,12 +105,12 @@ test('in progress lists started work and planned work stays out', () => {
   assert.equal(groups.PLANNED({status: 'WIP'}), false);
 });
 
-test('task rows show blocked, interrupted and limit reached, and the picker shows gate and breaches', () => {
+test('task rows hide unsupported blocked-by and show interrupted and limit reached, and the picker shows gate and breaches', () => {
   const markup = task => renderToStaticMarkup(React.createElement(window.UI.Task, {
     task: {id: task.id, title: task.title, status: 'PLANNED', messages: [], ...task},
     on: false, select() {},
   }));
-  assert.match(markup({id: 'b', title: 'Wait', blockedBy: 'Foundation'}), /blocked by Foundation/);
+  assert.doesNotMatch(markup({id: 'b', title: 'Wait', blockedBy: 'Foundation'}), /blocked by/);
   assert.match(markup({id: 'i', title: 'Cut', outcome: 'interrupted'}), /data-task-row-state="interrupted"/);
   assert.match(markup({id: 'l', title: 'Hold', capacity: 'LIMIT_REACHED'}), /data-task-row-state="limit reached"/);
   const {choices} = window.UI.workshopPeople({
@@ -125,6 +129,7 @@ test('task rows show blocked, interrupted and limit reached, and the picker show
   assert.match(picker, /2 breaches/);
   assert.match(picker, /Gate unavailable/);
   assert.match(picker, /Breaches unavailable/);
+  assert.doesNotMatch(picker, /disabled/);
 });
 
 test('home canvas at 1440 keeps fitted nodes off the plan pane', async () => {
@@ -187,6 +192,7 @@ test('home canvas at 1440 keeps fitted nodes off the plan pane', async () => {
 test('a 1440 canvas fit keeps canonical nodes inside the graph and off the plan pane', () => {
   const screens = fs.readFileSync(path.join(studio, 'ds_screens.jsx'), 'utf8');
   const ui = {
+    taskRowReason: sharedWindow.UI.taskRowReason,
     A: {ok: '#3a3', warn: '#a80', err: '#a33', ink: '#111', inkSoft: '#666', inkDim: '#888', accent: '#d97757', purple: '#86f', cyan: '#5cc', bgCanvas: '#101015', bgPanel: '#15151a', bgSoft: '#1a1a20', bgHover: '#222', line: '#26262e', lineSoft: '#333', accentDim: '#2a1812', rad: {xs: 3, sm: 5, md: 6, lg: 8, xl: 10, pill: 999}},
     D: {}, api: {}, useData() { return {}; }, useApp() { return {}; }, Btn() { return null; }, Chip() { return null; },
   };
@@ -215,10 +221,11 @@ test('a step shows only the status the progress dict recorded', () => {
   ];
   const progress = {draw: 'working', check: 'blocked', file: {status: 'error', agent: 'Ada'}};
   const ui = {
+    taskRowReason: sharedWindow.UI.taskRowReason,
     useData() {
       return {tasks: [{id: 't1', title: 'Ship the hall', status: 'WIP', description: 'Ship the hall', plan, progress, messages: []}], liveAgents: [], approvals: [], hosts: [], providers: []};
     },
-    useApp() { return {task: 't1', act: fn => fn(), setTask() {}, go() {}, libraryOpen: false, setLibraryOpen() {}, show() {}}; },
+    useApp() { return {task: 't1', composerDraft: {}, setComposerDraft() {}, act: fn => fn(), setTask() {}, go() {}, libraryOpen: false, setLibraryOpen() {}, show() {}}; },
     Btn(props) { return React.createElement('button', props, props.children); },
   };
   vm.runInNewContext(transformSync(fs.readFileSync(path.join(studio, 'ds_home2.jsx'), 'utf8'), {loader: 'jsx', jsx: 'transform'}).code, {
@@ -256,10 +263,11 @@ test('a step shows only the status the progress dict recorded', () => {
 
 test('workshop and canvas routes open that face of the selected task on Home', () => {
   const ui = {
+    taskRowReason: sharedWindow.UI.taskRowReason,
     useData() {
       return {tasks: [{id: 't1', title: 'Ship the hall', status: 'WIP', description: 'Ship the hall', plan: [], messages: []}], liveAgents: [], approvals: [], hosts: []};
     },
-    useApp() { return {task: 't1', act: fn => fn(), setTask() {}, go() {}, libraryOpen: false, setLibraryOpen() {}, show() {}}; },
+    useApp() { return {task: 't1', composerDraft: {}, setComposerDraft() {}, act: fn => fn(), setTask() {}, go() {}, libraryOpen: false, setLibraryOpen() {}, show() {}}; },
     Btn(props) { return React.createElement('button', props, props.children); },
   };
   const win = {UI: ui, ArchHubHomeFace: 'canvas', AHIcon() { return null; }, ArchHubAPI: {executeAction() {}}, addEventListener() {}, removeEventListener() {}, localStorage: {getItem() { return null; }, setItem() {}}};
@@ -301,8 +309,9 @@ test('the workshop face shows task-file messages and refreshes them when the tas
     messages: [{id: 'room-1', role: 'room', who: 'Room', text: 'This room line stays out'}, {id: 'task-2', role: 'task', who: 'Ada', text: 'Ada wrote on the task'}],
   };
   const ui = {
+    taskRowReason: sharedWindow.UI.taskRowReason,
     useData() { return {tasks: [task], liveAgents: [], approvals: [], hosts: [], providers: []}; },
-    useApp() { return {task: 't1', act: fn => fn(), setTask() {}, go() {}, libraryOpen: false, setLibraryOpen() {}, show() {}}; },
+    useApp() { return {task: 't1', composerDraft: {}, setComposerDraft() {}, act: fn => fn(), setTask() {}, go() {}, libraryOpen: false, setLibraryOpen() {}, show() {}}; },
     Btn(props) { return React.createElement('button', props, props.children); },
   };
   const api = {executeAction() {}, openTaskGraph(id) { opened.push(id); return Promise.resolve({taskId: id, messages: task.fileMessages}); }};
@@ -327,10 +336,11 @@ test('home at 1440 keeps the conversation dominant and says an empty task once',
   const request = 'Please draw the north hall and keep this request in one place.';
   let current = {id: 't1', title: 'North hall', status: 'PLANNED', description: 'North hall', plan: [], messages: []};
   const ui = {
+    taskRowReason: sharedWindow.UI.taskRowReason,
     useData() {
       return {tasks: [current], liveAgents: [], approvals: [], hosts: [], providers: []};
     },
-    useApp() { return {task: 't1', act: fn => fn(), setTask() {}, go() {}, libraryOpen: false, setLibraryOpen() {}, show() {}}; },
+    useApp() { return {task: 't1', composerDraft: {}, setComposerDraft() {}, act: fn => fn(), setTask() {}, go() {}, libraryOpen: false, setLibraryOpen() {}, show() {}}; },
     Btn(props) { return React.createElement('button', props, props.children); },
   };
   vm.runInNewContext(transformSync(fs.readFileSync(path.join(studio, 'ds_home2.jsx'), 'utf8'), {loader: 'jsx', jsx: 'transform'}).code, {

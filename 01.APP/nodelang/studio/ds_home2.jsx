@@ -153,7 +153,6 @@
     const [query, setQuery] = React.useState('');
     const [status, setStatus] = React.useState('');
     const [history, setHistory] = React.useState(false);
-    const [drafts, setDrafts] = React.useState({});
     const [sending, setSending] = React.useState(false);
     const sendingRef = React.useRef(false);
     const [to, setTo] = React.useState('');
@@ -224,9 +223,12 @@
     const source = String(task?.description || '').trim();
     const sourceSentence = source && source !== task?.title ? source.split(/(?<=[.!?])\s/)[0] : '';
     const shortSource = sourceSentence.length > 140 ? sourceSentence.slice(0, 139).replace(/\s+\S*$/, '').replace(/[,\s;:]+$/, '') + '…' : sourceSentence;
-    const draftKey = task?.id || '';
-    const text = drafts[draftKey] || '';
-    const setText = value => setDrafts(current => ({...current, [draftKey]: typeof value === 'function' ? value(current[draftKey] || '') : value}));
+    const draftKey = JSON.stringify(['task-file', task?.id || '']);
+    const text = u.composerDraft[draftKey]?.text || '';
+    const setText = value => u.setComposerDraft(current => {
+      const draft = current[draftKey] || {text: '', revision: 0};
+      return {...current, [draftKey]: {text: typeof value === 'function' ? value(draft.text) : value, revision: draft.revision + 1}};
+    });
     const messages = taskMessages(task);
     const showCanvas = () => setFace('canvas');
     const choices = people.choices?.length ? people.choices : [{key: 'baboom', handle: '', name: 'BABOOM'}];
@@ -306,6 +308,7 @@
         <button type="button" className="dx-task" aria-selected={task?.id === t.id} onClick={() => executeAction('ui.select', () => u.setTask(t.id))} onDoubleClick={() => executeAction('ui.select', () => openTask(t))}>
           <b>{t.title}</b>
           <span data-line="reason">{reasonOf(t)}</span>
+          {window.UI.taskRowReason(t) && <span data-task-row-state={window.UI.taskRowReason(t)}>{window.UI.taskRowReason(t)}</span>}
           <small>{[ownerOf(t), t.status === 'WIP' ? statusText(t.status) : ''].filter(Boolean).join(' · ')}</small>
         </button>
         {needsEvidence ? <button type="button" className="dx-evidence" onClick={() => executeAction('ui.select', () => openEvidence(t))}>Evidence</button> : null}

@@ -615,6 +615,9 @@ class SessionFiles:
         if not isinstance(body,dict) or not isinstance(body.get('action'),str):
             raise ValueError('Session file action is required')
         action = body['action']
+        if action in ('open', 'initial'):
+            from .enforce import guard_effect
+            invoke = invoke or guard_effect
         if action == 'catalogue':
             return {'ok':True,'items':catalogue(),'recent':self.recent(),'directory':str(self.directory)}
         if action == 'initial':
@@ -624,6 +627,7 @@ class SessionFiles:
             held = json.loads(current.read_text(encoding='utf-8')) if current.exists() else {}
             recovery = Path(held['path']) if held.get('path') else self.directory/(held['id']+'.archhub') if held else self.directory/'autosave.archhub'
             document = read_document(launch) if launch else read_document(recovery) if recovery.exists() else new_document()
+            canvas_documents.solve(document, [n['id'] for n in document['nodes']], invoke=invoke, stopped=stopped)
             return {'ok':True,'document':document,'path':str(launch or (json.loads(current.read_text(encoding='utf-8')).get('path','') if current.exists() else ''))}
         if action == 'starter':
             # A built-in starter becomes the founder's own new session file (the starter itself never changes).
@@ -643,6 +647,7 @@ class SessionFiles:
             if not str(path).lower().endswith('.archhub'):
                 return self.import_file(path)
             document = read_document(path)
+            canvas_documents.solve(document, [n['id'] for n in document['nodes']], invoke=invoke, stopped=stopped)
             self.remember(local_path(path),document)
             return {'ok':True,'document':document,'path':str(local_path(path))}
         if action in ('save','autosave'):

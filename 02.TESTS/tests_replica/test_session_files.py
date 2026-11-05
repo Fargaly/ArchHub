@@ -26,7 +26,12 @@ def test_real_engines_and_second_profile(tmp_path):
         node['result']=result['results'][node['id']]
     path=tmp_path/'test.archhub';write_document(path,doc)
     second=SessionFiles(tmp_path/'SECOND')
-    assert second.dispatch({'action':'open','path':str(path)})['document']==doc
+    reopened = second.dispatch({'action':'open','path':str(path)})['document']
+    assert reopened['nodes'][1]['result']['output'] == {'out': 'hello'}
+    assert reopened['nodes'][2]['result']['status'] == 'Done'
+    for node in reopened['nodes']:
+        node['result'] = doc['nodes'][int(node['id'])]['result']
+    assert reopened == doc
 
 
 def test_bad_file_preserves_previous_bytes(tmp_path):

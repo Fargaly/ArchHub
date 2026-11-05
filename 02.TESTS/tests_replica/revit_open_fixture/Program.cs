@@ -29,6 +29,25 @@ internal static class Program
     private static async Task Main(string[] args)
     {
         var app = new UIApplication();
+        if (args.Length > 0 && args[0] == "stall")
+        {
+            var handler = new RevitEventHandler();
+            var calls = 0;
+            var pending = handler.SubmitAsync(_ => { calls++; return "{}"; });
+            var shim = new RevitMCPApp();
+            typeof(RevitMCPApp).GetField("_handler", BindingFlags.NonPublic | BindingFlags.Instance).SetValue(shim, handler);
+            var show = typeof(RevitMCPApp).GetMethod("OnDialogShowing", BindingFlags.NonPublic | BindingFlags.Instance);
+            var known = new Autodesk.Revit.UI.Events.DialogBoxShowingEventArgs { DialogId = "Dialog_Revit_DocWarnDialog" };
+            var unknown = new Autodesk.Revit.UI.Events.DialogBoxShowingEventArgs { DialogId = "Unknown_Addin_Dialog" };
+            show.Invoke(shim, new object[] { null, known });
+            show.Invoke(shim, new object[] { null, unknown });
+            var timedOut = await pending;
+            handler.Execute(app);
+            Console.WriteLine(JsonSerializer.Serialize(new { known = known.Answer, unknown = unknown.Answer,
+                calls, pending = handler.HasWork, timeout = JsonDocument.Parse(timedOut).RootElement,
+                running = JsonDocument.Parse(RevitEventHandler.StallResult("Unknown add-in \"dialog\"", true)).RootElement }));
+            return;
+        }
         if (args.Length > 0)
         {
             // Real Core.HandleAsync + BridgeAuth, on a court-owned random port.

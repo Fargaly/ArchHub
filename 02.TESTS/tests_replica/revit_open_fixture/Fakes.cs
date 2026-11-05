@@ -64,7 +64,16 @@ namespace Autodesk.Revit.UI
 {
     using Autodesk.Revit.DB;
     public interface IExternalEventHandler { void Execute(UIApplication app); string GetName(); }
-    public class ExternalEvent { public void Raise() { } }
+    public class ExternalEvent : IDisposable { public void Raise() { } public void Dispose() { }
+        public static ExternalEvent Create(IExternalEventHandler handler) => new ExternalEvent(); }
+    public enum Result { Succeeded, Failed }
+    public interface IExternalApplication { Result OnStartup(UIControlledApplication app); Result OnShutdown(UIControlledApplication app); }
+    public class ControlledInfo { public string VersionNumber = "2025"; }
+    public class UIControlledApplication {
+        public ControlledInfo ControlledApplication = new ControlledInfo();
+        public event EventHandler<Autodesk.Revit.UI.Events.DialogBoxShowingEventArgs> DialogBoxShowing;
+        public void Show(Autodesk.Revit.UI.Events.DialogBoxShowingEventArgs args) => DialogBoxShowing?.Invoke(this, args);
+    }
     public class ApplicationInfo { public string VersionName = "fixture"; public string Username = "fixture"; }
     public class UIDocument
     {
@@ -108,5 +117,14 @@ namespace ArchHub.Shared
                 modifiable = context.Doc?.IsModifiable == true };
             return new ScriptResult { Status = "ok" };
         }
+    }
+}
+
+namespace Autodesk.Revit.UI.Events
+{
+    public class DialogBoxShowingEventArgs : EventArgs {
+        public string DialogId;
+        public int? Answer;
+        public bool OverrideResult(int result) { Answer = result; return true; }
     }
 }

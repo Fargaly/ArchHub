@@ -125,14 +125,23 @@
       return () => window.removeEventListener('archhub:open-home', openHome);
     }, []);
     const settingsOrigin = React.useRef('home');
-    const go = r => {
+    const go = async (r, taskId = '') => {
       if (r === 'system') r = 'settings/System graph';
       if (r === 'baboom') {
         setCompanion(true);
         setModal(null);
         return;
       }
-      if (r === 'library' || r === 'skills') { r = 'canvas'; setLibraryOpen(true); }
+      const home = window.UI.homeDestination?.(r);
+      if (home) {
+        if (home.library) setLibraryOpen(true);
+        const selected = taskId ? s.tasks.find(t => t.id === taskId || t.sessionPath === taskId)
+          : s.tasks.find(t => t.id === task) || s.tasks.find(t => t.id === s.focusedTask) || s.tasks.find(t => t.sessionOpen) || s.tasks[0];
+        if (selected) return openTaskFile(selected.id, home.face);
+        setTask('');
+        setToast('Pick a task on Home.');
+        r = 'home';
+      }
       if (r.startsWith('settings/') && !route.startsWith('settings/')) settingsOrigin.current = route;
       if(r==='canvas')setCanvasOpened(true);
       api.setActiveSurface?.(r);
@@ -313,7 +322,7 @@
     React.useEffect(() => {
       document.title = 'ArchHub · ' + ((route === "task-file" ? "Task file" : routeNames[route]) || route.split('/').at(-1));
     }, [route]);
-    const rail = [['home', 'Home', 'home'], ['clock', 'Automations', 'automations'], ['docs', 'Docs', 'docs']];
+    const rail = [['home', 'Home', 'home'], ['workshop', 'Workshop', 'workshop'], ['canvas', 'Canvas', 'canvas'], ['clock', 'Automations', 'automations'], ['docs', 'Docs', 'docs']];
     const screen = route === 'meetings' ? <window.UI.Meetings /> : route === 'dependencies' ? <window.UI.Dependencies /> : route === 'present' ? <window.UI.Present /> : route === 'community' ? <window.UI.Community /> : route === 'model-review' ? <window.UI.ModelReview /> : route === 'interface' ? <window.UI.InterfaceStudio /> : route === 'social' ? <window.UI.Social /> : route === 'xray' ? <window.UI.Xray /> : route === 'access' ? <window.UI.Access /> : route === 'routing' ? <window.UI.Routing /> : route === 'home' ? <window.UI.Home key="home" /> : route === 'task-file' ? <window.UI.Home key={task} fileWorkspace initialFace={taskFace} /> : route === 'workshop' ? <window.UI.Workshop /> : route === 'canvas' ? null : route === 'system' ? <window.UI.Settings page="System graph" /> : route === 'colleagues' ? <window.UI.Colleagues /> : route === 'brain' ? <window.UI.Brain /> : route === 'watcher' ? <window.UI.Watcher /> : route === 'first-run' ? <window.UI.FirstRun /> : route === 'runs' ? <window.UI.Runs /> : route === 'receipts' ? <window.UI.Receipts /> : route === 'docs' ? <window.UI.Docs /> : route === 'feedback' ? <window.UI.Feedback /> : route === 'automations' ? <window.UI.Automations /> : route.startsWith('settings/') ? <window.UI.Settings key={route} page={route.slice(9)} /> : <window.UI.Settings key={route} page={{
       account: 'Account',
       connections: 'Connections',
@@ -399,7 +408,7 @@
             padding: '10px 0 8px',
             gap: 4,
             overflow: 'auto'
-          }}>{rail.map(([g, l, r]) => <D.Rail key={r} variant="compact" glyph={r === "home" ? <ArchMark size={15} /> : <window.AHIcon name={g} size={15} />} label={l} active={route === r || (r === "home" && route === "task-file")} onDragOver={e => {
+          }}>{rail.map(([g, l, r]) => <D.Rail key={r} variant="compact" glyph={r === "home" ? <ArchMark size={15} /> : <window.AHIcon name={g} size={15} />} label={l} active={route === r || (route === "task-file" && r === taskFace)} onDragOver={e => {
               if (r === 'canvas') e.preventDefault();
             }} onDragEnter={() => {
               if (r === 'canvas') go(r);

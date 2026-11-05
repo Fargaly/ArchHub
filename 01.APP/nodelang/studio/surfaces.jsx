@@ -22,7 +22,7 @@
       u = useApp();
     const body = <div className="grid"><div className="spread"><h2>Schedules</h2><Btn sm onClick={event => executeAction("projects.surfaces.AddSchedule.1", {s,u}, event)}>Add schedule</Btn></div>{s.schedules.length ? s.schedules.map(t => <Card key={t.id} style={{
         padding: 16
-      }}><div className="spread"><div><h3>{t.title}</h3><p className="muted">{t.enabled ? 'Every day ' + t.time + ' · next at ' + t.time : 'Held · paused'}</p></div><div className="flex"><input aria-label={'Time ' + t.title} type="time" value={t.time} onChange={e => u.act(() => api.setScheduleTime(t.id, e.target.value))} /><D.Toggle label={t.title + ' schedule'} checked={t.enabled} onCheckedChange={v => u.act(() => api.setScheduleEnabled(t.id, v))} /><Btn sm onClick={event => executeAction("projects.surfaces.Reset.2", {api,t,u}, event)}>Reset</Btn></div></div><window.UI.ScheduleResponsibility id={t.id} /></Card>) : <Empty>No schedules yet. Repeat a task when you want it to run again.</Empty>}<Card style={{
+      }}><div className="spread"><div><h3><button type="button" className="button-reset" onClick={event => executeAction('projects.surfaces.OpenTaskCanvas', {t,u}, event)}>{t.title}</button></h3><p className="muted">{t.enabled ? 'Every day ' + t.time + ' · next at ' + t.time : 'Held · paused'}</p></div><div className="flex"><input aria-label={'Time ' + t.title} type="time" value={t.time} onChange={e => u.act(() => api.setScheduleTime(t.id, e.target.value))} /><D.Toggle label={t.title + ' schedule'} checked={t.enabled} onCheckedChange={v => u.act(() => api.setScheduleEnabled(t.id, v))} /><Btn sm onClick={event => executeAction("projects.surfaces.Reset.2", {api,t,u}, event)}>Reset</Btn></div></div><window.UI.ScheduleResponsibility id={t.id} /></Card>) : <Empty>No schedules yet. Repeat a task when you want it to run again.</Empty>}<Card style={{
         padding: 16
       }}><h3>Triggers</h3><div className="flex" style={{
           marginTop: 12,
@@ -144,6 +144,7 @@ function projectssurfacesjsxViewUpdate11({u}, event) {
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }
 function projectsWatcherConnections({u}) { return u.go('settings/Connections'); }
+function projectsOpenTaskCanvas({t,u}) { return u.go('canvas', t.taskId || t.task_id || t.path); }
 function projectsWatcherRun({refresh}) { return refresh(); }
 function projectsWatcherAdd({api,s,u}) {
   return u.act(()=>{
@@ -153,6 +154,7 @@ function projectsWatcherAdd({api,s,u}) {
   });
 }
 const PROJECT_ACTIONS = {
+  'projects.surfaces.OpenTaskCanvas':'projectsOpenTaskCanvas',
   'projects.watcher.connections':'projectsWatcherConnections',
   'projects.watcher.add':'projectsWatcherAdd',
   'projects.watcher.run':'projectsWatcherRun',
@@ -168,5 +170,5 @@ const PROJECT_ACTIONS = {
   "projects.surfaces.CheckResponse.10": "projectssurfacesjsxCheckResponse10",
   "projects.surfaces.ViewUpdate.11": "projectssurfacesjsxViewUpdate11"
 };
-window.registerActions(PROJECT_ACTIONS, {projectsWatcherConnections,projectsWatcherRun,projectsWatcherAdd,projectssurfacesjsxAddSchedule1,projectssurfacesjsxReset2,projectssurfacesjsxAsyncConstNAwaitU3,projectssurfacesjsxExport4,projectssurfacesjsxUndoLastAction5,projectssurfacesjsxOpen6,projectssurfacesjsxRetry7,projectssurfacesjsxRetry8,projectssurfacesjsxSendFeedback9,projectssurfacesjsxCheckResponse10,projectssurfacesjsxViewUpdate11});
+window.registerActions(PROJECT_ACTIONS, {projectsOpenTaskCanvas,projectsWatcherConnections,projectsWatcherRun,projectsWatcherAdd,projectssurfacesjsxAddSchedule1,projectssurfacesjsxReset2,projectssurfacesjsxAsyncConstNAwaitU3,projectssurfacesjsxExport4,projectssurfacesjsxUndoLastAction5,projectssurfacesjsxOpen6,projectssurfacesjsxRetry7,projectssurfacesjsxRetry8,projectssurfacesjsxSendFeedback9,projectssurfacesjsxCheckResponse10,projectssurfacesjsxViewUpdate11});
 })();

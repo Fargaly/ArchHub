@@ -61,7 +61,7 @@ def test_recovery_is_per_session(tmp_path):
     owner=SessionFiles(tmp_path);first=definition();second=new_document('Second')
     owner.dispatch({'action':'autosave','document':first})
     owner.dispatch({'action':'autosave','document':second})
-    assert read_document(tmp_path/(first['id']+'.archhub'))==first
+    assert read_document(tmp_path/(first['title']+'.archhub'))==first
     assert owner.dispatch({'action':'initial'})['document']==second
 
 
@@ -69,16 +69,14 @@ def test_file_route_does_not_read_or_write_graph(tmp_path, monkeypatch):
     import json
     from urllib.request import Request, urlopen
     from urllib.error import HTTPError
-    from nodelang.application_server import ApplicationServer
+    from nodelang.nograph_server import NoGraphServer
     monkeypatch.setenv('LOCALAPPDATA',str(tmp_path))
-    server=ApplicationServer(enable_machine_transport=False, enable_machine_projection_prewarm=False, live_watch=False).start()
-    snapshot=server.universal_store.snapshot
-    def forbidden(*args,**kwargs):
-        raise AssertionError('File operation touched the universal graph')
+    server=NoGraphServer(tmp_path/'ArchHub')
+    server.thread=__import__('threading').Thread(target=server.httpd.serve_forever,daemon=True)
+    server.thread.start()
     try:
-        monkeypatch.setattr(server.universal_store,'snapshot',forbidden)
         def post(body,token=None,csrf=None):
-            request=Request(server.url+'/api/session-files',data=json.dumps(body).encode(),headers={
+            request=Request(server.public_url+'/api/session-files',data=json.dumps(body).encode(),headers={
                 'Content-Type':'application/json','X-ArchHub-Session':server.browser_session_token if token is None else token,
                 'X-ArchHub-CSRF':server.browser_csrf_token if csrf is None else csrf})
             try:
@@ -92,38 +90,36 @@ def test_file_route_does_not_read_or_write_graph(tmp_path, monkeypatch):
         assert post({'action':'open','path':path})[1]['document']==doc
         assert post({'action':'run','document':doc})[1]['succeeded']
     finally:
-        monkeypatch.setattr(server.universal_store,'snapshot',snapshot)
-        server.close()
+        server.httpd.shutdown()
+        server.httpd.server_close()
+        server.thread.join(timeout=5)
 
 
-def test_clean_file_route_uses_existing_frame_admission_without_graph(tmp_path, monkeypatch):
-    import json
-    from urllib.request import Request, urlopen
-    from urllib.error import HTTPError
-    from tests_replica.test_clean_server_admission import _provision_clean_runtime, _start_clean_server
+def test_file_health_uses_http_and_real_workshop_database(tmp_path, monkeypatch):
+    import sqlite3
+    import threading
+    from nodelang.nograph_server import NoGraphServer
     monkeypatch.setenv('LOCALAPPDATA',str(tmp_path))
-    from nodelang.application_server import _CleanAuthorityHttpServer
-    monkeypatch.setattr(_CleanAuthorityHttpServer,'_warm_clean_runtime',lambda self:self._boot_ready.set())
-    built,provider=_provision_clean_runtime(tmp_path,root_name='CLEAN')
-    server=_start_clean_server(built,provider,scope_root=built.location.authority.manifest.application_root)
-    snapshot=built.location.authority.store.snapshot
-    def forbidden(*args,**kwargs):
-        raise AssertionError('File route read the clean graph')
+    state=tmp_path/'ArchHub'
+    server=NoGraphServer(state)
+    server.thread=threading.Thread(target=server.httpd.serve_forever,daemon=True)
+    server.thread.start()
+    database=state/'workshop/messages.sqlite3'
+    database.parent.mkdir()
+    with sqlite3.connect(database) as connection:
+        connection.execute('CREATE TABLE saved(value TEXT)')
+        connection.execute("INSERT INTO saved VALUES ('untouched')")
     try:
-        monkeypatch.setattr(built.location.authority.store,'snapshot',forbidden)
-        def post(key):
-            request=Request(server.url+'/api/session-files',data=json.dumps({'action':'validate','document':definition()}).encode(),headers={'Content-Type':'application/json','X-ArchHub-Canvas-Key':key})
-            try:
-                with urlopen(request,timeout=15) as response:return response.status,json.load(response)
-            except HTTPError as error:return error.code,json.load(error)
-        assert post('unknown')[0]==403
-        status,answer=post(server.clean_canvas_key)
-        assert status==200,answer
-        assert answer['document']['nodes'][0]['params']['value']=='hello'
+        assert server.health_check()
+        server.files['settings'].write({'sessionsFolder':str(tmp_path/'Documents/ArchHub')})
+        assert server.health_check()
+        server.files['settings'].path.write_text('invalid json',encoding='utf-8')
+        with pytest.raises(ValueError):
+            server.health_check()
     finally:
-        monkeypatch.setattr(built.location.authority.store,'snapshot',snapshot)
-        server.close()
-        built.location.authority.store.close()
+        server.httpd.shutdown()
+        server.httpd.server_close()
+        server.thread.join(timeout=5)
 
 
 def test_stop_prevents_the_next_engine_effect():

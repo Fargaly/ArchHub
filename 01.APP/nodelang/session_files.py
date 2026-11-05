@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import os
 from pathlib import Path
@@ -325,9 +326,9 @@ def catalogue():
 
 
 def load_skills():
-    """Valid skill files in skills_directory(). One reader for the catalogue and for ?templates=1."""
+    """Saved Canvas sessions, read by the Library and reusable-node engine."""
     found = []
-    for path in sorted(skills_directory().glob('*.archhub')):
+    for path in sorted(sessions_directory().glob('*.archhub')):
         try:
             skill = read_document(path)
         except (OSError, ValueError):
@@ -342,11 +343,275 @@ def skill_template_rows():
             for row in load_skills()]
 
 
-def skills_directory():
-    # A skill is a saved workflow: one portable .archhub file, shown in the Library as one node.
-    path = Path(os.environ['LOCALAPPDATA'])/'ArchHub'/'sessions-files'/'skills'
+def profile_directory():
+    return Path(os.environ.get('ARCHHUB_TEST_STATE_DIR') or Path(os.environ['LOCALAPPDATA']) / 'ArchHub')
+
+
+def sessions_directory():
+    owner = _folder_move_owner()
+    with canvas_documents.locked(owner.path):
+        _restore_folder_move(owner)
+        return _selected_sessions_directory()
+
+
+def _default_sessions_directory():
+    home = Path(os.environ.get('USERPROFILE', str(Path.home())))
+    if os.name == 'nt':
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                r'Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders') as key:
+                documents = Path(os.path.expandvars(winreg.QueryValueEx(key, 'Personal')[0]))
+            if documents.resolve() != (home / 'Documents').resolve():
+                logging.getLogger(__name__).info('Documents is redirected; default sessions stay under the user profile')
+        except OSError as error:
+            logging.getLogger(__name__).debug('Documents redirection lookup unavailable: %s', error)
+    return home / 'ArchHub' / 'Sessions'
+
+
+def _selected_sessions_directory():
+    from .nograph_server import JsonFile
+    settings = JsonFile(profile_directory() / 'settings' / 'settings.json', {}).read()
+    path = Path(settings.get('sessionsFolder') or Path(os.environ.get('USERPROFILE', str(Path.home()))))
+    if not settings.get('sessionsFolder'):
+        path = _default_sessions_directory()
+    if not path.is_absolute() or str(path).startswith(('\\\\', '//')):
+        raise ValueError('Choose an absolute local sessions folder')
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def document_path(directory, document):
+    """Readable Windows filename, without overwriting another session of the same title."""
+    title = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '-', document['title']).strip(' .')[:160] or 'Untitled'
+    if title.split('.')[0].upper() in {'CON', 'PRN', 'AUX', 'NUL', *('COM%d' % n for n in range(1, 10)), *('LPT%d' % n for n in range(1, 10))}:
+        title = '_' + title
+    path, index = Path(directory) / (title + '.archhub'), 2
+    while path.exists():
+        try:
+            if read_document(path)['id'] == document['id']:
+                return path
+        except (OSError, ValueError) as error:
+            logging.getLogger(__name__).debug('Existing session filename retained: %s', error)
+        path = Path(directory) / ('%s (%d).archhub' % (title, index))
+        index += 1
+    return path
+
+
+def _folder_move_owner():
+    from .nograph_server import JsonFile
+    return JsonFile(profile_directory() / 'data/sessions/folder-move.json', {})
+
+
+def _restore_folder_move(owner):
+    """An interrupted folder change rolls back before any reader selects a folder."""
+    if not owner.path.exists():
+        return
+    from .nograph_server import JsonFile
+    from .quiet_update import _cleanup_plain
+    import shutil
+    pending = owner.read()
+    for row in reversed(pending['moves']):
+        old, new = local_path(row['old']), local_path(row['new'])
+        if old == new or not _cleanup_plain(old) or not _cleanup_plain(new):
+            raise ValueError('Folder recovery requires distinct plain session paths')
+        with canvas_documents.locked(old), canvas_documents.locked(new):
+            if new.exists():
+                if old.exists():
+                    if old.read_bytes() != new.read_bytes():
+                        raise OSError('Folder recovery conflict; both sessions retained')
+                    if not row['duplicate']:
+                        new.unlink()
+                elif row['duplicate']:
+                    shutil.copyfile(new, old)
+                else:
+                    try:
+                        new.rename(old)
+                    except OSError as error:
+                        import errno
+                        if error.errno != errno.EXDEV and getattr(error, 'winerror', None) != 17:
+                            raise
+                        _copy_session_across_volumes(new, old)
+    for snapshot in pending['metadata']:
+        path = profile_directory() / snapshot['path']
+        if snapshot['path'] not in ('settings/settings.json', 'data/sessions/current.json', 'data/sessions/recent.json'):
+            raise ValueError('Invalid folder recovery metadata')
+        if snapshot['existed']:
+            JsonFile(path, {}).write(snapshot['value'])
+        else:
+            path.unlink(missing_ok=True)
+    owner.path.unlink()
+
+
+def set_sessions_directory(target):
+    """One recoverable folder change, including local current/recent pointers."""
+    from .nograph_server import JsonFile
+    from .quiet_update import _cleanup_plain
+    target = Path(target)
+    if not target.is_absolute() or str(target).startswith(('\\\\', '//')) or not _cleanup_plain(target):
+        raise ValueError('Choose an absolute local sessions folder without links')
+    target.mkdir(parents=True, exist_ok=True)
+    owner = _folder_move_owner()
+    with canvas_documents.locked(owner.path):
+        _restore_folder_move(owner)
+        previous = _selected_sessions_directory()
+        if previous.resolve() == target.resolve():
+            return []
+        metadata = []
+        for name, default in (('settings/settings.json', {}), ('data/sessions/current.json', {}), ('data/sessions/recent.json', [])):
+            path = profile_directory() / name
+            metadata.append({'path': name, 'existed': path.exists(), 'value': JsonFile(path, default).read()})
+        pending = {'moves': [], 'metadata': metadata}
+        owner.write(pending)
+        def before_move(old, new):
+            pending['moves'].append({'old': str(old), 'new': str(new), 'duplicate': new.exists()})
+            owner.write(pending)
+        try:
+            moved = [(str(path), move_session(path, target, before_move=before_move)) for path in list(previous.glob('*.archhub'))]
+            _relocate_pointers(profile_directory(), moved)
+            settings = JsonFile(profile_directory() / 'settings/settings.json', {})
+            settings.write({**settings.read(), 'sessionsFolder': str(target)})
+            owner.path.unlink()
+            return moved
+        except (OSError, ValueError):
+            _restore_folder_move(owner)
+            raise
+
+
+def _relocate_pointers(state_dir, moved):
+    from .nograph_server import JsonFile
+    replacements = dict(moved)
+    for name in ('recent.json', 'current.json'):
+        owner = JsonFile(Path(state_dir) / 'data/sessions' / name, [] if name == 'recent.json' else {})
+        value = owner.read()
+        for row in value if isinstance(value, list) else [value]:
+            if isinstance(row, dict) and row.get('path') in replacements:
+                row['path'] = replacements[row['path']]
+        if owner.path.exists():
+            owner.write(value)
+
+
+def move_session(path, destination, *, before_move=None):
+    """Move one document under the same exclusion used by Canvas and agent editors."""
+    from .quiet_update import _cleanup_plain, _unlocked
+    path, destination = Path(path), Path(destination)
+    if not _cleanup_plain(path) or not _cleanup_plain(destination):
+        raise OSError('Linked session paths are retained')
+    with canvas_documents.locked(path):
+        _unlocked(path)
+        document = read_document(path)
+        target = document_path(destination, document)
+        if path.resolve() == target.resolve():
+            return str(target)
+        with canvas_documents.locked(target):
+            if target.exists():
+                if target.read_bytes() == path.read_bytes():
+                    if before_move:
+                        before_move(path, target)
+                    path.unlink()
+                    return str(target)
+                target = document_path(destination, {**document, 'id': str(uuid4())})
+            if before_move:
+                before_move(path, target)
+            try:
+                # Same-volume rename is atomic and does not copy a concurrently
+                # edited file. Cross-volume publication uses a complete temp file.
+                path.rename(target)
+            except OSError as error:
+                import errno
+                if error.errno != errno.EXDEV and getattr(error, 'winerror', None) != 17:
+                    raise
+                _copy_session_across_volumes(path, target)
+        return str(target)
+
+
+def _copy_session_across_volumes(path, target):
+    """Hold Windows write exclusion until the verified source is deleted."""
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                  ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+    kernel.CreateFileW.restype = wintypes.HANDLE
+    # Readers and deletion may share this handle; writers may not.
+    handle = kernel.CreateFileW(str(path), 0x80000000, 5, None, 3, 0x80, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    with os.fdopen(msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY), 'rb') as original:
+        raw = original.read(MAX_BYTES + 1)
+        validate(json.loads(raw.decode('utf-8-sig')))
+        if len(raw) > MAX_BYTES:
+            raise ValueError('Session exceeds 8 MiB')
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=target.parent, suffix='.tmp', delete=False) as stream:
+                temporary = Path(stream.name)
+                stream.write(raw)
+                stream.flush()
+                os.fsync(stream.fileno())
+            temporary.rename(target)
+            path.unlink()
+        finally:
+            if temporary:
+                temporary.unlink(missing_ok=True)
+
+
+def migrate_sessions(state_dir):
+    """Move legacy documents byte-for-byte; unknown files and invalid documents stay put."""
+    from .quiet_update import _cleanup_plain
+    source = Path(state_dir) / 'sessions-files'
+    if not source.is_dir() or not _cleanup_plain(source):
+        return []
+    destination, moved = sessions_directory(), []
+    for path in [*source.glob('*.archhub'), *(source / 'skills').glob('*.archhub')]:
+        try:
+            if not _cleanup_plain(path) or verification_document(read_document(path)):
+                continue
+            target = move_session(path, destination)
+            if path.resolve() != Path(target).resolve():
+                moved.append((str(path), target))
+        except (OSError, ValueError):
+            continue
+    for name in ('recent.json', 'current.json'):
+        old = source / name
+        if not old.is_file() or not _cleanup_plain(old):
+            continue
+        try:
+            value = json.loads(old.read_text(encoding='utf-8'))
+            replacements = dict(moved)
+            def update(row):
+                if isinstance(row, dict) and row.get('path') in replacements:
+                    row['path'] = replacements[row['path']]
+                return row
+            if isinstance(value, list):
+                value = [update(row) for row in value]
+            else:
+                if not value.get('path') and value.get('id'):
+                    value['path'] = str(source / (value['id'] + '.archhub'))
+                update(value)
+            from .nograph_server import JsonFile
+            target = Path(state_dir) / 'data' / 'sessions' / name
+            if not target.exists():
+                JsonFile(target, {}).write(value)
+            if json.loads(target.read_text(encoding='utf-8')) == value:
+                old.unlink()
+        except (OSError, ValueError, AttributeError):
+            continue
+    try:
+        (source / 'skills').rmdir()
+    except OSError as error:
+        logging.getLogger(__name__).debug('Legacy session directory retained: %s', error)
+    try:
+        source.rmdir()
+    except OSError as error:
+        logging.getLogger(__name__).debug('Legacy session directory retained: %s', error)
+    return moved
+
+
+def verification_document(document):
+    return document.get('title', '').strip().casefold() in {
+        'archhub interface verification a', 'archhub interface verification b', 'ui verification'}
 
 
 def skill_ports(skill, items=()):
@@ -376,7 +641,9 @@ def run_skill(params, *, invoke, stopped, depth, feeds=None):
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', name):
         raise ValueError('Skill id is invalid')
     from .node_params import PARAM_ENGINE, coerce
-    skill = read_document(skills_directory()/(name+'.archhub'))
+    skill = next((row['skill'] for row in load_skills() if row['skill']['id'] == name), None)
+    if skill is None:
+        raise ValueError('Saved session is unavailable')
     inputs = {n['id']: n for n in skill['nodes'] if n['type'] == PARAM_ENGINE and not n.get('bind')}
     for socket, value in (feeds or {}).items():
         held = inputs.get(str(socket)[3:]) if str(socket).startswith('in:') else None
@@ -533,11 +800,13 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
 class SessionFiles:
     """Files are data; recent paths and crash recovery remain local to the profile."""
     def __init__(self, directory=None):
-        self.directory = Path(directory) if directory else Path(os.environ['LOCALAPPDATA'])/'ArchHub'/'sessions-files'
+        self.directory = Path(directory) if directory else sessions_directory()
         self.directory.mkdir(parents=True, exist_ok=True)
+        self.metadata = Path(directory) if directory else profile_directory() / 'data' / 'sessions'
+        self.metadata.mkdir(parents=True, exist_ok=True)
 
     def recent(self):
-        path = self.directory/'recent.json'
+        path = self.metadata/'recent.json'
         if not path.exists():
             return []
         rows = json.loads(path.read_text(encoding='utf-8'))
@@ -547,8 +816,8 @@ class SessionFiles:
 
     def remember(self, path, document):
         rows = [{'id':str(path), 'path':str(path), 'name':document['title'], 'title':document['title']}] + [r for r in self.recent() if r['path'] != str(path)]
-        target = self.directory/'recent.json'
-        with tempfile.NamedTemporaryFile(dir=self.directory, suffix='.tmp', delete=False, mode='w', encoding='utf-8') as stream:
+        target = self.metadata/'recent.json'
+        with tempfile.NamedTemporaryFile(dir=self.metadata, suffix='.tmp', delete=False, mode='w', encoding='utf-8') as stream:
             temporary = stream.name
             json.dump(rows[:20],stream)
         try:
@@ -558,8 +827,8 @@ class SessionFiles:
                 os.unlink(temporary)
 
     def _current(self, identity, path):
-        current = self.directory/'current.json'
-        with tempfile.NamedTemporaryFile(dir=self.directory, suffix='.tmp', delete=False, mode='w', encoding='utf-8') as stream:
+        current = self.metadata/'current.json'
+        with tempfile.NamedTemporaryFile(dir=self.metadata, suffix='.tmp', delete=False, mode='w', encoding='utf-8') as stream:
             temporary = stream.name
             json.dump({'id':identity,'path':str(local_path(path)) if path else ''},stream)
         try:
@@ -578,7 +847,7 @@ class SessionFiles:
     def open_files(self):
         """The file the app has open now (agents edit the same file), then recent files."""
         rows = []
-        current = self.directory/'current.json'
+        current = self.metadata/'current.json'
         if current.exists():
             held = json.loads(current.read_text(encoding='utf-8'))
             path = held.get('path') or str(self.directory/(held['id']+'.archhub'))
@@ -598,11 +867,9 @@ class SessionFiles:
         if len(raw) > MAX_BYTES:
             raise ValueError('Imported file exceeds 8 MiB')
         kind, imported = import_text(raw.decode('utf-8-sig'), source.name)
-        if kind == 'skill':
-            target = skills_directory()/(imported['id']+'.archhub')
-        else:
+        if kind != 'skill':
             imported['id'] = 'import-' + hashlib.sha1(str(source.resolve()).lower().encode()).hexdigest()[:16]
-            target = self.directory/(imported['id']+'.archhub')
+        target = document_path(self.directory, imported)
         with canvas_documents.locked(target):
             existing = read_document(target) if target.exists() else None
             document = reimport(existing, imported)
@@ -616,11 +883,12 @@ class SessionFiles:
             raise ValueError('Session file action is required')
         action = body['action']
         if action == 'catalogue':
-            return {'ok':True,'items':catalogue(),'recent':self.recent(),'directory':str(self.directory)}
+            return {'ok':True,'items':catalogue(),'recent':self.recent(),'directory':str(self.directory),
+                    'sessions':[{'id':row['skill']['id'], 'title':row['skill']['title'], 'path':str(row['path'])} for row in load_skills()]}
         if action == 'initial':
             import sys
             launch = next((a for a in sys.argv[1:] if str(a).lower().endswith('.archhub')), None)
-            current = self.directory/'current.json'
+            current = self.metadata/'current.json'
             held = json.loads(current.read_text(encoding='utf-8')) if current.exists() else {}
             recovery = Path(held['path']) if held.get('path') else self.directory/(held['id']+'.archhub') if held else self.directory/'autosave.archhub'
             document = read_document(launch) if launch else read_document(recovery) if recovery.exists() else new_document()
@@ -629,7 +897,7 @@ class SessionFiles:
             # A built-in starter becomes the founder's own new session file (the starter itself never changes).
             from .starters import document as starter_document
             document = starter_document(str(body.get('id') or ''))
-            path = write_document(self.directory/(document['id']+'.archhub'), document)
+            path = write_document(document_path(self.directory, document), document)
             canvas_documents.remember(path, document)
             self.remember(path, document)
             self._current(document['id'], path)
@@ -644,6 +912,7 @@ class SessionFiles:
                 return self.import_file(path)
             document = read_document(path)
             self.remember(local_path(path),document)
+            self._current(document['id'], path)
             return {'ok':True,'document':document,'path':str(local_path(path))}
         if action in ('save','autosave'):
             document = validate(body.get('document'))
@@ -652,25 +921,36 @@ class SessionFiles:
             if action == 'autosave':
                 # Autosave is in place: the open file IS the document agents edit too.
                 from .canvas_documents import commit_ui
-                path = str(local_path(body['path'])) if body.get('path') else str(self.directory/(document['id']+'.archhub'))
+                path = str(local_path(body['path'])) if body.get('path') else str(document_path(self.directory, document))
                 merged = commit_ui(path, document, int(body.get('base_revision') or 0))
-                self._current(document['id'], body.get('path') or '')
+                renamed = move_session(path, Path(path).parent)
+                if renamed != path:
+                    _relocate_pointers(profile_directory(), [(path, renamed)])
+                    path = renamed
+                    canvas_documents.remember(path, merged)
+                self._current(document['id'], path)
                 return {'ok':True,'path':path,'document':merged,'revision':merged.get('properties',{}).get('revision',0)}
             path = body.get('path')
-            if not path and save_picker:
-                path = save_picker('Save session','ArchHub session (*.archhub)')
+            if not path and body.get('save_as') and save_picker:
+                path = save_picker('Save session','ArchHub session (*.archhub)',str(document_path(self.directory, document)))
+                if not path:
+                    return {'ok':True,'cancelled':True}
+            elif not path:
+                path = str(document_path(self.directory, document))
             if not path:
                 return {'ok':True,'cancelled':True}
+            if body.get('save_as'):
+                document = {**document, 'title': Path(path).stem}
             path = write_document(path,document)
             canvas_documents.remember(path, document)
             self.remember(path,document)
             self._current(document['id'], path)
-            return {'ok':True,'path':path}
+            return {'ok':True,'path':path,'document':document}
         if action == 'save-skill':
             document = validate(body.get('document'))
             if not re.fullmatch(r'[A-Za-z0-9_-]{1,128}',document['id']):
                 raise ValueError('Skill id must be a portable filename identifier')
-            return {'ok':True,'path':write_document(str(skills_directory()/(document['id']+'.archhub')),document),'id':'skill:'+document['id']}
+            return self.dispatch({'action':'save', 'document':document})
         if action == 'param-op':
             # One implementation of typed parameters for the window and the agents (node_params.py).
             from . import node_params
@@ -714,7 +994,7 @@ class SessionFiles:
                     written.append(change.get('key'))
             return {**solve(document, list(body.get('changed') or []), invoke=invoke, stopped=stopped), 'written': written}
         if action in ('head', 'read'):
-            path = local_path(body.get('path')) if body.get('path') else self.directory/(str(body.get('id',''))+'.archhub')
+            path = local_path(body.get('path')) if body.get('path') else next((row['path'] for row in load_skills() if row['skill']['id'] == body.get('id')), self.directory/'missing.archhub')
             if not re.fullmatch(r'[A-Za-z0-9_-]{0,128}', str(body.get('id',''))) or not path.exists():
                 return {'ok':True,'revision':-1}
             document = read_document(path)

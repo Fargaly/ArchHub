@@ -2389,9 +2389,9 @@ def _skill_entry(loaded, items):
     ports = skill_ports(skill, items)
     return {
         "id": "skill:" + skill["id"],
-        "cat": "skills",
+        "cat": "sessions",
         "title": skill["title"],
-        "sub": "Skill · %d nodes" % len(skill["nodes"]),
+        "sub": "Session · %d nodes" % len(skill["nodes"]),
         "engine": "skill",
         "params": {"skill": skill["id"]},
         "path": str(path),

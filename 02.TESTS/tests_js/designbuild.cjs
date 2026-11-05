@@ -255,6 +255,7 @@ const {chromium} = require('playwright');
       await page.getByRole('complementary',{name:'Library shelf'}).waitFor({state:'hidden'});
       await node.locator('[data-node-card-title]').click();
       await page.getByTitle('Reset zoom').click();
+      await page.waitForFunction(()=>new window.DOMMatrix(window.getComputedStyle(document.querySelector('.react-flow__viewport')).transform).a===1);
       await page.locator('[data-node-inspector="slice"]').waitFor();
       assert.equal(await page.getByRole('tab',{name:'Selection',exact:true}).getAttribute('aria-selected'),'true');
       assert.equal(await page.getByRole('region',{name:'Task parameters',exact:true}).count(),0);
@@ -263,6 +264,7 @@ const {chromium} = require('playwright');
       await pointer('mouseMoved',start.x,start.y);
       await pointer('mousePressed',start.x,start.y,true,'middle');
       await pointer('mouseMoved',start.x+shift,start.y,true,'middle');
+      await page.waitForFunction(()=>document.querySelector('.react-flow__node[data-id="slice"]').getBoundingClientRect().x>=64);
       await pointer('mouseReleased',start.x+shift,start.y,false,'middle');
       await page.waitForFunction(()=>document.querySelector('.react-flow__node[data-id="slice"]').getBoundingClientRect().x>=64);
 

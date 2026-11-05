@@ -140,7 +140,8 @@ def test_rendered_checkpoint_and_width(tmp_path, monkeypatch):
     import subprocess
     root = Path(__file__).resolve().parents[2]
     subprocess.run(["node", "--max-old-space-size=512", "03.TOOLS/packaging/compile_studio.cjs"],
-                   cwd=root, check=True, capture_output=True, timeout=180)
+                   cwd=root, check=True, capture_output=True, timeout=180,
+                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     _isolate(monkeypatch, tmp_path / "rendered")
     from nodelang import host_brokers
     from nodelang.nograph_server import NoGraphServer

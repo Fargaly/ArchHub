@@ -60,6 +60,14 @@ test('CHECKPOINT: document round trip and inspector owner width', async () => {
     const params = page.locator('#params');
     const handle = await page.getByRole('separator', {name:'Resize the Properties pane'}).boundingBox();
     const before = await params.boundingBox();
+    const groupWidth = await page.locator('#home-context').evaluate(element => element.offsetWidth);
+    let releaseWidthSave;
+    const widthSave = new Promise(resolve => { releaseWidthSave = resolve; });
+    await page.route('**/api/universal/settings-action', async route => {
+      const body = route.request().postDataJSON();
+      if (body.function === 'setAppearance' && body.args[0] === 'Appearance.Inspector width') await widthSave;
+      await route.continue();
+    });
     const x = handle.x + handle.width/2, y = handle.y + handle.height/2;
     const input = await page.context().newCDPSession(page);
     await input.send('Input.dispatchMouseEvent', {type:'mouseMoved',x,y});
@@ -67,6 +75,11 @@ test('CHECKPOINT: document round trip and inspector owner width', async () => {
     await input.send('Input.dispatchMouseEvent', {type:'mouseMoved',x:x-(375-before.width),y,button:'left',buttons:1});
     await input.send('Input.dispatchMouseEvent', {type:'mouseReleased',x:x-(375-before.width),y,button:'left',buttons:0,clickCount:1});
     await input.detach();
+    await page.getByRole('status', {name:'', exact:true}).filter({hasText:/^Saving$/}).waitFor();
+    assert.equal(await page.getByRole('status').filter({hasText:/^Saving$/}).evaluate(element => window.getComputedStyle(element).pointerEvents), 'none');
+    assert.equal(await page.locator('#home-context').evaluate(element => element.offsetWidth), groupWidth);
+    assert.equal(await params.evaluate(element => element.offsetWidth), 375);
+    releaseWidthSave();
     await page.waitForFunction(() => window.ArchHubAPI.getSnapshot().settings.find(row=>row.id==='Appearance.Inspector width').value === 375);
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const after = await params.boundingBox();

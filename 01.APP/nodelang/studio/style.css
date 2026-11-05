@@ -252,7 +252,9 @@ html[data-reduced-motion="true"] *::after{transition:none!important;animation:no
 .app-window:has(.dx-home-root){grid-template-rows:var(--layout-header-height) minmax(0,1fr)!important}
 .app-window:has(.dx-home-root)>footer{display:none!important}
 .dx-home-root,.dx-home,.dx-split,.dx-col,.dx-workspace,.dx-main{min-width:0;min-height:0}
-.dx-home-root{height:100%;display:flex;background:var(--color-bg);color:var(--color-ink);font-family:var(--type-family-ui),Inter,sans-serif;overflow:hidden}
+.dx-home-root{height:100%;display:flex;position:relative;background:var(--color-bg);color:var(--color-ink);font-family:var(--type-family-ui),Inter,sans-serif;overflow:hidden}
+.dx-home-root>p[role]{position:absolute;top:0;left:0;z-index:2;margin:0;padding:4px 8px;background:var(--color-bg-panel);pointer-events:none}
+.dx-home-root>p[role] button{pointer-events:auto}
 .dx-home,.dx-split{flex:1;height:100%;overflow:hidden}
 .dx-workspace{display:flex;flex-direction:column;height:100%;padding:16px 16px 8px;gap:8px;overflow:hidden}
 .dx-head{display:flex;flex-wrap:nowrap;align-items:center;justify-content:space-between;gap:8px 12px;min-width:0}

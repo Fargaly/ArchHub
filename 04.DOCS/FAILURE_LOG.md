@@ -2,6 +2,10 @@
      From now on this repository's incidents are logged here. -->
 # FAILURE_LOG
 
+### 2026-11-06 · CHECKPOINT pane width during saving
+- **gap**: on 2c901867, the rail court observed live 407.5 versus stored/reopened 395. The Saving status was a horizontal flex sibling that temporarily reduced the panel group from 1376 to 1334 pixels during the owner update.
+- **resolution**: status/error feedback overlays the existing board without resizing it; the checkpoint browser court holds the real appearance write and checks stable group width and live 375 before acknowledgement, then stored/reopened 375. The DESIGNBUILD pan court waits for rendered zoom 1 and observed movement before release, preserving its final position check. Fonts output was diagnostic context for the pointer timeout, not a font assertion. Release/installed acceptance remains with 717; this lane uses disposable headless profiles only.
+
 ### 2026-10-16 · NATIVEHOOK diagnostic court overlap
 - **status**: closed for scheduling; feature admission remains pending
 - **claim**: the lane runs its heavy verification serially.

@@ -1,1 +1,13 @@
-{"intent":"NOGRAPH","author":"codex-checkpoint","why":"Restore task-file checkpoints and exact live inspector width; isolated source lane for coordinator 717."}
+{
+  "intent": "NOGRAPH",
+  "author": "codex-checkpoint",
+  "why": "Preserve task-file checkpoints and live=stored=reopened inspector width by keeping saving feedback outside board layout; isolated source lane for coordinator 717.",
+  "verification": {
+    "summary": "146 passed, 1 warning in 242.52s (0:04:02)",
+    "python_files": 12,
+    "protected_write_attempts": 0,
+    "live_stored_reopened_width": 375,
+    "installed_verified": false,
+    "source_sha256": "676bf65c6bb9332957792117a700dffe3a2159f497250751fb8f08a81b3da723"
+  }
+}

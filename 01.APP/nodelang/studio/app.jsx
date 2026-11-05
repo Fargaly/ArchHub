@@ -25,7 +25,7 @@
     const [route, setRoute] = React.useState('home'),  // SPEC § and founder 2026-11-02: the app opens on Home; the task session stays on that page
       [canvasOpened, setCanvasOpened] = React.useState(false),
       [task, setTask] = React.useState(''),
-      [taskFace, setTaskFace] = React.useState('canvas'),
+      [taskFaces, setTaskFaces] = React.useState(() => new Map()),
       [composerDraft, setComposerDraft] = React.useState({}),
       [modal, setModal] = React.useState(null),
       [toast, setToast] = React.useState(''),
@@ -179,11 +179,13 @@
         return null;
       }
     };
-    const openTaskFile = async (id, face = 'canvas') => {
+    const taskFace = taskFaces.get(task) || 'workshop';
+    const setTaskFace = face => setTaskFaces(current => new Map(current).set(task, face));
+    const openTaskFile = async (id, face = taskFaces.get(id) || 'workshop') => {
       const opened = await act(() => api.openTaskGraph(id));
       if (!opened || opened.cancelled) return;
       setTask(id);
-      setTaskFace(face);
+      setTaskFaces(current => new Map(current).set(id, face));
       go('task-file');
     };
     const confirm = (title, run) => show('Confirm', {

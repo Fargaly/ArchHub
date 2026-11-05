@@ -60,7 +60,10 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
       assert.deepEqual(await nav.getByRole('button').evaluateAll(buttons => buttons.slice(0, 6).map(b => b.getAttribute('aria-label'))), labels);
       assert.equal(await page.locator('[data-home-face]').count(), 0, 'Home starts with the task list');
       assert.deepEqual(await page.evaluate(() => window.openedTasks), []);
-      if (mode === 'clicked') await page.locator('.dx-task').filter({hasText: 'Selected task'}).click();
+      if (mode === 'clicked') {
+        await page.locator('.dx-task').filter({hasText: 'Selected task'}).dblclick();
+        await page.locator('.dx-main[data-home-face="workshop"]').waitFor();
+      }
       const boxes = [];
       for (const label of labels) boxes.push(await nav.getByRole('button', {name: label, exact: true}).boundingBox());
       boxes.forEach((box, index) => { assert.ok(box && box.height > 0); if (index) assert.ok(box.y >= boxes[index - 1].y + boxes[index - 1].height, labelAt(index)); });
@@ -84,6 +87,19 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
         }
       }
       if (mode === 'selected') {
+        await page.getByRole('button', {name: 'Workshop view', exact: true}).click();
+        await nav.getByRole('button', {name: 'Home', exact: true}).click();
+        await page.locator('.dx-task').filter({hasText: 'Recent task'}).dblclick();
+        await page.locator('.dx-main[data-home-face="workshop"]').waitFor();
+        await nav.getByRole('button', {name: 'Canvas', exact: true}).click();
+        await page.locator('.dx-main[data-home-face="canvas"]').waitFor();
+        await nav.getByRole('button', {name: 'Home', exact: true}).click();
+        await page.locator('.dx-task').filter({hasText: 'Selected task'}).dblclick();
+        await page.locator('.dx-main[data-home-face="workshop"]').waitFor();
+        await nav.getByRole('button', {name: 'Home', exact: true}).click();
+        await page.locator('.dx-task').filter({hasText: 'Recent task'}).dblclick();
+        await page.locator('.dx-main[data-home-face="canvas"]').waitFor();
+        console.log('PASS per-task faces: new task Workshop; selected Workshop; recent Canvas');
         await nav.getByRole('button', {name: 'Automations', exact: true}).click();
         await page.getByRole('button', {name: 'Repeat recent task', exact: true}).click();
         await page.locator('.dx-main[data-home-face="canvas"]').waitFor();

@@ -27,7 +27,9 @@ namespace RevitMCP
         private ExternalEvent _event;
         private int _pending;
         private readonly Action<string> _log;
+        private Item _running;
         public bool HasWork => Volatile.Read(ref _pending) > 0;
+        public bool IsRunning { get { var item = Volatile.Read(ref _running); return item != null && Volatile.Read(ref item.State) == 1; } }
         public RevitEventHandler(Action<string> log = null) { _log = log ?? (message => Trace.WriteLine(message)); }
 
         // Cancel this known warning/open operation; never choose Save, overwrite, or an unknown answer.
@@ -60,6 +62,7 @@ namespace RevitMCP
             while (_queue.TryDequeue(out var item))
             {
                 if (Interlocked.CompareExchange(ref item.State, 1, 0) != 0) continue;
+                Volatile.Write(ref _running, item);
                 try
                 {
                     var s = item.Fn(app);
@@ -74,6 +77,7 @@ namespace RevitMCP
                 finally
                 {
                     Interlocked.Exchange(ref item.State, 2);
+                    Volatile.Write(ref _running, null);
                     Interlocked.Decrement(ref _pending);
                 }
             }

@@ -73,7 +73,7 @@ namespace RevitMCP
 
         private void OnDialogShowing(object sender, DialogBoxShowingEventArgs args)
         {
-            if (_handler == null || !_handler.HasWork) return;
+            if (_handler == null || !_handler.IsRunning) return;
             var answer = RevitEventHandler.SafeDialogAnswer(args.DialogId);
             if (!answer.HasValue)
             {

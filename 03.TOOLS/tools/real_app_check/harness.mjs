@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { pathToFileURL } from 'node:url';
-import { stepVerdict } from './guards.mjs';
+import { refuseSigning, stepVerdict } from './guards.mjs';
 
 
 const lines = readline.createInterface({ input: process.stdin })[Symbol.asyncIterator]();
@@ -55,12 +55,14 @@ const shot = async name => {
 const until = async (read, ok, tries = 40, ms = 500) => { let value; for (let i = 0; i < tries; i++) { value = await read(); if (ok(value)) return value; await sleep(ms); } return value; };
 const rectOf = expression => js(`(() => { const e = ${expression}; if (!e) return null; const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + Math.min(r.height / 2, 14), w: r.width, h: r.height, text: (e.innerText || e.getAttribute('aria-label') || '').trim().slice(0, 80) }; })()`);
 const mouse = async (point, button = 'left', clickCount = 1) => {
+  if (point) refuseSigning(point.text);
   await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: point.x, y: point.y });
   await cdp('Input.dispatchMouseEvent', { type: 'mousePressed', x: point.x, y: point.y, button, clickCount });
   await cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', x: point.x, y: point.y, button, clickCount });
 };
 // Click the visible element whose own text, aria-label or title is exactly `text`, with the real mouse.
 const clickText = async (text, selector = 'button,[role=button],[role=tab],a') => {
+  refuseSigning(text);
   const point = await rectOf(`[...document.querySelectorAll(${JSON.stringify(selector)})].find(e => e.getClientRects().length && [(e.innerText||'').trim(), (e.getAttribute('aria-label')||'').trim(), (e.title||'').trim()].includes(${JSON.stringify(text)}))`);
   if (!point) return false;
   await mouse(point);

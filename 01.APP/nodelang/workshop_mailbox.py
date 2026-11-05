@@ -76,7 +76,9 @@ def application_history(source=None, *, read_only=False, busy_timeout_seconds: f
     path = Path(database) if database is not None else profile_database()
     path.parent.mkdir(parents=True, exist_ok=True)
     with closing(sqlite3.connect(path, isolation_level=None, timeout=busy_timeout_seconds)) as connection:
-        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA busy_timeout=%d" % (busy_timeout_seconds * 1000))
+        if connection.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
+            connection.execute("PRAGMA journal_mode=WAL")
         with ConversationHistoryStore(path, instance_id=ROOM, connection=connection,
                 busy_timeout_seconds=busy_timeout_seconds) as selected:
             if selected._db.execute("SELECT 1 FROM conversations WHERE id=?", (ROOM,)).fetchone() is None:
@@ -135,7 +137,7 @@ def _delivery_cursor(history, row):
         "json_extract(workshop_delivery_cursors.record,'$.since')", (row["session"], json.dumps(payload)))
 
 
-# A room post is visible to every reader. It names nobody, so it is injected into nobody.
+# Room posts are visible to every reader; only an explicit "*" also broadcasts into sessions.
 _ROOM_TARGETS = {"", "*", "everyone", "all", "room", "workshop", "founder", "ahmed", "you"}
 _GENERIC_ALIASES = {"claude", "claude code", "codex", "opencode", "cursor", "copilot", "grok", "gemini",
                     "goose", "antigravity", "antigravity ide", "mcp"}
@@ -166,8 +168,8 @@ def _header_targets(message):
 
 
 def agent_addressed(message):
-    """True only when the note names a specific agent. '*' and a bare status name nobody."""
-    return any(target.casefold() not in _ROOM_TARGETS for target in _header_targets(message))
+    """Explicit broadcast or a named agent; an ordinary room post names nobody."""
+    return any(target == "*" or target.casefold() not in _ROOM_TARGETS for target in _header_targets(message))
 
 
 def _aliases(identity, declaration=None):
@@ -175,7 +177,7 @@ def _aliases(identity, declaration=None):
     aliases = {str(value).casefold() for value in (identity.get("sender_label"), identity.get("sender_key"),
         declaration.get("agent"), declaration.get("session"), declaration.get("native_session_id"),
         declaration.get("runtime"), declaration.get("display_name"), declaration.get("title"),
-        declaration.get("role"), *declaration.get("aliases", ())) if value}
+        declaration.get("role") if declaration.get("role_current", True) else None, *declaration.get("aliases", ())) if value}
     if "claude" in aliases:
         aliases.add("claude code")
     label = str(identity.get("sender_label") or declaration.get("agent") or "").split(" / ", 1)[0]
@@ -184,7 +186,7 @@ def _aliases(identity, declaration=None):
     runtime_alias = {"vscode-copilot":"copilot", "grok-bot":"grok"}.get(declaration.get("runtime"))
     if runtime_alias:
         aliases.add(runtime_alias)
-    role = str(declaration.get("role") or "").casefold()
+    role = str(declaration.get("role") or "").casefold() if declaration.get("role_current", True) else ""
     aliases.update({"717", "coordinator"} if role == "717" else
                    {"design", "designer"} if role == "design" else
                    {"research", "r&d", "c91e"} if role == "research" else ())
@@ -202,7 +204,7 @@ def _addressed(message, identity, declaration=None):
     declaration = declaration or {}
     aliases = _aliases(identity, declaration)
     native = str(declaration.get("native_session_id") or "").casefold()
-    return any(target.casefold() not in _ROOM_TARGETS and (target.casefold() in aliases or
+    return any(target == "*" or target.casefold() not in _ROOM_TARGETS and (target.casefold() in aliases or
         (re.fullmatch(r"[0-9a-f]{3,}", target.casefold()) is not None
          and native.startswith(target.casefold()))) for target in _header_targets(message))
 
@@ -309,7 +311,7 @@ def _asks_for_reply(message):
 
 
 def _recipient_rows(message, declarations):
-    """Each named agent, and only that agent. A room post and an unknown name match nobody."""
+    """Named agents or explicit broadcast recipients; ordinary room posts match nobody."""
     if not agent_addressed(message):
         return []
     targets = [value.casefold() for value in _header_targets(message) if value.casefold() not in _ROOM_TARGETS]
@@ -951,10 +953,9 @@ def read_declarations(connection, *, include_archived=False):
             continue
         holders = [other for other in rows if other.get("role") == role and other["current"]]
         holder = max(holders, key=lambda other: other.get("updated_at", ""), default=None)
-        if holder is not None:
+        row["role_current"] = row is holder
+        if holder is not None and not row["current"]:
             holder.setdefault("aliases", []).extend(_aliases({}, row))
-            if row is not holder:
-                row["current"] = False
     return [row for row in rows if include_archived or row["current"]]
 
 
@@ -1170,7 +1171,7 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
                     result = _declare(selected, body, context, identity, runtime, peer, identity["sender_key"])
                     target, detail = result["declaration"]["request_id"], {"status":body["status"]}
                 else:
-                    result = _send(selected, body, identity, sender_binding={"session":identity["sender_key"],
+                    result = _send(selected, body, identity, resolve_live=True, sender_binding={"session":identity["sender_key"],
                         "runtime":runtime, "native_session_id":next(iter(context.values()), None)})
                     target, detail = result["message_id"], {"to":result["to"], "repeat":result.get("repeat", False)}
                 with selected._transaction(write=True):
@@ -1180,7 +1181,7 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
             break
         except sqlite3.OperationalError as error:
             remaining = deadline - time.monotonic()
-            if (getattr(error, "sqlite_errorcode", None) not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+            if ((getattr(error, "sqlite_errorcode", 0) & 0xff) not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
                     or not store_busy_timeout_seconds or remaining <= 0):
                 raise
             # SQLite has no writer fairness; jitter only transactions, never native effects.
@@ -1299,13 +1300,13 @@ def _deliver_now(database, result, body, identity):
                       if row.get("session") != identity["sender_key"]]
         current = read_declarations(selected._db)
         live = {row["session"] for row in current}
-        if not recipients or not any(row["session"] in live for row in recipients):
+        if not recipients or not any(row["session"] in live or row["session"].startswith("native:") for row in recipients):
             recipients = _recipient_rows(message, current)
         founder = body["to"].strip().casefold() in ("ahmed", "founder", "you")
         parts = {part.strip().casefold() for part in body["to"].split(",") if part.strip()}
-        if parts and parts <= _ROOM_TARGETS:
+        if parts and parts <= _ROOM_TARGETS and "*" not in parts:
             return []
-        if not recipients and not founder and result.get("status") == "recorded":
+        if not recipients and not founder:
             # Display names and @handles address agents too (the composer and agents use the same names).
             from .workshop_live import live_agents
             wanted = {part.strip().lstrip("@").casefold() for part in body["to"].split(",")}
@@ -1397,17 +1398,31 @@ def _validate_send(body):
     return target, text, control, reply, retry_key
 
 
-def _send(history, body, identity, *, queued=(), sender_binding=None):
+def _send(history, body, identity, *, queued=(), sender_binding=None, resolve_live=False):
     target, text, control, reply, retry_key = _validate_send(body)
     retry_key = sha256((identity["sender_key"] + ":" + retry_key).encode()).hexdigest()
-    declarations = read_declarations(history._db)
+    declarations = read_declarations(history._db, include_archived=True)
     sender = _declaration(history, identity)
     project = sender.get("project") or (sender_binding or {}).get("project") or ""
     probe = {"content": "To " + target + ":\n" + text, "category": CATEGORY, "author": identity["sender"],
              "evidence": [ROUTING_EVIDENCE, json.dumps({"project": project})]}
+    recipients = _recipient_rows(probe, declarations)
+    targets = [part for part in _header_targets(probe) if part.casefold() not in _ROOM_TARGETS]
+    waiting = [part for part in targets if _role(part) in {"717", "research", "design", "tbp"}
+               or any(part.casefold() in _aliases({}, row) for row in declarations)]
+    resolved = set()
+    if resolve_live and targets:
+        from .workshop_live import discover_target
+        for part in targets:
+            if part in waiting or _recipient_rows({**probe, "content":"To " + part + ":\nx"}, declarations):
+                continue
+            found = discover_target(part)
+            if found:
+                recipients.extend(found)
+                resolved.add(part)
     with history._transaction(write=True):
         routing = {"recipients":[{key: row.get(key) for key in
-            ("session", "agent", "runtime", "native_session_id")} for row in _recipient_rows(probe, declarations)],
+            ("session", "agent", "runtime", "native_session_id")} for row in recipients],
             "project": project,
             "native_control":control,
             "sender": {key: value for key, value in (sender_binding or sender).items()
@@ -1429,13 +1444,9 @@ def _send(history, body, identity, *, queued=(), sender_binding=None):
             reply_principal=identity["sender"],
             idempotency_key=retry_key)
         history._db.execute("CREATE TABLE IF NOT EXISTS workshop_waiting(message_id TEXT PRIMARY KEY, target TEXT NOT NULL)")
-        known = read_declarations(history._db, include_archived=True)
-        targets = [part for part in _header_targets(probe) if part.casefold() not in _ROOM_TARGETS]
-        waiting = [part for part in targets if _role(part) in {"717", "research", "design", "tbp"}
-                   or any(part.casefold() in _aliases({}, row) for row in known)]
         if waiting:
             history._db.execute("INSERT OR IGNORE INTO workshop_waiting VALUES(?,?)", (message["id"], target))
-        missing = [] if reply else [part for part in _header_targets(probe) if part.casefold() not in _ROOM_TARGETS and part not in waiting
+        missing = [] if reply else [part for part in _header_targets(probe) if part.casefold() not in _ROOM_TARGETS and part not in waiting and part not in resolved
                    and not _recipient_rows({"content": "To " + part + ":\nx", "category": CATEGORY,
                        "author": identity["sender"], "evidence": probe["evidence"]}, declarations)]
         if missing:

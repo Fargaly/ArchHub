@@ -1,0 +1,112 @@
+--- a/00.GOVERNANCE/03.AGENT-HOOKS/product-hooks/publication_scan.py
++++ b/00.GOVERNANCE/03.AGENT-HOOKS/product-hooks/publication_scan.py
+@@ -126 +126 @@
+-def outgoing_entries(stdin):
++def outgoing_entries(stdin, remote_name=None):
+@@ -144,0 +145,5 @@
++    # New branches advertise a zero old SHA; their published ancestors still
++    # belong to this destination's remote-tracking refs, not to this push.
++    if remote_name and remote_name in git("remote").decode().splitlines():
++        bases.update(git("for-each-ref", "--format=%(objectname)",
++                         "refs/remotes/" + remote_name + "/").decode().splitlines())
+@@ -265 +270 @@
+-        entries = staged_entries() if args.mode == "staged" else outgoing_entries(sys.stdin.read())
++        entries = staged_entries() if args.mode == "staged" else outgoing_entries(sys.stdin.read(), args.remote)
+@@ -284 +288,0 @@
+-
+--- /dev/null
++++ b/00.GOVERNANCE/07.CARE-CHECKS/test_publication_scan.py
+@@ -0,0 +1,93 @@
++"""Exercise publication boundaries with real, isolated Git objects."""
++import os
++from pathlib import Path
++import subprocess
++import sys
++
++import pytest
++
++
++SCANNER = Path(__file__).resolve().parents[1] / '03.AGENT-HOOKS/product-hooks/publication_scan.py'
++
++
++def git(repo, *args):
++    return subprocess.run(['git', '-C', str(repo), *args], check=True,
++                          capture_output=True, text=True, timeout=15).stdout.strip()
++
++
++@pytest.fixture
++def repo(tmp_path):
++    git(tmp_path, 'init', '-q')
++    git(tmp_path, 'config', 'user.name', 'Fixture')
++    git(tmp_path, 'config', 'user.email', 'fixture@example.invalid')
++    git(tmp_path, 'config', 'core.hooksPath', '')
++    git(tmp_path, 'config', 'commit.gpgSign', 'false')
++    git(tmp_path, 'remote', 'add', 'origin', 'https://example.invalid/public.git')
++    # Already-published legacy material must not block unrelated new work.
++    (tmp_path / 'bbc4-legacy.txt').write_text('published fixture')
++    git(tmp_path, 'add', '.')
++    git(tmp_path, 'commit', '-qm', 'published fixture')
++    base = git(tmp_path, 'rev-parse', 'HEAD')
++    git(tmp_path, 'update-ref', 'refs/remotes/origin/main', base)
++    git(tmp_path, 'checkout', '-qb', 'lane/clean')
++    return tmp_path
++
++
++def scan(repo, refs=None):
++    tip = git(repo, 'rev-parse', 'HEAD')
++    refs = refs or f'refs/heads/lane/clean {tip} refs/heads/lane/clean {"0" * 40}\n'
++    env = {**os.environ, 'ARCHHUB_FORCE_PUBLIC': '1'}
++    return subprocess.run([sys.executable, '-B', str(SCANNER), 'pre-push', 'origin'],
++                          input=refs, cwd=repo, env=env, capture_output=True, text=True, timeout=30)
++
++
++def commit(repo, path, content):
++    (repo / path).write_text(content)
++    git(repo, 'add', '.')
++    git(repo, 'commit', '-qm', 'outgoing fixture')
++
++
++def test_new_branch_clean_commit_excludes_remote_history(repo):
++    commit(repo, 'clean.txt', 'new work')
++    result = scan(repo)
++    assert result.returncode == 0, result.stderr
++    assert 'publication-scan PASS' in result.stdout
++
++
++def test_new_branch_still_refuses_new_secret(repo):
++    commit(repo, 'notes.txt', 'credential=' + 'ghp_' + 'Q' * 36)
++    result = scan(repo)
++    assert result.returncode == 1
++    assert 'github-token' in result.stderr
++    assert 'Q' * 36 not in result.stderr
++
++
++def test_new_path_reusing_remote_blob_still_checks_privacy(repo):
++    git(repo, 'mv', 'bbc4-legacy.txt', 'bbc4-new.txt')
++    git(repo, 'commit', '-qm', 'rename outgoing fixture')
++    result = scan(repo)
++    assert result.returncode == 1
++    assert 'client-data-public' in result.stderr
++    assert 'bbc4-new.txt' in result.stderr
++
++
++def test_secret_removed_before_tip_is_still_refused(repo):
++    commit(repo, 'notes.txt', 'ghp_' + 'Q' * 36)
++    commit(repo, 'notes.txt', 'removed before tip')
++    result = scan(repo)
++    assert result.returncode == 1
++    assert 'github-token' in result.stderr
++
++
++def test_unrelated_remote_does_not_exempt_outgoing_commit(repo):
++    commit(repo, 'notes.txt', 'ghp_' + 'Q' * 36)
++    git(repo, 'update-ref', 'refs/remotes/other/main', git(repo, 'rev-parse', 'HEAD'))
++    assert scan(repo).returncode == 1
++
++
++def test_nonzero_pushed_ref_also_excludes_other_remote_branches(repo):
++    base = git(repo, 'rev-parse', 'HEAD')
++    commit(repo, 'clean.txt', 'new work')
++    tip = git(repo, 'rev-parse', 'HEAD')
++    refs = f'refs/heads/lane/clean {tip} refs/heads/lane/clean {base}\n'
++    assert scan(repo, refs).returncode == 0

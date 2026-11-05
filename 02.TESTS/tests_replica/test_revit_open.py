@@ -199,8 +199,53 @@ def test_watchdog_cancels_unstarted_work_and_unknown_dialogs_stay_open(fixture_e
     result = subprocess.run([*fixture_exe, 'stall'], capture_output=True, text=True, timeout=90)
     assert result.returncode == 0, result.stdout + result.stderr
     seen = json.loads(result.stdout)
-    assert seen['known'] == 2 and seen['unknown'] is None
+    assert seen['known'] is None and seen['unknown'] is None
     assert seen['calls'] == 0 and seen['pending'] is False
     assert seen['timeout']['execution_state'] == 'not_started' and seen['timeout']['retry_safe'] is True
     assert seen['running']['execution_state'] == 'running' and seen['running']['retry_safe'] is False
     assert 'Unknown add-in "dialog"' in seen['running']['error']
+
+
+@pytest.mark.parametrize("extension", ["rte", "rft", "RTE", "RFT"])
+def test_open_refuses_templates_before_any_revit_api(fixture_exe, extension):
+    result = run(fixture_exe, body={"path": "C:\\fixture\\model." + extension})
+    assert result["answer"]["status"] == "error" and "templates" in result["answer"]["error"]
+    assert result["Opens"] == result["Starts"] == result["Calls"] == 0
+    assert result["LastPath"] is None
+
+
+@pytest.mark.parametrize("method", ["OpenDocumentFile", "OpenAndActivateDocument"])
+@pytest.mark.parametrize("extension", ["rte", "rft", "RTE", "RFT"])
+@pytest.mark.parametrize("transaction", [False, True])
+def test_exec_refuses_template_opening_before_compile_or_transaction(fixture_exe, method, extension, transaction):
+    code = 'var path = @"C:\\fixture\\model.' + extension + '"; ctx.UIApp.' + method + '(path);'
+    result = run(fixture_exe, "/exec", {"code": code, "transaction": transaction}, active=True)
+    assert result["answer"]["status"] == "error" and "templates" in result["answer"]["error"]
+    assert result["Calls"] == result["Starts"] == result["Opens"] == 0
+
+
+def test_only_running_broker_work_can_cancel_known_dialogs(fixture_exe):
+    result = subprocess.run([*fixture_exe, "dialogs"], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout) == {"queued": None, "running": 2, "unknown": None,
+                                       "completed": None, "active": True, "finished": False, "pending": False}
+
+
+@pytest.mark.parametrize("extension", ["rte", "rft", "RTE", "RFT"])
+@pytest.mark.parametrize("code", ["external-file", "external-activate", "external-file-catch", "external-activate-catch"])
+def test_exec_cancels_runtime_template_paths_even_if_script_catches(fixture_exe, extension, code):
+    result = run(fixture_exe, "/exec", {"code": code, "transaction": False},
+                 active=True, external_path="C:/fixture/computed." + extension)
+    assert result["answer"]["status"] == "error" and "templates" in result["answer"]["error"]
+    assert result["Calls"] == 1 and result["Opens"] == result["file_opens"] == 0
+    assert result["opening_handlers"] == 0
+
+
+@pytest.mark.parametrize("code", ["external-file", "external-activate", "throw", "fail"])
+def test_exec_runtime_guard_detaches_on_success_or_failure(fixture_exe, code):
+    result = run(fixture_exe, "/exec", {"code": code, "transaction": False},
+                 active=True, external_path="C:/fixture/model.rvt")
+    assert result["answer"]["status"] == ("error" if code in ("throw", "fail") else "ok")
+    assert result["opening_handlers"] == 0
+    if code.startswith("external-"):
+        assert result["Opens"] + result["file_opens"] == 1

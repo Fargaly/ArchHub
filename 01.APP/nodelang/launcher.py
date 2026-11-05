@@ -347,25 +347,8 @@ def _held_port_outcome(port, front_running_archhub, tell_the_person):
 
 
 def _launcher_profile(environment):
-    """Profile identity is local state, never account identity or signing authority."""
-    local = environment.get("LOCALAPPDATA")
-    if not local:
-        return None
-    state = environment.get("ARCHHUB_TEST_STATE_DIR") or str(Path(local) / "ArchHub")
-    return tuple(os.path.normcase(os.path.realpath(value)) for value in (local, state))
-
-
-def _profile_lock_port(environment):
-    import hashlib
-    if environment.get("ARCHHUB_TEST_LOCK_PORT"):
-        port = int(environment["ARCHHUB_TEST_LOCK_PORT"])
-        if not 1 <= port <= 65535:
-            raise ValueError("Isolated lock port must be between 1 and 65535")
-        return port
-    profile = _launcher_profile(environment)
-    if profile is None:
-        raise ValueError("LOCALAPPDATA is required for the launcher profile")
-    return 45000 + int.from_bytes(hashlib.sha256("\0".join(profile).encode()).digest()[:4], "big") % 18000
+    from nodelang.profile_instance import profile_identity
+    return profile_identity(environment)
 
 
 def _verified_launch_owner(port):
@@ -594,47 +577,34 @@ def _serve_launch_requests(listener, on_launch):
             continue
 
 
-# ONE app. The exclusive socket also carries subsequent launches to Qt.
+# The profile mutex owns the app; an OS-assigned port carries subsequent launches.
+import atexit
 import socket as _socket
-_lock_port = _profile_lock_port(os.environ)
-_instance_lock = _socket.socket()
-# NEVER SO_REUSEADDR here: on Windows it PERMITS binding a port another
-# process already holds, which silently disables the single-instance
-# mutex and lets a second app fight the first for the database.
-if hasattr(_socket, "SO_EXCLUSIVEADDRUSE"):
-    _instance_lock.setsockopt(
-        _socket.SOL_SOCKET, _socket.SO_EXCLUSIVEADDRUSE, 1
-    )
-for _attempt in range(12):
-    try:
-        _instance_lock.bind(("127.0.0.1", _lock_port))
-        break
-    except OSError:
-        # A dying previous instance still holds the port for a moment.
-        # Reopening right after closing must WORK, so wait it out rather
-        # than exiting silently and leaving the founder with no window.
-        time.sleep(_launcher_seconds('instance_retry_ms'))
-else:
-    # Say so in the log AND on the screen: a launch that exits without a word
-    # leaves an orphan header, reads as a crash, and gives the person nothing
-    # to act on. A dead or silent holder is not "already running": take the
-    # port and open the window. A live launcher that answers is left as the
-    # one instance.
-    print("  lock       : port %d is already held" % _lock_port, flush=True)
-    if not _release_unanswering_holder(_lock_port, state_dir):
-        _exit_while_port_is_held()
-    bound = False
-    for _again in range(12):
+from nodelang.profile_instance import ProfileInstance
+_profile_instance = ProfileInstance()
+_launch_port_file = Path(state_dir) / "launcher-ipc-port"
+if _profile_instance.handle is None:
+    for _attempt in range(12):
         try:
-            _instance_lock.bind(("127.0.0.1", _lock_port))
-            bound = True
+            _lock_port = int(_launch_port_file.read_text(encoding="ascii"))
+            if 1 <= _lock_port <= 65535 and _forward_launch_arguments(_lock_port, sys.argv[1:]):
+                raise SystemExit(0)
+        except (OSError, ValueError) as error:
+            print("  lock       : existing profile IPC is not ready (%s)" % type(error).__name__, flush=True)
+        time.sleep(_launcher_seconds('instance_retry_ms'))
+        _profile_instance = ProfileInstance()
+        if _profile_instance.handle is not None:
             break
-        except OSError:
-            time.sleep(_launcher_seconds("instance_retry_ms"))
-    if not bound:
-        _exit_while_port_is_held()
-
+    if _profile_instance.handle is None:
+        _front_running_archhub()
+        print("  lock       : this profile already has a launcher", flush=True)
+        raise SystemExit(0)
+atexit.register(_profile_instance.close)
+_instance_lock = _socket.socket()
+_instance_lock.bind(("127.0.0.1", 0))
 _instance_lock.listen(8)
+_lock_port = _instance_lock.getsockname()[1]
+_launch_port_file.write_text(str(_lock_port), encoding="ascii")
 
 import subprocess as _update_preboot_process
 # Apply only a verified release armed by the preceding owner's final recovery.
@@ -647,6 +617,7 @@ try:
         print("  update     : %s" % _staged.get("reason"), flush=True)
         try:
             _instance_lock.close()
+            _profile_instance.close()
             _update_preboot_process.Popen(["wscript.exe", str(Path(__file__).resolve().parents[1] / "ArchHub.vbs")],
                 close_fds=True, creationflags=getattr(_update_preboot_process, "CREATE_NO_WINDOW", 0))
         except Exception as _rollback_relaunch_refusal:
@@ -667,6 +638,7 @@ try:
             print("  update     : install failed: %s" % _applied.get("reason"), flush=True)
             try:
                 _instance_lock.close()
+                _profile_instance.close()
                 _update_preboot_process.Popen(["wscript.exe", str(Path(__file__).resolve().parents[1] / "ArchHub.vbs")], close_fds=True, creationflags=getattr(_update_preboot_process, "CREATE_NO_WINDOW", 0))
             except Exception as _relaunch_refusal:
                 print("  update     : install failed; relaunch failed (%s). Reopen ArchHub." % type(_relaunch_refusal).__name__, flush=True)
@@ -678,6 +650,7 @@ try:
             append_update_log(state_dir, "update: installed %s" % _applied.get("build_id"))
             try:
                 _instance_lock.close()
+                _profile_instance.close()
                 _update_preboot_process.Popen(["wscript.exe", str(Path(__file__).resolve().parents[1] / "ArchHub.vbs")], close_fds=True, creationflags=getattr(_update_preboot_process, "CREATE_NO_WINDOW", 0))
             except Exception as _relaunch_refusal:
                 print("  update     : installed; relaunch failed (%s). Reopen ArchHub; recovery is retained." % type(_relaunch_refusal).__name__, flush=True)

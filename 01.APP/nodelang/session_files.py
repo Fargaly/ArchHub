@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import tempfile
 import threading
+import time
 from uuid import uuid4
 
 from . import canvas_documents
@@ -17,6 +18,18 @@ from . import canvas_documents
 MAX_BYTES = 8 * 1024 * 1024
 # Windows readers must close metadata handles before another request replaces the file.
 _METADATA_LOCK = threading.RLock()
+
+def _metadata_io(operation, *args, **kwargs):
+    for attempt in range(7):
+        try:
+            return operation(*args, **kwargs)
+        except OSError as error:
+            if getattr(error, 'winerror', None) not in (5, 32, 33):
+                raise
+            time.sleep(.025 * (attempt + 1))
+    return operation(*args, **kwargs)
+
+
 _SECRET = re.compile(r'(^|_)(password|secret|token|api_key|private_key|credential)(_|$)', re.I)
 # Connection-node choices on the wire record itself. The first choice is what a
 # missing field means, so an old .archhub file still loads. Mirrored in studio/api.js.
@@ -933,25 +946,29 @@ class SessionFiles:
         self.metadata = Path(directory) if directory else profile_directory() / 'data' / 'sessions'
         self.metadata.mkdir(parents=True, exist_ok=True)
 
+    def _recent(self):
+        path = self.metadata/'recent.json'
+        try:
+            rows = json.loads(_metadata_io(path.read_text, encoding='utf-8'))
+        except FileNotFoundError:
+            return []
+        if not isinstance(rows, list):
+            raise ValueError('Recent session list is invalid')
+        return rows
+
     def recent(self):
-        with _METADATA_LOCK:
-            path = self.metadata/'recent.json'
-            if not path.exists():
-                return []
-            rows = json.loads(path.read_text(encoding='utf-8'))
-            if not isinstance(rows, list):
-                raise ValueError('Recent session list is invalid')
-            return rows
+        with _METADATA_LOCK, canvas_documents.locked(self.metadata/'recent.json'):
+            return self._recent()
 
     def remember(self, path, document):
-        with _METADATA_LOCK:
-            rows = [{'id':str(path), 'path':str(path), 'name':document['title'], 'title':document['title']}] + [r for r in self.recent() if r['path'] != str(path)]
+        with _METADATA_LOCK, canvas_documents.locked(self.metadata/'recent.json'):
+            rows = [{'id':str(path), 'path':str(path), 'name':document['title'], 'title':document['title']}] + [r for r in self._recent() if r['path'] != str(path)]
             target = self.metadata/'recent.json'
             with tempfile.NamedTemporaryFile(dir=self.metadata, suffix='.tmp', delete=False, mode='w', encoding='utf-8') as stream:
                 temporary = stream.name
                 json.dump(rows[:20],stream)
             try:
-                os.replace(temporary,target)
+                _metadata_io(os.replace, temporary, target)
             finally:
                 if os.path.exists(temporary):
                     os.unlink(temporary)

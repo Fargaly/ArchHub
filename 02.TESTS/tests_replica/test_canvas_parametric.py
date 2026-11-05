@@ -112,11 +112,18 @@ def test_reopen_in_browser_has_no_effect_request(profile, monkeypatch):
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {readFileSync} from 'node:fs';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 const config = JSON.parse(readFileSync(0, 'utf8'));
 const require = createRequire(path.join(process.env.ARCHHUB_NODE_MODULES || path.resolve('node_modules'), 'playwright', 'package.json'));
 const {chromium} = require('playwright');
-const browser = await chromium.launch({headless: true, channel: 'chromium'});
+const cache = process.env.PLAYWRIGHT_BROWSERS_PATH || path.join(os.userInfo().homedir, 'AppData/Local/ms-playwright');
+const versions = fs.existsSync(cache) ? fs.readdirSync(cache) : [];
+const latest = pattern => versions.filter(name => pattern.test(name)).sort((a, b) => Number(b.split('-').at(-1)) - Number(a.split('-').at(-1)))[0];
+const shell = latest(/^chromium_headless_shell-\d+$/), full = latest(/^chromium-\d+$/);
+const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || (process.platform === 'win32' && (shell || full) ? path.join(cache, shell || full, shell ? 'chrome-headless-shell-win64/chrome-headless-shell.exe' : 'chrome-win64/chrome.exe') : undefined);
+const browser = await chromium.launch({headless: true, executablePath});
 try {
   const page = await browser.newPage();
   const requests = [];
@@ -155,7 +162,8 @@ try {
 """
         result = subprocess.run(['node', '--input-type=module', '-e', script], input=json.dumps({
             'url': server.public_url + '/studio/?bootstrap=' + server.browser_bootstrap_token,
-            'path': str(path)}), text=True, encoding='utf-8', capture_output=True, timeout=120, env=os.environ.copy())
+            'path': str(path)}), text=True, encoding='utf-8', capture_output=True, timeout=120, env=os.environ.copy(),
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         print(result.stdout)
         assert result.returncode == 0, result.stderr
         assert calls == []

@@ -639,7 +639,7 @@ def relocate_sessions(state_dir, moved):
 def open_session(history, task, path=None, *, select=True, zoom=1):
     """Open this task's own .archhub file. A first path binds it; a later open reads that same file."""
     from .session_files import SessionFiles, local_path, new_document, read_document
-    from .session_files import sessions_directory
+    from .session_files import document_path, sessions_directory
     sessions_directory()
     row = get(history, task)
     if row is None:
@@ -661,7 +661,7 @@ def open_session(history, task, path=None, *, select=True, zoom=1):
         return _show(task, bound, read_document(bound), select=select)
     document = new_document(row["title"])
     document["viewport"]["zoom"] = zoom
-    target = str(local_path(str(SessionFiles().directory / (document["id"] + ".archhub"))))
+    target = str(local_path(str(document_path(SessionFiles().directory, document))))
     document = _stamp(target, task, document)
     _bind_session(history, task, row.get("revision"), target)
     return _show(task, target, document, select=select)

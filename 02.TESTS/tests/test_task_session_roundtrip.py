@@ -13,7 +13,7 @@ def _isolate(monkeypatch, root):
         path = root / name
         path.mkdir(parents=True)
         monkeypatch.setenv(name, str(path))
-    monkeypatch.delenv("ARCHHUB_TEST_STATE_DIR", raising=False)
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(root / "LOCALAPPDATA" / "ArchHub"))
     monkeypatch.setenv("ARCHHUB_TEST_NO_OPEN", "1")
 
 

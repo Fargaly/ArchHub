@@ -80,13 +80,20 @@ def test_bound_task_reopens_same_document_after_autosave_rename(profile):
     with application_history() as history:
         session = workshop_tasks.create_session(history, 'A real workflow')
         document = session_files.read_document(session['path'])
+        assert Path(session['path']).name == 'A real workflow.archhub'
+        saved = session_files.SessionFiles().dispatch({'action': 'autosave', 'path': session['path'],
+                                                     'document': document})
+        assert saved['path'] == session['path']
+        duplicate = workshop_tasks.create_session(history, 'A real workflow', select=False)
+        assert duplicate['path'] != session['path'] and duplicate['id'] != session['id']
+        assert session_files.read_document(session['path'])['id'] == session['id']
         document['title'] = 'Renamed workflow'
         saved = session_files.SessionFiles().dispatch({'action': 'autosave', 'path': session['path'],
                                                      'document': document})
         opened = workshop_tasks.open_session(history, session['taskId'])
         assert opened['id'] == session['id'] and opened['path'] == saved['path']
         assert not Path(session['path']).exists()
-        assert history._db.execute('SELECT count(*) FROM workshop_tasks').fetchone()[0] == 1
+        assert history._db.execute('SELECT count(*) FROM workshop_tasks').fetchone()[0] == 2
 
 
 def test_populated_task_migration_and_folder_change_rollback(profile, tmp_path, monkeypatch):
@@ -150,6 +157,9 @@ def test_binding_failure_restores_file_before_returning_error(profile, monkeypat
     with application_history() as history:
         session = workshop_tasks.create_session(history, 'Rename failure')
         old = Path(session['path'])
+        document = session_files.read_document(old)
+        document['title'] = 'Renamed workflow'
+        session_files.write_document(old, document)
         with monkeypatch.context() as patch:
             patch.setattr(workshop_tasks, 'relocate_sessions', lambda *args: (_ for _ in ()).throw(OSError('binding unavailable')))
             with pytest.raises(OSError, match='binding unavailable'):
@@ -165,6 +175,9 @@ def test_recovery_does_not_bind_task_to_a_reused_old_filename(profile, monkeypat
     with application_history() as history:
         session = workshop_tasks.create_session(history, 'Original workflow')
         old = Path(session['path'])
+        document = session_files.read_document(old)
+        document['title'] = 'Recovered workflow'
+        session_files.write_document(old, document)
         with monkeypatch.context() as patch:
             patch.setattr(workshop_tasks, 'relocate_sessions', lambda *args: (_ for _ in ()).throw(SystemExit('crashed')))
             with pytest.raises(SystemExit):
@@ -453,9 +466,14 @@ def test_rendered_library_opens_the_real_session_and_exports_archhub(profile):
     from nodelang.nograph_server import NoGraphServer
     root = Path(__file__).resolve().parents[2]
     subprocess.run(['node', '--max-old-space-size=512', str(root / '03.TOOLS/packaging/compile_studio.cjs')],
-                   cwd=root, check=True, capture_output=True, text=True, timeout=180)
+                   cwd=root, check=True, capture_output=True, text=True, timeout=180,
+                   creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
     owner = session_files.SessionFiles()
     saved = owner.dispatch({'action': 'save', 'document': session_files.new_document('Facade study')})
+    from nodelang import workshop_tasks
+    from nodelang.workshop_mailbox import application_history
+    with application_history() as history:
+        workshop_tasks.create_session(history, 'Library entry', select=False)
     server = NoGraphServer(profile)
     save_as = profile.parent / "Shared study.archhub"
     def delayed_save_picker(title, name_filter="", default_path=""):
@@ -470,7 +488,8 @@ def test_rendered_library_opens_the_real_session_and_exports_archhub(profile):
         result = subprocess.run(['node', '02.TESTS/tests_js/apptidy_sessions.test.mjs'],
                                 input=json.dumps({'url': server.public_url + '/studio/?bootstrap=' + server.browser_bootstrap_token,
                                                   'path': saved['path'], 'saveAs': str(save_as)}),
-                                cwd=root, text=True, encoding='utf-8', capture_output=True, timeout=90)
+                                cwd=root, text=True, encoding='utf-8', capture_output=True, timeout=90,
+                                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         assert result.returncode == 0, result.stdout + result.stderr
         assert 'APPTIDY rendered Library open, Run, Save As and .archhub export PASS' in result.stdout
         assert json.loads(save_as.read_text(encoding='utf-8'))['title'] == 'Shared study'

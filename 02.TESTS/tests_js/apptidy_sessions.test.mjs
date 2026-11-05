@@ -7,7 +7,8 @@ const input = JSON.parse(fs.readFileSync(0, 'utf8'));
 // Same installed-cache discovery as the existing rail doors court; pytest isolates LOCALAPPDATA.
 const cache = process.env.PLAYWRIGHT_BROWSERS_PATH || path.join(os.userInfo().homedir, 'AppData/Local/ms-playwright');
 const shell = fs.existsSync(cache) && fs.readdirSync(cache).filter(name => /^chromium_headless_shell-\d+$/.test(name)).sort((a, b) => Number(b.split('-').at(-1)) - Number(a.split('-').at(-1)))[0];
-const executablePath = process.env.ARCHHUB_BROWSER_EXECUTABLE || (process.platform === 'win32' && shell ? path.join(cache, shell, 'chrome-headless-shell-win64/chrome-headless-shell.exe') : undefined);
+const full = fs.existsSync(cache) && fs.readdirSync(cache).filter(name => /^chromium-\d+$/.test(name)).sort((a, b) => Number(b.split('-').at(-1)) - Number(a.split('-').at(-1)))[0];
+const executablePath = process.env.ARCHHUB_BROWSER_EXECUTABLE || process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || (process.platform === 'win32' && (shell || full) ? path.join(cache, shell || full, shell ? 'chrome-headless-shell-win64/chrome-headless-shell.exe' : 'chrome-win64/chrome.exe') : undefined);
 const {chromium} = await import('playwright');
 const browser = await chromium.launch({executablePath, headless: true});
 try {
@@ -19,8 +20,12 @@ try {
   assert.equal(exported.name, 'Facade study.archhub');
   assert.equal(JSON.parse(exported.content).format, 'archhub');
   assert.equal(JSON.parse(exported.content).title, 'Facade study');
-  await page.getByRole('button', {name: 'Library', exact: true}).click();
+  await page.getByRole('button', {name: /Library entry/}).first().click();
+  await page.getByRole('complementary', {name: 'Properties'}).getByRole('button', {name: 'Open workflow', exact: true}).click();
   const shelf = page.getByRole('complementary', {name: 'Library shelf'});
+  await shelf.getByRole('button', {name: 'Close Library', exact: true}).click();
+  await page.getByLabel('File actions', {exact: true}).click();
+  await page.getByRole('menuitem', {name: 'Library', exact: true}).click();
   await shelf.getByRole('button', {name: 'Sessions', exact: true}).click();
   assert.equal(await shelf.getByRole('button', {name: 'Skills', exact: true}).count(), 0);
   assert.equal(await shelf.getByRole('button', {name: 'Workflows', exact: true}).count(), 0);

@@ -92,7 +92,15 @@ def test_file_route_does_not_read_or_write_graph(tmp_path, monkeypatch):
         assert post({'action':'catalogue'})[0]==200
         doc=definition();path=str(tmp_path/'test.archhub')
         assert post({'action':'save','path':path,'document':doc})[0]==200
-        assert post({'action':'open','path':path})[1]['document']==doc
+        from pathlib import Path
+        before = Path(path).read_bytes()
+        expected = copy.deepcopy(doc)
+        from nodelang.canvas_documents import solve
+        from nodelang.enforce import guard_effect
+        solve(expected, [node['id'] for node in expected['nodes']], invoke=guard_effect)
+        assert post({'action':'open','path':path})[1]['document']==expected
+        assert expected['nodes'][2]['result']['output']['out']=='hello'
+        assert Path(path).read_bytes()==before and read_document(path)==doc
         assert post({'action':'run','document':doc})[1]['succeeded']
     finally:
         server.httpd.shutdown()

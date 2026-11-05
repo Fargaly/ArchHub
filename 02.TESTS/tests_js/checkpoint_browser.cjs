@@ -70,13 +70,18 @@ test('CHECKPOINT: document round trip and inspector owner width', async () => {
     await page.waitForFunction(() => window.ArchHubAPI.getSnapshot().settings.find(row=>row.id==='Appearance.Inspector width').value === 375);
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const after = await params.boundingBox();
+    const live = await params.evaluate(element => element.offsetWidth);
     const stored = await page.evaluate(() => window.ArchHubAPI.getSnapshot().settings.find(row=>row.id==='Appearance.Inspector width').value);
-    assert.equal(after.width, 375, JSON.stringify({live:after.width,stored}));
+    assert.equal(live, 375, JSON.stringify({live,bounds:after.width,stored}));
+    assert.ok(Math.abs(after.width-live) < 0.5, JSON.stringify({live,bounds:after.width}));
     await page.reload({waitUntil:'domcontentloaded'});
     await page.waitForFunction(() => window.ArchHubAPI && !document.getElementById('studio-boot') && document.querySelector('[data-home-ready]'));
+    await page.waitForFunction(() => window.ArchHubAPI.getSnapshot().settings.find(row=>row.id==='Appearance.Inspector width')?.value === 375 && document.getElementById('params')?.offsetWidth === 375);
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const reopened = await params.boundingBox();
-    assert.equal(reopened.width, 375);
-    console.log('PASS pane: ' + JSON.stringify({before:before.width,live:after.width,stored,reopened:reopened.width}));
+    assert.equal(await params.evaluate(element => element.offsetWidth), 375);
+    assert.ok(Math.abs(reopened.width-375) < 0.5, JSON.stringify({reopened:reopened.width}));
+    console.log('PASS pane: ' + JSON.stringify({before:before.width,live,stored,reopened:await params.evaluate(element => element.offsetWidth),bounds:after.width}));
     assert.deepEqual(errors, []);
   } finally { await browser.close(); }
 });

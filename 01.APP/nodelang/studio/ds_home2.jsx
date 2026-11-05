@@ -146,6 +146,8 @@
     const inspectorRef = React.useRef(null), canvasRef = React.useRef(null);
     const inspectorSetting = s.settings.find(row => row.id === 'Appearance.Inspector width');
     const inspectorWidth = inspectorSetting?.value ?? 320;
+    // Changing defaultSize re-registers the panel; owner updates use resize().
+    const initialInspectorWidth = React.useRef(inspectorWidth);
     const [inspection, setInspection] = React.useState({nodeId: null, wireId: null});
     const [propertyTab, setPropertyTab] = React.useState('Task');
     const inspectedNode = s.graph.nodes.find(node => node.id === inspection.nodeId);
@@ -415,7 +417,7 @@
             </div>
           </aside></div></Column>
           <Separator className="pane-splitter" aria-label="Resize the Properties pane" />
-          <Column id="params" className="dx-home-preview" panelRef={inspectorRef} defaultSize={inspectorWidth} minSize={280} maxSize={480} groupResizeBehavior="preserve-pixel-size">{propertiesPane}</Column>
+          <Column id="params" className="dx-home-preview" panelRef={inspectorRef} defaultSize={initialInspectorWidth.current} minSize={280} maxSize={480} groupResizeBehavior="preserve-pixel-size">{propertiesPane}</Column>
         </Group> :
           <div className="dx-workspace" data-dx="workspace" data-task-face={face}>
             <Group key={layoutReady ? 'saved' : 'loading'} id="home-context" className="dx-split" orientation="horizontal" onLayoutChanged={(_, meta) => { if (meta?.isUserInteraction && inspectorRef.current) persistWidth(Math.round(inspectorRef.current.getSize().inPixels)); }}>
@@ -510,7 +512,7 @@
                 </div>}</div>
               </Column>
               <Separator className="pane-splitter" aria-label="Resize the Properties pane" />
-              <Column id="params" className="dx-col dx-properties-column" panelRef={inspectorRef} defaultSize={inspectorWidth} minSize={280} maxSize={480} groupResizeBehavior="preserve-pixel-size">
+              <Column id="params" className="dx-col dx-properties-column" panelRef={inspectorRef} defaultSize={initialInspectorWidth.current} minSize={280} maxSize={480} groupResizeBehavior="preserve-pixel-size">
                 {propertiesPane}
               </Column>
             </Group>

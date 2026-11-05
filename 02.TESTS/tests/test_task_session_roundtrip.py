@@ -135,7 +135,7 @@ def _save(studio, view):
     return saved["path"]
 
 
-def test_rendered_checkpoint(tmp_path, monkeypatch):
+def test_rendered_checkpoint_and_width(tmp_path, monkeypatch):
     import os
     import subprocess
     root = Path(__file__).resolve().parents[2]
@@ -148,7 +148,7 @@ def test_rendered_checkpoint(tmp_path, monkeypatch):
     server = NoGraphServer(tmp_path / "rendered/LOCALAPPDATA/ArchHub").start()
     try:
         result = subprocess.run(["node", "--test", "02.TESTS/tests_js/checkpoint_browser.cjs"], cwd=root,
-                                env={**os.environ, "CHECKPOINT_URL": server.public_url + "/studio/?bootstrap=" + server.browser_bootstrap_token},
+                                env={**os.environ, "CHECKPOINT_WIDTH": "1", "CHECKPOINT_URL": server.public_url + "/studio/?bootstrap=" + server.browser_bootstrap_token},
                                 capture_output=True, text=True, encoding="utf-8", timeout=120,
                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         print(result.stdout)

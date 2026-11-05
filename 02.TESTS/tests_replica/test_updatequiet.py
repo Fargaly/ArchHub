@@ -122,7 +122,7 @@ def test_foreign_connector_warning_is_logged_and_visible_without_any_box(tmp_pat
     config.write_text('[mcp_servers.' + SERVER_NAME + ']\ncommand = "foreign.exe"\n')
     before = config.read_bytes()
     env = {'USERPROFILE': str(home), 'LOCALAPPDATA': str(tmp_path / 'LOCAL'),
-           'ARCHHUB_TEST_STATE_DIR': str(state), 'PATH': ''}
+           'ARCHHUB_TEST_STATE_DIR': str(state), 'PATH': '', 'APPDATA': str(tmp_path / 'LOCAL'), 'TEMP': str(tmp_path / 'LOCAL'), 'TMP': str(tmp_path / 'LOCAL')}
     monkeypatch.setattr(registration, 'install_roots', lambda environment=None: (app, state))
     warnings = []
     rows = registration.migrate_install_connectors(consent=True, environment=env, warning=warnings.append)

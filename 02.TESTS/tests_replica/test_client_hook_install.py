@@ -363,7 +363,7 @@ def test_claude_unquoted_backslash_hook_is_repair_available_and_repairs_to_a_bas
     settings, broken = _unquoted_backslash_settings("claude-code", python, gate)
     target = home / ".claude" / "settings.json"
     target.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
-    env = {"USERPROFILE": str(home), "ARCHHUB_TEST_STATE_DIR": str(tmp_path / "state")}
+    env = {"USERPROFILE": str(home), "ARCHHUB_TEST_STATE_DIR": str(tmp_path / "state"), 'APPDATA': str(home), 'LOCALAPPDATA': str(home), 'TEMP': str(home), 'TMP': str(home)}
     assert registration.hook_readiness("claude-code", environment=env)["state"] == "repair_available"
     preview = registration.preview_hooks("claude-code", environment=env)
     assert preview["changed"] is True
@@ -406,7 +406,7 @@ def test_hook_preview_sent_to_the_browser_contains_no_path(tmp_path, inputs, ins
     managed = config.render_client_hooks("claude-code", python_executable=python,
                                         gate_script=gate, install_root=home)
     (home / ".claude" / "settings.json").write_text(json.dumps({"hooks": managed}), encoding="utf-8")
-    env = {"USERPROFILE": str(home), "ARCHHUB_TEST_STATE_DIR": str(tmp_path / "state")}
+    env = {"USERPROFILE": str(home), "ARCHHUB_TEST_STATE_DIR": str(tmp_path / "state"), 'APPDATA': str(home), 'LOCALAPPDATA': str(home), 'TEMP': str(home), 'TMP': str(home)}
     text = json.dumps(registration.preview_hooks("claude-code", environment=env))
     assert "adapter" not in text and "interpreter" not in text
     for spelling in (str(tmp_path), tmp_path.as_posix(), "agent_scope_gate", "python.exe"):
@@ -484,7 +484,7 @@ def test_setup_leaves_the_workspace_gate_byte_identical_and_adds_only_the_stop_h
     gate_hooks["PreToolUse"][0]["hooks"].append(broken)
     target = home / ".claude" / "settings.json"
     target.write_text(json.dumps({"hooks": gate_hooks}, indent=2), encoding="utf-8")
-    env = {"USERPROFILE": str(home), "PATH": ""}
+    env = {"USERPROFILE": str(home), "PATH": "", 'APPDATA': str(home), 'LOCALAPPDATA': str(home), 'TEMP': str(home), 'TMP': str(home)}
     results = registration.connect_hooks_on_setup(consent=True, environment=env)
     assert {r["client"]: r["state"] for r in results} == {
         "claude-code": "configured", "codex": "configured", "gemini-cli": "configured",
@@ -509,7 +509,7 @@ def test_setup_refuses_gemini_jsonc_and_a_hard_link_and_keeps_their_bytes(inputs
     claude.write_bytes(b'{"hooks": {}}\n')
     os.link(claude, home / "twin.json")
     results = {r["client"]: r["state"] for r in registration.connect_hooks_on_setup(
-        consent=True, environment={"USERPROFILE": str(home)})}
+        consent=True, environment={"USERPROFILE": str(home), 'APPDATA': str(home), 'LOCALAPPDATA': str(home), 'TEMP': str(home), 'TMP': str(home)})}
     assert results["gemini-cli"] == "not_connected" and results["claude-code"] == "not_connected"
     assert gemini.read_bytes() == b'{\n  // a comment\n  "theme": "x"\n}\n'
     assert claude.read_bytes() == (home / "twin.json").read_bytes() == b'{"hooks": {}}\n'
@@ -551,7 +551,7 @@ def test_settings_shows_each_event_in_plain_words(inputs, installed):
     stays with the person; OpenCode connects per session."""
     from nodelang import assistant_registration as registration
     home, _, _, _ = inputs
-    env = {"USERPROFILE": str(home)}
+    env = {"USERPROFILE": str(home), 'APPDATA': str(home), 'LOCALAPPDATA': str(home), 'TEMP': str(home), 'TMP': str(home)}
     claude = registration.hook_readiness("claude-code", environment=env)
     assert claude["available"] is True and claude["state"] == "repair_available"
     assert [e["said"] for e in claude["events"]] == ["When a reply ends, ArchHub checks for open work: Off"]
@@ -628,7 +628,7 @@ def test_every_written_hook_and_the_mcp_server_run_under_the_installed_venv(tmp_
                     str(root / ".venv")], check=True, timeout=300)
     home = tmp_path / "home"
     env = {**os.environ, "USERPROFILE": str(home), "LOCALAPPDATA": str(tmp_path / "LocalAppData"),
-           "APPDATA": str(tmp_path / "AppData"), "PYTHONNOUSERSITE": "1"}
+           "APPDATA": str(tmp_path / "AppData"), "PYTHONNOUSERSITE": "1", 'TEMP': str(tmp_path / "LocalAppData"), 'TMP': str(tmp_path / "LocalAppData")}
     for key in ("PYTHONPATH", "PYTHONHOME", "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID",
                 "ARCHHUB_EXTERNAL_SESSION_ID"):
         env.pop(key, None)
@@ -686,7 +686,7 @@ def test_install_then_uninstall_leaves_the_settings_byte_equal(inputs, installed
     and a file ArchHub created is gone again."""
     from nodelang import assistant_registration as registration
     home, _, _, _ = inputs
-    env = {"USERPROFILE": str(home)}
+    env = {"USERPROFILE": str(home), 'APPDATA': str(home), 'LOCALAPPDATA': str(home), 'TEMP': str(home), 'TMP': str(home)}
     target = home / config._HOOK_CLIENTS[vendor][0]
     original = b'\xef\xbb\xbf{"model":"x",  "hooks" : {"Other": [{"hooks": [{"type": "command", "command": "mine"}]}]}}\r\n'
     target.write_bytes(original)
@@ -704,7 +704,7 @@ def test_uninstall_after_later_edits_takes_out_only_our_entries(inputs, installe
     this install's end-of-turn entries (matched by the installed path) go."""
     from nodelang import assistant_registration as registration
     home, _, _, _ = inputs
-    env = {"USERPROFILE": str(home)}
+    env = {"USERPROFILE": str(home), 'APPDATA': str(home), 'LOCALAPPDATA': str(home), 'TEMP': str(home), 'TMP': str(home)}
     target = home / ".claude" / "settings.json"
     other_copy = {"type": "command", "command": '"C:/Elsewhere/python.exe" "C:/Elsewhere/nodelang/native_stop_hook.py" --vendor claude-code'}
     registration.connect_hooks_on_setup(consent=True, environment=env)
@@ -743,7 +743,7 @@ def test_setup_reports_another_or_stale_copy_and_never_claims_configured(
     ours, never overwritten at setup, and never reported as configured for this install."""
     from nodelang import assistant_registration as registration
     home, _, _, _ = inputs
-    env = {"USERPROFILE": str(home)}
+    env = {"USERPROFILE": str(home), 'APPDATA': str(home), 'LOCALAPPDATA': str(home), 'TEMP': str(home), 'TMP': str(home)}
     target = home / ".claude" / "settings.json"
     raw = json.dumps({"hooks": {"Stop": [{"hooks": [_foreign_stop(tmp_path, exists=exists)]}]}}).encode()
     target.write_bytes(raw)
@@ -761,7 +761,7 @@ def test_reviewed_migration_leaves_exactly_this_installs_check(inputs, installed
     Stop check (this install's) with every other hook kept."""
     from nodelang import assistant_registration as registration
     home, _, _, _ = inputs
-    env = {"USERPROFILE": str(home)}
+    env = {"USERPROFILE": str(home), 'APPDATA': str(home), 'LOCALAPPDATA': str(home), 'TEMP': str(home), 'TMP': str(home)}
     target = home / ".claude" / "settings.json"
     theirs = {"type": "command", "command": "their-own-stop"}
     target.write_text(json.dumps({"hooks": {"Stop": [
@@ -788,7 +788,7 @@ def test_codex_home_is_the_one_place_for_install_readiness_and_uninstall(inputs,
     codex_home.mkdir()
     decoy = home / ".codex" / "hooks.json"
     decoy.write_bytes(b'{"hooks": {}}\n')
-    env = {"USERPROFILE": str(home), "CODEX_HOME": str(codex_home)}
+    env = {"USERPROFILE": str(home), "CODEX_HOME": str(codex_home), 'APPDATA': str(home), 'LOCALAPPDATA': str(home), 'TEMP': str(home), 'TMP': str(home)}
     results = {r["client"]: r["state"] for r in registration.connect_hooks_on_setup(consent=True, environment=env)}
     assert results["codex"] == "configured"
     stop = json.loads((codex_home / "hooks.json").read_text(encoding="utf-8"))["hooks"]["Stop"]
@@ -799,7 +799,7 @@ def test_codex_home_is_the_one_place_for_install_readiness_and_uninstall(inputs,
     registration.disconnect_hooks_on_uninstall(environment=env)
     assert not (codex_home / "hooks.json").exists()
     assert decoy.read_bytes() == b'{"hooks": {}}\n'
-    missing = {"USERPROFILE": str(home), "CODEX_HOME": str(tmp_path / "no-such-codex-home")}
+    missing = {"USERPROFILE": str(home), "CODEX_HOME": str(tmp_path / "no-such-codex-home"), 'APPDATA': str(home), 'LOCALAPPDATA': str(home), 'TEMP': str(home), 'TMP': str(home)}
     assert registration.hook_readiness("codex", environment=missing)["state"] == "not_installed"
 
 
@@ -812,7 +812,7 @@ def test_mixed_own_and_foreign_check_is_disclosed_and_migrated_only_on_review(
     discloses the migration; afterwards exactly one check (ours) and unrelated hooks kept."""
     from nodelang import assistant_registration as registration
     home, _, _, _ = inputs
-    env = {"USERPROFILE": str(home)}
+    env = {"USERPROFILE": str(home), 'APPDATA': str(home), 'LOCALAPPDATA': str(home), 'TEMP': str(home), 'TMP': str(home)}
     target = home / ".claude" / "settings.json"
     ours = {"type": "command", "timeout": 30, "command": _stop_command(installed, "claude-code")}
     theirs = {"type": "command", "command": "their-own-stop"}

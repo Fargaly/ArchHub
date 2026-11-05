@@ -574,3 +574,21 @@ def test_unsigned_settings_admit_registered_writes(tmp_path, monkeypatch):
     assert roots.containing(str(workspace / 'output.txt'), roots.load().registered)[0] == 'inside'
     settings.write_text('{broken', encoding='utf-8')
     assert roots.load().state == 'degraded'
+
+
+@pytest.mark.parametrize('tool', ['SendMessage', 'collaboration.send_message', 'workshop.send'])
+def test_local_agent_message_names_private_folders_without_publishing(env, tool):
+    decision = call(env, tool, {'recipient': '717', 'text': 'Review 20.CLIENTS and 60.PERSONAL folder names'})
+    assert decision['action'] == 'send'
+    assert decision['rules'] == []
+    assert decision['verdict'] != 'refuse'
+
+
+def test_public_destination_still_refuses_private_folder_data_and_logs_rule(env):
+    decision = call(env, 'SendMessage', {'to': 'https://public.example/post',
+        'text': 'Review C:/Users/x/00.ARCHUB/20.CLIENTS/client/fees.xlsx'})
+    assert decision['rules'] == ['client-data-going-public']
+    log = Path(env['ARCHHUB_HOOK_STATE']) / 'refusals.jsonl'
+    saved = json.loads(log.read_text(encoding='utf-8').splitlines()[-1])
+    assert saved['rules'] == decision['rules'] and saved['paths'] == decision['paths']
+    assert 'C:/Users/x/00.ARCHUB/20.CLIENTS/client/fees.xlsx' in saved['paths']

@@ -8978,7 +8978,7 @@
       ]
     },
     "NOGRAPH": {
-      "source": "Founder 2026-10-28 NOGRAPH: app is .archhub files of nodes/sockets/wires, parametric, no always-on graph; agents work in the canvas; any agent. Cumulative release of NG-ROUTER, NG-WORKSHOP, NG-BROKERS, NG-CANVAS, NG-NOGRAPH plus live Workshop delivery and the compiler pass. T1SMALL: F98 unsigned workspace settings admission, tested through the existing hook owner. WSROLES: declared-role aliases, waiting and handover in the existing Workshop mailbox; automatic vendor onboarding.",
+      "source": "Founder 2026-10-28 NOGRAPH: app is .archhub files of nodes/sockets/wires, parametric, no always-on graph; agents work in the canvas; any agent. Cumulative release of NG-ROUTER, NG-WORKSHOP, NG-BROKERS, NG-CANVAS, NG-NOGRAPH plus live Workshop delivery and the compiler pass. T1SMALL: F98 unsigned workspace settings admission, tested through the existing hook owner. WSROLES: declared-role aliases, waiting and handover in the existing Workshop mailbox; automatic vendor onboarding. T1SMALL router cold-start fix; register the founder-listed workspace, guard, smoke, Studio and Revit owner paths for the remaining per-item commits.",
       "scope": [
         "01.APP/nodelang/client_mcp_installation.py",
         "02.TESTS/tests_replica/test_client_mcp_installation.py",
@@ -9467,7 +9467,16 @@
         "03.TOOLS/installer/README.md",
         "03.TOOLS/tools/fresh_machine_check.py",
         "05.EVIDENCE/fresh-machine-dependencies.md",
-        "05.EVIDENCE/freshmachine-result.md"
+        "05.EVIDENCE/freshmachine-result.md",
+        "01.APP/bridges/sources/revit_mcp/RevitEventHandler.cs",
+        "01.APP/bridges/sources/revit_mcp/RevitMCPApp.cs",
+        "02.TESTS/tests_replica/test_opencode_native_custody.py",
+        "02.TESTS/tests_replica/test_revit_addin_packaging.py",
+        "03.TOOLS/tools/real_app_check/guards.mjs",
+        "03.TOOLS/tools/real_app_check/harness.mjs",
+        "03.TOOLS/tools/real_app_check/scenarios/smoke.mjs",
+        "02.TESTS/tests_replica/test_revit_open.py",
+        "02.TESTS/tests_replica/revit_open_fixture/Program.cs"
       ]
     }
   }

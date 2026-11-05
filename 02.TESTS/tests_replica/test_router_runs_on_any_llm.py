@@ -104,3 +104,67 @@ def test_every_provider_call_writes_one_genai_span(monkeypatch):
     assert span["gen_ai.request.model"] == "llama3" and span["gen_ai.response.model"] == "llama3"
     assert span["gen_ai.usage.input_tokens"] == 5 and span["gen_ai.usage.output_tokens"] == 2
     assert not any("four" in str(value) or "2+2" in str(value) for value in span.values()), "no prompt or answer text"
+
+
+def test_provider_setup_does_not_spend_dispatch_budget(monkeypatch):
+    import time
+    from types import SimpleNamespace
+    from any_llm import AnyLLM
+    original = AnyLLM.create
+    elapsed = [0.0]
+    monkeypatch.setattr(router, 'time', SimpleNamespace(**{name: getattr(time, name) for name in dir(time)
+        if name != 'monotonic'}, monotonic=lambda: time.monotonic() + elapsed[0]))
+
+    def slow_setup(*args, **kwargs):
+        elapsed[0] += 32.69
+        return original(*args, **kwargs)
+    monkeypatch.setattr(AnyLLM, 'create', slow_setup)
+    from test_ng_router import test_configured_fallback_and_real_stream_parser
+    test_configured_fallback_and_real_stream_parser(monkeypatch, 400)
+
+
+def test_first_cold_process_400_dispatches_fallback(tmp_path):
+    import os
+    import subprocess
+    import sys
+    program = r'''import io, json, sys, time, urllib.error
+from nodelang import model_router as router
+assert 'any_llm' not in sys.modules
+sent = []
+def wire(request, timeout=None):
+    sent.append(json.loads(request.data)['model'])
+    if len(sent) == 1:
+        raise urllib.error.HTTPError(request.full_url, 400, 'forced cold refusal', {}, io.BytesIO())
+    return io.BytesIO(json.dumps({'model': 'second/answer:free', 'choices': [{'index': 0,
+        'message': {'role': 'assistant', 'content': 'four'}, 'finish_reason': 'stop'}],
+        'usage': {'cost': 0}}).encode())
+started = time.perf_counter()
+result = router.route_chat('openrouter/first/refuses:free', [{'role': 'user', 'content': '2+2'}],
+    free_only=True, fallback_routes=['openrouter/second/answer:free'], opener=wire,
+    environ={}, secrets_loader=lambda name: 'fixture-value', cloud_session=None)
+assert result['text'] == 'four'
+assert sent == ['first/refuses:free', 'second/answer:free']
+print('COLD-FIRST-400: dispatches=%d elapsed_seconds=%.2f' % (len(sent), time.perf_counter()-started))
+'''
+    environment = dict(os.environ, PYTHONPATH=str(ROOT / '01.APP'))
+    for name in ('LOCALAPPDATA', 'APPDATA', 'TEMP', 'TMP', 'USERPROFILE', 'HOME', 'ARCHHUB_TEST_STATE_DIR'):
+        environment[name] = str(tmp_path)
+    result = subprocess.run([sys.executable, '-B', '-c', program], cwd=ROOT, env=environment,
+                            capture_output=True, text=True, timeout=180)
+    assert result.returncode == 0, result.stdout + result.stderr
+    print(result.stdout.strip())
+
+
+def test_background_warm_loads_only_default_and_ollama_expires_it(monkeypatch):
+    from any_llm import AnyLLM
+    from nodelang import settings_owner
+    providers, requests = [], []
+    monkeypatch.setattr(settings_owner, 'read_router_settings', lambda: {'default_model': 'ollama/llama3'})
+    monkeypatch.setattr(AnyLLM, 'create', lambda provider, **options: providers.append(provider))
+    def wire(request, timeout):
+        requests.append((request.full_url, json.loads(request.data)))
+        return io.BytesIO(b'{}')
+    monkeypatch.setattr(router.urllib.request, 'urlopen', wire)
+    router.prewarm_default_provider()
+    assert providers == ['ollama']
+    assert requests == [('http://127.0.0.1:11434/api/generate', {'model': 'llama3', 'keep_alive': 60})]

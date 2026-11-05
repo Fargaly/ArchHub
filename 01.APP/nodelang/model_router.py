@@ -35,7 +35,8 @@ import sqlite3
 import time
 import urllib.error
 import urllib.request
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1605,6 +1606,7 @@ def _any_llm_call(destination, rows, *, send, timeout, api_key, max_tokens, temp
     Wire failures re-raise as the opener raised them (HTTPError, URLError, timeouts,
     bounded-read refusals), so the refusal readers keep one meaning per failure.
     """
+    setup_started = time.monotonic()
     import httpx  # noqa: PLC0415
     from any_llm import AnyLLM  # noqa: PLC0415
 
@@ -1630,6 +1632,7 @@ def _any_llm_call(destination, rows, *, send, timeout, api_key, max_tokens, temp
     try:
         llm = AnyLLM.create(provider, api_key=api_key or "not-required", api_base=api_base,
                             unified_exceptions=False, **client_args)
+        _PROVIDER_SETUP_SECONDS.set(_PROVIDER_SETUP_SECONDS.get() + time.monotonic() - setup_started)
         answer = llm.completion(model=destination.model, **kwargs)
         if streaming:
             pieces, metadata, finish = [], {}, None
@@ -2407,8 +2410,40 @@ def _local_cli_refusal_uncertain(refused: ModelRouteRefused) -> bool:
     return refused.reason_code in _LOCAL_CLI_UNCERTAIN_ERRORS
 
 
+_PROVIDER_SETUP_SECONDS = ContextVar("router_provider_setup_seconds", default=None)
+
+
+@contextmanager
+def _dispatch_budget():
+    token = _PROVIDER_SETUP_SECONDS.set(0.0)
+    try:
+        yield
+    finally:
+        _PROVIDER_SETUP_SECONDS.reset(token)
+
+
+def _dispatch_clock():
+    return time.monotonic() - (_PROVIDER_SETUP_SECONDS.get() or 0.0)
+
+
+def prewarm_default_provider():
+    """Called after Studio loads; warm one provider, with no cloud generation or key read."""
+    from any_llm import AnyLLM
+    from .settings_owner import read_router_settings
+    route = resolve_model_route(read_router_settings()["default_model"])
+    provider, api_base, _kwargs = _any_llm_request(route, [], 1, 0.0, 1.0)
+    AnyLLM.create(provider, api_key="not-required", api_base=api_base, unified_exceptions=False)
+    if route.family == "ollama":
+        # Ollama unloads this one selected model after 60 idle seconds.
+        url = route.url.rsplit("/api/", 1)[0] + "/api/generate"
+        request = urllib.request.Request(url, data=json.dumps({"model": route.model, "keep_alive": 60}).encode(),
+                                         headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=_LOCAL_FREE_FALLBACK_SECONDS) as response:
+            response.read(65536)
+
+
 def _remaining_timeout(deadline: float, *, cap: Optional[float] = None) -> float:
-    remaining = max(0.0, deadline - time.monotonic())
+    remaining = max(0.0, deadline - _dispatch_clock())
     if cap is not None:
         remaining = min(remaining, cap)
     return remaining
@@ -2682,6 +2717,7 @@ def _free_only_after_first_openrouter_failure(
         raise
 
 
+@_dispatch_budget()
 def route_chat(
     route: object,
     messages: object,
@@ -2789,9 +2825,8 @@ def route_chat(
         raise ModelRouteRefused("This reasoning effort requires a supported OpenRouter route.")
     try:
         budget_seconds = max(0.0, float(timeout))
-        deadline = time.monotonic() + budget_seconds
-    except (TypeError, ValueError):
-        deadline = time.monotonic()
+    except (TypeError, ValueError) as refused:
+        raise ModelRouteRefused("Request timeout must be numeric.", reason_code="invalid_timeout") from refused
     dispatched = False
 
     def before_dispatch_once():
@@ -2848,7 +2883,8 @@ def route_chat(
         trace.close("free_model_exhausted")
         raise _openrouter_free_exhausted_refusal()
     before_dispatch_once()
-    openrouter_deadline = min(deadline, time.monotonic() + _OPENROUTER_FREE_TOTAL_SECONDS)
+    deadline = _dispatch_clock() + budget_seconds
+    openrouter_deadline = min(deadline, _dispatch_clock() + _OPENROUTER_FREE_TOTAL_SECONDS)
     for index, attempt in enumerate(attempts):
         attempt_timeout = (
             _remaining_timeout(openrouter_deadline)

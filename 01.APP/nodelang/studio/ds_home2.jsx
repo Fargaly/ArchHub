@@ -270,10 +270,14 @@
       sendingRef.current = true;
       setSending(true);
       const prompt = (!recipient || new RegExp('(^|\\s)@' + recipient + '\\b').test(body) ? '' : '@' + recipient + ' ') + body;
+      const clearedRevision = (u.composerDraft[draftKey]?.revision || 0) + 1;
       setText('');
       try {
         const result = await u.act(() => api.apiRouterChat(prompt, 'BABOOM'));
-        if (result == null) setText(current => current && String(current).trim() ? current : body);
+        if (result == null) u.setComposerDraft(current => {
+          const held = current[draftKey];
+          return held?.revision === clearedRevision ? {...current,[draftKey]:{text:body,revision:held.revision+1}} : current;
+        });
         else await api.listTasks?.();
       } finally {
         sendingRef.current = false;
@@ -495,7 +499,7 @@
                         </select>
                         <small>Free models first</small>
                       </label>
-                      </div></details><Btn p type="submit" aria-busy={sending} disabled={!text.trim()}>Send</Btn>
+                      </div></details><Btn p type="submit" loading={sending} disabled={!text.trim()}>Send</Btn>
                     </div>
                   </form>}
                   <p className="dx-foot" data-dx="footer">{footer}</p>

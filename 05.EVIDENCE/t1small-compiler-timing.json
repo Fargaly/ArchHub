@@ -1,0 +1,18 @@
+{
+  "base": "52a4fd53",
+  "root": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\lane-t1small",
+  "files": 1638,
+  "diagnostics": 13704,
+  "same_report": true,
+  "before": {
+    "normalize_calls": 15342
+  },
+  "after": {
+    "normalize_calls": 1616
+  },
+  "observations": [
+    {"phase": "scan", "metric": "wall clock", "value": 165.11989800000083, "unit": "s"},
+    {"phase": "before", "metric": "validator wall clock", "value": 29.55905619999976, "unit": "s"},
+    {"phase": "after", "metric": "validator wall clock", "value": 2.6244107999991684, "unit": "s"}
+  ]
+}

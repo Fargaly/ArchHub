@@ -360,6 +360,13 @@ def _validate_report(report, root, artifact=False):
                              if isinstance(item, dict) and isinstance(item.get("language"), str))
     if any(not isinstance(bucket, dict) or set(bucket) != languages_in_files for bucket in counts.values()):
         raise CompilerFailure("compiler omitted code/language rule coverage")
+    normalized_paths = {}
+
+    def normalized(path):
+        if path not in normalized_paths:
+            normalized_paths[path] = normalize(root, path)
+        return normalized_paths[path]
+
     actual = {}
     for diagnostic in diagnostics:
         if not isinstance(diagnostic, dict) or any(not isinstance(diagnostic.get(k), str) or not diagnostic[k]
@@ -368,7 +375,7 @@ def _validate_report(report, root, artifact=False):
         if any(type(diagnostic.get(k)) is not int or diagnostic[k] < 1 for k in ("line", "column")):
             raise CompilerFailure("invalid compiler diagnostic location")
         if not artifact:
-            diagnostic["file"] = normalize(root, diagnostic["file"])
+            diagnostic["file"] = normalized(diagnostic["file"])
         languages = actual.setdefault(diagnostic["code"], {})
         languages[diagnostic["language"]] = languages.get(diagnostic["language"], 0) + 1
     for code, languages in counts.items():
@@ -387,7 +394,7 @@ def _validate_report(report, root, artifact=False):
         if not isinstance(item, dict) or not isinstance(item.get("file"), str) or not isinstance(item.get("language"), str):
             raise CompilerFailure("invalid compiler file coverage")
         if not artifact:
-            item["file"] = normalize(root, item["file"])
+            item["file"] = normalized(item["file"])
     return report
 
 

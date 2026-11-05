@@ -552,3 +552,25 @@ def test_no_second_decide_remains():
     found = subprocess.run(["git", "grep", "-nE", r"def decide(_\w+)?\(|def decide[A-Z]\w*\(", "--", "01.APP/*.py"],
                            cwd=ROOT, capture_output=True, text=True).stdout.splitlines()
     assert found and all(line.startswith("01.APP/nodelang/hook_decision.py:") for line in found), found
+
+
+def test_unsigned_settings_admit_registered_writes(tmp_path, monkeypatch):
+    import importlib
+    monkeypatch.syspath_prepend('C:/Users/fargaly/00.ARCHUB/00.GOVERNANCE/03.AGENT-HOOKS')
+    for name in ('LOCALAPPDATA', 'APPDATA', 'TEMP', 'TMP', 'USERPROFILE', 'HOME'):
+        monkeypatch.setenv(name, str(tmp_path))
+    roots = importlib.import_module('workspace_roots')
+    gate = importlib.import_module('pretooluse_validate')
+    workspace = tmp_path / 'registered'
+    workspace.mkdir()
+    settings = roots.snapshot_path()
+    settings.parent.mkdir(parents=True)
+    settings.write_text(json.dumps({'roots': [{'root_id': 'workspace:demo', 'path': str(workspace),
+                                              'privacy': 'private'}]}), encoding='utf-8')
+    monkeypatch.setattr(roots, '_installed_verifier', lambda: pytest.fail('key store opened'))
+    assert roots.load().state == 'valid'
+    gate._ROOTS_CACHE.clear()
+    assert gate._root_denial(str(workspace / 'output.txt'), 'codex') is None
+    assert roots.containing(str(workspace / 'output.txt'), roots.load().registered)[0] == 'inside'
+    settings.write_text('{broken', encoding='utf-8')
+    assert roots.load().state == 'degraded'

@@ -240,8 +240,12 @@ def _own_workspace(tool: str, data) -> bool:
     if "categorize" in name:
         return True
     connector = str(data.get("connector") or "").casefold() if isinstance(data, dict) else ""
-    if "workshop" in name or connector == "workshop":
-        return True
+    local_message = name == "sendmessage" or name in {"collaboration.send_message", "collaboration.followup_task"}
+    if local_message and isinstance(data, dict):
+        recipient = data.get("recipient") or data.get("target") or data.get("to")
+        return not _outside_recipient(recipient) and not _public_target(data)
+    if "workshop" in name or "session_link" in name or connector == "workshop":
+        return not _public_target(data)
     leaf = re.split(r"[._]", name.split("__")[-1])[-1]
     body = data.get("text") or data.get("message") or data.get("body") if isinstance(data, dict) else None
     if (leaf == "send" and isinstance(data, dict) and "to" in data and isinstance(body, str)
@@ -1173,6 +1177,22 @@ def decide(payload: dict, vendor: str = "", *, environment=None):
                 "notes": notes, "findings": findings, "scanners": scanners, "mode": permissions["runMode"]}
     if hold_id:
         decision["hold"] = hold_id
+    if verdict == "refuse":
+        paths = _delete_targets(facts["command"], event["cwd"]) if action == "delete" else []
+        for key in ("file_path", "path", "filePath"):
+            if isinstance(event["input"], dict) and isinstance(event["input"].get(key), str):
+                paths.append(event["input"][key])
+        paths.extend(re.findall(r"[A-Za-z]:[\\/][^\s\"\'<>]+", facts["text"]))
+        paths = list(dict.fromkeys(paths))
+        log = _trace_path(event["session"], environment).parent / "refusals.jsonl"
+        try:
+            log.parent.mkdir(parents=True, exist_ok=True)
+            with log.open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps({"at": time.time(), "session": event["session"], "tool": event["tool"],
+                                         "paths": paths, "rules": rules}) + "\n")
+        except OSError:
+            notes.append("Refusal log unavailable; rule and paths remain in this decision.")
+        decision["paths"] = paths
     return decision
 
 

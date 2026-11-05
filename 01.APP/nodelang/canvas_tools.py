@@ -130,7 +130,7 @@ def register_canvas_tools(server):
                 raise ValueError('Unknown socket. Outputs: %s; inputs: %s' % (list(outs), list(ins)))
             if a['id'] in docs.downstream(document, [b['id']]):
                 raise ValueError('Cycle detected: this wire would feed a node back into itself.')
-            if not compatible(outs[out], ins[inp]):
+            if not compatible(outs[out], ins[inp], inp):
                 raise ValueError('Wrong type: a %s output cannot feed a %s input. Insert Convert.' % (outs[out], ins[inp]))
             document['wires'] = [w for w in document['wires'] if (w['to']['node'], w['to']['socket']) != (b['id'], inp)]
             document['wires'].append({'id': str(uuid4()), 'from': {'node': a['id'], 'socket': out}, 'to': {'node': b['id'], 'socket': inp}})

@@ -214,8 +214,10 @@ def ports(node, base):
     return {'source': source, 'target': target}
 
 
-def compatible(out_type, in_type):
-    return 'any' in (out_type, in_type) or 'unknown' in (out_type, in_type) or out_type == in_type
+def compatible(out_type, in_type, input_socket=''):
+    return ('any' in (out_type, in_type) or 'unknown' in (out_type, in_type) or out_type == in_type
+            or {out_type, in_type} <= {'file', 'path'}
+            or out_type in ('file', 'path') and in_type == 'string' and input_socket.removeprefix('param:') == 'path')
 
 
 CATALOGUE_ITEM = {'id': PARAM_ENGINE, 'cat': 'input', 'title': 'Parameter', 'sub': 'A typed value you can wire anywhere',

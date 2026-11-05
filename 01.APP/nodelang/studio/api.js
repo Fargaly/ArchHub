@@ -1362,15 +1362,16 @@ api.addInterfaceElement=async kind=>{const result=await canvasOperation('add_int
 api.refreshMods=async()=>{const result=await request('/api/universal/mods',{action:'state'});publish({mods:result.mods.rows});project();return result.mods.rows;};
 api.importModNode=(id,item)=>canvasOperation('import_mod_node',[id,item]);
 
+api.socketCompatible=(out,input)=>['any','unknown'].includes(out.type)||['any','unknown'].includes(input.type)||out.type===input.type||(['file','path'].includes(out.type)&&(['file','path'].includes(input.type)||input.type==='string'&&input.id.replace(/^param:/,'')==='path'));
 api.compatibleNodes=endpoint=>{
  const node=state.graph.nodes.find(n=>n.id===endpoint?.id);
  const port=(endpoint?.side==='out'?node?.outputs:node?.inputs)?.find(p=>p.id===endpoint.port);
  if(!port)return [];
  const side=endpoint.side==='out'?'target':'source';
- return (state.libraryPorts||[]).filter(entry=>entry.ports[side].some(p=>p.type!=='unknown'&&(p.type===port.type||[p.type,port.type].includes('any')))).map(entry=>({id:entry.id,name:entry.title}));
+ return (state.libraryPorts||[]).filter(entry=>entry.ports[side].some(p=>p.type!=='unknown'&&(endpoint.side==='out'?api.socketCompatible(port,p):api.socketCompatible(p,port)))).map(entry=>({id:entry.id,name:entry.title}));
 };
 api.addCompatibleNode=async(endpoint,item,position)=>{
- const before=copy(sessionDocument), node=await api.addNode(item,position), other=state.graph.nodes.find(n=>n.id===endpoint.id), side=endpoint.side==='out'?'inputs':'outputs', original=(endpoint.side==='out'?other.outputs:other.inputs).find(p=>p.id===endpoint.port), port=node[side].find(p=>p.type===original.type||p.type==='any'||original.type==='any');
+ const before=copy(sessionDocument), node=await api.addNode(item,position), other=state.graph.nodes.find(n=>n.id===endpoint.id), side=endpoint.side==='out'?'inputs':'outputs', original=(endpoint.side==='out'?other.outputs:other.inputs).find(p=>p.id===endpoint.port), port=node[side].find(p=>endpoint.side==='out'?api.socketCompatible(original,p):api.socketCompatible(p,original));
  try{await api.connectSockets(endpoint.side==='out'?{from:endpoint.id,fromPort:endpoint.port,to:node.id,toPort:port.id}:{from:node.id,fromPort:port.id,to:endpoint.id,toPort:endpoint.port});return node;}catch(error){sessionDocument=before;projectFile();queueAutosave();throw error;}
 };
 api.insertConvert=async value=>{
@@ -1698,7 +1699,7 @@ api.deleteWire=async id=>api.deleteSelection([],[id]);
 api.connectSockets=async wire=>{
  const from=state.graph.nodes.find(n=>n.id===wire.from),to=state.graph.nodes.find(n=>n.id===wire.to),out=from?.outputs.find(p=>p.id===wire.fromPort),input=to?.inputs.find(p=>p.id===wire.toPort);
  if(!out||!input||from.id===to.id)throw Error('Choose an output and another node input.');
- if(!['any',input.type].includes(out.type)&&input.type!=='any'){throw Error('Wrong type: a '+out.type+' output cannot feed a '+input.type+' input. Insert Convert.');}
+ if(!api.socketCompatible(out,input)){throw Error('Wrong type: a '+out.type+' output cannot feed a '+input.type+' input. Insert Convert.');}
  if(sessionDocument.wires.some(w=>w.to.node===to.id&&w.to.socket===input.id))throw Error('Disconnect the existing input wire first.');
  const reaches=new Set([to.id]);let changed=true;while(changed){changed=false;for(const w of sessionDocument.wires)if(reaches.has(w.from.node)&&!reaches.has(w.to.node)){reaches.add(w.to.node);changed=true;}}
  if(reaches.has(from.id))throw Error('Cycle detected: disconnect a feedback wire first.');

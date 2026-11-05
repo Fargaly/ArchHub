@@ -179,7 +179,7 @@ THING_ENGINES = {
                     'out': [_port('text', 'string'), _port('model', 'string')]},
     'thing.host': {'pure': True, 'run': _run_host, 'in': [], 'out': [_port('sessions', 'list'), _port('elements', 'list')]},
     'thing.workspace': {'pure': True, 'run': _run_workspace, 'in': [], 'out': [_port('path', 'string'), _port('files', 'list')]},
-    'thing.file': {'pure': True, 'run': _run_file, 'in': [], 'out': [_port('path', 'string'), _port('text', 'string')]},
+    'thing.file': {'pure': True, 'run': _run_file, 'in': [], 'out': [_port('path', 'file'), _port('text', 'string')]},
     'thing.workshop': {'pure': True, 'run': _run_workshop, 'in': [], 'out': [_port('messages', 'list')],
                        'engine': 'thing.workshop', 'params': {'thread': 'app:workshop', 'limit': 20}},
     'thing.setting': {'pure': True, 'run': _run_setting, 'in': [_port('value')], 'out': [_port('value')]},

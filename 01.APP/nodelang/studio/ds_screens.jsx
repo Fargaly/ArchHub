@@ -854,7 +854,7 @@
       const outputPort = s.graph.nodes.find(n=>n.id===out.id)?.outputs.find(p=>p.id===out.port),
         inputPort = s.graph.nodes.find(n=>n.id===input.id)?.inputs.find(p=>p.id===input.port);
       if (!outputPort || !inputPort || outputPort.connectable === false || inputPort.connectable === false || outputPort.read_only || inputPort.read_only) return;
-      if (outputPort.type !== inputPort.type && outputPort.type !== 'any' && inputPort.type !== 'any') {
+      if (!api.socketCompatible(outputPort, inputPort)) {
         // Spec d9c0d514: an invalid drop draws the wire red at the drop and offers the converter on the target socket; no modal, nothing written.
         setRejected({from:out, to:input, outType:word(outputPort), inType:word(inputPort)}); return;
       }

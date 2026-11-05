@@ -12,6 +12,14 @@
   };
   const Ctx = React.createContext(null);
   const useApp = () => React.useContext(Ctx);
+  // F178.2: no dependency label until the task owner supplies a real blocked_by field.
+  const blockedDependencyReason = () => '';
+  const taskRowReason = task => {
+    const state = String(task.rowState || '').toLowerCase().replace(/_/g, ' ');
+    if (state === 'interrupted' || task.outcome === 'interrupted') return 'interrupted';
+    if (state === 'limit reached' || task.capacity === 'LIMIT_REACHED') return 'limit reached';
+    return blockedDependencyReason();
+  };
   const useData = () => React.useSyncExternalStore(api.subscribe, api.getSnapshot, api.getSnapshot);
   const actionIcons = {
     'Start': 'play',
@@ -393,6 +401,7 @@
     return <button type="button" className={'button-reset clamp' + (open ? ' open' : '')} style={{'--clamp-lines': lines}} title={text} aria-expanded={open} onClick={event => executeAction("sharedUI.Toggle.23", {toggle: () => setOpen(!open)}, event)}>{text}</button>;
   }
   window.UI = {
+    taskRowReason,
     api,
     Prose,
     Clamp,

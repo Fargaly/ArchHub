@@ -9,7 +9,7 @@ const {chromium} = require('playwright');
 const studio = path.resolve(__dirname, '../../01.APP/nodelang/studio');
 process.stdout.write(execFileSync(process.execPath, ['--max-old-space-size=512', path.resolve(__dirname, '../../03.TOOLS/packaging/compile_studio.cjs')], {windowsHide: true}));
 const compiled = name => fs.readFileSync(path.join(studio, 'compiled', name.replace(/\//g, '-').replace(/\.jsx$/, '.js')), 'utf8');
-const sources = ['tokens.jsx', 'ds/index.jsx', 'icons.jsx', 'ui.jsx', 'ds_home2.jsx', 'surfaces.jsx', 'app.jsx'].map(compiled);
+const sources = ['tokens.jsx', 'ds/index.jsx', 'icons.jsx', 'ui.jsx', 'ds_home2.jsx', 'ds_workshop3.jsx', 'surfaces.jsx', 'app.jsx'].map(compiled);
 
 test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation clicks', async () => {
   // Pytest isolates LOCALAPPDATA; browser binaries remain in the OS account's cache.
@@ -18,51 +18,63 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
   const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || (process.platform === 'win32' && shell ? path.join(cache, shell, 'chrome-headless-shell-win64/chrome-headless-shell.exe') : undefined);
   const browser = await chromium.launch({headless: true, executablePath});
   try {
-    for (const mode of ['selected', 'clicked', 'last', 'first', 'empty', 'refused', 'cancelled', 'repeat']) {
+    for (const mode of ['selected', 'clicked', 'last', 'first', 'empty', 'refused', 'cancelled', 'repeat', 'uxflow']) {
       const page = await browser.newPage({viewport: {width: 1440, height: 900}});
       const errors = [];
       page.on('pageerror', error => errors.push(error.message));
       await page.route('**/*', route => route.fulfill({contentType: 'text/html', body: '<div id="root"></div>'}));
       await page.goto('http://raildoors.test');
-      await page.addStyleTag({path: path.join(studio, 'style.css')});
-      await page.addStyleTag({content: 'html,body,#root{height:100%;margin:0}'});
-      for (const name of ['react.js', 'react-dom.js']) await page.addScriptTag({path: path.join(studio, 'vendor', name)});
-      await page.evaluate(() => { window.fetch = () => new Promise(() => {}); });
-      await page.addScriptTag({path: path.join(studio, 'compiled/api.js')});
-      await page.evaluate(mode => {
-        window.fixture = window.structuredClone(window.ArchHubAPI.getSnapshot());
-        const s = window.fixture;
-        s.tasks = mode === 'empty' ? [] : [
-          {id: 'recent', title: 'Recent task', status: 'WIP', sessionPath: 'recent.archhub', messages: []},
-          {id: 'selected', title: 'Selected task', status: 'WIP', sessionPath: 'selected.archhub', sessionOpen: mode === 'last', messages: []}
-        ];
-        s.focusedTask = ['selected', 'refused', 'cancelled'].includes(mode) ? 'selected' : '';
-        if (mode === 'repeat') {
-          s.tasks.forEach(t => { t.title = 'Same task'; });
-          s.templates = s.tasks.map(t => ({...t, chain: []}));
-        }
-        s.schedules = [{id: 'trigger', title: 'Repeat recent task', path: 'recent.archhub', enabled: true, time: '09:00'}];
-        window.openedTasks = [];
-        window.scheduledTasks = [];
-        window.ArchHubAPI = {...window.ArchHubAPI, getSnapshot: () => s, subscribe: () => () => {},
-          executeAction: (id, callback) => { if (id === 'ui.select') return callback(); throw Error('Unexpected action: ' + id); },
-          setActiveSurface: () => {}, supportsAction: () => true,
-          refreshAgentSurface: async () => null,
-          addSchedule: async (id, time) => { window.scheduledTasks.push({id, time}); return {ok: true}; },
-          openTaskGraph: async id => { window.openedTasks.push(id); if (mode === 'refused') throw Error('Fixture task open refused'); return mode === 'cancelled' ? {cancelled: true} : {ok: true}; }};
-      }, mode);
-      for (let i = 0; i < sources.length - 1; i++) await page.addScriptTag({content: sources[i]});
-      await page.evaluate(() => {
-        const blank = () => null;
-        Object.assign(window.UI, {BaboomSprite: blank, ScheduleResponsibility: blank,
-          Canvas: () => React.createElement('div', {'data-fixture-canvas': true}, 'Task canvas'),
-          Docs: () => {
-            const u = window.UI.useApp();
-            return React.createElement('div', null, ...window.fixture.tasks.map(t =>
-              React.createElement('button', {key: t.id, onClick: () => u.show('Skill', {id: t.id})}, 'Repeat ' + t.id)));
-          }, Settings: blank});
-      });
-      await page.addScriptTag({content: sources.at(-1)});
+      const mount = async () => {
+        await page.addStyleTag({path: path.join(studio, 'style.css')});
+        await page.addStyleTag({content: 'html,body,#root{height:100%;margin:0}'});
+        for (const name of ['react.js', 'react-dom.js']) await page.addScriptTag({path: path.join(studio, 'vendor', name)});
+        await page.addScriptTag({content: require('./studio_xyflow.cjs').script()});
+        await page.addScriptTag({path: path.join(studio, 'compiled/react-resizable-panels.js')});
+        await page.evaluate(() => { window.fetch = () => new Promise(() => {}); });
+        await page.addScriptTag({path: path.join(studio, 'compiled/api.js')});
+        await page.evaluate(mode => {
+          window.fixture = window.structuredClone(window.ArchHubAPI.getSnapshot());
+          const s = window.fixture;
+          s.tasks = mode === 'empty' ? [] : [
+            {id: 'recent', title: 'Recent task', status: 'WIP', sessionPath: 'recent.archhub', messages: []},
+            {id: 'selected', title: 'Selected task', status: 'WIP', sessionPath: 'selected.archhub', sessionOpen: mode === 'last', messages: []}
+          ];
+          s.focusedTask = ['selected', 'refused', 'cancelled', 'uxflow'].includes(mode) ? 'selected' : '';
+          if (mode === 'repeat') {
+            s.tasks.forEach(t => { t.title = 'Same task'; });
+            s.templates = s.tasks.map(t => ({...t, chain: []}));
+          }
+          if (mode === 'uxflow') {
+            s.tasks[1].messages = [{id: 'long', who: 'Fixture agent', text: 'x'.repeat(900)}];
+            s.tasks.push(...['interrupted', 'limit reached', 'LIMIT_REACHED', 'blocked'].map((rowState, i) => ({
+              id: 'state-' + i, title: 'State ' + rowState, status: 'PLANNED', rowState,
+              summary: 'Planned, not started', blockedBy: 'Unsupported dependency', messages: []
+            })));
+          }
+          s.schedules = [{id: 'trigger', title: 'Repeat recent task', path: 'recent.archhub', enabled: true, time: '09:00'}];
+          window.openedTasks = [];
+          window.scheduledTasks = [];
+          window.ArchHubAPI = {...window.ArchHubAPI, getSnapshot: () => s, subscribe: () => () => {},
+            executeAction: (id, callback) => { if (id === 'ui.select') return callback(); throw Error('Unexpected action: ' + id); },
+            setActiveSurface: () => {}, supportsAction: () => true,
+            refreshAgentSurface: async () => null, apiRouterChat: async () => window.holdSend ? new Promise(resolve => { window.finishSend = resolve; }) : null,
+            addSchedule: async (id, time) => { window.scheduledTasks.push({id, time}); return {ok: true}; },
+            openTaskGraph: async id => { window.openedTasks.push(id); if (mode === 'refused') throw Error('Fixture task open refused'); return mode === 'cancelled' ? {cancelled: true} : {ok: true}; }};
+        }, mode);
+        for (let i = 0; i < sources.length - 1; i++) await page.addScriptTag({content: sources[i]});
+        await page.evaluate(() => {
+          const blank = () => null;
+          Object.assign(window.UI, {BaboomSprite: blank, ScheduleResponsibility: blank,
+            Canvas: () => React.createElement('div', {'data-fixture-canvas': true}, 'Task canvas'),
+            Docs: () => {
+              const u = window.UI.useApp();
+              return React.createElement('div', null, ...window.fixture.tasks.map(t =>
+                React.createElement('button', {key: t.id, onClick: () => u.show('Skill', {id: t.id})}, 'Repeat ' + t.id)));
+            }, Settings: blank});
+        });
+        await page.addScriptTag({content: sources.at(-1)});
+      };
+      await mount();
       const nav = page.getByRole('navigation', {name: 'Main navigation'});
       await nav.waitFor();
       const labels = ['Home', 'Workshop', 'Canvas', 'Automations', 'Docs', 'Settings'];
@@ -86,6 +98,82 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
         await page.close();
         continue;
       }
+      if (mode === 'uxflow') {
+        for (const [state, label] of [['interrupted', 'interrupted'], ['limit reached', 'limit reached'], ['LIMIT_REACHED', 'limit reached']]) {
+          const row = page.locator('.dx-task').filter({has: page.locator('b', {hasText: 'State ' + state})});
+          assert.equal(await row.locator('[data-line="reason"]').innerText(), 'Planned, not started');
+          assert.equal(await row.locator('[data-task-row-state]').innerText(), label);
+        }
+        assert.equal(await page.locator('[data-task-row-state^="blocked"]').count(), 0);
+        // The same owner renders Workshop task rows; unsupported dependency data stays hidden.
+        await page.evaluate(() => {
+          const node = document.createElement('div'); node.id = 'workshop-row-court'; document.body.append(node);
+          window.ReactDOM.createRoot(node).render(React.createElement(window.UI.Ctx.Provider, {value: {}},
+            ...window.fixture.tasks.filter(t => t.rowState).map(task => React.createElement(window.UI.Task, {key: task.id, task, select: () => {}}))));
+        });
+        await page.locator('#workshop-row-court [data-task-row-state="interrupted"]').waitFor();
+        assert.equal(await page.locator('#workshop-row-court [data-task-row-state="limit reached"]').count(), 2);
+        assert.equal(await page.locator('#workshop-row-court').getByText(/blocked by/).count(), 0);
+        await page.locator('#workshop-row-court').evaluate(node => node.remove());
+        console.log('PASS task reasons: Home + Workshop interrupted / limit reached; generic status retained; blocked-by hidden');
+        const open = async title => {
+          await nav.getByRole('button', {name: 'Home', exact: true}).click();
+          await page.locator('.dx-task').filter({hasText: title}).click();
+          await nav.getByRole('button', {name: 'Workshop', exact: true}).click();
+          await page.getByRole('button', {name: 'Workshop view', exact: true}).click();
+        };
+        await open('Selected task');
+        const separator = page.getByRole('separator', {name: 'Resize the task parameters'});
+        const params = page.locator('#params');
+        const before = await params.boundingBox(), handle = await separator.boundingBox();
+        assert.ok(handle.width >= 6);
+        assert.equal(await separator.evaluate(el => window.getComputedStyle(el).cursor), 'col-resize');
+        // CDP targets only this headless page; it never sends input to the desktop.
+        const input = await page.context().newCDPSession(page);
+        const point = {x: handle.x + handle.width / 2, y: handle.y + handle.height / 2};
+        await input.send('Input.dispatchMouseEvent', {type: 'mouseMoved', ...point});
+        await input.send('Input.dispatchMouseEvent', {type: 'mousePressed', ...point, button: 'left', buttons: 1, clickCount: 1});
+        await input.send('Input.dispatchMouseEvent', {type: 'mouseMoved', x: point.x + 75, y: point.y, button: 'left', buttons: 1});
+        await input.send('Input.dispatchMouseEvent', {type: 'mouseReleased', x: point.x + 75, y: point.y, button: 'left', buttons: 0, clickCount: 1});
+        await input.detach();
+        const after = await params.boundingBox();
+        assert.ok(after.width > before.width + 60, JSON.stringify({before, after}));
+        await page.waitForFunction(() => JSON.parse(localStorage.getItem('archhub.home.layout.v1'))?.inner?.params > 0);
+        await page.reload(); await mount(); await open('Selected task');
+        const restored = await params.boundingBox();
+        assert.ok(Math.abs(restored.width - after.width) < 1, JSON.stringify({after, restored}));
+        console.log('PASS pointer resize + reload: ' + JSON.stringify({before: before.width, after: after.width, restored: restored.width}));
+        for (const [width, height] of [[1440, 900], [800, 500]]) {
+          await page.setViewportSize({width, height});
+          const token = page.locator('.dx-msg-line p').filter({hasText: 'x'.repeat(900)});
+          const sizes = await token.evaluate(el => ({client: el.clientWidth, scroll: el.scrollWidth, page: document.documentElement.scrollWidth}));
+          assert.ok(sizes.scroll <= sizes.client, JSON.stringify(sizes));
+          assert.ok(sizes.page <= width, JSON.stringify(sizes));
+          const details = page.getByRole('button', {name: 'Details', exact: true});
+          await details.click(); assert.equal(await details.getAttribute('aria-expanded'), 'true');
+          await details.click(); assert.equal(await details.getAttribute('aria-expanded'), 'false');
+          await page.getByRole('button', {name: 'Reply', exact: true}).click();
+          assert.equal(await page.getByRole('textbox', {name: 'Message', exact: true}).evaluate(el => el === document.activeElement), true);
+          console.log('PASS message wrap + actions ' + width + 'x' + height + ': ' + JSON.stringify(sizes));
+        }
+        const draft = page.getByRole('textbox', {name: 'Message', exact: true});
+        await draft.fill('Fixture draft A');
+        await open('Recent task'); assert.equal(await draft.inputValue(), '');
+        await draft.fill('Fixture draft B');
+        await open('Selected task'); assert.equal(await draft.inputValue(), 'Fixture draft A');
+        await page.evaluate(() => { window.holdSend = true; });
+        await page.getByRole('button', {name: 'Send', exact: true}).click();
+        await open('Recent task');
+        assert.equal(await draft.inputValue(), 'Fixture draft B');
+        await page.evaluate(() => window.finishSend(null));
+        await open('Selected task');
+        await page.waitForFunction(() => document.querySelector('textarea[aria-label="Message"]').value === 'Fixture draft A');
+        await open('Recent task'); assert.equal(await draft.inputValue(), 'Fixture draft B');
+        await open('Selected task'); assert.equal(await draft.inputValue(), 'Fixture draft A');
+        assert.deepEqual(errors, []);
+        console.log('PASS per-task drafts: Home + B round trips, no cross-task leak, delayed failed-request recovery after navigation; pageErrors=[]');
+        await page.close(); continue;
+      }
       if (mode === 'clicked') {
         await page.locator('.dx-task').filter({hasText: 'Selected task'}).dblclick();
         await page.locator('.dx-main[data-home-face="workshop"]').waitFor();
@@ -100,12 +188,14 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
           assert.deepEqual(await page.evaluate(() => window.openedTasks), []);
           assert.equal(await nav.getByRole('button', {name: 'Home', exact: true}).getAttribute('aria-current'), 'page');
         } else if (mode === 'cancelled') {
+          assert.equal(await page.evaluate(() => window.openedTasks.at(-1)), 'selected');
           assert.equal(await page.getByRole('textbox', {name: 'Task title', exact: true}).count(), 0);
           assert.equal(await nav.getByRole('button', {name: 'Home', exact: true}).getAttribute('aria-current'), 'page');
         } else if (mode === 'refused') {
           await page.getByRole('alert').filter({hasText: 'Fixture task open refused'}).waitFor();
           assert.equal(await page.locator('[data-home-face="canvas"]').count(), 0);
         } else {
+          assert.deepEqual(errors, []);
           await page.locator('.dx-main[data-home-face="' + face.toLowerCase() + '"]').waitFor();
           assert.equal(await page.getByRole('textbox', {name: 'Task title', exact: true}).inputValue(), mode === 'first' ? 'Recent task' : 'Selected task');
           assert.equal(await page.evaluate(() => window.openedTasks.at(-1)), mode === 'first' ? 'recent' : 'selected');

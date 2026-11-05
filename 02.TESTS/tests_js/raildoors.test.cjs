@@ -66,9 +66,10 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
       boxes.forEach((box, index) => { assert.ok(box && box.height > 0); if (index) assert.ok(box.y >= boxes[index - 1].y + boxes[index - 1].height, labelAt(index)); });
       for (const face of ['Workshop', 'Canvas']) {
         await nav.getByRole('button', {name: face, exact: true}).click();
-        if (mode === 'empty') {
+        if (['empty', 'first', 'last', 'cancelled'].includes(mode)) {
           await page.getByRole('alert').filter({hasText: 'Pick a task on Home.'}).waitFor();
           assert.deepEqual(await page.evaluate(() => window.openedTasks), []);
+          assert.equal(await nav.getByRole('button', {name: 'Home', exact: true}).getAttribute('aria-current'), 'page');
         } else if (mode === 'cancelled') {
           assert.equal(await page.getByRole('textbox', {name: 'Task title', exact: true}).count(), 0);
           assert.equal(await nav.getByRole('button', {name: 'Home', exact: true}).getAttribute('aria-current'), 'page');

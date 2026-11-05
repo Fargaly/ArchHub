@@ -9478,7 +9478,9 @@
         "03.TOOLS/tools/real_app_check/harness.mjs",
         "03.TOOLS/tools/real_app_check/scenarios/smoke.mjs",
         "02.TESTS/tests_replica/test_revit_open.py",
-        "02.TESTS/tests_replica/revit_open_fixture/Program.cs"
+        "02.TESTS/tests_replica/revit_open_fixture/Program.cs",
+        "05.EVIDENCE/t1small-hook-stop.patch",
+        "05.EVIDENCE/t1small-compiler-timing.json"
       ]
     }
   }

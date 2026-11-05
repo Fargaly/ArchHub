@@ -1469,9 +1469,9 @@ function datasetPorts(node){
 }
 function fileNode(node){
  const item=state.libraryPorts.find(row=>row.id===node.item)||state.libraryPorts.find(row=>row.engine===node.type), base=item?.ports||node.ports||{source:[],target:[]};
- const defs=node.paramDefs||[], bind=node.type==='param.value'?node.bind:null, owner=bind&&sessionDocument.nodes.find(n=>n.id===bind.node);
+ const defs=(node.paramDefs||[]).map(d=>node.type==='param.value'&&d.id==='value'?{...d,type:node.params.type}:d), bind=node.type==='param.value'?node.bind:null, owner=bind&&sessionDocument.nodes.find(n=>n.id===bind.node);
  const ports=datasetPorts(node)||{source:node.type==='param.value'?[{id:'value',type:PARAM_SOCKET[node.params.type]||'any'}]:base.source||[],
-  target:[...(base.target||[]),...defs.map(d=>({id:'param:'+d.id,type:PARAM_SOCKET[d.type]||'any',label:d.name}))]};
+  target:[...(base.target||[]).map(p=>node.type==='param.value'&&p.id==='value'?{...p,type:PARAM_SOCKET[node.params.type]||'any'}:p),...defs.map(d=>({id:'param:'+d.id,type:PARAM_SOCKET[d.type]||'any',label:d.name}))]};
  const params=bind?{type:node.params.type,value:owner?.params[bind.param]}:{...node.params};
  const typeOf=key=>bind&&key==='value'?node.params.type:node.type==='param.value'&&key==='value'?node.params.type:defs.find(d=>d.id===key)?.type||ports.target.find(port=>port.id===key)?.type;
  const schema=Object.keys(params).map(key=>{const kind=typeOf(key),def=defs.find(d=>d.id===key)||(bind&&owner?.paramDefs?.find(d=>d.id===bind.param))||{};

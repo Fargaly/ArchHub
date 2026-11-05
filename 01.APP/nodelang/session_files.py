@@ -168,8 +168,11 @@ def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, de
     from .pipeline_engines import PIPELINE_ENGINES
     from .stem_graph_evaluation import run_stem_operation
     if engine == PARAM_ENGINE:
-        value = bound_value(document, node)
-        return {'value': coerce(node['params'].get('type', 'json'), value)}, str(value)
+        value = bound_value(document, node) if node.get('bind') else feeds.get('value', params.get('value'))
+        owner = next((n for n in document['nodes'] if n['id'] == (node.get('bind') or {}).get('node')), node)
+        key = (node.get('bind') or {}).get('param', 'value')
+        entry = next((d for d in owner.get('paramDefs', []) if d['id'] == key), {})
+        return {'value': coerce(node['params'].get('type', 'json'), value, entry)}, str(value)
     if engine in ('data.dataset', 'data.field'):
         from .node_datasets import outputs as dataset_outputs
         return dataset_outputs(node, feeds)

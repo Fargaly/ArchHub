@@ -6,6 +6,80 @@ import json
 import pytest
 
 
+def test_all_parameter_sockets_through_shared_api(profile):
+    from nodelang import node_params
+    from nodelang.native_agent_mcp import build_server
+    server = build_server()
+    path = str(profile / 'types.archhub')
+    def tool(name, **args):
+        result = asyncio.run(server.call_tool(name, args))
+        content = result[1] if isinstance(result, tuple) else None
+        return content.get('result', content) if isinstance(content, dict) else json.loads(result[0].text)
+    tool('canvas.new', path=path)
+    for kind in node_params.TYPES:
+        value = {'bool': True, 'integer': 7, 'number': 3.5, 'list': [1, 2], 'object': {'a': 1},
+                 'json': {'a': 1}, 'color': '#112233', 'date': '2026-11-05'}.get(kind, 'typed value')
+        a = tool('canvas.add_node', path=path, type='param.value', params={'type': kind, 'value': value})['node']
+        b = tool('canvas.add_node', path=path, type='param.value', params={'type': kind, 'value': node_params.default({'type': kind, 'options': ['other', value]})})['node']
+        if kind in ('choice', 'enum'):
+            from nodelang.session_files import read_document, write_document
+            doc = read_document(path)
+            for n in doc['nodes']:
+                if n['id'] in (a, b):
+                    next(d for d in n['paramDefs'] if d['id'] == 'value')['options'] = ['other', value]
+            write_document(path, doc)
+        read = tool('canvas.read', path=path)
+        node = next(n for n in read['nodes'] if n['id'] == b)
+        socket = 'value:' + node_params.socket_type(kind)
+        assert socket in node['sockets']['in'] and socket in node['sockets']['out'], (kind, node['sockets'])
+        tool('canvas.set_param', path=path, node=a, key='value', value=json.dumps(value) if kind in ('list', 'object', 'json') else str(value))
+        read = tool('canvas.wire', path=path, source=a+'.value', target=b+'.value')
+        assert next(n for n in read['nodes'] if n['id'] == b)['output']['value'] == value
+        if node_params.socket_type(kind) != 'any':
+            wrong = 'text' if node_params.socket_type(kind) != 'string' else 'number'
+            c = tool('canvas.add_node', path=path, type='param.value', params={'type': wrong})['node']
+            with pytest.raises(Exception, match='Wrong type'):
+                tool('canvas.wire', path=path, source=c+'.value', target=b+'.value')
+        print('TYPEDPARAM shared API:', kind, socket, 'same-type accepted; mismatch policy retained')
+
+
+def test_parameter_types_in_compiled_studio(profile):
+    import os
+    import subprocess
+    import threading
+    from pathlib import Path
+    from nodelang import node_params
+    from nodelang.nograph_server import NoGraphServer
+    from nodelang.session_files import catalogue, new_document, write_document
+    item = next(i for i in catalogue() if i['id'] == 'param.value')
+    doc = new_document('Typed parameter chains')
+    cases = []
+    for index, kind in enumerate(node_params.TYPES):
+        value = {'bool': True, 'integer': 7, 'number': 3.5, 'list': [1, 2], 'object': {'a': 1},
+                 'json': {'a': 1}, 'color': '#112233', 'date': '2026-11-05'}.get(kind, 'typed value')
+        defs = copy.deepcopy(item['paramDefs'])
+        next(d for d in defs if d['id'] == 'value')['options'] = ['other', value] if kind in ('choice', 'enum') else []
+        for suffix, held in [('a', value), ('b', node_params.default({'type': kind, 'options': ['other', value]}))]:
+            doc['nodes'].append({'id': kind+'-'+suffix, 'type': 'param.value', 'item': item['id'],
+                'title': kind+' '+suffix, 'params': {'type': kind, 'value': held},
+                'paramDefs': defs, 'position': {'x': 0 if suffix == 'a' else 320, 'y': index*250}})
+        cases.append({'kind': kind, 'socket': node_params.socket_type(kind), 'value': value})
+    path = profile / 'typed.archhub'
+    write_document(path, doc)
+    server = NoGraphServer(profile / 'server')
+    server.thread = threading.Thread(target=server.httpd.serve_forever, daemon=True)
+    server.thread.start()
+    try:
+        result = subprocess.run(['node', str(Path(__file__).parents[1] / 'tests_js/typedparam.mjs')],
+            input=json.dumps({'url': server.public_url+'/studio/?bootstrap='+server.browser_bootstrap_token,
+                              'path': str(path), 'cases': cases}),
+            text=True, encoding='utf-8', capture_output=True, timeout=150, env=os.environ.copy())
+        print(result.stdout)
+        assert result.returncode == 0, result.stderr
+    finally:
+        server.close()
+
+
 @pytest.fixture(autouse=True)
 def profile(tmp_path, monkeypatch):
     for name in ('LOCALAPPDATA', 'APPDATA', 'USERPROFILE', 'HOME'):

@@ -106,7 +106,7 @@ def definition(node, param):
     found = [d for d in node.get('paramDefs', []) if d['id'] == param]
     if not found:
         raise ValueError('Parameter is absent: %s' % param)
-    return found[0]
+    return {**found[0], 'type': node['params'].get('type', 'number')} if node['type'] == PARAM_ENGINE and param == 'value' else found[0]
 
 
 def default(entry):
@@ -152,7 +152,8 @@ def set_value(document, node_ref, key, value):
     if key not in node['params']:
         raise ValueError('Parameter is absent. Parameters: %s' % list(node['params']))
     user = [d for d in node.get('paramDefs', []) if d['id'] == key]
-    node['params'][key] = coerce(user[0]['type'], value, user[0]) if user else value
+    entry = definition(node, key) if user else None
+    node['params'][key] = coerce(entry['type'], value, entry) if entry else value
     promoted = user[0].get('promoted') if user else None
     return [node['id']] + ([promoted] if promoted else [])
 
@@ -197,15 +198,19 @@ def demote(document, node_ref, param):
 
 
 def ports(node, base):
-    """Library ports plus the typed sockets of the node's own parameters (and a Parameter node's output)."""
+    """Library ports plus typed parameter sockets, including both ends of a Parameter value."""
     source, target = list(base.get('source', [])), list(base.get('target', []))
     if node['type'] in ('data.dataset', 'data.field'):
         from .node_datasets import ports as dataset_ports
         source, target = dataset_ports(node)['source'], dataset_ports(node)['target']
     if node['type'] == PARAM_ENGINE:
-        source = [{'id': 'value', 'type': socket_type(node['params'].get('type'))}]
+        value_type = socket_type(node['params'].get('type'))
+        source = [{'id': 'value', 'type': value_type}]
+        target = [{**p, 'type': value_type} if p['id'] == 'value' else p for p in target]
     if node['type'] != 'data.dataset':  # a dataset's fields are its columns, not inputs
-        target += [{'id': 'param:' + d['id'], 'type': socket_type(d['type'])} for d in node.get('paramDefs', [])]
+        target += [{'id': 'param:' + d['id'], 'type': socket_type(node['params'].get('type')
+                   if node['type'] == PARAM_ENGINE and d['id'] == 'value' else d['type'])}
+                   for d in node.get('paramDefs', [])]
     return {'source': source, 'target': target}
 
 

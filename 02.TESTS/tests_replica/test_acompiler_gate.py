@@ -1022,3 +1022,20 @@ def test_release_bootstrap_registration_keeps_immutable_authority_checks(reposit
     assert seen[0]['why'] == 'Founder request'
     assert seen[0]['intent'] == ('ACOMPILER2B' if kind == 'additive' else 'NEW')
     assert run_git(repository, 'rev-parse', 'HEAD') == head
+
+
+def test_report_normalizes_each_path_once_per_validation(repository, monkeypatch):
+    from unittest.mock import Mock
+    normalizer = Mock(wraps=strict_check.normalize)
+    monkeypatch.setattr(strict_check, "normalize", normalizer)
+    payload = report(*[diagnostic() for _ in range(100)])
+    result = strict_check._validate_report(payload, repository)
+    assert normalizer.call_count == 2
+    assert {item["file"] for item in result["diagnostics"]} == {"nodelang/old.py"}
+    strict_check._validate_report(report(diagnostic()), repository)
+    assert normalizer.call_count == 4
+    with pytest.raises(strict_check.CompilerFailure, match="outside compiler root"):
+        strict_check._validate_report(report(diagnostic("../escape.py")), repository)
+    normalizer.reset_mock()
+    strict_check._validate_report(report(diagnostic("../artifact.py")), repository, artifact=True)
+    normalizer.assert_not_called()

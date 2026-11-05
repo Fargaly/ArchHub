@@ -276,6 +276,19 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
     app._update_pulse = update_pulse
     QTimer.singleShot(0, consider_update)
     QTimer.singleShot(0, lambda: print('  window     : Studio opened', flush=True))
+    def warm_provider(ok):
+        if not ok or getattr(server, '_provider_warm_started', False):
+            return
+        server._provider_warm_started = True
+
+        def warm():
+            try:
+                from .model_router import prewarm_default_provider
+                prewarm_default_provider()
+            except Exception as failure:
+                print('  router     : background provider warm skipped (%s)' % type(failure).__name__, flush=True)
+        threading.Thread(target=warm, name='archhub-provider-warm', daemon=True).start()
+    view.loadFinished.connect(warm_provider)
     view.loadFinished.connect(lambda ok: threading.Thread(target=confirm_boot if ok else lambda: finish_app_folder(state_dir, healthy=False), name='archhub-update-confirm', daemon=True).start())
     restart['quit'] = quit_app
     code = app.exec()

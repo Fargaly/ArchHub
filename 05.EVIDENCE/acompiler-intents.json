@@ -8980,6 +8980,8 @@
     "NOGRAPH": {
       "source": "Founder 2026-10-28 NOGRAPH: app is .archhub files of nodes/sockets/wires, parametric, no always-on graph; agents work in the canvas; any agent. Cumulative release of NG-ROUTER, NG-WORKSHOP, NG-BROKERS, NG-CANVAS, NG-NOGRAPH plus live Workshop delivery and the compiler pass. T1SMALL: F98 unsigned workspace settings admission, tested through the existing hook owner. WSROLES: declared-role aliases, waiting and handover in the existing Workshop mailbox; automatic vendor onboarding. T1SMALL router cold-start fix; register the founder-listed workspace, guard, smoke, Studio and Revit owner paths for the remaining per-item commits. WORKSPACE-ENFORCE: temporary profile environment maps, all-folder name reports and numbered steward reports, exercised without live task dispatch. INSTALLED-SMOKE-HARNESS: ship pinned pywinauto/comtypes and confine generated COM wrappers to the disposable rig profile.",
       "scope": [
+        "01.APP/nodelang/profile_instance.py",
+        "05.EVIDENCE/t1small-publication-scan.patch",
         "01.APP/nodelang/client_mcp_installation.py",
         "02.TESTS/tests_replica/test_client_mcp_installation.py",
         "01.APP/nodelang/studio/design-tokens.json",

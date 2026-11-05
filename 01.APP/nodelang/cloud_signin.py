@@ -524,14 +524,14 @@ def record_refusal(path: Optional[Path], refused_bearer: str, *,
         write_cloud_session(record, {"refused_at": int(now if now is not None else time.time())}, expected_token=refused_bearer)
 
 
-def sign_in_state(path: Optional[Path] = None, *, now: Optional[float] = None) -> dict:
+def sign_in_state(path: Optional[Path] = None, *, now: Optional[float] = None, session=None) -> dict:
     """What the one session record on this machine says, without the network.
 
     signed_in: a bearer, an email and an expiry still ahead (or none recorded).
     expired:   the expiry passed, or the cloud refused this bearer.
     signed_out: no usable record."""
     record = path or cloud_session_path()
-    held = read_cloud_session(record)
+    held = session if session is not None else read_cloud_session(record)
     email = str(held.get("email") or "").strip().casefold()
     if not _held_bearer(held) or "@" not in email:
         return {"state": "signed_out", "signed_in": False, "email": "", "expires_at": None,

@@ -37,13 +37,18 @@
    sourceTotal+=file.source_bytes;outputTotal+=file.bytes;
    if(sourceTotal>2097152||outputTotal>4194304)throw Error('Studio build exceeds its aggregate bound.');
    if(file.integrity!=='sha256-'+window.btoa(file.sha256.match(/../g).map(x=>String.fromCharCode(parseInt(x,16))).join('')))throw Error('Studio integrity metadata differs.');
+  }
+  await Promise.all(manifest.files.map(async file=>{
    const bytes=await readAsset(file.source,1048576);
    const sha=await hash(bytes);
    if(sha!==file.source_sha256||bytes.byteLength!==file.source_bytes)throw Error('Studio build is stale.');
-   await new Promise((resolve,reject)=>{const tag=document.createElement('script');tag.src='/studio/compiled/'+file.output;tag.integrity=file.integrity;tag.crossOrigin='anonymous';tag.onload=resolve;tag.onerror=()=>reject(Error('Studio compiled asset failed verification.'));document.body.appendChild(tag);});
-   // Observe failure immediately; data must not hold the remaining UI scripts.
-   if(file.source==='api.js')window.ArchHubAPI.ready.catch(error=>{readyFailure=error;});
-  }
+  }));
+  await Promise.all(manifest.files.map(file=>new Promise((resolve,reject)=>{
+   const tag=document.createElement('script');tag.async=false;tag.src='/studio/compiled/'+file.output;
+   tag.integrity=file.integrity;tag.crossOrigin='anonymous';tag.onerror=()=>reject(Error('Studio compiled asset failed verification.'));
+   tag.onload=()=>{if(file.source==='api.js')window.ArchHubAPI.ready.catch(error=>{readyFailure=error;});resolve();};
+   document.body.appendChild(tag);
+  })));
   if(readyFailure)throw readyFailure;
   await window.ArchHubAPI.ready;
   if(boot.dataset.hold==='1')return;

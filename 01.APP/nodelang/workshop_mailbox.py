@@ -81,6 +81,7 @@ def application_history(source=None, *, read_only=False, busy_timeout_seconds: f
                 busy_timeout_seconds=busy_timeout_seconds) as selected:
             if selected._db.execute("SELECT 1 FROM conversations WHERE id=?", (ROOM,)).fetchone() is None:
                 selected.ensure_conversation(ROOM)
+            selected._db.execute("CREATE TABLE IF NOT EXISTS workshop_waiting(message_id TEXT PRIMARY KEY, target TEXT NOT NULL)")
             _retain_messages(selected)
             yield selected
 
@@ -93,7 +94,7 @@ def _retain_messages(history):
         return
     with history._transaction(write=True):
         rows = history._db.execute("SELECT rowid,* FROM messages WHERE conversation_id=? "
-            "AND created_at<? ORDER BY sequence DESC LIMIT 128", (ROOM, cutoff)).fetchall()
+            "AND created_at<? AND id NOT IN (SELECT message_id FROM workshop_waiting) ORDER BY sequence DESC LIMIT 128", (ROOM, cutoff)).fetchall()
         for row in rows:
             history._db.execute("UPDATE messages SET reply_to=NULL WHERE conversation_id=? AND reply_to=?",
                 (ROOM, row["id"]))
@@ -173,7 +174,8 @@ def _aliases(identity, declaration=None):
     declaration = declaration or {}
     aliases = {str(value).casefold() for value in (identity.get("sender_label"), identity.get("sender_key"),
         declaration.get("agent"), declaration.get("session"), declaration.get("native_session_id"),
-        declaration.get("runtime")) if value}
+        declaration.get("runtime"), declaration.get("display_name"), declaration.get("title"),
+        declaration.get("role"), *declaration.get("aliases", ())) if value}
     if "claude" in aliases:
         aliases.add("claude code")
     label = str(identity.get("sender_label") or declaration.get("agent") or "").split(" / ", 1)[0]
@@ -182,7 +184,16 @@ def _aliases(identity, declaration=None):
     runtime_alias = {"vscode-copilot":"copilot", "grok-bot":"grok"}.get(declaration.get("runtime"))
     if runtime_alias:
         aliases.add(runtime_alias)
+    role = str(declaration.get("role") or "").casefold()
+    aliases.update({"717", "coordinator"} if role == "717" else
+                   {"design", "designer"} if role == "design" else
+                   {"research", "r&d", "c91e"} if role == "research" else ())
     return aliases
+
+
+def _role(value):
+    value = str(value or "").strip().casefold()
+    return {"coordinator": "717", "designer": "design", "r&d": "research", "c91e": "research"}.get(value, value)
 
 
 def _addressed(message, identity, declaration=None):
@@ -239,7 +250,8 @@ def _declaration(history, identity, runtime=None):
         row = history._db.execute("SELECT record FROM workshop_declarations WHERE json_extract(record,'$.session')=?",
             (identity["sender_key"],)).fetchone()
         if row:
-            return json.loads(row[0])
+            return next((value for value in read_declarations(history._db, include_archived=True)
+                         if value["session"] == identity["sender_key"]), json.loads(row[0]))
     return {"runtime":runtime, "session":identity["sender_key"], "agent":identity["sender_label"]}
 
 
@@ -304,6 +316,7 @@ def _recipient_rows(message, declarations):
     ambiguous = {target for target in targets if re.fullmatch(r"[0-9a-f]{3,}", target)
         and len({row.get("native_session_id") for row in declarations
             if str(row.get("native_session_id") or "").casefold().startswith(target)}) > 1}
+    ambiguous = {target for target in ambiguous if not any(target in _aliases({}, row) for row in declarations)}
     if ambiguous:
         message = {**message, "content":"To " + ", ".join(target for target in targets if target not in ambiguous)
             + ":\n" + message["content"].partition("\n")[2]}
@@ -333,6 +346,9 @@ def _reply_recipients(history, message, identity, declaration, declarations, rep
     routing = _routing(message)
     if not recipients:
         recipients = routing["recipients"] if routing and routing["recipients"] else _recipient_rows(message, declarations)
+    live_sessions = {row["session"] for row in declarations if row.get("current")}
+    if recipients and not any(row["session"] in live_sessions for row in recipients):
+        recipients = _recipient_rows(message, declarations)
     reply_targets = set()
     if reply is not None and reply.get("reply_to") == message["id"] and agent_addressed(reply):
         reply_targets = {target.strip().casefold() for target in reply["content"].split("\n", 1)[0][3:-1].split(",")}
@@ -404,16 +420,34 @@ def _routing(message):
     return json.loads("".join(evidence[1:])) if evidence and evidence[0] == ROUTING_EVIDENCE else None
 
 
-def _acknowledged(history, message, identity):
+def _acknowledged(history, message, identity, declaration=None):
     """A message is acknowledged for this recipient once it was injected into its session (one live
     delivery row, any channel) or once the recipient replied to it; it is never attached again."""
     db = history._db
+    sessions = {identity["sender_key"]}
+    if declaration and declaration.get("role"):
+        sessions.update(alias for alias in declaration.get("aliases", ()) if alias.startswith("agent:session:"))
+    marks = ",".join("?" for _ in sessions)
     if db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_live_deliveries'").fetchone() is not None and \
-            db.execute("SELECT 1 FROM workshop_live_deliveries WHERE message_id=? AND recipient=? AND state='delivered'",
-                       (message["id"], identity["sender_key"])).fetchone() is not None:
+            db.execute("SELECT 1 FROM workshop_live_deliveries WHERE message_id=? AND recipient IN (" + marks + ") AND state='delivered'",
+                       (message["id"], *sessions)).fetchone() is not None:
         return True
     return db.execute("SELECT 1 FROM messages WHERE conversation_id=? AND reply_to=? AND author=? LIMIT 1",
                       (ROOM, message["id"], identity["sender"])).fetchone() is not None
+
+
+def _settle_waiting(history, message, declarations):
+    """Keep a waiting address until every named holder has received it."""
+    if not history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_waiting'").fetchone():
+        return True
+    targets = [part for part in _header_targets(message) if part.casefold() not in _ROOM_TARGETS]
+    for target in targets:
+        rows = _recipient_rows({**message, "content": "To " + target + ":\nx"}, declarations)
+        if not rows or not all(_acknowledged(history, message, {"sender_key": row["session"],
+                "sender": row["agent"] + " [" + row["session"] + "]"}, row) for row in rows):
+            return False
+    history._db.execute("DELETE FROM workshop_waiting WHERE message_id=?", (message["id"],))
+    return True
 
 
 def _seen(history, body, identity, runtime):
@@ -445,6 +479,7 @@ def _seen(history, body, identity, runtime):
                 "reason=excluded.reason, at=excluded.at, ms=excluded.ms WHERE workshop_live_deliveries.state!='delivered'",
                 (message_id, identity["sender_key"], identity["sender_label"], runtime, None, body["channel"],
                  "delivered", "handed over in " + body["channel"], at, 0))
+            _settle_waiting(history, message, declarations)
     return {"seen": ids}
 
 
@@ -481,12 +516,12 @@ def _pending(history, identity, runtime):
                 continue
             all_events = delivery_events(history, message)
             routed = {key for key, records in all_events.items() if "addressed" in records}
-            if routed and identity["sender_key"] not in routed:
+            if routed and identity["sender_key"] not in routed and routed & {r["session"] for r in declarations}:
                 continue
             if not routed and not _can_ack(history, message, identity, declaration, declarations):
                 continue
             events = all_events.get(identity["sender_key"], {})
-            if "answered" in events or "delivered" in events or _acknowledged(history, message, identity):
+            if "answered" in events or "delivered" in events or _acknowledged(history, message, identity, declaration):
                 continue
             message["delivery_sequence"] = message["sequence"]
             cost = len(json.dumps(message).encode())
@@ -692,6 +727,7 @@ class WorkshopInjection:
             self._tick(history, now)
 
     def _tick(self, history, now, *, message_id=None):
+        history._db.execute("CREATE TABLE IF NOT EXISTS workshop_waiting(message_id TEXT PRIMARY KEY, target TEXT NOT NULL)")
         direct = message_id is not None
         cutoff = datetime.fromtimestamp(now - self.backfill_seconds, timezone.utc).isoformat()
         with history._transaction():
@@ -703,10 +739,16 @@ class WorkshopInjection:
                 rows = history._db.execute("SELECT * FROM messages WHERE conversation_id=? AND id=?",
                     (ROOM, message_id)).fetchall()
                 latest = []
+        waiting_rows = []
+        if history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_waiting'").fetchone():
+            waiting_rows = history._db.execute("SELECT m.* FROM messages m JOIN workshop_waiting w ON m.id=w.message_id "
+                "WHERE m.conversation_id=? ORDER BY m.sequence LIMIT 2000", (ROOM,)).fetchall()
+        latest += waiting_rows
+        waiting_ids = {row["id"] for row in waiting_rows}
         for raw in [*rows, *latest]:
             message = history._message(raw)
-            if (agent_addressed(message) and message["id"] not in self._settled
-                    and str(message.get("created_at") or "") >= cutoff):
+            if (agent_addressed(message) and (message["id"] not in self._settled or message["id"] in waiting_ids)
+                    and (str(message.get("created_at") or "") >= cutoff or message["id"] in waiting_ids)):
                 self._pending[message["id"]] = message["sequence"]
         # Process liveness probes must not keep SQLite readers blocking a sender's COMMIT.
         declarations = read_declarations(history._db, include_archived=True)
@@ -739,6 +781,9 @@ class WorkshopInjection:
                     self._pending.pop(message_id, None)
                     continue
                 recorded = delivery_events(history, message)
+            if message["id"] in waiting_ids and _settle_waiting(history, message, declarations):
+                self._pending.pop(message["id"], None)
+                continue
             routing = _routing(message)
             control_data = routing.get("native_control") if routing else None
             if (control_data
@@ -767,9 +812,12 @@ class WorkshopInjection:
                     for row in recipients:
                         _delivery_receipt(history, message, row, "addressed", now=now,
                             runtime=row["runtime"], native_session_id=row.get("native_session_id"))
+            live_sessions = {row["session"] for row in declarations if row.get("current")}
+            if not recipients or not any(row["session"] in live_sessions for row in recipients):
+                recipients = _recipient_rows(message, declarations)
             controls = [events["native-control"] for events in recorded.values() if "native-control" in events]
             asks_for_reply = _asks_for_reply(message)
-            settled = True
+            settled = bool(recipients)
             for recipient in recipients:
                 if "[" + recipient["session"] + "]" in message["author"] or message["author"] == recipient["agent"]:
                     continue
@@ -897,6 +945,16 @@ def read_declarations(connection, *, include_archived=False):
         row["sockets"] = {field: row["root"] + ":" + field for field in row if field not in ("sockets", "root")}
         row["process_alive"] = _session_alive(row)
         row["current"] = row["status"] != "done" and row["process_alive"]
+    for row in rows:
+        role = row.get("role")
+        if not role:
+            continue
+        holders = [other for other in rows if other.get("role") == role and other["current"]]
+        holder = max(holders, key=lambda other: other.get("updated_at", ""), default=None)
+        if holder is not None:
+            holder.setdefault("aliases", []).extend(_aliases({}, row))
+            if row is not holder:
+                row["current"] = False
     return [row for row in rows if include_archived or row["current"]]
 
 
@@ -911,9 +969,13 @@ def _declare(history, body, context, identity, runtime, peer, native_session):
     if sum(len(value.encode()) for value in paths) > 16384:
         raise ValueError("Declaration paths exceed their byte budget")
     metadata = {key: _text(body[key], key, 256).strip()
-                for key in ("display_name", "model") if key in body}
+                for key in ("display_name", "model", "role", "title") if key in body}
     if any(char in value for value in metadata.values() for char in "\r\n"):
         raise ValueError("Declaration display metadata must be one line")
+    if "role" in metadata:
+        metadata["role"] = _role(metadata["role"])
+        if not re.fullmatch(r"(?:717|research|design|tbp|founder|builder:[a-z0-9_-]+)", metadata["role"]):
+            raise ValueError("Choose a registered Workshop role")
     if "display_name" in metadata:
         # Compare system-label lookalikes only; preserve the user's stored display name.
         skeleton = "".join(char for char in unicodedata.normalize("NFKC", metadata["display_name"])
@@ -960,14 +1022,16 @@ def _declare(history, body, context, identity, runtime, peer, native_session):
         for record, in history._db.execute("SELECT record FROM workshop_declarations "
                                           "WHERE json_extract(record,'$.updated_at')<?", (cutoff,)).fetchall():
             archived = json.loads(record)
-            if not _session_alive(archived):
+            if not archived.get("role") and not _session_alive(archived):
                 expired.append(archived["root"])
     with history._transaction(write=True):
         history._db.execute("CREATE TABLE IF NOT EXISTS workshop_declarations("
                             "root TEXT PRIMARY KEY,record TEXT NOT NULL CHECK(json_valid(record))) STRICT")
         previous = history._db.execute("SELECT record FROM workshop_declarations WHERE root=?", (root,)).fetchone()
         old = json.loads(previous[0]) if previous else None
-        row.update({key: old[key] for key in ("display_name", "model") if old and key in old})
+        row.update({key: old[key] for key in ("display_name", "model", "role", "title") if old and key in old})
+        if old and task == "Session start" and old.get("role") and metadata.get("role", "").startswith("builder:"):
+            metadata["role"] = old["role"]
         row.update(metadata)
         changed = old is None or any(old.get(key) != value for key, value in row.items())
         row.update(version=(old["version"] if old else 0) + int(changed),
@@ -1060,7 +1124,7 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
                 "declare": {"task", "paths", "status", "request_id"},
                 "task_create": {"title"}, "task_list": set(), "task_claim": {"id"}, "task_release": {"id"},
                 "task_complete": {"id"}, "task_set_session": {"id"}, "task_open": {"id"}, "task_archive": {"id"}}
-    optional = {"send": {"reply_to", "idempotency_key", "native_control"}, "read": {"declarations_after", "include_archived"}, "declare": {"display_name", "model"}, "pending":set(), "seen":set(),
+    optional = {"send": {"reply_to", "idempotency_key", "native_control"}, "read": {"declarations_after", "include_archived"}, "declare": {"display_name", "model", "role", "title"}, "pending":set(), "seen":set(),
                 "task_create": set(), "task_list": set(), "task_claim": {"lease_seconds"}, "task_release": set(),
                 "task_complete": {"result"},
                 "task_set_session": {"scope", "rules", "agents", "plan", "progress", "folders", "references"},
@@ -1233,11 +1297,15 @@ def _deliver_now(database, result, body, identity):
         message = selected.get(ROOM, result["message_id"], principal=DELIVERY_AUTHOR)
         recipients = [row for row in (_routing(message) or {}).get("recipients", [])
                       if row.get("session") != identity["sender_key"]]
+        current = read_declarations(selected._db)
+        live = {row["session"] for row in current}
+        if not recipients or not any(row["session"] in live for row in recipients):
+            recipients = _recipient_rows(message, current)
         founder = body["to"].strip().casefold() in ("ahmed", "founder", "you")
         parts = {part.strip().casefold() for part in body["to"].split(",") if part.strip()}
         if parts and parts <= _ROOM_TARGETS:
             return []
-        if not recipients and not founder:
+        if not recipients and not founder and result.get("status") == "recorded":
             # Display names and @handles address agents too (the composer and agents use the same names).
             from .workshop_live import live_agents
             wanted = {part.strip().lstrip("@").casefold() for part in body["to"].split(",")}
@@ -1253,14 +1321,17 @@ def _deliver_now(database, result, body, identity):
         # mid-turn like his chat does ('prompting' is held for approval in a bypass-mode Claude session).
         rows = deliver(selected, result["message_id"], recipients, identity["sender_label"], body["text"],
                        permission_mode="bypass")
+        if recipients:
+            _settle_waiting(selected, message, current)
         if not recipients and not founder:
             from .workshop_live import SCHEMA
             selected._db.execute(SCHEMA)
-            reason = "queued until " + body["to"] + " next starts"
+            state = "returned" if result.get("status") == "returned" else "pending"
+            reason = "name has never existed" if state == "returned" else "queued for " + body["to"]
             selected._db.execute("INSERT OR IGNORE INTO workshop_live_deliveries VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (result["message_id"], body["to"], body["to"], "", "", "workshop", "pending", reason,
+                (result["message_id"], body["to"], body["to"], "", "", "workshop", state, reason,
                  datetime.now(timezone.utc).isoformat(), 0))
-            rows = [{"agent": body["to"], "state": "pending", "reason": reason, "delivery_note": "queued"}]
+            rows = [{"agent": body["to"], "state": state, "reason": reason, "delivery_note": "queued" if state == "pending" else "returned"}]
     return rows
 
 
@@ -1357,7 +1428,14 @@ def _send(history, body, identity, *, queued=(), sender_binding=None):
             evidence=evidence,
             reply_principal=identity["sender"],
             idempotency_key=retry_key)
-        missing = [] if reply else [part for part in _header_targets(probe) if part.casefold() not in _ROOM_TARGETS
+        history._db.execute("CREATE TABLE IF NOT EXISTS workshop_waiting(message_id TEXT PRIMARY KEY, target TEXT NOT NULL)")
+        known = read_declarations(history._db, include_archived=True)
+        targets = [part for part in _header_targets(probe) if part.casefold() not in _ROOM_TARGETS]
+        waiting = [part for part in targets if _role(part) in {"717", "research", "design", "tbp"}
+                   or any(part.casefold() in _aliases({}, row) for row in known)]
+        if waiting:
+            history._db.execute("INSERT OR IGNORE INTO workshop_waiting VALUES(?,?)", (message["id"], target))
+        missing = [] if reply else [part for part in _header_targets(probe) if part.casefold() not in _ROOM_TARGETS and part not in waiting
                    and not _recipient_rows({"content": "To " + part + ":\nx", "category": CATEGORY,
                        "author": identity["sender"], "evidence": probe["evidence"]}, declarations)]
         if missing:
@@ -1375,4 +1453,5 @@ def _send(history, body, identity, *, queued=(), sender_binding=None):
             history.append(ROOM, author="Workshop", content="To " + identity["sender_label"] + ":\n" + correction,
                 category=CATEGORY, refs=(identity["sender_key"],),
                 idempotency_key="workshop-language:" + message["id"])
-        return {**identity, "to": target, "text": text, "message_id": message["id"], "sequence": message["sequence"]}
+        return {**identity, "to": target, "text": text, "message_id": message["id"], "sequence": message["sequence"],
+                "status": "returned" if missing else "queued for " + target if waiting and not routing["recipients"] else "recorded"}

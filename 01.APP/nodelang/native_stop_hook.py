@@ -1357,7 +1357,17 @@ def main():
     import argparse
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--vendor',default='claude-code')
+    parser.add_argument('--session-start', action='store_true')
     args=parser.parse_args()
+    if args.session_start:
+        try:
+            from nodelang.native_agent_hooks import declare_session
+            declare_session(json.loads(sys.stdin.buffer.read(65537) or b'{}'), args.vendor)
+        except Exception as failure:
+            print('Workshop session declaration failed (%s); retry declare in the session. Startup continues.'
+                  % type(failure).__name__, file=sys.stderr)
+        sys.stdout.write('{}\n')
+        return 0
     if args.vendor == 'cursor':
         raw=sys.stdin.buffer.read(65537)
         if len(raw)>65536:

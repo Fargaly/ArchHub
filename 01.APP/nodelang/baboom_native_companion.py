@@ -729,6 +729,7 @@ def create_baboom_native_companion_window(
     position_path: Path | None = None,
     on_stop: Callable[[], None] | None = None,
     on_open: Callable[[], None] | None = None,
+    on_open_task: Callable[[str], object] | None = None,
     reduced_motion: bool | None = None,
     work_rows: Callable[[], object] | None = None,
     sessions_directory: Callable[[], Path] | None = None,
@@ -738,6 +739,8 @@ def create_baboom_native_companion_window(
         raise ValueError("BABOOM native companion controller is invalid")
     if on_response is not None and not callable(on_response):
         raise ValueError("BABOOM native companion response callback is invalid")
+    if on_open_task is not None and not callable(on_open_task):
+        raise ValueError("BABOOM task callback is invalid")
     if voice_input is not None and type(voice_input) is not BaboomVoiceInput:
         raise ValueError("BABOOM native companion voice input is invalid")
     if reduced_motion is not None and type(reduced_motion) is not bool:
@@ -896,6 +899,8 @@ def create_baboom_native_companion_window(
             self._send.setStyleSheet("background:%s;color:%s;border:0;padding:0 8px;font-size:13px;font-weight:600;"
                 % (_theme["accent"], _theme["on_fill"]))
             self._send.clicked.connect(self._submit_input)
+            self._input.textChanged.connect(lambda text: self._send.setEnabled(bool(text.strip()) and not self._busy))
+            self._send.setEnabled(False)
             self._send.hide()
             self._connection_status = QLabel("", self)
             self._connection_status.setAccessibleName("ArchHub connection status")
@@ -930,6 +935,10 @@ def create_baboom_native_companion_window(
             self._state_bubble = QLabel(self)
             self._state_bubble.setFont(self._companion_font)
             self._state_bubble.setWordWrap(True)
+            self._state_bubble.setTextFormat(Qt.TextFormat.RichText)
+            self._state_bubble.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse | Qt.TextInteractionFlag.LinksAccessibleByKeyboard)
+            self._state_bubble.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            self._state_bubble.linkActivated.connect(lambda _link: self._open_work_task())
             self._state_bubble.setStyleSheet(
                 "background:%s;color:%s;border:0;padding:4px;font-size:11px;"
                 % (_theme["bg_raised"], _theme["ink"])
@@ -1082,6 +1091,12 @@ def create_baboom_native_companion_window(
                 presence = baboom_work_presence(self._work_rows())
             except Exception:
                 presence = BaboomWorkPresence("idle", "", "idle", False, "")
+            snapshot = controller.latest_snapshot
+            work = snapshot.context.get("work", {}) if snapshot is not None else {}
+            active = work.get("active_turns", 0) if isinstance(work, Mapping) else 0
+            if presence.state in {"idle", "done"} and (self._busy or (type(active) is int and active > 0)):
+                name = self._submitted_utterance or "Working on your request"
+                presence = BaboomWorkPresence("thinking", name, "think", False, name)
             if reduced:
                 self._transition_left = 0
             elif presence.state != previous:
@@ -1131,7 +1146,10 @@ def create_baboom_native_companion_window(
             self._state_badge.hide()
             bubble_w = bubble_h = 0
             if text:
-                self._state_bubble.setText(text)
+                from html import escape
+                linked = on_open_task is not None and presence is not None and bool(presence.task_id)
+                self._state_bubble.setText(('<a href="task" style="color:%s">%s</a>' % (self._theme["ink"], escape(text))) if linked else escape(text))
+                self._state_bubble.setToolTip("Open task and full result" if linked else text)
                 bubble_w = min(200, max(80, self._state_bubble.fontMetrics().horizontalAdvance(text) + 16))
                 bubble_h = max(24, int(self._state_bubble.heightForWidth(bubble_w) or 24))
             gap = 6
@@ -1609,6 +1627,9 @@ def create_baboom_native_companion_window(
             if self._busy:
                 return
             self._details_open = True
+            self._send.setText("Ask")
+            self._input.setAccessibleDescription("")
+            self._input.setToolTip("")
             self.setWindowTitle("BABOOM")
             self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, False)
             set_native_click_through(int(self.winId()), False)
@@ -1737,6 +1758,20 @@ def create_baboom_native_companion_window(
                 shortcut = programs / "ArchHub/ArchHub.lnk"
             if not shortcut.is_file() or not QDesktopServices.openUrl(QUrl.fromLocalFile(str(shortcut))):
                 self._transient_report = "ArchHub could not open. Start it from the Start menu."
+                self.refresh()
+
+        def _open_work_task(self) -> None:
+            presence = self._work_presence
+            if on_open_task is None or presence is None or not presence.task_id:
+                return
+            try:
+                result = on_open_task(presence.task_id)
+                if result is False or (isinstance(result, Mapping) and result.get("ok") is False):
+                    raise RuntimeError(str(result.get("error") or "Task is unavailable") if isinstance(result, Mapping) else "Task is unavailable")
+            except Exception as refused:
+                self._details_open = True
+                self._result_visible = True
+                self._transient_report = "Task could not open: " + str(refused)
                 self.refresh()
 
         def _show_approval(self) -> None:
@@ -2148,6 +2183,26 @@ def create_baboom_native_companion_window(
             self._busy = False
             command = result.get("command")
             response = result.get("response")
+            if isinstance(response, Mapping) and response.get("kind") == "unavailable":
+                summary = str(response.get("summary") or "Message was not sent. Try again.")
+                self._result_visible = False
+                self._interaction_requested = True
+                self._transient_report = summary
+                self._input.setText(self._submitted_utterance)
+                self._input.setEnabled(True)
+                self._input.setAccessibleDescription(summary)
+                self._input.setToolTip(summary)
+                self._send.setText("Retry")
+                self._send.setEnabled(bool(self._submitted_utterance))
+                self._report.hide()
+                self._input.setVisible(self._details_open)
+                self.refresh()
+                if on_response is not None:
+                    on_response(result)
+                return
+            self._send.setText("Ask")
+            self._input.setAccessibleDescription("")
+            self._input.setToolTip("")
             if isinstance(response, Mapping) and response.get("kind") != "unavailable":
                 self._response_received_at = time.monotonic()
                 self._response_owner = id(controller._host._transport)

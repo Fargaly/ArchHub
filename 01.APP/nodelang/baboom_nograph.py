@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 
 # A tool turn on a free model takes longer than a chat line; the Workshop turn has its own budget.
-BABOOM_NODE = {'id': 'baboom', 'params': {'model': 'openrouter/free', 'turn_seconds': 120}}
+BABOOM_NODE = {'id': 'baboom', 'params': {'turn_seconds': 120}}
 # The companion window's frames are leases; the host renews them every few seconds.
 COMPANION_NODE = {'id': 'baboom.companion', 'params': {'frame_seconds': 12}}
 _STATE = {'runtime': None, 'brain': None, 'error': '', 'turns': 0}
@@ -74,7 +74,33 @@ def ask(prompt, context=''):
     current = _STATE['brain']
     if current is None:
         raise RuntimeError(reason())
-    result = current.ask(prompt, context, BABOOM_NODE['params']['model'], turn_seconds=BABOOM_NODE['params']['turn_seconds'])
+    from .agent_budget import paused
+    from .model_router import ModelRouteRefused, resolve_model_route
+    from .nograph_server import _SERVER
+    from .settings_owner import read_router_settings
+    stopped = _SERVER.is_halted if _SERVER is not None else None
+    if stopped is not None and stopped():
+        raise RuntimeError('Stopped by you. Press Resume to continue.')
+    if paused('BABOOM'):
+        raise ModelRouteRefused('This agent reached its token cap and is paused.', reason_code='agent_paused')
+    settings = read_router_settings()
+    model = (settings['agents'].get('BABOOM', {}).get('model')
+             or settings['providerPreferences'].get('BABOOM') or settings['default_model'])
+    if resolve_model_route(model).family == 'openrouter' and not settings['providers']['openrouter']['enabled']:
+        raise ModelRouteRefused('OpenRouter is disabled in Settings.')
+    active = False
+
+    def dispatched():
+        nonlocal active
+        active = True
+        _STATE['turns'] += 1
+
+    try:
+        result = current.ask(prompt, context, model, turn_seconds=BABOOM_NODE['params']['turn_seconds'],
+                             is_halted=stopped, before_dispatch=dispatched)
+    finally:
+        if active:
+            _STATE['turns'] -= 1
     # BABOOM's instructions (agent_composer._SYSTEM) answer as {"answer": ..., "actions": [...]}.
     # A tool turn can stream more than one such object; the last answer is BABOOM's reply.
     decoder, text, index, shaped = json.JSONDecoder(), result['text'].strip(), 0, None
@@ -183,7 +209,7 @@ class NoGraphTransport:
         self.revision += 1
         ttl, now, up = COMPANION_NODE['params']['frame_seconds'], time.time(), _STATE['brain'] is not None
         context = {'revision': self.revision, 'brain': {'ok': up, 'facts': 1 if up else 0},
-                   'work': {'blocked': 0, 'review': 0}, 'attention': {'blocked_obligations': 0},
+                   'work': {'blocked': 0, 'review': 0, 'active_turns': _STATE['turns']}, 'attention': {'blocked_obligations': 0},
                    'workshop': {'entry_count': 0}, 'meeting_notes': {'active_sessions': 0},
                    # Without it the companion falls back to "Tray" and hides the on-screen pet every frame.
                    'shows_as': shows_as_choice(_STATE.get('state_dir'))}
@@ -219,11 +245,7 @@ class NoGraphTransport:
 
 
 def _turn(utterance):
-    _STATE['turns'] = _STATE.get('turns', 0) + 1
-    try:
-        return ask(utterance)
-    finally:
-        _STATE['turns'] -= 1
+    return ask(utterance)
 
 
 def companion_host():

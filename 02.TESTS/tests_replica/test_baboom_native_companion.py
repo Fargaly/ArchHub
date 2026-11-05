@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import time
+import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -841,7 +842,7 @@ class _ScreenTransport(_Transport):
         return frame
 
 
-def _screen_companion(tmp_path, monkeypatch, name):
+def _screen_companion(tmp_path, monkeypatch, name, *, on_open_task=None):
     """A visible companion on the offscreen desktop, with every pose painted."""
     import nodelang.baboom_native_companion as companion
 
@@ -869,7 +870,8 @@ def _screen_companion(tmp_path, monkeypatch, name):
     host.connect()
     controller = BaboomNativeCompanionController(host, atlas, occupied_provider=lambda: ())
     opened: list[str] = []
-    window = create_baboom_native_companion_window(controller, on_open=lambda: opened.append("archhub"))
+    options = {"on_open_task": on_open_task} if on_open_task is not None else {}
+    window = create_baboom_native_companion_window(controller, on_open=lambda: opened.append("archhub"), **options)
     window.start_projection()
     app.processEvents()
     window.refresh()
@@ -986,6 +988,92 @@ def test_reduced_motion_keeps_a_static_think_frame(tmp_path, monkeypatch):
         assert window._frame.source == before
         assert window._frame.motion == "think"
         assert opened == []
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_real_turn_activity_is_consumed_without_overriding_attention(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    turns = [1]
+    original = BaboomNativeCompanionController.latest_snapshot.fget
+
+    def snapshot(controller):
+        held = original(controller)
+        return replace(held, context={**held.context, "work": {"active_turns": turns[0]}})
+
+    monkeypatch.setattr(BaboomNativeCompanionController, "latest_snapshot", property(snapshot))
+    app, window, _opened = _screen_companion(tmp_path, monkeypatch, "live-turn.png")
+    try:
+        window._work_rows = lambda: []
+        window.refresh()
+        assert window._work_presence.state == "thinking"
+        window._work_rows = lambda: [{"id": "approval", "status": "IN REVIEW", "title": "Review the tags"}]
+        window.refresh()
+        assert window._work_presence.state == "needs-you"
+        window._work_rows = lambda: []
+        turns[0] = 0
+        window.refresh()
+        assert window._work_presence.state == "idle"
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_state_notice_opens_its_existing_task_without_a_model_call(tmp_path, monkeypatch):
+    opened = []
+    app, window, _app_opened = _screen_companion(tmp_path, monkeypatch, "task-open.png", on_open_task=opened.append)
+    try:
+        window._work_rows = lambda: [{"id": "task-123", "status": "WIP", "title": "Index the sheets"}]
+        window.refresh()
+        assert window._state_bubble.isVisible()
+        assert "Index the sheets" in window._state_bubble.text()
+        QTest.mouseClick(window._state_bubble, Qt.MouseButton.LeftButton, pos=window._state_bubble.rect().center())
+        app.processEvents()
+        assert opened == ["task-123"]
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_unavailable_reply_preserves_the_draft_and_exposes_retry(tmp_path, monkeypatch):
+    app, window, _opened = _screen_companion(tmp_path, monkeypatch, "retry-draft.png")
+    try:
+        window._open_interaction()
+        window._submitted_utterance = "Review the selected task"
+        window._busy = True
+        window._input.hide()
+        window._apply_response({"response": {"kind": "unavailable", "summary": "Connection lost", "data": {}}})
+        assert window._input.text() == "Review the selected task"
+        assert window._input.isVisible() and window._input.isEnabled()
+        assert window._send.text() == "Retry" and window._send.isEnabled()
+        assert "Connection lost" in window._input.accessibleDescription()
+        window._apply_response({"response": {"kind": "answer", "summary": "Review is ready", "data": {}}})
+        window._open_interaction()
+        assert window._send.text() == "Ask"
+        assert not window._send.isEnabled()
+        assert window._input.accessibleDescription() == ""
+        window._input.setText("A new request")
+        assert window._send.isEnabled()
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.parametrize("failure", [False, {"ok": False, "error": "Task is unavailable"}])
+def test_task_open_failure_is_visible(tmp_path, monkeypatch, failure):
+    app, window, _opened = _screen_companion(tmp_path, monkeypatch, "task-unavailable.png", on_open_task=lambda task: failure)
+    try:
+        window._work_rows = lambda: [{"id": "missing", "status": "WIP", "title": "Missing task"}]
+        window.refresh()
+        window._state_bubble.linkActivated.emit("task")
+        assert window._details_open
+        assert "Task could not open" in window._transient_report
     finally:
         window.close()
         window.deleteLater()

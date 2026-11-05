@@ -509,10 +509,11 @@ COLUMNS = ("id", "title", "status", "owner", "owner_label", "lease_until", "resu
            "revision", "outcome", "write_open", "capacity")
 
 
-def rows(history, task=None, *, include_archived=True):
+def rows(history, task=None, *, include_archived=True, settle=True):
     if not history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_tasks'").fetchone():
         return []
-    _settle_lapsed(history)
+    if settle:
+        _settle_lapsed(history)
     _ensure(history)
     now = time.time()
     # A lookup by id still finds an archived task. A list hides it unless asked.

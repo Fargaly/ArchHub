@@ -6,14 +6,14 @@ Workshop file, or keeps a second task store.
 from __future__ import annotations
 
 import ctypes
-import json
+import logging
 import os
 import re
 import sqlite3
-import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Mapping
 
 
@@ -26,6 +26,7 @@ _STATE_MOTION = {
 }
 _RANK = {"needs-you": 0, "error": 1, "thinking": 2, "done": 3}
 _SKIP_WORDS = {"a", "an", "the", "of", "to", "for", "and", "in", "on"}
+_LOG = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +38,8 @@ class BaboomWorkPresence:
     motion: str
     badge: bool
     bubble: str
+    task_id: str = ""
+    report: str = ""
 
 
 def windows_show_animations() -> bool:
@@ -89,7 +92,11 @@ def _parsed_time(value: object) -> datetime | None:
     if len(text) < 19 or text[4] != "-" or text[7] != "-" or text[10] not in "Tt ":
         return None
     text = text.replace("Z", "+00:00")
-    parsed = datetime.fromisoformat(text)
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        _LOG.warning("BABOOM ignored an invalid Workshop timestamp; inspect the task's event time")
+        return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed
@@ -99,7 +106,8 @@ def _recent(row: Mapping[str, object], now: datetime, done_seconds: int) -> bool
     parsed = _parsed_time(row.get("updated_at"))
     if parsed is None:
         return False
-    return (now - parsed).total_seconds() <= done_seconds
+    # Allow only small clock skew, not a future timestamp that stays "done" for years.
+    return -5 <= (now - parsed).total_seconds() <= done_seconds
 
 
 def _failed(row: Mapping[str, object]) -> bool:
@@ -136,9 +144,20 @@ def _name(row: Mapping[str, object]) -> str:
     return "Task"
 
 
-def _bubble(kind: str, name: str, row: Mapping[str, object]) -> str:
+def _result_text(row: Mapping[str, object]) -> str:
     result = row.get("result")
-    text = result.strip() if isinstance(result, str) and result.strip() else ""
+    if isinstance(result, str):
+        return result if result.strip() else ""
+    if isinstance(result, Mapping):
+        return "\n".join(dict.fromkeys(
+            value.strip() for key in ("summary", "error", "message", "details")
+            if isinstance(value := result.get(key), str) and value.strip()
+        ))
+    return ""
+
+
+def _bubble(kind: str, name: str, row: Mapping[str, object]) -> str:
+    text = _result_text(row).strip()
     if kind == "error":
         shown = text or name
     elif kind == "done":
@@ -173,7 +192,12 @@ def baboom_work_presence(rows: object, *, now: datetime | None = None, done_seco
         return BaboomWorkPresence("idle", "", "idle", False, "")
     ranked.sort(key=lambda item: (item[0], item[1], item[2]))
     _rank, _stamp, name, kind, row = ranked[0]
-    return BaboomWorkPresence(kind, name, _STATE_MOTION[kind], kind == "needs-you", _bubble(kind, name, row))
+    report = _result_text(row) or name
+    task_id = row.get("id")
+    return BaboomWorkPresence(
+        kind, name, _STATE_MOTION[kind], kind == "needs-you", _bubble(kind, name, row),
+        task_id if isinstance(task_id, str) else "", report,
+    )
 
 
 def read_workshop_task_rows() -> list[dict[str, object]]:
@@ -202,44 +226,30 @@ def read_workshop_task_rows() -> list[dict[str, object]]:
     try:
         if connection.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_tasks'").fetchone() is None:
             return []
-        present = {row[1] for row in connection.execute("PRAGMA table_info(workshop_tasks)")}
-        wanted = ["id", "title", "status", "owner", "owner_label", "lease_until", "result", "updated_at", "archived", "purpose"]
-        columns = [name for name in wanted if name in present]
-        if "id" not in columns or "status" not in columns:
-            return []
-        archived = "AND IFNULL(archived,0)=0" if "archived" in present else ""
-        found = [
-            dict(zip(columns, row))
-            for row in connection.execute(
-                "SELECT " + ",".join(columns) + " FROM workshop_tasks WHERE 1=1 " + archived + " LIMIT 500"
-            )
-        ]
-        clock = time.time()
-        for row in found:
-            lease = row.get("lease_until")
-            row["lease_expired"] = row.get("status") == "claimed" and isinstance(lease, (int, float)) and lease < clock
-        declarations = []
-        if connection.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_declarations'").fetchone():
-            for (record,) in connection.execute("SELECT record FROM workshop_declarations"):
-                try:
-                    item = json.loads(record)
-                except (TypeError, ValueError):
-                    continue
-                if not isinstance(item, dict) or item.get("status") not in ("working", "blocked", "done"):
-                    continue
-                declarations.append(item)
+        from .workshop_mailbox import read_declarations
+        from .workshop_tasks import rows
+        from .baboom_nograph import own_session
+
+        # The Workshop owns ordering, leases, archive filtering and native liveness.
+        found = rows(SimpleNamespace(_db=connection), include_archived=False, settle=False)
+        declarations = read_declarations(connection)
+        own = own_session(root)
+        shown = []
         for row in found:
             declaration = _declaration_for(row, declarations)
+            if own and declaration and declaration.get("session") == own and declaration.get("request_id") == "BABOOM":
+                continue
             declared = (declaration or {}).get("status")
-            if declared == "blocked":
+            if row.get("status") == "done":
+                row["status"] = "DONE"
+            elif declared == "blocked":
                 row["status"] = "IN REVIEW"
             elif declared == "working" or (row.get("status") == "claimed" and not row.get("lease_expired")):
                 row["status"] = "WIP"
-            elif row.get("status") == "done":
-                row["status"] = "DONE"
             elif row.get("status") == "open":
                 row["status"] = "PLANNED"
-        return found
+            shown.append(row)
+        return shown
     except sqlite3.Error:
         return []
     finally:

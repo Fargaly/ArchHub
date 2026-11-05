@@ -153,7 +153,7 @@ print(json.dumps({'lock_errors':0}))
                 principal=mailbox.DELIVERY_AUTHOR)['content'], 'To founder:\napplication caller')
         self.assertEqual(forbidden.read_bytes(), b'not a Workshop database; must stay untouched')
 
-    def test_broadcast_reaches_each_recipient_without_app_worker(self):
+    def test_room_notes_inject_nobody_and_named_target_injects_once(self):
         class Transport:
             def __init__(self):
                 self.sent = []
@@ -165,8 +165,11 @@ print(json.dumps({'lock_errors':0}))
             mailbox.call('declare', {'task':'recipient','paths':[str(Path.cwd())],
                 'status':'working','request_id':'unassigned'}, {'claude/sessionID':native})
         with patch.object(mailbox, '_local_transport', return_value=transport):
-            mailbox.call('send', {'to':'*','text':'No reply needed.'}, self.context)
-        self.assertEqual({row[0]['id'] for row in transport.sent}, {'recipient-one', 'recipient-two'})
+            for target in ('*', 'room', 'founder'):
+                mailbox.call('send', {'to':target,'text':'No reply needed.'}, self.context)
+            self.assertEqual(transport.sent, [])
+            mailbox.call('send', {'to':'recipient-one','text':'No reply needed.'}, self.context)
+        self.assertEqual([row[0]['id'] for row in transport.sent], ['recipient-one'])
 
     def test_exact_live_session_needs_no_graph_enrollment_or_declaration(self):
         class Transport:
@@ -243,7 +246,7 @@ print(json.dumps({'lock_errors':0}))
                 'status':'working','request_id':'unassigned'}, {'claude/sessionID':native})
         with mailbox.application_history(None) as history:
             identity, _runtime, _peer = mailbox._identity(self.context, None)
-            mailbox._send(history, {'to':'*','text':'No reply needed.'}, identity)
+            mailbox._send(history, {'to':'recipient-one, recipient-two','text':'No reply needed.'}, identity)
         transport = Transport()
         worker = mailbox.WorkshopInjection(None, transport)
         worker.tick()

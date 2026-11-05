@@ -2427,19 +2427,12 @@ def _dispatch_clock():
 
 
 def prewarm_default_provider():
-    """Called after Studio loads; warm one provider, with no cloud generation or key read."""
+    """Called after Studio loads; import and construct one client without loading a model."""
     from any_llm import AnyLLM
     from .settings_owner import read_router_settings
     route = resolve_model_route(read_router_settings()["default_model"])
     provider, api_base, _kwargs = _any_llm_request(route, [], 1, 0.0, 1.0)
     AnyLLM.create(provider, api_key="not-required", api_base=api_base, unified_exceptions=False)
-    if route.family == "ollama":
-        # Ollama unloads this one selected model after 60 idle seconds.
-        url = route.url.rsplit("/api/", 1)[0] + "/api/generate"
-        request = urllib.request.Request(url, data=json.dumps({"model": route.model, "keep_alive": 60}).encode(),
-                                         headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(request, timeout=_LOCAL_FREE_FALLBACK_SECONDS) as response:
-            response.read(65536)
 
 
 def _remaining_timeout(deadline: float, *, cap: Optional[float] = None) -> float:

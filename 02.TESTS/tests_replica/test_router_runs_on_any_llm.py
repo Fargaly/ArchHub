@@ -155,7 +155,7 @@ print('COLD-FIRST-400: dispatches=%d elapsed_seconds=%.2f' % (len(sent), time.pe
     print(result.stdout.strip())
 
 
-def test_background_warm_loads_only_default_and_ollama_expires_it(monkeypatch):
+def test_background_warm_constructs_only_default_client_without_loading_model(monkeypatch):
     from any_llm import AnyLLM
     from nodelang import settings_owner
     providers, requests = [], []
@@ -167,4 +167,4 @@ def test_background_warm_loads_only_default_and_ollama_expires_it(monkeypatch):
     monkeypatch.setattr(router.urllib.request, 'urlopen', wire)
     router.prewarm_default_provider()
     assert providers == ['ollama']
-    assert requests == [('http://127.0.0.1:11434/api/generate', {'model': 'llama3', 'keep_alive': 60})]
+    assert requests == []

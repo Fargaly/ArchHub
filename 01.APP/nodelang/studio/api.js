@@ -1486,7 +1486,7 @@ function projectFile(){
  if(!sessionDocument)return;
  const properties=sessionDocument.properties||{}, nodes=sessionDocument.nodes.map(fileNode), graph={...properties,id:sessionDocument.id,scopeKey:sessionDocument.id+':'+scopeEpoch,name:sessionDocument.title,system:false,
   nodes,wires:sessionDocument.wires.map(w=>projectSessionWire(w,nodes)),viewport:sessionDocument.viewport};
- publish({graph,sessionFile:sessionPath,sessionDirty:true,graphOpening:false,sync:solveNote||'Local session file'});
+ publish({graph,sessionFile:sessionPath,sessionDirty:localDirty || !sessionPath,graphOpening:false,sync:solveNote||'Local session file'});
 }
 // Parametric (Grasshopper): an edit re-solves the pure nodes downstream of it, then stops.
 let sessionRevision=0, localDirty=false, solveIds=new Set(), solveParams=[], solveTimer=null, solveNote='', solveCount=0;
@@ -1525,6 +1525,7 @@ function saveNow(){
    localDirty=false;sessionRevision=saved.revision;
    if(JSON.stringify([saved.document.nodes,saved.document.wires])!==JSON.stringify([sent.nodes,sent.wires])){sessionDocument=copy(saved.document);projectFile();}
    else sessionDocument.properties=saved.document.properties;
+   publish({sessionDirty:!sessionPath});
   }
   return saved;
  });

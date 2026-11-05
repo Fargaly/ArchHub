@@ -132,6 +132,9 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
         const reviewer=page.getByRole('option', {name: /Design reviewer.*Gate missing.*2 breaches/});
         assert.equal(await reviewer.isEnabled(),true);
         await reviewer.click();
+        await page.getByRole('button',{name:'Recipient',exact:true}).click();
+        await page.getByRole('option',{name:/BABOOM/}).click();
+        assert.match(await page.getByRole('button',{name:'Recipient',exact:true}).innerText(),/BABOOM/);
         const separator = page.getByRole('separator', {name: 'Resize the task parameters'});
         const params = page.locator('#params');
         const before = await params.boundingBox(), handle = await separator.boundingBox();
@@ -142,8 +145,8 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
         const point = {x: handle.x + handle.width / 2, y: handle.y + handle.height / 2};
         await input.send('Input.dispatchMouseEvent', {type: 'mouseMoved', ...point});
         await input.send('Input.dispatchMouseEvent', {type: 'mousePressed', ...point, button: 'left', buttons: 1, clickCount: 1});
-        await input.send('Input.dispatchMouseEvent', {type: 'mouseMoved', x: point.x + 75, y: point.y, button: 'left', buttons: 1});
-        await input.send('Input.dispatchMouseEvent', {type: 'mouseReleased', x: point.x + 75, y: point.y, button: 'left', buttons: 0, clickCount: 1});
+        await input.send('Input.dispatchMouseEvent', {type: 'mouseMoved', x: point.x - 75, y: point.y, button: 'left', buttons: 1});
+        await input.send('Input.dispatchMouseEvent', {type: 'mouseReleased', x: point.x - 75, y: point.y, button: 'left', buttons: 0, clickCount: 1});
         await input.detach();
         const after = await params.boundingBox();
         assert.ok(after.width > before.width + 60, JSON.stringify({before, after}));

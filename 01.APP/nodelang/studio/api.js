@@ -41,6 +41,7 @@ let refreshTimer=null, refreshInFlight=false, taskRefreshInFlight=null, ready=fa
 let activeSurface='home', canvasRefresh=null, accountKnown=false;
 let providerRoster=[], workingAgents=[], agentsChecked=false;
 let controlsGeneration=0, notificationGeneration=0;
+let appearanceWrites=Promise.resolve();
 let composerGeneration=0;
 let updateGeneration=0, updateActionPending=false;
 let updateReadsPending=0, updateReadFailures=0, updateReadAfter=0;
@@ -522,7 +523,7 @@ Object.assign(api,{
  compatibleNodes:()=>[],getDecisionState:()=>null,
  async sendToBaboom(text,options={}){return routerChat(text,options.provider||'BABOOM',undefined);},
  async setSetting(id,value){
-  if(window.ARCHHUB_BOOT?.nograph&&id.startsWith('Appearance.')&&state.settings.some(row=>row.id===id))return settingsAction('setAppearance',[id,value]);
+  if(window.ARCHHUB_BOOT?.nograph&&id.startsWith('Appearance.')&&state.settings.some(row=>row.id===id))return setAppearance(id,value);
   const row=state.settings.find(r=>r.id===id);if(!row)return unavailable('setSetting');
   if(id==='Appearance.Zoom percentage'){
    if(!Number.isFinite(Number(value))||Number(value)<=0)throw Error('Enter a positive zoom percentage.');
@@ -1142,7 +1143,13 @@ for(const functionName of ['updateProfile','invitePerson','selectFirm','setTeamA
 }
 api.refreshSettingsOperations=()=>settingsAction('readOperations',[state.graph.id]);
 api.setGraphWorkspaces=ids=>settingsAction('setGraphWorkspaces',[state.graph.id,ids]);
-api.setInspectorWidth=value=>settingsAction('setAppearance',['Appearance.Inspector width',value]);
+function setAppearance(id,value){
+ const identity=state.profile.id;
+ const write=appearanceWrites.then(()=>{if(identity!==state.profile.id)throw Error('Your account changed. Retry this appearance edit.');return settingsAction('setAppearance',[id,value]);});
+ appearanceWrites=write.catch(()=>{});
+ return write;
+}
+api.setInspectorWidth=value=>setAppearance('Appearance.Inspector width',value);
 api.setSettingsScope=async scope=>{const result=await settingsAction('setSettingsScope',[scope,state.activeWorkspace||state.graph.workspaceIds?.[0]||'',state.graph.id]);scopeEpoch++;publish({hostSkillsReady:false,hostSkills:[],connectorBundle:null});await commands.load();project();await api.refreshSettingsOperations();await refreshHostSkills();return result;};
 const settingsListWorkspaces=api.listWorkspaces;
 api.listWorkspaces=async()=>{await settingsListWorkspaces();if(state.profile.signedIn)await api.refreshSettingsOperations();return copy(state.workspaces);};

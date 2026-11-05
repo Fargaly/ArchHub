@@ -58,7 +58,7 @@ class JsonFile:
     """One settings owner = one small JSON file, replaced atomically."""
 
     def __init__(self, path, default):
-        self.path, self.default, self.lock = Path(path), default, threading.Lock()
+        self.path, self.default, self.lock = Path(path), default, threading.RLock()
 
     def read(self):
         try:
@@ -78,6 +78,14 @@ class JsonFile:
                 if os.path.exists(temporary):
                     os.unlink(temporary)
         return value
+
+
+    def update(self, changes, remove=()):
+        with self.lock:
+            value = {**self.read(), **changes}
+            for key in remove:
+                value.pop(key, None)
+            return self.write(value)
 
 
 class Cached:
@@ -957,7 +965,7 @@ def r_settings_action(s, req):
             if (not isinstance(groups, list) or len(groups) > 5 or any(
                     group not in ('Start', 'Programs', 'Change', 'Decide', 'Deliver') for group in groups)):
                 raise Refused('Choose valid Library categories.')
-            settings.write({**settings.read(), 'libraryCollapsed': list(dict.fromkeys(groups))})
+            settings.update({'libraryCollapsed': list(dict.fromkeys(groups))})
         return {'ok': True, 'result': {'libraryCollapsed': settings.read().get('libraryCollapsed', [])}}
     if function in ('readControls', 'setAppearance'):
         import re
@@ -999,10 +1007,7 @@ def r_settings_action(s, req):
             limits = dimensions.get(key, {})
             if 'min' in limits and (type(value) is not int or not limits['min'] <= value <= limits['max']):
                 raise Refused('Choose a value within the Appearance setting limits.')
-            updated = {**preferences, key: value}
-            if key == 'appearanceInspectorWidth':
-                updated.pop('homeLayout', None)
-            preferences = settings.write(updated)
+            preferences = settings.update({key: value}, remove=('homeLayout',) if key == 'appearanceInspectorWidth' else ())
         rows = [{'id': id, 'page': 'Appearance', 'label': label, 'default': default,
                  'type': 'enum' if choices else 'boolean' if type(default) is bool else 'number' if type(default) is int else 'color',
                  'value': preferences.get(key, default), 'overridden': key in preferences,
@@ -1076,7 +1081,7 @@ def r_settings_action(s, req):
         os.startfile(str(found))  # noqa: S606 - the founder pressed Open; the installed program starts
         return {'ok': True, 'result': {'opened': str(found)}}
     if function == 'setSettingsScope':
-        return {'ok': True, 'result': settings.write({**settings.read(), 'settingsScope': args[0] if args else 'User'})}
+        return {'ok': True, 'result': settings.update({'settingsScope': args[0] if args else 'User'})}
     local = {'ok': True, 'settingsScope': settings.read().get('settingsScope', 'User'), 'workspacePolicies': {}}
     if function == 'readOperations':
         return {'ok': True, 'result': {**local, 'dependencies': []}}

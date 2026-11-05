@@ -334,8 +334,9 @@
       return () => window.removeEventListener('archhub:open-task', openRequestedTask);
     }, [s.tasks, openTaskFile]);
     React.useEffect(() => {
-      document.title = 'ArchHub · ' + ((route === "task-file" ? (taskFace === "workshop" ? "Workshop" : "Canvas") : routeNames[route]) || route.split('/').at(-1));
+      document.title = 'ArchHub · ' + ((route.startsWith("settings/") ? "Settings" : route === "task-file" ? (taskFace === "workshop" ? "Workshop" : "Canvas") : routeNames[route]) || route.split('/').at(-1));
     }, [route, taskFace]);
+    const fullPage=['home','canvas','task-file','system','account','connections','hooks','privacy','appearance'].includes(route)||route.startsWith('settings/');
     const rail = [['home', 'Home', 'home'], ['workshop', 'Workshop', 'workshop'], ['canvas', 'Canvas', 'canvas'], ['clock', 'Automations', 'automations'], ['docs', 'Docs', 'docs']];
     const screen = route === 'meetings' ? <window.UI.Meetings /> : route === 'dependencies' ? <window.UI.Dependencies /> : route === 'present' ? <window.UI.Present /> : route === 'community' ? <window.UI.Community /> : route === 'model-review' ? <window.UI.ModelReview /> : route === 'interface' ? <window.UI.InterfaceStudio /> : route === 'social' ? <window.UI.Social /> : route === 'xray' ? <window.UI.Xray /> : route === 'access' ? <window.UI.Access /> : route === 'routing' ? <window.UI.Routing /> : route === 'home' ? <window.UI.Home key="home" /> : route === 'task-file' ? <window.UI.Home key={task} fileWorkspace initialFace={taskFace} /> : route === 'workshop' ? <window.UI.Workshop /> : route === 'canvas' ? null : route === 'system' ? <window.UI.Settings page="System graph" /> : route === 'colleagues' ? <window.UI.Colleagues /> : route === 'brain' ? <window.UI.Brain /> : route === 'watcher' ? <window.UI.Watcher /> : route === 'first-run' ? <window.UI.FirstRun /> : route === 'runs' ? <window.UI.Runs /> : route === 'receipts' ? <window.UI.Receipts /> : route === 'docs' ? <window.UI.Docs /> : route === 'feedback' ? <window.UI.Feedback /> : route === 'automations' ? <window.UI.Automations /> : route.startsWith('settings/') ? <window.UI.Settings key={route} page={route.slice(9)} /> : <window.UI.Settings key={route} page={{
       account: 'Account',
@@ -377,14 +378,14 @@
         height: '100%',
         display: 'grid',
         gridTemplateColumns: 'minmax(0,1fr)',
-        gridTemplateRows: ['home', 'canvas'].includes(route) ? '48px minmax(0,1fr)' : '48px minmax(0,1fr) 22px'
+        gridTemplateRows: fullPage ? '48px minmax(0,1fr)' : '48px minmax(0,1fr) 22px'
       }}>
    <header className="flex app-header" data-window-caption style={{
           height: 48,
           padding: window.ARCHHUB_ONE_TITLE_BAR ? '0 0 0 12px' : '0 12px',
           background: '#0f0f13',
           borderBottom: '1px solid ' + A.lineSoft,
-          fontSize: 13,
+          fontSize: 'calc(13px * var(--text-scale,1))',
           gap: 0
         }}><button className="button-reset header-mark" style={{
             color: A.accent
@@ -394,7 +395,7 @@
             show
           }, event)}><span>{s.workspaces.find(w => w.id === s.activeWorkspace)?.name || s.workspaces.find(w => w.builtIn)?.name || 'Add workspace'}</span><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true"><path d="M3 4.5l3 3 3-3" /></svg></button><i className="header-divider" /><span className="muted">/</span><button className="button-reset header-page" onClick={event => executeAction("appShell.ArchHub.2", {
             go
-          }, event)}>{(route === "task-file" ? (taskFace === "workshop" ? "Workshop" : "Canvas") : routeNames[route]) || route.split('/').at(-1)}</button><span className="fill" /><button className="button-reset header-search" onClick={event => executeAction("appShell.SearchCtrlK.5", {
+          }, event)}>{(route.startsWith("settings/") ? "Settings" : route === "task-file" ? (taskFace === "workshop" ? "Workshop" : "Canvas") : routeNames[route]) || route.split('/').at(-1)}</button><span className="fill" /><button className="button-reset header-search" onClick={event => executeAction("appShell.SearchCtrlK.5", {
             show
           }, event)} aria-label="Search · Ctrl K"><window.AHIcon name="search" size={15} /><span className="fill">Search...</span><kbd>Ctrl K</kbd></button>{(s.update.available || s.update.state==='failed') && <button className="button-reset header-update" title={s.update.state==='failed' ? (s.update.detail || 'Update failed') : `${s.update.installed} → ${s.update.next}. Unsent text is lost; your saved graphs and settings stay with you.`} aria-label={s.update.state==='failed' ? (s.update.detail || 'Update failed') : 'Update available'} onClick={event => executeAction("appShell.Control.3", {
             act,
@@ -445,11 +446,11 @@
               background: 'linear-gradient(135deg,#e8c39e,#b98a62)',
               color: '#2a1d10',
               fontWeight: 700,
-              fontSize: 12,
+              fontSize: 'calc(12px * var(--text-scale,1))',
               flex: 'none'
             }}>{s.profile.name.split(' ').map(n => n[0]).join('').slice(0, 2)}</button></nav><div className="screen-with-composer has-local-composer" style={{'--canvas-library-width':libraryOpen ? '248px' : '0px'}}>{(canvasOpened || route==='canvas') && <div hidden={route!=='canvas'} ref={element=>{element?.toggleAttribute('inert',route!=='canvas'||!!s.graphOpening);}} style={{display:route==='canvas'?'grid':'none',minHeight:0,height:'100%'}}><window.UI.Canvas key={s.graph.scopeKey || s.graph.id} active={route==='canvas'&&!s.graphOpening} /></div>}{screen}{route === 'canvas' && <div className="canvas-status" role="status"><span>{s.connectionNotice && s.connectionNotice !== 'Checking for updates…' ? '1 notice · see Receipts' : s.connectionNotice || '● Local session'}</span><span>{(s.agentSummary||'Checking running agents…')} · {(n => n ? n + ' wait for you' : 'Nothing waiting for you')(s.approvals.filter(c=>c.status==='pending').length)}</span>{agentLoad.status==='error' && <button className="button-reset" onClick={event=>executeAction('appShell.RetryWorkshop',{reloadWorkshop},event)}>Retry Workshop connection</button>}</div>}{route === 'canvas' && <div className="global-composer canvas-composer"><window.UI.Composer compact /></div>}</div></div>
-    {!['home', 'canvas'].includes(route) && <footer className="flex" style={{
-          fontSize: 11,
+    {!fullPage && <footer className="flex" style={{
+          fontSize: 'calc(11px * var(--text-scale,1))',
           gap: 16,
           padding: '0 14px',
           background: '#0f0f13',
@@ -655,7 +656,7 @@
         }}>{items.map((item, i) => <button className="listbutton spread" key={i} onClick={event => executeAction("appShell.Control.30", {
             item
           }, event)}><span>{item.label}</span><span className="muted" style={{
-              fontSize: 11
+              fontSize: 'calc(11px * var(--text-scale,1))'
             }}>{item.group}</span></button>)}{!items.length && <Empty>No results.</Empty>}</div></>;
     } else if (k === 'Confirm') body = <><p>{m.title}</p><p className="muted">Undo brings it back.</p><div className="flex"><Btn onClick={event => executeAction("appShell.Cancel.31", {
           close

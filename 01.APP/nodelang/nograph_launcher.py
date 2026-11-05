@@ -5,6 +5,7 @@ Nothing runs in the background: no journal, no enrolment, no recovery at boot.
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import threading
@@ -51,6 +52,16 @@ def _open_launch(arguments, companion, show_home, show_unavailable):
         detail = 'BABOOM unavailable: %s' % refusal
         show_unavailable(detail)
         return detail
+
+
+def _open_task(window, view, task_id):
+    if not isinstance(task_id, str) or not task_id.strip():
+        raise ValueError('No such Workshop task')
+    window.showNormal()
+    window.raise_()
+    window.activateWindow()
+    view.page().runJavaScript("window.dispatchEvent(new CustomEvent('archhub:open-task', {detail: "
+                              + json.dumps({'task_id': task_id}) + "}))")
 
 
 def run(state_dir, instance_lock=None, serve_launch_requests=None):
@@ -274,7 +285,8 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
         try:
             from .baboom_native_runtime import create_baboom_native_projection
             window_ = create_baboom_native_projection(host, atlas=companion['atlas'], position_path=Path(state_dir) / 'baboom-position.json',
-                                                      on_stop=host.request_stop, on_open=show_home)
+                                                      on_stop=host.request_stop, on_open=show_home,
+                                                      on_open_task=lambda task_id: _open_task(window, view, task_id))
             window_.show()
             window_.start_projection()
             host.start()

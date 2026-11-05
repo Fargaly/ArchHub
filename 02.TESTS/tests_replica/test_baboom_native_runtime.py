@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -60,11 +61,16 @@ def test_projection_passes_open_callback_to_existing_companion(tmp_path):
     host = create_baboom_native_host(_Transport(), external_session_id='open-court',
         device_credential_provider=lambda challenge: {'proof': 'approved'})
     window = create_baboom_native_projection(host, position_path=tmp_path / 'position.json',
-        on_open=lambda: opened.append('home'))
+        on_open=lambda: opened.append('home'), on_open_task=opened.append)
     try:
         window._open_archhub()
         app.processEvents()
         assert opened == ['home']
+        presence = window._work_presence
+        window._work_presence = SimpleNamespace(task_id='task-123')
+        window._open_work_task()
+        window._work_presence = presence
+        assert opened == ['home', 'task-123']
         assert not host.running
         _open_launch(['--baboom'], {'window': window}, lambda: opened.append('unexpected'), opened.append)
         assert window.isVisible()
@@ -149,3 +155,28 @@ def test_unavailable_companion_reports_reason_and_plain_launch_still_opens_home(
         assert errors[-1] == result
     _open_launch([], {}, lambda: home.append('home'), errors.append)
     assert home == ['home']
+
+
+def test_task_callback_focuses_same_window_and_dispatches_one_id():
+    from nodelang.nograph_launcher import _open_task
+    calls, scripts = [], []
+    window = SimpleNamespace(showNormal=lambda: calls.append('show'),
+        raise_=lambda: calls.append('raise'), activateWindow=lambda: calls.append('activate'))
+    view = SimpleNamespace(page=lambda: SimpleNamespace(runJavaScript=scripts.append))
+    task_id = 'task-";\\\n\u2028'
+    _open_task(window, view, task_id)
+    assert calls == ['show', 'raise', 'activate']
+    assert len(scripts) == 1
+    result = subprocess.run(['node', '-e', "const window = new EventTarget(); const events = [];"
+        "window.addEventListener('archhub:open-task', e => events.push(e.detail));"
+        "window.addEventListener('archhub:open-home', () => {throw Error('unexpected Home event')});"
+        + scripts[0] + ";process.stdout.write(JSON.stringify(events));"],
+        capture_output=True, text=True, encoding='utf-8', timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == [{'task_id': task_id}]
+    for invalid in ('', ' ', None, 123):
+        import pytest
+        with pytest.raises(ValueError, match='No such Workshop task'):
+            _open_task(window, view, invalid)
+    assert calls == ['show', 'raise', 'activate']
+    assert len(scripts) == 1

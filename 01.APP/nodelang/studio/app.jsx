@@ -106,6 +106,10 @@
       if (theme === 'System') preference.addEventListener('change', applyTheme);
       document.documentElement.dataset.contrast = String(s.settings.find(r => r.id === 'Appearance.High contrast')?.value);
       document.documentElement.style.setProperty('--text-scale', (s.settings.find(r => r.id === 'Appearance.Text scale')?.value || 100) / 100);
+      for (const [id, token, unit] of [['Appearance.Inspector width','--layout-inspector-width','px'],['Appearance.Row spacing','--layout-node-row-gap','px'],['Appearance.Node radius','--node-radius','px']]) {
+        const row=s.settings.find(item=>item.id===id);
+        if(row) document.documentElement.style.setProperty(token,row.value+unit);
+      }
       document.documentElement.dataset.grid = String(s.settings.find(r => r.id === 'Appearance.Canvas grid')?.value !== false);
       document.documentElement.dataset.reducedMotion = String(s.settings.find(r => r.id === 'Appearance.Reduce motion')?.value === true);
       for (const token of ['--color-accent', '--color-accent-hi', '--color-accent-press']) {
@@ -322,8 +326,16 @@
       };
     }, [modal, companion, route]);
     React.useEffect(() => {
+      const openRequestedTask = event => {
+        const id = event.detail?.task_id;
+        if (typeof id === 'string' && id.trim()) openTaskFile(id);
+      };
+      window.addEventListener('archhub:open-task', openRequestedTask);
+      return () => window.removeEventListener('archhub:open-task', openRequestedTask);
+    }, [s.tasks, openTaskFile]);
+    React.useEffect(() => {
       document.title = 'ArchHub · ' + ((route === "task-file" ? (taskFace === "workshop" ? "Workshop" : "Canvas") : routeNames[route]) || route.split('/').at(-1));
-    }, [route]);
+    }, [route, taskFace]);
     const rail = [['home', 'Home', 'home'], ['workshop', 'Workshop', 'workshop'], ['canvas', 'Canvas', 'canvas'], ['clock', 'Automations', 'automations'], ['docs', 'Docs', 'docs']];
     const screen = route === 'meetings' ? <window.UI.Meetings /> : route === 'dependencies' ? <window.UI.Dependencies /> : route === 'present' ? <window.UI.Present /> : route === 'community' ? <window.UI.Community /> : route === 'model-review' ? <window.UI.ModelReview /> : route === 'interface' ? <window.UI.InterfaceStudio /> : route === 'social' ? <window.UI.Social /> : route === 'xray' ? <window.UI.Xray /> : route === 'access' ? <window.UI.Access /> : route === 'routing' ? <window.UI.Routing /> : route === 'home' ? <window.UI.Home key="home" /> : route === 'task-file' ? <window.UI.Home key={task} fileWorkspace initialFace={taskFace} /> : route === 'workshop' ? <window.UI.Workshop /> : route === 'canvas' ? null : route === 'system' ? <window.UI.Settings page="System graph" /> : route === 'colleagues' ? <window.UI.Colleagues /> : route === 'brain' ? <window.UI.Brain /> : route === 'watcher' ? <window.UI.Watcher /> : route === 'first-run' ? <window.UI.FirstRun /> : route === 'runs' ? <window.UI.Runs /> : route === 'receipts' ? <window.UI.Receipts /> : route === 'docs' ? <window.UI.Docs /> : route === 'feedback' ? <window.UI.Feedback /> : route === 'automations' ? <window.UI.Automations /> : route.startsWith('settings/') ? <window.UI.Settings key={route} page={route.slice(9)} /> : <window.UI.Settings key={route} page={{
       account: 'Account',

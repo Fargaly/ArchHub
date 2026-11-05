@@ -1,0 +1,18 @@
+{
+  "board": "canvas",
+  "penpotFile": "751e8d0c-7080-8124-8008-d8e6f6eedbb6",
+  "referenceRevision": 1970,
+  "referenceSha256": "8b40022e707eb2695f2ca4345d9aef6efdbeb44b3a19f840456a7cb8eb439c8e",
+  "viewport": {
+    "width": 1366,
+    "height": 768
+  },
+  "compiledManifestSha256": "eafce58018a35f81a7ace271df7bde8a9803c443fe2ad5d241b916af1574cd95",
+  "profile": "real isolated temporary owners",
+  "installedVerified": false,
+  "observedNodeMode": "full",
+  "openItems": [
+    "Compact primary cards are concept references; full NodeCard controls retained.",
+    "PDF output contract reconciliation remains with R&D; only current engine-declared sockets rendered."
+  ]
+}

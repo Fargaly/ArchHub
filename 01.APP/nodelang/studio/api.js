@@ -1142,7 +1142,7 @@ for(const functionName of ['updateProfile','invitePerson','selectFirm','setTeamA
 }
 api.refreshSettingsOperations=()=>settingsAction('readOperations',[state.graph.id]);
 api.setGraphWorkspaces=ids=>settingsAction('setGraphWorkspaces',[state.graph.id,ids]);
-api.setHomeLayout=value=>settingsAction('setAppearance',['Appearance.Home layout',value]);
+api.setInspectorWidth=value=>settingsAction('setAppearance',['Appearance.Inspector width',value]);
 api.setSettingsScope=async scope=>{const result=await settingsAction('setSettingsScope',[scope,state.activeWorkspace||state.graph.workspaceIds?.[0]||'',state.graph.id]);scopeEpoch++;publish({hostSkillsReady:false,hostSkills:[],connectorBundle:null});await commands.load();project();await api.refreshSettingsOperations();await refreshHostSkills();return result;};
 const settingsListWorkspaces=api.listWorkspaces;
 api.listWorkspaces=async()=>{await settingsListWorkspaces();if(state.profile.signedIn)await api.refreshSettingsOperations();return copy(state.workspaces);};
@@ -1443,7 +1443,9 @@ let sessionDocument=null, sessionPath='', fileDirectory='', fileHistory=[], file
 const sessionRequest=(action,extra={})=>request('/api/session-files',{action,...extra});
 // node_params.py, mirrored for display only: every value change goes through the server's one implementation.
 const PARAM_SOCKET={bool:'boolean',integer:'number',number:'number',text:'string',choice:'string',date:'string',file:'file',folder:'file',object:'any',list:'list',path:'file',color:'string',enum:'string',json:'any'};
-const PARAM_EDITOR={number:'number',integer:'number',bool:'boolean',color:'color',date:'date',list:'json',json:'json',object:'json'};
+const PARAM_EDITOR={number:'number',integer:'number',bool:'boolean',boolean:'boolean',color:'color',date:'date',list:'json',json:'json',object:'json'};
+const NODE_ICONS=['canvas','docs','folder','check','send','brain','settings','code','clock'];
+api.nodeIcons=NODE_ICONS;
 const PARAM_TYPES=['bool','integer','number','text','choice','date','file','folder','object','list'];
 // node_datasets.py, mirrored for display only: a field node is its dataset's column as a typed list.
 const COLUMN_LABEL={number:'Number',integer:'Integer',text:'Text',bool:'Boolean',choice:'Choice',date:'Date',file:'File',folder:'Folder',object:'Object',list:'List'};
@@ -1458,7 +1460,7 @@ function fileNode(node){
  const ports=datasetPorts(node)||{source:node.type==='param.value'?[{id:'value',type:PARAM_SOCKET[node.params.type]||'any'}]:base.source||[],
   target:[...(base.target||[]),...defs.map(d=>({id:'param:'+d.id,type:PARAM_SOCKET[d.type]||'any',label:d.name}))]};
  const params=bind?{type:node.params.type,value:owner?.params[bind.param]}:{...node.params};
- const typeOf=key=>bind&&key==='value'?node.params.type:node.type==='param.value'&&key==='value'?node.params.type:defs.find(d=>d.id===key)?.type;
+ const typeOf=key=>bind&&key==='value'?node.params.type:node.type==='param.value'&&key==='value'?node.params.type:defs.find(d=>d.id===key)?.type||ports.target.find(port=>port.id===key)?.type;
  const schema=Object.keys(params).map(key=>{const kind=typeOf(key),def=defs.find(d=>d.id===key)||(bind&&owner?.paramDefs?.find(d=>d.id===bind.param))||{};
    return {key,label:node.type==='param.value'&&key==='type'?'Type':def.name||key,type:(['min','max','step'].includes(key)||kind==='number'||kind==='integer')?'number':PARAM_EDITOR[kind]||(kind?'text':typeof params[key]==='number'?'number':typeof params[key]==='boolean'?'boolean':'text'),
    dataType:kind||'',min:def.min,max:def.max,step:def.step??(kind==='integer'?1:undefined),unit:node.type==='param.value'&&key==='type'?'':def.unit||'',options:['enum','choice'].includes(kind)?def.options||[]:undefined,
@@ -1470,7 +1472,7 @@ function fileNode(node){
  return {id:node.id,type:node.type,pure:item?.pure??node.pure,budget:node.budget||item?.budget||null,loop:node.loop||item?.loop||null,settingsKeys:item?.settingsKeys||[],dataset,column,title:node.title||item?.title||node.type,kind:node.children?'Group':item?.title||node.type,category:item?.cat||'Node',x:node.position.x,y:node.position.y,
   params,defaults:item?.params||{},parameterSchema:schema,paramDefs:defs,bind,
   inputs:(ports.target||[]).map(p=>({...p,name:p.label||p.id,type:p.type==='unknown'?'any':p.type})),outputs:(ports.source||[]).map(p=>({...p,name:p.label||p.id,type:p.type==='unknown'?'any':p.type})),
-  children:node.children||[],members:(Array.isArray(node.members)?node.members:[]).filter(m=>m&&typeof m.id==='string'&&m.id).map(m=>({id:m.id,title:m.title||m.name||m.id,agent:m.agent||m.id})),parent:node.parent||null,frozen:!!node.frozen,pinned:!!node.pinned,portVisibility:node.portVisibility||{},parameterPresentation:node.parameterPresentation||{},
+  children:node.children||[],members:(Array.isArray(node.members)?node.members:[]).filter(m=>m&&typeof m.id==='string'&&m.id).map(m=>({id:m.id,title:m.title||m.name||m.id,agent:m.agent||m.id})),parent:node.parent||null,icon:NODE_ICONS.includes(node.icon)?node.icon:'',color:typeof node.color==='string'&&/^#[0-9a-f]{6}$/i.test(node.color)?node.color:undefined,frozen:!!node.frozen,pinned:!!node.pinned,portVisibility:node.portVisibility||{},parameterPresentation:node.parameterPresentation||{},
   output:node.result?.output||[],status:node.result?.status||'Idle',error:node.result?.error||'',display:node.result?.display||''};
 }
 // session_files.py _WIRE_MENUS, mirrored for the inspector. First choice is the omitted-field value.
@@ -1659,6 +1661,10 @@ api.promoteParam=async(id,key)=>{await paramOp('promote',[id,key]);return state.
 api.demoteParam=async(id,key)=>{await paramOp('demote',[id,key]);return state.graph.nodes.find(n=>n.id===id);};
 api.parameterTypes=()=>[...PARAM_TYPES];
 api.resetNodeParam=(id,key)=>api.setNodeParam(id,key,state.graph.nodes.find(n=>n.id===id)?.defaults[key]);
+api.setNodePresentation=async(id,values)=>{
+ if(!values||typeof values!=='object'||Array.isArray(values)||Object.keys(values).some(key=>!['icon','color'].includes(key))||('icon'in values&&values.icon!==''&&!NODE_ICONS.includes(values.icon))||('color'in values&&!/^#[0-9a-f]{6}$/i.test(values.color)))throw Error('Choose an approved icon and a six-digit colour.');
+ return fileEdit(d=>{const node=d.nodes.find(n=>n.id===id);if(!node)throw Error('Choose a node in this workflow.');Object.assign(node,values);});
+};
 api.renameNode=async(id,title)=>fileEdit(d=>{const n=d.nodes.find(n=>n.id===id);if(n)n.title=title;});
 api.deleteNode=async id=>fileEdit(d=>{d.nodes=d.nodes.filter(n=>n.id!==id);d.wires=d.wires.filter(w=>w.from.node!==id&&w.to.node!==id);for(const n of d.nodes){n.children=n.children?.filter(child=>child!==id);if(n.parent===id)delete n.parent;}d.groups=d.groups.filter(g=>g.id!==id).map(g=>({...g,nodes:g.nodes.filter(child=>child!==id)}));},sessionDocument.wires.filter(w=>w.from.node===id).map(w=>w.to.node));
 api.deleteWire=async id=>fileEdit(d=>{d.wires=d.wires.filter(w=>w.id!==id);},sessionDocument.wires.filter(w=>w.id===id).map(w=>w.to.node));

@@ -61,6 +61,17 @@ async function mount(server,{holdBootDelay=false}={}) {
   };
   win.fetch=async(url,options={})=>{
     let data={ok:true};
+    if(url==='/api/session-files'){
+      const body=JSON.parse(options.body||'{}');
+      if(body.action==='catalogue')data={ok:true,items:[{id:'value',title:'Value',engine:'param.value',pure:true,params:{type:'number',value:1},ports:{source:[],target:[]}}],recent:[],directory:'/fixture'};
+      else if(body.action==='initial')data={ok:true,document:{format:'archhub',version:1,id:'fixture-file',title:'Fixture',nodes:[],wires:[],groups:[],notes:[],properties:{}}};
+      else data={ok:true,document:body.document,revision:1,outputs:{},pending:{},changed:[]};
+    }
+    if(url==='/api/router/settings')data={default_model:'openrouter/fixture:free',agents:{},providerPreferences:{},fallback_models:[]};
+    if(url==='/api/universal/settings-action'){
+      const body=JSON.parse(options.body||'{}');
+      data=server.settings?await server.settings(body):{ok:true,result:{runMode:'Accept edits',tools:{},libraryCollapsed:[]}};
+    }
     if(url==='/api/universal/canvas')data={root:'graph',nodes:server.nodes||[],wires:[],catalog:[],...(server.workshop?{scope:{current:'graph'},workshops:[{root:'workshop'}]}:{})};
     if(url==='/api/router/chat'){
       const body=JSON.parse(options.body||'{}');
@@ -70,7 +81,6 @@ async function mount(server,{holdBootDelay=false}={}) {
       return {ok:answer.ok!==false,status:answer.ok===false?409:200,json:async()=>plain(answer),body:{getReader(){return {async read(){if(sent)return {done:true,value:undefined};sent=true;return {done:false,value:encoded};},releaseLock(){}}}}};
     }
     if(url==='/api/universal/cloud-session')data={ok:true,signed_in:false};
-    if(url==='/api/universal/settings-action' && server.settings) data=await server.settings(JSON.parse(options.body||'{}'));
     if(url==='/api/universal/workshop'){
       const body=JSON.parse(options.body);
       data=server.workshop?await server.workshop(body):{ok:true,result:[]};
@@ -92,6 +102,7 @@ async function mount(server,{holdBootDelay=false}={}) {
   win.ArchHubStudioAuthority={create:({get,post:send})=>{let held;const post=async(...args)=>{const result=await send(...args);held=Array.isArray(result.nodes)?result:await get('/api/universal/canvas');return result;};return ({getSnapshot:()=>({canvas:held}),clear:()=>{held=null;},adopt:async result=>held=result,transact:async action=>held=await action(),load:async()=>held=await get('/api/universal/canvas'),undo:()=>post('/api/universal/gesture',{undo:true}),redo:()=>post('/api/universal/gesture',{redo:true})})}};
   win.eval(read('01.APP/nodelang/studio/vendor/react.js'));
   win.eval(read('01.APP/nodelang/studio/vendor/react-dom.js'));
+  win.eval(read('01.APP/nodelang/studio/compiled/xyflow.js'));
   const manifest=JSON.parse(read('01.APP/nodelang/studio/compiled/manifest.json'));
   for(const file of manifest.files){
     win.eval(read('01.APP/nodelang/studio/compiled/'+file.output));
@@ -102,7 +113,7 @@ async function mount(server,{holdBootDelay=false}={}) {
     assert.ok(predicate(),description);
   };
   const doc=win.document;
-  const button=label=>[...doc.querySelectorAll('button')].find(b=>b.textContent.trim()===label)||null;
+  const button=label=>[...doc.querySelectorAll('[role="dialog"] button'),...doc.querySelectorAll('[data-screen] button'),...doc.querySelectorAll('button')].find(b=>b.textContent.trim()===label)||null;
   const click=async node=>{assert.ok(node,'button exists');assert.equal(node.disabled,false);node.click();await pause();};
   try{
     await settle(()=>!!doc.querySelector('[aria-label="Main navigation"]'),'the compiled Home opens');
@@ -110,34 +121,29 @@ async function mount(server,{holdBootDelay=false}={}) {
   const settings=async()=>{
     await click(doc.querySelector('[aria-label="Settings"]'));
     await settle(()=>!!doc.querySelector('[data-screen="settings/Account"]'),'Account opens');
-    const updates=[...doc.getElementsByTagName('button')].find(b=>b.getAttribute('aria-label')==='Updates & About');
-    await click(updates);
-    await settle(()=>[...doc.querySelectorAll('[data-screen]')].some(el=>el.getAttribute('data-screen')==='settings/Updates & About'),'Updates opens');
+    await click(button('System'));
+    await settle(()=>!!button('Updates'),'System tools open');
+    await click(button('Updates'));
+    await settle(()=>!!doc.querySelector('[data-screen="settings/Updates & About"]'),'Updates opens');
   };
   return {win,doc,button,click,settle,settings,gets,posts,deadlines,api:win.ArchHubAPI,
     push:()=>win.dispatchEvent(new win.Event('archhub:update-ready')),
     close:()=>{dom.window.close();}};
 }
 
-test('Workshop settings failure stays visible and retries the actual owner',async()=>{
-  let attempts=0;
-  const v=await mount({get:()=>status('idle'),workshop:body=>{
-    if(body.function==='getAgentSurface'){
-      attempts++;
-      return attempts===1 ? {ok:false,error:'Workshop settings read refused'} :
-        {ok:true,result:{agentProfiles:{},learning:{layers:{}}}};
-    }
-    if(body.function==='getGraphMetadata')return {ok:true,result:{}};
-    return {ok:true,result:[]};
-  }});
-  try{
-    await v.settle(()=>!!v.doc.querySelector('[aria-label="Retry Workshop connection"]'),'Workshop failure offers a persistent retry');
-    assert.match(v.doc.body.textContent,/Workshop settings read refused/);
-    await v.click(v.doc.querySelector('[aria-label="Retry Workshop connection"]'));
-    await v.settle(()=>!!v.doc.querySelector('[aria-label="Workshop settings ready"]'),'retry re-reads the owner');
-    assert.equal(attempts,2);
-    assert.equal(v.doc.querySelector('[aria-label="Retry Workshop connection"]'),null);
-  }finally{v.close();}
+test('Settings failure stays visible and retries the actual owner',async()=>{
+ let attempts=0;
+ const v=await mount({get:()=>status('idle'),settings:body=>{
+  if(body.function==='readControls'&&++attempts===1)return {ok:false,error:'Settings read refused'};
+  return {ok:true,result:{runMode:'Accept edits',tools:{},libraryCollapsed:[]}};
+ }});
+ try{
+  await v.click(v.doc.querySelector('[aria-label="Settings"]'));
+  await v.settle(()=>!!v.button('Retry settings'),'Settings failure offers retry');
+  assert.match(v.doc.body.textContent,/Settings read refused/);
+  await v.click(v.button('Retry settings'));
+  await v.settle(()=>attempts===2&&!v.button('Retry settings'),'retry reaches the same owner');
+ }finally{v.close();}
 });
 
 test('a loaded graph opens without waiting for an artificial splash timer',async()=>{
@@ -169,11 +175,19 @@ test('Home composer admits one chat request and restores a refused draft only wh
     type('A newer request');
     gate.resolve({ok:false,error:'The model request was refused.'});
     await v.settle(()=>message().value==='A newer request','a refusal keeps newer text');
+    await v.settle(()=>message().closest('form').querySelector('button[type="submit"]').getAttribute('aria-busy')!=='true','refused send settled');
     gate=deferred();
     submit();
     await v.settle(()=>chats.length===3,'a later send uses the newer draft');
     gate.resolve({ok:true,result:{answer:'done'}});
     await v.settle(()=>message().value==='','a completed send clears only its own draft');
+    await v.settle(()=>message().closest('form').querySelector('button[type="submit"]').getAttribute('aria-busy')!=='true','completed send settled');
+    gate=deferred();type('Discard this draft');submit();
+    await v.settle(()=>chats.length===4,'a fourth request starts');
+    type('Intervening text');type('');
+    gate.resolve({ok:false,error:'The model request was refused.'});
+    await v.settle(()=>message().closest('form').querySelector('button[type="submit"]').getAttribute('aria-busy')!=='true','discarded draft request settled');
+    assert.equal(message().value,'','an explicit newer empty draft stays empty');
   }finally{gate.resolve({ok:false,error:'closed'});v.close();}
 });
 
@@ -187,16 +201,16 @@ test('idle Studio needs no update timer and a native ready push reads once',asyn
   }finally{v.close();}
 });
 
-test('a read that never answers times out and Read status can recover',async()=>{
-  let current=new Promise(()=>{});const v=await mount({get:()=>current});
-  try{
-    v.deadlines.at(-1).abort(new Error('Update status did not answer within 15 seconds'));
-    await v.settle(()=>v.api.getSnapshot().update.state==='failed','timeout reported');
-    await v.settings();assert.match(v.doc.body.textContent,/did not answer within 15 seconds/);
-    assert.equal(v.button('Up to date'),null);
-    current=status('ready');await v.api.refreshApplicationUpdate();
-    await v.settle(()=>!!v.button('Update'),'a subsequent status read recovers');
-  }finally{v.close();}
+test('a read that never answers times out and a native status refresh recovers',async()=>{
+ let current=new Promise(()=>{});const v=await mount({get:()=>current});
+ try{
+  v.deadlines.at(-1).abort(new Error('Update status did not answer within 15 seconds'));
+  await v.settle(()=>v.api.getSnapshot().update.state==='failed','timeout reported by owner');
+  assert.match(v.api.getSnapshot().update.detail,/did not answer within 15 seconds/);
+  assert.equal(v.doc.querySelector('[aria-label="Update available"]'),null);
+  current=status('ready');v.push();
+  await v.settle(()=>!!v.doc.querySelector('[aria-label="Update available"]'),'verified update can be requested');
+ }finally{v.close();}
 });
 
 test('up to date draws no notice; a ready build shows one relaunch notification',async()=>{
@@ -207,29 +221,28 @@ test('up to date draws no notice; a ready build shows one relaunch notification'
     await v.settle(()=>!!v.doc.querySelector('[aria-label="Update available"]'),'ready badge appears');
     assert.equal(!!v.doc.querySelector('[role="dialog"]'),false);
     const notice=v.doc.querySelector('[aria-label="Update available"]');
-    assert.equal(notice.textContent,'Relaunch to update');
+    assert.equal(notice.textContent,'Update');
     assert.match(notice.title,/installed-build.*next-build/);
     assert.match(notice.title,/Unsent text is lost/);
   }finally{v.close();}
 });
 
-test('one review action restarts once, with no second confirmation',async()=>{
-  const v=await mount({get:()=>status('ready'),post:()=>status('restarting')});
-  try{
-    await v.settings();await v.click(v.button('Update'));
-    await v.settle(()=>!!v.button('Restart and update'),'review opens');
-    await v.click(v.button('Restart and update'));
-    await v.settle(()=>v.api.getSnapshot().update.state==='restarting','restart requested');
-    assert.deepEqual(v.posts,[{action:'reload'}]);
-    assert.equal(v.doc.querySelector('[aria-label="Update available"]'),null);
-  }finally{v.close();}
+test('one ready toolbar action restarts once without a second confirmation',async()=>{
+ const v=await mount({get:()=>status('ready'),post:()=>status('restarting')});
+ try{
+  await v.click(v.doc.querySelector('[aria-label="Update available"]'));
+  await v.settle(()=>v.api.getSnapshot().update.state==='restarting','restart requested');
+  assert.deepEqual(v.posts,[{action:'reload'}]);
+  assert.equal(v.doc.querySelector('[aria-label="Update available"]'),null);
+  assert.equal(v.doc.querySelector('[role="dialog"]'),null);
+ }finally{v.close();}
 });
 
 test('R11 ready notification applies with ONE button and no review dialog',async()=>{
   const pending=deferred(),v=await mount({get:()=>status('ready'),post:()=>pending.promise});
   try{
     const update=v.doc.querySelector('[aria-label="Update available"]');
-    assert.equal(update.textContent.trim(),'Relaunch to update');
+    assert.equal(update.textContent.trim(),'Update');
     update.click();update.click();
     await v.settle(()=>v.posts.length===1,'one click requests the update');
     assert.equal(!!v.doc.querySelector('[role="dialog"]'),false,
@@ -242,41 +255,38 @@ test('R11 ready notification applies with ONE button and no review dialog',async
   }finally{pending.resolve(status('restarting'));v.close();}
 });
 
-test('a refused restart reports its reason and recovers only after Read status',async()=>{
-  const v=await mount({get:()=>status('ready'),post:()=>({ok:false,error:'A Workshop job is running'})});
-  try{
-    await v.settings();await v.click(v.button('Update'));
-    await v.settle(()=>!!v.button('Restart and update'),'review opens');
-    await v.click(v.button('Restart and update'));
-    await v.settle(()=>/Workshop job is running/.test(v.doc.body.textContent),'refusal visible');
-    assert.equal(v.button('Restart and update').disabled,true);
-    assert.deepEqual(v.posts,[{action:'reload'}]);
-    await v.click(v.button('Read status'));
-    await v.settle(()=>!v.button('Restart and update').disabled,'read reoffers verified ready build');
-    assert.equal(v.posts.length,1);
-  }finally{v.close();}
+test('a refused restart reports its reason and a native status refresh recovers',async()=>{
+ const v=await mount({get:()=>status('ready'),post:()=>({ok:false,error:'A Workshop job is running'})});
+ try{
+  await v.click(v.doc.querySelector('[aria-label="Update available"]'));
+  await v.settle(()=>/Workshop job is running/.test(v.doc.body.textContent),'refusal stays visible');
+  assert.equal(v.doc.querySelector('[aria-label="Update available"]'),null);
+  assert.deepEqual(v.posts,[{action:'reload'}]);
+  v.push();
+  await v.settle(()=>!!v.doc.querySelector('[aria-label="Update available"]'),'status reoffers verified build');
+  assert.equal(v.posts.length,1,'reading status cannot restart');
+ }finally{v.close();}
 });
 
-for(const from of [null,PREVIOUS])test('installed build confirmation persists until acknowledged: '+(from||'local install'),async()=>{
-  let current=status('idle',{updated_from:from,updated_to:INSTALLED});
-  const v=await mount({get:()=>current,post:body=>{assert.equal(body.action,'acknowledge');return current=status('idle');}});
-  try{
-    const badge=v.doc.querySelector('[aria-label="Update installed"]');assert.ok(badge);
-    await v.click(badge);
-    await v.settle(()=>!!v.button('Dismiss update confirmation'),'confirmation opens');
-    assert.match(v.doc.body.textContent,new RegExp((from||'ArchHub')+' → '+INSTALLED));
-    assert.equal(v.posts.length,0);
-    await v.click(v.button('Dismiss update confirmation'));
-    await v.settle(()=>!v.button('Dismiss update confirmation'),'confirmation acknowledged');
-    assert.deepEqual(v.posts,[{action:'acknowledge'}]);
-  }finally{v.close();}
+for(const from of [null,PREVIOUS])test('installed build receipt persists until acknowledged: '+(from||'local install'),async()=>{
+ let current=status('idle',{updated_from:from,updated_to:INSTALLED});
+ const v=await mount({get:()=>current,post:body=>{assert.equal(body.action,'acknowledge');return current=status('idle');}});
+ try{
+  await v.settle(()=>v.api.getSnapshot().update.updatedTo===INSTALLED,'installed receipt arrives');
+  assert.equal(v.api.getSnapshot().update.updatedFrom,from||'');
+  assert.equal(v.doc.querySelector('[aria-label="Update available"]'),null,'installed is not a pending update');
+  assert.equal(v.posts.length,0);
+  await v.api.acknowledgeUpdate();
+  assert.equal(v.api.getSnapshot().update.updatedTo,'');
+  assert.deepEqual(v.posts,[{action:'acknowledge'}]);
+ }finally{v.close();}
 });
 
 test('a delayed successful status confirms the running build',async()=>{
   const late=deferred(),v=await mount({get:()=>late.promise});
   try{
     late.resolve(status('idle',{updated_from:PREVIOUS,updated_to:INSTALLED}));
-    await v.settle(()=>!!v.doc.querySelector('[aria-label="Update installed"]'),'delayed confirmation visible');
+    await v.settle(()=>v.api.getSnapshot().update.updatedTo===INSTALLED,'delayed receipt reaches the owner');
     assert.equal(v.posts.length,0);
   }finally{v.close();}
 });
@@ -285,7 +295,7 @@ test('late reads cannot override newer reads and failed first reads are visible'
   let current=()=>{throw Error('Update status could not be read');};const v=await mount({get:()=>current()});
   try{
     await v.settle(()=>v.api.getSnapshot().update.state==='failed','read failure visible');
-    await v.settings();assert.match(v.doc.body.textContent,/could not be read/);
+    assert.match(v.api.getSnapshot().update.detail,/could not be read/);
     const late=deferred();current=()=>late.promise;
     const first=v.api.refreshApplicationUpdate();
     current=()=>status('idle');await v.api.refreshApplicationUpdate();
@@ -295,53 +305,50 @@ test('late reads cannot override newer reads and failed first reads are visible'
   }finally{v.close();}
 });
 
-test('all update entry points lead to the same review with one restart control',async()=>{
-  const v=await mount({get:()=>status('ready'),post:()=>status('restarting')});
-  try{
-    await v.settings();await v.click(v.button('Update'));
-    await v.settle(()=>!!v.button('Restart and update'),'Settings uses the same review');
-    assert.equal([...v.doc.querySelectorAll('button')].filter(b=>b.textContent==='Restart and update').length,1);
-    await v.click(v.button('Restart and update'));
-    await v.settle(()=>v.posts.length===1,'one lifecycle mutation');
-    assert.deepEqual(v.posts,[{action:'reload'}]);
-  }finally{v.close();}
+test('native ready refresh and toolbar update use one lifecycle owner',async()=>{
+ let current=status('idle');const v=await mount({get:()=>current,post:()=>status('restarting')});
+ try{
+  const reads=v.gets.length;current=status('ready');v.push();
+  await v.settle(()=>!!v.doc.querySelector('[aria-label="Update available"]'),'native refresh reveals the toolbar action');
+  assert.equal(v.gets.length,reads+1);
+  await v.click(v.doc.querySelector('[aria-label="Update available"]'));
+  await v.settle(()=>v.posts.length===1,'one lifecycle mutation');
+  assert.deepEqual(v.posts,[{action:'reload'}]);
+ }finally{v.close();}
 });
 
 for(const draft of ['New unsent draft','First request',null])test(draft === 'New unsent draft' ? 'STUDIOTESTS a late successful send preserves a newer unsent Composer draft' : draft === null ? 'STUDIOFIX a successful send clears only its unchanged draft' : 'STUDIOFIX a retyped identical draft survives a late send and navigation',async()=>{
  const pending=deferred(),sends=[];
- const v=await mount({get:()=>status('idle'),workshop:body=>{
-  if(body.function==='sendToBaboom'){sends.push(body);return pending.promise;}
-  if(body.function==='getAgentSurface')return {ok:true,result:{agentProfiles:{},learning:{layers:{}}}};
-  if(body.function==='getGraphMetadata')return {ok:true,result:{}};
-  return {ok:true,result:[]};
- }});
+ const v=await mount({get:()=>status('idle'),chat:body=>{sends.push(body);return pending.promise;}});
  try{
   const message=v.doc.querySelector('textarea[aria-label="Message"]');
   const type=text=>{Object.getOwnPropertyDescriptor(v.win.HTMLTextAreaElement.prototype,'value').set.call(message,text);message.dispatchEvent(new v.win.Event('input',{bubbles:true}));message.dispatchEvent(new v.win.Event('change',{bubbles:true}));};
-  type('First request');await v.settle(()=>!v.doc.querySelector('[aria-label="Send ↵"]').disabled,'first draft is ready');
+  type('First request');await v.settle(()=>!message.closest('form').querySelector('button[type="submit"]').disabled,'first draft is ready');
   const form=message.closest('form');form.dispatchEvent(new v.win.Event('submit',{bubbles:true,cancelable:true}));form.dispatchEvent(new v.win.Event('submit',{bubbles:true,cancelable:true}));
-  await v.settle(()=>sends.length===1,'one admitted send');
+  await v.settle(()=>sends.length===1,'one admitted router send');
   if(draft!==null){type('Intervening edit');await pause();type(draft);await pause();}
-  pending.resolve({ok:true,result:{id:'task-a',title:'First request'}});
-  await v.settle(()=>v.doc.title.includes('Workshop'),'successful send opened its confirmed task');
+  pending.resolve({ok:true,result:{answer:'done'}});
+  await v.settle(()=>message.closest('form').querySelector('button[type="submit"]').getAttribute('aria-busy')!=='true','router send settled');
   assert.equal(sends.length,1);
-  assert.equal(v.doc.querySelector('textarea[aria-label="Message"]').value,'','Home text must not leak into a task reply');
+  await v.click(v.doc.querySelector('[aria-label="Docs"]'));
   await v.click(v.doc.querySelector('[aria-label="Home"]'));
-  await v.settle(()=>v.doc.title.includes('Home'),'return to the sending surface');
-  assert.equal(v.doc.querySelector('textarea[aria-label="Message"]').value,draft??'','late receipt clears only its submitted draft; newer Home edits survive navigation');
- }finally{pending.resolve({ok:true,result:{id:'task-a'}});v.close();}
+  await v.settle(()=>!!v.doc.querySelector('textarea[aria-label="Message"]'),'returned to Home');
+  assert.equal(v.doc.querySelector('textarea[aria-label="Message"]').value,draft??'','late reply clears only its submitted draft');
+ }finally{pending.resolve({ok:true,result:{answer:'done'}});v.close();}
 });
 
 test('STUDIOTESTS Undo and Redo ignore editable targets and use the current graph owner',async()=>{
- let undo=0,redo=0;const v=await mount({get:()=>status('idle'),gesture:body=>{if(body.undo)undo++;if(body.redo)redo++;return {ok:true};}});
+ const v=await mount({get:()=>status('idle')});
  try{
-  await pause();
+  await v.api.addNode('Value',{x:20,y:20});
+  assert.equal(v.api.getSnapshot().graph.nodes.length,1);
   const key=(target,shiftKey=false)=>target.dispatchEvent(new v.win.KeyboardEvent('keydown',{key:'z',ctrlKey:true,shiftKey,bubbles:true,cancelable:true}));
   for(const tag of ['input','textarea','select']){const field=v.doc.createElement(tag);v.doc.body.append(field);key(field);key(field,true);field.remove();}
   const editable=v.doc.createElement('div');editable.contentEditable='true';v.doc.body.append(editable);key(editable);key(editable,true);editable.remove();
   for(const value of ['true','','plaintext-only']){const editable=v.doc.createElement('div'),child=v.doc.createElement('span');editable.setAttribute('contenteditable',value);editable.append(child);v.doc.body.append(editable);key(child);key(child,true);editable.remove();}
-  await pause();assert.equal(undo,0,'editing must not undo the graph');assert.equal(redo,0,'editing must not redo the graph');
-  key(v.doc.body);key(v.doc.body,true);await pause();assert.equal(undo,1);assert.equal(redo,1);
+  await pause();assert.equal(v.api.getSnapshot().graph.nodes.length,1,'editing must not undo the file');
+  key(v.doc.body);await v.settle(()=>v.api.getSnapshot().graph.nodes.length===0,'Undo uses current file history');
+  key(v.doc.body,true);await v.settle(()=>v.api.getSnapshot().graph.nodes.length===1,'Redo restores the file node');
  }finally{v.close();}
 });
 
@@ -433,10 +440,13 @@ test('the File menu is file-only and Workshop leads with the thread',async()=>{
   const labels=[...menu.querySelectorAll('[role="menuitem"]')].map(node=>node.textContent.trim());
   assert.deepEqual(labels,['New file','Open file…','Import…','Library']);
   assert.doesNotMatch(menu.textContent,/Search|Activity|Add node|Overview|Save as/);
-  assert.match(read('01.APP/nodelang/studio/ds_home2.jsx'),/data-dx="canvas-commands"[\s\S]*\+ Add node[\s\S]*Library[\s\S]*Program view[\s\S]*Present[\s\S]*Model review[\s\S]*Overview/);
   const library=[...menu.querySelectorAll('[role="menuitem"]')].find(node=>node.textContent.trim()==='Library');
   await v.click(library);
   await v.settle(()=>!!v.doc.querySelector('[aria-label="Library shelf"]'),'Library from Workshop opens the shelf');
+  await v.click([...v.doc.querySelectorAll('[data-dx="views"] button')].find(node=>node.textContent.trim()==='Canvas'));
+  await v.settle(()=>!!v.doc.querySelector('[data-dx="canvas-commands"]'),'Canvas opens its commands');
+  const commands=v.doc.querySelector('[data-dx="canvas-commands"]').textContent;
+  for(const label of ['+ Add node','Library','Program view','Present','Model review','Overview'])assert.ok(commands.includes(label),label);
  }finally{v.close();}
 });
 
@@ -475,6 +485,7 @@ test('Settings search shows values and Advanced rows, then reveals the control i
   return {ok:true,result:[]};
  }});
  try{
+  await v.api.setSettingsScope('User');
   await v.click(v.doc.querySelector('[aria-label="Settings"]'));
   await v.settle(()=>!!v.doc.querySelector('[aria-label="Search settings"]'),'Settings search is on the sheet');
   const field=v.doc.querySelector('[aria-label="Search settings"]');

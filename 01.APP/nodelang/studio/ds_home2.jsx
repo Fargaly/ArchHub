@@ -153,7 +153,6 @@
     const [query, setQuery] = React.useState('');
     const [status, setStatus] = React.useState('');
     const [history, setHistory] = React.useState(false);
-    const [drafts, setDrafts] = React.useState({});
     const [sending, setSending] = React.useState(false);
     const sendingRef = React.useRef(false);
     const [to, setTo] = React.useState('');
@@ -222,9 +221,12 @@
     const source = String(task?.description || '').trim();
     const sourceSentence = source && source !== task?.title ? source.split(/(?<=[.!?])\s/)[0] : '';
     const shortSource = sourceSentence.length > 140 ? sourceSentence.slice(0, 139).replace(/\s+\S*$/, '').replace(/[,\s;:]+$/, '') + '…' : sourceSentence;
-    const draftKey = task?.id || '';
-    const text = drafts[draftKey] || '';
-    const setText = value => setDrafts(current => ({...current, [draftKey]: typeof value === 'function' ? value(current[draftKey] || '') : value}));
+    const draftKey = JSON.stringify(['home', task?.id || '']);
+    const text = u.composerDraft[draftKey]?.text || '';
+    const setText = value => u.setComposerDraft(current => {
+      const held = current[draftKey] || {text:'',revision:0};
+      return {...current,[draftKey]:{text:typeof value === 'function' ? value(held.text) : value,revision:held.revision+1}};
+    });
     const messages = taskMessages(task);
     const seenTask = React.useRef('');
     React.useEffect(() => {
@@ -288,10 +290,14 @@
       sendingRef.current = true;
       setSending(true);
       const prompt = (!recipient || new RegExp('(^|\\s)@' + recipient + '\\b').test(body) ? '' : '@' + recipient + ' ') + body;
+      const clearedRevision = (u.composerDraft[draftKey]?.revision || 0) + 1;
       setText('');
       try {
         const result = await u.act(() => api.apiRouterChat(prompt, 'BABOOM'));
-        if (result == null) setText(current => current && String(current).trim() ? current : body);
+        if (result == null) u.setComposerDraft(current => {
+          const held = current[draftKey];
+          return held?.revision === clearedRevision ? {...current,[draftKey]:{text:body,revision:held.revision+1}} : current;
+        });
         else await api.listTasks?.();
       } finally {
         sendingRef.current = false;
@@ -522,7 +528,7 @@
                         </select>
                         <small>Free models first</small>
                       </label>
-                      <Btn p type="submit" aria-busy={sending} disabled={!text.trim()}>Send</Btn>
+                      <Btn p type="submit" loading={sending} disabled={!text.trim()}>Send</Btn>
                     </div>
                   </form>
                   <p className="dx-foot" data-dx="footer">{footer}</p>

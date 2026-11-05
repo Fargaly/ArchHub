@@ -351,6 +351,7 @@ def profile_directory():
 
 
 def sessions_directory():
+    recover_session_move()
     owner = _folder_move_owner()
     with canvas_documents.locked(owner.path):
         _restore_folder_move(owner)
@@ -427,7 +428,8 @@ def _restore_folder_move(owner):
                     if not row['duplicate']:
                         new.unlink()
                 elif row['duplicate']:
-                    shutil.copyfile(new, old)
+                    with new.open('rb') as source, old.open('xb') as target:
+                        shutil.copyfileobj(source, target)
                 else:
                     try:
                         new.rename(old)
@@ -445,6 +447,8 @@ def _restore_folder_move(owner):
                 JsonFile(path, {}).write(snapshot['value'])
             else:
                 path.unlink(missing_ok=True)
+    from .workshop_tasks import relocate_sessions
+    relocate_sessions(profile_directory(), [(row['new'], row['old']) for row in pending['moves']])
     owner.path.unlink()
 
 
@@ -452,6 +456,7 @@ def set_sessions_directory(target):
     """One recoverable folder change, including local current/recent pointers."""
     from .nograph_server import JsonFile
     from .quiet_update import _cleanup_plain
+    import sqlite3
     target = Path(target)
     if not target.is_absolute() or str(target).startswith(('\\\\', '//')) or not _cleanup_plain(target):
         raise ValueError('Choose an absolute local sessions folder without links')
@@ -479,7 +484,7 @@ def set_sessions_directory(target):
             settings.write({**settings.read(), 'sessionsFolder': str(target)})
             owner.path.unlink()
             return moved
-        except (OSError, ValueError):
+        except (OSError, ValueError, sqlite3.Error):
             _restore_folder_move(owner)
             raise
 
@@ -498,7 +503,76 @@ def _relocate_pointers(state_dir, moved):
                 owner.write(value)
 
 
+def recover_session_move():
+    from .nograph_server import JsonFile
+    owner = JsonFile(profile_directory() / 'data/sessions/file-move.json', {})
+    with canvas_documents.locked(owner.path):
+        _recover_session_move(owner)
+
+
+def _recover_session_move(owner):
+    from .workshop_tasks import relocate_sessions
+    if not owner.path.exists():
+        return
+    pending = owner.read()
+    old, new = pending['old'], pending['new']
+    from .quiet_update import _cleanup_plain
+    if not _cleanup_plain(local_path(old)) or not _cleanup_plain(local_path(new)):
+        raise ValueError('Session recovery requires plain local document paths')
+    with canvas_documents.locked(old), canvas_documents.locked(new):
+        for current, other in ((old, new), (new, old)):
+            try:
+                if read_document(current)['id'] == pending['id']:
+                    moved = [(other, current)]
+                    break
+            except (OSError, ValueError):
+                continue
+        else:
+            raise OSError('Session move recovery cannot find the original document')
+        relocate_sessions(profile_directory(), moved)
+        _relocate_pointers(profile_directory(), moved)
+        owner.path.unlink()
+
+
 def move_session(path, destination, *, before_move=None):
+    """Journal the file move before publication; replay bindings before any reopen."""
+    from .nograph_server import JsonFile
+    import sqlite3
+    owner = JsonFile(profile_directory() / 'data/sessions/file-move.json', {})
+    with canvas_documents.locked(owner.path):
+        _recover_session_move(owner)
+        def prepare(old, new):
+            if before_move:
+                before_move(old, new)
+            owner.write({'old': str(old), 'new': str(new), 'id': read_document(old)['id'],
+                         'duplicate': new.exists()})
+        try:
+            result = _move_session(path, destination, before_move=prepare)
+            _recover_session_move(owner)
+            return result
+        except (OSError, ValueError, sqlite3.Error):
+            if owner.path.exists():
+                pending = owner.read()
+                old, new = Path(pending['old']), Path(pending['new'])
+                with canvas_documents.locked(old), canvas_documents.locked(new):
+                    if not old.exists() and new.exists():
+                        if pending['duplicate']:
+                            import shutil
+                            with new.open('rb') as source, old.open('xb') as target:
+                                shutil.copyfileobj(source, target)
+                        else:
+                            try:
+                                new.rename(old)
+                            except OSError as error:
+                                import errno
+                                if error.errno != errno.EXDEV and getattr(error, 'winerror', None) != 17:
+                                    raise
+                                _copy_session_across_volumes(new, old)
+                _recover_session_move(owner)
+            raise
+
+
+def _move_session(path, destination, *, before_move=None):
     """Move one document under the same exclusion used by Canvas and agent editors."""
     from .quiet_update import _cleanup_plain, _unlocked
     path, destination = Path(path), Path(destination)

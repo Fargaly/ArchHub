@@ -85,6 +85,21 @@ APP_FOLDER_OWNERS = {
 }
 _CLEANUP_STAGE = '_cleanup-staging'
 _CLEANUP_JOURNAL = 'cleanup-pending.json'
+_OBSOLETE_ROOT_ENTRIES = frozenset({
+    'candidate-20.log', 'candidate-locked.log', 'live-20.stdout.log',
+    'settings.json.bak_old', 'version.json.bak_old', 'node-native-wip.next-25.json.gz',
+    'authority-bridge-headless.json.gz.universal.sqlite3', 'node-native-wip.json.gz.universal.sqlite3',
+    '_syncrung_backup', '_deploy_backup', '.retired-v1-docs', 'preflight', 'packages', 'cache',
+})
+
+
+def _protected_file(path):
+    return (path.suffix.lower() in ('.pem', '.key', '.dpapi', '.pfx', '.p12', '.kdbx',
+                                   '.pdf', '.xlsx', '.xls', '.json', '.docx', '.csv')
+            or path.name.lower().startswith('.env')
+            or any(re.search(r'credential|secret|token|password|^keys$|^auth[.-]', part, re.I)
+                   for part in path.parts)
+            or path.name.lower() == 'cloud.json')
 
 
 def _cleanup_plain(path):
@@ -121,9 +136,7 @@ def _unlocked(path):
 
 def _cleanup_paths(state):
     for path in state.iterdir():
-        if path.name not in APP_FOLDER_OWNERS and path.name != _CLEANUP_STAGE:
-            if path.suffix.lower() == '.archhub':
-                continue
+        if path.name in _OBSOLETE_ROOT_ENTRIES:
             yield path
     # Only these exact founder-identified test titles are removable user-format files.
     from .session_files import read_document, verification_document
@@ -197,7 +210,7 @@ def stage_app_folder(state_dir):
             size = 0
             for file in _entry_files(path):
                 # Unrecognised Canvas documents are user data, even in an old directory.
-                if file.suffix.lower() in ('.archhub', '.pem', '.key', '.dpapi') and path.suffix.lower() != '.archhub':
+                if _protected_file(file.relative_to(state)) or (file.suffix.lower() == '.archhub' and path.suffix.lower() != '.archhub'):
                     raise OSError('user Canvas document retained')
                 _unlocked(file)
                 size += file.stat().st_size
@@ -243,12 +256,12 @@ def finish_app_folder(state_dir, *, healthy):
                 raise ValueError('Invalid cleanup journal path')
             target = state / _CLEANUP_STAGE / relative
             try:
-                if relative.parts[0] in APP_FOLDER_OWNERS and not (relative.parts[0] == 'sessions-files' and target.suffix.lower() == '.archhub'):
-                    raise OSError('allowlisted entry retained')
+                if relative.parts[0] not in _OBSOLETE_ROOT_ENTRIES and not (relative.parts[0] == 'sessions-files' and target.suffix.lower() == '.archhub'):
+                    raise OSError('unidentified entry retained')
                 # Re-check locks/links: a process may have opened it since staging.
                 if target.exists():
                     for file in _entry_files(target):
-                        if file.suffix.lower() in ('.archhub', '.pem', '.key', '.dpapi'):
+                        if _protected_file(file.relative_to(state)) or file.suffix.lower() == '.archhub':
                             from .session_files import read_document, verification_document
                             if file.suffix.lower() != '.archhub' or not verification_document(read_document(file)):
                                 raise OSError('new user data in staged entry retained')

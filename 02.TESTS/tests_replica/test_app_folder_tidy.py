@@ -58,6 +58,156 @@ def test_first_run_deletes_only_staged_after_health_and_keeps_manifest(profile):
     assert quiet_update.stage_app_folder(profile)['staged'] == []
 
 
+def test_unknown_files_folders_and_credentials_survive_cleanup(profile):
+    kept = seed(profile)
+    for name in ('report.pdf', 'budget.xlsx', 'unknown.json', 'Incoming/report.pdf',
+                 'Incoming/table.xlsx', 'Incoming/config.json', 'credentials.json',
+                 'secrets/token', '.env', 'keys/private.pem'):
+        path = profile / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        kept[name] = b'untouched user bytes'
+        path.write_bytes(kept[name])
+    quiet_update.stage_app_folder(profile)
+    quiet_update.finish_app_folder(profile, healthy=True)
+    for name, raw in kept.items():
+        assert (profile / name).read_bytes() == raw
+    assert not (profile / 'candidate-20.log').exists()
+
+
+def test_bound_task_reopens_same_document_after_autosave_rename(profile):
+    from nodelang import workshop_tasks
+    from nodelang.workshop_mailbox import application_history
+    with application_history() as history:
+        session = workshop_tasks.create_session(history, 'A real workflow')
+        document = session_files.read_document(session['path'])
+        document['title'] = 'Renamed workflow'
+        saved = session_files.SessionFiles().dispatch({'action': 'autosave', 'path': session['path'],
+                                                     'document': document})
+        opened = workshop_tasks.open_session(history, session['taskId'])
+        assert opened['id'] == session['id'] and opened['path'] == saved['path']
+        assert not Path(session['path']).exists()
+        assert history._db.execute('SELECT count(*) FROM workshop_tasks').fetchone()[0] == 1
+
+
+def test_populated_task_migration_and_folder_change_rollback(profile, tmp_path, monkeypatch):
+    from nodelang import workshop_tasks
+    from nodelang.workshop_mailbox import application_history
+    from nodelang.nograph_server import JsonFile
+    legacy = profile / 'sessions-files'
+    legacy.mkdir()
+    document = session_files.new_document('Populated task')
+    document['notes'].append({'id': 'note', 'text': 'keep task content'})
+    old = legacy / (document['id'] + '.archhub')
+    session_files.write_document(old, document)
+    with application_history() as history:
+        task = workshop_tasks.create(history, 'Populated task', 'founder')['id']
+        original = workshop_tasks.open_session(history, task, str(old))
+        session_files.migrate_sessions(profile)
+        migrated = workshop_tasks.open_session(history, task)
+        assert migrated['id'] == original['id'] and migrated['path'] != str(old)
+        raw = Path(migrated['path']).read_bytes()
+        target = tmp_path / 'Moved sessions'
+        session_files.set_sessions_directory(target)
+        changed = workshop_tasks.open_session(history, task)
+        assert Path(changed['path']).parent == target
+        assert Path(changed['path']).read_bytes() == raw
+        write = JsonFile.write
+        failed = []
+        def fail_once(owner, value):
+            if owner.path.name == 'current.json' and not failed:
+                failed.append(True)
+                raise OSError('rollback test')
+            return write(owner, value)
+        monkeypatch.setattr(JsonFile, 'write', fail_once)
+        with pytest.raises(OSError, match='rollback test'):
+            session_files.set_sessions_directory(tmp_path / 'Failed move')
+        reopened = workshop_tasks.open_session(history, task)
+        assert reopened['id'] == original['id'] and reopened['path'] == changed['path']
+        assert Path(reopened['path']).read_bytes() == raw
+        assert history._db.execute('SELECT count(*) FROM workshop_tasks').fetchone()[0] == 1
+
+
+def test_interrupted_task_binding_relocation_recovers_before_reopen(profile, monkeypatch):
+    from nodelang import workshop_tasks
+    from nodelang.workshop_mailbox import application_history
+    with application_history() as history:
+        session = workshop_tasks.create_session(history, 'Interrupted workflow')
+        document = session_files.read_document(session['path'])
+        document['title'] = 'Recovered workflow'
+        session_files.write_document(session['path'], document)
+        with monkeypatch.context() as patch:
+            patch.setattr(workshop_tasks, 'relocate_sessions', lambda *args: (_ for _ in ()).throw(SystemExit('interrupted')))
+            with pytest.raises(SystemExit, match='interrupted'):
+                session_files.move_session(session['path'], Path(session['path']).parent)
+        opened = workshop_tasks.open_session(history, session['taskId'])
+        assert opened['id'] == session['id'] and Path(opened['path']).stem == 'Recovered workflow'
+        assert not (profile / 'data/sessions/file-move.json').exists()
+
+
+def test_binding_failure_restores_file_before_returning_error(profile, monkeypatch):
+    from nodelang import workshop_tasks
+    from nodelang.workshop_mailbox import application_history
+    with application_history() as history:
+        session = workshop_tasks.create_session(history, 'Rename failure')
+        old = Path(session['path'])
+        with monkeypatch.context() as patch:
+            patch.setattr(workshop_tasks, 'relocate_sessions', lambda *args: (_ for _ in ()).throw(OSError('binding unavailable')))
+            with pytest.raises(OSError, match='binding unavailable'):
+                session_files.move_session(old, old.parent)
+        assert old.exists()
+        opened = workshop_tasks.open_session(history, session['taskId'])
+        assert opened['id'] == session['id'] and opened['path'] == str(old)
+
+
+def test_recovery_does_not_bind_task_to_a_reused_old_filename(profile, monkeypatch):
+    from nodelang import workshop_tasks
+    from nodelang.workshop_mailbox import application_history
+    with application_history() as history:
+        session = workshop_tasks.create_session(history, 'Original workflow')
+        old = Path(session['path'])
+        with monkeypatch.context() as patch:
+            patch.setattr(workshop_tasks, 'relocate_sessions', lambda *args: (_ for _ in ()).throw(SystemExit('crashed')))
+            with pytest.raises(SystemExit):
+                session_files.move_session(old, old.parent)
+        unrelated = session_files.new_document('Unrelated document')
+        session_files.write_document(old, unrelated)
+        opened = workshop_tasks.open_session(history, session['taskId'])
+        assert opened['id'] == session['id'] and opened['path'] != str(old)
+        assert session_files.read_document(old) == unrelated
+
+
+def test_task_owner_sqlite_failure_rolls_back_folder_move(profile, tmp_path):
+    import sqlite3
+    from nodelang import workshop_tasks
+    from nodelang.workshop_mailbox import application_history
+    with application_history() as history:
+        session = workshop_tasks.create_session(history, 'A workflow')
+        raw = Path(session['path']).read_bytes()
+        history._db.execute("CREATE TRIGGER refuse_relocation BEFORE UPDATE OF session_path ON workshop_tasks "
+                            "WHEN new.session_path LIKE '%Refused%' BEGIN SELECT RAISE(ABORT, 'relocate failed'); END")
+        with pytest.raises(sqlite3.IntegrityError, match='relocate failed'):
+            session_files.set_sessions_directory(tmp_path / 'Refused')
+        opened = workshop_tasks.open_session(history, session['taskId'])
+        assert opened['id'] == session['id'] and opened['path'] == session['path']
+        assert Path(opened['path']).read_bytes() == raw
+        assert not list((tmp_path / 'Refused').glob('*.archhub'))
+
+
+def test_thirty_bound_workflows_move_without_new_tasks_or_documents(profile, tmp_path):
+    from nodelang import workshop_tasks
+    from nodelang.workshop_mailbox import application_history
+    with application_history() as history:
+        sessions = [workshop_tasks.create_session(history, 'Workflow %d' % index) for index in range(30)]
+        target = tmp_path / 'Thirty workflows'
+        session_files.set_sessions_directory(target)
+        for session in sessions:
+            opened = workshop_tasks.open_session(history, session['taskId'])
+            assert opened['id'] == session['id'] and Path(opened['path']).parent == target
+            assert not Path(session['path']).exists()
+        assert len(list(target.glob('*.archhub'))) == 30
+        assert history._db.execute('SELECT count(*) FROM workshop_tasks').fetchone()[0] == 30
+
+
 def test_failed_health_and_interrupted_boot_restore_everything(profile):
     seed(profile)
     before = {path.relative_to(profile): path.read_bytes() for path in profile.rglob('*') if path.is_file()}
@@ -152,23 +302,27 @@ def test_user_documents_and_credentials_in_unknown_folders_are_retained(profile)
     key.write_bytes(b'user credential')
     before = (other / 'My work.archhub').read_bytes()
     result = quiet_update.stage_app_folder(profile)
-    assert {row['path'] for row in result['skipped']} == {'user-folder', 'device.key'}
+    assert result == {'staged': [], 'skipped': []}
     quiet_update.finish_app_folder(profile, healthy=True)
     assert (other / 'My work.archhub').read_bytes() == before
     assert key.read_bytes() == b'user credential'
 
 
-def test_data_added_after_staging_is_not_deleted(profile):
-    junk = profile / 'old-build'
+@pytest.mark.parametrize('name', ['New work.archhub', 'report.pdf', 'budget.xlsx', 'config.json', '.env', 'device.pfx'])
+def test_data_added_after_staging_is_not_deleted(profile, name):
+    junk = profile / '_deploy_backup'
     junk.mkdir()
     (junk / 'old.log').write_bytes(b'old')
     quiet_update.stage_app_folder(profile)
-    staged = profile / '_cleanup-staging/old-build'
-    session_files.write_document(staged / 'New work.archhub', session_files.new_document('New work'))
+    staged = profile / '_cleanup-staging/_deploy_backup'
+    if name.endswith('.archhub'):
+        session_files.write_document(staged / name, session_files.new_document('New work'))
+    else:
+        (staged / name).write_bytes(b'user data')
     result = quiet_update.finish_app_folder(profile, healthy=True)
-    assert result['pending'] and (staged / 'New work.archhub').exists()
+    assert result['pending'] and (staged / name).exists()
     quiet_update.finish_app_folder(profile, healthy=False)
-    assert (junk / 'New work.archhub').exists()
+    assert (junk / name).exists()
 
 
 def test_migration_updates_current_and_recent_without_changing_documents(profile):

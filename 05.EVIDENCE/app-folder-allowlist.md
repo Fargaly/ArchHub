@@ -99,11 +99,11 @@ Scope: `%LOCALAPPDATA%/ArchHub` only. The builder inventoried names and source; 
 
 `session_files.sessions_directory()` reads `settings/settings.json:sessionsFolder`, defaulting to `%USERPROFILE%/ArchHub/Sessions`. All `.archhub` workflows use that folder, the same Canvas open/edit/save implementation and the same file export/import. There is no `skills_directory()` or separate Skills setting/category. Existing `skill` engine identifiers remain compatible with files already saved by users.
 
-`migrate_sessions()` moves legacy `.archhub` files from `sessions-files` and its `skills` subfolder with readable title filenames, preserving raw bytes and resolving name collisions. Unknown/invalid user files remain protected. The exact founder-identified verification titles are staged as junk. Settings folder changes move the same documents and update recent/current pointers in a journaled transaction. A failed or interrupted folder change restores the previous files and pointers before the next reader selects a folder. Save As chooses any local `.archhub` path.
+`migrate_sessions()` moves legacy `.archhub` files from `sessions-files` and its `skills` subfolder with readable title filenames, preserving raw bytes and resolving name collisions. Unknown/invalid user files remain protected. The exact founder-identified verification titles are staged as junk. Settings folder changes move the same documents and update recent/current pointers and Workshop task bindings through their owners in a journaled transaction. A failed or interrupted folder change restores the previous files and pointers before the next reader selects a folder. Save As chooses any local `.archhub` path.
 
 ## Removed inputs and stopped writers
 
-All other root entries are staged, except user `.archhub` documents, credential files, linked paths and data-protected folders. Candidate/live build logs, `*.bak_*`, `_syncrung_backup*`, `_deploy_backup*`, `_config_backup*`, `sessions_backup*`, `.retired-v1-docs`, `.stem_surface_backup`, `authority-recovery-*`, obsolete graph stores and empty retired folders have no current owner and are removal candidates. A directory containing unrecognised Canvas data or credential files is skipped wholesale.
+Unknown root entries are retained. Only exact `_OBSOLETE_ROOT_ENTRIES` names and verified test documents are staged; credentials and linked paths are protected. Candidate/live build logs, `*.bak_*`, `_syncrung_backup*`, `_deploy_backup*`, `_config_backup*`, `sessions_backup*`, `.retired-v1-docs`, `.stem_surface_backup`, `authority-recovery-*`, obsolete graph stores and empty retired folders have no current owner and are removal candidates. A directory containing unrecognised Canvas data or credential files is skipped wholesale.
 
 Source search: `candidate-`, `live-*.log`, `bak_` in shipped Python/PowerShell/VBS/installer writers found no current root writer for those historical names. The current installer no longer calls `ArchiveLegacyDocs` or `SweepLegacyV1`, and no longer extracts/runs the closed-profile graph backup before replacing code. Cleanup happens only after first-run health. The current launcher and quit updater no longer select/read legacy graph databases merely to authorize an update.
 
@@ -136,3 +136,20 @@ Studio compile:
 The rendered test serves the actual compiled Studio from NoGraphServer against disposable .archhub files. It opens Library -> Sessions -> the saved document on Canvas, runs that saved session, verifies .archhub export content, and checks Save As title/file persistence with an edit arriving during a delayed native picker. Explicit saves share the autosave queue; queued snapshots are captured when executed so they use the current path, title and revision. Folder rollback tests include a pointer-write fault and an interrupted move recovered by the next reader. Provider trace assertions compare emitted steps to the independent fake HTTP requests, so a cold dependency import consuming the existing routing budget does not require an unattempted model to appear in the log.
 
 The exploratory legacy updater run reported `7 failed, 45 passed`; four filename/server/path cases were adapted to current owners. Three assertions against removed private launcher functions remain outside the final scoped run (`test_the_app_has_one_close_owner_and_optional_tray`, `test_the_launcher_keeps_the_one_brain_owner_and_no_retired_daemon`, `test_build22_slow_graph_never_rolls_back_a_booted_studio`). This lane does not claim a full-suite or installer/installed-app PASS. The provider SDK emitted two deprecation warnings in the final run.
+
+## APPTIDY refused-landing correction (2026-11-05)
+
+Base: `48246733`; rebased APPTIDY `60e940cd` and SLOWHOME `f5086e57`.
+Cleanup now selects only the exact `_OBSOLETE_ROOT_ENTRIES` names and verified test documents. Unknown root files/folders are retained. PDF/XLSX/JSON, other document formats and recognised credential files also prevent deletion inside obsolete folders, including files introduced after staging.
+Session moves journal the old/new path before publication, then relocate Workshop task bindings through `workshop_tasks.relocate_sessions` in one SQLite transaction and update recent/current pointers. Recovery replays the existing file's path before reopen. Folder rollback reverses task bindings as well as files/settings. Task and document IDs are unchanged.
+
+Disposable-profile results (raw logs retained locally under `05.EVIDENCE/apptidy`):
+
+```text
+Pre-fix overlay: 3 failed, 21 deselected, 1 warning in 40.65s
+Headless cleanup/session/browser: 31 passed, 1 warning in 195.85s (0:03:15)
+Final recovery, SQLite refusal and 30 workflows: 30 passed, 1 deselected, 1 warning in 139.60s (0:02:19)
+PROFILE-WRITE-GUARD: protected write attempts=0
+```
+
+Clean-main and lane full-file failure comparison is reported separately to 717 with trace lines; no installed-app acceptance is claimed. SDK-missing exploratory runs are diagnostics, not passing provider verification. Primary recovery reference: SQLite atomic commit, https://www.sqlite.org/atomiccommit.html (existing transaction and journal pattern, no new store).

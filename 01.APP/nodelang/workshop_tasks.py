@@ -619,9 +619,27 @@ def _bind_session(history, task, revision, target):
         raise ValueError("Task already has a session file")
 
 
+def relocate_sessions(state_dir, moved):
+    """Relocate bindings in one owner transaction, preserving task and document identity."""
+    from pathlib import Path
+    from .workshop_mailbox import application_history
+    database = Path(state_dir) / 'workshop/messages.sqlite3'
+    if not database.exists():
+        return
+    with application_history(database=database) as history, history._transaction(write=True):
+        if not history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_tasks'").fetchone():
+            return
+        _ensure(history)
+        for old, new in moved:
+            history._db.execute("UPDATE workshop_tasks SET session_path=?, updated_at=?, revision=revision+1 "
+                                "WHERE session_path=?", (str(new), _now(), str(old)))
+
+
 def open_session(history, task, path=None, *, select=True, zoom=1):
     """Open this task's own .archhub file. A first path binds it; a later open reads that same file."""
     from .session_files import SessionFiles, local_path, new_document, read_document
+    from .session_files import sessions_directory
+    sessions_directory()
     row = get(history, task)
     if row is None:
         raise ValueError("No such Workshop task")

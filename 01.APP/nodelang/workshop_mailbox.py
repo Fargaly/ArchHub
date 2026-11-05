@@ -137,7 +137,7 @@ def _delivery_cursor(history, row):
         "json_extract(workshop_delivery_cursors.record,'$.since')", (row["session"], json.dumps(payload)))
 
 
-# Room posts are visible to every reader; only an explicit "*" also broadcasts into sessions.
+# Room posts are visible to every reader; injection requires an explicit addressee.
 _ROOM_TARGETS = {"", "*", "everyone", "all", "room", "workshop", "founder", "ahmed", "you"}
 _GENERIC_ALIASES = {"claude", "claude code", "codex", "opencode", "cursor", "copilot", "grok", "gemini",
                     "goose", "antigravity", "antigravity ide", "mcp"}
@@ -168,8 +168,8 @@ def _header_targets(message):
 
 
 def agent_addressed(message):
-    """Explicit broadcast or a named agent; an ordinary room post names nobody."""
-    return any(target == "*" or target.casefold() not in _ROOM_TARGETS for target in _header_targets(message))
+    """A named agent; room notes never inject into sessions."""
+    return any(target.casefold() not in _ROOM_TARGETS for target in _header_targets(message))
 
 
 def _aliases(identity, declaration=None):
@@ -204,7 +204,7 @@ def _addressed(message, identity, declaration=None):
     declaration = declaration or {}
     aliases = _aliases(identity, declaration)
     native = str(declaration.get("native_session_id") or "").casefold()
-    return any(target == "*" or target.casefold() not in _ROOM_TARGETS and (target.casefold() in aliases or
+    return any(target.casefold() not in _ROOM_TARGETS and (target.casefold() in aliases or
         (re.fullmatch(r"[0-9a-f]{3,}", target.casefold()) is not None
          and native.startswith(target.casefold()))) for target in _header_targets(message))
 
@@ -311,7 +311,7 @@ def _asks_for_reply(message):
 
 
 def _recipient_rows(message, declarations):
-    """Named agents or explicit broadcast recipients; ordinary room posts match nobody."""
+    """Named agents only; room posts match nobody."""
     if not agent_addressed(message):
         return []
     targets = [value.casefold() for value in _header_targets(message) if value.casefold() not in _ROOM_TARGETS]

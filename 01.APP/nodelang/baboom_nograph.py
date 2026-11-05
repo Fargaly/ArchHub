@@ -56,7 +56,17 @@ def start(state_dir, app_root, url=''):
         _STATE['error'] = 'BABOOM brain unavailable: %s' % refused
         print('  BABOOM     : %s' % _STATE['error'], flush=True)
         return None
-    _join_workshop(state_dir, url)
+    try:
+        _join_workshop(state_dir, url)
+    except Exception:
+        _STATE['error'] = 'BABOOM could not join the Workshop. Check its secure credential and try again.'
+        try:
+            runtime.close()
+        except Exception:
+            print('  BABOOM     : owned runtime cleanup failed; inspect the runtime before restarting it', flush=True)
+        _STATE.update(runtime=None, brain=None)
+        print('  BABOOM     : ' + _STATE['error'], flush=True)
+        return None
     print('  BABOOM     : Goose brain running (ACP) and joined the Workshop', flush=True)
     return _STATE['brain']
 
@@ -119,20 +129,47 @@ def ask(prompt, context=''):
     return result
 
 
+def credential_reference(state_dir):
+    import hashlib
+    # Isolated validation must never rotate the live profile's capability.
+    digest = hashlib.sha256(str(Path(state_dir).resolve()).casefold().encode('utf-8')).hexdigest()
+    return 'wcm://ArchHub/baboom-turn:' + digest
+
+
+def load_turn_credential(state_dir, reference):
+    from app import secrets_store
+    if reference != credential_reference(state_dir):
+        raise ValueError('BABOOM secure credential reference does not match this profile')
+    return secrets_store.load_credential(reference.removeprefix('wcm://ArchHub/'))
+
+
 def _join_workshop(state_dir, url):
     from .workshop_mailbox import call
     import os
     import psutil
+    import secrets
+    from app import secrets_store
     from .nograph_server import JsonFile
+    token = secrets.token_urlsafe(32)
+    reference = credential_reference(state_dir)
+    name = reference.removeprefix('wcm://ArchHub/')
+    if secrets_store.os_store_refused():
+        secrets_store.save_api_key(name, token)
+    else:
+        backend = secrets_store.credential_backend()
+        if backend is None:
+            raise RuntimeError('BABOOM secure credential store is unavailable')
+        backend.set_password(secrets_store.SERVICE, name, token)
+    if load_turn_credential(state_dir, reference) != token:
+        raise RuntimeError('BABOOM secure credential could not be confirmed')
+    _STATE['token'] = token
     declared = call('declare', {'task': 'BABOOM: answers with its tools and skills', 'paths': [str(Path(state_dir))],
                                 'status': 'working', 'request_id': 'BABOOM'}, {'goose/sessionID': 'baboom'})
     # Which declaration is the app's own BABOOM: this process, recorded by the app (agents cannot claim the name).
-    import secrets
-    _STATE['token'] = secrets.token_urlsafe(32)
     # Any process (the app, an agent's connector) reaches this BABOOM through the app's local turn door.
     JsonFile(Path(state_dir) / 'settings' / 'baboom-session.json', {}).write(
         {'session': declared['declaration']['session'], 'pid': os.getpid(), 'created_at': psutil.Process().create_time(),
-         'url': url, 'token': _STATE['token']})
+         'url': url, 'credential': reference})
 
 
 def _record(state_dir=None):

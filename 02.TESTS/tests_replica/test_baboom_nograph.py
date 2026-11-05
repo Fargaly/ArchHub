@@ -186,3 +186,86 @@ def test_goose_is_offered_only_the_workshop_and_canvas_tools(monkeypatch, tmp_pa
     names = {tool.name for tool in build_server()._tool_manager.list_tools()}
     assert {'declare', 'send', 'read', 'canvas.read', 'library.search'} <= names
     assert all(n in ('declare', 'send', 'read', 'library.search') or n.startswith('canvas.') for n in names)
+
+
+def test_join_publishes_only_a_credential_reference_and_keeps_token_checks(tmp_path, monkeypatch, no_real_credential_store):
+    import json
+    from app import secrets_store
+    from nodelang import baboom_nograph, workshop_mailbox
+
+    monkeypatch.setenv('ARCHHUB_TEST_SECRET_STORE', 'memory')
+    monkeypatch.setattr(secrets_store, 'load_credential', no_real_credential_store.load_api_key)
+    monkeypatch.setattr(workshop_mailbox, 'call', lambda *args: {'declaration': {'session': 'app-baboom'}})
+    monkeypatch.setitem(baboom_nograph._STATE, 'token', '')
+    baboom_nograph._join_workshop(tmp_path, 'http://127.0.0.1:12345')
+    raw = (tmp_path / 'settings/baboom-session.json').read_text(encoding='utf-8')
+    held = json.loads(raw)
+    token = baboom_nograph._STATE['token']
+    assert 'token' not in held and token not in raw
+    assert held['credential'].startswith('wcm://ArchHub/baboom-turn:')
+    assert baboom_nograph.load_turn_credential(tmp_path, held['credential']) == token
+    received = []
+    monkeypatch.setattr(baboom_nograph, '_adapter', lambda *args: (received.append(args) or ('delivered', 'goose-acp', '')))
+    assert baboom_nograph.accept_turn(token, 'hello', 'request-1')['ok']
+    assert not baboom_nograph.accept_turn('wrong', 'hello', 'request-2')['ok']
+    assert not baboom_nograph.accept_turn(None, 'hello', 'request-3')['ok']
+    assert len(received) == 1
+
+
+def test_unconfirmed_credential_does_not_publish_a_session(tmp_path, monkeypatch):
+    from app import secrets_store
+    from nodelang import baboom_nograph, workshop_mailbox
+
+    monkeypatch.setenv('ARCHHUB_TEST_SECRET_STORE', 'memory')
+    monkeypatch.setattr(secrets_store, '_MEMORY_KEYS', {})
+    monkeypatch.setattr(secrets_store, 'load_credential', lambda name: None)
+    monkeypatch.setattr(workshop_mailbox, 'call', lambda *args: {'declaration': {'session': 'app-baboom'}})
+    with pytest.raises(RuntimeError, match='secure credential'):
+        baboom_nograph._join_workshop(tmp_path, 'http://127.0.0.1:12345')
+    assert not (tmp_path / 'settings/baboom-session.json').exists()
+
+
+def test_isolated_profile_does_not_rotate_another_profiles_credential(tmp_path, monkeypatch, no_real_credential_store):
+    import json
+    from app import secrets_store
+    from nodelang import baboom_nograph, workshop_mailbox
+
+    monkeypatch.setattr(secrets_store, 'load_credential', no_real_credential_store.load_api_key)
+    monkeypatch.setattr(workshop_mailbox, 'call', lambda *args: {'declaration': {'session': 'app-baboom'}})
+    first, second = tmp_path / 'live', tmp_path / 'isolated'
+    baboom_nograph._join_workshop(first, 'http://127.0.0.1:12345')
+    held = json.loads((first / 'settings/baboom-session.json').read_text())
+    first_token = baboom_nograph._STATE['token']
+    baboom_nograph._join_workshop(second, 'http://127.0.0.1:23456')
+    other = json.loads((second / 'settings/baboom-session.json').read_text())
+    assert held['credential'] != other['credential']
+    assert no_real_credential_store.load_api_key(held['credential'].removeprefix('wcm://ArchHub/')) == first_token
+    with pytest.raises(ValueError, match='does not match this profile'):
+        baboom_nograph.load_turn_credential(first, other['credential'])
+
+
+def test_join_failure_closes_only_the_owned_runtime(tmp_path, monkeypatch):
+    from nodelang import baboom_nograph, goose_adapter, goose_runtime
+
+    class Runtime:
+        closed = False
+
+        def start(self):
+            return self
+
+        def close(self):
+            self.closed = True
+
+    runtime = Runtime()
+    monkeypatch.setattr(goose_runtime, 'GooseRuntime', lambda **kwargs: runtime)
+    monkeypatch.setattr(goose_adapter, 'GooseAdapter', lambda current: object())
+    for name, value in (('runtime', None), ('brain', None), ('error', ''), ('state_dir', tmp_path)):
+        monkeypatch.setitem(baboom_nograph._STATE, name, value)
+
+    def refused(*args):
+        raise RuntimeError('secure credential unavailable')
+
+    monkeypatch.setattr(baboom_nograph, '_join_workshop', refused)
+    assert baboom_nograph.start(tmp_path, tmp_path) is None
+    assert runtime.closed and baboom_nograph.brain() is None
+    assert 'Workshop' in baboom_nograph.reason()

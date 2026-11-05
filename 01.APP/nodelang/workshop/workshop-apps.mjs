@@ -10,6 +10,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import {execFileSync,spawn} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 import {agCall} from './extra-apps.mjs';
 import {stateDir} from './paths.mjs';
 
@@ -90,12 +91,26 @@ async function injectAntigravity(recipient,text,onDispatch){
  return {status:'injected'};
 }
 async function injectArchHub(recipient,text,messageId,onDispatch){
- // BABOOM's door is the running app's own loopback endpoint; its token is written by that app.
+ // The app publishes metadata only; the existing OS credential owner keeps the bearer.
  let held;try{held=JSON.parse(fs.readFileSync(path.join(path.dirname(stateDir()),'settings','baboom-session.json'),'utf8'));}
  catch{return {status:'not_sent',reason:'BABOOM is not running (start ArchHub; BABOOM starts with it unless turned off)'};}
- if(!alive(held.pid)||!held.url)return {status:'not_sent',reason:'BABOOM is not running (start ArchHub; BABOOM starts with it unless turned off)'};
+ if(!Number.isSafeInteger(held.pid)||held.pid<=0||!alive(held.pid)||typeof held.url!=='string')return {status:'not_sent',reason:'BABOOM is not running (start ArchHub; BABOOM starts with it unless turned off)'};
+ let endpoint;
+ try{endpoint=new URL(held.url);}catch{return {status:'not_sent',reason:'BABOOM local turn address is invalid'};}
+ if(endpoint.protocol!=='http:'||!['127.0.0.1','localhost','[::1]'].includes(endpoint.hostname)||endpoint.username||endpoint.password||endpoint.search||endpoint.hash||endpoint.pathname!=='/')
+  return {status:'not_sent',reason:'BABOOM turn address must be the existing local app'};
+ if(typeof held.credential!=='string'||!/^wcm:\/\/ArchHub\/baboom-turn:[0-9a-f]{64}$/.test(held.credential))return {status:'not_sent',reason:'BABOOM secure credential reference is unavailable; update and reopen ArchHub'};
+ const python=process.env.WORKSHOP_PYTHON;
+ if(!python)return {status:'not_sent',reason:'BABOOM credential helper is unavailable in this runtime'};
+ let token;
+ try{
+  const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
+  const read="import sys;sys.path.insert(0,sys.argv[1]);from nodelang.baboom_nograph import load_turn_credential;sys.stdout.write(load_turn_credential(sys.argv[2],sys.argv[3]) or '')";
+  token=String(execFileSync(python,['-I','-B','-c',read,root,path.dirname(stateDir()),held.credential],{timeout:WORKSHOP_APPS_NODE.params.baboom_ms,windowsHide:true,encoding:'utf8',maxBuffer:4096,stdio:['ignore','pipe','pipe']}));
+ }catch{return {status:'not_sent',reason:'BABOOM secure credential could not be read; reopen ArchHub'};}
+ if(!/^[A-Za-z0-9_-]{32,256}$/.test(token))return {status:'not_sent',reason:'BABOOM secure credential is unavailable; reopen ArchHub'};
  onDispatch();
- const r=await fetch(held.url+'/baboom/turn',{method:'POST',headers:{'Content-Type':'application/json','X-ArchHub-BABOOM':held.token},
+ const r=await fetch(endpoint.origin+'/baboom/turn',{method:'POST',redirect:'error',headers:{'Content-Type':'application/json','X-ArchHub-BABOOM':token},
   body:JSON.stringify({text,message_id:messageId}),signal:AbortSignal.timeout(WORKSHOP_APPS_NODE.params.baboom_ms)});
  const answer=await r.json().catch(()=>({}));
  return answer.ok?{status:'injected'}:{status:'not_sent',reason:String(answer.error||('HTTP '+r.status))};

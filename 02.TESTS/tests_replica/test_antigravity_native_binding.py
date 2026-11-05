@@ -118,7 +118,7 @@ def _home(tmp_path, raw_bytes):
 
 def _env(profile, state, tmp_path):
     return {"USERPROFILE": str(profile), "LOCALAPPDATA": str(tmp_path / "local"),
-            "ARCHHUB_TEST_STATE_DIR": str(state), "PATH": ""}
+            "ARCHHUB_TEST_STATE_DIR": str(state), "PATH": "", 'APPDATA': str(tmp_path / "local"), 'TEMP': str(tmp_path / "local"), 'TMP': str(tmp_path / "local")}
 
 
 def _setup(tmp_path, monkeypatch, stop_entries, raw=None):

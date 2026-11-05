@@ -33,7 +33,7 @@ def machine(tmp_path, monkeypatch):
     profile = tmp_path / "profile"
     profile.mkdir()
     state = tmp_path / "LocalAppData" / "ArchHub-Test"
-    env = {"USERPROFILE": str(profile), "LOCALAPPDATA": str(tmp_path / "LocalAppData"), "PATH": ""}
+    env = {"USERPROFILE": str(profile), "LOCALAPPDATA": str(tmp_path / "LocalAppData"), "PATH": "", 'APPDATA': str(tmp_path / "LocalAppData"), 'TEMP': str(tmp_path / "LocalAppData"), 'TMP': str(tmp_path / "LocalAppData")}
     monkeypatch.setattr(registration, "install_roots", lambda environment=None: (install, state))
     return type("Machine", (), {"install": install, "module": module, "profile": profile,
                                 "state": state, "env": env, "local": tmp_path / "LocalAppData"})

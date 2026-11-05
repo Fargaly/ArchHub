@@ -190,7 +190,7 @@ def test_custody_retains_exact_native_parent_and_checks_session(tmp_path):
     cli.write_bytes(b"MZ")
     (cli.parent.parent / "package.json").write_text('{"name":"opencode-ai"}',encoding="utf-8")
     env={"LOCALAPPDATA":str(tmp_path),"APPDATA":str(appdata),"USERPROFILE":str(tmp_path/"home"),
-         "PATH":str(appdata/"npm")}
+         "PATH":str(appdata/"npm"), 'TEMP': str(tmp_path), 'TMP': str(tmp_path)}
     for expected in (desktop,cli):
         own=Process(os.getpid(),1,987,str(tmp_path/"python.exe"),str(tmp_path),"ses_real123")
         parent=Process(987,2,986,str(expected.resolve()),str(tmp_path),"")

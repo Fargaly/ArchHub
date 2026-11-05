@@ -41,7 +41,7 @@ def machine(tmp_path):
     appdata = profile / "AppData" / "Roaming"
     appdata.mkdir(parents=True)
     env = {"USERPROFILE": str(profile), "APPDATA": str(appdata), "ProgramFiles": str(program_files),
-           "ProgramData": str(tmp_path / "ProgramData")}
+           "ProgramData": str(tmp_path / "ProgramData"), 'LOCALAPPDATA': str(profile), 'TEMP': str(profile), 'TMP': str(profile)}
     return type("Machine", (), {"install": install, "host": host, "env": env, "appdata": appdata})
 
 

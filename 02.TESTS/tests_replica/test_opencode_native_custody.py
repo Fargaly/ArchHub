@@ -31,7 +31,7 @@ def _env(tmp_path):
         "APPDATA": str(appdata),
         "USERPROFILE": str(tmp_path / "home"),
         "PATH": str(appdata / "npm"),
-    }, cli, desktop
+     'TEMP': str(local), 'TMP': str(local)}, cli, desktop
 
 
 def _write_cli(root):

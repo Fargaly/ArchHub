@@ -3,6 +3,7 @@ const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
 const vm = require('node:vm');
 const {chromium} = require('playwright');
 const studio = path.resolve(__dirname, '../../01.APP/nodelang/studio');
@@ -12,7 +13,11 @@ const compiled = name => compiler.Babel.transform(fs.readFileSync(path.join(stud
 const sources = ['tokens.jsx', 'ds/index.jsx', 'icons.jsx', 'ui.jsx', 'ds_home2.jsx', 'surfaces.jsx', 'app.jsx'].map(compiled);
 
 test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation clicks', async () => {
-  const browser = await chromium.launch({headless: true, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE});
+  // Pytest isolates LOCALAPPDATA; browser binaries remain in the OS account's cache.
+  const cache = process.env.PLAYWRIGHT_BROWSERS_PATH || path.join(os.userInfo().homedir, 'AppData/Local/ms-playwright');
+  const shell = fs.existsSync(cache) && fs.readdirSync(cache).filter(name => /^chromium_headless_shell-\d+$/.test(name)).sort((a, b) => Number(b.split('-').at(-1)) - Number(a.split('-').at(-1)))[0];
+  const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || (process.platform === 'win32' && shell ? path.join(cache, shell, 'chrome-headless-shell-win64/chrome-headless-shell.exe') : undefined);
+  const browser = await chromium.launch({headless: true, executablePath});
   try {
     for (const mode of ['selected', 'clicked', 'last', 'first', 'empty', 'refused', 'cancelled']) {
       const page = await browser.newPage({viewport: {width: 1440, height: 900}});

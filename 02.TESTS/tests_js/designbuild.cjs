@@ -17,6 +17,10 @@ const {chromium} = require('playwright');
     // CDP input is confined to this headless page; it never uses the desktop pointer.
     const inputSession=await context.newCDPSession(page);
     const pointer=(type,x,y,pressed=false,button='left')=>inputSession.send('Input.dispatchMouseEvent',{type,x,y,...(type==='mouseMoved'?pressed?{button,buttons:button==='middle'?4:1}:{}:{button,buttons:pressed?button==='middle'?4:1:0,clickCount:1})});
+    const key = async (name, code) => {
+      await inputSession.send('Input.dispatchKeyEvent',{type:'keyDown',key:name,code:name,windowsVirtualKeyCode:code,...(name==='Enter'?{text:String.fromCharCode(13)}:{})});
+      await inputSession.send('Input.dispatchKeyEvent',{type:'keyUp',key:name,code:name,windowsVirtualKeyCode:code});
+    };
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(input.url);
@@ -30,6 +34,32 @@ const {chromium} = require('playwright');
     assert.equal(await page.evaluate(() => [...document.fonts].some(face => face.family === 'Inter' && face.status === 'loaded')),true);
     assert.equal(await page.evaluate(() => window.devicePixelRatio),1);
     console.log('Fonts '+JSON.stringify(await page.evaluate(() => ({dpr:window.devicePixelRatio,faces:[...document.fonts].map(f=>({family:f.family,status:f.status,weight:f.weight})),title:window.getComputedStyle(document.querySelector('.dx-tasks h2')).font}))));
+    if(input.board==='canvas_fit') {
+      await preview.getByRole('button',{name:'Open workflow',exact:true}).click();
+      await page.locator('.react-flow__node[data-id="slice"]').waitFor();
+      await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().sessionDirty===false);
+      const area=await page.getByLabel('Workflow canvas',{exact:true}).boundingBox();
+      const cards=await page.locator('.react-flow__node').all();
+      for(const card of cards) {
+        const box=await card.boundingBox();
+        assert.ok(box.x>=area.x+10&&box.x+box.width<=area.x+area.width-10,JSON.stringify({box,area}));
+        assert.equal(Math.round(box.width),304);
+      }
+      assert.equal(await page.getByTitle('Reset zoom').innerText(),'100%');
+      await page.screenshot({path:'05.EVIDENCE/designbuild/canvas/initial-two-nodes.png'});
+      await page.getByRole('button',{name:'Zoom in',exact:true}).click();
+      await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().graph.viewport.zoom>1);
+      await page.evaluate(()=>window.ArchHubAPI.saveSession());
+      await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().sessionDirty===false);
+      const saved=await page.evaluate(()=>window.ArchHubAPI.getSnapshot().graph.viewport);
+      await page.getByRole('button',{name:'Workshop view',exact:true}).click();
+      await page.getByRole('button',{name:'Canvas view',exact:true}).click();
+      await page.waitForFunction(expected=>{const element=document.querySelector('.react-flow__viewport');if(!element)return false;const matrix=new window.DOMMatrix(window.getComputedStyle(element).transform);return Math.abs(matrix.a-expected.zoom)<0.001&&Math.abs(matrix.e-expected.x)<0.1&&Math.abs(matrix.f-expected.y)<0.1;},saved);
+      assert.deepEqual(await page.evaluate(()=>window.ArchHubAPI.getSnapshot().graph.viewport),saved);
+      assert.deepEqual(errors,[]);
+      console.log('PASS two-node initial frame100% inside canvas; explicit viewport retained across Workshop/Canvas re-entry');
+      return;
+    }
     const capture = async referenceName => {
     const out = path.resolve('05.EVIDENCE/designbuild',input.board);
     fs.mkdirSync(out,{recursive:true});
@@ -91,6 +121,9 @@ const {chromium} = require('playwright');
       await page.getByRole('button',{name:/Drawing set review/}).first().click();
       console.log('PASS Settings separate page, source1680 geometry, scale150 three widths, density/radius close/reopen and Reset');
     }
+    const sharedHeader=()=>page.locator('.shared-properties-head').boundingBox();
+    const homeHeader=await sharedHeader();
+    const homeScope=await preview.locator('.dx-edit-field').filter({has:page.locator('summary>span:first-child').filter({hasText:/^Scope$/})}).boundingBox();
     if(input.board === 'workshop') {
       await preview.getByRole('button',{name:'Open Workshop',exact:true}).click();
       await page.getByRole('heading',{name:'Thread activity',exact:true}).waitFor();
@@ -98,6 +131,17 @@ const {chromium} = require('playwright');
       assert.match(await page.locator('.dx-session-meta').innerText(), /Saved$/);
       preview=page.getByRole('region',{name:'Task parameters',exact:true});
       await page.getByRole('complementary',{name:'Threads',exact:true}).waitFor();
+      assert.deepEqual(await sharedHeader(),homeHeader);
+      const scope=await preview.locator('.dx-edit-field').filter({has:page.locator('summary>span:first-child').filter({hasText:/^Scope$/})}).boundingBox();
+      assert.equal(scope.x,homeScope.x);assert.equal(scope.y,homeScope.y);
+      const progress=preview.locator('.dx-plan-summary');
+      await progress.locator('summary').focus();await key('Enter',13);
+      assert.equal(await progress.locator('li').count(),3);
+      assert.equal(await progress.locator('li[data-step="done"]').count(),2);
+      assert.equal(await progress.getByRole('textbox').count(),0);
+      await progress.locator('summary').press('Enter');
+      assert.equal(await preview.locator('[data-dx-list="References"] .dx-edit-label').innerText(),'Edit');
+
       const geometry=await page.evaluate(() => {
         const box = selector => {const r=document.querySelector(selector).getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};};
         return {params:box('#params'),composer:box('.dx-composer'),conversation:box('[data-dx="conversation"]')};
@@ -130,10 +174,20 @@ const {chromium} = require('playwright');
     if(input.board === 'canvas') {
       await preview.getByRole('button',{name:'Open workflow',exact:true}).click();
       await page.locator('.react-flow__node[data-id="slice"]').waitFor();
+      await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().sessionDirty===false);
+      const cleanSession=await page.evaluate(()=>({id:window.ArchHubAPI.getSnapshot().graph.id,path:window.ArchHubAPI.getSnapshot().sessionFile}));
+
       await page.waitForFunction(()=>document.title==='ArchHub · Canvas');
       assert.equal(await page.getByTitle('Reset zoom').innerText(),'100%');
       assert.equal(Math.round((await page.locator('.react-flow__node[data-id="slice"]').boundingBox()).width),304);
+      const initial=await page.locator('.react-flow__node[data-id="list"]').boundingBox();
+      const canvasBounds=await page.getByLabel('Workflow canvas',{exact:true}).boundingBox();
+      assert.ok(initial.x>=canvasBounds.x&&initial.x+initial.width<=canvasBounds.x+canvasBounds.width);
+      await page.screenshot({path:'05.EVIDENCE/designbuild/canvas/initial.png'});
       await page.getByRole('button',{name:'Fit',exact:true}).click();
+      await page.evaluate(()=>window.ArchHubAPI.saveSession());
+      await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().sessionDirty===false);
+
       const pane=page.locator('[data-properties-pane]');
       const bounds=()=>pane.boundingBox();
       assert.deepEqual(await bounds(),{x:1046,y:87,width:320,height:681});
@@ -159,6 +213,8 @@ const {chromium} = require('playwright');
           await page.waitForFunction(()=>[...document.querySelectorAll('[role=tab]')].find(tab=>tab.textContent==='Task')?.getAttribute('aria-selected')==='true');
         }
       }
+      assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSnapshot().sessionDirty),false);
+      assert.deepEqual(await page.evaluate(()=>({id:window.ArchHubAPI.getSnapshot().graph.id,path:window.ArchHubAPI.getSnapshot().sessionFile})),cleanSession);
       await page.setViewportSize({width:1366,height:768});
       await node.locator('[data-node-card-title]').click();
       const inspector=page.locator('[data-node-inspector="slice"]');
@@ -210,6 +266,8 @@ const {chromium} = require('playwright');
       await pointer('mouseReleased',start.x+shift,start.y,false,'middle');
       await page.waitForFunction(()=>document.querySelector('.react-flow__node[data-id="slice"]').getBoundingClientRect().x>=64);
 
+      await page.evaluate(()=>window.ArchHubAPI.saveSession());
+      await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().sessionDirty===false);
       await capture('penpot-canvas-r1970-native.png');
       await page.evaluate(()=>window.ArchHubAPI.setSetting('Appearance.Theme','Light'));
       await page.waitForFunction(()=>window.getComputedStyle(document.querySelector('.react-flow__node[data-id="count"] [data-ds-node]')).backgroundColor==='rgb(251, 249, 244)');
@@ -234,6 +292,16 @@ const {chromium} = require('playwright');
       await page.getByRole('heading',{name:'Thread activity',exact:true}).waitFor();
       preview=page.getByRole('region',{name:'Task parameters',exact:true});
     }
+    if(input.board==='home') {
+      const plan=preview.locator('.dx-plan-summary');
+      await plan.locator('summary').focus();await key('Tab',9);
+      assert.equal(await page.getByRole('button',{name:'Open workflow',exact:true}).evaluate(el=>el===document.activeElement),true);
+      assert.deepEqual(await sharedHeader(),homeHeader);
+      await key('Enter',13);
+      await page.locator('[data-screen=canvas]').waitFor();
+      await page.getByRole('navigation',{name:'Main navigation'}).getByRole('button',{name:'Home',exact:true}).click();
+      preview=page.getByRole('complementary',{name:'Properties'});
+    }
     for(const [label,value] of [['Scope','Review the current issue'],['Rules','Review every sheet before export'],['References','Current drawing index'],['Folders','Dated issue folder renamed']]) {
       const field=preview.locator('details').filter({has:page.locator('summary>span:first-child').filter({hasText:new RegExp('^'+label+'$')})});
       await field.locator('summary').click();
@@ -248,6 +316,7 @@ const {chromium} = require('playwright');
       await page.waitForFunction(()=>window.ArchHubAPI?.getSnapshot().settings.find(row=>row.id==='Appearance.Inspector width')?.value===391);
       assert.equal(await page.evaluate(()=>localStorage.getItem('archhub.home.layout.v1')),null);
     }
+    const savedViewport=input.board==='canvas'?await page.evaluate(()=>window.ArchHubAPI.getSnapshot().graph.viewport):null;
     await page.close();
     page = await context.newPage();
     page.on('pageerror', error => errors.push(error.message));
@@ -262,6 +331,7 @@ const {chromium} = require('playwright');
       await page.getByRole('button',{name:'Canvas view',exact:true}).click();
       assert.ok(Math.abs((await page.locator('[data-properties-pane]').boundingBox()).width-400)<=5);
       const saved=await page.evaluate(()=>window.ArchHubAPI.getSnapshot().graph.nodes.find(n=>n.id==='slice'));
+      assert.deepEqual(await page.evaluate(()=>window.ArchHubAPI.getSnapshot().graph.viewport),savedViewport);
       assert.equal(saved.title,'Review first sheets');assert.equal(saved.color,'#743b27');assert.equal(saved.icon,'docs');
       assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSnapshot().settings.find(row=>row.id==='Appearance.Row spacing').value),8);
       assert.equal(await page.evaluate(()=>window.getComputedStyle(document.documentElement).getPropertyValue('--layout-node-row-gap').trim()),'8px');
@@ -283,6 +353,18 @@ const {chromium} = require('playwright');
       assert.deepEqual(opens,[task.id,'missing-task']);
       assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSnapshot().graph.id),session);
       assert.equal(await page.getByRole('textbox',{name:'Task title',exact:true}).inputValue(),'Sheet index check');
+      const nav=page.getByRole('navigation',{name:'Main navigation'});
+      await nav.getByRole('button',{name:'Settings',exact:true}).click();
+      await page.getByRole('button',{name:'Back to task',exact:true}).click();
+      await page.getByRole('textbox',{name:'Task title',exact:true}).waitFor();
+      assert.equal(await page.getByRole('textbox',{name:'Task title',exact:true}).inputValue(),'Sheet index check');
+      assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSnapshot().graph.id),session);
+      await nav.getByRole('button',{name:'Docs',exact:true}).click();
+      await page.waitForFunction(()=>document.querySelector('nav[aria-label="Main navigation"] button[aria-current="page"]')?.textContent==='Docs');
+      await nav.getByRole('button',{name:'Settings',exact:true}).click();
+      await page.getByRole('button',{name:'Done',exact:true}).click();
+      assert.equal(await nav.getByRole('button',{name:'Docs',exact:true}).getAttribute('aria-current'),'page');
+      assert.deepEqual(opens,[task.id,'missing-task']);
       console.log('PASS native task event: one owner request per event after rebinds; known opens exact task, unknown reports and preserves session');
     }
     assert.deepEqual(errors,[]);

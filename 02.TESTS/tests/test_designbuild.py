@@ -8,7 +8,7 @@ import pytest
 from test_task_session_roundtrip import _isolate, _Studio, _post
 
 
-@pytest.mark.parametrize("board", ["home", "workshop", "canvas", "settings"])
+@pytest.mark.parametrize("board", ["home", "workshop", "canvas", "settings", "canvas_fit"])
 def test_designbuild_board(tmp_path, monkeypatch, board):
     browser_cache = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '')
     if not browser_cache:
@@ -30,13 +30,15 @@ def test_designbuild_board(tmp_path, monkeypatch, board):
             'progress': {'Read sheet index': 'done', 'Review drawings': 'done'},
             'messages': [{'id':'review-complete','who':'Drawing coordinator','text':'Review is complete. The drawing index matches the reviewed set.'},{'id':'ask-export','who':'You','text':'What is holding up the export?'}],
         })
-        if board == 'canvas':
+        if board in ('canvas', 'canvas_fit'):
             import copy
             from nodelang.session_files import catalogue
             items = {row['id']: row for row in catalogue()}
             nodes = [{'id': key, 'item': item, 'type': items[item]['engine'], 'title': items[item]['title'],
                       'params': copy.deepcopy(items[item]['params']), 'position': {'x': x, 'y': 0}}
                      for key, item, x in [('list','n_list',0),('slice','s_slice',350),('count','s_count',700),('pdf','o_pdf_handoff',1050)]]
+            if board == 'canvas_fit':
+                nodes = nodes[:2]
             nodes[0]['params']['value'] = '[10, 20, 30, 40, 50]'
             nodes[1]['params']['count'] = '3'
             view = client.workshop('openTaskGraph', task['taskId'])
@@ -45,6 +47,8 @@ def test_designbuild_board(tmp_path, monkeypatch, board):
             opened['document']['wires'] = [
                 {'id':'first','from':{'node':'list','socket':'value'},'to':{'node':'slice','socket':'items'}},
                 {'id':'second','from':{'node':'slice','socket':'items_out'},'to':{'node':'count','socket':'items'}}]
+            if board == 'canvas_fit':
+                opened['document']['wires'] = opened['document']['wires'][:1]
             client.files('save', path=view['path'], document=opened['document'])
         for title in ['Sheet index check', 'Export issue package', 'Update drawing references', 'Model view audit']:
             client.workshop('createTask', title)
@@ -58,6 +62,8 @@ def test_designbuild_board(tmp_path, monkeypatch, board):
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         print(result.stdout)
         assert result.returncode == 0, result.stdout + result.stderr
+        if board == 'canvas_fit':
+            return
         reopened = client.workshop('openTaskGraph', task['taskId'])
         assert reopened['scope'] == 'Review the current issue'
         assert reopened['rules'] == ['Review every sheet before export']

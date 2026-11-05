@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 TOOL = Path(__file__).resolve().parents[2] / "03.TOOLS/tools" / "real_app_check"
+APP = Path(__file__).resolve().parents[2] / "01.APP"
 windows_only = pytest.mark.skipif(os.name != "nt", reason="the rig drives Windows desktops and Job objects")
 
 
@@ -337,7 +338,7 @@ def _plan(tmp_path):
     for name in ("APPDATA", "LOCALAPPDATA", "USERPROFILE", "TEMP", "state"):
         (run / name).mkdir(parents=True, exist_ok=True)
     env = rig.isolated_env(dict(os.environ), run, cdp_port=rig.free_port(), lock_port=rig.free_port())
-    return owner, owner.plan_graph_owner(run, env, repo=TOOL.parents[1])
+    return owner, owner.plan_graph_owner(run, env)
 
 
 def test_the_owner_gets_its_own_ports_and_never_the_live_owners(tmp_path):
@@ -347,18 +348,18 @@ def test_the_owner_gets_its_own_ports_and_never_the_live_owners(tmp_path):
     assert plan["env"]["ARCHHUB_COORDINATION_ENDPOINT"] == "http://127.0.0.1:%d/coordination" % plan["coordination_port"]
     for live in ((8474, 9000), (9000, 8475), (9001, 9001)):
         with pytest.raises(ValueError, match="own two ports"):
-            owner.plan_graph_owner(tmp_path / "run", plan["env"], repo=TOOL.parents[1], ports=live)
+            owner.plan_graph_owner(tmp_path / "run", plan["env"], repo=APP.parent, ports=live)
 
 
 def test_every_root_the_owner_derives_lies_in_the_run_under_the_planned_environment(tmp_path):
     owner, plan = _plan(tmp_path)
-    assert owner.owner_isolation_problems(plan, sys.executable, TOOL.parents[1]) == []
+    assert owner.owner_isolation_problems(plan, sys.executable, APP) == []
     leaking = dict(plan, env=dict(plan["env"], LOCALAPPDATA=os.environ.get("LOCALAPPDATA", r"C:\outside")))
-    problems = owner.owner_isolation_problems(leaking, sys.executable, TOOL.parents[1])
+    problems = owner.owner_isolation_problems(leaking, sys.executable, APP)
     assert any("resolves outside the run" in problem for problem in problems), problems
     no_endpoint = dict(plan, env={k: v for k, v in plan["env"].items() if k != "ARCHHUB_COORDINATION_ENDPOINT"})
     assert any("endpoint is not the run's own" in problem
-               for problem in owner.owner_isolation_problems(no_endpoint, sys.executable, TOOL.parents[1]))
+               for problem in owner.owner_isolation_problems(no_endpoint, sys.executable, APP))
 
 
 def test_the_owner_sources_are_pinned_by_their_exact_bytes(tmp_path):
@@ -372,12 +373,12 @@ def test_the_owner_sources_are_pinned_by_their_exact_bytes(tmp_path):
 def test_provisioning_lands_only_in_the_run_and_refuses_an_unpinned_source(tmp_path):
     owner, plan = _plan(tmp_path)
     run = Path(plan["run_dir"])
-    bad = owner.provision_command(plan, sys.executable, TOOL.parents[1])
+    bad = owner.provision_command(plan, sys.executable, APP)
     bad[-1] = "0" * 64                                              # the grand map's pin no longer matches
     refused = subprocess.run(bad, env=plan["env"], capture_output=True, text=True, timeout=300)
     assert refused.returncode != 0
     assert not (Path(plan["runtime_root"]) / "CURRENT").exists()
-    done = subprocess.run(owner.provision_command(plan, sys.executable, TOOL.parents[1]), env=plan["env"],
+    done = subprocess.run(owner.provision_command(plan, sys.executable, APP), env=plan["env"],
                           capture_output=True, text=True, timeout=600)
     assert done.returncode == 0, done.stderr[-800:]
     assert json.loads(done.stdout.strip().splitlines()[-1])["ok"] is True
@@ -396,7 +397,8 @@ def test_the_owner_is_started_only_through_the_runs_desktop_and_job(tmp_path):
             return "spawned"
     assert owner.start_graph_owner(Desktop(), plan, "python.exe", tmp_path) == "spawned"
     (command, env, cwd), = calls
-    assert command.endswith('-B -m nodelang.desktop')
+    assert 'profile_guard.py' in command
+    assert command.endswith('-m nodelang.desktop')
     assert env == plan['env']
     assert env['ARCHHUB_TEST_HTTP_PORT'] == str(plan['canvas_port'])
     assert Path(env['ARCHHUB_TEST_STATE_DIR']) == Path(plan['runtime_root']).parent
@@ -460,7 +462,7 @@ def _gated(tmp_path):
 def _launch(owner, plan, desktop, runner, **kwargs):
     kwargs.setdefault("port_free", lambda port: True)
     kwargs.setdefault("health", lambda port: {"ok": True, "graph_id": GRAPH, "revision": 1})
-    return owner.launch_graph_owner(desktop, plan, "python.exe", TOOL.parents[1], runner=runner, **kwargs)
+    return owner.launch_graph_owner(desktop, plan, "python.exe", APP, runner=runner, **kwargs)
 
 
 def test_a_runner_outside_the_runs_job_is_refused_before_any_child_starts(tmp_path):
@@ -621,12 +623,12 @@ def test_a_refused_owner_fails_the_run_with_its_reasons_in_the_report(tmp_path, 
 @windows_only
 def test_the_real_provisioning_reads_back_from_inside_the_run(tmp_path):
     owner, plan = _plan(tmp_path)
-    problems, graph_id = owner.provisioning_problems(plan, sys.executable, TOOL.parents[1])
+    problems, graph_id = owner.provisioning_problems(plan, sys.executable, APP)
     assert problems == [] and graph_id
     assert (Path(plan["runtime_root"]) / "CURRENT").read_text(encoding="ascii").strip() == graph_id
     (Path(plan["runtime_root"]) / "CURRENT").write_text("0" * len(graph_id), encoding="ascii")
     read, error = owner._child_answer(subprocess.run, [sys.executable, "-B", "-c", owner._READBACK,
-                                                       str(TOOL.parents[1])], plan["env"], 300)
+                                                       str(APP)], plan["env"], 300)
     assert read is None and error                                     # a foreign pointer does not open
 
 

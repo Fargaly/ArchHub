@@ -571,6 +571,7 @@ def main(argv=None) -> int:
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--app", type=Path, default=Path(os.environ["LOCALAPPDATA"]) / "ArchHub")
     parser.add_argument("--overlay", type=Path)
+    parser.add_argument("--nograph", action="store_true", help="verify the isolated file-based Studio owner")
     parser.add_argument("--input", type=Path, help="JSON handed to the scenario as ctx.input")
     parser.add_argument("--winapp", default=os.environ.get("ARCHHUB_WINAPP", DEFAULT_WINAPP))
     parser.add_argument("--boot-seconds", type=int, default=600)
@@ -607,12 +608,17 @@ def main(argv=None) -> int:
         # from the same installed (or labelled candidate) code; the desktop is pointed at it, never :8474.
         owner_module = _graph_owner()
         owner_plan = owner_module.plan_graph_owner(run_dir, env)
-        report["graph_owner"] = owner_module.launch_graph_owner(desktop, owner_plan, str(python), app,
-                                                                runner=JobRunner(job))
+        if args.nograph:
+            owner = owner_module.launch_nograph_owner(desktop, owner_plan, str(python), app,
+                                                      runner=JobRunner(job), health_seconds=args.boot_seconds)
+            report["nograph_owner"] = owner
+        else:
+            owner = owner_module.launch_graph_owner(desktop, owner_plan, str(python), app, runner=JobRunner(job))
+            report["graph_owner"] = owner
         env = owner_plan["env"]
         # launch_graph_owner already started the Qt desktop and its graph.
         # The rig observes that same process instead of opening another app.
-        report["owner_pid"] = report["graph_owner"]["pid"]
+        report["owner_pid"] = owner["pid"]
         started = time.monotonic()
         while time.monotonic() - started < args.boot_seconds:
             try:

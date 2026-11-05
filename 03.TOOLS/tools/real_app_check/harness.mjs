@@ -19,12 +19,21 @@ const target = targets.find(t => t.type === 'page' && t.url.includes('/studio'))
 if (!target) { console.log('DONE ' + JSON.stringify(['no page to drive'])); process.exit(2); }
 const ws = new WebSocket(target.webSocketDebuggerUrl);
 await new Promise(resolve => ws.addEventListener('open', resolve, { once: true }));
-let id = 0; const waiting = new Map(); const failed = [];
+let id = 0; const waiting = new Map(); const failed = [], fileActions = new Map(), fileFailures = [];
 ws.addEventListener('message', event => {
   const m = JSON.parse(event.data);
   if (m.id && waiting.has(m.id)) { waiting.get(m.id)(m); waiting.delete(m.id); }
-  if (m.method === 'Network.responseReceived' && m.params.response.status >= 400)
+  if (m.method === 'Network.requestWillBeSent' && new URL(m.params.request.url).pathname === '/api/session-files') {
+    try {
+      const action = JSON.parse(m.params.request.postData || '{}').action;
+      if (typeof action === 'string' && /^[a-z-]{1,32}$/.test(action)) fileActions.set(m.params.requestId, action);
+    } catch {}
+  }
+  if (m.method === 'Network.responseReceived' && m.params.response.status >= 400) {
     failed.push(m.params.response.status + ' ' + m.params.response.url.replace(/^https?:\/\/[^/]+/, '').slice(0, 90));
+    if (fileActions.has(m.params.requestId)) fileFailures.push({status:m.params.response.status,action:fileActions.get(m.params.requestId)});
+  }
+  if (m.method === 'Network.loadingFinished' || m.method === 'Network.loadingFailed') fileActions.delete(m.params.requestId);
 });
 const cdp = (method, params = {}, timeoutMs = 10000) => new Promise((resolve, reject) => {
   const i = ++id;
@@ -66,14 +75,15 @@ const clickText = async (text, selector = 'button,[role=button],[role=tab],a') =
 };
 const native = async request => { console.log('NATIVE ' + JSON.stringify(request)); return JSON.parse((await lines.next()).value); };
 const step = async (asked, fn) => {
-  const before = failed.length; let returned = null;
+  const before = failed.length, beforeFile = fileFailures.length; let returned = null;
   try { returned = await fn(); }
   catch (error) { returned = { pass: false, why: String(error.message || error).slice(0, 300) }; }
   await sleep(700);
   const httpErrors = failed.slice(before);
   const verdict = stepVerdict(returned, httpErrors);
   const row = { label: setup.label, asked, result: verdict.result, did: verdict.did, got: returned?.got ?? null,
-    http_errors: httpErrors, expected_http: returned?.expected_http ?? [], shot: await shot(asked) };
+    http_errors: httpErrors, session_file_errors: fileFailures.slice(beforeFile),
+    expected_http: returned?.expected_http ?? [], shot: await shot(asked) };
   results.push(row);
   console.log('STEP ' + JSON.stringify(row));
   return row;

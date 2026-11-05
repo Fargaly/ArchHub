@@ -24,6 +24,7 @@ still be alive in the run's Job when the owner is spawned.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import socket
 import subprocess
@@ -122,8 +123,10 @@ def provision_command(plan: dict, python: str, code_root: Path) -> list:
 def start_graph_owner(desktop, plan: dict, python: str, code_root: Path):
     """Start the owner on the run's hidden desktop, inside the run's Job (desktop.spawn adopts it).
     Only launch_graph_owner calls this, after its gates."""
-    from tools.real_app_check.profile_guard import command as guarded
-    command = subprocess.list2cmdline(guarded([python, *plan["service_args"]]))
+    spec = importlib.util.spec_from_file_location("owner_profile_guard", HERE / "profile_guard.py")
+    guard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(guard)
+    command = subprocess.list2cmdline(guard.command([python, *plan["service_args"]]))
     return desktop.spawn(command, env=plan["env"], cwd=str(code_root))
 
 
@@ -227,6 +230,40 @@ def endpoint_problems(plan: dict, *, port_free=_port_free) -> list:
 def _health(port: int):
     with urllib.request.urlopen("http://127.0.0.1:%d/health" % port, timeout=3) as answer:
         return json.loads(answer.read().decode("utf-8"))
+
+
+def launch_nograph_owner(desktop, plan, python, code_root, *, runner, health_seconds):
+    """Admit only the NoGraph listener started by this isolated desktop process."""
+    import psutil
+    if not getattr(runner, "job_owned", False):
+        raise OwnerRefused(["lifecycle: the helper runner is not owned by the run's Job"])
+    problems = owner_isolation_problems(plan, python, code_root, runner=runner) + endpoint_problems(plan)
+    if problems or runner.leftovers():
+        raise OwnerRefused(problems or ["lifecycle: helpers are still running"])
+    pid = int(start_graph_owner(desktop, plan, python, code_root).pid)
+    port = plan["canvas_port"]
+    marker = Path(plan["env"]["ARCHHUB_TEST_STATE_DIR"]) / "nograph-http-port"
+    endpoint = "http://127.0.0.1:%d/api/alive" % port
+    started = time.monotonic()
+    while time.monotonic() - started < health_seconds:
+        try:
+            if int(marker.read_text(encoding="ascii")) == port:
+                root = psutil.Process(pid)
+                job_pids = set(runner.leftovers())
+                for process in (root, *root.children(recursive=True)):
+                    if process.pid not in job_pids or not any(
+                        conn.status == psutil.CONN_LISTEN and conn.laddr == ("127.0.0.1", port)
+                        for conn in process.net_connections(kind="tcp")
+                    ):
+                        continue
+                    with urllib.request.urlopen(endpoint, timeout=3) as answer:
+                        if answer.status == 204:
+                            return {"pid": pid, "listener_pid": process.pid, "endpoint": endpoint,
+                                    "state_marker": str(marker), "health_seconds": round(time.monotonic() - started)}
+        except (OSError, ValueError, psutil.Error):
+            pass
+        time.sleep(1)
+    raise OwnerRefused(["health: the isolated desktop did not own a ready NoGraph listener"])
 
 
 def launch_graph_owner(desktop, plan: dict, python: str, code_root: Path, *, runner, health_seconds: int = 300,

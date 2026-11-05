@@ -3,11 +3,13 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import pytest
 
 from test_task_session_roundtrip import _isolate, _Studio
 
 
-def test_designbuild_home(tmp_path, monkeypatch):
+@pytest.mark.parametrize("board", ["home", "workshop"])
+def test_designbuild_board(tmp_path, monkeypatch, board):
     browser_cache = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '')
     if not browser_cache:
         browser_cache = subprocess.check_output(['node', '-p', "require('node:path').join(require('node:os').userInfo().homedir,'AppData/Local/ms-playwright')"], text=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)).strip()
@@ -16,6 +18,7 @@ def test_designbuild_home(tmp_path, monkeypatch):
 
     state = tmp_path / 'desk' / 'LOCALAPPDATA' / 'ArchHub'
     state.mkdir()
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(state))
     server = NoGraphServer(state).start()
     client = _Studio(server)
     try:
@@ -25,6 +28,7 @@ def test_designbuild_home(tmp_path, monkeypatch):
             'agents': ['Drawing coordinator'], 'folders': ['Dated issue folder'],
             'references': ['Drawing index'], 'plan': ['Read sheet index', 'Review drawings', 'Export PDF'],
             'progress': {'Read sheet index': 'done', 'Review drawings': 'done'},
+            'messages': [{'id':'review-complete','who':'Drawing coordinator','text':'Review is complete. The drawing index matches the reviewed set.'},{'id':'ask-export','who':'You','text':'What is holding up the export?'}],
         })
         for title in ['Sheet index check', 'Export issue package', 'Update drawing references', 'Model view audit']:
             client.workshop('createTask', title)
@@ -32,7 +36,7 @@ def test_designbuild_home(tmp_path, monkeypatch):
         result = subprocess.run(
             ['node', '02.TESTS/tests_js/designbuild.cjs'],
             input=json.dumps({'url': server.public_url, 'cookie': server._cookie_token,
-                              'browserCache': browser_cache, 'board': 'home'}),
+                              'browserCache': browser_cache, 'board': board}),
             cwd=Path(__file__).resolve().parents[2], capture_output=True, text=True,
             encoding='utf-8', timeout=120,
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
@@ -42,7 +46,9 @@ def test_designbuild_home(tmp_path, monkeypatch):
         assert reopened['scope'] == 'Review the current issue'
         assert reopened['rules'] == ['Review every sheet before export']
         assert reopened['references'] == ['Current drawing index']
-        assert json.loads((state / 'settings' / 'settings.json').read_text())['homeLayout']['inner']['params'] == 30
+        assert reopened['folders'] == ['Dated issue folder renamed']
+        if board == 'home':
+            assert json.loads((state / 'settings' / 'settings.json').read_text(encoding='utf8'))['homeLayout']['inner']['params'] == 30
     finally:
         client.close()
         server.close()

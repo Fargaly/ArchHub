@@ -78,12 +78,6 @@
     if (route === 'library' || route === 'skills') return {route: 'home', face: 'canvas', library: true};
     return null;
   };
-  const stepStatusText = (step, progress) => {
-    const recorded = recordedStep(step, progress);
-    if (recorded == null || recorded === '') return '';
-    const raw = typeof recorded === 'object' ? String(recorded.status || recorded.state || '') : String(recorded);
-    return raw.trim();
-  };
   const stepOf = (step, progress) => {
     const recorded = recordedStep(step, progress);
     const raw = recorded == null || recorded === '' ? '' : (typeof recorded === 'object' ? String(recorded.status || recorded.state || '') : String(recorded));
@@ -99,12 +93,6 @@
     if (/next|planned/i.test(text)) return {kind: 'next', label: text, owner};
     return {kind: 'recorded', label: text, owner};
   };
-  const markColor = key => {
-    let hash = 0;
-    const text = String(key || 'person');
-    for (let i = 0; i < text.length; i++) hash = (hash * 33 + text.charCodeAt(i)) >>> 0;
-    return 'hsl(' + (hash % 360) + ' 42% 38%)';
-  };
   const sameList = (before, after) => {
     const left = Array.isArray(before) ? before.map(item => JSON.stringify(item)) : [];
     const right = Array.isArray(after) ? after.map(item => JSON.stringify(item)) : [];
@@ -119,7 +107,7 @@
   const Group = RP ? RP.Group : ({children, className, id}) => <div id={id} className={className}>{children}</div>;
   const Column = RP ? RP.Panel : ({children, className}) => <div className={className}>{children}</div>;
   const Separator = RP ? RP.Separator : () => null;
-  function ItemList({label, icon, items, choices, onCommit}) {
+  function ItemList({label, icon, items, choices, onCommit, action = 'Edit'}) {
     const source = Array.isArray(items) ? items : [];
     const stamp = JSON.stringify(source);
     const [hold, setHold] = React.useState({stamp, rows: source});
@@ -132,7 +120,7 @@
       return true;
     };
     return <details className="dx-fact dx-edit-field" data-dx-list={label}>
-      <summary><span>{label}</span><span className="dx-edit-label">Edit</span><b>{source.map(describe).join(' · ') || 'Not set'}</b></summary>
+      <summary><span>{label}</span><span className="dx-edit-label">{action}</span><b>{source.map(describe).join(' · ') || 'Not set'}</b></summary>
       {rows.map((row, index) => choices ? <window.UI.AgentPicker key={stamp + ':' + index} label={label + ' ' + (index + 1)} choices={choices} to={row} setTo={value => { if (value === row) return; const next = rows.slice(); next[index] = value; commit(next); }} /> : <input key={stamp + ':' + index} aria-label={label + ' ' + (index + 1)} defaultValue={describe(row)} onBlur={event => { if (event.target.value === describe(row)) return; const next = rows.slice(); next[index] = event.target.value; commit(next); }} />)}
       <button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => setRows(current => [...current, '']))}>{choices ? '+ Add agent' : '+ Add'}</button>
     </details>;
@@ -144,7 +132,7 @@
     const [history, setHistory] = React.useState(false);
     const [sending, setSending] = React.useState(false);
     const sendingRef = React.useRef(false);
-    const [to, setTo] = React.useState('');
+    const [to, setTo] = React.useState(null);
     const [checkpoint, setCheckpoint] = React.useState('');
     const [localFace, setLocalFace] = React.useState(initialFace);
     const face = fileWorkspace ? u.taskFace : localFace;
@@ -234,7 +222,7 @@
     const messages = taskMessages(task);
     const showCanvas = () => setFace('canvas');
     const choices = people.choices?.length ? people.choices : [{key: 'baboom', handle: '', name: 'BABOOM'}];
-    const recipient = to || (task && (s.liveAgents || []).find(a => a.agent === task.owner)?.handle) || choices[0]?.handle || '';
+    const recipient = to ?? (task && (s.liveAgents || []).find(a => a.agent === task.owner)?.handle) ?? choices[0]?.handle ?? '';
     const personModel = (people.people || []).find(p => p.handle && p.handle === recipient)?.model || '';
     const models = router ? [...new Set([router.default_model, ...(router.models || []), ...(router.fallback_models || [])].filter(Boolean))] : [];
     const modelName = router?.default_model || personModel || '';
@@ -344,23 +332,24 @@
       if (field) field.focus();
     };
     const taskParameters = (<section className="dx-params" data-dx="params" aria-label="Task parameters">
-                  <div className="dx-params-head"><h2>Task parameters</h2></div>
+                  <div className="dx-params-head"><h2>Task parameters</h2><p>Applies to this task file</p></div>
                   <details className="dx-fact dx-edit-field"><summary><span>Scope</span><span className="dx-edit-label">Edit</span><b>{scopeValue || 'Not set'}</b></summary><input key={(task?.id || '') + ':scope:' + scopeValue} aria-label="Scope" title={scopeValue} defaultValue={scopeValue} onBlur={e => { if (e.target.value === scopeValue) return false; return saveSession({scope: e.target.value}); }} /></details>
-                  <ItemList label="Rules" icon="shield" items={rules} onCommit={next => saveSession({rules: next})} />
-                  <ItemList label="Assigned agents" icon="users" items={agents} choices={agentChoices} onCommit={next => saveSession({agents: next})} />
-                  <ItemList label="Folders" icon="folder" items={folders} onCommit={next => saveSession({folders: next})} />
-                  <ItemList label="References" icon="link" items={references} onCommit={next => saveSession({references: next})} />
-                  {[["Session & saved workflow", (fileName || session) && task?.title ? task.title + '.archhub' : 'Not saved']].map(([label, value]) => {
+                  <ItemList action={fileWorkspace ? "Add" : "Edit"} label="Rules" icon="shield" items={rules} onCommit={next => saveSession({rules: next})} />
+                  <ItemList action={fileWorkspace ? "Add" : "Edit"} label="Assigned agents" icon="users" items={agents} choices={agentChoices} onCommit={next => saveSession({agents: next})} />
+                  {!fileWorkspace && <ItemList label="Folders" icon="folder" items={folders} onCommit={next => saveSession({folders: next})} />}
+                  <ItemList action={fileWorkspace ? "Open" : "Edit"} label="References" icon="link" items={references} onCommit={next => saveSession({references: next})} />
+                  {[[fileWorkspace ? "Saved node" : "Session & saved workflow", (fileName || session) && task?.title ? task.title + '.archhub' : 'Not saved']].map(([label, value]) => {
                     const full = factText(value);
-                    return <label className="dx-fact" key={label}><span>{label}</span><b className="dx-path" title={full}>{middle(full)}</b></label>;
+                    return fileWorkspace ? <details className="dx-fact dx-edit-field" key={label}><summary><span>{label}</span><span className="dx-edit-label">Details</span><b>{middle(full)}</b></summary><p>{(task?.workflow || []).length} nodes · {(task?.parameters || []).length} parameter groups</p><button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => setFace('canvas'))}>Open workflow</button></details> : <label className="dx-fact" key={label}><span>{label}</span><b className="dx-path" title={full}>{middle(full)}</b></label>;
                   })}
-                  <details className="dx-fact dx-edit-field"><summary><span>Checkpoints</span><span className="dx-edit-label">Edit</span><b>{task?.checkpoints?.find(c => c.id === checkpoint)?.title || 'No checkpoint selected'}</b></summary>
+                  <details className="dx-fact dx-edit-field"><summary><span>Checkpoints</span>{fileWorkspace ? <button type="button" className="dx-link dx-edit-label" onClick={event => {event.preventDefault();return executeAction('ui.select', () => u.act(() => api.checkpointTask(task.id)));}}>Save</button> : <span className="dx-edit-label">Edit</span>}<b>{task?.checkpoints?.find(c => c.id === checkpoint)?.title || 'No checkpoint selected'}</b></summary>
                     <span className="dx-checkpoint-row">
                       {(task?.checkpoints || []).length ? <select aria-label="Checkpoints" value={checkpoint} onChange={e => setCheckpoint(e.target.value)}><option value="">No checkpoint selected</option>{task.checkpoints.map(c => <option key={c.id} value={c.id}>{c.title || c.id}</option>)}</select> : <b>No checkpoint selected</b>}
                       <button type="button" className="dx-quiet" disabled={!task} onClick={() => executeAction('ui.select', () => u.act(() => api.checkpointTask(task.id)))}>Save checkpoint</button>
                       <button type="button" className="dx-quiet" disabled={!task || !checkpoint} onClick={() => executeAction('ui.select', () => u.act(() => api.restoreTaskCheckpoint(task.id, checkpoint)))}>Restore</button>
                     </span>
                   </details>
+                  {fileWorkspace && <><ItemList action="Name…" label="Folders" icon="folder" items={folders} onCommit={next => saveSession({folders: next})} /><div className="dx-fact"><span>Recurrence</span><b>{(s.schedules || []).find(row => row.taskId === task?.id)?.time || "Not scheduled"}</b><button type="button" className="dx-link" onClick={() => executeAction("ui.select", () => u.schedule(task.id))}>Edit</button></div></>}
                   <div className="dx-plan-summary"><span>Plan and progress</span><b>{plan.length ? plan.filter(step => stepOf(step, task?.progress).kind === 'done').length + ' of ' + plan.length + ' steps complete' : 'No plan recorded'}</b></div>
                 </section>);
     return <div className="dx-home-root" data-screen={fileWorkspace ? "task-file" : "home"} data-home-page={fileWorkspace ? undefined : ""} data-start={document.documentElement.dataset.start || 'cold'} onKeyDown={fileKeys}>
@@ -397,11 +386,11 @@
           {task ? <><header><small>TASK PROPERTIES</small><h2>{task.title}</h2><span>{statusText(task.status)}</span></header>
             {taskParameters}
             <div className="dx-preview-actions">
-              <Btn sm p style={{height:32, width:145, borderRadius:0, background:'var(--color-accent-dim)', color:'var(--color-accent)', border:0, fontWeight:500}} onClick={() => executeAction('ui.select', () => u.openTaskFile(task.id, 'canvas'))}>Open workflow</Btn>
-              <Btn sm ghost style={{height:32, width:152, borderRadius:0, background:'transparent', border:0, fontWeight:500}} onClick={() => executeAction('ui.select', () => u.openTaskFile(task.id, 'workshop'))}>Open Workshop</Btn>
+              <Btn sm p style={{height:32, width:145, borderRadius:0, background:'var(--color-accent-dim)', color:'var(--color-accent)', border:0, fontWeight:600}} onClick={() => executeAction('ui.select', () => u.openTaskFile(task.id, 'canvas'))}>Open workflow</Btn>
+              <Btn sm ghost style={{height:32, width:152, borderRadius:0, background:'transparent', border:0, fontWeight:600}} onClick={() => executeAction('ui.select', () => u.openTaskFile(task.id, 'workshop'))}>Open Workshop</Btn>
             </div></> : <p>Select a task to see its properties.</p>}
         </aside></div> :
-          <div className="dx-workspace" data-dx="workspace">
+          <div className="dx-workspace" data-dx="workspace" data-task-face={face}>
             <header className="dx-head" data-dx="head">
               <input className="dx-title" aria-label="Task title" key={(task?.id || '') + ':' + (task?.title || '')} defaultValue={task?.title || ''} disabled={!task} onBlur={event => {
                 if (!task) return false;
@@ -426,26 +415,20 @@
                   return {ok: false, error: error instanceof Error ? error.message : String(error)};
                 });
               }} />
-              <div className="dx-actions" role="menu" aria-label="File" data-dx="file-menu">
+              <details className="dx-actions" data-dx="file-menu"><summary aria-label="File actions" title="New, Open, Import and Library">File ▾</summary><div className="dx-file-popup" role="menu" aria-label="File">
                 <button type="button" role="menuitem" className="dx-file-link" onClick={() => executeAction('ui.select', makeFile)}>New file</button>
                 <button type="button" role="menuitem" className="dx-file-link" onClick={() => executeAction('ui.select', openFile)}>Open file…</button>
                 <button type="button" role="menuitem" className="dx-file-link" onClick={() => executeAction('ui.select', importFile)}>Import…</button>
                 <button type="button" role="menuitem" className="dx-file-link" onClick={() => executeAction('ui.select', openLibrary)}>Library</button>
                 <div className="dx-runmode" data-run-mode={namedMode || 'unavailable'} role={runMode.status === 'error' ? 'alert' : 'status'}>{runLabel}{runMode.status === 'error' ? <button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => { setRunMode({status: 'waiting', value: '', message: ''}); api.readPermissions().then(result => { const mode = result && typeof result.runMode === 'string' ? result.runMode : ''; setRunMode({status: mode ? 'loaded' : 'empty', value: mode, message: ''}); }).catch(error => setRunMode({status: 'error', value: '', message: error instanceof Error ? error.message : String(error)})); })}>Retry</button> : null}</div>
-              </div>
+              </div></details>
             </header>
+            <p className="dx-session-meta">{task?.title && (fileName || session) ? task.title + ".archhub" : "Unsaved workflow"}{task?.sessionPath ? s.sessionDirty ? " · Unsaved changes" : " · Saved" : ""}</p>
+            <div className="dx-task-toolbar"><div className="dx-toggle" data-dx="views" role="group" aria-label="Task view"><button type="button" aria-label="Canvas view" aria-pressed={face === "canvas"} onClick={() => executeAction("ui.select", showCanvas)}>Canvas</button><button type="button" aria-label="Workshop view" aria-pressed={face === "workshop"} onClick={() => executeAction("ui.select", () => setFace("workshop"))}>Workshop</button></div><div className="dx-toolbar-actions"><button type="button" className="dx-quiet" title="Open this task workflow and its real Agent/Workshop nodes" onClick={() => executeAction("ui.select", showCanvas)}>Handoff map</button><button type="button" className="dx-quiet" onClick={() => executeAction("ui.select", () => document.querySelector(".dx-composer textarea")?.focus())}>Ask agent</button></div></div>
             {shortSource ? <p className="dx-desc" data-dx="description">{shortSource}</p> : null}
             <Group key={layoutReady ? 'saved' : 'loading'} id="home-context" className="dx-split" orientation="horizontal" defaultLayout={saved.inner} onLayoutChanged={(layout, meta) => { if (meta?.isUserInteraction) persistLayout({...readLayout(), inner: layout}); }}>
-              <Column id="params" className="dx-col" defaultSize={256} minSize={200} groupResizeBehavior="preserve-pixel-size">
-                {taskParameters}
-              </Column>
-              <Separator className="pane-splitter" aria-label="Resize the task parameters" />
               <Column id="main" className="dx-col" minSize={480}>
                 <div className="dx-main" data-dx="main" data-home-face={face}>
-                  <div className="dx-toggle" data-dx="views" role="group" aria-label="Task view">
-                    <button type="button" aria-label="Workshop view" aria-pressed={face === 'workshop'} onClick={() => executeAction('ui.select', () => setFace('workshop'))}>Workshop</button>
-                    <button type="button" aria-label="Canvas view" aria-pressed={face === 'canvas'} onClick={() => executeAction('ui.select', showCanvas)}>Canvas</button>
-                  </div>
                   {face === 'canvas' ? <div className="dx-board" data-dx="canvas-commands" role="toolbar" aria-label="Canvas commands">
                     <button type="button" onClick={() => executeAction('ui.select', () => u.show('Search'))}>+ Add node</button>
                     <button type="button" aria-pressed={!!u.libraryOpen} onClick={() => executeAction('ui.select', () => u.setLibraryOpen(value => !value))}>Library</button>
@@ -454,34 +437,39 @@
                     <button type="button" onClick={() => executeAction('ui.select', () => u.go('model-review'))}>Model review</button>
                     <button type="button" onClick={() => executeAction('ui.select', () => { const fit = window.UI.requestCanvasFit; return typeof fit === 'function' ? fit() : false; })}>Overview</button>
                   </div> : null}
+                  <div className="dx-thread-layout"><aside className="dx-threads" aria-label="Threads"><header><h2>Threads</h2><button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => u.go('home'))}>All tasks</button></header>{tasks.map(t => <button type="button" className="dx-thread-row" key={t.id} aria-selected={t.id === task?.id} onClick={() => executeAction('ui.select', () => u.openTaskFile(t.id, 'workshop'))}><b>{t.title}</b>{ownerOf(t) ? <span>You → {ownerOf(t)}</span> : null}<span>{window.UI.taskRowReason(t) || statusText(t.status)}{reasonOf(t) ? ' · ' + reasonOf(t) : ''}</span></button>)}</aside>
                   <div className="dx-work-scroll">
                   <div className="dx-mid" data-plan={plan.length ? 'shown' : 'hidden'}>
                     <div className="dx-stage">
-                    {face === 'workshop' && plan.length ? <section className="dx-cards" data-dx="workflow" aria-label="Workflow">
-                      <h2>Workflow</h2>
-                      <div className="dx-card-row">{plan.map((step, index) => {
-                        const recorded = stepOf(step, task?.progress);
-                        const label = typeof step === 'object' ? (step.title || step.text || step.name || step.what || describe(step)) : String(step);
-                        const statusWord = stepStatusText(step, task?.progress) || recorded.label;
-                        return <article key={index} className="dx-flow-card" data-step={recorded.kind}><span className="dx-flow-icon" aria-hidden="true"><Icon name="docs" size={14} /></span><b>{label}</b><small>{recorded.owner}</small><span className="dx-flow-status">{statusWord}</span><i className="dx-flow-dot" aria-hidden="true" /></article>;
-                      })}</div>
-                    </section> : null}
                     {face === 'workshop' ? <section className="dx-talk dx-thread" data-dx="conversation" aria-label="Conversation">
-                      <h2>Conversation</h2>
+                      <h2>Thread activity</h2><p className="dx-thread-status">{ownerOf(task) ? "You → " + ownerOf(task) + " · " : ""}{statusText(task?.status)}</p>
+                      {window.UI.taskRowReason(task || {}) === 'interrupted' ? <div className="dx-task-notice" role="status"><p>Interrupted · outcome unknown{reasonOf(task) ? ' · ' + reasonOf(task) : ''}</p><button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => u.go('receipts'))}>View activity</button></div> : null}
+                      {window.UI.taskRowReason(task || {}) === 'limit reached' ? <div className="dx-task-notice" role="status"><p>Limit reached{task?.limits ? ' · ' + describe(task.limits) : ''}{reasonOf(task) ? ' · ' + reasonOf(task) : ''}</p><button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => u.go('runs'))}>View active runs</button></div> : null}
+                      {task?.blocked_by ? <div className="dx-task-notice" role="status"><p>Blocked by {describe(task.blocked_by)}</p>{tasks.some(t => t.id === task.blocked_by) ? <button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => u.openTaskFile(task.blocked_by, 'workshop'))}>View dependency</button> : null}</div> : null}
                       {!messages.length && !plan.length && !activity.length && !outputs.length && !scopeValue && !rules.length && !agents.length && !folders && !references && !session && !fileName ? <p className="dx-empty-task" data-dx="empty">Nothing recorded for this task yet.</p> : null}
                       {messages.map(m => {
-                        const own = Boolean(m.sender_key) && m.sender_key === m.viewer_key;
+                        const own = Boolean(m.sender_key) && m.sender_key === m.viewer_key || m.who === 'You';
                         const sender = own ? 'You' : (people.whoIs ? people.whoIs(m.who, m.sender_key).name : m.who);
-                        const delivery = (m.live || []).map(d => d.state || d.reason).filter(Boolean).join(' · ');
+                        const delivery = ((m.live || []).length ? m.live : m.delivery || []).map(d => [d.state || d.reason, d.agent ? (people.whoIs ? people.whoIs(d.agent).name : d.agent) : ''].filter(Boolean).join(' · ').replace(/_/g, ' ')).filter(Boolean).join(' · ') || String(m.state || '').replace(/_/g, ' ');
                         const who = m.sender_key || m.who || sender;
                         const open = detailId === (m.id || who);
-                        return <article key={m.id} className="dx-msg"><span className="dx-avatar" style={{background: markColor(who)}} aria-hidden="true" title={sender}>{String(sender || '?').slice(0, 2).toUpperCase()}</span><div className="dx-msg-line"><div><b>{sender}</b><p>{typeof m.text === 'object' ? describe(m.text) : m.text}</p><p className="dx-delivery">{delivery || 'Delivery unverified'}</p>{open ? <p className="dx-delivery">{[m.id, m.created_at, delivery].filter(Boolean).join(' · ') || 'No delivery record'}</p> : null}</div><span className="dx-msg-actions"><button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => replyToMessage(m))}>Reply</button><button type="button" className="dx-quiet" aria-expanded={open} onClick={() => executeAction('ui.select', () => setDetailId(open ? '' : (m.id || who)))}>Details</button></span></div></article>;
+                        return <article key={m.id} className="dx-msg"><span className="dx-avatar" style={{background:'var(--color-accent-dim)',color:'var(--color-accent)'}} aria-hidden="true" title={sender}>{String(own ? s.profile.name || sender : sender || '?').trim().split(/\s+/).map(word => word[0]).join('').slice(0,2).toUpperCase()}</span><div className="dx-msg-line"><div><b>{sender}</b><p>{typeof m.text === 'object' ? describe(m.text) : m.text}</p><p className="dx-delivery">{delivery || 'Delivery unverified'}</p>{m.event ? <p className="dx-delivery">Task event: {describe(m.event)}</p> : null}{open ? <p className="dx-delivery">{[m.id, m.created_at, delivery].filter(Boolean).join(' · ') || 'No delivery record'}</p> : null}</div><span className="dx-msg-actions"><button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => replyToMessage(m))}>Reply</button><button type="button" className="dx-quiet" aria-expanded={open} onClick={() => executeAction('ui.select', () => setDetailId(open ? '' : (m.id || who)))}>Details</button></span></div></article>;
                       })}
                     </section> : <section className="dx-panel" data-dx="workflow" data-home-face={face} aria-label="Workflow">
                       <h2>Workflow · logic</h2>
                       <div className="dx-canvas-mount" data-dx="graph">{window.UI.Canvas ? <window.UI.Canvas active embedded /> : <p className="dx-empty">No nodes in this workflow yet.</p>}</div>
                     </section>}
                     </div>
+                  </div>
+                  {(activity.length || outputs.length) ? <div className="dx-low">
+                    {outputs.length ? <section className="dx-panel dx-slim" id="dx-outputs" tabIndex={-1} data-dx="outputs" aria-label="Outputs">
+                      <h2>Outputs</h2>
+                      {outputs.map((row, index) => <article key={index} className="dx-output" data-output=""><span className="dx-output-preview">{row.thumb ? <img alt="" src={row.thumb} /> : <Icon name="docs" size={18} />}</span><div><b>{row.name || 'Output'}</b>{row.excerpt ? <p>{row.excerpt}</p> : null}</div></article>)}
+                    </section> : null}
+                  </div> : null}
+                  </div>
+                  </div>
+                  <div className="dx-plan-activity">
                     {plan.length ? <section className="dx-panel" data-dx="plan" aria-label="Plan and progress">
                       <h2>Plan and progress</h2>
                       <ol className="dx-stepper">{plan.map((step, index) => {
@@ -490,22 +478,11 @@
                         return <li key={index} data-step={recorded.kind}><Icon name={recorded.kind === 'done' ? 'check' : recorded.kind === 'working' ? 'clock' : 'arrow'} size={14} /><b>{label}</b><span>{recorded.label}</span><small>{recorded.owner}</small></li>;
                       })}</ol>
                     </section> : null}
-                  </div>
-                  {(activity.length || outputs.length) ? <div className="dx-low">
-                    {activity.length ? <section className="dx-panel dx-slim" id="dx-activity" tabIndex={-1} data-dx="activity" aria-label="Activity">
-                      <h2>Activity</h2>
-                      {activity.map(row => <p key={row.id}>{[row.status, describe(row.output)].filter(Boolean).join(' · ')}</p>)}
-                    </section> : null}
-                    {outputs.length ? <section className="dx-panel dx-slim" id="dx-outputs" tabIndex={-1} data-dx="outputs" aria-label="Outputs">
-                      <h2>Outputs</h2>
-                      {outputs.map((row, index) => <article key={index} className="dx-output" data-output=""><span className="dx-output-preview">{row.thumb ? <img alt="" src={row.thumb} /> : <Icon name="docs" size={18} />}</span><div><b>{row.name || 'Output'}</b>{row.excerpt ? <p>{row.excerpt}</p> : null}</div></article>)}
-                    </section> : null}
-                  </div> : null}
-                  </div>
+                    <section className="dx-panel" data-dx="activity" aria-label="Activity"><h2>Activity</h2>{activity.length ? activity.map(row => <p key={row.id}>{[statusText(row.status),describe(row.output)].filter(Boolean).join(' · ')}</p>) : <p>No activity recorded.</p>}</section></div>
                   {face === "workshop" && <form className="dx-composer" data-dx="composer" onSubmit={e => { e.preventDefault(); executeAction('ui.select', send); }}>
                     <window.UI.AgentPicker choices={choices} to={recipient} setTo={setTo} />
                     <textarea aria-label="Message" placeholder="Message this task…" rows={2} value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} />
-                    <div className="dx-tools">
+                    <div className="dx-tools"><details className="dx-composer-options"><summary aria-label="Message options">⋯</summary><div>
                       {u.pickFile && <button type="button" className="dx-link" onClick={() => executeAction('ui.select', u.pickFile)}>Attach</button>}
                       {u.voice && <button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => u.voice(setText))}>Voice</button>}
                       <label className="dx-model">Model
@@ -518,11 +495,15 @@
                         </select>
                         <small>Free models first</small>
                       </label>
-                      <Btn p type="submit" aria-busy={sending} disabled={!text.trim()}>Send</Btn>
+                      </div></details><Btn p type="submit" aria-busy={sending} disabled={!text.trim()}>Send</Btn>
                     </div>
                   </form>}
                   <p className="dx-foot" data-dx="footer">{footer}</p>
                 </div>
+              </Column>
+              <Separator className="pane-splitter" aria-label="Resize the task parameters" />
+              <Column id="params" className="dx-col" defaultSize={366} minSize={200} groupResizeBehavior="preserve-pixel-size">
+                {taskParameters}
               </Column>
             </Group>
           </div>

@@ -299,6 +299,10 @@ class NoGraphServer:
                     denied = local_browser_admission_error(self.headers, owner.port)
                     if denied:
                         raise Refused(denied, 403)
+                    if method == 'GET' and path == '/favicon.ico':
+                        from .site_export import BRAND_DIR
+                        owner._send_bytes(self, (BRAND_DIR / 'favicon.ico').read_bytes(), 'image/x-icon')
+                        return
                     if method == 'GET' and (path in ('/', '/studio', '/studio/') or path.startswith('/studio/')):
                         owner._studio(self, parsed)
                         return
@@ -711,13 +715,14 @@ def _rename_task(task, title):
         return {'ok': False, 'error': str(refused)}
 
 
-def _create_task(title):
+def _create_task(s, title):
     """The studio's new task: one Workshop row and the .archhub file that is its session."""
     from .workshop_mailbox import application_history
     from .workshop_tasks import create_session
     try:
         with application_history() as history:
-            return create_session(history, title)
+            zoom = s.files['settings'].read().get('appearanceDefaultZoom', 100)
+            return create_session(history, title, zoom=zoom / 100)
     except ValueError as refused:
         return {'ok': False, 'error': str(refused)}
 
@@ -877,7 +882,6 @@ OWNER_ACTIONS = {
 
 WORKSHOP_READS = {
     'listTasks': lambda *a: _list_tasks(),
-    'createTask': _create_task,
     'renameTask': _rename_task,
     'openTaskGraph': _open_task_graph,
     'setTaskSession': _set_task_session,
@@ -910,6 +914,8 @@ def r_workshop(s, req):
                 return {'ok': True, 'result': method(factory(body.get('request_id') or ''), *(body.get('args') or []))}
             except (InvalidCell, TypeError) as refused:
                 return {'ok': True, 'result': {'ok': False, 'error': str(refused)}}
+        if function == 'createTask':
+            return {'ok': True, 'result': _create_task(s, *(body.get('args') or []))}
         handler = WORKSHOP_READS.get(function)
         if handler is None:
             return {'ok': True, 'result': not_available('Workshop "%s"' % function)}
@@ -953,9 +959,45 @@ def r_settings_action(s, req):
                 raise Refused('Choose valid Library categories.')
             settings.write({**settings.read(), 'libraryCollapsed': list(dict.fromkeys(groups))})
         return {'ok': True, 'result': {'libraryCollapsed': settings.read().get('libraryCollapsed', [])}}
+    if function in ('readControls', 'setAppearance'):
+        import re
+        appearance = {
+            'Appearance.Theme': ('appearanceTheme', 'Theme', 'Dark', ('Dark', 'Light', 'System')),
+            'Appearance.High contrast': ('appearanceContrast', 'High contrast', False, ()),
+            'Appearance.Canvas grid': ('appearanceGrid', 'Canvas grid', True, ()),
+            'Appearance.Reduce motion': ('appearanceReduceMotion', 'Reduce motion', False, ()),
+            'Appearance.Accent colour': ('appearanceAccent', 'Accent colour', '#d97757', ()),
+            'Appearance.Text scale': ('appearanceTextScale', 'Text scale', 100, ()),
+            'Appearance.Default zoom': ('appearanceDefaultZoom', 'Default zoom', 100, ()),
+        }
+        preferences = settings.read()
+        if function == 'setAppearance':
+            if len(args) != 2 or not isinstance(args[0], str) or args[0] not in appearance:
+                raise Refused('Choose a supported Appearance setting.')
+            key, _label, default, choices = appearance[args[0]]
+            value = args[1]
+            if (choices and value not in choices) or (type(default) is bool and type(value) is not bool):
+                raise Refused('Choose a valid value for this Appearance setting.')
+            if key == 'appearanceAccent' and (not isinstance(value, str) or not re.fullmatch(r'#[0-9a-fA-F]{6}', value)):
+                raise Refused('Choose a six-digit accent colour.')
+            if key == 'appearanceTextScale' and (type(value) is not int or not 75 <= value <= 150):
+                raise Refused('Choose a text scale from 75 to 150 percent.')
+            if key == 'appearanceDefaultZoom' and (type(value) is not int or not 10 <= value <= 400):
+                raise Refused('Choose a default zoom from 10 to 400 percent.')
+            preferences = settings.write({**preferences, key: value})
+        rows = [{'id': id, 'page': 'Appearance', 'label': label, 'default': default,
+                 'type': 'enum' if choices else 'boolean' if type(default) is bool else 'number' if type(default) is int else 'color',
+                 'value': preferences.get(key, default),
+                 **({'min': 75, 'max': 150} if key == 'appearanceTextScale' else {}),
+                 **({'min': 10, 'max': 400} if key == 'appearanceDefaultZoom' else {}),
+                 **({'options': list(choices)} if choices else {})}
+                for id, (key, label, default, choices) in appearance.items()]
+        if function == 'setAppearance':
+            return {'ok': True, 'result': {'appearanceSettings': rows}}
     if function == 'readControls':
         result = {'companion': companion.read(), 'providerPreferences': read_router_settings()['providerPreferences'],
-                  'controlErrors': {}, 'providerModels': {}}
+                  'controlErrors': {}, 'providerModels': {},
+                  'appearanceSettings': rows}
         try:
             result['secrets'] = _secrets()
         except Exception:  # noqa: BLE001

@@ -364,8 +364,6 @@ def _session_context(path):
         context = _held_context(document)
     except (OSError, ValueError, KeyError, TypeError):
         return {}
-    if context.get("scope") == document.get("id"):
-        context["scope"] = ""
     context["fileMessages"] = _file_messages(document)
     return context
 
@@ -551,7 +549,7 @@ def _held_context(document):
             if name and name not in agents:
                 agents.append(name)
     return {
-        "scope": held.get("scope") or document["id"],
+        "scope": "" if held.get("scope") == document["id"] else (held.get("scope") or ""),
         "rules": held["rules"] if isinstance(held.get("rules"), list) else [],
         "agents": agents,
         "plan": held["plan"] if isinstance(held.get("plan"), list) else [],
@@ -595,7 +593,7 @@ def _stamp(path, task, document):
     props = dict(document.get("properties") or {})
     held = dict(props.get("taskContext") or {})
     held["task"] = task
-    held.setdefault("scope", document["id"])
+    held.setdefault("scope", "")
     props["taskContext"] = held
     document["properties"] = props
     write_document(path, document)
@@ -621,7 +619,7 @@ def _bind_session(history, task, revision, target):
         raise ValueError("Task already has a session file")
 
 
-def open_session(history, task, path=None, *, select=True):
+def open_session(history, task, path=None, *, select=True, zoom=1):
     """Open this task's own .archhub file. A first path binds it; a later open reads that same file."""
     from .session_files import SessionFiles, local_path, new_document, read_document
     row = get(history, task)
@@ -643,16 +641,17 @@ def open_session(history, task, path=None, *, select=True):
     if bound:
         return _show(task, bound, read_document(bound), select=select)
     document = new_document(row["title"])
+    document["viewport"]["zoom"] = zoom
     target = str(local_path(str(SessionFiles().directory / (document["id"] + ".archhub"))))
     document = _stamp(target, task, document)
     _bind_session(history, task, row.get("revision"), target)
     return _show(task, target, document, select=select)
 
 
-def create_session(history, title, creator="founder", *, select=True):
+def create_session(history, title, creator="founder", *, select=True, zoom=1):
     """A new task and the .archhub file that holds its session."""
     row = create(history, title, creator)
-    return open_session(history, row["id"], select=select)
+    return open_session(history, row["id"], select=select, zoom=zoom)
 
 
 _SESSION_FIELDS = {"scope", "rules", "agents", "plan", "progress", "nodes", "parameters", "messages", "folders", "references"}

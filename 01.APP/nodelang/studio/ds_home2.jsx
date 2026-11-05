@@ -113,8 +113,8 @@
     return 'hsl(' + (hash % 360) + ' 42% 38%)';
   };
   const sameList = (before, after) => {
-    const left = Array.isArray(before) ? before.map(item => String(item)) : [];
-    const right = Array.isArray(after) ? after.map(item => String(item)) : [];
+    const left = Array.isArray(before) ? before.map(item => JSON.stringify(item)) : [];
+    const right = Array.isArray(after) ? after.map(item => JSON.stringify(item)) : [];
     return left.length === right.length && left.every((item, index) => item === right[index]);
   };
   const commitList = (before, after, save) => {
@@ -127,13 +127,13 @@
   const Column = RP ? RP.Panel : ({children, className}) => <div className={className}>{children}</div>;
   const Separator = RP ? RP.Separator : () => null;
   function ItemList({label, icon, items, choices, onCommit}) {
-    const source = Array.isArray(items) ? items.map(item => String(item)) : [];
-    const stamp = source.join('\u0001');
+    const source = Array.isArray(items) ? items : [];
+    const stamp = JSON.stringify(source);
     const [hold, setHold] = React.useState({stamp, rows: source});
     const rows = hold.stamp === stamp ? hold.rows : source;
     const setRows = next => setHold({stamp, rows: typeof next === 'function' ? next(rows) : next});
     const commit = next => {
-      const cleaned = (Array.isArray(next) ? next : []).map(item => String(item)).filter(item => item !== '');
+      const cleaned = (Array.isArray(next) ? next : []).filter(item => item !== '');
       if (!commitList(source, cleaned, onCommit)) return false;
       setRows(cleaned);
       return true;
@@ -144,11 +144,11 @@
         <option value="">Choose</option>
         {row && !choices.some(choice => choice.value === row) && <option value={row}>{row}</option>}
         {choices.map(choice => <option key={choice.key} value={choice.value}>{choice.name}</option>)}
-      </select> : <input key={stamp + ':' + index} aria-label={label + ' ' + (index + 1)} defaultValue={row} onBlur={event => { if (event.target.value === row) return; const next = rows.slice(); next[index] = event.target.value; commit(next); }} />)}
+      </select> : <input key={stamp + ':' + index} aria-label={label + ' ' + (index + 1)} defaultValue={describe(row)} onBlur={event => { if (event.target.value === describe(row)) return; const next = rows.slice(); next[index] = event.target.value; commit(next); }} />)}
       <button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => setRows(current => [...current, '']))}>{choices ? '+ Add agent' : '+ Add'}</button>
     </div>;
   }
-  function Home() {
+  function Home({fileWorkspace = false, initialFace = fileWorkspace ? 'canvas' : 'workshop'} = {}) {
     const s = useData(), u = useApp();
     const [query, setQuery] = React.useState('');
     const [status, setStatus] = React.useState('');
@@ -158,7 +158,9 @@
     const sendingRef = React.useRef(false);
     const [to, setTo] = React.useState('');
     const [checkpoint, setCheckpoint] = React.useState('');
-    const [face, setFace] = React.useState(() => window.ArchHubHomeFace === 'canvas' ? 'canvas' : 'workshop');
+    const [localFace, setLocalFace] = React.useState(initialFace);
+    const face = fileWorkspace ? u.taskFace : localFace;
+    const setFace = fileWorkspace ? u.setTaskFace : setLocalFace;
     const [router, setRouter] = React.useState(null);
     const [detailId, setDetailId] = React.useState('');
     const [runMode, setRunMode] = React.useState({status: 'waiting', value: '', message: ''});
@@ -194,7 +196,7 @@
     const waiting = new Set((s.approvals || []).filter(c => c.status === 'pending').map(c => c.taskId));
     const list = tasks.filter(t => (!status || t.status === status) && (!query || `${t.title} ${t.status}`.toLowerCase().includes(query.toLowerCase())));
     const focus = u.task || s.focusedTask || tasks.find(t => t.sessionOpen)?.id;
-    const task = tasks.find(t => t.id === focus) || list[0];
+    const task = fileWorkspace ? tasks.find(t => t.id === u.task) : tasks.find(t => t.id === focus) || list[0];
     const people = window.UI.workshopPeople ? window.UI.workshopPeople(s) : {people: [], choices: [], whoIs: label => ({name: label || 'Agent'})};
     const ownerOf = t => {
       if (!t) return '';
@@ -211,8 +213,8 @@
     const rules = Array.isArray(task?.rules) ? task.rules.map(item => typeof item === 'string' ? item : describe(item)) : [];
     const recordedAgents = Array.isArray(task?.agents) ? task.agents.map(item => typeof item === 'string' ? item : describe(item)).filter(Boolean) : [];
     const agents = recordedAgents.length ? recordedAgents : [ownerOf(task) || declared?.agent].filter(item => typeof item === 'string' && item);
-    const folders = describe(task?.folders) || declaredPaths.join(' · ');
-    const references = describe(task?.references);
+    const folders = Array.isArray(task?.folders) ? task.folders : (task?.folders ? [task.folders] : declaredPaths);
+    const references = Array.isArray(task?.references) ? task.references : (task?.references ? [task.references] : []);
     const scopeValue = describe(task?.scope) || declaredPaths.join(' · ');
     const session = task?.sessionPath || (typeof task?.session === 'string' ? task.session : '') || (typeof declared?.session === 'string' ? declared.session : '');
     const fileName = task?.sessionPath ? task.sessionPath.split(/[/\\]/).pop() : '';
@@ -226,21 +228,7 @@
     const text = drafts[draftKey] || '';
     const setText = value => setDrafts(current => ({...current, [draftKey]: typeof value === 'function' ? value(current[draftKey] || '') : value}));
     const messages = taskMessages(task);
-    const seenTask = React.useRef('');
-    React.useEffect(() => {
-      let live = true;
-      if (task?.id && typeof api.openTaskGraph === 'function' && seenTask.current && seenTask.current !== task.id) {
-        const id = task.id;
-        u.act(() => api.openTaskGraph(id)).catch(error => {
-          if (!live) return;
-          setFailure(error instanceof Error ? error.message : String(error));
-          setRequest('error');
-        });
-      }
-      if (task?.id) seenTask.current = task.id;
-      return () => { live = false; };
-    }, [task?.id]);
-    const showCanvas = async () => { u.go('canvas'); if (task) await u.act(() => api.openTaskGraph(task.id)); };
+    const showCanvas = () => setFace('canvas');
     const choices = people.choices?.length ? people.choices : [{key: 'baboom', handle: '', name: 'BABOOM'}];
     const recipient = to || (task && (s.liveAgents || []).find(a => a.agent === task.owner)?.handle) || choices[0]?.handle || '';
     const personModel = (people.people || []).find(p => p.handle && p.handle === recipient)?.model || '';
@@ -281,7 +269,7 @@
       });
     };
     const agentChoices = (s.liveAgents || []).map(agent => ({key: agent.handle || agent.agent, value: agent.agent, name: agent.name && agent.name !== agent.agent ? agent.name : agent.agent})).filter(choice => choice.value);
-    const openTask = async t => { u.setTask(t.id); await u.act(() => api.openTaskGraph(t.id)); };
+    const openTask = t => u.openTaskFile(t.id);
     const send = async () => {
       const body = text.trim();
       if (!body || sendingRef.current) return;
@@ -315,7 +303,7 @@
     const TaskRow = ({t}) => {
       const needsEvidence = t.status === 'IN REVIEW' || t.status === 'STOPPED' || waiting.has(t.id);
       return <div className={'dx-task-row' + (task?.id === t.id ? ' on' : '')} data-status={toneOf(t)}>
-        <button type="button" className="dx-task" aria-selected={task?.id === t.id} onClick={() => executeAction('ui.select', () => openTask(t))}>
+        <button type="button" className="dx-task" aria-selected={task?.id === t.id} onClick={() => executeAction('ui.select', () => u.setTask(t.id))} onDoubleClick={() => executeAction('ui.select', () => openTask(t))}>
           <b>{t.title}</b>
           <span data-line="reason">{reasonOf(t)}</span>
           <small>{[ownerOf(t), t.status === 'WIP' ? statusText(t.status) : ''].filter(Boolean).join(' · ')}</small>
@@ -323,11 +311,11 @@
         {needsEvidence ? <button type="button" className="dx-evidence" onClick={() => executeAction('ui.select', () => openEvidence(t))}>Evidence</button> : null}
       </div>;
     };
-    const makeFile = () => u.act(() => api.newSession()).then(result => { if (result && !result.cancelled) setFace('canvas'); return result; });
-    const openFile = () => u.act(() => api.openSession()).then(result => { if (result && !result.cancelled) setFace('canvas'); return result; });
+    const makeFile = () => u.act(() => api.newSession()).then(result => { if (result && !result.cancelled) u.go('canvas'); return result; });
+    const openFile = () => u.act(() => api.openSession()).then(result => { if (result && !result.cancelled) u.go('canvas'); return result; });
     const saveFile = asCopy => u.act(() => asCopy ? api.saveSessionAs() : api.saveSession());
     const importFile = () => u.pickFlow?.();
-    const openLibrary = () => typeof u.setLibraryOpen === 'function' ? u.setLibraryOpen(value => !value) : u.go('library');
+    const openLibrary = () => { if (fileWorkspace) setFace('canvas'); else u.go('canvas'); return u.setLibraryOpen(value => !value); };
     const fileKeys = event => {
       if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
       const tag = event.target && event.target.tagName;
@@ -346,14 +334,38 @@
       const field = document.querySelector('.dx-composer textarea');
       if (field) field.focus();
     };
-    return <div className="dx-home-root" data-screen="home" data-home-page="" data-start={document.documentElement.dataset.start || 'cold'} onKeyDown={fileKeys}>
+    const taskParameters = (<section className="dx-params" data-dx="params" aria-label="Task parameters">
+                  <div className="dx-params-head"><h2>Task parameters</h2></div>
+                  <label className="dx-fact"><span><Icon name="fit" size={14} />Scope</span><input key={(task?.id || '') + ':scope:' + scopeValue} aria-label="Scope" title={scopeValue} defaultValue={scopeValue} onBlur={e => { if (e.target.value === scopeValue) return false; return saveSession({scope: e.target.value}); }} /></label>
+                  <ItemList label="Rules" icon="shield" items={rules} onCommit={next => saveSession({rules: next})} />
+                  <ItemList label="Assigned agents" icon="users" items={agents} choices={agentChoices} onCommit={next => saveSession({agents: next})} />
+                  <ItemList label="Folders" icon="folder" items={folders} onCommit={next => saveSession({folders: next})} />
+                  <ItemList label="References" icon="link" items={references} onCommit={next => saveSession({references: next})} />
+                  {[['clock', 'Session', session], ['canvas', 'Saved workflow', fileName]].map(([icon, label, value]) => {
+                    const full = factText(value);
+                    return <label className="dx-fact" key={label}><span><Icon name={icon} size={14} />{label}</span><b className="dx-path" title={full}>{middle(full)}</b></label>;
+                  })}
+                  <label className="dx-fact"><span><Icon name="pin" size={14} />Checkpoints</span>
+                    <span className="dx-checkpoint-row">
+                      {(task?.checkpoints || []).length ? <select aria-label="Checkpoints" value={checkpoint} onChange={e => setCheckpoint(e.target.value)}><option value="">No checkpoint selected</option>{task.checkpoints.map(c => <option key={c.id} value={c.id}>{c.title || c.id}</option>)}</select> : <b>No checkpoint selected</b>}
+                      <button type="button" className="dx-quiet" disabled={!task} onClick={() => executeAction('ui.select', () => u.act(() => api.checkpointTask(task.id)))}>Save checkpoint</button>
+                      <button type="button" className="dx-quiet" disabled={!task || !checkpoint} onClick={() => executeAction('ui.select', () => u.act(() => api.restoreTaskCheckpoint(task.id, checkpoint)))}>Restore</button>
+                    </span>
+                  </label>
+                </section>);
+    return <div className="dx-home-root" data-screen={fileWorkspace ? "task-file" : "home"} data-home-page={fileWorkspace ? undefined : ""} data-start={document.documentElement.dataset.start || 'cold'} onKeyDown={fileKeys}>
       {s.liveAgents === undefined ? <p role="status" data-home-loading="">Opening your tasks…</p> : null}
       {request === 'waiting' ? <p role="status">Saving</p> : null}
       {request === 'error' ? <p role="alert">{failure} <button type="button" onClick={() => executeAction('ui.select', () => retrySave.current())}>Retry</button></p> : null}
       {request === 'empty' ? <p role="status">No tasks yet.</p> : null}
       {request === 'loaded' ? <span data-home-ready="" /> : null}
-      <Group id="home-layout" className="dx-home" orientation="horizontal" defaultLayout={saved.outer} onLayoutChanged={(layout, meta) => { if (meta?.isUserInteraction) persistLayout({...readLayout(), outer: layout}); }}>
-        <Column id="tasks" className="dx-col" defaultSize={224} minSize={180} groupResizeBehavior="preserve-pixel-size">
+      <div className="dx-home">
+        {!fileWorkspace ? <div className="dx-home-landing"><div className="dx-home-tools" aria-label="Files">
+            <Btn sm ghost onClick={() => executeAction('ui.select', makeFile)}>New</Btn>
+            <Btn sm ghost onClick={() => executeAction('ui.select', openFile)}>Open…</Btn>
+            <Btn sm ghost onClick={() => executeAction('ui.select', importFile)}>Import…</Btn>
+            <Btn sm ghost onClick={() => executeAction('ui.select', () => { u.setLibraryOpen(true); u.go('canvas'); })}>Library</Btn>
+          </div><div className="dx-task-index">
           <aside className="dx-tasks" data-dx="tasks" aria-label="Tasks">
             <div className="dx-tasks-head">
               <h2>Tasks</h2>
@@ -383,9 +395,14 @@
               <button type="button" className="dx-link" aria-pressed={history} onClick={() => executeAction('ui.select', () => setHistory(!history))}>History →</button>
             </div>
           </aside>
-        </Column>
-        <Separator className="pane-splitter" aria-label="Resize the Tasks pane" />
-        <Column id="workspace" className="dx-col" minSize={720}>
+        </div><aside className="dx-home-preview" aria-label="Selected task properties">
+          {task ? <><header><h2>{task.title}</h2><span>{statusText(task.status)}</span></header>
+            {taskParameters}
+            <div className="dx-preview-actions">
+              <Btn sm p onClick={() => executeAction('ui.select', () => u.openTaskFile(task.id, 'canvas'))}>Open Canvas</Btn>
+              <Btn sm ghost onClick={() => executeAction('ui.select', () => u.openTaskFile(task.id, 'workshop'))}>Open Workshop</Btn>
+            </div></> : <p>Select a task to see its properties.</p>}
+        </aside></div> :
           <div className="dx-workspace" data-dx="workspace">
             <header className="dx-head" data-dx="head">
               <input className="dx-title" aria-label="Task title" key={(task?.id || '') + ':' + (task?.title || '')} defaultValue={task?.title || ''} disabled={!task} onBlur={event => {
@@ -422,24 +439,7 @@
             {shortSource ? <p className="dx-desc" data-dx="description">{shortSource}</p> : null}
             <Group id="home-context" className="dx-split" orientation="horizontal" defaultLayout={saved.inner} onLayoutChanged={(layout, meta) => { if (meta?.isUserInteraction) persistLayout({...readLayout(), inner: layout}); }}>
               <Column id="params" className="dx-col" defaultSize={256} minSize={200} groupResizeBehavior="preserve-pixel-size">
-                <section className="dx-params" data-dx="params" aria-label="Task parameters">
-                  <div className="dx-params-head"><h2>Task parameters</h2></div>
-                  <label className="dx-fact"><span><Icon name="fit" size={14} />Scope</span><input key={(task?.id || '') + ':scope:' + scopeValue} aria-label="Scope" title={scopeValue} defaultValue={scopeValue} onBlur={e => { if (e.target.value === scopeValue) return false; return saveSession({scope: e.target.value}); }} /></label>
-                  <ItemList label="Rules" icon="shield" items={rules} onCommit={next => saveSession({rules: next})} />
-                  <ItemList label="Assigned agents" icon="users" items={agents} choices={agentChoices} onCommit={next => saveSession({agents: next})} />
-                  {[['folder', 'Folders', folders], ['link', 'References', references], ['clock', 'Session', session], ['canvas', 'Saved workflow', fileName]].map(([icon, label, value]) => {
-                    const full = factText(value);
-                    if (!full) return null;
-                    return <label className="dx-fact" key={label}><span><Icon name={icon} size={14} />{label}</span><b className="dx-path" title={full}>{middle(full)}</b></label>;
-                  })}
-                  <label className="dx-fact"><span><Icon name="pin" size={14} />Checkpoints</span>
-                    <span className="dx-checkpoint-row">
-                      {(task?.checkpoints || []).length ? <select aria-label="Checkpoints" value={checkpoint} onChange={e => setCheckpoint(e.target.value)}><option value="">No checkpoint selected</option>{task.checkpoints.map(c => <option key={c.id} value={c.id}>{c.title || c.id}</option>)}</select> : <b>No checkpoint selected</b>}
-                      <button type="button" className="dx-quiet" disabled={!task} onClick={() => executeAction('ui.select', () => u.act(() => api.checkpointTask(task.id)))}>Save checkpoint</button>
-                      <button type="button" className="dx-quiet" disabled={!task || !checkpoint} onClick={() => executeAction('ui.select', () => u.act(() => api.restoreTaskCheckpoint(task.id, checkpoint)))}>Restore</button>
-                    </span>
-                  </label>
-                </section>
+                {taskParameters}
               </Column>
               <Separator className="pane-splitter" aria-label="Resize the task parameters" />
               <Column id="main" className="dx-col" minSize={480}>
@@ -456,6 +456,7 @@
                     <button type="button" onClick={() => executeAction('ui.select', () => u.go('model-review'))}>Model review</button>
                     <button type="button" onClick={() => executeAction('ui.select', () => { const fit = window.UI.requestCanvasFit; return typeof fit === 'function' ? fit() : false; })}>Overview</button>
                   </div> : null}
+                  <div className="dx-work-scroll">
                   <div className="dx-mid" data-plan={plan.length ? 'shown' : 'hidden'}>
                     <div className="dx-stage">
                     {face === 'workshop' && plan.length ? <section className="dx-cards" data-dx="workflow" aria-label="Workflow">
@@ -502,7 +503,8 @@
                       {outputs.map((row, index) => <article key={index} className="dx-output" data-output=""><span className="dx-output-preview">{row.thumb ? <img alt="" src={row.thumb} /> : <Icon name="docs" size={18} />}</span><div><b>{row.name || 'Output'}</b>{row.excerpt ? <p>{row.excerpt}</p> : null}</div></article>)}
                     </section> : null}
                   </div> : null}
-                  <form className="dx-composer" data-dx="composer" onSubmit={e => { e.preventDefault(); executeAction('ui.select', send); }}>
+                  </div>
+                  {face === "workshop" && <form className="dx-composer" data-dx="composer" onSubmit={e => { e.preventDefault(); executeAction('ui.select', send); }}>
                     <label className="dx-to">To
                       <select aria-label="Recipient" value={recipient} onChange={e => setTo(e.target.value)}>
                         {choices.map(c => <option key={c.key} value={c.handle || ''}>{c.name}</option>)}
@@ -524,14 +526,14 @@
                       </label>
                       <Btn p type="submit" aria-busy={sending} disabled={!text.trim()}>Send</Btn>
                     </div>
-                  </form>
+                  </form>}
                   <p className="dx-foot" data-dx="footer">{footer}</p>
                 </div>
               </Column>
             </Group>
           </div>
-        </Column>
-      </Group>
+        }
+      </div>
     </div>;
   }
   window.UI.Home = Home;

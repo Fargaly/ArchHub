@@ -522,6 +522,7 @@ Object.assign(api,{
  compatibleNodes:()=>[],getDecisionState:()=>null,
  async sendToBaboom(text,options={}){return routerChat(text,options.provider||'BABOOM',undefined);},
  async setSetting(id,value){
+  if(window.ARCHHUB_BOOT?.nograph&&id.startsWith('Appearance.')&&state.settings.some(row=>row.id===id))return settingsAction('setAppearance',[id,value]);
   const row=state.settings.find(r=>r.id===id);if(!row)return unavailable('setSetting');
   if(id==='Appearance.Zoom percentage'){
    if(!Number.isFinite(Number(value))||Number(value)<=0)throw Error('Enter a positive zoom percentage.');
@@ -1112,6 +1113,10 @@ async function settingsAction(functionName, args=[]) {
  if(functionName==='readControls'&&generation!==controlsGeneration)return result;
  if(['readOperations','setGraphWorkspaces'].includes(functionName)&&graph!==state.graph.id)throw Error('The graph changed while Settings ran. Refresh Settings before retrying.');
  const values={};
+ if(Array.isArray(result.appearanceSettings)){
+  const ids=new Set(result.appearanceSettings.map(row=>row.id));
+  values.settings=[...state.settings.filter(row=>!ids.has(row.id)),...result.appearanceSettings];
+ }
  for(const key of ['firms','activeFirm','people','billing','dependencies','officeInvitations','settingsScope','activeWorkspace','devices','activeDevice','backups','companion','secrets','providerPreferences','providerModels','libraryCollapsed'])if(Object.hasOwn(result,key))values[key]=result[key];
  if(result.controlErrors){
   values.controlErrors={...state.controlErrors};
@@ -1544,7 +1549,10 @@ async function adoptFile(document,path='',navigation=++fileNavigation){
  sessionDocument=copy(checked.document);sessionPath=path;sessionRevision=checked.document.properties?.revision||0;localDirty=false;solveNote='';fileHistory=[];fileFuture=[];runEpoch++;scopeEpoch++;projectFile();queueAutosave();return state.graph;
 }
 async function flushAutosave(){clearTimeout(autosaveTimer);if(sessionDocument)await saveNow();}
-api.newSession=async title=>adoptFile({format:'archhub',version:1,id:window.crypto.randomUUID(),title:title||'Untitled',nodes:[],wires:[],groups:[],notes:[],viewport:{x:0,y:0,zoom:1}});
+api.newSession=async title=>{
+ const zoom=(state.settings.find(row=>row.id==='Appearance.Default zoom')?.value??100)/100;
+ return adoptFile({format:'archhub',version:1,id:window.crypto.randomUUID(),title:title||'Untitled',nodes:[],wires:[],groups:[],notes:[],viewport:{x:0,y:0,zoom}});
+};
 api.openSession=async path=>{
  if(!path&&typeof window.ARCHHUB_WINDOW_ACTION!=='function')return new Promise((resolve,reject)=>{
   const picker=document.createElement('input');picker.type='file';picker.accept='.archhub';picker.hidden=true;
@@ -1569,9 +1577,18 @@ api.readSystemGraph=async()=>{
  try{canvas=normalise(data);systemProjection=canvas;await commands.adopt(canvas);return {nodes:canvas.nodes.map(nodeDto),wires:(canvas.wires||[]).map(w=>({id:w.id,from:w.source||w.from,to:w.target||w.to,fromPort:w.source_interface||w.fromPort,toPort:w.target_interface||w.toPort,type:w.value_type||'any'}))};}
  finally{canvas=previous;}
 };
-api.setSessionViewport=viewport=>{if(!sessionDocument)return;sessionDocument.viewport=copy(viewport);queueAutosave();};
+api.setSessionViewport=viewport=>{
+ if(!sessionDocument||['x','y','zoom'].every(key=>sessionDocument.viewport?.[key]===viewport[key]))return;
+ sessionDocument.viewport=copy(viewport);
+ localDirty=true;
+ publish({graph:{...state.graph,viewport:sessionDocument.viewport},sessionDirty:true});
+ queueAutosave();
+};
 api.addGraph=api.newSession;
-api.selectGraph=path=>path===sessionDocument?.id?Promise.resolve(state.graph):api.openSession(path);
+api.selectGraph=path=>{
+ if(path&&(path===sessionPath||path===sessionDocument?.id))return Promise.resolve(state.graph);
+ return api.openSession(path);
+};
 api.getGraph=()=>copy(state.graph);
 api.setLibraryCollapsed=async groups=>{
  if(!Array.isArray(groups)||groups.some(name=>!['Start','Programs','Change','Decide','Deliver'].includes(name)))throw Error('Unknown Library category.');
@@ -1724,7 +1741,7 @@ api.ready=(async()=>{
  void api.refreshRouter?.().catch(error=>notice(error.message));
  // Account/network discovery must not hold the usable graph behind its timeout.
  void (async()=>{
-  for(const refresh of [refreshApplicationUpdate,refreshAccount,refreshGraphs,api.listWorkspaces,api.listProviders,refreshTasks,refreshAgents]){
+  for(const refresh of [refreshSettingsControls,refreshApplicationUpdate,refreshAccount,refreshGraphs,api.listWorkspaces,api.listProviders,refreshTasks,refreshAgents]){
    if(activeSurface==='canvas')break;
    try{await refresh();}catch(error){if(refresh!==refreshApplicationUpdate)publish({connectionNotice:error.message});}
   }

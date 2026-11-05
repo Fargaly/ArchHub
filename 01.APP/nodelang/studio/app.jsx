@@ -25,6 +25,7 @@
     const [route, setRoute] = React.useState('home'),  // SPEC § and founder 2026-11-02: the app opens on Home; the task session stays on that page
       [canvasOpened, setCanvasOpened] = React.useState(false),
       [task, setTask] = React.useState(''),
+      [taskFace, setTaskFace] = React.useState('canvas'),
       [composerDraft, setComposerDraft] = React.useState({}),
       [modal, setModal] = React.useState(null),
       [toast, setToast] = React.useState(''),
@@ -99,10 +100,19 @@
       A.accentPress = accent;
     }
     React.useEffect(() => {
-      document.documentElement.dataset.theme = theme;
+      const preference = window.matchMedia('(prefers-color-scheme: dark)');
+      const applyTheme = () => { document.documentElement.dataset.theme = theme === 'System' ? (preference.matches ? 'Dark' : 'Light') : theme; };
+      applyTheme();
+      if (theme === 'System') preference.addEventListener('change', applyTheme);
       document.documentElement.dataset.contrast = String(s.settings.find(r => r.id === 'Appearance.High contrast')?.value);
       document.documentElement.style.setProperty('--text-scale', (s.settings.find(r => r.id === 'Appearance.Text scale')?.value || 100) / 100);
       document.documentElement.dataset.grid = String(s.settings.find(r => r.id === 'Appearance.Canvas grid')?.value !== false);
+      document.documentElement.dataset.reducedMotion = String(s.settings.find(r => r.id === 'Appearance.Reduce motion')?.value === true);
+      for (const token of ['--color-accent', '--color-accent-hi', '--color-accent-press']) {
+        if (accent === '#d97757') document.documentElement.style.removeProperty(token);
+        else document.documentElement.style.setProperty(token, accent);
+      }
+      return () => preference.removeEventListener('change', applyTheme);
     }, [theme, s.revision]);
     React.useEffect(() => {
       const notice = event => setToast(event.detail.message);
@@ -114,6 +124,7 @@
       window.addEventListener('archhub:open-home', openHome);
       return () => window.removeEventListener('archhub:open-home', openHome);
     }, []);
+    const settingsOrigin = React.useRef('home');
     const go = r => {
       if (r === 'system') r = 'settings/System graph';
       if (r === 'baboom') {
@@ -121,16 +132,8 @@
         setModal(null);
         return;
       }
-      const home = window.UI.homeDestination?.(r);
-      if (home) {
-        window.ArchHubHomeFace = home.face;
-        if (home.library) setLibraryOpen(true);
-        window.dispatchEvent(new CustomEvent('archhub:home-view', {detail: home.face}));
-        api.setActiveSurface?.('home');
-        setRoute('home');
-        setModal(null);
-        return;
-      }
+      if (r === 'library' || r === 'skills') { r = 'canvas'; setLibraryOpen(true); }
+      if (r.startsWith('settings/') && !route.startsWith('settings/')) settingsOrigin.current = route;
       if(r==='canvas')setCanvasOpened(true);
       api.setActiveSurface?.(r);
       setRoute(r);
@@ -167,6 +170,13 @@
         return null;
       }
     };
+    const openTaskFile = async (id, face = 'canvas') => {
+      const opened = await act(() => api.openTaskGraph(id));
+      if (!opened || opened.cancelled) return;
+      setTask(id);
+      setTaskFace(face);
+      go('task-file');
+    };
     const confirm = (title, run) => show('Confirm', {
       title,
       run
@@ -179,8 +189,7 @@
       return Number.isSafeInteger(value) && value > 0 ? value : null;
     };
     const download = async (name, nodeId) => {
-      const duration = timing('export_release_ms');
-      if (duration === null) { setToast('Reload System graph settings, then retry export.'); return; }
+      const duration = timing('export_release_ms') ?? 1000;
       const data = await act(() => api.exportData(name, nodeId));
       if (!data) return;
       const url = URL.createObjectURL(new Blob([data.content], {
@@ -227,6 +236,10 @@
       route,
       task,
       setTask,
+      taskFace,
+      setTaskFace,
+      settingsOrigin: settingsOrigin.current,
+      openTaskFile,
       go,
       show,
       close,
@@ -298,10 +311,10 @@
       };
     }, [modal, companion, route]);
     React.useEffect(() => {
-      document.title = 'ArchHub · ' + (routeNames[route] || route.split('/').at(-1));
+      document.title = 'ArchHub · ' + ((route === "task-file" ? "Task file" : routeNames[route]) || route.split('/').at(-1));
     }, [route]);
-    const rail = [['home', 'Home', 'home'], ['docs', 'Docs', 'docs']];
-    const screen = route === 'meetings' ? <window.UI.Meetings /> : route === 'dependencies' ? <window.UI.Dependencies /> : route === 'present' ? <window.UI.Present /> : route === 'community' ? <window.UI.Community /> : route === 'model-review' ? <window.UI.ModelReview /> : route === 'interface' ? <window.UI.InterfaceStudio /> : route === 'social' ? <window.UI.Social /> : route === 'xray' ? <window.UI.Xray /> : route === 'access' ? <window.UI.Access /> : route === 'routing' ? <window.UI.Routing /> : route === 'home' ? <window.UI.Home /> : route === 'workshop' ? <window.UI.Workshop /> : route === 'canvas' ? null : route === 'system' ? <window.UI.Settings page="System graph" /> : route === 'colleagues' ? <window.UI.Colleagues /> : route === 'brain' ? <window.UI.Brain /> : route === 'watcher' ? <window.UI.Watcher /> : route === 'first-run' ? <window.UI.FirstRun /> : route === 'runs' ? <window.UI.Runs /> : route === 'receipts' ? <window.UI.Receipts /> : route === 'docs' ? <window.UI.Docs /> : route === 'feedback' ? <window.UI.Feedback /> : route === 'automations' ? <window.UI.Automations /> : route.startsWith('settings/') ? <window.UI.Settings page={route.slice(9)} /> : <window.UI.Settings page={{
+    const rail = [['home', 'Home', 'home'], ['clock', 'Automations', 'automations'], ['docs', 'Docs', 'docs']];
+    const screen = route === 'meetings' ? <window.UI.Meetings /> : route === 'dependencies' ? <window.UI.Dependencies /> : route === 'present' ? <window.UI.Present /> : route === 'community' ? <window.UI.Community /> : route === 'model-review' ? <window.UI.ModelReview /> : route === 'interface' ? <window.UI.InterfaceStudio /> : route === 'social' ? <window.UI.Social /> : route === 'xray' ? <window.UI.Xray /> : route === 'access' ? <window.UI.Access /> : route === 'routing' ? <window.UI.Routing /> : route === 'home' ? <window.UI.Home key="home" /> : route === 'task-file' ? <window.UI.Home key={task} fileWorkspace initialFace={taskFace} /> : route === 'workshop' ? <window.UI.Workshop /> : route === 'canvas' ? null : route === 'system' ? <window.UI.Settings page="System graph" /> : route === 'colleagues' ? <window.UI.Colleagues /> : route === 'brain' ? <window.UI.Brain /> : route === 'watcher' ? <window.UI.Watcher /> : route === 'first-run' ? <window.UI.FirstRun /> : route === 'runs' ? <window.UI.Runs /> : route === 'receipts' ? <window.UI.Receipts /> : route === 'docs' ? <window.UI.Docs /> : route === 'feedback' ? <window.UI.Feedback /> : route === 'automations' ? <window.UI.Automations /> : route.startsWith('settings/') ? <window.UI.Settings key={route} page={route.slice(9)} /> : <window.UI.Settings key={route} page={{
       account: 'Account',
       connections: 'Connections',
       hooks: 'Hooks',
@@ -340,6 +353,7 @@
   {s.app.quit || s.app.hidden ? <window.UI.DesktopScene /> : <div className="app-window" style={{
         height: '100%',
         display: 'grid',
+        gridTemplateColumns: 'minmax(0,1fr)',
         gridTemplateRows: route === 'canvas' ? '48px minmax(0,1fr)' : '48px minmax(0,1fr) 22px'
       }}>
    <header className="flex app-header" data-window-caption style={{
@@ -357,7 +371,7 @@
             show
           }, event)}><span>{s.workspaces.find(w => w.id === s.activeWorkspace)?.name || s.workspaces.find(w => w.builtIn)?.name || 'Add workspace'}</span><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true"><path d="M3 4.5l3 3 3-3" /></svg></button><i className="header-divider" /><span className="muted">/</span><button className="button-reset header-page" onClick={event => executeAction("appShell.ArchHub.2", {
             go
-          }, event)}>{routeNames[route] || route.split('/').at(-1)}</button><span className="fill" />{window.UI.RunModeChip && <span style={{marginRight: 8}}><window.UI.RunModeChip waiting={(s.approvals || []).some(card => card.approvalKind === 'ask' && card.status === 'pending')} count={(s.approvals || []).filter(card => card.approvalKind === 'ask' && card.status === 'pending').length} /></span>}<button className="button-reset header-search" onClick={event => executeAction("appShell.SearchCtrlK.5", {
+          }, event)}>{(route === "task-file" ? "Task file" : routeNames[route]) || route.split('/').at(-1)}</button><span className="fill" />{window.UI.RunModeChip && <span style={{marginRight: 8}}><window.UI.RunModeChip waiting={(s.approvals || []).some(card => card.approvalKind === 'ask' && card.status === 'pending')} count={(s.approvals || []).filter(card => card.approvalKind === 'ask' && card.status === 'pending').length} /></span>}<button className="button-reset header-search" onClick={event => executeAction("appShell.SearchCtrlK.5", {
             show
           }, event)} aria-label="Search · Ctrl K"><window.AHIcon name="search" size={15} /><span className="fill">Search...</span><kbd>Ctrl K</kbd></button>{(s.update.available || s.update.state==='failed') && <button className="button-reset header-update" title={s.update.state==='failed' ? (s.update.detail || 'Update failed') : `${s.update.installed} → ${s.update.next}. Unsent text is lost; your saved graphs and settings stay with you.`} aria-label={s.update.state==='failed' ? (s.update.detail || 'Update failed') : 'Update available'} onClick={event => executeAction("appShell.Control.3", {
             act,
@@ -374,17 +388,18 @@
           }, event)}><span aria-hidden="true">{action === 'maximize' ? <><span className="when-normal">{glyph}</span><span className="when-maximized">{'\uE923'}</span></> : glyph}</span></button>)}</div>}</header>
    <div style={{
           display: 'grid',
-          gridTemplateColumns: '64px minmax(0,1fr)',
+          gridTemplateColumns: '44px minmax(0,1fr)',
           minHeight: 0
-        }}><nav aria-label="Main navigation" style={{
-            background: '#0f0f13',
+        }}><nav className="app-rail" aria-label="Main navigation" style={{
+            background: A.bgDeep,
             borderRight: '1px solid ' + A.lineSoft,
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
-            paddingTop: 12,
+            padding: '10px 0 8px',
+            gap: 4,
             overflow: 'auto'
-          }}>{rail.map(([g, l, r]) => <D.Rail key={r} variant="home" glyph={<window.AHIcon name={g} />} label={l} active={route === r} onDragOver={e => {
+          }}>{rail.map(([g, l, r]) => <D.Rail key={r} variant="compact" glyph={r === "home" ? <ArchMark size={15} /> : <window.AHIcon name={g} size={15} />} label={l} active={route === r || (r === "home" && route === "task-file")} onDragOver={e => {
               if (r === 'canvas') e.preventDefault();
             }} onDragEnter={() => {
               if (r === 'canvas') go(r);
@@ -392,14 +407,10 @@
               go,
               r
             }, event)} badge={r === 'workshop' ? s.tasks.filter(t => !['DONE','ARCHIVED'].includes(t.status)).length + (s.declaredTasks || []).length : undefined} style={{
-              width: 64,
-              height: 58,
               flex: 'none'
-            }} />)}<span className="fill" /><D.Rail variant="home" glyph={<window.AHIcon name="settings" />} label="Settings" active={route.startsWith('settings/')} onClick={event => executeAction("appShell.Control.11", {
+            }} />)}<span className="fill" /><D.Rail variant="compact" glyph={<window.AHIcon name="settings" size={15} />} label="Settings" active={route.startsWith('settings/')} onClick={event => executeAction("appShell.Control.11", {
               go
             }, event)} style={{
-              width: 64,
-              height: 58,
               flex: 'none'
             }} /><button className="button-reset" aria-label="Your account" title="Your account" onClick={event => executeAction("appShell.YourAccount.12", {
               show
@@ -580,10 +591,7 @@
       })), ...s.tasks.map(t => ({
         label: t.title,
         group: 'Chats',
-        action: () => {
-          u.setTask(t.id);
-          u.go('workshop');
-        }
+        action: () => u.openTaskFile(t.id)
       })), ...(s.liveAgents || []).map(a => ({
         label: a.name + (a.task ? ' · ' + a.task : ''),
         group: 'Agents',
@@ -631,7 +639,7 @@
         }, event)}>Cancel</Btn><Btn danger onClick={event => executeAction("appShell.Confirm.32", {
           m,
           saved
-        }, event)}>Confirm</Btn></div></>;else if (k === 'New task') body = <><label className="grid">Task name<input aria-label="Task name" value={text} onChange={e => setText(e.target.value)} placeholder="Name this task" /></label><Btn p disabled={!text.trim()} onClick={event => executeAction("ui.select", async () => { const made = await u.act(() => api.createTask(text.trim())); if (made?.taskId) { u.setTask(made.taskId); close(); } }, event)}>Create task</Btn></>;else if (k === 'Account') body = <><h2>{s.profile.name}</h2><p className="muted">{s.profile.firm} · {s.people.length} people</p><div className="grid">{['My profile', 'My secrets', 'My files', 'Workspaces'].map(t => <Btn key={t} onClick={event => executeAction("appShell.Control.33", {
+        }, event)}>Confirm</Btn></div></>;else if (k === 'New task') body = <><label className="grid">Task name<input aria-label="Task name" value={text} onChange={e => setText(e.target.value)} placeholder="Name this task" /></label><Btn p disabled={!text.trim()} onClick={event => executeAction("ui.select", async () => { const made = await u.act(() => api.createTask(text.trim())); if (made?.taskId) { await u.openTaskFile(made.taskId); } }, event)}>Create task</Btn></>;else if (k === 'Account') body = <><h2>{s.profile.name}</h2><p className="muted">{s.profile.firm} · {s.people.length} people</p><div className="grid">{['My profile', 'My secrets', 'My files', 'Workspaces'].map(t => <Btn key={t} onClick={event => executeAction("appShell.Control.33", {
           t,
           u
         }, event)}>{t}</Btn>)}<Btn onClick={event => executeAction("appShell.AccountSettings.34", {
@@ -693,10 +701,7 @@
           color: A.inkSoft
         }}>{name} · {s.tasks.filter(member).length}</h3>{s.tasks.filter(member).map(t => <Card key={t.id} style={{
           padding: 8
-        }}><window.UI.Task task={t} select={() => {
-            u.setTask(t.id);
-            u.go('workshop');
-          }} /></Card>)}</div>)}</div>;else if (k === 'Notifications' || k === 'Founder inbox') body = <div className="grid">{s.notifications.map(n => (api.supportsAction?.('readNotification') !== false && <button className="listbutton" key={n.id} onClick={event => executeAction("appShell.Control.49", {
+        }}><window.UI.Task task={t} select={() => u.openTaskFile(t.id)} /></Card>)}</div>)}</div>;else if (k === 'Notifications' || k === 'Founder inbox') body = <div className="grid">{s.notifications.map(n => (api.supportsAction?.('readNotification') !== false && <button className="listbutton" key={n.id} onClick={event => executeAction("appShell.Control.49", {
         api,
         n,
         u

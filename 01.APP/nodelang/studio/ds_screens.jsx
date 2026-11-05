@@ -526,7 +526,7 @@
     const shown = (name, choices) => choices.includes(wire[name]) ? wire[name] : choices[0];
     const read = (name, text, note) => <div data-wire-param={name} style={{display: 'grid', gap: 2}}><span style={labelStyle}>{name}</span><div style={field}><span style={{color: A.ink}}>{text}</span>{note && <span style={{color: A.inkMuted}}>{' · ' + note}</span>}</div></div>;
     return <aside className="pane inspector" style={{borderLeft: '1px solid ' + A.line, padding: 16, overflow: 'auto', minHeight: 0}} aria-label="Wire">
-      <div className="spread"><h2 style={{margin: 0, fontSize: 16, fontWeight: 500}}>Connection</h2><Btn variant="controls" sm ghost aria-label="Close wire" onClick={event=>executeAction('projects.controls.activate',{handler:onClose},event)}>×</Btn></div>
+      <div className="spread" style={{position:'sticky',top:0,zIndex:1,background:A.bgRaised}}><h2 style={{margin: 0, fontSize: 16, fontWeight: 500}}>Connection</h2><Btn variant="controls" sm ghost aria-label="Close wire" onClick={event=>executeAction('projects.controls.activate',{handler:onClose},event)}>×</Btn></div>
       <div data-wire-inspection="" style={{display: 'grid', gap: window.AH.sp.sm, marginTop: window.AH.sp.md}}>
         {read('From', (a?.title || wire.from) + '.' + (out?.name || wire.fromPort), '')}
         {read('To', (b?.title || wire.to) + '.' + (into?.name || wire.toPort), '')}
@@ -596,14 +596,27 @@
       zoomWrites = React.useRef(Promise.resolve()),
       pendingZoomWrites = React.useRef(0);
     const fittedScope = React.useRef(null);
+    const userViewport = React.useRef(false);
     const {zoom, pan} = viewport;
     const [requestState, setRequestState] = React.useState('waiting');
     const [requestError, setRequestError] = React.useState('');
     const zoomSetting = zoomRow?.value;
     const appliedZoomSetting = React.useRef(zoomSetting);
     const zoomSaveDelay = Number(s.canvasPolicy?.viewport_commit_debounce_ms ?? 140);
-    const updateView = next => { view.current = next; setViewport(next); if (!embedded) api.setSessionViewport?.({x:next.pan.x,y:next.pan.y,zoom:next.zoom}); };
-    React.useEffect(()=>{if (embedded) return; const saved=s.graph.viewport;if(saved){const next={zoom:saved.zoom,pan:{x:saved.x,y:saved.y}};view.current=next;setViewport(next);}},[s.graph.scopeKey, embedded]);
+    const persistView = ({x,y,zoom}) => {
+      userViewport.current = true;
+      api.setSessionViewport?.({x,y,zoom});
+    };
+    const updateView = (next, persist = true) => {
+      view.current = next;
+      setViewport(next);
+      if (persist) persistView({x:next.pan.x,y:next.pan.y,zoom:next.zoom});
+    };
+    React.useEffect(() => {
+      const saved = s.graph.viewport;
+      userViewport.current = Boolean(saved && (!embedded || saved.x !== 0 || saved.y !== 0 || saved.zoom !== 1));
+      if (userViewport.current) updateView({zoom:saved.zoom,pan:{x:saved.x,y:saved.y}}, false);
+    }, [s.graph.scopeKey, embedded]);
     const zoomAt = (value, client = null) => {
       const bounds = area.current?.getBoundingClientRect();
       if (!bounds) return;
@@ -726,16 +739,18 @@
     React.useEffect(() => {
       if (!active) return;
       const listener = e => {
+        if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's') {
+          if (e.defaultPrevented) return;
+          e.preventDefault();
+          u.act(() => e.shiftKey ? api.saveSessionAs() : api.saveSession());
+          return;
+        }
         if (e.target.closest?.('input,textarea,select,[contenteditable="true"],[role="textbox"]')) return;
         if (area.current?.contains(e.target)) {
           if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomAt(view.current.zoom * 1.2); }
           if (e.key === '-') { e.preventDefault(); zoomAt(view.current.zoom / 1.2); }
           if (e.key === '0') { e.preventDefault(); e.ctrlKey ? fit() : zoomAt(1); }
           if (e.shiftKey && (e.code === 'Digit1' || e.key === '1')) { e.preventDefault(); fit(); }
-        }
-        if (e.ctrlKey && e.key.toLowerCase() === 's') {
-          e.preventDefault();
-          u.act(() => api.saveSession());
         }
         if (e.ctrlKey && e.key.toLowerCase() === 'g') {
           e.preventDefault();
@@ -884,17 +899,16 @@
           data: {color, route: w.route, state: w.rejected ? 'rejected' : color === A.warn ? 'affected' : 'compatible', selected: wireId === w.id && shown !== 'Hidden',
             opacity: w.rejected ? 1 : shown==='Hidden'||portVisibility==='Hidden' ? 0 : shown==='Faint'||portVisibility==='Faint' ? .2 : .9}};
       });
-    const fit = () => {
+    const fit = (persist = true) => {
       if (!visible.length || !area.current) return;
       const w = area.current.clientWidth, h = area.current.clientHeight;
       const boxes = [...area.current.querySelectorAll('[data-graph-node]')].map(el => {
         const n = visible.find(n => n.id === el.dataset.graphNode);
-        return n && {x: n.x, y: n.y, w: n.w || el.offsetWidth || el.getBoundingClientRect().width / view.current.zoom || 224,
-          h: n.h || el.offsetHeight || el.getBoundingClientRect().height / view.current.zoom || 160};
+        return n && {x: n.x, y: n.y, w: el.offsetWidth || n.w || 224, h: el.offsetHeight || n.h || 160};
       }).filter(Boolean);
       if (!boxes.length) return;
       const fitted = fitCanvasViewport(boxes, w, h, zoomMin, zoomMax, Number(s.canvasPolicy?.zoom_fit_max ?? 1.25));
-      if (fitted) updateView(fitted);
+      if (fitted) updateView(fitted, persist);
     };
     React.useEffect(() => {
       if (embedded || s.graph.viewport || !active || requestState !== 'loaded' || layout.scope !== scope || fittedScope.current === scope+':'+u.libraryOpen) return;
@@ -908,7 +922,7 @@
     });
     React.useEffect(() => {
       if (!embedded || !active || requestState !== 'loaded' || !area.current) return;
-      const run = () => fit();
+      const run = () => { if (!userViewport.current) fit(false); };
       const frame = requestAnimationFrame(run);
       const observer = new window.ResizeObserver(run);
       observer.observe(area.current);
@@ -964,9 +978,9 @@
               () => u.act(() => api.setWireVisibility(({Visible: 'Faint', Faint: 'Hidden', Hidden: 'Visible'})[s.graph.wireVisibility || 'Visible']))],
           ].map(([label, run, disabled]) => <button key={label} role="menuitem" type="button" className="button-reset listbutton" disabled={disabled} style={{textAlign:'left',padding:'6px 8px'}}
             onClick={event => executeAction('projects.controls.activate', {handler: () => { setMore(false); return run(); }}, event)}>{label}</button>)}</div>}</div></div>
-  <div style={{
+  <div className="canvas-panes" data-compact-inspection={!embedded && !!(wire || inspected) ? '' : undefined} style={{
         display: 'grid',
-        gridTemplateColumns: (u.libraryOpen ? '248px ' : '') + 'minmax(0,1fr)' + (!embedded && (wire || inspected) ? ' ' + LAYOUT.inspectorWidth + 'px' : ''),
+        '--canvas-pane-columns': (u.libraryOpen ? '248px ' : '') + 'minmax(0,1fr)' + (!embedded && (wire || inspected) ? ' ' + LAYOUT.inspectorWidth + 'px' : ''),
         minHeight: 0
       }}>{u.libraryOpen && <window.UI.LibraryShelf onClose={() => u.setLibraryOpen(false)} />}
    <div ref={area} className={'node-canvas' + (visible.some(n => n.status === 'Running') ? ' running-wires' : '')} tabIndex={0} aria-label="Workflow canvas" style={{position:'relative',minHeight:0,'--xy-selection-background-color':A.accent+'16','--xy-selection-border':'1px solid '+A.accent,'--xy-background-color':'transparent'}}
@@ -987,7 +1001,8 @@
         }}>
     <CanvasContext.Provider value={{renderNode, openNode}}>
      <RF.ReactFlow nodes={flowNodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
-       viewport={{x: pan.x, y: pan.y, zoom}} onViewportChange={v => updateView({zoom: v.zoom, pan: {x: v.x, y: v.y}})} minZoom={zoomMin} maxZoom={zoomMax}
+       viewport={{x: pan.x, y: pan.y, zoom}} onViewportChange={v => updateView({zoom: v.zoom, pan: {x: v.x, y: v.y}}, false)}
+       onMoveEnd={(event, v) => { if (event instanceof window.Event) persistView(v); }} minZoom={zoomMin} maxZoom={zoomMax}
        onNodesChange={onNodesChange} onNodeDragStop={onNodeDragStop} onNodeDoubleClick={(e, f) => openNode(f.data.n)}
        onConnect={c => connect({id: c.source, port: c.sourceHandle}, {id: c.target, port: c.targetHandle})}
        onConnectEnd={(e, state) => {

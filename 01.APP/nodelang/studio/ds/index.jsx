@@ -465,6 +465,7 @@
   }) {
     const text = label ?? l;
     const selected = active ?? on;
+    const compact = variant === 'compact';
     if (text === undefined) return <Tag {...props} style={{
       background: A.bg,
       borderRight: `1px solid ${A.lineSoft}`,
@@ -475,26 +476,27 @@
       ...style
     }}>{children}</Tag>;
     return <button {...props} onClick={event => executeAction('projects.controls.activate', {handler:props.onClick}, event)} type="button" title={props.title || text} aria-label={props['aria-label'] || text} aria-current={selected ? props['aria-current'] ?? 'page' : undefined} style={{
-      width: 44,
-      height: 52,
+      width: compact ? 30 : 44,
+      height: compact ? 30 : 52,
       display: 'grid',
       placeItems: 'center',
       alignContent: 'center',
       gap: 2,
       position: 'relative',
-      color: selected ? A.ink : A.inkSoft,
+      color: selected ? (compact ? A.accent : A.ink) : A.inkSoft,
       border: 0,
       padding: 0,
-      background: 'transparent',
+      background: compact && selected ? A.accentDim : 'transparent',
+      borderRadius: compact ? 6 : undefined,
       fontFamily: A.sans,
       cursor: 'pointer',
       ...style
     }}>
       {selected && variant !== 'home' && <i aria-hidden="true" style={{
         position: 'absolute',
-        left: 0,
-        top: 12,
-        bottom: 12,
+        left: compact ? -7 : 0,
+        top: compact ? 6 : 12,
+        bottom: compact ? 6 : 12,
         width: 2,
         background: A.accent,
         borderRadius: 2
@@ -505,13 +507,10 @@
         borderRadius: variant === 'home' ? 8 : 6,
         display: 'grid',
         placeItems: 'center',
-        background: selected ? A.bgHover : 'transparent',
+        background: selected && !compact ? A.bgHover : 'transparent',
         fontSize: 15
       }}>{glyph ?? g}</span>
-      <span style={{
-        fontSize: 11,
-        lineHeight: '13px'
-      }}>{text}</span>
+      {!compact && <span style={{fontSize: 11, lineHeight: '13px'}}>{text}</span>}
       {badge && <span style={{
         position: 'absolute',
         right: 6,
@@ -923,8 +922,9 @@ function projectsdsindexjsxERun8({e}, event) {
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }
   function projectsControlActivate({handler}, event) { return handler ? Reflect.apply(handler, undefined, [event]) : undefined; }
-  const CONTROL_ACTIONS = {'projects.controls.activate':'projectsControlActivate'};
-  window.registerActions(CONTROL_ACTIONS, {projectsControlActivate});
+  function uiSelect(handler, event) { return projectsControlActivate({handler}, event); }
+  const CONTROL_ACTIONS = {'projects.controls.activate':'projectsControlActivate', 'ui.select':'uiSelect'};
+  window.registerActions(CONTROL_ACTIONS, {projectsControlActivate, uiSelect});
   const PROJECT_ACTIONS = {
   "projects.ds.index.EOnCheckedChangeValueOnChangeValue.1": "projectsdsindexjsxEOnCheckedChangeValueOnChangeValue1",
   "projects.ds.index.Reset.2": "projectsdsindexjsxReset2",

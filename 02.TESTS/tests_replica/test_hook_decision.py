@@ -134,6 +134,33 @@ def test_delete_founder_data_refused_temp_delete_allowed(env):
     assert d["verdict"] == "allow"
 
 
+def test_exact_session_scratch_delete_and_refusal_log(env):
+    home = Path(env['USERPROFILE'])
+    scratch = home / '.claude' / 'sessions' / 's-1' / 'scratchpad' / 'rejtest'
+    scratch.mkdir(parents=True)
+    own_file = scratch / 'own.txt'
+    call(env, 'Write', {'file_path': str(own_file), 'content': 'fixture'})
+    own_file.write_text('fixture', encoding='utf-8')
+    command = 'Remove-Item -LiteralPath "%s"' % scratch
+    assert call(env, 'PowerShell', {'command': command})['verdict'] == 'allow'
+    assert call(env, 'PowerShell', {'command': command}, session='other')['rules'] == ['delete-founder-data']
+    foreign_file = scratch / 'someone-else.txt'
+    foreign_file.write_text('preserve', encoding='utf-8')
+    assert call(env, 'PowerShell', {'command': command})['rules'] == ['delete-founder-data']
+    for target in (home / '00.ARCHUB/founder.txt', home / '00.ARCHUB/*',
+                   scratch / '20.CLIENTS/fixture.txt'):
+        decision = call(env, 'PowerShell', {'command': 'Remove-Item -LiteralPath "%s"' % target})
+        assert decision['rules'] == ['delete-founder-data']
+        rows = [json.loads(row) for row in (Path(env['ARCHHUB_HOOK_STATE']) / 'refusals.jsonl').read_text().splitlines()]
+        assert rows[-1]['rules'] == ['delete-founder-data'] and str(target) in rows[-1]['paths']
+
+
+def test_wildcard_over_shared_temp_root_is_refused(env):
+    target = Path(env['TEMP']) / '*'
+    decision = call(env, 'PowerShell', {'command': 'Remove-Item -Recurse "%s"' % target})
+    assert decision['rules'] == ['delete-founder-data']
+
+
 def _fill(command, paths):
     for key, value in paths.items():
         command = command.replace("{" + key + "}", str(value))

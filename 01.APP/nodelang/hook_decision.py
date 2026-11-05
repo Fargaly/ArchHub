@@ -833,11 +833,46 @@ def _plot_publish_override(command: str, cwd: str, environment) -> bool | None:
     return None
 
 
-def founder_data_targeted(command: str, cwd: str, environment, cleanup_candidates=None) -> bool:
+def _own_scratch_target(path: Path, cwd: str, environment, session: str) -> bool:
+    """Exact paths only, with real-path containment so junctions cannot expose founder data."""
+    if any(char in str(path) for char in '*?[]') or _PRIVATE_PATH.search(str(path)):
+        return False
+    resolved = path.resolve()
+    if _PRIVATE_PATH.search(str(resolved)):
+        return False
+    temp = Path(environment.get('TEMP') or tempfile.gettempdir()).resolve()
+    home = Path(environment.get('USERPROFILE') or environment.get('HOME') or Path.home()).resolve()
+    lane = Path(cwd).resolve()
+    if (lane.parent == temp and lane.name.startswith(('lane-', 'nograph-'))
+            and _same_tree(resolved, lane)):
+        return True
+    for parent in (resolved, *resolved.parents):
+        if parent.parent == temp and parent.name.startswith(('lane-', 'nograph-')):
+            return True
+        if (session and parent.name == 'scratchpad' and parent.parent.name == session
+                and any(_same_tree(parent, root) for root in (temp, home / '.claude', home / '.codex'))):
+            try:
+                trace = json.loads(_trace_path(session, environment).read_text(encoding='utf-8'))
+                written = set(trace[-1].get('written_paths', [])) if trace else set()
+                if not resolved.is_dir():
+                    return _norm(resolved) in written
+                if not any(_same_tree(Path(wrote), resolved) for wrote in written):
+                    return False
+                for child in resolved.rglob('*'):
+                    if (_PRIVATE_PATH.search(str(child)) or child.is_symlink() or child.is_junction()
+                            or child.is_file() and _norm(child.resolve()) not in written):
+                        return False
+                return True
+            except (OSError, ValueError):
+                return False
+    return False
+
+
+def founder_data_targeted(command: str, cwd: str, environment, cleanup_candidates=None, *, session='') -> bool:
     """A delete aimed at the founder's data.
 
     Only the delete verb's path arguments count, plus the path of a Get-ChildItem/ls
-    that pipes into Remove-Item. Temp, crash dumps, regenerable caches, and paths
+    that pipes into Remove-Item. Exact temp paths, crash dumps, regenerable caches, and paths
     from the cleanup-candidate file are free. Old PlotandPublish logs are free when
     the newest three are kept. Client, personal, and ArchHub data, repo sources
     outside temp, and PAT/hatch, settings, profiles, models, and first90 stay protected.
@@ -850,6 +885,11 @@ def founder_data_targeted(command: str, cwd: str, environment, cleanup_candidate
     roots = _founder_roots(environment)
     for raw in _delete_targets(command, cwd):
         path = _resolve_target(raw, cwd, environment)
+        if (any(char in raw for char in '*?[]') and
+                any(_same_tree(path, Path(environment[key])) for key in ('TEMP', 'TMP') if environment.get(key))):
+            return True
+        if _own_scratch_target(path, cwd, environment, session):
+            continue
         inside = any(_same_tree(path, root) for root in roots)
         contains = any(_same_tree(root, path) for root in roots)
         # A cache that sits inside a client or project folder is still his data.
@@ -1079,6 +1119,10 @@ def trace_rules(event, action, facts, environment):
         trace = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         trace = []
+    written = {target for row in trace for target in row.pop('written_paths', [])}
+    target = event['input'].get('file_path') or event['input'].get('path') or event['input'].get('filePath')
+    if action == 'write' and isinstance(target, str) and target:
+        written.add(_norm(_resolve_target(target, event['cwd'], environment).resolve()))
     key = hashlib.sha256((event["tool"] + "\0" + json.dumps(event["input"], sort_keys=True, default=str)).encode()).hexdigest()
     private = facts["private"] or any(t.get("private") for t in trace)
     untrusted = facts["untrusted"] or any(t.get("untrusted") for t in trace)
@@ -1087,7 +1131,8 @@ def trace_rules(event, action, facts, environment):
     trifecta = _leaves_his_account(action, event["tool"], event["input"]) and private and untrusted
     looping = sum(1 for t in trace[-9:] if t.get("key") == key) >= 4
     trace = (trace + [{"at": time.time(), "tool": event["tool"], "action": action, "key": key,
-                       "private": facts["private"], "untrusted": facts["untrusted"]}])[-50:]
+                       "private": facts["private"], "untrusted": facts["untrusted"],
+                       "written_paths": sorted(written)}])[-50:]
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(trace), encoding="utf-8")
@@ -1134,7 +1179,8 @@ def decide(payload: dict, vendor: str = "", *, environment=None):
     # A secret on any outbound send is still refused. Ask first can hold a real send.
     goes_public = _leaves_his_account(action, event["tool"], event["input"])
     context = {"secret": secret, "client_data": bool(client and goes_public),
-               "founder_data": action == "delete" and founder_data_targeted(facts["command"], event["cwd"], environment),
+               "founder_data": action == "delete" and founder_data_targeted(facts["command"], event["cwd"], environment,
+                                                                            session=event['session']),
                "trifecta": trifecta, "banned_package": facts["banned_package"]}
     scanners["policy"], rules = cedar_forbids(action, context, vendor)
     if secret and action not in ("publish", "send"):

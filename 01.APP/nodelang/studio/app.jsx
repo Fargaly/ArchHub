@@ -136,7 +136,7 @@
       if (home) {
         if (home.library) setLibraryOpen(true);
         const selected = taskId ? s.tasks.find(t => t.id === taskId || t.sessionPath === taskId)
-          : s.tasks.find(t => t.id === task) || s.tasks.find(t => t.id === s.focusedTask) || s.tasks.find(t => t.sessionOpen) || s.tasks[0];
+          : s.tasks.find(t => t.id === task) || s.tasks.find(t => t.id === s.focusedTask);
         if (selected) return openTaskFile(selected.id, home.face);
         setTask('');
         setToast('Pick a task on Home.');

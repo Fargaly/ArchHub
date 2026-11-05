@@ -55,12 +55,113 @@ def test_effect_nodes_wait_for_run(profile):
     assert not (profile / 'LOCALAPPDATA' / 'ArchHub' / 'workshop' / 'messages.sqlite3').exists()  # nothing was sent
 
 
+@pytest.mark.parametrize('action', ['open', 'initial'])
+def test_reopen_solves_saved_parameters_without_effects(profile, monkeypatch, action):
+    import sys
+    from nodelang.canvas_documents import solve
+    from nodelang.session_files import SessionFiles, read_document, write_document
+    monkeypatch.setattr(sys, 'argv', ['archhub'])
+    doc = workflow(with_agent=True)
+    solve(doc, ['list'])
+    assert doc['nodes'][2]['result']['output'] == {'count': 3}
+    doc['nodes'][3]['result'] = {'status': 'Done', 'output': {'previous': True}, 'error': ''}
+    path = profile / 'reopen.archhub'
+    owner = SessionFiles(profile / 'sessions')
+    owner.dispatch({'action': 'save', 'path': str(path), 'document': doc})
+    doc['nodes'][1]['params']['count'] = '4'
+    # Closing before the debounced solve completes leaves old results on disk.
+    write_document(path, doc)
+    calls = []
+    opened = SessionFiles(owner.directory).dispatch(
+        {'action': action, 'path': str(path)}, invoke=lambda *args: calls.append(args))['document']
+    assert opened['nodes'][2]['result']['output'] == {'count': 4}
+    assert opened['nodes'][3]['result']['status'] == 'Out of date'
+    assert calls == []
+    assert read_document(path)['nodes'][1]['params']['count'] == '4'
+    print(f'PARAMREOPEN {action}: saved=4 pure=4 effect=Out of date effect_runs={len(calls)}')
+
+
 def test_cycle_refused():
     from nodelang.session_files import run_document
     doc = workflow()
     doc['wires'].append({'id': 'loop', 'from': {'node': 'count', 'socket': 'count'}, 'to': {'node': 'list', 'socket': 'x'}})
     with pytest.raises(ValueError, match='Cycle'):
         run_document(doc)
+
+
+def test_reopen_in_browser_has_no_effect_request(profile, monkeypatch):
+    import os
+    import subprocess
+    from nodelang.canvas_documents import solve
+    from nodelang.nograph_server import NoGraphServer
+    from nodelang.session_files import SessionFiles, write_document
+    doc = workflow(with_agent=True)
+    solve(doc, ['list'])
+    doc['nodes'][1]['params']['count'] = '4'
+    path = profile / 'browser.archhub'
+    write_document(path, doc)
+    SessionFiles().dispatch({'action': 'save', 'path': str(path), 'document': doc})
+    calls = []
+    monkeypatch.setattr('nodelang.enforce.guard_effect', lambda *args: calls.append(args))
+    server = NoGraphServer(profile / 'server')
+    # Serve the actual browser routes without starting host probes, relay or triggers.
+    server.thread = threading.Thread(target=server.httpd.serve_forever, daemon=True)
+    server.thread.start()
+    try:
+        script = r"""
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+import {readFileSync} from 'node:fs';
+import path from 'node:path';
+const config = JSON.parse(readFileSync(0, 'utf8'));
+const require = createRequire(path.join(process.env.ARCHHUB_NODE_MODULES || path.resolve('node_modules'), 'playwright', 'package.json'));
+const {chromium} = require('playwright');
+const browser = await chromium.launch({headless: true, channel: 'chromium'});
+try {
+  const page = await browser.newPage();
+  const requests = [];
+  await page.route('**/*', route => new URL(route.request().url()).origin === new URL(config.url).origin
+    ? route.continue() : route.abort());
+  page.on('request', request => {
+    if (request.method() === 'POST') requests.push({url: request.url(), body: request.postDataJSON()});
+  });
+  await page.goto(config.url);
+  await page.waitForFunction(() => window.ArchHubAPI);
+  await page.evaluate(() => window.ArchHubAPI.ready);
+  await page.evaluate(file => window.ArchHubAPI.openSession(file), config.path);
+  const check = async label => {
+    const doc = await page.evaluate(() => window.ArchHubAPI.getSessionDocument());
+    assert.equal(doc.nodes.find(n => n.id === 'count').result.output.count, 4);
+    assert.equal(doc.nodes.find(n => n.id === 'agent').result.status, 'Out of date');
+    assert.equal(requests.filter(r => r.body?.action === 'run' || /\/host\/|\/baboom\/turn/.test(r.url)).length, 0);
+    console.log(`PARAMREOPEN browser ${label}: pure=4 effect=Out of date effect_requests=0`);
+  };
+  await check('open');
+  await page.evaluate(async file => {
+    const api = window.ArchHubAPI;
+    await api.setNodeParam('slice', 'count', '3');
+    await api.solveNow();
+    await api.saveSession(file);
+    await api.setNodeParam('slice', 'count', '4');
+    await api.saveSession(file);
+  }, config.path);
+  await page.reload();
+  await page.waitForFunction(() => window.ArchHubAPI);
+  await page.evaluate(() => window.ArchHubAPI.ready);
+  await check('reload');
+} finally {
+  await browser.close();
+}
+"""
+        result = subprocess.run(['node', '--input-type=module', '-e', script], input=json.dumps({
+            'url': server.public_url + '/studio/?bootstrap=' + server.browser_bootstrap_token,
+            'path': str(path)}), text=True, encoding='utf-8', capture_output=True, timeout=120, env=os.environ.copy())
+        print(result.stdout)
+        assert result.returncode == 0, result.stderr
+        assert calls == []
+        print('PARAMREOPEN browser: effect_runs=0')
+    finally:
+        server.close()
 
 
 def test_atomic_save_and_locked_concurrent_edits(profile):

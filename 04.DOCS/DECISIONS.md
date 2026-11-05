@@ -408,3 +408,10 @@ Budget: one pure-Python wheel. PyPI publishes `pypdf-6.21.4-py3-none-any.whl` (4
 Request: F20
 Prior art: workshop_tasks.rows -> the existing Workshop messages.sqlite3 task table; Windows SystemParametersInfo SPI_GETCLIENTAREAANIMATION -> a static pose when animations are off
 Replaces: nothing exists
+
+## D-024 Native and Studio drivers in the existing isolated acceptance rig (2026-11-05, Codex T1SMALL)
+Request: F212 VERSIONSMOKE: use Playwright for Studio and pywinauto for native windows, on the rig profile only; the same runner serves installed smoke checks.
+Prior art: Playwright -> attach to the rig's QtWebEngine CDP page; pywinauto -> invoke native UI Automation controls by the admitted window handle; Microsoft WinAppDriver -> keep native-window ownership and desktop isolation as admission boundaries.
+Replaces: the raw WebSocket Studio driver and WinAppDriver folder helper inside tools/real_app_check; no second harness, dependency installer, profile or store. The active readiness path uses the owned NoGraph listener and Studio, without retired graph health or signing-key reads.
+Decision: add pywinauto 0.6.9, comtypes 1.4.17 and six 1.17.0 to the existing desktop requirements/wheelhouse. Native helpers redirect comtypes.gen before importing pywinauto, keeping generated wrappers in the disposable profile and leaving installed package bytes unchanged. The app does not import this driver at startup.
+Evidence: the real native import ran on a hidden desktop with the pinned libraries, verified its generated-cache path and unchanged dependency digest, and passed both focused cases. Installed-app and live-host acceptance remain separate; the lane does not install or use the live desktop.

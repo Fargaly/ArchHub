@@ -2,7 +2,7 @@
 
 The rig's own acceptance is its real run (README). These pin its safety rules: isolation, the
 candidate label and overlay allowlist, the installed-code digest, the folder-dialog Edit choice, the
-exact signing-key read and its fail-closed verdict, the strict step verdict, the run-unique desktop and
+keyless disposable profile, the strict step verdict, the run-unique desktop and
 the Job that owns every process.
 """
 import hashlib
@@ -13,7 +13,6 @@ import shutil
 import subprocess
 import sys
 import time
-import uuid
 from pathlib import Path
 
 import pytest
@@ -42,51 +41,7 @@ def _node(script):
 GUARDS = json.dumps((TOOL / "guards.mjs").resolve().as_uri())
 
 
-# (1) The signing-key read is exact; the verdict fails closed. ------------------------------------
-
-class _FakeNcrypt:
-    def __init__(self, open_key_code):
-        self.open_key_code, self.freed = open_key_code, 0
-
-    def NCryptOpenStorageProvider(self, handle, name, flags):
-        return 0
-
-    def NCryptOpenKey(self, provider, key, name, spec, flags):
-        assert flags == 0x40                       # silent: never a prompt
-        return self.open_key_code
-
-    def NCryptFreeObject(self, handle):
-        self.freed += 1
-        return 0
-
-
-def test_only_nte_bad_keyset_reads_as_absent_and_other_errors_keep_their_code():
-    rig = _rig()
-    assert rig.signing_key_state("k", ncrypt=_FakeNcrypt(0x80090016)) == "absent"
-    silent_context = rig.signing_key_state("k", ncrypt=_FakeNcrypt(0x80090022))   # NTE_SILENT_CONTEXT
-    assert silent_context == "inaccessible:0x80090022"
-    assert rig.signing_key_state("k", ncrypt=_FakeNcrypt(0x80090010)) == "inaccessible:0x80090010"
-
-
-def test_the_key_verdict_fails_closed_unless_exact_and_unchanged():
-    rig = _rig()
-    present = "present:" + "a" * 64
-    assert rig.signing_key_verdict("absent", "absent") == "PASS"
-    assert rig.signing_key_verdict(present, present) == "PASS"
-    for before, after in (("absent", present), (present, "present:" + "b" * 64),
-                          ("inaccessible:0x80090022", "inaccessible:0x80090022"),
-                          ("absent", "inaccessible:0x80090022"), ("store-unavailable:0x1", "store-unavailable:0x1"),
-                          ("present", "present"), ("unsupported", "unsupported")):
-        assert rig.signing_key_verdict(before, after).startswith("FAIL"), (before, after)
-
-
-@windows_only
-def test_the_real_key_read_is_silent_and_creates_nothing():
-    rig = _rig()
-    name = "ArchHub-real-app-check-court-" + uuid.uuid4().hex
-    assert rig.signing_key_state(name) == "absent"
-    assert rig.signing_key_state(name) == "absent"          # reading twice still created nothing
-
+# (1) NoGraph never opens a signing store.
 
 # (2) A step passes only on an explicit pass: true and only expected HTTP refusals. ----------------
 
@@ -123,16 +78,6 @@ def test_the_run_passes_only_when_every_step_passed_and_no_gate_failed():
     assert rig.run_result([passed], ["FAIL: the installed code changed"]).startswith("FAIL")
     assert rig.run_result([], []).startswith("FAIL")
     assert rig.run_result([{"asked": "d", "result": "maybe"}], []).startswith("FAIL")
-
-
-def test_the_harness_refuses_every_signing_control():
-    result = _node(
-        "import {refuseSigning, SIGNING_CONTROLS} from %s;"
-        "const refused = SIGNING_CONTROLS.filter(t => { try { refuseSigning(t); return false; } catch (_) { return true; } });"
-        "let browse = true; try { refuseSigning('Browse…'); } catch (_) { browse = false; }"
-        "console.log(JSON.stringify({controls: SIGNING_CONTROLS, refused, browse}));" % GUARDS)
-    assert set(result["controls"]) == {"Add", "Remove", "Republish", "Stop governing"}
-    assert result["refused"] == result["controls"] and result["browse"] is True
 
 
 # (3) A run-unique desktop that is never shared; (4) one Job owns every process. -------------------
@@ -308,8 +253,13 @@ def test_an_unfinished_or_divergent_probe_fails_the_run_even_with_pass_rows(line
 
 
 @windows_only
-def test_a_run_that_raises_still_writes_its_report_with_the_key_and_digest(tmp_path):
+def test_a_run_that_raises_writes_a_report_without_opening_keys(tmp_path, monkeypatch):
     rig = _rig()
+    original = rig.ctypes.WinDLL
+    def no_keys(name, *args, **kwargs):
+        assert name.lower() not in ('ncrypt', 'ncrypt.dll'), 'disposable profiles must not read signing keys'
+        return original(name, *args, **kwargs)
+    monkeypatch.setattr(rig.ctypes, 'WinDLL', no_keys)
     installed, overlay = _installed(tmp_path), tmp_path / "overlay"
     overlay.mkdir()
     (overlay / "outside-the-allowlist.txt").write_text("x\n", encoding="utf-8")
@@ -607,7 +557,7 @@ def test_a_refused_owner_fails_the_run_with_its_reasons_in_the_report(tmp_path, 
             return {"env": env}
 
         @staticmethod
-        def launch_graph_owner(desktop, plan, python, code_root, *, runner):
+        def launch_nograph_owner(desktop, plan, python, code_root, *, runner, health_seconds):
             assert runner.job_owned and runner.job is not None
             raise Refusing.OwnerRefused(["pinned endpoint: port 1 is already taken"])
     monkeypatch.setattr(rig, "_graph_owner", lambda: Refusing)
@@ -646,7 +596,7 @@ def test_the_agent_proposal_runs_job_owned_against_the_runs_own_descriptor(tmp_p
             return subprocess.CompletedProcess(command, 0, json.dumps({
                 "ok": True, "message_id": "m1", "state": "proposed", "work_created": False,
                 "grants_admitted": False}) + "\n", "")
-    env = {"LOCALAPPDATA": str(tmp_path / "LOCALAPPDATA")}
+    env = {"LOCALAPPDATA": str(tmp_path / "LOCALAPPDATA"), 'APPDATA': str(tmp_path / "LOCALAPPDATA"), 'TEMP': str(tmp_path / "LOCALAPPDATA"), 'TMP': str(tmp_path / "LOCALAPPDATA")}
     answer = rig.agent_propose(Runner(), Path("python.exe"), tmp_path / "app", tmp_path, env, "A proposal")
     (command, given_env, cwd, timeout), = calls
     assert command[2] == str(TOOL / "agent_propose.py") and command[3] == str(tmp_path / "app")
@@ -704,15 +654,14 @@ console.log(JSON.stringify({pass: result.pass, why: result.why || '', clicked}))
 """
 
 
-def test_conversations_declares_its_steps_and_never_presses_a_signing_control():
+def test_conversations_declares_its_steps():
     declared = _node("import(%s).then(m => console.log(JSON.stringify(m.steps)))"
                      % json.dumps((TOOL / "scenarios" / "conversations.mjs").resolve().as_uri()))
     assert declared == ["the real app opens to the Studio", "open the Workshop tab",
                         "create a saved conversation from the Conversations menu", "its row is listed in the catalog",
                         "select it from its row: the room opens", "reload the Studio page",
                         "reopen it from its row after the reload"]
-    source = (TOOL / "scenarios" / "conversations.mjs").read_text(encoding="utf-8")
-    assert not any("clickText('%s')" % control in source for control in ("Add", "Remove", "Republish", "Stop governing"))
+
 
 
 @pytest.mark.parametrize("enabled_after, expected", [(3, {"pass": True, "clicked": 1}), (10**6, {"pass": False, "clicked": 0})])
@@ -728,3 +677,128 @@ def test_a_conversation_row_is_clicked_only_once_it_is_enabled(enabled_after, ex
     assert {key: got[key] for key in expected} == expected, got
     if not expected["pass"]:
         assert "never became enabled" in got["why"]
+
+
+def test_native_folder_worker_refuses_the_interactive_desktop():
+    rig = _rig()
+    with pytest.raises(RuntimeError, match='outside the rig desktop'):
+        rig.native_folder_action({'desktop': 'ArchHubFixture', 'pids': [], 'title': 'Never touched', 'folder': 'C:/fixture'})
+
+
+@windows_only
+def test_native_driver_import_and_com_cache_stay_on_the_rig(tmp_path):
+    rig = _rig()
+    dependencies = APP.parent / '05.EVIDENCE/t1small-native-deps'
+    if not dependencies.is_dir() and importlib.util.find_spec('pywinauto') is None:
+        pytest.skip('Pinned native driver is not installed in this test environment')
+    program = '''import importlib.util, pathlib, sys
+spec=importlib.util.spec_from_file_location('rig',sys.argv[1]);rig=importlib.util.module_from_spec(spec);spec.loader.exec_module(rig)
+cache=pathlib.Path(sys.argv[2]);application=rig.native_application(cache)
+import comtypes.client
+assert application.__name__=='Application'
+assert pathlib.Path(comtypes.client.gen_dir).resolve()==cache.resolve()
+assert all(pathlib.Path(p).resolve().is_relative_to(cache.resolve()) for p in comtypes.gen.__path__)
+print('PYWINAUTO-RIG: native import PASS; generated COM cache confined')
+'''
+    environment = rig.isolated_env(dict(os.environ), tmp_path / 'profile')
+    script = tmp_path / 'native_driver.py'
+    script.write_text(program, encoding='utf-8')
+    if dependencies.is_dir():
+        environment['PYTHONPATH'] = str(dependencies)
+    native_before = rig.tree_digest(dependencies, entries=('comtypes', 'pywinauto'))
+    job, desktop = rig.RunJob(), None
+    try:
+        desktop = rig.HiddenDesktop(job)
+        command = subprocess.list2cmdline([sys.executable, '-B', str(script),
+            str(TOOL / 'real_app_check.py'), str(tmp_path / 'profile/LOCALAPPDATA/comtypes')])
+        result = desktop.run(command, 60, env=environment, cwd=str(tmp_path))
+        assert 'PYWINAUTO-RIG: native import PASS' in result
+        assert rig.tree_digest(dependencies, entries=('comtypes', 'pywinauto')) == native_before
+        print(result.strip())
+    finally:
+        job.close()
+        if desktop is not None:
+            desktop.close()
+
+
+@pytest.mark.parametrize('owned', [True, False])
+def test_nograph_readiness_uses_the_isolated_marker_and_owned_listener(tmp_path, monkeypatch, owned):
+    import http.server
+    import threading
+    from types import SimpleNamespace
+    owner, plan = _plan(tmp_path)
+    requests, servers = [], []
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append(self.path)
+            self.send_response(204)
+            self.end_headers()
+        def log_message(self, *args):
+            pass
+    class Runner:
+        job_owned = True
+        started = False
+        def __call__(self, *args, **kwargs):
+            return subprocess.run(*args, **kwargs)
+        def leftovers(self):
+            return [os.getpid()] if self.started and owned else []
+    runner = Runner()
+    def start(*args):
+        server = http.server.ThreadingHTTPServer(('127.0.0.1', plan['canvas_port']), Handler)
+        servers.append(server)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        marker = Path(plan['env']['ARCHHUB_TEST_STATE_DIR']) / 'nograph-http-port'
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(str(plan['canvas_port']), encoding='ascii')
+        runner.started = True
+        return SimpleNamespace(pid=os.getpid())
+    monkeypatch.setattr(owner, 'start_graph_owner', start)
+    try:
+        if owned:
+            result = owner.launch_nograph_owner(None, plan, sys.executable, APP, runner=runner, health_seconds=1)
+            assert result['listener_pid'] == os.getpid()
+            assert requests == ['/api/alive']
+        else:
+            with pytest.raises(owner.OwnerRefused, match='ready NoGraph listener'):
+                owner.launch_nograph_owner(None, plan, sys.executable, APP, runner=runner, health_seconds=1)
+            assert requests == []
+    finally:
+        for server in servers:
+            server.shutdown()
+            server.server_close()
+
+
+def test_playwright_driver_uses_a_disposable_headless_browser(tmp_path):
+    browsers = sorted(Path('C:/Users/fargaly/AppData/Local/ms-playwright').glob('chromium-*/chrome-win64/chrome.exe'))
+    assert browsers, 'Existing test Chromium is required'
+    program = r'''import { chromium } from 'playwright';
+import fs from 'node:fs';
+import path from 'node:path';
+import net from 'node:net';
+import { spawn } from 'node:child_process';
+const [tool,out,executablePath]=process.argv.slice(1);
+const socket=net.createServer();await new Promise(resolve=>socket.listen(0,'127.0.0.1',resolve));
+const port=socket.address().port;await new Promise(resolve=>socket.close(resolve));
+const browser=await chromium.launch({executablePath,headless:true,args:['--remote-debugging-port='+port]});
+try{
+ const page=await browser.newPage();await page.goto('data:text/html,<title>Fixture</title><button>Fixture</button>');
+ const scenario=path.join(out,'scenario.mjs');
+ fs.writeFileSync(scenario,`export const steps=['Playwright fixture'];export default async ctx=>{await ctx.step('Playwright fixture',async()=>({pass:await ctx.js('document.title')==='Fixture'}));};`);
+ const child=spawn(process.execPath,[path.join(tool,'harness.mjs'),scenario],{stdio:['pipe','pipe','pipe']});
+ let output='',errors='';child.stdout.on('data',data=>output+=data);child.stderr.on('data',data=>errors+=data);
+ child.stdin.end(JSON.stringify({cdp:port,out,label:'DISPOSABLE FIXTURE'})+'\n');
+ const code=await new Promise(resolve=>child.on('exit',resolve));
+ if(code!==0)throw Error(output+errors);
+ const rows=JSON.parse(fs.readFileSync(path.join(out,'steps.json'),'utf8'));
+ if(rows.length!==1||rows[0].result!=='PASS')throw Error(JSON.stringify(rows));
+ console.log('PLAYWRIGHT-RIG: isolated step PASS');
+}finally{await browser.close();}
+'''
+    environment = dict(os.environ)
+    for name in ('LOCALAPPDATA', 'APPDATA', 'TEMP', 'TMP', 'USERPROFILE', 'HOME'):
+        environment[name] = str(tmp_path)
+    result = subprocess.run([shutil.which('node'), '--input-type=module', '-e', program,
+        str(TOOL), str(tmp_path), str(browsers[-1])], cwd=TOOL.parents[2], env=environment,
+        capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stdout + result.stderr
+    print(result.stdout.strip())

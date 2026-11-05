@@ -36,6 +36,10 @@ numpy>=2.4,<3
 # Windows Office host brokers attach to Classic Outlook and other Office COM hosts.
 # Match the packaged Windows runtime; New Outlook does not expose this interface.
 pywin32==311; sys_platform == "win32"
+# The one isolated acceptance rig uses pywinauto for its native folder dialogs.
+pywinauto==0.6.9; sys_platform == "win32"
+comtypes==1.4.17; sys_platform == "win32"
+six==1.17.0
 # Native desktop admission reads process executable, arguments and working directory.
 # Ship this dependency; minimal pipe PID custody alone cannot admit the desktop.
 psutil==7.2.2

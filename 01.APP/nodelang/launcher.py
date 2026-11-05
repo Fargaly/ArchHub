@@ -346,6 +346,28 @@ def _held_port_outcome(port, front_running_archhub, tell_the_person):
             "to recover the existing instance without changing its lock port" % port)
 
 
+def _launcher_profile(environment):
+    """Profile identity is local state, never account identity or signing authority."""
+    local = environment.get("LOCALAPPDATA")
+    if not local:
+        return None
+    state = environment.get("ARCHHUB_TEST_STATE_DIR") or str(Path(local) / "ArchHub")
+    return tuple(os.path.normcase(os.path.realpath(value)) for value in (local, state))
+
+
+def _profile_lock_port(environment):
+    import hashlib
+    if environment.get("ARCHHUB_TEST_LOCK_PORT"):
+        port = int(environment["ARCHHUB_TEST_LOCK_PORT"])
+        if not 1 <= port <= 65535:
+            raise ValueError("Isolated lock port must be between 1 and 65535")
+        return port
+    profile = _launcher_profile(environment)
+    if profile is None:
+        raise ValueError("LOCALAPPDATA is required for the launcher profile")
+    return 45000 + int.from_bytes(hashlib.sha256("\0".join(profile).encode()).digest()[:4], "big") % 18000
+
+
 def _verified_launch_owner(port):
     """Refuse argv delivery unless the listener is this user's exact launcher."""
     import psutil
@@ -357,7 +379,8 @@ def _verified_launch_owner(port):
                     or connection.laddr != ('127.0.0.1', port)):
                 continue
             owner = psutil.Process(connection.pid)
-            if owner.username() != current.username():
+            if (owner.username() != current.username() or
+                    _launcher_profile(owner.environ()) != _launcher_profile(os.environ)):
                 return None
             observed = _observe_machine_process(connection.pid)
             if observed is not None and _desktop_launch_is_admitted(observed,
@@ -457,20 +480,6 @@ def _launcher_family_pids(process):
     return protected
 
 
-def _lock_listener_pid(port):
-    import psutil
-    try:
-        for connection in psutil.net_connections(kind="tcp"):
-            if (connection.status == psutil.CONN_LISTEN
-                    and connection.laddr == ("127.0.0.1", port)
-                    and connection.pid):
-                return int(connection.pid)
-    except (psutil.Error, OSError) as error:
-        print("  lock       : could not read the lock listener: %s" % error, flush=True)
-        return None
-    return None
-
-
 def _release_unanswering_holder(port, state_dir):
     """Stop our own launcher when it holds the lock and is not answering.
 
@@ -518,51 +527,6 @@ def _release_unanswering_holder(port, state_dir):
         return not owner.is_running()
     except (psutil.Error, OSError):
         return True
-
-
-def _stop_duplicate_launchers():
-    """Stop one different launcher only when it is silent.
-
-    A live launcher that answers stays. This process, its parents, its
-    children, and the process that holds the lock stay as well. After a
-    takeover the caller continues and opens the window.
-    """
-    import psutil
-    from nodelang.application_machine_transport import _observe_machine_process, _desktop_launch_is_admitted
-    try:
-        me = psutil.Process()
-    except (psutil.Error, OSError):
-        return
-    protected = _launcher_family_pids(me)
-    listener = _lock_listener_pid(_lock_port)
-    if listener:
-        protected.add(listener)
-        try:
-            protected.update(_launcher_family_pids(psutil.Process(listener)))
-        except (psutil.Error, OSError) as error:
-            print("  lock       : could not protect the lock owner's process chain: %s" % error, flush=True)
-    answering = _holder_answers(_lock_port, state_dir)
-    root = Path(__file__).resolve().parents[1]
-    for process in psutil.process_iter(["pid"]):
-        if process.pid in protected:
-            continue
-        try:
-            if process.username() != me.username():
-                continue
-            observed = _observe_machine_process(process.pid)
-            if observed is None or not _desktop_launch_is_admitted(observed, product_root=root):
-                continue
-            if answering or not process.is_running():
-                continue
-            age = max(0.0, time.time() - process.create_time())
-            if _lock_takeover_decision(True, True, False, age, True) != "stop":
-                continue
-            if process.pid in protected:
-                continue
-            process.terminate()
-            print("  lock       : stopped duplicate launcher pid %d" % process.pid, flush=True)
-        except (psutil.Error, OSError, ValueError):
-            continue
 
 
 def _exit_while_port_is_held():
@@ -632,7 +596,7 @@ def _serve_launch_requests(listener, on_launch):
 
 # ONE app. The exclusive socket also carries subsequent launches to Qt.
 import socket as _socket
-_lock_port = int(os.environ.get("ARCHHUB_TEST_LOCK_PORT", "48611"))
+_lock_port = _profile_lock_port(os.environ)
 _instance_lock = _socket.socket()
 # NEVER SO_REUSEADDR here: on Windows it PERMITS binding a port another
 # process already holds, which silently disables the single-instance
@@ -671,7 +635,6 @@ else:
         _exit_while_port_is_held()
 
 _instance_lock.listen(8)
-_stop_duplicate_launchers()
 
 import subprocess as _update_preboot_process
 # Apply only a verified release armed by the preceding owner's final recovery.

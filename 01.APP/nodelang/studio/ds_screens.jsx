@@ -614,6 +614,7 @@
       zoomWrites = React.useRef(Promise.resolve()),
       pendingZoomWrites = React.useRef(0);
     const fittedScope = React.useRef(null);
+    const framedScope = React.useRef(null);
     const userViewport = React.useRef(false);
     const {zoom, pan} = viewport;
     const [requestState, setRequestState] = React.useState('waiting');
@@ -941,6 +942,24 @@
       window.UI.requestCanvasFit = fit;
       return () => { if (window.UI.requestCanvasFit === fit) window.UI.requestCanvasFit = null; };
     });
+    React.useLayoutEffect(() => {
+      if (!embedded || !active || framedScope.current === scope || userViewport.current || !area.current) return;
+      if (requestState === 'empty') {framedScope.current=scope;return;}
+      if (requestState !== 'loaded' || layout.scope !== scope) return;
+      const boxes=[...area.current.querySelectorAll('[data-graph-node]')].map(element=>{
+        const node=visible.find(node=>node.id===element.dataset.graphNode);
+        return node && {x:node.x,y:node.y,w:element.offsetWidth,h:element.offsetHeight};
+      }).filter(Boolean);
+      if (!boxes.length || boxes.length !== visible.length) return;
+      const width=area.current.clientWidth,height=area.current.clientHeight,z=view.current.zoom;
+      const minX=Math.min(...boxes.map(box=>box.x)),minY=Math.min(...boxes.map(box=>box.y));
+      const span=Math.max(...boxes.map(box=>box.x+box.w))-minX;
+      const frame=fitCanvasViewport(boxes,width,height,z,z,z);
+      if (span*z > width-32) frame.pan.x=32-minX*z;
+      frame.pan.y=120-minY*z;
+      updateView(frame,false);
+      framedScope.current=scope;
+    }, [embedded,active,requestState,scope,layout,flowNodes.length]);
     const openNode = n => {
       if (n.kind.toLowerCase().includes('meeting')) u.go('meetings');else if (n.kind === 'Watch program') u.act(() => api.windowAction('hide'));else if (n.kind === 'Present') u.go('present');else if (['Community', 'Community group', 'Marketplace listing', 'Project charge'].includes(n.kind)) u.go('community');else if (n.kind === 'Interface studio' || n.kind === 'UI element') u.go('interface');else if (n.kind.startsWith('TBP ')) u.go('model-review');else if (n.kind === 'Theme') u.go('settings/Appearance');else if (n.kind === 'Workflow link') {
         if (n.params.targetGraph) u.act(() => api.selectGraph(n.params.targetGraph));else u.show('Workflows');
@@ -1040,7 +1059,7 @@
        selectionOnDrag panOnDrag={[1]} panActivationKeyCode="Space" multiSelectionKeyCode="Shift" selectionKeyCode={null} deleteKeyCode={null}
        zoomOnDoubleClick={false} connectionLineStyle={{stroke: A.cyan, strokeWidth: 2}} proOptions={{hideAttribution: true}} />
     </CanvasContext.Provider>
-    <div data-canvas-overlay="" className="canvas-toolbar"><Btn variant="controls" sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom">{Math.round(zoom * 100)}%</button><Btn variant="controls" sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><button type="button" className="dx-quiet" onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</button>{embedded && onHandoff && <button type="button" className="dx-quiet" onClick={event=>executeAction("projects.controls.activate",{handler:onHandoff},event)}>Handoff map</button>}</div>
+    <div data-canvas-overlay="" className="canvas-toolbar">{parent && <button type="button" className="dx-quiet" onClick={event=>executeAction("projects.ds_screens.Parent.6",{parent,s,setParent,setSelected},event)}>← {s.graph.nodes.find(node=>node.id===parent)?.title || 'Parent'}</button>}<Btn variant="controls" sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom">{Math.round(zoom * 100)}%</button><Btn variant="controls" sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><button type="button" className="dx-quiet" onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</button>{embedded && onHandoff && <button type="button" className="dx-quiet" onClick={event=>executeAction("projects.controls.activate",{handler:onHandoff},event)}>Handoff map</button>}</div>
     {embedded && <><div data-workflow-label="">Workflow</div><div data-canvas-summary="" aria-label="Workflow status">{[...stateCounts].map(([label,count])=>count+' '+label).join(' · ')}</div></>}
    </div>
    {!externalInspector && inspected && <NodeInspector n={inspected} s={s} u={u} />}

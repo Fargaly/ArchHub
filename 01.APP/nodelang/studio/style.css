@@ -636,16 +636,7 @@ html[data-reduced-motion="true"] *::after{transition:none!important;animation:no
 .dx-workspace[data-task-face=workshop] .dx-msg-actions button{background:transparent;padding:0;color:var(--color-ink-soft);height:20px}
 .dx-workspace[data-task-face=workshop] [data-dx=plan]{padding:10px 0 0;background:transparent;border-top:1px solid var(--color-line);flex:none}
 .dx-workspace[data-task-face=workshop] [data-dx=plan] h2{font-size:calc(14px * var(--text-scale,1));line-height:20px;margin:0 0 8px}
-.dx-workspace[data-task-face=workshop] .dx-stepper{display:flex;flex-wrap:wrap;gap:8px 16px;margin:0;padding:0}
-.dx-workspace[data-task-face=workshop] .dx-stepper li{display:flex;align-items:center;gap:4px;font-size:calc(12px * var(--text-scale,1));line-height:18px;background:transparent;padding:0;border:0}
-.dx-workspace[data-task-face=workshop] .dx-stepper small{display:none}
-.dx-workspace[data-task-face=workshop] .dx-stepper b{font-weight:400}
-.dx-workspace[data-task-face=workshop] .dx-params{padding:20px 24px;background:var(--color-bg-panel)}
-.dx-workspace[data-task-face=workshop] .dx-params-head{display:block;padding:0 0 8px}
-.dx-workspace[data-task-face=workshop] .dx-params h2{font-size:calc(20px * var(--text-scale,1));line-height:24px}
-.dx-workspace[data-task-face=workshop] .dx-params-head p{font-size:calc(12px * var(--text-scale,1));line-height:18px;color:var(--color-ink-soft)}
 .dx-workspace[data-task-face=workshop] .dx-fact{padding:10px 0 12px;border-top:1px solid var(--color-line);min-height:56px}
-.dx-workspace[data-task-face=workshop] .dx-plan-summary{display:none}
 .dx-workspace[data-task-face=workshop] .dx-composer{position:relative;min-height:76px;padding:8px 16px;gap:4px;border-radius:0}
 .dx-workspace[data-task-face=workshop] .dx-composer textarea{font-size:calc(14px * var(--text-scale,1));line-height:22px;min-height:28px;height:28px;padding-right:90px}
 .dx-workspace[data-task-face=workshop] .dx-tools{position:absolute;right:16px;bottom:8px;gap:8px}
@@ -803,3 +794,5 @@ html[data-reduced-motion="true"] *::after{transition:none!important;animation:no
 .sheet-category+.sheet-category{margin-top:30px}
 
 html[data-theme=Light]{--color-bg:var(--color-l-bg);--color-bg-deep:var(--color-l-bg);--color-bg-panel:var(--color-l-bg-panel);--color-bg-canvas:var(--color-l-bg);--color-bg-soft:var(--color-l-bg-soft);--color-bg-raised:var(--color-l-bg-panel);--color-bg-hover:var(--color-l-bg-soft);--color-bg-ink:var(--color-l-bg-soft);--color-ink:var(--color-l-ink);--color-ink-soft:var(--color-l-ink-soft);--color-ink-muted:var(--color-l-ink-muted);--color-line:var(--color-l-line);--color-line-soft:var(--color-l-line);--color-accent:var(--color-l-accent);--color-accent-hi:var(--color-l-accent)}
+
+.dx-edit-label{white-space:nowrap}

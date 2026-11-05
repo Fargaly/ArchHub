@@ -157,7 +157,7 @@ def _wait_until(predicate, timeout):
 
 
 def test_real_entry_chain_opens_one_window(tmp_path):
-    """The installed chain: ArchHub.vbs, then one window, one maintainer.
+    """The installed chain: ArchHub.vbs, then one window owning its updates.
 
     The venv pythonw redirector is the parent of the interpreter and carries
     the same launcher command line. This launch must leave that parent alive
@@ -229,7 +229,7 @@ def test_real_entry_chain_opens_one_window(tmp_path):
         [sys.executable, "-E", "-s", str(app / "colleague_setup.py"), "--check-ready"],
         cwd=app, env=env, capture_output=True, text=True, timeout=120)
     assert ready.returncode == 0, (ready.returncode, ready.stdout, ready.stderr)
-    log_path = state / "launcher.log"
+    log_path = state / "logs" / "launcher.log"
     launches = []
 
     def start():
@@ -283,14 +283,14 @@ def test_real_entry_chain_opens_one_window(tmp_path):
                 parents.append(parent)
         assert parents, first
         assert all(_alive(pid) for pid in parents)
-        assert _wait_until(lambda: len(maintain_pids()) == 1, 30), maintain_pids()
+        assert not maintain_pids(), maintain_pids()
         second = start()
         second.wait(timeout=180)
         assert second.returncode == 0, log_text()[-4000:]
-        assert "leaving it alone" in log_text()
+        assert log_text().count("window     : Studio opened") == 1
         assert answers()
         assert all(_alive(pid) for pid in first)
-        assert len(maintain_pids()) == 1, maintain_pids()
+        assert not maintain_pids(), maintain_pids()
         _kill_pids(first)
         assert _wait_until(lambda: not launcher_pids(), 20), launcher_pids()
         before = log_text().count("window     : Studio opened")
@@ -301,7 +301,7 @@ def test_real_entry_chain_opens_one_window(tmp_path):
         assert reopened, log_text()[-4000:]
         again = launcher_pids()
         assert len(again) >= 2, again
-        assert len(maintain_pids()) == 1, maintain_pids()
+        assert not maintain_pids(), maintain_pids()
     finally:
         for proc in launches:
             try:

@@ -35,6 +35,8 @@ def fixture_exe(tmp_path_factory):
     command += ["/r:" + str(path) for path in references]
     command += [str(core), str(ROOT / "01.APP/bridges/sources/revit_mcp/RevitEventHandler.cs"),
                 str(ROOT / "01.APP/bridges/sources/shared/BridgeAuth.cs"), str(ROOT / "01.APP/bridges/sources/shared/ReviewedCore.cs")]
+    command += [str(ROOT / "01.APP/bridges/sources/revit_mcp/RevitMCPApp.cs"),
+                str(ROOT / "01.APP/bridges/sources/shared/CoreLoader.cs")]
     command += [str(path) for path in (ROOT / "02.TESTS/tests_replica/revit_open_fixture").glob("*.cs")]
     built = subprocess.run(command, capture_output=True, text=True, timeout=300)
     assert built.returncode == 0, built.stdout + built.stderr
@@ -191,3 +193,14 @@ def test_incomplete_or_failed_rollback_is_reported_with_the_original_error(fixtu
 def test_pending_commit_is_reported_as_unresolved_not_as_unmodified(fixture_exe):
     result = run(fixture_exe, "/exec", {"code": "probe"}, active=True, commit_status="Pending")
     assert "unresolved" in result["answer"]["error"] and "not modified" not in result["answer"]["error"]
+
+
+def test_watchdog_cancels_unstarted_work_and_unknown_dialogs_stay_open(fixture_exe):
+    result = subprocess.run([*fixture_exe, 'stall'], capture_output=True, text=True, timeout=90)
+    assert result.returncode == 0, result.stdout + result.stderr
+    seen = json.loads(result.stdout)
+    assert seen['known'] == 2 and seen['unknown'] is None
+    assert seen['calls'] == 0 and seen['pending'] is False
+    assert seen['timeout']['execution_state'] == 'not_started' and seen['timeout']['retry_safe'] is True
+    assert seen['running']['execution_state'] == 'running' and seen['running']['retry_safe'] is False
+    assert 'Unknown add-in "dialog"' in seen['running']['error']

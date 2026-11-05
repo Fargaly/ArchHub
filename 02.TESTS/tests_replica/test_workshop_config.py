@@ -42,7 +42,7 @@ def _record(folder, connection, suffix, text):
 
 
 def test_state_dir_follows_the_application(tmp_path):
-    assert slc.app_state_dir({"LOCALAPPDATA": str(tmp_path)}) == tmp_path / "ArchHub-Test" / "workshop"
+    assert slc.app_state_dir({"LOCALAPPDATA": str(tmp_path), 'APPDATA': str(tmp_path), 'TEMP': str(tmp_path), 'TMP': str(tmp_path)}) == tmp_path / "ArchHub-Test" / "workshop"
     assert slc.app_state_dir({"LOCALAPPDATA": "x", "ARCHHUB_TEST_STATE_DIR": str(tmp_path)}) == tmp_path / "workshop"
     with pytest.raises(slc.WorkshopConfigRefused):
         slc.app_state_dir({})

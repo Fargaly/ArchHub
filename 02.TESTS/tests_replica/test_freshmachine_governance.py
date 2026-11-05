@@ -30,7 +30,7 @@ def test_generated_rules_preserve_user_text_and_update_once(tmp_path):
     (home / '.codex').mkdir(parents=True)
     target = home / '.codex/AGENTS.md'
     target.write_text('My own instructions.\n', encoding='utf-8')
-    env = {'USERPROFILE': str(home)}
+    env = {'USERPROFILE': str(home), 'APPDATA': str(home), 'LOCALAPPDATA': str(home), 'TEMP': str(home), 'TMP': str(home)}
     install_rules('codex', root, env)
     first = target.read_bytes()
     install_rules('codex', root, env)
@@ -51,5 +51,40 @@ def test_damaged_rule_markers_are_left_untouched(tmp_path):
     original = b'personal\n<!-- ARCHHUB-PRODUCT:BEGIN -->\n'
     target.write_bytes(original)
     with pytest.raises(ValueError, match='ambiguous'):
-        install_rules('claude-code', tmp_path, {'USERPROFILE': str(home)})
+        install_rules('claude-code', tmp_path, {'USERPROFILE': str(home), 'APPDATA': str(home), 'LOCALAPPDATA': str(home), 'TEMP': str(home), 'TMP': str(home)})
     assert target.read_bytes() == original
+
+
+def _workspace_care(name):
+    import importlib.util
+    folder = Path('C:/Users/fargaly/00.ARCHUB/00.GOVERNANCE/01.WORKSPACE-CARE')
+    spec = importlib.util.spec_from_file_location(name, folder / (name + '.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_hourly_folder_names_scan_private_names_without_file_reads(tmp_path, monkeypatch):
+    care = _workspace_care('gen_register')
+    workspace = tmp_path / 'workspace'
+    for name in ('20.CLIENTS/21.PROJECT/lowercase', '60.PERSONAL/badname',
+                 '50.TOOLING/51.SCRIPTS/52.VALID', '10.PRODUCT/11.APP/python_package'):
+        (workspace / name).mkdir(parents=True)
+    private_file = workspace / '20.CLIENTS/21.PROJECT/private.txt'
+    private_file.write_text('fixture only', encoding='utf-8')
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, 'open', lambda *args, **kwargs: pytest.fail('folder scan opened a file'))
+        report = care.folder_names(workspace)
+    assert {row['path'] for row in report['invalid']} == {
+        '20.CLIENTS/21.PROJECT/lowercase', '60.PERSONAL/badname', '10.PRODUCT/11.APP/python_package'}
+    assert care.main(['--folders-only', '--root', str(workspace)]) == 0
+    assert (workspace / '00.GOVERNANCE/05.WORKSPACE-REPORTS/folder-names.json').is_file()
+
+
+def test_steward_reports_in_existing_numbered_folder(tmp_path, monkeypatch):
+    care = _workspace_care('workspace_steward')
+    monkeypatch.syspath_prepend(str(Path(care.__file__).parent))
+    (tmp_path / '00.GOVERNANCE').mkdir()
+    assert care.main(['--root', str(tmp_path), '--no-dedup', '--no-tier-scan', '--no-copy-scan']) == 0
+    assert list((tmp_path / '00.GOVERNANCE/05.WORKSPACE-REPORTS').glob('*.json'))
+    assert not (tmp_path / '00.GOVERNANCE/reports').exists()

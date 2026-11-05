@@ -73,7 +73,7 @@ def _env(root, mode):
         "ARCHHUB_HOOK_STATE": str(hook),
         "PATH": os.environ.get("PATH", ""),
         "SYSTEMROOT": os.environ.get("SYSTEMROOT", r"C:\Windows"),
-    }
+     'APPDATA': str(root)}
 
 
 def _relay(base, root, mode, **kw):

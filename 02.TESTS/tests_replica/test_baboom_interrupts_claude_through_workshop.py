@@ -63,7 +63,7 @@ class Recorder:
 def env(tmp_path):
     node = tmp_path / "node.exe"
     node.write_bytes(b"")
-    return {"WORKSHOP_NODE": str(node), "LOCALAPPDATA": str(tmp_path / "local")}
+    return {"WORKSHOP_NODE": str(node), "LOCALAPPDATA": str(tmp_path / "local"), 'APPDATA': str(tmp_path / "local"), 'TEMP': str(tmp_path / "local"), 'TMP': str(tmp_path / "local")}
 
 
 # -- 1. the helper: exact result shapes -------------------------------------
@@ -125,7 +125,7 @@ def test_a_refused_silent_or_missing_transport_never_claims_anything(env):
     with pytest.raises(InvalidCell, match="does not match this request"):
         bsi.route_interrupt({"target": "claude:" + SESSION}, environment=env, runner=garbage)
     missing = {"WORKSHOP_NODE": str(Path(env["WORKSHOP_NODE"]).with_name("absent.exe")),
-               "LOCALAPPDATA": env["LOCALAPPDATA"]}
+               "LOCALAPPDATA": env["LOCALAPPDATA"], 'APPDATA': env["LOCALAPPDATA"], 'TEMP': env["LOCALAPPDATA"], 'TMP': env["LOCALAPPDATA"]}
     none = Recorder()
     with pytest.raises(InvalidCell, match="Node runtime is unavailable; nothing was sent"):
         bsi.route_interrupt({"target": "claude:" + SESSION}, environment=missing, runner=none)
@@ -178,7 +178,7 @@ def test_the_real_workshop_entry_refuses_an_unknown_session_through_the_same_arg
     env = {**{k: v for k, v in os.environ.items()
               if k not in ("CODEX_APP_TOOLS_PIPE_PATH", "CODEX_THREAD_ID", "WORKSHOP_PRODUCT_WORKER")},
            "WORKSHOP_NODE": node, "HOME": str(home), "USERPROFILE": str(home),
-           "WORKSHOP_STATE_DIR": str(tmp_path / "state")}
+           "WORKSHOP_STATE_DIR": str(tmp_path / "state"), 'APPDATA': str(home), 'LOCALAPPDATA': str(home), 'TEMP': str(home), 'TMP': str(home)}
     with pytest.raises(InvalidCell, match="Workshop refused the interrupt: .*nothing sent"):
         bsi.route_interrupt({"target": "claude:" + SESSION, "reason": "court"}, environment=env)
 

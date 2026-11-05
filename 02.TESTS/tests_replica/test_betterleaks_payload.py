@@ -52,7 +52,7 @@ def _env(tmp_path, exe):
     return {"USERPROFILE": str(home), "HOME": str(home),
             "LOCALAPPDATA": str(home / "AppData" / "Local"),
             "TEMP": str(tmp_path / "tmp"), "ARCHHUB_HOOK_STATE": str(tmp_path / "state"),
-            "ARCHHUB_BETTERLEAKS": str(exe)}
+            "ARCHHUB_BETTERLEAKS": str(exe), 'APPDATA': str(home / "AppData" / "Local"), 'TMP': str(home / "AppData" / "Local")}
 
 
 def test_real_scanner_flags_a_fake_aws_key_and_ignores_clean_text(staged, tmp_path):

@@ -38,7 +38,7 @@ def _rig(tmp_path, servers=None, projects=None):
         config["projects"] = projects
     (home / ".claude.json").write_text(json.dumps(config), encoding="utf-8")
     environment = {"USERPROFILE": str(home), "PATH": "",
-                   "APPDATA": str(tmp_path / "roaming"), "LOCALAPPDATA": str(tmp_path / "local")}
+                   "APPDATA": str(tmp_path / "roaming"), "LOCALAPPDATA": str(tmp_path / "local"), 'TEMP': str(tmp_path / "local"), 'TMP': str(tmp_path / "local")}
     return root, tmp_path / "state", home, environment
 
 

@@ -177,7 +177,7 @@ def acad(tmp_path):
     appdata = profile / "AppData" / "Roaming"
     appdata.mkdir(parents=True)
     env = {"USERPROFILE": str(profile), "APPDATA": str(appdata), "ProgramFiles": str(program_files),
-           "ProgramData": str(tmp_path / "ProgramData"), "LOCALAPPDATA": str(profile / "AppData" / "Local")}
+           "ProgramData": str(tmp_path / "ProgramData"), "LOCALAPPDATA": str(profile / "AppData" / "Local"), 'TEMP': str(profile / "AppData" / "Local"), 'TMP': str(profile / "AppData" / "Local")}
     bundle = appdata / "Autodesk" / "ApplicationPlugins" / "ArchHub.AcadMCP.bundle"
     return type("Acad", (), {"install": install, "host": host, "env": env, "bundle": bundle})
 

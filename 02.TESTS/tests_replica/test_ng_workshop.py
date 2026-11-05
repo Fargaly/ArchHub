@@ -58,7 +58,8 @@ for i in range(100):
 """
         def run(i):
             result = subprocess.run([sys.executable, '-B', '-c', program, str(i)],
-                capture_output=True, text=True, timeout=90)
+                capture_output=True, text=True, timeout=90,
+                env={**os.environ, 'PYTHONPATH':str(Path(__file__).resolve().parents[2] / '01.APP')}, **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}))
             self.assertEqual(result.returncode, 0, result.stderr)
         started = time.perf_counter()
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
@@ -72,6 +73,39 @@ for i in range(100):
         self.assertEqual(sorted(r['sequence'] for r in rows), list(range(1, 1001)))
         print(json.dumps({'concurrent_messages': len(rows), 'lost': 0,
             'seconds': round(time.perf_counter() - started, 3)}))
+
+    def test_four_senders_200_messages_with_concurrent_readers(self):
+        # Real independent SQLite connections, including cold-start schema contention.
+        program = """from nodelang.workshop_mailbox import call
+import json, sys, time
+while time.time() < float(sys.argv[2]):
+ time.sleep(.01)
+if sys.argv[1].startswith('writer'):
+ for i in range(50):
+  call('send', {'to':'founder', 'text':sys.argv[1]+':'+str(i), 'idempotency_key':str(i)}, {})
+else:
+ for i in range(100):
+  call('read', {'since':8050 if i % 2 else 0}, {})
+print(json.dumps({'lock_errors':0}))
+"""
+        start = str(time.time() + 3)
+        def run(name):
+            result = subprocess.run([sys.executable, '-B', '-c', program, name, start],
+                capture_output=True, text=True, timeout=90,
+                env={**os.environ, 'PYTHONPATH':str(Path(__file__).resolve().parents[2] / '01.APP')},
+                **({'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {}))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout), {'lock_errors':0})
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+            list(pool.map(run, ['writer0', 'writer1', 'writer2', 'writer3', 'reader0', 'reader1']))
+        with mailbox.application_history(None) as history:
+            rows = history._db.execute('SELECT content FROM messages WHERE category=?',
+                (mailbox.CATEGORY,)).fetchall()
+        self.assertEqual({row['content'] for row in rows},
+            {'To founder:\nwriter%d:%d' % (writer, i) for writer in range(4) for i in range(50)})
+        self.assertEqual(len(rows), 200)
+        print(json.dumps({'concurrent_senders':4, 'concurrent_readers':2,
+            'messages':len(rows), 'lost':0, 'lock_errors':0}))
 
     def test_injection_once_and_reply_settles(self):
         class Transport:
@@ -146,8 +180,13 @@ for i in range(100):
                 return {'status':'injected', 'dispatch_attempted':True}
         transport = Transport()
         with patch.object(mailbox, '_local_transport', return_value=transport):
-            mailbox.call('send', {'to':'external-session','text':'No reply needed.'}, self.context)
+            result = mailbox.call('send', {'to':'external-session','text':'No reply needed.'}, self.context)
         self.assertEqual(transport.sent, [{'app':'claude','id':'external-session'}])
+        self.assertEqual(result['status'], 'recorded')
+        self.assertEqual([row['state'] for row in result['delivery']], ['delivered'])
+        with mailbox.application_history(None) as history:
+            self.assertIsNone(history._db.execute(
+                "SELECT 1 FROM messages WHERE idempotency_key LIKE 'workshop-unresolved:%'").fetchone())
 
     def test_retention_expires_parent_preserves_recent_reply_and_indexes(self):
         from datetime import datetime, timedelta, timezone
@@ -301,3 +340,18 @@ def test_session_start_declares_role(tmp_path, monkeypatch, database):
     monkeypatch.delenv('ARCHHUB_WORKSHOP_ROLE')
     again = declare_session({'session_id': 'auto', 'cwd': str(tmp_path)}, 'codex', database=database)
     assert again['declaration']['role'] == 'research'
+
+
+def test_two_live_role_holders_keep_exact_session_addresses(database):
+    older = declare(database, 'older-design', 'design', display_name='First designer')
+    newer = declare(database, 'newer-design', 'design', display_name='Second designer')
+    sender = {'sender_key':'writer', 'sender_label':'Writer', 'sender':'Writer [writer]'}
+    with mb.application_history(database=database) as history:
+        exact = mb._send(history, {'to':'older-design', 'text':'exact native'}, sender)
+        session = mb._send(history, {'to':older['sender_key'], 'text':'exact session'}, sender)
+        role = mb._send(history, {'to':'design', 'text':'current role'}, sender)
+        rows = mb.read_declarations(history._db)
+        assert {row['session'] for row in rows} == {older['sender_key'], newer['sender_key']}
+        assert {m['id'] for m in mb._pending(history, ident(older), 'codex')['pending']} == {
+            exact['message_id'], session['message_id']}
+        assert {m['id'] for m in mb._pending(history, ident(newer), 'codex')['pending']} == {role['message_id']}

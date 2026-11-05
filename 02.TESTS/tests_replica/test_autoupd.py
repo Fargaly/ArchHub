@@ -46,7 +46,7 @@ def launcher_function(name, namespace):
     return namespace[name]
 
 
-@pytest.mark.parametrize('mode', ['rolled_back', 'applied'])
+@pytest.mark.parametrize('mode', ['rolled_back', 'applied', 'apply_rolled_back'])
 @pytest.mark.parametrize('launch_failed', [False, True])
 def test_preboot_relaunch_uses_one_process_owner_and_never_falls_through(tmp_path, monkeypatch, mode, launch_failed):
     from nodelang import application_update_recovery as recovery
@@ -55,7 +55,8 @@ def test_preboot_relaunch_uses_one_process_owner_and_never_falls_through(tmp_pat
         and any(isinstance(child, ast.Name) and child.id == 'begin_update_boot' for child in ast.walk(n)))
     monkeypatch.setattr(qu, 'begin_update_boot', lambda *a: {'rolled_back': True} if mode == 'rolled_back'
         else {'staged': True, 'status': 'staged'})
-    monkeypatch.setattr(qu, 'apply_staged', lambda *a, **kw: {'applied': True, 'build_id': 'new'})
+    monkeypatch.setattr(qu, 'apply_staged', lambda *a, **kw: {'rolled_back': True} if mode == 'apply_rolled_back'
+        else {'applied': True, 'build_id': 'new'})
     monkeypatch.setattr(recovery, 'validate_update_ready', lambda *a: None)
     calls = []
     def launch(command, **kwargs):
@@ -64,12 +65,13 @@ def test_preboot_relaunch_uses_one_process_owner_and_never_falls_through(tmp_pat
             raise OSError('fixture launcher unavailable')
     namespace = dict(Path=Path, __file__=str(tmp_path / 'nodelang/launcher.py'), state_dir=tmp_path,
         state_path=tmp_path / 'graph.db', _instance_lock=SimpleNamespace(close=lambda: calls.append('close')),
+        _profile_instance=SimpleNamespace(close=lambda: calls.append('mutex-close')),
         _update_preboot_process=SimpleNamespace(Popen=launch, CREATE_NO_WINDOW=123))
     with pytest.raises(SystemExit) as stopped:
         exec(compile(ast.Module(body=[node], type_ignores=[]), '<preboot-fixture>', 'exec'), namespace)
     assert stopped.value.code == int(launch_failed)
-    assert calls[0] == 'close' and len(calls) == 2
-    assert calls[1] == (['wscript.exe', str(tmp_path / 'ArchHub.vbs')],
+    assert calls[:2] == ['close', 'mutex-close'] and len(calls) == 3
+    assert calls[2] == (['wscript.exe', str(tmp_path / 'ArchHub.vbs')],
         {'close_fds': True, 'creationflags': 123})
 
 
@@ -80,10 +82,16 @@ def test_startup_stages_local_newer_manifest_before_first_wait(tmp_path, monkeyp
     stage = qu.stage_if_newer
     monkeypatch.setattr(qu, 'stage_if_newer', lambda state, app, **kw: stage(state, app, opener, **kw))
     owner = ApplicationUpdate(state, app, request_restart=lambda: None, first_boot=True)
-    namespace = dict(time=SimpleNamespace(monotonic=lambda: 0),
-        _update_stop=SimpleNamespace(is_set=lambda: False, wait=lambda delay: True),
-        _stage_once=owner.check)
-    launcher_function('_stage_update_quietly', namespace)()
+    from nodelang import application_update
+    monkeypatch.setattr(application_update, 'canvas_job_running', lambda server: True)
+    source = ast.parse((ROOT / "01.APP/nodelang/nograph_launcher.py").read_text(encoding='utf-8'))
+    pulse = next(node for node in ast.walk(source) if isinstance(node, ast.FunctionDef)
+                 and node.name == 'consider_update')
+    namespace = dict(__package__='nodelang', server=SimpleNamespace(application_update=owner),
+        window=SimpleNamespace(isVisible=lambda: True), seen_open={'value': False},
+        QSystemTrayIcon=SimpleNamespace(isSystemTrayAvailable=lambda: False))
+    exec(compile(ast.Module(body=[pulse], type_ignores=[]), '<nograph-update-pulse>', 'exec'), namespace)
+    namespace['consider_update']()
     if owner._worker:
         owner._worker.join(timeout=5)
     assert owner.status()['state'] == 'ready', 'startup never staged/offered the local newer release'
@@ -288,18 +296,15 @@ def test_emergency_recovery_uses_only_stdlib_and_refuses_a_running_owner(tmp_pat
     app, state = staged_app(tmp_path)
     assert qu.apply_staged(state, app, runner=fixture_installer(app))['applied']
     (app / 'nodelang' / '__init__.py').write_text('invalid Python !!!',encoding='utf-8')
-    class Socket:
-        busy = True
-        def setsockopt(self, *args): pass
-        def bind(self, address):
-            if self.busy: raise OSError('existing desktop owns the lock')
+    class Lock:
+        handle = None
         def close(self): pass
-    socket = Socket()
+    lock = Lock()
     owner = runpy.run_path(qu.__file__)
-    assert not owner['recover_failed_launch'](state, app, socket_factory=lambda: socket)['rolled_back']
+    assert not owner['recover_failed_launch'](state, app, lock_factory=lambda: lock)['rolled_back']
     assert qu.installed_build_id(app) == NEW[0]
-    socket.busy = False
-    assert not owner['recover_failed_launch'](state, app, socket_factory=lambda: socket)['rolled_back']
+    lock.handle = 1
+    assert not owner['recover_failed_launch'](state, app, lock_factory=lambda: lock)['rolled_back']
     assert qu.installed_build_id(app) == NEW[0]
     assert not (state / 'updates' / 'previous-build.zip').exists()
 
@@ -488,3 +493,36 @@ def test_canvas_job_counter_blocks_an_unattended_install():
     assert canvas_job_running(SimpleNamespace(_canvas_jobs=1)) is True
     assert canvas_job_running(SimpleNamespace(_canvas_jobs=0, triggers=SimpleNamespace(running=()))) is False
     assert canvas_job_running(SimpleNamespace(_canvas_jobs=0, triggers=SimpleNamespace(running=('job',)))) is True
+
+
+@pytest.mark.parametrize('action', ['--apply-staged', '--maintain', '--recover-failed-launch'])
+def test_explicit_cli_state_is_selected_before_any_profile_check(tmp_path, monkeypatch, action):
+    state, app = tmp_path / 'chosen-state', tmp_path / 'app'
+    monkeypatch.setenv('ARCHHUB_TEST_STATE_DIR', str(tmp_path / 'other-state'))
+    calls = []
+    def selected(*args, **kwargs):
+        assert qu.state_directory() == state
+        calls.append(action)
+        return True
+    monkeypatch.setattr(qu, '_desktop_running', selected)
+    monkeypatch.setattr(qu, 'append_update_log', lambda *args: None)
+    monkeypatch.setattr(qu, 'maintain', lambda *args: int(not selected()))
+    monkeypatch.setattr(qu, 'recover_failed_launch', lambda actual, *args: {'rolled_back': False, 'selected': selected()})
+    assert qu.main([action, str(app), '--state-dir', str(state)]) == (1 if action == '--recover-failed-launch' else 0)
+    assert calls == [action]
+
+
+def test_direct_recovery_locks_its_explicit_state_not_environment(tmp_path, monkeypatch):
+    from nodelang.profile_instance import ProfileInstance
+    state, app = tmp_path / 'chosen-state', tmp_path / 'app'
+    (state / 'updates').mkdir(parents=True)
+    (state / 'updates' / 'staged.json').write_text('{}', encoding='utf-8')
+    monkeypatch.setenv('ARCHHUB_TEST_STATE_DIR', str(tmp_path / 'other-state'))
+    environment = dict(os.environ, ARCHHUB_TEST_STATE_DIR=str(state))
+    holder = ProfileInstance(environment)
+    monkeypatch.setattr(qu, 'rollback_staged', lambda *args: pytest.fail('cannot rollback an open profile'))
+    try:
+        assert not qu.recover_failed_launch(state, app)['rolled_back']
+        assert os.environ['ARCHHUB_TEST_STATE_DIR'] == str(tmp_path / 'other-state')
+    finally:
+        holder.close()

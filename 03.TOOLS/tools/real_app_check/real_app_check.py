@@ -12,7 +12,7 @@ Guarantees:
     it and belongs to this run's own processes. Native dialogs open there; pywinauto drives them there.
   * Isolated profile: APPDATA, LOCALAPPDATA, USERPROFILE (with its shell folders), HOME, TEMP,
     CLAUDE_CONFIG_DIR and ARCHHUB_TEST_STATE_DIR point into the run folder; agent/session variables
-    are dropped; own lock and CDP ports; no bytecode; the launch directory is the run folder. The
+    are dropped; own profile lock and CDP port; no bytecode; the launch directory is the run folder. The
     report proves the app wrote its state there.
   * The installed tree is never modified: its code is hashed before and after the run. With --overlay,
     only files under the code allowlist are laid over a copy of that code (contained, no links), and
@@ -20,7 +20,7 @@ Guarantees:
     repository's packaging/compile_studio.cjs.
   * One Windows Job object (kill on close) owns the app, the probe and every winapp helper; every wait
     is bounded; the job is terminated in `finally` on every exit path.
-  * No signing-key read: NoGraph uses plain workspace settings; the disposable run never opens CNG.
+  * Signing controls are refused; silent public-key state reads prove the Windows key is unchanged.
 """
 from __future__ import annotations
 
@@ -58,6 +58,55 @@ OVERLAY_ROOTS = ("nodelang", "app", "runtime", "workflows", "library", "custom_n
 DROPPED_ENV = ("CLAUDE", "ARCHHUB", "WORKSHOP", "CODEX", "ANTHROPIC", "PYTHON")
 OVERLAY_LABEL = "CANDIDATE OVERLAY"
 INSTALLED_LABEL = "INSTALLED BUILD"
+
+
+SIGNING_KEY_NAME = "ArchHub-workspace-roots-v1"
+NTE_BAD_KEYSET = 0x80090016
+# Windows CNG ABI flag, matching windows_cng_signing_provider; silence is mandatory.
+_NCRYPT_SILENT_FLAG = ctypes.c_ulong(0x40).value
+
+def signing_key_state(name: str = SIGNING_KEY_NAME, ncrypt=None) -> str:
+    """Silently read the Workspaces signing key: "absent" (NTE_BAD_KEYSET only), "present:<sha256 of
+    the public half>", or an exact failure code. Never creates or uses the key."""
+    if ncrypt is None:
+        if os.name != "nt":
+            return "unsupported"
+        ncrypt = ctypes.WinDLL("ncrypt")
+    provider, key = ctypes.c_size_t(), ctypes.c_size_t()
+    rc = ncrypt.NCryptOpenStorageProvider(ctypes.byref(provider), "Microsoft Software Key Storage Provider", 0)
+    if rc:
+        return "store-unavailable:0x%08x" % (rc & 0xFFFFFFFF)
+    try:
+        rc = ncrypt.NCryptOpenKey(provider, ctypes.byref(key), name, 0, _NCRYPT_SILENT_FLAG) & 0xFFFFFFFF
+        if rc == NTE_BAD_KEYSET:
+            return "absent"
+        if rc:
+            return "inaccessible:0x%08x" % rc
+        try:
+            size = ctypes.c_ulong()
+            rc = ncrypt.NCryptExportKey(key, 0, "ECCPUBLICBLOB", None, None, 0, ctypes.byref(size),
+                                        _NCRYPT_SILENT_FLAG) & 0xFFFFFFFF
+            if rc:
+                return "present-unreadable:0x%08x" % rc
+            blob = (ctypes.c_ubyte * size.value)()
+            rc = ncrypt.NCryptExportKey(key, 0, "ECCPUBLICBLOB", None, blob, size, ctypes.byref(size),
+                                        _NCRYPT_SILENT_FLAG) & 0xFFFFFFFF
+            if rc:
+                return "present-unreadable:0x%08x" % rc
+            return "present:" + hashlib.sha256(bytes(blob[:size.value])).hexdigest()
+        finally:
+            ncrypt.NCryptFreeObject(key)
+    finally:
+        ncrypt.NCryptFreeObject(provider)
+
+def signing_key_verdict(before: str, after: str) -> str:
+    """Fail closed: only an exact, unchanged "absent" or "present:<hash>" passes."""
+    exact = lambda state: state == "absent" or (state.startswith("present:") and len(state) == len("present:") + 64)
+    if not (exact(before) and exact(after)):
+        return "FAIL: the signing key state is not exactly known (%s -> %s)" % (before, after)
+    if before != after:
+        return "FAIL: the Workspaces signing key changed during the run (%s -> %s)" % (before, after)
+    return "PASS"
 
 
 def free_port() -> int:
@@ -562,7 +611,7 @@ def main(argv=None) -> int:
     _profile_guard().install(out / "PROFILE-WRITES.jsonl")
     installed = args.app.resolve()
     python = installed / ".venv" / "Scripts" / "python.exe"
-    report = {"installed": str(installed), "signing_key_before": "not-used-nograph",
+    report = {"installed": str(installed), "signing_key_before": signing_key_state(),
               "installed_code_before": tree_digest(installed)}
     job = desktop = probe = None
     failures, lines, timed_out, exit_code = [], [], False, None
@@ -666,8 +715,8 @@ def main(argv=None) -> int:
 
 
 def finalize_report(report: dict, out: Path, installed: Path, failures: list) -> int:
-    """Always record the code digest, every gate and report.json without opening keys."""
-    for name, read in (("signing_key_after", lambda: "not-used-nograph"), ("installed_code_after", lambda: tree_digest(installed))):
+    """Always record silent key-state readback, the code digest, every gate and report.json."""
+    for name, read in (("signing_key_after", signing_key_state), ("installed_code_after", lambda: tree_digest(installed))):
         try:
             report[name] = read()
         except Exception as exc:  # noqa: BLE001 - an unreadable state is not a pass
@@ -677,7 +726,9 @@ def finalize_report(report: dict, out: Path, installed: Path, failures: list) ->
         steps = json.loads(steps_file.read_text(encoding="utf-8")) if steps_file.exists() else []
     except ValueError:
         steps, failures = [], [*failures, "FAIL: steps.json is unreadable"]
+    key = signing_key_verdict(report.get("signing_key_before", "unknown"), report["signing_key_after"])
     problems = [*failures, *[problem for problem in (
+        None if key == "PASS" else key,
         None if report["installed_code_after"] == report.get("installed_code_before") else "FAIL: the installed code changed",
         None if report.get("app_windows_on_desktop") else "FAIL: no window of this run's app was found on its hidden desktop",
         None if report.get("state_written_in_run_folder") else "FAIL: the app wrote no state in the run folder",

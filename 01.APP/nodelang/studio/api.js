@@ -1685,8 +1685,16 @@ api.setNodePresentation=async(id,values)=>{
  return fileEdit(d=>{const node=d.nodes.find(n=>n.id===id);if(!node)throw Error('Choose a node in this workflow.');Object.assign(node,values);});
 };
 api.renameNode=async(id,title)=>fileEdit(d=>{const n=d.nodes.find(n=>n.id===id);if(n)n.title=title;});
-api.deleteNode=async id=>fileEdit(d=>{d.nodes=d.nodes.filter(n=>n.id!==id);d.wires=d.wires.filter(w=>w.from.node!==id&&w.to.node!==id);for(const n of d.nodes){n.children=n.children?.filter(child=>child!==id);if(n.parent===id)delete n.parent;}d.groups=d.groups.filter(g=>g.id!==id).map(g=>({...g,nodes:g.nodes.filter(child=>child!==id)}));},sessionDocument.wires.filter(w=>w.from.node===id).map(w=>w.to.node));
-api.deleteWire=async id=>fileEdit(d=>{d.wires=d.wires.filter(w=>w.id!==id);},sessionDocument.wires.filter(w=>w.id===id).map(w=>w.to.node));
+api.deleteSelection=async(nodes=[],wires=[])=>{
+ const removedNodes=new Set(nodes),removedWires=new Set(wires),removed=w=>removedWires.has(w.id)||removedNodes.has(w.from.node)||removedNodes.has(w.to.node);
+ return fileEdit(d=>{
+  d.nodes=d.nodes.filter(n=>!removedNodes.has(n.id));d.wires=d.wires.filter(w=>!removed(w));
+  for(const n of d.nodes){if(n.children)n.children=n.children.filter(id=>!removedNodes.has(id));if(removedNodes.has(n.parent))delete n.parent;}
+  d.groups=d.groups.filter(g=>!removedNodes.has(g.id)).map(g=>({...g,nodes:g.nodes.filter(id=>!removedNodes.has(id))}));
+ },sessionDocument.wires.filter(removed).map(w=>w.to.node));
+};
+api.deleteNode=async id=>api.deleteSelection([id]);
+api.deleteWire=async id=>api.deleteSelection([],[id]);
 api.connectSockets=async wire=>{
  const from=state.graph.nodes.find(n=>n.id===wire.from),to=state.graph.nodes.find(n=>n.id===wire.to),out=from?.outputs.find(p=>p.id===wire.fromPort),input=to?.inputs.find(p=>p.id===wire.toPort);
  if(!out||!input||from.id===to.id)throw Error('Choose an output and another node input.');

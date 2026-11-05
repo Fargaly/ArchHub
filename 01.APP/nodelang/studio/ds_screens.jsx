@@ -602,6 +602,7 @@
     const zoomMin = Number(s.canvasPolicy?.zoom_min ?? .1), zoomMax = Number(s.canvasPolicy?.zoom_max ?? 4);
     const [selected, setSelected] = React.useState(u.selectedNodeId && s.graph.nodes.some(n => n.id === u.selectedNodeId) ? [u.selectedNodeId] : []),
       [wireId, setWireId] = React.useState(null),
+      [selectedWires, setSelectedWires] = React.useState([]),
       [parent, setParent] = React.useState(null),
       [viewport, setViewport] = React.useState({zoom: Math.max(zoomMin, Math.min(zoomMax, (zoomRow?.value || 100) / 100)), pan: embedded ? {x:32,y:120} : {x:0,y:0}}),
       [rejected, setRejected] = React.useState(null),
@@ -778,7 +779,7 @@
           e.preventDefault();
           group();
         }
-        if (e.key === 'Delete' && selected.length) {
+        if (e.key === 'Delete' && (selected.length || selectedWires.length)) {
           e.preventDefault();
           remove();
         }
@@ -786,6 +787,7 @@
         if (e.key === 'Escape') {
           setRejected(null);
           setSelected([]);
+          setSelectedWires([]);
           setWireId(null);
           if (parent) setParent(null);
         }
@@ -840,9 +842,11 @@
       const g = await u.act(() => api.groupNodes(selected));
       if (g) setSelected([g.id]);
     };
-    const remove = () => u.confirm(`Delete ${selected.length} selected node${selected.length === 1 ? '' : 's'}?`, async () => {
-      for (const id of selected) await api.deleteNode(id);
+    const remove = () => u.confirm(`Delete ${selected.length + selectedWires.length} selected item(s)?`, async () => {
+      await api.deleteSelection(selected, selectedWires);
       setSelected([]);
+      setSelectedWires([]);
+      setWireId(null);
     });
     const connect = async (out, input) => {
       const word = p => (TYPE_NAME[p.type] || p.type || 'any').toLowerCase();
@@ -917,8 +921,8 @@
     const edges = (rejected ? [...s.graph.wires,{id:'rejected',rejected:true,from:rejected.from.id,fromPort:rejected.from.port,to:rejected.to.id,toPort:rejected.to.port}] : s.graph.wires)
       .filter(w => shownIds.has(w.from) && shownIds.has(w.to)).map(w => {
         const color = w.rejected ? A.err : wireColor(w, s.graph.nodes), shown = s.graph.wireVisibility, portVisibility = s.graph.nodes.find(n=>n.id===w.from)?.portVisibility?.[w.fromPort];
-        return {id: w.id, type: 'archhub', source: w.from, target: w.to, sourceHandle: w.fromPort, targetHandle: w.toPort, selectable: false, focusable: false,
-          data: {color, route: w.route, state: w.rejected ? 'rejected' : color === A.warn ? 'affected' : 'compatible', selected: wireId === w.id && shown !== 'Hidden',
+        return {id: w.id, type: 'archhub', source: w.from, target: w.to, sourceHandle: w.fromPort, targetHandle: w.toPort, selectable: !w.rejected, focusable: !w.rejected, selected: selectedWires.includes(w.id),
+          data: {color, route: w.route, state: w.rejected ? 'rejected' : color === A.warn ? 'affected' : 'compatible', selected: (wireId === w.id || selectedWires.includes(w.id)) && shown !== 'Hidden',
             opacity: w.rejected ? 1 : shown==='Hidden'||portVisibility==='Hidden' ? 0 : shown==='Faint'||portVisibility==='Faint' ? .2 : .9}};
       });
     const fit = (persist = true) => {
@@ -974,7 +978,7 @@
       });
     };
     React.useImperativeHandle(controlsRef, () => ({
-      clearSelection: () => { setSelected([]); setWireId(null); },
+      clearSelection: () => { setSelected([]); setSelectedWires([]); setWireId(null); },
       addNode: () => u.setLibraryOpen(true),
       run: () => executeAction('projects.ds_screens.Run.15', {api, u}),
       connections: () => { setSelected([]); setWireId(s.graph.wires[0]?.id || null); u.setToast(s.graph.wires.length ? 'Select a connection to inspect its declared types.' : 'This workflow has no connections.'); },
@@ -1048,14 +1052,15 @@
        viewport={{x: pan.x, y: pan.y, zoom}} onViewportChange={v => updateView({zoom: v.zoom, pan: {x: v.x, y: v.y}}, false)}
        onMoveEnd={(event, v) => { if (event instanceof window.Event) persistView(v); }} minZoom={zoomMin} maxZoom={zoomMax}
        onNodesChange={onNodesChange} onNodeClick={(event,node)=>onInspect?.({nodeId:node.id,wireId:null})} onNodeDragStop={onNodeDragStop} onNodeDoubleClick={(e, f) => openNode(f.data.n)}
+       onEdgesChange={changes => setSelectedWires(old => {const next=new Set(old);for(const c of changes)if(c.type==='select'&&c.id!=='rejected')c.selected?next.add(c.id):next.delete(c.id);return [...next];})}
        onConnect={c => connect({id: c.source, port: c.sourceHandle}, {id: c.target, port: c.targetHandle})}
        onConnectEnd={(e, state) => {
          // A wire dropped on empty canvas offers the nodes that can take it (spec Compatible nodes).
          if (!state || state.isValid || state.toHandle || !state.fromHandle || e.target.closest?.('.react-flow__node')) return;
          u.show('Compatible nodes', {endpoint: {id: state.fromNode.id, side: state.fromHandle.type === 'source' ? 'out' : 'in', port: state.fromHandle.id}, position: toFlow(e)});
        }}
-       onEdgeClick={(e, edge) => { if (edge.id !== 'rejected') { setWireId(edge.id); setSelected([]); } }}
-       onPaneClick={() => { setSelected([]); setWireId(null); setRejected(null); }}
+       onEdgeClick={(e, edge) => { if (edge.id !== 'rejected') { setWireId(edge.id); if(!e.shiftKey&&!e.ctrlKey)setSelected([]); } }}
+       onPaneClick={() => { setSelected([]); setWireId(null); setSelectedWires([]); setRejected(null); }}
        selectionOnDrag panOnDrag={[1]} panActivationKeyCode="Space" multiSelectionKeyCode="Shift" selectionKeyCode={null} deleteKeyCode={null}
        zoomOnDoubleClick={false} connectionLineStyle={{stroke: A.cyan, strokeWidth: 2}} proOptions={{hideAttribution: true}} />
     </CanvasContext.Provider>

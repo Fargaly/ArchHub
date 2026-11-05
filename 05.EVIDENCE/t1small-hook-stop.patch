@@ -1,0 +1,142 @@
+--- a/00.GOVERNANCE/03.AGENT-HOOKS/pretooluse_validate.py
++++ b/00.GOVERNANCE/03.AGENT-HOOKS/pretooluse_validate.py
+@@ -18,6 +18,7 @@
+ """
+ from __future__ import annotations
+ 
++import ast
+ import hashlib
+ from contextvars import ContextVar
+ import io
+@@ -2014,14 +2015,71 @@
+     return env
+ 
+ 
++def _method_stop_denial(command, pipelines):
++    """Only a process object created by this script proves method-stop ownership."""
++    remaining = command
++    for pipe in pipelines:
++        for tokens in pipe:
++            if not tokens:
++                continue
++            if _verb_name(tokens[0]) in ("python", "python3", "pythonw", "py") and "-c" in tokens:
++                index = tokens.index("-c") + 1
++                if index >= len(tokens):
++                    continue
++                try:
++                    statements = ast.parse(tokens[index]).body
++                except SyntaxError:
++                    continue
++                owned = set()
++                modules = set()
++                for statement in statements:
++                    if isinstance(statement, ast.Import):
++                        modules.update(name.name for name in statement.names
++                            if name.name in ("subprocess", "sys") and name.asname in (None, name.name))
++                    if any(isinstance(node, ast.NamedExpr) for node in ast.walk(statement)):
++                        owned.clear()
++                    for node in ast.walk(statement):
++                        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
++                                and node.func.attr.lower() in ("kill", "closemainwindow")):
++                            if not isinstance(node.func.value, ast.Name) or node.func.value.id not in owned:
++                                return _kill_denial("stop-process", ["stop-process", "-name", "*"], [], 0)
++                    if isinstance(statement, ast.Assign):
++                        for target in statement.targets:
++                            if isinstance(target, ast.Name):
++                                owned.discard(target.id)
++                                modules.discard(target.id)
++                        value = statement.value
++                        if (len(statement.targets) == 1 and isinstance(statement.targets[0], ast.Name)
++                                and isinstance(value, ast.Call) and ast.unparse(value.func) == "subprocess.Popen"
++                                and "subprocess" in modules
++                                and all(keyword.arg not in (None, "executable") and (keyword.arg != "shell"
++                                    or isinstance(keyword.value, ast.Constant) and keyword.value.value is False)
++                                    for keyword in value.keywords)
++                                and value.args and isinstance(value.args[0], (ast.List, ast.Tuple))
++                                and value.args[0].elts):
++                            executable = value.args[0].elts[0]
++                            if ((isinstance(executable, ast.Constant) and isinstance(executable.value, str)
++                                    and not _name_hit(executable.value.replace("\\", "/").rsplit("/", 1)[-1]) == "app")
++                                    or "sys" in modules and ast.unparse(executable) == "sys.executable"):
++                                owned.add(statement.targets[0].id)
++                        continue
++                    # Branches or rebinding cannot prove that the same child is still held.
++                    if not isinstance(statement, (ast.Expr, ast.Import, ast.ImportFrom)):
++                        owned.clear()
++                remaining = remaining.replace(tokens[index], "", 1)
++    # PowerShell and other dialects keep the existing name/pipeline checks;
++    # an unbound method receiver cannot prove ownership.
++    if _KILL_CALL.search(remaining):
++        return _kill_denial("stop-process", ["stop-process", "-name", "*"], [], 0)
++    return None
++
++
+ def _dialect_denial(command: str, cwd: str, runtime: str, public: bool, ps: bool):
+     pipelines = _pipelines(command, 0, ps)
+     if _KILL_CALL.search(command):
+-        for pipe in pipelines:
+-            for cmd in pipe:
+-                for tok in cmd:
+-                    if _name_hit(tok):
+-                        return _kill_denial("stop-process", ["stop-process", "-name", tok], [], 0)
++        denial = _method_stop_denial(command, pipelines)
++        if denial:
++            return denial
+     state_cwd = _real(cwd) if cwd else ""
+     in_product = bool(state_cwd) and _within(state_cwd, _PRODUCT_ROOT)
+     for m in _COPY_CALL.finditer(command):
+--- /dev/null
++++ b/00.GOVERNANCE/07.CARE-CHECKS/test_hook_stop.py
+@@ -0,0 +1,52 @@
++import sys
++from pathlib import Path
++
++HOOKS = Path(__file__).resolve().parents[1] / '03.AGENT-HOOKS'
++sys.path.insert(0, str(HOOKS))
++import pretooluse_validate as gate
++
++
++def test_child_stop_ignores_office_data():
++    command = "python -c \"import subprocess; import sys; data='excel'; child=subprocess.Popen([sys.executable, '-c', 'pass'], stdout=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW); child.kill()\""
++    assert gate._command_denial(command, str(Path.cwd()), "codex", False) is None
++
++
++def test_unknown_stop_ownership_refuses():
++    assert gate._dialect_denial('python -c "child.kill()"', str(Path.cwd()), "codex", False, True)
++
++
++def test_app_name_and_imagewide_stops_refuse():
++    for command in ('Stop-Process -Name Excel', 'Get-Process Excel | % { $_.Kill() }',
++                    'taskkill /IM python.exe', 'python -c "import subprocess; p=subprocess.Popen([\'excel.exe\']); p.kill()"'):
++        assert gate._dialect_denial(command, str(Path.cwd()), "codex", False, True)
++
++
++def test_rebound_child_refuses():
++    command = 'python -c "import subprocess; import sys; p=subprocess.Popen([sys.executable]); p=other; p.kill()"'
++    assert gate._dialect_denial(command, str(Path.cwd()), "codex", False, True)
++
++
++def test_all_stops_are_checked_including_assignment_values_and_later_commands():
++    prefix = "import subprocess; import sys; p=subprocess.Popen([sys.executable]); p.kill(); "
++    for tail in ('q.kill()', 'x=q.kill()', 'p=other; p.kill()', 'p.kill(); q.kill()'):
++        command = 'python -c "' + prefix + tail + '"'
++        assert gate._dialect_denial(command, str(Path.cwd()), "codex", False, True)
++    command = 'python -c "' + prefix + '"; Get-Process Excel | % { $_.Kill() }'
++    assert gate._dialect_denial(command, str(Path.cwd()), "codex", False, True)
++
++
++def test_unknown_and_overridden_executable_refuses():
++    for arguments in ("[name]", "[sys.executable], executable='excel.exe'", "['cmd'], shell=True"):
++        command = 'python -c "import subprocess; import sys; p=subprocess.Popen(' + arguments + '); p.kill()"'
++        assert gate._dialect_denial(command, str(Path.cwd()), "codex", False, True)
++
++
++def test_rebinding_inside_an_expression_refuses():
++    command = 'python -c "import subprocess; import sys; p=subprocess.Popen([sys.executable]); (p:=other).kill()"'
++    assert gate._command_denial(command, str(Path.cwd()), "codex", False)
++
++
++def test_unknown_factory_ownership_refuses():
++    for prefix in ('', 'import subprocess; subprocess=other; '):
++        command = 'python -c "' + prefix + "p=subprocess.Popen(['child.exe']); p.kill()" + '"'
++        assert gate._command_denial(command, str(Path.cwd()), "codex", False)

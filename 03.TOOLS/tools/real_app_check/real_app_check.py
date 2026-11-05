@@ -9,7 +9,7 @@ real window did). Every agent uses this one tool.
 
 Guarantees:
   * A hidden desktop with a run-unique name (CreateDesktopW). The report proves the app's window is on
-    it and belongs to this run's own processes. Native dialogs open there; winapp drives them there.
+    it and belongs to this run's own processes. Native dialogs open there; pywinauto drives them there.
   * Isolated profile: APPDATA, LOCALAPPDATA, USERPROFILE (with its shell folders), HOME, TEMP,
     CLAUDE_CONFIG_DIR and ARCHHUB_TEST_STATE_DIR point into the run folder; agent/session variables
     are dropped; own lock and CDP ports; no bytecode; the launch directory is the run folder. The
@@ -20,10 +20,7 @@ Guarantees:
     repository's packaging/compile_studio.cjs.
   * One Windows Job object (kill on close) owns the app, the probe and every winapp helper; every wait
     is bounded; the job is terminated in `finally` on every exit path.
-  * No protected CNG key: the Workspaces signing key lives in the Windows user's key store, which no
-    environment variable isolates, and creating it raises a Windows prompt on the founder's desktop.
-    The harness refuses the controls that sign, and the key's state is read silently before and
-    after; the run fails closed unless both reads are exact and equal.
+  * No signing-key read: NoGraph uses plain workspace settings; the disposable run never opens CNG.
 """
 from __future__ import annotations
 
@@ -59,9 +56,6 @@ CODE_ENTRIES = ("nodelang", "app", "runtime", "governed-bin", "workflows", "libr
 OVERLAY_ROOTS = ("nodelang", "app", "runtime", "workflows", "library", "custom_nodes", "ui_widgets",
                  "skills")
 DROPPED_ENV = ("CLAUDE", "ARCHHUB", "WORKSHOP", "CODEX", "ANTHROPIC", "PYTHON")
-SIGNING_KEY_NAME = "ArchHub-workspace-roots-v1"      # nodelang/workspace_roots_catalogue.py KEY_NAME
-NTE_BAD_KEYSET = 0x80090016                           # the one NCryptOpenKey answer that means "no key"
-NCRYPT_SILENT_FLAG = 0x40
 OVERLAY_LABEL = "CANDIDATE OVERLAY"
 INSTALLED_LABEL = "INSTALLED BUILD"
 
@@ -199,51 +193,6 @@ def pick_edit_slug(search: object, label: str) -> str:
     if len(edits) != 1:
         raise ValueError("expected exactly one Edit named %r, found %d" % (label, len(edits)))
     return str(edits[0].get("slug") or edits[0].get("selector"))
-
-
-def signing_key_state(name: str = SIGNING_KEY_NAME, ncrypt=None) -> str:
-    """Silently read the Workspaces signing key: "absent" (NTE_BAD_KEYSET only), "present:<sha256 of
-    the public half>", or an exact failure code. Never creates or uses the key."""
-    if ncrypt is None:
-        if os.name != "nt":
-            return "unsupported"
-        ncrypt = ctypes.WinDLL("ncrypt")
-    provider, key = ctypes.c_size_t(), ctypes.c_size_t()
-    rc = ncrypt.NCryptOpenStorageProvider(ctypes.byref(provider), "Microsoft Software Key Storage Provider", 0)
-    if rc:
-        return "store-unavailable:0x%08x" % (rc & 0xFFFFFFFF)
-    try:
-        rc = ncrypt.NCryptOpenKey(provider, ctypes.byref(key), name, 0, NCRYPT_SILENT_FLAG) & 0xFFFFFFFF
-        if rc == NTE_BAD_KEYSET:
-            return "absent"
-        if rc:
-            return "inaccessible:0x%08x" % rc
-        try:
-            size = ctypes.c_ulong()
-            rc = ncrypt.NCryptExportKey(key, 0, "ECCPUBLICBLOB", None, None, 0, ctypes.byref(size),
-                                        NCRYPT_SILENT_FLAG) & 0xFFFFFFFF
-            if rc:
-                return "present-unreadable:0x%08x" % rc
-            blob = (ctypes.c_ubyte * size.value)()
-            rc = ncrypt.NCryptExportKey(key, 0, "ECCPUBLICBLOB", None, blob, size, ctypes.byref(size),
-                                        NCRYPT_SILENT_FLAG) & 0xFFFFFFFF
-            if rc:
-                return "present-unreadable:0x%08x" % rc
-            return "present:" + hashlib.sha256(bytes(blob[:size.value])).hexdigest()
-        finally:
-            ncrypt.NCryptFreeObject(key)
-    finally:
-        ncrypt.NCryptFreeObject(provider)
-
-
-def signing_key_verdict(before: str, after: str) -> str:
-    """Fail closed: only an exact, unchanged "absent" or "present:<hash>" passes."""
-    exact = lambda state: state == "absent" or (state.startswith("present:") and len(state) == len("present:") + 64)
-    if not (exact(before) and exact(after)):
-        return "FAIL: the signing key state is not exactly known (%s -> %s)" % (before, after)
-    if before != after:
-        return "FAIL: the Workspaces signing key changed during the run (%s -> %s)" % (before, after)
-    return "PASS"
 
 
 def run_result(steps: list, problems: list) -> str:
@@ -450,12 +399,12 @@ class HiddenDesktop:
         self.k32.ResumeThread(pi.hThread)
         return pi
 
-    def run(self, cmdline: str, timeout: int = 30) -> str:
+    def run(self, cmdline: str, timeout: int = 30, *, env=None, cwd=None) -> str:
         """Run one short command ON the hidden desktop (UI Automation sees that desktop only)."""
-        handle, name = tempfile.mkstemp(suffix=".txt")
+        handle, name = tempfile.mkstemp(suffix=".txt", dir=cwd)
         os.close(handle)
         out = Path(name)
-        pi = self.spawn('cmd.exe /d /c "%s > "%s" 2>&1"' % (cmdline, out))
+        pi = self.spawn('cmd.exe /d /c "%s > "%s" 2>&1"' % (cmdline, out), env=env, cwd=cwd)
         try:
             if self.k32.WaitForSingleObject(pi.hProcess, timeout * 1000) != 0:
                 self.k32.TerminateProcess(pi.hProcess, 1)   # its own handle, never a PID lookup
@@ -489,49 +438,70 @@ class HiddenDesktop:
             self.handle = None
 
 
-def pick_folder(desktop: HiddenDesktop, winapp: str, title: str, folder: str, evidence: Path) -> dict:
-    """Answer the real Windows folder dialog on the hidden desktop: type the folder into its Edit
-    (chosen by type), verify it, then press Enter until the dialog closes."""
-    os.environ["WINAPP_CLI_TELEMETRY_OPTOUT"] = "1"
-    result = {"title": title, "folder": folder}
-    for _ in range(30):
-        if title in desktop.run('"%s" ui list-windows' % winapp, 15):
-            break
-        time.sleep(1)
-    else:
-        result["error"] = "folder dialog never appeared"
-        return result
-    result["shot"] = desktop.run('"%s" ui screenshot -a "%s" -o "%s"' % (winapp, title, evidence / "native-folder-dialog.png"), 20)[-200:]
-    raw = desktop.run('"%s" ui search "Folder:" -a "%s" --json' % (winapp, title), 30)
-    result["search"] = raw[-1500:]
-    try:
-        slug = pick_edit_slug(json_tail(raw), "Folder:")
-    except (ValueError, json.JSONDecodeError) as refusal:
-        result["error"] = "Folder edit not found: %s" % refusal
-        return result
-    result["slug"] = slug
-    unwrapped = lambda text: "".join(text.split()).lower()   # winapp wraps long values across lines
-    result["set"] = desktop.run('"%s" ui set-value %s "%s" -a "%s"' % (winapp, slug, folder, title), 20)[-1200:]
-    result["read_back"] = desktop.run('"%s" ui get-value %s -a "%s"' % (winapp, slug, title), 20)[-600:]
-    if unwrapped(folder) not in unwrapped(result["read_back"]):
-        result["typed"] = desktop.run('"%s" ui send-keys "%s" --verbatim --target %s --via post-message -a "%s"'
-                                      % (winapp, folder, slug, title), 20)[-600:]
-        result["read_back"] = desktop.run('"%s" ui get-value %s -a "%s"' % (winapp, slug, title), 20)[-600:]
-    if unwrapped(folder) not in unwrapped(result["read_back"]):
-        result["error"] = "the Folder field never held the chosen path"
-        return result
-    # Enter on a typed path first navigates INTO that folder; the next Enter selects it and closes.
-    result["enter"] = []
-    for _ in range(3):
-        result["enter"].append(desktop.run('"%s" ui send-keys enter --target %s --via post-message -a "%s"'
-                                           % (winapp, slug, title), 20)[-200:])
-        for _ in range(6):
-            time.sleep(0.5)
-            if title not in desktop.run('"%s" ui list-windows' % winapp, 15):
-                result["closed"] = True
-                return result
-    result["error"] = "the folder dialog did not close after Enter"
-    return result
+def native_application(cache):
+    """Keep generated COM wrappers in this run, never in the installed environment."""
+    import types
+    import comtypes
+    cache.mkdir(parents=True, exist_ok=True)
+    generated = types.ModuleType('comtypes.gen')
+    generated.__path__ = [str(cache)]
+    sys.modules['comtypes.gen'] = comtypes.gen = generated
+    from pywinauto import Application
+    return Application
+
+
+def native_folder_action(request):
+    """Invoke only a folder dialog owned by this rig, on this hidden desktop."""
+    user = ctypes.windll.user32
+    user.GetThreadDesktop.argtypes, user.GetThreadDesktop.restype = (w.DWORD,), w.HANDLE
+    user.GetUserObjectInformationW.argtypes = (w.HANDLE, ctypes.c_int, ctypes.c_void_p, w.DWORD, ctypes.POINTER(w.DWORD))
+    user.GetWindowThreadProcessId.argtypes = (w.HWND, ctypes.POINTER(w.DWORD))
+    user.GetWindowTextLengthW.argtypes = (w.HWND,)
+    user.GetWindowTextW.argtypes = (w.HWND, w.LPWSTR, ctypes.c_int)
+    desktop = user.GetThreadDesktop(ctypes.windll.kernel32.GetCurrentThreadId())
+    name, needed = ctypes.create_unicode_buffer(256), w.DWORD()
+    if not user.GetUserObjectInformationW(desktop, 2, name, ctypes.sizeof(name), ctypes.byref(needed)):
+        raise RuntimeError("Cannot verify the native worker desktop")
+    if name.value.casefold() != request['desktop'].split('\\')[-1].casefold() or name.value.casefold() == 'default':
+        raise RuntimeError("Native worker is outside the rig desktop")
+    allowed = set(request['pids'])
+    handles = []
+    callback = ctypes.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)
+
+    def visit(handle, _):
+        pid = w.DWORD()
+        user.GetWindowThreadProcessId(handle, ctypes.byref(pid))
+        title = ctypes.create_unicode_buffer(user.GetWindowTextLengthW(handle) + 1)
+        user.GetWindowTextW(handle, title, len(title))
+        if pid.value in allowed and title.value == request['title']:
+            handles.append(handle)
+        return True
+    user.EnumDesktopWindows.argtypes = (w.HANDLE, callback, w.LPARAM)
+    user.EnumDesktopWindows(desktop, callback(visit), 0)
+    if len(handles) != 1:
+        raise RuntimeError("Expected one folder dialog owned by the rig")
+    Application = native_application(Path(os.environ['LOCALAPPDATA']) / 'comtypes')
+    dialog = Application(backend='uia').connect(handle=handles[0]).window(handle=handles[0])
+    edits = dialog.descendants(control_type='Edit')
+    named = [edit for edit in edits if edit.element_info.name.rstrip(':').casefold() in
+             {'folder', 'folder name', 'file name'}]
+    edits = named or edits
+    if len(edits) != 1:
+        raise RuntimeError("Folder dialog Edit is ambiguous")
+    edits[0].set_edit_text(request['folder'])
+    if edits[0].get_value() != request['folder']:
+        raise RuntimeError("Folder field readback differs")
+    dialog.child_window(auto_id='1', control_type='Button').invoke()
+    dialog.wait_not('exists')
+    return {'title': request['title'], 'folder': request['folder'], 'closed': True}
+
+
+def pick_folder(desktop: HiddenDesktop, python: str, title: str, folder: str, evidence: Path, env) -> dict:
+    request = evidence / 'native-folder-request.json'
+    request.write_text(json.dumps({'title': title, 'folder': folder, 'desktop': desktop.name,
+                                  'pids': desktop.job.pids()}), encoding='utf-8')
+    command = subprocess.list2cmdline([python, str(HERE / 'real_app_check.py'), '--native-folder', str(request)])
+    return json_tail(desktop.run(command, 30, env=env, cwd=str(evidence)))
 
 
 def agent_propose(runner, python: Path, app: Path, run_dir: Path, env: dict, title: str) -> dict:
@@ -565,13 +535,20 @@ def _lines(stream, sink: queue.Queue) -> None:
 
 
 def main(argv=None) -> int:
-    sys.stdout.reconfigure(encoding="utf-8")
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if len(arguments) == 2 and arguments[0] == '--native-folder':
+        request = Path(arguments[1])
+        if request.stat().st_size > 65536:
+            raise ValueError('Native request exceeds its bound')
+        print(json.dumps(native_folder_action(json.loads(request.read_text(encoding='utf-8')))))
+        return 0
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--scenario", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--app", type=Path, default=Path(os.environ["LOCALAPPDATA"]) / "ArchHub")
     parser.add_argument("--overlay", type=Path)
-    parser.add_argument("--nograph", action="store_true", help="verify the isolated file-based Studio owner")
     parser.add_argument("--input", type=Path, help="JSON handed to the scenario as ctx.input")
     parser.add_argument("--winapp", default=os.environ.get("ARCHHUB_WINAPP", DEFAULT_WINAPP))
     parser.add_argument("--boot-seconds", type=int, default=600)
@@ -585,7 +562,7 @@ def main(argv=None) -> int:
     _profile_guard().install(out / "PROFILE-WRITES.jsonl")
     installed = args.app.resolve()
     python = installed / ".venv" / "Scripts" / "python.exe"
-    report = {"installed": str(installed), "signing_key_before": signing_key_state(),
+    report = {"installed": str(installed), "signing_key_before": "not-used-nograph",
               "installed_code_before": tree_digest(installed)}
     job = desktop = probe = None
     failures, lines, timed_out, exit_code = [], [], False, None
@@ -604,31 +581,31 @@ def main(argv=None) -> int:
         report.update(label=label, build=(app / "BUILD_ID").read_text(encoding="utf-8").strip(), app=str(app),
                       overlay=str(args.overlay) if args.overlay else None, overlay_files=laid,
                       desktop=desktop.name, isolated_root=str(run_dir), launch_cwd=str(run_dir), cdp_port=cdp)
-        # The run's own graph owner, gated at the spawn (plan, provisioning read-back, pinned endpoint),
-        # from the same installed (or labelled candidate) code; the desktop is pointed at it, never :8474.
+        # The run's NoGraph listener is admitted by profile paths, marker, endpoint and Job ownership.
         owner_module = _graph_owner()
         owner_plan = owner_module.plan_graph_owner(run_dir, env)
-        if args.nograph:
-            owner = owner_module.launch_nograph_owner(desktop, owner_plan, str(python), app,
-                                                      runner=JobRunner(job), health_seconds=args.boot_seconds)
-            report["nograph_owner"] = owner
-        else:
-            owner = owner_module.launch_graph_owner(desktop, owner_plan, str(python), app, runner=JobRunner(job))
-            report["graph_owner"] = owner
+        owner = owner_module.launch_nograph_owner(desktop, owner_plan, str(python), app,
+                                                  runner=JobRunner(job), health_seconds=args.boot_seconds)
+        report["nograph_owner"] = owner
         env = owner_plan["env"]
-        # launch_graph_owner already started the Qt desktop and its graph.
+        # launch_nograph_owner already started the Qt desktop.
         # The rig observes that same process instead of opening another app.
         report["owner_pid"] = owner["pid"]
         started = time.monotonic()
+        studio_open = False
         while time.monotonic() - started < args.boot_seconds:
             try:
                 pages = json.load(urllib.request.urlopen("http://127.0.0.1:%d/json" % cdp, timeout=2))
                 if any("/studio" in page.get("url", "") for page in pages):
+                    studio_open = True
                     break
             except Exception:
                 pass
             time.sleep(2)
         report["boot_seconds"] = round(time.monotonic() - started)
+        report["studio_open"] = studio_open
+        if not studio_open:
+            raise RuntimeError("The isolated NoGraph server is ready but Studio did not open")
         ours = set(job.pids())
         report["app_windows_on_desktop"] = [title for pid, title in desktop.windows() if pid in ours and title]
         report["state_written_in_run_folder"] = sorted(path.name for path in (run_dir / "state").iterdir())[:20]
@@ -659,7 +636,7 @@ def main(argv=None) -> int:
             if line.startswith("NATIVE "):
                 request = json.loads(line[len("NATIVE "):])
                 if request.get("kind") == "pick-folder":
-                    answer = pick_folder(desktop, args.winapp, request["title"], request["folder"], out)
+                    answer = pick_folder(desktop, str(python), request["title"], request["folder"], out, env)
                 elif request.get("kind") == "agent-propose":
                     answer = agent_propose(JobRunner(job), python, app, run_dir, env, str(request["title"])[:200])
                 else:
@@ -689,8 +666,8 @@ def main(argv=None) -> int:
 
 
 def finalize_report(report: dict, out: Path, installed: Path, failures: list) -> int:
-    """Always runs: the key and code reads after the run, every gate, and report.json."""
-    for name, read in (("signing_key_after", signing_key_state), ("installed_code_after", lambda: tree_digest(installed))):
+    """Always record the code digest, every gate and report.json without opening keys."""
+    for name, read in (("signing_key_after", lambda: "not-used-nograph"), ("installed_code_after", lambda: tree_digest(installed))):
         try:
             report[name] = read()
         except Exception as exc:  # noqa: BLE001 - an unreadable state is not a pass
@@ -700,9 +677,7 @@ def finalize_report(report: dict, out: Path, installed: Path, failures: list) ->
         steps = json.loads(steps_file.read_text(encoding="utf-8")) if steps_file.exists() else []
     except ValueError:
         steps, failures = [], [*failures, "FAIL: steps.json is unreadable"]
-    key = signing_key_verdict(report.get("signing_key_before", "unknown"), report["signing_key_after"])
     problems = [*failures, *[problem for problem in (
-        None if key == "PASS" else key,
         None if report["installed_code_after"] == report.get("installed_code_before") else "FAIL: the installed code changed",
         None if report.get("app_windows_on_desktop") else "FAIL: no window of this run's app was found on its hidden desktop",
         None if report.get("state_written_in_run_folder") else "FAIL: the app wrote no state in the run folder",

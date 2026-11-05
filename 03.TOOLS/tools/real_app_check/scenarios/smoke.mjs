@@ -1,7 +1,7 @@
 // Smoke: the installed app opens, its tabs answer, a library node is placed, undone and redone,
 // Settings > Workspaces reads the run's own registry and Browse fills the folder field from the real
 // Windows folder dialog, and a Work an agent proposes shows in the Workshop as a decision card.
-// Never presses Add/Remove/Republish (the harness refuses them): those sign with the protected key.
+// Workspace registration uses this rig profile's plain settings file.
 import fs from 'node:fs';
 import path from 'node:path';
 

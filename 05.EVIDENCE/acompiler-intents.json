@@ -8985,6 +8985,8 @@
         "02.TESTS/tests_js/designbuild.cjs",
         "02.TESTS/tests_js/raildoors.test.cjs",
         "02.TESTS/tests_replica/test_raildoors.py",
+        "01.APP/nodelang/profile_instance.py",
+        "05.EVIDENCE/t1small-publication-scan.patch",
         "01.APP/nodelang/client_mcp_installation.py",
         "02.TESTS/tests_replica/test_client_mcp_installation.py",
         "01.APP/nodelang/studio/design-tokens.json",

@@ -41,7 +41,7 @@ The `--out` folder must be new or empty. It receives:
   - the run-unique desktop name and the app windows found on it;
   - the state files the app wrote in the run folder;
   - the boot time and the native dialog transcript;
-  - `not-used-nograph` for signing-key checks; the runner never opens a signing store;
+  - silent read-only signing-key state before and after;
   - the installed-code digest before and after;
   - the overall result.
 
@@ -75,7 +75,7 @@ The run passes only when all of these hold:
 - the app's window was on this run's own desktop;
 - the app wrote its state in the run folder;
 - the installed code is byte-identical before and after;
-- the disposable run never reads a signing key.
+- the protected signing-key state is exactly known and unchanged.
 
 ## Guarantees
 
@@ -84,16 +84,15 @@ The run passes only when all of these hold:
   there.
 - **Isolated profile.** APPDATA, LOCALAPPDATA, USERPROFILE (with its shell folders), HOME, TEMP,
   CLAUDE_CONFIG_DIR and ARCHHUB_TEST_STATE_DIR all point into the run folder. The launch directory is
-  the run folder too. Agent and session variables are dropped. The run gets its own lock port and its
-  own CDP port. No bytecode is written.
+  the run folder too. Agent and session variables are dropped. The run gets its own profile mutex and CDP port. No bytecode is written.
 - **One Job owns everything.**
   - A Windows Job object with kill-on-close owns the app, the scenario probe and every winapp helper,
     each assigned at creation.
   - Every wait is bounded.
   - The Job is terminated in `finally` on every exit path.
   - No process is ever killed by number.
-- **No protected key.** NoGraph uses plain workspace settings. The rig never opens the Windows
-  signing store; its report records `not-used-nograph`.
+- **No signing.** The harness refuses signing controls. Silent CNG public-key reads before and after
+  the run prove that its protected Workspaces key was unchanged; profile environment variables do not isolate CNG.
 - **Native driver.** The existing desktop dependency manifest ships pywinauto and comtypes.
   Generated COM wrappers stay under the rig's LOCALAPPDATA, outside the installed environment.
 

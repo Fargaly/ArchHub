@@ -74,7 +74,18 @@ namespace Autodesk.Revit.UI
         public event EventHandler<Autodesk.Revit.UI.Events.DialogBoxShowingEventArgs> DialogBoxShowing;
         public void Show(Autodesk.Revit.UI.Events.DialogBoxShowingEventArgs args) => DialogBoxShowing?.Invoke(this, args);
     }
-    public class ApplicationInfo { public string VersionName = "fixture"; public string Username = "fixture"; }
+    public class ApplicationInfo {
+        public string VersionName = "fixture"; public string Username = "fixture";
+        public event EventHandler<Autodesk.Revit.DB.Events.DocumentOpeningEventArgs> DocumentOpening;
+        public int OpeningHandlers => DocumentOpening?.GetInvocationList().Length ?? 0;
+        public int Opens;
+        public void Opening(string path) {
+            var args = new Autodesk.Revit.DB.Events.DocumentOpeningEventArgs { PathName = path };
+            DocumentOpening?.Invoke(this, args);
+            if (args.Cancelled) throw new Exception("document opening cancelled");
+        }
+        public Document OpenDocumentFile(string path) { Opening(path); Opens++; return new Document { PathName = path }; }
+    }
     public class UIDocument
     {
         public Document Document; private View view = new View();
@@ -91,6 +102,7 @@ namespace Autodesk.Revit.UI
             if (ActiveUIDocument?.Document.IsModifiable == true) throw new Exception("modifiable active document");
             if (FailOpen) throw new Exception("fixture open refused");
             if (detachAndPrompt) throw new Exception("user prompt forbidden");
+            Application.Opening(path.Path);
             Opens++; ActiveUIDocument = new UIDocument { Document = new Document { PathName = path.Path } };
             ActiveUIDocument.Document.Views.Add(new View { Name = "Invalid" });
             return ActiveUIDocument;
@@ -103,6 +115,7 @@ namespace ArchHub.Shared
     public static class ScriptCompiler
     {
         public static int Calls;
+        public static string ExternalPath = "fixture.rvt";
         public static string ProbeCsc() => "fixture";
         public static (string, string) ProbeCscDetailed() => ("fixture", "ok");
         public static ScriptResult CompileAndRun(string userCode, object ctx, string scriptContextFullName,
@@ -111,6 +124,15 @@ namespace ArchHub.Shared
             Calls++; var context = (ScriptContext)ctx;
             if (userCode == "throw") throw new Exception("fixture compiler crash");
             if (userCode == "fail") return new ScriptResult { Status = "runtime_error", Error = "fixture failure" };
+            if (userCode.StartsWith("external-"))
+            {
+                Action open = () => {
+                    if (userCode.Contains("file")) context.UIApp.Application.OpenDocumentFile(ExternalPath);
+                    else context.UIApp.OpenAndActivateDocument(new Autodesk.Revit.DB.ModelPath { Path = ExternalPath }, new Autodesk.Revit.DB.OpenOptions(), false);
+                };
+                if (userCode.EndsWith("catch")) { try { open(); } catch { } }
+                else open();
+            }
             if (userCode == "open")
                 context.UIApp.OpenAndActivateDocument(new Autodesk.Revit.DB.ModelPath { Path = "fixture" }, new Autodesk.Revit.DB.OpenOptions(), false);
             context.result = new { doc_null = context.Doc == null, uidoc_null = context.UIDoc == null,
@@ -126,5 +148,14 @@ namespace Autodesk.Revit.UI.Events
         public string DialogId;
         public int? Answer;
         public bool OverrideResult(int result) { Answer = result; return true; }
+    }
+}
+
+namespace Autodesk.Revit.DB.Events
+{
+    public class DocumentOpeningEventArgs : EventArgs {
+        public string PathName;
+        public bool Cancelled;
+        public void Cancel() { Cancelled = true; }
     }
 }

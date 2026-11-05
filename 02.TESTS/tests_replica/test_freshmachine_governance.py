@@ -57,7 +57,9 @@ def test_damaged_rule_markers_are_left_untouched(tmp_path):
 
 def _workspace_care(name):
     import importlib.util
-    folder = Path('C:/Users/fargaly/00.ARCHUB/00.GOVERNANCE/01.WORKSPACE-CARE')
+    folder = Path(__file__).resolve().parents[2] / '00.GOVERNANCE/01.WORKSPACE-CARE'
+    if not (folder / (name + '.py')).is_file():
+        pytest.skip('workspace-care sources are not shipped in this repository')
     spec = importlib.util.spec_from_file_location(name, folder / (name + '.py'))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

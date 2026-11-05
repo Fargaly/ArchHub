@@ -313,12 +313,86 @@ def test_real_entry_chain_opens_one_window(tmp_path):
 
 
 def test_launcher_lock_is_profile_scoped_and_unknown_profiles_cannot_take_over(tmp_path):
-    functions = _functions()
-    port = functions['_profile_lock_port']
+    from nodelang.profile_instance import mutex_name, profile_identity
     first = {'LOCALAPPDATA': str(tmp_path / 'one')}
     second = {'LOCALAPPDATA': str(tmp_path / 'two')}
-    assert port(first) == port(dict(first))
-    assert port(first) != port(second)
-    assert functions['_launcher_profile']({}) is None
-    assert functions['_launcher_profile'](first) != functions['_launcher_profile'](second)
-    assert port({**first, 'ARCHHUB_TEST_LOCK_PORT': '54321'}) == 54321
+    assert mutex_name(first) == mutex_name(dict(first))
+    assert mutex_name(first) != mutex_name(second)
+    assert mutex_name(first).startswith("Local\\ArchHub-")
+    state = str(tmp_path / 'shared-state')
+    assert mutex_name({**first, 'ARCHHUB_TEST_STATE_DIR':state}) == mutex_name({**second, 'ARCHHUB_TEST_STATE_DIR':state})
+    assert profile_identity({}) is None
+    assert profile_identity(first) != profile_identity(second)
+
+
+def test_launch_reclaims_the_profile_when_the_previous_instance_exits():
+    from types import SimpleNamespace
+    source = ast.parse((Path(__file__).resolve().parents[2] / '01.APP/nodelang/launcher.py').read_text(encoding='utf-8-sig'))
+    block = next(node for node in source.body if isinstance(node, ast.If)
+                 and ast.unparse(node.test) == '_profile_instance.handle is None')
+    retries = []
+    replacement = SimpleNamespace(handle=1)
+    namespace = dict(_profile_instance=SimpleNamespace(handle=None),
+        _launch_port_file=SimpleNamespace(read_text=lambda **kwargs: '12345'),
+        _forward_launch_arguments=lambda *args: False, sys=SimpleNamespace(argv=['launcher.py']),
+        time=SimpleNamespace(sleep=lambda seconds: retries.append(seconds)), _launcher_seconds=lambda key: 0,
+        ProfileInstance=lambda: replacement, _front_running_archhub=lambda: retries.append('front'))
+    exec(compile(ast.Module(body=[block], type_ignores=[]), '<launcher-owner-retry>', 'exec'), namespace)
+    assert namespace['_profile_instance'] is replacement and retries == [0]
+
+
+def test_another_profile_listener_is_not_an_owner_and_is_never_stopped(tmp_path, monkeypatch):
+    import psutil
+    from types import SimpleNamespace
+    from nodelang import application_machine_transport as transport
+    functions = _functions()
+    calls = []
+    class Process:
+        pid = 123
+        def username(self): return 'same-account'
+        def environ(self): return {'LOCALAPPDATA': str(tmp_path / 'other-profile')}
+        def terminate(self): calls.append('terminate')
+        def kill(self): calls.append('kill')
+    monkeypatch.setenv('LOCALAPPDATA', str(tmp_path / 'current-profile'))
+    monkeypatch.setattr(psutil, 'Process', lambda *args: Process())
+    monkeypatch.setattr(psutil, 'net_connections', lambda **kwargs: [
+        SimpleNamespace(status=psutil.CONN_LISTEN, pid=123, laddr=('127.0.0.1', 45678))])
+    monkeypatch.setattr(transport, '_observe_machine_process', lambda *args: calls.append('inspect'))
+    assert functions['_verified_launch_owner'](45678) is None
+    assert functions['_release_unanswering_holder'](45678, tmp_path) is False
+    assert calls == []
+
+
+def test_profile_mutex_excludes_updater_and_rollback_and_releases(tmp_path, monkeypatch):
+    from nodelang.profile_instance import ProfileInstance
+    from nodelang import quiet_update
+    monkeypatch.setenv('LOCALAPPDATA', str(tmp_path / 'local'))
+    monkeypatch.setenv('ARCHHUB_TEST_STATE_DIR', str(tmp_path / 'state'))
+    state = tmp_path / 'state'
+    (state / 'updates').mkdir(parents=True)
+    (state / 'updates' / 'staged.json').write_text('{}', encoding='utf-8')
+    calls = []
+    monkeypatch.setattr(quiet_update, 'rollback_staged', lambda *args: calls.append('rollback') or {'rolled_back': True})
+    first = ProfileInstance()
+    second = ProfileInstance()
+    try:
+        assert first.handle is not None and second.handle is None
+        alias = ProfileInstance({'LOCALAPPDATA':str(tmp_path / 'other-local'), 'ARCHHUB_TEST_STATE_DIR':str(state)})
+        try:
+            assert alias.handle is None
+        finally:
+            alias.close()
+        assert quiet_update._desktop_running() is True
+        assert not quiet_update.recover_failed_launch(state, tmp_path / 'app')['rolled_back']
+        assert calls == []
+        foreign = ProfileInstance({'LOCALAPPDATA': str(tmp_path / 'other')})
+        try:
+            assert foreign.handle is not None
+        finally:
+            foreign.close()
+    finally:
+        first.close()
+        second.close()
+    assert quiet_update._desktop_running() is False
+    assert quiet_update.recover_failed_launch(state, tmp_path / 'app')['rolled_back']
+    assert calls == ['rollback']

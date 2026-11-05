@@ -311,6 +311,7 @@ namespace RevitMCPCore
                 using var json = JsonDocument.Parse(body);
                 path = json.RootElement.GetProperty("path").GetString();
                 if (string.IsNullOrWhiteSpace(path)) return OpenResult(null, "Missing 'path'.");
+                if (IsTemplatePath(path)) return OpenResult(null, "Opening Revit templates (.rte/.rft) is refused.");
                 if (json.RootElement.TryGetProperty("activate", out var activate) && !activate.GetBoolean())
                     return OpenResult(null, "/open requires activate:true.");
                 if (json.RootElement.TryGetProperty("view", out var v)) view = v.GetString();
@@ -339,6 +340,10 @@ namespace RevitMCPCore
             }).ConfigureAwait(false);
         }
 
+        private static bool IsTemplatePath(string path) =>
+            string.Equals(Path.GetExtension(path), ".rte", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(Path.GetExtension(path), ".rft", StringComparison.OrdinalIgnoreCase);
+
         private static string OpenResult(UIDocument opened, string error) =>
             JsonSerializer.Serialize(new {
                 status = error == null ? "ok" : "error", title = opened?.Document.Title,
@@ -361,6 +366,10 @@ namespace RevitMCPCore
             }
             catch (Exception ex) { return JsonError("Bad JSON: " + ex.Message); }
             if (string.IsNullOrEmpty(code)) return JsonError("Missing 'code'.");
+            if ((code.Contains("OpenDocumentFile") || code.Contains("OpenAndActivateDocument")) &&
+                System.Text.RegularExpressions.Regex.IsMatch(code, @"\.r(?:te|ft)\b",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                return JsonError("Opening Revit templates (.rte/.rft) from scripts is refused.");
 
             return await _submit(a => RunCSharpScript((UIApplication)a, code, txName, transaction))
                               .ConfigureAwait(false);
@@ -500,6 +509,14 @@ namespace RevitMCPCore
                 }
                 catch (Exception ex) { return JsonError("Transaction start failed: " + ex.Message); }
                 ScriptResult sr;
+                bool templateRefused = false;
+                EventHandler<Autodesk.Revit.DB.Events.DocumentOpeningEventArgs> guard = (sender, opening) =>
+                {
+                    if (!IsTemplatePath(opening.PathName)) return;
+                    templateRefused = true;
+                    opening.Cancel();
+                };
+                app.Application.DocumentOpening += guard;
                 try
                 {
                     sr = ScriptCompiler.CompileAndRun(
@@ -512,8 +529,12 @@ namespace RevitMCPCore
                 }
                 catch (Exception ex)
                 {
-                    return JsonError("ScriptCompiler crash: " + ex.Message + RollBackOutcome(tx));
+                    return JsonError((templateRefused ? "Opening Revit templates (.rte/.rft) from scripts is refused."
+                        : "ScriptCompiler crash: " + ex.Message) + RollBackOutcome(tx));
                 }
+                finally { app.Application.DocumentOpening -= guard; }
+                if (templateRefused)
+                    return JsonError("Opening Revit templates (.rte/.rft) from scripts is refused." + RollBackOutcome(tx));
                 if (sr.Status == "ok")
                 {
                     if (tx != null && tx.HasStarted() && tx.GetStatus() == TransactionStatus.Started)

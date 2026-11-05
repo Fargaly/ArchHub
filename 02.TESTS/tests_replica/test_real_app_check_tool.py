@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 import pytest
@@ -41,7 +42,51 @@ def _node(script):
 GUARDS = json.dumps((TOOL / "guards.mjs").resolve().as_uri())
 
 
-# (1) NoGraph never opens a signing store.
+# (1) The signing-key read is exact; the verdict fails closed. ------------------------------------
+
+class _FakeNcrypt:
+    def __init__(self, open_key_code):
+        self.open_key_code, self.freed = open_key_code, 0
+
+    def NCryptOpenStorageProvider(self, handle, name, flags):
+        return 0
+
+    def NCryptOpenKey(self, provider, key, name, spec, flags):
+        assert flags == 0x40                       # silent: never a prompt
+        return self.open_key_code
+
+    def NCryptFreeObject(self, handle):
+        self.freed += 1
+        return 0
+
+
+def test_only_nte_bad_keyset_reads_as_absent_and_other_errors_keep_their_code():
+    rig = _rig()
+    assert rig.signing_key_state("k", ncrypt=_FakeNcrypt(0x80090016)) == "absent"
+    silent_context = rig.signing_key_state("k", ncrypt=_FakeNcrypt(0x80090022))   # NTE_SILENT_CONTEXT
+    assert silent_context == "inaccessible:0x80090022"
+    assert rig.signing_key_state("k", ncrypt=_FakeNcrypt(0x80090010)) == "inaccessible:0x80090010"
+
+
+def test_the_key_verdict_fails_closed_unless_exact_and_unchanged():
+    rig = _rig()
+    present = "present:" + "a" * 64
+    assert rig.signing_key_verdict("absent", "absent") == "PASS"
+    assert rig.signing_key_verdict(present, present) == "PASS"
+    for before, after in (("absent", present), (present, "present:" + "b" * 64),
+                          ("inaccessible:0x80090022", "inaccessible:0x80090022"),
+                          ("absent", "inaccessible:0x80090022"), ("store-unavailable:0x1", "store-unavailable:0x1"),
+                          ("present", "present"), ("unsupported", "unsupported")):
+        assert rig.signing_key_verdict(before, after).startswith("FAIL"), (before, after)
+
+
+@windows_only
+def test_the_real_key_read_is_silent_and_creates_nothing():
+    rig = _rig()
+    name = "ArchHub-real-app-check-court-" + uuid.uuid4().hex
+    assert rig.signing_key_state(name) == "absent"
+    assert rig.signing_key_state(name) == "absent"          # reading twice still created nothing
+
 
 # (2) A step passes only on an explicit pass: true and only expected HTTP refusals. ----------------
 
@@ -78,6 +123,16 @@ def test_the_run_passes_only_when_every_step_passed_and_no_gate_failed():
     assert rig.run_result([passed], ["FAIL: the installed code changed"]).startswith("FAIL")
     assert rig.run_result([], []).startswith("FAIL")
     assert rig.run_result([{"asked": "d", "result": "maybe"}], []).startswith("FAIL")
+
+
+def test_the_harness_refuses_every_signing_control():
+    result = _node(
+        "import {refuseSigning, SIGNING_CONTROLS} from %s;"
+        "const refused = SIGNING_CONTROLS.filter(t => { try { refuseSigning(t); return false; } catch (_) { return true; } });"
+        "let browse = true; try { refuseSigning('Browse…'); } catch (_) { browse = false; }"
+        "console.log(JSON.stringify({controls: SIGNING_CONTROLS, refused, browse}));" % GUARDS)
+    assert set(result["controls"]) == {"Add", "Remove", "Republish", "Stop governing"}
+    assert result["refused"] == result["controls"] and result["browse"] is True
 
 
 # (3) A run-unique desktop that is never shared; (4) one Job owns every process. -------------------
@@ -260,6 +315,7 @@ def test_a_run_that_raises_writes_a_report_without_opening_keys(tmp_path, monkey
         assert name.lower() not in ('ncrypt', 'ncrypt.dll'), 'disposable profiles must not read signing keys'
         return original(name, *args, **kwargs)
     monkeypatch.setattr(rig.ctypes, 'WinDLL', no_keys)
+    monkeypatch.setattr(rig, 'signing_key_state', lambda: 'absent')
     installed, overlay = _installed(tmp_path), tmp_path / "overlay"
     overlay.mkdir()
     (overlay / "outside-the-allowlist.txt").write_text("x\n", encoding="utf-8")
@@ -769,14 +825,13 @@ def test_nograph_readiness_uses_the_isolated_marker_and_owned_listener(tmp_path,
 
 
 def test_playwright_driver_uses_a_disposable_headless_browser(tmp_path):
-    browsers = sorted(Path('C:/Users/fargaly/AppData/Local/ms-playwright').glob('chromium-*/chrome-win64/chrome.exe'))
-    assert browsers, 'Existing test Chromium is required'
     program = r'''import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
-const [tool,out,executablePath]=process.argv.slice(1);
+const [tool,out]=process.argv.slice(1);
+const executablePath=chromium.executablePath();
 const socket=net.createServer();await new Promise(resolve=>socket.listen(0,'127.0.0.1',resolve));
 const port=socket.address().port;await new Promise(resolve=>socket.close(resolve));
 const browser=await chromium.launch({executablePath,headless:true,args:['--remote-debugging-port='+port]});
@@ -784,7 +839,7 @@ try{
  const page=await browser.newPage();await page.goto('data:text/html,<title>Fixture</title><button>Fixture</button>');
  const scenario=path.join(out,'scenario.mjs');
  fs.writeFileSync(scenario,`export const steps=['Playwright fixture'];export default async ctx=>{await ctx.step('Playwright fixture',async()=>({pass:await ctx.js('document.title')==='Fixture'}));};`);
- const child=spawn(process.execPath,[path.join(tool,'harness.mjs'),scenario],{stdio:['pipe','pipe','pipe']});
+ const child=spawn(process.execPath,[path.join(tool,'harness.mjs'),scenario],{stdio:['pipe','pipe','pipe'],windowsHide:true});
  let output='',errors='';child.stdout.on('data',data=>output+=data);child.stderr.on('data',data=>errors+=data);
  child.stdin.end(JSON.stringify({cdp:port,out,label:'DISPOSABLE FIXTURE'})+'\n');
  const code=await new Promise(resolve=>child.on('exit',resolve));
@@ -798,7 +853,8 @@ try{
     for name in ('LOCALAPPDATA', 'APPDATA', 'TEMP', 'TMP', 'USERPROFILE', 'HOME'):
         environment[name] = str(tmp_path)
     result = subprocess.run([shutil.which('node'), '--input-type=module', '-e', program,
-        str(TOOL), str(tmp_path), str(browsers[-1])], cwd=TOOL.parents[2], env=environment,
-        capture_output=True, text=True, timeout=120)
+        str(TOOL), str(tmp_path)], cwd=TOOL.parents[2], env=environment,
+        capture_output=True, text=True, timeout=120,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     assert result.returncode == 0, result.stdout + result.stderr
     print(result.stdout.strip())

@@ -29,6 +29,33 @@ internal static class Program
     private static async Task Main(string[] args)
     {
         var app = new UIApplication();
+        if (args.Length > 0 && args[0] == "dialogs")
+        {
+            var handler = new RevitEventHandler();
+            var shim = new RevitMCPApp();
+            typeof(RevitMCPApp).GetField("_handler", BindingFlags.NonPublic | BindingFlags.Instance).SetValue(shim, handler);
+            var show = typeof(RevitMCPApp).GetMethod("OnDialogShowing", BindingFlags.NonPublic | BindingFlags.Instance);
+            Autodesk.Revit.UI.Events.DialogBoxShowingEventArgs Dialog(string id) {
+                var dialog = new Autodesk.Revit.UI.Events.DialogBoxShowingEventArgs { DialogId = id };
+                show.Invoke(shim, new object[] { null, dialog });
+                return dialog;
+            }
+            int? running = null, unknown = null;
+            bool runningObserved = false;
+            var pending = handler.SubmitAsync(_ => {
+                runningObserved = handler.IsRunning;
+                running = Dialog("Dialog_Revit_DocWarnDialog").Answer;
+                unknown = Dialog("Unknown_Addin_Dialog").Answer;
+                return "{}";
+            });
+            var queued = Dialog("Dialog_Revit_DocWarnDialog").Answer;
+            handler.Execute(app);
+            await pending;
+            var completed = Dialog("Dialog_Revit_DocWarnDialog").Answer;
+            Console.WriteLine(JsonSerializer.Serialize(new { queued, running, unknown, completed, active = runningObserved,
+                finished = handler.IsRunning, pending = handler.HasWork }));
+            return;
+        }
         if (args.Length > 0 && args[0] == "stall")
         {
             var handler = new RevitEventHandler();
@@ -78,12 +105,14 @@ internal static class Program
         Transaction.CommitResult = input.TryGetProperty("commit_status", out var cs) ? Enum.Parse<TransactionStatus>(cs.GetString()) : TransactionStatus.Committed;
         Transaction.RollbackResult = input.TryGetProperty("rollback_status", out var rs) ? Enum.Parse<TransactionStatus>(rs.GetString()) : TransactionStatus.RolledBack;
         Transaction.ThrowOnRollback = input.TryGetProperty("fail_rollback", out var fr) && fr.GetBoolean();
+        if (input.TryGetProperty("external_path", out var externalPath)) ScriptCompiler.ExternalPath = externalPath.GetString();
         var route = typeof(CoreEntry).GetMethod("RouteAsync", BindingFlags.NonPublic | BindingFlags.Instance);
         var task = (Task<string>)route.Invoke(Create(app), new object[] {
             input.GetProperty("route").GetString(), input.GetProperty("body").GetRawText(),
             input.TryGetProperty("method", out var method) ? method.GetString() : "POST" });
         var answer = JsonDocument.Parse(await task).RootElement;
         Console.WriteLine(JsonSerializer.Serialize(new { answer, app.Opens, ModelPathUtils.LastPath,
-            Transaction.Starts, Transaction.Commits, Transaction.Rollbacks, ScriptCompiler.Calls }));
+            Transaction.Starts, Transaction.Commits, Transaction.Rollbacks, ScriptCompiler.Calls,
+            opening_handlers = app.Application.OpeningHandlers, file_opens = app.Application.Opens }));
     }
 }

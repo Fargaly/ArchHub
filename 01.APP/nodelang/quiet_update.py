@@ -958,25 +958,33 @@ def confirm_when_free(state_dir: Path, app_dir: Path, *, attempts: int = 30, wai
     return result
 
 
-def recover_failed_launch(state_dir: Path, app_dir: Path, *, socket_factory=None) -> dict:
-    """Emergency entry uses stdlib only, before setup or application imports.
+def _profile_instance(state_dir=None):
+    # Emergency bootstrap must work even if nodelang/__init__.py is damaged.
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("archhub_profile_instance", Path(__file__).with_name("profile_instance.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    environment = dict(os.environ)
+    if state_dir is not None:
+        environment["ARCHHUB_TEST_STATE_DIR"] = str(state_dir)
+    return module.ProfileInstance(environment)
 
-    It takes the same exclusive socket as the sole desktop launcher. A failed
-    second launch must never restore files underneath an already running app.
-    """
-    import socket
+
+def recover_failed_launch(state_dir: Path, app_dir: Path, *, lock_factory=None) -> dict:
+    """Recover only while holding the same profile mutex as the desktop."""
     if not (Path(state_dir) / "updates" / "staged.json").is_file():
         return {"rolled_back": False, "reason": "no pending update"}
-    lock = (socket_factory or socket.socket)()
+    lock = None
     try:
-        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
-            lock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-        lock.bind(("127.0.0.1", int(os.environ.get("ARCHHUB_TEST_LOCK_PORT", "48611"))))
+        lock = lock_factory() if lock_factory is not None else _profile_instance(state_dir)
+        if lock.handle is None:
+            return {"rolled_back": False, "reason": "existing desktop owns the profile"}
         return rollback_staged(state_dir, app_dir)
     except (OSError, ValueError) as exc:
         return _failure(exc, rolled_back=False)
     finally:
-        lock.close()
+        if lock is not None:
+            lock.close()
 
 
 def apply_unattended(state_dir: Path, app_dir: Path, opener=urllib.request.urlopen, runner=subprocess.run, *,
@@ -1089,18 +1097,12 @@ def _machine_is_idle(minutes: int) -> bool:
 
 
 def _desktop_running() -> bool:
-    """True when launcher.py holds the single-instance port. It installs itself."""
-    import socket
-    sock = socket.socket()
+    """The same profile mutex guards desktop launch and update recovery."""
+    lock = _profile_instance()
     try:
-        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-        sock.bind(("127.0.0.1", int(os.environ.get("ARCHHUB_TEST_LOCK_PORT", "48611"))))
-    except OSError:
-        return True
+        return lock.handle is None
     finally:
-        sock.close()
-    return False
+        lock.close()
 
 
 _MAINTAINER_MUTEX = None
@@ -1192,12 +1194,12 @@ def main(argv=None):
     parser.add_argument("--apply-staged", type=Path, help="Install a staged build when the desktop is not open, then exit.")
     parser.add_argument("--state-dir", type=Path)
     args = parser.parse_args(argv)
+    if args.state_dir is not None:
+        os.environ["ARCHHUB_TEST_STATE_DIR"] = str(args.state_dir)
     if args.apply_staged is not None:
         if _desktop_running():
             append_update_log(state_directory(), "update: desktop is open; install waits until quit or the next start")
             return 0
-        if args.state_dir is not None:
-            os.environ["ARCHHUB_TEST_STATE_DIR"] = str(args.state_dir)
         applied = apply_staged(state_directory(), args.apply_staged, stop_runtime=stop_runtime_processes)
         if applied.get("applied"):
             append_update_log(state_directory(), "update: installed %s" % applied.get("build_id"))
@@ -1205,8 +1207,6 @@ def main(argv=None):
             append_update_log(state_directory(), "update: %s" % applied.get("reason"))
         return 0 if applied.get("applied") or applied.get("status") != "failed" else 1
     if args.maintain is not None:
-        if args.state_dir is not None:
-            os.environ["ARCHHUB_TEST_STATE_DIR"] = str(args.state_dir)
         return maintain(args.maintain)
     if args.recover_failed_launch is None or args.state_dir is None:
         parser.error("--recover-failed-launch and --state-dir are required unless --maintain is set")

@@ -25,6 +25,34 @@ def _native_boot_document():
             '</style></head><body>' + card + '</body></html>')
 
 
+def _open_launch(arguments, companion, show_home, show_unavailable):
+    """Route both initial and handed-off argv through the existing windows."""
+    if '--baboom' not in arguments:
+        show_home()
+        return None
+    try:
+        window = companion.get('window')
+        if isinstance(window, Exception):
+            raise window
+        if window is None:
+            from .baboom_nograph import reason
+            raise RuntimeError(companion.get('error') or reason())
+        if window._stopped:
+            raise RuntimeError('BABOOM is stopped for this launch.')
+        if window._shows_as == 'Hidden':
+            raise RuntimeError('BABOOM is hidden in Settings.')
+        window.start_projection()
+        window._open_interaction()
+        window.show()
+        window.raise_()
+        window.activateWindow()
+        return None
+    except Exception as refusal:  # noqa: BLE001 - a launch must give a visible result
+        detail = 'BABOOM unavailable: %s' % refusal
+        show_unavailable(detail)
+        return detail
+
+
 def run(state_dir, instance_lock=None, serve_launch_requests=None):
     app_root = Path(__file__).resolve().parents[1]
     restart = {'requested': False, 'quit': None}
@@ -121,6 +149,7 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
             companion['atlas'] = prepare_baboom_native_atlas()
             companion['host'] = companion_host()  # set last: land_companion lands once the host appears
         except Exception as refused:  # noqa: BLE001 - the Studio stays; the face says why it is missing
+            companion['error'] = str(refused)
             print('  BABOOM     : companion unavailable (%s)' % refused, flush=True)
     companion = {}
     threading.Thread(target=start_baboom, name='archhub-baboom', daemon=True).start()
@@ -135,6 +164,13 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
         window.raise_()
         window.activateWindow()
         view.page().runJavaScript("window.dispatchEvent(new CustomEvent('archhub:open-home'))")
+
+    def show_unavailable(detail):
+        show_home()
+        window.statusBar().showMessage(detail)
+
+    def open_launch(arguments):
+        return _open_launch(arguments, companion, show_home, show_unavailable)
 
     class Asker(QObject):
         ask = pyqtSignal(object)
@@ -160,7 +196,7 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
         class Launch(QObject):
             requested = pyqtSignal(list)
         launch = Launch(app)
-        launch.requested.connect(lambda _arguments: show_home())
+        launch.requested.connect(open_launch)
         threading.Thread(target=serve_launch_requests, args=(instance_lock, launch.requested.emit), daemon=True).start()
     from .window_commands import CloseToTray, bind_window_commands
     quit_app = app.quit
@@ -221,11 +257,13 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
         try:
             from .baboom_native_runtime import create_baboom_native_projection
             window_ = create_baboom_native_projection(host, atlas=companion['atlas'], position_path=Path(state_dir) / 'baboom-position.json',
-                                                      on_stop=host.request_stop)
+                                                      on_stop=host.request_stop, on_open=show_home)
             window_.show()
             window_.start_projection()
             host.start()
             companion['window'] = window_
+            if '--baboom' in sys.argv[1:]:
+                open_launch(['--baboom'])
             print('  BABOOM     : companion window shown', flush=True)
         except Exception as refused:  # noqa: BLE001 - the Studio stays open without the face
             companion['window'] = refused
@@ -235,6 +273,8 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
     landing.timeout.connect(land_companion)
     landing.start(1000)
     window.show()
+    if '--baboom' in sys.argv[1:]:
+        QTimer.singleShot(0, lambda: open_launch(sys.argv[1:]))
     seen_open = {"value": False}
     def consider_update():
         update = server.application_update

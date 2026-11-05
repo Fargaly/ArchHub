@@ -152,7 +152,7 @@ def test_agent_canvas_tools_build_run_and_refuse_cycles(profile):
 
 
 def test_skill_has_typed_sockets_from_its_inner_workflow(profile):
-    from nodelang.session_files import catalogue, new_document, run_document, skills_directory, write_document
+    from nodelang.session_files import catalogue, new_document, run_document, sessions_directory, write_document
     items = {row['id']: row for row in catalogue()}
     skill = new_document('Count items')
     skill['id'] = 'count_items'
@@ -160,7 +160,7 @@ def test_skill_has_typed_sockets_from_its_inner_workflow(profile):
         {'id': 'items', 'item': 'param.value', 'type': 'param.value', 'title': 'Items', 'params': {'type': 'list', 'value': []}, 'position': {'x': 0, 'y': 0}},
         {'id': 'count', 'item': 's_count', 'type': items['s_count']['engine'], 'title': 'Count', 'params': copy.deepcopy(items['s_count']['params']), 'position': {'x': 300, 'y': 0}}]
     skill['wires'] = [{'id': 'w', 'from': {'node': 'items', 'socket': 'value'}, 'to': {'node': 'count', 'socket': 'items'}}]
-    write_document(str(skills_directory() / 'count_items.archhub'), skill)
+    write_document(str(sessions_directory() / 'count_items.archhub'), skill)
     entry = {row['id']: row for row in catalogue()}['skill:count_items']
     assert entry['ports']['target'] == [{'id': 'in:items', 'type': 'list', 'label': 'Items'}]
     assert {'id': 'out:count:count', 'type': 'number', 'label': 'Count · count'} in entry['ports']['source']

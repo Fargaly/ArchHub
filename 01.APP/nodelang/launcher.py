@@ -24,6 +24,8 @@ _log_dir = Path(
     or (Path(os.environ["LOCALAPPDATA"]) / "ArchHub")
 )
 _log_dir.mkdir(parents=True, exist_ok=True)
+_log_dir = _log_dir / "logs"
+_log_dir.mkdir(parents=True, exist_ok=True)
 _log_path = _log_dir / "launcher.log"
 _bootstrap_log = open(_log_path, "a", encoding="utf-8", buffering=1)
 _log = _bootstrap_log
@@ -240,8 +242,6 @@ except Exception as refusal:
     print("  desktop    : launch refused: %s" % refusal, flush=True)
     raise SystemExit(4)
 state_dir.mkdir(parents=True, exist_ok=True)
-from nodelang.persistence import application_database_path
-state_path = application_database_path(state_dir)
 
 def idle_or_away() -> bool:
     """Use BABOOM's input-age reader; unknown presence never permits focus theft."""
@@ -674,7 +674,7 @@ _instance_lock.listen(8)
 _stop_duplicate_launchers()
 
 import subprocess as _update_preboot_process
-# Apply only a verified release armed by the preceding owner's final recovery.
+# Apply the verified installer after the previous desktop owner has closed.
 # No synchronous network download belongs on the application startup path.
 _staged = {}
 try:
@@ -694,12 +694,7 @@ try:
         print("  update     : previous installation is unresolved; recovery and installer retained. Startup refused.", flush=True)
         raise SystemExit(1)
     if _staged.get("staged") and _staged.get("status") == "staged":
-        from nodelang.application_update_recovery import validate_update_ready
-        from nodelang.persistence import application_content_path
-        _update_content = application_content_path(state_path)
-        _applied = _apply_staged(state_dir, Path(__file__).resolve().parents[1],
-            before_apply=lambda: validate_update_ready(state_dir, Path(__file__).resolve().parents[1],
-                state_path, _update_content))
+        _applied = _apply_staged(state_dir, Path(__file__).resolve().parents[1])
         if _applied.get("rolled_back"):
             print("  update     : install failed: %s" % _applied.get("reason"), flush=True)
             try:

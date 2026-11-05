@@ -100,16 +100,12 @@ Name: "desktopicon"; Description: "Create a Desktop shortcut"; GroupDescription:
 Name: "connectassistants"; Description: "Connect my AI assistants to ArchHub (adds ArchHub's end-of-turn check to Claude Code, Codex and Gemini CLI and the Workshop plugin to OpenCode; your other settings are kept)"; GroupDescription: "Assistants:"
 
 [Files]
-; Setup extracts the new product backup owner before replacing any old code.
-Source: "..\nodelang\application_recovery_files.py"; Flags: dontcopy
-Source: "..\nodelang\installer_closed_profile.py"; Flags: dontcopy
-Source: "..\nodelang\backup_retention.py"; Flags: dontcopy
+; Setup preflights assistant connections before replacing application code.
 Source: "..\nodelang\assistant_registration.py"; Flags: dontcopy
 Source: "..\nodelang\client_mcp_installation.py"; Flags: dontcopy
 Source: "..\nodelang\native_workshop_profile.py"; Flags: dontcopy
 Source: "..\nodelang\workshop_config.py"; Flags: dontcopy
 Source: "..\nodelang\cell_secret_keys.py"; Flags: dontcopy
-Source: "..\nodelang\conversation_trace_shapes.py"; Flags: dontcopy
 Source: "{#NodeRuntimePath}"; DestDir: "{app}\runtime"; DestName: "node.exe"; Flags: ignoreversion; Check: NodeRuntimeNeedsInstall
 Source: "{#NodeLicensePath}"; DestDir: "{app}\runtime"; DestName: "Node-LICENSE.txt"; Flags: ignoreversion
 Source: "{#GoosePayloadPath}\*"; DestDir: "{app}\runtime\goose"; Flags: recursesubdirs ignoreversion
@@ -301,7 +297,7 @@ Name: "{autodesktop}\ArchHub"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}
 Filename: "{app}\{#AppExe}"; Description: "Open ArchHub now (the first open installs what it needs, in a window you can read)"; Flags: shellexec postinstall nowait skipifsilent
 
 [Code]
-#include "legacy_sweep.iss"
+
 
 #include "host_registrations.iss"
 
@@ -566,17 +562,7 @@ end;
 
 var
   BackupProgress: TOutputMarqueeProgressWizardPage;
-  BackupFailure: String;
   ConnectorWarnings: String;
-
-procedure OnBackupLog(const S: String; const Error, FirstLine: Boolean);
-begin
-  Log(S);
-  BackupProgress.SetText(S, 'Your saved work is kept until this backup is verified.');
-  BackupProgress.Animate();
-  if Pos('Setup refused:', S) > 0 then
-    BackupFailure := S;
-end;
 
 procedure OnConnectorLog(const S: String; const Error, FirstLine: Boolean);
 begin
@@ -599,11 +585,8 @@ begin
   if CurStep = ssInstall then
   begin
     CloseInstallConnectors();
-    { v1.x left its whole code tree beside this one; sweep it once, guarded. }
-    SweepLegacyV1(ExpandConstant('{app}'));
-    { These stale files were never payloads of this package. Preserve exact
-      known v1 bytes in an archive; do not remove unknown/user-edited docs. }
-    ArchiveLegacyDocs(ExpandConstant('{app}'));
+    { Unused entries are staged by first run, then removed only after health.
+      Setup never makes retired-doc archives or deletes unrecognised files. }
     { Bridge DLLs for this build land in bridges\<host>\<year>\{#BuildId}\.
       A running Revit or AutoCAD keeps the DLL it already mapped. This setup
       does not replace that file, move it, or ask Restart Manager to close the host. }
@@ -709,32 +692,6 @@ begin
     end;
     if ConnectorWarnings <> '' then
       Log(ConnectorWarnings);
-  end;
-  if Result = '' then
-  begin
-    ExtractTemporaryFile('application_recovery_files.py');
-    ExtractTemporaryFile('installer_closed_profile.py');
-    ExtractTemporaryFile('backup_retention.py');
-    ExtractTemporaryFile('conversation_trace_shapes.py');
-    BackupProgress := CreateOutputMarqueeProgressPage('Preserving your saved work',
-      'Closing ArchHub journal holders, checking SQLite and preserving saved work');
-    BackupFailure := '';
-    if not WizardSilent() then BackupProgress.Show();
-    BackupProgress.Animate();
-    try
-      if not ExecAndLogOutput(FindPython(), '-u "' + ExpandConstant('{tmp}\application_recovery_files.py') +
-          '" --closed-profile "' + ExpandConstant('{localappdata}') + '" --build "{#BuildId}"',
-          '', SW_HIDE, ewWaitUntilTerminated, BackupCode, @OnBackupLog) then
-        Result := 'The pre-upgrade journal backup could not start. Your saved work was kept.'
-      else if BackupCode <> 0 then
-      begin
-        Result := BackupFailure;
-        if Result = '' then
-          Result := 'The pre-upgrade journal backup did not complete. Your saved work was kept; see the Setup log for the store and holder.';
-      end;
-    finally
-      BackupProgress.Hide();
-    end;
   end;
   if Result <> '' then
     Log('ArchHub Setup refused: ' + Result);

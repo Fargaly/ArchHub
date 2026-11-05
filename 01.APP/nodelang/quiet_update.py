@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 import sys
@@ -32,9 +33,243 @@ _RELEASE_BYTES = 2 * 1024 * 1024
 _INSTALLER_BYTES = 1024 * 1024 * 1024
 _THREAD_LOCK = threading.Lock()
 _PAYLOAD_DIRS = ("nodelang", "app", "runtime", "tools", "bridges", "licenses", "wheelhouse")
-_PAYLOAD_FILES = ("BUILD_ID", "BUILD_METADATA.json", "launch_archhub_test.py", "colleague_setup.py",
+_PAYLOAD_FILES = ("BUILD_ID", "BUILD_METADATA.json", "colleague_setup.py",
                   "requirements.txt", "ArchHub.vbs", "ArchHub.bat", "archhub.ico", "NOTICE", "HOST_ARTIFACTS.json")
 _ROLLBACK_BYTES = 2 * 1024 * 1024 * 1024
+
+# The installed payload and the current plain-file owners. User documents are
+# protected independently of this list, including unrecognised sessions-files data.
+APP_FOLDER_OWNERS = {
+    **{name: 'installer payload' for name in (*_PAYLOAD_DIRS, *_PAYLOAD_FILES, 'packed', 'docs', '.venv',
+                                             'unins000.exe', 'unins000.dat', '.archhub-ready')},
+    'settings': 'nograph_server.JsonFile / settings_owner',
+    'workshop': 'workshop_mailbox / Workshop Session Link',
+    'sessions': 'host_brokers / pipeline_engines',
+    'sessions-files': 'legacy Canvas migration; unknown user files retained',
+    'workflows': 'user Canvas documents', 'skills': 'user supplied workflows',
+    'data': 'session_files recent/current metadata',
+    'logs': 'log_rotation / cleanup removal manifest',
+    'runtime': 'installer runtimes / runtime_credentials browser session',
+    'bin': 'colleague_setup._setup_compiler_candidates host compiler discovery',
+    'updates': 'quiet_update release handoff',
+    'web-profile': 'nograph_launcher Qt browser profile',
+    'agents': 'installed agent work files',
+    'BABOOM': 'user companion assets', 'goose': 'goose_runtime work files',
+    'library': 'user imported host connectors',
+    'custom_nodes': 'selfext runtime user mods',
+    'payload': 'host_exec compiled connector payloads',
+    'Revit': 'host_brokers session records', 'AutoCAD': 'host_brokers session records',
+    'bridge': 'host_brokers runtime', 'bridges': 'installer host adapters',
+    'session-link': 'existing Workshop connection records',
+    'native-launch-configs': 'native_agent_session configuration',
+    'native-workshop': 'native_workshop_profile isolated assistant configuration',
+    'runtimes': 'daily_work_nodes installed tools', 'daily-work': 'daily_work_nodes results',
+    'nograph-http-port': 'nograph_server discovery',
+    'baboom-position.json': 'baboom_native_runtime window position',
+    'tray-notice-shown': 'window_commands close-to-tray preference',
+    'browser-session-v1.dpapi': 'browser_admission protected session',
+    'assistant-hooks.json': 'assistant_registration consent',
+    'assistant-integration.json': 'assistant_registration consent',
+    'settings.json': 'existing user preferences', 'profile.json': 'user profile',
+    'theme.json': 'existing user theme',
+    'deployment-evidence.json': 'deployment_evidence installed build provenance',
+    'use_software_render': 'desktop renderer compatibility',
+    'rhino.active': 'host_brokers', 'speckle.active': 'host_brokers',
+    'keys': 'existing credential custody; never cleanup input',
+    'runtime-context': 'hook_decision / native_stop_hook',
+    'relay-descriptor.json': 'nograph_server cloud relay',
+    'terminal': 'terminal_sessions working directory',
+    'projects': 'user project files', 'exports': 'user exported files',
+    'renders': 'user render outputs', 'personal_brain': 'user knowledge',
+    'memory': 'user knowledge', 'private-client-backups': 'user client data',
+}
+_CLEANUP_STAGE = '_cleanup-staging'
+_CLEANUP_JOURNAL = 'cleanup-pending.json'
+
+
+def _cleanup_plain(path):
+    return all(not item.is_symlink() and not getattr(item.lstat(), 'st_file_attributes', 0) & 0x400
+               for item in (path, *path.parents) if item.exists() or item.is_symlink())
+
+
+def _entry_files(path):
+    """Never traverse junctions, even in retired folders."""
+    if not _cleanup_plain(path):
+        raise OSError('linked entry retained')
+    if path.is_dir():
+        for child in path.iterdir():
+            yield from _entry_files(child)
+    else:
+        yield path
+
+
+def _unlocked(path):
+    if os.name != 'nt':
+        return
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                  ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+    kernel.CreateFileW.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+    handle = kernel.CreateFileW(str(path), 0x80000000, 0, None, 3, 0x80, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    kernel.CloseHandle(handle)
+
+
+def _cleanup_paths(state):
+    for path in state.iterdir():
+        if path.name not in APP_FOLDER_OWNERS and path.name != _CLEANUP_STAGE:
+            if path.suffix.lower() == '.archhub':
+                continue
+            yield path
+    # Only these exact founder-identified test titles are removable user-format files.
+    from .session_files import read_document, verification_document
+    legacy = state / 'sessions-files'
+    for path in [*legacy.glob('*.archhub'), *(legacy / 'skills').glob('*.archhub')]:
+        try:
+            if _cleanup_plain(path) and verification_document(read_document(path)):
+                yield path
+        except (OSError, ValueError):
+            continue
+
+
+def restore_app_folder(state_dir):
+    """Recover an interrupted/failed boot without overwriting any new user file."""
+    from .nograph_server import JsonFile
+    state = Path(state_dir)
+    if not _cleanup_plain(state / _CLEANUP_STAGE) or not _cleanup_plain(state / 'logs'):
+        raise ValueError('Cleanup paths must not contain links or reparse points')
+    journal = state / 'logs' / _CLEANUP_JOURNAL
+    if not journal.exists():
+        return {'restored': [], 'pending': False}
+    rows = json.loads(journal.read_text(encoding='utf-8'))
+    restored, pending = [], []
+    for row in reversed(rows):
+        relative = Path(row['path'])
+        if not relative.parts or relative.is_absolute() or relative.drive or '..' in relative.parts or relative.parts[0] == _CLEANUP_STAGE:
+            raise ValueError('Invalid cleanup journal path')
+        source, target = state / _CLEANUP_STAGE / relative, state / relative
+        if source.exists():
+            try:
+                if target.exists():
+                    raise OSError('restoration target exists; both retained')
+                target.parent.mkdir(parents=True, exist_ok=True)
+                source.rename(target)
+                restored.append(row['path'])
+            except OSError:
+                pending.append(row)
+    if pending:
+        JsonFile(journal, []).write(pending)
+    else:
+        journal.unlink()
+        _remove_empty_stage(state / _CLEANUP_STAGE)
+    return {'restored': restored, 'pending': bool(pending)}
+
+
+def _remove_empty_stage(stage):
+    if not stage.is_dir():
+        return
+    for child in stage.iterdir():
+        if child.is_dir() and _cleanup_plain(child):
+            _remove_empty_stage(child)
+    try:
+        stage.rmdir()
+    except OSError as error:
+        logging.getLogger(__name__).debug('Cleanup staging retained: %s', error)
+
+
+def stage_app_folder(state_dir):
+    """First-run owner: stage unused entries before boot; never run by a maintenance tool."""
+    from .nograph_server import JsonFile
+    state = Path(state_dir).absolute()
+    if not _cleanup_plain(state) or not _cleanup_plain(state / _CLEANUP_STAGE) or not _cleanup_plain(state / 'logs'):
+        raise ValueError('Cleanup requires a plain application folder')
+    if restore_app_folder(state)['pending']:
+        return {'staged': [], 'skipped': ['unfinished restoration']}
+    journal = state / 'logs' / _CLEANUP_JOURNAL
+    staged, skipped = [], []
+    for path in list(_cleanup_paths(state)):
+        relative = path.relative_to(state)
+        try:
+            size = 0
+            for file in _entry_files(path):
+                # Unrecognised Canvas documents are user data, even in an old directory.
+                if file.suffix.lower() in ('.archhub', '.pem', '.key', '.dpapi') and path.suffix.lower() != '.archhub':
+                    raise OSError('user Canvas document retained')
+                _unlocked(file)
+                size += file.stat().st_size
+            target = state / _CLEANUP_STAGE / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            row = {'path': relative.as_posix(), 'size': size}
+            # Journal before rename: either side remains recoverable after a crash.
+            JsonFile(journal, []).write([*staged, row])
+            path.rename(target)
+            staged.append(row)
+        except OSError as error:
+            skipped.append({'path': relative.as_posix(), 'reason': str(error)})
+    if staged:
+        JsonFile(journal, []).write(staged)
+    elif journal.exists():
+        journal.unlink()
+    _remove_empty_stage(state / _CLEANUP_STAGE)
+    return {'staged': staged, 'skipped': skipped}
+
+
+def finish_app_folder(state_dir, *, healthy):
+    """Delete only after the app's health check; failure restores the exact staged entries."""
+    if not healthy:
+        return restore_app_folder(state_dir)
+    import shutil
+    from .nograph_server import JsonFile
+    from .log_rotation import RotatingLog
+    state = Path(state_dir)
+    if not _cleanup_plain(state / _CLEANUP_STAGE) or not _cleanup_plain(state / 'logs'):
+        raise ValueError('Cleanup paths must not contain links or reparse points')
+    journal = state / 'logs' / _CLEANUP_JOURNAL
+    if not journal.exists():
+        return {'removed': [], 'pending': False}
+    if not _cleanup_plain(journal) or not _cleanup_plain(state / 'logs/removals.jsonl'):
+        raise ValueError('Cleanup journal and manifest must be plain files')
+    rows = json.loads(journal.read_text(encoding='utf-8'))
+    removed, pending = [], []
+    from contextlib import closing
+    with closing(RotatingLog(state / 'logs' / 'removals.jsonl')) as manifest:
+        for row in rows:
+            relative = Path(row['path'])
+            if not relative.parts or relative.is_absolute() or relative.drive or '..' in relative.parts or relative.parts[0] == _CLEANUP_STAGE:
+                raise ValueError('Invalid cleanup journal path')
+            target = state / _CLEANUP_STAGE / relative
+            try:
+                if relative.parts[0] in APP_FOLDER_OWNERS and not (relative.parts[0] == 'sessions-files' and target.suffix.lower() == '.archhub'):
+                    raise OSError('allowlisted entry retained')
+                # Re-check locks/links: a process may have opened it since staging.
+                if target.exists():
+                    for file in _entry_files(target):
+                        if file.suffix.lower() in ('.archhub', '.pem', '.key', '.dpapi'):
+                            from .session_files import read_document, verification_document
+                            if file.suffix.lower() != '.archhub' or not verification_document(read_document(file)):
+                                raise OSError('new user data in staged entry retained')
+                        _unlocked(file)
+                    manifest.write(json.dumps({**row, 'status': 'removing'}) + '\n')
+                    manifest.flush()
+                    if target.is_dir():
+                        shutil.rmtree(target)
+                    else:
+                        target.unlink()
+                manifest.write(json.dumps({**row, 'status': 'removed'}) + '\n')
+                manifest.flush()
+                removed.append(row)
+            except (OSError, ValueError):
+                pending.append(row)
+    if pending:
+        JsonFile(journal, []).write(pending)
+    else:
+        journal.unlink()
+        _remove_empty_stage(state / _CLEANUP_STAGE)
+    return {'removed': removed, 'pending': bool(pending)}
 
 
 def installed_build_id(app_dir: Path) -> str:
@@ -768,9 +1003,11 @@ def state_directory() -> Path:
 def append_update_log(state_dir: Path, line: str) -> None:
     """One update line in launcher.log. A log failure must not hide the check."""
     try:
-        directory = Path(state_dir)
+        directory = Path(state_dir) / 'logs'
         directory.mkdir(parents=True, exist_ok=True)
-        with (directory / "launcher.log").open("a", encoding="utf-8", newline="\n") as stream:
+        from contextlib import closing
+        from nodelang.log_rotation import RotatingLog
+        with closing(RotatingLog(directory / 'updates.log')) as stream:
             stream.write(str(line).rstrip("\r\n") + "\n")
             stream.flush()
     except OSError:

@@ -797,15 +797,13 @@ def test_openrouter_free_send_writes_bounded_step_trace(caplog, monkeypatch, tmp
     assert "local chat answer" not in sample
     assert "how many walls" not in sample
     assert "Authorization" not in sample
-    trace_path = tmp_path / "free-chat-trace.jsonl"
+    trace_path = tmp_path / "logs" / "free-chat-trace.jsonl"
     lines = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+    attempted = [json.loads(request.data.decode("utf-8"))["model"] for request in wire.sent
+                 if request.full_url == OPENROUTER_CHAT]
     assert [line["step"] for line in lines] == [
-        "rotation source: env",
-        "openrouter/free",
-        "one/free:free",
-        "local probe",
-        "lmstudio/qwen2.5-coder-7b-instruct",
-        "final",
+        "rotation source: env", *attempted, "local probe",
+        "lmstudio/qwen2.5-coder-7b-instruct", "final",
     ]
     assert {tuple(line) for line in lines} == {("ts", "send_id", "step", "outcome", "elapsed_ms")}
     assert {line["send_id"] for line in lines} and len({line["send_id"] for line in lines}) == 1

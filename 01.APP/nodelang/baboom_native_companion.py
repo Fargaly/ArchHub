@@ -731,7 +731,7 @@ def create_baboom_native_companion_window(
     on_open: Callable[[], None] | None = None,
     reduced_motion: bool | None = None,
     work_rows: Callable[[], object] | None = None,
-    skills_directory: Callable[[], Path] | None = None,
+    sessions_directory: Callable[[], Path] | None = None,
 ) -> Any:
     """Create, but never show or start, the one transparent companion window."""
     if type(controller) is not BaboomNativeCompanionController:
@@ -744,7 +744,7 @@ def create_baboom_native_companion_window(
         raise ValueError("BABOOM reduced motion parameter is invalid")
     if work_rows is not None and not callable(work_rows):
         raise ValueError("BABOOM work rows provider is invalid")
-    if skills_directory is not None and not callable(skills_directory):
+    if sessions_directory is not None and not callable(sessions_directory):
         raise ValueError("BABOOM skills directory provider is invalid")
     if work_rows is None:
         from .baboom_work_presence import read_workshop_task_rows
@@ -836,7 +836,7 @@ def create_baboom_native_companion_window(
             self._transition_left = 0
             self._reduced_motion = reduced_motion
             self._work_rows = work_rows
-            self._skills_directory = skills_directory
+            self._sessions_directory = sessions_directory
             self._skill_offer: dict[str, str] | None = None
             self._presence_hold = False
             self._position_path = position_path
@@ -1954,17 +1954,17 @@ def create_baboom_native_companion_window(
                 return
             super().mouseDoubleClickEvent(event)
 
-        def _skills_folder(self) -> Path:
-            if self._skills_directory is not None:
-                return Path(self._skills_directory())
-            from .session_files import skills_directory
-            return skills_directory()
+        def _sessions_folder(self) -> Path:
+            if self._sessions_directory is not None:
+                return Path(self._sessions_directory())
+            from .session_files import sessions_directory
+            return sessions_directory()
 
         def _offer_dropped_file(self, path: Path) -> None:
             from .baboom_work_presence import load_saved_skills, match_saved_skill
             if self._frame is None or self._busy or self._dismissed or self._stopped:
                 return
-            match = match_saved_skill(path, load_saved_skills(self._skills_folder()))
+            match = match_saved_skill(path, load_saved_skills(self._sessions_folder()))
             self._details_open = True
             self._interaction_requested = True
             self._result_visible = False

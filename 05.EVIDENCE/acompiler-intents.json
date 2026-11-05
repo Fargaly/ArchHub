@@ -9469,7 +9469,17 @@
         "03.TOOLS/installer/README.md",
         "03.TOOLS/tools/fresh_machine_check.py",
         "05.EVIDENCE/fresh-machine-dependencies.md",
-        "05.EVIDENCE/freshmachine-result.md"
+        "05.EVIDENCE/freshmachine-result.md",
+        "02.TESTS/tests/test_universal_agent_plain_send.py",
+        "02.TESTS/tests_js/apptidy_sessions.test.mjs",
+        "02.TESTS/tests_replica/test_app_folder_tidy.py",
+        "02.TESTS/tests_replica/test_skills_library.py",
+        "02.TESTS/tests_replica/test_the_router_sends_it_where_it_says.py",
+        "05.EVIDENCE/app-folder-allowlist.md",
+        "01.APP/nodelang/model_catalogue.py",
+        "02.TESTS/tests_replica/test_slowhome.py",
+        "02.TESTS/tests_js/slowhome_browser.cjs",
+        "01.APP/nodelang/cloud_signin.py"
       ]
     }
   }

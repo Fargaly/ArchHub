@@ -1302,7 +1302,7 @@ Object.assign(api,{
  async startTemplate(id){const parent=state.graph.id;const opened=await api.openTemplateGraph(id);if(opened.root){scopeEpoch++;publish({declaredTasks:[]});await mutate(()=>commands.open(opened.root),true);}const runEpoch=scopeEpoch;const raw=await mutate(()=>request('/api/universal/run-graph',{roots:opened.nodes}));const result=scopeEpoch===runEpoch?projectRunResult(raw):raw;if(opened.root&&scopeEpoch===runEpoch&&state.graph.id===opened.root){scopeEpoch++;publish({declaredTasks:[]});await mutate(()=>commands.open(parent),true);}await refreshProjectData();return result;},
  
  async exportData(name,id){
-  if(name==='Recipe')return api.exportRecipe();
+  if(name==='Recipe'||name==='Graph'){const doc=await api.exportRecipe();return {name:(doc.title||'Untitled').replace(/[<>:"/\\|?*\u0000-\u001f]/g,'-')+'.archhub',type:'application/json',content:JSON.stringify(doc,null,2)};}
   if(name.startsWith('Run ')){const run=state.runs.find(r=>'Run '+r.id===name);if(!run)throw Error('Open a current run before exporting.');return {name:'Run.json',type:'application/json',content:JSON.stringify(run.rows,null,2)};}
   if(name==='Receipts'||name==='Issues')return {name:name+'.json',type:'application/json',content:JSON.stringify(name==='Receipts'?state.receipts:state.modelReview.issues,null,2)};
   return projectExport(name,id);
@@ -1511,9 +1511,12 @@ async function runSolve(){
  return solved;
 }
 function saveNow(){
- const sent=portableDocument(),path=sessionPath,base=sessionRevision,text=JSON.stringify(sent);
+ const id=sessionDocument?.id;
  fileWrites=fileWrites.catch(()=>{}).then(async()=>{
-  const saved=await sessionRequest('autosave',{document:sent,path,base_revision:base});
+  if(sessionDocument?.id!==id)return {cancelled:true};
+  const sent=portableDocument(),currentPath=sessionPath,base=sessionRevision,text=JSON.stringify(sent);
+  const saved=await sessionRequest('autosave',{document:sent,path:currentPath,base_revision:base});
+  if(sessionDocument?.id===sent.id&&sessionPath===currentPath){sessionPath=saved.path;publish({sessionFile:sessionPath});}
   // Adopt the merged file only if nothing changed here meanwhile; otherwise the next save merges from the same base.
   if(sessionDocument?.id===sent.id&&JSON.stringify(portableDocument())===text){
    localDirty=false;sessionRevision=saved.revision;
@@ -1562,15 +1565,18 @@ api.openSession=async path=>{
  const navigation=++fileNavigation,opened=await sessionRequest('open',{...(path?{path}:{})});if(opened.cancelled||navigation!==fileNavigation)return {cancelled:true};return adoptFile(opened.document,opened.path,navigation);};
 // Built-in starters (Book ch.12): open one as a new session file; Start also runs it to its Approve gate.
 api.openStarter=async id=>{const navigation=++fileNavigation,opened=await sessionRequest('starter',{id});return adoptFile(opened.document,opened.path,navigation);};
-api.startTemplate=async id=>{await api.openStarter(id);await api.runNode();return {ok:true};};
+api.startTemplate=async id=>{const opened=await api.openTemplateGraph(id);if(opened?.cancelled)return opened;await api.runNode();return {ok:true};};
 api.importSession=async file=>{const navigation=++fileNavigation;if(!file.name.toLowerCase().endsWith('.archhub')||file.size>8388608)throw Error('Choose an .archhub file up to 8 MiB.');return adoptFile(JSON.parse(await file.text()),'',navigation);};
-api.saveSession=async(path=sessionPath)=>{
- if(!path)path=window.prompt('Save session as',fileDirectory+'\\'+(sessionDocument.title||'Untitled')+'.archhub');
- if(!path)return {cancelled:true};
- const document=portableDocument(),navigation=fileNavigation,saved=await sessionRequest('save',{path,document});
- if(saved.cancelled)return saved;if(navigation===fileNavigation&&sessionDocument.id===document.id){sessionPath=saved.path;publish({sessionFile:sessionPath,sessionDirty:JSON.stringify(portableDocument())!==JSON.stringify(document)});queueAutosave();}await refreshGraphs();return saved;
+api.saveSession=async(path=sessionPath,saveAs=false)=>{
+ const navigation=fileNavigation,previousPath=sessionPath;await flushAutosave();
+ if(navigation!==fileNavigation)return {cancelled:true};if(!saveAs&&path===previousPath)path=sessionPath;
+ fileWrites=fileWrites.catch(()=>{}).then(async()=>{
+ if(navigation!==fileNavigation)return {cancelled:true};
+ const document=portableDocument(),saved=await sessionRequest('save',{path,document,save_as:saveAs});
+ if(saved.cancelled)return saved;if(navigation===fileNavigation&&sessionDocument.id===document.id){sessionPath=saved.path;if(saveAs&&sessionDocument.title===document.title){sessionDocument.title=saved.document.title;projectFile();}publish({sessionFile:sessionPath,sessionDirty:JSON.stringify(portableDocument())!==JSON.stringify(document)});queueAutosave();}return saved;
+ });const saved=await fileWrites;await refreshGraphs();return saved;
 };
-api.saveSessionAs=()=>api.saveSession('');
+api.saveSessionAs=()=>api.saveSession('',true);
 api.getSessionDocument=()=>copy(portableDocument());
 api.readSystemGraph=async()=>{
  const data=await request('/api/universal/canvas'),previous=canvas;
@@ -1598,11 +1604,11 @@ api.refreshProjects=async()=>{if(!ready)await api.ready;projectFile();return cop
 api.tickSchedules=async()=>[];
 api.refreshLibraryPorts=async()=>{
  const data=await sessionRequest('catalogue');fileDirectory=data.directory;
- publish({libraryPorts:data.items,catalogue:data.items.filter(i=>!i.noEngine).map(i=>({id:i.id,name:i.title,family:i.cat,description:i.sub,descriptor:{engine:i.engine}})),graphs:data.recent});
+ publish({sessionsFolder:data.directory,libraryPorts:data.items,catalogue:data.items.filter(i=>!i.noEngine).map(i=>({id:i.id,name:i.title,family:i.cat,description:i.sub,descriptor:{engine:i.engine}})),graphs:data.sessions.map(row=>({...row,id:row.path,name:row.title})),templates:[...state.templates.filter(row=>String(row.id).startsWith('starter:')),...data.sessions.map(row=>({...row,id:'skill:'+row.id}))]});
  projectFile();return data.items;
 };
 async function refreshGraphs(){return refreshSessionFiles();}
-const refreshSessionFiles=async()=>{const data=await sessionRequest('catalogue');publish({graphs:data.recent});return data.recent;};
+const refreshSessionFiles=async()=>{const data=await sessionRequest('catalogue');publish({graphs:data.sessions.map(row=>({...row,id:row.path,name:row.title}))});return data.sessions;};
 api.addNode=async(name,position={})=>{
  const item=state.libraryPorts.find(i=>i.id===name||i.title===name);
  if(!item||item.noEngine)throw Error('Choose an executable Library node.');
@@ -1700,7 +1706,10 @@ api.setPromotedParameter=async(id,key,value)=>fileEdit(d=>{const n=d.nodes.find(
 api.updateGraph=async(id,values)=>fileEdit(d=>{if(values.name)d.title=values.name;d.properties={...d.properties,...values};});
 api.exportRecipe=async()=>portableDocument();
 api.solveNow=()=>runSolve();api.getSessionPath=()=>sessionPath;
-api.saveSkill=async name=>{if(!sessionDocument)throw Error('Open a workflow first.');const document={...portableDocument(),id:window.crypto.randomUUID(),title:String(name||sessionDocument.title).trim()};document.nodes=document.nodes.map(({result,...node})=>node);const saved=await sessionRequest('save-skill',{document});await api.refreshLibraryPorts();notice('Skill saved. It is in the Library under Skills.');return saved;};
+api.saveSkill=async name=>{if(name)fileEdit(d=>{d.title=String(name).trim()||d.title;});const saved=await api.saveSession();await api.refreshLibraryPorts();return saved;};
+api.openTemplateGraph=async id=>{const row=state.templates.find(t=>t.id===id);if(row?.path)return api.openSession(row.path);return api.openStarter(id);};
+api.readSessionsFolder=()=>settingsAction('readSessionsFolder').then(result=>{publish({sessionsFolder:result.sessionsFolder});return result;});
+api.chooseSessionsFolder=async()=>{await flushAutosave();const result=await settingsAction('setSessionsFolder',[]);sessionPath=result.moved?.find(([old])=>old===sessionPath)?.[1]||sessionPath;publish({sessionsFolder:result.sessionsFolder,sessionFile:sessionPath});await api.refreshLibraryPorts();return result;};
 window.addEventListener('pagehide',()=>{if(sessionDocument){const body=JSON.stringify({action:'autosave',document:portableDocument(),path:sessionPath});fetch('/api/session-files',{method:'POST',headers:{'Content-Type':'application/json','X-ArchHub-Session':session?.token||'','X-ArchHub-CSRF':session?.csrf||'',...(window.ARCHHUB_AUTHORITY?.canvas_key?{'X-ArchHub-Canvas-Key':window.ARCHHUB_AUTHORITY.canvas_key}:{})},body,keepalive:true}).catch(()=>{});}});
 
 const initialState=copy(state);

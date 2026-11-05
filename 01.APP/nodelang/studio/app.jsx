@@ -796,7 +796,7 @@
         m
       }, event)} disabled={m.selected.length < 2}>Group · Ctrl G</Btn><Btn sm onClick={event => executeAction("appShell.SaveAsSkill.70", {
         u
-      }, event)}>Save as skill</Btn><Btn danger sm onClick={event => executeAction("appShell.Delete.71", {
+      }, event)}>Save session</Btn><Btn danger sm onClick={event => executeAction("appShell.Delete.71", {
         m
       }, event)}>Delete…</Btn></div>;else if (k === 'Parameter socket') body = <><p>{m.page} is an application node. Its parameters are the same values shown in Settings.</p><div className="grid">{s.settings.filter(r => r.page === m.page).map(r => <div key={r.id} className="spread row"><span>{r.label} · {r.type}</span><Btn sm onClick={event => executeAction("appShell.ExposeOnCanvas.72", {
             api,
@@ -1500,7 +1500,7 @@
   function appShellSaveAsSkill70({
     u
   }, event) {
-    const handler = () => u.show('Save skill');
+    const handler = () => u.act(() => window.ArchHubAPI.saveSession());
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
   }
   function appShellDelete71({

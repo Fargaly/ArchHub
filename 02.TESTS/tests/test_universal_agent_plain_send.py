@@ -716,4 +716,4 @@ def test_universal_agent_free_tool_route_empty_catalogue_refuses_without_dispatc
     ]
     assert timeouts[0] <= 20.0
     assert all(timeout <= 20.0 for timeout in timeouts)
-    assert (tmp_path / "free-chat-trace.jsonl").is_file()
+    assert (tmp_path / "logs" / "free-chat-trace.jsonl").is_file()

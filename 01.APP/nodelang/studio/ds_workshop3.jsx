@@ -298,7 +298,7 @@
         {task.approvalId && <ApprovalCard id={task.approvalId} />}
         {task.status === 'STOPPED' && <Btn onClick={() => executeAction("reassignTask", u, task.id)}>Continue with another agent</Btn>}
         {task.status === 'DONE' && task.result && <section data-workshop-result className="ws-request"><div className="ws-label">RESULT</div><Prose text={task.result} lines={6} /></section>}
-        {task.status === 'DONE' && <div className="flex"><Btn onClick={() => executeAction("ui.go", u, 'watcher')}>Open result</Btn><Btn onClick={() => executeAction("ui.schedule", u, task.title)}>Repeat this</Btn></div>}
+        {task.status === 'DONE' && <div className="flex"><Btn onClick={() => executeAction("ui.go", u, 'watcher')}>Open result</Btn><Btn onClick={() => executeAction("ui.schedule", u, task.id)}>Repeat this</Btn></div>}
       </> : <>
         {(previous.before ? previous.more : s.workshopMessagesMore) && <Btn sm ghost onClick={async () => {
           const page = await executeAction("listWorkshopMessages", u, previous.before || s.workshopMessagesBefore);

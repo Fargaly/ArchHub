@@ -9508,7 +9508,8 @@
         "05.EVIDENCE/t1small-hook-stop.patch",
         "05.EVIDENCE/t1small-compiler-timing.json",
         "02.TESTS/tests_replica/test_baboom_native_runtime.py",
-        "01.APP/nodelang/studio/fonts/inter-variable.woff2"
+        "01.APP/nodelang/studio/fonts/inter-variable.woff2",
+        "05.EVIDENCE/designpolish/"
       ]
     }
   }

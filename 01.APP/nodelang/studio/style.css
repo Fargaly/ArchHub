@@ -798,3 +798,5 @@ html[data-reduced-motion="true"] *::after{transition:none!important;animation:no
 html[data-theme=Light]{--color-bg:var(--color-l-bg);--color-bg-deep:var(--color-l-bg);--color-bg-panel:var(--color-l-bg-panel);--color-bg-canvas:var(--color-l-bg);--color-bg-soft:var(--color-l-bg-soft);--color-bg-raised:var(--color-l-bg-panel);--color-bg-hover:var(--color-l-bg-soft);--color-bg-ink:var(--color-l-bg-soft);--color-ink:var(--color-l-ink);--color-ink-soft:var(--color-l-ink-soft);--color-ink-muted:var(--color-l-ink-muted);--color-line:var(--color-l-line);--color-line-soft:var(--color-l-line);--color-accent:var(--color-l-accent);--color-accent-hi:var(--color-l-accent)}
 
 .dx-edit-label{white-space:nowrap}
+
+@font-face{font-family:Inter;src:url(fonts/inter-variable.woff2) format('woff2');font-weight:100 900;font-display:block}

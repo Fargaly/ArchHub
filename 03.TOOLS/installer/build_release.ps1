@@ -217,6 +217,7 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
         # The public website the app serves carries brand files and the three OFL faces it
         # renders with, beside their licences. They are data, not code: named exactly, so the
         # generic allowlist never turns into "any binary under nodelang".
+        if ($Path -ceq 'nodelang/studio/fonts/inter-variable.woff2') { return $true }
         if ($Path -cmatch '^nodelang/data/website/(favicon\.(ico|svg)|og\.png|fonts/[A-Za-z0-9][A-Za-z0-9._-]*\.(woff2|txt))$') { return $true }
         # The .NET add-in sources: build_host_bridges.ps1 compiles the Revit and
         # AutoCAD ones and only that compiled closure is installed. Their

@@ -55,6 +55,7 @@ function inputs() {
     babel:input('nodelang/studio/vendor/babel.js', 4 * 1024 * 1024),
     loader:input('nodelang/studio/studio.html', 256 * 1024),
     stylesheet:input('nodelang/studio/style.css', 1024 * 1024),
+    inter:input('nodelang/studio/fonts/inter-variable.woff2', 128 * 1024),
     design_tokens:input('nodelang/studio/design-tokens.json', 256 * 1024),
     package:input('package.json', 128 * 1024),
   };

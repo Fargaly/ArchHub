@@ -268,14 +268,43 @@ def _run_context():
     return context
 
 
-def test_release_profiles_unchanged():
-    if not os.environ.get('ARCHHUB_TEST_PROFILE_SNAPSHOT'):
-        pytest.skip('Run this file as the release wrapper to scan the real profiles')
+def test_release_profiles_unchanged(testiso_run):
+    """The session fixture scans after every test and session fixture has finished."""
     context = _run_context()
-    leaks = _profile_leaks(context['before'], context['run'], time.time())
-    report = Path(os.environ['ARCHHUB_TEST_PROFILE_SNAPSHOT']).with_name('profile-leaks.json')
-    report.write_text(json.dumps(leaks, indent=2), encoding='utf-8')
-    assert not leaks, 'Test writes reached real profiles: ' + json.dumps(leaks)
+    assert context['before'] == testiso_run['before']
+    assert context['run']['started'] == testiso_run['run']['started']
+    assert context['run']['marker'] == os.environ['ARCHHUB_TEST_RUN_ID']
+    writer = Path(os.environ['ARCHHUB_TEST_PROCESS_DIR']) / (str(os.getpid()) + '.json')
+    assert json.loads(writer.read_text(encoding='utf-8')) == {
+        'test_run_id': context['run']['marker'], 'writer_pid': os.getpid(),
+        'writer_session': context['run']['marker'] + ':' + str(os.getpid()),
+    }
+
+
+def test_installed_guard_refuses_mixed_case_environment_root(tmp_path):
+    protected = tmp_path / 'Protected'
+    protected.mkdir()
+    log = tmp_path / 'guard.jsonl'
+    probe = '''
+import sys
+from pathlib import Path
+sys.path.insert(0, '03.TOOLS')
+from tools.real_app_check.profile_guard import install
+install()
+try:
+    Path(sys.argv[1]).write_text('refused')
+except AssertionError:
+    pass
+'''
+    target = protected / 'leak.txt'
+    env = dict(os.environ, ARCHHUB_PROFILE_GUARD_ROOTS=json.dumps([str(protected).upper()]),
+               ARCHHUB_PROFILE_GUARD_LOG=str(log))
+    done = subprocess.run([sys.executable, '-B', '-c', probe, str(target)], env=env,
+                          capture_output=True, text=True, timeout=30,
+                          creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    assert done.returncode == 3, done.stdout + done.stderr
+    assert not target.exists()
+    assert json.loads(log.read_text(encoding='utf-8'))[0] == 'open'
 
 
 def _fixture_run():
@@ -393,70 +422,3 @@ def test_deliberate_leak_is_refused(tmp_path, kind, monkeypatch):
         path.write_text(json.dumps({'writer_session': 'test-session', 'created_at': time.time()}))
     with pytest.raises(AssertionError, match='Test writes reached real profiles'):
         _assert_profiles_clean(before, run, time.time())
-
-
-if __name__ == '__main__':
-    # Run inside run-heavy. The guard is installed before pytest collection,
-    # and is inherited by Python children through the existing guard wrapper.
-    import winreg
-    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, 'Volatile Environment') as key:
-        home = Path(winreg.QueryValueEx(key, 'USERPROFILE')[0])
-        local = Path(winreg.QueryValueEx(key, 'LOCALAPPDATA')[0])
-    protected = [home / 'ArchHub', home / '.archhub', local / 'ArchHub']
-    marker = str(uuid4())
-    root = Path('.cache/testiso-release').resolve() / marker
-    root.mkdir(parents=True, exist_ok=True)
-    sentinel = root / 'sentinel'
-    sentinel.mkdir(exist_ok=True)
-    state = root / 'state'
-    state.mkdir(exist_ok=True)
-    temporary = root / 'tmp'
-    temporary.mkdir(exist_ok=True)
-    protected.append(sentinel)
-    before = {}
-    for path in protected:
-        before[str(path)] = _sessions_snapshot(path)
-        print('TESTISO snapshot: ' + str(path), flush=True)
-    baseline = root / 'profile-snapshot.json'
-    run = {'marker': marker, 'started': time.time(), 'pids': [str(os.getpid())],
-           'sessions': [marker + ':' + str(os.getpid())]}
-    baseline.write_text(json.dumps({'before': before, 'run': run}), encoding='utf-8')
-    env = dict(os.environ, USERPROFILE=str(sentinel), HOME=str(sentinel),
-               LOCALAPPDATA=str(sentinel), APPDATA=str(sentinel),
-               TEMP=str(temporary), TMP=str(temporary),
-               ARCHHUB_TEST_STATE_DIR=str(state),
-               ARCHHUB_TEST_RUN_ID=marker,
-               ARCHHUB_TEST_PROCESS_DIR=str(root / 'processes'),
-               ARCHHUB_TEST_PROFILE_SNAPSHOT=str(baseline),
-               ARCHHUB_PROFILE_GUARD_ROOTS=json.dumps([str(p) for p in protected]),
-               ARCHHUB_PROFILE_GUARD_LOG=str(root / 'writes.jsonl'),
-               PYTHONDONTWRITEBYTECODE='1', ARCHHUB_TEST_SECRET_STORE='memory')
-    os.environ.update(env)
-    sys.path[:0] = ['01.APP', '03.TOOLS']
-    from tools.real_app_check.profile_guard import install
-    install()
-    class ReleaseCounts:
-        passed = 0
-        failed = 0
-
-        def pytest_runtest_logreport(self, report):
-            if report.when == 'call' and report.passed:
-                self.passed += 1
-            if report.failed:
-                self.failed += 1
-
-    counts = ReleaseCounts()
-    guard = '02.TESTS/tests/test_state_isolation.py::test_release_profiles_unchanged'
-    result = pytest.main(['-p', 'no:cacheprovider', '--ignore-glob=*',
-                          '--basetemp=' + str(root / 'pytest'), '--deselect=' + guard,
-                          *sys.argv[1:]], plugins=[counts])
-    # Scan once, after release tests and their session fixtures have finished.
-    checked = pytest.main(['-p', 'no:cacheprovider', '--ignore-glob=*',
-                           '--basetemp=' + str(root / 'guard-pytest'), guard, '-q', '--tb=short'],
-                          plugins=[counts])
-    print(f'TESTISO release result: {counts.passed} passed, {counts.failed} failed', flush=True)
-    report = root / 'profile-leaks.json'
-    if report.exists():
-        print('TESTISO attributed profile leaks: ' + report.read_text(encoding='utf-8'), flush=True)
-    print('TESTISO evidence: ' + str(root), flush=True)
-    raise SystemExit(result or checked)

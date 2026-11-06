@@ -98,7 +98,8 @@ def install(log=None, *, protected=()):
     if _INSTALLED:
         return
     roots = (*_real_profile_paths(), *(_profile_path(path) for path in protected),
-             *json.loads(os.environ.get("ARCHHUB_PROFILE_GUARD_ROOTS", "[]")))
+             *(_profile_path(path) for path in
+               json.loads(os.environ.get("ARCHHUB_PROFILE_GUARD_ROOTS", "[]"))))
     receipt = Path(os.environ.get("ARCHHUB_PROFILE_GUARD_LOG") or log)
     os.environ["ARCHHUB_PROFILE_GUARD_LOG"] = str(receipt)
     receipt.parent.mkdir(parents=True, exist_ok=True)

@@ -9509,7 +9509,11 @@
         "05.EVIDENCE/t1small-compiler-timing.json",
         "02.TESTS/tests_replica/test_baboom_native_runtime.py",
         "01.APP/nodelang/studio/fonts/inter-variable.woff2",
-        "05.EVIDENCE/designpolish/"
+        "05.EVIDENCE/designpolish/",
+        "01.APP/nodelang/studio/designbuild.jsx",
+        "02.TESTS/tests/test_agentcanvas.py",
+        "02.TESTS/tests_js/agentcanvas.cjs",
+        "05.EVIDENCE/agentcanvas/status-717.txt"
       ]
     }
   }

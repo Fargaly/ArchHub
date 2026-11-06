@@ -47,6 +47,8 @@ def test_context_edit_keeps_canvas_edit_and_the_open_file(tmp_path, monkeypatch)
     with application_history() as history:
         task_a = create(history, "Alpha task", "founder")["id"]
         task_b = create(history, "Beta task", "founder")["id"]
+        # Exercise legacy first-file binding on rows predating automatic workflows.
+        history._db.execute("UPDATE workshop_tasks SET session_path=NULL WHERE id IN (?,?)", (task_a, task_b))
 
     opened_a = _call("openTaskGraph", task_a, path_a)
     _call("openTaskGraph", task_b, path_b)

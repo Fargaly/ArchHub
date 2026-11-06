@@ -186,8 +186,10 @@ def rename(history, task, title, revision=None):
 
 def create(history, title, creator):
     task = uuid4().hex
-    _write(history, "INSERT INTO workshop_tasks(id,title,status,created_by,created_at,updated_at) "
-           "VALUES(?,?,'open',?,?,?)", (task, _text(title, "title", 2000), creator, _now(), _now()))
+    title = _text(title, "title", 2000)
+    path = _start_session(task, title)
+    _write(history, "INSERT INTO workshop_tasks(id,title,status,created_by,created_at,updated_at,session_path) "
+           "VALUES(?,?,'open',?,?,?,?)", (task, title, creator, _now(), _now(), path))
     return get(history, task)
 
 
@@ -620,6 +622,42 @@ def _bind_session(history, task, revision, target):
                 (target, _now(), task, expected))
     if not _update(history, task, revision, statement):
         raise ValueError("Task already has a session file")
+
+
+def _start_session(task, title):
+    from . import canvas_documents
+    from .session_files import sessions_directory
+    path = sessions_directory() / (task + '.archhub')
+    def start(document):
+        context = document.setdefault('properties', {}).setdefault('taskContext', {})
+        if context.get('task', task) != task:
+            raise ValueError('Session file belongs to another task')
+        context['task'] = task
+        if not document['nodes']:
+            document['nodes'].append({'id': 'start', 'type': 'param.value', 'title': 'Start · ' + title,
+                                      'params': {'value': title}, 'position': {'x': 80, 'y': 80}})
+        return []
+    canvas_documents.edit(path, 'Workshop', 'create task workflow', start,
+                          create_title=title, solve_changed=False)
+    return str(path)
+
+
+def backfill_sessions(history):
+    """Prepare files without a mailbox write lock, then bind all missing rows atomically."""
+    _ensure(history)
+    missing = history._db.execute(
+        "SELECT id,title FROM workshop_tasks WHERE session_path IS NULL OR trim(session_path)=''"
+    ).fetchall()
+    prepared = [(task, _start_session(task, title)) for task, title in missing]
+    if not prepared:
+        return 0
+    changed = 0
+    with history._transaction(write=True):
+        for task, path in prepared:
+            changed += history._db.execute(
+                "UPDATE workshop_tasks SET session_path=?, revision=revision+1 WHERE id=? "
+                "AND (session_path IS NULL OR trim(session_path)='')", (path, task)).rowcount
+    return changed
 
 
 def relocate_sessions(state_dir, moved):

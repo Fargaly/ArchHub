@@ -365,7 +365,7 @@
         gap: 6,
         minWidth: 0
       }}>
-  {api.supportsAction?.('exposeSettingsPage') !== false && <D.Socket t={row.type === 'boolean' ? 'boolean' : row.type === 'number' ? 'number' : 'text'} hit role="button" tabIndex={0} aria-label={'Wire ' + row.label} onClick={event => executeAction("sharedUI.Control.20", {
+  {raw && api.supportsAction?.('exposeSettingsPage') !== false && <D.Socket t={row.type === 'boolean' ? 'boolean' : row.type === 'number' ? 'number' : 'text'} hit role="button" tabIndex={0} aria-label={'Wire ' + row.label} onClick={event => executeAction("sharedUI.Control.20", {
           row,
           u
         }, event)} onKeyDown={e => {
@@ -400,7 +400,14 @@
     const [open, setOpen] = React.useState(false);
     return <button type="button" className={'button-reset clamp' + (open ? ' open' : '')} style={{'--clamp-lines': lines}} title={text} aria-expanded={open} onClick={event => executeAction("sharedUI.Toggle.23", {toggle: () => setOpen(!open)}, event)}>{text}</button>;
   }
+  function deliveryAttention(message) {
+    const rows = Array.isArray(message.live) && message.live.length ? message.live : Array.isArray(message.delivery) ? message.delivery : [];
+    const states = [message.state, ...rows.map(row => row.state || row.reason)].filter(Boolean).map(value => String(value).toLowerCase().replace(/_/g, ' '));
+    const failed = states.find(state => /fail|error|denied|refused|not delivered|undelivered|timeout/.test(state));
+    return failed || (states.some(state => /queue|pending/.test(state)) ? 'Queued' : '');
+  }
   window.UI = {
+    deliveryAttention,
     taskRowReason,
     api,
     Prose,

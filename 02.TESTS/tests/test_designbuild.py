@@ -16,6 +16,7 @@ def test_designbuild_board(tmp_path, monkeypatch, board):
     _isolate(monkeypatch, tmp_path / 'desk')
     from nodelang.nograph_server import NoGraphServer
 
+    monkeypatch.setattr(NoGraphServer, "_probe_hosts", staticmethod(lambda: []))
     state = tmp_path / 'desk' / 'LOCALAPPDATA' / 'ArchHub'
     state.mkdir()
     monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(state))

@@ -88,7 +88,6 @@
   const writeLayout = value => { try { if (value) window.localStorage.setItem(LAYOUT_KEY, JSON.stringify(value)); else window.localStorage.removeItem(LAYOUT_KEY); return true; } catch (error) { return {error: String(error)}; } };
   const subscribeWidth = notify => { if (!window.addEventListener) return () => {}; window.addEventListener('resize', notify); return () => window.removeEventListener('resize', notify); };
   // Receipt words (designer 01a18ba7): Stored in the Workshop, Started in the session, Replied, Unavailable (no door), Uncertain.
-  const receipt = (d, replied) => replied ? 'Replied' : d.state === 'delivered' ? 'Started' : /no live door|not a running|no joined agent|reads the message in the Workshop/i.test(d.reason || '') ? 'Unavailable' : 'Uncertain';
   const ownMessage = message => Boolean(message?.sender_key) && message.sender_key === message.viewer_key || message?.who === 'You' || message?.role === 'task';
   function TaskBrief({task}) {
     const what = oneLine(task.description || task.title);
@@ -116,7 +115,6 @@
       const own = Boolean(m.sender_key) && m.sender_key === m.viewer_key;
       const sender = own ? {name: 'You'} : whoIs(m.who, m.sender_key);
       const parent = m.reply_to && all.find(x => x.id === m.reply_to);
-      const replies = all.filter(x => x.reply_to === m.id);
       const notice = !own && m.who === 'Workshop coordination';
       return <div key={m.id} className={'ws-msg' + (own ? ' own' : '') + (notice ? ' notice' : '')}>{!own && <Av id={sender.name} size={28} />}
         <div className="ws-msg-body" style={own ? {justifySelf: 'end', maxWidth: 640, padding: '12px 16px', borderRadius: '12px 12px 4px 12px', background: '#1a1a20', border: '1px solid #26262e'} : {}}>
@@ -125,9 +123,7 @@
           {parent && <span className="ws-small ws-reply-ref">↳ reply to {parent.sender_key === parent.viewer_key ? 'You' : whoIs(parent.who, parent.sender_key).name}: {String(parent.text || '').slice(0, 80)}</span>}
           <Prose text={m.text} />
           <div className="flex ws-msg-foot">
-            {(m.live || []).length > 0 ? <span className="flex ws-live" data-live-delivery>{m.live.map((d, i) => <Chip key={i} c={d.state === 'delivered' ? A.inkSoft : A.warn}>{receipt(d, replies.some(r => whoIs(r.who, r.sender_key).name === d.agent))} · {d.agent}</Chip>)}</span>
-              : m.to && own && <span className="ws-small">Stored</span>}
-            {['pending', 'delivered', 'answered'].includes(m.state) && <span role="status" data-delivery-state={m.state} className="ws-small">{m.state === 'answered' ? 'Answered' : m.state === 'delivered' ? 'Delivered' : 'Pending'}{m.delivery?.some(row => row.escalated) ? ' · Coordinator notified' : ''}</span>}
+            {window.UI.deliveryAttention?.(m) && <Chip c={A.warn} data-delivery-attention="" role="status">{window.UI.deliveryAttention(m)}</Chip>}
             {!own && onReply && sender.handle && <button type="button" className="ws-link" onClick={() => executeAction("ui.select", () => onReply({id: m.id, handle: sender.handle, name: sender.name}))}>Reply</button>}
             <button type="button" className="ws-link" aria-expanded={inspect === m.id} onClick={() => executeAction("ui.select", () => setInspect(inspect === m.id ? null : m.id))}>{inspect === m.id ? 'Hide details' : 'Inspect'}</button>
           </div>

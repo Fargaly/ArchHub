@@ -61,18 +61,20 @@ class JsonFile:
         self.path, self.default, self.lock = Path(path), default, threading.RLock()
 
     def read(self):
+        from .user_paths import strip_test_write
         try:
-            return json.loads(self.path.read_text(encoding='utf-8'))
+            return strip_test_write(json.loads(self.path.read_text(encoding='utf-8')))
         except FileNotFoundError:
             return json.loads(json.dumps(self.default))
 
     def write(self, value):
+        from .user_paths import stamp_test_write
         with self.lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             fd, temporary = tempfile.mkstemp(dir=self.path.parent, suffix='.tmp')
             try:
                 with os.fdopen(fd, 'w', encoding='utf-8') as stream:
-                    json.dump(value, stream, ensure_ascii=False, indent=1)
+                    json.dump(stamp_test_write(value), stream, ensure_ascii=False, indent=1)
                 os.replace(temporary, self.path)
             finally:
                 if os.path.exists(temporary):

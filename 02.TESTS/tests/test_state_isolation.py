@@ -4,6 +4,14 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import sqlite3
+import shutil
+import re
+import tempfile
+import time
+from datetime import datetime
+from contextlib import closing
+from uuid import uuid4
 
 import pytest
 
@@ -95,18 +103,296 @@ def _snapshot(root):
     return result
 
 
+# These files belong to live agent hooks/app telemetry, not verifier owners.
+# Their writes can overlap every test run; never infer test leakage from them.
+_LIVE_HOOK_FILES = {'governance/ledger.jsonl', 'last_gate_decision.json', 'spans.jsonl'}
+
+
+def _profile_files(root):
+    if not root.exists():
+        return
+    with os.scandir(root) as entries:
+        for entry in entries:
+            if entry.is_symlink() or entry.is_junction():
+                continue
+            path = Path(entry.path)
+            if entry.is_dir(follow_symlinks=False):
+                yield from _profile_files(path)
+            elif entry.is_file(follow_symlinks=False):
+                yield path
+
+
+def _sessions_snapshot(root):
+    # Only the created .archhub set is stable evidence here, never settings or hook mtimes.
+    return sorted(str(p.relative_to(root)) for p in _profile_files(root / 'Sessions')
+                  if p.suffix.casefold() == '.archhub')
+
+
+def _created_at(value, fallback):
+    try:
+        if isinstance(value, (int, float)):
+            return value / 1000 if value > 1e11 else value
+        return datetime.fromisoformat(str(value).replace('Z', '+00:00')).timestamp()
+    except (ValueError, TypeError):
+        return fallback
+
+
+def _owned_record(value, run, end, fallback):
+    if isinstance(value, list):
+        return any(_owned_record(row, run, end, fallback) for row in value)
+    if not isinstance(value, dict):
+        return False
+    created = _created_at(value.get('created_at', value.get('ts')), fallback)
+    ours = (str(value.get('writer_pid', value.get('pid', ''))) in run['pids'] or
+            str(value.get('writer_session', value.get('session_id', ''))) in run['sessions'])
+    if ours and run['started'] <= created <= end:
+        return True
+    return any(_owned_record(row, run, end, fallback) for row in value.values())
+
+
+def _marked_files(root, marker):
+    # Reuse the installed native scanner; two threads bound CPU and filenames-only output avoids data disclosure.
+    patterns = [re.escape(marker), r'\x00'.join(map(re.escape, marker)) + r'\x00',
+                r'\x00' + r'\x00'.join(map(re.escape, marker))]
+    command = ['rg', '--no-config', '--hidden', '--no-ignore', '--text', '--files-with-matches', '--null',
+               '--threads', '2', '--glob', '!/runtime-context/**']
+    for name in _LIVE_HOOK_FILES:
+        command += ['--glob', '!/' + name]
+    for pattern in patterns:
+        command += ['-e', pattern]
+    done = subprocess.run([*command, '--', str(root)], capture_output=True, timeout=600,
+                          creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    if done.returncode not in (0, 1):
+        raise OSError('Native profile content scan incomplete')
+    return {os.fsdecode(name) for name in done.stdout.split(b'\0') if name}
+
+
+def _sqlite_records(path):
+    # SQLite may create -shm even with mode=ro. Only open a disposable DB+WAL copy.
+    # Never copy an entire profile, and bound temporary disk use on the founder's machine.
+    sources = (path, Path(str(path) + '-wal'))
+    def versions():
+        return [(p.stat().st_size, p.stat().st_mtime_ns) if p.exists() else None for p in sources]
+    with tempfile.TemporaryDirectory(prefix='testiso-scan-') as temporary:
+        target = Path(temporary) / path.name
+        for _ in range(5):
+            before = versions()
+            if sum(item[0] for item in before if item) > 128 * 1024 * 1024:
+                raise ValueError('Owner database exceeds the 128 MiB read-only scan budget')
+            for source, version in zip(sources, before):
+                destination = Path(temporary) / source.name
+                if version is not None:
+                    shutil.copyfile(source, destination)
+                else:
+                    destination.unlink(missing_ok=True)
+            if before == versions():
+                break
+        else:
+            raise ValueError('Owner database changed throughout snapshot retries')
+        with closing(sqlite3.connect(target)) as db:
+            db.execute('PRAGMA query_only=ON')
+            db.row_factory = sqlite3.Row
+            tables = [row[0] for row in db.execute('SELECT name FROM sqlite_master WHERE type="table"')]
+            for table in tables:
+                quoted = '"' + table.replace('"', '""') + '"'
+                for row in db.execute('SELECT * FROM ' + quoted):
+                    record = dict(row)
+                    for key, value in list(record.items()):
+                        if isinstance(value, str) and value[:1] in ('{', '['):
+                            try:
+                                record[key] = json.loads(value)
+                            except ValueError:
+                                pass
+                    yield table, record
+
+
+def _profile_leaks(before, run, end):
+    leaks = []
+    marker = run['marker']
+    for name, snapshot in before.items():
+        root = Path(name)
+        if not root.exists():
+            continue
+        marked = _marked_files(root, marker)
+        new_sessions = set(_sessions_snapshot(root)) - set(snapshot)
+        for path in _profile_files(root):
+            relative = path.relative_to(root).as_posix()
+            if relative.startswith('runtime-context/') or relative in _LIVE_HOOK_FILES:
+                continue
+            try:
+                if marker in relative or str(path) in marked:
+                    leaks.append(str(path) + ': test run marker')
+                    continue
+                parts = {part.casefold() for part in path.relative_to(root).parts}
+                owner_file = (path.suffix.casefold() == '.archhub' or 'settings' in parts or
+                              'router' in path.name.casefold() or
+                              relative in ('data/sessions/current.json', 'data/sessions/recent.json'))
+                if not owner_file:
+                    continue
+                stat = path.stat()
+                born = getattr(stat, 'st_birthtime', stat.st_ctime)
+                if path.suffix.casefold() in ('.sqlite', '.sqlite3', '.db'):
+                    for table, record in _sqlite_records(path):
+                        if _owned_record(record, run, end, born):
+                            leaks.append(str(path) + ': test writer row in ' + table)
+                            break
+                elif path.suffix.casefold() in ('.json', '.jsonl', '.archhub'):
+                    # Existing documents may be updated, so still inspect their writer records.
+                    if relative in new_sessions or stat.st_mtime >= run['started'] or born >= run['started']:
+                        raw = path.read_text(encoding='utf-8-sig')
+                        rows = [json.loads(line) for line in raw.splitlines() if line] if path.suffix == '.jsonl' else json.loads(raw)
+                        if _owned_record(rows, run, end, born):
+                            leaks.append(str(path) + ': test writer record')
+            except FileNotFoundError:
+                # A live owner may atomically replace/remove a file between enumeration and read.
+                continue
+            except (OSError, ValueError, sqlite3.Error) as error:
+                leaks.append(str(path) + ': scan incomplete (' + type(error).__name__ + ')')
+    return leaks
+
+
+def _assert_profiles_clean(before, run, end):
+    leaks = _profile_leaks(before, run, end)
+    assert not leaks, 'Test writes reached real profiles: ' + json.dumps(leaks)
+
+
+def _run_context():
+    context = json.loads(Path(os.environ['ARCHHUB_TEST_PROFILE_SNAPSHOT']).read_text(encoding='utf-8'))
+    run = context['run']
+    registry = Path(os.environ['ARCHHUB_TEST_PROCESS_DIR'])
+    for path in registry.glob('*.json'):
+        writer = json.loads(path.read_text(encoding='utf-8'))
+        if writer['test_run_id'] == run['marker']:
+            run['pids'].append(str(writer['writer_pid']))
+            run['sessions'].append(writer['writer_session'])
+    return context
+
+
 def test_release_profiles_unchanged():
-    baseline = os.environ.get('ARCHHUB_TEST_PROFILE_SNAPSHOT')
-    if not baseline:
-        pytest.skip('Run this file as the release wrapper to compare profile snapshots')
-    before = json.loads(Path(baseline).read_text(encoding='utf-8'))
-    changed = {}
-    for root, old in before.items():
-        new = _snapshot(Path(root))
-        if old != new:
-            changed[root] = sorted(name for name in (old or {}).keys() | (new or {}).keys()
-                                   if (old or {}).get(name) != (new or {}).get(name))
-    assert not changed, 'Profile file lists or mtimes changed: ' + json.dumps(changed)
+    if not os.environ.get('ARCHHUB_TEST_PROFILE_SNAPSHOT'):
+        pytest.skip('Run this file as the release wrapper to scan the real profiles')
+    context = _run_context()
+    leaks = _profile_leaks(context['before'], context['run'], time.time())
+    report = Path(os.environ['ARCHHUB_TEST_PROFILE_SNAPSHOT']).with_name('profile-leaks.json')
+    report.write_text(json.dumps(leaks, indent=2), encoding='utf-8')
+    assert not leaks, 'Test writes reached real profiles: ' + json.dumps(leaks)
+
+
+def _fixture_run():
+    return {'marker': str(uuid4()), 'started': time.time(),
+            'pids': [str(os.getpid())], 'sessions': ['test-session']}
+
+
+def test_owners_persist_marker_without_changing_values(tmp_path):
+    from nodelang import agent_budget, model_router, session_files, settings_owner, workshop_tasks
+    from nodelang.nograph_server import JsonFile
+    from nodelang.workshop_mailbox import application_history
+    marker = os.environ['ARCHHUB_TEST_RUN_ID']
+    document = session_files.new_document('TESTISO owner probe')
+    path = tmp_path / 'probe.archhub'
+    session_files.write_document(path, document)
+    assert json.loads(path.read_text())['properties']['_test_writer']['test_run_id'] == marker
+    assert session_files.read_document(path) == document
+    with_properties = {**document, 'properties': {}}
+    session_files.write_document(path, with_properties)
+    assert session_files.read_document(path) == with_properties
+    owner = JsonFile(tmp_path / 'settings.json', {})
+    owner.write({'theme': 'light'})
+    assert owner.read() == {'theme': 'light'}
+    assert json.loads(owner.path.read_text())['_test_writer']['test_run_id'] == marker
+    owner.write([{'path': 'example.archhub'}])
+    assert owner.read() == [{'path': 'example.archhub'}]
+    assert json.loads(owner.path.read_text())[0]['_test_writer']['test_run_id'] == marker
+    sessions = session_files.SessionFiles(tmp_path / 'metadata')
+    sessions.remember(path, document)
+    sessions._current(document['id'], str(path))
+    assert marker in (sessions.metadata / 'recent.json').read_text()
+    assert marker in (sessions.metadata / 'current.json').read_text()
+    account = settings_owner.AccountFiles(tmp_path / 'account.json')
+    account.write('account:test', {'theme': 'light'})
+    assert account.read('account:test') == {'theme': 'light'}
+    assert json.loads(account.path.read_text())['_test_writer']['test_run_id'] == marker
+    model_router.request_profiles({'id': 'probe', 'ts': time.time(), 'agent': 'test',
+                                  'model': 'test', 'provider': 'test', 'tokens': 0, 'ms': 0, 'outcome': 'ok'})
+    with agent_budget.connect() as db:
+        assert marker in db.execute('SELECT writer FROM test_write_provenance WHERE row_id="probe"').fetchone()[0]
+    with application_history() as history:
+        task = workshop_tasks.create(history, 'TESTISO task', 'test')
+        assert marker in history._db.execute('SELECT writer FROM test_write_provenance WHERE row_id=?',
+                                            (task['id'],)).fetchone()[0]
+
+
+def test_child_with_explicit_environment_keeps_marker():
+    grandchild = 'import os; print(os.environ["ARCHHUB_TEST_RUN_ID"])'
+    child = ('import subprocess,sys; subprocess.run([sys.executable,"-B","-c",' +
+             repr(grandchild) + '],env={})')
+    done = subprocess.run([sys.executable, '-B', '-c', child],
+                          env={'PATH': os.environ.get('PATH', '')}, capture_output=True, text=True,
+                          creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == os.environ['ARCHHUB_TEST_RUN_ID']
+    version = subprocess.run([sys.executable, '--version'], capture_output=True, text=True,
+                             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    assert version.returncode == 0, version.stderr
+    assert version.stdout.startswith('Python ')
+
+
+def test_concurrent_live_writers_are_not_test_leaks(tmp_path):
+    root = tmp_path / 'real'
+    root.mkdir()
+    before = {str(root): _sessions_snapshot(root)}
+    run = _fixture_run()
+    for name in ('runtime-context/other-session.json', 'governance/ledger.jsonl',
+                 'last_gate_decision.json', 'spans.jsonl', 'settings/account.json',
+                 'Sessions/live.archhub'):
+        target = root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps({'writer_pid': -1, 'created_at': time.time()}))
+    _assert_profiles_clean(before, run, time.time())
+
+
+def test_wal_scan_preserves_real_root_bytes_and_mtimes(tmp_path):
+    root = tmp_path / 'real'
+    root.mkdir()
+    run = _fixture_run()
+    path = root / 'router.sqlite'
+    with sqlite3.connect(path) as writer:
+        writer.execute('PRAGMA journal_mode=WAL')
+        writer.execute('CREATE TABLE requests (writer_pid INTEGER, ts REAL)')
+        writer.execute('INSERT INTO requests VALUES (?, ?)', (os.getpid(), time.time()))
+        writer.commit()
+        before = _snapshot(root)
+        contents = {p.name: p.read_bytes() for p in root.iterdir()}
+        with pytest.raises(AssertionError, match='test writer row'):
+            _assert_profiles_clean({str(root): []}, run, time.time())
+        assert _snapshot(root) == before
+        assert {p.name: p.read_bytes() for p in root.iterdir()} == contents
+
+
+@pytest.mark.parametrize('kind', ['filename', 'content', 'utf16', 'boundary', 'session', 'settings', 'router'])
+def test_deliberate_leak_is_refused(tmp_path, kind, monkeypatch):
+    root = tmp_path / 'real'
+    root.mkdir()
+    before = {str(root): _sessions_snapshot(root)}
+    run = _fixture_run()
+    config = tmp_path / 'ripgrep.conf'
+    config.write_text('--max-filesize=1\n', encoding='utf-8')
+    monkeypatch.setenv('RIPGREP_CONFIG_PATH', str(config))
+    if kind == 'filename':
+        (root / (run['marker'] + '.txt')).write_text('leaked')
+    elif kind in ('content', 'utf16', 'boundary'):
+        raw = ('x' * (1024 * 1024 - 3) if kind == 'boundary' else '') + run['marker']
+        (root / 'leak.txt').write_text(raw, encoding='utf-16' if kind == 'utf16' else 'utf-8')
+    elif kind == 'router':
+        with sqlite3.connect(root / 'router.sqlite') as db:
+            db.execute('CREATE TABLE requests (writer_pid INTEGER, ts REAL)')
+            db.execute('INSERT INTO requests VALUES (?, ?)', (os.getpid(), time.time()))
+    else:
+        path = root / ('Sessions/leak.archhub' if kind == 'session' else 'settings/account.json')
+        path.parent.mkdir()
+        path.write_text(json.dumps({'writer_session': 'test-session', 'created_at': time.time()}))
+    with pytest.raises(AssertionError, match='Test writes reached real profiles'):
+        _assert_profiles_clean(before, run, time.time())
 
 
 if __name__ == '__main__':
@@ -116,10 +402,9 @@ if __name__ == '__main__':
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, 'Volatile Environment') as key:
         home = Path(winreg.QueryValueEx(key, 'USERPROFILE')[0])
         local = Path(winreg.QueryValueEx(key, 'LOCALAPPDATA')[0])
-        roaming = Path(winreg.QueryValueEx(key, 'APPDATA')[0])
-    protected = [home / 'ArchHub', home / '.archhub', local / 'ArchHub',
-                 local / 'ArchHub-Test', roaming / 'ArchHub']
-    root = Path('.cache/testiso-release').resolve()
+    protected = [home / 'ArchHub', home / '.archhub', local / 'ArchHub']
+    marker = str(uuid4())
+    root = Path('.cache/testiso-release').resolve() / marker
     root.mkdir(parents=True, exist_ok=True)
     sentinel = root / 'sentinel'
     sentinel.mkdir(exist_ok=True)
@@ -130,14 +415,18 @@ if __name__ == '__main__':
     protected.append(sentinel)
     before = {}
     for path in protected:
-        before[str(path)] = _snapshot(path)
+        before[str(path)] = _sessions_snapshot(path)
         print('TESTISO snapshot: ' + str(path), flush=True)
     baseline = root / 'profile-snapshot.json'
-    baseline.write_text(json.dumps(before), encoding='utf-8')
+    run = {'marker': marker, 'started': time.time(), 'pids': [str(os.getpid())],
+           'sessions': [marker + ':' + str(os.getpid())]}
+    baseline.write_text(json.dumps({'before': before, 'run': run}), encoding='utf-8')
     env = dict(os.environ, USERPROFILE=str(sentinel), HOME=str(sentinel),
                LOCALAPPDATA=str(sentinel), APPDATA=str(sentinel),
                TEMP=str(temporary), TMP=str(temporary),
                ARCHHUB_TEST_STATE_DIR=str(state),
+               ARCHHUB_TEST_RUN_ID=marker,
+               ARCHHUB_TEST_PROCESS_DIR=str(root / 'processes'),
                ARCHHUB_TEST_PROFILE_SNAPSHOT=str(baseline),
                ARCHHUB_PROFILE_GUARD_ROOTS=json.dumps([str(p) for p in protected]),
                ARCHHUB_PROFILE_GUARD_LOG=str(root / 'writes.jsonl'),
@@ -146,14 +435,28 @@ if __name__ == '__main__':
     sys.path[:0] = ['01.APP', '03.TOOLS']
     from tools.real_app_check.profile_guard import install
     install()
+    class ReleaseCounts:
+        passed = 0
+        failed = 0
+
+        def pytest_runtest_logreport(self, report):
+            if report.when == 'call' and report.passed:
+                self.passed += 1
+            if report.failed:
+                self.failed += 1
+
+    counts = ReleaseCounts()
+    guard = '02.TESTS/tests/test_state_isolation.py::test_release_profiles_unchanged'
     result = pytest.main(['-p', 'no:cacheprovider', '--ignore-glob=*',
-                          '--basetemp=' + str(root / 'pytest'), *sys.argv[1:]])
-    changed = {}
-    for path in protected:
-        old, new = before[str(path)], _snapshot(path)
-        if old != new:
-            changed[str(path)] = [name for name in (old or {}).keys() | (new or {}).keys()
-                                  if (old or {}).get(name) != (new or {}).get(name)]
-    (root / 'snapshot-changes.json').write_text(json.dumps(changed, indent=2), encoding='utf-8')
-    print('TESTISO profile snapshots changed: ' + json.dumps(changed), flush=True)
-    raise SystemExit(result or bool(changed))
+                          '--basetemp=' + str(root / 'pytest'), '--deselect=' + guard,
+                          *sys.argv[1:]], plugins=[counts])
+    # Scan once, after release tests and their session fixtures have finished.
+    checked = pytest.main(['-p', 'no:cacheprovider', '--ignore-glob=*',
+                           '--basetemp=' + str(root / 'guard-pytest'), guard, '-q', '--tb=short'],
+                          plugins=[counts])
+    print(f'TESTISO release result: {counts.passed} passed, {counts.failed} failed', flush=True)
+    report = root / 'profile-leaks.json'
+    if report.exists():
+        print('TESTISO attributed profile leaks: ' + report.read_text(encoding='utf-8'), flush=True)
+    print('TESTISO evidence: ' + str(root), flush=True)
+    raise SystemExit(result or checked)

@@ -1,7 +1,7 @@
 """Portable Canvas documents. No CellStore, enrollment or graph lock."""
 from __future__ import annotations
 
-from .user_paths import state_directory
+from .user_paths import state_directory, test_writer, stamp_test_write, strip_test_write
 
 import hashlib
 import json
@@ -316,12 +316,22 @@ def read_document(path):
         raw = stream.read(MAX_BYTES + 1)
     if len(raw) > MAX_BYTES:
         raise ValueError('Session exceeds 8 MiB')
-    return validate(json.loads(raw.decode('utf-8-sig')))
+    document = validate(json.loads(raw.decode('utf-8-sig')))
+    properties = document.get('properties', {}) if isinstance(document, dict) else {}
+    writer = properties.get('_test_writer') if isinstance(properties, dict) else None
+    if isinstance(writer, dict) and writer.get('test_run_id'):
+        properties.pop('_test_writer')
+        if not properties and not writer.get('had_properties', False):
+            document.pop('properties')
+    return document
 
 
 def write_document(path, document):
     target = local_path(str(path))
     validate(document)
+    if writer := test_writer():
+        document = {**document, 'properties': {**document.get('properties', {}),
+                    '_test_writer': {**writer, 'had_properties': 'properties' in document}}}
     raw = json.dumps(document, ensure_ascii=False, indent=2, allow_nan=False).encode('utf-8')
     if len(raw) > MAX_BYTES:
         raise ValueError('Session exceeds 8 MiB')
@@ -739,7 +749,7 @@ def migrate_sessions(state_dir):
                 target = Path(state_dir) / 'data' / 'sessions' / name
                 if not target.exists():
                     JsonFile(target, {}).write(value)
-                if json.loads(target.read_text(encoding='utf-8')) == value:
+                if JsonFile(target, {}).read() == strip_test_write(value):
                     old.unlink()
             except (OSError, ValueError, AttributeError):
                 continue
@@ -953,7 +963,7 @@ class SessionFiles:
     def _recent(self):
         path = self.metadata/'recent.json'
         try:
-            rows = json.loads(_metadata_io(path.read_text, encoding='utf-8'))
+            rows = strip_test_write(json.loads(_metadata_io(path.read_text, encoding='utf-8')))
         except FileNotFoundError:
             return []
         if not isinstance(rows, list):
@@ -970,7 +980,7 @@ class SessionFiles:
             target = self.metadata/'recent.json'
             with tempfile.NamedTemporaryFile(dir=self.metadata, suffix='.tmp', delete=False, mode='w', encoding='utf-8') as stream:
                 temporary = stream.name
-                json.dump(rows[:20],stream)
+                json.dump(stamp_test_write(rows[:20]),stream)
             try:
                 _metadata_io(os.replace, temporary, target)
             finally:
@@ -982,7 +992,7 @@ class SessionFiles:
             current = self.metadata/'current.json'
             with tempfile.NamedTemporaryFile(dir=self.metadata, suffix='.tmp', delete=False, mode='w', encoding='utf-8') as stream:
                 temporary = stream.name
-                json.dump({'id':identity,'path':str(local_path(path)) if path else ''},stream)
+                json.dump(stamp_test_write({'id':identity,'path':str(local_path(path)) if path else ''}),stream)
             try:
                 os.replace(temporary,current)
             finally:

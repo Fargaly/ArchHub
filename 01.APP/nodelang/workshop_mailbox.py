@@ -99,6 +99,11 @@ def application_history(source=None, *, read_only=False, busy_timeout_seconds: f
                         _SESSION_MIGRATED.add(key)
                 finally:
                     _SESSION_MIGRATION_LOCK.release()
+            from .user_paths import test_writer, stamp_test_rows
+            if not read_only and test_writer():
+                from .workshop_tasks import _ensure
+                _ensure(selected)
+                stamp_test_rows(selected._db, 'workshop_tasks')
             yield selected
 
 

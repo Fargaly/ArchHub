@@ -55,11 +55,46 @@ def _deny_profile_write(event, args, protected, attempts):
 
 
 
+def mark_test_processes():
+    """Propagate attribution through the existing Python-child entrypoint, including grandchildren."""
+    marker = os.environ.get('ARCHHUB_TEST_RUN_ID')
+    if not marker or getattr(subprocess.Popen, '_archhub_test_marked', False):
+        return
+    registry = os.environ.get('ARCHHUB_TEST_PROCESS_DIR')
+
+    def register(pid):
+        if registry:
+            directory = Path(registry)
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / (str(pid) + '.json')).write_text(json.dumps({
+                'test_run_id': marker, 'writer_pid': pid,
+                'writer_session': marker + ':' + str(pid)}), encoding='utf-8')
+
+    register(os.getpid())
+
+    class MarkedProcess(subprocess.Popen):
+        _archhub_test_marked = True
+
+        def __init__(self, args, *positional, **kwargs):
+            env = dict(os.environ if kwargs.get('env') is None else kwargs['env'])
+            env['ARCHHUB_TEST_RUN_ID'] = marker
+            if registry:
+                env['ARCHHUB_TEST_PROCESS_DIR'] = registry
+            kwargs['env'] = env
+            if isinstance(args, (list, tuple)) and not kwargs.get('shell'):
+                args = command(args, mark_only=True)
+            super().__init__(args, *positional, **kwargs)
+            register(self.pid)
+
+    subprocess.Popen = MarkedProcess
+
+
 _INSTALLED = False
 
 
 def install(log=None, *, protected=()):
     global _INSTALLED
+    mark_test_processes()
     if _INSTALLED:
         return
     roots = (*_real_profile_paths(), *(_profile_path(path) for path in protected),
@@ -85,7 +120,7 @@ def install(log=None, *, protected=()):
     atexit.register(finish)
 
 
-def command(parts):
+def command(parts, *, mark_only=False):
     """Keep interpreter flags, including -I/-E, and install before any application import."""
     parts = [str(part) for part in parts]
     if Path(parts[0]).name.lower() not in ("python", "python.exe", "python3", "python3.exe"):
@@ -93,12 +128,15 @@ def command(parts):
     index = 1
     while index < len(parts) and parts[index] in ("-I", "-E", "-s", "-B", "-u"):
         index += 1
+    if index == len(parts) or parts[index] in ('--version', '-V', '-VV', '--help', '-h', '-?'):
+        return parts
     if index < len(parts) and parts[index] == str(Path(__file__).resolve()):
         return parts
     if index < len(parts) and parts[index] == "-c":
-        prefix = "import runpy; runpy.run_path(" + repr(str(Path(__file__).resolve())) + ")['install']();\n"
+        installer = "mark_test_processes" if mark_only else "install"
+        prefix = "import runpy; runpy.run_path(" + repr(str(Path(__file__).resolve())) + ")[" + repr(installer) + "]();\n"
         return [*parts[:index], "-c", prefix + parts[index + 1], *parts[index + 2:]]
-    return [*parts[:index], str(Path(__file__).resolve()), *parts[index:]]
+    return [*parts[:index], str(Path(__file__).resolve()), *(["--marker-only"] if mark_only else []), *parts[index:]]
 
 
 if __name__ == "__main__":
@@ -111,7 +149,11 @@ if __name__ == "__main__":
         os.environ.clear()
         os.environ.update(isolated)
         arguments = arguments[2:]
-    install()
+    if arguments[:1] == ["--marker-only"]:
+        arguments = arguments[1:]
+        mark_test_processes()
+    else:
+        install()
     target, *args = arguments
     sys.argv = [target, *args]
     if target in ("-c", "-m") and not sys.flags.safe_path:

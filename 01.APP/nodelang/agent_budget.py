@@ -6,7 +6,7 @@ heavy imports so the per-turn Stop hook can record native usage cheaply.
 """
 from __future__ import annotations
 
-from .user_paths import state_directory
+from .user_paths import state_directory, stamp_test_rows
 
 from contextlib import closing
 from datetime import datetime
@@ -30,6 +30,7 @@ def connect():
     path.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(path, timeout=BUDGET_NODE['params']['busy_timeout_seconds'])
     db.execute(SCHEMA)
+    stamp_test_rows(db, 'requests')
     db.execute('CREATE INDEX IF NOT EXISTS requests_agent_ts ON requests(agent, ts)')
     return db
 

@@ -1,7 +1,7 @@
 """Settings translations over the selected CellStore and existing cloud owners."""
 from __future__ import annotations
 
-from .user_paths import state_directory
+from .user_paths import state_directory, stamp_test_write
 
 import inspect
 import json
@@ -44,6 +44,7 @@ def read_router_settings():
         raise InvalidCell('Router settings could not be read.') from None
     if type(values) is not dict:
         raise InvalidCell('Router settings must be an object.')
+    values.pop('_test_writer', None)
     return _checked_router_settings({**defaults, **values})
 
 
@@ -141,7 +142,7 @@ class AccountFiles:
         if root.startswith('cached-read:'):
             data = {key: value for key, value in data.items() if not key.startswith('cached-read:')}
         data[root] = values
-        encoded = json.dumps(data, ensure_ascii=False, allow_nan=False, indent=1)
+        encoded = json.dumps(stamp_test_write(data), ensure_ascii=False, allow_nan=False, indent=1)
         if len(encoded.encode('utf-8')) > 65536:
             raise InvalidCell('Settings exceed 64 KiB. Shorten workspace rules and retry.')
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -287,7 +288,7 @@ class SettingsOwner:
             path.parent.mkdir(parents=True, exist_ok=True)
             temporary = path.with_suffix('.tmp')
             try:
-                temporary.write_text(json.dumps(values, ensure_ascii=False, allow_nan=False), encoding='utf-8')
+                temporary.write_text(json.dumps(stamp_test_write(values), ensure_ascii=False, allow_nan=False), encoding='utf-8')
                 os.replace(temporary, path)
             finally:
                 temporary.unlink(missing_ok=True)

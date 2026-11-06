@@ -61,7 +61,7 @@ colorama==0.4.6; sys_platform == "win32"
 PyYAML==6.0.3
 # Local document coordination: workbook images/validation and clipped PDF evidence.
 openpyxl==3.1.5
-Pillow==12.1.1
+Pillow==13.0.0
 pypdfium2==5.8.0
 # PDF writing (stamp and merge) behind host.exec Python. D-022.
 # BSD-3-Clause, pure Python. 6.21.4 publishes py3-none-any, which installs on CPython 3.14.

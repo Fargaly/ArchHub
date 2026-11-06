@@ -239,3 +239,8 @@ AGENTLINK final HTTP retry regression reached zero transport calls (`native_cont
 AGENTLINK export hygiene removed three trailing blank EOF lines without semantic changes. The first fresh requalification then returned `Provider did not complete its isolated turn: TimeoutExpired`; the real CLI refused release and its owned profile was cleaned. Retry uses a new isolated profile on unchanged source, never a cached PASS or relaxed predicate.
 
 AGENTLINK final diagnostic run called the original qualifier and original _run without changing any success predicate or timeout. The fresh profile passed all required real-client checks on the final EOF-normalized source. Two preceding timeouts remain refused attempts; absent completed-tool log lines did not establish a root cause. No provider-outage or governance-regression cause is asserted. Lane-only instrumentation records safe failure fields only and is retained for reproduction.
+
+### 2026-11-06 - TESTISO / F295 per-user path isolation
+- **incident**: verifier task files used the session owner's USERPROFILE default despite ARCHHUB_TEST_STATE_DIR; agent budget accounting selected the live router database.
+- **repair**: per-user application owners share nodelang/user_paths.py; test state precedes production state and profile defaults. Production session defaults retain the same location; fixture sessions stay in disposable state.
+- **evidence**: test_state_isolation.py failed before the repair with `sessions escape test state`; its release wrapper protects live ArchHub roots and an empty fake-profile sentinel before collection, compares file lists and mtimes read-only, and reports snapshot changes as failures. Live-process changes are never filtered into a pass.

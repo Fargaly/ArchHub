@@ -35,6 +35,7 @@ the asked record and the decided record. Run modes stay as they are.
 """
 from __future__ import annotations
 
+
 import contextvars
 import fnmatch
 import hashlib
@@ -46,6 +47,10 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from nodelang.user_paths import state_directory
 
 HERE = Path(__file__).resolve().parent
 # Scans carry no own timeout: each agent's hook entry has its visible "timeout" setting.
@@ -919,8 +924,7 @@ _ROUTINE = ("read", "write", "shell", "other")
 
 
 def _settings_dir(environment) -> Path:
-    home = Path(environment.get("USERPROFILE") or environment.get("HOME") or Path.home())
-    return Path(environment.get("LOCALAPPDATA") or home / "AppData" / "Local") / "ArchHub" / "settings"
+    return state_directory(environment) / "settings"
 
 
 def checked_permissions(values) -> dict:
@@ -1106,7 +1110,7 @@ def cedar_forbids(action: str, context: dict, vendor: str):
 
 def _trace_path(session: str, environment) -> Path:
     base = Path(environment.get("ARCHHUB_HOOK_STATE") or
-                Path(environment.get("LOCALAPPDATA") or tempfile.gettempdir()) / "ArchHub" / "runtime-context" / "hook-decision")
+                state_directory(environment) / "runtime-context" / "hook-decision")
     return base / (hashlib.sha256(session.encode()).hexdigest()[:32] + ".json")
 
 

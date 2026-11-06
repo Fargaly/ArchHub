@@ -1,6 +1,8 @@
 """Portable Canvas documents. No CellStore, enrollment or graph lock."""
 from __future__ import annotations
 
+from .user_paths import state_directory
+
 import hashlib
 import json
 import logging
@@ -406,7 +408,7 @@ def skill_template_rows():
 
 
 def profile_directory():
-    return Path(os.environ.get('ARCHHUB_TEST_STATE_DIR') or Path(os.environ['LOCALAPPDATA']) / 'ArchHub')
+    return state_directory()
 
 
 def sessions_directory():
@@ -418,7 +420,11 @@ def sessions_directory():
 
 
 def _default_sessions_directory():
-    home = Path(os.environ.get('USERPROFILE', str(Path.home())))
+    from .user_paths import sessions_directory as default_sessions
+    path = default_sessions()
+    if os.environ.get('ARCHHUB_TEST_STATE_DIR'):
+        return path
+    home = path.parent.parent
     if os.name == 'nt':
         import winreg
         try:
@@ -430,15 +436,13 @@ def _default_sessions_directory():
                 logging.getLogger(__name__).info('Documents is redirected; default sessions stay under the user profile')
         except OSError as error:
             logging.getLogger(__name__).debug('Documents redirection lookup unavailable: %s', error)
-    return home / 'ArchHub' / 'Sessions'
+    return path
 
 
 def _selected_sessions_directory():
     from .nograph_server import JsonFile
     settings = JsonFile(profile_directory() / 'settings' / 'settings.json', {}).read()
-    path = Path(settings.get('sessionsFolder') or Path(os.environ.get('USERPROFILE', str(Path.home()))))
-    if not settings.get('sessionsFolder'):
-        path = _default_sessions_directory()
+    path = Path(settings.get('sessionsFolder') or _default_sessions_directory())
     if not path.is_absolute() or str(path).startswith(('\\\\', '//')):
         raise ValueError('Choose an absolute local sessions folder')
     path.mkdir(parents=True, exist_ok=True)

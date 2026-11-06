@@ -20,6 +20,8 @@ imported once and renamed brain.json.imported.
 """
 from __future__ import annotations
 
+from .user_paths import state_directory
+
 import hashlib
 import json
 import math
@@ -30,7 +32,6 @@ import struct
 import threading
 import time
 import unicodedata
-from pathlib import Path
 
 BRAIN_NODE = {'id': 'brain.files', 'params': {'list_limit': 500, 'context_limit': 8,
                                               'dimensions': 256, 'chunk_chars': 600}}
@@ -59,7 +60,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS chunk_fts USING fts5(text, tokenize='unicode6
 
 
 def _path():
-    return Path(os.environ['LOCALAPPDATA']) / 'ArchHub' / 'settings' / 'brain.sqlite'
+    return state_directory() / 'settings' / 'brain.sqlite'
 
 
 def _db():

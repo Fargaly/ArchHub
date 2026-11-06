@@ -3878,8 +3878,8 @@ class _CleanAuthorityHttpServer(WorkspaceRootsOwner):
         try:
             import os as _os
             from pathlib import Path as _Path
-            root = _Path(_os.environ.get("LOCALAPPDATA", ""))
-            root = root / "ArchHub" / "unified-authority"
+            from .user_paths import state_directory
+            root = state_directory() / "unified-authority"
             if not root.is_dir():
                 return
             import time as _time

@@ -13,6 +13,8 @@ Startup follows settings/baboom.json {"startup": "on"|"off"}; it starts off the 
 """
 from __future__ import annotations
 
+from .user_paths import state_directory
+
 import json
 import threading
 import time
@@ -173,9 +175,8 @@ def _join_workshop(state_dir, url):
 
 
 def _record(state_dir=None):
-    import os
     import psutil
-    root = Path(state_dir) if state_dir else Path(os.environ['LOCALAPPDATA']) / 'ArchHub'
+    root = Path(state_dir) if state_dir else state_directory()
     try:
         held = json.loads((root / 'settings' / 'baboom-session.json').read_text(encoding='utf-8'))
         alive = abs(psutil.Process(held['pid']).create_time() - held['created_at']) < 0.01

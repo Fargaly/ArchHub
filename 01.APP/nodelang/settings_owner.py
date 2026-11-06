@@ -1,6 +1,8 @@
 """Settings translations over the selected CellStore and existing cloud owners."""
 from __future__ import annotations
 
+from .user_paths import state_directory
+
 import inspect
 import json
 import math
@@ -21,7 +23,7 @@ _ACCOUNT_FILE_LOCK = threading.RLock()
 
 
 def router_settings_path():
-    return Path(os.environ['LOCALAPPDATA']) / 'ArchHub' / 'settings' / 'router.json'
+    return state_directory() / 'settings' / 'router.json'
 
 
 def read_router_settings():

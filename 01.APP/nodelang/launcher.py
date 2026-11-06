@@ -16,13 +16,11 @@ os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu")
 os.environ.setdefault("QT_OPENGL", "software")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from nodelang.user_paths import state_directory
 
 # pythonw has no console: stdout/stderr vanish and a crash is invisible.
 # Everything this launcher says goes to a file the founder can open.
-_log_dir = Path(
-    os.environ.get("ARCHHUB_TEST_STATE_DIR")
-    or (Path(os.environ["LOCALAPPDATA"]) / "ArchHub")
-)
+_log_dir = state_directory()
 _log_dir.mkdir(parents=True, exist_ok=True)
 _log_dir = _log_dir / "logs"
 _log_dir.mkdir(parents=True, exist_ok=True)
@@ -231,10 +229,7 @@ def _require_desktop_state_custody(selected_state, normal_state):
             "Automation requires a separate ARCHHUB_TEST_STATE_DIR outside user state.")
 
 
-state_dir = Path(
-    os.environ.get("ARCHHUB_TEST_STATE_DIR")
-    or (Path(os.environ["LOCALAPPDATA"]) / "ArchHub")
-)
+state_dir = state_directory()
 try:
     _require_desktop_state_custody(
         state_dir, Path(os.environ["LOCALAPPDATA"]) / "ArchHub")

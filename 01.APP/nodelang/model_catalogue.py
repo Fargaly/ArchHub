@@ -13,6 +13,8 @@ was really everything (2026-09-05). It was a hard-coded list.
 """
 from __future__ import annotations
 
+from .user_paths import state_directory
+
 import json
 import os
 from pathlib import Path
@@ -77,7 +79,7 @@ _router_refreshes: dict[Path, tuple[float, bool, str]] = {}
 def cached_free_routes():
     """Disposable public catalogue; a cold or stale read never waits for HTTP."""
     from .model_router import _OPENROUTER_FREE_MODELS_DEFAULT
-    path = Path(os.environ['LOCALAPPDATA']) / 'ArchHub' / 'settings' / 'openrouter-catalogue.json'
+    path = state_directory() / 'settings' / 'openrouter-catalogue.json'
     held = {}
     cache_error = ''
     try:

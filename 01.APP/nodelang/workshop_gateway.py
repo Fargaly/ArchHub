@@ -9,6 +9,8 @@ The agent is never blocked.
 """
 from __future__ import annotations
 
+from .user_paths import state_directory
+
 import hashlib
 import json
 import os
@@ -58,7 +60,7 @@ def counts():
 
 
 def _store():
-    return Path(os.environ['LOCALAPPDATA']) / 'ArchHub' / 'settings' / 'governance-stamps.json'
+    return state_directory() / 'settings' / 'governance-stamps.json'
 
 
 _LOCK = threading.Lock()

@@ -14,10 +14,11 @@ with sockets, parameters and wires -- inside one .archhub file, never a global g
 """
 from __future__ import annotations
 
+from .user_paths import state_directory
+
 import copy
 import hashlib
 import json
-import os
 import re
 import threading
 import time
@@ -231,7 +232,7 @@ def thing_items():
                        ('notion', 'Notion'), ('rhino', 'Rhino'), ('blender', 'Blender'), ('max', '3ds Max'), ('dropbox', 'Dropbox')):
         items.append(card('thing:host:' + host, 'connectors', name, 'Connector · read sessions', 'thing.host',
                           {'host': host, 'document': '', 'view': ''}))
-    held_path = Path(os.environ['LOCALAPPDATA']) / 'ArchHub' / 'settings' / 'workspaces.json'
+    held_path = state_directory() / 'settings' / 'workspaces.json'
     try:
         held = json.loads(held_path.read_text(encoding='utf-8')) if held_path.exists() else {'roots': []}
         for root in held.get('roots', []):

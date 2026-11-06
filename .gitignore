@@ -53,3 +53,6 @@ signature_AFargaly*
 
 # Packed connector runtime: built by 03.TOOLS/packaging/pack_runtime.py in the release payload step
 /01.APP/packed/
+
+# TESTISO disposable profiles and verification output.
+/.cache/testiso*

@@ -6,10 +6,10 @@ heavy imports so the per-turn Stop hook can record native usage cheaply.
 """
 from __future__ import annotations
 
+from .user_paths import state_directory
+
 from contextlib import closing
 from datetime import datetime
-import os
-from pathlib import Path
 import sqlite3
 import time
 
@@ -22,7 +22,7 @@ SCHEMA = ('CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, ts REAL, ag
 
 
 def router_database():
-    return Path(os.environ['LOCALAPPDATA']) / 'ArchHub' / 'settings' / 'router.sqlite'
+    return state_directory() / 'settings' / 'router.sqlite'
 
 
 def connect():

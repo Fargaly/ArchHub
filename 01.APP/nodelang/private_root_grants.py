@@ -5,6 +5,8 @@ graph content, and not a replacement for the signed workspace-root registry.
 """
 from __future__ import annotations
 
+from .user_paths import state_directory
+
 from pathlib import Path
 from contextlib import contextmanager
 import hashlib
@@ -45,7 +47,7 @@ def canonical(value: object) -> bytes:
 
 def default_grant_path() -> Path:
     base = os.environ.get("LOCALAPPDATA")
-    root = Path(base) / "ArchHub" if base else Path.home() / ".archhub"
+    root = state_directory() if base or "ARCHHUB_TEST_STATE_DIR" in os.environ else Path.home() / ".archhub"
     return root / "governance" / "private-root-grants.json"
 
 

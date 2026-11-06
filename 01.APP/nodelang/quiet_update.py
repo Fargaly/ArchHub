@@ -3,6 +3,7 @@
 Published SHA-256 is byte integrity, not signed release proof or rollback.
 """
 from __future__ import annotations
+
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
@@ -1015,10 +1016,10 @@ def apply_unattended(state_dir: Path, app_dir: Path, opener=urllib.request.urlop
 
 def state_directory() -> Path:
     """The same folder launcher.py writes launcher.log into."""
-    override = os.environ.get("ARCHHUB_TEST_STATE_DIR", "").strip()
-    if override:
-        return Path(override)
-    return Path(os.environ["LOCALAPPDATA"]) / "ArchHub"
+    if __package__ in (None, ""):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from nodelang.user_paths import state_directory as user_state_directory
+    return user_state_directory()
 
 
 def append_update_log(state_dir: Path, line: str) -> None:

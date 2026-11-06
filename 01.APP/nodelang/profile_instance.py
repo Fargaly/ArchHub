@@ -5,13 +5,19 @@ import hashlib
 import os
 from pathlib import Path
 
+# The updater's emergency loader must survive a damaged package __init__.
+import importlib.util
+_spec = importlib.util.spec_from_file_location('archhub_user_paths', Path(__file__).with_name('user_paths.py'))
+_paths = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_paths)
+
 
 def profile_identity(environment):
     local = environment.get("LOCALAPPDATA")
-    if not local:
+    if not local and not environment.get('ARCHHUB_TEST_STATE_DIR'):
         return None
-    state = environment.get("ARCHHUB_TEST_STATE_DIR") or str(Path(local) / "ArchHub")
-    return tuple(os.path.normcase(os.path.realpath(value)) for value in (local, state))
+    state = str(_paths.state_directory(environment))
+    return tuple(os.path.normcase(os.path.realpath(value)) for value in (local or state, state))
 
 
 def mutex_name(environment):

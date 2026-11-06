@@ -5,6 +5,8 @@ checked before and after one dispatch; uncertain calls are never replayed.
 """
 from __future__ import annotations
 
+from .user_paths import state_directory
+
 from typing import Callable
 
 import inspect
@@ -38,9 +40,7 @@ def _sessions(service: str) -> dict:
 
 def _allow_effect(host: str) -> None:
     import json
-    import os
-    from pathlib import Path
-    path = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "ArchHub" / "settings.json"
+    path = state_directory() / "settings.json"
     try:
         settings = json.loads(path.read_text(encoding="utf-8-sig"))
         permissions = settings.get("host_effects", {})

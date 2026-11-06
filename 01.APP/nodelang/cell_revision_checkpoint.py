@@ -6,6 +6,8 @@ and cannot detect coordinated rollback of every local copy.
 """
 from __future__ import annotations
 
+from .user_paths import state_directory
+
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -107,12 +109,12 @@ class RevisionCheckpointGuard:
     @staticmethod
     def default_path(database_path: str | os.PathLike[str]) -> Path:
         local = os.environ.get("LOCALAPPDATA")
-        if not local:
+        if not local and not os.environ.get("ARCHHUB_TEST_STATE_DIR"):
             raise RevisionCheckpointDenied("LOCALAPPDATA is unavailable")
         identity = hashlib.sha256(
             str(Path(database_path).expanduser().resolve()).casefold().encode("utf-8")
         ).hexdigest()
-        return Path(local) / "ArchHub" / "checkpoints" / (identity + ".json")
+        return state_directory() / "checkpoints" / (identity + ".json")
 
     def _read(self) -> dict[str, object] | None:
         if not self.path.exists():

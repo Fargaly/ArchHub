@@ -6,6 +6,8 @@ local graph requests reuse that bearer-bound proof without waiting on a network.
 """
 from __future__ import annotations
 
+from .user_paths import state_directory
+
 import json
 import os
 import hashlib
@@ -39,8 +41,8 @@ def remember_verified_account(held, status, me):
 
 def cloud_session_path() -> Path:
     isolated = os.environ.get('ARCHHUB_TEST_STATE_DIR')
-    if isolated:
-        return Path(isolated).resolve() / 'brain' / 'cloud.json'
+    if isolated is not None:
+        return state_directory().resolve() / 'brain' / 'cloud.json'
     return _roaming_directory() / 'ArchHub' / 'brain' / 'cloud.json'
 
 

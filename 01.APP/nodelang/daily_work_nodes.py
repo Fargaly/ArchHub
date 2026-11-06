@@ -21,6 +21,8 @@ maintained ONNX packaging of the same models.
 """
 from __future__ import annotations
 
+from .user_paths import state_directory
+
 import csv
 import difflib
 import hashlib
@@ -95,7 +97,7 @@ WHISPER_MODELS = {
 
 
 def runtimes_root() -> Path:
-    return Path(os.environ['LOCALAPPDATA']) / 'ArchHub' / 'runtimes'
+    return state_directory() / 'runtimes'
 
 
 def _pin_digest(spec) -> str:
@@ -352,7 +354,7 @@ def revision_compare(params, feeds):
     limit = int(float(params.get('max_pages') or spec['params']['max_pages']))
     scale = dpi / 72.0
     started, budget = time.monotonic(), _budget(params, spec)
-    overlays = Path(os.environ['LOCALAPPDATA']) / 'ArchHub' / 'daily-work' / 'compare' / hashlib.sha256(
+    overlays = state_directory() / 'daily-work' / 'compare' / hashlib.sha256(
         (_sha256(old) + _sha256(new) + repr((dpi, threshold))).encode()).hexdigest()[:16]
     first, second = pdfium.PdfDocument(str(old)), pdfium.PdfDocument(str(new))
     pages, files = [], []

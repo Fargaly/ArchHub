@@ -18,6 +18,8 @@ OpenRouter and LM Studio (LM Studio serves it verbatim); Ollama has its own
 """
 from __future__ import annotations
 
+from .user_paths import state_directory
+
 import json
 import importlib.util
 import base64
@@ -2002,12 +2004,12 @@ def _application_state_dir(environ: Optional[Mapping[str, str]] = None) -> Optio
     def get_env(name: str) -> Optional[str]:
         return env.get(name) if name in env else os.environ.get(name)
 
-    root = get_env("ARCHHUB_STATE_DIR") or get_env("ARCHHUB_TEST_STATE_DIR")
+    root = get_env("ARCHHUB_TEST_STATE_DIR") or get_env("ARCHHUB_STATE_DIR")
     if not root:
         # The app always names its state folder; never guess one (no file rather than a wrong file).
         return None
     try:
-        state = Path(root).expanduser()
+        state = state_directory({**os.environ, **env})
     except (TypeError, ValueError):
         return None
     return state if state.is_absolute() else None

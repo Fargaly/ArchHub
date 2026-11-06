@@ -5,6 +5,8 @@ Workshop file, or keeps a second task store.
 """
 from __future__ import annotations
 
+from .user_paths import state_directory
+
 import ctypes
 import logging
 import os
@@ -210,12 +212,7 @@ def read_workshop_task_rows() -> list[dict[str, object]]:
 
     if os.environ.get("PYTEST_CURRENT_TEST") and not os.environ.get("ARCHHUB_BABOOM_READ_WORKSHOP"):
         return []
-    root = os.environ.get("ARCHHUB_TEST_STATE_DIR")
-    if not root:
-        local = os.environ.get("LOCALAPPDATA")
-        if not local:
-            return []
-        root = str(Path(local) / "ArchHub")
+    root = str(state_directory())
     database = Path(root) / "workshop" / "messages.sqlite3"
     if not database.is_file():
         return []

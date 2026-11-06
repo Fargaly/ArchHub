@@ -1,6 +1,8 @@
 """Generic deployment evidence expressed with the universal node primitives."""
 from __future__ import annotations
 
+from .user_paths import state_directory
+
 import json
 import os
 import re
@@ -12,8 +14,7 @@ from .core import Store, validate_store
 
 DEPLOYMENT_EVIDENCE_ENV = "ARCHHUB_DEPLOYMENT_EVIDENCE"
 DEPLOYMENT_EVIDENCE_PATH = (
-    Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
-    / "ArchHub" / "deployment-evidence.json"
+    state_directory() / "deployment-evidence.json"
 )
 _FIELDS = (
     "provider", "project_ref", "version_ref", "deployment_ref", "url",

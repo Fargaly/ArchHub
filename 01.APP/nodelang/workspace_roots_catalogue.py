@@ -25,6 +25,8 @@ Limits (stated, not hidden):
 """
 from __future__ import annotations
 
+from .user_paths import state_directory
+
 from dataclasses import dataclass
 import hashlib
 import hmac
@@ -857,7 +859,7 @@ def snapshot_body(roots, pin, *, key_id=KEY_ID) -> dict:
 
 def registry_dir() -> Path:
     home = os.environ.get("USERPROFILE") or str(Path.home())
-    return Path(home) / ".archhub"
+    return state_directory() / "workspace-registry" if "ARCHHUB_TEST_STATE_DIR" in os.environ else Path(home) / ".archhub"
 
 
 def default_snapshot_path() -> Path:
@@ -969,8 +971,7 @@ def _verify_blob(key_id, blob, version, payload, signature, verifier) -> bool:
 def default_app_key_path(snapshot_path=None) -> Path:
     if snapshot_path is not None:
         return Path(snapshot_path).with_name("workspace-roots.app-key.dpapi")
-    base = os.environ.get("LOCALAPPDATA") or str(Path.home())
-    return Path(base) / "ArchHub" / "governance" / "workspace-roots.app-key.dpapi"
+    return state_directory() / "governance" / "workspace-roots.app-key.dpapi"
 
 
 _APP_KEY_PURPOSE = "archhub:workspace-roots:app-signing-key"
@@ -1658,8 +1659,7 @@ def normalized_picked_folder(chosen) -> str:
 
 def default_last_good_path() -> Path:
     """The hooks' last-good copy: the newest snapshot they verified."""
-    base = os.environ.get("LOCALAPPDATA") or str(Path.home())
-    return Path(base) / "ArchHub" / "governance" / "workspace-roots.last-good.json"
+    return state_directory() / "governance" / "workspace-roots.last-good.json"
 
 
 def _refuse_rollback(signed, blob, verifier, last_good_path=None):

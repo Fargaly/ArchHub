@@ -1273,7 +1273,8 @@ def publish_pdf(params: Mapping[str, object], feeds: Mapping[str, object]):
     # data anyone can hand you, so a folder it names is only a NAME inside
     # that base (never a share, never a path of its own), and the listing
     # afterwards is exactly what this run wrote.
-    base = os.path.join(os.path.expanduser("~"), "Documents", "ArchHub", "pdf")
+    from .user_paths import state_directory
+    base = str(state_directory() / "pdf") if os.environ.get("ARCHHUB_TEST_STATE_DIR") else os.path.join(os.path.expanduser("~"), "Documents", "ArchHub", "pdf")
     stamp = time.strftime("%Y%m%d-%H%M%S")
     asked = os.path.basename(_text(params, "folder").replace(chr(92), "/").rstrip("/"))
     safe = "".join(ch for ch in asked if ch.isalnum() or ch in "-_ ").strip()

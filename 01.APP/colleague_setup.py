@@ -614,6 +614,7 @@ def register_autocad_add_ins(root: Path, *, environment=None, install=None,
     not place, never needs elevation and never starts AutoCAD.
     """
     import json
+    from nodelang.user_paths import state_directory
     env = os.environ if environment is None else environment
     if install is None:
         from nodelang.autocad_broker_installation import install_autocad_broker as install
@@ -638,7 +639,7 @@ def register_autocad_add_ins(root: Path, *, environment=None, install=None,
             user_plugins_root=str(Path(env["APPDATA"]) / "Autodesk" / "ApplicationPlugins"),
             machine_plugins_root=str(Path(env.get("ProgramData", r"C:\ProgramData")) / "Autodesk" / "ApplicationPlugins"),
             # nodelang/launcher.py owns this state location (see _launcher_state_root).
-            state_root=str(Path(env.get("ARCHHUB_TEST_STATE_DIR") or Path(env["LOCALAPPDATA"]) / "ArchHub")))
+            state_root=str(state_directory(env)))
         for result in results:
             print("  autocad %s : %s%s" % (result["host_version"], result["status"],
                                            (" - " + result["reason"]) if result.get("reason") else
@@ -671,8 +672,8 @@ def report_rhino_blender(root: Path, *, detected=None) -> list[dict]:
 
 def _launcher_state_root() -> Path:
     # nodelang/launcher.py owns this location; a court holds the two equal.
-    return Path(os.environ.get("ARCHHUB_TEST_STATE_DIR")
-                or Path(os.environ["LOCALAPPDATA"]) / "ArchHub")
+    from nodelang.user_paths import state_directory
+    return state_directory()
 
 
 def _assistant_integration(root: Path, identity: str) -> None:

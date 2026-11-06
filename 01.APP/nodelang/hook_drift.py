@@ -14,6 +14,7 @@ current inventory as the approved state.
 """
 from __future__ import annotations
 
+
 import hashlib
 import json
 import os
@@ -23,6 +24,7 @@ from pathlib import Path
 
 if not __package__:  # run as the installed script: import the canonical package
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from nodelang.user_paths import state_directory
 from nodelang.runtime_hook_observer import VENDORS
 
 # The same per-agent hook files the compliance observer reads, plus Claude's local layer.
@@ -137,8 +139,7 @@ def approve(home, state_file, *, codex_home=None) -> dict:
 
 def default_state_file(environment=None) -> Path:
     environment = os.environ if environment is None else environment
-    base = environment.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
-    return Path(base) / "ArchHub" / "runtime-context" / "hook-drift" / "approved.json"
+    return state_directory(environment) / "runtime-context" / "hook-drift" / "approved.json"
 
 
 def main(argv=None) -> int:

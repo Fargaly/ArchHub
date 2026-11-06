@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .user_paths import state_directory
+
 import base64
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -51,9 +53,9 @@ class WindowsDpapiCallerKeyStore:
     @staticmethod
     def default_path() -> Path:
         local = os.environ.get("LOCALAPPDATA")
-        if not local:
+        if not local and not os.environ.get("ARCHHUB_TEST_STATE_DIR"):
             raise InvalidCell("LOCALAPPDATA is unavailable")
-        return Path(local) / "ArchHub" / "keys" / "caller-signing-v1.dpapi.json"
+        return state_directory() / "keys" / "caller-signing-v1.dpapi.json"
 
     @staticmethod
     def _purpose(key_id: str) -> str:

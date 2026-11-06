@@ -7,6 +7,8 @@ responsible for resolving graph-declared routes, authorization, and mutation.
 """
 from __future__ import annotations
 
+from .user_paths import state_directory
+
 from collections import deque
 from contextvars import ContextVar
 import ctypes
@@ -628,9 +630,9 @@ class ExportableSigningKeyProvider(SigningKeyProvider, Protocol):
 
 def default_runtime_descriptor_path() -> Path:
     local = os.environ.get("LOCALAPPDATA")
-    if not local:
+    if not local and not os.environ.get("ARCHHUB_TEST_STATE_DIR"):
         raise MachineTransportError("LOCALAPPDATA is unavailable")
-    return Path(local) / "ArchHub" / "active-universal-runtime.json"
+    return state_directory() / "active-universal-runtime.json"
 
 
 def _canonical(payload: Mapping[str, object]) -> bytes:
@@ -1320,12 +1322,7 @@ def stopped_runtime_restart_database(
         )
     try:
         database = Path(descriptor.database).expanduser().resolve(strict=True)
-        local_app_data = os.environ.get("LOCALAPPDATA")
-        authority_root = (
-            Path(local_app_data).expanduser().resolve() / "ArchHub"
-            if local_app_data
-            else (Path.home() / "AppData" / "Local" / "ArchHub").resolve()
-        )
+        authority_root = state_directory().resolve()
         database.relative_to(authority_root)
         journal = inspect_read_only_cell_journal(database)
     except (OSError, ReadOnlyJournalError, ValueError) as exc:

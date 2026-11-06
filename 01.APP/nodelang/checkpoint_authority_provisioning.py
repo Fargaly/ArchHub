@@ -1,6 +1,8 @@
 """Durable local provisioning for v2 revision-checkpoint authority."""
 from __future__ import annotations
 
+from .user_paths import state_directory
+
 from datetime import datetime, timezone
 import hashlib
 import os
@@ -39,11 +41,10 @@ def default_checkpoint_authority_path(
     database_identity: str | os.PathLike[str],
 ) -> Path:
     local = os.environ.get("LOCALAPPDATA")
-    if not local:
+    if not local and not os.environ.get("ARCHHUB_TEST_STATE_DIR"):
         raise RevisionCheckpointDenied("LOCALAPPDATA is unavailable")
     return (
-        Path(local)
-        / "ArchHub"
+        state_directory()
         / "authorities"
         / ("revision-checkpoint-%s.sqlite3" % _identity(database_identity))
     )

@@ -4,6 +4,8 @@ This module starts no service and stores no credentials or attachment records.
 The server's existing identity guard handles competing processes. A failed
 attempt is retained here, but this process-local state cannot guard a restart.
 """
+from .user_paths import state_directory
+
 from collections.abc import Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -197,13 +199,13 @@ class NativeAgentSession:
                 self._identity.external_session_id, environment=self._environment)
         local = _environment_text(self._environment, "LOCALAPPDATA")
         if descriptor_path is None:
-            if not local:
+            if not local and not self._environment.get("ARCHHUB_TEST_STATE_DIR"):
                 raise ValueError("existing installed runtime location is unavailable")
-            descriptor_path = Path(local) / "ArchHub" / "active-universal-runtime.json"
+            descriptor_path = state_directory(self._environment) / "active-universal-runtime.json"
         self._descriptor_path = Path(descriptor_path).expanduser().resolve()
         self._key_provider = key_provider
         self._key_path = None if key_provider is not None else (
-            Path(local) / "ArchHub" / "keys" / "authority-signing-v1.dpapi.json" if local else None)
+            state_directory(self._environment) / "keys" / "authority-signing-v1.dpapi.json" if local or self._environment.get("ARCHHUB_TEST_STATE_DIR") else None)
         if key_provider is None and self._key_path is None:
             raise ValueError("existing installed signing custody is unavailable")
         self._factory = client_factory

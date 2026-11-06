@@ -271,7 +271,7 @@ def test_one_folder_migration_preserves_bytes_and_readable_names(profile):
     assert len(moved) == 3
     assert not (legacy / 'skills').exists()
     folder = session_files.sessions_directory()
-    assert folder == Path(os.environ['USERPROFILE']) / 'ArchHub/Sessions'
+    assert folder == profile / 'Sessions'
     assert {path.name for path in folder.iterdir()} == {'Door schedule.archhub', 'Door schedule (2).archhub', 'My Canvas.archhub'}
     for path in folder.iterdir():
         assert path.read_bytes() == originals[session_files.read_document(path)['id']]
@@ -534,6 +534,7 @@ def test_linked_staging_is_refused_without_touching_target(profile, tmp_path):
 
 @pytest.mark.skipif(os.name != 'nt', reason='Windows Known Folder Move registry')
 def test_redirected_documents_are_detected_but_never_used_by_default(profile, tmp_path, monkeypatch, caplog):
+    monkeypatch.delenv('ARCHHUB_TEST_STATE_DIR')  # Check production defaults against the fixture's fake user.
     import winreg
     redirected = tmp_path / 'OneDrive' / 'Documents'
     calls = []

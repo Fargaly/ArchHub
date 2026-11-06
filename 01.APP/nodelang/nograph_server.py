@@ -1269,7 +1269,8 @@ def r_workspace_roots(s, req):
     held = store.read()
     if not held['roots'] and not held.get('imported_legacy'):
         # One-time carry-over of the folders registered before NOGRAPH (~/.archhub/workspace-roots.json).
-        legacy = Path(os.environ.get('USERPROFILE') or str(Path.home())) / '.archhub' / 'workspace-roots.json'
+        from .workspace_roots_catalogue import default_snapshot_path
+        legacy = default_snapshot_path()
         try:
             old = json.loads(legacy.read_text(encoding='utf-8')).get('roots') or []
         except (OSError, ValueError):

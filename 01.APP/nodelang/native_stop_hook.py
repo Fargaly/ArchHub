@@ -4,6 +4,7 @@ The shell owns no graph client or enrollment. A Windows credential grants only
 this local Stop observation; the full Agent Session capability stays in MCP.
 """
 from datetime import datetime
+
 import hashlib
 import json
 import os
@@ -19,6 +20,8 @@ from multiprocessing.connection import Client
 if not globals().get("__package__"):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     __package__ = "nodelang"
+
+from .user_paths import state_directory
 
 SERVICE = 'ArchHub.NativeStop.v1'
 UNAVAILABLE = {'decision':'block','reason':'Native Stop authority is unavailable. Continue through the existing native session to reconcile; do not create a replacement session.'}
@@ -110,7 +113,7 @@ def _vault():
     base=os.environ.get('LOCALAPPDATA')
     if not base or not Path(base).is_absolute():
         raise RuntimeError('Native Stop encrypted custody is unavailable')
-    return _DpapiStopStore(Path(base)/'ArchHub'/'runtime-context'/'native-stop')
+    return _DpapiStopStore(state_directory()/'runtime-context'/'native-stop')
 
 
 class _DpapiStopStore:
@@ -1186,7 +1189,7 @@ def _followup_state_path(session_id, directory=None):
         base = os.environ.get('LOCALAPPDATA')
         if not base or not Path(base).is_absolute():
             raise RuntimeError('Follow-up guard location is unavailable')
-        directory = Path(base) / 'ArchHub' / 'runtime-context' / 'native-stop-followup'
+        directory = state_directory() / 'runtime-context' / 'native-stop-followup'
     return Path(directory) / (hashlib.sha256(str(session_id).encode()).hexdigest() + '.json')
 
 
@@ -1293,7 +1296,7 @@ def _verdict_path(fingerprint, directory=None):
         base = os.environ.get('LOCALAPPDATA')
         if not base or not Path(base).is_absolute():
             raise RuntimeError('Stop verdict location is unavailable')
-        directory = Path(base) / 'ArchHub' / 'runtime-context' / 'native-stop-verdict'
+        directory = state_directory() / 'runtime-context' / 'native-stop-verdict'
     if type(fingerprint) is not str or len(fingerprint) != 64 or not set(fingerprint) <= set('0123456789abcdef'):
         raise ValueError('Stop verdict needs its session fingerprint')
     return Path(directory) / (fingerprint + '.json')

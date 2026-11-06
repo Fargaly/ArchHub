@@ -119,6 +119,7 @@ def _isolate_profile(home, monkeypatch):
     monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("LOCALAPPDATA", str(local))
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(local / "ArchHub"))
     monkeypatch.setenv("APPDATA", str(home / "ROAMING"))
     temporary = home / "TMP"
     temporary.mkdir()

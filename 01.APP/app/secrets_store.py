@@ -5,7 +5,8 @@ from contextlib import contextmanager, ExitStack
 from pathlib import Path
 
 SERVICE = "ArchHub"
-APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "ArchHub"
+from nodelang.user_paths import state_directory
+APP_DIR = state_directory()
 SECRETS_FILE = APP_DIR / "secrets.dat"
 SETTINGS_FILE = APP_DIR / "settings.json"
 # Serialize this application's read-modify-write operations. Atomic replacement

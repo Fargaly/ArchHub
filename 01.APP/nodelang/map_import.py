@@ -44,13 +44,15 @@ live only in the one table.
 """
 from __future__ import annotations
 
+from .user_paths import state_directory
+
 import json
 import os
 from pathlib import Path
 
 PUBLIC_MAP_PATH = Path(__file__).resolve().parent / "data" / "public_runtime_map.json"
 AUTHORITY_ENV = "ARCHHUB_GRAND_MAP_PATH"
-AUTHORITY_CONFIG = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "ArchHub" / "authority.json"
+AUTHORITY_CONFIG = state_directory() / "authority.json"
 
 # Seed DATA for the scale nodes (graph data, written once as nodes -- the
 # live scoring authority is the NODES, not this dict; tests prove it by

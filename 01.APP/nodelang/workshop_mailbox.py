@@ -7,6 +7,8 @@ from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from functools import lru_cache
+from .user_paths import state_directory
+
 import json
 import os
 from pathlib import Path
@@ -939,7 +941,7 @@ def _process_identity(context, pid, created_at, cwd):
 
 
 def _profile_root():
-    return Path(os.environ.get("ARCHHUB_TEST_STATE_DIR") or (Path(os.environ["LOCALAPPDATA"]) / "ArchHub"))
+    return state_directory()
 
 
 def profile_database():

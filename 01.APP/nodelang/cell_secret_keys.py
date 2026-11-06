@@ -6,6 +6,8 @@ revisions remain verifiable after rotation.
 """
 from __future__ import annotations
 
+from .user_paths import state_directory
+
 from dataclasses import dataclass
 import base64
 import ctypes
@@ -438,9 +440,9 @@ class WindowsDpapiSigningKeyProvider:
     @staticmethod
     def default_path() -> Path:
         local = os.environ.get("LOCALAPPDATA")
-        if not local:
+        if not local and not os.environ.get("ARCHHUB_TEST_STATE_DIR"):
             raise SigningKeyError("LOCALAPPDATA is unavailable")
-        return Path(local) / "ArchHub" / "keys" / "authority-signing-v1.dpapi.json"
+        return state_directory() / "keys" / "authority-signing-v1.dpapi.json"
 
     @staticmethod
     def _validate_key_id(key_id: str) -> None:

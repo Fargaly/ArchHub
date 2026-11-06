@@ -9,6 +9,8 @@ Each engine returns the honest zero with a reason when the host is not there
 """
 from __future__ import annotations
 
+from .user_paths import state_directory
+
 import ctypes
 import json
 import ntpath
@@ -55,7 +57,7 @@ def broker_sessions(service: str, *, include_document=True) -> list[dict]:
     if service not in ("revit", "acad"):
         raise ValueError("unknown broker service")
     family = "autocad" if service == "acad" else "revit"
-    directory = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "ArchHub" / "sessions"
+    directory = state_directory() / "sessions"
     found = {}
     try:
         processes = _windows_process_table() if os.name == "nt" else None

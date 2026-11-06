@@ -25,6 +25,8 @@ here starts the server, so nothing here proves a connection or a host action.
 """
 from __future__ import annotations
 
+from .user_paths import state_directory
+
 import json
 import os
 import tempfile
@@ -50,8 +52,7 @@ def install_roots(environment=None) -> tuple[Path, Path]:
     """This installation and the launcher's state folder (nodelang/launcher.py owns it)."""
     env = os.environ if environment is None else environment
     root = Path(os.path.abspath(Path(__file__).resolve().parent.parent))
-    state = Path(env.get("ARCHHUB_TEST_STATE_DIR")
-                 or Path(env.get("LOCALAPPDATA", str(Path.home()))) / "ArchHub")
+    state = state_directory(env)
     return root, state
 
 

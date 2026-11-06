@@ -1,6 +1,8 @@
 """Current-user custody for browser capabilities that survive worker handoff."""
 from __future__ import annotations
 
+from .user_paths import state_directory
+
 from dataclasses import dataclass
 import hashlib
 import json
@@ -38,9 +40,9 @@ class BrowserCredentialVault:
     @staticmethod
     def default_path() -> Path:
         local = os.environ.get("LOCALAPPDATA")
-        if not local:
+        if not local and not os.environ.get("ARCHHUB_TEST_STATE_DIR"):
             raise SigningKeyError("LOCALAPPDATA is unavailable")
-        return Path(local) / "ArchHub" / "runtime" / "browser-session-v1.dpapi"
+        return state_directory() / "runtime" / "browser-session-v1.dpapi"
 
     def _purpose(self) -> str:
         identity = hashlib.sha256(str(self.path).encode("utf-8")).hexdigest()

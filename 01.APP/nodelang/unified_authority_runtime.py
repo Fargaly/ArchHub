@@ -6,6 +6,8 @@ graph remain the authority and are verified on every open.
 """
 from __future__ import annotations
 
+from .user_paths import state_directory
+
 import argparse
 import base64
 from dataclasses import dataclass
@@ -50,10 +52,9 @@ class AuthorityLocation:
 
 def default_runtime_root() -> Path:
     local = os.environ.get("LOCALAPPDATA")
-    if not local:
+    if not local and not os.environ.get("ARCHHUB_TEST_STATE_DIR"):
         raise InvalidCell("LOCALAPPDATA is unavailable")
-    declared = os.environ.get('ARCHHUB_TEST_STATE_DIR')
-    state = Path(declared) if declared else Path(local) / 'ArchHub'
+    state = state_directory()
     return state / 'unified-authority'
 
 

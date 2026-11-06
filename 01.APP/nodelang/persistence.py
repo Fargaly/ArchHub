@@ -1,6 +1,8 @@
 """Atomic local CDE/WIP snapshots for the one-table application graph."""
 from __future__ import annotations
 
+from .user_paths import state_directory as user_state_directory
+
 import gzip
 import json
 import os
@@ -60,16 +62,13 @@ class _MigrationProgress:
 
 
 def default_state_path():
-    root = Path(os.environ.get('LOCALAPPDATA') or (Path.home() / 'AppData' / 'Local'))
-    return root / 'ArchHub' / 'node-native-wip.json.gz'
+    return user_state_directory() / 'node-native-wip.json.gz'
 
 
 
 def application_database_path(state_directory=None):
     """Locate the one selected application journal; never select an old copy."""
-    root = Path(state_directory) if state_directory is not None else Path(
-        os.environ.get('ARCHHUB_TEST_STATE_DIR') or
-        (Path(os.environ.get('LOCALAPPDATA') or Path.home() / 'AppData' / 'Local') / 'ArchHub'))
+    root = Path(state_directory) if state_directory is not None else user_state_directory()
     root = root.resolve()
     runtime = root / 'unified-authority'
     current = runtime / 'CURRENT'

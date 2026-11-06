@@ -2,7 +2,7 @@
 
 One source: the entry script and the transport ship inside the install
 (nodelang/workshop); state lives where the application composes it
-(ARCHHUB_TEST_STATE_DIR or %LOCALAPPDATA%/ArchHub-Test, then workshop).
+(ARCHHUB_TEST_STATE_DIR or %LOCALAPPDATA%/ArchHub, then workshop).
 Agent-side files (the workshop skill for Claude, Codex and OpenCode, and
 the OpenCode governance loader) are rendered from this module, never written
 by hand or from a handoff folder.
@@ -14,6 +14,8 @@ the destination, none are copied and it is reported. Nothing is overwritten
 and the source is never deleted.
 """
 from __future__ import annotations
+
+from .user_paths import state_directory
 
 import argparse
 import filecmp
@@ -45,12 +47,7 @@ class WorkshopConfigRefused(ValueError):
 def app_state_dir(environment=None) -> Path:
     """The Workshop state folder the application composes (desktop.py, launcher)."""
     env = os.environ if environment is None else environment
-    root = env.get("ARCHHUB_TEST_STATE_DIR")
-    if not root:
-        if not env.get("LOCALAPPDATA"):
-            raise WorkshopConfigRefused("application state directory unavailable")
-        root = str(Path(env["LOCALAPPDATA"]) / "ArchHub-Test")
-    state = Path(root) / "workshop"
+    state = state_directory(env) / "workshop"
     if not state.is_absolute():
         raise WorkshopConfigRefused("application state directory must be absolute")
     return state

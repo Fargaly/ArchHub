@@ -1,0 +1,237 @@
+{
+  "canvas": null,
+  "panelOverflow": [],
+  "small": [],
+  "secondary": [
+    {
+      "text": "/",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Search...",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Ctrl K",
+      "ratio": 4.956145839127986
+    },
+    {
+      "text": "Workshop",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Canvas",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Automations",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Docs",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Settings",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Needs you",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "Automations",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "New task",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "Task",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Assigned to",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Status",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Last update",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Not assigned",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Planned",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Not assigned",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Planned",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Not assigned",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Planned",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Not assigned",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Planned",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Drawing coordinator",
+      "ratio": 5.212659123162378
+    },
+    {
+      "text": "Planned",
+      "ratio": 5.212659123162378
+    },
+    {
+      "text": "TASK PROPERTIES",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Planned",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Selection",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "Scope",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Edit",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Rules",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Edit",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Assigned agents",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Edit",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Drawing coordinator ▾",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Folders",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Edit",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "References",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Edit",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Session & saved workflow",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Checkpoints",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Save checkpoint",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Plan and progress",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "done",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "not reported",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "done",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "not reported",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "not reported",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "not reported",
+      "ratio": 6.008479267493088
+    }
+  ],
+  "accentCount": 2,
+  "accents": [
+    {
+      "text": "StatusAll tasksNeeds youWorkingPlannedBlockedDoneArchived",
+      "tag": "LABEL",
+      "cls": "dx-status",
+      "properties": [
+        "backgroundColor"
+      ]
+    },
+    {
+      "text": "Open task",
+      "tag": "BUTTON",
+      "cls": null,
+      "properties": [
+        "backgroundColor"
+      ]
+    }
+  ],
+  "font": {
+    "check": true,
+    "body": "Inter, system-ui, sans-serif",
+    "loaded": [
+      {
+        "weight": "400 600",
+        "status": "loaded"
+      },
+      {
+        "weight": "100 900",
+        "status": "loaded"
+      }
+    ]
+  },
+  "deliveryUnverified": false
+}

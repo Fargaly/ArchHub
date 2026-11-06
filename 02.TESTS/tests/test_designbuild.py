@@ -36,7 +36,7 @@ def test_designbuild_board(tmp_path, monkeypatch, board):
             items = {row['id']: row for row in catalogue()}
             nodes = [{'id': key, 'item': item, 'type': items[item]['engine'], 'title': items[item]['title'],
                       'params': copy.deepcopy(items[item]['params']), 'position': {'x': x, 'y': 0}}
-                     for key, item, x in [('list','n_list',0),('slice','s_slice',350),('count','s_count',700),('pdf','o_pdf_handoff',1050)]]
+                     for key, item, x in [('list','n_list',0),('slice','s_slice',280),('count','s_count',560),('pdf','o_pdf_handoff',840)]]
             if board == 'canvas_fit':
                 nodes = nodes[:2]
             nodes[0]['params']['value'] = '[10, 20, 30, 40, 50]'
@@ -56,13 +56,14 @@ def test_designbuild_board(tmp_path, monkeypatch, board):
         result = subprocess.run(
             ['node', '02.TESTS/tests_js/designbuild.cjs'],
             input=json.dumps({'url': server.public_url, 'cookie': server._cookie_token,
-                              'browserCache': browser_cache, 'board': board}),
+                              'browserCache': browser_cache, 'board': board,
+                              'polish': os.environ.get('ARCHHUB_DESIGNPOLISH_PHASE', '')}),
             cwd=Path(__file__).resolve().parents[2], capture_output=True, text=True,
             encoding='utf-8', timeout=120,
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         print(result.stdout)
         assert result.returncode == 0, result.stdout + result.stderr
-        if board == 'canvas_fit':
+        if board == 'canvas_fit' or os.environ.get('ARCHHUB_DESIGNPOLISH_PHASE'):
             return
         reopened = client.workshop('openTaskGraph', task['taskId'])
         assert reopened['scope'] == 'Review the current issue'

@@ -1089,7 +1089,7 @@
     "$description": ""
    },
    "nodeWidth": {
-    "$value": "304px",
+    "$value": "256px",
     "$type": "dimension",
     "$description": "Default full working node width; compact overview is optional."
    },
@@ -1126,7 +1126,7 @@
    "inspectorWidth": {
     "$value": "320px",
     "$type": "dimension",
-    "$description": "One stable right Properties pane across Home, Workshop and Canvas. Task is default; selection changes its content. User-resizable 280–480px; one saved app-level width."
+    "$description": "One stable right Properties pane across Home, Workshop and Canvas. Task is default; selection changes its content. User-resizable 280\u00e2\u20ac\u201c480px; one saved app-level width."
    }
   },
   "wire": {
@@ -1143,7 +1143,7 @@
   },
   "control": {
    "radius": {
-    "$value": "5px",
+    "$value": "6px",
     "$type": "borderRadius",
     "$description": ""
    }
@@ -1156,6 +1156,24 @@
    }
   },
   "type": {
+   "size": {
+    "body": {
+     "$value": "13px",
+     "$type": "fontSizes"
+    },
+    "label": {
+     "$value": "12px",
+     "$type": "fontSizes"
+    },
+    "section": {
+     "$value": "14px",
+     "$type": "fontSizes"
+    },
+    "meta": {
+     "$value": "11px",
+     "$type": "fontSizes"
+    }
+   },
    "family": {
     "ui": {
      "$value": "Inter",
@@ -1255,7 +1273,7 @@
   "penpot": {
    "fileId": "751e8d0c-7080-8124-8008-d8e6f6eedbb6",
    "revn": 1968,
-   "file": "ArchHub — Editable Product Design",
+   "file": "ArchHub \u00e2\u20ac\u201d Editable Product Design",
    "read": "DTCG handoff grouped into the Penpot token sets compile_studio already reads"
   },
   "archhub.blocks": {

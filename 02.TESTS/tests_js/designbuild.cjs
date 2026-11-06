@@ -74,6 +74,10 @@ const {chromium} = require('playwright');
           });
           const accentRGB=['--color-accent','--color-accent-hi','--color-accent-soft','--color-accent-dim'].map(name=>{const probe=document.createElement('i');probe.style.color=`var(${name})`;document.body.append(probe);const value=window.getComputedStyle(probe).color;probe.remove();return value;});
           const accents=[...document.querySelectorAll('body *')].filter(visible).flatMap(el=>{const css=window.getComputedStyle(el),props=['backgroundColor','borderTopColor','borderRightColor','borderBottomColor','borderLeftColor','outlineColor'];if([...el.childNodes].some(n=>n.nodeType===3&&n.textContent.trim()))props.push('color');const used=props.filter(prop=>accentRGB.includes(css[prop])&&(prop!=='outlineColor'||css.outlineStyle!=='none')&&(!prop.startsWith('border')||parseFloat(css[prop.replace('Color','Width')])>0));return used.length?[{text:el.textContent.slice(0,70),tag:el.tagName,cls:el.getAttribute('class'),properties:used}]:[];});
+          for (const el of document.querySelectorAll('.dx-task-row.on')) {
+            const css=window.getComputedStyle(el,'::before');
+            if (visible(el) && accentRGB.includes(css.backgroundColor)) accents.push({text:el.textContent.slice(0,70),tag:el.tagName,cls:el.className,pseudo:'::before',properties:['backgroundColor']});
+          }
           const area=document.querySelector('[aria-label="Workflow canvas"]'),panel=document.querySelector('.shared-properties'),box=el=>{const r=el.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,right:r.right,bottom:r.bottom};};
           const canvas=area?{area:box(area),nodes:[...area.querySelectorAll('.react-flow__node')].map(box),viewport:window.ArchHubAPI.getSnapshot().graph.viewport,transform:document.querySelector('.react-flow__viewport')?.style.transform}:null;
           const panelOverflow=panel?[...panel.querySelectorAll('input,textarea,select,.spread,.row')].filter(visible).filter(el=>box(el).right>box(panel).right-15).map(el=>({tag:el.tagName,text:el.textContent.slice(0,40),box:box(el)})):[];
@@ -87,6 +91,7 @@ const {chromium} = require('playwright');
           await comparison.screenshot({path:path.join(out,`comparison-${name}.png`)});
           await comparison.close();
           assert.equal(measured.font.check,true);
+          if(input.board==='home') assert.ok(measured.accents.some(row=>row.pseudo==='::before'));
           assert.match(measured.font.body,/Inter/);
           assert.deepEqual(measured.small,[],JSON.stringify(measured.small));
           assert.deepEqual(measured.secondary.filter(row=>row.ratio<4.5),[]);

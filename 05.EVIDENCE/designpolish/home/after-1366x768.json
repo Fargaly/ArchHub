@@ -200,7 +200,7 @@
       "ratio": 6.008479267493088
     }
   ],
-  "accentCount": 2,
+  "accentCount": 3,
   "accents": [
     {
       "text": "StatusAll tasksNeeds youWorkingPlannedBlockedDoneArchived",
@@ -214,6 +214,15 @@
       "text": "Open task",
       "tag": "BUTTON",
       "cls": null,
+      "properties": [
+        "backgroundColor"
+      ]
+    },
+    {
+      "text": "Drawing set reviewDrawing coordinatorPlanned",
+      "tag": "DIV",
+      "cls": "dx-task-row on",
+      "pseudo": "::before",
       "properties": [
         "backgroundColor"
       ]

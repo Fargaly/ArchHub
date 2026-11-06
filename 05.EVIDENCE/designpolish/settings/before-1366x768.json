@@ -1,0 +1,78 @@
+{
+  "small": [],
+  "secondary": [
+    {
+      "text": "/",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Search...",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Ctrl K",
+      "ratio": 4.956145839127986
+    },
+    {
+      "text": "Home",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Workshop",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Canvas",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Automations",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Docs",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Settings categories",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Workspace",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Workflow",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Application",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Choose how ArchHub looks and how the Canvas opens.",
+      "ratio": 6.528549540588584
+    },
+    {
+      "text": "Choose the application theme",
+      "ratio": 6.528549540588584
+    },
+    {
+      "text": "Adjust interface text size",
+      "ratio": 6.528549540588584
+    },
+    {
+      "text": "Limit interface animation",
+      "ratio": 6.528549540588584
+    },
+    {
+      "text": "Show the grid when a workflow opens",
+      "ratio": 6.528549540588584
+    },
+    {
+      "text": "Set the starting zoom for a workflow",
+      "ratio": 6.528549540588584
+    }
+  ],
+  "deliveryUnverified": false
+}

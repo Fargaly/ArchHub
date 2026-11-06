@@ -178,12 +178,12 @@
     const dis = !!(disabled || off);
     const setting = variant === 'settings';
     return <button {...props} type="button" role="switch" aria-checked={value} aria-label={props['aria-label'] || label || title} title={title || label} disabled={dis} onClick={event => executeAction("projects.ds.index.EOnCheckedChangeValueOnChangeValue.1", {onChange,onCheckedChange,onClick,value}, event)} style={{
-      width: setting ? 34 : 30,
+      width: setting ? 36 : 30,
       height: setting ? 20 : 18,
-      borderRadius: 999,
+      borderRadius: setting ? 999 : 'var(--control-radius)',
       padding: 0,
-      background: setting ? dis ? '#1d1d22' : value ? A.accent : '#33333b' : value ? A.accent : A.bgHover,
-      border: dis ? `1px dashed ${A.line}` : setting ? 0 : `1px solid ${value ? A.accent : A.line}`,
+      background: value && !dis ? A.ink : setting ? A.line : A.bgHover,
+      border: `1px ${dis ? 'dashed' : 'solid'} ${A.line}`,
       position: 'relative',
       display: 'inline-block',
       boxSizing: 'border-box',
@@ -194,12 +194,12 @@
     }}>
       <i aria-hidden="true" style={{
         position: 'absolute',
-        top: setting ? 3 : 2,
-        left: value ? setting ? 17 : 14 : setting ? 3 : 2,
-        width: setting ? 14 : 12,
-        height: setting ? 14 : 12,
+        top: 2,
+        left: value ? setting ? 18 : 14 : 2,
+        width: setting ? 16 : 12,
+        height: setting ? 16 : 12,
         borderRadius: '50%',
-        background: setting ? dis ? A.inkSoft : '#fff' : value ? A.onFill : A.inkSoft
+        background: value && !dis ? A.bgPanel : A.inkSoft
       }} />
     </button>;
   }
@@ -520,8 +520,8 @@
         borderRadius: 7,
         background: A.line,
         color: A.ink,
-        fontSize: 11,
-        fontWeight: 600,
+        fontSize: 'var(--type-size-meta)',
+        fontWeight: 500,
         display: 'grid',
         placeItems: 'center'
       }}>{badge}</span>}{children}
@@ -726,7 +726,7 @@
     gap: 6,
     height: 24,
     padding: '0 9px',
-    borderRadius: 999,
+    borderRadius: 'var(--control-radius)',
     background: `${color}1f`,
     color,
     fontSize: 12,

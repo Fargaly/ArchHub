@@ -1,0 +1,346 @@
+{
+  "compiled_manifest_sha256": "fc1b2701139758f9ef6f4121884cc8c70c8879332d1c93846a1562ca4e6497b1",
+  "design_owner": {
+    "state": "accepted",
+    "message": "d8ca41a6"
+  },
+  "environment": {
+    "platform": "Windows",
+    "python": "3.14.3",
+    "browser": "headless Chromium",
+    "task_data": "real isolated temporary NoGraph owners",
+    "host_probe": "excluded by rendered UI fixture"
+  },
+  "screens": {
+    "home": {
+      "reference": "r1970",
+      "renders": [
+        {
+          "viewport": [
+            1366,
+            768
+          ],
+          "png_sha256": "c34de4c2b4939a66ce75be3169c30deac6fd9783fceea8ca18b132e8ed61d8fe",
+          "small_text_violations": 0,
+          "minimum_secondary_contrast": 4.956145839127986,
+          "accent_uses": 3,
+          "font": {
+            "check": true,
+            "body": "Inter, system-ui, sans-serif",
+            "loaded": [
+              {
+                "weight": "400 600",
+                "status": "loaded"
+              },
+              {
+                "weight": "100 900",
+                "status": "loaded"
+              }
+            ]
+          },
+          "panel_overflow": [],
+          "canvas": null
+        },
+        {
+          "viewport": [
+            1680,
+            893
+          ],
+          "png_sha256": "2878bc1b30512071ce59128edc71760b31e0859d7a2f352a27ecf279228c1806",
+          "small_text_violations": 0,
+          "minimum_secondary_contrast": 4.956145839127986,
+          "accent_uses": 3,
+          "font": {
+            "check": true,
+            "body": "Inter, system-ui, sans-serif",
+            "loaded": [
+              {
+                "weight": "400 600",
+                "status": "loaded"
+              },
+              {
+                "weight": "100 900",
+                "status": "loaded"
+              }
+            ]
+          },
+          "panel_overflow": [],
+          "canvas": null
+        }
+      ]
+    },
+    "workshop": {
+      "reference": "r1970",
+      "renders": [
+        {
+          "viewport": [
+            1366,
+            768
+          ],
+          "png_sha256": "c69989f55766ddb76cd3678d2ba37f9619b8469a7b90868da82dcfdfd3c14c04",
+          "small_text_violations": 0,
+          "minimum_secondary_contrast": 4.956145839127986,
+          "accent_uses": 3,
+          "font": {
+            "check": true,
+            "body": "Inter, system-ui, sans-serif",
+            "loaded": [
+              {
+                "weight": "400 600",
+                "status": "loaded"
+              },
+              {
+                "weight": "100 900",
+                "status": "loaded"
+              }
+            ]
+          },
+          "panel_overflow": [],
+          "canvas": null
+        },
+        {
+          "viewport": [
+            1680,
+            893
+          ],
+          "png_sha256": "3de8572df8a9e7b6e4e556d877589ad3868a9cf266bd58cf9f164c66389521aa",
+          "small_text_violations": 0,
+          "minimum_secondary_contrast": 4.956145839127986,
+          "accent_uses": 3,
+          "font": {
+            "check": true,
+            "body": "Inter, system-ui, sans-serif",
+            "loaded": [
+              {
+                "weight": "400 600",
+                "status": "loaded"
+              },
+              {
+                "weight": "100 900",
+                "status": "loaded"
+              }
+            ]
+          },
+          "panel_overflow": [],
+          "canvas": null
+        }
+      ]
+    },
+    "canvas": {
+      "reference": "r1970",
+      "renders": [
+        {
+          "viewport": [
+            1366,
+            768
+          ],
+          "png_sha256": "38e62c14e01ff963ff61fd72dc53a6a8dda99e92d7de7907e775ae272efbe9f8",
+          "small_text_violations": 0,
+          "minimum_secondary_contrast": 4.956145839127986,
+          "accent_uses": 2,
+          "font": {
+            "check": true,
+            "body": "Inter, system-ui, sans-serif",
+            "loaded": [
+              {
+                "weight": "400 600",
+                "status": "loaded"
+              },
+              {
+                "weight": "100 900",
+                "status": "loaded"
+              }
+            ]
+          },
+          "panel_overflow": [],
+          "canvas": {
+            "area": {
+              "x": 64,
+              "y": 205,
+              "width": 976,
+              "height": 563,
+              "right": 1040,
+              "bottom": 768
+            },
+            "nodes": [
+              {
+                "x": 88,
+                "y": 325,
+                "width": 216.75912475585938,
+                "height": 182.149658203125,
+                "right": 304.7591247558594,
+                "bottom": 507.149658203125
+              },
+              {
+                "x": 325.0802917480469,
+                "y": 325,
+                "width": 216.75912475585938,
+                "height": 255.8006591796875,
+                "right": 541.8394165039062,
+                "bottom": 580.8006591796875
+              },
+              {
+                "x": 562.1605834960938,
+                "y": 325,
+                "width": 216.7591552734375,
+                "height": 178.59078979492188,
+                "right": 778.9197387695312,
+                "bottom": 503.5907897949219
+              },
+              {
+                "x": 799.2409057617188,
+                "y": 325,
+                "width": 216.75909423828125,
+                "height": 255.8006591796875,
+                "right": 1016,
+                "bottom": 580.8006591796875
+              }
+            ],
+            "viewport": {
+              "x": 0,
+              "y": 0,
+              "zoom": 1
+            },
+            "transform": "translate(24px, 120px) scale(0.846715)"
+          }
+        },
+        {
+          "viewport": [
+            1680,
+            893
+          ],
+          "png_sha256": "56064ac8769b812b0f4ae50b3b171a684c03b6afce10791c6159dfc617933184",
+          "small_text_violations": 0,
+          "minimum_secondary_contrast": 4.956145839127986,
+          "accent_uses": 2,
+          "font": {
+            "check": true,
+            "body": "Inter, system-ui, sans-serif",
+            "loaded": [
+              {
+                "weight": "400 600",
+                "status": "loaded"
+              },
+              {
+                "weight": "100 900",
+                "status": "loaded"
+              }
+            ]
+          },
+          "panel_overflow": [],
+          "canvas": {
+            "area": {
+              "x": 64,
+              "y": 205,
+              "width": 1290.015625,
+              "height": 688,
+              "right": 1354.015625,
+              "bottom": 893
+            },
+            "nodes": [
+              {
+                "x": 88,
+                "y": 325,
+                "width": 256,
+                "height": 215.125,
+                "right": 344,
+                "bottom": 540.125
+              },
+              {
+                "x": 368,
+                "y": 325,
+                "width": 256,
+                "height": 302.109375,
+                "right": 624,
+                "bottom": 627.109375
+              },
+              {
+                "x": 648,
+                "y": 325,
+                "width": 256,
+                "height": 210.921875,
+                "right": 904,
+                "bottom": 535.921875
+              },
+              {
+                "x": 928,
+                "y": 325,
+                "width": 256,
+                "height": 302.109375,
+                "right": 1184,
+                "bottom": 627.109375
+              }
+            ],
+            "viewport": {
+              "x": 0,
+              "y": 0,
+              "zoom": 1
+            },
+            "transform": "translate(24px, 120px) scale(1)"
+          }
+        }
+      ]
+    },
+    "settings": {
+      "reference": "r1963",
+      "renders": [
+        {
+          "viewport": [
+            1366,
+            768
+          ],
+          "png_sha256": "5837e3594316cf8c02f3e745c416f5129e9f62669e303c00f40f713e81afdb5e",
+          "small_text_violations": 0,
+          "minimum_secondary_contrast": 4.956145839127986,
+          "accent_uses": 1,
+          "font": {
+            "check": true,
+            "body": "Inter, system-ui, sans-serif",
+            "loaded": [
+              {
+                "weight": "400 600",
+                "status": "loaded"
+              },
+              {
+                "weight": "100 900",
+                "status": "loaded"
+              }
+            ]
+          },
+          "panel_overflow": [],
+          "canvas": null
+        },
+        {
+          "viewport": [
+            1680,
+            893
+          ],
+          "png_sha256": "dccababe928e0a7a3e2f3335dcb91e51795f7cfd92bc0b5c88f165165f4b7be7",
+          "small_text_violations": 0,
+          "minimum_secondary_contrast": 4.956145839127986,
+          "accent_uses": 1,
+          "font": {
+            "check": true,
+            "body": "Inter, system-ui, sans-serif",
+            "loaded": [
+              {
+                "weight": "400 600",
+                "status": "loaded"
+              },
+              {
+                "weight": "100 900",
+                "status": "loaded"
+              }
+            ]
+          },
+          "panel_overflow": [],
+          "canvas": null
+        }
+      ]
+    }
+  },
+  "rendered_suite": "6 passed, 1 warning in 56.97s",
+  "release_suite": "160 passed, 1 warning in 454.52s (0:07:34)",
+  "scalar_settings_regression": "3 passed, 1 warning in 24.48s",
+  "protected_profile_write_attempts": 0
+}

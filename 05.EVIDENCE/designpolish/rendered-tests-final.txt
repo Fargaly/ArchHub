@@ -1,0 +1,27 @@
+Fonts {"dpr":1,"faces":[{"family":"Instrument Serif","status":"unloaded","weight":"400"},{"family":"Instrument Serif","status":"unloaded","weight":"400"},{"family":"Inter","status":"loaded","weight":"400 600"},{"family":"JetBrains Mono","status":"loaded","weight":"400"},{"family":"Inter","status":"loaded","weight":"100 900"}],"title":"600 28px / 35px Inter, sans-serif"}
+after home 1366x768: small=0, contrastFailures=0
+after home 1680x893: small=0, contrastFailures=0
+
+.Fonts {"dpr":1,"faces":[{"family":"Instrument Serif","status":"unloaded","weight":"400"},{"family":"Instrument Serif","status":"unloaded","weight":"400"},{"family":"Inter","status":"loaded","weight":"400 600"},{"family":"JetBrains Mono","status":"loaded","weight":"400"},{"family":"Inter","status":"loaded","weight":"100 900"}],"title":"600 28px / 35px Inter, sans-serif"}
+after workshop 1366x768: small=0, contrastFailures=0
+after workshop 1680x893: small=0, contrastFailures=0
+
+.Fonts {"dpr":1,"faces":[{"family":"Instrument Serif","status":"unloaded","weight":"400"},{"family":"Instrument Serif","status":"unloaded","weight":"400"},{"family":"Inter","status":"loaded","weight":"400 600"},{"family":"JetBrains Mono","status":"loaded","weight":"400"},{"family":"Inter","status":"loaded","weight":"100 900"}],"title":"600 28px / 35px Inter, sans-serif"}
+after canvas 1366x768: small=0, contrastFailures=0
+after canvas 1680x893: small=0, contrastFailures=0
+
+.Fonts {"dpr":1,"faces":[{"family":"Instrument Serif","status":"unloaded","weight":"400"},{"family":"Instrument Serif","status":"unloaded","weight":"400"},{"family":"Inter","status":"loaded","weight":"400 600"},{"family":"JetBrains Mono","status":"loaded","weight":"400"},{"family":"Inter","status":"loaded","weight":"100 900"}],"title":"600 28px / 35px Inter, sans-serif"}
+after settings 1366x768: small=0, contrastFailures=0
+after settings 1680x893: small=0, contrastFailures=0
+
+.Fonts {"dpr":1,"faces":[{"family":"Instrument Serif","status":"unloaded","weight":"400"},{"family":"Instrument Serif","status":"unloaded","weight":"400"},{"family":"Inter","status":"loaded","weight":"400 600"},{"family":"JetBrains Mono","status":"loaded","weight":"400"},{"family":"Inter","status":"loaded","weight":"100 900"}],"title":"600 28px / 35px Inter, sans-serif"}
+
+..
+============================== warnings summary ===============================
+..\..\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\config\__init__.py:1434
+  C:\Users\fargaly\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\config\__init__.py:1434: PytestConfigWarning: Unknown config option: cache_dir
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+6 passed, 1 warning in 56.97s

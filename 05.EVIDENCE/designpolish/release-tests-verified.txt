@@ -1,0 +1,12 @@
+........................................................................ [ 45%]
+........................................................................ [ 90%]
+................                                                         [100%]
+============================== warnings summary ===============================
+..\..\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\config\__init__.py:1434
+  C:\Users\fargaly\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\config\__init__.py:1434: PytestConfigWarning: Unknown config option: cache_dir
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+PROFILE-WRITE-GUARD: protected write attempts=0
+160 passed, 1 warning in 454.52s (0:07:34)

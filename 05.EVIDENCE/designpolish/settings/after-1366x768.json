@@ -1,0 +1,121 @@
+{
+  "canvas": null,
+  "panelOverflow": [],
+  "small": [],
+  "secondary": [
+    {
+      "text": "/",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Search...",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Ctrl K",
+      "ratio": 4.956145839127986
+    },
+    {
+      "text": "Home",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Workshop",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Canvas",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Automations",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Docs",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Workspace",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Workflow",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Application",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Choose how ArchHub looks and how the Canvas opens.",
+      "ratio": 6.528549540588584
+    },
+    {
+      "text": "ThemeChoose the application theme",
+      "ratio": 6.528549540588584
+    },
+    {
+      "text": "Choose the application theme",
+      "ratio": 6.528549540588584
+    },
+    {
+      "text": "Text sizeAdjust interface text size",
+      "ratio": 6.528549540588584
+    },
+    {
+      "text": "Adjust interface text size",
+      "ratio": 6.528549540588584
+    },
+    {
+      "text": "Reduce motionLimit interface animation",
+      "ratio": 6.528549540588584
+    },
+    {
+      "text": "Limit interface animation",
+      "ratio": 6.528549540588584
+    },
+    {
+      "text": "GridShow the grid when a workflow opens",
+      "ratio": 6.528549540588584
+    },
+    {
+      "text": "Show the grid when a workflow opens",
+      "ratio": 6.528549540588584
+    },
+    {
+      "text": "Default zoomSet the starting zoom for a workflow",
+      "ratio": 6.528549540588584
+    },
+    {
+      "text": "Set the starting zoom for a workflow",
+      "ratio": 6.528549540588584
+    }
+  ],
+  "accentCount": 1,
+  "accents": [
+    {
+      "text": "Appearance",
+      "tag": "BUTTON",
+      "cls": "settings-section",
+      "properties": [
+        "borderLeftColor"
+      ]
+    }
+  ],
+  "font": {
+    "check": true,
+    "body": "Inter, system-ui, sans-serif",
+    "loaded": [
+      {
+        "weight": "400 600",
+        "status": "loaded"
+      },
+      {
+        "weight": "100 900",
+        "status": "loaded"
+      }
+    ]
+  },
+  "deliveryUnverified": false
+}

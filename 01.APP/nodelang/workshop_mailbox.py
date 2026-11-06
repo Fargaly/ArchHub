@@ -34,6 +34,8 @@ ROUTING_EVIDENCE = "workshop-routing"
 _ENGLISH_RULE = "reply in English (Arabic only for exact names, with an English gloss); results only; no filler"
 _ARABIC = re.compile(r"[\u0600-\u06FF]")
 _LATIN = re.compile(r"[A-Za-z]")
+_SESSION_MIGRATED = set()
+_SESSION_MIGRATION_LOCK = threading.Lock()
 
 
 def founder_rules():
@@ -85,6 +87,13 @@ def application_history(source=None, *, read_only=False, busy_timeout_seconds: f
                 selected.ensure_conversation(ROOM)
             selected._db.execute("CREATE TABLE IF NOT EXISTS workshop_waiting(message_id TEXT PRIMARY KEY, target TEXT NOT NULL)")
             _retain_messages(selected)
+            if not read_only:
+                with _SESSION_MIGRATION_LOCK:
+                    key = str(path.resolve())
+                    if key not in _SESSION_MIGRATED:
+                        from .workshop_tasks import backfill_sessions
+                        backfill_sessions(selected)
+                        _SESSION_MIGRATED.add(key)
             yield selected
 
 

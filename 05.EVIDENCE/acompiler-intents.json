@@ -9575,6 +9575,16 @@
         "05.EVIDENCE/acompiler-intents.json",
         "03.TOOLS/tools/real_app_check/profile_guard.py"
       ]
+    },
+    "PREFLIGHT": {
+      "source": "Founder 2026-11-07: ONLY builder in lane/preflight-imports from e7a221a4; generate installer preflight extract list from AST import closure including lazy imports, isolated -I imports, retain cell_secret_keys, run release set, commit no push.",
+      "scope": [
+        "05.EVIDENCE/acompiler-intents.json",
+        "03.TOOLS/packaging/preflight_imports.py",
+        "03.TOOLS/installer/ArchHub.iss",
+        "03.TOOLS/installer/build_release.ps1",
+        "02.TESTS/tests/test_preflight_imports.py"
+      ]
     }
   }
 }

@@ -409,6 +409,7 @@
               </label>
               <button type="button" className="dx-quiet" aria-pressed={status === 'IN REVIEW'} onClick={() => executeAction('ui.select', () => setStatus(status === 'IN REVIEW' ? '' : 'IN REVIEW'))}>Needs you</button>
               <button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => u.go('automations'))}>Automations</button>
+              <button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => u.go('agents'))}>Agents {(s.agents || []).reduce((count, agent) => count + (agent.sessions || []).filter(session => session.status === 'working').length, 0)}</button>
               <button type="button" className="dx-new-task" onClick={() => executeAction('ui.show', u, 'New task')}>New task</button>
             </div>
             <div className="dx-task-columns" aria-hidden="true"><span>Task</span><span>Assigned to</span><span>Status</span><span>Last update</span></div>

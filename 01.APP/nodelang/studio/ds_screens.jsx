@@ -35,8 +35,8 @@
   })[t] || A.accent;
   function measureWires(world, wires) {
     if (!world) return [];
-    const bounds=world.getBoundingClientRect(), sockets=new Map([...world.querySelectorAll('[data-port-key]')].map(el=>{
-      const r=el.getBoundingClientRect();return [el.dataset.portKey,{x:r.left+r.width/2-bounds.left,y:r.top+r.height/2-bounds.top}];
+    const bounds=world.getBoundingClientRect(), scale=world.offsetWidth/bounds.width || 1, sockets=new Map([...world.querySelectorAll('[data-port-key]')].map(el=>{
+      const r=el.getBoundingClientRect();return [el.dataset.portKey,{x:(r.left+r.width/2-bounds.left)*scale,y:(r.top+r.height/2-bounds.top)*scale}];
     }));
     return wires.map(w=>({w,a:sockets.get(`${w.from}:out:${w.fromPort}`),b:sockets.get(`${w.to}:in:${w.toPort}`)})).filter(p=>p.a&&p.b);
   }
@@ -207,6 +207,26 @@
     </D.Node>;
   }
   // e6e4a367 studio-lm.jsx NodeRenderer: category header, role edge and parameter body.
+  function AgentWorkflowCard({n, renderPort, headerProps, selected, headerEnd}) {
+    const status = n.role==='step'&&n.status==='blocked' ? 'Blocked' : ({working:'Working',blocked:'Waiting for you',done:'Done',idle:'Idle',resting:'Idle',stopped:'Stopped',failed:'Failed',open:'Planned',claimed:'In progress'})[n.status] || n.status;
+    const color = /Working|Done|progress/.test(status) ? A.ok : /Waiting|Blocked/.test(status) ? A.warn : /Failed/.test(status) ? A.err : A.inkMuted;
+    const message=n.message, at=message?.at ? new Date(message.at) : null, minutes=at ? Math.max(0,Math.floor((Date.now()-at.getTime())/60000)) : null;
+    const textStyle={overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'};
+    return <D.Node w={304} className="agent-workflow-card" selected={selected} gc={color} glyph={<window.AHIcon name={n.role==='task'?'docs':'workshop'} size={12} />}
+      title={<><span style={{display:'block',fontSize:11,fontWeight:500,color:A.inkSoft,textTransform:'uppercase'}}>{n.kicker}</span><span title={n.title}>{n.title}</span></>}
+      sub="" ins={n.inputs} outs={n.outputs} renderPort={renderPort} headerProps={headerProps} headerEnd={headerEnd}
+      style={{borderTop:'2px solid '+color}} foot={null}>
+      {n.role!=='start' && <div style={{padding:'0 12px 10px',display:'grid',gap:8}}>
+        <span style={{color,fontSize:11,fontWeight:500,background:A.bgSoft,borderRadius:10,padding:'2px 6px',justifySelf:'start',display:'flex',alignItems:'center',gap:4}}><span aria-hidden="true" style={{width:6,height:6,borderRadius:'50%',background:status==='Stopped'?'transparent':color,border:'1px solid '+color}} />{status}</span>
+        {n.role==='task' ? <span style={{fontSize:12,color:A.inkSoft}}>{n.path ? n.steps+' steps' : 'No workflow file'}</span> : <>
+          <div style={{...textStyle,fontSize:13}}><span style={{fontSize:11,color:A.inkSoft}}>{n.role==='step'?'By':'Task'} </span><span>{n.by || n.taskTitle || 'No task'}</span></div>
+          {message && <div style={{...textStyle,fontSize:12,color:A.inkSoft}} title={message.id+' · '+message.at+' · '+message.text}><time dateTime={message.at} title={at?.toLocaleString()} style={{color:A.inkMuted,fontSize:11}}>{minutes===0?'Just now':minutes+' min ago'} </time>{message.text.split('\n')[0]}</div>}
+          {n.result && <button type="button" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:n.openResult},event)} style={{...textStyle,textAlign:'left',fontSize:12,fontFamily:A.mono,color:A.inkSoft}} title={n.result}>{n.result}</button>}
+        </>}
+        {n.actions && <div style={{display:'flex',gap:16,fontSize:12,fontWeight:500}}>{n.actions}</div>}
+      </div>}
+    </D.Node>;
+  }
   function NodeRenderer({n, catalogue = [], selected, headerProps, headerEnd, renderPort, renderSocket, rejected, members, onMember, onDetach, compact = false}) {
     const u = useApp(), s = useData(), [expanded,setExpanded] = React.useState(false), [parameterDrafts,setParameterDrafts] = React.useState({});
     const exact = catalogue.find(c=>c.id===n.definition||c.id===n.assembly||c.name===n.assembly||c.id===n.kind||c.name===n.kind),
@@ -440,6 +460,11 @@
   function FlowCard({n, s, u, selected, refusal, onConvert, socket, members, onMember, onDetach, menu}) {
     // Spec section 0b P0: the default card is full capability (every row); compact (first three rows) is an opt-in toggle.
     const [compact, setCompact] = React.useState(false);
+    if (n.agentStep || n.workflowStart) return <AgentWorkflowCard n={{...n,role:n.workflowStart?'start':'step',kicker:n.workflowStart?'Start':'Step · '+(n.params.vendor||'Agent'),status:n.params.status||n.status,by:n.params.display_name||n.params.agent,result:n.params.result||n.params.message_id,
+      openResult:()=>u.openTaskFile(n.agentTask,'workshop'),
+      inputs:n.workflowStart?[]:n.inputs.filter(p=>p.id==='task').map(p=>({...p,name:'Step'})),outputs:n.outputs.filter(p=>p.id===(n.workflowStart?'value':'result')).map(p=>({...p,name:'Step'}))}}
+      renderPort={(p,i,side)=><div className="canvas-port-row" style={{position:'relative',height:22,display:'flex',alignItems:'center',justifyContent:side==='out'?'flex-end':undefined,padding:'0 12px',fontSize:12}}>{socket(p,side)}Step</div>}
+      headerProps={{className:'node-header'}} selected={selected} headerEnd={menu} />;
     const field = n.column && fieldColumn(n, s.graph);
     if (field) return <FieldNode n={n} field={field} selected={selected} headerProps={{className: 'node-header'}} renderSocket={socket} />;
     const scalarParameter = ['thing.setting', 'param.value'].includes(n.type) && n.outputs.length === 1 && (typeof n.params.value === 'number' || n.params.value === null);
@@ -1117,6 +1142,56 @@
   window.UI.WireInspector = WireInspector;
   window.UI.fitCanvasViewport = fitCanvasViewport;
   window.UI.SystemGraph = SystemGraph;
+
+  function AgentsCanvas() {
+    const u=useApp(), world=React.useRef(), container=React.useRef(), dialog=React.useRef();
+    const [graph,setGraph]=React.useState(null),[load,setLoad]=React.useState('waiting'),[error,setError]=React.useState(''),[attempt,setAttempt]=React.useState(0),[paths,setPaths]=React.useState([]),[selected,setSelected]=React.useState(''),[scale,setScale]=React.useState(1),[transcript,setTranscript]=React.useState(null);
+    React.useEffect(()=>{
+      let active=true;setLoad('waiting');
+      api.readAgentsGraph().then(value=>{if(active){setGraph(value);setLoad(value.sessions.length?'loaded':'empty');}})
+        .catch(e=>{if(active){setError(e.message);setLoad('error');}});
+      return()=>{active=false;};
+    },[attempt]);
+    React.useLayoutEffect(()=>{const measure=()=>setPaths(measureWires(world.current,graph?.wires||[]));measure();const observer=new window.ResizeObserver(measure);if(world.current)observer.observe(world.current);return()=>observer.disconnect();},[graph,load]);
+    const rank={blocked:0,working:1,idle:2,resting:2,done:3,failed:4};
+    const sessions=[...(graph?.sessions||[])].sort((a,b)=>(rank[a.status]??2)-(rank[b.status]??2)||a.name.localeCompare(b.name));
+    const inspected=sessions.find(n=>n.id===selected)||graph?.tasks.find(n=>n.id===selected);
+    const openThread=n=>n.task?u.openTaskFile(n.task,'workshop'):graph.tasks.some(t=>t.id===n.id)?u.openTaskFile(n.id,'workshop'):u.go('workshop');
+    const port=id=>(p,i,side)=><div className="canvas-port-row" style={{position:'relative',height:22,display:'flex',alignItems:'center',justifyContent:side==='out'?'flex-end':undefined,padding:'0 12px',fontSize:12}}><span data-port-key={`${id}:${side}:${p.id}`} style={{position:'absolute',[side==='in'?'left':'right']:-6}}><D.Socket t="event" /></span>Task</div>;
+    const openTranscript=async n=>{
+      setTranscript({id:n.id,name:n.name,status:'waiting'});
+      try{const data=await api.readAgentTranscript(n.id);setTranscript({id:n.id,name:n.name,...data,status:data.messages.length?'loaded':'empty'});}
+      catch(e){setTranscript({id:n.id,name:n.name,status:'error',error:e.message});}
+    };
+    React.useEffect(()=>{const node=dialog.current;if(transcript&&!node?.open)node?.showModal();return()=>{if(node?.open)node.close();};},[!!transcript]);
+    return <main ref={container} data-screen="agents" className="system-workflow scroll" style={{padding:24,overflow:'auto'}}>
+      <div className="spread"><div><h2>Agents</h2><p className="muted">Live sessions and the task each one works on</p></div><div className="flex"><span>{sessions.filter(n=>n.status==='working').length} working · {sessions.filter(n=>n.status==='blocked').length} waiting</span><Btn sm ghost disabled={load!=='loaded'} onClick={event=>executeAction('projects.controls.activate',{handler:()=>{setScale(Math.max(.1,Math.min(1,(container.current.clientWidth-48)/768,(container.current.clientHeight-160)/world.current.offsetHeight)));container.current.scrollTo(0,0);}},event)}>Fit</Btn></div></div>
+      <p className="muted" style={{fontSize:12}}>Read-only view, built from the Workshop. Open a task to edit its workflow.</p>
+      {load==='waiting' && <p role="status">Loading agents…</p>}
+      {load==='error' && <p role="alert">{error} <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(n=>n+1)},event)}>Retry</Btn></p>}
+      {load==='empty' && <div style={{textAlign:'center',padding:48}}><p>No agent sessions are running.</p><Btn ghost onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.go('workshop')},event)}>Open Workshop</Btn></div>}
+      {load==='loaded' && <div ref={world} style={{position:'relative',display:'grid',gridTemplateColumns:'304px 304px',columnGap:160,rowGap:24,width:768,marginTop:24,transform:`scale(${scale})`,transformOrigin:'top left'}}>
+        <svg data-agent-wires="" width="100%" height="100%" style={{position:'absolute',inset:0,overflow:'visible',pointerEvents:'none'}}><GraphWires paths={paths} /></svg>
+        <div style={{display:'grid',gap:24,alignContent:'start'}}>{sessions.map(n=><div data-agent-session={n.id} key={n.id} data-graph-node={n.id} style={{zIndex:1}} tabIndex={0} onFocus={()=>setSelected(n.id)}>
+          <AgentWorkflowCard n={{...n,role:'session',title:n.name,kicker:n.vendor,inputs:[],outputs:[{id:'task'}],actions:<>
+            <button className="button-reset" onClick={event=>executeAction('projects.controls.activate',{handler:()=>openThread(n)},event)}>Open thread</button>
+            {n.hasTranscript && <button className="button-reset" onClick={event=>executeAction('projects.controls.activate',{handler:()=>openTranscript(n)},event)}>Open transcript</button>}</>}} selected={selected===n.id} renderPort={port(n.id)} />
+        </div>)}</div>
+        <div style={{display:'grid',gap:24,alignContent:'start'}}>{graph.tasks.map(n=><div data-agent-task={n.id} key={n.id} data-graph-node={n.id} tabIndex={0} onFocus={()=>setSelected(n.id)} onDoubleClick={event=>executeAction('projects.controls.activate',{handler:()=>u.openTaskFile(n.id,'canvas')},event)} onKeyDown={e=>{if(e.key==='Enter')executeAction('projects.controls.activate',{handler:()=>u.openTaskFile(n.id,'canvas')},e);}} style={{zIndex:1}}>
+          <AgentWorkflowCard n={{...n,role:'task',kicker:'Task',inputs:[{id:'task'}],outputs:[],actions:!n.path?<button className="button-reset" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.openTaskFile(n.id,'canvas')},event)}>Create workflow</button>:null}} selected={selected===n.id} renderPort={port(n.id)} />
+        </div>)}</div>
+      </div>}
+      {inspected && <aside aria-label="Agent properties" className="pane" style={{position:'absolute',right:24,top:144,width:264,padding:16}}><h3>{inspected.name||inspected.title}</h3><p>{inspected.vendor} · {inspected.status}</p><p>{inspected.taskTitle}</p>{inspected.message&&<p style={{whiteSpace:'pre-wrap'}}>{inspected.message.text}</p>}<button className="button-reset" onClick={event=>executeAction('projects.controls.activate',{handler:()=>openThread(inspected)},event)}>Open thread</button>{inspected.hasTranscript&&<button className="button-reset" onClick={event=>executeAction('projects.controls.activate',{handler:()=>openTranscript(inspected)},event)}>Open transcript</button>}</aside>}
+      {transcript && <dialog ref={dialog} aria-label="Agent transcript" onCancel={()=>setTranscript(null)} style={{color:A.ink,background:A.bgPanel,border:'1px solid '+A.line,borderRadius:8,padding:24,width:'min(720px,85vw)',maxHeight:'80vh',overflow:'auto'}}>
+        <header className="spread"><h2>{transcript.name} transcript</h2><Btn sm ghost onClick={event=>executeAction('projects.controls.activate',{handler:()=>setTranscript(null)},event)}>Close transcript</Btn></header>
+        {transcript.status==='waiting' && <p role="status">Reading transcript…</p>}
+        {transcript.status==='error' && <p role="alert">{transcript.error} <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>openTranscript(transcript)},event)}>Retry transcript</Btn></p>}
+        {transcript.status==='empty' && <p>No text turns recorded.</p>}
+        {transcript.status==='loaded' && <>{transcript.limited&&<p className="muted">Recent transcript only. Earlier turns remain in the native session.</p>}{transcript.messages.map((m,i)=><article key={i} style={{marginTop:16}}><b>{m.role==='user'?'You':'Agent'}</b><p style={{whiteSpace:'pre-wrap'}}>{m.text}</p></article>)}</>}
+      </dialog>}
+    </main>;
+  }
+  window.UI.AgentsCanvas=AgentsCanvas;
 
 // WIRE-projects: each rendered callback is registered with its executable owner.
 function projectsdsscreensjsxNavigateHome5({u}, event) {

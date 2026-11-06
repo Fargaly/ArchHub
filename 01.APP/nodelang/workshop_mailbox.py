@@ -83,17 +83,20 @@ def application_history(source=None, *, read_only=False, busy_timeout_seconds: f
             connection.execute("PRAGMA journal_mode=WAL")
         with ConversationHistoryStore(path, instance_id=ROOM, connection=connection,
                 busy_timeout_seconds=busy_timeout_seconds) as selected:
-            if selected._db.execute("SELECT 1 FROM conversations WHERE id=?", (ROOM,)).fetchone() is None:
-                selected.ensure_conversation(ROOM)
-            selected._db.execute("CREATE TABLE IF NOT EXISTS workshop_waiting(message_id TEXT PRIMARY KEY, target TEXT NOT NULL)")
-            _retain_messages(selected)
             if not read_only:
-                with _SESSION_MIGRATION_LOCK:
+                if selected._db.execute("SELECT 1 FROM conversations WHERE id=?", (ROOM,)).fetchone() is None:
+                    selected.ensure_conversation(ROOM)
+                selected._db.execute("CREATE TABLE IF NOT EXISTS workshop_waiting(message_id TEXT PRIMARY KEY, target TEXT NOT NULL)")
+                _retain_messages(selected)
+            if not read_only and _SESSION_MIGRATION_LOCK.acquire(blocking=False):
+                try:
                     key = str(path.resolve())
                     if key not in _SESSION_MIGRATED:
                         from .workshop_tasks import backfill_sessions
                         backfill_sessions(selected)
                         _SESSION_MIGRATED.add(key)
+                finally:
+                    _SESSION_MIGRATION_LOCK.release()
             yield selected
 
 

@@ -1079,7 +1079,8 @@ class SessionFiles:
                 path = str(local_path(body['path'])) if body.get('path') else str(document_path(self.directory, document))
                 merged = commit_ui(path, document, int(body.get('base_revision') or 0))
                 task = document.get('properties', {}).get('taskContext', {}).get('task')
-                renamed = path if task and Path(path).stem == task else move_session(path, Path(path).parent)
+                from .workshop_tasks import session_filename
+                renamed = path if isinstance(task, str) and Path(path).name == session_filename(task) else move_session(path, Path(path).parent)
                 if renamed != path:
                     _relocate_pointers(profile_directory(), [(path, renamed)])
                     path = renamed

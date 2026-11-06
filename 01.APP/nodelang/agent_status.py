@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 
 
@@ -33,12 +34,57 @@ def _tail_rows(path, limit=65536):
     return rows
 
 
-def _codex(native_id):
-    root = _home() / '.codex' / 'sessions'
-    found = sorted(root.rglob('rollout-*%s.jsonl' % native_id), key=lambda p: p.stat().st_mtime) if root.is_dir() else []
-    if not found:
+def transcript_path(runtime, native_id):
+    """Resolve only this provider's named transcript under the existing profile."""
+    if not isinstance(native_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', native_id):
         return None
-    for row in reversed(_tail_rows(found[-1])):
+    if runtime == 'codex':
+        root = _home() / '.codex' / 'sessions'
+        found = list(root.rglob('rollout-*%s.jsonl' % native_id)) if root.is_dir() else []
+    elif runtime == 'claude':
+        root = _home() / '.claude' / 'projects'
+        found = list(root.glob('*/%s.jsonl' % native_id)) if root.is_dir() else []
+    else:
+        return None
+    return max((p for p in found if p.is_file() and p.resolve().is_relative_to(root.resolve())),
+               key=lambda p: p.stat().st_mtime, default=None)
+
+
+def read_transcript(runtime, native_id):
+    """Read recent user/assistant text using the same bounded native-log reader as status."""
+    path = transcript_path(runtime, native_id)
+    if path is None:
+        raise ValueError('No native transcript is available for this session.')
+    messages = []
+    for row in _tail_rows(path):
+        if not isinstance(row, dict):
+            continue
+        message = row.get('payload', {}) if runtime == 'codex' else row.get('message', {})
+        if not isinstance(message, dict):
+            continue
+        if runtime == 'codex' and (row.get('type') != 'response_item' or message.get('type') != 'message'):
+            continue
+        if runtime == 'claude' and (row.get('type') not in ('user', 'assistant') or row.get('isSidechain')):
+            continue
+        role, content = message.get('role'), message.get('content', [])
+        if role not in ('user', 'assistant'):
+            continue
+        text = ''
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            text = '\n'.join(part['text'] for part in content if isinstance(part, dict)
+                             and part.get('type') in ('text', 'input_text', 'output_text') and isinstance(part.get('text'), str))
+        if text:
+            messages.append({'role': role, 'text': text, 'at': row.get('timestamp', '')})
+    return {'messages': messages[-200:], 'limited': path.stat().st_size > 65536 or len(messages) > 200}
+
+
+def _codex(native_id):
+    path = transcript_path('codex', native_id)
+    if path is None:
+        return None
+    for row in reversed(_tail_rows(path)):
         kind = (row.get('payload') or {}).get('type')
         if kind in ('task_complete', 'turn_aborted'):
             return 'resting'
@@ -48,11 +94,10 @@ def _codex(native_id):
 
 
 def _claude(native_id):
-    root = _home() / '.claude' / 'projects'
-    found = list(root.glob('*/%s.jsonl' % native_id)) if root.is_dir() else []
-    if not found:
+    path = transcript_path('claude', native_id)
+    if path is None:
         return None
-    for row in reversed(_tail_rows(found[0])):
+    for row in reversed(_tail_rows(path)):
         if row.get('isSidechain'):
             continue
         message = row.get('message') or {}

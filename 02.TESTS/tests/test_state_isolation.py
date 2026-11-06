@@ -6,7 +6,6 @@ import subprocess
 import sys
 import sqlite3
 import shutil
-import re
 import tempfile
 import time
 from datetime import datetime
@@ -151,20 +150,30 @@ def _owned_record(value, run, end, fallback):
 
 
 def _marked_files(root, marker):
-    # Reuse the installed native scanner; two threads bound CPU and filenames-only output avoids data disclosure.
-    patterns = [re.escape(marker), r'\x00'.join(map(re.escape, marker)) + r'\x00',
-                r'\x00' + r'\x00'.join(map(re.escape, marker))]
-    command = ['rg', '--no-config', '--hidden', '--no-ignore', '--text', '--files-with-matches', '--null',
-               '--threads', '2', '--glob', '!/runtime-context/**']
-    for name in _LIVE_HOOK_FILES:
-        command += ['--glob', '!/' + name]
-    for pattern in patterns:
-        command += ['-e', pattern]
-    done = subprocess.run([*command, '--', str(root)], capture_output=True, timeout=600,
-                          creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-    if done.returncode not in (0, 1):
-        raise OSError('Native profile content scan incomplete')
-    return {os.fsdecode(name) for name in done.stdout.split(b'\0') if name}
+    patterns = [marker.encode(encoding) for encoding in ('utf-8', 'utf-16-le', 'utf-16-be')]
+    # Retain enough bytes for the longest encoded marker crossing a read boundary.
+    overlap = max(map(len, patterns)) - 1
+    marked = set()
+    for path in _profile_files(root):
+        relative = path.relative_to(root).as_posix()
+        if relative.startswith('runtime-context/') or relative in _LIVE_HOOK_FILES:
+            continue
+        if marker in relative:
+            marked.add(str(path))
+            continue
+        try:
+            with path.open('rb') as stream:
+                tail = b''
+                while chunk := stream.read(1024 * 1024):
+                    chunk = tail + chunk
+                    if any(pattern in chunk for pattern in patterns):
+                        marked.add(str(path))
+                        break
+                    tail = chunk[-overlap:] if overlap else b''
+        except FileNotFoundError:
+            # Live owners may atomically replace files between enumeration and read.
+            continue
+    return marked
 
 
 def _sqlite_records(path):
@@ -399,14 +408,11 @@ def test_wal_scan_preserves_real_root_bytes_and_mtimes(tmp_path):
 
 
 @pytest.mark.parametrize('kind', ['filename', 'content', 'utf16', 'boundary', 'session', 'settings', 'router'])
-def test_deliberate_leak_is_refused(tmp_path, kind, monkeypatch):
+def test_deliberate_leak_is_refused(tmp_path, kind):
     root = tmp_path / 'real'
     root.mkdir()
     before = {str(root): _sessions_snapshot(root)}
     run = _fixture_run()
-    config = tmp_path / 'ripgrep.conf'
-    config.write_text('--max-filesize=1\n', encoding='utf-8')
-    monkeypatch.setenv('RIPGREP_CONFIG_PATH', str(config))
     if kind == 'filename':
         (root / (run['marker'] + '.txt')).write_text('leaked')
     elif kind in ('content', 'utf16', 'boundary'):
@@ -422,3 +428,29 @@ def test_deliberate_leak_is_refused(tmp_path, kind, monkeypatch):
         path.write_text(json.dumps({'writer_session': 'test-session', 'created_at': time.time()}))
     with pytest.raises(AssertionError, match='Test writes reached real profiles'):
         _assert_profiles_clean(before, run, time.time())
+
+
+@pytest.mark.parametrize('encoding', ['utf-8', 'utf-8-sig', 'utf-16-le', 'utf-16-be'])
+@pytest.mark.parametrize('bom', [False, True])
+def test_marker_scan_is_read_only_across_chunk_boundary(tmp_path, encoding, bom):
+    root = tmp_path / 'real'
+    root.mkdir()
+    marker = str(uuid4())
+    encoded = marker.encode(encoding)
+    prefix = (b'\xff\xfe' if encoding == 'utf-16-le' else b'\xfe\xff') if bom and encoding.startswith('utf-16') else b''
+    target = root / 'content.bin'
+    target.write_bytes(prefix + b'x' * (1024 * 1024 - len(prefix) - 1) + encoded)
+    named = root / (marker + '.txt')
+    named.write_bytes(b'filename only')
+    excluded = ['runtime-context/nested/leak.txt', *_LIVE_HOOK_FILES]
+    for name in excluded:
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(encoded)
+    contents = {str(path): path.read_bytes() for path in _profile_files(root)}
+    # Enumerate the completed fixture before recording Windows directory metadata.
+    _snapshot(root)
+    before = _snapshot(root)
+    assert _marked_files(root, marker) == {str(target), str(named)}
+    assert _snapshot(root) == before
+    assert {str(path): path.read_bytes() for path in _profile_files(root)} == contents

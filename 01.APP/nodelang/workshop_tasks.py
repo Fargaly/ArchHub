@@ -227,9 +227,10 @@ def complete(history, task, owner, result="", revision=None):
                 (result, _now(), task, expected, owner))
     won = _update(history, task, revision, statement, holder=owner)
     row = get(history, task)
-    if won or (row and row['status'] == 'done' and row['owner'] == owner and row['result'] == result):
+    reconciled = bool(row and row['status'] == 'done' and row['owner'] == owner and row['result'] == result)
+    if won or reconciled:
         record_step(history, task, owner, row['owner_label'] or owner, None, 'done', result)
-    return won
+    return won or reconciled
 
 
 def begin_run(history, task, owner, label, revision=None, lease_seconds=None):
@@ -296,10 +297,12 @@ def declared(history, root, request_id, title, status, owner, label, project="")
     addressed = get(history, request_id)
     if addressed:
         if status == 'done':
-            return complete(history, request_id, owner)
+            won = complete(history, request_id, owner)
+            result = (addressed.get('result') or '') if addressed['owner'] == owner else ''
+            record_step(history, request_id, owner, label, title, status, result)
+            return won
         won = claim(history, request_id, owner, label)
-        if won:
-            record_step(history, request_id, owner, label, title, status)
+        record_step(history, request_id, owner, label, title, status)
         return won
     task = _declared_id(owner)
     title = _text(title, "title", 2000)
@@ -343,7 +346,7 @@ def record_step(history, task, owner, label, title, status, result=""):
         (ROOM, label + ' [' + owner + ']')).fetchone()
     declaration = None
     if history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_declarations'").fetchone():
-        declaration = history._db.execute("SELECT json_extract(record,'$.runtime') FROM workshop_declarations "
+        declaration = history._db.execute("SELECT json_extract(record,'$.runtime'),json_extract(record,'$.display_name') FROM workshop_declarations "
                                          "WHERE json_extract(record,'$.session')=? LIMIT 1", (owner,)).fetchone()
     identity = 'step-' + sha256(owner.encode()).hexdigest()[:24]
     def change(document):
@@ -367,6 +370,7 @@ def record_step(history, task, owner, label, title, status, result=""):
                               instructions=node['title'], result=result)
         if declaration:
             node['params']['vendor'] = declaration[0] or ''
+            node['params']['display_name'] = declaration[1] or label
         if message:
             node['params'].update(message_id=message[0], last_message=message[1], message_at=message[2])
         return []
@@ -684,10 +688,16 @@ def _bind_session(history, task, revision, target):
         raise ValueError("Task already has a session file")
 
 
+def session_filename(task):
+    """Legacy task ids may contain characters Windows cannot use in a filename."""
+    safe = re.fullmatch(r'[A-Za-z0-9_-]{1,128}', task) and not re.fullmatch(r'CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9]', task, re.I)
+    return (task if safe else 'task-' + sha256(task.encode()).hexdigest()) + '.archhub'
+
+
 def _start_session(task, title, zoom=1):
     from . import canvas_documents
     from .session_files import sessions_directory
-    path = sessions_directory() / (task + '.archhub')
+    path = sessions_directory() / session_filename(task)
     def start(document):
         context = document.setdefault('properties', {}).setdefault('taskContext', {})
         if context.get('task', task) != task:

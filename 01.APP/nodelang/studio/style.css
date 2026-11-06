@@ -949,3 +949,7 @@ html[data-theme=Light]{--color-bg:var(--color-l-bg);--color-bg-deep:var(--color-
 
 /* Meta text keeps the same readable floor in every shell and badge. */
 kbd{font-size:var(--type-size-meta)!important;font-weight:500!important}
+.agent-workflow-card [data-node-card-subtitle]:empty,.agent-workflow-card [data-node-footer-status]:empty{display:none}
+.agent-workflow-card [data-status-dot]{display:none}
+[data-agent-session]:focus-visible,[data-agent-task]:focus-visible{outline:2px solid var(--color-accent);outline-offset:3px;border-radius:6px}
+.agent-workflow-card:hover{background:var(--color-bg-hover)!important}

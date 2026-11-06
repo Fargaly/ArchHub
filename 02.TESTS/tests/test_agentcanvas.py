@@ -36,6 +36,7 @@ def test_backfill_all_94_preserves_data_and_is_idempotent(history):
     rows = tasks.rows(history)
     contents = {r['session_path']: read_document(r['session_path']) for r in rows}
     assert len(contents) == 94
+    assert len([tasks.open_session(history, row['id'], select=False) for row in rows]) == 94
     assert tasks.backfill_sessions(history) == 0
     assert before == [tuple(row) for row in history._db.execute('SELECT id,title,status,result,created_at FROM workshop_tasks')]
     assert contents == {p: read_document(p) for p in contents}
@@ -125,13 +126,17 @@ def test_legacy_open_creates_start_once(history):
     assert read_document(first['path'])['nodes'][0]['params'] == {'type': 'text', 'value': 'Legacy task'}
 
 
-def test_failed_claim_does_not_write_steps(history):
+def test_declaration_records_own_step_without_taking_another_agents_lease(history):
     from nodelang import workshop_tasks as tasks
     from nodelang.session_files import read_document
     task = tasks.create(history, 'Held task', 'founder')
     tasks.claim(history, task['id'], 'first', 'First')
     assert not tasks.declared(history, 'second-root', task['id'], 'Wrong holder', 'working', 'second', 'Second')
-    assert len(read_document(task['session_path'])['nodes']) == 1
+    steps = read_document(task['session_path'])['nodes']
+    assert len(steps) == 2 and steps[-1]['params']['agent'] == 'Second'
+    assert tasks.get(history, task['id'])['owner'] == 'first'
+    assert not tasks.complete(history, task['id'], 'second', 'not the holder')
+    assert read_document(task['session_path'])['nodes'][-1]['params']['status'] == 'working'
 
 
 def test_declared_task_and_archived_purpose_have_files(history):
@@ -156,7 +161,132 @@ def test_completion_file_failure_reconciles_on_retry(history, monkeypatch):
     with pytest.raises(OSError, match='disk unavailable'):
         tasks.complete(history, row['id'], 'agent', 'commit 12345678')
     monkeypatch.setattr(canvas_documents, 'edit', edit)
-    tasks.complete(history, row['id'], 'agent', 'commit 12345678')
+    assert tasks.complete(history, row['id'], 'agent', 'commit 12345678')
     step = read_document(row['session_path'])['nodes'][-1]
     assert step['params']['result'] == 'commit 12345678'
     assert step['params']['status'] == 'done'
+
+
+def test_done_declaration_never_copies_another_agents_result(history):
+    from nodelang import workshop_tasks as tasks
+    from nodelang.session_files import read_document
+    row = tasks.create(history, 'Shared task', 'founder')
+    tasks.claim(history, row['id'], 'first', 'First')
+    tasks.complete(history, row['id'], 'first', 'commit first-agent')
+    tasks.declared(history, 'second-root', row['id'], 'My step finished', 'done', 'second', 'Second')
+    steps = read_document(row['session_path'])['nodes']
+    assert steps[-1]['params']['result'] == ''
+    assert steps[-1]['params']['status'] == 'done'
+    assert tasks.get(history, row['id'])['result'] == 'commit first-agent'
+
+
+@pytest.mark.parametrize('identity', ['../escape', 'app:workshop:declaration:legacy', 'CON', 'a/b'])
+def test_legacy_task_ids_stay_inside_sessions_directory(history, identity):
+    from pathlib import Path
+    from nodelang import workshop_tasks as tasks
+    from nodelang.session_files import sessions_directory, read_document
+    tasks._write(history, "INSERT INTO workshop_tasks(id,title,status,created_by,created_at,updated_at) "
+                 "VALUES(?,'Legacy task','open','founder','then','then')", (identity,))
+    assert tasks.backfill_sessions(history) == 1
+    row = tasks.get(history, identity)
+    assert Path(row['session_path']).parent == sessions_directory()
+    assert read_document(row['session_path'])['properties']['taskContext']['task'] == identity
+    assert tasks.backfill_sessions(history) == 0
+
+
+def test_native_transcripts_are_bounded_and_provider_scoped(history, monkeypatch, tmp_path):
+    import json
+    from nodelang.agent_status import read_transcript, transcript_path
+    monkeypatch.setenv('ARCHHUB_AGENT_PROFILE', str(tmp_path))
+    codex = tmp_path / '.codex/sessions/fixture/rollout-date-native-id.jsonl'
+    claude = tmp_path / '.claude/projects/fixture/native-id.jsonl'
+    for path in (codex, claude):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    codex.write_text('\n'.join(json.dumps(row) for row in [None, [], {'type': 'response_item', 'payload': None},
+        {'type': 'response_item', 'payload': {'type': 'message', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'Codex answer'}]}}]), encoding='utf-8')
+    claude.write_text(json.dumps({'type': 'assistant', 'message': {'role': 'assistant', 'content': [{'type': 'text', 'text': 'Claude answer'}]}}), encoding='utf-8')
+    assert read_transcript('codex', 'native-id')['messages'][0]['text'] == 'Codex answer'
+    assert read_transcript('claude', 'native-id')['messages'][0]['text'] == 'Claude answer'
+    assert transcript_path('codex', '../native-id') is None
+    assert transcript_path('codex', '*') is None
+    assert transcript_path('unsupported', 'native-id') is None
+    with pytest.raises(ValueError, match='No native transcript'):
+        read_transcript('claude', 'missing-id')
+
+
+def test_agents_view_does_not_create_or_change_workflows(history, monkeypatch):
+    import json
+    import os
+    import psutil
+    from nodelang import workshop_tasks as tasks, workshop_mailbox as mailbox, nograph_server as server, canvas_documents
+    task = tasks.create(history, 'Read only workflow', 'founder')
+    before = __import__('pathlib').Path(task['session_path']).read_bytes()
+    history._db.execute('CREATE TABLE workshop_declarations(root TEXT PRIMARY KEY,record TEXT NOT NULL)')
+    declaration = {'root': 'root', 'agent': 'Agent', 'session': 'session', 'status': 'working', 'runtime': 'codex',
+                   'request_id': task['id'], 'pid': os.getpid(), 'created_at': psutil.Process().create_time()}
+    history._db.execute('INSERT INTO workshop_declarations VALUES(?,?)', ('root', json.dumps(declaration)))
+    monkeypatch.setattr(mailbox, 'profile_database', lambda: __import__('pathlib').Path(history._db.execute('PRAGMA database_list').fetchone()[2]))
+    monkeypatch.setattr(server, '_list_agents', lambda: [])
+    def never(*args, **kwargs):
+        raise AssertionError('A derived Agents view wrote a workflow')
+    monkeypatch.setattr(canvas_documents, 'edit', never)
+    graph = server.r_agents_canvas(None, None)
+    assert len(graph['sessions']) == 1 and len(graph['wires']) == 1
+    assert graph['tasks'][0]['id'] == task['id']
+    assert __import__('pathlib').Path(task['session_path']).read_bytes() == before
+    assert tasks.get(history, task['id'])['revision'] == task['revision']
+
+
+def test_backfill_binding_failure_is_atomic(history):
+    import sqlite3
+    from nodelang import workshop_tasks as tasks
+    for key in ('a', 'b'):
+        tasks._write(history, "INSERT INTO workshop_tasks(id,title,status,created_by,created_at,updated_at) "
+                     "VALUES(?,?,'open','founder','then','then')", (key, key))
+    history._db.execute("CREATE TRIGGER fail_binding BEFORE UPDATE OF session_path ON workshop_tasks "
+                        "WHEN NEW.id='b' BEGIN SELECT RAISE(ABORT,'simulated binding failure'); END")
+    with pytest.raises(sqlite3.IntegrityError, match='simulated binding failure'):
+        tasks.backfill_sessions(history)
+    assert all(row['session_path'] is None for row in tasks.rows(history))
+    history._db.execute('DROP TRIGGER fail_binding')
+    assert tasks.backfill_sessions(history) == 2
+
+
+def test_migration_does_not_block_other_mailbox_opens(history, monkeypatch):
+    import threading
+    from nodelang import workshop_mailbox as mailbox
+    path = history._db.execute('PRAGMA database_list').fetchone()[2]
+    lock, finished, errors = threading.Lock(), threading.Event(), []
+    monkeypatch.setattr(mailbox, '_SESSION_MIGRATION_LOCK', lock)
+    def open_mailbox():
+        try:
+            with mailbox.application_history(database=path):
+                pass
+        except Exception as error:
+            errors.append(error)
+        finally:
+            finished.set()
+    with lock:
+        worker = threading.Thread(target=open_mailbox)
+        worker.start()
+        completed = finished.wait(1.5)
+    worker.join(3)
+    assert completed and not errors
+
+
+def test_rendered_agents_and_task_steps():
+    import os
+    from pathlib import Path
+    import subprocess
+    import sys
+    root = Path(__file__).resolve().parents[2]
+    browser_cache = os.environ.get('PLAYWRIGHT_BROWSERS_PATH') or subprocess.check_output(
+        ['node', '-p', "require('node:path').join(require('node:os').userInfo().homedir,'AppData/Local/ms-playwright')"],
+        text=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)).strip()
+    for command in (['node', '--max-old-space-size=512', '03.TOOLS/packaging/compile_studio.cjs'],
+                    ['node', '02.TESTS/tests_js/agentcanvas.cjs']):
+        result = subprocess.run(command, cwd=root, capture_output=True, text=True, encoding='utf-8', timeout=240,
+                                env={**os.environ, 'PLAYWRIGHT_BROWSERS_PATH': browser_cache, 'ARCHHUB_COURT_PYTHON': sys.executable},
+                                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        print(result.stdout)
+        assert result.returncode == 0, result.stdout + result.stderr

@@ -804,7 +804,7 @@ def r_providers(s, req):
 # -- Workshop: the room is workshop/messages.sqlite3; delivery is Workshop --
 def _declarations():
     from .workshop_mailbox import application_history, read_declarations
-    with application_history() as history:
+    with application_history(read_only=True) as history:
         return read_declarations(history._db, include_archived=True)
 
 
@@ -1075,6 +1075,61 @@ def r_workshop_model_approval(s, req):
 
 def r_native_agents(s, req):
     return {'ok': True, 'agents': _list_agents()}
+
+
+def r_agents_canvas(s, req):
+    """A read-only System view of the existing roster, task bindings and Workshop messages."""
+    from .workshop_mailbox import application_history, read_declarations, ROOM
+    from .workshop_tasks import rows, _declared_id
+    from .session_files import read_document
+    from .agent_status import transcript_path
+    roster = _list_agents()
+    sessions, tasks, wires = [], {}, []
+    with application_history(read_only=True) as history:
+        declarations = [r for r in read_declarations(history._db) if r.get('current')]
+        held = {r['id']: r for r in rows(history, settle=False)}
+        for row in declarations:
+            task = held.get(row.get('request_id')) or held.get(_declared_id(row['session'])) or held.get(row['root'])
+            message = history._db.execute(
+                'SELECT id,content,created_at FROM messages WHERE conversation_id=? AND author=? ORDER BY sequence DESC LIMIT 1',
+                (ROOM, row['agent'] + ' [' + row['session'] + ']')).fetchone()
+            session = {'id': row['root'], 'name': row.get('display_name') or row['agent'],
+                       'vendor': row.get('runtime') or row.get('app') or '', 'status': row['status'],
+                       'task': task['id'] if task else None, 'taskTitle': task['title'] if task else '',
+                       'message': {'id': message[0], 'text': message[1].partition('\n')[2] or message[1], 'at': message[2]} if message else None,
+                       'hasTranscript': transcript_path(row.get('runtime'), row.get('native_session_id')) is not None}
+            sessions.append(session)
+            if task and task['id'] not in tasks:
+                path = task.get('session_path')
+                workflow, count, error = False, 0, ''
+                if path:
+                    try:
+                        document = read_document(path)
+                        workflow = document.get('properties', {}).get('taskContext', {}).get('task') == task['id']
+                        count = sum(bool(n.get('params', {}).get('workshop_step')) for n in document['nodes'])
+                    except (OSError, ValueError) as refused:
+                        error = str(refused)
+                tasks[task['id']] = {'id': task['id'], 'title': task['title'], 'status': task['status'],
+                                     'path': path if workflow else None, 'steps': count, 'error': error}
+            if task and tasks[task['id']]['path']:
+                wires.append({'id': row['root'] + ':task', 'from': row['root'], 'to': task['id'],
+                              'fromPort': 'task', 'toPort': 'task', 'type': 'event'})
+        for runtime in roster:
+            if not any(row['vendor'] == runtime['runtime'] for row in sessions):
+                sessions.append({'id': 'runtime:' + runtime['id'], 'name': runtime['name'], 'vendor': runtime['runtime'],
+                                 'status': runtime['presence'], 'task': None, 'taskTitle': '', 'message': None})
+    return {'ok': True, 'sessions': sessions, 'tasks': list(tasks.values()), 'wires': wires}
+
+
+def r_agents_transcript(s, req):
+    from .agent_status import read_transcript
+    from .workshop_mailbox import application_history, read_declarations
+    session = (req.body or {}).get('session')
+    with application_history(read_only=True) as history:
+        row = next((r for r in read_declarations(history._db) if r['root'] == session), None)
+    if row is None:
+        raise Refused('This agent session is no longer available.', 404)
+    return {'ok': True, **read_transcript(row.get('runtime'), row.get('native_session_id'))}
 
 
 # -- Settings: one JSON file per owner; secrets stay in Windows Credential Manager --
@@ -1534,6 +1589,8 @@ ROUTES = {
     WORKSHOP_PATH: ('workshop/messages.sqlite3 + Workshop', r_workshop),
     '/api/universal/workshop-model-approval': ('graph only (read: expired)', r_workshop_model_approval),
     '/api/universal/native-agents': ('agent_runtime_registry + declarations', r_native_agents),
+    '/api/universal/agents-canvas': ('Workshop derived System view', r_agents_canvas),
+    '/api/universal/agents-transcript': ('agent_status bounded native transcript reader', r_agents_transcript),
     '/api/universal/hosts': ('pipeline_engines.probe_connectors + settings/hosts.json', r_hosts),
     '/api/universal/providers': ('model_router.provider_rows', r_providers),
     '/api/universal/models': ('model_catalogue (held) + router.json', r_providers),

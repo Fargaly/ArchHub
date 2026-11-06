@@ -1491,7 +1491,7 @@ function fileNode(node){
  const dataset=node.type==='data.dataset'?{fields:defs,records:node.records||[]}:null;
  const feed=node.type==='data.field'&&sessionDocument.wires.find(w=>w.to.node===node.id&&w.to.socket==='column');
  const column=node.type==='data.field'?{dataset:feed?sessionDocument.nodes.find(n=>n.id===feed.from.node)?.title||'':'',field:feed?feed.from.socket.replace(/^field:/,''):'',label:(COLUMN_LABEL[node.params.type]||'Any')+'[]'}:null;
- return {id:node.id,type:node.type,pure:item?.pure??node.pure,budget:node.budget||item?.budget||null,loop:node.loop||item?.loop||null,settingsKeys:item?.settingsKeys||[],dataset,column,title:node.title||item?.title||node.type,kind:node.children?'Group':item?.title||node.type,category:item?.cat||'Node',x:node.position.x,y:node.position.y,
+ return {id:node.id,type:node.type,agentStep:node.params?.workshop_step===true,agentTask:sessionDocument.properties?.taskContext?.task,workflowStart:node.id==='start'&&!!sessionDocument.properties?.taskContext?.task,pure:item?.pure??node.pure,budget:node.budget||item?.budget||null,loop:node.loop||item?.loop||null,settingsKeys:item?.settingsKeys||[],dataset,column,title:node.title||item?.title||node.type,kind:node.children?'Group':item?.title||node.type,category:item?.cat||'Node',x:node.position.x,y:node.position.y,
   params,defaults:item?.params||{},parameterSchema:schema,paramDefs:defs,bind,
   inputs:(ports.target||[]).map(p=>({...p,name:p.label||p.id,type:p.type==='unknown'?'any':p.type})),outputs:(ports.source||[]).map(p=>({...p,name:p.label||p.id,type:p.type==='unknown'?'any':p.type})),
   children:node.children||[],members:(Array.isArray(node.members)?node.members:[]).filter(m=>m&&typeof m.id==='string'&&m.id).map(m=>({id:m.id,title:m.title||m.name||m.id,agent:m.agent||m.id})),parent:node.parent||null,icon:NODE_ICONS.includes(node.icon)?node.icon:'',color:typeof node.color==='string'&&/^#[0-9a-f]{6}$/i.test(node.color)?node.color:undefined,frozen:!!node.frozen,pinned:!!node.pinned,portVisibility:node.portVisibility||{},parameterPresentation:node.parameterPresentation||{},
@@ -1568,7 +1568,7 @@ async function pollFile(){
  fileHistory.push(copy(sessionDocument));sessionDocument=copy(read.document);sessionRevision=read.revision;runEpoch++;
  solveNote=read.by&&read.by!=='You'?'Updated by '+read.by:solveNote;projectFile();publish({liveEditBy:read.by,liveRevision:read.revision});
 }
-if(typeof window.setInterval==='function')window.setInterval(()=>pollFile().catch(()=>{}),Number(state.canvasPolicy?.file_poll_ms??ownerRefreshMs));
+if(typeof window.setInterval==='function')window.setInterval(()=>pollFile().catch(()=>{}),Number(state.canvasPolicy?.file_poll_ms??1000));
 function portableDocument(){return copy(sessionDocument);}
 async function adoptFile(document,path='',navigation=++fileNavigation){
  const checked=await sessionRequest('validate',{document});
@@ -1609,6 +1609,8 @@ api.readSystemGraph=async()=>{
  try{canvas=normalise(data);systemProjection=canvas;await commands.adopt(canvas);return {nodes:canvas.nodes.map(nodeDto),wires:(canvas.wires||[]).map(w=>({id:w.id,from:w.source||w.from,to:w.target||w.to,fromPort:w.source_interface||w.fromPort,toPort:w.target_interface||w.toPort,type:w.value_type||'any'}))};}
  finally{canvas=previous;}
 };
+api.readAgentsGraph=()=>request('/api/universal/agents-canvas');
+api.readAgentTranscript=session=>request('/api/universal/agents-transcript',{session});
 api.setSessionViewport=viewport=>{
  if(!sessionDocument||['x','y','zoom'].every(key=>sessionDocument.viewport?.[key]===viewport[key]))return;
  sessionDocument.viewport=copy(viewport);

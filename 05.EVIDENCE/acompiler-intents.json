@@ -9507,7 +9507,14 @@
         "02.TESTS/tests_replica/revit_open_fixture/Program.cs",
         "05.EVIDENCE/t1small-hook-stop.patch",
         "05.EVIDENCE/t1small-compiler-timing.json",
-        "02.TESTS/tests_replica/test_baboom_native_runtime.py"
+        "02.TESTS/tests_replica/test_baboom_native_runtime.py",
+        "03.TOOLS/installer/publisher_trust.iss",
+        "03.TOOLS/packaging/windows/sign.ps1",
+        "03.TOOLS/packaging/windows/archhub-root.cer",
+        "03.TOOLS/packaging/windows/archhub-publisher.cer",
+        "03.TOOLS/packaging/windows/README.md",
+        "03.TOOLS/tools/pipeline/package_compiler.py",
+        "02.TESTS/tests/windows_publisher_signing.ps1"
       ]
     }
   }

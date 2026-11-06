@@ -1,6 +1,7 @@
 // Real mailbox calls and compiled Studio, confined to one disposable profile.
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
 const assert = require('node:assert/strict');
 const {spawn} = require('node:child_process');
 const readline = require('node:readline');
@@ -10,7 +11,7 @@ const serverScript = String.raw`
 import json, os, sys, tempfile, traceback
 from pathlib import Path
 def main():
-    temporary=tempfile.mkdtemp(prefix='agentcanvas-', dir='05.EVIDENCE/agentcanvas')
+    temporary=tempfile.mkdtemp(prefix='agentcanvas-', dir=os.environ.get('ARCHHUB_TEST_STATE_DIR') or tempfile.gettempdir())
     root=Path(temporary).resolve()
     for key in ('USERPROFILE','HOME','LOCALAPPDATA','APPDATA','TEMP','TMP'):
         directory=root/key
@@ -42,6 +43,7 @@ def main():
     server=NoGraphServer(root/'state').start()
     client=_Studio(server)
     server._live_agents.get=lambda:{'processes':[{'runtime':runtime} for runtime in runtimes],'complete':True}
+    server._providers.get=lambda:[]  # Provider CLI readiness is outside this isolated canvas court.
     def declare(index,title='Review drawings',status='working'):
         return call('declare',{'task':title,'request_id':task['taskId'] if index<3 else 'unassigned' if index==3 else missing['taskId'],
             'paths':[str(root/('lane'+str(index)))],'status':status,'display_name':'Fixture '+str(index)},contexts[index],database=profile_database(),peer=peer)
@@ -171,7 +173,7 @@ main()
     child.stdin.end();
     const code=await new Promise(resolve=>child.exitCode===null?child.once('exit',resolve):resolve(child.exitCode));
     if(profile){
-      const resolved=path.resolve(profile), owned=path.resolve('05.EVIDENCE/agentcanvas');
+      const resolved=path.resolve(profile), owned=path.resolve(process.env.ARCHHUB_TEST_STATE_DIR||os.tmpdir());
       assert.equal(path.dirname(resolved),owned);
       assert.ok(path.basename(resolved).startsWith('agentcanvas-'));
       assert.equal(fs.lstatSync(resolved).isSymbolicLink(),false);

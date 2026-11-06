@@ -86,6 +86,7 @@ def profile(tmp_path, monkeypatch):
     for name in ('LOCALAPPDATA', 'APPDATA', 'USERPROFILE', 'HOME'):
         monkeypatch.setenv(name, str(tmp_path / name))
         (tmp_path / name).mkdir()
+    monkeypatch.setenv('ARCHHUB_TEST_STATE_DIR', str(tmp_path / 'LOCALAPPDATA' / 'ArchHub'))
     yield tmp_path
 
 

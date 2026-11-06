@@ -107,11 +107,14 @@ def test_populated_task_migration_and_folder_change_rollback(profile, tmp_path, 
     old = legacy / (document['id'] + '.archhub')
     session_files.write_document(old, document)
     with application_history() as history:
-        task = workshop_tasks.create(history, 'Populated task', 'founder')['id']
+        task = 'legacy-populated-task'
+        workshop_tasks._write(history, "INSERT INTO workshop_tasks(id,title,status,created_by,created_at,updated_at) "
+                              "VALUES(?,'Populated task','open','founder','then','then')", (task,))
         original = workshop_tasks.open_session(history, task, str(old))
         session_files.migrate_sessions(profile)
         migrated = workshop_tasks.open_session(history, task)
         assert migrated['id'] == original['id'] and migrated['path'] != str(old)
+        assert session_files.read_document(migrated['path'])['notes'] == document['notes']
         raw = Path(migrated['path']).read_bytes()
         target = tmp_path / 'Moved sessions'
         session_files.set_sessions_directory(target)

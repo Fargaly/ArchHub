@@ -126,6 +126,33 @@ def test_legacy_open_creates_start_once(history):
     assert read_document(first['path'])['nodes'][0]['params'] == {'type': 'text', 'value': 'Legacy task'}
 
 
+def test_bound_open_reuses_workflow_even_with_another_path(history, tmp_path):
+    from nodelang import workshop_tasks as tasks
+    from nodelang.session_files import new_document, read_document, write_document
+    row = tasks.create(history, 'Bound workflow', 'founder')
+    other = tmp_path / 'other.archhub'
+    write_document(other, new_document('Other workflow'))
+    before = other.read_bytes()
+    opened = tasks.open_session(history, row['id'], str(other), select=False)
+    assert opened['path'] == row['session_path']
+    assert opened['id'] == read_document(row['session_path'])['id']
+    assert other.read_bytes() == before
+    assert tasks.get(history, row['id'])['revision'] == row['revision']
+
+
+def test_step_reads_its_own_mailbox_not_profile_database(history):
+    from nodelang import workshop_tasks as tasks
+    from nodelang.workshop_mailbox import ROOM, CATEGORY
+    from nodelang.session_files import read_document
+    row = tasks.create(history, 'Mailbox owner', 'founder')
+    message = history.append(ROOM, author='Agent [agent]', content='Own mailbox message', category=CATEGORY,
+                             idempotency_key='own-mailbox-message')
+    tasks.record_step(history, row['id'], 'agent', 'Agent', 'Work', 'working')
+    step = read_document(row['session_path'])['nodes'][-1]
+    assert step['params']['message_id'] == message['id']
+    assert step['params']['last_message'] == 'Own mailbox message'
+
+
 def test_declaration_records_own_step_without_taking_another_agents_lease(history):
     from nodelang import workshop_tasks as tasks
     from nodelang.session_files import read_document

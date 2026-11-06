@@ -335,15 +335,13 @@ def declared(history, root, request_id, title, status, owner, label, project="")
 def record_step(history, task, owner, label, title, status, result=""):
     """Project the existing declaration/completion into its task file, without executing it."""
     from . import canvas_documents
-    from .workshop_mailbox import ROOM
+    from .workshop_mailbox import latest_agent_message
     row = get(history, task)
     path = row.get('session_path')
     if not path:
         path = _start_session(task, row['title'])
         _bind_session(history, task, row['revision'], path)
-    message = history._db.execute(
-        "SELECT id,content,created_at FROM messages WHERE conversation_id=? AND author=? ORDER BY sequence DESC LIMIT 1",
-        (ROOM, label + ' [' + owner + ']')).fetchone()
+    message = latest_agent_message(history, label + ' [' + owner + ']')
     declaration = None
     if history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_declarations'").fetchone():
         declaration = history._db.execute("SELECT json_extract(record,'$.runtime'),json_extract(record,'$.display_name') FROM workshop_declarations "
@@ -696,13 +694,20 @@ def session_filename(task):
 
 def _start_session(task, title, zoom=1):
     from . import canvas_documents
-    from .session_files import sessions_directory
-    path = sessions_directory() / session_filename(task)
+    from .session_files import document_path, sessions_directory
+    directory = sessions_directory()
+    identity = 'task-' + sha256(task.encode()).hexdigest()
+    path = directory / session_filename(task)
+    if not path.exists():
+        path = document_path(directory, {'id': identity, 'title': title})
+    creating = not path.exists()
     def start(document):
         context = document.setdefault('properties', {}).setdefault('taskContext', {})
         if context.get('task', task) != task:
             raise ValueError('Session file belongs to another task')
         context['task'] = task
+        if creating:
+            document['id'] = identity
         if not document['nodes']:
             document['viewport']['zoom'] = zoom
             document['nodes'].append({'id': 'start', 'type': 'param.value', 'title': 'Start · ' + title,
@@ -755,20 +760,17 @@ def open_session(history, task, path=None, *, select=True, zoom=1):
     if row is None:
         raise ValueError("No such Workshop task")
     bound = row.get("session_path")
+    if bound:
+        return _show(task, bound, read_document(bound), select=select)
     if path is not None:
         target = str(local_path(path))
-        if bound and bound != target:
-            raise ValueError("Task already has a session file")
         holder = history._db.execute("SELECT id FROM workshop_tasks WHERE session_path=? AND id!=?", (target, task)).fetchone()
         if holder:
             raise ValueError("Session file belongs to another task")
         document = read_document(target)
-        if not bound:
-            document = _stamp(target, task, document)
-            _bind_session(history, task, row.get("revision"), target)
+        document = _stamp(target, task, document)
+        _bind_session(history, task, row.get("revision"), target)
         return _show(task, target, document, select=select)
-    if bound:
-        return _show(task, bound, read_document(bound), select=select)
     target = _start_session(task, row['title'], zoom)
     document = read_document(target)
     _bind_session(history, task, row.get("revision"), target)

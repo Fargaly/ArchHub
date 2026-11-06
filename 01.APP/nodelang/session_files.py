@@ -330,7 +330,7 @@ def write_document(path, document):
             stream.write(raw)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, target)
+        _metadata_io(os.replace, temporary, target)
     finally:
         if temporary and os.path.exists(temporary):
             os.unlink(temporary)
@@ -1078,9 +1078,7 @@ class SessionFiles:
                 from .canvas_documents import commit_ui
                 path = str(local_path(body['path'])) if body.get('path') else str(document_path(self.directory, document))
                 merged = commit_ui(path, document, int(body.get('base_revision') or 0))
-                task = document.get('properties', {}).get('taskContext', {}).get('task')
-                from .workshop_tasks import session_filename
-                renamed = path if isinstance(task, str) and Path(path).name == session_filename(task) else move_session(path, Path(path).parent)
+                renamed = move_session(path, Path(path).parent)
                 if renamed != path:
                     _relocate_pointers(profile_directory(), [(path, renamed)])
                     path = renamed

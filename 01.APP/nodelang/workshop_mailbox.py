@@ -100,6 +100,15 @@ def application_history(source=None, *, read_only=False, busy_timeout_seconds: f
             yield selected
 
 
+def latest_agent_message(history, author):
+    """Read the task owner's mailbox connection; a fresh task store has no messages yet."""
+    if not history._db.execute("SELECT 1 FROM sqlite_master WHERE name='messages'").fetchone():
+        return None
+    return history._db.execute(
+        "SELECT id,content,created_at FROM messages WHERE conversation_id=? AND author=? ORDER BY sequence DESC LIMIT 1",
+        (ROOM, author)).fetchone()
+
+
 def _retain_messages(history):
     """Bounded expiry in this Workshop file only; recent reply text survives its parent."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=20)).isoformat()

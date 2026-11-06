@@ -42,6 +42,40 @@ def test_bad_file_preserves_previous_bytes(tmp_path):
         assert path.read_bytes()==before
 
 
+def test_atomic_save_retries_windows_read_handle_and_preserves_old_file(tmp_path, monkeypatch):
+    from nodelang import session_files
+    path = tmp_path / 'atomic.archhub'
+    document = new_document('Before')
+    write_document(path, document)
+    before = path.read_bytes()
+    replace = session_files.os.replace
+    calls = []
+    def busy_once(source, target):
+        calls.append(target)
+        assert path.read_bytes() == before
+        if len(calls) == 1:
+            error = PermissionError('reader holds the target')
+            error.winerror = 5
+            raise error
+        return replace(source, target)
+    monkeypatch.setattr(session_files.os, 'replace', busy_once)
+    monkeypatch.setattr(session_files.time, 'sleep', lambda _: None)
+    document['title'] = 'After'
+    write_document(path, document)
+    assert len(calls) == 2 and read_document(path)['title'] == 'After'
+    saved = path.read_bytes()
+    def denied(source, target):
+        error = PermissionError('still busy')
+        error.winerror = 32
+        raise error
+    monkeypatch.setattr(session_files.os, 'replace', denied)
+    document['title'] = 'Never published'
+    with pytest.raises(PermissionError, match='still busy'):
+        write_document(path, document)
+    assert path.read_bytes() == saved
+    assert not list(tmp_path.glob('.*.tmp'))
+
+
 def test_cycles_and_missing_sockets_refuse_before_effect():
     doc=definition();doc['wires'].append({'id':'cycle','from':{'node':'2','socket':'out'},'to':{'node':'0','socket':'value'}})
     with pytest.raises(ValueError,match='Cycle'):run_document(doc)

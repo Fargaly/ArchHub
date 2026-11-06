@@ -89,3 +89,74 @@ def test_migration_only_on_first_writable_open(history, monkeypatch):
         with mailbox.application_history(database=path):
             pass
     assert len(calls) == 1
+
+
+def test_declare_and_complete_write_ordered_steps_without_canvas_calls(history):
+    from nodelang import workshop_tasks as tasks
+    from nodelang.session_files import read_document
+    task = tasks.create(history, 'Coordinate drawings', 'founder')
+    for owner, label in [('codex-session', 'Codex'), ('claude-session', 'Claude Code')]:
+        assert tasks.declared(history, 'root-' + owner, task['id'], 'Review drawings', 'working', owner, label)
+        assert tasks.release(history, task['id'], owner)
+    assert tasks.declared(history, 'root-codex-session', task['id'], 'Export drawings', 'working', 'codex-session', 'Codex')
+    document = read_document(task['session_path'])
+    steps = [n for n in document['nodes'] if n['type'] == 'thing.agent']
+    assert len(steps) == 2
+    assert steps[0]['title'] == 'Export drawings'
+    assert steps[0]['params']['status'] == 'working'
+    assert [(w['from']['node'], w['to']['node']) for w in document['wires']] == [
+        ('start', steps[0]['id']), (steps[0]['id'], steps[1]['id'])]
+    assert tasks.complete(history, task['id'], 'codex-session', 'commit 12345678')
+    updated = read_document(task['session_path'])
+    step = next(n for n in updated['nodes'] if n['id'] == steps[0]['id'])
+    assert step['params']['status'] == 'done'
+    assert step['params']['result'] == 'commit 12345678'
+    assert len(updated['nodes']) == 3
+
+
+def test_legacy_open_creates_start_once(history):
+    from nodelang import workshop_tasks as tasks
+    from nodelang.session_files import read_document
+    tasks._write(history, "INSERT INTO workshop_tasks(id,title,status,created_by,created_at,updated_at) "
+                 "VALUES('legacy','Legacy task','open','founder','then','then')", ())
+    first = tasks.open_session(history, 'legacy', select=False)
+    second = tasks.open_session(history, 'legacy', select=False)
+    assert first['path'] == second['path']
+    assert read_document(first['path'])['nodes'][0]['params'] == {'type': 'text', 'value': 'Legacy task'}
+
+
+def test_failed_claim_does_not_write_steps(history):
+    from nodelang import workshop_tasks as tasks
+    from nodelang.session_files import read_document
+    task = tasks.create(history, 'Held task', 'founder')
+    tasks.claim(history, task['id'], 'first', 'First')
+    assert not tasks.declared(history, 'second-root', task['id'], 'Wrong holder', 'working', 'second', 'Second')
+    assert len(read_document(task['session_path'])['nodes']) == 1
+
+
+def test_declared_task_and_archived_purpose_have_files(history):
+    from nodelang import workshop_tasks as tasks
+    from nodelang.session_files import read_document
+    for request in ('FIRST', 'SECOND'):
+        assert tasks.declared(history, 'root', request, 'Declared work', 'working', 'agent', 'Agent')
+    rows = tasks.rows(history)
+    assert len(rows) == 2
+    assert all(read_document(row['session_path']) for row in rows)
+
+
+def test_completion_file_failure_reconciles_on_retry(history, monkeypatch):
+    from nodelang import workshop_tasks as tasks, canvas_documents
+    from nodelang.session_files import read_document
+    row = tasks.create(history, 'Finish task', 'founder')
+    tasks.claim(history, row['id'], 'agent', 'Agent')
+    edit = canvas_documents.edit
+    def fail(*args, **kwargs):
+        raise OSError('disk unavailable')
+    monkeypatch.setattr(canvas_documents, 'edit', fail)
+    with pytest.raises(OSError, match='disk unavailable'):
+        tasks.complete(history, row['id'], 'agent', 'commit 12345678')
+    monkeypatch.setattr(canvas_documents, 'edit', edit)
+    tasks.complete(history, row['id'], 'agent', 'commit 12345678')
+    step = read_document(row['session_path'])['nodes'][-1]
+    assert step['params']['result'] == 'commit 12345678'
+    assert step['params']['status'] == 'done'

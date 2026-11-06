@@ -225,7 +225,11 @@ def complete(history, task, owner, result="", revision=None):
         return ("UPDATE workshop_tasks SET status='done', lease_until=NULL, write_open=0, result=?, updated_at=?, "
                 "revision=revision+1 WHERE id=? AND revision=? AND owner=? AND status='claimed'",
                 (result, _now(), task, expected, owner))
-    return _update(history, task, revision, statement, holder=owner)
+    won = _update(history, task, revision, statement, holder=owner)
+    row = get(history, task)
+    if won or (row and row['status'] == 'done' and row['owner'] == owner and row['result'] == result):
+        record_step(history, task, owner, row['owner_label'] or owner, None, 'done', result)
+    return won
 
 
 def begin_run(history, task, owner, label, revision=None, lease_seconds=None):
@@ -289,6 +293,14 @@ def _declared_id(owner):
 
 def declared(history, root, request_id, title, status, owner, label, project=""):
     """One declared task per agent. Re-declare updates it. A new purpose closes the previous one as done."""
+    addressed = get(history, request_id)
+    if addressed:
+        if status == 'done':
+            return complete(history, request_id, owner)
+        won = claim(history, request_id, owner, label)
+        if won:
+            record_step(history, request_id, owner, label, title, status)
+        return won
     task = _declared_id(owner)
     title = _text(title, "title", 2000)
     if status == "done":
@@ -310,7 +322,55 @@ def declared(history, root, request_id, title, status, owner, label, project="")
            "purpose=excluded.purpose, project=excluded.project, updated_at=excluded.updated_at, "
            "revision=workshop_tasks.revision+1 WHERE status!='done'",
            (task, title, label, _now(), _now(), request_id, project or None))
-    return claim(history, task, owner, label)
+    won = claim(history, task, owner, label)
+    if won:
+        backfill_sessions(history)
+        record_step(history, task, owner, label, title, status)
+    return won
+
+
+def record_step(history, task, owner, label, title, status, result=""):
+    """Project the existing declaration/completion into its task file, without executing it."""
+    from . import canvas_documents
+    from .workshop_mailbox import ROOM
+    row = get(history, task)
+    path = row.get('session_path')
+    if not path:
+        path = _start_session(task, row['title'])
+        _bind_session(history, task, row['revision'], path)
+    message = history._db.execute(
+        "SELECT id,content,created_at FROM messages WHERE conversation_id=? AND author=? ORDER BY sequence DESC LIMIT 1",
+        (ROOM, label + ' [' + owner + ']')).fetchone()
+    declaration = None
+    if history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_declarations'").fetchone():
+        declaration = history._db.execute("SELECT json_extract(record,'$.runtime') FROM workshop_declarations "
+                                         "WHERE json_extract(record,'$.session')=? LIMIT 1", (owner,)).fetchone()
+    identity = 'step-' + sha256(owner.encode()).hexdigest()[:24]
+    def change(document):
+        context = document.get('properties', {}).get('taskContext', {})
+        if context.get('task') != task:
+            raise ValueError('Session file belongs to another task')
+        steps = [n for n in document['nodes'] if n.get('params', {}).get('workshop_step')]
+        node = next((n for n in steps if n['id'] == identity), None)
+        if node is None:
+            previous = steps[-1] if steps else next((n for n in document['nodes'] if n['id'] == 'start'), None)
+            node = {'id': identity, 'type': 'thing.agent', 'title': title or row['title'], 'params': {},
+                    'position': {'x': (previous['position']['x'] + 384) if previous else 80, 'y': 80}}
+            document['nodes'].append(node)
+            if previous:
+                document['wires'].append({'id': 'wire-' + identity,
+                    'from': {'node': previous['id'], 'socket': 'result' if previous in steps else 'value'},
+                    'to': {'node': identity, 'socket': 'task'}})
+        if title is not None:
+            node['title'] = title
+        node['params'].update(workshop_step=True, agent=label, session=owner, status=status,
+                              instructions=node['title'], result=result)
+        if declaration:
+            node['params']['vendor'] = declaration[0] or ''
+        if message:
+            node['params'].update(message_id=message[0], last_message=message[1], message_at=message[2])
+        return []
+    canvas_documents.edit(path, label, 'agent step ' + status, change, solve_changed=False)
 
 
 # A token that reads as an id, path, flag or measurement, not as words.
@@ -624,7 +684,7 @@ def _bind_session(history, task, revision, target):
         raise ValueError("Task already has a session file")
 
 
-def _start_session(task, title):
+def _start_session(task, title, zoom=1):
     from . import canvas_documents
     from .session_files import sessions_directory
     path = sessions_directory() / (task + '.archhub')
@@ -634,8 +694,9 @@ def _start_session(task, title):
             raise ValueError('Session file belongs to another task')
         context['task'] = task
         if not document['nodes']:
+            document['viewport']['zoom'] = zoom
             document['nodes'].append({'id': 'start', 'type': 'param.value', 'title': 'Start · ' + title,
-                                      'params': {'value': title}, 'position': {'x': 80, 'y': 80}})
+                                      'params': {'type': 'text', 'value': title}, 'position': {'x': 80, 'y': 80}})
         return []
     canvas_documents.edit(path, 'Workshop', 'create task workflow', start,
                           create_title=title, solve_changed=False)
@@ -678,8 +739,7 @@ def relocate_sessions(state_dir, moved):
 
 def open_session(history, task, path=None, *, select=True, zoom=1):
     """Open this task's own .archhub file. A first path binds it; a later open reads that same file."""
-    from .session_files import SessionFiles, local_path, new_document, read_document
-    from .session_files import document_path, sessions_directory
+    from .session_files import local_path, read_document, sessions_directory
     sessions_directory()
     row = get(history, task)
     if row is None:
@@ -699,10 +759,8 @@ def open_session(history, task, path=None, *, select=True, zoom=1):
         return _show(task, target, document, select=select)
     if bound:
         return _show(task, bound, read_document(bound), select=select)
-    document = new_document(row["title"])
-    document["viewport"]["zoom"] = zoom
-    target = str(local_path(str(document_path(SessionFiles().directory, document))))
-    document = _stamp(target, task, document)
+    target = _start_session(task, row['title'], zoom)
+    document = read_document(target)
     _bind_session(history, task, row.get("revision"), target)
     return _show(task, target, document, select=select)
 

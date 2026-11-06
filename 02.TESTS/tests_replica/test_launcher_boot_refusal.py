@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import ast
-import threading
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -20,23 +20,6 @@ def _launcher_names(*names, **bindings):
     namespace = dict(bindings)
     exec(compile(ast.Module(body=selected, type_ignores=[]), "nodelang/launcher.py", "exec"), namespace)
     return namespace
-
-
-class FakeClock:
-    def __init__(self):
-        self.now = 0.0
-        self.sleeps = []
-
-    def monotonic(self):
-        return self.now
-
-    def sleep(self, seconds):
-        self.sleeps.append(seconds)
-        self.now += seconds
-
-
-def _saved_graph_probe():
-    return _launcher_names("_saved_graph_exists", os=__import__("os"))["_saved_graph_exists"]
 
 
 def test_forced_foreground_requires_explicit_activation_and_idle_presence(monkeypatch):
@@ -76,144 +59,71 @@ def test_unknown_or_active_presence_never_allows_forced_focus(monkeypatch, age, 
     assert _launcher_names('idle_or_away')['idle_or_away']() is allowed
 
 
-def _saved_application(path):
-    from nodelang.universal_cell import Cell, CellStore, NULL_CELL_ID
-    with CellStore(path) as store:
-        store.commit(store.revision, create=(Cell("app:archhub", NULL_CELL_ID, NULL_CELL_ID, b""),))
+def _headless_launch(state_dir, monkeypatch, failure=None):
+    """Exercise the current launcher offscreen, with no BABOOM worker or updater."""
+    from nodelang import cloud_session, nograph_launcher, quiet_update
+    from nodelang.nograph_server import NoGraphServer
+    from nodelang.universal_cell import CellStore
+
+    monkeypatch.setenv("ARCHHUB_TEST_NO_OPEN", "1")
+    monkeypatch.setenv("ARCHHUB_TEST_HTTP_PORT", "0")
+    monkeypatch.setattr(cloud_session, "_roaming_directory", lambda: state_dir / "ROAMING")
+    monkeypatch.setattr(quiet_update, "stage_app_folder", lambda *a: None)
+    monkeypatch.setattr(quiet_update, "finish_app_folder", lambda *a, **k: None)
+    monkeypatch.setattr(quiet_update, "confirm_when_free", lambda *a: {})
+    monkeypatch.setattr(nograph_launcher, "threading", SimpleNamespace(
+        Thread=lambda **k: SimpleNamespace(start=lambda: None),
+        Event=lambda: SimpleNamespace(wait=lambda: None)))
+
+    def no_graph(*a, **k):
+        raise AssertionError("NOGRAPH boot must never open a graph")
+
+    monkeypatch.setattr(CellStore, "__init__", no_graph)
+    servers = []
+    start = NoGraphServer.start
+
+    def boot(server):
+        if failure is not None:
+            server.httpd.server_close()
+            raise failure
+        result = start(server)
+        servers.append(server)
+        return result
+
+    monkeypatch.setattr(NoGraphServer, "start", boot)
+    try:
+        return nograph_launcher.run(state_dir)
+    finally:
+        for server in servers:
+            server.close()
 
 
-def test_upgrade_preflight_admits_the_existing_2230_graph_for_migration(tmp_path):
-    legacy = tmp_path / "archhub-test.universal.sqlite3"
-    _saved_application(legacy)
-    (tmp_path / "runtime-descriptor.json").write_text("{}", encoding="utf-8")
-    before = legacy.read_bytes()
-    assert _saved_graph_probe()(tmp_path, tmp_path / "authority.sqlite3") is True
-    assert legacy.read_bytes() == before
-    assert not (tmp_path / "authority.sqlite3").exists()
+@pytest.mark.parametrize("name", [
+    "archhub-test.universal.sqlite3", "authority.sqlite3-wal",
+    "unified-authority/generations/saved/authority.sqlite3", "authority.sqlite3-shm",
+])
+def test_nograph_boot_preserves_retired_graph_and_recovery_files(tmp_path, monkeypatch, name):
+    # NOGRAPH supersedes the deleted graph migration and owner-retry boot path.
+    legacy = tmp_path / name
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_bytes(b"unreadable legacy graph or unreconciled recovery")
+    assert _headless_launch(tmp_path, monkeypatch) == 0
+    assert legacy.read_bytes() == b"unreadable legacy graph or unreconciled recovery"
 
 
-def test_upgrade_preflight_still_refuses_a_missing_target_with_its_own_wal(tmp_path):
-    _saved_application(tmp_path / "archhub-test.universal.sqlite3")
-    (tmp_path / "authority.sqlite3-wal").write_bytes(b"unreconciled target")
-    with pytest.raises(RuntimeError, match="recovery files remain"):
-        _saved_graph_probe()(tmp_path, tmp_path / "authority.sqlite3")
+@pytest.mark.parametrize("failure", [DatabaseOwnerConflict("held"), RuntimeError("boot refused")])
+def test_nograph_boot_failure_reaches_the_launcher_notice(tmp_path, monkeypatch, failure):
+    with pytest.raises(type(failure), match=str(failure)):
+        _headless_launch(tmp_path, monkeypatch, failure)
 
 
-def test_upgrade_preflight_never_treats_a_corrupt_legacy_graph_as_first_run(tmp_path):
-    (tmp_path / "archhub-test.universal.sqlite3").write_bytes(b"not sqlite")
-    with pytest.raises(RuntimeError, match="unreadable database header"):
-        _saved_graph_probe()(tmp_path, tmp_path / "authority.sqlite3")
-
-
-def test_selected_generation_presence_checks_the_actual_database_directory(tmp_path):
-    database = tmp_path / "unified-authority" / "generations" / "test-generation" / "authority.sqlite3"
-    database.parent.mkdir(parents=True)
-    _saved_application(database)
-    (tmp_path / "runtime-descriptor.json").write_text("{}", encoding="utf-8")
-    assert _saved_graph_probe()(tmp_path, database) is True
-
-
-def test_transient_owner_conflict_retries_until_the_saved_graph_opens():
-    clock = FakeClock()
-    calls = []
-
-    def boot():
-        calls.append("boot")
-        if len(calls) < 4:
-            raise DatabaseOwnerConflict("held by previous owner")
-        return "server"
-
+@pytest.mark.parametrize("answered", [True, False])
+def test_held_launcher_port_reports_the_existing_instance_without_a_second_boot(answered):
     messages = []
-    ns = _launcher_names(
-        "_open_saved_graph",
-        "_release_own_fence",
-        "_is_transient_owner_conflict",
-        _boot=boot,
-        print=lambda *parts, **_kw: messages.append(" ".join(str(p) for p in parts)),
-        time=clock,
-        state_path=Path("archhub-test.universal.sqlite3"),
-        state_dir=Path("."),
-        os=__import__("os"),
-    )
-
-    server, refusal = ns["_open_saved_graph"](
-        max_wait_seconds=45.0,
-        sleep_seconds=1.0,
-    )
-
-    assert server == "server"
-    assert refusal is None
-    assert len(calls) == 4
-    assert clock.sleeps == [1.0, 1.0, 1.0]
-    assert sum("owner lock still held" in item for item in messages) == 3
-    assert any("the saved graph opened on attempt 4" in item for item in messages)
-
-
-def test_owner_conflict_past_window_refuses_and_marks_descriptor_not_active():
-    clock = FakeClock()
-    messages = []
-    descriptor_statuses = []
-    boxes = []
-    exits = []
-
-    ns = _launcher_names(
-        "_open_saved_graph",
-        "_release_own_fence",
-        "_is_transient_owner_conflict",
-        "_refuse_boot_without_living",
-        "_boot_refusal_message",
-        _boot=lambda: (_ for _ in ()).throw(DatabaseOwnerConflict("still held")),
-        print=lambda *parts, **_kw: messages.append(" ".join(str(p) for p in parts)),
-        time=clock,
-        state_path=Path("archhub-test.universal.sqlite3"),
-        state_dir=Path("."),
-        os=__import__("os"),
-        descriptor_path=Path("runtime-descriptor.json"),
-        machine_key_provider=object(),
-        _log_path=Path("launcher.log"),
-        _mark_runtime_refused=lambda refusal: descriptor_statuses.append(type(refusal).__name__),
-        _message_box=lambda message, **kwargs: boxes.append((message, kwargs)) or True,
-        _exit_process=lambda code: exits.append(code),
-    )
-
-    server, refusal = ns["_open_saved_graph"](
-        max_wait_seconds=3.0,
-        sleep_seconds=1.0,
-    )
-    assert server is None
-    assert isinstance(refusal, DatabaseOwnerConflict)
-
-    ns["_refuse_boot_without_living"](refusal)
-
-    assert descriptor_statuses == ["DatabaseOwnerConflict"]
-    assert len(boxes) == 1
-    assert boxes[0][1].get("blocking") is False
-    assert boxes[0][1].get("quit_event") is not None
-    assert exits == [1]
-    assert len(clock.sleeps) == 3
-    assert any("owner lock still held" in item for item in messages)
-
-
-def test_quit_request_during_refusal_message_exits():
-    exits = []
-    quit_event = threading.Event()
-
-    ns = _launcher_names(
-        "_boot_refusal_message",
-        "_refuse_boot_without_living",
-        _mark_runtime_refused=lambda _refusal: None,
-        _message_box=lambda _message, **kwargs: kwargs["quit_event"].set() or True,
-        _exit_process=lambda code: exits.append(code),
-        _log_path=Path("launcher.log"),
-    )
-
-    ns["_refuse_boot_without_living"](
-        RuntimeError("boom"),
-        quit_event=quit_event,
-    )
-
-    assert quit_event.is_set()
-    assert exits == [1]
+    outcome = _launcher_names("_held_port_outcome")["_held_port_outcome"](
+        12345, lambda: answered, messages.append)
+    assert bool(messages) is not answered
+    assert ("brought its window to the front" if answered else "no ArchHub window answered") in outcome
 
 
 def test_excepthook_uses_nonblocking_notice_when_qt_loop_is_running():
@@ -259,23 +169,3 @@ def test_failed_native_notice_result_is_not_reported_as_delivered(capsys):
     output = capsys.readouterr()
     assert "saved graph refused" in output.err
     assert "boot refusal notice was not displayed" in output.out
-
-
-def test_locked_quit_marker_is_reported_and_still_honors_quit(capsys):
-    class LockedMarker:
-        def is_file(self):
-            return True
-
-        def unlink(self):
-            raise OSError("quit marker locked")
-
-    class StateDirectory:
-        def __truediv__(self, name):
-            assert name == "quit-request"
-            return LockedMarker()
-
-    ns = _launcher_names("_refusal_quit_requested", state_dir=StateDirectory())
-    quit_event = threading.Event()
-    assert ns["_refusal_quit_requested"](quit_event) is True
-    assert quit_event.is_set()
-    assert "quit marker locked" in capsys.readouterr().out

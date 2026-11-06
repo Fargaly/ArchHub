@@ -1,4 +1,9 @@
-"""Courts for the transparent physical BABOOM companion projection."""
+"""Courts for the transparent physical BABOOM companion projection.
+
+F277 supersedes PRESENCE1 (founder, 2026-11-06):
+"هو بابوم مش ستيبل ليه وعمال يختفي أنا عاوز أشوفه طول الوقت"
+(BABOOM must be visible all the time).
+"""
 from __future__ import annotations
 
 import json
@@ -296,8 +301,7 @@ def test_native_companion_keeps_reply_available_without_relaying_every_tick(tmp_
         assert window.geometry() == first_geometry
         assert window._projection_timer.interval() >= 500
         assert window._animation_timer.interval() == 900
-        # PRESENCE1: a request opens its own window; presence never stays on top.
-        assert not bool(
+        assert bool(
             window.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
         )
         assert bool(
@@ -1088,8 +1092,7 @@ def test_hiding_the_companion_stops_its_timers(tmp_path, monkeypatch):
         window._projection_timer.start()
         assert window._animation_timer.isActive()
         assert window._projection_timer.isActive()
-        assert window._presence_hold is False
-        window.hide()
+        window.hide_until_next_launch()
         app.processEvents()
         assert window._animation_timer.isActive() is False
         assert window._projection_timer.isActive() is False

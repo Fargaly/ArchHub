@@ -30,18 +30,70 @@ def _menu_source() -> str:
     return source[start:source.index("def mousePressEvent", start)]
 
 
-def test_the_companion_holds_still_while_its_menu_is_open():
-    body = _menu_source()
-    assert "self._projection_timer.stop()" in body
-    assert "self._animation_timer.stop()" in body
-    assert "menu.exec(event.globalPos())" in body
-    stopped = body.index("self._projection_timer.stop()")
-    shown = body.index("menu.exec(event.globalPos())")
-    restarted = body.index("self._projection_timer.start()")
-    assert stopped < shown < restarted, (
-        "the timers must be stopped before the menu and started after it"
-    )
-    assert "finally:" in body, "a menu that raises must not freeze the companion"
+def test_the_companion_holds_still_while_its_menu_is_open(tmp_path, monkeypatch):
+    from PyQt6.QtCore import QTimer, Qt
+    from PyQt6.QtGui import QContextMenuEvent
+    from PyQt6.QtWidgets import QMenu
+    from tests_replica.test_baboom_native_companion import _screen_companion
+
+    app, window, _ = _screen_companion(tmp_path, monkeypatch, "menu.png")
+    original_exec = QMenu.exec
+    observed = []
+
+    def execute(menu, point):
+        geometry = window.geometry()
+        submenu = next(action.menu() for action in menu.actions() if action.menu())
+
+        def open_submenu():
+            submenu.popup(menu.mapToGlobal(menu.actionGeometry(submenu.menuAction()).topRight()))
+
+        def observe_and_close():
+            observed.append((menu.isVisible(), submenu.isVisible(),
+                             window.geometry() == geometry,
+                             window._projection_timer.isActive(),
+                             window._animation_timer.isActive()))
+            submenu.close()
+            menu.close()
+
+        QTimer.singleShot(0, open_submenu)
+        QTimer.singleShot(1100, observe_and_close)
+        return original_exec(menu, point)
+
+    monkeypatch.setattr(QMenu, "exec", execute)
+    try:
+        assert window.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
+        window.contextMenuEvent(QContextMenuEvent(
+            QContextMenuEvent.Reason.Mouse, window.rect().center(), window.geometry().center()))
+        assert observed == [(True, True, True, False, False)]
+        assert window._projection_timer.isActive()
+    finally:
+        window.hide_until_next_launch()
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_a_menu_error_does_not_freeze_projection(tmp_path, monkeypatch):
+    from PyQt6.QtGui import QContextMenuEvent
+    from PyQt6.QtWidgets import QMenu
+    from tests_replica.test_baboom_native_companion import _screen_companion
+
+    app, window, _ = _screen_companion(tmp_path, monkeypatch, "menu-error.png")
+
+    def refuse(*args):
+        raise RuntimeError("menu failed")
+
+    monkeypatch.setattr(QMenu, "exec", refuse)
+    try:
+        with pytest.raises(RuntimeError, match="menu failed"):
+            window.contextMenuEvent(QContextMenuEvent(
+                QContextMenuEvent.Reason.Mouse, window.rect().center(), window.geometry().center()))
+        assert window._projection_timer.isActive()
+    finally:
+        window.hide_until_next_launch()
+        window.close()
+        window.deleteLater()
+        app.processEvents()
 
 
 def test_the_menu_asks_for_a_signed_in_cockpit_address():

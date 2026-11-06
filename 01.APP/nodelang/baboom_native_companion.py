@@ -841,7 +841,6 @@ def create_baboom_native_companion_window(
             self._work_rows = work_rows
             self._sessions_directory = sessions_directory
             self._skill_offer: dict[str, str] | None = None
-            self._presence_hold = False
             self._position_path = position_path
             self._voice_input = voice_input or BaboomVoiceInput()
             self._voice_cancel: threading.Event | None = None
@@ -967,7 +966,9 @@ def create_baboom_native_companion_window(
             self.setWindowFlags(
                 Qt.WindowType.Tool
                 | Qt.WindowType.FramelessWindowHint
+                | Qt.WindowType.WindowStaysOnTopHint
             )
+            self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
             self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
             # Never let Qt or the system paint a background behind the sprite:
             # with the ask box open the founder saw the whole window rectangle
@@ -1029,7 +1030,7 @@ def create_baboom_native_companion_window(
         def _presence(self, frame) -> None:
             snapshot = controller.latest_snapshot
             context = snapshot.context if snapshot is not None else {}
-            mode = context.get("shows_as", "Tray")
+            mode = context.get("shows_as", self._shows_as)
             self._shows_as = mode if mode in ("Screen", "Tray", "Hidden") else "Tray"
             stale = (controller._host.connection_state != "live"
                      or controller.host_silent_seconds > _FRAME_GRACE_SECONDS)
@@ -1068,15 +1069,15 @@ def create_baboom_native_companion_window(
             )
 
         def _sync_resource_timers(self) -> None:
-            """Pause while hidden. Idle keeps a slow projection and no pose timer."""
-            if self._dismissed or self._stopped or not self.isVisible() or self.isMinimized():
+            """Keep polling until dismissed; hidden and idle sprites need no animation."""
+            if self._dismissed or self._stopped:
                 self._projection_timer.stop()
                 self._animation_timer.stop()
                 return
             self._projection_timer.setInterval(750 if self._timers_active() else 5000)
             if not self._projection_timer.isActive():
                 self._projection_timer.start()
-            if self._motion_reduced() or not self._timers_active():
+            if not self.isVisible() or self.isMinimized() or self._motion_reduced() or not self._timers_active():
                 self._animation_timer.stop()
                 return
             self._animation_timer.setInterval(125 if self._transition_left > 0 else 900)
@@ -1216,21 +1217,12 @@ def create_baboom_native_companion_window(
             if self._approval is not None:
                 self._approval.hide()
             self._place_idle_chrome(x, y, size, edge)
-            cursor = QCursor.pos()
-            # A visible sprite remains reachable while approached. A hidden one
-            # must not reappear underneath input intended for another program.
-            approaching = self.isVisible() and self.geometry().adjusted(-24, -24, 24, 24).contains(cursor)
-            active = desktop_input_idle_seconds() < 2.0
-            if self._shows_as != "Screen" or (active and foreign_foreground_window() and not approaching):
+            if self._shows_as != "Screen":
                 self._state_bubble.hide()
                 self._state_badge.hide()
                 self._animation_timer.stop()
-                if self.isVisible():
-                    self._presence_hold = True
-                    self.hide()
-                else:
-                    self._presence_hold = False
-                    self._projection_timer.stop()
+                self.hide()
+                self._sync_resource_timers()
                 return
             # The mask is the hit target. Opaque sprite pixels take the click;
             # transparent pixels are not part of the window, so they fall
@@ -1253,6 +1245,7 @@ def create_baboom_native_companion_window(
             self.refresh()
 
         def stop_projection(self) -> None:
+            self._dismissed = True
             self._projection_timer.stop()
             self._animation_timer.stop()
             self._tray.hide()
@@ -1397,12 +1390,11 @@ def create_baboom_native_companion_window(
             frame = controller.next_frame(screen)
             if frame is not None:
                 frame = self._overlay_work_pose(frame)
+            else:
+                frame = self._frame
             self._presence(frame)
             if frame is None:
-                self.hide()
-                if not self.isVisible():
-                    self._projection_timer.stop()
-                    self._animation_timer.stop()
+                self._sync_resource_timers()
                 return
             if self._shows_as == "Hidden":
                 self._details_open = False
@@ -1605,15 +1597,11 @@ def create_baboom_native_companion_window(
 
         def hideEvent(self, event) -> None:  # noqa: N802 - Qt callback name
             super().hideEvent(event)
-            if self._presence_hold:
-                self._presence_hold = False
-                self._animation_timer.stop()
-                if not self._dismissed and not self._stopped:
-                    self._projection_timer.setInterval(5000)
-                    self._projection_timer.start()
-                return
-            self._projection_timer.stop()
-            self._animation_timer.stop()
+            self._sync_resource_timers()
+
+        def closeEvent(self, event) -> None:  # noqa: N802 - Qt callback name
+            self.hide_until_next_launch()
+            super().closeEvent(event)
 
         def changeEvent(self, event) -> None:  # noqa: N802 - Qt callback name
             super().changeEvent(event)

@@ -439,3 +439,59 @@ Evidence: the real native import ran on a hidden desktop with the pinned librari
 
 Review correction: desktop ownership uses a shared profile-path-keyed Windows named mutex (the existing Win32 pattern in app/credential_lock.py and colleague_setup.py), replacing the fixed/hashed TCP lock. Launcher, updater and rollback select the same profile; loopback IPC uses an OS-assigned port and never establishes ownership. Foreign-profile listeners cannot be stopped. Native mutex, explicit-profile and close-before-relaunch courts cover the boundary; this is source-court evidence, not installed-app acceptance.
 Publication scanner correction: exclude destination remote-tracking ancestors from outgoing Git object traversal while retaining every outgoing commit's changed-path checks, including old blobs reused under a new path. The canonical hook and isolated Git regression courts are delivered in 05.EVIDENCE/t1small-publication-scan.patch (apply with git apply --unidiff-zero); the hook itself lives in workspace governance, outside the public product tree.
+
+## D-027 Parametric (Grasshopper): an edit re-solves only downstream pure nodes; effect nodes wait for Run. Typed parameters can be exposed as nodes sharing ONE value identity; datasets: field = column/type, record = row, cell = typed value, values owned only by the dataset (workbook decision, numbered D-027 on 2026-11-06; was workbook D-015)
+
+- **Verdict:** Right
+- **What to do:** Keep; dataset in next release
+- **Work:** NOGRAPH builder
+- **Request:** founder 2026-10-28
+- **Stage:** Landed (params) / Built (dataset)
+
+## D-028 Provider-agnostic governance: ONE source (.rulesync hooks + GOVERNANCE sheet → ledger rules) generated into every INSTALLED agent; the Workshop connector is registered in every agent; connecting to the Workshop applies the rules (gateway) (workbook decision, numbered D-028 on 2026-11-06; was workbook D-016)
+
+- **Verdict:** Right
+- **What to do:** Keep (00.GOVERNANCE/03.AGENT-HOOKS agent_onboard.py)
+- **Work:** 717
+- **Request:** founder 2026-10-28
+- **Stage:** Applied
+
+## D-029 Workshop = group chat on Session Link: live injection only (no pending, inbox or queue); composer = router (@agent / @everyone / plain question to a model); every agent sees the room and redirects misaddressed messages (workbook decision, numbered D-029 on 2026-11-06; was workbook D-017)
+
+- **Verdict:** Right
+- **What to do:** Keep; Grok Bot / Cursor desktop / Antigravity live delivery still open
+- **Work:** NOGRAPH builder + desktop lane
+- **Request:** founder 2026-10-28
+- **Stage:** Landed (6 agents live)
+
+## D-030 Design first, strictly: the builder implements UI only from the designer's Penpot build spec; any UI gap goes to the designer; install waits for a side-by-side design match (workbook decision, numbered D-030 on 2026-11-06; was workbook D-018)
+
+- **Verdict:** Right
+- **What to do:** Keep
+- **Work:** Ping (design) + builder
+- **Request:** founder 2026-10-28
+- **Stage:** In force
+
+## D-031 BA office ribbon ships inside the ArchHub installer as a panel of the existing ArchHub Revit add-in (RevitMCP); no pyRevit dependency; buttons are .archhub workflows run through the broker; the ribbon layout is data; updates only via quiet_update. Office content (template/libraries/catalogues) syncs from \\BASERVER\ba-bim-std by manifest+SHA and is never bundled in the public installer. GPL buttons (pyRevit, EF-Tools, pyChilizer, pyRevitMEP) are patterns only, re-implemented. Request (founder 2026-11-04, verbatim): 'عاوز كل الحاجات دي تبقى مربوطة بآركهب … هخلي المكتب كله يسطب آركهب فلازم الحاجات دي تنزل معاه والابديت بتاعها يبقى مربوط بآركهب … عاوز بعد كده أقدر أحولها لحاجة بريميوم بتتباع وبتتطور وبناخد منها فيدباك'. Prior art: Autodesk App Store .bundle/PackageContents.xml; the pyRevit extension model (rejected: second runtime/updater + GPL); DiRoots/BIMOne add-in ribbons. Replaces the planned pyRevit extension. Budgets: measure add-in load time and RAM in Revit before/after, at his real office template. Superseded for the office tools (founder decision relayed by the TBP lane; founder 2026-11-05 via the TBP lane: "لا مش فاهم أحا ده أنت مديهاله ليه؟ ايه علاقة ده اصلا باركهب؟ هو معطل شغل اركهب وشغال في دي معاك؟ أحا" + "كسم الحاجات دي عاوزها في خلال ساعة" (why did you give this to ArchHub? what does it have to do with ArchHub? is it blocking ArchHub's work while you work on this? I want these within an hour)): ribbon + CAD sync are office-only. Office tools = our own C# add-in 'BA Tools', separate from ArchHub (Revit .bundle + AutoCAD .NET plugin), built by the TBP lane; pyRevit/EF-Tools/DiRoots and other repos are behaviour references only, the code is ours; no GPL code copied. pyRevit rejected (founder 2026-11-05): "أحا ايه الهبل ده أنا عاوز نعمل حاجة بتاعتنا؟ … بايريفيت ايه؟" + "مبناخدش كسم حاجة زي ما هي" (what is this nonsense? I want us to make our own thing … what pyRevit? we don't take anything as it is). ArchHub keeps the rule tables (dat-tab-011) as the one rule source and F212 VERSIONSMOKE for its own Revit add-in. Covers the BA Tools ribbon, the CAD<->Revit sync and the presentation + AI report: office tools by the TBP lane; they never take ArchHub builders off ArchHub work. (workbook decision, numbered D-031 on 2026-11-06; was workbook D-019)
+
+- **Verdict:** Right
+- **What to do:** Build F208 + F209; research F210 + F211; measure the budgets
+- **Work:** builder + research
+- **Request:** founder 2026-11-04 (R214)
+- **Stage:** Reversed (office tools) / Open (ArchHub rule tables + VERSIONSMOKE)
+
+## D-032 The meeting agent joins Teams meetings in the founder's place: a self-hosted Attendee bot (Elastic 2.0) in WSL Docker, VAD + Smart Turn turn-taking, local faster-whisper, and a router answer or 'I'll check and reply'. It speaks only when asked, after the turn ends and >=0.8 s of silence, and stops the moment someone speaks. It announces itself on join and leaves on objection (UAE Cybercrime Art. 44, Penal Code Art. 431, PDPL). Notes go to Notion meeting notes, tasks to the Workshop. Prior art: Recall.ai (paid, rejected: no payment), Notion AI meeting notes (cannot join or speak), Otter/Fireflies (notes only). Replaces: the July BABOOM meeting contracts' 'never join' line. Budgets: measure RAM/GPU on his PC during a 60-min call. (workbook decision, numbered D-032 on 2026-11-06; was workbook D-021)
+
+- **Verdict:** Right
+- **What to do:** Build F227-F231 under F222; measure the budgets
+- **Work:** builder lane (unassigned)
+- **Request:** founder 2026-11-04 (R216), verbatim: "امبارح كان في ميتنج كان المفروض احضره ومحضرتهوش لاني كنت واخد سيكليف... عاوز افهم بقى دلوقتي وصلنا لحد فين في الايجنت اللي بيدخل مكانك الميتنج ويتفاعل ويسجل الميتنج نوتس في نوشن باستعمال نوشن ترانسكرايب ويرد لو حد سأله ولو مش عارف يقول هدرسها وأرد وميقاطعش حد بيتكلم"
+- **Stage:** Open
+
+## D-033 One source, four linked targets for the BIM standard: markdown + generators -> BA Word on the office share, BABOOM edition in the private repo Fargaly/baboom-bim-standard, owning TBP Notion page (agent merge, BRIEF-INTEGRATE), ArchHub companion manifest; every copy links its siblings by STD id; one build_all.py run delivers only changed documents (links.py manifest). Prior art: DITA-OT (stable ids, own id->location map), md-clone (hash per file, Notion overwrite only), notionify (block diff, no structure merge). Replaces manual TBP edits and hand copies between editions. Measured on 74 docs: map 2.5 s, BA Word rebuild 194 s, BABOOM edition 1303 s, scan 18 s. (workbook decision, numbered D-033 on 2026-11-06; was workbook D-022)
+
+- **Verdict:** Right
+- **What to do:** Keep; ArchHub companion reader is open (717 builder lane); BABOOM push on HOLD until the new brand lands
+- **Work:** BABOOM publishing session (12.BABOOM-PUBLISH)
+- **Request:** founder 2026-11-05, verbatim: "بابوم واركهب و TBP كل الحاجات دي لازم تبقى مربوطة ببعضها والدكيومنتيشن بيسمع لبعضه"
+- **Stage:** Open

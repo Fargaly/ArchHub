@@ -73,7 +73,8 @@ def test_parameter_types_in_compiled_studio(profile):
         result = subprocess.run(['node', str(Path(__file__).parents[1] / 'tests_js/typedparam.mjs')],
             input=json.dumps({'url': server.public_url+'/studio/?bootstrap='+server.browser_bootstrap_token,
                               'path': str(path), 'cases': cases}),
-            text=True, encoding='utf-8', capture_output=True, timeout=150, env=os.environ.copy())
+            text=True, encoding='utf-8', capture_output=True, timeout=150, env=os.environ.copy(),
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         print(result.stdout)
         assert result.returncode == 0, result.stderr
     finally:

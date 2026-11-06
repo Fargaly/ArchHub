@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
-import {readFileSync} from 'node:fs';
+import {chromium} from 'playwright';
+import os from 'node:os';
+import {readFileSync, readdirSync} from 'node:fs';
 import path from 'node:path';
 const config=JSON.parse(readFileSync(0,'utf8'));
-const require=createRequire(path.join(process.env.ARCHHUB_NODE_MODULES,'playwright/package.json'));
-const {chromium}=require('playwright');
-const browser=await chromium.launch({headless:true,channel:'chromium'});
+// Resolve the account cache even when pytest isolates the profile environment.
+const cache = process.env.PLAYWRIGHT_BROWSERS_PATH || path.join(os.userInfo().homedir, 'AppData/Local/ms-playwright');
+const shell = readdirSync(cache).filter(name => /^chromium_headless_shell-\d+$/.test(name)).sort((a,b) => Number(b.split('-').at(-1))-Number(a.split('-').at(-1)))[0];
+const full = readdirSync(cache).filter(name => /^chromium-\d+$/.test(name)).sort((a,b) => Number(b.split('-').at(-1))-Number(a.split('-').at(-1)))[0];
+const executablePath = path.join(cache, shell || full, shell ? 'chrome-headless-shell-win64/chrome-headless-shell.exe' : 'chrome-win64/chrome.exe');
+const browser = await chromium.launch({headless: true, executablePath});
 try {
  const page=await browser.newPage();
  await page.route('**/*',route=>new URL(route.request().url()).origin===new URL(config.url).origin?route.continue():route.abort());

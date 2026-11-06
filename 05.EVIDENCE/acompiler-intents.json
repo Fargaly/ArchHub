@@ -9568,7 +9568,9 @@
         "02.TESTS/conftest.py",
         "02.TESTS/tests/test_state_isolation.py",
         "02.TESTS/tests_replica/conftest.py",
+        "02.TESTS/tests_replica/test_app_folder_tidy.py",
         "02.TESTS/tests_replica/test_canvas_parametric.py",
+        "04.DOCS/FAILURE_LOG.md",
         "05.EVIDENCE/acompiler-intents.json"
       ]
     }

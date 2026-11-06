@@ -1,0 +1,268 @@
+{
+  "canvas": {
+    "area": {
+      "x": 64,
+      "y": 205,
+      "width": 1290.015625,
+      "height": 688,
+      "right": 1354.015625,
+      "bottom": 893
+    },
+    "nodes": [
+      {
+        "x": 88,
+        "y": 325,
+        "width": 256,
+        "height": 215.125,
+        "right": 344,
+        "bottom": 540.125
+      },
+      {
+        "x": 368,
+        "y": 325,
+        "width": 256,
+        "height": 302.109375,
+        "right": 624,
+        "bottom": 627.109375
+      },
+      {
+        "x": 648,
+        "y": 325,
+        "width": 256,
+        "height": 210.921875,
+        "right": 904,
+        "bottom": 535.921875
+      },
+      {
+        "x": 928,
+        "y": 325,
+        "width": 256,
+        "height": 302.109375,
+        "right": 1184,
+        "bottom": 627.109375
+      }
+    ],
+    "viewport": {
+      "x": 0,
+      "y": 0,
+      "zoom": 1
+    },
+    "transform": "translate(24px, 120px) scale(1)"
+  },
+  "panelOverflow": [],
+  "small": [],
+  "secondary": [
+    {
+      "text": "/",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Search...",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Ctrl K",
+      "ratio": 4.956145839127986
+    },
+    {
+      "text": "Home",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Workshop",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Automations",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Docs",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Settings",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "⋯",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Attach",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Voice",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Modelopenrouter/freeopenrouter/cohere/north-mini-code:freeop",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Free models first",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Mode unavailable",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Drawing set review.archhub · Saved",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "input",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "string",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "+ Parameter",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "value · List",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "shape",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "List",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "List.value",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "number",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "string",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "+ Parameter",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "items_out · List",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "shape",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "List",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "Slice.items_out",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "+ Parameter",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "count · Number",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "output",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Effect",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Any",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "string",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "string",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "+ Parameter",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "out · Any",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Connect data to inspect output",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "3 complete · 1 out of date",
+      "ratio": 6.264083680911266
+    },
+    {
+      "text": "Workflow parameters",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Task",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "The working space and its shared parameters.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "2 relations",
+      "ratio": 6.008479267493088
+    }
+  ],
+  "accentCount": 2,
+  "accents": [
+    {
+      "text": "Canvas",
+      "tag": "BUTTON",
+      "cls": null,
+      "properties": [
+        "backgroundColor",
+        "color"
+      ]
+    },
+    {
+      "text": "Run",
+      "tag": "BUTTON",
+      "cls": "dx-quiet dx-primary-run",
+      "properties": [
+        "backgroundColor",
+        "color"
+      ]
+    }
+  ],
+  "font": {
+    "check": true,
+    "body": "Inter, system-ui, sans-serif",
+    "loaded": [
+      {
+        "weight": "400 600",
+        "status": "loaded"
+      },
+      {
+        "weight": "100 900",
+        "status": "loaded"
+      }
+    ]
+  },
+  "deliveryUnverified": false
+}

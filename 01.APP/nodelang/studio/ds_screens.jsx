@@ -47,14 +47,14 @@
   const nodeState = (n, rejected) => n.frozen ? ['Disabled', A.inkDim] : rejected ? ['Types do not match', A.err]
     : n.previewOff ? ['Preview off', A.inkSoft]
     : /saved/i.test(n.status) ? ['Saved', A.ok]
-    : /await/i.test(n.status) ? ['Awaiting', A.inkSoft]
+    : /await/i.test(n.status) ? ['Awaiting', A.warn]
     : /approval|needs you|in review/i.test(n.status) ? ['Needs you', A.warn]
-    : /agent|working|wip/i.test(n.status) ? ['Working', A.accent]
+    : /agent|working|wip/i.test(n.status) ? ['Working', A.ink]
     : /error|fail|refus/i.test(n.status) ? ['Failed · ' + (n.error || 'retry'), A.err]
     : /block|held|wait/i.test(n.status) ? ['Blocked · upstream', A.inkSoft]
     : /stale|changed|out of date/i.test(n.status) ? ['Out of date · Run', A.warn]
     : /running|updating/i.test(n.status) ? ['Updating…', A.cyan]
-    : /done|ran/i.test(n.status) ? ['Done', A.ink] : ['Not run', A.inkSoft];
+    : /done|ran/i.test(n.status) ? ['Done', A.ok] : ['Not run', A.inkSoft];
   // Spec Wire/*: compatible cyan, affected downstream warn, rejected drag err; one stroke width (wire.strokeWidth = 2).
   const wireColor = (w, nodes) => w.rejected ? A.err : /^(Updating|Out of date)/.test(nodeState(nodes.find(n=>n.id===w.to) || {}, false)[0]) ? A.warn : A.cyan;
   // DESIGNSYS-050 4.9 Wire: ONE stroke for the Canvas (FlowWire) and the System graph (GraphWires); Penpot Wire/Compatible, wire.strokeWidth 2.
@@ -129,7 +129,7 @@
     const word = runWord(n);
     const runLabel = reachable ? 'Run' : (load.state && load.state.state) || 'Not available';
     const foot = <span style={{display:'flex', alignItems:'center', gap:8}}><RunModeChip waiting={word === 'Waiting for you'} /><span style={{color: word === 'Failed' ? A.err : word === 'Waiting for you' ? A.warn : A.ink}}>{word}</span></span>;
-    return <D.Node data-host-exec="" w={304} title="Run in program" sub={load.status === 'loaded' && load.state ? load.state.state : 'Run in program'} selected={selected} headerProps={headerProps} renderPort={renderPort} ins={n.inputs} outs={n.outputs} foot={foot} footc={word === 'Failed' ? A.err : word === 'Waiting for you' ? A.warn : A.inkSoft} glyph={<window.AHIcon name="folder" size={12} />} gc={A.inkSoft}>
+    return <D.Node data-host-exec="" w={LAYOUT.nodeWidth} title="Run in program" sub={load.status === 'loaded' && load.state ? load.state.state : 'Run in program'} selected={selected} headerProps={headerProps} renderPort={renderPort} ins={n.inputs} outs={n.outputs} foot={foot} footc={word === 'Failed' ? A.err : word === 'Waiting for you' ? A.warn : A.inkSoft} glyph={<window.AHIcon name="folder" size={12} />} gc={A.inkSoft}>
       {load.status === 'waiting' && <div role="status" aria-label="Loading" style={{display:'grid', gap:6}}><div style={{height:32, borderRadius:A.rad.sm, background:A.bgSoft}} /><div style={{height:32, borderRadius:A.rad.sm, background:A.bgSoft}} /></div>}
       {load.status === 'empty' && <p style={{fontSize: 'calc(12px * var(--text-scale,1))', color:A.inkSoft}}>No programs available.</p>}
       {load.status === 'error' && <div role="alert" style={{fontSize: 'calc(12px * var(--text-scale,1))', color:A.err}}>{load.message} <button type="button" className="button-reset" onClick={event => executeAction('projects.controls.activate', {handler:() => setAttempt(value => value + 1)}, event)}>Retry</button></div>}
@@ -178,7 +178,7 @@
     const chosen = load.actions.find(row => row.name === params.action);
     const word = runWord(n);
     const foot = <span style={{display:'flex', alignItems:'center', gap:8}}><RunModeChip waiting={word === 'Waiting for you'} /><span style={{color: word === 'Failed' ? A.err : word === 'Waiting for you' ? A.warn : A.ink}}>{word}</span></span>;
-    return <D.Node data-connector-action="" w={304} title="Connector action" sub="Connector action" selected={selected} headerProps={headerProps} renderPort={renderPort} ins={n.inputs} outs={n.outputs} foot={foot} footc={word === 'Failed' ? A.err : word === 'Waiting for you' ? A.warn : A.inkSoft} glyph={<window.AHIcon name="send" size={12} />} gc={A.inkSoft}>
+    return <D.Node data-connector-action="" w={LAYOUT.nodeWidth} title="Connector action" sub="Connector action" selected={selected} headerProps={headerProps} renderPort={renderPort} ins={n.inputs} outs={n.outputs} foot={foot} footc={word === 'Failed' ? A.err : word === 'Waiting for you' ? A.warn : A.inkSoft} glyph={<window.AHIcon name="send" size={12} />} gc={A.inkSoft}>
       {load.status === 'waiting' && <div role="status" aria-label="Loading" style={{display:'grid', gap:6}}><div style={{height:32, borderRadius:A.rad.sm, background:A.bgSoft}} /><div style={{height:32, borderRadius:A.rad.sm, background:A.bgSoft}} /></div>}
       {load.status === 'empty' && <div>
         <label style={hostBlock}><span style={hostLabel}>Connector</span>
@@ -294,10 +294,10 @@
       {renderSocket && n.inputs.map(p => <span key={p.id} style={edge('in')}>{renderSocket(p, 'in')}</span>)}
       {renderSocket && n.outputs.map(p => <span key={p.id} style={edge('out')}>{renderSocket(p, 'out')}</span>)}
       <div data-node-card-title="" style={{position: 'absolute', left: 12, top: 9, right: 40, fontSize: 'calc(14px * var(--text-scale,1))', lineHeight: 1.2, color: SPEC.text, whiteSpace: 'pre', overflow: 'hidden', textOverflow: 'ellipsis'}}>{typeGlyph(def.type) && typeGlyph(def.type) + '  '}{def.name}</div>
-      <span data-record-count="" style={{position: 'absolute', right: 12, top: 11, fontSize: 'calc(12.5px * var(--text-scale,1))', color: SPEC.label}} title="All records">{values.length}</span>
-      <div style={{position: 'absolute', left: 12, top: 34, fontSize: 'calc(12.5px * var(--text-scale,1))', lineHeight: 1.2, color: SPEC.typed}}>{n.column.label}{def.unit ? ' · ' + def.unit : ''}</div>
+      <span data-record-count="" style={{position: 'absolute', right: 12, top: 11, fontSize: 'calc(var(--type-size-label) * var(--text-scale,1))', color: SPEC.label}} title="All records">{values.length}</span>
+      <div style={{position: 'absolute', left: 12, top: 34, fontSize: 'calc(var(--type-size-label) * var(--text-scale,1))', lineHeight: 1.2, color: SPEC.typed}}>{n.column.label}{def.unit ? ' · ' + def.unit : ''}</div>
       <output data-column-of={n.column.dataset + '.' + n.column.field} data-todo="output-summary-expanded" style={{position: 'absolute', left: 8, right: 8, top: 56, height: 24, boxSizing: 'border-box', padding: '5px 6px', borderRadius: 5,
-        background: SPEC.slot, fontSize: 'calc(12.5px * var(--text-scale,1))', lineHeight: 1.2, color: SPEC.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>{values.slice(0, 3).map(cellText).join(', ')}{values.length > 3 ? '…' : ''}  ›</output>
+        background: SPEC.slot, fontSize: 'calc(var(--type-size-label) * var(--text-scale,1))', lineHeight: 1.2, color: SPEC.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>{values.slice(0, 3).map(cellText).join(', ')}{values.length > 3 ? '…' : ''}  ›</output>
     </div>;
   }
   // Spec FieldTypeMenu: a listbox of the server's parameter types (node_params.py), labelled as the design names them.
@@ -386,7 +386,7 @@
   };
   const HIDDEN_VALUE = /(?:[a-f0-9]{32,}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}|(?:assembly|template|node)-instance:|^\s*[\[{][\s\S]*[\]}]\s*$)/i;
   const HIDDEN_PARAM = /(^_|(?:^|_)(?:id|hash|instance|ref)(?:_|$)|^template_|^(?:engine|responsibility|last_result|last_attempt)$)/i;
-  const LAYOUT = {nodeWidth: 304, datasetWidth: 340, inspectorWidth: 320};
+  const LAYOUT = {nodeWidth: parseFloat(window.getComputedStyle(document.documentElement).getPropertyValue('--layout-node-width')) || 256, datasetWidth: 340, inspectorWidth: 320};
   const FIELD_WIDTH = {text: 70, number: 92, integer: 108, point: 112, object: 112, bool: 70, choice: 108, date: 108, file: 112, folder: 112, list: 112};
   const NAMED_WIDTH = {id: 70, width: 92, position: 112, height: 108};
   const fieldWidth = field => {
@@ -395,7 +395,7 @@
     const name = String(field && (field.name || field.id) || '').toLowerCase();
     return NAMED_WIDTH[name] || FIELD_WIDTH[field && field.type] || 92;
   };
-  const CARD = {background: SPEC.field, border: '1px solid ' + SPEC.fieldLine, borderRadius: 6, boxSizing: 'border-box', position: 'relative', color: SPEC.text, fontSize: 'calc(12.5px * var(--text-scale,1))', lineHeight: 1.2};
+  const CARD = {background: SPEC.field, border: '1px solid ' + SPEC.fieldLine, borderRadius: 6, boxSizing: 'border-box', position: 'relative', color: SPEC.text, fontSize: 'calc(var(--type-size-label) * var(--text-scale,1))', lineHeight: 1.2};
   const SLOT = {background: SPEC.slot, borderRadius: 5, padding: '6px 9px', position: 'relative', display: 'flex', alignItems: 'center', gap: 6, minHeight: 28, boxSizing: 'border-box'};
   const edgeSocket = (side, top, inset = 0) => ({position: 'absolute', [side === 'in' ? 'left' : 'right']: -11 - inset, top, transform: 'translateY(-50%)', lineHeight: 0, zIndex: 2});
   function ValueWidget({n, p, value, u}) {
@@ -415,9 +415,9 @@
     const p = n.parameterSchema?.find(x => x.key === 'value') || {key: 'value', type: 'number', editable: true}, unset = typeof n.params.value !== 'number',
       value = unset ? NaN : n.params.value, max = p.max ?? (unset || Math.abs(value) <= 2 ? 2 : Math.abs(value) * 2), min = p.min ?? Math.min(0, unset ? 0 : value), step = p.step ?? (max <= 2 ? .05 : 1),
       out = n.outputs[0], save = v => Number.isFinite(v) ? u.act(() => api.setNodeParam(n.id, 'value', Math.min(p.max ?? Infinity, Math.max(p.min ?? -Infinity, v)))) : undefined;
-    return <div data-ds-node="" data-spec="parameter" className="node-header" style={{...CARD, width: 180, height: 80, outline: selected ? '2px solid ' + A.accent : 'none', outlineOffset: 2}}>
+    return <div data-ds-node="" data-spec="parameter" className="node-header" style={{...CARD, width: 180, height: 80, outline: selected ? '1.5px solid ' + A.accent : 'none', outlineOffset: 2}}>
       <div data-node-card-title="" style={{position: 'absolute', left: 12, top: 9, right: 40, color: SPEC.typed}}>#  {n.title}</div>
-      {!n.pure && <span data-node-pure="false" title="Side effect: waits for Run" style={{position: 'absolute', right: 10, top: 9, color: A.inkSoft}}>⚡</span>}
+      {!n.pure && <span data-node-pure="false" title="Side effect: waits for Run" style={{position: 'absolute', right: 10, top: 9, color: A.inkSoft}}><window.AHIcon name="clock" size={12} /><span>Effect</span></span>}
       <div style={{position: 'absolute', left: 12, top: 32, right: 12, display: 'flex', alignItems: 'center', gap: 6, color: SPEC.typed}}>
         {unset ? <span data-unset="" style={{flex: 1, color: SPEC.label}} title="Not set in router.json">unset</span> : <ValueWidget n={n} p={{...p, type: 'number', step}} value={value} u={u} />}
         <span>{p.unit || ''}</span>
@@ -461,13 +461,14 @@
     const headerColor=typeof requestedHeader==='string'&&/^#[0-9a-f]{6}$/i.test(requestedHeader)?requestedHeader:undefined;
     const luminance = headerColor && headerColor.slice(1).match(/../g).map(hex => {const channel=parseInt(hex,16)/255;return channel<=0.04045?channel/12.92:((channel+0.055)/1.055)**2.4;}).reduce((sum,channel,index)=>sum+channel*[0.2126,0.7152,0.0722][index],0);
     return <div data-ds-node="" className="lm-node" data-spec={n.dataset ? 'dataset' : 'operation'} data-node-state={state.split(' · ')[0]}
-      style={{...CARD, width: n.dataset ? LAYOUT.datasetWidth : LAYOUT.nodeWidth, borderRadius:'var(--node-radius,8px)', paddingBottom: 10, border: '1px solid ' + (refusal ? A.err : SPEC.fieldLine), outline: selected ? '2px solid ' + A.accent : 'none', outlineOffset: 2}}>
+      style={{...CARD, width: n.dataset ? LAYOUT.datasetWidth : LAYOUT.nodeWidth, borderRadius:'var(--node-radius,8px)', paddingBottom: 10, border: '1px solid ' + (refusal ? A.err : SPEC.fieldLine), borderTop: '2px solid ' + stateColor, outline: selected ? '1.5px solid ' + A.accent : 'none', outlineOffset: 2}}>
+      <div data-node-kind="">{n.category && n.category !== 'Node' ? n.category : n.kind}</div>
       <div className="node-header" style={{display: 'flex', alignItems: 'flex-start', gap: 8, padding: '12px 12px 0', background: headerColor, color: headerColor ? luminance > 0.179 ? '#000000' : '#ffffff' : SPEC.text}}>
-        {n.icon && <window.AHIcon name={n.icon} size={18} />}<div data-node-card-title="" style={{flex: 1, minWidth: 0, fontSize: 'calc(15px * var(--text-scale,1))', fontWeight: 600, lineHeight: 1.25, overflowWrap: 'anywhere'}}>{n.title}</div>
-        {!n.pure && <span data-node-pure="false" style={{paddingTop: 2, color: A.inkSoft}}
-          title={'Side effect: waits for Run' + (n.budget ? ' · budget ' + [n.budget.seconds != null && n.budget.seconds + ' s', n.budget.calls != null && n.budget.calls + ' call(s)'].filter(Boolean).join(', ') : '')}>⚡</span>}{menu}
+        <div data-node-card-title="" style={{flex: 1, minWidth: 0, fontSize: 'calc(15px * var(--text-scale,1))', fontWeight: 600, lineHeight: 1.25, overflowWrap: 'anywhere'}}>{n.title}</div>
+        {!n.pure && <span data-node-pure="false" style={{paddingTop:2,color:A.inkSoft,display:'inline-flex',alignItems:'center',gap:4,fontSize:'var(--type-size-meta)',fontWeight:500}}
+          title={'Side effect: waits for Run' + (n.budget ? ' · budget ' + [n.budget.seconds != null && n.budget.seconds + ' s', n.budget.calls != null && n.budget.calls + ' call(s)'].filter(Boolean).join(', ') : '')}><window.AHIcon name="clock" size={12} /><span>Effect</span></span>}{menu}
       </div>
-      {(n.category || n.kind) && <div data-node-kind="" style={{fontSize: 'calc(12.5px * var(--text-scale,1))',lineHeight:1.25,color:SPEC.label,margin:'7px 12px 0'}}>{n.category && n.category !== 'Node' ? n.category : n.kind}</div>}
+
       {members.length > 0 && <div className="canvas-members">{members.map(m => <button key={m.id} data-group-member={m.id} draggable={m.chip || undefined} className="canvas-member nodrag" title={m.chip ? 'Drag ' + m.title + ' out of the group' : 'Open ' + m.title} onDragStart={event => { if (!m.chip) return; event.stopPropagation(); event.dataTransfer.setData('text/plain', m.id); event.dataTransfer.effectAllowed = 'move'; event.currentTarget.dataset.dragged = '1'; }} onDragEnd={event => { if (!m.chip || !onDetach) return; onDetach(m, event); }} onClick={event => { if (event.currentTarget.dataset.dragged === '1') { event.currentTarget.dataset.dragged = ''; return; } executeAction('projects.controls.activate', {handler: () => onMember(m)}, event); }}><span style={{background: A.purple, color: A.onFill}}>{m.title.slice(0, 1)}</span>{m.title}</button>)}</div>}
       <div style={{display: 'grid', gap: 'var(--layout-node-row-gap,4px)', padding: '8px 12px 0'}}>
         {/* Full-node row (archhub-full-node-controls-native.png): name over its type, then the linked source or an inline control, then a row menu. Real data or empty. */}
@@ -478,10 +479,10 @@
           return <React.Fragment key={key}><div data-port-row={param ? undefined : 'in'} data-parameter={param ? param.key : undefined}
             style={{...SLOT, display: 'grid', gridTemplateColumns: '88px minmax(0,1fr) 16px', minHeight:36, gap: 6, padding: '4px 10px', alignItems: 'center'}}>
             {ports.map(alias=><span key={alias.id} aria-hidden={alias.id!==port.id||undefined} style={{...edgeSocket('in', '50%', 12),opacity:alias.id===port.id?1:0,pointerEvents:alias.id===port.id?undefined:'none'}}>{socket(alias, 'in')}</span>)}
-            <span style={{minWidth: 0}}><span style={{display: 'block', fontSize: 'calc(12.5px * var(--text-scale,1))', lineHeight: 1.25, overflowWrap: 'anywhere'}} title={param ? param.label || param.key : port.name}>{name}</span>
+            <span style={{minWidth: 0}}><span style={{display: 'block', fontSize: 'calc(var(--type-size-label) * var(--text-scale,1))', lineHeight: 1.25, overflowWrap: 'anywhere'}} title={param ? param.label || param.key : port.name}>{name}</span>
               <span style={{display: 'block', color: SPEC.label}}>{type}</span></span>
             <span data-row-value="" style={{display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>
-              {from ? <span data-linked-source="" style={{color: SPEC.typed}} title={from}>↳ {from}</span>
+              {from ? <span data-linked-source="" style={{color: SPEC.label}} title={from}>{from}</span>
                 : !param ? null : n.params[param.key] === null && !(param.type === 'number' && ['min','max'].includes(param.key)) ? <span data-unset="" style={{color: SPEC.label}}>unset</span> : <ValueWidget n={n} p={param} value={n.params[param.key]} u={u} />}</span>
             <button type="button" className="button-reset nodrag" aria-label={name + ' row actions'} style={{color: SPEC.label, padding: '0 4px'}}
               onClick={event => executeAction('projects.controls.activate', {handler: () => u.show('Port menu', {id: n.id, port: port?.id || 'param:' + param.key, paramKey: param?.key, anchor: {x: event.clientX, y: event.clientY}})}, event)}>⋮</button>
@@ -491,9 +492,9 @@
         {n.loop && <div data-node-loop="" style={{color: SPEC.label}} title={'Trigger ' + n.loop.trigger + ' · stops when ' + n.loop.stop + (n.loop.evaluator ? ' · evaluator ' + n.loop.evaluator : '')}>Loop · cap {n.loop.cap} · until {n.loop.stop}</div>}
         {n.dataset && <DatasetEditor n={n} u={u} />}
         {!n.dataset && !n.column && n.paramDefs && api.addNodeParameter && <AddParameter n={n} u={u} />}
-        {n.outputs.map(p => <div key={p.id} data-port-row="out" style={{position: 'relative', color: SPEC.typed, minHeight: 18, display: 'flex', alignItems: 'center'}}>
+        {n.outputs.map(p => <div key={p.id} data-port-row="out" style={{position: 'relative', color: SPEC.label, minHeight: 18, display: 'flex', alignItems: 'center'}}>
           <span>{p.name} · {typeName(p)}</span><span style={edgeSocket('out', '50%', 12)}>{socket(p, 'out')}</span></div>)}
-        {n.outputs.length > 0 && !repeatedValue && <div data-node-result="" data-todo="output-summary-expanded" style={{...SLOT, color: result ? SPEC.text : SPEC.label, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block'}} title={result}>{result ? '▸  ' + result : wiresIn.length || !n.inputs.length ? 'Run to inspect output' : 'Connect data to inspect output'}</div>}
+        {n.outputs.length > 0 && !repeatedValue && <div data-node-result="" data-todo="output-summary-expanded" style={{...SLOT, color: result ? SPEC.text : SPEC.label, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block'}} title={result}>{result ? result.replace(/^\w+_out\s+/, '') : wiresIn.length || !n.inputs.length ? 'Run to inspect output' : 'Connect data to inspect output'}</div>}
         {<span data-node-status="" style={{...FOOT, fontSize: 'calc(13px * var(--text-scale,1))', lineHeight: 1.2, color: stateColor}} title={n.error || state}>{state === 'Done' ? 'Complete' : state.split(' · ')[0]}</span>}
       </div>
     </div>;
@@ -508,12 +509,12 @@
     const cap = {fontSize: 'calc(12px * var(--text-scale,1))', color: SPEC.label, margin: '16px 0 6px'};
     return <Tag className={embedded ? "inspector-content" : "pane inspector"} data-node-inspector={n.id} aria-label="Properties" style={{borderLeft: embedded ? 0 : '1px solid ' + A.line, padding: embedded ? 0 : 16, overflow: 'auto'}}>
       {!embedded && <div className="muted" style={{fontSize: 'calc(12px * var(--text-scale,1))'}}>Properties</div>}
-      <h2 style={{margin: '4px 0 0', paddingLeft: 8, borderLeft: '2px solid ' + A.accent}}>{n.title}</h2>
+      {!embedded && <h2 style={{margin:'4px 0 0'}}>{n.title}</h2>}
       <div style={{color: SPEC.label, fontSize: 'calc(12px * var(--text-scale,1))', marginTop: 2}}>{state} · {n.pure ? 'pure' : 'side effect'}{n.kind ? ' · ' + n.kind : ''}</div>
       <div className="node-presentation" style={{display:'grid',gap:8,marginTop:16}}>
         <label>Label<input aria-label="Node label" key={n.id+':'+n.title} defaultValue={n.title} onBlur={event=>{const title=event.target.value.trim();if(title && title!==n.title)u.act(()=>api.renameNode(n.id,title));else event.target.value=n.title;}} /></label>
         <label>Icon<select aria-label="Node icon" value={n.icon || ''} onChange={event=>u.act(()=>api.setNodePresentation(n.id,{icon:event.target.value}))}><option value="">Default</option>{api.nodeIcons.map(name=><option key={name} value={name}>{name}</option>)}</select></label>
-        <label>Colour<input type="color" aria-label="Node colour" value={n.color || defaultColor} onChange={event=>u.act(()=>api.setNodePresentation(n.id,{color:event.target.value}))} /></label>
+        <label>Colour<span className="node-colour-value"><input type="color" aria-label="Node colour" value={n.color || defaultColor} onChange={event=>u.act(()=>api.setNodePresentation(n.id,{color:event.target.value}))} /><span>{n.color || defaultColor}</span></span></label>
       </div>
       <div style={cap}>Inputs</div>
       <div style={{display: 'grid', gap: 6}}>{n.inputs.filter(p => !params.some(q => q.key === p.id || 'param:' + q.key === p.id)).map(p => <div key={p.id} style={SLOT}>
@@ -615,7 +616,6 @@
       zoomWrites = React.useRef(Promise.resolve()),
       pendingZoomWrites = React.useRef(0);
     const fittedScope = React.useRef(null);
-    const framedScope = React.useRef(null);
     const userViewport = React.useRef(false);
     const {zoom, pan} = viewport;
     const [requestState, setRequestState] = React.useState('waiting');
@@ -675,7 +675,7 @@
         setRequestState('error');
       });
     };
-    React.useEffect(() => { if(active && requestState==='waiting'){reload(); u.setLibraryOpen?.(true);} }, [active]);
+    React.useEffect(() => { if(active && requestState==='waiting'){reload();} }, [active]);
     React.useEffect(() => {
       if (requestState === 'loaded' || requestState === 'empty')
         setRequestState(s.graph.nodes.length ? 'loaded' : 'empty');
@@ -947,22 +947,26 @@
       return () => { if (window.UI.requestCanvasFit === fit) window.UI.requestCanvasFit = null; };
     });
     React.useLayoutEffect(() => {
-      if (!embedded || !active || framedScope.current === scope || userViewport.current || !area.current) return;
-      if (requestState === 'empty') {framedScope.current=scope;return;}
-      if (requestState !== 'loaded' || layout.scope !== scope) return;
-      const boxes=[...area.current.querySelectorAll('[data-graph-node]')].map(element=>{
-        const node=visible.find(node=>node.id===element.dataset.graphNode);
-        return node && {x:node.x,y:node.y,w:element.offsetWidth,h:element.offsetHeight};
-      }).filter(Boolean);
-      if (!boxes.length || boxes.length !== visible.length) return;
-      const width=area.current.clientWidth,height=area.current.clientHeight,z=view.current.zoom;
-      const minX=Math.min(...boxes.map(box=>box.x)),minY=Math.min(...boxes.map(box=>box.y));
-      const span=Math.max(...boxes.map(box=>box.x+box.w))-minX;
-      const frame=fitCanvasViewport(boxes,width,height,z,z,z);
-      if (span*z > width-32) frame.pan.x=32-minX*z;
-      frame.pan.y=120-minY*z;
-      updateView(frame,false);
-      framedScope.current=scope;
+      if (!embedded || !active || !visible.length || !area.current) return;
+      const frame = () => {
+        if (userViewport.current) return;
+        const boxes=[...area.current.querySelectorAll('[data-graph-node]')].map(element=>{
+          const node=visible.find(node=>node.id===element.dataset.graphNode);
+          return node && {x:node.x,y:node.y,w:element.offsetWidth,h:element.offsetHeight};
+        }).filter(Boolean);
+        if (!boxes.length || boxes.length !== visible.length || boxes.some(box=>!box.w||!box.h)) return;
+        const width=area.current.clientWidth,height=area.current.clientHeight;
+        if (width<=48 || height<=144) return;
+        const minX=Math.min(...boxes.map(box=>box.x)),minY=Math.min(...boxes.map(box=>box.y));
+        const spanW=Math.max(...boxes.map(box=>box.x+box.w))-minX,spanH=Math.max(...boxes.map(box=>box.y+box.h))-minY;
+        const fitted=Math.min(1,(width-48)/spanW,(height-144)/spanH),z=fitted>=.75?fitted:1;
+        updateView({zoom:z,pan:{x:24-minX*z,y:120-minY*z}},false);
+      };
+      const observer=new window.ResizeObserver(frame);
+      observer.observe(area.current);
+      for (const element of area.current.querySelectorAll('[data-graph-node]')) observer.observe(element);
+      const tick=window.requestAnimationFrame(frame);
+      return () => {observer.disconnect();window.cancelAnimationFrame(tick);};
     }, [embedded,active,requestState,scope,layout,flowNodes.length]);
     const openNode = n => {
       if (n.kind.toLowerCase().includes('meeting')) u.go('meetings');else if (n.kind === 'Watch program') u.act(() => api.windowAction('hide'));else if (n.kind === 'Present') u.go('present');else if (['Community', 'Community group', 'Marketplace listing', 'Project charge'].includes(n.kind)) u.go('community');else if (n.kind === 'Interface studio' || n.kind === 'UI element') u.go('interface');else if (n.kind.startsWith('TBP ')) u.go('model-review');else if (n.kind === 'Theme') u.go('settings/Appearance');else if (n.kind === 'Workflow link') {
@@ -986,7 +990,7 @@
       more: () => setMore(value => !value)
     }));
     const stateCounts=new Map();
-    for(const node of visible){const state=nodeState(node,false)[0],label=state==='Done'?'complete':state.toLowerCase();stateCounts.set(label,(stateCounts.get(label)||0)+1);}
+    for(const node of visible){const state=nodeState(node,false)[0].split(' · ')[0],label=state==='Done'?'complete':state.toLowerCase();stateCounts.set(label,(stateCounts.get(label)||0)+1);}
     const actionsMenu = <> {more && <div role="menu" aria-label="Canvas actions" data-canvas-more="" onKeyDown={e => { if (e.key === 'Escape') setMore(false); }} style={{position:'absolute',right:0,top:8,display:'grid',minWidth:200,maxHeight:'calc(100% - 16px)',overflow:'auto',padding:6,gap:2,
           background:A.bgPanel,border:'1px solid '+A.lineSoft,borderRadius:6,zIndex:20}}>{[
             ['Add node · Ctrl K', () => executeAction("projects.ds_screens.AddANodeCtrlK.24", {u})], ['New', () => u.act(() => api.newSession())], ['Open…', () => u.act(() => api.openSession())], ['Save · Ctrl S', () => u.act(() => api.saveSession())],
@@ -1049,7 +1053,7 @@
         }}>
     <CanvasContext.Provider value={{renderNode, openNode}}>
      <RF.ReactFlow nodes={flowNodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
-       viewport={{x: pan.x, y: pan.y, zoom}} onViewportChange={v => updateView({zoom: v.zoom, pan: {x: v.x, y: v.y}}, false)}
+       viewport={{x: pan.x, y: pan.y, zoom}} onMove={(event,v) => {if(event instanceof window.Event) updateView({zoom:v.zoom,pan:{x:v.x,y:v.y}},false);}}
        onMoveEnd={(event, v) => { if (event instanceof window.Event) persistView(v); }} minZoom={zoomMin} maxZoom={zoomMax}
        onNodesChange={onNodesChange} onNodeClick={(event,node)=>onInspect?.({nodeId:node.id,wireId:null})} onNodeDragStop={onNodeDragStop} onNodeDoubleClick={(e, f) => openNode(f.data.n)}
        onEdgesChange={changes => setSelectedWires(old => {const next=new Set(old);for(const c of changes)if(c.type==='select'&&c.id!=='rejected')c.selected?next.add(c.id):next.delete(c.id);return [...next];})}
@@ -1065,7 +1069,7 @@
        zoomOnDoubleClick={false} connectionLineStyle={{stroke: A.cyan, strokeWidth: 2}} proOptions={{hideAttribution: true}} />
     </CanvasContext.Provider>
     <div data-canvas-overlay="" className="canvas-toolbar">{parent && <button type="button" className="dx-quiet" onClick={event=>executeAction("projects.ds_screens.Parent.6",{parent,s,setParent,setSelected},event)}>← {s.graph.nodes.find(node=>node.id===parent)?.title || 'Parent'}</button>}<Btn variant="controls" sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom">{Math.round(zoom * 100)}%</button><Btn variant="controls" sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><button type="button" className="dx-quiet" onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</button>{embedded && onHandoff && <button type="button" className="dx-quiet" onClick={event=>executeAction("projects.controls.activate",{handler:onHandoff},event)}>Handoff map</button>}</div>
-    {embedded && <><div data-workflow-label="">Workflow</div><div data-canvas-summary="" aria-label="Workflow status">{[...stateCounts].map(([label,count])=>count+' '+label).join(' · ')}</div></>}
+    {embedded && <><div data-canvas-summary="" aria-label="Workflow status">{[...stateCounts].map(([label,count])=>count+' '+label).join(' · ')}</div></>}
    </div>
    {!externalInspector && inspected && <NodeInspector n={inspected} s={s} u={u} />}
    {!externalInspector && wire && <WireInspector wire={wire} s={s} u={u} onClose={() => setWireId(null)} />}

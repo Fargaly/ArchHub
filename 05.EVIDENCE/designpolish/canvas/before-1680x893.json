@@ -1,0 +1,1454 @@
+{
+  "small": [],
+  "secondary": [
+    {
+      "text": "/",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Search...",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Ctrl K",
+      "ratio": 4.956145839127986
+    },
+    {
+      "text": "Home",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Workshop",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Automations",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Docs",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Settings",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "File ▾",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Mode unavailable",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Drawing set review.archhub · Saved",
+      "ratio": 6.364089024132037
+    },
+    {
+      "text": "Sessions",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Runs",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Start",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "33",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "starts when you press Run",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "clock trigger",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "folder and pattern watcher",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "event from Revit or another host",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "runs after approval grant",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "read-only URL trigger",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "A number the graph holds",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "A text the graph holds",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "A list, as JSON or comma-separated",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "True or false",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "A local file value",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "A hex colour value",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Set by whoever runs this graph",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "A bounded numeric input",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Starts the graph when you press Run",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "A typed value you can wire anywhere",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Fields, records and typed cells",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "One dataset column as a typed list",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "cad.host_lines",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "cad.read_lines",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "vision.sketch_lines",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Number parameter · router generation",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "From Settings · Appearance",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "From Settings · Appearance",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "From Settings · Appearance",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "From Settings · Appearance",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "From Settings · Appearance",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "From Settings · Appearance",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "From Settings · Appearance",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "From Settings · Appearance",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "From Settings · Appearance",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "From Settings · Appearance",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "From Settings · Appearance",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Programs",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "161",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Ask a connected host for elements",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Rows from a fixture workbook range",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Read elements by Revit category",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Read a named parameter from elements",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Write a named parameter after approval",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Create sheets from approved rows",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Renumber or rename approved elements",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Run code in the program you pick",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Run one action from a connected account",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "open workbooks and their sheets",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "open documents and their paragraphs",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "open decks and their slides",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "pull walls from active view",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "pull doors + swings + marks",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "pull windows + types",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "enumerate sheets in set",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "plans, sections, schedules",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "levels + elevations",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "whatever is selected in host",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "host warnings · by severity",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "sheets of the workbook in front",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "paragraphs of the document in front",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "slides of the deck in front",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every host connector's live state",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Live Revit sessions",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Active Revit document",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Open a model in Revit",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Run C# in the open Revit",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Export the active view as PNG",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Live AutoCAD sessions",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Active AutoCAD document",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Run C# in the open AutoCAD",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Is 3ds Max answering",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "3ds Max scene info",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Run Python in 3ds Max",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Run MAXScript in 3ds Max",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Is Blender answering",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Run Python in Blender",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Is Rhino answering",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Run Python in Rhino",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Read open Excel, Word or PowerPoint",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Newest inbox items",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Search the Notion workspace",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Files in Dropbox",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every room, with its number and area.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every loaded family, with its category.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every schedule, and whether it is a titleblock revision sche",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every revision, with its sequence, date and issued state.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every grid line in the model.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every user workset, whether it is open, and who owns it.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every linked Revit model and whether its file is still found",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every CAD link and every imported CAD instance. Imports that",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every view template defined in the project.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every phase, in order.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every design option, its set, and whether it is primary.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every group instance and how many members it holds.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every in-place family. These cannot be scheduled or reused a",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every titleblock type loaded in the project.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every material, with its class.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every project parameter binding, instance or type, and how m",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every view that no viewport places on a sheet.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every room that is not placed or encloses no area.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "How many placed elements each category holds.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every text note and the view it sits in.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every floor, with its type, level and area.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every ceiling, with its type and level.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every roof, with its type and level.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every column, architectural and structural.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every stair, with its type and level.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every railing, with its type and level.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every wall whose type is a curtain wall.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every wall type, its kind and width.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every area, with its scheme and size.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every line style and its projection weight.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every sheet and the revisions clouded on it.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every view filter and how many categories it reaches.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every scope box in the model.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every reference plane and the view that owns it.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every door type loaded, with its family.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every window type loaded, with its family.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every generic model placed, with its level.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Furniture, casework and speciality equipment.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every dimension, its view, and whether its value was overrid",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every legend view.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Bounding box of each element in metres, optionally in a view",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Solids, faces, edges, volume, area and location of each elem",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Shortest distance between two elements in metres (bounding b",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Elements of categories A that clash with categories B, box f",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "The nearest element a ray hits in a 3D view; origin in metre",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Elements inside or crossing a box in metres, or a room's box",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Solid volume of each element and the total, in cubic metres.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Total face area of each element and the total, in square met",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Where a point in metres lands on one face of an element.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Pairs of one category whose bounding boxes overlap.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Volume-weighted centroid of each element in metres, box cent",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Solid, face and curved-face counts per element, most complex",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every layer with its colour, linetype, lineweight and state.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Every linetype loaded in the drawing.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Create a layer (or update one of that name) with colour, lin",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Delete an unused layer; a layer in use, current, 0 or Defpoi",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Make a layer current.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Change a layer's colour, linetype or lineweight.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Freeze a layer.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Thaw a layer.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Lock a layer.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Unlock a layer.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Turn a layer off.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Turn a layer on.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Load a linetype from acadiso.lin / acad.lin (by MEASUREMENT)",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Microsoft Graph mailbox status. Sign-in is not started from ",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Read a mailbox through Microsoft Graph. Never launches class",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "List categories on the named Microsoft 365 mailbox.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Preview a category change. Apply stays off unless the caller",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Read-only status for the company IMAP mailbox.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Read-only inbox through the company IMAP mailbox.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Read one message already listed by the company inbox.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Start Notion's own browser sign-in. Nothing is pasted.",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "connector.rows",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "connector.status",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "revit.build_walls",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "revit.verb",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Ask a model",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "What the Brain remembers for a query",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "brain.facts",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "brain.write",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Search correspondence",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Read correspondence thread",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Read comment tables",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Build coordination workbook",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Update workbook cells",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Share coordination workbook",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Show workbook",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Read PDF pages",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Clip PDF evidence",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Reply draft",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Forward draft",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Messages in the Workshop room",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Default model from router.json",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Free model",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Free model",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Free model",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Agent · any open session",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Agent · any open session",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Agent · any open session",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Agent · any open session",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Connector · read sessions",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Connector · read sessions",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Connector · read sessions",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Connector · read sessions",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Connector · read sessions",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Connector · read sessions",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Connector · read sessions",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Connector · read sessions",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Connector · read sessions",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Connector · read sessions",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "A local file or folder reference",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Session · 4 nodes",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Session · 0 nodes",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Session · 0 nodes",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Session · 0 nodes",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Session · 0 nodes",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Change",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "42",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Keep or drop items by a rule",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Change each item by an expression",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Order items by a field",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Group items by a field",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Drop duplicate items",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Take one field from each item",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "How many items",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "First or last N items",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Nested lists into one",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Join lists end to end",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Convert a wired value",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Write a value onto every item",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Translate coordinates in millimetres",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Turn coordinates about a centre",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Scale coordinates about a centre",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "A text note in the stream",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "One dimension per line",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Tag every untagged room",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Tag every untagged element",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Put named views on a sheet",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "A table from the stream",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "One entry per symbol",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Write rows to an Excel or CSV file",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Replace, split, join, format or pad text",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Safe numeric expression",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Start, step and count",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Words on the canvas",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "A dot a wire passes through",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "A saved graph as one node",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "lines.watch",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "tool.baboom",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "tool.brain",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "tool.cloud",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "tool.connectors",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "tool.studio",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "tool.workshop",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Check every sheet's title block: fields, sheet numbers, dupl",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "What changed between two issues of a drawing (PDF)",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "IfcOpenShell clash and ifctester IDS, issues written as BCF",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Read Arabic or English text from a scan, photo or PDF (Paddl",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Space areas from an IFC model or wired room rows, totalled b",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Transcribe a recording on this machine (whisper.cpp), timest",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Decide",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "36",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Route by a rule",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Batch over a list",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Route by a key",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Iterate a list",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Merge streams",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Score wired rows using explicit numeric criteria and weights",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "agent.session",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "library.embed",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "library.filter_compare",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "library.filter_field",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "library.filter_rule",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "library.group_by",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "library.if",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "library.loop",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "library.match_skill",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "library.merge",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "library.publish_package",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "library.push_speckle",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "library.sort_by",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "library.switch",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "library.terminal",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "library.think",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "library.vision",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "mods.run",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "skills.catalogue",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "skills.read",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "skills.thinking_chain",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "workshop.conversation",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "workshop.review",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Write back to Brain",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Show proposed changes without applying them",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Read connector health",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Attach file hashes as evidence",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Hold data until approved",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Pass/fail report from a rule",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Check pending writes; correct compiler diagnostics before ap",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Deliver",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "7",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "See what flows through",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "What this graph returns",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Save this run as a skill file",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Export sheets from open Revit",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "A draft in open Outlook",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "A desktop notification",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Send elements to Speckle",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "input",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "string",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "⋮",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "+ Parameter",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "shape",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "List",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "⋮",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "number",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "⋮",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "string",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "⋮",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "+ Parameter",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "shape",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "List",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "⋮",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "+ Parameter",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "⚡",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "output",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Any",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "⋮",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "string",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "⋮",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "string",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "⋮",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "+ Parameter",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Connect data to inspect output",
+      "ratio": 5.593235802082592
+    },
+    {
+      "text": "Workflow",
+      "ratio": 6.264083680911266
+    },
+    {
+      "text": "3 complete · 1 out of date · run",
+      "ratio": 6.264083680911266
+    },
+    {
+      "text": "Selection",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Planned",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Scope",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Edit",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Rules",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Add",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "+ Add",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Assigned agents",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Add",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Drawing coordinator ▾",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "+ Add agent",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "References",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Edit",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "+ Add",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Saved node",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Details",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "4 nodes · 4 parameter groups",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Open workflow",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Checkpoints",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Save",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Folders",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Edit",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "+ Add",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Recurrence",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Edit",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "Plan and progress",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "done",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "not reported",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "done",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "not reported",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "not reported",
+      "ratio": 6.008479267493088
+    },
+    {
+      "text": "not reported",
+      "ratio": 6.008479267493088
+    }
+  ],
+  "deliveryUnverified": false
+}

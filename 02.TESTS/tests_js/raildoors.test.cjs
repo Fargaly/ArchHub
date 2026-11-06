@@ -71,6 +71,7 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
           const blank = () => null;
           Object.assign(window.UI, {BaboomSprite: blank, ScheduleResponsibility: blank,
             Canvas: () => React.createElement('div', {'data-fixture-canvas': true}, 'Task canvas'),
+            GraphProperties: ({g}) => React.createElement('div', {'data-fixture-properties':true}, g.name),
             Docs: () => {
               const u = window.UI.useApp();
               return React.createElement('div', null, ...window.fixture.tasks.map(t =>

@@ -33,7 +33,7 @@
         handleCanvasstatesjsx3
       })(id, ...args);
     }
-    return <div className="grid"><window.UI.ActionStatus action={actionState} /><div className="spread"><h2>Workflow</h2><Icon name="canvas" size={18} /></div><p className="muted">The working space and its shared parameters.</p><label className="grid">Name<input aria-label="Workflow name" value={g.name} onChange={(e) => actionState.run(async () => await api.updateGraph(g.id, {
+    return <div className="grid"><window.UI.ActionStatus action={actionState} /><p className="muted">The working space and its shared parameters.</p><label className="grid">Name<input aria-label="Workflow name" value={g.name} onChange={(e) => actionState.run(async () => await api.updateGraph(g.id, {
           name: e.target.value
         }))} /></label><label className="grid">Owner<select aria-label="Workflow owner" value={g.humanOwner || s.profile.name || 'Unassigned'} onChange={(e) => actionState.run(async () => await api.updateGraph(g.id, {
           humanOwner: e.target.value

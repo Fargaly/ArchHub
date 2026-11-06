@@ -18,7 +18,8 @@ try {
   await page.waitForFunction(()=>window.ArchHubAPI);
   await page.evaluate(()=>window.ArchHubAPI.ready);
   await page.getByRole('button',{name:/Settings bridge test/}).click();
-  await page.getByRole('button',{name:'Open workflow',exact:true}).click();
+  await page.getByRole('button',{name:'Open task',exact:true}).click();
+  await page.getByRole('button',{name:'Canvas view',exact:true}).click();
  };
  await open();
  const id=await page.evaluate(async()=>{
@@ -43,9 +44,11 @@ try {
   await api.saveSession();
  },id);
  await page.waitForFunction(()=>window.ArchHubAPI.getSessionDocument().nodes.filter(n=>n.type==='param.value').every(n=>n.result?.output?.value===130),null,{timeout:2000});
+ await page.getByRole('button',{name:'Fit',exact:true}).click();
  await page.locator('[data-graph-node="'+id+'"]').waitFor();
  await page.goto(config.url.split('?')[0]);
  await open();
+ await page.getByRole('button',{name:'Fit',exact:true}).click();
  await page.locator('[data-graph-node="'+id+'"]').waitFor();
  assert.equal(await page.evaluate(id=>window.ArchHubAPI.getSnapshot().graph.nodes.find(n=>n.id===id).params.value,id),130);
  console.log('SETTINGS-AS-NODE compiled Studio: node=125 == Settings; Settings=130 == node after reopen; automatic node/downstream solve; one owner file; no copied value');

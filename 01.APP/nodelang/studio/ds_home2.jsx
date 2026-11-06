@@ -337,7 +337,7 @@
         <button type="button" className="dx-task" aria-selected={task?.id === t.id} onClick={() => executeAction('ui.select', () => u.setTask(t.id))} onDoubleClick={() => executeAction('ui.select', () => openTask(t))}>
           <b title={t.title}>{t.title}</b>
           <span className={!ownerOf(t) ? "muted" : undefined} title={ownerOf(t)}>{ownerOf(t) || "Not assigned"}</span>
-          <span data-task-row-state={window.UI.taskRowReason(t) || undefined}>{statusText(t.status)}</span>
+          <span data-task-row-state={window.UI.taskRowReason(t) || undefined}>{window.UI.taskRowReason(t) || statusText(t.status)}</span>
           <span data-line="reason" title={lastUpdate(t)}>{lastUpdate(t)}</span>
         </button>
         {needsEvidence ? <button type="button" className="dx-evidence" aria-label={'Evidence for ' + t.title} onClick={() => executeAction('ui.select', () => openEvidence(t))}><Icon name="eye" size={14} /></button> : null}

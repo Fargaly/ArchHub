@@ -1129,6 +1129,10 @@ def r_agents_canvas(s, req):
             if not any(row['vendor'] == runtime['runtime'] for row in sessions):
                 sessions.append({'id': 'runtime:' + runtime['id'], 'name': runtime['name'], 'vendor': runtime['runtime'],
                                  'status': runtime['presence'], 'task': None, 'taskTitle': '', 'message': None})
+        for task in held.values():
+            if task['id'] not in tasks and not task.get('archived'):
+                tasks[task['id']] = {'id': task['id'], 'title': task['title'], 'status': task['status'],
+                                     'path': task.get('session_path'), 'steps': 0, 'error': ''}
     return {'ok': True, 'sessions': sessions, 'tasks': list(tasks.values()), 'wires': wires}
 
 

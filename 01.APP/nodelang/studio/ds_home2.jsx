@@ -333,7 +333,7 @@
     };
     const taskRow = t => {
       const needsEvidence = t.status === 'IN REVIEW' || t.status === 'STOPPED' || waiting.has(t.id);
-      return <div key={t.id} className={'dx-task-row' + (task?.id === t.id ? ' on' : '')} data-status={toneOf(t)}>
+      return <div key={t.id} className={'dx-task-row' + (task?.id === t.id ? ' on' : '')} data-status={toneOf(t)} draggable={!!t.sessionPath} onDragStart={e=>{e.dataTransfer.setData('task',t.id);if(t.sessionPath)e.dataTransfer.setData('session',t.sessionPath);}}>
         <button type="button" className="dx-task" aria-selected={task?.id === t.id} onClick={() => executeAction('ui.select', () => u.setTask(t.id))} onDoubleClick={() => executeAction('ui.select', () => openTask(t))}>
           <b title={t.title}>{t.title}</b>
           <span className={!ownerOf(t) ? "muted" : undefined} title={ownerOf(t)}>{ownerOf(t) || "Not assigned"}</span>

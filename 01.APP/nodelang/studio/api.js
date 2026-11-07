@@ -1477,6 +1477,34 @@ api.saveResearchDecision=async values=>{
 // Canvas state is the portable file document; gestures never round-trip a graph.
 let systemProjection=null;
 let sessionDocument=null, sessionPath='', fileDirectory='', fileHistory=[], fileFuture=[], autosaveTimer=null, fileWrites=Promise.resolve(), runEpoch=0, fileNavigation=0;
+let sessionBreadcrumbs=[];
+api.enterSession=async id=>{
+ const node=sessionDocument?.nodes.find(n=>n.id===id);
+ if(!node?.params.session_file)throw Error('Choose a linked session group.');
+ await flushAutosave();
+ const parent={path:sessionPath,title:sessionDocument.title};
+ const resolved=await sessionRequest('resolve-session',{params:node.params});
+ await api.openSession(resolved.path,true);
+ sessionBreadcrumbs.push(parent);publish({sessionBreadcrumbs:[...sessionBreadcrumbs]});
+};
+api.leaveSession=async()=>{
+ const parent=sessionBreadcrumbs.at(-1);if(!parent)return;
+ await api.openSession(parent.path,true);sessionBreadcrumbs.pop();publish({sessionBreadcrumbs:[...sessionBreadcrumbs]});
+};
+api.insertSession=async(path,position={})=>{
+ const result=await sessionRequest('insert-session',{document:portableDocument(),session:path,...position});
+ fileEdit(d=>{d.nodes=result.document.nodes;},[result.node]);
+ return state.graph.nodes.find(n=>n.id===result.node);
+};
+api.detachSession=async node=>{
+ const result=await sessionRequest('detach-session',{document:portableDocument(),node});
+ fileEdit(d=>{d.nodes=result.document.nodes;});return result;
+};
+api.addAutomation=async()=>{
+ await flushAutosave();
+ const result=await sessionRequest('add-automation',{path:sessionPath});
+ await adoptFile(result.document,sessionPath);return result;
+};
 const sessionRequest=(action,extra={})=>request('/api/session-files',{action,...extra});
 // node_params.py, mirrored for display only: every value change goes through the server's one implementation.
 const PARAM_SOCKET={bool:'boolean',integer:'number',number:'number',text:'string',choice:'string',date:'string',file:'file',folder:'file',object:'any',list:'list',path:'file',color:'string',enum:'string',json:'any'};
@@ -1492,7 +1520,7 @@ function datasetPorts(node){
  return {source:[{id:'records',type:'list',label:'Record[]'},...(node.paramDefs||[]).map(d=>({id:'field:'+d.id,type:'list',label:d.name+' \u00b7 '+(COLUMN_LABEL[d.type]||'Any')+'[]'}))],target:[]};
 }
 function fileNode(node){
- const item=state.libraryPorts.find(row=>row.id===node.item)||state.libraryPorts.find(row=>row.engine===node.type), base=item?.ports||node.ports||{source:[],target:[]};
+ const item=state.libraryPorts.find(row=>row.id===node.item)||state.libraryPorts.find(row=>row.engine===node.type), base=node.ports||item?.ports||{source:[],target:[]};
  const defs=(node.paramDefs||[]).map(d=>node.type==='param.value'&&d.id==='value'?{...d,type:node.params.type}:d), bind=node.type==='param.value'?node.bind:null, owner=bind&&sessionDocument.nodes.find(n=>n.id===bind.node);
  const ports=datasetPorts(node)||{source:node.type==='param.value'?[{id:'value',type:PARAM_SOCKET[node.params.type]||'any'}]:base.source||[],
   target:[...(base.target||[]).map(p=>node.type==='param.value'&&p.id==='value'?{...p,type:PARAM_SOCKET[node.params.type]||'any'}:p),...defs.map(d=>({id:'param:'+d.id,type:PARAM_SOCKET[d.type]||'any',label:d.name}))]};
@@ -1594,16 +1622,17 @@ async function adoptFile(document,path='',navigation=++fileNavigation){
 }
 async function flushAutosave(){clearTimeout(autosaveTimer);if(sessionDocument)await saveNow();}
 api.newSession=async title=>{
+ sessionBreadcrumbs=[];publish({sessionBreadcrumbs:[]});
  const zoom=(state.settings.find(row=>row.id==='Appearance.Default zoom')?.value??100)/100;
  return adoptFile({format:'archhub',version:1,id:window.crypto.randomUUID(),title:title||'Untitled',nodes:[],wires:[],groups:[],notes:[],viewport:{x:0,y:0,zoom}});
 };
-api.openSession=async path=>{
+api.openSession=async(path,linked=false)=>{
  if(!path&&typeof window.ARCHHUB_WINDOW_ACTION!=='function')return new Promise((resolve,reject)=>{
   const picker=document.createElement('input');picker.type='file';picker.accept='.archhub';picker.hidden=true;
   picker.onchange=()=>{const file=picker.files[0];picker.remove();if(file)api.importSession(file).then(resolve,reject);else resolve({cancelled:true});};
   picker.oncancel=()=>{picker.remove();resolve({cancelled:true});};document.body.append(picker);picker.click();
  });
- const navigation=++fileNavigation,opened=await sessionRequest('open',{...(path?{path}:{})});if(opened.cancelled||navigation!==fileNavigation)return {cancelled:true};return adoptFile(opened.document,opened.path,navigation);};
+ const navigation=++fileNavigation,opened=await sessionRequest('open',{...(path?{path}:{})});if(opened.cancelled||navigation!==fileNavigation)return {cancelled:true};const result=await adoptFile(opened.document,opened.path,navigation);if(opened.migrationDocument)fileHistory.push(copy(opened.migrationDocument));if(!linked){sessionBreadcrumbs=[];publish({sessionBreadcrumbs:[]});}return result;};
 // Built-in starters (Book ch.12): open one as a new session file; Start also runs it to its Approve gate.
 api.openStarter=async id=>{const navigation=++fileNavigation,opened=await sessionRequest('starter',{id});return adoptFile(opened.document,opened.path,navigation);};
 api.startTemplate=async id=>{const opened=await api.openTemplateGraph(id);if(opened?.cancelled)return opened;await api.runNode();return {ok:true};};
@@ -1657,6 +1686,7 @@ api.addNode=async(name,position={})=>{
  const item=state.libraryPorts.find(i=>i.id===name||i.title===name);
  if(!item||item.noEngine)throw Error('Choose an executable Library node.');
  if(position.x===undefined){const detail={reserved:[],point:null,error:null};window.dispatchEvent(new CustomEvent('archhub:canvas-insertion',{detail}));if(detail.error)throw Error(detail.error);position=detail.point||{x:80,y:100};}
+ if(item.engine==='skill'&&item.params.session_file)return api.insertSession(item.params.session_file,position);
  const node={id:window.crypto.randomUUID(),type:item.engine,item:item.id,title:item.title,pure:item.pure===true,budget:copy(item.budget||{}),...(item.loop?{loop:copy(item.loop)}:{}),params:copy(item.params),...(item.paramDefs?{paramDefs:copy(item.paramDefs)}:{}),position:{x:position.x,y:position.y??100}};
  fileEdit(d=>d.nodes.push(node),[node.id]);return state.graph.nodes.find(n=>n.id===node.id);
 };
@@ -1798,7 +1828,7 @@ api.ready=(async()=>{
  try{
   await api.refreshLibraryPorts();
   const initialFile=await sessionRequest('initial');
-  if(initialFile?.document){sessionDocument=copy(initialFile.document);sessionPath=initialFile.path||'';sessionRevision=sessionDocument.properties?.revision||0;projectFile();}
+  if(initialFile?.document){sessionDocument=copy(initialFile.document);sessionPath=initialFile.path||'';sessionRevision=sessionDocument.properties?.revision||0;if(initialFile.migrationDocument)fileHistory.push(copy(initialFile.migrationDocument));projectFile();}
   else await api.newSession();
  }catch(error){notice(error.message||String(error));try{await api.newSession();}catch(inner){notice(inner.message||String(inner));}}
  publish({learning:{...state.learning,layer:'Host'},connectionNotice:state.connectionNotice||''});

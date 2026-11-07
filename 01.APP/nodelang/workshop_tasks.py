@@ -314,9 +314,14 @@ def declared(history, root, request_id, title, status, owner, label, project="")
                                         + str(existing.get("created_at") or "")).encode()).hexdigest()[:32]
         if get(history, archive) is None:
             _write(history, "INSERT INTO workshop_tasks(id,title,status,owner,owner_label,result,created_by,"
-                   "created_at,updated_at,purpose,project) VALUES(?,?,'done',?,?,?,?,?,?,?,?)",
+                   "created_at,updated_at,purpose,project,session_path) VALUES(?,?,'done',?,?,?,?,?,?,?,?,?)",
                    (archive, existing["title"], existing["owner"], existing["owner_label"], "closed: new purpose",
-                    existing["created_by"], existing["created_at"], _now(), existing.get("purpose"), existing.get("project")))
+                    existing["created_by"], existing["created_at"], _now(), existing.get("purpose"), existing.get("project"), existing.get('session_path')))
+        if existing.get('session_path'):
+            from .session_files import read_document
+            old_path = existing['session_path']
+            _stamp(old_path, archive, read_document(old_path))
+        _write(history, 'UPDATE workshop_tasks SET session_path=NULL,created_at=? WHERE id=?', (_now(), task))
         if existing["status"] == "done":
             _write(history, "UPDATE workshop_tasks SET status='open', owner=NULL, owner_label=NULL, lease_until=NULL, "
                    "result=NULL, updated_at=?, revision=revision+1 WHERE id=? AND status='done'", (_now(), task))
@@ -339,7 +344,7 @@ def record_step(history, task, owner, label, title, status, result=""):
     row = get(history, task)
     path = row.get('session_path')
     if not path:
-        path = _start_session(task, row['title'])
+        path = _start_session(task, row['title'], purpose=row.get('purpose') or '', generation=row['created_at'])
         _bind_session(history, task, row['revision'], path)
     message = latest_agent_message(history, label + ' [' + owner + ']')
     declaration = None
@@ -371,7 +376,7 @@ def record_step(history, task, owner, label, title, status, result=""):
             node['params']['display_name'] = declaration[1] or label
         if message:
             node['params'].update(message_id=message[0], last_message=message[1], message_at=message[2])
-        from .agent_work import project, redact
+        from .agent_work import project, redact, _tool
         from .agent_status import read_transcript
         import json
         detail = json.loads(declaration[2]) if declaration else {}
@@ -379,8 +384,31 @@ def record_step(history, task, owner, label, title, status, result=""):
             transcript = read_transcript(detail.get('runtime'), detail.get('native_session_id'))
         except (OSError, ValueError):
             transcript = {}
+        calls = transcript.get('calls', [])
+        selected, belongs = [], False
+        for call in calls:
+            if _tool(call) == 'declare':
+                request = call.get('input', {}).get('request_id') if isinstance(call.get('input'), dict) else None
+                if request:
+                    belongs = request in (task, row.get('purpose'))
+            if belongs:
+                selected.append(call)
+        transcript = {**transcript, 'calls': selected}
+        detail['task_id'] = task
         # A session owns the real tool steps; old no-detail sessions keep their existing card.
         project(document, node, detail, transcript)
+        foreign = {n['id'] for n in document['nodes'] if n.get('agentWork', {}).get('role') == 'step'
+                   and n['agentWork'].get('owner') == node['id'] and n['agentWork'].get('task') != task}
+        if foreign:
+            from .session_files import checkpoint_document
+            checkpoint_document(document, 'Before separating task steps')
+            document['nodes'] = [n for n in document['nodes'] if n['id'] not in foreign]
+            document['wires'] = [w for w in document['wires'] if w['from']['node'] not in foreign and w['to']['node'] not in foreign]
+            for group in document['groups']:
+                group['nodes'] = [identity for identity in group['nodes'] if identity not in foreign]
+            for group in document['nodes']:
+                if 'children' in group:
+                    group['children'] = [identity for identity in group['children'] if identity not in foreign]
         node['params'] = redact(node['params'])
         node['title'] = redact(node['title'])
         return []
@@ -740,12 +768,12 @@ def session_filename(task):
     return (task if safe else 'task-' + sha256(task.encode()).hexdigest()) + '.archhub'
 
 
-def _start_session(task, title, zoom=1):
+def _start_session(task, title, zoom=1, *, purpose='', generation=''):
     from . import canvas_documents
     from .session_files import document_path, sessions_directory
     directory = sessions_directory()
-    identity = 'task-' + sha256(task.encode()).hexdigest()
-    path = directory / session_filename(task)
+    identity = 'task-' + sha256((task + ('\0' + purpose + '\0' + generation if purpose else '')).encode()).hexdigest()
+    path = directory / session_filename(identity if purpose else task)
     if not path.exists():
         path = document_path(directory, {'id': identity, 'title': title})
     creating = not path.exists()
@@ -770,9 +798,9 @@ def backfill_sessions(history):
     """Prepare files without a mailbox write lock, then bind all missing rows atomically."""
     _ensure(history)
     missing = history._db.execute(
-        "SELECT id,title FROM workshop_tasks WHERE session_path IS NULL OR trim(session_path)=''"
+        "SELECT id,title,purpose,created_at FROM workshop_tasks WHERE session_path IS NULL OR trim(session_path)=''"
     ).fetchall()
-    prepared = [(task, _start_session(task, title)) for task, title in missing]
+    prepared = [(task, _start_session(task, title, purpose=purpose or '', generation=created)) for task, title, purpose, created in missing]
     if not prepared:
         return 0
     changed = 0
@@ -819,7 +847,7 @@ def open_session(history, task, path=None, *, select=True, zoom=1):
         document = _stamp(target, task, document)
         _bind_session(history, task, row.get("revision"), target)
         return _show(task, target, document, select=select)
-    target = _start_session(task, row['title'], zoom)
+    target = _start_session(task, row['title'], zoom, purpose=row.get('purpose') or '', generation=row['created_at'])
     document = read_document(target)
     _bind_session(history, task, row.get("revision"), target)
     return _show(task, target, document, select=select)

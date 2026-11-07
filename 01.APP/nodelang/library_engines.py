@@ -2381,7 +2381,7 @@ def _skill_entry(loaded, items):
         "title": skill["title"],
         "sub": "Session · %d nodes" % len(skill["nodes"]),
         "engine": "skill",
-        "params": {"skill": skill["id"]},
+        "params": {"skill": skill["id"], "session_file": str(path)},
         "path": str(path),
         "ports": ports,
     }

@@ -75,6 +75,18 @@ def main():
                     with application_history() as history:
                         held=tasks.get(history,task['taskId'])
                     answer['steps']=[{'title':n['title'],'status':n['params'].get('status'),'result':n['params'].get('result')} for n in read_document(held['session_path'])['nodes'] if n['type']=='thing.agent']
+                elif command['action']=='legacy':
+                    from nodelang.session_files import SessionFiles,new_document,write_document
+                    document=new_document('Legacy task composition')
+                    for key in ('a','b'):
+                        document['nodes'].extend([
+                            {'id':key,'type':'thing.agent','title':'Legacy '+key,'params':{'session':key},'agentWork':{'role':'session'},'position':{'x':0,'y':0}},
+                            {'id':key+'-step','type':'note','title':'Step '+key,'params':{},'agentWork':{'role':'step','owner':key},'position':{'x':300,'y':0}}])
+                    document['groups']=[{'id':'frame','nodes':['a-step','b-step']}]
+                    document['notes']=[{'id':'annotation','text':'Retained migration annotation'}]
+                    path=SessionFiles().directory/'Legacy task composition.archhub'
+                    write_document(path,document)
+                    answer={'path':str(path),'nodes':[n['id'] for n in document['nodes']],'groups':document['groups'],'notes':document['notes']}
                 elif command['action']=='empty':
                     with application_history() as history:
                         history._db.execute("UPDATE workshop_declarations SET record=json_set(record,'$.status','done')")
@@ -110,6 +122,12 @@ main()
     const context=await browser.newContext({viewport:{width:1366,height:768}});
     await context.addCookies([{name:'archhub_studio',value:input.cookie,url:input.url}]);
     const page=await context.newPage(), errors=[];
+    // Input stays inside this private headless page, using the existing design court's CDP path.
+    const inputSession=await context.newCDPSession(page);
+    const key=async(name,code,modifiers=0)=>{
+      await inputSession.send('Input.dispatchKeyEvent',{type:'keyDown',key:name,code:name,windowsVirtualKeyCode:code,modifiers,...(name==='Enter'?{text:String.fromCharCode(13)}:{})});
+      await inputSession.send('Input.dispatchKeyEvent',{type:'keyUp',key:name,code:name,windowsVirtualKeyCode:code,modifiers});
+    };
     page.on('pageerror',error=>errors.push(error.message));
     await page.goto(input.url);
     await page.locator('[data-home-ready]').waitFor({state:'attached',timeout:60000});
@@ -117,18 +135,18 @@ main()
     const view=page.locator('[data-screen="agents"]');
     await view.locator('[data-agent-session]').first().waitFor();
     assert.equal(await view.locator('[data-agent-session]').count(),5);
-    assert.equal(await view.locator('[data-agent-task]').count(),2);
-    assert.equal(await view.locator('[data-graph-wire]').count(),3);
-    await view.getByText('Waiting for you',{exact:true}).waitFor();
-    await view.getByText('No task',{exact:true}).waitFor();
+    assert.ok(await view.locator('[data-agent-task]').count()>=2);
+    assert.equal(await view.locator('[data-graph-wire]').count(),0);
+    await view.getByText(/Waiting for you/).first().waitFor();
+    await view.getByText(/No task/).first().waitFor();
     await view.getByText('No workflow file',{exact:true}).waitFor();
     assert.equal(await view.getByRole('button',{name:'Run',exact:true}).count(),0);
     for(const [width,height] of [[1366,768],[1680,893]]){
       await page.setViewportSize({width,height});
-      await view.getByRole('button',{name:'Fit',exact:true}).click();
+      assert.equal(await view.locator('[data-graph-node]').count(),0);
       await page.screenshot({path:`05.EVIDENCE/agentcanvas/agents-${width}.png`});
     }
-    console.log('PASS Agents: 5 live sessions, fan-in task wires, waiting/unassigned/missing-file states, no Run; both design viewports');
+    console.log('PASS Agents: live session list opens task files; no shared canvas or wires; waiting/unassigned/missing-file states; both viewports');
     for(const vendor of ['Codex','Claude']){
       await view.locator('[data-agent-session]').filter({hasText:'Fixture '+(vendor==='Codex'?0:1)}).getByRole('button',{name:'Open transcript',exact:true}).click();
       await page.getByRole('dialog',{name:'Agent transcript'}).getByText('Native '+vendor+' transcript text',{exact:true}).waitFor();
@@ -159,6 +177,39 @@ main()
       await page.screenshot({path:`05.EVIDENCE/agentcanvas/steps-${width}.png`});
     }
     console.log('PASS task_complete() records declared done status and commit; Start plus 3 real thing.agent steps');
+    const linked=await page.evaluate(async()=>{
+      const api=window.ArchHubAPI, child=api.getSessionPath(), before=api.getSessionDocument();
+      await api.newSession('Composition');await api.saveSession();
+      const parent=api.getSessionPath();await api.refreshLibraryPorts();
+      const item=api.getSnapshot().libraryPorts.find(row=>row.path===child);
+      const node=await api.addNode(item.id,{x:80,y:100});await api.saveSession();
+      return {child,parent,node:node.id,before:before.nodes.length};
+    });
+    assert.equal(await page.locator('.react-flow__node').count(),1);
+    await page.locator(`.react-flow__node[data-id="${linked.node}"]`).dblclick();
+    await page.getByRole('button',{name:'Parent session',exact:true}).waitFor();
+    assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSessionPath()),linked.child);
+    assert.equal(await page.locator('.react-flow__node').count(),linked.before);
+    await page.evaluate(async()=>{await window.ArchHubAPI.renameNode('start','Edited inside session');await window.ArchHubAPI.saveSession();});
+    await page.getByRole('button',{name:'Parent session',exact:true}).click();
+    await page.waitForFunction(parent=>window.ArchHubAPI.getSessionPath()===parent,linked.parent);
+    assert.equal(await page.locator('.react-flow__node').count(),1);
+    const card=page.locator(`.react-flow__node[data-id="${linked.node}"]`);
+    await card.click();await key('Enter',13);
+    await page.getByRole('button',{name:'Parent session',exact:true}).waitFor();
+    await page.locator('.node-canvas').focus();await key('Escape',27);
+    await page.waitForFunction(parent=>window.ArchHubAPI.getSessionPath()===parent,linked.parent);
+    assert.equal(await page.locator('.react-flow__node').count(),1);
+    console.log('PASS linked session: one group, double-click/Enter, original file edits, breadcrumb/Escape return');
+    const legacy=await command('legacy');
+    await page.evaluate(path=>window.ArchHubAPI.openSession(path),legacy.path);
+    assert.equal(await page.locator('.react-flow__node').count(),2);
+    await page.locator('.node-canvas').focus();await key('z',90,2);
+    await page.waitForFunction(()=>window.ArchHubAPI.getSessionDocument().nodes.length===4);
+    const recovered=await page.evaluate(async()=>{await window.ArchHubAPI.saveSession();return window.ArchHubAPI.getSessionDocument();});
+    assert.deepEqual(recovered.nodes.map(n=>n.id).sort(),legacy.nodes.sort());
+    assert.deepEqual(recovered.groups,legacy.groups);assert.deepEqual(recovered.notes,legacy.notes);
+    console.log('PASS automatic legacy migration is undoable through real CtrlZ with group membership and notes restored');
     await command('empty');
     await page.getByRole('button',{name:'Home',exact:true}).click();
     await page.getByRole('button',{name:/^Agents \d+$/}).click();

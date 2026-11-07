@@ -36,7 +36,7 @@ def _summary(document, solved=None):
     ports = {item['id']: item['ports'] for item in catalogue()}
     from .node_params import bound_value, ports as node_ports, PARAM_ENGINE
     for node, source in zip(nodes, document['nodes']):
-        held = node_ports(source, ports.get(source.get('item')) or {})
+        held = node_ports(source, source.get('ports') or ports.get(source.get('item')) or {})
         node['sockets'] = {'in': [p['id'] + ':' + p.get('type', 'any') for p in held['target']],
                            'out': [p['id'] + ':' + p.get('type', 'any') for p in held['source']]}
         if source.get('paramDefs'):
@@ -111,6 +111,11 @@ def register_canvas_tools(server):
                 **({'paramDefs': [dict(row) for row in item['paramDefs']]} if item.get('paramDefs') else {}),
                 'position': {'x': float(x), 'y': float(y)}}
         def change(document):
+            if node['type'] == 'skill' and node['params'].get('session_file'):
+                from .session_files import insert_session
+                placed = insert_session(document, node['params']['session_file'], x, y)
+                node['id'] = placed['id']
+                return [placed['id']]
             document['nodes'].append(node)
             return [node['id']]
         document, solved = docs.edit(_path(path), _who(ctx), 'add %s' % item['title'], change)
@@ -122,8 +127,8 @@ def register_canvas_tools(server):
         def change(document):
             (a, out), (b, inp) = _end(document, source), _end(document, target)
             from .node_params import compatible, ports as node_ports
-            ports_a = node_ports(a, _item(a.get('item') or a['type'])['ports'])
-            ports_b = node_ports(b, _item(b.get('item') or b['type'])['ports'])
+            ports_a = node_ports(a, a.get('ports') or _item(a.get('item') or a['type'])['ports'])
+            ports_b = node_ports(b, b.get('ports') or _item(b.get('item') or b['type'])['ports'])
             outs = {p['id']: p.get('type', 'any') for p in ports_a['source']}
             ins = {p['id']: p.get('type', 'any') for p in ports_b['target']}
             if out not in outs or inp not in ins:

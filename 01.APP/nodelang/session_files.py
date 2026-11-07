@@ -202,7 +202,7 @@ def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, de
     if engine in THING_ENGINES:
         return run_thing(engine, params, feeds)
     if engine == 'skill':
-        return run_skill(params, invoke=invoke, stopped=stopped, depth=depth, feeds=feeds)
+        return run_skill({**params, 'called_by': document['title']}, invoke=invoke, stopped=stopped, depth=depth, feeds=feeds)
     if engine == 'note':
         return {}, node.get('title', 'Note')
     if engine in STEM_RUN_ENGINES:
@@ -357,24 +357,29 @@ def write_document(path, document):
     return str(target)
 
 
-def checkpoint(path, label=None):
-    """Keep a non-recursive document snapshot in its own portable file."""
+def checkpoint_document(document, label=None):
+    """Append a non-recursive checkpoint while the caller holds this document's edit lock."""
     import copy
     from datetime import datetime, timezone
-    saved = None
+    snapshot = copy.deepcopy(document)
+    props = snapshot.setdefault('properties', {})
+    for key in ('checkpoints', 'history', 'revision'):
+        props.pop(key, None)
+    at = datetime.now(timezone.utc).isoformat()
+    title = label if label is not None else 'Checkpoint ' + at
+    if not isinstance(title, str) or not title.strip() or len(title) > 200:
+        raise ValueError('Checkpoint label must be 1 to 200 characters')
+    saved = {'id': str(uuid4()), 'title': title.strip(), 'at': at}
+    document.setdefault('properties', {}).setdefault('checkpoints', []).append({**saved, 'document': snapshot})
+    return saved
 
+
+def checkpoint(path, label=None):
+    """Keep a non-recursive document snapshot in its own portable file."""
+    saved = None
     def change(document):
         nonlocal saved
-        snapshot = copy.deepcopy(document)
-        props = snapshot.setdefault('properties', {})
-        for key in ('checkpoints', 'history', 'revision'):
-            props.pop(key, None)
-        at = datetime.now(timezone.utc).isoformat()
-        title = label if label is not None else 'Checkpoint ' + at
-        if not isinstance(title, str) or not title.strip() or len(title) > 200:
-            raise ValueError('Checkpoint label must be 1 to 200 characters')
-        saved = {'id': str(uuid4()), 'title': title.strip(), 'at': at}
-        document.setdefault('properties', {}).setdefault('checkpoints', []).append({**saved, 'document': snapshot})
+        saved = checkpoint_document(document, label)
 
     canvas_documents.edit(path, 'You', 'save checkpoint', change, solve_changed=False)
     return saved
@@ -794,6 +799,10 @@ def skill_ports(skill, items=()):
         for port in node_ports(n, entry.get('ports') or {})['source']:
             source.append({'id': 'out:%s:%s' % (n['id'], port['id']), 'type': port.get('type', 'any'),
                            'label': '%s · %s' % (n.get('title') or n['type'], port.get('label') or port['id'])})
+    for side, ports in (('source', source), ('target', target)):
+        for port in skill.get('properties', {}).get('sessionPorts', {}).get(side, []):
+            if not any(p['id'] == port['id'] for p in ports):
+                ports.append(dict(port))
     return {'source': source, 'target': target}
 
 
@@ -804,16 +813,42 @@ def run_skill(params, *, invoke, stopped, depth, feeds=None):
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', name):
         raise ValueError('Skill id is invalid')
     from .node_params import PARAM_ENGINE, coerce
-    skill = next((row['skill'] for row in load_skills() if row['skill']['id'] == name), None)
+    path = params.get('session_file')
+    if path:
+        path, skill = linked_session(params)
+    else:
+        skill = next((row['skill'] for row in load_skills() if row['skill']['id'] == name), None)
     if skill is None:
         raise ValueError('Saved session is unavailable')
+    original = {n['id']: dict(n['params']) for n in skill['nodes']}
     inputs = {n['id']: n for n in skill['nodes'] if n['type'] == PARAM_ENGINE and not n.get('bind')}
     for socket, value in (feeds or {}).items():
         held = inputs.get(str(socket)[3:]) if str(socket).startswith('in:') else None
         if held is None:
-            raise ValueError('This skill has no input %s' % socket)
+            endpoint = []
+            for node in skill['nodes']:
+                prefix = 'in:' + node['id'] + ':'
+                if str(socket).startswith(prefix):
+                    endpoint = [node['id'], str(socket)[len(prefix):]]
+                    break
+            if len(endpoint) != 2 or not any(n['id'] == endpoint[0] for n in skill['nodes']):
+                raise ValueError('This skill has no input %s' % socket)
+            identity = 'input-' + hashlib.sha256(str(socket).encode()).hexdigest()[:24]
+            skill['nodes'].append({'id': identity, 'type': PARAM_ENGINE, 'params': {'type': 'json', 'value': value}, 'position': {'x': 0, 'y': 0}})
+            skill['wires'] = [w for w in skill['wires'] if w['to'] != {'node': endpoint[0], 'socket': endpoint[1]}]
+            skill['wires'].append({'id': identity, 'from': {'node': identity, 'socket': 'value'}, 'to': {'node': endpoint[0], 'socket': endpoint[1]}})
+            continue
         held['params']['value'] = coerce(held['params'].get('type', 'json'), value)   # a wired value sets the inner Parameter
     inner = run_document(skill, invoke=invoke, stopped=stopped, depth=depth+1)
+    if path:
+        def record(document):
+            for node in document['nodes']:
+                if node['id'] in inner['results'] and node['params'] == original.get(node['id']):
+                    node['result'] = inner['results'][node['id']]
+            return []
+        canvas_documents.edit(path, 'Session', 'called by ' + str(params.get('called_by') or 'canvas'), record, solve_changed=False, always_record=True)
+    if inner.get('approvalId'):
+        return {'approvalId': inner['approvalId']}, 'Waiting for approval'
     if not inner['succeeded']:
         raise ValueError('Skill failed: '+'; '.join(r.get('error','') for r in inner['results'].values() if r.get('error')))
     last = inner['results'][inner['order'][-1]]['output'] if inner['order'] else {}
@@ -824,6 +859,136 @@ def run_skill(params, *, invoke, stopped, depth, feeds=None):
     return produced, 'Skill ran %d nodes' % len(inner['order'])
 
 
+def linked_session(params):
+    """Follow identity across APPTIDY renames; never execute a replacement at an old path."""
+    path = local_path(params.get('session_file'))
+    try:
+        document = read_document(path)
+    except FileNotFoundError:
+        matches = [row for row in load_skills() if row['skill']['id'] == params.get('skill')]
+        if len(matches) != 1:
+            raise ValueError('Linked session is missing or ambiguous')
+        path, document = matches[0]['path'], matches[0]['skill']
+    if document['id'] != params.get('skill'):
+        raise ValueError('Linked session identity changed')
+    return str(path), document
+
+
+def check_session_links(document, ancestors=frozenset(), visited=None):
+    """Refuse linked recursion before any effect, including files changed since placement."""
+    visited = set() if visited is None else visited
+    if document['id'] in ancestors:
+        raise ValueError('Cycle detected in linked sessions')
+    if len(ancestors) > 8 or len(visited) > 128:
+        raise ValueError('Linked sessions exceed 8 levels or 128 files')
+    if document['id'] in visited:
+        return
+    for node in document['nodes']:
+        if node['type'] == 'skill' and node['params'].get('session_file'):
+            check_session_links(linked_session(node['params'])[1], ancestors | {document['id']}, visited)
+    visited.add(document['id'])
+
+
+def insert_session(document, path, x=80, y=100):
+    """One linked group; the referenced document remains the owner of its graph."""
+    from uuid import uuid4
+    document = validate(document)
+    path = local_path(path)
+    child = read_document(path)
+    check_session_links(child, {document['id']})
+    node = {'id': str(uuid4()), 'type': 'skill', 'title': child['title'], 'children': [],
+            'params': {'skill': child['id'], 'session_file': str(path)},
+            'ports': skill_ports(child, catalogue()), 'position': {'x': x, 'y': y}}
+    document['nodes'].append(node)
+    return node
+
+
+def split_sessions(path):
+    """Replace legacy session islands with references, retaining the source in Undo."""
+    import copy
+    path = local_path(path)
+    saved = []
+    source = read_document(path)
+    if source.get('properties', {}).get('taskContext') or sum(
+            n.get('agentWork', {}).get('role') == 'session' or n['type'] == 'thing.agent' and bool(n['params'].get('session'))
+            for n in source['nodes']) < 2:
+        return saved
+    checkpoint(path, 'Before splitting task sessions')
+    def split(document):
+        sessions = [n for n in document['nodes'] if n.get('agentWork', {}).get('role') == 'session'
+                    or n['type'] == 'thing.agent' and n['params'].get('session')]
+        if len(sessions) < 2:
+            return []
+        ownership = {}
+        for session in sessions:
+            ownership[session['id']] = session['id']
+        changed = True
+        while changed:
+            changed = False
+            for node in document['nodes']:
+                owner = ownership.get(node.get('agentWork', {}).get('owner') or node.get('parent'))
+                if owner and node['id'] not in ownership:
+                    ownership[node['id']] = owner
+                    changed = True
+        replacements, crossings = {}, []
+        for session in sessions:
+            ids = {key for key, owner in ownership.items() if owner == session['id']}
+            child = new_document(session.get('title') or 'Session')
+            child['id'] = 'session-' + hashlib.sha256((document['id'] + '\0' + session['id']).encode()).hexdigest()[:32]
+            child['nodes'] = copy.deepcopy([n for n in document['nodes'] if n['id'] in ids])
+            for node in child['nodes']:
+                if node.get('parent') not in ids:
+                    node.pop('parent', None)
+            child['wires'] = copy.deepcopy([w for w in document['wires'] if w['from']['node'] in ids and w['to']['node'] in ids])
+            child['groups'] = [copy.deepcopy(g) for g in document['groups'] if g['id'] in ids and set(g['nodes']) <= ids]
+            ports = skill_ports(child, catalogue())
+            for wire in document['wires']:
+                for side, other, direction in (('from', 'to', 'source'), ('to', 'from', 'target')):
+                    if wire[side]['node'] in ids and wire[other]['node'] not in ids:
+                        endpoint = wire[side]
+                        socket = ('out:' if side == 'from' else 'in:') + endpoint['node'] + ':' + endpoint['socket']
+                        if not any(p['id'] == socket for p in ports[direction]):
+                            ports[direction].append({'id': socket, 'type': 'any', 'label': endpoint['socket']})
+            child.setdefault('properties', {})['sessionPorts'] = ports
+            target = document_path(path.parent, child)
+            if target.exists():
+                existing = read_document(target)
+                if existing['nodes'] != child['nodes'] or existing['wires'] != child['wires']:
+                    raise ValueError('Migration destination contains different work')
+            else:
+                write_document(target, child)
+            group = {'id': session['id'], 'type': 'skill', 'title': child['title'], 'children': [],
+                     'params': {'skill': child['id'], 'session_file': str(target)},
+                     'position': dict(session['position']), 'ports': ports}
+            replacements[session['id']] = group
+            saved.append(str(target))
+        for wire in document['wires']:
+            a, b = ownership.get(wire['from']['node']), ownership.get(wire['to']['node'])
+            if a and a == b:
+                continue
+            wire = copy.deepcopy(wire)
+            for side, owner in (('from', a), ('to', b)):
+                if owner:
+                    endpoint = wire[side]
+                    socket = ('out:' if side == 'from' else 'in:') + endpoint['node'] + ':' + endpoint['socket']
+                    ports = replacements[owner]['ports']['source' if side == 'from' else 'target']
+                    if not any(p['id'] == socket for p in ports):
+                        ports.append({'id': socket, 'type': 'any', 'label': endpoint['socket']})
+                    wire[side] = {'node': owner, 'socket': socket}
+            crossings.append(wire)
+        document['nodes'] = [replacements[n['id']] if n['id'] in replacements else n for n in document['nodes']
+                             if n['id'] not in ownership or n['id'] in replacements]
+        document['wires'] = crossings
+        document['groups'] = [{**g, 'nodes': list(dict.fromkeys(ownership.get(n, n) for n in g['nodes']))}
+                              for g in document['groups'] if g['id'] not in ownership]
+        for node in document['nodes']:
+            if node.get('children'):
+                node['children'] = list(dict.fromkeys(ownership.get(n, n) for n in node['children']))
+        return []
+    canvas_documents.edit(path, 'Migration', 'split task sessions (Undo restores shared canvas)', split, solve_changed=False)
+    return saved
+
+
 def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, plan_only=False, cached=(), only=None):
     """Validate the whole plan before invoking existing engines in wire order."""
     from collections import deque
@@ -831,6 +996,8 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
     from .pipeline_engines import PIPELINE_ENGINES
     from .stem_graph_evaluation import longest_each_plans, collect_each_runs, each_fault
     validate(document)
+    if not plan_only and only is None:
+        check_session_links(document)
     nodes = {n['id']: n for n in document['nodes']}
     incoming = {key: [] for key in nodes}
     outgoing = {key: [] for key in nodes}
@@ -882,7 +1049,8 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
             raise ValueError('Library item and engine disagree')
         if entry:
             for side, wires, end in [('source', outgoing[key], 'from'), ('target', incoming[key], 'to')]:
-                sockets = {p['id'] for p in node_ports(node, entry['ports'])[side]}
+                base = node.get('ports') if engine == 'skill' else None
+                sockets = {p['id'] for p in node_ports(node, base or entry['ports'])[side]}
                 if any(wire[end]['socket'] not in sockets for wire in wires):
                     raise ValueError('Unknown socket on '+node.get('title',key))
     outputs, results = {}, {}
@@ -1067,6 +1235,48 @@ class SessionFiles:
         if not isinstance(body,dict) or not isinstance(body.get('action'),str):
             raise ValueError('Session file action is required')
         action = body['action']
+        if action == 'resolve-session':
+            path, document = linked_session(body.get('params') or {})
+            return {'ok': True, 'path': path, 'document': document}
+        if action == 'detach-session':
+            document = validate(body.get('document'))
+            node = next((n for n in document['nodes'] if n['id'] == body.get('node')), None)
+            if not node or node['type'] != 'skill' or not node['params'].get('session_file'):
+                raise ValueError('Choose a linked session group')
+            _, child = linked_session(node['params'])
+            child['id'], child['title'] = str(uuid4()), child['title'] + ' copy'
+            for key in ('taskContext', 'history', 'revision', 'checkpoints'):
+                child.get('properties', {}).pop(key, None)
+            check_session_links(child, {document['id']})
+            path = write_document(document_path(self.directory, child), child)
+            node['params'] = {'skill': child['id'], 'session_file': path}
+            node['title'], node['ports'] = child['title'], skill_ports(child, catalogue())
+            return {'ok': True, 'document': document, 'path': path}
+        if action == 'insert-session':
+            document = validate(body.get('document'))
+            node = insert_session(document, body.get('session'), body.get('x', 80), body.get('y', 100))
+            return {'ok': True, 'document': validate(document), 'node': node['id']}
+        if action == 'split-sessions':
+            return {'ok': True, 'sessions': split_sessions(body.get('path'))}
+        if action == 'add-automation':
+            identity = str(uuid4())
+            trigger = body.get('trigger', 'manual')
+            if trigger not in ('manual', 'schedule', 'file-change', 'host-event'):
+                raise ValueError('Choose a supported trigger')
+            item_id = {'manual': 'tr_manual', 'schedule': 'tr_schedule', 'file-change': 'tr_file', 'host-event': 'tr_host'}[trigger]
+            item = next(i for i in catalogue() if i['id'] == item_id)
+            def automate(document):
+                target = next((n for n in document['nodes'] if n['id'] == 'start'), None)
+                if target is None:
+                    raise ValueError('Choose a task session with a Start input')
+                document['nodes'].append({'id': identity, 'type': item['engine'], 'item': item['id'], 'title': item['title'],
+                    'params': dict(item['params']), 'position': {'x': target['position']['x'] - 300, 'y': target['position']['y']}})
+                document['wires'] = [w for w in document['wires'] if w['to'] != {'node': target['id'], 'socket': 'value'}]
+                document['wires'].append({'id': 'trigger-' + identity, 'from': {'node': identity, 'socket': 'fire'},
+                                          'to': {'node': target['id'], 'socket': 'value'}})
+                return [identity]
+            document, _ = canvas_documents.edit(local_path(body.get('path')), 'You', 'add automation trigger', automate)
+            return {'ok': True, 'document': document, 'node': identity}
         if action in ('open', 'initial'):
             from .enforce import guard_effect
             invoke = invoke or guard_effect
@@ -1080,9 +1290,13 @@ class SessionFiles:
             with _METADATA_LOCK:
                 held = json.loads(current.read_text(encoding='utf-8')) if current.exists() else {}
             recovery = Path(held['path']) if held.get('path') else self.directory/(held['id']+'.archhub') if held else self.directory/'autosave.archhub'
-            document = read_document(launch) if launch else read_document(recovery) if recovery.exists() else new_document()
+            selected_path = Path(launch) if launch else recovery
+            before_migration = read_document(selected_path) if selected_path.exists() else None
+            migrated = split_sessions(str(selected_path)) if before_migration else []
+            document = read_document(selected_path) if before_migration else new_document()
             canvas_documents.solve(document, [n['id'] for n in document['nodes']], invoke=invoke, stopped=stopped)
-            return {'ok':True,'document':document,'path':str(launch or held.get('path', ''))}
+            return {'ok':True,'document':document,'path':str(launch or held.get('path', '')),
+                    **({'migrationDocument': before_migration} if migrated else {})}
         if action == 'starter':
             # A built-in starter becomes the founder's own new session file (the starter itself never changes).
             from .starters import document as starter_document
@@ -1100,11 +1314,14 @@ class SessionFiles:
                 return {'ok':True,'cancelled':True}
             if not str(path).lower().endswith('.archhub'):
                 return self.import_file(path)
+            before_migration = read_document(path)
+            migrated = split_sessions(path)
             document = read_document(path)
             canvas_documents.solve(document, [n['id'] for n in document['nodes']], invoke=invoke, stopped=stopped)
             self.remember(local_path(path),document)
             self._current(document['id'], path)
-            return {'ok':True,'document':document,'path':str(local_path(path))}
+            return {'ok':True,'document':document,'path':str(local_path(path)),
+                    **({'migrationDocument': before_migration} if migrated else {})}
         if action in ('save','autosave'):
             document = validate(body.get('document'))
             if not re.fullmatch(r'[A-Za-z0-9_-]{1,128}',document['id']):
@@ -1141,7 +1358,7 @@ class SessionFiles:
             document = validate(body.get('document'))
             if not re.fullmatch(r'[A-Za-z0-9_-]{1,128}',document['id']):
                 raise ValueError('Skill id must be a portable filename identifier')
-            return self.dispatch({'action':'save', 'document':document})
+            return self.dispatch({'action':'save', 'document':document, **({'path': body['path']} if body.get('path') else {})})
         if action == 'param-op':
             # One implementation of typed parameters for the window and the agents (node_params.py).
             from . import node_params

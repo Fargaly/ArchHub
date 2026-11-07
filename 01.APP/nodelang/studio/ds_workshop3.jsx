@@ -62,7 +62,7 @@
         select();
         executeAction("ui.show", u, 'Task details', {id: task.id});
       }
-    }} draggable onDragStart={e => e.dataTransfer.setData('task', task.id)}>
+    }} draggable onDragStart={e => {e.dataTransfer.setData('task', task.id);if(task.sessionPath)e.dataTransfer.setData('session',task.sessionPath);}}>
       <span className="ws-task-icon" aria-hidden="true">{String(task.title || '?').trim().charAt(0).toUpperCase()}</span><div className="ws-task-line"><span className="ws-task-title">{task.title}</span>{(ownerName || task.owner) && <span className="ws-small ws-task-owner">{ownerName || task.owner}</span>}<span className="ws-task-state" style={{color: color(task.status)}}>{statusText(task.status)}</span>{rowNote(task) && <span className="ws-small" data-task-row-state={rowNote(task)}>{rowNote(task)}</span>}</div>
       {a && <div data-agent-activity role="status" className="ws-activity">
         {a.sessions.map(row => <div key={row.provider + ':' + row.session} title={row.session}>

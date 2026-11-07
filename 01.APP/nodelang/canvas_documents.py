@@ -535,7 +535,8 @@ def _stamp(document, before, by, op):
     strip = lambda n: {k: v for k, v in n.items() if k != 'result'} if n else None
     undo = {'nodes': {i: old_nodes.get(i) for i in set(old_nodes) | set(new_nodes) if strip(old_nodes.get(i)) != strip(new_nodes.get(i))},
             'wires': {i: old_wires.get(i) for i in set(old_wires) | set(new_wires) if old_wires.get(i) != new_wires.get(i)},
-            'title': (before or {}).get('title')}
+            'title': (before or {}).get('title'),
+            **{key: copy.deepcopy(before[key]) for key in ('groups', 'notes') if before is not None and before.get(key) != document.get(key)}}
     history = [row for row in (before or {}).get('properties', {}).get('history', [])][-(DOCUMENT_NODE['params']['history_limit'] - 1):]
     history.append({'revision': props['revision'], 'by': str(by)[:120], 'op': str(op)[:200],
                     'at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), 'undo': undo})
@@ -548,7 +549,7 @@ def read(path):
     return read_document(path)
 
 
-def edit(path, by, op, change, *, create_title=None, solve_changed=True):
+def edit(path, by, op, change, *, create_title=None, solve_changed=True, always_record=False):
     """Read-modify-write one .archhub file atomically; change(doc) returns the ids it touched."""
     from .session_files import new_document, read_document, write_document, validate
     from .enforce import guard_effect
@@ -566,7 +567,7 @@ def edit(path, by, op, change, *, create_title=None, solve_changed=True):
         solved = None
         if solve_changed and touched:
             solved = solve(document, touched, invoke=guard_effect)
-        if not mutated:
+        if not mutated and not always_record:
             return document, solved
         _stamp(document, before, by, op)
         write_document(path, document)
@@ -587,6 +588,9 @@ def undo_last(path, by):
         for key, old in entry['undo']['wires'].items():
             wires.pop(key, None) if old is None else wires.__setitem__(key, old)
         document['nodes'], document['wires'] = list(nodes.values()), list(wires.values())
+        for key in ('groups', 'notes'):
+            if key in entry['undo']:
+                document[key] = copy.deepcopy(entry['undo'][key])
         entry['op'] = 'undo:' + entry['op']
         return [k for k in entry['undo']['nodes'] if k in nodes]
     return edit(path, by, 'undo', change)

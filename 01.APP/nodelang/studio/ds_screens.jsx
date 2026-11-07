@@ -829,6 +829,7 @@
           setSelectedWires([]);
           setWireId(null);
           if (parent) setParent(null);
+          else if ((s.sessionBreadcrumbs||[]).length) u.act(()=>api.leaveSession());
         }
         if (e.ctrlKey && e.key.toLowerCase() === 'a') {
           e.preventDefault();
@@ -1008,6 +1009,7 @@
       return () => {observer.disconnect();window.cancelAnimationFrame(tick);};
     }, [embedded,active,requestState,scope,layout,flowNodes.length]);
     const openNode = n => {
+      if (n.params?.session_file) { setParent(null);setSelected([]);u.act(() => api.enterSession(n.id));return; }
       if (n.kind.toLowerCase().includes('meeting')) u.go('meetings');else if (n.kind === 'Watch program') u.act(() => api.windowAction('hide'));else if (n.kind === 'Present') u.go('present');else if (['Community', 'Community group', 'Marketplace listing', 'Project charge'].includes(n.kind)) u.go('community');else if (n.kind === 'Interface studio' || n.kind === 'UI element') u.go('interface');else if (n.kind.startsWith('TBP ')) u.go('model-review');else if (n.kind === 'Theme') u.go('settings/Appearance');else if (n.kind === 'Workflow link') {
         if (n.params.targetGraph) u.act(() => api.selectGraph(n.params.targetGraph));else u.show('Workflows');
       } else if (n.kind === 'Agent') u.show('Agent', {
@@ -1033,7 +1035,8 @@
     const actionsMenu = <> {more && <div role="menu" aria-label="Canvas actions" data-canvas-more="" onKeyDown={e => { if (e.key === 'Escape') setMore(false); }} style={{position:'absolute',right:0,top:8,display:'grid',minWidth:200,maxHeight:'calc(100% - 16px)',overflow:'auto',padding:6,gap:2,
           background:A.bgPanel,border:'1px solid '+A.lineSoft,borderRadius:6,zIndex:20}}>{[
             ['Add node · Ctrl K', () => executeAction("projects.ds_screens.AddANodeCtrlK.24", {u})], ['New', () => u.act(() => api.newSession())], ['Open…', () => u.act(() => api.openSession())], ['Save · Ctrl S', () => u.act(() => api.saveSession())],
-            ['Save as…', () => u.act(() => api.saveSessionAs())], ['Save as skill…', () => u.show('Save skill')], ['Workspaces · ' + s.workspaces.length, () => u.show('Workspaces')],
+            ['Save as…', () => u.act(() => api.saveSessionAs())], ['Save as workflow', () => u.act(() => api.saveSession())], ['Save as skill…', () => u.show('Save skill')], ['Add automation', () => u.act(() => api.addAutomation())], ['Workspaces · ' + s.workspaces.length, () => u.show('Workspaces')],
+            ['Detach session (copy)', () => u.act(() => api.detachSession(selected[0])), selected.length!==1||!s.graph.nodes.find(n=>n.id===selected[0])?.params.session_file],
             [(u.libraryOpen ? 'Hide' : 'Show') + ' Library', () => u.setLibraryOpen(v => !v)], ['Group · Ctrl G', group, selected.length < 2],
             ['Undo · Ctrl Z', () => u.act(api.undo)], ['Redo · Ctrl Shift Z', () => u.act(api.redo)], ['Arrange', () => u.act(api.arrangeGraph)],
             ['Wires: ' + (s.graph.wireVisibility || 'Visible') + ' → ' + ({Visible: 'Faint', Faint: 'Hidden', Hidden: 'Visible'})[s.graph.wireVisibility || 'Visible'],
@@ -1063,6 +1066,7 @@
         minWidth:0,padding: '6px 12px',borderRadius:6,border:'1px solid '+A.lineSoft,
         background: A.bgPanel, fontSize: 'calc(13px * var(--text-scale,1))'
       }}><div className="flex" style={{minWidth:0}}><button className="button-reset" title={s.graph.name} aria-label="Workflows" style={{minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} onClick={event => executeAction("projects.ds_screens.Graphs.7", {u}, event)}>{s.graph.name} · {s.sessionDirty === false ? 'Saved' : 'Unsaved'}</button>
+        {(s.sessionBreadcrumbs||[]).length>0 && <button type="button" className="dx-quiet" aria-label="Parent session" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.leaveSession())},event)}>{s.sessionBreadcrumbs.map(row=>row.title).join(' / ')} / {s.graph.name} · ← Parent</button>}
         {parent && <Btn variant="controls" sm ghost onClick={event => executeAction("projects.ds_screens.Parent.6", {parent,s,setParent,setSelected}, event)}>← Parent</Btn>}
         {stale > 0 && <span data-solve-status="" style={{color: A.warn}}>{stale} out of date · Run</span>}</div>
       <div className="flex" style={{position:'relative',flexShrink:0}}> <Btn variant="controls" sm ghost aria-label="More canvas actions" aria-expanded={more} onClick={event => executeAction('projects.controls.activate', {handler: () => setMore(!more)}, event)}>⋯</Btn>
@@ -1075,11 +1079,16 @@
         minHeight: 0
       }}>{u.libraryOpen && <window.UI.LibraryShelf onClose={() => u.setLibraryOpen(false)} />}
    <div ref={area} className={'node-canvas' + (visible.some(n => n.status === 'Running') ? ' running-wires' : '')} tabIndex={0} aria-label="Workflow canvas" style={{position:'relative',minHeight:0,'--xy-selection-background-color':A.accent+'16','--xy-selection-border':'1px solid '+A.accent,'--xy-background-color':'transparent'}}
+        onKeyDownCapture={e=>{if(e.key==='Escape'&&!parent&&(s.sessionBreadcrumbs||[]).length&&!e.target.closest?.('input,textarea,select,[contenteditable="true"]')){e.preventDefault();e.stopPropagation();u.act(()=>api.leaveSession());}}}
         title="Drag to select · Shift adds · Middle or Space-drag to pan · Wheel to zoom · Double-click to fit"
         onDoubleClick={e => { if (e.target.classList?.contains('react-flow__pane')) fit(); }}
         onDragOver={e => e.preventDefault()} onDrop={e => {
           e.preventDefault();
           if(e.dataTransfer.files?.length){u.act(()=>api.importSession(e.dataTransfer.files[0]));return;}
+          const session=e.dataTransfer.getData('session');
+          const task=e.dataTransfer.getData('task');
+          const path=session||(s.tasks||[]).find(t=>t.id===task)?.sessionPath;
+          if(path){u.act(()=>api.insertSession(path,toFlow(e)));return;}
           const name = e.dataTransfer.getData('node');
           if (name) u.act(() => api.addNode(name, toFlow(e)));
         }} onContextMenu={e => {
@@ -1107,7 +1116,7 @@
        selectionOnDrag panOnDrag={[1]} panActivationKeyCode="Space" multiSelectionKeyCode="Shift" selectionKeyCode={null} deleteKeyCode={null}
        zoomOnDoubleClick={false} connectionLineStyle={{stroke: A.cyan, strokeWidth: 2}} proOptions={{hideAttribution: true}} />
     </CanvasContext.Provider>
-    <div data-canvas-overlay="" className="canvas-toolbar">{parent && <button type="button" className="dx-quiet" onClick={event=>executeAction("projects.ds_screens.Parent.6",{parent,s,setParent,setSelected},event)}>← {s.graph.nodes.find(node=>node.id===parent)?.title || 'Parent'}</button>}<Btn variant="controls" sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom">{Math.round(zoom * 100)}%</button><Btn variant="controls" sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><button type="button" className="dx-quiet" onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</button>{embedded && onHandoff && <button type="button" className="dx-quiet" onClick={event=>executeAction("projects.controls.activate",{handler:onHandoff},event)}>Handoff map</button>}</div>
+    <div data-canvas-overlay="" className="canvas-toolbar">{embedded&&(s.sessionBreadcrumbs||[]).length>0&&<button type="button" className="dx-quiet" aria-label="Parent session" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.leaveSession())},event)}>{s.sessionBreadcrumbs.map(row=>row.title).join(' / ')} / {s.graph.name} · ← Parent</button>}{parent && <button type="button" className="dx-quiet" onClick={event=>executeAction("projects.ds_screens.Parent.6",{parent,s,setParent,setSelected},event)}>← {s.graph.nodes.find(node=>node.id===parent)?.title || 'Parent'}</button>}<Btn variant="controls" sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom">{Math.round(zoom * 100)}%</button><Btn variant="controls" sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><button type="button" className="dx-quiet" onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</button>{embedded && onHandoff && <button type="button" className="dx-quiet" onClick={event=>executeAction("projects.controls.activate",{handler:onHandoff},event)}>Handoff map</button>}</div>
     {embedded && <><div data-canvas-summary="" aria-label="Workflow status">{[...stateCounts].map(([label,count])=>count+' '+label).join(' · ')}</div></>}
    </div>
    {!externalInspector && inspected && <NodeInspector n={inspected} s={s} u={u} />}
@@ -1162,44 +1171,39 @@
   window.UI.SystemGraph = SystemGraph;
 
   function AgentsCanvas() {
-    const u=useApp(), world=React.useRef(), container=React.useRef(), dialog=React.useRef();
-    const [graph,setGraph]=React.useState(null),[load,setLoad]=React.useState('waiting'),[error,setError]=React.useState(''),[attempt,setAttempt]=React.useState(0),[paths,setPaths]=React.useState([]),[selected,setSelected]=React.useState(''),[scale,setScale]=React.useState(1),[transcript,setTranscript]=React.useState(null);
+    const u=useApp(), dialog=React.useRef();
+    const [graph,setGraph]=React.useState(null),[load,setLoad]=React.useState('waiting'),[error,setError]=React.useState(''),[attempt,setAttempt]=React.useState(0),[transcript,setTranscript]=React.useState(null);
     React.useEffect(()=>{
       let active=true;setLoad('waiting');
       api.readAgentsGraph().then(value=>{if(active){setGraph(value);setLoad(value.sessions.length?'loaded':'empty');}})
         .catch(e=>{if(active){setError(e.message);setLoad('error');}});
       return()=>{active=false;};
     },[attempt]);
-    React.useLayoutEffect(()=>{const measure=()=>setPaths(measureWires(world.current,graph?.wires||[]));measure();const observer=new window.ResizeObserver(measure);if(world.current)observer.observe(world.current);return()=>observer.disconnect();},[graph,load]);
-    const rank={blocked:0,working:1,idle:2,resting:2,done:3,failed:4};
-    const sessions=[...(graph?.sessions||[])].sort((a,b)=>(rank[a.status]??2)-(rank[b.status]??2)||a.name.localeCompare(b.name));
-    const inspected=sessions.find(n=>n.id===selected)||graph?.tasks.find(n=>n.id===selected);
-    const openThread=n=>n.task?u.openTaskFile(n.task,'workshop'):graph.tasks.some(t=>t.id===n.id)?u.openTaskFile(n.id,'workshop'):u.go('workshop');
-    const port=id=>(p,i,side)=><div className="canvas-port-row" style={{position:'relative',height:22,display:'flex',alignItems:'center',justifyContent:side==='out'?'flex-end':undefined,padding:'0 12px',fontSize:12}}><span data-port-key={`${id}:${side}:${p.id}`} style={{position:'absolute',[side==='in'?'left':'right']:-6}}><D.Socket t="event" /></span>Task</div>;
+    const sessions=graph?.sessions||[], tasks=graph?.tasks||[];
     const openTranscript=async n=>{
       setTranscript({id:n.id,name:n.name,status:'waiting'});
       try{const data=await api.readAgentTranscript(n.id);setTranscript({id:n.id,name:n.name,...data,status:data.messages.length?'loaded':'empty'});}
       catch(e){setTranscript({id:n.id,name:n.name,status:'error',error:e.message});}
     };
     React.useEffect(()=>{const node=dialog.current;if(transcript&&!node?.open)node?.showModal();return()=>{if(node?.open)node.close();};},[!!transcript]);
-    return <main ref={container} data-screen="agents" className="system-workflow scroll" style={{padding:24,overflow:'auto'}}>
-      <div className="spread"><div><h2>Agents</h2><p className="muted">Live sessions and the task each one works on</p></div><div className="flex"><span>{sessions.filter(n=>n.status==='working').length} working · {sessions.filter(n=>n.status==='blocked').length} waiting</span><Btn sm ghost disabled={load!=='loaded'} onClick={event=>executeAction('projects.controls.activate',{handler:()=>{setScale(Math.max(.1,Math.min(1,(container.current.clientWidth-48)/768,(container.current.clientHeight-160)/world.current.offsetHeight)));container.current.scrollTo(0,0);}},event)}>Fit</Btn></div></div>
-      <p className="muted" style={{fontSize:12}}>Read-only view, built from the Workshop. Open a task to edit its workflow.</p>
-      {load==='waiting' && <p role="status">Loading agents…</p>}
+    return <main data-screen="agents" className="scroll" style={{padding:24,overflow:'auto'}}>
+      <h2>Agents</h2><p className="muted">Task sessions · open one workflow at a time</p>
+      {load==='waiting' && <p role="status">Loading sessions…</p>}
       {load==='error' && <p role="alert">{error} <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(n=>n+1)},event)}>Retry</Btn></p>}
-      {load==='empty' && <div style={{textAlign:'center',padding:48}}><p>No agent sessions are running.</p><Btn ghost onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.go('workshop')},event)}>Open Workshop</Btn></div>}
-      {load==='loaded' && <div ref={world} style={{position:'relative',display:'grid',gridTemplateColumns:'304px 304px',columnGap:160,rowGap:24,width:768,marginTop:24,transform:`scale(${scale})`,transformOrigin:'top left'}}>
-        <svg data-agent-wires="" width="100%" height="100%" style={{position:'absolute',inset:0,overflow:'visible',pointerEvents:'none'}}><GraphWires paths={paths} /></svg>
-        <div style={{display:'grid',gap:24,alignContent:'start'}}>{sessions.map(n=><div data-agent-session={n.id} key={n.id} data-graph-node={n.id} style={{zIndex:1}} tabIndex={0} onFocus={()=>setSelected(n.id)}>
-          <AgentWorkflowCard n={{...n,role:'session',title:n.name,kicker:n.vendor,inputs:[],outputs:[{id:'task'}],actions:<>
-            <button className="button-reset" onClick={event=>executeAction('projects.controls.activate',{handler:()=>openThread(n)},event)}>Open thread</button>
-            {n.hasTranscript && <button className="button-reset" onClick={event=>executeAction('projects.controls.activate',{handler:()=>openTranscript(n)},event)}>Open transcript</button>}</>}} selected={selected===n.id} renderPort={port(n.id)} />
-        </div>)}</div>
-        <div style={{display:'grid',gap:24,alignContent:'start'}}>{graph.tasks.map(n=><div data-agent-task={n.id} key={n.id} data-graph-node={n.id} tabIndex={0} onFocus={()=>setSelected(n.id)} onDoubleClick={event=>executeAction('projects.controls.activate',{handler:()=>u.openTaskFile(n.id,'canvas')},event)} onKeyDown={e=>{if(e.key==='Enter')executeAction('projects.controls.activate',{handler:()=>u.openTaskFile(n.id,'canvas')},e);}} style={{zIndex:1}}>
-          <AgentWorkflowCard n={{...n,role:'task',kicker:'Task',inputs:[{id:'task'}],outputs:[],actions:!n.path?<button className="button-reset" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.openTaskFile(n.id,'canvas')},event)}>Create workflow</button>:null}} selected={selected===n.id} renderPort={port(n.id)} />
-        </div>)}</div>
-      </div>}
-      {inspected && <aside aria-label="Agent properties" className="pane" style={{position:'absolute',right:24,top:144,width:264,padding:16}}><h3>{inspected.name||inspected.title}</h3><p>{inspected.vendor} · {inspected.status}</p><p>{inspected.taskTitle}</p>{inspected.message&&<p style={{whiteSpace:'pre-wrap'}}>{inspected.message.text}</p>}<button className="button-reset" onClick={event=>executeAction('projects.controls.activate',{handler:()=>openThread(inspected)},event)}>Open thread</button>{inspected.hasTranscript&&<button className="button-reset" onClick={event=>executeAction('projects.controls.activate',{handler:()=>openTranscript(inspected)},event)}>Open transcript</button>}</aside>}
+      {load==='empty' && <p>No agent sessions are running.</p>}
+      <div aria-label="Task sessions">{tasks.map(task=><div key={task.id} data-agent-task={task.id} className="listbutton" tabIndex={0}
+        draggable={!!task.path} onDragStart={e=>e.dataTransfer.setData('session',task.path||'')}
+        onDoubleClick={()=>u.openTaskFile(task.id,'canvas')} onKeyDown={e=>{if(e.key==='Enter')u.openTaskFile(task.id,'canvas');}}>
+        <b>{task.title}</b><span className="muted"> · {task.status} · {task.steps} steps</span>
+        {!task.path&&<span>No workflow file</span>}
+        <Btn sm ghost onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.openTaskFile(task.id,'canvas')},event)}>Open session</Btn>
+      </div>)}</div>
+      <div aria-label="Agents working">{sessions.map(n=><div key={n.id} data-agent-session={n.id} className="listbutton">
+        <b>{n.name}</b><span> · {n.status==='blocked'?'Waiting for you':n.status} · {n.taskTitle||'No task'}</span>
+        {n.task&&<Btn sm ghost onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.openTaskFile(n.task,'canvas')},event)}>Open session</Btn>}
+        <Btn sm ghost onClick={event=>executeAction('projects.controls.activate',{handler:()=>n.task?u.openTaskFile(n.task,'workshop'):u.go('workshop')},event)}>Open thread</Btn>
+        {n.hasTranscript&&<Btn sm ghost onClick={event=>executeAction('projects.controls.activate',{handler:()=>openTranscript(n)},event)}>Open transcript</Btn>}
+      </div>)}</div>
       {transcript && <dialog ref={dialog} aria-label="Agent transcript" onCancel={()=>setTranscript(null)} style={{color:A.ink,background:A.bgPanel,border:'1px solid '+A.line,borderRadius:8,padding:24,width:'min(720px,85vw)',maxHeight:'80vh',overflow:'auto'}}>
         <header className="spread"><h2>{transcript.name} transcript</h2><Btn sm ghost onClick={event=>executeAction('projects.controls.activate',{handler:()=>setTranscript(null)},event)}>Close transcript</Btn></header>
         {transcript.status==='waiting' && <p role="status">Reading transcript…</p>}

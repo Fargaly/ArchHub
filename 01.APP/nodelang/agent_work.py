@@ -129,6 +129,8 @@ def project(document, session_node, declaration, transcript):
         metadata = {'role': 'step', 'owner': session_node['id'], 'runtime': runtime, 'native': native,
                     'calls': [c['id'] for c in calls], 'kind': kind, 'tool': calls[mapped.index(chosen)]['tool'] if calls else 'detail not available',
                     'runnable': engine != 'note' and len(params) == len(chosen[2]), 'state': group.get('state', 'working')}
+        if declaration.get('task_id'):
+            metadata['task'] = declaration['task_id']
         if existing is None:
             node = {'id': identity, 'type': engine, 'title': redact(str(group['title'])), 'params': params,
                     'paramDefs': _definitions(params), 'position': {'x': 464 + index % 4 * 320, 'y': 380 + index // 4 * 400},

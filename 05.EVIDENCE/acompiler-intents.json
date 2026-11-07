@@ -9585,6 +9585,19 @@
         "03.TOOLS/installer/build_release.ps1",
         "02.TESTS/tests/test_preflight_imports.py"
       ]
+    },
+    "REVITOLD": {
+      "source": "Founder F269 REVIT-DIALOG-SCOPE with ADDINSIGN: retire only ArchHub legacy Revit manifests for every installed year without a supported gated payload; reviewed per-year replacements only; no live host/profile writes; fake-tree courts and codex-graphout release set; commit without push.",
+      "scope": [
+        "01.APP/colleague_setup.py",
+        "01.APP/nodelang/host_broker_installation.py",
+        "01.APP/nodelang/host_addin_retarget.py",
+        "02.TESTS/tests_replica/test_revit_addin_packaging.py",
+        "03.TOOLS/installer/build_host_bridges.ps1",
+        "01.APP/bridges/sources/BUILD-PROPOSAL.md",
+        "04.DOCS/FAILURE_LOG.md",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

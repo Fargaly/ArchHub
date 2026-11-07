@@ -1,9 +1,39 @@
 {
-  "result": "PASS",
-  "source_base": "37990c425dfbfe30f8e00f98efe57554a4c24a0b",
-  "release_summary": "474 passed, 2 skipped, 1 warning in 770.15s (0:12:50)",
+  "result": "ISOLATED_INSTALL_AND_RELEASE_PASS",
+  "source_base": "464beaa8a287f9ae5a5786d8964dd2099f00417d",
+  "release_summary": "527 passed, 2 skipped, 1 warning in 814.63s (0:13:34)",
+  "passed": 527,
   "failed": 0,
+  "skipped": 2,
+  "exit_code": 0,
   "release_files": [
+    "02.TESTS/tests_replica/test_app_folder_tidy.py",
+    "02.TESTS/tests_replica/test_baboom_native_companion.py",
+    "02.TESTS/tests_replica/test_baboom_native_runtime.py",
+    "02.TESTS/tests_replica/test_baboom_nograph.py",
+    "02.TESTS/tests_replica/test_baboom_work_presence.py",
+    "02.TESTS/tests_replica/test_canvas_parametric.py",
+    "02.TESTS/tests_replica/test_clean_coordination_task_install.py",
+    "02.TESTS/tests_replica/test_colleague_install.py",
+    "02.TESTS/tests_replica/test_file_path_links.py",
+    "02.TESTS/tests_replica/test_fresh_machine_host_brokers.py",
+    "02.TESTS/tests_replica/test_graphout.py",
+    "02.TESTS/tests_replica/test_install_prune.py",
+    "02.TESTS/tests_replica/test_installer_locked_host_files.py",
+    "02.TESTS/tests_replica/test_multidelete.py",
+    "02.TESTS/tests_replica/test_ng_workshop.py",
+    "02.TESTS/tests_replica/test_node_params.py",
+    "02.TESTS/tests_replica/test_presence1_acceptance.py",
+    "02.TESTS/tests_replica/test_raildoors.py",
+    "02.TESTS/tests_replica/test_real_app_check_tool.py",
+    "02.TESTS/tests_replica/test_recent_json_lock.py",
+    "02.TESTS/tests_replica/test_release_ships_committed_bytes.py",
+    "02.TESTS/tests_replica/test_remote_agents_relay.py",
+    "02.TESTS/tests_replica/test_revit_addin_packaging.py",
+    "02.TESTS/tests_replica/test_session_files.py",
+    "02.TESTS/tests_replica/test_settings_node_bridge.py",
+    "02.TESTS/tests_replica/test_the_menu_opens_and_the_cockpit_signs_in.py",
+    "02.TESTS/tests_replica/test_update_release_path.py",
     "02.TESTS/tests/test_agentcanvas.py",
     "02.TESTS/tests/test_agentwork.py",
     "02.TESTS/tests/test_designbuild.py",
@@ -12,60 +42,67 @@
     "02.TESTS/tests/test_state_isolation.py",
     "02.TESTS/tests/test_task_session_keeps_canvas.py",
     "02.TESTS/tests/test_task_session_roundtrip.py",
-    "02.TESTS/tests_replica/test_app_folder_tidy.py",
-    "02.TESTS/tests_replica/test_baboom_native_companion.py",
-    "02.TESTS/tests_replica/test_baboom_native_runtime.py",
-    "02.TESTS/tests_replica/test_baboom_nograph.py",
-    "02.TESTS/tests_replica/test_baboom_work_presence.py",
-    "02.TESTS/tests_replica/test_canvas_parametric.py",
-    "02.TESTS/tests_replica/test_colleague_install.py",
-    "02.TESTS/tests_replica/test_file_path_links.py",
-    "02.TESTS/tests_replica/test_fresh_machine_host_brokers.py",
-    "02.TESTS/tests_replica/test_graphout.py",
-    "02.TESTS/tests_replica/test_install_prune.py",
-    "02.TESTS/tests_replica/test_multidelete.py",
-    "02.TESTS/tests_replica/test_ng_workshop.py",
-    "02.TESTS/tests_replica/test_node_params.py",
-    "02.TESTS/tests_replica/test_presence1_acceptance.py",
-    "02.TESTS/tests_replica/test_raildoors.py",
-    "02.TESTS/tests_replica/test_real_app_check_tool.py",
-    "02.TESTS/tests_replica/test_recent_json_lock.py",
-    "02.TESTS/tests_replica/test_remote_agents_relay.py",
-    "02.TESTS/tests_replica/test_revit_addin_packaging.py",
-    "02.TESTS/tests_replica/test_session_files.py",
-    "02.TESTS/tests_replica/test_settings_node_bridge.py",
-    "02.TESTS/tests_replica/test_the_menu_opens_and_the_cockpit_signs_in.py",
     "06.CLOUD/cloud_backend/tests/test_openrouter_free.py",
     "06.CLOUD/cloud_backend/tests/test_relay_models.py"
   ],
-  "command": "python -B -m pytest -q -p no:cacheprovider --tb=short 02.TESTS/tests/test_agentcanvas.py 02.TESTS/tests/test_agentwork.py 02.TESTS/tests/test_designbuild.py 02.TESTS/tests/test_onetask.py 02.TESTS/tests/test_preflight_imports.py 02.TESTS/tests/test_state_isolation.py 02.TESTS/tests/test_task_session_keeps_canvas.py 02.TESTS/tests/test_task_session_roundtrip.py 02.TESTS/tests_replica/test_app_folder_tidy.py 02.TESTS/tests_replica/test_baboom_native_companion.py 02.TESTS/tests_replica/test_baboom_native_runtime.py 02.TESTS/tests_replica/test_baboom_nograph.py 02.TESTS/tests_replica/test_baboom_work_presence.py 02.TESTS/tests_replica/test_canvas_parametric.py 02.TESTS/tests_replica/test_colleague_install.py 02.TESTS/tests_replica/test_file_path_links.py 02.TESTS/tests_replica/test_fresh_machine_host_brokers.py 02.TESTS/tests_replica/test_graphout.py 02.TESTS/tests_replica/test_install_prune.py 02.TESTS/tests_replica/test_multidelete.py 02.TESTS/tests_replica/test_ng_workshop.py 02.TESTS/tests_replica/test_node_params.py 02.TESTS/tests_replica/test_presence1_acceptance.py 02.TESTS/tests_replica/test_raildoors.py 02.TESTS/tests_replica/test_real_app_check_tool.py 02.TESTS/tests_replica/test_recent_json_lock.py 02.TESTS/tests_replica/test_remote_agents_relay.py 02.TESTS/tests_replica/test_revit_addin_packaging.py 02.TESTS/tests_replica/test_session_files.py 02.TESTS/tests_replica/test_settings_node_bridge.py 02.TESTS/tests_replica/test_the_menu_opens_and_the_cockpit_signs_in.py 06.CLOUD/cloud_backend/tests/test_openrouter_free.py 06.CLOUD/cloud_backend/tests/test_relay_models.py",
+  "command": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\11.ARCHHUB-APP\\.venv\\Scripts\\python.exe -B -m pytest -q -p no:cacheprovider --tb=short 02.TESTS/tests_replica/test_app_folder_tidy.py 02.TESTS/tests_replica/test_baboom_native_companion.py 02.TESTS/tests_replica/test_baboom_native_runtime.py 02.TESTS/tests_replica/test_baboom_nograph.py 02.TESTS/tests_replica/test_baboom_work_presence.py 02.TESTS/tests_replica/test_canvas_parametric.py 02.TESTS/tests_replica/test_clean_coordination_task_install.py 02.TESTS/tests_replica/test_colleague_install.py 02.TESTS/tests_replica/test_file_path_links.py 02.TESTS/tests_replica/test_fresh_machine_host_brokers.py 02.TESTS/tests_replica/test_graphout.py 02.TESTS/tests_replica/test_install_prune.py 02.TESTS/tests_replica/test_installer_locked_host_files.py 02.TESTS/tests_replica/test_multidelete.py 02.TESTS/tests_replica/test_ng_workshop.py 02.TESTS/tests_replica/test_node_params.py 02.TESTS/tests_replica/test_presence1_acceptance.py 02.TESTS/tests_replica/test_raildoors.py 02.TESTS/tests_replica/test_real_app_check_tool.py 02.TESTS/tests_replica/test_recent_json_lock.py 02.TESTS/tests_replica/test_release_ships_committed_bytes.py 02.TESTS/tests_replica/test_remote_agents_relay.py 02.TESTS/tests_replica/test_revit_addin_packaging.py 02.TESTS/tests_replica/test_session_files.py 02.TESTS/tests_replica/test_settings_node_bridge.py 02.TESTS/tests_replica/test_the_menu_opens_and_the_cockpit_signs_in.py 02.TESTS/tests_replica/test_update_release_path.py 02.TESTS/tests/test_agentcanvas.py 02.TESTS/tests/test_agentwork.py 02.TESTS/tests/test_designbuild.py 02.TESTS/tests/test_onetask.py 02.TESTS/tests/test_preflight_imports.py 02.TESTS/tests/test_state_isolation.py 02.TESTS/tests/test_task_session_keeps_canvas.py 02.TESTS/tests/test_task_session_roundtrip.py 06.CLOUD/cloud_backend/tests/test_openrouter_free.py 06.CLOUD/cloud_backend/tests/test_relay_models.py > .cache/prunerig-safety-release.txt 2>&1",
   "profile_scan": "TESTISO final profile leaks: []; protected write attempts: 0",
   "compiler": "ACOMPILER PASS",
   "source_sha256": {
-    "01.APP/nodelang/host_addin_retarget.py": "9dd7c4e10c7ef39539832c6fb7e142c1b287c98b61c5d70b3fdf912e8b763af8",
-    "02.TESTS/tests_replica/test_install_prune.py": "49dc7b7bfb2cd4fe53d12204f8e4e45416936de7b8211818d03e0064cd580f5e",
-    "02.TESTS/tests_replica/test_real_app_check_tool.py": "53310be7536060f1ad05617752806e54e78ba1f0c0b2236e50a7283f780ee8d0",
-    "03.TOOLS/installer/ArchHub.iss": "d1385a3a28763e54d822f10c8db791f51466588c57d8f74ce52e1675615e3864",
-    "03.TOOLS/installer/build_release.ps1": "8cd0e9540495ad94171e749b146e7843b88f6a9822766e775dcd4aa3146ea5c3",
-    "03.TOOLS/tools/real_app_check/harness.mjs": "0e72bca47c68832e72e86e9518b667b974b370228157ed6ded733dbc6fb869f1",
-    "03.TOOLS/tools/real_app_check/real_app_check.py": "f4d4e2c162d875c3a8e0fcac44ff8efdab985ff44f642f0553e86ceea22955f7",
-    "03.TOOLS/tools/real_app_check/guards.mjs": "5fdc604d9fd41c606e6b6bda70b638dd74724fc0351bdf7bced401dbe39fda5d",
-    "03.TOOLS/tools/real_app_check/scenarios/qt_attach.mjs": "74eb9e06087cc05fdc72a7a3310ea7da4f2d19d9eeac37206823a576e0fee355",
-    "03.TOOLS/tools/real_app_check/README.md": "6249b67e38993c58c388f63a04b11f6dc8642419a0bf0606fcf488cbb10c8fb8",
-    "04.DOCS/FAILURE_LOG.md": "333a8db8b4bd1f2fa084eb53c7ce60ae63ffea16b4a44981629b40008160e392",
-    "04.DOCS/DECISIONS.md": "072b607d350c955437241092c3480c68fd3ea31442fabe5d3a5f2f2bd3f7a971"
+    "01.APP/nodelang/host_addin_retarget.py": "91267ac16cf7c566e519792430f4efa8ffbbea390a540f3c2f8a403bfaa35d60",
+    "02.TESTS/tests_replica/test_install_prune.py": "8c648f67fbbb9fd4d1e7a2357b85842070210bf63c3d3980bc0f7b1519348eaf",
+    "02.TESTS/tests_replica/test_clean_coordination_task_install.py": "a1c6a5977501c22ae790bc26ad7184e3625c7160012dd74993815740793e4f2d",
+    "02.TESTS/tests_replica/test_release_ships_committed_bytes.py": "4de3e50c4edaddd2b35a6444d40c157677cb59b557e8c69f5a9365ddc0361bbc",
+    "02.TESTS/tests_replica/test_update_release_path.py": "4c9a49953aa7795d8151d91fbb063e951790e249ba16dabf79f4648d3499b60d",
+    "03.TOOLS/installer/ArchHub.iss": "03a0e368382880da6bba3924a368c9be08cde34b030bb5a0bf329690d02338d9",
+    "04.DOCS/DECISIONS.md": "189407252f5db04941a860208ad35457d75e465c1307890e7f4d270b986e77be",
+    "04.DOCS/FAILURE_LOG.md": "8706152c5bd66ccf72439b48b8c1b9ec03cf102648f4369cd5e779ad31984c6b"
   },
-  "fake_install": "fake-install.json",
-  "installed_rig": "installed-rig.json",
   "runtime": {
     "python": "3.14.3",
     "pytest": "9.0.3",
+    "executable": "C:/Users/fargaly/00.ARCHUB/10.PRODUCT/11.ARCHHUB-APP/.venv/Scripts/python.exe",
     "cloud_test_dependencies": "disposable lane-local target; FastAPI 0.141.1, Pydantic 2.14.3"
   },
+  "reviewer": {
+    "agent": "prune_safety_review",
+    "verdict": "No concrete residual issues in final staged eight-file diff",
+    "boundary": "read-only source review, not installed acceptance",
+    "sha256": {
+      "01.APP/nodelang/host_addin_retarget.py": "91267ac16cf7c566e519792430f4efa8ffbbea390a540f3c2f8a403bfaa35d60",
+      "02.TESTS/tests_replica/test_install_prune.py": "8c648f67fbbb9fd4d1e7a2357b85842070210bf63c3d3980bc0f7b1519348eaf",
+      "03.TOOLS/installer/ArchHub.iss": "3020fd83bb94e9b506c9271773e0565e0b989b17186c0caed4b1fc4079089c6d"
+    }
+  },
+  "regressions": [
+    "Exact three-root reviewer RED input preserves my-work.archhub, brain.sqlite3 and user.db byte-identically",
+    "All four product roots preserve seeded documents, databases, WAL/SHM, settings and logs while legacy program files are pruned",
+    "Previous-manifest-only removal; newer and modified/unowned files preserved; installer-created bridge year authority recorded before copy",
+    "Forbidden candidate aborts entire prune and retains pending retries",
+    "Real Inno before-copy preparation and after-copy prune, real Windows held-open DLL handle, success while locked, removal on next install after handle closes",
+    "No unconditional InstallDelete bypass or recursive retired-host directory removal"
+  ],
+  "red_repro": "Before repair: 1 failed; log: PRUNE nodelang/brain.sqlite3; PRUNE nodelang/my-work.archhub; PRUNE nodelang/user.db",
   "untested": [
     "Full distributable installer rebuild",
-    "Deletion of legacy DLLs held by a running Revit process"
+    "Live Revit/AutoCAD installed-build acceptance"
   ],
-  "boundary": "Installer changes exercised against fake trees and a real Inno harness. Qt rig exercised installed 20261107-2320-37990c4 on a hidden desktop. No installation, push, or live profile mutation.",
-  "inno_install_log": "inno-install.log"
+  "boundary": "Commit only. All installer writes use disposable fake product/profile roots and real Inno harnesses. No push, live installation or host closure. Earlier installed-rig/fake-install artifacts describe the superseded source revision and are not current prune safety evidence.",
+  "line_endings": {
+    "operation": "CRLF to LF only; text lines identical; executable pruner and regression Python bytes unchanged. Reviewer hashes retain the original reviewed bytes; source_sha256 binds final committed LF bytes.",
+    "files": {
+      "03.TOOLS/installer/ArchHub.iss": {
+        "reviewed_working_bytes": "3020fd83bb94e9b506c9271773e0565e0b989b17186c0caed4b1fc4079089c6d",
+        "committed_lf_bytes": "03a0e368382880da6bba3924a368c9be08cde34b030bb5a0bf329690d02338d9"
+      },
+      "04.DOCS/DECISIONS.md": {
+        "reviewed_working_bytes": "c8118035e451a2becd3544d69f3662ae71cdcb81675126d46126225ca312454f",
+        "committed_lf_bytes": "189407252f5db04941a860208ad35457d75e465c1307890e7f4d270b986e77be"
+      },
+      "04.DOCS/FAILURE_LOG.md": {
+        "reviewed_working_bytes": "d1d2e7802b5469197ef4943b8d38bfca6e147c75db1c5839884e2218d6371c6b",
+        "committed_lf_bytes": "8706152c5bd66ccf72439b48b8c1b9ec03cf102648f4369cd5e779ad31984c6b"
+      }
+    }
+  }
 }

@@ -37,17 +37,9 @@ def test_upgrade_also_retires_the_old_universal_runtime_task():
     assert not (ROOT / "03.TOOLS/packaging/windows/install_runtime_task.ps1").exists()
 
 
-def test_upgrade_removes_exact_retired_executable_copies_without_sweeping_state():
+def test_upgrade_has_no_unconditional_file_deletions():
     source = ISS.read_text(encoding='utf-8').split('[InstallDelete]', 1)[1].split('[UninstallDelete]', 1)[0]
-    for path in ('desktop\\clean_shell.py', 'nodelang\\desktop_supervisor.py',
-                 'nodelang\\runtime_supervisor.py', 'nodelang\\authority_bridge.py',
-                 'nodelang\\remote_native_cloud_login.py',
-                 'packaging\\windows\\install_clean_coordination_task.ps1',
-                 'packaging\\windows\\install_runtime_task.ps1',
-                 'packaging\\windows\\entrypoint.py', 'packaging\\windows\\Launch-ArchHub.vbs'):
-        assert 'Type: files; Name: "{app}\\' + path + '"' in source
-    assert 'filesandordirs' not in source
-    assert 'authority.sqlite3' not in source and 'cloud.json' not in source
+    assert not any(line.startswith('Type:') for line in source.splitlines())
 
 
 def test_retirement_does_not_require_a_developer_or_installed_python():

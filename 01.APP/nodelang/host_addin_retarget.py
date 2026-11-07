@@ -12,17 +12,24 @@ import hashlib
 import json
 import os
 import re
+import tempfile
+import time
 from pathlib import Path, PurePosixPath
 
 
 ROOTS = {"nodelang", "studio", "app", "bridges"}
 STATE_DIRS = {"settings", "workshop", "logs", "sessions", "recent", "checkpoints", ".venv"}
 HEADER = "ARCHHUB_INSTALLED_SOURCE_MANIFEST_V1"
+RECEIPT = "installed-source-state.json"
+DATA_TYPES = {".archhub", ".db", ".sqlite", ".sqlite3", ".json", ".yaml", ".yml", ".toml", ".log"}
+PROGRAM_TYPES = {".py", ".pyc", ".pyd", ".pyi", ".js", ".jsx", ".mjs", ".cjs", ".css", ".map"}
 
 
 def protected(relative):
+    name = relative.name.casefold()
+    base = re.sub(r"-(wal|shm)$", "", name)
     return (any(part.casefold() in STATE_DIRS for part in relative.parts)
-            or ".universal.sqlite3" in relative.name.casefold())
+            or PurePosixPath(base).suffix in DATA_TYPES)
 
 
 def plain(path):
@@ -68,40 +75,171 @@ def write_manifest(source, hosts, destination):
     destination.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def prune(root, expected):
-    raw = (root / "source-manifest.tsv").read_bytes()
-    if hashlib.sha256(raw).hexdigest() != expected:
-        raise ValueError("installed source manifest digest mismatch")
+def manifest_rows(raw):
     lines = raw.decode("utf-8").splitlines()
     if lines[:2] != [HEADER, "path\tsha256"]:
         raise ValueError("unsupported installed source manifest")
-    keep = set()
+    rows = {}
     for line in lines[2:]:
         relative, digest = line.split("\t")
-        path = PurePosixPath(relative)
-        if (not path.parts or path.parts[0] not in ROOTS or path.is_absolute()
-                or any(part in {".", ".."} or ":" in part or "\\" in part for part in path.parts)
-                or path.as_posix() != relative or not re.fullmatch("[0-9a-f]{64}", digest)
-                or relative.casefold() in keep):
+        if not valid_row(relative, digest) or relative.casefold() in rows:
             raise ValueError("invalid installed source manifest row")
-        keep.add(relative.casefold())
+        rows[relative.casefold()] = digest
     # Validate the complete manifest and copied payload before deleting anything.
-    if not {name.split("/")[0] for name in keep} >= {"nodelang", "app", "bridges"}:
+    if not {name.split("/")[0] for name in rows} >= {"nodelang", "app", "bridges"}:
         raise ValueError("incomplete installed source manifest")
-    for line in lines[2:]:
-        relative, digest = line.split("\t")
+    return rows
+
+
+def valid_row(relative, digest):
+    path = PurePosixPath(relative)
+    return (bool(path.parts) and path.parts[0] in ROOTS and not path.is_absolute()
+            and not any(part in {".", ".."} or ":" in part or "\\" in part
+                        or part.endswith((".", " ")) for part in path.parts)
+            and path.as_posix() == relative and bool(re.fullmatch("[0-9a-f]{64}", digest)))
+
+
+def legacy_program(relative, years):
+    return (relative.suffix.casefold() in PROGRAM_TYPES
+            or relative.suffix.casefold() == ".html" and "studio" in relative.parts[:-1]
+            or relative.suffix.casefold() in {".dll", ".exe", ".addin"}
+            and tuple(relative.parts[:3]) in years)
+
+
+def save_receipt(root, raw, pending, years):
+    state = {"manifest": raw.decode("utf-8"), "installed_at_ns": time.time_ns(),
+             "pending_prune": pending, "bridge_years": sorted(years)}
+    save_state(root, state)
+
+
+def save_state(root, state):
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=root, delete=False) as stream:
+        temporary = Path(stream.name)
+        json.dump(state, stream)
+    try:
+        os.replace(temporary, root / RECEIPT)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def prepare(root, manifest, expected):
+    """Record directory creation authority before Inno copies any host payload."""
+    if root.absolute() != (Path(os.environ["LOCALAPPDATA"]) / "ArchHub").absolute() or not _plain(root):
+        print("PRUNE prepare skipped: outside plain %LOCALAPPDATA%/ArchHub", flush=True)
+        return
+    raw = manifest.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != expected:
+        raise ValueError("installed source manifest digest mismatch")
+    rows = manifest_rows(raw)
+    root.mkdir(parents=True, exist_ok=True)
+    if not all(plain(root / name) for name in (RECEIPT, "source-manifest.tsv", "BUILD_ID")):
+        print("PRUNE prepare skipped: redirected install metadata", flush=True)
+        return
+    if (root / RECEIPT).exists():
+        state = json.loads((root / RECEIPT).read_text(encoding="utf-8"))
+    else:
+        old = root / "source-manifest.tsv"
+        state = {"manifest": old.read_text(encoding="utf-8") if old.is_file() else None,
+                 "installed_at_ns": (root / "BUILD_ID").stat().st_mtime_ns if (root / "BUILD_ID").is_file() else 0,
+                 "pending_prune": {}, "bridge_years": []}
+    years = set(state["bridge_years"])
+    for name in rows:
+        if re.match(r"^bridges/(revit|autocad)/20[0-9]{2}/", name):
+            year = "/".join(PurePosixPath(name).parts[:3])
+            if not (root / year).exists():
+                years.add(year)
+    state["bridge_years"] = sorted(years)
+    save_state(root, state)
+
+
+def prune(root, expected):
+    # Never let an installer directory override broaden the deletion boundary.
+    allowed = Path(os.environ["LOCALAPPDATA"]) / "ArchHub"
+    if root.absolute() != allowed.absolute() or not _plain(root):
+        print("PRUNE skipped: outside plain %LOCALAPPDATA%/ArchHub", flush=True)
+        return []
+    for name in ("source-manifest.tsv", RECEIPT, "BUILD_ID"):
+        if not plain(root / name):
+            print("PRUNE skipped: redirected install metadata", flush=True)
+            return []
+    raw = (root / "source-manifest.tsv").read_bytes()
+    if hashlib.sha256(raw).hexdigest() != expected:
+        raise ValueError("installed source manifest digest mismatch")
+    keep = manifest_rows(raw)
+    for relative, digest in keep.items():
         path = root / relative
         if any(not plain(parent) for parent in (path, *path.parents) if parent != root.parent):
             raise ValueError("redirected installed payload")
         if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
             raise ValueError("installed payload differs from source manifest: " + relative)
+    previous, pending, years = {}, {}, set()
+    cutoff = (root / "BUILD_ID").stat().st_mtime_ns if (root / "BUILD_ID").is_file() else 0
+    has_previous = (root / RECEIPT).exists()
+    try:
+        if has_previous:
+            state = json.loads((root / RECEIPT).read_text(encoding="utf-8"))
+            has_previous = state["manifest"] is not None
+            if has_previous:
+                previous = manifest_rows(state["manifest"].encode("utf-8"))
+            cutoff = state["installed_at_ns"]
+            if type(cutoff) is not int or cutoff < 0:
+                raise ValueError("invalid previous install time")
+            pending = state["pending_prune"]
+            years = set(state["bridge_years"])
+            if any(not re.fullmatch(r"bridges/(revit|autocad)/20[0-9]{2}", year) for year in years):
+                raise ValueError("invalid installer-created bridge year")
+            for name, row in pending.items():
+                if (not valid_row(name, row["sha256"] or "0" * 64)
+                        or type(row["mtime_ns"]) is not int):
+                    raise ValueError("invalid deferred modification time")
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        print("PRUNE skipped: invalid previous installed manifest/pending-prune list", flush=True)
+        return []
+    candidates = {name: digest for name, digest in previous.items() if name not in keep}
+    candidates.update({name: row["sha256"] for name, row in pending.items() if name not in keep})
+    if not has_previous and cutoff:
+        for name in sorted(ROOTS):
+            for path in files(root / name):
+                relative = path.relative_to(root)
+                key = relative.as_posix().casefold()
+                if key not in keep and legacy_program(relative, {tuple(year.split("/")) for year in years}):
+                    candidates[key] = None
+    print("PRUNE DRY RUN " + json.dumps(sorted(candidates)), flush=True)
+    forbidden = [name for name in candidates if protected(PurePosixPath(name))]
+    if forbidden:
+        print("PRUNE skipped: never-delete candidate " + json.dumps(forbidden), flush=True)
+        deferred = {}
+        for name, digest in candidates.items():
+            path = root / name
+            if not protected(PurePosixPath(name)) and _plain(path) and path.is_file():
+                stamp = path.stat().st_mtime_ns
+                if stamp <= cutoff:
+                    deferred[name] = pending.get(name, {"sha256": digest, "mtime_ns": stamp})
+        save_receipt(root, raw, deferred, years)
+        return []
+    deferred = {}
     removed = []
-    for name in sorted(ROOTS):
-        for path in files(root / name):
-            if path.relative_to(root).as_posix().casefold() not in keep:
-                path.unlink()
-                removed.append(path.relative_to(root).as_posix())
-                print("PRUNE " + removed[-1], flush=True)
+    for name, digest in sorted(candidates.items()):
+        path = root / name
+        if not _plain(path) or not path.is_file():
+            continue
+        stamp = path.stat().st_mtime_ns
+        if stamp > cutoff or name in pending and stamp != pending[name]["mtime_ns"]:
+            print("PRUNE kept: newer/changed file " + name, flush=True)
+            continue
+        try:
+            actual = hashlib.sha256(path.read_bytes()).hexdigest()
+            if digest is not None and actual != digest:
+                print("PRUNE kept: modified installed file " + name, flush=True)
+                continue
+            path.unlink()
+        except PermissionError:
+            deferred[name] = {"sha256": digest, "mtime_ns": stamp}
+            print("PRUNE " + name + " deferred: in use by a running program", flush=True)
+        else:
+            removed.append(name)
+            print("PRUNE " + name, flush=True)
+    save_receipt(root, raw, deferred, years)
     return removed
 
 
@@ -154,28 +292,9 @@ def cleanup_revit(root, roots, outcomes):
                 if not _plain(path) or not path.is_file():
                     continue
                 name = path.name.casefold()
-                if ((name.endswith(".addin.retired") and _owned_manifest(path))
-                        or (name.startswith(".archhub-addin-") and name.endswith(".tmp"))):
+                if name.endswith(".addin.retired") and _owned_manifest(path):
                     path.unlink()
                     print("REVIT CLEAN " + str(path), flush=True)
-    for outcome in outcomes:
-        year = outcome.get("host_version", "")
-        if not outcome.get("registered") or not re.fullmatch(r"20[0-9]{2}", year):
-            continue
-        old = root / "Revit" / year
-        if not _plain(old) or not old.is_dir():
-            continue
-        for name in ("RevitMCP.dll", "RevitMCP.pdb", "RevitMCP.deps.json",
-                     "RevitMCPCore.dll", "RevitMCPCore.pdb", "RevitMCPCore.deps.json", "RevitMCP.addin"):
-            path = old / name
-            if not _plain(path) or not path.is_file():
-                continue
-            if path.suffix == ".addin" and not _owned_manifest(path):
-                continue
-            path.unlink()
-            print("REVIT CLEAN " + str(path), flush=True)
-        if _plain(old) and old.is_dir() and not any(old.iterdir()):
-            old.rmdir()
 
 
 def retarget(root, setup, environment):
@@ -202,6 +321,9 @@ def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if len(argv) == 4 and argv[0] == "--manifest":
         write_manifest(Path(argv[1]), Path(argv[2]), Path(argv[3]))
+        return 0
+    if len(argv) == 4 and argv[0] == "--prepare":
+        prepare(Path(argv[1]), Path(argv[2]), argv[3])
         return 0
     if len(argv) == 3 and argv[0] == "--prune":
         prune(Path(argv[1]), argv[2])

@@ -6,8 +6,8 @@
     committed blob (cell_value_graph.py, studio/mount.jsx on 2026-10-01).
     The snapshot now refuses any clean tracked file whose bytes are not its
     HEAD blob; a candidate's content-changed files stay reviewed working bytes.
-(b) An upgrade never sweeps directories, so a module retired from source stays
-    installed unless [InstallDelete] names it (runtime_announcement.py).
+(b) Retired product files are removed only by the ownership-bound pruner;
+    unconditional [InstallDelete] entries bypass its user-data protection.
 """
 import json
 import shutil
@@ -29,10 +29,9 @@ def _install_delete():
     return [line.strip() for line in section.splitlines() if line.strip().startswith("Type:")]
 
 
-def test_an_upgrade_removes_the_retired_runtime_announcement():
+def test_an_upgrade_has_no_unconditional_cleanup_bypass():
     entries = _install_delete()
-    assert 'Type: files; Name: "{app}\\nodelang\\runtime_announcement.py"' in entries
-    assert 'Type: files; Name: "{app}\\nodelang\\__pycache__\\runtime_announcement.*.pyc"' in entries
+    assert entries == []
     assert not (ROOT / "01.APP/nodelang" / "runtime_announcement.py").exists()
 
 
@@ -56,7 +55,7 @@ $ErrorActionPreference = 'Stop'
 $tokens = $null; $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($Build, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw 'build script does not parse' }
-foreach ($name in 'Get-GitBlobId', 'Assert-CommittedBlobBytes') {
+foreach ($name in 'Get-RepositoryPath', 'Get-PayloadPath', 'Get-GitBlobId', 'Assert-CommittedBlobBytes') {
     $definition = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
     if (-not $definition) { throw "missing $name" }
     . ([scriptblock]::Create($definition.Extent.Text))

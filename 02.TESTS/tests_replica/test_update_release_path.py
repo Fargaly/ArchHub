@@ -14,6 +14,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import re
 import sqlite3
@@ -338,13 +339,10 @@ def test_real_installer_deletes_only_named_application_files_never_user_state():
     assert re.search(r"(?m)^DefaultDirName=\{localappdata\}\\ArchHub\s*$", iss)
     uninstall = iss.split('[UninstallDelete]', 1)[1].split('\n[', 1)[0]
     removed = re.findall(r'(?m)^Type:\s*(\w+);\s*Name:\s*"([^"]+)"', uninstall)
-    assert removed == [('filesandordirs', '{app}\\.retired-host-files')], removed
+    assert removed == [], removed
     section = iss.split("[InstallDelete]", 1)[1].split("\n[", 1)[0]
     entries = re.findall(r'(?m)^Type:\s*(\w+);\s*Name:\s*"([^"]+)"', section)
-    assert entries, "InstallDelete section not parsed"
-    for kind, name in entries:
-        assert kind == "files" and name.startswith("{app}\\"), (kind, name)
-        assert not re.search(r"(?i)sqlite|graph|settings|credential|ArchHub-Test", name), name
-    launcher = (ROOT / "01.APP/nodelang/launcher.py").read_text(encoding="utf-8")
-    assert '"ARCHHUB_TEST_STATE_DIR"' in launcher, "fixture state must remain isolated"
+    assert entries == [], entries
+    from nodelang.user_paths import state_directory
+    assert state_directory() == Path(os.environ["ARCHHUB_TEST_STATE_DIR"])
     assert not {'state', 'updates', 'web-profile'} & set(qu._PAYLOAD_DIRS), "rollback must not own user data"

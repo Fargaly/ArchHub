@@ -1,6 +1,8 @@
 """Behavioural installer prune/receipt courts; every target is a temporary install tree."""
 import hashlib
 import json
+import os
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 import subprocess
 import sys
@@ -13,6 +15,14 @@ from nodelang import host_addin_retarget as retarget
 from nodelang.host_broker_installation import ADDIN_ID, CLASS_NAME, VENDOR_ID
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.fixture
+def install_root(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    root = tmp_path / "ArchHub"
+    root.mkdir()
+    return root
 
 
 def _manifest(root):
@@ -37,23 +47,33 @@ def _seed(root):
                  "nodelang/settings/user.json", "nodelang/test.universal.sqlite3",
                  "app/test.universal.sqlite3-wal", "studio/test.universal.sqlite3-shm",
                  "bridges/.venv/user.pkg", "nodelang/workshop/messages.sqlite3"]
+    protected += [f"{root}/user{suffix}" for root in prune.ROOTS for suffix in
+                  (".archhub", ".db", ".sqlite", ".sqlite3", ".sqlite3-wal", ".sqlite3-shm",
+                   ".json", ".yaml", ".toml", ".log")]
     for name in orphans + protected:
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(name.encode())
+        os.utime(path, ns=(1_000_000_000, 1_000_000_000))
+    (root / "BUILD_ID").write_text("previous-build")
+    # A pre-baseline installer recorded creating this bridge year, but had no file manifest.
+    prune.save_state(root, {"manifest": None, "installed_at_ns": (root / "BUILD_ID").stat().st_mtime_ns,
+                            "bridge_years": ["bridges/revit/2027"], "pending_prune": {}})
     before = {name: (root / name).read_bytes() for name in protected}
     return digest, orphans, before
 
 
-def test_fake_install_prunes_all_product_roots_and_preserves_state(tmp_path):
+def test_fake_install_prunes_all_product_roots_and_preserves_state(install_root):
+    tmp_path = install_root
     digest, orphans, before = _seed(tmp_path)
-    assert set(prune.prune(tmp_path, digest)) == set(orphans)
+    assert set(prune.prune(tmp_path, digest)) == {name.casefold() for name in orphans}
     assert all(not (tmp_path / name).exists() for name in orphans)
     assert before == {name: (tmp_path / name).read_bytes() for name in before}
     assert prune.prune(tmp_path, digest) == []
 
 
-def test_bad_manifest_or_copy_aborts_before_any_delete(tmp_path):
+def test_bad_manifest_or_copy_aborts_before_any_delete(install_root):
+    tmp_path = install_root
     digest, orphans, _ = _seed(tmp_path)
     with pytest.raises(ValueError, match="digest mismatch"):
         prune.prune(tmp_path, "0" * 64)
@@ -95,10 +115,11 @@ def test_revit_receipts_both_roots_all_years_and_gated_legacy_cleanup(tmp_path, 
         {"host_version": "2024", "registered": False, "status": "refused"}],
         register_autocad_add_ins=lambda root: None)
     assert retarget.retarget(app, setup, env) == 0
-    assert not (app / "Revit/2027").exists()
+    assert (app / "Revit/2027/RevitMCP.dll").read_bytes() == b"old"
+    assert (app / "Revit/2027/RevitMCP.deps.json").read_bytes() == b"old"
     assert (app / "Revit/2024/RevitMCP.dll").read_bytes() == b"old"
     for root in roots:
-        assert not list(root.glob("*/*.tmp"))
+        assert len(list(root.glob("*/*.tmp"))) == 3
         assert not list(root.glob("*/ArchHub.addin.retired"))
         assert len(list(root.glob("*/Foreign.addin.retired"))) == 3
     receipts = [json.loads(line.removeprefix("REVIT FOREIGN RECEIPT ")) for line in capsys.readouterr().out.splitlines()
@@ -108,12 +129,32 @@ def test_revit_receipts_both_roots_all_years_and_gated_legacy_cleanup(tmp_path, 
     assert all(row["unchanged"] and row["before_sha256"] == row["after_sha256"] for row in receipts)
 
 
-def test_inno_post_copy_runs_the_same_pruner(tmp_path):
+@contextmanager
+def _held_open(path):
+    import ctypes
+    from ctypes import wintypes
+    create = ctypes.windll.kernel32.CreateFileW
+    create.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+                       wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+    create.restype = wintypes.HANDLE
+    close = ctypes.windll.kernel32.CloseHandle
+    close.argtypes = (wintypes.HANDLE,)
+    handle = create(str(path), 0x80000000, 1, None, 3, 0, None)
+    assert handle != wintypes.HANDLE(-1).value
+    try:
+        with pytest.raises(PermissionError):
+            path.unlink()
+        yield
+    finally:
+        assert close(handle)
+
+
+@pytest.mark.parametrize("locked", [False, True])
+def test_inno_post_copy_runs_the_same_pruner(tmp_path, install_root, locked):
     compiler = Path("C:/Program Files (x86)/Inno Setup 6/ISCC.exe")
     if not compiler.is_file():
         pytest.skip("Inno Setup is not installed")
-    app = tmp_path / "installed"
-    app.mkdir()
+    app = install_root
     digest, orphans, before = _seed(app)
     script = tmp_path / "prune.iss"
     script.write_text('''[Setup]
@@ -129,12 +170,24 @@ RestartApplications=no
 OutputBaseFilename=prune-court
 [Files]
 Source: "{#Source}"; DestDir: "{app}\\nodelang"; Flags: ignoreversion
+Source: "{#Source}"; Flags: dontcopy
+Source: "{#Manifest}"; DestDir: "{app}"; DestName: "source-manifest.tsv"; Flags: ignoreversion
 [Code]
+procedure OnPruneLog(const S: String; const Error, FirstLine: Boolean);
+begin
+  Log(S);
+end;
 procedure CurStepChanged(Step: TSetupStep);
 var Code: Integer;
 begin
+  if Step = ssInstall then begin
+    ExtractTemporaryFile('host_addin_retarget.py');
+    ExtractTemporaryFile('source-manifest.tsv');
+    if not ExecAndLogOutput(ExpandConstant('{param:python}'), '-B "' + ExpandConstant('{tmp}') + '\\host_addin_retarget.py" --prepare "' + ExpandConstant('{app}') + '" "' + ExpandConstant('{tmp}') + '\\source-manifest.tsv" {#Digest}', ExpandConstant('{tmp}'), SW_HIDE, ewWaitUntilTerminated, Code, @OnPruneLog) then RaiseException('could not prepare prune');
+    if Code <> 0 then RaiseException('prune preparation failed');
+  end;
   if Step = ssPostInstall then begin
-    if not Exec(ExpandConstant('{param:python}'), '-B "' + ExpandConstant('{app}') + '\\nodelang\\host_addin_retarget.py" --prune "' + ExpandConstant('{app}') + '" {#Digest}', ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, Code) then RaiseException('could not run prune');
+    if not ExecAndLogOutput(ExpandConstant('{param:python}'), '-B "' + ExpandConstant('{app}') + '\\nodelang\\host_addin_retarget.py" --prune "' + ExpandConstant('{app}') + '" {#Digest}', ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, Code, @OnPruneLog) then RaiseException('could not run prune');
     if Code <> 0 then RaiseException('prune failed');
   end;
 end;
@@ -144,10 +197,26 @@ end;
     manifest = app / "source-manifest.tsv"
     manifest.write_text(manifest.read_text() + "nodelang/host_addin_retarget.py\t" + hashlib.sha256(helper.read_bytes()).hexdigest() + "\n")
     digest = hashlib.sha256(manifest.read_bytes()).hexdigest()
-    build = subprocess.run([str(compiler), "/Q", "/O" + str(tmp_path), "/DSource=" + str(helper), "/DDigest=" + digest, str(script)], capture_output=True, text=True, timeout=90)
+    build = subprocess.run([str(compiler), "/Q", "/O" + str(tmp_path), "/DSource=" + str(helper), "/DManifest=" + str(manifest), "/DDigest=" + digest, str(script)], capture_output=True, text=True, timeout=90)
     assert build.returncode == 0, build.stdout + build.stderr
-    done = subprocess.run([str(tmp_path / "prune-court.exe"), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/app=" + str(app), "/python=" + sys.executable, "/LOG=" + str(tmp_path / "install.log")], capture_output=True, timeout=90)
-    assert done.returncode == 0, (tmp_path / "install.log").read_text(errors="replace")
+    command = [str(tmp_path / "prune-court.exe"), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/app=" + str(app), "/python=" + sys.executable, "/LOG=" + str(tmp_path / "install.log")]
+    old = "bridges/revit/2027/old/RevitMCP.dll"
+    with _held_open(app / old) if locked else nullcontext():
+        done = subprocess.run(command, capture_output=True, timeout=90)
+        log = (tmp_path / "install.log").read_text(errors="replace")
+        assert done.returncode == 0, log
+        assert "PRUNE DRY RUN" in log
+        if locked:
+            assert (app / old).read_bytes() == old.encode()
+            assert "deferred: in use by a running program" in log
+            state = json.loads((app / prune.RECEIPT).read_text())
+            assert old.casefold() in state["pending_prune"]
+            orphans.remove(old)
+    if locked:
+        # A second install retries the saved pending-prune list after the handle closes.
+        assert subprocess.run(command, capture_output=True, timeout=90).returncode == 0
+        assert not (app / old).exists()
+        assert json.loads((app / prune.RECEIPT).read_text())["pending_prune"] == {}
     assert all(not (app / name).exists() for name in orphans)
     assert before == {name: (app / name).read_bytes() for name in before}
 
@@ -174,7 +243,8 @@ def test_manifest_covers_generated_studio_and_gated_hosts_only(tmp_path):
     assert not any("__pycache__" in name or "unshipped" in name or name.endswith(".db") for name in rows)
 
 
-def test_pruner_does_not_follow_a_junction(tmp_path):
+def test_pruner_does_not_follow_a_junction(install_root):
+    tmp_path = install_root
     digest, _, _ = _seed(tmp_path)
     foreign = tmp_path / "outside"
     foreign.mkdir()
@@ -184,3 +254,131 @@ def test_pruner_does_not_follow_a_junction(tmp_path):
     assert done.returncode == 0, done.stderr
     prune.prune(tmp_path, digest)
     assert (foreign / "keep.py").read_bytes() == b"foreign"
+
+
+def test_reviewer_three_root_manifest_keeps_user_documents_and_databases(install_root):
+    digest = _manifest(install_root)
+    names = ("nodelang/my-work.archhub", "nodelang/brain.sqlite3", "nodelang/user.db")
+    before = {}
+    for name in names:
+        path = install_root / name
+        path.write_bytes(name.encode())
+        before[name] = path.read_bytes()
+    prune.prune(install_root, digest)
+    assert before == {name: (install_root / name).read_bytes() for name in names}
+
+
+def _add_row(root, name, data=b"installed code"):
+    path = root / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    manifest = root / "source-manifest.tsv"
+    manifest.write_bytes(manifest.read_bytes() + (name + "\t" + hashlib.sha256(data).hexdigest() + "\n").encode())
+    return hashlib.sha256(manifest.read_bytes()).hexdigest()
+
+
+def test_previous_manifest_only_drops_owned_unchanged_files(install_root, capsys):
+    root = install_root
+    _manifest(root)
+    _add_row(root, "nodelang/dropped.py")
+    _add_row(root, "app/changed.py")
+    digest = _add_row(root, "studio/old.png")
+    prune.prune(root, digest)
+    state = json.loads((root / prune.RECEIPT).read_text())
+    assert "nodelang/dropped.py" in state["manifest"]
+    (root / "app/changed.py").write_bytes(b"user edits")
+    user = root / "nodelang/unmanifested.py"
+    user.write_bytes(b"user program")
+    os.utime(user, ns=(1_000_000_000, 1_000_000_000))
+    digest = _manifest(root)
+    assert set(prune.prune(root, digest)) == {"nodelang/dropped.py", "studio/old.png"}
+    assert user.read_bytes() == b"user program"
+    assert (root / "app/changed.py").read_bytes() == b"user edits"
+    log = capsys.readouterr().out
+    assert log.index("PRUNE DRY RUN [\"app/changed.py\"") < log.index("PRUNE nodelang/dropped.py")
+
+
+@pytest.mark.parametrize("name", ["nodelang/user.archhub", "app/owner.db", "studio/owner.sqlite3",
+                                   "bridges/owner.sqlite-wal", "app/user.json", "studio/user.yaml",
+                                   "nodelang/user.toml", "app/run.log", "bridges/owner.sqlite3-shm",
+                                   *[f"nodelang/{folder}/keep.py" for folder in prune.STATE_DIRS]])
+def test_never_delete_candidate_aborts_entire_prune(install_root, capsys, name):
+    root = install_root
+    _manifest(root)
+    _add_row(root, "nodelang/dropped.py")
+    digest = _add_row(root, name, b"user bytes")
+    prune.prune(root, digest)
+    digest = _manifest(root)
+    assert prune.prune(root, digest) == []
+    assert (root / name).read_bytes() == b"user bytes"
+    assert (root / "nodelang/dropped.py").read_bytes() == b"installed code"
+    log = capsys.readouterr().out
+    assert "PRUNE DRY RUN" in log and "PRUNE skipped: never-delete candidate" in log
+    assert json.loads((root / prune.RECEIPT).read_text())["manifest"] == (root / "source-manifest.tsv").read_text()
+
+
+def test_legacy_allowlist_time_and_directory_ownership(install_root):
+    root = install_root
+    digest = _manifest(root)
+    kept = ["nodelang/user.py", "nodelang/readme.html", "app/user.exe", "studio/user.dll",
+            "bridges/revit/2027/user.dll", "bridges/autocad/2026/user.addin", "app/photo.png"]
+    deleted = ["nodelang/old.py", "app/old.pyi", "studio/old.html", "nodelang/studio/old.html",
+               "bridges/rhino/old.py"]
+    for name in kept + deleted:
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(name.encode())
+        os.utime(path, ns=(1_000_000_000, 1_000_000_000))
+    (root / "BUILD_ID").write_text("previous")
+    future = (root / "BUILD_ID").stat().st_mtime_ns + 1_000_000_000
+    os.utime(root / kept[0], ns=(future, future))
+    assert set(prune.prune(root, digest)) == set(deleted)
+    assert all((root / name).read_bytes() == name.encode() for name in kept)
+
+
+def test_prepare_records_only_new_years_and_previous_manifest(install_root, tmp_path):
+    root = install_root
+    digest = _manifest(root)
+    old = (root / "source-manifest.tsv").read_bytes()
+    (root / "BUILD_ID").write_text("previous")
+    cutoff = (root / "BUILD_ID").stat().st_mtime_ns
+    incoming = tmp_path / "incoming.tsv"
+    incoming.write_bytes(old + b"bridges/autocad/2026/build/AcadMCP.dll\t" + b"a" * 64 + b"\n")
+    prune.prepare(root, incoming, hashlib.sha256(incoming.read_bytes()).hexdigest())
+    state = json.loads((root / prune.RECEIPT).read_text())
+    assert state["manifest"].encode() == old
+    assert state["installed_at_ns"] == cutoff
+    assert state["bridge_years"] == ["bridges/autocad/2026"]
+    assert prune.prune(root, digest) == []
+
+
+def test_outside_install_and_corrupt_receipt_never_prune(install_root, tmp_path, capsys):
+    root = tmp_path / "outside"
+    root.mkdir()
+    digest, orphans, _ = _seed(root)
+    assert prune.prune(root, digest) == []
+    assert all((root / name).exists() for name in orphans)
+    digest, orphans, _ = _seed(install_root)
+    (install_root / prune.RECEIPT).write_text("{broken")
+    assert prune.prune(install_root, digest) == []
+    assert all((install_root / name).exists() for name in orphans)
+    assert "invalid previous installed manifest" in capsys.readouterr().out
+
+
+def test_forbidden_candidate_keeps_pending_lock_retry(install_root):
+    root = install_root
+    _manifest(root)
+    _add_row(root, "app/user.json", b"user data")
+    digest = _add_row(root, "bridges/revit/2027/old/Locked.dll", b"old code")
+    prune.prune(root, digest)
+    digest = _manifest(root)
+    old = root / "bridges/revit/2027/old/Locked.dll"
+    state = json.loads((root / prune.RECEIPT).read_text())
+    state["pending_prune"] = {"bridges/revit/2027/old/locked.dll": {
+        "sha256": hashlib.sha256(old.read_bytes()).hexdigest(), "mtime_ns": old.stat().st_mtime_ns}}
+    prune.save_state(root, state)
+    with _held_open(old):
+        assert prune.prune(root, digest) == []  # user.json aborts all deletion
+        assert json.loads((root / prune.RECEIPT).read_text())["pending_prune"]
+    assert prune.prune(root, digest) == ["bridges/revit/2027/old/locked.dll"]
+    assert (root / "app/user.json").read_bytes() == b"user data"

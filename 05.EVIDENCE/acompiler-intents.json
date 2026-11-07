@@ -10860,7 +10860,9 @@
         "03.TOOLS/tools/app_from_grandmap.py",
         "03.TOOLS/tools/reality_grade.py",
         "03.TOOLS/tools/serve_governance.py",
-        "03.TOOLS/tools/serve_grandmap.py"
+        "03.TOOLS/tools/serve_grandmap.py",
+        "03.TOOLS/tools/measure_store.py",
+        "03.TOOLS/tools/measure_store_allocations.py"
       ]
     }
   }

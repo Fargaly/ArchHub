@@ -10864,7 +10864,9 @@
         "03.TOOLS/tools/measure_store.py",
         "03.TOOLS/tools/measure_store_allocations.py",
         "01.APP/nodelang/canvas.html",
-        "01.APP/nodelang/browser_graph_editor_court.cjs"
+        "01.APP/nodelang/browser_graph_editor_court.cjs",
+        "03.TOOLS/tools/archhub-compiler/src/lib.rs",
+        "03.TOOLS/tools/archhub-compiler/tests/diagnostics.rs"
       ]
     }
   }

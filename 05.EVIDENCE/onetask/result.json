@@ -1,0 +1,20 @@
+{
+  "request": "ONETASK",
+  "baseline": "aef09cd1",
+  "branch": "lane/onetask-onefile",
+  "source_head": "1aeb148305acb5d3b96c361d23e9c1d8b65062d7",
+  "passed": 435,
+  "failed": 0,
+  "skipped": 1,
+  "pytest_summary": "435 passed, 1 skipped, 1 warning in 636.79s (0:10:36)",
+  "release_files": 30,
+  "source_files": 14,
+  "hash_mismatches": [],
+  "profile_leaks": [],
+  "protected_write_attempts": 0,
+  "source_review": "source-review.json",
+  "runtime_evidence": "release.txt",
+  "environment_evidence": "release-env.json",
+  "installed_verified": false,
+  "pushed": false
+}

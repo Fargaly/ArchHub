@@ -1,0 +1,15 @@
+{
+  "scope": "source-only",
+  "verdict": "clean after corrections",
+  "installed_verified": false,
+  "workshop_receipt": {
+    "id": "52494317c82a422d96e84bd80d420d17",
+    "sequence": 9911,
+    "reviewer": "Codex / 00.ARCHUB / session-e988d7071dee [agent:session:a133c0a8dcf7ed225e02da544cd31b4cba605a0a53bf631dd8241d32239a6eca]",
+    "at": "2026-11-07T19:00:39.076129+00:00"
+  },
+  "reference": "release-env.json",
+  "source_files": 14,
+  "manifest_sha256": "55a9d44a5eadaef322883f18f5290b7b0ff13bda8baa87a77b2dc15efb811a12",
+  "note": "Independent source review and exact working-file hash binding; runtime result is recorded separately."
+}

@@ -55,7 +55,7 @@ try:
                     ('Read Revit views','r_views',{},'views'),
                     ('Set native parameters','b_set_parameter',{'parameter_name':'Comments','value':'Reviewed'},'done'),
                     ('Send review summary','send',{'to':'Fixture reviewer','text':'Review complete'},'receipt')]:
-                    calls.extend([('declare',{'task':title},'{}'),(tool,args,out)])
+                    calls.extend([('declare',{'task':title,'request_id':held[vendor]['taskId']},'{}'),(tool,args,out)])
                 native(root/'USERPROFILE',vendor,'work-'+vendor,calls)
                 declare(vendor)
                 answer={'ok':True,'edited':str(edited)}

@@ -13,11 +13,12 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 # Install deps first so they cache across code changes.
-COPY requirements.txt .
+COPY 06.CLOUD/cloud_backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy app code.
-COPY . .
+COPY 06.CLOUD/cloud_backend/ .
+COPY 01.APP/nodelang/openrouter_defaults.py .
 
 # Fly.io / Cloud Run / generic container.
 EXPOSE 8000

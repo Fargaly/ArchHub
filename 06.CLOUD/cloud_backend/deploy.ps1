@@ -232,18 +232,17 @@ if (-not $SkipSecrets) {
 
 # ----- 6. Deploy ---------------------------------------------------------
 Step 6 "Deploying $AppName"
-$repoRoot = Split-Path -Parent $PSScriptRoot
-$flyToml  = Join-Path $repoRoot "cloud_backend\fly.toml"
-# Build context is cloud_backend\ itself (the Dockerfile copies requirements.txt
-# and main.py from it), whatever directory this script is started from.
-$context  = Join-Path $repoRoot "cloud_backend"
+$flyToml  = Join-Path $PSScriptRoot "fly.toml"
+# Include the one desktop defaults module in the relay image.
+$context  = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $before = Get-FlyResult -FlyArgs @("releases", "-a", $AppName, "--json")
 Stop-IfFlyFailed "releases" $before
 $beforeNewest = Get-NewestRelease $before.StdOut
 $beforeVersion = 0
 if ($beforeNewest) { $beforeVersion = $beforeNewest.Version }
-$dockerfile = Join-Path $context "Dockerfile"
-$deployed = Get-FlyResult -FlyArgs @("deploy", $context, "--config", $flyToml, "--dockerfile", $dockerfile, "-a", $AppName)
+$dockerfile = Join-Path $PSScriptRoot "Dockerfile"
+$ignorefile = Join-Path $PSScriptRoot "dockerignore.txt"
+$deployed = Get-FlyResult -FlyArgs @("deploy", $context, "--config", $flyToml, "--dockerfile", $dockerfile, "--ignorefile", $ignorefile, "-a", $AppName)
 Stop-IfFlyFailed "deploy" $deployed
 $after = Get-FlyResult -FlyArgs @("releases", "-a", $AppName, "--json")
 Stop-IfFlyFailed "releases" $after

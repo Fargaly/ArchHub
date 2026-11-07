@@ -1,0 +1,11 @@
+# Repository-root context; admit only relay runtime and its shared defaults.
+**
+!06.CLOUD/
+!06.CLOUD/cloud_backend/
+!06.CLOUD/cloud_backend/*.py
+!06.CLOUD/cloud_backend/requirements.txt
+!06.CLOUD/cloud_backend/cockpit_assets/
+!06.CLOUD/cloud_backend/cockpit_assets/**
+!01.APP/
+!01.APP/nodelang/
+!01.APP/nodelang/openrouter_defaults.py

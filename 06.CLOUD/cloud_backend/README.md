@@ -52,6 +52,18 @@ the ResolverRegistry pattern in `app/resolver_registry.py`. GDPR delete via
 
 ## Local dev
 
+R2 relay routing enumerates zero-priced models with tools and text input/output,
+excludes `openrouter/free`, and prioritizes Nemotron Ultra, Dots3, Nemotron Super
+VL, North Mini Code, then Nemotron Lightning. Remaining models sort by total
+billions of parameters disclosed in their ID/name; undisclosed sizes sort last.
+Offline defaults come from `01.APP/nodelang/openrouter_defaults.py`, shared with
+the desktop router. Explicit provider/model environment overrides still apply.
+The recorded free-row `/models` fixture is in `tests/fixtures/` with provenance.
+
+`deploy.ps1` builds from the repository root to include that same module and
+passes `--ignorefile dockerignore.txt` to Fly. The allowlist admits only the relay
+runtime and shared defaults; use this helper for the relay image build.
+
 ```bash
 cd cloud_backend
 python -m venv .venv

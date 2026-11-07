@@ -65,16 +65,9 @@ OPENAI_CHAT = "https://api.openai.com/v1/chat/completions"
 GOOGLE_CHAT = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 NVIDIA_CHAT = "https://integrate.api.nvidia.com/v1/chat/completions"
 ANTHROPIC_MESSAGES = "https://api.anthropic.com/v1/messages"
-_OPENROUTER_FREE_MODELS_DEFAULT = (
-    "dots-studio/dots-3-note-preview:free",
-    "cohere/north-mini-code:free",
-    "nvidia/nemotron-3.5-lightning:free",
-)
-_OPENROUTER_FREE_TOOL_MODELS_DEFAULT = (
-    "dots-studio/dots-3-note-preview:free",
-    "cohere/north-mini-code:free",
-    "nvidia/nemotron-3.5-lightning:free",
-)
+from .openrouter_defaults import FREE_MODELS as _OPENROUTER_FREE_MODELS_DEFAULT
+
+_OPENROUTER_FREE_TOOL_MODELS_DEFAULT = _OPENROUTER_FREE_MODELS_DEFAULT
 _OPENROUTER_FREE_TOOL_CATALOGUE_CACHE_SECONDS = 300.0
 _OPENROUTER_FREE_TOOL_CATALOGUE_LOCK = threading.Lock()
 _OPENROUTER_FREE_TOOL_CATALOGUE_FETCHED = False

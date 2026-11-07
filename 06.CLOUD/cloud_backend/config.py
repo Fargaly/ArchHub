@@ -49,10 +49,17 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import sys
 import time
 from pathlib import Path
 
 import httpx  # used by openrouter_free_models() runtime enumeration
+
+# The container copies this same dependency-free desktop module beside config.
+if (__shared := Path(__file__).resolve().parent.parent.parent / "01.APP" / "nodelang").is_dir():
+    sys.path.append(str(__shared))
+from openrouter_defaults import FREE_MODELS as _OPENROUTER_FREE_MODELS_DEFAULT, RELAY_PREFERRED_MODELS
 
 try:
     from dotenv import load_dotenv  # type: ignore
@@ -167,13 +174,6 @@ OPENROUTER_BASE_URL = _req(
 # hardcoded list is only the FALLBACK — config.openrouter_free_models()
 # enumerates OpenRouter's /api/v1/models at runtime (pricing==0) so the pool
 # tracks reality, with this list as the offline default.
-_OPENROUTER_FREE_MODELS_DEFAULT = (
-    "mistralai/mistral-small-3.2-24b-instruct:free",
-    "deepseek/deepseek-chat-v3-0324:free",
-    "qwen/qwen-2.5-72b-instruct:free",
-    "meta-llama/llama-3.2-3b-instruct:free",
-    "google/gemini-2.0-flash-exp:free",
-)
 
 
 def _csv_tuple(env_name: str, default: tuple[str, ...]) -> tuple[str, ...]:
@@ -213,8 +213,8 @@ _OPENROUTER_FREE_CACHE: dict = {"at": 0.0, "models": ()}
 def _enumerate_openrouter_free(key: str, base_url: str) -> tuple[str, ...]:
     """Live-enumerate OpenRouter's presently-free slugs (pricing == 0).
 
-    Calls GET {base}/models, keeps only models whose pricing.prompt AND
-    pricing.completion are both zero. Returns an ordered de-duped tuple, or
+    Calls GET {base}/models, keeps free tool models with text input and output,
+    excluding the meta-router. Returns a size-ordered de-duped tuple, or
     () on any failure (caller falls back to the hardcoded list). The key is
     sent as a Bearer (OpenRouter allows /models unauthenticated too, but the
     founder's key keeps us consistent). NEVER logs the key."""
@@ -232,13 +232,21 @@ def _enumerate_openrouter_free(key: str, base_url: str) -> tuple[str, ...]:
     rows = data.get("data") if isinstance(data, dict) else None
     if not isinstance(rows, list):
         return ()
-    out: list[str] = []
+    out: dict[str, float] = {}
     for row in rows:
         if not isinstance(row, dict):
             continue
         slug = row.get("id") or ""
         pricing = row.get("pricing") or {}
-        if not slug or not isinstance(pricing, dict):
+        architecture = row.get("architecture") or {}
+        parameters = row.get("supported_parameters")
+        if (not isinstance(slug, str) or not slug or slug == "openrouter/free"
+                or not isinstance(pricing, dict) or not isinstance(architecture, dict)
+                or not isinstance(parameters, list) or "tools" not in parameters
+                or not isinstance(architecture.get("input_modalities"), list)
+                or "text" not in architecture["input_modalities"]
+                or not isinstance(architecture.get("output_modalities"), list)
+                or "text" not in architecture["output_modalities"]):
             continue
         # A model is free iff BOTH prompt + completion cost are exactly zero.
         # OpenRouter expresses prices as strings ("0", "0.0000007", …) — treat
@@ -249,9 +257,10 @@ def _enumerate_openrouter_free(key: str, base_url: str) -> tuple[str, ...]:
             except (TypeError, ValueError):
                 return False
         if _is_zero(pricing.get("prompt")) and _is_zero(pricing.get("completion")):
-            if slug not in out:
-                out.append(slug)
-    return tuple(out)
+            # shortcut: undisclosed sizes sort last; use API parameter counts if added.
+            size = re.search(r"(\d+(?:\.\d+)?)b\b", slug + " " + str(row.get("name") or ""), re.I)
+            out[slug] = float(size[1]) if size else 0.0
+    return tuple(sorted(out, key=lambda slug: (-out[slug], slug)))
 
 
 def openrouter_free_models(key: str = "", base_url: str = "",
@@ -278,10 +287,10 @@ def openrouter_free_models(key: str = "", base_url: str = "",
     enum_set = set(enumerated)
     ordered: list[str] = []
     # Curated heads that are STILL free lead (preserve our quality ordering).
-    for m in OPENROUTER_FREE_MODELS:
+    for m in RELAY_PREFERRED_MODELS:
         if m in enum_set and m not in ordered:
             ordered.append(m)
-    # Then every other freshly-discovered free slug.
+    # Then every other eligible model, largest disclosed total size first.
     for m in enumerated:
         if m not in ordered:
             ordered.append(m)

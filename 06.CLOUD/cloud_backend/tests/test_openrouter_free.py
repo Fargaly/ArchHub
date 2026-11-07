@@ -468,7 +468,7 @@ def test_openrouter_free_models_enumeration_filters_pricing_zero(monkeypatch):
         status_code = 200
 
         def json(self):
-            return {"data": [
+            rows = [
                 {"id": "free/alpha:free",
                  "pricing": {"prompt": "0", "completion": "0"}},
                 {"id": "paid/beta",
@@ -478,7 +478,11 @@ def test_openrouter_free_models_enumeration_filters_pricing_zero(monkeypatch):
                 {"id": "half/delta",  # prompt free but completion paid → NOT free
                  "pricing": {"prompt": "0", "completion": "0.0000005"}},
                 {"id": "nopricing/eps"},  # missing pricing → NOT free
-            ]}
+            ]
+            for row in rows:
+                row.update(supported_parameters=["tools"], architecture={
+                    "input_modalities": ["text"], "output_modalities": ["text"]})
+            return {"data": rows}
 
     monkeypatch.setattr(config.httpx, "get", lambda *a, **k: _Resp())
     pool = config.openrouter_free_models("or-key", "https://openrouter.ai/api/v1",

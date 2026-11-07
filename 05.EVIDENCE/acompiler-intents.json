@@ -9621,6 +9621,22 @@
         "05.EVIDENCE/acompiler-intents.json",
         ".gitignore"
       ]
+    },
+    "RELAYMODELS": {
+      "source": "Founder R2 2026-11-07, R&D d4ac5cef / rd-2026-11-07.md: share desktop fallback; enumerate free tools with text input/output; exclude meta-router; curate five families then size; recorded fixture regression tests; commit only, 717 deploys after landing.",
+      "scope": [
+        "01.APP/nodelang/model_router.py",
+        "01.APP/nodelang/openrouter_defaults.py",
+        "06.CLOUD/cloud_backend/config.py",
+        "06.CLOUD/cloud_backend/Dockerfile",
+        "06.CLOUD/cloud_backend/dockerignore.txt",
+        "06.CLOUD/cloud_backend/deploy.ps1",
+        "06.CLOUD/cloud_backend/README.md",
+        "06.CLOUD/cloud_backend/tests/test_openrouter_free.py",
+        "06.CLOUD/cloud_backend/tests/test_relay_models.py",
+        "06.CLOUD/cloud_backend/tests/fixtures/openrouter-models-2026-11-07.json",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

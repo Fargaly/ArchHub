@@ -16,5 +16,15 @@
   "runtime_evidence": "release.txt",
   "environment_evidence": "release-env.json",
   "installed_verified": false,
-  "pushed": false
+  "pushed": false,
+  "skip_details": [
+    {
+      "nodeid": "02.TESTS/tests_replica/test_real_app_check_tool.py::test_an_overlay_link_is_refused",
+      "reason": "this account cannot create symbolic links",
+      "identification": "Exact 436-item collection order mapped to the sole s in saved release progress; no test rerun"
+    }
+  ],
+  "tested_code_commit": "d0d9a1d41ffb83071a565ce2d72ef7254d2e70c4",
+  "committed_sources_match_after_newline_normalization": true,
+  "runtime_review": "runtime-review.json"
 }

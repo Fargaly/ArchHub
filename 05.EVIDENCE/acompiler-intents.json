@@ -10893,6 +10893,21 @@
         "03.TOOLS/tools/real_app_check/owner_grand_map.json",
         "03.TOOLS/tools/real_app_check/"
       ]
+    },
+    "PRUNERIG": {
+      "source": "Founder PRUNERIG F253+F303: exact build manifest installer prune preserving user data; owned Revit cleanup and foreign manifest hash receipts; raw page CDP Qt rig; remove retired CNG gate. Sole builder, isolated checks, commit no push or live-profile writes.",
+      "scope": [
+        "01.APP/nodelang/install_prune.py",
+        "01.APP/nodelang/host_addin_retarget.py",
+        "02.TESTS/tests_replica/test_install_prune.py",
+        "02.TESTS/tests_replica/test_real_app_check_tool.py",
+        "03.TOOLS/installer/ArchHub.iss",
+        "03.TOOLS/installer/build_release.ps1",
+        "03.TOOLS/tools/real_app_check/",
+        "04.DOCS/FAILURE_LOG.md",
+        "05.EVIDENCE/acompiler-intents.json",
+        "05.EVIDENCE/prunerig/"
+      ]
     }
   }
 }

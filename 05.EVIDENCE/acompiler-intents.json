@@ -18,6 +18,7 @@
         "02.TESTS/tests/test_onetask.py",
         "02.TESTS/tests_js/onetask.cjs",
         "02.TESTS/tests_js/agentcanvas.cjs",
+        "02.TESTS/tests_js/agentwork.cjs",
         "04.DOCS/DECISIONS.md",
         "05.EVIDENCE/acompiler-intents.json",
         "05.EVIDENCE/onetask/"

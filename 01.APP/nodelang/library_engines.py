@@ -2302,7 +2302,7 @@ def _type_entry(entry):
     present = {port.get("id") for port in ports["target"]}
     for definition in definitions:
         if definition["id"] not in present and not (
-                str(entry.get("id") or "").startswith("skill:") and definition["id"] == "skill"):
+                str(entry.get("id") or "").startswith("skill:") and definition["id"] in ("skill", "session_file")):
             ports["target"].append({"id": definition["id"], "type": socket_type(definition["type"])})
             present.add(definition["id"])
     entry["sockets"] = {

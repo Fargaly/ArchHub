@@ -8,6 +8,8 @@
         "01.APP/nodelang/session_files.py",
         "01.APP/nodelang/library_engines.py",
         "01.APP/nodelang/canvas_tools.py",
+        "01.APP/nodelang/canvas_documents.py",
+        "01.APP/nodelang/agent_work.py",
         "01.APP/nodelang/nograph_server.py",
         "01.APP/nodelang/studio/api.js",
         "01.APP/nodelang/studio/ds_screens.jsx",

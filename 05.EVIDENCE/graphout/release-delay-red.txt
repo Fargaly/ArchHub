@@ -1,0 +1,56 @@
+.FTESTISO final profile leaks: []; protected write attempts: 0
+                                                                         [100%]
+================================== FAILURES ===================================
+_____________________ test_rendered_agents_and_task_steps _____________________
+
+    def test_rendered_agents_and_task_steps():
+        import os
+        from pathlib import Path
+        import subprocess
+        import sys
+        root = Path(__file__).resolve().parents[2]
+        browser_cache = os.environ.get('PLAYWRIGHT_BROWSERS_PATH') or subprocess.check_output(
+            ['node', '-p', "require('node:path').join(require('node:os').userInfo().homedir,'AppData/Local/ms-playwright')"],
+            text=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)).strip()
+        for command in (['node', '--max-old-space-size=512', '03.TOOLS/packaging/compile_studio.cjs'],
+                        ['node', '02.TESTS/tests_js/agentcanvas.cjs']):
+            result = subprocess.run(command, cwd=root, capture_output=True, text=True, encoding='utf-8', timeout=240,
+                                    env={**os.environ, 'PLAYWRIGHT_BROWSERS_PATH': browser_cache, 'ARCHHUB_COURT_PYTHON': sys.executable},
+                                    creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            print(result.stdout)
+>           assert result.returncode == 0, result.stdout + result.stderr
+E           AssertionError: PASS Agents: 5 live sessions, fan-in task wires, waiting/unassigned/missing-file states, no Run; both design viewports
+E             PASS Open transcript reads real Codex and Claude fixture native logs
+E             PASS Open thread lands on the real task Workshop thread
+E             AssertionError [ERR_ASSERTION]: step refresh 2894 ms
+E                 at C:\Users\fargaly\AppData\Local\Temp\land-stack\02.TESTS\tests_js\agentcanvas.cjs:151:12 {
+E               generatedMessage: false,
+E               code: 'ERR_ASSERTION',
+E               actual: false,
+E               expected: true,
+E               operator: '==',
+E               diff: 'simple'
+E             }
+E             
+E           assert 1 == 0
+E            +  where 1 = CompletedProcess(args=['node', '02.TESTS/tests_js/agentcanvas.cjs'], returncode=1, stdout='PASS Agents: 5 live session...sage: false,\n  code: 'ERR_ASSERTION',\n  actual: false,\n  expected: true,\n  operator: '==',\n  diff: 'simple'\n}\n").returncode
+
+02.TESTS\tests\test_agentcanvas.py:319: AssertionError
+---------------------------- Captured stdout call -----------------------------
+{"ok":true,"action":"compile","files":40,"output_bytes":1889410,"manifest_sha256":"9f4129e1761556cc15b2986ec90a23f980ab192be1e4c81fd73e252b84b96548","babel_version":"7.29.0"}
+
+PASS Agents: 5 live sessions, fan-in task wires, waiting/unassigned/missing-file states, no Run; both design viewports
+PASS Open transcript reads real Codex and Claude fixture native logs
+PASS Open thread lands on the real task Workshop thread
+
+============================== warnings summary ===============================
+..\..\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434
+  C:\Users\fargaly\AppData\Local\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434: PytestConfigWarning: Unknown config option: cache_dir
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+PROFILE-WRITE-GUARD: protected write attempts=0
+=========================== short test summary info ===========================
+FAILED 02.TESTS/tests/test_agentcanvas.py::test_rendered_agents_and_task_steps
+1 failed, 1 passed, 1 warning in 160.36s (0:02:40)

@@ -346,14 +346,9 @@ def test_tampered_payload_retires_legacy_instead_of_loading_it(machine):
 
 def test_bridge_packager_omits_failed_year_and_keeps_supported_year(tmp_path):
     import os
-    import shutil
     import subprocess
-    candidates = [Path(sys.executable).with_name("pwsh.exe"),
-                  Path("C:/Program Files/PowerShell/7/pwsh.exe"),
-                  *sorted(Path("C:/Program Files/WindowsApps").glob(
-                      "Microsoft.PowerShell_*_x64__*/pwsh.exe"), reverse=True)]
-    powershell = next((str(path) for path in candidates if path.is_file()), None) or shutil.which("pwsh")
-    assert powershell, "PowerShell 7 is required to exercise the bridge packager"
+    # Use the OS executable and its modules; Store PowerShell can refuse launch inside the release job.
+    powershell = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
     source = tmp_path / "sources"
     source.mkdir()
     (source / "max_mcp").mkdir()
@@ -379,10 +374,11 @@ def test_bridge_packager_omits_failed_year_and_keeps_supported_year(tmp_path):
                       "$env:ProgramFiles = $env:ARCHHUB_FIXTURE_PROGRAMFILES\n"
                       "& $env:ARCHHUB_FIXTURE_BUILDER @args\n")
     result = subprocess.run([
-        powershell, "-NoProfile", "-File", str(runner),
+        str(powershell), "-NoProfile", "-File", str(runner),
         "-SourceRoot", str(source), "-OutputRoot", str(out), "-SourceRevision", "a" * 40,
         "-BuildId", "fixture", "-DotnetPath", str(dotnet)],
-        env=dict(os.environ, PATH="", ARCHHUB_FIXTURE_PROGRAMFILES=str(program_files),
+        env=dict(os.environ, PATH="", PSMODULEPATH=str(powershell.parent / "Modules"),
+                 ARCHHUB_FIXTURE_PROGRAMFILES=str(program_files),
                  ARCHHUB_FIXTURE_BUILDER=str(ROOT / "03.TOOLS/installer/build_host_bridges.ps1")),
         capture_output=True, text=True, timeout=120)
     assert result.returncode == 0, result.stdout + result.stderr

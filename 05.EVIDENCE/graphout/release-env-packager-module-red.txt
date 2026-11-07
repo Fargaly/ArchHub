@@ -1,0 +1,72 @@
+FTESTISO final profile leaks: []; protected write attempts: 0
+                                                                         [100%]
+================================== FAILURES ===================================
+_______ test_bridge_packager_omits_failed_year_and_keeps_supported_year _______
+
+tmp_path = WindowsPath('C:/Users/fargaly/AppData/Local/Temp/pytest-of-Fargaly/pytest-152/test_bridge_packager_omits_fai0')
+
+    def test_bridge_packager_omits_failed_year_and_keeps_supported_year(tmp_path):
+        import os
+        import subprocess
+        # The packager supports Windows PowerShell; Store aliases can refuse launch inside the release job.
+        powershell = str(Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe")
+        source = tmp_path / "sources"
+        source.mkdir()
+        (source / "max_mcp").mkdir()
+        (source / "max_mcp/max_mcp_startup.py").write_text("# fixture")
+        program_files = tmp_path / "ProgramFiles"
+        for year in (2020, 2027):
+            host = program_files / "Autodesk" / ("Revit %s" % year)
+            host.mkdir(parents=True)
+            for name in ("RevitAPI.dll", "RevitAPIUI.dll"):
+                (host / name).write_bytes(b"fixture API")
+        dotnet = tmp_path / "dotnet.ps1"
+        dotnet.write_text(
+            '$ErrorActionPreference = "Stop"\n$BuildArgs = $args\n'
+            'if (($BuildArgs -join " ") -match "RevitYear=2020") { exit 1 }\n'
+            'if ($BuildArgs[0] -eq "build") {\n'
+            '  $out = $BuildArgs[[Array]::IndexOf($BuildArgs, "-o") + 1]\n'
+            '  $name = [IO.Path]::GetFileNameWithoutExtension($BuildArgs[1]) + ".dll"\n'
+            '  [IO.File]::WriteAllText((Join-Path $out $name), "fixture bridge")\n'
+            '}\nexit 0\n')
+        out = tmp_path / "payload"
+        runner = tmp_path / "build.ps1"
+        runner.write_text("$ErrorActionPreference = 'Stop'\n"
+                          "$env:ProgramFiles = $env:ARCHHUB_FIXTURE_PROGRAMFILES\n"
+                          "& $env:ARCHHUB_FIXTURE_BUILDER @args\n")
+        result = subprocess.run([
+            powershell, "-NoProfile", "-File", str(runner),
+            "-SourceRoot", str(source), "-OutputRoot", str(out), "-SourceRevision", "a" * 40,
+            "-BuildId", "fixture", "-DotnetPath", str(dotnet)],
+            env=dict(os.environ, PATH="", ARCHHUB_FIXTURE_PROGRAMFILES=str(program_files),
+                     ARCHHUB_FIXTURE_BUILDER=str(ROOT / "03.TOOLS/installer/build_host_bridges.ps1")),
+            capture_output=True, text=True, timeout=120)
+>       assert result.returncode == 0, result.stdout + result.stderr
+E       AssertionError: WARNING: Revit 2020 unsupported by this build; setup will retire its ArchHub manifests: Restore failed for 
+E         revit_mcp_core/RevitMCPCore.csproj (-p:TargetFramework=net47 -p:RevitYear=2020 
+E         -p:RevitInstallDir=C:\Users\fargaly\AppData\Local\Temp\pytest-of-Fargaly\pytest-152\test_bridge_packager_omits_fai0\Pro
+E         gramFiles\Autodesk\Revit 2020).
+E         ForEach-Object : The term 'Get-FileHash' is not recognized as the name of a cmdlet, function, script file, or operable 
+E         program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+E         At C:\Users\fargaly\AppData\Local\Temp\land-stack\03.TOOLS\installer\build_host_bridges.ps1:120 char:28
+E         +         Sort-Object Name | ForEach-Object {
+E         +                            ~~~~~~~~~~~~~~~~
+E             + CategoryInfo          : ObjectNotFound: (Get-FileHash:String) [ForEach-Object], CommandNotFoundException
+E             + FullyQualifiedErrorId : CommandNotFoundException,Microsoft.PowerShell.Commands.ForEachObjectCommand
+E          
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', '-NoProfile', '-File', 'C:\\U...ption\n    + FullyQualifiedErrorId : CommandNotFoundException,Microsoft.PowerShell.Commands.ForEachObjectCommand\n \n").returncode
+
+02.TESTS\tests_replica\test_revit_addin_packaging.py:383: AssertionError
+============================== warnings summary ===============================
+..\..\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434
+  C:\Users\fargaly\AppData\Local\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434: PytestConfigWarning: Unknown config option: cache_dir
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+PROFILE-WRITE-GUARD: protected write attempts=0
+=========================== short test summary info ===========================
+FAILED 02.TESTS/tests_replica/test_revit_addin_packaging.py::test_bridge_packager_omits_failed_year_and_keeps_supported_year
+1 failed, 1 warning in 102.83s (0:01:42)

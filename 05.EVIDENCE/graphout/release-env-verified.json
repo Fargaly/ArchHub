@@ -1,0 +1,63 @@
+{
+  "coordinator_environment_pid": 42000,
+  "entry_pid": 20452,
+  "pytest_pid": 164496,
+  "entry_executable": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\.venv\\Scripts\\python.exe",
+  "runtime_executable": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+  "command": [
+    "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\.venv\\Scripts\\python.exe",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "-rf",
+    "02.TESTS/tests_replica/test_raildoors.py",
+    "02.TESTS/tests/test_designbuild.py",
+    "02.TESTS/tests_replica/test_app_folder_tidy.py",
+    "02.TESTS/tests_replica/test_session_files.py",
+    "02.TESTS/tests_replica/test_canvas_parametric.py",
+    "02.TESTS/tests_replica/test_ng_workshop.py",
+    "02.TESTS/tests_replica/test_baboom_work_presence.py",
+    "02.TESTS/tests_replica/test_baboom_nograph.py",
+    "02.TESTS/tests_replica/test_baboom_native_companion.py",
+    "02.TESTS/tests_replica/test_baboom_native_runtime.py",
+    "02.TESTS/tests/test_task_session_roundtrip.py",
+    "02.TESTS/tests/test_agentcanvas.py",
+    "02.TESTS/tests/test_agentwork.py",
+    "02.TESTS/tests/test_preflight_imports.py",
+    "02.TESTS/tests/test_state_isolation.py",
+    "02.TESTS/tests/test_task_session_keeps_canvas.py",
+    "02.TESTS/tests_replica/test_colleague_install.py",
+    "02.TESTS/tests_replica/test_file_path_links.py",
+    "02.TESTS/tests_replica/test_fresh_machine_host_brokers.py",
+    "02.TESTS/tests_replica/test_graphout.py",
+    "02.TESTS/tests_replica/test_multidelete.py",
+    "02.TESTS/tests_replica/test_node_params.py",
+    "02.TESTS/tests_replica/test_presence1_acceptance.py",
+    "02.TESTS/tests_replica/test_real_app_check_tool.py",
+    "02.TESTS/tests_replica/test_recent_json_lock.py",
+    "02.TESTS/tests_replica/test_remote_agents_relay.py",
+    "02.TESTS/tests_replica/test_revit_addin_packaging.py",
+    "02.TESTS/tests_replica/test_settings_node_bridge.py",
+    "02.TESTS/tests_replica/test_the_menu_opens_and_the_cockpit_signs_in.py"
+  ],
+  "entry_PATH": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\.venv\\Scripts;C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\wbin;C:\\Program Files\\LucidLink\\bin\\;C:\\Windows\\system32;C:\\Windows;C:\\Windows\\System32\\Wbem;C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\;C:\\Windows\\System32\\OpenSSH\\;C:\\Program Files (x86)\\NVIDIA Corporation\\PhysX\\Common;C:\\Program Files\\dotnet\\;C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\;C:\\Program Files\\Microsoft SQL Server\\120\\Tools\\Binn\\;C:\\Program Files\\Common Files\\Autodesk Shared\\;C:\\Program Files\\Microsoft SQL Server\\150\\Tools\\Binn\\;C:\\Program Files\\nodejs\\;C:\\Program Files\\pyRevit-Master\\bin;C:\\Program Files\\GitHub CLI\\;C:\\Program Files\\NVIDIA Corporation\\NVIDIA App\\NvDLISR;C:\\Program Files\\Tailscale\\;C:\\Program Files\\Git\\cmd;C:\\Program Files\\pyRevit-Master\\bin;C:\\Program Files\\pyRevit CLI\\bin;C:\\Program Files\\WSL\\;C:\\Users\\fargaly\\.local\\bin;C:\\Users\\fargaly\\AppData\\Local\\Microsoft\\WindowsApps;C:\\Users\\fargaly\\AppData\\Roaming\\pyRevit-Master\\bin;C:\\Users\\fargaly\\AppData\\Local\\Programs\\Microsoft VS Code\\bin;C:\\Users\\fargaly\\.dotnet\\tools;C:\\Users\\fargaly\\AppData\\Local\\Programs\\Antigravity\\bin;C:\\Users\\fargaly\\AppData\\Roaming\\npm;C:\\Users\\fargaly\\AppData\\Local\\Programs\\Ollama;C:\\Users\\fargaly\\AppData\\Local\\Python\\bin;C:\\Users\\fargaly\\.lmstudio\\bin;C:\\Users\\fargaly\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Fly-io.flyctl_Microsoft.Winget.Source_8wekyb3d8bbwe;C:\\Users\\fargaly\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Stripe.StripeCli_Microsoft.Winget.Source_8wekyb3d8bbwe;C:\\Users\\fargaly\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python313\\Scripts;C:\\Users\\fargaly\\AppData\\Local\\Programs\\Antigravity IDE\\bin;C:\\Users\\fargaly\\AppData\\Local\\PowerToys\\DSCModules\\;C:\\Users\\fargaly\\AppData\\Local\\Temp\\claude\\C--Users-fargaly-00-ARCHUB\\71743447-6dd5-4050-bc4f-d228f7a1d91e\\scratchpad\\newapp\\01.WIP\\FIXTURE\\PACKAGING\\DOTNET\\.dotnet\\tools;C:\\Users\\fargaly\\AppData\\Local\\Temp\\claude\\C--Users-fargaly-00-ARCHUB\\71743447-6dd5-4050-bc4f-d228f7a1d91e\\scratchpad\\repoclean3\\SDKHOME\\.dotnet\\tools;C:\\Users\\fargaly\\AppData\\Local\\cursor-agent;C:\\Users\\fargaly\\AppData\\Local\\Programs\\cursor\\resources\\app\\bin",
+  "matches_supplied_entry_PATH": true,
+  "runtime_PATH": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\.venv\\Lib\\site-packages\\PyQt6\\Qt6\\bin;C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\.venv\\Scripts;C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\wbin;C:\\Program Files\\LucidLink\\bin\\;C:\\Windows\\system32;C:\\Windows;C:\\Windows\\System32\\Wbem;C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\;C:\\Windows\\System32\\OpenSSH\\;C:\\Program Files (x86)\\NVIDIA Corporation\\PhysX\\Common;C:\\Program Files\\dotnet\\;C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\;C:\\Program Files\\Microsoft SQL Server\\120\\Tools\\Binn\\;C:\\Program Files\\Common Files\\Autodesk Shared\\;C:\\Program Files\\Microsoft SQL Server\\150\\Tools\\Binn\\;C:\\Program Files\\nodejs\\;C:\\Program Files\\pyRevit-Master\\bin;C:\\Program Files\\GitHub CLI\\;C:\\Program Files\\NVIDIA Corporation\\NVIDIA App\\NvDLISR;C:\\Program Files\\Tailscale\\;C:\\Program Files\\Git\\cmd;C:\\Program Files\\pyRevit-Master\\bin;C:\\Program Files\\pyRevit CLI\\bin;C:\\Program Files\\WSL\\;C:\\Users\\fargaly\\.local\\bin;C:\\Users\\fargaly\\AppData\\Local\\Microsoft\\WindowsApps;C:\\Users\\fargaly\\AppData\\Roaming\\pyRevit-Master\\bin;C:\\Users\\fargaly\\AppData\\Local\\Programs\\Microsoft VS Code\\bin;C:\\Users\\fargaly\\.dotnet\\tools;C:\\Users\\fargaly\\AppData\\Local\\Programs\\Antigravity\\bin;C:\\Users\\fargaly\\AppData\\Roaming\\npm;C:\\Users\\fargaly\\AppData\\Local\\Programs\\Ollama;C:\\Users\\fargaly\\AppData\\Local\\Python\\bin;C:\\Users\\fargaly\\.lmstudio\\bin;C:\\Users\\fargaly\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Fly-io.flyctl_Microsoft.Winget.Source_8wekyb3d8bbwe;C:\\Users\\fargaly\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Stripe.StripeCli_Microsoft.Winget.Source_8wekyb3d8bbwe;C:\\Users\\fargaly\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python313\\Scripts;C:\\Users\\fargaly\\AppData\\Local\\Programs\\Antigravity IDE\\bin;C:\\Users\\fargaly\\AppData\\Local\\PowerToys\\DSCModules\\;C:\\Users\\fargaly\\AppData\\Local\\Temp\\claude\\C--Users-fargaly-00-ARCHUB\\71743447-6dd5-4050-bc4f-d228f7a1d91e\\scratchpad\\newapp\\01.WIP\\FIXTURE\\PACKAGING\\DOTNET\\.dotnet\\tools;C:\\Users\\fargaly\\AppData\\Local\\Temp\\claude\\C--Users-fargaly-00-ARCHUB\\71743447-6dd5-4050-bc4f-d228f7a1d91e\\scratchpad\\repoclean3\\SDKHOME\\.dotnet\\tools;C:\\Users\\fargaly\\AppData\\Local\\cursor-agent;C:\\Users\\fargaly\\AppData\\Local\\Programs\\cursor\\resources\\app\\bin",
+  "runtime_added_PATH_entries": [
+    "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\.venv\\Lib\\site-packages\\PyQt6\\Qt6\\bin"
+  ],
+  "ARCHHUB_NODE_MODULES": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\land-stack\\node_modules",
+  "tools": {
+    "node": "C:\\Program Files\\nodejs\\node.EXE",
+    "pwsh": "C:\\Users\\fargaly\\AppData\\Local\\Microsoft\\WindowsApps\\pwsh.EXE",
+    "rg": null
+  },
+  "source_sha256": {
+    "02.TESTS/tests_replica/test_revit_addin_packaging.py": "373760009ec7abc158275ae87bcc16b4783eb0d9c04b41f922bd253e3547c924",
+    "02.TESTS/tests/test_agentcanvas.py": "a5a50a006767b95e9956600cb7a59205f6e9ca5bb80eccd11fdd6f6fb4b975b2",
+    "02.TESTS/tests_js/agentcanvas.cjs": "6c3057a92eb12f9e830228220762fd5e41f5251e590ae4405744743294d064d3",
+    "03.TOOLS/installer/build_host_bridges.ps1": "3ebf5c23f5acc93325c9bb7803867a274d4fdce0d2e759e7b392876a8a91dd9a"
+  }
+}

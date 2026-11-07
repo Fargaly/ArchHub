@@ -8,16 +8,17 @@
   "import_entries": 38,
   "unique_import_files": 146,
   "python_acceptance_inventory": 410,
-  "acceptance_note": "GRAPHOUT follow-up: the three requested cases pass alone. Expanded complete release union in one pytest process via run-heavy: 408 passed, 0 failed, 2 optional tests skipped. All three original failures also reproduced on origin/main.",
+  "acceptance_note": "GRAPHOUT release-environment follow-up: both cases pass separately, the browser also with controlled producer delay; exact supplied entry PATH and installed release interpreter, complete one-process release union: 409 passed, 0 failed, 1 skipped. Source-only commit; no push or installed-app acceptance.",
   "test_results": {
     "release": {
-      "passed": 408,
+      "passed": 409,
       "failed": 0,
-      "skipped": 2,
+      "skipped": 1,
       "warnings": 1,
-      "log": "fixes-release.txt",
+      "log": "release-env-full-green.txt",
       "single_pytest_process": true,
-      "test_files": 29
+      "test_files": 29,
+      "environment_proof": "release-env-verified.json"
     },
     "graphout": {
       "passed": 14,

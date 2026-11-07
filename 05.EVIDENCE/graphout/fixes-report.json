@@ -1,83 +1,106 @@
 {
-  "request": "Continue GRAPHOUT on lane/graphout at 9afdeaa4; fix three release failures; compare origin/main; targeted then complete release in one pytest process via run-heavy; commit without push.",
-  "base_head": "9afdeaa4a4a3e682b04b0dcc1d6e854ab751454e",
-  "origin_main": "9a1a3a7974e99d3e311ba34973b37b53f34e90e0",
-  "baseline_method": "Extract the three unchanged test function ASTs from origin/main; run against origin/main launcher/setup/installer/packager blobs under the same 02.TESTS conftest profile guard and release interpreter. No live host or user-state writes.",
-  "baseline_result": "3 failed, 1 warning in 122.39s (0:02:02)",
-  "classification": {
-    "test_window_icon_is_the_one_the_installer_ships": "pre-existing: assertion still targeted the bootstrap launcher after Qt icon setup moved into nograph_launcher.run",
-    "test_assistant_receipt_uses_the_launcher_state_root": "pre-existing: source spelling assertions predated the shared user_paths.state_directory owner",
-    "test_bridge_packager_omits_failed_year_and_keeps_supported_year": "pre-existing environment-sensitive failure: bare pwsh resolves the Store execution alias; same guarded main fixture raises PermissionError WinError 5. Absolute installed executable succeeds with child PATH empty."
-  },
-  "source_comparison": [
-    {
-      "path": "01.APP/nodelang/launcher.py",
-      "origin_main_sha256": "a2c7fa5d47007bae2c7e7302a385b2f002ba4cc69700ab6d2a103617c7a3d807",
-      "same_git_blob": false,
-      "working_tree_sha256": "99ac1d95a91071f2f93834fc9a10cfc7eb7bcc2aed3181a6f670ddbdc3a34557"
+  "request": "Continue GRAPHOUT on lane/graphout at ac11a53f; reproduce both release failures in the installed release interpreter and supplied PATH, fix the causes, run alone and in the complete one-process release union; commit without push.",
+  "base_head": "ac11a53f6cbdfa75d61bb7940944e507a4504459",
+  "branch": "lane/graphout",
+  "failure_proofs": {
+    "packager_full": {
+      "passed": 408,
+      "failed": 1,
+      "skipped": 1,
+      "error": 0,
+      "summary": "1 failed, 408 passed, 1 skipped, 1 warning in 1640.88s (0:27:20)",
+      "log": "release-env-717-full-red.txt"
     },
-    {
-      "path": "01.APP/nodelang/nograph_launcher.py",
-      "origin_main_sha256": "2695e101308c96b4f814ab38590cbd5472de46fd070656c0c6d1f6fecf90a599",
-      "same_git_blob": true,
-      "working_tree_sha256": "2695e101308c96b4f814ab38590cbd5472de46fd070656c0c6d1f6fecf90a599"
+    "packager_standalone_before_fix": {
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "error": 0,
+      "summary": "2 passed, 1 warning in 221.66s (0:03:41)",
+      "log": "release-env-717-targeted-red.txt"
     },
-    {
-      "path": "01.APP/nodelang/user_paths.py",
-      "origin_main_sha256": "865c6918b62e8c861431ff836309de83f8203e831a82a1bb7541b7c52cbdc1dd",
-      "same_git_blob": true,
-      "working_tree_sha256": "865c6918b62e8c861431ff836309de83f8203e831a82a1bb7541b7c52cbdc1dd"
+    "packager_native_store_refusal": {
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "error": 0,
+      "summary": "1 failed, 1 warning in 101.27s (0:01:41)",
+      "log": "release-env-packager-store-red.txt"
     },
-    {
-      "path": "01.APP/colleague_setup.py",
-      "origin_main_sha256": "7431011bc15f6f71d9412f9d07685ce0a8726f1d8ca3da618ea55cd7d51fe716",
-      "same_git_blob": true,
-      "working_tree_sha256": "8d300819060c07188ccfab5599fb8626699b75d7bde86e9dfe4d399dce0e3b9f"
+    "packager_module_path_refusal": {
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "error": 0,
+      "summary": "1 failed, 1 warning in 102.83s (0:01:42)",
+      "log": "release-env-packager-module-red.txt"
     },
-    {
-      "path": "03.TOOLS/installer/build_host_bridges.ps1",
-      "origin_main_sha256": "c698d0c4d62b4c9e249953e41ac37b0d1bd5d423468ee53d75bbc22a7635e82d",
-      "same_git_blob": true,
-      "working_tree_sha256": "3ebf5c23f5acc93325c9bb7803867a274d4fdce0d2e759e7b392876a8a91dd9a"
+    "browser_producer_delay": {
+      "passed": 1,
+      "failed": 1,
+      "skipped": 0,
+      "error": 0,
+      "summary": "1 failed, 1 passed, 1 warning in 160.36s (0:02:40)",
+      "log": "release-delay-red.txt"
     }
-  ],
-  "independent_review": "No remaining concrete findings after exact shipped-icon path assertion; reviewer did not run tests.",
-  "boundaries": [
-    "No push or installation",
-    "Two optional tests skipped",
-    "Existing uncommitted design evidence restored byte-for-byte"
-  ],
-  "release_files": "fixes-release-files.json",
-  "release_invocation": "C:/Users/fargaly/00.ARCHUB/10.PRODUCT/11.ARCHHUB-APP/.venv/Scripts/python.exe -u -m pytest -v -p no:cacheprovider --tb=short 02.TESTS/tests_replica/test_raildoors.py 02.TESTS/tests/test_designbuild.py 02.TESTS/tests_replica/test_app_folder_tidy.py 02.TESTS/tests_replica/test_session_files.py 02.TESTS/tests_replica/test_canvas_parametric.py 02.TESTS/tests_replica/test_ng_workshop.py 02.TESTS/tests_replica/test_baboom_work_presence.py 02.TESTS/tests_replica/test_baboom_nograph.py 02.TESTS/tests_replica/test_baboom_native_companion.py 02.TESTS/tests_replica/test_baboom_native_runtime.py 02.TESTS/tests/test_task_session_roundtrip.py 02.TESTS/tests/test_agentcanvas.py 02.TESTS/tests/test_agentwork.py 02.TESTS/tests/test_preflight_imports.py 02.TESTS/tests/test_state_isolation.py 02.TESTS/tests/test_task_session_keeps_canvas.py 02.TESTS/tests_replica/test_colleague_install.py 02.TESTS/tests_replica/test_file_path_links.py 02.TESTS/tests_replica/test_fresh_machine_host_brokers.py 02.TESTS/tests_replica/test_graphout.py 02.TESTS/tests_replica/test_multidelete.py 02.TESTS/tests_replica/test_node_params.py 02.TESTS/tests_replica/test_presence1_acceptance.py 02.TESTS/tests_replica/test_real_app_check_tool.py 02.TESTS/tests_replica/test_recent_json_lock.py 02.TESTS/tests_replica/test_remote_agents_relay.py 02.TESTS/tests_replica/test_revit_addin_packaging.py 02.TESTS/tests_replica/test_settings_node_bridge.py 02.TESTS/tests_replica/test_the_menu_opens_and_the_cockpit_signs_in.py > 05.EVIDENCE/graphout/fixes-release.txt 2>&1",
-  "targeted_result": "3 passed, 1 warning in 145.80s (0:02:25)",
-  "targeted_profile_guard": "TESTISO final profile leaks: []; protected write attempts: 0",
-  "release_interpreter": "C:/Users/fargaly/00.ARCHUB/10.PRODUCT/11.ARCHHUB-APP/.venv/Scripts/python.exe",
-  "prior_art": "Existing nograph_launcher.run icon setup, user_paths.state_directory, colleague_setup._launcher_state_root; Python subprocess documentation recommends fully qualified executable paths.",
-  "environment_repair": "The release .venv had Qt but lacked the already-pinned sqlite-vec==0.1.9. Installed that exact existing local wheel from the installed app wheelhouse using pip --python --no-index --no-deps; no project dependency or product source changed.",
-  "incomplete_release_attempt": "First 29-file invocation reached one brain-route failure and two optional skips, then its combined baseline/targeted/release run-heavy budget expired at 28 minutes during final tests/profile scan. This is not a completed release result.",
-  "changed_test_hashes": {
-    "02.TESTS/tests_replica/test_colleague_install.py": "3e9125ee7991039b077732c6c7d43be9095fbddb9bb20735ecbf8b6cc9594aee",
-    "02.TESTS/tests_replica/test_revit_addin_packaging.py": "58ea46cab449772891753083bd46ab7cd75c5a274b4e34dad9c36c5d7b484227"
   },
-  "release_runner": "Existing run-heavy.ps1, shared machine queue, 8192 MB job limit, BelowNormal inherited priority; final route and release budget 36 minutes.",
-  "release_result": {
-    "passed": 408,
-    "failed": 0,
-    "skipped": 2,
-    "warnings": 1,
-    "log": "fixes-release.txt",
-    "single_pytest_process": true,
-    "test_files": 29
+  "root_causes": {
+    "packager": "WindowsApps enumeration returned no candidates; fallback selected a Store App Execution Alias. The complete run reproduced CreateProcess PermissionError WinError 5. The registered native Store executable also refused creation with 0xc0070005. Windows PowerShell launched, but inherited PowerShell 7 module search hid Get-FileHash. The final court uses the OS executable with its own PSMODULEPATH and an empty PATH.",
+    "browser": "The 2-second stopwatch included producer work before declaration acknowledgement. A bounded 2.1-second producer delay reproduced step refresh 2894 ms despite correct rendered content. The court now measures after acknowledgement and waits up to 10 seconds for each exact declare/complete result; elapsed time is diagnostic."
   },
-  "secret_scanner": "Betterleaks 1.9.0, staged scan required before commit",
-  "preserved_existing_design_evidence": {
-    "files": 14,
-    "sha256_readback": "all original hashes restored"
-  },
-  "final_profile_scan": {
-    "report": ".cache\\testiso-release\\pytest-h054kotb\\profile-leaks.json",
-    "leaks": [],
+  "verification": {
+    "standalone_packager": {
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "error": 0,
+      "summary": "1 passed, 1 warning in 83.84s (0:01:23)",
+      "log": "release-env-packager-final.txt"
+    },
+    "standalone_browser_with_producer_delay": {
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "error": 0,
+      "summary": "1 passed, 1 warning in 149.52s (0:02:29)",
+      "log": "release-env-browser-green.txt"
+    },
+    "full_release": {
+      "passed": 409,
+      "failed": 0,
+      "skipped": 1,
+      "error": 0,
+      "summary": "409 passed, 1 skipped, 1 warning in 1103.27s (0:18:23)",
+      "log": "release-env-full-green.txt"
+    },
+    "single_full_pytest_process": true,
+    "release_file_count": 29,
+    "release_files": "fixes-release-files.json",
+    "final_profile_leaks": [],
     "protected_write_attempts": 0
   },
-  "supplemental_check": "1 passed, 1 warning in 128.78s (0:02:08)"
+  "environment": {
+    "proof": "release-env-verified.json",
+    "interpreter": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\.venv\\Scripts\\python.exe",
+    "runner": "Existing C:/Users/fargaly/00.ARCHUB/50.TOOLING/53.AGENT-TOOLS/53.05-REPAIR-OPERATIONS/run-heavy.ps1; temporary session-bound reproduction adapter removed after evidence capture.",
+    "inherited_environment": "Live 717 coordinator process 42000, copied in memory; secret values were not persisted. PID is session-bound.",
+    "entry_PATH": "Exact supplied venv + machine + user PATH, reset inside cmd after queue/PowerShell startup additions.",
+    "runtime_PATH": "PyQt adds only its installed Qt bin directory during collection; no rg resolves.",
+    "node_modules": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\land-stack\\node_modules",
+    "baseline_caveat": "The initial full red run retained the normal PowerShell startup PATH prefix; the controlled delay probe and final standalone/full green runs reset the exact supplied PATH at pytest entry.",
+    "replay": "Use the existing run-heavy.ps1 with command and entry_PATH from release-env-verified.json and the existing fixes-release-files.json manifest."
+  },
+  "source_sha256": {
+    "02.TESTS/tests_replica/test_revit_addin_packaging.py": "373760009ec7abc158275ae87bcc16b4783eb0d9c04b41f922bd253e3547c924",
+    "02.TESTS/tests/test_agentcanvas.py": "a5a50a006767b95e9956600cb7a59205f6e9ca5bb80eccd11fdd6f6fb4b975b2",
+    "02.TESTS/tests_js/agentcanvas.cjs": "6c3057a92eb12f9e830228220762fd5e41f5251e590ae4405744743294d064d3",
+    "03.TOOLS/installer/build_host_bridges.ps1": "3ebf5c23f5acc93325c9bb7803867a274d4fdce0d2e759e7b392876a8a91dd9a"
+  },
+  "independent_review": "Read-only reviewer found no blocking source issue; uppercase PSMODULEPATH normalization was applied before the final packager and full runs. Review did not replace execution.",
+  "boundaries": [
+    "One existing test skipped.",
+    "No push or installation.",
+    "No live Revit/AutoCAD/Max writes or installed-app acceptance claim.",
+    "Browser delay proof is a controlled producer-latency diagnostic; the unchanged full run reproduced the packager failure."
+  ]
 }

@@ -10906,7 +10906,8 @@
         "03.TOOLS/tools/real_app_check/",
         "04.DOCS/FAILURE_LOG.md",
         "05.EVIDENCE/acompiler-intents.json",
-        "05.EVIDENCE/prunerig/"
+        "05.EVIDENCE/prunerig/",
+        "04.DOCS/DECISIONS.md"
       ]
     }
   }

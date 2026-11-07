@@ -16,6 +16,7 @@ async function adapter(tasks=[],library,hosts=()=>({hosts:[]}),overrides={}){
    const body=options.body?JSON.parse(options.body):{};requests.push({url,body});
    let data={ok:true};
    if(url==='/api/universal/canvas')data=canvas;
+   if(url==='/api/universal/agents-canvas')data={ok:true,agents:[{id:'codex',sessions:[{root:'declared',request_id:'untracked',task:'Actual declared task',status:'working'}]}],sessions:[{id:'declared',status:'working'}],tasks:[],wires:[]};
    if(url==='/api/universal/graphs?screen=home')data={graphs:[]};
    if(url==='/api/universal/workshop')data.result=body.function==='getAgentSurface'?{agentProfiles:{},learning:{layers:{}}}:body.function==='getGraphMetadata'?{}:body.function==='listWorkshopMessages'?{messages:[]}:body.function==='listTasks'?tasks:body.function==='listAgentsWorking'?[{id:'codex',sessions:[{root:'declared',request_id:'untracked',task:'Actual declared task',status:'working'}]}]:[];
    if(url==='/api/universal/canvas-op')data.result=body.op==='list_skills'?[{id:'saved',title:'Saved workflow',chain:['Value'],runs:null,recipe:{nodes:[],wires:[]}}]:[];

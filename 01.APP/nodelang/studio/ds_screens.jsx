@@ -1171,15 +1171,15 @@
   window.UI.SystemGraph = SystemGraph;
 
   function AgentsCanvas() {
-    const u=useApp(), dialog=React.useRef();
-    const [graph,setGraph]=React.useState(null),[load,setLoad]=React.useState('waiting'),[error,setError]=React.useState(''),[attempt,setAttempt]=React.useState(0),[transcript,setTranscript]=React.useState(null);
+    const s=useData(), u=useApp(), dialog=React.useRef();
+    const [load,setLoad]=React.useState('waiting'),[error,setError]=React.useState(''),[attempt,setAttempt]=React.useState(0),[transcript,setTranscript]=React.useState(null);
     React.useEffect(()=>{
       let active=true;setLoad('waiting');
-      api.readAgentsGraph().then(value=>{if(active){setGraph(value);setLoad(value.sessions.length?'loaded':'empty');}})
+      api.readAgentsGraph().then(value=>{if(active){setLoad(value.sessions.length?'loaded':'empty');}})
         .catch(e=>{if(active){setError(e.message);setLoad('error');}});
       return()=>{active=false;};
     },[attempt]);
-    const sessions=graph?.sessions||[], tasks=graph?.tasks||[];
+    const sessions=s.agentGraph?.sessions||[], tasks=s.agentGraph?.tasks||[];
     const openTranscript=async n=>{
       setTranscript({id:n.id,name:n.name,status:'waiting'});
       try{const data=await api.readAgentTranscript(n.id);setTranscript({id:n.id,name:n.name,...data,status:data.messages.length?'loaded':'empty'});}
@@ -1190,7 +1190,7 @@
       <h2>Agents</h2><p className="muted">Task sessions · open one workflow at a time</p>
       {load==='waiting' && <p role="status">Loading sessions…</p>}
       {load==='error' && <p role="alert">{error} <Btn sm onClick={event=>executeAction('projects.controls.activate',{handler:()=>setAttempt(n=>n+1)},event)}>Retry</Btn></p>}
-      {load==='empty' && <p>No agent sessions are running.</p>}
+      {(load==='loaded'||load==='empty')&&!sessions.length && <p>No agent sessions are running.</p>}
       <div aria-label="Task sessions">{tasks.map(task=><div key={task.id} data-agent-task={task.id} className="listbutton" tabIndex={0}
         draggable={!!task.path} onDragStart={e=>e.dataTransfer.setData('session',task.path||'')}
         onDoubleClick={()=>u.openTaskFile(task.id,'canvas')} onKeyDown={e=>{if(e.key==='Enter')u.openTaskFile(task.id,'canvas');}}>

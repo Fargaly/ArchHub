@@ -175,6 +175,8 @@ def _runtime_process_table():
 
 def discover_runtime_processes():
     """One snapshot; fresh generations guard cached metadata, never PID alone."""
+    if 'ARCHHUB_TEST_STATE_DIR' in os.environ:
+        return {'processes': [], 'complete': True}
     import psutil
     global _runtime_process_cache
     deadline = time.monotonic() + .3

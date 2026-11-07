@@ -40,9 +40,10 @@ def main():
     peer=MachinePipePeer(pid=process.pid,created_at=process.create_time(),cwd=str(root))
     contexts=[{'threadId':'canvas-codex'},{'claude/sessionID':'canvas-claude'},{'ai.opencode/sessionID':'canvas-opencode'},{'gemini/sessionID':'canvas-idle'},{'goose/sessionID':'canvas-missing'}]
     runtimes=['codex','claude','opencode','gemini','goose']
-    server=NoGraphServer(root/'state').start()
+    roster={'processes':[{'runtime':runtime} for runtime in runtimes], 'complete':True}
+    server=NoGraphServer(root/'state',agent_source=lambda:roster).start()
+    server._live_agents.reset(roster)
     client=_Studio(server)
-    server._live_agents.get=lambda:{'processes':[{'runtime':runtime} for runtime in runtimes],'complete':True}
     server._providers.get=lambda:[]  # Provider CLI readiness is outside this isolated canvas court.
     def declare(index,title='Review drawings',status='working'):
         return call('declare',{'task':title,'request_id':task['taskId'] if index<3 else 'unassigned' if index==3 else missing['taskId'],
@@ -90,7 +91,8 @@ def main():
                 elif command['action']=='empty':
                     with application_history() as history:
                         history._db.execute("UPDATE workshop_declarations SET record=json_set(record,'$.status','done')")
-                    server._live_agents.get=lambda:{'processes':[],'complete':True}
+                    roster['processes']=[]
+                    server._live_agents.reset({'processes':[], 'complete':True})
                     answer={'ok':True}
                 else:
                     raise ValueError('Unknown court command')
@@ -122,6 +124,10 @@ main()
     const context=await browser.newContext({viewport:{width:1366,height:768}});
     await context.addCookies([{name:'archhub_studio',value:input.cookie,url:input.url}]);
     const page=await context.newPage(), errors=[];
+    const nodeCount=async count=>{
+      await page.waitForFunction(n=>document.querySelectorAll('.react-flow__node').length===n,count);
+      assert.equal(await page.locator('.react-flow__node').count(),count);
+    };
     // Input stays inside this private headless page, using the existing design court's CDP path.
     const inputSession=await context.newCDPSession(page);
     const key=async(name,code,modifiers=0)=>{
@@ -131,10 +137,15 @@ main()
     page.on('pageerror',error=>errors.push(error.message));
     await page.goto(input.url);
     await page.locator('[data-home-ready]').waitFor({state:'attached',timeout:60000});
+    await page.getByRole('button',{name:'Agents 4',exact:true}).waitFor();
     await page.getByRole('button',{name:/^Agents \d+$/}).click();
     const view=page.locator('[data-screen="agents"]');
+    await page.getByRole('button',{name:'4 working · 0 idle · Nothing waiting for you',exact:true}).waitFor();
     await view.locator('[data-agent-session]').first().waitFor();
+    await page.waitForFunction(()=>document.querySelectorAll('[data-agent-session]').length===5);
     assert.equal(await view.locator('[data-agent-session]').count(),5);
+    assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSnapshot().agentWorkingCount),4);
+    assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSnapshot().agentSummary),'4 working · 0 idle');
     assert.ok(await view.locator('[data-agent-task]').count()>=2);
     assert.equal(await view.locator('[data-graph-wire]').count(),0);
     await view.getByText(/Waiting for you/).first().waitFor();
@@ -153,14 +164,14 @@ main()
       await page.getByRole('button',{name:'Close transcript',exact:true}).click();
     }
     console.log('PASS Open transcript reads real Codex and Claude fixture native logs');
-    await view.locator('[data-agent-session]').first().getByRole('button',{name:'Open thread',exact:true}).click();
+    await view.locator('[data-agent-session]').filter({hasText:'Fixture 0'}).getByRole('button',{name:'Open thread',exact:true}).click();
     await page.getByRole('heading',{name:'Thread activity',exact:true}).waitFor();
     console.log('PASS Open thread lands on the real task Workshop thread');
     await page.locator('button[title="Home"][aria-label="Home"]').click();
     await page.getByRole('button',{name:/^Agents \d+$/}).click();
     await page.locator(`[data-agent-task="${input.task}"]`).dblclick();
     await page.locator('.react-flow__node[data-id="start"]').waitFor();
-    assert.equal(await page.locator('.react-flow__node').count(),4);
+    await nodeCount(4);
     await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().sessionDirty===false);
     await command('declare');
     const started=Date.now();
@@ -185,32 +196,32 @@ main()
       const node=await api.addNode(item.id,{x:80,y:100});await api.saveSession();
       return {child,parent,node:node.id,before:before.nodes.length};
     });
-    assert.equal(await page.locator('.react-flow__node').count(),1);
+    await nodeCount(1);
     await page.locator(`.react-flow__node[data-id="${linked.node}"]`).dblclick();
     await page.getByRole('button',{name:'Parent session',exact:true}).waitFor();
     assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSessionPath()),linked.child);
-    assert.equal(await page.locator('.react-flow__node').count(),linked.before);
+    await nodeCount(linked.before);
     await page.evaluate(async()=>{await window.ArchHubAPI.renameNode('start','Edited inside session');await window.ArchHubAPI.saveSession();});
     await page.getByRole('button',{name:'Parent session',exact:true}).click();
     await page.waitForFunction(parent=>window.ArchHubAPI.getSessionPath()===parent,linked.parent);
-    assert.equal(await page.locator('.react-flow__node').count(),1);
+    await nodeCount(1);
     const card=page.locator(`.react-flow__node[data-id="${linked.node}"]`);
     await card.click();await key('Enter',13);
     await page.getByRole('button',{name:'Parent session',exact:true}).waitFor();
     await page.locator('.node-canvas').focus();await key('Escape',27);
     await page.waitForFunction(parent=>window.ArchHubAPI.getSessionPath()===parent,linked.parent);
-    assert.equal(await page.locator('.react-flow__node').count(),1);
+    await nodeCount(1);
     console.log('PASS linked session: one group, double-click/Enter, original file edits, breadcrumb/Escape return');
     const legacy=await command('legacy');
     await page.evaluate(path=>window.ArchHubAPI.openSession(path),legacy.path);
-    assert.equal(await page.locator('.react-flow__node').count(),2);
+    await nodeCount(2);
     await page.locator('.node-canvas').focus();await key('z',90,2);
     await page.waitForFunction(()=>window.ArchHubAPI.getSessionDocument()?.nodes.length===4);
     const recovered=await page.evaluate(async()=>{await window.ArchHubAPI.saveSession();return window.ArchHubAPI.getSessionDocument();});
     assert.deepEqual(recovered.nodes.map(n=>n.id).sort(),legacy.nodes.sort());
     assert.deepEqual(recovered.groups,legacy.groups);assert.deepEqual(recovered.notes,legacy.notes);
     await page.evaluate(path=>window.ArchHubAPI.openSession(path),legacy.path);
-    assert.equal(await page.locator('.react-flow__node').count(),4);
+    await nodeCount(4);
     await page.reload();await page.locator('[data-home-ready]').waitFor({state:'attached',timeout:60000});
     await page.waitForFunction(()=>window.ArchHubAPI.getSessionDocument()?.nodes.length===4);
     const persisted=await page.evaluate(()=>window.ArchHubAPI.getSessionDocument());
@@ -220,6 +231,11 @@ main()
     await page.locator('button[title="Home"][aria-label="Home"]').click();
     await page.getByRole('button',{name:/^Agents \d+$/}).click();
     await view.getByText('No agent sessions are running.',{exact:true}).waitFor();
+    await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().agentSummary==='No agents are running.');
+    assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSnapshot().agentWorkingCount),0);
+    await page.getByRole('button',{name:'No agents are running. · Nothing waiting for you',exact:true}).waitFor();
+    await page.locator('button[title="Home"][aria-label="Home"]').click();
+    await page.getByRole('button',{name:'Agents 0',exact:true}).waitFor();
     await page.screenshot({path:'05.EVIDENCE/agentcanvas/agents-empty.png'});
     assert.deepEqual(errors,[]);
     console.log('PASS empty roster; no browser errors; derived view never saved');

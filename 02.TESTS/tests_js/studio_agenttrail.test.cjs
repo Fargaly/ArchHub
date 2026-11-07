@@ -14,7 +14,7 @@ const truthSource=file=>process.env.AGENTS_TRUTH_MAIN
  : fs.readFileSync(path.join(studio,file),'utf8');
 
 async function truthAdapter(){
- let fail=false;
+ let fail=false,sessions;
  const agents=[{id:'claude:native-one',runtime:'claude',name:'Claude Code',presence:'working',status_text:'Working',
   task:'Repair presence',model:'Actual model',observation_complete:true,sessions:[]},
  {id:'codex:native-two',runtime:'codex',name:'Codex',presence:'working',status_text:'Working',
@@ -26,17 +26,17 @@ async function truthAdapter(){
  const context={window,console,setTimeout,clearTimeout,AbortSignal,URLSearchParams,CustomEvent:class{},
  document:{hidden:true,addEventListener(){}},fetch:async(url,options)=>{
   const body=options?.body?JSON.parse(options.body):{};
-  if(body.function==='listAgentsWorking'&&fail)throw Error('fixture observer offline');
+  if(url==='/api/universal/agents-canvas'&&fail)throw Error('fixture observer offline');
   const result=url==='/api/universal/canvas'?{ok:true,root:'graph:fixture',nodes:[],revision:1,workshops:[{root:'room'}]}:
    url==='/api/universal/providers'?{providers:[{id:'claude-code',name:'Claude Code',state:'installed',signedIn:null},{id:'openrouter',name:'OpenRouter',state:'keyed'}]}:
-   body.function==='listAgentsWorking'?{ok:true,result:agents}:body.function==='listWorkshopMessages'?{ok:true,result:{messages:[]}}:{ok:true,result:[]};
+   url==='/api/universal/agents-canvas'?{ok:true,agents,sessions:sessions??agents.filter(a=>a.kind!=='observation').map(a=>({id:a.id,status:a.presence})),tasks:[],wires:[]}:body.function==='listWorkshopMessages'?{ok:true,result:{messages:[]}}:{ok:true,result:[]};
   return {ok:true,status:200,json:async()=>result};
  }};
  vm.runInNewContext(truthSource('api.js'),context);
  const api=window.ArchHubAPI;
  await api.ready;
  await api.listProviders();await api.listAgentsWorking();
- return {api,agents,fail:(value=true)=>{fail=value;}};
+ return {api,agents,setSessions:value=>{sessions=value;},fail:(value=true)=>{fail=value;}};
 }
 
 test('AGENTS-TRUTH sessions and counts are separate from provider availability',async()=>{
@@ -47,6 +47,19 @@ test('AGENTS-TRUTH sessions and counts are separate from provider availability',
  assert.equal(s.providers[0].authentication,'Sign-in not checked');
  assert.equal(s.providers[0].availability,'Installed · Sign-in not checked');
  assert.equal(s.providers[1].availability,'Credential present · Sign-in not checked');
+});
+
+test('AGENTS-TRUTH summary and Home count use the displayed session roster',async()=>{
+ const {api,setSessions}=await truthAdapter();
+ const sessions=[{id:'one',status:'working'},{id:'two',status:'working'},{id:'three',status:'working'},
+  {id:'blocked',status:'blocked'},{id:'idle',status:'idle'}];
+ setSessions(sessions);await api.listAgentsWorking();
+ const s=api.getSnapshot();
+ assert.equal(s.agents.length,2);assert.equal(s.agentGraph.sessions.length,5);
+ assert.equal(s.agentWorkingCount,3);assert.equal(s.agentSummary,'3 working · 1 idle');
+ setSessions([]);await api.listAgentsWorking();
+ assert.equal(api.getSnapshot().agentWorkingCount,0);
+ assert.equal(api.getSnapshot().agentSummary,'No agents are running.');
 });
 
 test('AGENTS-TRUTH failed refresh clears certainty immediately and recovers',async()=>{

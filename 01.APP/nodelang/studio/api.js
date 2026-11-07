@@ -241,16 +241,17 @@ async function refreshTasks(details=true) {
  if(details){await refreshApprovals();await refreshWatcher();await refreshHostSkills();await refreshDesktop();await refreshNotifications();}
  return state.tasks;
 }
-function projectProviders() {
+function projectProviders(agentGraph=state.agentGraph) {
  const providers=providerRoster.map(p=>({...p,model:state.providerPreferences?.[p.id]||p.model,models:state.providerModels?.[p.id]||[]}));
  const agents=workingAgents.filter(a=>a.kind!=='observation');
  const complete=workingAgents.every(a=>a.observation_complete!==false&&a.presence!=='unknown');
- const working=agents.filter(a=>a.presence==='working').length, idle=agents.filter(a=>a.presence==='idle').length;
+ const sessions=agentGraph?.sessions||[];
+ const working=sessions.filter(a=>a.status==='working').length, idle=sessions.filter(a=>a.status==='idle').length;
  const assigned=new Set(state.tasks.flatMap(t=>(t.declarations||[]).map(d=>d.root)));
  const declaredTasks=[...new Map(agents.flatMap(p=>(p.sessions||[]).filter(d=>d.status==='working'&&!assigned.has(d.root))
   .map(d=>[d.request_id,{id:d.root,title:d.task,owner:p.runtime||p.id,status:'WIP',declaration:true}]))).values()];
- publish({providers,agents,declaredTasks,
-  agentSummary:!agentsChecked?'Checking running agents…':!complete?'Agent status is incomplete.':working?`${working} working · ${idle} idle`:agents.some(a=>a.presence!=='not-running')?'No agents are working.':'No agents are running.',
+ publish({providers,agents,declaredTasks,agentGraph,agentWorkingCount:working,
+  agentSummary:!agentsChecked?'Checking running agents…':!complete?'Agent status is incomplete.':working?`${working} working · ${idle} idle`:sessions.length?'No agents are working.':'No agents are running.',
   agentHealth:!agentsChecked?'Checking running agents…':!complete?'Agent status is incomplete. Some sessions could not be checked.':'Agent status is current.'});
 }
 function providerDto(p) {
@@ -276,7 +277,7 @@ function agentsUnknown() {
 async function refreshAgents() {
  const epoch=scopeEpoch,binding=JSON.stringify(workshopBinding());
  try {
-  const agents=await workshop('listAgentsWorking');
+  const graph=await request('/api/universal/agents-canvas'), agents=graph.agents;
   if(epoch!==scopeEpoch||binding!==JSON.stringify(workshopBinding()))return state.agents;
   if(!Array.isArray(agents)){agentsUnknown();return agents;}
   agentsChecked=true;
@@ -287,7 +288,7 @@ async function refreshAgents() {
    return {...a,runtime:a.runtime||a.id,ini:(a.name||a.id||'A').slice(0,1),
     col:a.col||window.AH?.inkSoft,model:a.model||'Model not reported',task:a.task||a.sessions?.[0]?.task||'Idle'};
   });
-  projectProviders();return state.agents;
+  projectProviders(graph);return state.agents;
  } catch(error) {
   if(epoch===scopeEpoch&&binding===JSON.stringify(workshopBinding())){
    agentsUnknown();
@@ -1653,7 +1654,7 @@ api.readSystemGraph=async()=>{
  try{canvas=normalise(data);systemProjection=canvas;await commands.adopt(canvas);return {nodes:canvas.nodes.map(nodeDto),wires:(canvas.wires||[]).map(w=>({id:w.id,from:w.source||w.from,to:w.target||w.to,fromPort:w.source_interface||w.fromPort,toPort:w.target_interface||w.toPort,type:w.value_type||'any'}))};}
  finally{canvas=previous;}
 };
-api.readAgentsGraph=()=>request('/api/universal/agents-canvas');
+api.readAgentsGraph=async()=>{await refreshAgents();return state.agentGraph;};
 api.readAgentTranscript=session=>request('/api/universal/agents-transcript',{session});
 api.readStepHistory=node=>sessionRequest('agent-history',{document:portableDocument(),node});
 api.setSessionViewport=viewport=>{

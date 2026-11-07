@@ -301,6 +301,24 @@ def test_migration_does_not_block_other_mailbox_opens(history, monkeypatch):
     assert completed and not errors
 
 
+def test_isolated_machine_agent_source_never_reads_processes(monkeypatch):
+    from nodelang import agent_runtime_registry as registry
+    def forbidden():
+        raise AssertionError('Isolated owner enumerated real machine processes')
+    monkeypatch.setattr(registry, '_runtime_process_table', forbidden)
+    assert registry.discover_runtime_processes() == {'processes': [], 'complete': True}
+
+
+def test_production_machine_agent_source_still_discovers_processes(monkeypatch):
+    from nodelang import agent_runtime_registry as registry
+    monkeypatch.delenv('ARCHHUB_TEST_STATE_DIR')
+    calls = []
+    monkeypatch.setattr(registry, '_runtime_process_table', lambda: calls.append(True) or {})
+    monkeypatch.setattr(registry.time, 'time', lambda: 123.0)
+    assert registry.discover_runtime_processes() == {'processes': [], 'complete': True, 'observed_at': 123.0}
+    assert calls == [True]
+
+
 def test_rendered_agents_and_task_steps():
     import os
     from pathlib import Path

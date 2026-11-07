@@ -123,7 +123,7 @@ class Cached:
 
 
 class NoGraphServer:
-    def __init__(self, state_dir, *, host='127.0.0.1', port=0, engines=None):
+    def __init__(self, state_dir, *, host='127.0.0.1', port=0, engines=None, agent_source=None):
         self.state_dir = Path(state_dir)
         self.settings_dir = self.state_dir / 'settings'
         self.settings_dir.mkdir(parents=True, exist_ok=True)
@@ -151,7 +151,7 @@ class NoGraphServer:
         self._account = None
         self._account_lock = threading.Lock()
         self._session = Cached(30.0, self._probe_session)
-        self._live_agents = Cached(5.0, self._probe_agents)
+        self._live_agents = Cached(5.0, agent_source if agent_source is not None else self._probe_agents)
         self._providers = Cached(30.0, self._probe_providers)
         self._models = Cached(45.0, self._probe_models)
         self._workshop_agents = Cached(5.0, self._probe_workshop_agents)
@@ -1133,7 +1133,7 @@ def r_agents_canvas(s, req):
             if task['id'] not in tasks and not task.get('archived'):
                 tasks[task['id']] = {'id': task['id'], 'title': task['title'], 'status': task['status'],
                                      'path': task.get('session_path'), 'steps': 0, 'error': ''}
-    return {'ok': True, 'sessions': sessions, 'tasks': list(tasks.values()), 'wires': wires}
+    return {'ok': True, 'agents': roster, 'sessions': sessions, 'tasks': list(tasks.values()), 'wires': wires}
 
 
 def r_agents_transcript(s, req):

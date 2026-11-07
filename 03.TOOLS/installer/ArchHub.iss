@@ -53,6 +53,12 @@
 #ifndef HostPayloadPath
 #error Build with installer/build_release.ps1: HostPayloadPath is required.
 #endif
+#ifndef PreflightFilesPath
+#error Build with installer/build_release.ps1: PreflightFilesPath is required.
+#endif
+#ifndef PreflightCodePath
+#error Build with installer/build_release.ps1: PreflightCodePath is required.
+#endif
 #define BundledNodeSha256 GetSHA256OfFile(NodeRuntimePath)
 #define PayloadExcludes "__pycache__\*,*.pyc,*.pyo,.env,.env.*,*.sqlite3,*.sqlite3-*,*.db,*.db-*,*.key,*.pem"
 #define AppPublisher "Fargaly"
@@ -101,11 +107,7 @@ Name: "connectassistants"; Description: "Connect my AI assistants to ArchHub (ad
 
 [Files]
 ; Setup preflights assistant connections before replacing application code.
-Source: "..\nodelang\assistant_registration.py"; Flags: dontcopy
-Source: "..\nodelang\client_mcp_installation.py"; Flags: dontcopy
-Source: "..\nodelang\native_workshop_profile.py"; Flags: dontcopy
-Source: "..\nodelang\workshop_config.py"; Flags: dontcopy
-Source: "..\nodelang\cell_secret_keys.py"; Flags: dontcopy
+#include PreflightFilesPath
 Source: "{#NodeRuntimePath}"; DestDir: "{app}\runtime"; DestName: "node.exe"; Flags: ignoreversion; Check: NodeRuntimeNeedsInstall
 Source: "{#NodeLicensePath}"; DestDir: "{app}\runtime"; DestName: "Node-LICENSE.txt"; Flags: ignoreversion
 Source: "{#GoosePayloadPath}\*"; DestDir: "{app}\runtime\goose"; Flags: recursesubdirs ignoreversion
@@ -667,16 +669,7 @@ begin
     ConnectorTemp := ExpandConstant('{tmp}\mainrel-connectors');
     ForceDirectories(ConnectorTemp + '\nodelang');
     SaveStringToFile(ConnectorTemp + '\nodelang\__init__.py', '', False);
-    ExtractTemporaryFile('assistant_registration.py');
-    ExtractTemporaryFile('client_mcp_installation.py');
-    ExtractTemporaryFile('native_workshop_profile.py');
-    ExtractTemporaryFile('workshop_config.py');
-    ExtractTemporaryFile('cell_secret_keys.py');
-    FileCopy(ExpandConstant('{tmp}\assistant_registration.py'), ConnectorTemp + '\nodelang\assistant_registration.py', False);
-    FileCopy(ExpandConstant('{tmp}\client_mcp_installation.py'), ConnectorTemp + '\nodelang\client_mcp_installation.py', False);
-    FileCopy(ExpandConstant('{tmp}\native_workshop_profile.py'), ConnectorTemp + '\nodelang\native_workshop_profile.py', False);
-    FileCopy(ExpandConstant('{tmp}\workshop_config.py'), ConnectorTemp + '\nodelang\workshop_config.py', False);
-    FileCopy(ExpandConstant('{tmp}\cell_secret_keys.py'), ConnectorTemp + '\nodelang\cell_secret_keys.py', False);
+#include PreflightCodePath
     BackupProgress := CreateOutputMarqueeProgressPage('Checking assistant connections',
       'Checking existing entries before replacing application files');
     ConnectorWarnings := '';

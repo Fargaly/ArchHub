@@ -79,7 +79,7 @@ $selectedInputs = @(
     'nodelang', 'nodelang/outlook_graph.ps1', 'colleague_setup.py', 'docs/SPEC.md',
     'requirements.txt', 'installer', 'packaging/windows/Test-SourcePortability.ps1',
     'packaging/windows/publish_release.ps1', 'packaging/windows/check_update_offer.py',
-    'package.json', 'packaging/compile_studio.cjs',
+    'package.json', 'packaging/compile_studio.cjs', 'packaging/preflight_imports.py',
     'tools/real_app_check/real_app_check.py', 'tools/real_app_check/profile_guard.py',
     'app/secrets_store.py', 'app/credential_lock.py', 'app/__init__.py', 'bridges', 'archhub.ico',
     'packaging/windows/licenses/Node-v24.13.0-LICENSE.txt',
@@ -193,7 +193,7 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
             'nodelang/launcher.py', 'nodelang/studio/style.css', 'nodelang/studio/design-tokens.json', 'colleague_setup.py', 'requirements.txt',
             'NOTICE', 'docs/SPEC.md', 'packaging/windows/goose-pin.json', 'packaging/windows/stage_goose.py',
             'packaging/windows/betterleaks-pin.json', 'packaging/windows/stage_betterleaks.py',
-            'package.json', 'packaging/compile_studio.cjs',
+            'package.json', 'packaging/compile_studio.cjs', 'packaging/preflight_imports.py',
     'tools/real_app_check/real_app_check.py', 'tools/real_app_check/profile_guard.py',
             'installer/ArchHub.iss', 'installer/ArchHub.bat', 'installer/ArchHub.vbs', 'installer/README.md', 'nodelang/README.md', 'app/README.md',
             'installer/legacy_sweep.iss', 'installer/legacy_doc_files.iss', 'installer/legacy_v1_files.iss', 'installer/host_file_staging.iss',
@@ -316,7 +316,7 @@ function Read-CandidateManifest([string]$Path) {
         'selected/installer/ArchHub.iss', 'selected/installer/ArchHub.bat', 'selected/installer/ArchHub.vbs',
         'selected/installer/legacy_sweep.iss', 'selected/installer/legacy_doc_files.iss', 'selected/installer/legacy_v1_files.iss', 'selected/installer/host_file_staging.iss',
         'selected/installer/build_release.ps1', 'selected/packaging/windows/Test-SourcePortability.ps1',
-        'selected/package.json', 'selected/packaging/compile_studio.cjs',
+        'selected/package.json', 'selected/packaging/compile_studio.cjs', 'selected/packaging/preflight_imports.py',
         'selected/packaging/windows/licenses/Node-v24.13.0-LICENSE.txt',
         'selected/nodelang/workshop_transport.py',
         'selected/nodelang/outlook_graph.ps1',
@@ -833,7 +833,10 @@ foreach ($name in 'site.zip', 'stdlib.zip', 'stamp.json') {
         throw "The installer snapshot lacks packed/$name; no installer was compiled."
     }
 }
-& $compiler "/DBuildId=$BuildId" "/DRequirementsSha256=$requirementsSha" "/DBuildMetadataPath=$buildMetadataPath" "/DNodeRuntimePath=$node" "/DNodeLicensePath=$nodeLicense" "/DGoosePayloadPath=$goosePayload" "/DBetterleaksPayloadPath=$betterleaksPayload" "/DCompilerPayloadPath=$(Join-Path $selectedRoot 'runtime/acompiler')" "/DWheelhousePath=$wheelhouse" "/DHostPayloadPath=$hostPayload" "/O$output" $installer
+$preflightOutput = Join-Path $output 'preflight'
+& $PythonPath -I -B (Join-Path $selectedRoot 'packaging/preflight_imports.py') --source $selectedRoot --output $preflightOutput
+if ($LASTEXITCODE -ne 0) { throw 'Preflight import closure generation failed; no installer was compiled.' }
+& $compiler "/DBuildId=$BuildId" "/DRequirementsSha256=$requirementsSha" "/DBuildMetadataPath=$buildMetadataPath" "/DNodeRuntimePath=$node" "/DNodeLicensePath=$nodeLicense" "/DGoosePayloadPath=$goosePayload" "/DBetterleaksPayloadPath=$betterleaksPayload" "/DCompilerPayloadPath=$(Join-Path $selectedRoot 'runtime/acompiler')" "/DWheelhousePath=$wheelhouse" "/DHostPayloadPath=$hostPayload" "/DPreflightFilesPath=$(Join-Path $preflightOutput 'preflight-files.iss')" "/DPreflightCodePath=$(Join-Path $preflightOutput 'preflight-code.iss')" "/O$output" $installer
 if ($LASTEXITCODE -ne 0) { throw "Selected installer compilation failed with exit code $LASTEXITCODE." }
 if ((Get-FileHash -LiteralPath $node -Algorithm SHA256).Hash.ToLowerInvariant() -cne $nodeRuntimeSha) {
     throw 'Node runtime changed during installer compilation; retain artifact for inspection only.'

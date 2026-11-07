@@ -125,16 +125,14 @@ def save_state(root, state):
 def prepare(root, manifest, expected):
     """Record directory creation authority before Inno copies any host payload."""
     if root.absolute() != (Path(os.environ["LOCALAPPDATA"]) / "ArchHub").absolute() or not _plain(root):
-        print("PRUNE prepare skipped: outside plain %LOCALAPPDATA%/ArchHub", flush=True)
-        return
+        raise ValueError("PRUNE prepare refused: outside plain %LOCALAPPDATA%/ArchHub")
     raw = manifest.read_bytes()
     if hashlib.sha256(raw).hexdigest() != expected:
         raise ValueError("installed source manifest digest mismatch")
     rows = manifest_rows(raw)
     root.mkdir(parents=True, exist_ok=True)
     if not all(plain(root / name) for name in (RECEIPT, "source-manifest.tsv", "BUILD_ID")):
-        print("PRUNE prepare skipped: redirected install metadata", flush=True)
-        return
+        raise ValueError("PRUNE prepare refused: redirected install metadata")
     if (root / RECEIPT).exists():
         state = json.loads((root / RECEIPT).read_text(encoding="utf-8"))
     else:
@@ -156,12 +154,10 @@ def prune(root, expected):
     # Never let an installer directory override broaden the deletion boundary.
     allowed = Path(os.environ["LOCALAPPDATA"]) / "ArchHub"
     if root.absolute() != allowed.absolute() or not _plain(root):
-        print("PRUNE skipped: outside plain %LOCALAPPDATA%/ArchHub", flush=True)
-        return []
+        raise ValueError("PRUNE refused: outside plain %LOCALAPPDATA%/ArchHub")
     for name in ("source-manifest.tsv", RECEIPT, "BUILD_ID"):
         if not plain(root / name):
-            print("PRUNE skipped: redirected install metadata", flush=True)
-            return []
+            raise ValueError("PRUNE refused: redirected install metadata")
     raw = (root / "source-manifest.tsv").read_bytes()
     if hashlib.sha256(raw).hexdigest() != expected:
         raise ValueError("installed source manifest digest mismatch")
@@ -192,9 +188,8 @@ def prune(root, expected):
                 if (not valid_row(name, row["sha256"] or "0" * 64)
                         or type(row["mtime_ns"]) is not int):
                     raise ValueError("invalid deferred modification time")
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
-        print("PRUNE skipped: invalid previous installed manifest/pending-prune list", flush=True)
-        return []
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        raise ValueError("PRUNE refused: invalid previous installed manifest/pending-prune list") from exc
     candidates = {name: digest for name, digest in previous.items() if name not in keep}
     candidates.update({name: row["sha256"] for name, row in pending.items() if name not in keep})
     if not has_previous and cutoff:

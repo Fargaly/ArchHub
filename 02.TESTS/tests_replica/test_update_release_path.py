@@ -346,3 +346,23 @@ def test_real_installer_deletes_only_named_application_files_never_user_state():
     from nodelang.user_paths import state_directory
     assert state_directory() == Path(os.environ["ARCHHUB_TEST_STATE_DIR"])
     assert not {'state', 'updates', 'web-profile'} & set(qu._PAYLOAD_DIRS), "rollback must not own user data"
+
+@pytest.mark.parametrize("exit_code", [0, 10])
+def test_postinstall_failure_is_reported_and_stale_identity_never_applied(tmp_path, exit_code):
+    release = _build_output(tmp_path / "release", "20260924-0900-abc1234", "2026-09-24T05:00:00Z")
+    app = _installed_app(tmp_path / "ArchHub", "20260923-1945-72bcaae", "2026-09-23T15:57:49Z")
+    state = _fixture_state(tmp_path / "ArchHub-Test")
+    before = _state_fingerprint(state)
+    qu.stage_if_newer(state, app, opener=_local_github(release))
+
+    def failed_installer(argv, **options):
+        assert '/DIR=' + str(app) in argv
+        log = Path(next(arg[len('/LOG='):] for arg in argv if arg.startswith('/LOG=')))
+        log.write_text('ArchHub Setup refused: Post-install failed: Product prune failed.\n')
+        return type('Result', (), {'returncode': exit_code})()
+
+    result = qu.apply_staged(state, app, runner=failed_installer, stop_runtime=None)
+    assert result['applied'] is False and result['status'] == 'failed'
+    assert result['reason'] == 'installer failed: Post-install failed: Product prune failed.'
+    assert (app / 'BUILD_ID').read_text() == '20260923-1945-72bcaae'
+    assert _state_fingerprint(state) == before

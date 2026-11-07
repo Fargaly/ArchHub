@@ -356,13 +356,14 @@ def test_outside_install_and_corrupt_receipt_never_prune(install_root, tmp_path,
     root = tmp_path / "outside"
     root.mkdir()
     digest, orphans, _ = _seed(root)
-    assert prune.prune(root, digest) == []
+    with pytest.raises(ValueError, match="outside plain"):
+        prune.prune(root, digest)
     assert all((root / name).exists() for name in orphans)
     digest, orphans, _ = _seed(install_root)
     (install_root / prune.RECEIPT).write_text("{broken")
-    assert prune.prune(install_root, digest) == []
+    with pytest.raises(ValueError, match="invalid previous installed manifest"):
+        prune.prune(install_root, digest)
     assert all((install_root / name).exists() for name in orphans)
-    assert "invalid previous installed manifest" in capsys.readouterr().out
 
 
 def test_forbidden_candidate_keeps_pending_lock_retry(install_root):
@@ -382,3 +383,106 @@ def test_forbidden_candidate_keeps_pending_lock_retry(install_root):
         assert json.loads((root / prune.RECEIPT).read_text())["pending_prune"]
     assert prune.prune(root, digest) == ["bridges/revit/2027/old/locked.dll"]
     assert (root / "app/user.json").read_bytes() == b"user data"
+
+@pytest.mark.parametrize("fault", [False, True, "outside", "receipt"])
+def test_production_postinstall_events(tmp_path, install_root, monkeypatch, fault):
+    """Execute production event code, including its error handling, without host/profile effects."""
+    compiler = Path("C:/Program Files (x86)/Inno Setup 6/ISCC.exe")
+    app = install_root
+    digest, orphans, before = _seed(app)
+    (app / "BUILD_ID").write_text("20261107-2320-37990c4")
+    source = ROOT / "03.TOOLS/installer/ArchHub.iss"
+    text = source.read_text()
+    callback = text[text.index("var\n  BackupProgress:"):text.index("function PrepareToInstall(")]
+    # Real prepare/postinstall, real logger; external assistant/host actions are inert.
+    callback = callback.replace("RemoveRetiredRuntimeTask(CleanCoordinationTask)", "RemoveRetiredRuntimeTask('clean')")
+    callback = callback.replace("RemoveRetiredRuntimeTask(UniversalRuntimeTask)", "RemoveRetiredRuntimeTask('universal')")
+    helper = ROOT / "01.APP/nodelang/host_addin_retarget.py"
+    shipped = tmp_path / "payload"
+    shipped.mkdir()
+    for name in ("nodelang/current.py", "app/__init__.py", "bridges/revit/2027/new/RevitMCP.dll"):
+        dest = shipped / name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes((app / name).read_bytes())
+    bridge = shipped / "bridges/autocad/2026/new/AcadMCP.dll"
+    bridge.parent.mkdir(parents=True)
+    bridge.write_bytes(b"new bridge")
+    target = shipped / "nodelang/host_addin_retarget.py"
+    target.write_bytes(helper.read_bytes())
+    for name, data in {"nodelang/__init__.py": b"", "nodelang/assistant_registration.py": b"",
+                       "nodelang/host_broker_installation.py": b"def _read_registration(path): raise RegistrationRefused()\ndef _parse_registration(*args): pass\ndef _same_id(value): return False\nCLASS_NAME=VENDOR_ID=\"court\"\nclass RegistrationRefused(Exception): pass\n",
+                       "colleague_setup.py": b"def register_revit_add_ins(root): return []\ndef register_autocad_add_ins(root): return []\n"}.items():
+        (shipped / name).write_bytes(data)
+    manifest = tmp_path / "source-manifest.tsv"
+    rows = [prune.HEADER, "path\tsha256"]
+    for path in shipped.rglob('*'):
+        if path.is_file() and path.relative_to(shipped).parts[0] in prune.ROOTS:
+            rows.append(path.relative_to(shipped).as_posix() + '\t' + hashlib.sha256(path.read_bytes()).hexdigest())
+    manifest.write_text('\n'.join(rows) + '\n')
+    digest = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    if fault is True:
+        target.write_bytes(b"raise RuntimeError('forced postinstall failure')\n")
+    script = tmp_path / 'production.iss'
+    script.write_text(r'''[Setup]
+AppName=ArchHub postinstall court
+AppVersion=1
+DefaultDirName={param:app}
+DisableDirPage=yes
+DisableProgramGroupPage=yes
+PrivilegesRequired=lowest
+Uninstallable=no
+CreateUninstallRegKey=no
+CloseApplications=no
+RestartApplications=no
+UsePreviousAppDir=no
+OutputBaseFilename=production-court
+[Tasks]
+Name: "connectassistants"; Description: "Connect"; Flags: unchecked
+[Files]
+Source: "{#Source}"; Flags: dontcopy
+Source: "{#Payload}\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
+Source: "{#Manifest}"; DestDir: "{app}"; DestName: "source-manifest.tsv"; Flags: ignoreversion
+[Code]
+function FindPython(): String;
+begin Result := ExpandConstant('{param:python}'); end;
+procedure CloseInstallConnectors(); begin end;
+procedure HostFilesInstalled(); begin end;
+procedure RemoveRetiredRuntimeTask(Name: String); begin end;
+''' + callback + r'''
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  BackupProgress := CreateOutputMarqueeProgressPage('Court', 'Court');
+  Result := '';
+end;
+''', encoding='utf-8')
+    result = subprocess.run([str(compiler), '/Q', '/O' + str(tmp_path), '/DBuildId=20261108-0143-37d007e',
+        '/DRequirementsSha256=unused', '/DInstalledManifestSha256=' + digest,
+        '/DPayload=' + str(shipped), '/DSource=' + str(helper), '/DManifest=' + str(manifest), str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    log = tmp_path / 'production.log'
+    if fault == 'outside':
+        monkeypatch.setenv('LOCALAPPDATA', str(tmp_path / 'other-profile'))
+    with _held_open(app / prune.RECEIPT) if fault == 'receipt' else nullcontext():
+        done = subprocess.run([str(tmp_path / 'production-court.exe'), '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART',
+            '/DIR=' + str(app), '/python=' + sys.executable, '/LOG=' + str(log)], timeout=90)
+    output = log.read_text(errors='replace')
+    print(output)
+    if fault in ('outside', 'receipt'):
+        assert done.returncode != 0, output
+        assert 'Product prune preparation failed' in output
+        assert (app / 'BUILD_ID').read_text() == '20261107-2320-37990c4'
+        assert before == {name: (app / name).read_bytes() for name in before}
+    elif fault is True:
+        assert done.returncode != 0, output
+        assert 'ArchHub Setup refused:' in output
+        assert done.returncode == 10
+        assert 'Post-install failed' in (app / 'logs/postinstall.log').read_text()
+        assert (app / 'BUILD_ID').read_text() == '20261107-2320-37990c4'
+    else:
+        assert done.returncode == 0, output
+        assert (app / 'BUILD_ID').read_text() == '20261108-0143-37d007e', output
+        state = json.loads((app / prune.RECEIPT).read_text())
+        assert state['manifest'].encode() == manifest.read_bytes()
+        assert 'bridges/autocad/2026' in state['bridge_years']
+        assert all(not (app / name).exists() for name in orphans)
+        assert before == {name: (app / name).read_bytes() for name in before}

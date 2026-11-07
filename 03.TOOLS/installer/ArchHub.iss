@@ -101,6 +101,7 @@ CloseApplications=no
 RestartApplications=no
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayName={#AppName}
+SetupLogging=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -450,10 +451,19 @@ end;
 var
   BackupProgress: TOutputMarqueeProgressWizardPage;
   ConnectorWarnings: String;
+  PostInstallFailed: Boolean;
+
+function GetCustomSetupExitCode(): Integer;
+begin
+  Result := 0;
+  if PostInstallFailed then Result := 10;
+end;
 
 procedure OnConnectorLog(const S: String; const Error, FirstLine: Boolean);
 begin
   Log(S);
+  if PostInstallFailed then
+    SaveStringToFile(ExpandConstant('{app}\logs\postinstall.log'), S + #13#10, True);
   BackupProgress.SetText(S, 'Checking existing assistant connections.');
   BackupProgress.Animate();
   if Pos('Connector warning:', S) > 0 then
@@ -476,9 +486,9 @@ begin
     ExtractTemporaryFile('source-manifest.tsv');
     if not ExecAndLogOutput(FindPython(), '-u -E -s -B "' + ExpandConstant('{tmp}') + '\host_addin_retarget.py" --prepare "' + ExpandConstant('{app}') + '" "' + ExpandConstant('{tmp}') + '\source-manifest.tsv" {#InstalledManifestSha256}',
         ExpandConstant('{tmp}'), SW_HIDE, ewWaitUntilTerminated, ConnectorCode, @OnConnectorLog) then
-      Log('Product prune preparation could not start; no new bridge directories may be pruned.')
+      RaiseException('Product prune preparation could not start; installation refused.')
     else if ConnectorCode <> 0 then
-      Log('Product prune preparation failed; see the install log.');
+      RaiseException('Product prune preparation failed; installation refused. See the install log.');
     { User data is preserved. Dropped product code is pruned after copying,
       once the complete installed inventory matches this build's manifest. }
     { Bridge DLLs for this build land in bridges\<host>\<year>\{#BuildId}\.
@@ -493,56 +503,68 @@ begin
   end;
   { The installed build's identity, read by setup and the quiet updater. }
   if CurStep = ssPostInstall then
-    HostFilesInstalled();
-  if CurStep = ssPostInstall then
   begin
-    { Prune reads the previous BUILD_ID time only for pre-baseline installs.
-      Its own saved manifest/time survives replacement of source-manifest.tsv. }
-    if not ExecAndLogOutput(FindPython(), '-u -E -s -B "' + ExpandConstant('{app}') + '\nodelang\host_addin_retarget.py" --prune "' + ExpandConstant('{app}') + '" {#InstalledManifestSha256}',
-        ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ConnectorCode, @OnConnectorLog) then
-      RaiseException('Product prune could not start; installation is incomplete.');
-    if ConnectorCode <> 0 then
-      RaiseException('Product prune failed; installation is incomplete. See the install log.');
-    if not SaveStringToFile(ExpandConstant('{app}\BUILD_ID'), '{#BuildId}', False) then
-      RaiseException('The ArchHub build identity could not be saved. Run setup again.');
-    { Retarget reviewed host payloads and retire unsupported Revit manifests.
-      The helper logs third-party manifest hashes before and after its work. }
-    if FindPython() <> '' then
-    begin
-      if not ExecAndLogOutput(FindPython(), '-u -E -s -B "' + ExpandConstant('{app}') + '\nodelang\host_addin_retarget.py" "' + ExpandConstant('{app}') + '"',
-          ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ConnectorCode, @OnConnectorLog) then
-        Log('Host add-in retarget could not start. Host registration is incomplete; see the install log.')
-      else if ConnectorCode <> 0 then
-        Log('Host add-in retarget exited ' + IntToStr(ConnectorCode) + '. Host registration is incomplete; see the install log.');
-    end;
-    { After BUILD_ID: the task script recognises an installed tree by it. }
-    RemoveRetiredRuntimeTask(CleanCoordinationTask);
-    RemoveRetiredRuntimeTask(UniversalRuntimeTask);
-    { The "Connect my AI assistants" choice; the first open honours it once. }
-    if WizardIsTaskSelected('connectassistants') then
-    begin
-      if not SaveStringToFile(ExpandConstant('{app}\.assistant-hooks-consent'), 'connect-assistants-v1', False) then
-        RaiseException('The assistant connection choice could not be saved. Run setup again.');
-    end
-    else
-      DeleteFile(ExpandConstant('{app}\.assistant-hooks-consent'));
-    BackupProgress.SetText('Updating recognised assistant connections', 'Unrecognised settings are left untouched.');
-    ConnectorWarnings := '';
-    if not WizardSilent() then BackupProgress.Show();
+    PostInstallFailed := True;
     try
-      if not ExecAndLogOutput(FindPython(), '-u -E -s -B -m nodelang.assistant_registration migrate-connectors',
+      HostFilesInstalled();
+      if not ForceDirectories(ExpandConstant('{app}\logs')) then
+        RaiseException('Post-install log directory could not be created.');
+      if not SaveStringToFile(ExpandConstant('{app}\logs\postinstall.log'), '', False) then
+        RaiseException('Post-install log could not be opened.');
+      { Prune reads the previous BUILD_ID time only for pre-baseline installs.
+        Its own saved manifest/time survives replacement of source-manifest.tsv. }
+      if not ExecAndLogOutput(FindPython(), '-u -E -s -B "' + ExpandConstant('{app}') + '\nodelang\host_addin_retarget.py" --prune "' + ExpandConstant('{app}') + '" {#InstalledManifestSha256}',
           ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ConnectorCode, @OnConnectorLog) then
-        ConnectorWarnings := 'Assistant migration could not start. Existing client settings were kept; use Settings to Repair.'
-      else if ConnectorCode <> 0 then
-        ConnectorWarnings := ConnectorWarnings + 'Assistant migration needs Repair in Settings; Setup completed and existing settings were kept.';
-    finally
-      BackupProgress.Hide();
-    end;
-    if ConnectorWarnings <> '' then
+        RaiseException('Product prune could not start; installation is incomplete.');
+      if ConnectorCode <> 0 then
+        RaiseException('Product prune failed; installation is incomplete. See the install log.');
+      { Retarget reviewed host payloads and retire unsupported Revit manifests.
+        The helper logs third-party manifest hashes before and after its work. }
+      begin
+        if not ExecAndLogOutput(FindPython(), '-u -E -s -B "' + ExpandConstant('{app}') + '\nodelang\host_addin_retarget.py" "' + ExpandConstant('{app}') + '"',
+            ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ConnectorCode, @OnConnectorLog) then
+          RaiseException('Host add-in retarget could not start; installation is incomplete.')
+        else if ConnectorCode <> 0 then
+          RaiseException('Host add-in retarget exited ' + IntToStr(ConnectorCode) + '; installation is incomplete.');
+      end;
+      { Retired task removal does not require the new build identity. }
+      RemoveRetiredRuntimeTask(CleanCoordinationTask);
+      RemoveRetiredRuntimeTask(UniversalRuntimeTask);
+      { The "Connect my AI assistants" choice; the first open honours it once. }
+      if WizardIsTaskSelected('connectassistants') then
+      begin
+        if not SaveStringToFile(ExpandConstant('{app}\.assistant-hooks-consent'), 'connect-assistants-v1', False) then
+          RaiseException('The assistant connection choice could not be saved. Run setup again.');
+      end
+      else
+        DeleteFile(ExpandConstant('{app}\.assistant-hooks-consent'));
+      BackupProgress.SetText('Updating recognised assistant connections', 'Unrecognised settings are left untouched.');
+      ConnectorWarnings := '';
+      if not WizardSilent() then BackupProgress.Show();
+      try
+        if not ExecAndLogOutput(FindPython(), '-u -E -s -B -m nodelang.assistant_registration migrate-connectors',
+            ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ConnectorCode, @OnConnectorLog) then
+          ConnectorWarnings := 'Assistant migration could not start. Existing client settings were kept; use Settings to Repair.'
+        else if ConnectorCode <> 0 then
+          ConnectorWarnings := ConnectorWarnings + 'Assistant migration needs Repair in Settings; Setup completed and existing settings were kept.';
+      finally
+        BackupProgress.Hide();
+      end;
+      if ConnectorWarnings <> '' then
+        Log(ConnectorWarnings);
+      { Connector entries now point at ArchHub-Runtime; the supervisors start their connectors again. }
+      DeleteFile(ExpandConstant('{app}\.archhub-installing'));
+      { Publish success only after all required post-install work has completed. }
+      if not SaveStringToFile(ExpandConstant('{app}\BUILD_ID'), '{#BuildId}', False) then
+        RaiseException('The ArchHub build identity could not be saved. Run setup again.');
+      PostInstallFailed := False;
+    except
+      ConnectorWarnings := 'ArchHub Setup refused: Post-install failed: ' + GetExceptionMessage();
       Log(ConnectorWarnings);
-    { Connector entries now point at ArchHub-Runtime; the supervisors start their connectors again. }
-    DeleteFile(ExpandConstant('{app}\.archhub-installing'));
-
+      ForceDirectories(ExpandConstant('{app}\logs'));
+      SaveStringToFile(ExpandConstant('{app}\logs\postinstall.log'), ConnectorWarnings + #13#10, True);
+      RaiseException(ConnectorWarnings);
+    end;
   end;
 end;
 

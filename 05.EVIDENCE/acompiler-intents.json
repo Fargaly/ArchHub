@@ -10867,7 +10867,8 @@
         "01.APP/nodelang/browser_graph_editor_court.cjs",
         "03.TOOLS/tools/archhub-compiler/src/lib.rs",
         "03.TOOLS/tools/archhub-compiler/tests/diagnostics.rs",
-        "03.TOOLS/tools/real_app_check/owner_grand_map.json"
+        "03.TOOLS/tools/real_app_check/owner_grand_map.json",
+        "03.TOOLS/tools/real_app_check/"
       ]
     }
   }

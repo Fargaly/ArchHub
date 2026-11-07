@@ -9599,6 +9599,27 @@
         "05.EVIDENCE/acompiler-intents.json",
         "02.TESTS/tests_replica/test_fresh_machine_host_brokers.py"
       ]
+    },
+    "AGENTWORK": {
+      "source": "Founder F296 AGENTWORK-NODES T1: only builder lane/agentwork; extend AGENTCANVAS into agent-owned typed tool steps, reference History, normal Run with one Approve, inferred wires, Fork, reversible Home fold; Claude and Codex isolated proof; release set; commit without push or live profile changes.",
+      "scope": [
+        "01.APP/nodelang/agent_status.py",
+        "01.APP/nodelang/agent_work.py",
+        "01.APP/nodelang/workshop_tasks.py",
+        "01.APP/nodelang/session_files.py",
+        "01.APP/nodelang/canvas_documents.py",
+        "01.APP/nodelang/hook_decision.py",
+        "01.APP/nodelang/nograph_server.py",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/ds_screens.jsx",
+        "01.APP/nodelang/studio/context-menus.jsx",
+        "02.TESTS/tests/test_agentwork.py",
+        "02.TESTS/tests/test_agentcanvas.py",
+        "02.TESTS/tests_js/agentwork.cjs",
+        "02.TESTS/tests_js/agentcanvas.cjs",
+        "04.DOCS/FAILURE_LOG.md",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

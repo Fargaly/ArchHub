@@ -494,8 +494,10 @@ def register_revit_add_ins(root: Path, *, environment=None, install=None,
     and digest. For each year both packaged and installed, the existing
     registration owner (nodelang/host_broker_installation.py) verifies the
     closure, the host API pins and the custody review, then writes the user's
-    RevitMCP.addin. It never overwrites a different registration, never needs
-    elevation and never starts Revit. Each outcome is printed as it is.
+    RevitMCP.addin. Legacy ArchHub-only manifests in both roots are retired
+    before activation, including installed years without a supported payload.
+    Other vendors are untouched; no host is started or closed. Machine-wide
+    retirement requires the caller to have write access to that directory.
     """
     import json
     env = os.environ if environment is None else environment
@@ -504,22 +506,55 @@ def register_revit_add_ins(root: Path, *, environment=None, install=None,
     index_path = root / "HOST_ARTIFACTS.json"
     try:
         index = json.loads(index_path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
+    except (OSError, ValueError):
         print("  revit add-in: this build carries no Revit add-in payload")
-        return []
+        index = {"revit": {}}
     revit = index.get("revit") if isinstance(index, dict) else None
     if not isinstance(revit, dict):
-        print("  revit add-in: HOST_ARTIFACTS.json is unreadable; nothing registered")
-        return []
+        print("  revit add-in: HOST_ARTIFACTS.json is unreadable; retiring legacy registrations")
+        revit = {}
     detected = set(_setup_host_installations().get("revit") or []) if detected_years is None else set(detected_years)
     outcomes = []
-    for year in sorted(revit):
-        row = revit[year]
+    from nodelang.host_broker_installation import (
+        _manifest, _registration, retire_revit_registrations, RegistrationRefused)
+    user_root = Path(env["APPDATA"]) / "Autodesk/Revit/Addins"
+    machine_root = Path(env.get("ProgramData", r"C:\ProgramData")) / "Autodesk/Revit/Addins"
+    for year in sorted(set(revit) | detected):
+        if not re.fullmatch(r"20[0-9]{2}", year):
+            continue
+        row = revit.get(year)
         if year not in detected:
             outcomes.append({"host_version": year, "status": "host-not-installed"})
             print("  revit %s   : add-in packaged; Revit %s is not installed here" % (year, year))
             continue
         program_files = env.get("ProgramFiles", r"C:\Program Files")
+        host = Path(program_files) / "Autodesk" / ("Revit %s" % year) / "Revit.exe"
+        keep_path = user_root / year / "RevitMCP.addin"
+        keep_bytes = None
+        unavailable = "no supported Revit payload"
+        try:
+            if row:
+                keep_bytes = _registration(_manifest(root, root / row["manifest"], row["sha256"], year, host))
+        except (RegistrationRefused, OSError, KeyError, TypeError) as exc:
+            unavailable = str(exc)
+            print("  revit %s   : payload unavailable: %s" % (year, exc))
+        try:
+            retired = retire_revit_registrations(
+                user_addins_root=user_root, machine_addins_root=machine_root,
+                host_version=year, keep_path=keep_path, keep_bytes=keep_bytes)
+        except (RegistrationRefused, OSError) as exc:
+            outcomes.append({"host_version": year, "status": "failed", "reason": str(exc)})
+            print("  revit %s   : retirement failed: %s" % (year, exc))
+            continue
+        if not row:
+            if retired:
+                outcomes.append({"host_version": year, "status": "retired_pending_host_restart", "retired": retired})
+                print("  revit %s   : legacy add-ins retired; restart required" % year)
+            continue
+        if keep_bytes is None:
+            outcomes.append({"host_version": year, "status": "refused", "registered": False,
+                             "reason": unavailable, "retired": retired})
+            continue
         result = install(
             package_root=str(root), manifest_path=str(root / row["manifest"]),
             expected_manifest_sha256=row["sha256"], host_version=year,
@@ -527,6 +562,7 @@ def register_revit_add_ins(root: Path, *, environment=None, install=None,
             user_profile_root=env["USERPROFILE"],
             user_addins_root=str(Path(env["APPDATA"]) / "Autodesk" / "Revit" / "Addins"),
             machine_addins_root=str(Path(env.get("ProgramData", r"C:\ProgramData")) / "Autodesk" / "Revit" / "Addins"))
+        result["retired"] = retired
         outcomes.append(result)
         print("  revit %s   : %s%s" % (year, result["status"],
                                         (" - " + result["reason"]) if result.get("reason") else

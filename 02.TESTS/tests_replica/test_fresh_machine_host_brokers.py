@@ -419,7 +419,8 @@ def test_a_bundle_is_ours_only_with_our_install_record(acad, tmp_path):
     _acad_package(acad)
     first = colleague_setup.register_autocad_add_ins(acad.install, environment=acad.env, detected_years=["2025"])
     assert first[0]["status"] == "registered_pending_host_restart"
-    record = Path(acad.env["LOCALAPPDATA"]) / "ArchHub-Test" / "autocad-bundle.json"
+    from nodelang.user_paths import state_directory
+    record = state_directory(acad.env) / "autocad-bundle.json"
     stored = json.loads(record.read_text(encoding="utf-8"))
     from nodelang.autocad_broker_installation import PRODUCT_CODE
     assert stored["product_code"] == PRODUCT_CODE and stored["bundle"] == str(acad.bundle)

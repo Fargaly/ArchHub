@@ -353,6 +353,54 @@ def _remove(path):
     return False
 
 
+def retire_revit_registrations(*, user_addins_root, machine_addins_root, host_version,
+                               keep_path=None, keep_bytes=None):
+    """Retire only manifests wholly owned by ArchHub; never start or close a host."""
+    if not isinstance(host_version, str) or not re.fullmatch(r"20[0-9]{2}", host_version):
+        raise RegistrationRefused("an exact selected Revit year is required")
+    retired = []
+    for root in (Path(user_addins_root), Path(machine_addins_root)):
+        if root.name != "Addins":
+            raise _refuse("registration root leaf must be Addins", root)
+        directory = root / host_version
+        if _require_plain(directory, "directory", may_be_absent=True) is None:
+            continue
+        candidates = [p for p in directory.iterdir() if p.suffix.casefold() == ".addin"]
+        if len(candidates) > MAX_INVENTORY:
+            raise _refuse("registration inventory exceeds budget", directory)
+        for candidate in sorted(candidates):
+            try:
+                raw, text = _read_registration(candidate)
+                entries = list(_parse_registration(candidate, text).iter("AddIn"))
+            except RegistrationRefused as exc:
+                # Ownership is unknown; activation still refuses unreadable registrations.
+                print("  revit add-in: left unchanged; ownership unreadable: %s" % exc)
+                continue
+            owned = [entry for entry in entries
+                     if (_same_id(entry.findtext("AddInId", "")) or _same_id(entry.findtext("ClientId", "")))
+                     and entry.findtext("FullClassName", "").strip() == CLASS_NAME
+                     and entry.findtext("VendorId", "").strip() == VENDOR_ID]
+            if not owned:
+                continue
+            if len(owned) != len(entries):
+                raise _refuse("ArchHub shares a manifest with another add-in; cannot retire it", candidate)
+            if candidate == keep_path and raw == keep_bytes:
+                continue
+            destination = candidate.with_suffix(".addin.retired")
+            for number in range(MAX_INVENTORY):
+                if not destination.exists():
+                    break
+                destination = candidate.with_name(candidate.stem + ".%s.addin.retired" % (number + 1))
+            else:
+                raise _refuse("retired registration inventory exceeds budget", candidate)
+            if _read(candidate, MAX_REGISTRATION) != raw:
+                raise _refuse("registration changed during verification", candidate)
+            # Windows rename refuses an existing destination, preserving earlier retirements.
+            candidate.rename(destination)
+            retired.append(str(destination))
+    return retired
+
+
 def install_revit_broker(*, package_root, manifest_path, expected_manifest_sha256,
                          host_version, host_executable, user_profile_root,
                          user_addins_root, machine_addins_root):

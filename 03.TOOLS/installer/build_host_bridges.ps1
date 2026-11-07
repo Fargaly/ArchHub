@@ -77,6 +77,10 @@ function Get-Framework([int]$Year, [int]$LastNet48) {
 # The compiler server can still hold a file of a finished build for a moment;
 # a failed scratch delete must not fail the whole release.
 function Remove-BuildScratch([string]$Path) {
+    $target = [IO.Path]::GetFullPath($Path)
+    if (-not $target.StartsWith($output + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Build cleanup escapes OutputRoot: $target"
+    }
     for ($attempt = 1; $attempt -le 5; $attempt++) {
         try { Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop; return }
         catch {
@@ -136,8 +140,16 @@ foreach ($year in 2020..2030) {
     $folder = "bridges/revit/$year/$BuildId"
     $payload = Join-Path $output $folder
     New-Item -ItemType Directory -Path $payload -Force | Out-Null
-    foreach ($project in 'revit_mcp_core/RevitMCPCore.csproj', 'revit_mcp/RevitMCP.csproj') {
-        Build-Project $project @("-p:TargetFramework=$framework", "-p:RevitYear=$year", "-p:RevitInstallDir=$hostDir") $payload $work
+    try {
+        foreach ($project in 'revit_mcp_core/RevitMCPCore.csproj', 'revit_mcp/RevitMCP.csproj') {
+            Build-Project $project @("-p:TargetFramework=$framework", "-p:RevitYear=$year", "-p:RevitInstallDir=$hostDir") $payload $work
+        }
+    } catch {
+        # No entry means setup retires this year's legacy ArchHub manifests.
+        Write-Warning "Revit $year unsupported by this build; setup will retire its ArchHub manifests: $_"
+        if (Test-Path -LiteralPath $work) { Remove-BuildScratch $work }
+        Remove-BuildScratch $payload
+        continue
     }
     Remove-BuildScratch $work
     $manifest = [ordered]@{

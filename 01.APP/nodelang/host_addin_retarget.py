@@ -1,9 +1,9 @@
 """Point this install's Revit add-in and AutoCAD bundle at the newest bridge.
 
 The installer runs this after the new DLLs are in
-bridges/<host>/<year>/<build-id>/. It never starts Revit or AutoCAD. A
-registration refusal is printed and is not an install failure: the previous
-registration still names a DLL the setup did not replace.
+bridges/<host>/<year>/<build-id>/. It never starts Revit or AutoCAD. An
+unsupported Revit year's ArchHub manifests are retired; changes take effect
+at the next host start. Retirement failures are reported to setup.
 """
 from __future__ import annotations
 
@@ -23,8 +23,10 @@ def main(argv=None) -> int:
     sys.path.insert(0, str(root))
     import colleague_setup
     try:
-        colleague_setup.register_revit_add_ins(root)
+        revit = colleague_setup.register_revit_add_ins(root)
         colleague_setup.register_autocad_add_ins(root)
+        if any(row["status"] in ("failed", "partial_failure") for row in revit):
+            return 1
     except Exception as exc:  # noqa: BLE001 - the new DLLs are already installed
         print("  host add-in: not retargeted (%s)" % type(exc).__name__)
         return 1

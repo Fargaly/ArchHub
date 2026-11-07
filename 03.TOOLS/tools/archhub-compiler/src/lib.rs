@@ -317,6 +317,7 @@ struct Model {
     retired: BTreeSet<String>,
     uses: Vec<(String, Span)>,
     routes: Vec<(String, Span)>,
+    dispatched_routes: BTreeSet<(String, String)>,
     imports: BTreeMap<String, BTreeSet<String>>,
     modules: BTreeMap<String, Span>,
     entrypoints: BTreeSet<String>,
@@ -1706,6 +1707,26 @@ impl Extractor<'_> {
             if let Some(path) = route_path {
                 let method = member.to_uppercase();
                 let path = format!("{}{path}", self.route_prefix(receiver, node));
+                if decorated && self.language == "python"
+                    && self.model.imports.get(self.file).is_some_and(|names| names.contains("fastapi"))
+                    && self.lexical_binding(receiver, node).is_some_and(|rhs| {
+                        rhs.child_by_field_name("function")
+                            .is_some_and(|f| matches!(text(f, self.source), "FastAPI" | "fastapi.FastAPI"))
+                    })
+                {
+                    let mut parent = node.parent();
+                    let mut module_level = true;
+                    while let Some(scope) = parent {
+                        if matches!(scope.kind(), "function_definition" | "class_definition") {
+                            module_level = false;
+                            break;
+                        }
+                        parent = scope.parent();
+                    }
+                    if module_level {
+                        self.model.dispatched_routes.insert((self.file.into(), path.clone()));
+                    }
+                }
                 self.route(&method, path, node);
             }
         }
@@ -2484,19 +2505,6 @@ fn finish(mut model: Model, files: Vec<SourceFile>) -> Report {
             ));
         }
     }
-    for (route, span) in &model.routes {
-        if !model
-            .uses
-            .iter()
-            .any(|(s, _)| s == route || s.ends_with(route))
-        {
-            model.diagnostics.push(span.diagnostic(
-                "E0002",
-                format!("route `{route}` has no caller or dispatcher"),
-                "bind its user action/dispatcher or remove the route",
-            ));
-        }
-    }
     // Module reachability starts at shipped launchers, never at tests.
     let mut reachable: BTreeSet<String> = model
         .modules
@@ -2530,6 +2538,23 @@ fn finish(mut model: Model, files: Vec<SourceFile>) -> Report {
         reachable.extend(added);
         if old == reachable.len() {
             break;
+        }
+    }
+    for (route, span) in &model.routes {
+        // A reachable ASGI app dispatches its registered public endpoints even
+        // when the caller is an external browser, deployment probe, or older client.
+        let dispatched = reachable.contains(&span.file)
+            && model.dispatched_routes.contains(&(span.file.clone(), route.clone()));
+        if !dispatched && !model
+            .uses
+            .iter()
+            .any(|(s, _)| s == route || s.ends_with(route))
+        {
+            model.diagnostics.push(span.diagnostic(
+                "E0002",
+                format!("route `{route}` has no caller or dispatcher"),
+                "bind its user action/dispatcher or remove the route",
+            ));
         }
     }
     for (path, span) in &model.modules {

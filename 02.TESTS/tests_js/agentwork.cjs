@@ -17,7 +17,7 @@ from test_agentwork import native
 from test_task_session_roundtrip import _Studio
 from nodelang import host_brokers, workshop_tasks as tasks
 from nodelang.workshop_mailbox import application_history,call,profile_database
-from nodelang.application_machine_transport import MachinePipePeer
+from types import SimpleNamespace as MachinePipePeer
 from nodelang.nograph_server import NoGraphServer
 host_brokers._com_probe=lambda program:False
 process=psutil.Process()

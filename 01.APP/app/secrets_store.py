@@ -14,7 +14,6 @@ SETTINGS_FILE = APP_DIR / "settings.json"
 # Writers of secrets.dat also hold its cross-process named mutex
 # (credential_lock.py beside this file) and refuse an observed outside change.
 _SAVE_LOCK = threading.RLock()
-_SETTINGS_OWNER = None
 _UNCHECKED = object()
 _CREDENTIAL_LOCK_MODULE = None
 # Legacy pad: only ever used to READ a file written before the DPAPI
@@ -128,60 +127,26 @@ def _write_file(data: dict, expected=_UNCHECKED) -> None:
     payload = _DPAPI_MARK + base64.b64encode(_dpapi(json.dumps(data).encode("utf-8"), protect=True))
     _replace_bytes(SECRETS_FILE, payload, expected)
 
-def bind_settings_owner(store):
-    """Bind only the running application's owner; no second database is opened."""
-    global _SETTINGS_OWNER
-    with _SAVE_LOCK:
-        if _SETTINGS_OWNER is not None and _SETTINGS_OWNER is not store:
-            raise OSError("another application already owns Settings")
-        _SETTINGS_OWNER = store
 
 
-def unbind_settings_owner(store):
-    global _SETTINGS_OWNER
-    with _SAVE_LOCK:
-        if _SETTINGS_OWNER is store:
-            _SETTINGS_OWNER = None
 
 
 def _read_settings() -> dict:
-    from nodelang.persistence import IMPORTED_SETTINGS_ROOT
-    if _SETTINGS_OWNER is None:
-        # Provisioning may read a retired file before the owner boots. It never
-        # writes it, and normal runtime readers are bound above after migration.
-        if not SETTINGS_FILE.exists():
-            return {}
-        try:
-            data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as error:
-            raise OSError("saved settings are unreadable; existing file preserved") from error
-    else:
-        cell = _SETTINGS_OWNER.snapshot().cells.get(IMPORTED_SETTINGS_ROOT)
-        data = {} if cell is None else json.loads(cell.atom)
+    from nodelang.nograph_server import JsonFile
+    try:
+        data = JsonFile(SETTINGS_FILE, {}).read()
+    except (OSError, ValueError) as error:
+        raise OSError('saved settings are unreadable; existing file preserved') from error
     if type(data) is not dict:
-        raise OSError("saved settings are unreadable; existing file preserved")
+        raise OSError('saved settings are unreadable; existing file preserved')
     return data
 
 
 def save_setting(key: str, value) -> None:
-    from nodelang import commit_intent
-    from nodelang.persistence import IMPORTED_SETTINGS_ROOT, _safe_settings
-    from nodelang.universal_cell import Cell, NULL_CELL_ID
+    from nodelang.nograph_server import JsonFile
     with _SAVE_LOCK:
-        store = _SETTINGS_OWNER
-        if store is None:
-            raise OSError("open ArchHub before changing application Settings")
-        with store._lock:
-            snapshot = store.snapshot()
-            data = _read_settings()
-            data[key] = value
-            encoded = json.dumps(_safe_settings(data), sort_keys=True).encode('utf-8')
-            previous = snapshot.cells.get(IMPORTED_SETTINGS_ROOT)
-            if previous is not None and previous.atom == encoded:
-                return
-            cell = Cell(IMPORTED_SETTINGS_ROOT, NULL_CELL_ID, NULL_CELL_ID, encoded)
-            with commit_intent.declare(commit_intent.USER_ACTION, actor='app:archhub', reason='update application Settings'):
-                store.commit(snapshot.revision, **({'create': (cell,)} if previous is None else {'replace': (cell,)}))
+        owner = JsonFile(SETTINGS_FILE, {})
+        owner.write(_safe_settings({**_read_settings(), key: value}))
 
 
 def load_setting(key: str):
@@ -328,7 +293,6 @@ def _archive_file(path, *, create=False):
 def archive_legacy_credentials() -> None:
     """Archive non-DPAPI bytes once into the managed Backups destination."""
     from nodelang.model_router import _credential_file_bytes
-    from nodelang.application_recovery_files import backup_location
     if os_store_refused():
         return
     if os.name != 'nt':
@@ -338,7 +302,7 @@ def archive_legacy_credentials() -> None:
         if raw is None or raw.startswith(_DPAPI_MARK):
             return
         digest = hashlib.sha256(raw).hexdigest()
-        directory = Path(backup_location(APP_DIR.parent)['directory'])
+        directory = Path(_backup_location(APP_DIR.parent)['directory'])
         archive = directory / ('secrets-legacy-' + digest + '.dat')
         receipt = archive.with_suffix('.sha256')
         # Validate every ancestor before mkdir or any archive/receipt write.
@@ -601,3 +565,57 @@ def list_keys() -> list[str]:
     kr = _try_keyring()
     names = (load_setting("known_providers") or []) if kr else _read_file().keys()
     return [name for name in names if isinstance(name, str) and not name.startswith("social-")]
+
+
+def _backup_location(profile):
+    """Installer-owned physical preference; Settings and Setup use this file."""
+    profile = Path(profile).resolve()
+    path = profile / 'ArchHub/backup-location.json'
+    if not path.exists():
+        return {'location': 'auto', 'directory': str(profile / 'ArchHub/backups')}
+    if path.is_symlink() or path.is_junction() or path.stat().st_size > 16384:
+        raise ValueError('installer backup location is not a bounded plain file')
+    record = json.loads(path.read_text(encoding='utf-8'))
+    if (type(record) is not dict or type(record.get('location')) is not str
+            or type(record.get('directory')) is not str):
+        raise ValueError('installer backup location is invalid')
+    history = record.get('managed_directories', [])
+    if type(history) is not list or any(type(item) is not str for item in history):
+        raise ValueError('installer backup directory history is invalid')
+    for directory in [record['directory'], *history]:
+        _owned_backup_directory(profile, directory)
+    return record
+
+
+def _owned_backup_directory(profile, directory):
+    """Validate current and historical locations with the same ownership rule."""
+    selected = Path(directory)
+    identity = hashlib.sha256(str(profile).casefold().encode('utf-8')).hexdigest()
+    if (not selected.is_absolute() or str(selected).startswith(('\\\\', '//'))
+            or (selected != profile / 'ArchHub/backups' and
+                (selected.name != 'profile-' + identity or selected.parent.name != 'ArchHub-backups'))):
+        raise ValueError('installer backup directory is outside its owned container')
+    if selected != profile / 'ArchHub/backups' and any(selected.is_relative_to(profile / name)
+            for name in ('ArchHub', 'ArchHub-Test')):
+        raise ValueError('installer backup directory is outside its owned container')
+    for ancestor in (selected, *selected.parents):
+        if ancestor.is_symlink() or ancestor.is_junction():
+            raise ValueError('installer backup directory contains a link')
+    return selected
+
+
+def _safe_settings(value):
+    if not isinstance(value, dict):
+        raise ValueError("settings must be an object")
+    forbidden = {"token", "api_key", "password", "secret", "private_key", "access_token", "refresh_token"}
+    def inspect(item):
+        if isinstance(item, dict):
+            for key, child in item.items():
+                if key.casefold() in forbidden:
+                    raise ValueError("secret-bearing settings cannot enter plain preferences")
+                inspect(child)
+        elif isinstance(item, list):
+            for child in item:
+                inspect(child)
+    inspect(value)
+    return value

@@ -346,10 +346,88 @@ def _launcher_profile(environment):
     return profile_identity(environment)
 
 
+from dataclasses import dataclass
+
+@dataclass(frozen=True, slots=True)
+class MachinePipePeer:
+    """Owner-local OS observation; never a request field or graph permission."""
+    pid: int
+    created_at: float
+    executable: str = ""
+    argv: tuple[str, ...] = ()
+    cwd: str = ""
+
+def _observe_machine_process(pid):
+    """OS observation only; never accept process metadata from the request."""
+    try:
+        import psutil
+    except ImportError as error:
+        print("startup: process observation unavailable (%s)" % type(error).__name__, file=sys.stderr)
+        # Launch metadata is optional for the minimal OS pipe-peer identity.
+        # Browser/desktop admission still requires a complete observation.
+        return None
+    try:
+        process = psutil.Process(pid)
+        created = process.create_time()
+        argv = tuple(process.cmdline())
+        if (not argv or len(argv) > 128 or any(type(arg) is not str for arg in argv)
+                or sum(len(arg) for arg in argv) > 16384):
+            return None
+        peer = MachinePipePeer(pid, created, str(Path(process.exe()).resolve()),
+                               argv, str(Path(process.cwd()).resolve()))
+        if psutil.Process(pid).create_time() != created:
+            return None
+        return peer
+    except (psutil.Error, OSError, ValueError) as error:
+        print("startup: process observation failed (%s)" % type(error).__name__, file=sys.stderr)
+        return None
+
+def _desktop_launch_is_admitted(peer, *, product_root=None, python_executable=None):
+    """Trusted launch shape, not a human-gesture or same-user isolation proof."""
+    if (type(peer) is not MachinePipePeer or not peer.executable or not peer.argv or not peer.cwd
+            or type(peer.argv) is not tuple or any(type(arg) is not str for arg in peer.argv)):
+        return False
+    root = Path(product_root) if product_root is not None else (
+        Path(sys.executable).resolve().parent if getattr(sys, "frozen", False)
+        else Path(__file__).resolve().parents[1])
+    def canonical(path):
+        return os.path.normcase(str(Path(path).resolve()))
+    executable = canonical(peer.executable)
+    args = peer.argv[1:]
+    if executable == canonical(root / "ArchHub.exe"):
+        return args == ("--desktop-worker",)
+    python = python_executable if python_executable is not None else sys.executable
+    trusted_python = {canonical(root / ".venv/Scripts/python.exe"),
+                      canonical(root / ".venv/Scripts/pythonw.exe")}
+    interpreter_paths = [Path(python)]
+    if python_executable is None:
+        interpreter_paths.append(Path(getattr(sys, "_base_executable", sys.executable)))
+    for interpreter in interpreter_paths:
+        if interpreter.name.casefold() in {"python.exe", "pythonw.exe"}:
+            # Windows venv redirectors can report the base interpreter image
+            # while argv[0] names the venv. Never trust argv[0] as image proof.
+            trusted_python.update(canonical(interpreter.with_name(name))
+                                  for name in ("python.exe", "pythonw.exe"))
+        elif interpreter.name.casefold() in {"python", "python3"}:
+            trusted_python.add(canonical(interpreter))
+    if executable not in trusted_python:
+        return False
+    if len(args) == 1 and Path(args[0]).is_absolute():
+        return canonical(args[0]) == canonical(root / "nodelang/launcher.py")
+    if len(args) == 3 and args[:2] == ("-E", "-s") and Path(args[2]).is_absolute():
+        # Exact installed VBS launch. Forwarded Qt/plugin or Python options are
+        # not application arguments and do not gain Desktop mint authority.
+        return canonical(args[2]) == canonical(root / "nodelang/launcher.py")
+    if (len(args) == 4 and args[:2] == ("-E", "-s") and args[3] == "--silent"
+            and Path(args[2]).is_absolute()):
+        # The Startup shortcut runs the same installed VBS launch with --silent.
+        # That flag only hides the first window; it gains no other authority.
+        return canonical(args[2]) == canonical(root / "nodelang/launcher.py")
+    return args == ("-m", "nodelang.desktop") and canonical(peer.cwd) == canonical(root)
+
 def _verified_launch_owner(port):
     """Refuse argv delivery unless the listener is this user's exact launcher."""
     import psutil
-    from nodelang.application_machine_transport import _observe_machine_process, _desktop_launch_is_admitted
     try:
         current = psutil.Process()
         for connection in psutil.net_connections(kind='tcp'):

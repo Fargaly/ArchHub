@@ -279,14 +279,9 @@ def test_removed_face_offer_and_floating_button_have_no_widget_state(presence):
         assert not hasattr(p.window, field), field
 
 
-def test_redundant_import_and_presence_argument_are_removed():
-    import ast
+def test_presence_argument_is_removed():
     from pathlib import Path
     root = Path(__file__).resolve().parents[2]
-    tree = ast.parse((root / "01.APP/nodelang/universal_application.py").read_text(encoding="utf-8"))
-    assert not any(isinstance(node, ast.ImportFrom) and node.module == "builtins"
-                   and any(alias.name == "UnicodeDecodeError" for alias in node.names)
-                   for node in tree.body)
     source = (root / "01.APP/nodelang/studio/studio-existing-workshop.js").read_text(encoding="utf-8")
     call = source.split("setBaboomShowsAs: mode => changeTheme(", 1)[1].split(")", 1)[0]
     assert call.split(",") == ["'baboom-presence'", " null", " mode"]

@@ -1,31 +1,14 @@
-"""One built application, forked per test.
-
-Every court that wants the application called build_universal_application
-and paid ~15 seconds to rebuild 162,904 cells from the same map -- fifty
-builds per file put HALF AN HOUR of pure fixture cost in front of the
-courts. Commits are copy-on-write over immutable maps, so one template
-build can hand every test its own store that shares the base and can
-never write into it.
-
-The fork is exact isolation, not a shared fixture: a forked store's
-commits land in its own overlay, and the registry is replaced with a
-copy of its one mutable member, so a test that provisions a view session
-cannot leak it into the next test. Any call that passes its own store,
-key provider, court workspace, or runner falls through to the real build.
-"""
+"""Disposable file-owner fixtures and guards against live profile and host writes."""
 from __future__ import annotations
 
-import copy
-import dataclasses
 import os
 from pathlib import Path
 import sys
-import threading
 import tempfile
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "03.TOOLS"))
-from tools.real_app_check.profile_guard import _profile_path, _real_profile_paths, _deny_profile_write as _guard_profile_write
+from tools.real_app_check.profile_guard import _real_profile_paths, _deny_profile_write as _guard_profile_write
 from functools import partial
 
 _REAL_PROFILE_PATHS = _real_profile_paths()
@@ -43,58 +26,6 @@ for _name, _suffix in (("USERPROFILE", ""), ("HOME", ""), ("LOCALAPPDATA", "LOCA
     _path = Path(_COLLECTION_PROFILE.name) / _suffix
     _path.mkdir(parents=True, exist_ok=True)
     os.environ[_name] = str(_path)
-
-import nodelang.universal_application as _application_module
-from nodelang.universal_application import (
-    build_universal_application as _real_build,
-)
-
-
-_TEMPLATES: dict[str, tuple[object, object]] = {}
-_TEMPLATE_LOCK = threading.Lock()
-
-
-def _fork_store(template):
-    forked = copy.copy(template)
-    for name in list(vars(forked) if hasattr(forked, "__dict__") else ()):
-        value = getattr(forked, name)
-        if isinstance(value, threading.RLock().__class__):
-            object.__setattr__(forked, name, threading.RLock())
-        elif isinstance(value, (dict, list, set)):
-            # type(value)(value), not dict(value): the store keeps
-            # OrderedDicts whose move_to_end a plain dict lacks.
-            object.__setattr__(forked, name, type(value)(value))
-    return forked
-
-
-def _fork_registry(template):
-    return dataclasses.replace(
-        template, view_sessions=dict(template.view_sessions)
-    )
-
-
-def _mutable_state(obj):
-    return {
-        name: (
-            dict(value) if isinstance(value, dict)
-            else list(value) if isinstance(value, list)
-            else set(value)
-        )
-        for name, value in vars(obj).items()
-        if isinstance(value, (dict, list, set))
-    }
-
-
-def _restore_state(obj, saved):
-    for name, value in saved.items():
-        held = getattr(obj, name)
-        if isinstance(held, dict):
-            held.clear(); held.update(value)
-        elif isinstance(held, list):
-            held[:] = value
-        else:
-            held.clear(); held.update(value)
-
 
 import pytest
 
@@ -125,11 +56,6 @@ def _isolate_profile(home, monkeypatch):
     temporary.mkdir()
     monkeypatch.setenv("TEMP", str(temporary))
     monkeypatch.setenv("TMP", str(temporary))
-    from nodelang import workspace_roots_catalogue as roots
-    monkeypatch.setattr(roots, "registry_dir", lambda: home / ".archhub")
-    monkeypatch.setattr(roots, "default_app_key_path", lambda snapshot_path=None: (
-        Path(snapshot_path).with_name("workspace-roots.app-key.dpapi") if snapshot_path is not None
-        else local / "ArchHub" / "governance" / "workspace-roots.app-key.dpapi"))
     return home
 
 
@@ -137,82 +63,6 @@ def pytest_terminal_summary(terminalreporter):
     terminalreporter.write_line("PROFILE-WRITE-GUARD: protected write attempts=" + str(len(_PROFILE_WRITE_ATTEMPTS)))
 
 
-_FRESH_TEMPLATE_STATE: list = []
-
-
-def _template_shared_state(registry):
-    """The runtime bookkeeping every fork of one template shares."""
-    saved = []
-    for broker in (
-        registry.authorization.broker,
-        registry.authorization.relationship_broker,
-    ):
-        saved.append((broker, _mutable_state(broker)))
-    # Operational records (SPEC 3.3: ownership, browser leases, presence)
-    # live in the template in-memory record storage that forks share.
-    records = getattr(registry.runtime_presence_protocol, "lease_storage", None)
-    if records is not None:
-        saved.append((records, _mutable_state(records)))
-    return saved
-
-
-@pytest.fixture(autouse=True)
-def _template_broker_state_rolls_back():
-    """The brokers are identity: a verified snapshot carries ITS broker
-    and later checks it by `is`, so a forked broker fails "broker
-    differs" while a shared one leaks generations -- one test's grants
-    made every other fork's signed material read as stale, 36 courts at
-    once. The object stays shared; its runtime bookkeeping (handles,
-    generations, sessions) is saved before each test and restored after.
-    """
-    saved = []
-    with _TEMPLATE_LOCK:
-        held = list(_TEMPLATES.values())
-        _FRESH_TEMPLATE_STATE.clear()
-    for _store, registry in held:
-        saved.extend(_template_shared_state(registry))
-    # The verified-authority cache is keyed by id(authority) with a
-    # 120-second TTL. Forks share the authorization object, so one
-    # test's verified snapshot -- its relationships, its inspector, its
-    # promotions -- was served to the next test as current authority.
-    _application_module._AUTHORITY_SNAPSHOT_CACHE.clear()
-    yield
-    # A template first built DURING this test was not held at setup; its
-    # state right after the build is rolled back too. Without this, the
-    # first test of a run to build the template leaked its grants and
-    # revocations into every later fork (canvas2-v6, 2026-09-25: a group
-    # gesture in the first court made the next courts refuse the canvas).
-    with _TEMPLATE_LOCK:
-        saved.extend(_FRESH_TEMPLATE_STATE)
-        _FRESH_TEMPLATE_STATE.clear()
-    for broker, state in saved:
-        _restore_state(broker, state)
-    _application_module._AUTHORITY_SNAPSHOT_CACHE.clear()
-
-
-def _forking_build(map_path, store=None, **kwargs):
-    if store is not None or any(value is not None for value in kwargs.values()):
-        return _real_build(map_path, store, **kwargs)
-    key = str(map_path)
-    with _TEMPLATE_LOCK:
-        held = _TEMPLATES.get(key)
-    if held is None:
-        built_store, built_registry = _real_build(map_path)
-        with _TEMPLATE_LOCK:
-            _TEMPLATES[key] = (built_store, built_registry)
-            _FRESH_TEMPLATE_STATE.extend(
-                _template_shared_state(built_registry)
-            )
-        held = (built_store, built_registry)
-    template_store, template_registry = held
-    return _fork_store(template_store), _fork_registry(template_registry)
-
-
-_application_module.build_universal_application = _forking_build
-
-# Courts import the symbol directly at module load; conftest loads first,
-# so their `from ... import build_universal_application` binds the fork.
-build_universal_application = _forking_build
 
 
 # ---------------------------------------------------------------------------
@@ -299,19 +149,6 @@ def no_configured_model_default(monkeypatch):
     monkeypatch.setattr(_router, "default_composer_route", lambda **_kwargs: ("", ""), raising=False)
 
 
-@_pytest.fixture(autouse=True)
-def _fresh_last_pipeline_run():
-    """Every court starts with no remembered pipeline run.
-
-    universal_pipeline keeps the last run in a module global for BABOOM
-    lenses; a run in one court leaked into the next court's projection, so
-    a result depended on test order.
-    """
-    from nodelang import universal_pipeline
-
-    universal_pipeline._LAST_RUN.clear()
-    yield
-    universal_pipeline._LAST_RUN.clear()
 
 
 def _no_live_coordination_service():
@@ -328,4 +165,3 @@ def pytest_configure(config):
     from nodelang import workspace_roots_catalogue
 
     workspace_roots_catalogue.graph_context = _no_live_coordination_service
-

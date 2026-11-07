@@ -6,7 +6,7 @@ const root = path.resolve('.');
 const read = name => fs.readFileSync(path.join(root, name), 'utf8');
 const manifest = JSON.parse(read('01.APP/nodelang/studio/compiled/manifest.json'));
 
-const seedText = read('01.APP/nodelang/universal_presentation_seed.py').match(/^THEME = \{([\s\S]*?)^\}/m)[1];
+const seedText = read('01.APP/nodelang/settings_owner.py').match(/^THEME = \{([\s\S]*?)^\}/m)[1];
 const seed = Object.fromEntries([...seedText.matchAll(/'([^']+)':\s*'(#[0-9a-f]{6})'/g)].map(match => [match[1], match[2]]));
 
 const projection = {

@@ -17,7 +17,7 @@ const {createHash} = require('node:crypto');
 const root = path.resolve(__dirname, '..', '..');
 const read = name => fs.readFileSync(path.join(root, name), 'utf8');
 const plain = value => JSON.parse(JSON.stringify(value));
-const seedText = read('01.APP/nodelang/universal_presentation_seed.py').match(/^THEME = \{([\s\S]*?)^\}/m)[1];
+const seedText = read('01.APP/nodelang/settings_owner.py').match(/^THEME = \{([\s\S]*?)^\}/m)[1];
 const seed = Object.fromEntries([...seedText.matchAll(/'([^']+)':\s*'(#[0-9a-f]{6})'/g)]
   .map(match => [match[1], match[2]]));
 const CONTROL = 'app:appearance-control:0123456789abcdef0123456789abcdef';

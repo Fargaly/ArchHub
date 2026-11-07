@@ -1,0 +1,3 @@
+............................s......................s....                                                                         [100%]
+PROFILE-WRITE-GUARD: protected write attempts=0
+54 passed, 2 skipped in 204.48s (0:03:24)

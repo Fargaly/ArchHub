@@ -1,0 +1,56 @@
+{
+  "intent": "GRAPHOUT",
+  "tier": "T0",
+  "branch": "lane/graphout",
+  "base_revision": "9a1a3a7974e99d3e311ba34973b37b53f34e90e0",
+  "deleted_files": 875,
+  "deleted_application_python_modules": 277,
+  "import_entries": 38,
+  "unique_import_files": 146,
+  "python_acceptance_inventory": 256,
+  "acceptance_note": "The complete frozen release suite and GRAPHOUT tests passed: 256 passed, 0 failed. Supplemental isolated checker and sidecar courts: 54 passed, 2 optional cases skipped. Compiler regressions: 46 passed, 0 failed.",
+  "test_results": {
+    "release": {
+      "passed": 256,
+      "failed": 0,
+      "log": "release-final.txt"
+    },
+    "graphout": {
+      "passed": 14,
+      "failed": 0,
+      "log": "graphout-final.txt"
+    },
+    "isolated_checker_and_sidecars": {
+      "passed": 54,
+      "failed": 0,
+      "skipped": 2,
+      "log": "retirement-final.txt"
+    },
+    "compiler_regressions": {
+      "passed": 46,
+      "failed": 0,
+      "log": "compiler-regression.txt"
+    }
+  },
+  "scoped_compiler_gate": "PASS",
+  "python": "3.14.3 (tags/v3.14.3:323c59a, Feb  3 2026, 16:04:56) [MSC v.1944 64 bit (AMD64)]",
+  "evidence_sha256": {
+    "release-final.txt": "558516f53f4d552fd4994ceb8d12cadff96768be53398e902b0f5c4de1d87c51",
+    "graphout-final.txt": "baef89edb02787f95d06b32636ac6f11a99f92ec8eb553921d4124acc30beb14",
+    "retirement-final.txt": "1b76700d555b191694ead3081a08a7253b72bed7f3c9b9e8268bb0117210a887",
+    "compiler-regression.txt": "b8c6800a5cdd8871a865cd5588baa38f9e6d056fc3a0ccff1331e26994d31b35",
+    "full-module-guard.txt": "cae3affe38ac90143cf5c3d02165c11217fb3cf653ffd7ac281c0c111e6fe1d6",
+    "filename-guard.txt": "cdb0960ef30c0e8f7cd9ad363da9ac1f271806a4e7e75b973b90e939737c8e35",
+    "red-tree.txt": "18ac7467a569b5a1a56aa5d2e02b2d4229a3149d187a7739e70ce0b30eb2be89"
+  },
+  "untested_boundaries": [
+    "No installation or push",
+    "Historical journal contents were not inspected or migrated; per-behaviour coverage remains explicitly unverified"
+  ],
+  "source_index_tree": "f978606829e2b9a4c5d4efe2c985f5c3d7745302",
+  "filename_guard": "Three isolated journal and sidecar fixtures refused before SQLite open; fixture bytes unchanged (filename-guard.txt).",
+  "final_index_admission": "The mandatory commit-msg compiler gate validates the complete final index; no new store, docs edit, hook bypass, installation or push.",
+  "verification_strategy": "Complete release suite against the frozen source, plus isolated route/boot/checker/sidecar and compiler regression courts. Focused counts overlap the main release suite.",
+  "cleanup_observation": "Automatic approval review rejected deletion of this run's ignored failed Cargo debug cache: blocked by policy.",
+  "code_commit_before_evidence_amend": "7d791a986d98e65a0bb9dd87840747c9f365d26f"
+}

@@ -1,4 +1,4 @@
-"""Settings translations over the selected CellStore and existing cloud owners."""
+"""Settings translations over current account and plain-file owners."""
 from __future__ import annotations
 
 from .user_paths import state_directory, stamp_test_write
@@ -8,15 +8,12 @@ import json
 import math
 from pathlib import Path
 import re
-import uuid
 import os
 import threading
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
-from .universal_cell import Cell, NULL_CELL_ID, InvalidCell
-from .cell_accounts import upsert_account, ensure_accounts
 
 _ROUTER_LOCK = threading.RLock()
 _ACCOUNT_FILE_LOCK = threading.RLock()
@@ -36,14 +33,14 @@ def read_router_settings():
     try:
         path = router_settings_path()
         if path.stat().st_size > 65536:
-            raise InvalidCell('Router settings exceed 64 KiB.')
+            raise ValueError('Router settings exceed 64 KiB.')
         values = json.loads(path.read_text(encoding='utf-8'))
     except FileNotFoundError:
         return defaults
     except (OSError, ValueError):
-        raise InvalidCell('Router settings could not be read.') from None
+        raise ValueError('Router settings could not be read.') from None
     if type(values) is not dict:
-        raise InvalidCell('Router settings must be an object.')
+        raise ValueError('Router settings must be an object.')
     values.pop('_test_writer', None)
     return _checked_router_settings({**defaults, **values})
 
@@ -53,17 +50,17 @@ def _checked_router_settings(values):
     allowed = {'default_model', 'fallback_models', 'free_first', 'providers', 'agents',
                'providerPreferences', 'generation'}
     if type(values) is not dict or set(values) - allowed or values.get('free_first') is not True:
-        raise InvalidCell('Router settings require free-first and credential references only.')
+        raise ValueError('Router settings require free-first and credential references only.')
     def route(value, *, free=False):
         if type(value) is not str or len(value) > 200:
-            raise InvalidCell('Choose a free model route.')
+            raise ValueError('Choose a free model route.')
         destination = resolve_model_route(value)
         if free and (destination.family != 'openrouter' or not (destination.model == 'openrouter/free' or destination.model.endswith(':free'))):
-            raise InvalidCell('Choose a free OpenRouter model; paid fallbacks are disabled.')
+            raise ValueError('Choose a free OpenRouter model; paid fallbacks are disabled.')
     route(values['default_model'])
     fallbacks = values['fallback_models']
     if type(fallbacks) is not list or len(fallbacks) > 8:
-        raise InvalidCell('Choose at most eight free fallback models.')
+        raise ValueError('Choose at most eight free fallback models.')
     for value in fallbacks:
         route(value, free=True)
     providers = values['providers']
@@ -72,48 +69,48 @@ def _checked_router_settings(values):
             set(providers['openrouter']) != {'credential', 'enabled'} or
             providers['openrouter']['credential'] != 'wcm://ArchHub/openrouter' or
             type(providers['openrouter']['enabled']) is not bool):
-        raise InvalidCell('Use the existing OpenRouter Windows credential reference.')
+        raise ValueError('Use the existing OpenRouter Windows credential reference.')
     agents = values['agents']
     if type(agents) is not dict or len(agents) > 64:
-        raise InvalidCell('Agent profiles exceed the router limit.')
+        raise ValueError('Agent profiles exceed the router limit.')
     for agent, profile in agents.items():
         if (type(agent) is not str or not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', agent) or
                 type(profile) is not dict or set(profile) - {'model', 'prompt', 'purpose', 'humanOwner',
                     'admins', 'autonomy', 'questionsPerDay', 'memoryScope', 'skillIds'} or
                 type(profile.get('prompt', '')) is not str or len(profile.get('prompt', '')) > 4096):
-            raise InvalidCell('Use a named agent profile with a model and short prompt.')
+            raise ValueError('Use a named agent profile with a model and short prompt.')
         if 'model' in profile:
             route(profile['model'])
         for name in ('purpose', 'humanOwner', 'memoryScope', 'admins'):
             if name in profile and (type(profile[name]) is not str or len(profile[name]) > 4096):
-                raise InvalidCell('Agent profile text is invalid.')
+                raise ValueError('Agent profile text is invalid.')
         for name in ('skillIds',):
             if name in profile and (type(profile[name]) is not list or len(profile[name]) > 128 or
                     any(type(item) is not str or len(item) > 200 for item in profile[name])):
-                raise InvalidCell('Agent profile list is invalid.')
+                raise ValueError('Agent profile list is invalid.')
         if 'questionsPerDay' in profile and (type(profile['questionsPerDay']) is not int or profile['questionsPerDay'] < 0):
-            raise InvalidCell('Questions per day must be a nonnegative integer.')
+            raise ValueError('Questions per day must be a nonnegative integer.')
         autonomy = profile.get('autonomy', {})
         if (type(autonomy) is not dict or set(autonomy) - {'Read', 'Write', 'Send', 'Spend'} or
                 any(value not in {'Review all', 'Escalate hard', 'Autonomous'} for value in autonomy.values())):
-            raise InvalidCell('Choose a supported autonomy policy.')
+            raise ValueError('Choose a supported autonomy policy.')
     preferences = values['providerPreferences']
     if type(preferences) is not dict or set(preferences) - {'openrouter', 'lmstudio', 'ollama', 'cloud',
             'openai', 'google', 'nvidia', 'anthropic', 'claude-code', 'codex', 'copilot', 'gemini-cli', 'opencode', 'antigravity', 'cursor'}:
-        raise InvalidCell('Provider preference is invalid.')
+        raise ValueError('Provider preference is invalid.')
     for provider, value in preferences.items():
         route(value)
         if SettingsOwner._provider_id(value) != provider:
-            raise InvalidCell('Choose a model belonging to its configured provider.')
+            raise ValueError('Choose a model belonging to its configured provider.')
     generation = values['generation']
     if type(generation) is not dict or set(generation) != {'max_tokens', 'temperature', 'top_p'}:
-        raise InvalidCell('Generation settings are invalid.')
+        raise ValueError('Generation settings are invalid.')
     if (type(generation['max_tokens']) is not int or not 1 <= generation['max_tokens'] <= 32000 or
             any(type(generation[key]) not in (int, float) or not math.isfinite(generation[key]) or
                 not 0 <= generation[key] <= limit for key, limit in (('temperature', 2), ('top_p', 1)))):
-        raise InvalidCell('Generation settings are outside their allowed range.')
+        raise ValueError('Generation settings are outside their allowed range.')
     if len(json.dumps(values, allow_nan=False).encode('utf-8')) > 65536:
-        raise InvalidCell('Router settings exceed 64 KiB.')
+        raise ValueError('Router settings exceed 64 KiB.')
     return values
 
 
@@ -144,7 +141,7 @@ class AccountFiles:
         data[root] = values
         encoded = json.dumps(stamp_test_write(data), ensure_ascii=False, allow_nan=False, indent=1)
         if len(encoded.encode('utf-8')) > 65536:
-            raise InvalidCell('Settings exceed 64 KiB. Shorten workspace rules and retry.')
+            raise ValueError('Settings exceed 64 KiB. Shorten workspace rules and retry.')
         self.path.parent.mkdir(parents=True, exist_ok=True)
         fd, temporary = tempfile.mkstemp(dir=self.path.parent, suffix='.tmp')
         try:
@@ -156,7 +153,7 @@ class AccountFiles:
                 os.unlink(temporary)
 
 
-class CloudRouteUnavailable(InvalidCell):
+class CloudRouteUnavailable(ValueError):
     """The pinned cloud does not serve a requested feature."""
 
 
@@ -184,47 +181,30 @@ class SettingsOwner:
 
     def dispatch(self, function, args):
         if function not in self.PUBLIC or type(args) is not list:
-            raise InvalidCell('Choose a registered Settings command.')
+            raise ValueError('Choose a registered Settings command.')
         method = getattr(self, function)
         try:
             inspect.signature(method).bind(*args)
         except TypeError:
-            raise InvalidCell('Settings arguments changed. Refresh this page and retry.') from None
+            raise ValueError('Settings arguments changed. Refresh this page and retry.') from None
         return method(*args)
 
     def _account(self):
         me = self.cloud('GET', '/v1/me')
         if not me.get('email') or not me.get('user_id'):
-            raise InvalidCell('Sign in with your browser, then retry.')
-        if isinstance(self.store, AccountFiles):
-            return me, 'account:' + me['user_id']   # the cloud account is the identity; no graph row
-        ensure_accounts(self.store, founder_email=None)
-        root, _email, _tier = upsert_account(self.store, me['email'])
-        return me, root
+            raise ValueError('Sign in with your browser, then retry.')
+        return me, 'account:' + me['user_id']
 
     def _preferences(self, root):
-        if isinstance(self.store, AccountFiles):
-            return self.store.read(root)
-        held = self.store.snapshot().cells.get(root + ':settings')
-        return json.loads(bytes(held.atom)) if held else {}
+        return self.store.read(root)
 
     def _save(self, root, values):
         values = {**self._preferences(root), **values}
-        if isinstance(self.store, AccountFiles):
-            self.store.write(root, values)
-            return values
-        snapshot = self.store.snapshot()
-        cell = Cell(root + ':settings', NULL_CELL_ID, NULL_CELL_ID,
-                    json.dumps(values, ensure_ascii=False, allow_nan=False).encode('utf-8'))
-        if len(cell.atom) > 65536:
-            raise InvalidCell('Settings exceed 64 KiB. Shorten workspace rules and retry.')
-        self.store.commit(snapshot.revision, **{'replace' if cell.id in snapshot.cells else 'create': (cell,)})
+        self.store.write(root, values)
         return values
 
     def _subject(self):
-        if self.runtime is None or self.authentication_context is None:
-            raise InvalidCell('Reopen Settings through the application owner.')
-        return self.runtime.universal_registry.authorization.subject_root
+        return self._account()[1]
 
     def _control_preferences(self):
         return self._preferences(self._subject())
@@ -243,7 +223,7 @@ class SettingsOwner:
         from .model_router import default_cloud_session
         payload = groups_with_routes(live_model_groups(default_cloud_session()))
         if payload.get('ok') is False:
-            raise InvalidCell('Model catalogue unavailable. Refresh Agents and retry.')
+            raise ValueError('Model catalogue unavailable. Refresh Agents and retry.')
         result = {}
         for group in payload.get('groups', []):
             for item in group.get('items', []):
@@ -269,7 +249,7 @@ class SettingsOwner:
 
     def setProviderModel(self, id, model):
         if type(model) is not str or self._provider_id(model) != id:
-            raise InvalidCell('Choose a model belonging to this provider.')
+            raise ValueError('Choose a model belonging to this provider.')
         with _ROUTER_LOCK:
             return self.setRouterSettings({'default_model': model, 'providerPreferences': {
                 **read_router_settings()['providerPreferences'], id: model}})
@@ -281,7 +261,7 @@ class SettingsOwner:
 
     def setRouterSettings(self, changes):
         if type(changes) is not dict:
-            raise InvalidCell('Router settings must be an object.')
+            raise ValueError('Router settings must be an object.')
         with _ROUTER_LOCK:
             values = _checked_router_settings({**read_router_settings(), **changes})
             path = router_settings_path()
@@ -304,25 +284,14 @@ class SettingsOwner:
 
     def disconnectSecret(self, id):
         from .model_router import revoke_social_credential
-        self._subject()
         matches = [row for row in self._secrets() if row['id'] == id]
-        if type(id) is not str or len(matches) != 1:
-            raise InvalidCell('Choose an existing connected account, then retry.')
+        if type(id) is not str or len(matches) != 1 or not matches[0]['disconnectable']:
+            raise ValueError('Choose an existing connected account, then retry.')
         row = matches[0]
-        if not row['disconnectable']:
-            raise InvalidCell('Manage this credential through its existing provider settings.')
-        def guard():
-            self.runtime.require_universal_http_route('POST', '/api/universal/social-credential-remove',
-                authentication_context=self.authentication_context, revalidate=True)
-        result = revoke_social_credential({key: row[key] for key in ('vault_entry', 'provider', 'account_id')},
-                                        before_replace=guard)
+        result = revoke_social_credential({key: row[key] for key in ('vault_entry', 'provider', 'account_id')})
         remaining = self._secrets()
-        if result.get('ok') is not True or result.get('state') not in {'removed', 'absent'} or any(
-                item['id'] == id for item in remaining):
-            raise InvalidCell('Disconnect was not confirmed. Refresh connected accounts before retrying.')
-        held = self._control_preferences().get('disconnectedAccounts', {})
-        self._save(self._subject(), {'disconnectedAccounts': {**held, id: {
-            key: result[key] for key in ('vault_entry', 'provider', 'account_id', 'state', 'provider_token_revoked')}}})
+        if result.get('ok') is not True or any(item['id'] == id for item in remaining):
+            raise ValueError('Disconnect was not confirmed. Refresh connected accounts before retrying.')
         return {**result, 'secrets': remaining}
 
     def companionState(self):
@@ -337,7 +306,7 @@ class SettingsOwner:
                 or (('x' in values) != ('y' in values))
                 or any(type(values[key]) not in (int, float) or not math.isfinite(values[key])
                        or not -100000 <= values[key] <= 100000 for key in ('x', 'y') if key in values)):
-            raise InvalidCell('Use a companion mode, a finite x/y position and an on/off pin.')
+            raise ValueError('Use a companion mode, a finite x/y position and an on/off pin.')
         self._save(self._subject(), {'companion': {**self.companionState(), **values}})
         return {'companion': self.companionState()}
 
@@ -356,7 +325,7 @@ class SettingsOwner:
             result['controlErrors']['secrets'] = 'Connected account index could not be read. Refresh Connections.'
         try:
             result['providerModels'] = self._provider_models()
-        except InvalidCell:
+        except ValueError:
             result['providerModels'] = {}
             result['controlErrors']['providerModels'] = 'Model catalogue unavailable. Refresh Agents.'
         return result
@@ -366,7 +335,7 @@ class SettingsOwner:
         from .canvas_documents import thing_items
         items = [row for row in thing_items() if (row.get('setting') or {}).get('page') == page]
         if not items:
-            raise InvalidCell('This page has no editable Settings rows.')
+            raise ValueError('This page has no editable Settings rows.')
         nodes = [{'id': 'setting:' + row['setting']['id'], 'item': row['id'], 'type': 'thing.setting',
                   'title': row['title'], 'params': {'setting': row['setting']['id']},
                   'position': {'x': 80 + i % 3 * 320, 'y': 100 + i // 3 * 240}}
@@ -376,29 +345,21 @@ class SettingsOwner:
     def _roots(self):
         if self.workspace_roots is not None:
             return self.workspace_roots()
-        from .workspace_roots_catalogue import forward_workspace_settings, settings_principal
-        route = getattr(self.runtime, '_clean_workspace_roots', None)
-        result = (route({'action': 'list'}, admission={'principal': settings_principal()})
-                  if route is not None else forward_workspace_settings({'action': 'list'}))
-        return [*([{**result['built_in'], 'root_id': result['built_in']['id']}]
-                  if result.get('built_in') else []), *result.get('roots', [])]
+        from .nograph_server import JsonFile
+        return JsonFile(state_directory() / 'settings/workspaces.json', {'roots': []}).read()['roots']
 
     def _workspace(self, id):
         if type(id) is not str or not id:
-            raise InvalidCell('Choose a registered workspace in Account settings, then retry.')
+            raise ValueError('Choose a registered workspace in Account settings, then retry.')
         matches = [row for row in self._roots() if row.get('root_id', row.get('id')) == id]
         if len(matches) != 1:
-            raise InvalidCell('This workspace is no longer registered. Refresh Account settings.')
+            raise ValueError('This workspace is no longer registered. Refresh Account settings.')
         return matches[0]
 
     def _graph(self, id):
-        if type(id) is not str or not id:
-            raise InvalidCell('Open the graph whose workspace scope you want to edit.')
-        if self.runtime is not None:
-            from .canvas_graph_owner import CanvasOwner
-            canvas = CanvasOwner(self.store, self.runtime.universal_registry, self.authentication_context).canvas()
-            if id != canvas.get('scope', {}).get('current', canvas.get('root')):
-                raise InvalidCell('The graph changed. Refresh Settings and retry.')
+        from .session_files import SessionFiles
+        if type(id) is not str or id != SessionFiles().canvas()['root']:
+            raise ValueError('The session changed. Refresh Settings and retry.')
 
     def readOperations(self, graph=''):
         _me, root = self._account()
@@ -416,46 +377,32 @@ class SettingsOwner:
                 or ('privacy' in values and values['privacy'] not in ('Internal', 'Confidential', 'Secret'))
                 or ('rules' in values and (type(values['rules']) is not str or len(values['rules']) > 16000))
                 or ('shareLearning' in values and type(values['shareLearning']) is not bool)):
-            raise InvalidCell('Use a private privacy tier, text rules and an on/off learning choice.')
+            raise ValueError('Use a private privacy tier, text rules and an on/off learning choice.')
         if workspace.get('privacy') == 'public':
-            raise InvalidCell('Register this client folder as private before saving private workspace rules.')
+            raise ValueError('Register this client folder as private before saving private workspace rules.')
         _me, root = self._account()
         policies = self._preferences(root).get('workspacePolicies', {})
         policy = {**policies.get(id, {}), **values}
         if policy.get('privacy') == 'Secret' and policy.get('shareLearning'):
-            raise InvalidCell('Secret work cannot share learned rules. Turn team learning off first.')
+            raise ValueError('Secret work cannot share learned rules. Turn team learning off first.')
         self._save(root, {'workspacePolicies': {**policies, id: policy}})
         return {'workspacePolicies': self._preferences(root)['workspacePolicies'], 'message': 'Workspace policy saved'}
 
     def setSettingsScope(self, scope, workspace='', graph=''):
         if scope not in ('User', 'Workspace'):
-            raise InvalidCell('Choose User or Workspace scope.')
+            raise ValueError('Choose User or Workspace scope.')
         if scope == 'Workspace':
             self._workspace(workspace)
         _me, root = self._account()
-        target = ''
-        if self.runtime is not None:
-            from .universal_graphs import open_graph
-            registry = self.runtime.universal_registry
-            target = registry.canvas_root
-            if scope == 'Workspace':
-                linked = self._preferences(root).get('graphWorkspaces', {})
-                candidates = [id for id, roots in linked.items() if workspace in roots]
-                if graph in candidates:
-                    target = graph
-                elif len(candidates) == 1:
-                    target = candidates[0]
-                else:
-                    raise InvalidCell('Choose this workspace in one graph first, then select Workspace scope.')
-            open_graph(self.store, registry, target, authentication_context=self.authentication_context)
-        self._save(root, {'settingsScope': scope, 'activeWorkspace': workspace if scope == 'Workspace' else ''})
-        return {'settingsScope': scope, 'activeWorkspace': workspace if scope == 'Workspace' else '',
-                'scopeRoot': target, 'message': 'Settings scope saved'}
+        active = workspace if scope == 'Workspace' else ''
+        self._save(root, {'settingsScope': scope, 'activeWorkspace': active})
+        return {'settingsScope': scope, 'activeWorkspace': active, 'scopeRoot': graph,
+                'message': 'Settings scope saved'}
 
     def setGraphWorkspaces(self, graph, ids):
         self._graph(graph)
         if type(ids) is not list or len(ids) > 100 or any(type(id) is not str for id in ids) or len(set(ids)) != len(ids):
-            raise InvalidCell('Choose each registered workspace at most once.')
+            raise ValueError('Choose each registered workspace at most once.')
         for id in ids:
             self._workspace(id)
         _me, root = self._account()
@@ -464,106 +411,35 @@ class SettingsOwner:
         return {'workspaceIds': self._preferences(root)['graphWorkspaces'][graph], 'message': 'Graph workspaces saved'}
 
     def executionContext(self, graph):
-        """The Workshop reads the same saved policy at the point of dispatch."""
-        from .cloud_session import signed_in_cloud_account
-        from .cell_accounts import _account_root, _normal
-        email = signed_in_cloud_account()
-        if not email:
-            return {'workspaces': [], 'device': ''}
-        prefs = self._preferences(_account_root(_normal(email)))
+        _me, root = self._account()
+        prefs = self._preferences(root)
         policies = prefs.get('workspacePolicies', {})
-        workspaces = []
-        for id in prefs.get('graphWorkspaces', {}).get(graph, []):
-            workspace = self._workspace(id)
-            policy = policies.get(id, {})
-            workspaces.append({'id': id, 'path': workspace.get('path', ''), **policy})
-        return {'workspaces': workspaces, 'device': prefs.get('activeDevice', '')}
+        return {'workspaces': [{'id': id, 'path': self._workspace(id).get('path', ''), **policies.get(id, {})}
+                               for id in prefs.get('graphWorkspaces', {}).get(graph, [])], 'device': ''}
 
     def _devices(self):
-        if self.runtime is None:
-            return []
-        from .universal_application import project_universal_founder_device_custody_report
-        report = project_universal_founder_device_custody_report(self.store, self.runtime.universal_registry)
-        return [{'id': row['device_ref'], 'name': row['label'],
-                 'status': 'Online' if row['runtime_present'] and row['state'] == 'active' else row['state'],
-                 'available': row['state'] == 'active' and row['runtime_present'] and row['baboom_bound']}
-                for row in report['devices']]
+        return []
 
     def selectDevice(self, id):
         selected = next((row for row in self._devices() if row['id'] == id and row['available']), None)
         if selected is None:
-            raise InvalidCell('This device is unavailable. Open BABOOM on that device, refresh Access, then retry.')
-        raise InvalidCell('This device is connected, but browser task routing has no receipt-bound device handoff. '
+            raise ValueError('This device is unavailable. Open BABOOM on that device, refresh Access, then retry.')
+        raise ValueError('This device is connected, but browser task routing has no receipt-bound device handoff. '
                           'Open its BABOOM device handoff node to send work; the current task target was kept.')
 
     def grantAccess(self, id):
-        if self.runtime is None or type(id) is not str or not id:
-            raise InvalidCell('Open the pending Permission Request node in System graph and retry.')
-        from .cell_state_machine import read_instance_state_machine, read_transition
-        from .cell_permission_requests import read_permission_request
-        from .universal_application import transition_universal_operational_state
-        registry = self.runtime.universal_registry
-        snapshot = self.store.snapshot()
-        operational = registry.standard_library.state_machine_protocol
-        definition = registry.standard_library.governed_domains.definitions['permission-request'].definition_root
-        read_permission_request(snapshot, registry.assembly_protocol, operational, id, expected_definition_root=definition)
-        machine = read_instance_state_machine(snapshot, registry.assembly_protocol, operational, id)
-        transitions = [read_transition(snapshot, operational, root) for root in machine.transition_roots]
-        matches = [row for row in transitions if row.from_state_root == machine.current_state_root
-                   and snapshot.cells[row.event_root].atom == b'approve']
-        if len(matches) != 1:
-            raise InvalidCell('This permission is no longer pending. Refresh its node before retrying.')
-        revision = transition_universal_operational_state(self.store, registry, id, matches[0].event_root,
-            machine.current_state_root, authentication_context=self.authentication_context)
-        return {'revision': revision, 'message': 'Permission decision recorded by its owner'}
+        raise ValueError('Graph permission requests are unavailable. Use the current Approve card.')
 
-    def _recovery_directory(self):
-        if self.content is None or self.authentication_context is None or self.store.database_path is None:
-            raise InvalidCell('Open ArchHub through its launcher to use the admitted recovery owner.')
-        from .persistence import application_state_directory
-        from .application_recovery_files import installer_backup_directory
-        state = application_state_directory(self.store.database_path)
-        return Path(installer_backup_directory(state.parent, self.store.database_path))
 
     def _backups(self):
-        if self.content is None or self.store.database_path is None:
-            return []
-        directory = self._recovery_directory()
-        if not directory.is_dir():
-            return []
-        result = []
-        for path in sorted(directory.glob('application-recovery-*'), reverse=True):
-            if path.is_dir() and not path.is_symlink() and not path.is_junction() and (path / 'recovery.json').is_file():
-                result.append({'id': path.name, 'name': path.name, 'location': 'Configured recovery location'})
-        return result
+        return []
 
     def backUpNow(self):
-        directory = self._recovery_directory()
-        directory.mkdir(parents=True, exist_ok=True)
-        path = self.content.backup_recovery(directory, authentication_context=self.authentication_context,
-                                            timeout_seconds=self._recovery_timeout())
-        return {'backups': self._backups(), 'backup': Path(path).name,
-                'message': 'Verified graph and content backup created at the configured recovery location'}
+        raise ValueError('Graph journal backups are unavailable. Canvas files retain their own history.')
 
     def rollBack(self, id):
-        if type(id) is not str or not re.fullmatch(r'application-recovery-[0-9]{8}-[0-9a-f]{32}', id):
-            raise InvalidCell('Choose a verified backup from Storage and retry.')
-        directory = self._recovery_directory()
-        source = directory / id
-        if id not in {row['id'] for row in self._backups()}:
-            raise InvalidCell('This backup is unavailable. Refresh Storage and retry.')
-        destination = directory / ('RESTORE-' + uuid.uuid4().hex.upper())
-        path = self.content.prepare_recovery_restore(source, destination,
-            authentication_context=self.authentication_context, timeout_seconds=self._recovery_timeout())
-        return {'status': 'prepared', 'restored': False, 'restoreDirectory': str(path),
-                'message': 'Restore verified and prepared. Live data is unchanged; activation requires the launcher recovery path.'}
+        raise ValueError('Graph journal restore is unavailable. Open the session file and its History.')
 
-    def _recovery_timeout(self):
-        from .universal_application import _workshop_board_int_param, _APPLICATION_SETTING_SPECS, _application_setting_default
-        key = 'recovery_timeout_seconds'
-        bounds = _APPLICATION_SETTING_SPECS[key][1]
-        return _workshop_board_int_param(self.store.snapshot(), self.runtime.universal_registry, key,
-            default=_application_setting_default(key), lower=bounds['min'], upper=bounds['max'])
 
     def read(self):
         me, root = self._account()
@@ -593,9 +469,9 @@ class SettingsOwner:
 
     def updateProfile(self, values):
         if type(values) is not dict or not values or set(values) - {'name', 'firm'}:
-            raise InvalidCell('Edit your name or firm here; identity changes use browser sign-in.')
+            raise ValueError('Edit your name or firm here; identity changes use browser sign-in.')
         if any(type(v) is not str or not v.strip() or len(v) > 120 for v in values.values()):
-            raise InvalidCell('Use a name and firm between 1 and 120 characters.')
+            raise ValueError('Use a name and firm between 1 and 120 characters.')
         _me, root = self._account()
         profile = {**self._preferences(root).get('profile', {}), **{k: v.strip() for k, v in values.items()}}
         self._save(root, {'profile': profile})
@@ -605,18 +481,18 @@ class SettingsOwner:
         rows = self.cloud('GET', '/v1/companies/mine').get('companies', [])
         selected = next((r for r in rows if r.get('is_current')), None)
         if not selected:
-            raise InvalidCell('Select your office in Account settings, then retry.')
+            raise ValueError('Select your office in Account settings, then retry.')
         return quote(selected['id'], safe='')
 
     def selectFirm(self, id):
         if type(id) is not str or not id:
-            raise InvalidCell('Choose an office from your account memberships.')
+            raise ValueError('Choose an office from your account memberships.')
         result = self.cloud('POST', '/v1/companies/' + quote(id, safe='') + '/switch', {})
         return {**result, **self.read()}
 
     def invitePerson(self, email):
         if type(email) is not str or '@' not in email or len(email) > 254:
-            raise InvalidCell('Enter your teammate’s email address and retry.')
+            raise ValueError('Enter your teammate’s email address and retry.')
         result = self.cloud('POST', '/v1/companies/' + self._company() + '/invites',
                             {'email': email.strip(), 'role': 'member'})
         # An issued invite is not proof that the mail provider delivered it.
@@ -624,28 +500,28 @@ class SettingsOwner:
 
     def acceptOfficeInvitation(self, id):
         if type(id) is not str or not id:
-            raise InvalidCell('Refresh your office invitations and choose one belonging to this account.')
+            raise ValueError('Refresh your office invitations and choose one belonging to this account.')
         self.cloud('POST', '/v1/companies/invites/accept', {'invite_token': id})
         return self.read()
 
     def declineOfficeInvitation(self, id):
         if type(id) is not str or not id:
-            raise InvalidCell('Refresh your office invitations and choose one belonging to this account.')
+            raise ValueError('Refresh your office invitations and choose one belonging to this account.')
         self.cloud('POST', '/v1/companies/invites/decline', {'invite_token': id})
         return self.read()
 
     def archiveActivity(self):
         if self.content is None or self.authentication_context is None:
-            raise InvalidCell('Reopen ArchHub through its launcher to use the active conversation owner.')
+            raise ValueError('Reopen ArchHub through its launcher to use the active conversation owner.')
         report = self.content.maintain_retention(authentication_context=self.authentication_context)
         return {'retention': report, 'message': '%s: %s conversations archived; %s protected.' % (report['status'], report['archived'], report['protected'])}
 
     def setTeamAccess(self, id, values):
         roles = {'Owner': 'owner', 'Administrator': 'admin', 'Member': 'member', 'Viewer': 'viewer'}
         if type(id) is not str or not id or type(values) is not dict or not values or set(values) - {'accessRole', 'expires'}:
-            raise InvalidCell('Select an existing team member and edit role or access date.')
+            raise ValueError('Select an existing team member and edit role or access date.')
         if 'accessRole' in values and values['accessRole'] not in roles:
-            raise InvalidCell('Choose Owner, Administrator, Member or Viewer.')
+            raise ValueError('Choose Owner, Administrator, Member or Viewer.')
         company = self._company()
         if values.get('accessRole') == 'Owner':
             self.cloud('POST', '/v1/companies/' + company + '/transfer-ownership', {'new_owner_user_id': id})
@@ -670,18 +546,18 @@ class SettingsOwner:
 
     def setBilling(self, values):
         if type(values) is not dict or not values or set(values) - {'requestedPlan', 'cycle', 'checkout'}:
-            raise InvalidCell('Edit a billing plan or cycle, then review it.')
+            raise ValueError('Edit a billing plan or cycle, then review it.')
         me, root = self._account()
         billing = self._billing(me, self._preferences(root))
         if 'cycle' in values and values['cycle'] not in ('Monthly', 'Annual'):
-            raise InvalidCell('Choose Monthly or Annual billing.')
+            raise ValueError('Choose Monthly or Annual billing.')
         if 'checkout' in values and values['checkout'] is not None:
-            raise InvalidCell('Create checkout with Review plan; payment confirmation belongs to billing.')
+            raise ValueError('Create checkout with Review plan; payment confirmation belongs to billing.')
         if 'requestedPlan' in values:
             plans = billing['plans']
             ids = {x.get('tier') for x in plans} if isinstance(plans, list) else set(plans)
             if {'Personal':'solo','Office':'studio','Team':'firm'}.get(values['requestedPlan'], values['requestedPlan']) not in ids:
-                raise InvalidCell('Refresh billing and choose a currently published plan.')
+                raise ValueError('Refresh billing and choose a currently published plan.')
         saved = {**self._preferences(root).get('billing', {}), **values}
         self._save(root, {'billing': saved})
         return self.refreshBilling()
@@ -692,7 +568,7 @@ class SettingsOwner:
         result = self.cloud('POST', '/v1/billing/checkout', {'tier': {'Personal':'solo','Office':'studio','Team':'firm'}.get(b['requestedPlan'], b['requestedPlan']), 'annual': b['cycle'] == 'Annual'})
         url = result.get('checkout_url') or result.get('url')
         if not url:
-            raise InvalidCell('Billing did not return a checkout. Refresh billing and review the published offer.')
+            raise ValueError('Billing did not return a checkout. Refresh billing and review the published offer.')
         self._save(root, {'billing': {**self._preferences(root).get('billing', {}), 'checkout': {'url': url, 'plan': b['requestedPlan'], 'cycle': b['cycle'], 'status': 'Awaiting payment provider confirmation'}}})
         return {**self.refreshBilling(), 'open_url': url}
 
@@ -733,9 +609,9 @@ def cloud_call(method, path, body=None, *, timeout_seconds=15, session=None):
     try:
         held = session if session is not None else read_cloud_session(cloud_session_path())
     except (OSError, ValueError):
-        raise InvalidCell('Not signed in. Sign in with your browser, then retry.') from None
+        raise ValueError('Not signed in. Sign in with your browser, then retry.') from None
     if not held.get('token'):
-        raise InvalidCell('Not signed in. Sign in with your browser, then retry.')
+        raise ValueError('Not signed in. Sign in with your browser, then retry.')
     request = Request(_pinned_base(held) + path, method=method,
                       data=None if body is None else json.dumps(body).encode('utf-8'),
                       headers={'Authorization': 'Bearer ' + held['token'], 'Content-Type': 'application/json'})
@@ -745,13 +621,13 @@ def cloud_call(method, path, body=None, *, timeout_seconds=15, session=None):
     except HTTPError as error:
         if error.code == 404 and method == 'GET' and path == '/v1/companies/invites/mine':
             raise CloudRouteUnavailable('Cloud feature unavailable. Update the cloud service and retry.') from None
-        raise InvalidCell('Cloud backend refused (HTTP %s). Refresh account status and retry.' % error.code) from None
+        raise ValueError('Cloud backend refused (HTTP %s). Refresh account status and retry.' % error.code) from None
     except OSError:
-        raise InvalidCell('Cloud backend unreachable. Check your connection and retry.') from None
+        raise ValueError('Cloud backend unreachable. Check your connection and retry.') from None
     except ValueError:
-        raise InvalidCell('Cloud backend returned an invalid response. Refresh account status and retry.') from None
+        raise ValueError('Cloud backend returned an invalid response. Refresh account status and retry.') from None
     if not isinstance(result, dict) or result.get('ok') is False:
-        raise InvalidCell('Cloud backend returned an unconfirmed response. Refresh account status before retrying.')
+        raise ValueError('Cloud backend returned an unconfirmed response. Refresh account status before retrying.')
     return result
 
 
@@ -816,3 +692,85 @@ def appearance_setting(identity):
     if row is None:
         raise ValueError('This Settings row no longer exists: %s' % identity)
     return row
+
+
+_APPLICATION_SETTING_SPECS = {
+    "stale_claim_after_idle_minutes": ("number", {"min": 1, "max": 1440, "step": 1}),
+    "archive_after_idle_days": ("number", {"min": 1, "max": 3650, "step": 1}),
+    "tick_cadence_minutes": ("number", {"min": 1, "max": 1440, "step": 1}),
+    "backup_count": ("number", {"min": 1, "max": 100, "step": 1}),
+    "backup_budget_bytes": ("number", {"min": 1048576, "max": 1099511627776, "step": 1048576}),
+    "recovery_timeout_seconds": ("number", {"min": 1, "max": 3600, "step": 1}),
+    "instance_retry_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "preflight_database_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "broker_start_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "home_load_ms": ("number", {"min": 1000, "max": 300000, "step": 1000}),
+    "refusal_poll_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "quit_watchdog_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "account_http_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "session_minimum_validity_seconds": ("number", {"min": 1, "max": 3600, "step": 1}),
+    "session_poll_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "worker_join_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "host_stop_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "host_cancel_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "mutation_poll_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "desktop_refresh_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "archive_step_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "cloud_shutdown_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "update_shutdown_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "export_release_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "toast_visible_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "voice_hold_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "model_request_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "model_cli_request_ms": ("number", {"min": 1, "max": 3600000, "step": 1}),
+    "keep_running_in_tray": ("boolean", {"min": 0, "max": 1, "step": 1}),
+    "update_check_interval_minutes": ("number", {"min": 1, "max": 1440, "step": 1}),
+    "update_idle_minutes": ("number", {"min": 1, "max": 1440, "step": 1}),
+    "update_auto_apply_on_quit": ("boolean", {"min": 0, "max": 1, "step": 1}),
+    "update_preview_channel": ("boolean", {"min": 0, "max": 1, "step": 1}),
+    "backup_location": ("text", {}),
+}
+
+def _application_setting_default(key: str) -> int | str:
+    from .library_engines import LIBRARY_ITEM_ENGINES
+    value = LIBRARY_ITEM_ENGINES['tool_workshop']['params'][key]
+    return str(value) if key == 'backup_location' else int(value)
+
+
+THEME = {
+    'bg': '#0e0e11',
+    'bg_panel': '#15151a',
+    'bg_soft': '#1c1c23',
+    'bg_hover': '#22222a',
+    'bg_deep': '#0a0a0d',
+    'bg_canvas': '#101015',
+    'bg_raised': '#1d1d22',
+    'bg_ink': '#18181e',
+    'ink': '#ece8e0',
+    'ink_soft': '#9b938a',
+    'ink_muted': '#8b837a',
+    'ink_dim': '#8a837c',
+    'on_fill': '#180f08',
+    'line': '#26262e',
+    'line_soft': '#1e1e24',
+    'line_hair': '#1a1a20',
+    'accent': '#d97757',
+    'accent_soft': '#3a2018',
+    'accent_dim': '#2a1812',
+    'accent_hi': '#e8896a',
+    'accent_press': '#a04832',
+    'ok': '#7ec18e',
+    'warn': '#e5b25a',
+    'err': '#e6705f',
+    'cyan': '#5fb3b3',
+    'purple': '#a98cd6',
+    'blue': '#7898d6',
+    'l_bg': '#f7f4ee',
+    'l_bg_panel': '#fbf9f4',
+    'l_bg_soft': '#efeae0',
+    'l_ink': '#1a1612',
+    'l_ink_soft': '#6b6256',
+    'l_ink_muted': '#9a9183',
+    'l_line': '#e3ddd0',
+    'l_accent': '#c96442',
+}

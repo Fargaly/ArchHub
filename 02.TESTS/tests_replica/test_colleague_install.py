@@ -23,14 +23,9 @@ if str(ROOT) not in sys.path:
 import colleague_setup  # noqa: E402
 
 DESKTOP_BOOT_MODULES = (
-    "nodelang.universal_application",
-    "nodelang.application_server",
-    "nodelang.universal_pipeline",
-    "nodelang.pipeline_engines",
-    "nodelang.baboom_attach",
-    "nodelang.baboom_native_runtime",
-    "nodelang.cell_accounts",
-    "nodelang.universal_cell",
+    'nodelang.nograph_server', 'nodelang.nograph_launcher',
+    'nodelang.pipeline_engines', 'nodelang.baboom_native_runtime',
+    'nodelang.model_router', 'nodelang.settings_owner', 'nodelang.runtime_credentials',
 )
 
 # Pulled in transitively by a listed package; not the colleague to name.

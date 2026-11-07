@@ -304,7 +304,7 @@ def migrate_codex(install_root, state_root, *, consent, environment=None) -> dic
     from .client_mcp_installation import _require_plain
     _require_plain(backup_dir, "directory", may_be_absent=True)
     backup_dir.mkdir(parents=True, exist_ok=True)
-    from .cell_secret_keys import protect_current_user_data
+    from .runtime_credentials import protect_current_user_data
     try:
         result = write_with_backup(
             path, text, backup_dir, expected_digest=hashlib.sha256(raw).hexdigest(),
@@ -638,7 +638,7 @@ def migrate_gemini(install_root, state_root, *, consent, environment=None) -> di
     """Replace only this product's retired Gemini entry, with encrypted custody."""
     import hashlib
     from .workshop_config import write_with_backup, settings_target
-    from .cell_secret_keys import protect_current_user_data
+    from .runtime_credentials import protect_current_user_data
     from .client_mcp_installation import _require_plain
     env = os.environ if environment is None else environment
     profile = env.get('USERPROFILE')

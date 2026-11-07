@@ -615,7 +615,7 @@ def test_native_companion_says_it_is_stale_rather_than_lie(tmp_path):
 # Every check below FAILS on 3a6bf6ba and passes on the slice patch.
 import re as _t13_re
 import nodelang.baboom_native_companion as _t13_companion
-from nodelang.application import THEME as _T13_THEME
+from nodelang.settings_owner import THEME as _T13_THEME
 
 _T13_SRC = Path(_t13_companion.__file__).read_text(encoding="utf-8")
 _T13_HEX = _t13_re.compile(r"#[0-9a-fA-F]{6}")

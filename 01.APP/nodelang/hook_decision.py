@@ -1253,26 +1253,14 @@ def _owner_apply(request, decision):
     return request["owner"].apply(request["id"], request["digest"], decision)
 
 
-def _social(request, decision):
-    from . import social_approval
-    return social_approval.apply(request["server"], request["binding"], request["body"])
 
 
-def _desktop(request, decision):
-    from . import social_approval
-    return social_approval.apply_desktop(request["owner"], request["id"], request["digest"], decision)
 
 
 def _watcher(request, decision):
-    from . import social_approval
-    if hasattr(request["owner"], "apply"):  # NOGRAPH: the Watcher owner file itself
-        return _owner_apply(request, decision)
-    return social_approval.apply_watcher(request["owner"], request["id"], request["digest"], decision)
+    return _owner_apply(request, decision)
 
 
-def _permission_request(request, decision):
-    from .cell_permission_requests import apply_permission_request
-    return apply_permission_request(**request["arguments"])
 
 
 def _baboom(request, decision):
@@ -1280,22 +1268,20 @@ def _baboom(request, decision):
 
 
 # kind -> the owner that applies the decided effect in its own store.
-APPROVALS = {"social": _social, "desktop": _desktop, "schedule": _desktop, "watcher": _watcher,
-             "hostskills": _owner_apply, "permission-request": _permission_request, "baboom": _baboom}
+APPROVALS = {"watcher": _watcher, "hostskills": _owner_apply, "baboom": _baboom}
 
 
 def _decide_approval(request: dict, environment):
-    from .universal_cell import InvalidCell
     kind = request["approval"]
     word = request["body"].get("decision") if kind == "social" and type(request.get("body")) is dict \
         else request.get("decision")
     decision = _WORDS.get(word) if type(word) is str else None
     if kind not in APPROVALS:
-        raise InvalidCell("Choose a listed approval kind.")
+        raise ValueError("Choose a listed approval kind.")
     if decision is None and kind != "social":  # social's own body check names the exact shape
-        raise InvalidCell("Decide Approve or Deny on the exact approval shown.")
+        raise ValueError("Decide Approve or Deny on the exact approval shown.")
     if decision == "approve" and read_permissions(environment)["runMode"] == "Plan only":
-        raise InvalidCell("Plan only is on in Settings: nothing runs until the run mode changes.")
+        raise ValueError("Plan only is on in Settings: nothing runs until the run mode changes.")
     return APPROVALS[kind](request, decision)
 
 
@@ -1656,24 +1642,23 @@ def _release_ask(replay: dict):
 
 def ask_apply(root, digest, decision, environment=None, decided_by="founder"):
     """Approve releases the held action once. Deny refuses it. A second Approve does not run it again."""
-    from .universal_cell import InvalidCell
     environment = os.environ if environment is None else environment
     if decision not in ("approve", "deny") or type(root) is not str or type(digest) is not str:
-        raise InvalidCell("Decide Approve or Deny on the exact approval shown.")
+        raise ValueError("Decide Approve or Deny on the exact approval shown.")
     if type(decided_by) is not str or not decided_by.strip():
-        raise InvalidCell("Name who decided this approval.")
+        raise ValueError("Name who decided this approval.")
     claimed = {"card": None, "row": None}
 
     def claim(path):
         held = _read_holds(path)
         row = held["holds"].get(root)
         if row is None or row.get("input_digest") != digest:
-            raise InvalidCell("Decide the exact approval shown.")
+            raise ValueError("Decide the exact approval shown.")
         if row.get("status") == "approved" and decision == "approve":
             claimed["card"] = _ask_card(row)
             return None
         if row.get("status") != "pending":
-            raise InvalidCell("This approval is closed.")
+            raise ValueError("This approval is closed.")
         if decision == "deny":
             _stamp_decision(row, decided_by, "denied")
             row["status"] = "declined"
@@ -1689,7 +1674,7 @@ def ask_apply(root, digest, decision, environment=None, decided_by="founder"):
     try:
         _with_ask_file(environment, claim)
     except OSError as exc:
-        raise InvalidCell("The approval could not be saved.") from exc
+        raise ValueError("The approval could not be saved.") from exc
     if claimed["card"] is not None:
         return claimed["card"]
     token = _RELEASING.set(True)
@@ -1709,7 +1694,7 @@ def ask_apply(root, digest, decision, environment=None, decided_by="founder"):
         held = _read_holds(path)
         row = held["holds"].get(root)
         if row is None:
-            raise InvalidCell("This approval is no longer in the file.")
+            raise ValueError("This approval is no longer in the file.")
         row["status"] = status
         row["permit_open"] = bool(permit and status == "approved")
         if error:
@@ -1723,9 +1708,9 @@ def ask_apply(root, digest, decision, environment=None, decided_by="founder"):
     try:
         _with_ask_file(environment, finish)
     except OSError as exc:
-        raise InvalidCell("The approval could not be saved.") from exc
+        raise ValueError("The approval could not be saved.") from exc
     if status == "failed":
-        raise InvalidCell(error or "The held action failed.")
+        raise ValueError(error or "The held action failed.")
     return claimed["card"]
 
 

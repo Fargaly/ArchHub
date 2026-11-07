@@ -639,7 +639,7 @@ def remove_stop_hook(vendor, *, home, install_root, receipt=None, backup_dir, co
             _restore_bytes(target, None, expected_digest=digest)
             return {"vendor": vendor, "changed": True, "method": "restored"}
         if type(receipt.get("backup")) is str:
-            from .cell_secret_keys import unprotect_current_user_data
+            from .runtime_credentials import unprotect_current_user_data
             backup = Path(receipt["backup"])
             _require_plain(backup, "file")
             data = unprotect_current_user_data(backup.read_bytes(),
@@ -691,7 +691,7 @@ def remove_stop_hook(vendor, *, home, install_root, receipt=None, backup_dir, co
     text = json.dumps(result, ensure_ascii=False, indent=indent) + "\n"
     if current.startswith(b"\xef\xbb\xbf"):
         text = "\ufeff" + text
-    from .cell_secret_keys import protect_current_user_data
+    from .runtime_credentials import protect_current_user_data
     write_with_backup(target, text, backup_dir, expected_digest=digest,
                       protect_backup=lambda data: protect_current_user_data(
                           data, purpose="archhub.client-hook-backup/v1"))
@@ -961,7 +961,7 @@ def apply_client_hook_install(plan, *, expected_digest, backup_dir):
         if current != plan["before_digest"]:
             raise WorkshopConfigRefused("client settings changed since preview")
         return {"changed": False, "activation_pending": True}
-    from .cell_secret_keys import protect_current_user_data
+    from .runtime_credentials import protect_current_user_data
     result = write_with_backup(
         target, plan["text"], backup_dir, expected_digest=plan["before_digest"],
         protect_backup=lambda data: protect_current_user_data(

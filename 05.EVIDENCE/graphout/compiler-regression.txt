@@ -1,0 +1,54 @@
+    Blocking waiting for file lock on build directory
+   Compiling archhub-compiler v0.1.0 (C:\Users\fargaly\AppData\Local\Temp\land-stack\03.TOOLS\tools\archhub-compiler)
+    Finished `release` profile [optimized] target(s) in 25.66s
+     Running tests\diagnostics.rs (03.TOOLS\tools\archhub-compiler\target\release\deps\diagnostics-a3ae1767be1cc04b.exe)
+
+running 46 tests
+test declared_non_code_assets_have_coverage_without_an_invented_grammar ... ok
+test duplicate_attributed_to_each_owner ... ok
+test actual_prefixed_retirement_route_registry_still_refuses_a_live_reference ... ok
+test active_registries_still_share_the_product_node_identity ... ok
+test e0001_duplicate_route ... ok
+test e0004_silent_failure ... ok
+test e0007_behaviour_constant ... ok
+test compatibility_registry_is_not_a_second_owner_of_the_live_registry ... ok
+test http_requests_are_uses_and_decorators_are_definitions ... ok
+test e0006_replaced_path ... ok
+test e0002_unused_param ... ok
+test e0008_missing_socket ... ok
+test e0011_parse_errors_never_pass ... ok
+test an_action_id_without_a_callback_is_not_a_working_button ... ok
+test e0005_button_binding ... ok
+test e0003_exhaustive_states ... ok
+test host_api_identifiers_in_opaque_strings_are_not_placeholder_sentinels ... ok
+test e0010_unknown_never_passes ... ok
+test comments_are_not_runtime_readers_or_failures ... ok
+test express_router_alias_remains_a_defining_owner ... ok
+test e0009_wire_type ... ok
+test embedded_html_and_svg_code_is_checked_with_original_locations ... ok
+test independent_host_servers_have_distinct_ownership_domains ... ok
+test external_roots_follow_real_imports_and_do_not_hide_unused_modules ... ok
+test finite_helper_reader_keys_are_resolved_in_registered_engine ... ok
+test extracts_real_catalogue_helpers ... ok
+test chained_listener_constant_binding_keeps_same_host_duplicate_detection ... ok
+test parameter_shaped_local_dictionary_is_not_a_node ... ok
+test local_router_prefix_does_not_overwrite_module_router_prefix ... ok
+test literal_catalogue_builder_and_typed_socket_comprehension ... ok
+test retirement_records_do_not_retire_http_method_tokens ... ok
+test opaque_executable_content_refuses_and_nested_callbacks_do_not_run ... ok
+test all_registered_grammars_parse_real_syntax ... ok
+test router_prefixes_are_part_of_route_identity ... ok
+test same_host_same_literal_listener_cannot_hide_behind_different_class_names ... ok
+test retirement_tokens_and_descriptive_metric_labels_are_not_paths_or_controls ... ok
+test same_host_listener_constant_resolves_across_class_scopes ... ok
+test behaviour_rules_execute_in_every_admitted_language ... ok
+test state_messages_and_registered_ui_targets_are_not_configuration ... ok
+test submit_button_uses_its_registered_form_action ... ok
+test shipped_asgi_dispatcher_remains_live_without_a_local_http_client ... ok
+test tests_cannot_make_dead_modules_reachable ... ok
+test synchronous_timer_effect_is_not_a_request ... ok
+test request_effects_still_need_rendered_request_states ... ok
+test unrelated_reader_does_not_clear_another_engine ... ok
+test test_and_fixture_sources_never_define_product_objects_or_readers ... ok
+
+test result: ok. 46 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s

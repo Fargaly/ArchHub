@@ -6,7 +6,6 @@ import tempfile
 import threading
 import time
 
-from .universal_cell import InvalidCell
 
 # quiet_update's refusal for a release that is not strictly newer than the
 # installed build. The decision court runs the real refusal through this match.
@@ -60,7 +59,7 @@ def restart_block_reason(owner):
     return None
 
 
-class UpdateRestartRefused(InvalidCell):
+class UpdateRestartRefused(ValueError):
     """Refused before any restart was requested: nothing happened."""
 
 
@@ -226,7 +225,7 @@ class ApplicationUpdate:
                 try:
                     _record_seen_build(self.state_dir, self._updated[1])
                 except (OSError, ValueError) as error:
-                    raise InvalidCell("The update confirmation could not be saved (" + type(error).__name__
+                    raise ValueError("The update confirmation could not be saved (" + type(error).__name__
                         + "). Dismiss again to retry.") from None
                 self._updated = None
             return self.status()
@@ -234,7 +233,7 @@ class ApplicationUpdate:
     def check(self):
         with self._lock:
             if self._closed or self._state == "restarting":
-                raise InvalidCell("The application is closing for an update")
+                raise ValueError("The application is closing for an update")
             if self._worker is not None and self._worker.is_alive():
                 return self.status()
             self._state, self._detail = "checking", "Checking and downloading the latest release."
@@ -261,7 +260,7 @@ class ApplicationUpdate:
             policy = self._policy()
             interval = policy["check_interval_minutes"]
             if type(interval) is not int or not 1 <= interval <= 1440:
-                raise InvalidCell("Update check interval must be 1 to 1440 minutes")
+                raise ValueError("Update check interval must be 1 to 1440 minutes")
             self._next_check = now + interval * 60
         return self.check()
 
@@ -298,7 +297,7 @@ class ApplicationUpdate:
             return False
         try:
             self.reload()
-        except (UpdateRestartRefused, InvalidCell):
+        except (UpdateRestartRefused, ValueError):
             return False
         return True
 
@@ -390,7 +389,7 @@ class ApplicationUpdate:
                 self._request_restart()
             except Exception as error:
                 self._state, self._detail = "failed", "Restart could not be requested (" + type(error).__name__ + "). The downloaded update is retained."
-                raise InvalidCell(self._detail) from None
+                raise ValueError(self._detail) from None
             self._state, self._detail = "restarting", "Saving your data and restarting into the update."
             return self.status()
 
@@ -422,10 +421,10 @@ def application_update_status(owner):
 
 def application_update_action(owner, body):
     if type(body) is not dict or set(body) != {"action"} or body["action"] not in ("check", "reload", "acknowledge"):
-        raise InvalidCell("Application update action is invalid")
+        raise ValueError("Application update action is invalid")
     update = getattr(owner, "application_update", None)
     if update is None:
-        raise InvalidCell("Application updates require the installed desktop lifecycle")
+        raise ValueError("Application updates require the installed desktop lifecycle")
     if body["action"] == "acknowledge":
         return update.acknowledge()
     return update.check() if body["action"] == "check" else update.reload()

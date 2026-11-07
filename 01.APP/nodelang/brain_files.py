@@ -32,6 +32,7 @@ import struct
 import threading
 import time
 import unicodedata
+import urllib.parse
 
 BRAIN_NODE = {'id': 'brain.files', 'params': {'list_limit': 500, 'context_limit': 8,
                                               'dimensions': 256, 'chunk_chars': 600}}
@@ -346,7 +347,6 @@ def _forget(connection, fact_id, current):
 
 
 def _publish(fact_id, text):
-    from .app_brain import names_the_client_area
     if names_the_client_area(text, fact_id):
         return {'ok': False, 'error': 'this fact names the client area; it stays on this machine'}
     return {'ok': False, 'error': 'Sharing with the Community Brain needs the ArchHub cloud review; the fact stays on this machine.'}
@@ -379,3 +379,46 @@ def call(tool, arguments):
             found = _current(_db(), fact_id)
         return _publish(fact_id, found[2]) if found else {'ok': False, 'error': 'no such fact'}
     raise ValueError('the application Brain does not provide %s' % tool)
+
+
+_AREAS = ("20.clients", "20clients", "60.personal", "60personal")
+
+_PROJECT_CODE = re.compile(r"(?<![a-z0-9])p[-_]?\d{3,4}(?![a-z0-9])")
+
+_CLIENTS_DIR = "20.CLIENTS"
+
+def _decoded(text):
+    text = str(text)
+    for _ in range(8):  # %252E, %25252E ...: unquote until nothing changes
+        once = urllib.parse.unquote(text)
+        if once == text:
+            break
+        text = once
+    return unicodedata.normalize("NFKC", text).casefold()
+
+def _client_folder_forms():
+    """The client folders of this workspace, by name only, in every spelling a fact
+    might use: 22.BBC4 -> "22.bbc4", "22bbc4", "bbc4". None on a machine without
+    the client area. Names shorter than three characters are not matched alone."""
+    from .resource_probe import _workspace_root
+    try:
+        names = [p.name for p in (_workspace_root() / _CLIENTS_DIR).iterdir() if p.is_dir()]
+    except OSError:
+        return ()
+    forms = set()
+    for name in names:
+        dotted = re.sub(r"[^a-z0-9]+", ".", _decoded(name)).strip(".")
+        bare = re.sub(r"^\d+\.", "", dotted)
+        for form in (dotted, dotted.replace(".", ""), bare, bare.replace(".", "")):
+            if len(form.replace(".", "")) >= 3:
+                forms.add(form)
+    return tuple(sorted(forms))
+
+def names_the_client_area(*texts):
+    forms = _AREAS + _client_folder_forms()
+    for text in texts:
+        decoded = _decoded(text)
+        dotted = "." + re.sub(r"[^a-z0-9]+", ".", decoded).strip(".") + "."
+        if any("." + form + "." in dotted for form in forms) or _PROJECT_CODE.search(decoded):
+            return True
+    return False

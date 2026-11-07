@@ -8,7 +8,6 @@ import secrets
 import tempfile
 import threading
 
-from .universal_cell import InvalidCell
 
 PREFIX = "app:watcher-proposal:"
 SCALE_MM = 15.0
@@ -21,13 +20,13 @@ def _digest(value):
 
 def _number(value):
     if type(value) not in (int, float) or not math.isfinite(value) or abs(value) > 10000000:
-        raise InvalidCell("Watcher coordinates must be finite numbers within the drawing budget")
+        raise ValueError("Watcher coordinates must be finite numbers within the drawing budget")
     return value
 
 
 def _point(value):
     if type(value) is not dict or set(value) != {"x", "y"}:
-        raise InvalidCell("A drawing point needs x and y")
+        raise ValueError("A drawing point needs x and y")
     return {key:_number(value[key]) for key in ("x", "y")}
 
 
@@ -50,7 +49,7 @@ class WatcherOwner:
         records = [(root, value)] + ([(self.root, state)] if state is not None else [])
         if any(len(json.dumps(record, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode()) > record_limit
                for _, record in records):
-            raise InvalidCell("Watcher record exceeds 64 KiB; existing content is unchanged")
+            raise ValueError("Watcher record exceeds 64 KiB; existing content is unchanged")
         with _LOCK:
             data = self._file()
             if all(data["records"].get(key) == record for key, record in records):
@@ -98,21 +97,21 @@ class WatcherOwner:
 
     def _source(self, state):
         if not state["source"] or not state["source"].get("element"):
-            raise InvalidCell("Select one wall or line in the source program, then choose its host")
+            raise ValueError("Select one wall or line in the source program, then choose its host")
         return state["source"]
 
     def _draft(self, state):
         if state["proposal"]:
-            raise InvalidCell("Discard the current proposal before changing its source or edit")
+            raise ValueError("Discard the current proposal before changing its source or edit")
 
     def set_host(self, host):
         from .host_brokers import watcher_read
         if host not in {"Revit", "AutoCAD"}:
-            raise InvalidCell("Choose Revit or AutoCAD for source geometry")
+            raise ValueError("Choose Revit or AutoCAD for source geometry")
         state = self._state()
         self._draft(state)
         if state["pendingY"] is not None:
-            raise InvalidCell("Discard pending geometry before changing source")
+            raise ValueError("Discard pending geometry before changing source")
         source = watcher_read(host)
         state.update(source=source, pendingY=None, applied=False)
         self._save(self.root, state)
@@ -124,7 +123,7 @@ class WatcherOwner:
         source = self._source(state)
         self._draft(state)
         if type(view) is not str or view not in source["views"] or state["pendingY"] is not None:
-            raise InvalidCell("Choose an available view after discarding pending geometry")
+            raise ValueError("Choose an available view after discarding pending geometry")
         state["source"] = watcher_read(source["host"], instance=source["instance"], view=view,
                                         document=source["document"], element=source["element"]["id"])
         self._save(self.root, state)
@@ -142,7 +141,7 @@ class WatcherOwner:
             for point in (source["element"]["start"], source["element"]["end"]):
                 if (not bounds["x"] <= point[0] <= bounds["x"]+bounds["w"] or
                         not all(bounds["y"] <= value <= bounds["y"]+bounds["h"] for value in (point[1], point[1]+shift))):
-                    raise InvalidCell("The edited element would leave your mask")
+                    raise ValueError("The edited element would leave your mask")
         # shortcut: offset editing only; add typed length/type edits with their own host validation.
         state.update(pendingY=y if y != source["element"]["start"][1] else None, applied=False)
         self._save(self.root, state)
@@ -152,40 +151,40 @@ class WatcherOwner:
         state = self._state()
         source = self._source(state)
         if type(values) is not dict:
-            raise InvalidCell("Annotation inputs must be named values")
+            raise ValueError("Annotation inputs must be named values")
         row = {"id":self.root + ":annotation:" + self.request_id, "kind":kind,
             "source":self._binding(source), "element":source["element"]["id"],
             "revision":source["element"]["revision"], "anchorY":source["element"]["start"][1], "author":"Ahmed"}
         if kind == "dimension":
             if set(values) != {"from", "to"}:
-                raise InvalidCell("A dimension needs its two endpoints")
+                raise ValueError("A dimension needs its two endpoints")
             start, end = _point(values["from"]), _point(values["to"])
             distance = math.hypot(end["x"]-start["x"], end["y"]-start["y"]) * SCALE_MM
             if distance < 1:
-                raise InvalidCell("Choose two different points")
+                raise ValueError("Choose two different points")
             row.update({"from":start, "to":end, "valueMm":distance})
         elif kind == "mark":
             if (set(values) != {"tool", "points"} or values["tool"] not in {"Sketch", "Mark", "Mask"}
                     or type(values["points"]) is not list or not 2 <= len(values["points"]) <= 2000):
-                raise InvalidCell("A sketch or mark needs 2-2000 points")
+                raise ValueError("A sketch or mark needs 2-2000 points")
             row.update(tool=values["tool"], points=[_point(p) for p in values["points"]])
             if row["tool"] == "Mask":
                 self._draft(state)
                 if state["pendingY"] is not None:
-                    raise InvalidCell("Discard the pending geometry before changing its mask")
+                    raise ValueError("Discard the pending geometry before changing its mask")
                 xs, ys = [p["x"] for p in row["points"]], [p["y"] for p in row["points"]]
                 if max(xs) == min(xs) or max(ys) == min(ys):
-                    raise InvalidCell("A mask needs a nonzero rectangular area")
+                    raise ValueError("A mask needs a nonzero rectangular area")
                 row["bounds"] = {"x":min(xs), "y":min(ys), "w":max(xs)-min(xs), "h":max(ys)-min(ys)}
         else:
             if (set(values) != {"text", "x", "y", "element"} or type(values["text"]) is not str
                     or not values["text"].strip() or len(values["text"]) > 2000
                     or values["element"] != row["element"]):
-                raise InvalidCell("A comment needs text and the selected source element")
+                raise ValueError("A comment needs text and the selected source element")
             row.update(text=values["text"].strip(), **_point({"x":values["x"], "y":values["y"]}))
         old = next((a for a in state["annotations"] if a["id"] == row["id"]), None)
         if old and old != row:
-            raise InvalidCell("This annotation request already names another value")
+            raise ValueError("This annotation request already names another value")
         if not old:
             state["annotations"].append(row)
             self._save(self.root, state)
@@ -197,11 +196,11 @@ class WatcherOwner:
         if state["proposal"]:
             return self.card(state["proposal"])
         if state["pendingY"] is None:
-            raise InvalidCell("Edit a source wall or line before proposing a change")
+            raise ValueError("Edit a source wall or line before proposing a change")
         payload = {"source":source, "offsetMm":(state["pendingY"]-source["element"]["start"][1])*SCALE_MM}
         root = PREFIX + _digest([self.root, self.request_id])
         if self._read(root) is not None:
-            raise InvalidCell("This proposal request already names a closed transaction; use a fresh request identity")
+            raise ValueError("This proposal request already names a closed transaction; use a fresh request identity")
         proposal = {"owner":self.root, "payload":payload, "input_digest":_digest(payload), "status":"pending"}
         # The proposal is sealed before linking; an interrupted link creates no executable card.
         self._save(root, proposal)
@@ -213,7 +212,7 @@ class WatcherOwner:
     def proposal(self, root):
         state = self._state()
         if type(root) is not str or root not in state["proposals"]:
-            raise InvalidCell("This proposal belongs to another Watcher or account")
+            raise ValueError("This proposal belongs to another Watcher or account")
         return self._read(root)
 
     def card(self, root):
@@ -238,7 +237,7 @@ class WatcherOwner:
             root = state["proposal"]
             proposal = self.proposal(root)
             if proposal["status"] in {"executing", "unconfirmed"}:
-                raise InvalidCell("Host outcome needs reconciliation; discard cannot undo an uncertain write")
+                raise ValueError("Host outcome needs reconciliation; discard cannot undo an uncertain write")
             if proposal["status"] == "approved":
                 state.update(source=proposal["readback"], pendingY=None, proposal=None, applied=True)
                 self._save(self.root, state)
@@ -256,12 +255,12 @@ class WatcherOwner:
         proposal = self.proposal(root)
         if (decision not in {"approve", "deny"} or digest != proposal["input_digest"]
                 or digest != _digest(proposal["payload"])):
-            raise InvalidCell("Review the exact source revision and change before deciding")
+            raise ValueError("Review the exact source revision and change before deciding")
         if proposal["status"] == "approved" and decision == "approve":
             return self.card(root)
         state = self._state()
         if state["proposal"] != root or proposal["status"] != "pending":
-            raise InvalidCell("This Watcher proposal is closed or needs reconciliation")
+            raise ValueError("This Watcher proposal is closed or needs reconciliation")
         if decision == "deny":
             self.discard()
             return self.card(root)
@@ -269,7 +268,7 @@ class WatcherOwner:
         current = watcher_read(source["host"], instance=source["instance"], view=source["view"],
             document=source["document"], element=source["element"]["id"])
         if current != source:
-            raise InvalidCell("Source revision changed; discard and review a fresh edit")
+            raise ValueError("Source revision changed; discard and review a fresh edit")
         proposal["status"] = "executing"
         self._save(root, proposal)
         try:
@@ -286,7 +285,7 @@ class WatcherOwner:
                            not math.isclose(result[key][0], expected[key][0], abs_tol=0.001) or
                            not math.isclose(result[key][1], expected[key][1]+shift, abs_tol=0.001)
                            for key in ("start", "end"))):
-                raise InvalidCell("Host readback differs from the approved wall position")
+                raise ValueError("Host readback differs from the approved wall position")
         except Exception:
             proposal["status"] = "unconfirmed"
             self._save(root, proposal)

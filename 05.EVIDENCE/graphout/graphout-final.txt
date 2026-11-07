@@ -1,0 +1,3 @@
+..............                                                                         [100%]
+PROFILE-WRITE-GUARD: protected write attempts=0
+14 passed in 147.96s (0:02:27)

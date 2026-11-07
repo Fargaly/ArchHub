@@ -1,0 +1,732 @@
+[
+  {
+    "path": "01.APP/app/__init__.py",
+    "sha256": "34115f5f9fa9b7c5282729d8642c36859854202616b39e8dd9a8e402d3aea053",
+    "bytes": 83
+  },
+  {
+    "path": "01.APP/app/credential_lock.py",
+    "sha256": "0682ffbc861a8e3ddab3d5f6b650cef17d5dc29b5c3d51d9fecee343790c07be",
+    "bytes": 3528
+  },
+  {
+    "path": "01.APP/app/secrets_store.py",
+    "sha256": "f6d7a1f137f31f5029f2d417aad8b0481293aed3660b447df8e0768f258a0dbe",
+    "bytes": 27411
+  },
+  {
+    "path": "01.APP/bridges/blender/archhub_mcp/__init__.py",
+    "sha256": "48f026aa95594c78651119fa2d6fc938a42b62bcc6a8e4aed978eda521fc5d0c",
+    "bytes": 16411
+  },
+  {
+    "path": "01.APP/bridges/rhino/archhub_mcp.py",
+    "sha256": "8ab95088138a5e3699a07d6708db46145e5e0ac295068a0621f42009295d02d6",
+    "bytes": 17655
+  },
+  {
+    "path": "01.APP/colleague_setup.py",
+    "sha256": "8d300819060c07188ccfab5599fb8626699b75d7bde86e9dfe4d399dce0e3b9f",
+    "bytes": 55613
+  },
+  {
+    "path": "01.APP/nodelang/__init__.py",
+    "sha256": "f6d4262bf27deb7414d908ff659f1b7c03cb5f198a5503e09201515ee7d5bb11",
+    "bytes": 1265
+  },
+  {
+    "path": "01.APP/nodelang/agent_budget.py",
+    "sha256": "2630cec0400b676892c473a8a9c238828884f7bdd49c5899b34e02fe0c782dfe",
+    "bytes": 3579
+  },
+  {
+    "path": "01.APP/nodelang/agent_composer.py",
+    "sha256": "aa195ed138a09df129a5e63ff8ed416fee5826fe8d4d7d050786043bb94e053b",
+    "bytes": 10259
+  },
+  {
+    "path": "01.APP/nodelang/agent_declarations.py",
+    "sha256": "5a0b9396477dfe6ee2024ef1a93b221deaf1dcd92b66688a328618790de0c129",
+    "bytes": 8071
+  },
+  {
+    "path": "01.APP/nodelang/agent_onboard.py",
+    "sha256": "5ff5fc16c5fb63fa2ff7393d7bfe7a48529bbc5db322f4d803e21e33f55f5ebe",
+    "bytes": 4255
+  },
+  {
+    "path": "01.APP/nodelang/agent_runtime_defs/claude.py",
+    "sha256": "bbf5259b661e4d59082ab2da6b2df44886c12209dfd3551e26276628a1192aea",
+    "bytes": 356
+  },
+  {
+    "path": "01.APP/nodelang/agent_runtime_defs/codex.py",
+    "sha256": "8810ee75a7619df0e31e761d3d21db0db8c2b5f2f0a747551b5502f23a5f0522",
+    "bytes": 233
+  },
+  {
+    "path": "01.APP/nodelang/agent_runtime_defs/gemini.py",
+    "sha256": "dc9ede487011c7c814bc877cd2e69884a88cceec1b2d89d9974086339396ba69",
+    "bytes": 255
+  },
+  {
+    "path": "01.APP/nodelang/agent_runtime_defs/opencode.py",
+    "sha256": "c58db103ff942d4a0988fea247f6d2487d965a01f3a05a3096f4f56044449ea2",
+    "bytes": 826
+  },
+  {
+    "path": "01.APP/nodelang/agent_runtime_registry.py",
+    "sha256": "5f47fb15e3d7cd0aa4b08c62ff3bae76dc56c10598c86ab67e9dc7a1852e9daa",
+    "bytes": 11963
+  },
+  {
+    "path": "01.APP/nodelang/agent_status.py",
+    "sha256": "9801c6d55df79f811f96426bb514858b58b8c6ec047cd4fe9db1362813bfebff",
+    "bytes": 6523
+  },
+  {
+    "path": "01.APP/nodelang/agent_work.py",
+    "sha256": "870ff3f955629ed41ec20f4372f64a76cba2c606fdfa77ae25d772336172a072",
+    "bytes": 12205
+  },
+  {
+    "path": "01.APP/nodelang/app_agents.py",
+    "sha256": "46a2c1b24f1e9b88356334dd8cceb142733d72a2e7a32877bf8fe79ae8d49c33",
+    "bytes": 7087
+  },
+  {
+    "path": "01.APP/nodelang/application_update.py",
+    "sha256": "bcac45ba8e6e987f58607bf9ce2cfba3f180f59195dc9835eef0d8fd92fb1d11",
+    "bytes": 21487
+  },
+  {
+    "path": "01.APP/nodelang/assistant_registration.py",
+    "sha256": "32b19ec12b5010869bf0b30bc87986c17a37f5f8d4c2f76ba7465162e7f93fb1",
+    "bytes": 46543
+  },
+  {
+    "path": "01.APP/nodelang/autocad_broker_installation.py",
+    "sha256": "f218524038ab9952c9be8619a8ba4d7559bc05e8430dd7405342613373dae90a",
+    "bytes": 19609
+  },
+  {
+    "path": "01.APP/nodelang/baboom_companion_placement.py",
+    "sha256": "a7a22b7046c0682efc89b634c140a9b81188ceacdf689545889ad0c43e0ebbfe",
+    "bytes": 8277
+  },
+  {
+    "path": "01.APP/nodelang/baboom_native_companion.py",
+    "sha256": "a9dfa425f0408d2b6ccef5b33068226382e0340ceabb59ee313e0a9f148d7168",
+    "bytes": 117536
+  },
+  {
+    "path": "01.APP/nodelang/baboom_native_host.py",
+    "sha256": "2bc20f26f59f2ef91050f6f75a113dec0383df852fad4aeab4873e88f0aeeef5",
+    "bytes": 25392
+  },
+  {
+    "path": "01.APP/nodelang/baboom_native_runtime.py",
+    "sha256": "b75918418004496d91dfee8a2130c67b9f8e212866abefe50ad5732bfe74d717",
+    "bytes": 4188
+  },
+  {
+    "path": "01.APP/nodelang/baboom_native_visual.py",
+    "sha256": "264a0d652ed894aed54fe8f7cca7dea9b4a4b73889ad0c786e498a5eed70867a",
+    "bytes": 8080
+  },
+  {
+    "path": "01.APP/nodelang/baboom_native_voice.py",
+    "sha256": "c23db5c48d301b9960fb35a7dd785241381c263004b57402ecf1eb04e1ae6edb",
+    "bytes": 5011
+  },
+  {
+    "path": "01.APP/nodelang/baboom_nograph.py",
+    "sha256": "12bce3e1c37deabc2880c6a304841ea957d518e560f081a2a1d09591694e1f54",
+    "bytes": 14611
+  },
+  {
+    "path": "01.APP/nodelang/baboom_speech.py",
+    "sha256": "d2ab03dc65bcdf393349fddf6d36d96185120eaae2d011ad6897f7b2eabca0bd",
+    "bytes": 12385
+  },
+  {
+    "path": "01.APP/nodelang/baboom_visual_assets.py",
+    "sha256": "d4c1f60db81b143adbdc5bc35472d6deda181aa1930651667602935fdf4677ff",
+    "bytes": 11443
+  },
+  {
+    "path": "01.APP/nodelang/baboom_work_presence.py",
+    "sha256": "bd779a48011ff6d91164e42380fbacd138b3f946aac963fa4caf2f66ad6d9b3f",
+    "bytes": 12634
+  },
+  {
+    "path": "01.APP/nodelang/base_universal_catalogue.py",
+    "sha256": "b4538e1593a4074fa99612dc1c14dc70a55238e0d091a32fc96fa67d84dd52da",
+    "bytes": 10082
+  },
+  {
+    "path": "01.APP/nodelang/brain_files.py",
+    "sha256": "07c7917810b88c2a72bc73bbdefce80c5c101ad3599bf0b62f16b282702ebf97",
+    "bytes": 20775
+  },
+  {
+    "path": "01.APP/nodelang/canvas_documents.py",
+    "sha256": "7ba7b295b70639f88a8ba1c1556ae0ba97536aa93924c74a6935a6173cbcf0c2",
+    "bytes": 33699
+  },
+  {
+    "path": "01.APP/nodelang/canvas_tools.py",
+    "sha256": "7d0da59fd3676f4bd932fc10c0e63ca5f4392a986eb6d012b38e3037675a3377",
+    "bytes": 15362
+  },
+  {
+    "path": "01.APP/nodelang/canvas_triggers.py",
+    "sha256": "4d5ffcbca8acf0b5ab21b34f62d6e80cede9a955d2fb49640b1892d394c9a8f0",
+    "bytes": 10829
+  },
+  {
+    "path": "01.APP/nodelang/clean_autocad_adapter.py",
+    "sha256": "5a5fd83d6b3d01430e20d9639f14f4b9eeeaf6bb99cebf2f7b78d7192caf3d5f",
+    "bytes": 12886
+  },
+  {
+    "path": "01.APP/nodelang/clean_host_catalogue_source.py",
+    "sha256": "037f8442b33256f8cfcb3c85f2a06377445094dda35d7dce36510f87f43aa25a",
+    "bytes": 19771
+  },
+  {
+    "path": "01.APP/nodelang/clean_office_adapter.py",
+    "sha256": "cee4175421c76d413ccc599904220b5e22f31cbe3f62fa540cf7579ffa98cb5b",
+    "bytes": 34780
+  },
+  {
+    "path": "01.APP/nodelang/clean_revit_adapter.py",
+    "sha256": "9eda1dc958ea3f75d0eb11e911457c397f39d1a7ca3a28a66c587227486d48be",
+    "bytes": 72354
+  },
+  {
+    "path": "01.APP/nodelang/client_mcp_installation.py",
+    "sha256": "bb17791cd06aa0de0f4652f115bc341960a60111a7f154cde903d971f6998aa2",
+    "bytes": 23526
+  },
+  {
+    "path": "01.APP/nodelang/cloud_publish_consent.py",
+    "sha256": "21c74c3bae7903f2599a1926d4bd5d98e72d38fe0e1027c7822de425f4439649",
+    "bytes": 3194
+  },
+  {
+    "path": "01.APP/nodelang/cloud_relay.py",
+    "sha256": "b10cee6023de3bb93aefb30f41873fccc0906393900bdd73109a1574c35c758b",
+    "bytes": 47550
+  },
+  {
+    "path": "01.APP/nodelang/cloud_session.py",
+    "sha256": "a9339d8f3a1f923f1c2d70ecfdca7b4357ae4011d6a83bfb8c86b38fd6648218",
+    "bytes": 9031
+  },
+  {
+    "path": "01.APP/nodelang/cloud_signin.py",
+    "sha256": "1955917737efb6fad5192f8d33e5d1d3f338a78cc4f40796b0ad77b3283a0fba",
+    "bytes": 28123
+  },
+  {
+    "path": "01.APP/nodelang/cloud_social_oauth.py",
+    "sha256": "9f5a9d3001507d5717450bf15af3acdecb42646cf2864a2dc9fbf7633369ea92",
+    "bytes": 18926
+  },
+  {
+    "path": "01.APP/nodelang/connector_operation_evidence.py",
+    "sha256": "8a7e551911beccc432eae252754152ab7dfe1b0c35aaa43ae85c36fc087d7a08",
+    "bytes": 13810
+  },
+  {
+    "path": "01.APP/nodelang/conversation_history.py",
+    "sha256": "05a880d48e285c3379419f479392b95061d02b7e282005cbbe53b688ea817a12",
+    "bytes": 68887
+  },
+  {
+    "path": "01.APP/nodelang/conversation_pages.py",
+    "sha256": "d1c4b0e9a6f89573baf8d97ac9809d21f4d7d4cbe654d528d08ed6f4aeff4945",
+    "bytes": 26266
+  },
+  {
+    "path": "01.APP/nodelang/daily_work_nodes.py",
+    "sha256": "e5f11a984413ac66c03b153ac62fa0c807eb1f36c9d485e8cb813db833b9e1e1",
+    "bytes": 33254
+  },
+  {
+    "path": "01.APP/nodelang/daily_work_worker.py",
+    "sha256": "63b0dd47c296af5d13979e9f1ee0f5b4b4e0b27146b1ec29f5d59e4c3022424b",
+    "bytes": 8952
+  },
+  {
+    "path": "01.APP/nodelang/domains/selfext.py",
+    "sha256": "2b7631787d20cb1135e9847e51bfd80721232854bb35da16e132a9a7d8df0daa",
+    "bytes": 13277
+  },
+  {
+    "path": "01.APP/nodelang/enforce.py",
+    "sha256": "823fb29f2744481d2e513183c971c7ee311211f7ec994f56808f37f3bef4fd68",
+    "bytes": 15594
+  },
+  {
+    "path": "01.APP/nodelang/flow_import.py",
+    "sha256": "b154b8fbff7a9a36e6aa60ca43219677bf25d6ebf4259962c1a06da090970389",
+    "bytes": 23614
+  },
+  {
+    "path": "01.APP/nodelang/goose_adapter.py",
+    "sha256": "5197289d8538d0e611859d50dc29e83a4c2f049ac0b52194268b86ae961899cd",
+    "bytes": 13870
+  },
+  {
+    "path": "01.APP/nodelang/goose_runtime.py",
+    "sha256": "8700009e38a179b760b5e125b1042c80adad35752c9aadf69c125d48033baf0e",
+    "bytes": 7572
+  },
+  {
+    "path": "01.APP/nodelang/hook_decision.py",
+    "sha256": "38508790c07cacd6ad1adb8c7fc34911c3bc7a66f8a2e7e1e60c38f9fa31fed9",
+    "bytes": 79639
+  },
+  {
+    "path": "01.APP/nodelang/hook_drift.py",
+    "sha256": "cbc063f3eb278560ba6fea92f9fd03ef34625d1d871e6b6f98ce535f6fa13bfe",
+    "bytes": 7477
+  },
+  {
+    "path": "01.APP/nodelang/host_addin_retarget.py",
+    "sha256": "0d62e58a5c5ab0e9bb3a165f1c7b2272f7e9b8587c3079fbdc2700ec6abcdcac",
+    "bytes": 1302
+  },
+  {
+    "path": "01.APP/nodelang/host_artifact_review.py",
+    "sha256": "0cc93f9f1b2961fa9d8f9cba0a4c022b393c6c1a681b7ae41cb1a9e746a14137",
+    "bytes": 6777
+  },
+  {
+    "path": "01.APP/nodelang/host_bridge_auth.py",
+    "sha256": "48f4c87174be48798858a60455340e1fe81c7feda3140fb14ec21d1b9c935dcb",
+    "bytes": 5877
+  },
+  {
+    "path": "01.APP/nodelang/host_broker_installation.py",
+    "sha256": "a4d18c9c2930a27c27c5a51fac3a46528b7d2e957babf852dd51e1b09ce6a140",
+    "bytes": 24624
+  },
+  {
+    "path": "01.APP/nodelang/host_brokers.py",
+    "sha256": "0ba191f96c7f3516ecf47c904c0a27c4b4649c2ba9c8da8efdde425e7253481a",
+    "bytes": 64641
+  },
+  {
+    "path": "01.APP/nodelang/host_exec.py",
+    "sha256": "62f94c3e5fd559b4f7ef76216978556062aad0fa0d392aee0d756ada54a09766",
+    "bytes": 32910
+  },
+  {
+    "path": "01.APP/nodelang/host_skill_owner.py",
+    "sha256": "2c101440f72a695732a23521360f8495cde15dfc458e73fa43226c08de07af7b",
+    "bytes": 20147
+  },
+  {
+    "path": "01.APP/nodelang/http_server.py",
+    "sha256": "06b9eb1affa9c977fb619f4f902d9b1fe53b0cc85d3e51470e96c5adf3d32f61",
+    "bytes": 2179
+  },
+  {
+    "path": "01.APP/nodelang/launcher.py",
+    "sha256": "99ac1d95a91071f2f93834fc9a10cfc7eb7bcc2aed3181a6f670ddbdc3a34557",
+    "bytes": 32464
+  },
+  {
+    "path": "01.APP/nodelang/library_engines.py",
+    "sha256": "da4477d48181d941f92ccfff83e38f3c710470ede6a5994467047d2f933daf58",
+    "bytes": 130932
+  },
+  {
+    "path": "01.APP/nodelang/log_rotation.py",
+    "sha256": "0e292b9b98ecb93286f711ec19a85f2415071253ac879fc307134a2bb5d2f58e",
+    "bytes": 5083
+  },
+  {
+    "path": "01.APP/nodelang/managed_dependencies.py",
+    "sha256": "c8c30cb5e703ac5525a754925c7f63bf2bb6814135790a88effa1bd13b1704f6",
+    "bytes": 5263
+  },
+  {
+    "path": "01.APP/nodelang/map_import.py",
+    "sha256": "29c66bceee2cfc22831a01bfa22c9e2782c6ab18b2ca3365ce523a0b8b06f323",
+    "bytes": 15181
+  },
+  {
+    "path": "01.APP/nodelang/mcp_supervisor.py",
+    "sha256": "e97169191ed6e899b57d3983b1e6fc995eb07b494561aa477ce5d4cc2a2f57f3",
+    "bytes": 10895
+  },
+  {
+    "path": "01.APP/nodelang/model_catalogue.py",
+    "sha256": "6a30f1279e670215d4dbead7f92e6ec1fcde19211526d264e42d6ec5e23707be",
+    "bytes": 29410
+  },
+  {
+    "path": "01.APP/nodelang/model_execution_broker.py",
+    "sha256": "102ac3e03939c5b20609e13de002c2585f659084f94fb626aff15a1fbdc69fcb",
+    "bytes": 42848
+  },
+  {
+    "path": "01.APP/nodelang/model_router.py",
+    "sha256": "b9619044ad8903063755f0d4a287df0b2e9e8a217db6ff97449da73a686ce7e3",
+    "bytes": 157617
+  },
+  {
+    "path": "01.APP/nodelang/native_agent_hooks.py",
+    "sha256": "d2b31a3342a6cd927933a4c73e5df5da50d81675dff4f82bf6406506bab9c646",
+    "bytes": 13552
+  },
+  {
+    "path": "01.APP/nodelang/native_agent_mcp.py",
+    "sha256": "0bced402fde6255b1f5b775b5c7d0b048b3cec4743269005b4b34ae9a0f426b6",
+    "bytes": 37432
+  },
+  {
+    "path": "01.APP/nodelang/native_agentic_loop.py",
+    "sha256": "097484c3c657dad2c33798839ce83392516d29953385278ae06298f38c7d3af9",
+    "bytes": 15360
+  },
+  {
+    "path": "01.APP/nodelang/native_host_tools.py",
+    "sha256": "6611a328eb716a38be2c86d780840b001cd1fa243f7e4c2e428e83263917bf59",
+    "bytes": 20068
+  },
+  {
+    "path": "01.APP/nodelang/native_stop_hook.py",
+    "sha256": "51998f90ff01aea148ee4ca88b5c2a9853ab695261abb653ecec0a693707433a",
+    "bytes": 38229
+  },
+  {
+    "path": "01.APP/nodelang/native_workshop_process.py",
+    "sha256": "f4062e35b7e9123d0d84c3995e1eed5841768adcfb573a437b9015205ca16fe1",
+    "bytes": 37049
+  },
+  {
+    "path": "01.APP/nodelang/native_workshop_profile.py",
+    "sha256": "dc9e0c17169eb4328d10e4318717c00c7c585cfc2339c3526a37a8870257a3fe",
+    "bytes": 15690
+  },
+  {
+    "path": "01.APP/nodelang/node_datasets.py",
+    "sha256": "c4f159410d131843332444fc10185eb9131fd875d2ed2729667a80cdc5802677",
+    "bytes": 7602
+  },
+  {
+    "path": "01.APP/nodelang/node_params.py",
+    "sha256": "84c1cd32d1b85215420f576b1c84ec7effa811087e608eae93bc9f73d84550f2",
+    "bytes": 12995
+  },
+  {
+    "path": "01.APP/nodelang/nodeslib_v2_engines.py",
+    "sha256": "a212fca3c5e2f45304745d6a7f8ae565bb434c78cfa313a6a0b41f3893f80f05",
+    "bytes": 31878
+  },
+  {
+    "path": "01.APP/nodelang/nograph_launcher.py",
+    "sha256": "2695e101308c96b4f814ab38590cbd5472de46fd070656c0c6d1f6fecf90a599",
+    "bytes": 18265
+  },
+  {
+    "path": "01.APP/nodelang/nograph_server.py",
+    "sha256": "8e9315c4284c61aa3bcd2519511e01dd442b5b0f063ed12c09138740b8623d8d",
+    "bytes": 85973
+  },
+  {
+    "path": "01.APP/nodelang/notion_mcp.py",
+    "sha256": "668f5f3e7f95457dcbee69d5769ca2ba406d1fcf6dd84ffb40f63e02c0f711c9",
+    "bytes": 14724
+  },
+  {
+    "path": "01.APP/nodelang/openrouter_defaults.py",
+    "sha256": "ed92f3ff2675a0c8a70efa6e4c269ca94c7fbedd505d3b8f2709f50eb3fa1508",
+    "bytes": 376
+  },
+  {
+    "path": "01.APP/nodelang/outlook_graph.py",
+    "sha256": "93127dad781da3ac150508965196a0c38e29b19899ddac948eb9d96cab1b2222",
+    "bytes": 6725
+  },
+  {
+    "path": "01.APP/nodelang/outlook_imap.py",
+    "sha256": "a1fe9353a9b1429923af3aae4c13f001ba272f28b7339b0fe4287dfe1741cd32",
+    "bytes": 9961
+  },
+  {
+    "path": "01.APP/nodelang/pipeline_engines.py",
+    "sha256": "1d48a2195ab5b348f16c9da625d6d60876576b915377bd9b9edc3cf81c172540",
+    "bytes": 32256
+  },
+  {
+    "path": "01.APP/nodelang/profile_instance.py",
+    "sha256": "49c227a7ba0940f3e961c5f6ea9f2abe3ec95e323d263dd5cb7424c97f47fea6",
+    "bytes": 2014
+  },
+  {
+    "path": "01.APP/nodelang/quiet_update.py",
+    "sha256": "56439d22a91283abd0616eec65451a22d787ccdf21103b1d666ef11d3b81d439",
+    "bytes": 61000
+  },
+  {
+    "path": "01.APP/nodelang/resource_probe.py",
+    "sha256": "f572bc021c6a72cf662ce3dc6e5f25bd6d3d66f0895ed2b7419cfc22d5ef332a",
+    "bytes": 6032
+  },
+  {
+    "path": "01.APP/nodelang/runtime_credentials.py",
+    "sha256": "e74465fcf610940b494e99c51229a44eb11c71804b20614e3678da764f8d456c",
+    "bytes": 8465
+  },
+  {
+    "path": "01.APP/nodelang/runtime_hook_observer.py",
+    "sha256": "5add64a6bba58844d95431e105cea8c58914850bab9a1a4a18c0be7fee648840",
+    "bytes": 14599
+  },
+  {
+    "path": "01.APP/nodelang/session_files.py",
+    "sha256": "9c7e77dbbf20d34a830ed388d2b9b41883cc7b43c19655d84d3c019b910424e6",
+    "bytes": 64108
+  },
+  {
+    "path": "01.APP/nodelang/settings_owner.py",
+    "sha256": "f4b68ed76ce419206b44b09d9372ae18b6848871a9a704ad8cb9546bac853d33",
+    "bytes": 43365
+  },
+  {
+    "path": "01.APP/nodelang/site_export.py",
+    "sha256": "25f58dad42f684d066b52ab23e87ce459ecba58c6a858120ec2458eeb31de44b",
+    "bytes": 40577
+  },
+  {
+    "path": "01.APP/nodelang/social_connections.py",
+    "sha256": "2931988e44de530651770c96415cefb35e04531f2cd740e7e75fefbb5380595d",
+    "bytes": 5427
+  },
+  {
+    "path": "01.APP/nodelang/social_connectors.py",
+    "sha256": "f6e038de873978ebe5d043f3b37b761d33b437ad1922bdab05ead4a3b657ddf0",
+    "bytes": 40811
+  },
+  {
+    "path": "01.APP/nodelang/social_custody.py",
+    "sha256": "5cf13bd728a23ac4fb4a4682b7044da859f4fb26583005902d41a95e4bf44ccf",
+    "bytes": 5461
+  },
+  {
+    "path": "01.APP/nodelang/social_linkedin_signin.py",
+    "sha256": "c32dfb2586f0253ff709115257bd7f910e5ffedd59a5ec26d84ce4d413d4c980",
+    "bytes": 13579
+  },
+  {
+    "path": "01.APP/nodelang/social_meta_signin.py",
+    "sha256": "359efad332204f5d1341e43f882214fd2ef0370422fe2022b4d8a4f59d70a984",
+    "bytes": 15867
+  },
+  {
+    "path": "01.APP/nodelang/starters.py",
+    "sha256": "485f35d34de654e544d4c4515408ec4c7e807ffd8702a38933ad071ea9f8f728",
+    "bytes": 9944
+  },
+  {
+    "path": "01.APP/nodelang/stem_graph_evaluation.py",
+    "sha256": "607e31829335abf4c066deb481fdb957f7b57456b382d9faf9c4f4d5633c8ac1",
+    "bytes": 38885
+  },
+  {
+    "path": "01.APP/nodelang/studio_downloads.py",
+    "sha256": "d2a07b64e6c50cba15763862b44dce875ade7b226b6b4ca7f0ff9c2e228ddca5",
+    "bytes": 8896
+  },
+  {
+    "path": "01.APP/nodelang/studio_window.py",
+    "sha256": "6bda995459dea678a1f172f08756d171837beebf8d540bcbab9fd3e639c60432",
+    "bytes": 823
+  },
+  {
+    "path": "01.APP/nodelang/terminal_sessions.py",
+    "sha256": "761119e217b8e72754aab4e7eef3875257425ef4c1b807cace6a863d4e4b1986",
+    "bytes": 16132
+  },
+  {
+    "path": "01.APP/nodelang/user_paths.py",
+    "sha256": "865c6918b62e8c861431ff836309de83f8203e831a82a1bb7541b7c52cbdc1dd",
+    "bytes": 2620
+  },
+  {
+    "path": "01.APP/nodelang/watcher_owner.py",
+    "sha256": "0f91813baf6aeb6627975954d9b0a0f55575b9a0f81bb8110f0a05a5bf228c85",
+    "bytes": 15609
+  },
+  {
+    "path": "01.APP/nodelang/window_chrome.py",
+    "sha256": "3ba4c40437d99abc55ba1638727c51d19f35026487a0019a5c34d58316e1a337",
+    "bytes": 10858
+  },
+  {
+    "path": "01.APP/nodelang/window_commands.py",
+    "sha256": "3418b19ca4cbe0b7cee808dcd641a530ae09241b57a332955b5a2254776f76a5",
+    "bytes": 9726
+  },
+  {
+    "path": "01.APP/nodelang/wire_parameters.py",
+    "sha256": "7dee3b3ec4ea7d759f45bb1acb1e073bef7f7a3b5e18e68b823a3be494885fe0",
+    "bytes": 1741
+  },
+  {
+    "path": "01.APP/nodelang/workshop/__init__.py",
+    "sha256": "10d10a3b1e6ea991f77461dc5ad25b894f29baa0110aa2afad1d50e07fc4591a",
+    "bytes": 96
+  },
+  {
+    "path": "01.APP/nodelang/workshop/console_seat.py",
+    "sha256": "24112622dc49b8b1071f9dffe05421debc6f589df2a2ca6454a39ac259f316bb",
+    "bytes": 11131
+  },
+  {
+    "path": "01.APP/nodelang/workshop_api.py",
+    "sha256": "60d01a1356b0acacc021cae6de190d3912df392728635a2845a1d446e8d03444",
+    "bytes": 5813
+  },
+  {
+    "path": "01.APP/nodelang/workshop_config.py",
+    "sha256": "2fe7aaed736d8b62a8b728602061bbc2637941ae2c226e1c29a4745d55e7df50",
+    "bytes": 53688
+  },
+  {
+    "path": "01.APP/nodelang/workshop_delivery_state.py",
+    "sha256": "39721a3c1e8b1e470840a356425ee8fe9d0dc41f0f81d9a415a208e5a9cf327e",
+    "bytes": 12780
+  },
+  {
+    "path": "01.APP/nodelang/workshop_gateway.py",
+    "sha256": "a7f175727ebebe6006bee2188c5f8d845932e8a6822de0f7f58ada35db3285ff",
+    "bytes": 7131
+  },
+  {
+    "path": "01.APP/nodelang/workshop_live.py",
+    "sha256": "d8994a24d9842eaaf3d20c37576a15d6cf139a0ef8502ae6c5617c9ceb2c10e2",
+    "bytes": 18835
+  },
+  {
+    "path": "01.APP/nodelang/workshop_mailbox.py",
+    "sha256": "e5fdfe3a6aa72f3ed5ca12730024916ff6d1e40a666055abcf8cb521167f55eb",
+    "bytes": 93359
+  },
+  {
+    "path": "01.APP/nodelang/workshop_tasks.py",
+    "sha256": "c5fe582b630f781273b29ee4b6a7e7496080402c5b962b0595101725694c5491",
+    "bytes": 49103
+  },
+  {
+    "path": "01.APP/nodelang/workshop_transport.py",
+    "sha256": "bdc315e51913a97cb1bddea7ef97bfd0387c36b7557a9fc8d359e2cfc62b4a7b",
+    "bytes": 28528
+  },
+  {
+    "path": "01.APP/nodelang/workspace_root.py",
+    "sha256": "060a005825ba96231eb86f2b734d92382624e8c7831399aaf6c47197799ad798",
+    "bytes": 1477
+  },
+  {
+    "path": "01.APP/nodelang/workspace_roots_catalogue.py",
+    "sha256": "db938077555b93a7907591646cc55ea098a2a99a174ef1dca65d0d0790e81c66",
+    "bytes": 5891
+  },
+  {
+    "path": "03.TOOLS/packaging/pack_runtime.py",
+    "sha256": "b97dd24d6cf14ea8e61bee1cc2e50df620bd5eb0cc330172106643e8ab2aae37",
+    "bytes": 3398
+  },
+  {
+    "path": "03.TOOLS/packaging/preflight_imports.py",
+    "sha256": "6a28c4f25f113337342def0368a1ee69f416df18dceb6f05ba343c5a8be963ed",
+    "bytes": 5769
+  },
+  {
+    "path": "03.TOOLS/packaging/windows/check_update_offer.py",
+    "sha256": "b9207f13a146b623caab71e2d171be318bdcb0d19f3dc83c2662c34099c21d77",
+    "bytes": 12389
+  },
+  {
+    "path": "03.TOOLS/packaging/windows/stage_betterleaks.py",
+    "sha256": "3620041cc97e6cf5d92ed9bfd4773bdd9ac561339121fc71fe16fc10c06f7bb9",
+    "bytes": 4410
+  },
+  {
+    "path": "03.TOOLS/packaging/windows/stage_goose.py",
+    "sha256": "1c24136c3ff886f6c348f3009106e59e6b78ca6ae1e09b6fb96e2c427c7ea40a",
+    "bytes": 2783
+  },
+  {
+    "path": "03.TOOLS/tools/__init__.py",
+    "sha256": "4f2a6fc20d91d7f05c6010a2ca9a2b6f5aae0ed1269f886cb6e7de540c14f3a3",
+    "bytes": 83
+  },
+  {
+    "path": "03.TOOLS/tools/pipeline/__init__.py",
+    "sha256": "a44d1002fb5955cd1efd6db8d9dc4e20ad90067fa7e1980828aed5dea8a24659",
+    "bytes": 64
+  },
+  {
+    "path": "03.TOOLS/tools/pipeline/build.py",
+    "sha256": "65716fe517bb3a323129226783855dcee9c2133b606fc616d2732e32dbfe56e9",
+    "bytes": 10752
+  },
+  {
+    "path": "03.TOOLS/tools/pipeline/install_hooks.py",
+    "sha256": "b26a08d201d8ba37de1f73e84f4381cb28d514b603b6d227542029ef7dd6c413",
+    "bytes": 3085
+  },
+  {
+    "path": "03.TOOLS/tools/pipeline/land.py",
+    "sha256": "c005a147a8ab62f9959d332d7a195767ba4422dfc41a54738e2e4675c107455c",
+    "bytes": 441
+  },
+  {
+    "path": "03.TOOLS/tools/pipeline/package_compiler.py",
+    "sha256": "443715249f53ee766e25df3be0834774b314ea4292d832db4038f837ce66b464",
+    "bytes": 8041
+  },
+  {
+    "path": "03.TOOLS/tools/pipeline/pre_commit.py",
+    "sha256": "23e5b55f3116570da8bed0390ccf46482cbab5cb51abadd79a7830e20662b108",
+    "bytes": 3754
+  },
+  {
+    "path": "03.TOOLS/tools/pipeline/record_observation.py",
+    "sha256": "e91ab992a24b222fab3e312038296343b53818f2840acba31a2dc2e65e617728",
+    "bytes": 11833
+  },
+  {
+    "path": "03.TOOLS/tools/pipeline/strict_check.py",
+    "sha256": "a195ca39f6e6d4035c38846fed016f8086009a5a0fbc5f45251ab4721be509bc",
+    "bytes": 52338
+  },
+  {
+    "path": "03.TOOLS/tools/ratchet.py",
+    "sha256": "69db47acc663cba0a3018c89d4037fdb079a5cf502f02dd2ccbec3158a9fb26c",
+    "bytes": 11374
+  },
+  {
+    "path": "03.TOOLS/tools/real_app_check/graph_owner.py",
+    "sha256": "3764d2ccbb8f8feb73153557b03924ac033b3d9f52100cede73c45559fdc4098",
+    "bytes": 7288
+  },
+  {
+    "path": "03.TOOLS/tools/real_app_check/profile_guard.py",
+    "sha256": "dc1ea20b9ba5f8882cddf8bf760a315211053cc5d3851dcdb2bfee1512f8fc2e",
+    "bytes": 6844
+  },
+  {
+    "path": "03.TOOLS/tools/real_app_check/real_app_check.py",
+    "sha256": "df4062ea8daa0ea05b3d61aee0c4869b9578b98e87d7ee52f339fb07b7ae6f39",
+    "bytes": 38134
+  }
+]

@@ -1624,16 +1624,6 @@ LIBRARY_ENGINES.update({
     "speckle.send": push_speckle,
 })
 
-# Workshop, Agent session and Independent review: the clean-bootstrap contracts
-# reconciled into this one running catalogue (workshop_workflow.WORKSHOP_CATALOGUE).
-# Placing one runs nothing; the canvas Run refuses them and only an approved
-# Workshop workflow binds their effects (workshop_workflow._bound_engines).
-from .workshop_workflow import WORKSHOP_CATALOGUE, approval_required  # noqa: E402
-
-for _item, _row in WORKSHOP_CATALOGUE.items():
-    LIBRARY_ENGINES[_row["engine"]] = approval_required
-    LIBRARY_ITEM_ENGINES[_item] = {"engine": _row["engine"], "params": dict(_row["params"])}
-
 # Terminal: a real shell in a folder inside this ArchHub's admitted workspace
 # root. The application server owns the sessions (terminal_sessions.py) and binds
 # this engine to them; outside a server the card refuses rather than spawn a shell.
@@ -2162,9 +2152,6 @@ LEGACY_LIBRARY_PRESENTATION = (('host',
    ('o_email', 'draft_email', 'draft in Outlook · you send'),
    ('o_notify', 'notify', 'desktop notification'),
    ('o_term', 'terminal', 'a shell in a folder this ArchHub admits'))))
-for _legacy_item, _legacy_row in WORKSHOP_CATALOGUE.items():
-    LEGACY_LIBRARY_ITEM_ENGINES.setdefault(_legacy_item, {
-        "engine": _legacy_row["engine"], "params": dict(_legacy_row["params"])})
 for _legacy_item, _legacy_binding in LEGACY_LIBRARY_ITEM_ENGINES.items():
     LIBRARY_ITEM_ENGINES.setdefault(_legacy_item, _legacy_binding)
 
@@ -2259,7 +2246,7 @@ def _setting_bounds(item_id):
     if _TYPING_SEEDS or item_id != "tool_workshop":
         return {}
     try:
-        from .universal_application import _APPLICATION_SETTING_SPECS
+        from .settings_owner import _APPLICATION_SETTING_SPECS
     except Exception:  # noqa: BLE001 - bounds are checked again when the settings node runs
         return {}
     return _APPLICATION_SETTING_SPECS

@@ -127,7 +127,7 @@ def test_a_claimed_host_exec_refuses_client_data(cloud, tmp_path):
 def test_a_remote_agent_appears_as_mcp_client_and_its_send_is_readable(cloud, tmp_path):
     mailbox = tmp_path / "workshop" / "messages.sqlite3"
     mailbox.parent.mkdir()
-    agents = McpWorkshopAgents(tmp_path / "relay-descriptor.json", None, mailbox_path=mailbox)
+    agents = McpWorkshopAgents(mailbox_path=mailbox)
     home = tmp_path / "env"
     send = {
         "agent": {"client_id": "notion-1", "client_name": "Notion"},

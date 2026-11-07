@@ -15,7 +15,6 @@ import dataclasses
 import hashlib
 import json
 import re
-import threading
 import urllib.parse
 from collections.abc import Mapping
 
@@ -715,23 +714,6 @@ def social_material_from_values(inputs: object) -> tuple[PreparedRequest, bytes]
     return prepared, raw
 
 
-def social_work_material(store, registry, work_root: str) -> tuple[PreparedRequest, bytes]:
-    """Server side: read the Work's `inputs` interface and rebuild its request.
-
-    Same resolver as project execution (existing_workshop_project_execution
-    ._material): the governed Work interface target and its value graph. Root
-    calls it only after _baboom_execution_work_context admits the Work.
-    """
-    from . import universal_application as app
-    from .cell_value_graph import read_value_graph
-
-    snapshot = store.snapshot()
-    inputs = read_value_graph(snapshot, registry.value_graph_protocol,
-                              app._governed_work_interface_target(snapshot, registry, work_root, "inputs"))
-    material = social_material_from_values(inputs)
-    if store.revision != snapshot.revision:
-        raise Refusal("invalid_input", "the Work changed while its social request was prepared")
-    return material
 
 
 def normalize_work_answer(prepared: PreparedRequest, status, headers, body) -> dict:
@@ -803,139 +785,3 @@ def _settled_answer(settled: object, prepared: dict) -> dict:
     return {"ok": settled["outcome"] == "succeeded", "state": _OUTCOME_STATE[settled["outcome"]],
             "work": prepared["work"], "delegation": prepared["delegation"],
             "receipt": settled.get("receipt"), "result": settled["result"]}
-
-
-class _SocialWorkAdapter:
-    """Per-Work preparation and execution state in this owner process.
-
-    A call reserves its Work atomically before any route call; a concurrent
-    call for the same Work is refused. A known pre-dispatch failure releases
-    the reservation, a possible dispatch leaves the Work uncertain, and an
-    uncertain record is never evicted. This is process-local: it is not the
-    runtime's atomic operation-attempt reservation across Works, delegations
-    and restarts.
-    """
-
-    def __init__(self, control) -> None:
-        self._control = control
-        self._lock = threading.Lock()
-        self._records: dict[str, dict] = {}
-
-    def _reserve(self, work_root: str, allowed: tuple, state: str) -> dict | None:
-        with self._lock:
-            record = self._records.get(work_root)
-            current = None if record is None else record["state"]
-            if current == "uncertain":
-                raise Refusal("uncertain", "an earlier execution of this Work needs reconciliation; "
-                              "no new preparation or grant is requested")
-            if current not in allowed:
-                if current is None:
-                    raise Refusal("not_ready", "prepare this Work and get founder approval first")
-                raise Refusal("busy", "another call for this Work is in flight")
-            if record is None and len(self._records) >= MAX_WORK_RECORDS:
-                idle = next((root for root, held in self._records.items()
-                             if held["state"] == "prepared"), None)
-                if idle is None:
-                    raise Refusal("busy", "this owner process already holds its maximum of active Works")
-                self._records.pop(idle)
-            self._records[work_root] = {"state": state,
-                                        "prepared": None if record is None else record["prepared"]}
-            return record
-
-    def _settle(self, work_root: str, record: dict | None) -> None:
-        with self._lock:
-            if record is None:
-                self._records.pop(work_root, None)
-            else:
-                self._records[work_root] = record
-
-    def prepare(self, work_root: object, note: object) -> dict:
-        try:
-            work_root, note = _work_root(work_root), _note(note)
-            settled = self._reserve(work_root, (None, "prepared"), "preparing")
-            try:
-                try:
-                    with self._control.bound_client() as client:
-                        answer = client.request("POST", SOCIAL_PREPARE_ROUTE,
-                                                {"root": work_root, "note": note})
-                except Exception as error:
-                    raise Refusal("runtime_error", "the runtime refused or lost the preparation",
-                                  error=type(error).__name__) from None
-                prepared = _prepared_answer(answer, work_root)
-                settled = {"state": "prepared", "prepared": prepared}
-                return _ok(**prepared, next_step="founder_approval")
-            finally:
-                self._settle(work_root, settled)
-        except Refusal as refusal:
-            return refusal_answer(refusal)
-
-    def execute(self, work_root: object) -> dict:
-        try:
-            work_root = _work_root(work_root)
-            prepared = self._reserve(work_root, ("prepared",), "granting")["prepared"]
-            try:
-                with self._control.bound_client() as client:
-                    grant = client.request("POST", GRANT_ROUTE, {"delegation": prepared["delegation"]})
-                if (type(grant) is not dict or grant.get("delegation") != prepared["delegation"]
-                        or type(grant.get("grant")) is not str or type(grant.get("capability")) is not str):
-                    raise Refusal("not_granted", "the grant answer is malformed; this call sent no "
-                                  "execution request. Prepare the Work again")
-            except BaseException as error:
-                # Known pre-dispatch outcome: this call never reached the execute route.
-                self._settle(work_root, None)
-                if isinstance(error, Exception) and not isinstance(error, Refusal):
-                    raise Refusal("not_granted", "the grant request failed before this call sent an "
-                                  "execution request. Prepare the Work again",
-                                  error=type(error).__name__) from None
-                raise
-            self._settle(work_root, {"state": "executing", "prepared": prepared})
-            settled = {"state": "uncertain", "prepared": prepared}
-            try:
-                try:
-                    with self._control.bound_client() as client:
-                        answer = client.request("POST", SOCIAL_EXECUTE_ROUTE,
-                                                {"grant": grant["grant"], "capability": grant["capability"]})
-                except Exception as error:
-                    raise Refusal("uncertain", "the execution may have happened; reconcile before any new "
-                                  "attempt", error=type(error).__name__) from None
-                result = _settled_answer(answer, prepared)
-                if result["state"] != "uncertain":
-                    settled = None
-                return result
-            finally:
-                self._settle(work_root, settled)
-        except Refusal as refusal:
-            return refusal_answer(refusal)
-
-
-def register_social_tools(server, control) -> None:
-    """Add the two Work-root social tools to the EXISTING native owner server.
-
-    A tool takes only a Work root (and, to prepare, an optional note). The
-    runtime reads operation, account, vault entry and payload from that Work's
-    graph-held inputs (social_work_material); no caller supplies an effect
-    argument and the argument schema forbids extra fields. The founder
-    approves through the existing consent gesture between the two calls.
-    The prepare and execute routes are the application's own
-    (/api/universal/social-work-prepare, /api/universal/social-work-execute).
-    """
-    adapter = _SocialWorkAdapter(control)
-
-    @server.tool(name="social.work_prepare")
-    def work_prepare(work_root: str, note: str = "") -> dict:
-        """Prepare the social request held by this exact Work for founder approval. Posts nothing."""
-        return adapter.prepare(work_root, note)
-
-    @server.tool(name="social.work_execute")
-    def work_execute(work_root: str) -> dict:
-        """Run this Work's approved social request once. Never re-sent; an uncertain run needs reconciliation."""
-        return adapter.execute(work_root)
-
-    manager = getattr(server, "_tool_manager", None)
-    if manager is not None:
-        for tool in manager.list_tools():
-            if tool.name in SOCIAL_TOOL_NAMES:
-                model = tool.fn_metadata.arg_model
-                model.model_config.update(extra="forbid", strict=True)
-                model.model_rebuild(force=True)
-                tool.parameters = model.model_json_schema(by_alias=True)

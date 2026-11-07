@@ -20,10 +20,9 @@ SERVER_NAME = "archhub_agent_coordination"
 _MAX_CONFIG_BYTES = 32 * 1024
 # Explicit task-server files only; no recursive installation scan. This binds
 # disk inputs, not an assertion about every loaded module or the whole package.
-TASK_SOURCE_FILES = ('__init__.py', 'native_agent_mcp.py', 'native_agent_session.py',
-    'native_agent_hooks.py',
-    'installed_workshop_coordination.py', 'application_machine_transport.py',
-    'cell_secret_keys.py', 'agent_runtime_registry.py',
+TASK_SOURCE_FILES = ('__init__.py', 'native_agent_mcp.py', 'native_agent_hooks.py',
+    'workshop_mailbox.py', 'workshop_tasks.py', 'session_files.py', 'canvas_tools.py',
+    'runtime_credentials.py', 'agent_runtime_registry.py',
     'agent_runtime_defs/claude.py', 'agent_runtime_defs/codex.py',
     'agent_runtime_defs/gemini.py', 'agent_runtime_defs/opencode.py')
 _MAX_SOURCE_BYTES = 2 * 1024 * 1024

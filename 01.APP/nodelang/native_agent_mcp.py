@@ -1,7 +1,6 @@
 """Shared Workshop mailbox over MCP; Work capabilities retain their separate authority."""
 from __future__ import annotations
 
-from contextlib import contextmanager
 from pathlib import Path
 import os
 import builtins
@@ -19,176 +18,12 @@ _STARTED_BUILD = installed_build_id(Path(__file__).resolve().parent.parent)
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
-from .application_machine_transport import MachineTransportError
-from .installed_workshop_coordination import InstalledWorkshopCoordinationClient
-from .native_agent_hooks import user_prompt_submit_context, stop_context
 
-class _OwnedWorkshopClient(InstalledWorkshopCoordinationClient):
-    def __init__(self, owner, client):
-        self._native_owner = owner
-        self._native_client = client
-        self._native_generation = getattr(owner, "generation", None)
-        super().__init__(client)
-
-    @contextmanager
-    def bound_client(self):
-        # Owner lock precedes client lock, matching enrollment and renewal.
-        with self._native_owner.bound_client() as current:
-            if current is not self._native_client:
-                generation = getattr(self._native_owner, "generation", None)
-                if (type(generation) is not int or type(self._native_generation) is not int
-                        or generation <= self._native_generation):
-                    raise MachineTransportError("native stdio client ownership changed")
-                # Construct the whole guarded adapter before replacing any
-                # cached delegate. The owner lock quiesces all tool calls.
-                fresh = InstalledWorkshopCoordinationClient(current)
-                if fresh._session != self._session:
-                    raise MachineTransportError("native stdio graph session changed")
-                self._client, self._descriptor_path = fresh._client, fresh._descriptor_path
-                self._session, self._descriptor = fresh._session, fresh._descriptor
-                self._native_client, self._native_generation = current, generation
-            yield current
-
-    def call(self, method, parameters=None, **kwargs):
-        # Work prompt hooks retain their governed actor's inbox, independently
-        # of the public shared-mailbox connector (which never enters this path).
-        from .installed_workshop_coordination import InstalledWorkshopInboxReader
-        if method in InstalledWorkshopInboxReader.READS and getattr(self._native_owner, "needs_inbox_recovery", lambda: False)():
-            return self._native_owner.inbox_reader().call(method, parameters, **kwargs)
-        with self.bound_client():
-            return super().call(method, parameters, **kwargs)
 
 def _text(value):
     return type(value) is str and bool(value.strip()) and len(value.encode("utf-8")) <= 512
 
-def _validate_index(result, client):
-    descriptor = client._pinned_runtime_descriptor
-    fields = {"application", "agent_session", "workshop", "revision",
-              "brain_scope", "registry", "total", "items"}
-    if (type(result) is not dict or set(result) != fields
-            or result["application"] != descriptor.application_root
-            or result["agent_session"] != client.agent_session_root
-            or result["workshop"] != descriptor.workshop_root
-            or result["registry"] != descriptor.work_registry_root
-            or not _text(result["brain_scope"])
-            or type(result["revision"]) is not int or result["revision"] < 0
-            or type(result["total"]) is not int
-            or type(result["items"]) not in (list, tuple)
-            or result["total"] != len(result["items"])
-            or not 0 <= result["total"] <= 4096):
-        raise MachineTransportError("native Work index identity or shape is invalid")
-    roots = set()
-    row_fields = {"root", "membership_wire", "queue_index", "interfaces",
-                  "operational", "claimant_session", "claimant_agent_body", "claim_binding"}
-    for row in result["items"]:
-        if (type(row) is not dict or set(row) != row_fields
-                or not _text(row["root"]) or not row["root"].startswith("assembly-instance:")
-                or row["root"] in roots or not _text(row["membership_wire"])
-                or type(row["queue_index"]) is not int or row["queue_index"] < 0
-                or type(row["interfaces"]) is not dict
-                or set(row["interfaces"]) != {"external-key", "title"}
-                or type(row["operational"]) is not dict
-                or set(row["operational"]) != {"machine", "current_state", "current_state_label"}
-                or not all(_text(value) for value in row["operational"].values())
-                or any(row[key] is not None and not _text(row[key]) for key in
-                       ("claimant_session", "claimant_agent_body", "claim_binding"))):
-            raise MachineTransportError("native Work index row is invalid")
-        roots.add(row["root"])
-        for interface in row["interfaces"].values():
-            if (type(interface) is not dict
-                    or set(interface) != {"id", "target", "value", "editable"}
-                    or not _text(interface["id"]) or not _text(interface["target"])
-                    or type(interface["value"]) is not str
-                    or interface["editable"] is not False):
-                raise MachineTransportError("native Work index interface is invalid")
-    return result
 
-class _WorkControl:
-    """Only a Work/host action needs the existing governed Work identity."""
-    def __init__(self, owner=None, environment=None):
-        import threading
-        self.owner = owner
-        self.environment = environment
-        self.fixed = owner is not None or environment is not None
-        self.controls = {}
-        self.lock = threading.RLock()
-        self.control = None
-        self.supervisor = None
-        self.expected_agent_session = None
-        self.continuations = {}
-
-    def selected(self):
-        # This map belongs only to governed Work authority. Mailbox tools never
-        # enter it, enroll an actor, or depend on its lifecycle.
-        if self.fixed:
-            return self
-        from mcp.server.lowlevel.server import request_ctx
-        try:
-            metadata = _session_metadata(request_ctx.get().meta)
-        except builtins.LookupError:
-            return self
-        if not metadata:
-            return self
-        key, identity = next(iter(metadata.items()))
-        from .agent_declarations import SESSION_KEYS
-        from .agent_runtime_registry import RUNTIMES
-        runtime = SESSION_KEYS[key]
-        if runtime not in RUNTIMES:
-            return self
-        with self.lock:
-            if (runtime, identity) not in self.controls:
-                environment = dict(os.environ)
-                for name in ("CODEX_THREAD_ID", "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID", "OPENCODE_SESSION_ID", "GEMINI_SESSION_ID"):
-                    environment.pop(name, None)
-                environment.update(ARCHHUB_AGENT_RUNTIME=runtime, ARCHHUB_EXTERNAL_SESSION_ID=identity)
-                environment[RUNTIMES[runtime]["session_environment"][0]] = identity
-                self.controls[(runtime, identity)] = _WorkControl(environment=environment)
-                self.controls[(runtime, identity)].expected_agent_session = self.continuations.get((runtime, identity))
-            return self.controls[(runtime, identity)]
-
-    @contextmanager
-    def bound_client(self):
-        selected = self.selected()
-        if selected is not self:
-            with selected.bound_client() as client:
-                yield client
-            return
-        self.connect()
-        with self.control.bound_client() as client:
-            yield client
-
-    def connect(self):
-        from .native_agent_session import NativeAgentSession
-        if self.owner is None:
-            self.owner = NativeAgentSession(environment=self.environment,
-                expected_agent_session=self.expected_agent_session)
-        if self.control is None:
-            self.control = _OwnedWorkshopClient(self.owner, self.owner.connect())
-            keeper = getattr(self.owner, "start_lease_keeper", None)
-            if callable(keeper):
-                keeper()
-            # Work enforcement retains its Stop IPC; plain mailbox calls do not
-            # construct this owner, start a keeper, or start a Stop host.
-            if isinstance(self.owner, NativeAgentSession):
-                from .native_stop_hook import StopHostSupervisor
-                self.supervisor = StopHostSupervisor(self.owner)
-                self.owner._stop_supervisor = self.supervisor
-                self.supervisor.start()
-
-    def call(self, method, parameters=None, **kwargs):
-        selected = self.selected()
-        if selected is not self:
-            return selected.call(method, parameters, **kwargs)
-        with self.bound_client():
-            return self.control.call(method, parameters, **kwargs)
-
-    def close(self):
-        for control in self.controls.values():
-            control.close()
-        if self.supervisor is not None:
-            self.supervisor.close()
-        if self.control is not None:
-            self.owner.close()
 
 
 def _caller_context(ctx):
@@ -478,13 +313,7 @@ def build_server(*, session=None, mailbox_call=None):
         """Close a task so it leaves the active list. Its session file stays readable."""
         return call("task_archive", {"id": id}, _caller_context(ctx))
 
-    control = _WorkControl(session)
-    server.work_control = control
-    if session is not None:
-        # An explicit in-process Work owner is already an authorised Work
-        # composition. The ordinary CLI supplies none and starts unbound.
-        control.connect()
-    _register_work_tools(server, control)
+    _register_work_tools(server)
     from .native_host_tools import register_host_tools
     existing_tools = {tool.name for tool in server._tool_manager.list_tools()}
     register_host_tools(server)
@@ -585,59 +414,30 @@ def forbid_extra_arguments(tool):
     tool.parameters = model.model_json_schema(by_alias=True)
 
 
-def _register_work_tools(server, control):
-    stop_notices = set()
-
+def _register_work_tools(server):
     @server.tool(name="native.hook_stop")
     def hook_stop(ctx: Context) -> dict[str, object]:
-        """Observe the current Work gate through its existing Work authority."""
         from .agent_declarations import reminder
         key = tuple(_caller_context(ctx).items())
-        with control.lock:
-            shown = key in stop_notices
-            stop_notices.add(key)
-        notice = '' if shown else reminder(mailbox=lambda: server._mailbox_pages.get(key, {}))
-        result = stop_context(control)
-        return {**result, **({"systemMessage":notice} if notice else {})}
+        notice = reminder(mailbox=lambda: server._mailbox_pages.get(key, {}))
+        return {'systemMessage': notice} if notice else {}
 
     @server.tool(name="native.hook_user_prompt_submit")
-    def hook_user_prompt_submit() -> dict[str, object]:
-        """Provide bounded Work and Workshop context for a native prompt hook.
-
-        Read-only context delivery; does not acknowledge, approve, or execute.
-        Configure this on UserPromptSubmit, after MCP connection is available.
-        """
-        return user_prompt_submit_context(control, selected=None)
+    def hook_user_prompt_submit(ctx: Context) -> dict[str, object]:
+        from .native_agent_hooks import user_prompt_submit_context
+        return user_prompt_submit_context(context=_caller_context(ctx))
 
     @server.tool(name="hosts.status")
     def hosts_status() -> dict[str, object]:
-        """Read live host state directly, with no app or Work enrollment."""
         from .native_host_tools import _host_state
         return _host_state()
 
-    # Social Works (LinkedIn, Facebook Pages, Instagram): prepare for the founder's
-    # approval, then execute once. The tools take only a Work root.
-    from .social_connectors import register_social_tools
-    register_social_tools(server, control)
-
 
 def _work_continuation(server):
-    """Retain identities and unresolved receipts, never transport credentials."""
-    control = server.work_control
-    actor = lambda held: (getattr(held.owner, '_session_root', None)
-                          or getattr(held.owner, '_expected_agent_session', None)
-                          or held.expected_agent_session)
-    actors = {**control.continuations,
-              **{key: actor(held) for key, held in control.controls.items()}}
-    return {'actor': actor(control),
-        'actors': [[*key, value] for key, value in actors.items()],
-        'level': server._mcpfresh_level}
+    return {'level': server._mcpfresh_level}
 
 
 def _restore_work_continuation(server, state):
-    control = server.work_control
-    control.expected_agent_session = state['actor']
-    control.continuations = {(runtime, identity): actor for runtime, identity, actor in state['actors']}
     server._mcpfresh_level = state['level']
 
 
@@ -770,39 +570,10 @@ class _FreshStdio:
         return changed
 
     def _settled(self):
-        for control in [self.server.work_control, *self.server.work_control.controls.values()]:
-            owner = control.owner
-            if owner is None:
-                continue
-            if not owner._lock.acquire(blocking=False):
-                return None
-            try:
-                if owner._active_calls:
-                    return None
-                if (owner._state not in ('unbound', 'bound')
-                        or owner._rebind_candidate is not None or owner._retired_release is not None):
-                    return False
-            finally:
-                owner._lock.release()
         return True
 
     def _exec(self, changed):
-        from contextlib import ExitStack
-        with ExitStack() as locks:
-            controls = [self.server.work_control, *self.server.work_control.controls.values()]
-            # Stop reconciliation takes supervisor then owner locks in this order.
-            for control in controls:
-                if control.supervisor is not None:
-                    if not control.supervisor._lock.acquire(blocking=False):
-                        return
-                    locks.callback(control.supervisor._lock.release)
-            for control in controls:
-                if control.owner is not None:
-                    if not control.owner._lock.acquire(blocking=False):
-                        return
-                    locks.callback(control.owner._lock.release)
-            if self._settled():
-                self._replace(changed)
+        self._replace(changed)
 
     def _replace(self, changed):
         import json
@@ -831,11 +602,6 @@ class _FreshStdio:
                 print('ArchHub MCP re-exec failed: %s' % error, file=sys.stderr, flush=True)
                 self.build = changed
                 return
-            for control in [self.server.work_control, *self.server.work_control.controls.values()]:
-                if control.supervisor is not None:
-                    # Its nonreentrant lock is held; process exit ends listener threads.
-                    control.supervisor._closed.set()
-                    control.supervisor._close_host()
             print('ArchHub MCP re-exec: %s -> %s' % (self.build, changed), file=sys.stderr, flush=True)
             # Windows has no in-place exec: the client (Claude Code, Codex...) watches the process it
             # started, so this one stays as the stable shim until the new build's process ends. Exiting
@@ -970,7 +736,6 @@ def main():
         anyio.run(_run_fresh_stdio, server, resume)
     finally:
         server._mailbox_stop()
-        server.work_control.close()
 
 
 if __name__ == "__main__":

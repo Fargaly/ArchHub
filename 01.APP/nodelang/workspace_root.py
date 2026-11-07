@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .universal_cell import InvalidCell
 
 
 def workspace_root_for_map(map_path: str | Path) -> Path:
@@ -33,4 +32,4 @@ def workspace_root_for_map(map_path: str | Path) -> Path:
     for candidate in (resolved.parent, *resolved.parents):
         if (candidate / "nodelang" / "__init__.py").is_file():
             return candidate
-    raise InvalidCell("ArchHub workspace root is unavailable")
+    raise ValueError("ArchHub workspace root is unavailable")

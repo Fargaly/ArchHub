@@ -1,0 +1,1 @@
+3 historical journal/sidecar fixtures refused before SQLite open; bytes unchanged

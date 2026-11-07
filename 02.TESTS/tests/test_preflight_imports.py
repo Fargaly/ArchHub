@@ -21,7 +21,7 @@ def test_generated_extraction_imports_every_preflight_entry_in_isolation(tmp_pat
     generated = tmp_path / 'includes'
     files = preflight.generate(ROOT / '01.APP', generated)
     assert Path('nodelang/user_paths.py') in files
-    assert Path('nodelang/cell_secret_keys.py') in files
+    assert Path('nodelang/runtime_credentials.py') in files
     staged = tmp_path / 'mainrel-connectors'
     (staged / 'nodelang').mkdir(parents=True)
     (staged / 'nodelang/__init__.py').write_text('', encoding='utf-8')
@@ -42,7 +42,7 @@ sys.path.insert(0, sys.argv[1])
 for name in sys.argv[2:]:
     module = importlib.import_module(name)
     assert pathlib.Path(module.__file__).is_relative_to(sys.argv[1]), module.__file__
-from nodelang.cell_secret_keys import protect_current_user_data, unprotect_current_user_data
+from nodelang.runtime_credentials import protect_current_user_data, unprotect_current_user_data
 payload = b'preflight fixture data'
 encrypted = protect_current_user_data(payload, purpose='preflight-import-court')
 assert encrypted != payload

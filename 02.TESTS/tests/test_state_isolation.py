@@ -44,22 +44,13 @@ with agent_budget.connect() as db:
     assert db.execute('SELECT count(*) FROM requests').fetchone() == (0,)
 from nodelang.model_router import _application_state_dir
 assert _application_state_dir() == state
-from nodelang import brain_files, persistence, workshop_config
+from nodelang import brain_files, workshop_config
 from nodelang.runtime_credentials import BrowserCredentialVault
-from nodelang.runtime_caller_capability import WindowsDpapiCallerKeyStore
-from nodelang.cell_revision_checkpoint import RevisionCheckpointGuard
-from nodelang.cell_secret_keys import WindowsDpapiSigningKeyProvider
-from nodelang.checkpoint_authority_provisioning import default_checkpoint_authority_path
 from nodelang.user_paths import state_directory
 for name in ('USERPROFILE', 'HOME', 'LOCALAPPDATA', 'APPDATA'):
     os.environ.pop(name, None)
-for path in (brain_files._path(), persistence.default_state_path(),
-             persistence.application_database_path(), workshop_config.app_state_dir(),
-             BrowserCredentialVault.default_path(), WindowsDpapiCallerKeyStore.default_path(),
-             WindowsDpapiSigningKeyProvider.default_path(),
-             RevisionCheckpointGuard.default_path(state / 'journal.sqlite3'),
-             default_checkpoint_authority_path(state / 'journal.sqlite3'),
-             session_files.SessionFiles().metadata):
+for path in (brain_files._path(), workshop_config.app_state_dir(),
+             BrowserCredentialVault.default_path(), session_files.SessionFiles().metadata):
     assert path.is_relative_to(state), str(path)
 from nodelang.quiet_update import _profile_instance
 lock = _profile_instance(state)
@@ -118,7 +109,9 @@ def _profile_files(root):
             if entry.is_dir(follow_symlinks=False):
                 yield from _profile_files(path)
             elif entry.is_file(follow_symlinks=False):
-                yield path
+                # GRAPHOUT: historical journals and sidecars are outside the run's ownership.
+                if '.universal.sqlite3' not in entry.name.casefold():
+                    yield path
 
 
 def _sessions_snapshot(root):
@@ -149,7 +142,7 @@ def _owned_record(value, run, end, fallback):
     return any(_owned_record(row, run, end, fallback) for row in value.values())
 
 
-def _marked_files(root, marker):
+def _marked_files(root, marker, *, since=None):
     patterns = [marker.encode(encoding) for encoding in ('utf-8', 'utf-16-le', 'utf-16-be')]
     # Retain enough bytes for the longest encoded marker crossing a read boundary.
     overlap = max(map(len, patterns)) - 1
@@ -162,6 +155,8 @@ def _marked_files(root, marker):
             marked.add(str(path))
             continue
         try:
+            if since is not None and path.stat().st_mtime < since:
+                continue  # A fresh run marker cannot predate this run; writes are also audit-guarded.
             with path.open('rb') as stream:
                 tail = b''
                 while chunk := stream.read(1024 * 1024):
@@ -222,7 +217,7 @@ def _profile_leaks(before, run, end):
         root = Path(name)
         if not root.exists():
             continue
-        marked = _marked_files(root, marker)
+        marked = _marked_files(root, marker, since=run['started'])
         new_sessions = set(_sessions_snapshot(root)) - set(snapshot)
         for path in _profile_files(root):
             relative = path.relative_to(root).as_posix()
@@ -240,6 +235,8 @@ def _profile_leaks(before, run, end):
                     continue
                 stat = path.stat()
                 born = getattr(stat, 'st_birthtime', stat.st_ctime)
+                if stat.st_mtime < run['started'] and born < run['started']:
+                    continue
                 if path.suffix.casefold() in ('.sqlite', '.sqlite3', '.db'):
                     for table, record in _sqlite_records(path):
                         if _owned_record(record, run, end, born):

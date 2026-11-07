@@ -364,33 +364,17 @@ def test_every_root_the_owner_derives_lies_in_the_run_under_the_planned_environm
     problems = owner.owner_isolation_problems(leaking, sys.executable, APP)
     assert any("resolves outside the run" in problem for problem in problems), problems
     no_endpoint = dict(plan, env={k: v for k, v in plan["env"].items() if k != "ARCHHUB_COORDINATION_ENDPOINT"})
-    assert any("endpoint is not the run's own" in problem
-               for problem in owner.owner_isolation_problems(no_endpoint, sys.executable, APP))
+    assert any("spawn environment points elsewhere" in problem
+               for problem in owner.endpoint_problems(no_endpoint, port_free=lambda port: True))
 
 
 def test_the_owner_sources_are_pinned_by_their_exact_bytes(tmp_path):
     owner, plan = _plan(tmp_path)
     for source in plan["sources"].values():
         assert source["sha256"] == hashlib.sha256(Path(source["path"]).read_bytes()).hexdigest()
-    assert Path(plan["sources"]["grand_map"]["path"]) == TOOL / "owner_grand_map.json"
+    assert set(plan["sources"]) == {"specification"}
 
 
-@windows_only
-def test_provisioning_lands_only_in_the_run_and_refuses_an_unpinned_source(tmp_path):
-    owner, plan = _plan(tmp_path)
-    run = Path(plan["run_dir"])
-    bad = owner.provision_command(plan, sys.executable, APP)
-    bad[-1] = "0" * 64                                              # the grand map's pin no longer matches
-    refused = subprocess.run(bad, env=plan["env"], capture_output=True, text=True, timeout=300)
-    assert refused.returncode != 0
-    assert not (Path(plan["runtime_root"]) / "CURRENT").exists()
-    done = subprocess.run(owner.provision_command(plan, sys.executable, APP), env=plan["env"],
-                          capture_output=True, text=True, timeout=600)
-    assert done.returncode == 0, done.stderr[-800:]
-    assert json.loads(done.stdout.strip().splitlines()[-1])["ok"] is True
-    assert (Path(plan["runtime_root"]) / "CURRENT").is_file()
-    keys = run / "LOCALAPPDATA" / "ArchHub" / "keys"
-    assert {path.name for path in keys.iterdir()} >= {"authority-signing-v1.dpapi.json", "caller-signing-v1.dpapi.json"}
 
 
 def test_the_owner_is_started_only_through_the_runs_desktop_and_job(tmp_path):
@@ -404,10 +388,10 @@ def test_the_owner_is_started_only_through_the_runs_desktop_and_job(tmp_path):
     assert owner.start_graph_owner(Desktop(), plan, "python.exe", tmp_path) == "spawned"
     (command, env, cwd), = calls
     assert 'profile_guard.py' in command
-    assert command.endswith('-m nodelang.desktop')
+    assert command.endswith(subprocess.list2cmdline([str(tmp_path / 'nodelang' / 'launcher.py')]))
     assert env == plan['env']
     assert env['ARCHHUB_TEST_HTTP_PORT'] == str(plan['canvas_port'])
-    assert Path(env['ARCHHUB_TEST_STATE_DIR']) == Path(plan['runtime_root']).parent
+    assert Path(env['ARCHHUB_TEST_STATE_DIR']) == Path(plan['runtime_root'])
 
 
 # (v4) The launch gate: refused unless plan, provisioning read-back and pinned endpoint pass at spawn. --
@@ -420,29 +404,6 @@ class _Answer:
         self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
 
 
-def _runner(owner, plan, *, paths=None, endpoint=None, provision=None, readback=None, calls=None):
-    """A child-process stand-in: answers the isolation resolve, the provisioning and the read-back."""
-    run = Path(plan["run_dir"])
-    resolved = {"paths": paths or {"runtime_root": str(run / "x")},
-                "endpoint": plan["endpoint"] if endpoint is None else endpoint}
-    generation = Path(plan["runtime_root"]) / "generations" / GRAPH
-    back = {"graph_id": GRAPH, "root": plan["runtime_root"], "database": str(generation / "cells.sqlite"),
-            "manifest": str(generation / "bootstrap.json")}
-    back.update(readback or {})
-
-    def run_child(command, **kwargs):
-        if calls is not None:
-            calls.append(command)
-        assert kwargs["env"] is plan["env"]                        # every child runs under the spawn env
-        if owner._RESOLVE in command:
-            return _Answer(0, json.dumps(resolved))
-        if any(str(part).endswith("owner_provision.py") for part in command):
-            return provision or _Answer(0, json.dumps({"ok": True, "graph_id": GRAPH}))
-        if owner._READBACK in command:
-            return _Answer(0, json.dumps(back))
-        raise AssertionError(command)
-    run_child.job_owned, run_child.leftovers = True, (lambda: [])
-    return run_child
 
 
 class _Desktop:
@@ -465,29 +426,10 @@ def _gated(tmp_path):
     return owner, plan
 
 
-def _launch(owner, plan, desktop, runner, **kwargs):
-    kwargs.setdefault("port_free", lambda port: True)
-    kwargs.setdefault("health", lambda port: {"ok": True, "graph_id": GRAPH, "revision": 1})
-    return owner.launch_graph_owner(desktop, plan, "python.exe", APP, runner=runner, **kwargs)
 
 
-def test_a_runner_outside_the_runs_job_is_refused_before_any_child_starts(tmp_path):
-    owner, plan = _gated(tmp_path)
-    desktop, calls = _Desktop(), []
-    plain = _runner(owner, plan, calls=calls)
-    del plain.job_owned
-    with pytest.raises(owner.OwnerRefused, match="lifecycle: the helper runner is not owned"):
-        _launch(owner, plan, desktop, plain)
-    assert calls == [] and desktop.spawned == []
 
 
-def test_a_helper_still_alive_in_the_job_refuses_the_spawn(tmp_path):
-    owner, plan = _gated(tmp_path)
-    desktop, lingering = _Desktop(), _runner(owner, plan)
-    lingering.leftovers = lambda: [4711]
-    with pytest.raises(owner.OwnerRefused, match=r"lifecycle: helper processes are still alive .*4711"):
-        _launch(owner, plan, desktop, lingering)
-    assert desktop.spawned == []
 
 
 @windows_only
@@ -529,75 +471,12 @@ def test_every_helper_child_joins_the_job_before_it_runs_and_is_ended_within_its
         job.close()
 
 
-def test_a_plan_with_a_root_outside_the_run_is_refused_before_anything_is_provisioned(tmp_path):
-    owner, plan = _gated(tmp_path)
-    desktop, calls = _Desktop(), []
-    outside = {"caller_key_store": os.environ.get("LOCALAPPDATA", r"C:\outside")}
-    with pytest.raises(owner.OwnerRefused) as refused:
-        _launch(owner, plan, desktop, _runner(owner, plan, paths=outside, calls=calls))
-    assert refused.value.problems[0].startswith("plan: caller_key_store resolves outside the run")
-    assert len(calls) == 1 and desktop.spawned == []                # no provisioning, no spawn
 
 
-@pytest.mark.parametrize("change, expected", [
-    ({"provision": _Answer(1, "", "pin mismatch")}, "provisioning failed: pin mismatch"),
-    ({"readback": {"graph_id": "h" * 16}}, "is not the one provisioned"),
-    ({"readback": {"root": r"C:\elsewhere\unified-authority"}}, "not in the run's runtime root"),
-    ({"readback": {"database": r"C:\elsewhere\cells.sqlite"}}, "read-back database lies outside the run"),
-    ("no-current", "CURRENT in the run's root does not select the provisioned graph"),
-])
-def test_a_provisioning_read_back_that_does_not_match_refuses_the_spawn(tmp_path, change, expected):
-    owner, plan = _gated(tmp_path)
-    desktop = _Desktop()
-    if change == "no-current":
-        (Path(plan["runtime_root"]) / "CURRENT").unlink()
-        change = {}
-    with pytest.raises(owner.OwnerRefused) as refused:
-        _launch(owner, plan, desktop, _runner(owner, plan, **change))
-    assert any(problem.startswith("provisioning read-back: ") and expected in problem
-               for problem in refused.value.problems), refused.value.problems
-    assert desktop.spawned == []
 
 
-@pytest.mark.parametrize("drift, expected", [
-    ("env", "the spawn environment points elsewhere"),
-    ("port", "not the pinned ports"),
-    ("root", "not the run's runtime root"),
-    ("taken", "is already taken"),
-])
-def test_an_endpoint_that_is_not_pinned_at_the_spawn_refuses_it(tmp_path, drift, expected):
-    owner, plan = _gated(tmp_path)
-    desktop, port_free = _Desktop(), (lambda port: True)
-    runner = _runner(owner, plan)
-    if drift == "env":
-        plan["env"]["ARCHHUB_COORDINATION_ENDPOINT"] = "http://127.0.0.1:8474/coordination"
-        runner = _runner(owner, plan, endpoint=plan["endpoint"])    # even if the plan read had passed
-    elif drift == "port":
-        plan['env']['ARCHHUB_TEST_HTTP_PORT'] = '8475'
-    elif drift == "root":
-        plan['env']['ARCHHUB_TEST_STATE_DIR'] = os.environ.get('LOCALAPPDATA', r'C:\outside')
-    else:
-        port_free = lambda port: port != plan["coordination_port"]
-    with pytest.raises(owner.OwnerRefused) as refused:
-        _launch(owner, plan, desktop, runner, port_free=port_free)
-    assert any(problem.startswith("pinned endpoint: ") and expected in problem
-               for problem in refused.value.problems), refused.value.problems
-    assert desktop.spawned == []
 
 
-def test_the_owner_spawns_once_after_every_gate_and_is_accepted_only_on_its_own_graph(tmp_path):
-    owner, plan = _gated(tmp_path)
-    desktop, calls = _Desktop(), []
-    record = _launch(owner, plan, desktop, _runner(owner, plan, calls=calls))
-    assert [owner._RESOLVE in c for c in calls] == [True, False, False] and owner._READBACK in calls[2]
-    assert len(desktop.spawned) == 1 and desktop.spawned[0][1] is plan["env"]
-    assert record["graph_id"] == GRAPH and record["pid"] == 4242 and record["endpoint"] == plan["endpoint"]
-    with pytest.raises(owner.OwnerRefused, match="serves 'other', not the provisioned"):
-        _launch(owner, plan, _Desktop(), _runner(owner, plan), health=lambda port: {"ok": True, "graph_id": "other"})
-    def silent(port):
-        raise ConnectionRefusedError("nothing listens")
-    with pytest.raises(owner.OwnerRefused, match="did not answer /health"):
-        _launch(owner, plan, _Desktop(), _runner(owner, plan), health=silent, health_seconds=1)
 
 
 def test_a_refused_owner_fails_the_run_with_its_reasons_in_the_report(tmp_path, monkeypatch):
@@ -626,60 +505,20 @@ def test_a_refused_owner_fails_the_run_with_its_reasons_in_the_report(tmp_path, 
     assert spawned == []                                               # the app never started
 
 
-@windows_only
-def test_the_real_provisioning_reads_back_from_inside_the_run(tmp_path):
-    owner, plan = _plan(tmp_path)
-    problems, graph_id = owner.provisioning_problems(plan, sys.executable, APP)
-    assert problems == [] and graph_id
-    assert (Path(plan["runtime_root"]) / "CURRENT").read_text(encoding="ascii").strip() == graph_id
-    (Path(plan["runtime_root"]) / "CURRENT").write_text("0" * len(graph_id), encoding="ascii")
-    read, error = owner._child_answer(subprocess.run, [sys.executable, "-B", "-c", owner._READBACK,
-                                                       str(APP)], plan["env"], 300)
-    assert read is None and error                                     # a foreign pointer does not open
 
 
 # (v6) The run-local agent proposal: Job-owned, the run's own descriptor, an answer or a typed error. --
 
-def test_the_agent_proposal_runs_job_owned_against_the_runs_own_descriptor(tmp_path):
-    rig = _rig()
-    calls = []
-
-    class Runner:
-        job_owned = True
-
-        def __call__(self, command, *, env=None, cwd=None, timeout=None):
-            calls.append((command, env, cwd, timeout))
-            return subprocess.CompletedProcess(command, 0, json.dumps({
-                "ok": True, "message_id": "m1", "state": "proposed", "work_created": False,
-                "grants_admitted": False}) + "\n", "")
-    env = {"LOCALAPPDATA": str(tmp_path / "LOCALAPPDATA"), 'APPDATA': str(tmp_path / "LOCALAPPDATA"), 'TEMP': str(tmp_path / "LOCALAPPDATA"), 'TMP': str(tmp_path / "LOCALAPPDATA")}
-    answer = rig.agent_propose(Runner(), Path("python.exe"), tmp_path / "app", tmp_path, env, "A proposal")
-    (command, given_env, cwd, timeout), = calls
-    assert command[2] == str(TOOL / "agent_propose.py") and command[3] == str(tmp_path / "app")
-    assert command[4] == str(tmp_path / "state" / "runtime-descriptor.json")   # this run's, never the founder's
-    assert command[6] == "A proposal" and given_env is env and cwd == str(tmp_path) and timeout == 180
-    assert answer["ok"] is True and answer["message_id"] == "m1" and answer["state"] == "proposed"
-    assert answer["external_session_id"] == command[5]
 
 
-def test_an_agent_that_did_not_propose_is_an_error_not_an_answer(tmp_path):
-    rig = _rig()
-
-    def refused(command, *, env=None, cwd=None, timeout=None):
-        return subprocess.CompletedProcess(command, 1, "", "existing runtime descriptor is unavailable")
-    answer = rig.agent_propose(refused, Path("python.exe"), tmp_path / "app", tmp_path, {}, "A proposal")
-    assert "ok" not in answer and "existing runtime descriptor is unavailable" in answer["error"]
 
 
-def test_smoke_declares_redo_and_the_proposal_steps_and_never_approves():
+def test_smoke_declares_current_file_owner_steps():
     declared = _node("import(%s).then(m => console.log(JSON.stringify(m.steps)))"
                      % json.dumps((TOOL / "scenarios" / "smoke.mjs").resolve().as_uri()))
-    for asked in ("redo the placement (Redo button)", "a run-local agent proposes a Work (native.work_propose)",
-                  "the Workshop shows the proposal as a card with Approve / Not now",
-                  "Not now leaves the proposal proposed"):
+    for asked in ("redo the placement (Redo button)", "open Settings > Workspaces",
+                  "Add the browsed folder as a workspace"):
         assert asked in declared
-    source = (TOOL / "scenarios" / "smoke.mjs").read_text(encoding="utf-8")
-    assert "clickText('Approve')" not in source and "'Approve')" not in source.replace("has('Approve')", "")
 
 
 # (v7) Saved conversations: the scenario's declared steps, and a row clicked only once enabled. --------
@@ -850,6 +689,9 @@ try{
 }finally{await browser.close();}
 '''
     environment = dict(os.environ)
+    environment.setdefault('PLAYWRIGHT_BROWSERS_PATH', subprocess.check_output(
+        ['node', '-p', "require('node:path').join(require('node:os').userInfo().homedir,'AppData/Local/ms-playwright')"],
+        text=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)).strip())
     for name in ('LOCALAPPDATA', 'APPDATA', 'TEMP', 'TMP', 'USERPROFILE', 'HOME'):
         environment[name] = str(tmp_path)
     result = subprocess.run([shutil.which('node'), '--input-type=module', '-e', program,
@@ -858,3 +700,16 @@ try{
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     assert result.returncode == 0, result.stdout + result.stderr
     print(result.stdout.strip())
+
+
+def test_flat_installed_owner_plan_needs_only_the_shipped_specification(tmp_path):
+    owner, source_plan = _plan(tmp_path)
+    installed = tmp_path / 'installed'
+    (installed / 'docs').mkdir(parents=True)
+    (installed / 'nodelang').mkdir()
+    (installed / 'docs/SPEC.md').write_text('isolated specification fixture', encoding='utf-8')
+    plan = owner.plan_graph_owner(Path(source_plan['run_dir']), source_plan['env'], repo=installed)
+    assert set(plan['sources']) == {'specification'}
+    assert plan['sources']['specification']['sha256'] == hashlib.sha256(
+        (installed / 'docs/SPEC.md').read_bytes()).hexdigest()
+    assert plan['service_args'] == ['-B', str(installed / 'nodelang/launcher.py')]

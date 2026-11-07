@@ -235,19 +235,18 @@ result = new Dictionary<string,object> {{"document",docId},
 
 def _watcher_call(host, request, *, instance=None, timeout_seconds: float = 30.0):
     from .clean_revit_adapter import broker_call, broker_sessions
-    from .universal_cell import InvalidCell
     if host not in {"Revit", "AutoCAD"}:
-        raise InvalidCell("Watcher supports Revit walls and AutoCAD lines")
+        raise ValueError("Watcher supports Revit walls and AutoCAD lines")
     service = "revit" if host == "Revit" else "acad"
     rows = [row for row in broker_sessions(service) if instance is None or row["port"] == instance]
     if len(rows) != 1:
-        raise InvalidCell("Choose exactly one available source host session")
+        raise ValueError("Choose exactly one available source host session")
     body = {"code":_watcher_script(host, request), "transaction_name":"ArchHub Watcher " + request["action"]}
     if host == "Revit" and request["action"] == "read":
         body["transaction"] = False   # a read opens no transaction in the model: nothing can be written or undone
     answer = broker_call(service, "/exec", body, port=rows[0]["port"], timeout=timeout_seconds)
     if answer.get("status") != "ok" or type(answer.get("result")) is not dict:
-        raise InvalidCell("Watcher source refused: " + str(answer.get("error") or "No geometry readback"))
+        raise ValueError("Watcher source refused: " + str(answer.get("error") or "No geometry readback"))
     return {**answer["result"], "host":host, "instance":rows[0]["port"]}
 
 

@@ -95,12 +95,21 @@ _OBSOLETE_ROOT_ENTRIES = frozenset({
 
 
 def _protected_file(path):
+    file_type = path.suffix.casefold().lstrip('.').partition('-')[0]
     return (path.suffix.lower() in ('.pem', '.key', '.dpapi', '.pfx', '.p12', '.kdbx',
                                    '.pdf', '.xlsx', '.xls', '.json', '.docx', '.csv')
+            or file_type in ('sqlite', 'sqlite3', 'db')
             or path.name.lower().startswith('.env')
             or any(re.search(r'credential|secret|token|password|^keys$|^auth[.-]', part, re.I)
                    for part in path.parts)
             or path.name.lower() == 'cloud.json')
+
+
+# Historical data cannot become cleanup input just because an older build listed it.
+for _entry in tuple(_OBSOLETE_ROOT_ENTRIES):
+    if _protected_file(Path(_entry)):
+        _OBSOLETE_ROOT_ENTRIES -= {_entry}
+        APP_FOLDER_OWNERS[_entry] = 'founder-owned data; never cleanup'
 
 
 def _cleanup_plain(path):
@@ -563,7 +572,13 @@ def _payload_files(app):
         for path in sorted(root.rglob("*")) if root.exists() else ():
             _plain(path)
             if (path.is_file() and "__pycache__" not in path.parts
+                    and not path.name.startswith(('cell_', 'universal_'))
+                    and not (name == 'nodelang' and path.stem in ('application_server', 'application_machine_transport',
+                                          'postgres_cell_journal', 'persistence', 'app_brain', 'canvas_graph_owner',
+                                          'core', 'laws_structure', 'laws_effect', 'laws_relation', 'laws_surface',
+                                          'laws_decision', 'serve_canvas', 'graph_api'))
                     and path.suffix.lower() not in (".pyc", ".pyo", ".sqlite3", ".db", ".key", ".pem")
+                    and path.suffix.casefold().lstrip('.').partition('-')[0] not in ('sqlite', 'sqlite3', 'db')
                     and not path.name.startswith(".env")):
                 yield path
 

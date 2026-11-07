@@ -11,7 +11,7 @@ const names=[...read('01.APP/nodelang/studio/studio.html').match(/const names = 
 const manifest=process.argv.includes('--compiled')?JSON.parse(read('01.APP/nodelang/studio/compiled/manifest.json')):null;
 if(manifest)for(const name of names){const f=manifest.files.find(f=>f.source===name);if(f?.source_sha256!==createHash('sha256').update(read('01.APP/nodelang/studio/'+name)).digest('hex'))throw Error('Stale compiled render input: '+name);}
 const scripts=names.map(name=>({name,code:(manifest?read('01.APP/nodelang/studio/compiled/'+manifest.files.find(f=>f.source===name).output):transformSync(read('01.APP/nodelang/studio/'+name),{loader:'jsx'}).code).replace(/window\.StudioLM\s*=\s*StudioLM;/,'window.SCREENS2={StudioLM,Frame,Home,Workspace,ChatsPanel,SystemSettingsNav,StatusBar,WsHeader,NodeCanvas,NodeRail,loadCatalogue,LM_HOSTS};window.StudioLM=StudioLM;')}));
-const themeSeed=Object.fromEntries([...read('01.APP/nodelang/universal_presentation_seed.py').match(/^THEME = \{([\s\S]*?)^\}/m)[1].matchAll(/'([^']+)':\s*'(#[0-9a-f]{6})'/g)].map(m=>[m[1],m[2]]));
+const themeSeed=Object.fromEntries([...read('01.APP/nodelang/settings_owner.py').match(/^THEME = \{([\s\S]*?)^\}/m)[1].matchAll(/'([^']+)':\s*'(#[0-9a-f]{6})'/g)].map(m=>[m[1],m[2]]));
 const fixture=plateFixture();
 const port=(id,label,t='elements',list=false)=>({id,label,t,list,connected:true,connectable:true});
 const node=(id,title,cat,x,y,w,ins=[],outs=[],extra={})=>({id,title,cat,x,y,w,ins,outs,live:true,application:false,params:[],...extra});

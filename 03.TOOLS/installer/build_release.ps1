@@ -81,6 +81,7 @@ $selectedInputs = @(
     'packaging/windows/publish_release.ps1', 'packaging/windows/check_update_offer.py',
     'package.json', 'packaging/compile_studio.cjs', 'packaging/preflight_imports.py',
     'tools/real_app_check/real_app_check.py', 'tools/real_app_check/profile_guard.py',
+    'tools/real_app_check/graph_owner.py',
     'app/secrets_store.py', 'app/credential_lock.py', 'app/__init__.py', 'bridges', 'archhub.ico',
     'packaging/windows/licenses/Node-v24.13.0-LICENSE.txt',
     'packaging/windows/licenses/ArchHub-components-MIT.txt',
@@ -173,6 +174,7 @@ function Get-SourceIdentity([string]$Path) {
 }
 
 function Test-CandidateInput([string]$Source, [string]$Path) {
+    if ($Path -cmatch '^nodelang/(?:.*/)?(?:cell_[^/]*|universal_[^/]*|application_server|application_machine_transport|postgres_cell_journal|persistence|app_brain|canvas_graph_owner|core|laws_structure|laws_effect|laws_relation|laws_surface|laws_decision|serve_canvas|graph_api)\.py$') { return $false }
     if ($Path -cnotmatch '^[A-Za-z0-9_][A-Za-z0-9_./-]*$') { return $false }
     foreach ($part in $Path.Split('/')) {
         if (-not $part -or $part.StartsWith('.') -or $part.EndsWith('.') -or
@@ -195,6 +197,7 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
             'packaging/windows/betterleaks-pin.json', 'packaging/windows/stage_betterleaks.py',
             'package.json', 'packaging/compile_studio.cjs', 'packaging/preflight_imports.py',
     'tools/real_app_check/real_app_check.py', 'tools/real_app_check/profile_guard.py',
+    'tools/real_app_check/graph_owner.py',
             'installer/ArchHub.iss', 'installer/ArchHub.bat', 'installer/ArchHub.vbs', 'installer/README.md', 'nodelang/README.md', 'app/README.md',
             'installer/legacy_sweep.iss', 'installer/legacy_doc_files.iss', 'installer/legacy_v1_files.iss', 'installer/host_file_staging.iss',
             'installer/build_release.ps1', 'packaging/windows/Test-SourcePortability.ps1',

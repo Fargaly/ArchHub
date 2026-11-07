@@ -45,7 +45,6 @@ from pathlib import Path
 from typing import Callable, Mapping, Optional, Sequence
 from uuid import uuid4
 
-from .universal_cell import InvalidCell
 from .model_execution_broker import (
     OPENCODE_DEFAULT_CLI_MODEL,
     opencode_free_cli_model,
@@ -463,7 +462,7 @@ def find_assistant(executable: str, environ=None) -> Optional[str]:
     return None
 
 
-class ModelRouteRefused(InvalidCell):
+class ModelRouteRefused(ValueError):
     """One short sentence about why no answer came, fit to show a person."""
 
     def __init__(self, message, *, reason_code="response_refused"):
@@ -619,7 +618,7 @@ _CREDENTIAL_ERRORS = {
 }
 
 
-class ProviderCredentialError(InvalidCell):
+class ProviderCredentialError(ValueError):
     """A fixed public error; storage/provider exception text must never escape."""
 
     def __init__(self, reason_code):
@@ -936,7 +935,6 @@ def provider_catalogue() -> list:
     (cell_model_providers.ADMITTED_PROVIDERS) that have no route here. The
     generic "local" admission is LM Studio and Ollama, already listed.
     """
-    from .cell_model_providers import ADMITTED_PROVIDERS
 
     titles = {"cloud": "ArchHub cloud"}
     records = [{"id": family, "title": titles.get(family, _PROVIDER_NAMES[family]),
@@ -945,7 +943,7 @@ def provider_catalogue() -> list:
     # "local" is LM Studio and Ollama above; "cli-subscription" is each CLI below.
     known = {record["id"] for record in records} | {"local", "cli-subscription"}
     records.extend({"id": name, "title": description, "capabilities": ["text"], "local": False}
-                   for name, description in ADMITTED_PROVIDERS.items() if name not in known)
+                   for name, description in _PROVIDER_NAMES.items() if name not in known)
     records.extend({"id": row_id, "title": name, "capabilities": ["text"], "local": True}
                    for row_id, name, _executable in SUBSCRIPTION_CLIS)
     return records
@@ -1022,10 +1020,9 @@ def provider_rows(*, environ=None, secrets_loader=None, cloud_session=None,
                          "state": "no key", "source": "", "sets": plan["variable"]})
     # Providers the graph registry admits (cell_model_providers) whose key
     # this machine holds but this build has no route for.
-    from .cell_model_providers import ADMITTED_PROVIDERS
     through_openrouter = any(
         row["id"] == "openrouter" and row["state"] == "keyed" for row in rows)
-    for name, description in ADMITTED_PROVIDERS.items():
+    for name, description in _PROVIDER_NAMES.items():
         if name in _KEY_PLAN or name in ("local", "cli-subscription"):
             continue
         stored = str(loader(name) or "").strip()
@@ -1281,7 +1278,7 @@ def composer_readiness(route: object, *, environ=None, secrets_loader=None,
         return answer("no_model", "", READINESS_COPY["no_model"], _READINESS_ACTIONS["no_model"])
     try:
         destination = resolve_model_route(text)
-    except (ModelRouteRefused, InvalidCell):
+    except (ModelRouteRefused, ValueError):
         return answer("invalid", text, READINESS_COPY["invalid"], _READINESS_ACTIONS["invalid"])
     if destination.family == "local-cli":
         assistant = destination.url.split(":", 1)[1]

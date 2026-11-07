@@ -263,7 +263,10 @@ if __name__ == '__main__':
 
 from nodelang import workshop_mailbox as mb
 import pytest
-from test_newapp_mailbox import peer
+def peer(pid=None):
+    import psutil
+    process = psutil.Process(pid or os.getpid())
+    return SimpleNamespace(pid=process.pid, created_at=process.create_time(), cwd=os.getcwd())
 
 
 @pytest.fixture

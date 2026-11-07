@@ -13,7 +13,6 @@ import tempfile
 import threading
 import zipfile
 
-from .universal_cell import InvalidCell
 
 PREFIX = "app:host-package-review:"
 SCRIPT_SUFFIXES = {".py", ".js", ".ps1", ".sh", ".exe", ".dll"}
@@ -31,59 +30,59 @@ def _digest(value):
 def _path(value):
     if (type(value) is not str or not value or "\\" in value or ":" in value or "\0" in value
             or PurePosixPath(value).is_absolute() or any(p in {"", ".", ".."} for p in value.split("/"))):
-        raise InvalidCell("Package paths must stay inside their bundle")
+        raise ValueError("Package paths must stay inside their bundle")
     if PurePosixPath(value).name.lower() in {".env", "cloud.json"} or value.lower().endswith((".key", ".pem")):
-        raise InvalidCell("Credentials belong in the account vault, never a package")
+        raise ValueError("Credentials belong in the account vault, never a package")
     return value
 
 
 def _files(values, *, byte_budget: int = 262144):
     if type(values) is not dict or len(values) > 64:
-        raise InvalidCell("A package holds at most 64 contained files")
+        raise ValueError("A package holds at most 64 contained files")
     total = 0
     result = {}
     for name, data in values.items():
         name = _path(name)
         if type(data) is not str:
-            raise InvalidCell("Uploaded package files must be UTF-8 text")
+            raise ValueError("Uploaded package files must be UTF-8 text")
         total += len(data.encode())
         if total > byte_budget:
-            raise InvalidCell("Package content exceeds 256 KiB")
+            raise ValueError("Package content exceeds 256 KiB")
         result[name] = data
     if len({name.casefold() for name in result}) != len(result):
-        raise InvalidCell("Package paths must be unique on every host")
+        raise ValueError("Package paths must be unique on every host")
     return result
 
 
 def _setting(schema, value):
     if schema.get("sensitive") or schema.get("secret"):
-        raise InvalidCell("Sensitive settings use the account vault, never this package")
+        raise ValueError("Sensitive settings use the account vault, never this package")
     kind = schema.get("type", "string")
     valid = ((kind == "boolean" and type(value) is bool)
         or (kind == "number" and type(value) in (int, float) and math.isfinite(value))
         or (kind in {"string", "text"} and type(value) is str and len(value) <= 2000))
     if not valid or ("enum" in schema and value not in schema["enum"]):
-        raise InvalidCell("Configuration must match the declared type and options")
+        raise ValueError("Configuration must match the declared type and options")
     if kind == "number":
         limits = [schema.get("min", -math.inf), schema.get("max", math.inf)]
         if any(type(v) not in (int, float) or math.isnan(v) for v in limits) or not limits[0] <= value <= limits[1]:
-            raise InvalidCell("Configuration is outside the declared numeric range")
+            raise ValueError("Configuration is outside the declared numeric range")
     return value
 
 
 def _bundle(upload, *, byte_budget: int = 262144, record_budget: int = 524288):
     if type(upload) is not dict or set(upload) != {"name", "base64"}:
-        raise InvalidCell("Choose a local MCPB or JSON package")
+        raise ValueError("Choose a local MCPB or JSON package")
     if type(upload["name"]) is not str or type(upload["base64"]) is not str or len(upload["base64"]) > record_budget:
-        raise InvalidCell("Package upload exceeds its bounded content budget")
+        raise ValueError("Package upload exceeds its bounded content budget")
     try:
         raw = base64.b64decode(upload["base64"], validate=True)
         if len(raw) > byte_budget:
-            raise InvalidCell("Package upload exceeds 256 KiB")
+            raise ValueError("Package upload exceeds 256 KiB")
         if upload["name"].lower().endswith(".json"):
             value = json.loads(raw)
             if type(value) is not dict:
-                raise InvalidCell("Manifest must be a JSON object")
+                raise ValueError("Manifest must be a JSON object")
             manifest, files = value.get("manifest", value), _files(value.get("files", {}))
             files["manifest.json"] = raw.decode("utf-8")
         elif upload["name"].lower().endswith(".mcpb"):
@@ -91,49 +90,49 @@ def _bundle(upload, *, byte_budget: int = 262144, record_budget: int = 524288):
             with zipfile.ZipFile(io.BytesIO(raw)) as archive:
                 entries = archive.infolist()
                 if len(entries) > 64 or sum(e.file_size for e in entries) > byte_budget:
-                    raise InvalidCell("Expanded package exceeds its file or byte budget")
+                    raise ValueError("Expanded package exceeds its file or byte budget")
                 for entry in entries:
                     if entry.is_dir():
                         _path(entry.filename.rstrip("/"))
                         continue
                     name = _path(entry.filename)
                     if stat.S_ISLNK(entry.external_attr >> 16) or name in files or entry.flag_bits & 1:
-                        raise InvalidCell("Linked, encrypted and duplicate package files are refused")
+                        raise ValueError("Linked, encrypted and duplicate package files are refused")
                     files[name] = archive.read(entry).decode("utf-8")
             files = _files(files)
             manifest = json.loads(files["manifest.json"])
         else:
-            raise InvalidCell("Choose a local .mcpb or .json package")
+            raise ValueError("Choose a local .mcpb or .json package")
     except (ValueError, KeyError, UnicodeError, zipfile.BadZipFile, RuntimeError) as error:
-        raise InvalidCell("Package cannot be read as a bounded UTF-8 manifest and files") from error
+        raise ValueError("Package cannot be read as a bounded UTF-8 manifest and files") from error
     if (type(manifest) is not dict or manifest.get("manifest_version") not in {"0.1", "0.2", "0.3"}
             or any(type(manifest.get(k)) is not str or not manifest[k].strip() for k in ("name", "version", "description"))):
-        raise InvalidCell("MCPB manifest needs its version, name, package version and description")
+        raise ValueError("MCPB manifest needs its version, name, package version and description")
     server = manifest.get("server")
     if (type(server) is not dict or server.get("type") not in {"python", "node"}
             or server.get("entry_point") not in files or type(server.get("mcp_config")) is not dict):
-        raise InvalidCell("Bundle must contain its declared Python or Node entry point and MCP configuration")
+        raise ValueError("Bundle must contain its declared Python or Node entry point and MCP configuration")
     config = server["mcp_config"]
     if (type(config.get("command")) is not str or not config["command"].strip()
             or type(config.get("args", [])) is not list or any(type(a) is not str for a in config.get("args", []))
             or type(config.get("env", {})) is not dict):
-        raise InvalidCell("MCP command, arguments and environment must be declared values")
+        raise ValueError("MCP command, arguments and environment must be declared values")
     if config.get("env"):
-        raise InvalidCell("Environment settings require a supported account-vault binding; no literal secrets are stored")
+        raise ValueError("Environment settings require a supported account-vault binding; no literal secrets are stored")
     if re.search(r"omniroute|lov0u", manifest["name"], re.I):
-        raise InvalidCell("This connector is unavailable under the existing tool policy")
+        raise ValueError("This connector is unavailable under the existing tool policy")
     tools = manifest.get("tools", [])
     schemas = manifest.get("user_config", {})
     if (type(tools) is not list or len(tools) > 64 or any(
             not (type(t) is str and t.strip() or type(t) is dict and type(t.get("name")) is str and t["name"].strip()) for t in tools)
             or type(schemas) is not dict or len(schemas) > 64):
-        raise InvalidCell("Bundle tools and typed settings must be declared")
+        raise ValueError("Bundle tools and typed settings must be declared")
     values = {}
     for key, schema in schemas.items():
         if type(schema) is not dict or type(key) is not str or not key:
-            raise InvalidCell("Configuration entries must be named typed declarations")
+            raise ValueError("Configuration entries must be named typed declarations")
         if schema.get("sensitive") or re.search(r"key|token|secret|password", key, re.I):
-            raise InvalidCell("Bundle secret settings require a supported account-vault binding")
+            raise ValueError("Bundle secret settings require a supported account-vault binding")
         kind = schema.get("type", "string")
         values[key] = _setting(schema, schema.get("default", False if kind == "boolean" else 0 if kind == "number" else ""))
     return {"kind":"connector", "manifest":manifest, "files":files}, values
@@ -166,12 +165,12 @@ class HostSkillOwner:
     def _record(self, root):
         value = self._file()["packages"].get(root)
         if value is None:
-            raise InvalidCell("Package is not in this ArchHub")
+            raise ValueError("Package is not in this ArchHub")
         return value
 
     def _save(self, root, value, *, record_budget: int = 524288):
         if len(_encoded(value)) > record_budget:
-            raise InvalidCell("Package record exceeds 512 KiB; existing state is unchanged")
+            raise ValueError("Package record exceeds 512 KiB; existing state is unchanged")
         with _LOCK:
             data = self._file()
             data["packages"][root] = value
@@ -194,7 +193,7 @@ class HostSkillOwner:
         record = {"owner":self.owner, "package":package, "digest":digest, "settings":settings,
             "enabled":False, "installed":False, "audit":None, "proposals":[], "activeDigest":None, "descriptor":None}
         if len(_encoded(record)) > record_budget:
-            raise InvalidCell("Package record exceeds 512 KiB")
+            raise ValueError("Package record exceeds 512 KiB")
         root = "app:host-package:" + digest[:24]
         self._save(root, record)
         return self._row(root, record)
@@ -204,23 +203,23 @@ class HostSkillOwner:
         if (type(value) is not dict or set(value) - {"host", "name", "text", "files"}
                 or type(value.get("host")) is not str or not value["host"].strip() or len(value["host"]) > 128
                 or type(value.get("text")) is not str or len(value["text"].encode()) > byte_budget):
-            raise InvalidCell("Choose a host and bounded SKILL.md instructions")
+            raise ValueError("Choose a host and bounded SKILL.md instructions")
         match = re.match(r"\A---\r?\n(.*?)\r?\n---(?:\r?\n|$)(.*)\Z", value["text"], re.S)
         if not match:
-            raise InvalidCell("SKILL.md needs YAML name and description frontmatter")
+            raise ValueError("SKILL.md needs YAML name and description frontmatter")
         try:
             if any(isinstance(token, (yaml.AliasToken, yaml.AnchorToken)) for token in yaml.scan(match[1])):
-                raise InvalidCell("Skill manifests cannot expand YAML anchors or aliases")
+                raise ValueError("Skill manifests cannot expand YAML anchors or aliases")
             manifest = yaml.safe_load(match[1])
             _encoded(manifest)
         except (yaml.YAMLError, ValueError, TypeError, RecursionError) as error:
-            raise InvalidCell("Skill manifest is invalid YAML") from error
+            raise ValueError("Skill manifest is invalid YAML") from error
         if (type(manifest) is not dict or any(type(manifest.get(k)) is not str or not manifest[k].strip()
                 for k in ("name", "description")) or not match[2].strip()):
-            raise InvalidCell("Skill manifest needs name, description and instructions")
+            raise ValueError("Skill manifest needs name, description and instructions")
         files = _files(value.get("files", {}))
         if "SKILL.md" in files:
-            raise InvalidCell("SKILL.md must be supplied exactly once")
+            raise ValueError("SKILL.md must be supplied exactly once")
         files["SKILL.md"] = value["text"]
         files = _files(files)
         return self._import({"kind":"skill", "manifest":manifest, "host":value["host"], "files":files}, {})
@@ -258,7 +257,7 @@ class HostSkillOwner:
         record = self._record(root)
         schema = record["package"]["manifest"].get("user_config", {}).get(key)
         if record["package"]["kind"] != "connector" or schema is None:
-            raise InvalidCell("Choose a declared bundle setting")
+            raise ValueError("Choose a declared bundle setting")
         value = _setting(schema, value)
         if record["settings"][key] != value:
             record["settings"][key] = value
@@ -281,9 +280,9 @@ class HostSkillOwner:
     def request(self, root, action):
         record = self._record(root)
         if action not in {"enable", "install"} or (action == "enable") != (record["package"]["kind"] == "skill"):
-            raise InvalidCell("Choose the matching package activation")
+            raise ValueError("Choose the matching package activation")
         if record["digest"] != _digest(record["package"]):
-            raise InvalidCell("Package digest changed; import and review the new content")
+            raise ValueError("Package digest changed; import and review the new content")
         if not record["audit"] or record["audit"]["digest"] != record["digest"]:
             self.audit(root)
             record = self._record(root)
@@ -295,7 +294,7 @@ class HostSkillOwner:
                 return self.card(proposal["id"])
         identity = PREFIX+_digest([self.owner, root, self.request_id])
         if any(p["id"] == identity for p in record["proposals"]):
-            raise InvalidCell("This request identity names a closed approval; use a fresh request")
+            raise ValueError("This request identity names a closed approval; use a fresh request")
         record["proposals"].append({"id":identity, "action":action,
             "material":material, "input_digest":_digest(material), "status":"pending"})
         self._save(root, record)
@@ -303,12 +302,12 @@ class HostSkillOwner:
 
     def set_enabled(self, root, enabled):
         if type(enabled) is not bool:
-            raise InvalidCell("Skill enabled must be a boolean")
+            raise ValueError("Skill enabled must be a boolean")
         if enabled:
             return self.request(root, "enable")
         record = self._record(root)
         if record["package"]["kind"] != "skill":
-            raise InvalidCell("Choose a host skill")
+            raise ValueError("Choose a host skill")
         record.update(enabled=False, activeDigest=None)
         for proposal in record["proposals"]:
             if proposal["status"] == "pending":
@@ -322,7 +321,7 @@ class HostSkillOwner:
             for proposal in record["proposals"]:
                 if proposal["id"] == identity:
                     return root, record, proposal
-        raise InvalidCell("Approval is not in this ArchHub")
+        raise ValueError("Approval is not in this ArchHub")
 
     def card(self, identity):
         root, record, proposal = self._proposal(identity)
@@ -344,11 +343,11 @@ class HostSkillOwner:
         root, record, proposal = self._proposal(identity)
         if (decision not in {"approve", "deny"} or digest != proposal["input_digest"]
                 or digest != _digest(self._material(record)) or record["digest"] != _digest(record["package"])):
-            raise InvalidCell("Package or configuration digest changed; review a fresh approval")
+            raise ValueError("Package or configuration digest changed; review a fresh approval")
         if proposal["status"] == "approved" and decision == "approve":
             return self.card(identity)
         if proposal["status"] != "pending":
-            raise InvalidCell("This package approval is closed")
+            raise ValueError("This package approval is closed")
         if decision == "approve":
             descriptor = record["package"]["files"].get("SKILL.md") if proposal["action"] == "enable" else json.dumps(
                 {"server":record["package"]["manifest"]["server"], "tools":record["package"]["manifest"].get("tools", []),

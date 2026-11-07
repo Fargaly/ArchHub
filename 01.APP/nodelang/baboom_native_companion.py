@@ -7,6 +7,8 @@ holder gates have cleared.
 """
 from __future__ import annotations
 
+from .settings_owner import THEME
+
 from collections.abc import Callable, Iterable, Mapping
 import ctypes
 import hashlib
@@ -251,7 +253,6 @@ def render_baboom_native_sprite(
     # fault is gone. The two live colours come from the product THEME.
     if orb is not None and state in ("lit", "down"):
         from PyQt6.QtGui import QColor, QRadialGradient
-        from .universal_presentation_seed import THEME
         colour = QColor(THEME["cyan"] if state == "lit" else THEME["err"])
         radius = max(6, round(image.width() * 0.09))
         glow = QRadialGradient(orb[0], orb[1], radius)
@@ -287,7 +288,7 @@ def baboom_execution_error_text(error: BaseException) -> str:
     interrupt had failed to create a task (real-app acceptance 2026-10-01).
     Any other failure stays generic: its text was not written for him.
     """
-    from .application_machine_transport import MachineResponseError
+    from .baboom_native_host import MachineResponseError
     text = str(error).strip() if isinstance(error, MachineResponseError) else ""
     return text[:400] if text else _BABOOM_EXECUTION_FAILED
 
@@ -583,7 +584,6 @@ FACE_MAX_CHARS = 72
 # read), the disabled row is THEME['ink_soft'] (5.54:1) not a faint grey, and a
 # drop shadow lifts the menu instead of a 1px hairline border.
 def _compose_menu_style() -> str:
-    from .universal_presentation_seed import THEME
     return (
         "QMenu {{ background: {bg}; color: {ink}; border: none;"
         " border-radius: 8px; padding: 5px; }}"
@@ -850,8 +850,7 @@ def create_baboom_native_companion_window(
             # module load). No colour is hand-typed in this file. THEME['bg_raised']
             # is the one companion surface -- report, reply box and act panel -- so
             # nothing behind the words is ever the desktop showing through.
-            from .universal_presentation_seed import THEME as _theme
-            self._theme = _theme
+            self._theme = THEME
             self._report = QLabel(self)
             self._report.setFont(self._companion_font)
             self._report.setWordWrap(True)
@@ -861,7 +860,7 @@ def create_baboom_native_companion_window(
             self._report.setStyleSheet(
                 "background:%s;color:%s;border:0;padding:12px;"
                 "border-radius:0;font-size:13px;line-height:20px;"
-                % (_theme["bg_raised"], _theme["ink"])
+                % (THEME["bg_raised"], THEME["ink"])
             )
             self._input = QLineEdit(self)
             self._input.setFont(self._companion_font)
@@ -869,7 +868,7 @@ def create_baboom_native_companion_window(
             self._input.setStyleSheet(
                 "background:%s;color:%s;border:0;padding:12px;"
                 "border-radius:0;font-size:13px;"
-                % (_theme["bg_raised"], _theme["ink"])
+                % (THEME["bg_raised"], THEME["ink"])
             )
             self._input.returnPressed.connect(self._submit_input)
             self._input.installEventFilter(self)
@@ -878,8 +877,8 @@ def create_baboom_native_companion_window(
             # the accessible name carries "Talk" for the screen reader. It turns
             # accent while recording so the founder can see it is listening.
             from PyQt6.QtCore import QSize
-            self._talk_idle_icon = _baboom_mic_icon(_theme["ink_muted"])
-            self._talk_recording_icon = _baboom_mic_icon(_theme["accent"])
+            self._talk_idle_icon = _baboom_mic_icon(THEME["ink_muted"])
+            self._talk_recording_icon = _baboom_mic_icon(THEME["accent"])
             self._talk = QToolButton(self)
             self._talk.setText("")
             self._talk.setIcon(self._talk_idle_icon)
@@ -896,14 +895,14 @@ def create_baboom_native_companion_window(
             self._send.setAccessibleName("Ask ArchHub")
             self._send.setToolTip("Ask ArchHub · Enter")
             self._send.setStyleSheet("background:%s;color:%s;border:0;padding:0 8px;font-size:13px;font-weight:600;"
-                % (_theme["accent"], _theme["on_fill"]))
+                % (THEME["accent"], THEME["on_fill"]))
             self._send.clicked.connect(self._submit_input)
             self._input.textChanged.connect(lambda text: self._send.setEnabled(bool(text.strip()) and not self._busy))
             self._send.setEnabled(False)
             self._send.hide()
             self._connection_status = QLabel("", self)
             self._connection_status.setAccessibleName("ArchHub connection status")
-            self._connection_status.setStyleSheet("background:%s;border-radius:4px;" % _theme["warn"])
+            self._connection_status.setStyleSheet("background:%s;border-radius:4px;" % THEME["warn"])
             self._connection_status.hide()
             # The confirm control carries the action in words, not a glyph, and a
             # labelled Cancel sits beside it so the founder always reads what he is
@@ -917,7 +916,7 @@ def create_baboom_native_companion_window(
             self._confirm.setStyleSheet(
                 "background:%s;color:%s;border:0;border-radius:4px;padding:0 8px;"
                 "font-size:11px;font-weight:600;"
-                % (_theme["accent"], _theme["on_fill"])
+                % (THEME["accent"], THEME["on_fill"])
             )
             self._confirm.clicked.connect(self._show_approval)
             self._confirm.hide()
@@ -927,7 +926,7 @@ def create_baboom_native_companion_window(
             self._cancel.setAccessibleName("Cancel the BABOOM action")
             self._cancel.setStyleSheet(
                 "background:transparent;color:%s;border:0;padding:0 6px;"
-                "font-size:11px;" % _theme["ink_muted"]
+                "font-size:11px;" % THEME["ink_muted"]
             )
             self._cancel.clicked.connect(self._close_interaction)
             self._cancel.hide()
@@ -940,7 +939,7 @@ def create_baboom_native_companion_window(
             self._state_bubble.linkActivated.connect(lambda _link: self._open_work_task())
             self._state_bubble.setStyleSheet(
                 "background:%s;color:%s;border:0;padding:4px;font-size:11px;"
-                % (_theme["bg_raised"], _theme["ink"])
+                % (THEME["bg_raised"], THEME["ink"])
             )
             self._state_bubble.hide()
             self._state_badge = QLabel("!", self)
@@ -948,7 +947,7 @@ def create_baboom_native_companion_window(
             self._state_badge.setAccessibleName("BABOOM needs you")
             self._state_badge.setStyleSheet(
                 "background:%s;color:%s;border:0;border-radius:8px;font-size:11px;font-weight:600;"
-                % (_theme["accent"], _theme["on_fill"])
+                % (THEME["accent"], THEME["on_fill"])
             )
             self._state_badge.hide()
             self._skill_run = QToolButton(self)
@@ -958,7 +957,7 @@ def create_baboom_native_companion_window(
             self._skill_run.setStyleSheet(
                 "background:%s;color:%s;border:0;border-radius:4px;padding:0 8px;"
                 "font-size:11px;font-weight:600;"
-                % (_theme["accent"], _theme["on_fill"])
+                % (THEME["accent"], THEME["on_fill"])
             )
             self._skill_run.clicked.connect(self._run_offered_skill)
             self._skill_run.hide()
@@ -2078,7 +2077,7 @@ def create_baboom_native_companion_window(
                     result: Mapping[str, object] = controller.respond(utterance,
                         on_progress=lambda step: self.progress_ready.emit((generation, step)))
                 except Exception as error:
-                    from .application_machine_transport import MachineResponseError
+                    from .baboom_native_host import MachineResponseError
                     result = {
                         "response": {
                             "kind": "unavailable",

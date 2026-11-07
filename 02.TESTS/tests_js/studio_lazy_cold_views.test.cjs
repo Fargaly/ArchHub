@@ -23,7 +23,7 @@ async function openSkills(ui) {
 const read = name => fs.readFileSync(path.join(root, name), 'utf8');
 const html = read('01.APP/nodelang/studio/studio.html');
 
-const themeText = read('01.APP/nodelang/universal_presentation_seed.py').match(/^THEME = \{([\s\S]*?)^\}/m)[1];
+const themeText = read('01.APP/nodelang/settings_owner.py').match(/^THEME = \{([\s\S]*?)^\}/m)[1];
 const theme = Object.fromEntries([...themeText.matchAll(/'([^']+)':\s*'(#[0-9a-f]{6})'/g)].map(row => [row[1], row[2]]));
 const fallbackCanvas = {ok:true, graph_id:'cold-application', application_root:'cold-application',
   root:'cold-scope', canvas_root:'cold-scope', scope:{current:'cold-scope', current_label:'Cold graph',

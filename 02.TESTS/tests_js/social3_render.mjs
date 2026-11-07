@@ -9,7 +9,7 @@ const manifest = JSON.parse(read('01.APP/nodelang/studio/compiled/manifest.json'
 for(const source of ['studio-lm.jsx','studio-params.jsx']) {
   assert.equal(manifest.files.find(f=>f.source===source)?.source_sha256,createHash('sha256').update(read('01.APP/nodelang/studio/'+source)).digest('hex'),'Build must match '+source);
 }
-const seedText=read('01.APP/nodelang/universal_presentation_seed.py').match(/^THEME = \{([\s\S]*?)^\}/m)[1];
+const seedText=read('01.APP/nodelang/settings_owner.py').match(/^THEME = \{([\s\S]*?)^\}/m)[1];
 const seed=Object.fromEntries([...seedText.matchAll(/'([^']+)':\s*'(#[0-9a-f]{6})'/g)].map(m=>[m[1],m[2]]));
 const browser=await chromium.launch({headless:true});
 try {

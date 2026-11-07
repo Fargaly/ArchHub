@@ -21,14 +21,15 @@ def profile(tmp_path, monkeypatch):
 
 def seed(state):
     junk = ['candidate-20.log', 'live-20.stdout.log', 'settings.json.bak_old',
-            'version.json.bak_old', 'node-native-wip.next-25.json.gz',
-            'authority-bridge-headless.json.gz.universal.sqlite3', 'node-native-wip.json.gz.universal.sqlite3']
+            'version.json.bak_old', 'node-native-wip.next-25.json.gz']
     for name in junk:
         (state / name).write_bytes(b'old build')
     for name in ['_syncrung_backup', '_deploy_backup', '.retired-v1-docs', 'preflight', 'packages', 'cache']:
         (state / name).mkdir()
         (state / name / 'old').write_bytes(b'retired')
-    kept = {'settings/preferences.json': b'{"theme":"dark"}',
+    kept = {'authority-bridge-headless.json.gz.universal.sqlite3': b'existing journal',
+            'node-native-wip.json.gz.universal.sqlite3': b'existing journal',
+            'settings/preferences.json': b'{"theme":"dark"}',
             'workshop/messages.sqlite3': b'workshop bytes',
             'sessions/broker.json': b'broker bytes',
             'sessions-files/unknown-user-data.txt': b'user data',

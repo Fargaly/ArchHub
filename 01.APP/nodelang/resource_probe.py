@@ -60,10 +60,10 @@ def run_resource_probe(spec):
         return _result(False, locator, "resource locator is missing")
 
     if locator == "authority://application-brain":
-        from . import app_brain
+        from . import brain_files
         try:
-            facts = app_brain.health()["facts"]
-        except app_brain.BrainUnavailable as refusal:
+            facts = brain_files.call("brain.health", {})["facts"]
+        except (ValueError, OSError) as refusal:
             return _result(False, locator, str(refusal))
         return _result(True, locator, "application Brain holds %d fact(s)" % facts)
 

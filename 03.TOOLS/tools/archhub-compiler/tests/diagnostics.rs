@@ -561,3 +561,17 @@ codes = {'response timeout invalid':'invalid'}
     assert!(has(&report("policy.py", "archive_timeout = 5
 "), "E0007"));
 }
+
+#[test]
+fn shipped_asgi_dispatcher_remains_live_without_a_local_http_client() {
+    let source = "from fastapi import FastAPI\napp = FastAPI()\n@app.get('/public')\ndef read():\n    return 1\n";
+    assert!(!has(&report("cloud_backend/main.py", source), "E0002"));
+    assert!(has(&report("nodelang/unreachable.py", source), "E0002"));
+    assert!(has(&report("cloud_backend/main.py", "ROUTES = [('GET', '/orphan')]\n"), "E0002"));
+    let shadowed = source.replace("@app.get", "app = object()\n@app.get");
+    assert!(has(&report("cloud_backend/main.py", &shadowed), "E0002"));
+    let nested = "from fastapi import FastAPI\napp = FastAPI()\ndef never_called():\n    @app.get('/hidden')\n    def hidden():\n        return 1\n";
+    assert!(has(&report("cloud_backend/main.py", nested), "E0002"));
+    let duplicated = format!("{source}\n@app.get('/public')\ndef another():\n    return 2\n");
+    assert!(has(&report("cloud_backend/main.py", &duplicated), "E0001"));
+}

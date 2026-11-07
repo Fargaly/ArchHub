@@ -32,7 +32,7 @@ def main():
     import psutil
     from nodelang import host_brokers, workshop_tasks as tasks
     from nodelang.workshop_mailbox import application_history, call, profile_database, ROOM, CATEGORY
-    from nodelang.application_machine_transport import MachinePipePeer
+    from types import SimpleNamespace as MachinePipePeer
     from nodelang.nograph_server import NoGraphServer, r_agents_canvas
     from test_task_session_roundtrip import _Studio
     host_brokers._com_probe=lambda program:False

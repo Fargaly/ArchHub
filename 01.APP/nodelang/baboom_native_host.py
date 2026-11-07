@@ -18,13 +18,120 @@ from contextlib import contextmanager
 from types import MappingProxyType
 from typing import Callable, Mapping, Protocol
 
-from .cell_activity import FOREGROUND_APP_LABELS
-from .application_machine_transport import (
-    MachineNoResponse,
-    MachineTransportError,
-    validate_baboom_native_frame_payload,
+
+
+FOREGROUND_APP_LABELS = (
+    "Codex",
+    "Revit",
+    "AutoCAD",
+    "3ds Max",
+    "Rhino",
+    "Excel",
+    "PowerPoint",
+    "Word",
+    "Browser",
+    "Files",
+    "VS Code",
+    "Cursor",
 )
 
+BABOOM_NATIVE_FRAME_PROJECTION = "app:baboom-native-frame:v2"
+
+BABOOM_NATIVE_REPORT_KIND = "steward-briefing"
+
+BABOOM_NATIVE_REPORT_SUMMARY = (
+    "Founder-local Work, Workshop, and attention briefing."
+)
+
+class MachineTransportError(RuntimeError):
+    """The runtime descriptor, pipe authentication, or request is invalid."""
+
+class MachineNoResponse(MachineTransportError):
+    """The request was sent and no answer came within the wait.
+
+    Final for every caller except BABOOM's first attach frame at boot, which
+    may ask again inside its bounded budget: the runtime refuses a second
+    enrollment of a bound identity, so a retry cannot mint a second session.
+    """
+
+def validate_baboom_native_frame_payload(
+    payload: object,
+    *,
+    now: float | None = None,
+) -> dict[str, object]:
+    """Validate one expiring, revision-coherent BABOOM projection frame."""
+    if type(payload) is not dict:
+        raise MachineTransportError("BABOOM native frame response is invalid")
+    result = payload
+    context = result.get("context")
+    directive = result.get("directive")
+    report = result.get("report")
+    revision = result.get("revision")
+    issued_at = result.get("issued_at")
+    expires_at = result.get("expires_at")
+    if (
+        set(result) != {
+            "projection", "revision", "issued_at", "expires_at",
+            "context", "directive", "report",
+        }
+        or result.get("projection") != BABOOM_NATIVE_FRAME_PROJECTION
+        or type(revision) is not int
+        or revision < 0
+        or type(issued_at) not in (int, float)
+        or type(expires_at) not in (int, float)
+        or not isinstance(context, dict)
+        or not isinstance(directive, dict)
+        or context.get("revision") != revision
+        or directive.get("revision") != revision
+    ):
+        raise MachineTransportError("BABOOM native frame response is invalid")
+    issued = float(issued_at)
+    expires = float(expires_at)
+    current = time.time() if now is None else float(now)
+    ttl = directive.get("ttl_seconds")
+    action = directive.get("action")
+    if (
+        not issued == issued
+        or not expires == expires
+        or not current == current
+        or type(ttl) not in (int, float)
+        or not 0.0 < float(ttl) <= 60.0
+        or not issued < expires
+        or expires - issued > float(ttl) + 0.001
+        or current >= expires
+        or type(action) is not str
+    ):
+        raise MachineTransportError("BABOOM native frame lease is invalid")
+    if not action:
+        if report is not None:
+            raise MachineTransportError(
+                "quiet BABOOM native frame must not carry a report"
+            )
+        return result
+    if type(report) is not dict:
+        raise MachineTransportError(
+            "actionable BABOOM native frame requires one report"
+        )
+    data = report.get("data")
+    if (
+        set(report) != {"kind", "summary", "revision", "data"}
+        or report.get("kind") != BABOOM_NATIVE_REPORT_KIND
+        or report.get("summary") != BABOOM_NATIVE_REPORT_SUMMARY
+        or report.get("revision") != revision
+        or type(data) is not dict
+        or set(data) != {
+            "projection", "revision", "context", "governed_work",
+            "workshop", "attention",
+        }
+        or data.get("projection") != "founder-local-baboom-steward-briefing"
+        or data.get("revision") != revision
+    ):
+        raise MachineTransportError("BABOOM native frame report is invalid")
+    for name in ("context", "governed_work", "workshop", "attention"):
+        projection = data.get(name)
+        if not isinstance(projection, dict) or projection.get("revision") != revision:
+            raise MachineTransportError("BABOOM native frame report revision drifted")
+    return result
 
 # The first frame after a boot reads the founder's Workshop and governed
 # work out of a cold journal; later frames read the same Cells from memory.
@@ -498,3 +605,8 @@ class BaboomNativeHost:
 __all__ = [
     "BaboomNativeHost", "BaboomNativeSnapshot", "BaboomNativeTransport",
 ]
+
+
+class MachineResponseError(MachineTransportError):
+    """An authenticated bound error response arrived; effects remain unknown."""
+    response_received = True

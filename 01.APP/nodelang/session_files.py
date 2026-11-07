@@ -1218,3 +1218,25 @@ class SessionFiles:
             ids = fork(document, node['id'])
             return {'ok': True, 'document': validate(document), 'ids': ids}
         raise ValueError('Unknown session file action')
+
+
+_SAMPLE_REF_PREFIX = "samples/"
+_SAMPLES = Path(__file__).resolve().parent / "samples"
+
+def resolve_sample_input(value: object) -> str | None:
+    """Resolve a graph-held sample reference to its shipped local file."""
+    text = str(value or "").strip().replace("\\", "/")
+    if not text.startswith(_SAMPLE_REF_PREFIX):
+        return None
+    name = text[len(_SAMPLE_REF_PREFIX):]
+    # Only a file the app actually ships under samples/ is a sample reference;
+    # any other "samples/..." value is the user's own relative path, unchanged.
+    if not name or "/" in name or name in (".", ".."):
+        return None
+    shipped = _SAMPLES / name
+    try:
+        if shipped.resolve().parent != _SAMPLES.resolve() or not shipped.is_file():
+            return None
+    except OSError as error:
+        raise ValueError("Shipped sample could not be inspected.") from error
+    return str(shipped)

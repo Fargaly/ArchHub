@@ -183,16 +183,15 @@ def engine(params, feeds):
                            readback=lambda candidate, receipt: receipt["pending"], params=config, record_effect=False)
     return {**result, "out": result, "admitted": result["pending"] if result["ok"] else None}, result["display"] or "Enforce passed; approval is still required"
 
-def graph_parameters(store):
-    """Read the unique Enforce node's Settings parameters from the same graph."""
-    if store is None:
-        return defaults()
-    from .domains.selfext import SHIPPED_MOD_ROWS, _decode_mod_state
-    base = next(row for row in SHIPPED_MOD_ROWS if row["id"] == "enforce")
-    state = _decode_mod_state(store.snapshot(), base)
-    if not state["enabled"]:
-        raise ValueError("Enforce is disabled; writes are refused until it is enabled")
-    return {**defaults(), **dict(state["params"])}
+def graph_parameters(store=None):
+    """Read Enforce from the same plain Mods Settings owner as the app."""
+    from .nograph_server import JsonFile
+    from .user_paths import state_directory
+    store = store or JsonFile(state_directory() / 'settings/mods.json', {'packages': {}, 'enabled': {}})
+    held = store.read()
+    if held.get('enabled', {}).get('enforce', True) is False:
+        raise ValueError('Enforce is disabled; writes are refused until it is enabled')
+    return {**defaults(), **held.get('params', {}).get('enforce', {})}
 
 def guard_effect(name, effect, params, feeds, *, config=None):
     """Admit explicit pending writes at the common pipeline effect boundary.

@@ -235,9 +235,7 @@ class NoGraphServer:
             try:
                 from .cloud_relay import HOST_EFFECT, HOST_READ, McpWorkshopAgents, start_cloud_relay
                 from .workshop_mailbox import profile_database
-                agents = McpWorkshopAgents(
-                    self.state_dir / 'relay-descriptor.json', None,
-                    mailbox_path=profile_database())
+                agents = McpWorkshopAgents(mailbox_path=profile_database())
                 self.cloud_relay = start_cloud_relay(
                     state_dir=self.state_dir, respond=lambda _text: {}, execute=lambda _text: {},
                     app_kinds=(HOST_READ, HOST_EFFECT), workshop_caller=agents.call)
@@ -998,8 +996,7 @@ def _answer_approval(request_id, kind, root, digest, decision):
         return decide({'approval': 'ask', 'id': root, 'digest': digest, 'decision': decision})
     owners = {'hostskills': _host_skills, 'watcher': _watcher}
     if kind not in owners:
-        from .universal_cell import InvalidCell
-        raise InvalidCell('This approval kind is not served here.')
+        raise ValueError('This approval kind is not served here.')
     return decide({'approval': kind, 'owner': owners[kind](request_id), 'id': root, 'digest': digest,
                    'decision': decision})
 
@@ -1061,11 +1058,10 @@ def r_workshop(s, req):
     if action == 'data-api':
         function = body.get('function')
         if function in OWNER_ACTIONS:
-            from .universal_cell import InvalidCell
             factory, method = OWNER_ACTIONS[function]
             try:
                 return {'ok': True, 'result': method(factory(body.get('request_id') or ''), *(body.get('args') or []))}
-            except (InvalidCell, TypeError) as refused:
+            except (ValueError, TypeError) as refused:
                 return {'ok': True, 'result': {'ok': False, 'error': str(refused)}}
         if function == 'createTask':
             return {'ok': True, 'result': _create_task(s, *(body.get('args') or []))}
@@ -1266,14 +1262,13 @@ def r_settings_action(s, req):
             return {'ok': True, 'result': {**local, **s.account_read()}}
         # Account, office, team and billing are the ArchHub cloud's; local preferences are one plain file.
         from .settings_owner import AccountFiles, CloudRouteUnavailable
-        from .universal_cell import InvalidCell
         owner = SettingsOwner(AccountFiles(s.settings_dir / 'account.json'))
         try:
             result = owner.dispatch(function, list(args))
             if s._account is not None:
                 s._account.at = 0.0
             return {'ok': True, 'result': result}
-        except (InvalidCell, CloudRouteUnavailable, OSError) as refused:
+        except (ValueError, CloudRouteUnavailable, OSError) as refused:
             raise Refused(str(refused)) from refused
     return {'ok': True, 'result': not_available('Settings "%s"' % function)}
 
@@ -1333,7 +1328,12 @@ def _mods_rows(store):
     rows = []
     for base in SHIPPED_MOD_ROWS:
         enabled = held['enabled'].get(str(base['id']), bool(base.get('enabled', True)))
-        rows.append({**json.loads(json.dumps(base)), 'enabled': enabled, 'status': 'built-in' if enabled else 'off'})
+        row = json.loads(json.dumps(base))
+        for node in row.get('nodes', []):
+            params = held.get('params', {}).get(str(base['id']), {})
+            node['params'] = {key: params.get(key, value) for key, value in node.get('params', {}).items()}
+        rows.append({**row, 'enabled': enabled, 'status': 'built-in' if enabled else 'off',
+                     'fired_today': held.get('fired_today', {}).get(str(base['id']), 0)})
     built_in = len(rows)
     for manifest in held['packages'].values():
         enabled = held['enabled'].get(manifest['id'], True)

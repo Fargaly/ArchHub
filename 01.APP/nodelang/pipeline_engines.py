@@ -61,7 +61,7 @@ def _local_input_path(path: str, *, label: str) -> str:
         raise ValueError("no %s; set it or wire a file in" % label)
     if text.startswith(("\\\\", "//")) or text.upper().startswith(("\\\\?\\UNC", "SMB:", "FILE:")):
         raise ValueError("%s must be a local file, not a network share" % label)
-    from .universal_pipeline import resolve_sample_input
+    from .session_files import resolve_sample_input
     text = resolve_sample_input(text) or text
     import os as _os
     if not _os.path.isfile(text):
@@ -76,7 +76,7 @@ def tool_settings(params: Mapping[str, object], feeds: Mapping[str, object]):
         raise ValueError("set the tool parameter")
     held = {str(key): value for key, value in params.items()}
     if tool == 'workshop':
-        from .universal_application import _APPLICATION_SETTING_SPECS, _application_setting_default
+        from .settings_owner import _APPLICATION_SETTING_SPECS, _application_setting_default
         values = {
             'stale_claim_after_idle_minutes': params.get('stale_claim_after_idle_minutes'),
             'archive_after_idle_days': params.get('archive_after_idle_days'),
@@ -255,25 +255,10 @@ class BrainSilent(Exception):
 
 def _brain_call(tool: str, arguments: Mapping[str, object], *, budget: float | None = None,
                 actor: str | None = None) -> str:
-    """One call to the application's own Brain, answered from the graph.
-
-    The personal-brain daemon on 127.0.0.1:8473 is retired; ``app_brain`` serves
-    the same tool names from the graph memory the port wrote into. Nothing is
-    dialed and there is no fallback: with no application bound in this process
-    the card says so. ``budget`` is kept for callers; a graph read has none.
-    """
-    from . import app_brain
-    if not app_brain._BOUND:
-        # NOGRAPH: no graph is bound; the Brain is one plain owner file (brain_files.py).
-        from . import brain_files
-        try:
-            answer = brain_files.call(tool, dict(arguments))
-        except ValueError as refusal:
-            raise BrainSilent(str(refusal)) from refusal
-        return answer if isinstance(answer, str) else json.dumps(answer)
+    from . import brain_files
     try:
-        answer = app_brain.call(tool, dict(arguments), actor=actor)
-    except app_brain.BrainUnavailable as refusal:
+        answer = brain_files.call(tool, dict(arguments))
+    except ValueError as refusal:
         raise BrainSilent(str(refusal)) from refusal
     return answer if isinstance(answer, str) else json.dumps(answer)
 

@@ -117,3 +117,43 @@ def document(starter_id):
         previous = (node, item)
     doc['notes'] = [{'text': starter['stops_at']}]
     return validate(doc)
+
+
+def _usage_starters():
+    """Runnable subchains from SCENARIOS-from-usage-2026-10-15; never full-job promises.
+
+    Frequencies are source scenario windows, NOT execution counters. These
+    records only install the ordinary catalogue; subsequent reads use Cells.
+    """
+    from .library_engines import LIBRARY_ITEM_ENGINES
+
+    def part(item, title, **params):
+        held = LIBRARY_ITEM_ENGINES[item]
+        return {"item": item, "title": title, "engine": held["engine"],
+                "params": {**held["params"], **params}}
+
+    def chain(item, title, frequency, source, columns, by, direction="asc"):
+        children = [source, part("s_sort", "Sort", by=by, direction=direction),
+                    part("d_schedule", "Table", columns=columns),
+                    part("w_watch", "Review")]
+        for index in range(1, len(children)):
+            children[index]["input"] = {"child": index - 1,
+                "source": "out", "target": "in"}
+        return item, title, frequency, children
+
+    return (
+        chain("tpl-sheet-register", "Sheet register review", 134,
+              part("r_sheets", "Sheets"), "number,name,id", "number"),
+        chain("tpl-model-table", "Model data → table", 66,
+              part("r_walls", "Model elements"), "name,type,level,id", "level"),
+        chain("tpl-notion-review", "Notion sources review", 30,
+              part("h_notion", "Notion search"), "title,url,id", "title"),
+        chain("tpl-cad-inventory", "CAD import inventory", 28,
+              part("r_views", "CAD imports", operation="revit.list_cad_imports"),
+              "name,id", "name"),
+        chain("tpl-inbox-review", "Inbox review table", 23,
+              part("h_outlook", "Inbox"), "subject,sender,received,unread", "received", "desc"),
+        chain("tpl-titleblocks", "Titleblock inventory", 22,
+              part("r_views", "Titleblocks", operation="revit.list_titleblocks"),
+              "family,name,id", "family"),
+    )

@@ -6,7 +6,7 @@ const {chromium} = require('playwright');
 const root = path.resolve(__dirname, '..', '..');
 const read = name => fs.readFileSync(path.join(root,name),'utf8');
 async function main() {
-  const seedText=read('01.APP/nodelang/universal_presentation_seed.py').match(/^THEME = \{([\s\S]*?)^\}/m)[1];
+  const seedText=read('01.APP/nodelang/settings_owner.py').match(/^THEME = \{([\s\S]*?)^\}/m)[1];
   const theme=Object.fromEntries([...seedText.matchAll(/'([^']+)':\s*'(#[0-9a-f]{6})'/g)].map(m=>[m[1],m[2]]));
   const session={app:'codex',runtime:'codex',session_id:'app:agent-session:runtime:isolated-court-august7',title:'codex Agent Session',issued_at:1792288800,connected:true,selectable:true};
   const state={ok:true,boot:'match',projection:'match',key_pinned:true,revision:1,

@@ -1102,7 +1102,6 @@ def _read(history, body, identity, runtime=None):
                                      "AND sequence>? AND NOT (author=? AND category=?) ORDER BY sequence LIMIT 101",
                                      (ROOM, since, DELIVERY_AUTHOR, DELIVERY_CATEGORY))
         messages, more = history._collect(cursor, 100, 180000)
-        from .installed_workshop_coordination import _recent_mailbox_peers
         peers = _recent_mailbox_peers(history, ROOM)
         read_cursor = min(since, history._head(ROOM))
     declarations = read_declarations(history._db, include_archived=body.get("include_archived", False))
@@ -1494,3 +1493,25 @@ def _send(history, body, identity, *, queued=(), sender_binding=None, resolve_li
                 idempotency_key="workshop-language:" + message["id"])
         return {**identity, "to": target, "text": text, "message_id": message["id"], "sequence": message["sequence"],
                 "status": "returned" if missing else "queued for " + target if waiting and not routing["recipients"] else "recorded"}
+
+
+def _recent_mailbox_peers(history, space):
+    """One bounded public tail, latest key per display address; never a roster."""
+    import re
+    from .agent_runtime_registry import RUNTIMES
+    peers = {}
+    for row in history._db.execute(
+            "SELECT author,sequence FROM messages WHERE conversation_id=? AND public=1 "
+            "ORDER BY sequence DESC LIMIT 100", (space,)):
+        label, separator, key = row["author"].removesuffix("]").rpartition(" [")
+        if (not separator or label == "BABOOM" or label in peers
+                or not re.fullmatch(r"agent:(?:session:[0-9a-f]{64}|\d+:\d+(?::[0-9a-f]{64})?)", key)):
+            continue
+        runtime = next((name for name, definition in RUNTIMES.items()
+            if label.startswith(definition["label"] + " / ")), "mcp")
+        head = label.split(" / ", 1)[0]
+        if head.startswith("mcp-"):
+            runtime = head
+        peers[label] = {"label": label, "sender_key": key, "runtime": runtime,
+                        "sequence": row["sequence"]}
+    return list(peers.values())

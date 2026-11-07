@@ -243,7 +243,7 @@ class NoGraphTransport:
                 'expires_at': time.time() + COMPANION_NODE['params']['frame_seconds']}
 
     def baboom_native_frame(self, *, response_timeout_seconds=None):
-        from .application_machine_transport import BABOOM_NATIVE_FRAME_PROJECTION
+        from .baboom_native_host import BABOOM_NATIVE_FRAME_PROJECTION
         self.revision += 1
         ttl, now, up = COMPANION_NODE['params']['frame_seconds'], time.time(), _STATE['brain'] is not None
         context = {'revision': self.revision, 'brain': {'ok': up, 'facts': 1 if up else 0},

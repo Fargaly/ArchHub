@@ -10809,8 +10809,21 @@
         "03.TOOLS/packaging/windows/check_update_offer.py",
         "03.TOOLS/packaging/windows/stage_betterleaks.py",
         "03.TOOLS/packaging/windows/stage_goose.py",
+        "03.TOOLS/tools/generate_catalogue_docs.py",
+        "03.TOOLS/tools/measure_restore_workload.py",
+        "03.TOOLS/tools/real_app_check/agent_propose.py",
+        "03.TOOLS/tools/real_app_check/designwire.py",
+        "03.TOOLS/tools/real_app_check/graph_owner.py",
+        "03.TOOLS/tools/real_app_check/owner_provision.py",
+        "03.TOOLS/tools/rollback-rehearsal-ci/rollback-rehearsal.ps1",
+        "03.TOOLS/tools/seed_large_store.py",
         "05.EVIDENCE/acompiler-intents.json",
-        "05.EVIDENCE/graphout/"
+        "05.EVIDENCE/designbuild/home/comparison.png",
+        "05.EVIDENCE/designbuild/home/evidence.json",
+        "05.EVIDENCE/designbuild/home/studio.png",
+        "05.EVIDENCE/graphout/",
+        "06.CLOUD/cloud_backend/tests/test_brain_two_accounts_share_only_skills.py",
+        "06.CLOUD/cloud_backend/tests/test_desktop_heartbeat_reaches_the_cockpit.py"
       ]
     }
   }

@@ -10852,7 +10852,15 @@
         "05.EVIDENCE/designbuild/workshop/studio.png",
         "05.EVIDENCE/graphout/",
         "06.CLOUD/cloud_backend/tests/test_brain_two_accounts_share_only_skills.py",
-        "06.CLOUD/cloud_backend/tests/test_desktop_heartbeat_reaches_the_cockpit.py"
+        "06.CLOUD/cloud_backend/tests/test_desktop_heartbeat_reaches_the_cockpit.py",
+        "03.TOOLS/packaging/website/.dockerignore",
+        "03.TOOLS/packaging/website/Dockerfile",
+        "03.TOOLS/packaging/website/fly.toml",
+        "03.TOOLS/packaging/website/httpd.conf",
+        "03.TOOLS/tools/app_from_grandmap.py",
+        "03.TOOLS/tools/reality_grade.py",
+        "03.TOOLS/tools/serve_governance.py",
+        "03.TOOLS/tools/serve_grandmap.py"
       ]
     }
   }

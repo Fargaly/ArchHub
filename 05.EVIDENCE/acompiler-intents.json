@@ -9618,7 +9618,8 @@
         "02.TESTS/tests_js/agentwork.cjs",
         "02.TESTS/tests_js/agentcanvas.cjs",
         "04.DOCS/FAILURE_LOG.md",
-        "05.EVIDENCE/acompiler-intents.json"
+        "05.EVIDENCE/acompiler-intents.json",
+        ".gitignore"
       ]
     }
   }

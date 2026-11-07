@@ -3,7 +3,7 @@
 
 // The controls that sign with the Windows user's protected Workspaces key. Pressing one creates that
 // key (a Windows prompt on the founder's desktop, outside any isolation) or uses it. The harness never
-// presses them; real_app_check.py also reads the key's state before and after a run.
+// presses them. The retired CNG owner-key layer is never opened by the rig.
 export const SIGNING_CONTROLS = Object.freeze(['Add', 'Remove', 'Republish', 'Stop governing']);
 
 export function refuseSigning(text) {

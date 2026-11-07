@@ -13,6 +13,12 @@
 ; Not signed (code-signing is geo-blocked for the founder's region);
 ; distributed on the firm share. The setup never runs a bare-named program.
 
+#ifndef InstalledManifestPath
+#error Build with installer/build_release.ps1: InstalledManifestPath is required.
+#endif
+#ifndef InstalledManifestSha256
+#error Build with installer/build_release.ps1: InstalledManifestSha256 is required.
+#endif
 #define AppName "ArchHub"
 #define AppVersion "0"
 ; Every build has its own identity even though the beta ships under one label:
@@ -106,6 +112,7 @@ Name: "desktopicon"; Description: "Create a Desktop shortcut"; GroupDescription:
 Name: "connectassistants"; Description: "Connect my AI assistants to ArchHub (adds ArchHub's end-of-turn check to Claude Code, Codex and Gemini CLI and the Workshop plugin to OpenCode; your other settings are kept)"; GroupDescription: "Assistants:"
 
 [Files]
+Source: "{#InstalledManifestPath}"; DestDir: "{app}"; DestName: "source-manifest.tsv"; Flags: ignoreversion
 ; Setup preflights assistant connections before replacing application code.
 #include PreflightFilesPath
 Source: "{#NodeRuntimePath}"; DestDir: "{app}\runtime"; DestName: "node.exe"; Flags: ignoreversion; Check: NodeRuntimeNeedsInstall
@@ -154,8 +161,8 @@ Source: "..\colleague_setup.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\requirements.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#WheelhousePath}\*.whl"; DestDir: "{app}\wheelhouse"; Flags: ignoreversion
 Source: "ArchHub.bat"; DestDir: "{app}"; Flags: ignoreversion
-; Replaces the previous launcher of the same name. Existing user state and
-; old installation files are not recursively deleted by this package.
+; Replaces the previous launcher of the same name. User state is preserved;
+; product code is reconciled against the build manifest after copying.
 Source: "ArchHub.vbs"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\archhub.ico"; DestDir: "{app}"; Flags: ignoreversion
 
@@ -1698,8 +1705,8 @@ begin
   if CurStep = ssInstall then
   begin
     CloseInstallConnectors();
-    { Unused entries are staged by first run, then removed only after health.
-      Setup never makes retired-doc archives or deletes unrecognised files. }
+    { User data is preserved. Dropped product code is pruned after copying,
+      once the complete installed inventory matches this build's manifest. }
     { Bridge DLLs for this build land in bridges\<host>\<year>\{#BuildId}\.
       A running Revit or AutoCAD keeps the DLL it already mapped. This setup
       does not replace that file, move it, or ask Restart Manager to close the host. }
@@ -1717,16 +1724,20 @@ begin
   begin
     if not SaveStringToFile(ExpandConstant('{app}\BUILD_ID'), '{#BuildId}', False) then
       RaiseException('The ArchHub build identity could not be saved. Run setup again.');
-    { Point RevitMCP.addin and the AutoCAD bundle at the DLLs just installed.
-      A refusal leaves the previous registration, which still names a DLL this
-      setup did not replace. It must not fail the install. }
+    if not ExecAndLogOutput(FindPython(), '-u -E -s -B "' + ExpandConstant('{app}') + '\nodelang\host_addin_retarget.py" --prune "' + ExpandConstant('{app}') + '" {#InstalledManifestSha256}',
+        ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ConnectorCode, @OnConnectorLog) then
+      RaiseException('Product prune could not start; installation is incomplete.');
+    if ConnectorCode <> 0 then
+      RaiseException('Product prune failed; installation is incomplete. See the install log.');
+    { Retarget reviewed host payloads and retire unsupported Revit manifests.
+      The helper logs third-party manifest hashes before and after its work. }
     if FindPython() <> '' then
     begin
-      if not Exec(FindPython(), '-u -E -s -B "' + ExpandConstant('{app}') + '\nodelang\host_addin_retarget.py" "' + ExpandConstant('{app}') + '"',
-          ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ConnectorCode) then
-        Log('Host add-in retarget could not start. The previous registration still names the bridge its host has loaded.')
+      if not ExecAndLogOutput(FindPython(), '-u -E -s -B "' + ExpandConstant('{app}') + '\nodelang\host_addin_retarget.py" "' + ExpandConstant('{app}') + '"',
+          ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ConnectorCode, @OnConnectorLog) then
+        Log('Host add-in retarget could not start. Host registration is incomplete; see the install log.')
       else if ConnectorCode <> 0 then
-        Log('Host add-in retarget exited ' + IntToStr(ConnectorCode) + '. The previous registration still names the bridge its host has loaded.');
+        Log('Host add-in retarget exited ' + IntToStr(ConnectorCode) + '. Host registration is incomplete; see the install log.');
     end;
     { After BUILD_ID: the task script recognises an installed tree by it. }
     RemoveRetiredRuntimeTask(CleanCoordinationTask);

@@ -1,10 +1,9 @@
-// Drives the REAL ArchHub window (QtWebEngine) through Playwright for real_app_check.py.
+// Drives the REAL ArchHub window (QtWebEngine) through raw page CDP for real_app_check.py.
 // A scenario module exports `default async function (ctx)` and calls ctx.step(asked, fn) per step.
 // Every step writes one row (asked -> what the real window did -> screenshot) and one PNG.
 // Clicks are real CDP mouse events at the element's on-screen centre.
 // Native dialogs: ctx.native({kind:'pick-folder', title, folder}) asks real_app_check.py, which
 // answers the dialog on the hidden desktop with pywinauto.
-import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -15,11 +14,53 @@ import { refuseSigning, stepVerdict } from './guards.mjs';
 const lines = readline.createInterface({ input: process.stdin })[Symbol.asyncIterator]();
 const setup = JSON.parse((await lines.next()).value);
 const out = setup.out;
-const browser = await chromium.connectOverCDP('http://127.0.0.1:' + setup.cdp);
-const context = browser.contexts()[0];
-const page = context.pages().find(p => p.url().includes('/studio')) || context.pages()[0];
-if (!page) { console.log('DONE ' + JSON.stringify(['no page to drive'])); process.exit(2); }
-const session = await context.newCDPSession(page);
+// Qt exposes page targets but does not implement browser context management.
+const response = await fetch('http://127.0.0.1:' + setup.cdp + '/json');
+const targets = await response.json();
+const target = targets.find(p => p.type === 'page' && p.url.includes('/studio'));
+if (!target?.webSocketDebuggerUrl) throw new Error('no Studio page target to drive');
+const socket = new globalThis.WebSocket(target.webSocketDebuggerUrl);
+const pending = new Map(), listeners = new Map();
+const connectTimeout = setup.connect_timeout_ms || 10000;
+const commandTimeout = setup.command_timeout_ms || 30000;
+let requestId = 0;
+socket.addEventListener('message', event => {
+  const message = JSON.parse(event.data);
+  if (message.id) {
+    const request = pending.get(message.id);
+    if (!request) return;
+    pending.delete(message.id);
+    clearTimeout(request.timer);
+    if (message.error) request.reject(new Error(message.error.message));
+    else request.resolve(message.result);
+  } else for (const listener of listeners.get(message.method) || []) listener(message.params);
+});
+socket.addEventListener('close', () => {
+  for (const request of pending.values()) {
+    clearTimeout(request.timer);
+    request.reject(new Error('CDP page disconnected'));
+  }
+  pending.clear();
+});
+await new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error('CDP page connection timed out')), connectTimeout);
+  socket.addEventListener('open', () => { clearTimeout(timer); resolve(); }, {once: true});
+  socket.addEventListener('error', () => { clearTimeout(timer); reject(new Error('CDP page connection failed')); }, {once: true});
+});
+const session = {
+  on(method, listener) {
+    if (!listeners.has(method)) listeners.set(method, []);
+    listeners.get(method).push(listener);
+  },
+  send(method, params) {
+    return new Promise((resolve, reject) => {
+      const id = ++requestId;
+      const timer = setTimeout(() => { pending.delete(id); reject(new Error('CDP timed out: ' + method)); }, commandTimeout);
+      pending.set(id, {resolve, reject, timer});
+      socket.send(JSON.stringify({id, method, params}));
+    });
+  },
+};
 const failed = [], fileActions = new Map(), fileFailures = [];
 const observe = m => {
   if (m.method === 'Network.requestWillBeSent' && new URL(m.params.request.url).pathname === '/api/session-files') {
@@ -99,5 +140,5 @@ try {
 }
 fs.writeFileSync(path.join(out, 'steps.json'), JSON.stringify(results, null, 1));
 console.log('DONE ' + JSON.stringify(results.map(row => row.asked + ': ' + row.result)));
-await browser.close();
+socket.close();
 process.exit(0);

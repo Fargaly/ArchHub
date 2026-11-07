@@ -3,7 +3,7 @@
 The founder's rule: no ArchHub task is handed over or accepted without real-app evidence. That means
 the installed build, run isolated on a hidden Windows desktop, with one screenshot per step showing
 what was asked, what the real window did, and the screenshot. Courts are review evidence, never done
-evidence. Every agent uses this one tool, including F212 VERSIONSMOKE. Studio uses Playwright; native folder dialogs use pywinauto on the rig desktop.
+evidence. Every agent uses this one tool, including F212 VERSIONSMOKE. Studio uses raw page CDP; native folder dialogs use pywinauto on the rig desktop.
 
 ## Run
 
@@ -41,7 +41,6 @@ The `--out` folder must be new or empty. It receives:
   - the run-unique desktop name and the app windows found on it;
   - the state files the app wrote in the run folder;
   - the boot time and the native dialog transcript;
-  - silent read-only signing-key state before and after;
   - the installed-code digest before and after;
   - the overall result.
 
@@ -66,7 +65,7 @@ The probe must finish. A scenario exports its step names as `steps`, and the har
 - it never prints `DONE`;
 - the steps that ran differ from the declared ones.
 
-The report is written on every path, including an exception, with the key state, the code digest and
+The report is written on every path, including an exception, with the code digest and
 the exception text.
 
 The run passes only when all of these hold:
@@ -74,8 +73,7 @@ The run passes only when all of these hold:
 - every step passed;
 - the app's window was on this run's own desktop;
 - the app wrote its state in the run folder;
-- the installed code is byte-identical before and after;
-- the protected signing-key state is exactly known and unchanged.
+- the installed code is byte-identical before and after.
 
 ## Guarantees
 
@@ -91,8 +89,7 @@ The run passes only when all of these hold:
   - Every wait is bounded.
   - The Job is terminated in `finally` on every exit path.
   - No process is ever killed by number.
-- **No signing.** The harness refuses signing controls. Silent CNG public-key reads before and after
-  the run prove that its protected Workspaces key was unchanged; profile environment variables do not isolate CNG.
+- **No signing.** The harness refuses signing controls and never opens CNG. The signed-owner key layer is retired (SPEC section 9.5).
 - **Native driver.** The existing desktop dependency manifest ships pywinauto and comtypes.
   Generated COM wrappers stay under the rig's LOCALAPPDATA, outside the installed environment.
 

@@ -1,0 +1,151 @@
+{
+  "result": "PASS",
+  "target": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\land-stack\\.cache\\prunerig-proof\\installed",
+  "boundary": "fake install, fake Addins roots, simulated registered/unsupported broker outcomes; no live host or profile",
+  "orphans_removed": [
+    "app/clean_shell.py",
+    "app/connectors/connector_health.py",
+    "app/connectors/sketchup_connector.py",
+    "app/core.py",
+    "app/google_client.py",
+    "app/graph.py",
+    "app/runner.py",
+    "bridges/revit/2027/old/RevitMCP.dll",
+    "nodelang/authority_adoption_record.py",
+    "nodelang/authority_adoption_structure.py",
+    "nodelang/authority_handoff.py",
+    "nodelang/automation.py",
+    "nodelang/baboom_attach.py",
+    "nodelang/boot_profile.py",
+    "nodelang/brain_memory_accelerators.py",
+    "nodelang/browser_graph_editor_court.py",
+    "nodelang/cell_attention_reactions.py",
+    "nodelang/cell_baboom_model_execution.py",
+    "nodelang/cell_baboom_steward.py",
+    "nodelang/cell_brain_fanout.py",
+    "nodelang/cell_brain_federation.py",
+    "nodelang/cell_legacy_brain_governance.py",
+    "nodelang/cell_legacy_core_nodes.py",
+    "nodelang/cell_legacy_custom_nodes.py",
+    "nodelang/cell_legacy_self_extension.py",
+    "nodelang/cell_legacy_surface_catalog.py",
+    "nodelang/cell_legacy_webshell_host.py",
+    "nodelang/cell_transparency_witness.py",
+    "nodelang/clean_agent_conversation.py",
+    "nodelang/clean_agent_coordination.py",
+    "nodelang/clean_application_server.py",
+    "nodelang/clean_application_view.py",
+    "nodelang/clean_model_adapter.py",
+    "nodelang/conversation_history_upgrade.py",
+    "nodelang/existing_workshop_model_worker.py",
+    "nodelang/existing_workshop_native_host.py",
+    "nodelang/gui_thread.py",
+    "nodelang/import_work_plan.py",
+    "nodelang/native_workshop_tools.py",
+    "nodelang/opencode_workshop_tools.py",
+    "nodelang/session_link_config.py",
+    "nodelang/session_link_transport.py",
+    "nodelang/social_research_community_backend.py",
+    "nodelang/startup_backup.py",
+    "nodelang/work_proposals.py",
+    "nodelang/workshop_clean_archive.py",
+    "nodelang/workshop_page_lifecycle.py",
+    "nodelang/workshop_presentation.py",
+    "nodelang/workshop_project_resolution.py",
+    "studio/old.js"
+  ],
+  "user_data": {
+    "settings/user.json": {
+      "before_sha256": "ae8390a1e796507ce36e4ee30c70d7e5696deb550fe0afa66141e734f3eb4ef3",
+      "after_sha256": "ae8390a1e796507ce36e4ee30c70d7e5696deb550fe0afa66141e734f3eb4ef3"
+    },
+    "workshop/messages.sqlite3": {
+      "before_sha256": "fb4d6b42e07705ec7b8463f03d8cc8581eb3c0a2c1534166241f7bfeea9d44bd",
+      "after_sha256": "fb4d6b42e07705ec7b8463f03d8cc8581eb3c0a2c1534166241f7bfeea9d44bd"
+    },
+    "logs/run.log": {
+      "before_sha256": "f1ec0dc9613fd2c733c499e9b51b95e7027f6eebb20edfadfc3b2dfafcef6078",
+      "after_sha256": "f1ec0dc9613fd2c733c499e9b51b95e7027f6eebb20edfadfc3b2dfafcef6078"
+    },
+    ".venv/user.pkg": {
+      "before_sha256": "c8674223b2911dbdbf5119f7bcb7ef2eb81dd5a0c62987142870a18e8e0290e8",
+      "after_sha256": "c8674223b2911dbdbf5119f7bcb7ef2eb81dd5a0c62987142870a18e8e0290e8"
+    },
+    "Sessions/a.archhub": {
+      "before_sha256": "45494fb62d9b139864789c51fd9574ed7b67656a6c2578319f9404ed68d0d2ab",
+      "after_sha256": "45494fb62d9b139864789c51fd9574ed7b67656a6c2578319f9404ed68d0d2ab"
+    },
+    "recent/x.json": {
+      "before_sha256": "685d2866c71b6a3426cc21cbd500e5f4c0b026c521f66e2e5aecfdc6265450eb",
+      "after_sha256": "685d2866c71b6a3426cc21cbd500e5f4c0b026c521f66e2e5aecfdc6265450eb"
+    },
+    "checkpoints/x.json": {
+      "before_sha256": "65bca63ab4855bdd424dbab63c293caf2c52ffa8d0304bebcdad0a9c9f93a38a",
+      "after_sha256": "65bca63ab4855bdd424dbab63c293caf2c52ffa8d0304bebcdad0a9c9f93a38a"
+    },
+    "nodelang/settings/user.json": {
+      "before_sha256": "a8710c0a0d9c63cf77e81cd0241fe18dd8ca6be6cd7723c6d16ff8d46afc33dc",
+      "after_sha256": "a8710c0a0d9c63cf77e81cd0241fe18dd8ca6be6cd7723c6d16ff8d46afc33dc"
+    },
+    "nodelang/test.universal.sqlite3": {
+      "before_sha256": "599474505cd03f57b81ffedd5f3eb035c9f39493d29731c990af7ff3a32352fd",
+      "after_sha256": "599474505cd03f57b81ffedd5f3eb035c9f39493d29731c990af7ff3a32352fd"
+    },
+    "app/test.universal.sqlite3-wal": {
+      "before_sha256": "c15155e21a51e8f2441d9e344e01f09ec412251ced6f1acea263a9f689d57e14",
+      "after_sha256": "c15155e21a51e8f2441d9e344e01f09ec412251ced6f1acea263a9f689d57e14"
+    },
+    "studio/test.universal.sqlite3-shm": {
+      "before_sha256": "c630872b335d7adaa9e2e00b0fb01a83a22c113aefd758c71bb3100b5f1135f8",
+      "after_sha256": "c630872b335d7adaa9e2e00b0fb01a83a22c113aefd758c71bb3100b5f1135f8"
+    },
+    "bridges/.venv/user.pkg": {
+      "before_sha256": "684cf3b452fec1de8ed9fe5a048c26416d770e57d182e5bd90c044aa6e1bdc2c",
+      "after_sha256": "684cf3b452fec1de8ed9fe5a048c26416d770e57d182e5bd90c044aa6e1bdc2c"
+    },
+    "nodelang/workshop/messages.sqlite3": {
+      "before_sha256": "acc1b2819ae82583ec5ea7210bb979383e55c40dc708ea71a0b6daa3ac56077f",
+      "after_sha256": "acc1b2819ae82583ec5ea7210bb979383e55c40dc708ea71a0b6daa3ac56077f"
+    }
+  },
+  "revit_manifest_receipts": [
+    {
+      "path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\land-stack\\.cache\\prunerig-proof\\APPDATA\\Autodesk\\Revit\\Addins\\2024\\Vendor.addin",
+      "before_sha256": "45e87c95a14659e480c15ae2ec63ea45af597461fa639ff97987d6ee9e0c47e4",
+      "after_sha256": "45e87c95a14659e480c15ae2ec63ea45af597461fa639ff97987d6ee9e0c47e4",
+      "unchanged": true
+    },
+    {
+      "path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\land-stack\\.cache\\prunerig-proof\\APPDATA\\Autodesk\\Revit\\Addins\\2027\\Vendor.addin",
+      "before_sha256": "45e87c95a14659e480c15ae2ec63ea45af597461fa639ff97987d6ee9e0c47e4",
+      "after_sha256": "45e87c95a14659e480c15ae2ec63ea45af597461fa639ff97987d6ee9e0c47e4",
+      "unchanged": true
+    },
+    {
+      "path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\land-stack\\.cache\\prunerig-proof\\APPDATA\\Autodesk\\Revit\\Addins\\2029\\Vendor.addin",
+      "before_sha256": "45e87c95a14659e480c15ae2ec63ea45af597461fa639ff97987d6ee9e0c47e4",
+      "after_sha256": "45e87c95a14659e480c15ae2ec63ea45af597461fa639ff97987d6ee9e0c47e4",
+      "unchanged": true
+    },
+    {
+      "path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\land-stack\\.cache\\prunerig-proof\\ProgramData\\Autodesk\\Revit\\Addins\\2024\\Vendor.addin",
+      "before_sha256": "45e87c95a14659e480c15ae2ec63ea45af597461fa639ff97987d6ee9e0c47e4",
+      "after_sha256": "45e87c95a14659e480c15ae2ec63ea45af597461fa639ff97987d6ee9e0c47e4",
+      "unchanged": true
+    },
+    {
+      "path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\land-stack\\.cache\\prunerig-proof\\ProgramData\\Autodesk\\Revit\\Addins\\2027\\Vendor.addin",
+      "before_sha256": "45e87c95a14659e480c15ae2ec63ea45af597461fa639ff97987d6ee9e0c47e4",
+      "after_sha256": "45e87c95a14659e480c15ae2ec63ea45af597461fa639ff97987d6ee9e0c47e4",
+      "unchanged": true
+    },
+    {
+      "path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\land-stack\\.cache\\prunerig-proof\\ProgramData\\Autodesk\\Revit\\Addins\\2029\\Vendor.addin",
+      "before_sha256": "45e87c95a14659e480c15ae2ec63ea45af597461fa639ff97987d6ee9e0c47e4",
+      "after_sha256": "45e87c95a14659e480c15ae2ec63ea45af597461fa639ff97987d6ee9e0c47e4",
+      "unchanged": true
+    }
+  ],
+  "supported_old_dll_removed": true,
+  "unsupported_old_dll_preserved": true
+}

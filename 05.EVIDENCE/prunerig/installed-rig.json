@@ -1,0 +1,51 @@
+{
+  "result": "PASS",
+  "build": "20261107-2320-37990c4",
+  "label": "INSTALLED BUILD",
+  "desktop": "ArchHubRealAppCheck-e3ece0beae00",
+  "installed_code_before": "4b7bb81d012a26b5c5f73bdb20fbe35887fcd0cdb16bc7534a7694f31f074ea5",
+  "installed_code_after": "4b7bb81d012a26b5c5f73bdb20fbe35887fcd0cdb16bc7534a7694f31f074ea5",
+  "studio_open": true,
+  "app_windows_on_desktop": [
+    "ArchHub"
+  ],
+  "probe_exit_code": 0,
+  "probe_timed_out": false,
+  "steps": [
+    {
+      "label": "INSTALLED BUILD",
+      "asked": "Installed Studio opens Home",
+      "result": "PASS",
+      "did": "as asked",
+      "got": {
+        "path": "/studio"
+      },
+      "http_errors": [],
+      "session_file_errors": [],
+      "expected_http": [],
+      "shot": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\land-stack\\.cache\\prunerig-installed-final\\01_Installed_Studio_opens_Home.png"
+    },
+    {
+      "label": "INSTALLED BUILD",
+      "asked": "Click Settings and read its screen",
+      "result": "PASS",
+      "did": "as asked",
+      "got": {
+        "clicked": true,
+        "screen": "settings/Account"
+      },
+      "http_errors": [],
+      "session_file_errors": [],
+      "expected_http": [],
+      "shot": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\land-stack\\.cache\\prunerig-installed-final\\02_Click_Settings_and_read_its_screen.png"
+    }
+  ],
+  "rig_source_sha256": {
+    "03.TOOLS/tools/real_app_check/harness.mjs": "0e72bca47c68832e72e86e9518b667b974b370228157ed6ded733dbc6fb869f1",
+    "03.TOOLS/tools/real_app_check/real_app_check.py": "f4d4e2c162d875c3a8e0fcac44ff8efdab985ff44f642f0553e86ceea22955f7",
+    "03.TOOLS/tools/real_app_check/guards.mjs": "5fdc604d9fd41c606e6b6bda70b638dd74724fc0351bdf7bced401dbe39fda5d",
+    "03.TOOLS/tools/real_app_check/scenarios/qt_attach.mjs": "74eb9e06087cc05fdc72a7a3310ea7da4f2d19d9eeac37206823a576e0fee355"
+  },
+  "raw_report": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\land-stack\\.cache\\prunerig-installed-final\\report.json",
+  "boundary": "Installed bytes, isolated profile and hidden desktop; no overlay, no live profile write, no owner-key CNG check."
+}

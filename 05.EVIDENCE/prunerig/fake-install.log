@@ -1,0 +1,75 @@
+PRUNE app/clean_shell.py
+PRUNE app/connectors/connector_health.py
+PRUNE app/connectors/sketchup_connector.py
+PRUNE app/core.py
+PRUNE app/google_client.py
+PRUNE app/graph.py
+PRUNE app/runner.py
+PRUNE bridges/revit/2027/old/RevitMCP.dll
+PRUNE nodelang/authority_adoption_record.py
+PRUNE nodelang/authority_adoption_structure.py
+PRUNE nodelang/authority_handoff.py
+PRUNE nodelang/automation.py
+PRUNE nodelang/baboom_attach.py
+PRUNE nodelang/boot_profile.py
+PRUNE nodelang/brain_memory_accelerators.py
+PRUNE nodelang/browser_graph_editor_court.py
+PRUNE nodelang/cell_attention_reactions.py
+PRUNE nodelang/cell_baboom_model_execution.py
+PRUNE nodelang/cell_baboom_steward.py
+PRUNE nodelang/cell_brain_fanout.py
+PRUNE nodelang/cell_brain_federation.py
+PRUNE nodelang/cell_legacy_brain_governance.py
+PRUNE nodelang/cell_legacy_core_nodes.py
+PRUNE nodelang/cell_legacy_custom_nodes.py
+PRUNE nodelang/cell_legacy_self_extension.py
+PRUNE nodelang/cell_legacy_surface_catalog.py
+PRUNE nodelang/cell_legacy_webshell_host.py
+PRUNE nodelang/cell_transparency_witness.py
+PRUNE nodelang/clean_agent_conversation.py
+PRUNE nodelang/clean_agent_coordination.py
+PRUNE nodelang/clean_application_server.py
+PRUNE nodelang/clean_application_view.py
+PRUNE nodelang/clean_model_adapter.py
+PRUNE nodelang/conversation_history_upgrade.py
+PRUNE nodelang/existing_workshop_model_worker.py
+PRUNE nodelang/existing_workshop_native_host.py
+PRUNE nodelang/gui_thread.py
+PRUNE nodelang/import_work_plan.py
+PRUNE nodelang/native_workshop_tools.py
+PRUNE nodelang/opencode_workshop_tools.py
+PRUNE nodelang/session_link_config.py
+PRUNE nodelang/session_link_transport.py
+PRUNE nodelang/social_research_community_backend.py
+PRUNE nodelang/startup_backup.py
+PRUNE nodelang/work_proposals.py
+PRUNE nodelang/workshop_clean_archive.py
+PRUNE nodelang/workshop_page_lifecycle.py
+PRUNE nodelang/workshop_presentation.py
+PRUNE nodelang/workshop_project_resolution.py
+PRUNE studio/old.js
+REVIT CLEAN C:\Users\fargaly\AppData\Local\Temp\land-stack\.cache\prunerig-proof\APPDATA\Autodesk\Revit\Addins\2024\.archhub-addin-proof.tmp
+REVIT CLEAN C:\Users\fargaly\AppData\Local\Temp\land-stack\.cache\prunerig-proof\APPDATA\Autodesk\Revit\Addins\2024\ArchHub.addin.retired
+REVIT CLEAN C:\Users\fargaly\AppData\Local\Temp\land-stack\.cache\prunerig-proof\APPDATA\Autodesk\Revit\Addins\2027\.archhub-addin-proof.tmp
+REVIT CLEAN C:\Users\fargaly\AppData\Local\Temp\land-stack\.cache\prunerig-proof\APPDATA\Autodesk\Revit\Addins\2027\ArchHub.addin.retired
+REVIT CLEAN C:\Users\fargaly\AppData\Local\Temp\land-stack\.cache\prunerig-proof\APPDATA\Autodesk\Revit\Addins\2029\.archhub-addin-proof.tmp
+REVIT CLEAN C:\Users\fargaly\AppData\Local\Temp\land-stack\.cache\prunerig-proof\APPDATA\Autodesk\Revit\Addins\2029\ArchHub.addin.retired
+REVIT CLEAN C:\Users\fargaly\AppData\Local\Temp\land-stack\.cache\prunerig-proof\ProgramData\Autodesk\Revit\Addins\2024\.archhub-addin-proof.tmp
+REVIT CLEAN C:\Users\fargaly\AppData\Local\Temp\land-stack\.cache\prunerig-proof\ProgramData\Autodesk\Revit\Addins\2024\ArchHub.addin.retired
+REVIT CLEAN C:\Users\fargaly\AppData\Local\Temp\land-stack\.cache\prunerig-proof\ProgramData\Autodesk\Revit\Addins\2027\.archhub-addin-proof.tmp
+REVIT CLEAN C:\Users\fargaly\AppData\Local\Temp\land-stack\.cache\prunerig-proof\ProgramData\Autodesk\Revit\Addins\2027\ArchHub.addin.retired
+REVIT CLEAN C:\Users\fargaly\AppData\Local\Temp\land-stack\.cache\prunerig-proof\ProgramData\Autodesk\Revit\Addins\2029\.archhub-addin-proof.tmp
+REVIT CLEAN C:\Users\fargaly\AppData\Local\Temp\land-stack\.cache\prunerig-proof\ProgramData\Autodesk\Revit\Addins\2029\ArchHub.addin.retired
+REVIT CLEAN C:\Users\fargaly\AppData\Local\Temp\land-stack\.cache\prunerig-proof\installed\Revit\2027\RevitMCP.dll
+REVIT CLEAN C:\Users\fargaly\AppData\Local\Temp\land-stack\.cache\prunerig-proof\installed\Revit\2027\RevitMCP.pdb
+REVIT CLEAN C:\Users\fargaly\AppData\Local\Temp\land-stack\.cache\prunerig-proof\installed\Revit\2027\RevitMCP.deps.json
+REVIT CLEAN C:\Users\fargaly\AppData\Local\Temp\land-stack\.cache\prunerig-proof\installed\Revit\2027\RevitMCPCore.dll
+REVIT CLEAN C:\Users\fargaly\AppData\Local\Temp\land-stack\.cache\prunerig-proof\installed\Revit\2027\RevitMCPCore.pdb
+REVIT CLEAN C:\Users\fargaly\AppData\Local\Temp\land-stack\.cache\prunerig-proof\installed\Revit\2027\RevitMCPCore.deps.json
+REVIT CLEAN C:\Users\fargaly\AppData\Local\Temp\land-stack\.cache\prunerig-proof\installed\Revit\2027\RevitMCP.addin
+REVIT FOREIGN RECEIPT {"path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\land-stack\\.cache\\prunerig-proof\\APPDATA\\Autodesk\\Revit\\Addins\\2024\\Vendor.addin", "before_sha256": "45e87c95a14659e480c15ae2ec63ea45af597461fa639ff97987d6ee9e0c47e4", "after_sha256": "45e87c95a14659e480c15ae2ec63ea45af597461fa639ff97987d6ee9e0c47e4", "unchanged": true}
+REVIT FOREIGN RECEIPT {"path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\land-stack\\.cache\\prunerig-proof\\APPDATA\\Autodesk\\Revit\\Addins\\2027\\Vendor.addin", "before_sha256": "45e87c95a14659e480c15ae2ec63ea45af597461fa639ff97987d6ee9e0c47e4", "after_sha256": "45e87c95a14659e480c15ae2ec63ea45af597461fa639ff97987d6ee9e0c47e4", "unchanged": true}
+REVIT FOREIGN RECEIPT {"path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\land-stack\\.cache\\prunerig-proof\\APPDATA\\Autodesk\\Revit\\Addins\\2029\\Vendor.addin", "before_sha256": "45e87c95a14659e480c15ae2ec63ea45af597461fa639ff97987d6ee9e0c47e4", "after_sha256": "45e87c95a14659e480c15ae2ec63ea45af597461fa639ff97987d6ee9e0c47e4", "unchanged": true}
+REVIT FOREIGN RECEIPT {"path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\land-stack\\.cache\\prunerig-proof\\ProgramData\\Autodesk\\Revit\\Addins\\2024\\Vendor.addin", "before_sha256": "45e87c95a14659e480c15ae2ec63ea45af597461fa639ff97987d6ee9e0c47e4", "after_sha256": "45e87c95a14659e480c15ae2ec63ea45af597461fa639ff97987d6ee9e0c47e4", "unchanged": true}
+REVIT FOREIGN RECEIPT {"path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\land-stack\\.cache\\prunerig-proof\\ProgramData\\Autodesk\\Revit\\Addins\\2027\\Vendor.addin", "before_sha256": "45e87c95a14659e480c15ae2ec63ea45af597461fa639ff97987d6ee9e0c47e4", "after_sha256": "45e87c95a14659e480c15ae2ec63ea45af597461fa639ff97987d6ee9e0c47e4", "unchanged": true}
+REVIT FOREIGN RECEIPT {"path": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\land-stack\\.cache\\prunerig-proof\\ProgramData\\Autodesk\\Revit\\Addins\\2029\\Vendor.addin", "before_sha256": "45e87c95a14659e480c15ae2ec63ea45af597461fa639ff97987d6ee9e0c47e4", "after_sha256": "45e87c95a14659e480c15ae2ec63ea45af597461fa639ff97987d6ee9e0c47e4", "unchanged": true}

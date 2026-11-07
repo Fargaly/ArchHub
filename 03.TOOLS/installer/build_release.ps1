@@ -839,7 +839,12 @@ foreach ($name in 'site.zip', 'stdlib.zip', 'stamp.json') {
 $preflightOutput = Join-Path $output 'preflight'
 & $PythonPath -I -B (Join-Path $selectedRoot 'packaging/preflight_imports.py') --source $selectedRoot --output $preflightOutput
 if ($LASTEXITCODE -ne 0) { throw 'Preflight import closure generation failed; no installer was compiled.' }
-& $compiler "/DBuildId=$BuildId" "/DRequirementsSha256=$requirementsSha" "/DBuildMetadataPath=$buildMetadataPath" "/DNodeRuntimePath=$node" "/DNodeLicensePath=$nodeLicense" "/DGoosePayloadPath=$goosePayload" "/DBetterleaksPayloadPath=$betterleaksPayload" "/DCompilerPayloadPath=$(Join-Path $selectedRoot 'runtime/acompiler')" "/DWheelhousePath=$wheelhouse" "/DHostPayloadPath=$hostPayload" "/DPreflightFilesPath=$(Join-Path $preflightOutput 'preflight-files.iss')" "/DPreflightCodePath=$(Join-Path $preflightOutput 'preflight-code.iss')" "/O$output" $installer
+# Exact installed product inventory, after generated Studio and gated host payloads exist.
+$installedManifest = Join-Path $output 'installed-source-manifest.tsv'
+& $PythonPath -B (Join-Path $selectedRoot 'nodelang/host_addin_retarget.py') --manifest $selectedRoot $hostPayload $installedManifest
+if ($LASTEXITCODE -ne 0) { throw 'Installed source manifest generation failed.' }
+$installedManifestSha = (Get-FileHash -LiteralPath $installedManifest -Algorithm SHA256).Hash.ToLowerInvariant()
+& $compiler "/DInstalledManifestPath=$installedManifest" "/DInstalledManifestSha256=$installedManifestSha" "/DBuildId=$BuildId" "/DRequirementsSha256=$requirementsSha" "/DBuildMetadataPath=$buildMetadataPath" "/DNodeRuntimePath=$node" "/DNodeLicensePath=$nodeLicense" "/DGoosePayloadPath=$goosePayload" "/DBetterleaksPayloadPath=$betterleaksPayload" "/DCompilerPayloadPath=$(Join-Path $selectedRoot 'runtime/acompiler')" "/DWheelhousePath=$wheelhouse" "/DHostPayloadPath=$hostPayload" "/DPreflightFilesPath=$(Join-Path $preflightOutput 'preflight-files.iss')" "/DPreflightCodePath=$(Join-Path $preflightOutput 'preflight-code.iss')" "/O$output" $installer
 if ($LASTEXITCODE -ne 0) { throw "Selected installer compilation failed with exit code $LASTEXITCODE." }
 if ((Get-FileHash -LiteralPath $node -Algorithm SHA256).Hash.ToLowerInvariant() -cne $nodeRuntimeSha) {
     throw 'Node runtime changed during installer compilation; retain artifact for inspection only.'

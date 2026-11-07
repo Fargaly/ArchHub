@@ -1,6 +1,25 @@
 {
   "schema_version": 1,
   "intents": {
+    "ONETASK": {
+      "source": "Founder ONETASK: one task one session one file; linked session groups; Home session list; task-scoped workflow skill automation; reversible migration. Sole builder; release set plus new tests; commit no push or installation.",
+      "scope": [
+        "01.APP/nodelang/workshop_tasks.py",
+        "01.APP/nodelang/session_files.py",
+        "01.APP/nodelang/library_engines.py",
+        "01.APP/nodelang/canvas_tools.py",
+        "01.APP/nodelang/nograph_server.py",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/ds_screens.jsx",
+        "01.APP/nodelang/studio/ds_home2.jsx",
+        "01.APP/nodelang/studio/ds_workshop3.jsx",
+        "02.TESTS/tests/test_onetask.py",
+        "02.TESTS/tests_js/onetask.cjs",
+        "04.DOCS/DECISIONS.md",
+        "05.EVIDENCE/acompiler-intents.json",
+        "05.EVIDENCE/onetask/"
+      ]
+    },
     "WSOWNER": {
       "source": "Founder WSOWNER / F98: desktop ApplicationServer answers Workspaces itself over the existing keyless coordination surface and in-process route; one shared implementation with retired consumer; same journal/account, retained registration and private grant boundaries, no new process, coordination key, admission ticket or manifest. Patch-only isolated lane; 717 lands/builds/installs.",
       "scope": [

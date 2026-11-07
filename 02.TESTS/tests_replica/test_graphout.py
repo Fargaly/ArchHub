@@ -245,3 +245,109 @@ def test_updater_protects_journals_and_recovery_sidecars(tmp_path):
     code = source / 'current.py'
     code.write_text('pass', encoding='utf-8')
     assert list(_payload_files(app)) == [code]
+
+
+def test_native_registered_tools_equal_origin_main():
+    import asyncio
+    from nodelang.native_agent_mcp import build_server
+    baseline = json.loads((ROOT / '05.EVIDENCE/graphout/origin-main-tools.json').read_text())
+    actual = sorted(tool.name for tool in asyncio.run(build_server().list_tools()))
+    assert actual == baseline['tools']
+    assert len(actual) == baseline['count']
+
+
+def test_graph_only_social_tools_remain_visible_open_items():
+    import asyncio
+    from nodelang.native_agent_mcp import build_server
+    server = build_server()
+    schemas = {tool.name: tool.inputSchema for tool in asyncio.run(server.list_tools())}
+    for name, properties in [('social.work_prepare', {'work_root', 'note'}),
+                             ('social.work_execute', {'work_root'})]:
+        assert set(schemas[name]['properties']) == properties
+        assert schemas[name]['additionalProperties'] is False
+        tool = server._tool_manager.get_tool(name)
+        answer = tool.fn(work_root='assembly-instance:retired-social-work')
+        assert answer['ok'] is False and answer['state'] == 'not_available'
+        assert 'open item' in answer['reason'].lower()
+        assert 'graph' in answer['reason'].lower()
+
+
+def test_native_prompt_context_includes_newest_beyond_one_hundred():
+    from nodelang.workshop_mailbox import application_history, ROOM, CATEGORY
+    from nodelang.native_agent_hooks import user_prompt_submit_context
+    with application_history() as history:
+        for index in range(125):
+            history.append(ROOM, author='fixture', category=CATEGORY,
+                           content='graphout-newest-%03d' % index,
+                           idempotency_key='graphout-newest-%03d' % index)
+    result = user_prompt_submit_context(context={'archhub/sessionID': 'graphout-newest'})
+    text = result['hookSpecificOutput']['additionalContext']
+    assert 'graphout-newest-124' in text
+    assert 'graphout-newest-000' not in text
+    assert text.index('graphout-newest-115') < text.index('graphout-newest-124')
+
+
+def test_native_prompt_context_fits_three_large_declarations(monkeypatch):
+    from nodelang import workshop_mailbox as mailbox
+    from nodelang.native_agent_hooks import user_prompt_submit_context
+    declarations = [{'root': 'declaration:%d' % i, 'task': 'x' * 15073} for i in range(3)]
+    assert all(len(json.dumps(row).encode()) == 15110 for row in declarations)
+    monkeypatch.setattr(mailbox, 'call', lambda *args, **kwargs: {
+        'messages': [], 'declarations': declarations, 'declaration_total': 3,
+        'declarations_more': False, 'declarations_after': declarations[-1]['root']})
+    result = user_prompt_submit_context(context={'archhub/sessionID': 'graphout-declarations'})
+    text = result['hookSpecificOutput']['additionalContext']
+    assert len(text.encode('utf-8')) <= 32768
+    page = json.loads(text.split('\n', 1)[1])
+    assert page['declarations'] and page['declaration_total'] == 3
+    assert page['declarations_more'] is True
+    assert page['declarations_after'] == ''
+
+
+def test_native_prompt_large_real_declarations_keep_caller_and_read_state(tmp_path):
+    from nodelang.workshop_mailbox import call, application_history, ROOM
+    from nodelang.native_agent_hooks import user_prompt_submit_context
+    paths = []
+    for i in range(70):
+        prefix = str(Path(tmp_path.anchor) / 'graphout' / ('path%02d' % i))
+        paths.append(prefix + 'x' * (215 + (i < 60) - len(prefix.encode()) - len('/file.py')) + '/file.py')
+    assert sum(len(path.encode()) for path in paths) == 15110
+    for i in range(3):
+        call('declare', {'task': 'valid budget fixture', 'paths': paths, 'status': 'working',
+                        'request_id': 'unassigned'}, {'threadId': 'budget-fixture-%d' % i})
+    context = {'threadId': 'budget-fixture-2'}
+    original = call('read', {'since': 0}, context)
+    assert len(original['declarations']) == 3
+    def snapshot():
+        with application_history(read_only=True) as history:
+            cursors = history._db.execute("SELECT name FROM sqlite_master WHERE name='workshop_delivery_cursors'").fetchone()
+            return (history._head(ROOM), history._db.execute('SELECT * FROM workshop_delivery_cursors').fetchall() if cursors else [],
+                    history._db.execute('SELECT COUNT(*) FROM messages').fetchone()[0])
+    before = snapshot()
+    result = user_prompt_submit_context(context=context)
+    text = result['hookSpecificOutput']['additionalContext']
+    assert len(text.encode()) <= 32768
+    page = json.loads(text.split('\n', 1)[1])
+    assert any(row['session'] == original['sender_key'] for row in page['declarations'])
+    assert page['declarations_more'] and page['declaration_total'] == 3
+    assert snapshot() == before
+
+
+def test_native_prompt_long_peer_labels_fit_budget():
+    from nodelang.workshop_mailbox import application_history, ROOM, CATEGORY
+    from nodelang.native_agent_hooks import user_prompt_submit_context
+    with application_history() as history:
+        for i in range(100):
+            author = 'Codex / ' + 'x' * 400 + str(i) + ' [agent:session:' + ('%064x' % i) + ']'
+            history.append(ROOM, author=author, category=CATEGORY, content='peer-%d' % i,
+                           idempotency_key='long-peer-%d' % i)
+    result = user_prompt_submit_context(context={'threadId': 'long-peer-context'})
+    text = result['hookSpecificOutput']['additionalContext']
+    assert len(text.encode()) <= 32768
+    page = json.loads(text.split('\n', 1)[1])
+    assert page['peers_omitted'] > 0
+    assert len(page['peers']) + page['peers_omitted'] == 100
+    assert page['messages'][-1]['content'] == 'peer-99'
+    assert page['older_messages_omitted']
+    assert page['oldest_included_sequence'] == page['messages'][0]['sequence']
+    assert 'since=0' in page['older_messages_recovery']

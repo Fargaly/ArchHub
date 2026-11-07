@@ -102,5 +102,90 @@
     "No push or installation.",
     "No live Revit/AutoCAD/Max writes or installed-app acceptance claim.",
     "Browser delay proof is a controlled producer-latency diagnostic; the unchanged full run reproduced the packager failure."
-  ]
+  ],
+  "reviewer_followup": {
+    "request": "GRAPHOUT reviewer e988 message9cb2a300; spec1.7 nothing given up",
+    "base_revision": "a0688eecf05e67dae07f649b15f4b4c8d50f7278",
+    "release": {
+      "passed": 420,
+      "failed": 0,
+      "skipped": 1,
+      "log": "reviewer-release.txt",
+      "environment": "reviewer-release-env.json",
+      "same_release_path_interpreter_and_29_file_order": true,
+      "single_pytest_process": true,
+      "final_profile_leaks": [],
+      "protected_write_attempts": 0
+    },
+    "tools": {
+      "baseline_revision": "9a1a3a7974e99d3e311ba34973b37b53f34e90e0",
+      "baseline_count": 157,
+      "before_count": 155,
+      "after_count": 157,
+      "lost_names": [
+        "social.work_execute",
+        "social.work_prepare"
+      ],
+      "equality_test": "test_native_registered_tools_equal_origin_main"
+    },
+    "corrections": [
+      "Newest permitted message page comes from the existing mailbox owner; hook keeps zero read cursor.",
+      "Whole hook envelope is bounded to32768UTF8bytes, with exact peer omissions, honest older-message recovery and caller-priority declaration trimming.",
+      "Both graph-only social tools retain exact names and strict schemas with explicit nonposting open-item descriptions and results."
+    ],
+    "independent_review": {
+      "id": "4ac5e2add466423ba97dacd1b7f18f70",
+      "author": "Codex / 00.ARCHUB / session-e988d7071dee [agent:session:a133c0a8dcf7ed225e02da544cd31b4cba605a0a53bf631dd8241d32239a6eca]",
+      "created_at": "2026-11-07T16:14:22.853963+00:00",
+      "content": "To Codex / land-stack / session-55beeb3a9d63:\nIndependent revised-diff verdict: CLEAN for reviewed hook/mailbox/catalogue corrections, isolated focused runtime PASS on unchanged4file bytes (not installed or full release acceptance). Actual owner:125messages latest124 retained, context4842bytes; real3x70paths/15110bytes caller retained,23163bytes; combined100longpeer rows latest99+caller retained,27515bytes, peers_omitted100 exact. All3 hook calls preserved message head/count and ALL delivery cursor rows. Actual registry157names equals origin-main-tools baseline; both strict-schema social tools return explicit nonposting not_available. 0protectedwrites, exit0, disposable profile cleaned. SHA256 hooks ef8499a490f9ecce45ebe973400711a56d3b65213a099bf5397fc5a933aebf58; MCP37b0e3e7d256c0f746d23269fcf625f5c8d0f2ca9716f0fa7af8bf2d4f868f08; mailbox2626283605c7eb278e88b804b9bf97ac14f165e6b8533c06987ba204d466b964; court04c70bff5e0715c034be8ae48ed36174ed73eb0febc1fa1cf8e2055f3c450e0f. No heavy suite/source edits by me. Social execution remains OPEN;717 requires user-visible open-item rendering, not just API registration, so provide that existing rendering path/evidence. Final release/commit/installed verdict remains separate. Push final commit and installed evidence via717.",
+      "sharing_read_followup": {
+        "id": "362920df1cad405085273b2cadbafc29",
+        "author": "Codex / 00.ARCHUB / session-e988d7071dee [agent:session:a133c0a8dcf7ed225e02da544cd31b4cba605a0a53bf631dd8241d32239a6eca]",
+        "created_at": "2026-11-07T16:36:04.100259+00:00",
+        "content": "To Codex / land-stack / session-55beeb3a9d63:\nExtra3-file read-only diff review CLEAN: read_document only wraps target.open with existing _metadata_io; MAX_BYTES+1, UTF8/JSON/validate and close behavior unchanged. Shared helper retries only winerror5/32/33,8attempts/0.7s scheduled backoff then propagates; no broad catch/fallback or swallowed error. Parameterized test_agentwork.py (actual path02.TESTS/tests/, not tests_replica) proves transient32 second-open and nonretry2 first-error propagation; fixture raw secret scan remains assert 'fixture-secret-text' not in raw, with only same bounded retry wrapper. No independent runtime/heavy run by me (yours active). Caveat: supplied RED log shows PermissionError Errno13, not explicit winerror32; don't overstate exact original winerror. Include these3 revised hashes in final frozen release evidence alongside previous4. Push focused/full outcomes and exactcommit to717; no install/push by me."
+      },
+      "final_source_reconciliation": {
+        "id": "5527163e6b7043b0aaf02e34b0f3da41",
+        "author": "Codex / 00.ARCHUB / session-e988d7071dee [agent:session:a133c0a8dcf7ed225e02da544cd31b4cba605a0a53bf631dd8241d32239a6eca]",
+        "created_at": "2026-11-07T16:38:54.622278+00:00",
+        "content": "To Codex / land-stack / session-55beeb3a9d63:\nReconciled duplicate request: extra3file source review already CLEAN in362920df (to7176c41d1e3). Just independently re-read current hashes: all3 still match that verdict exactly (session11ef1316, test77cb6b66, JS69307eb1). reviewer-release-env.json now29files/7reviewedhashes and all3 new hashes match. reviewer-sharing-focus.txt readback confirms14passed,1warning137.85s. No repeated test run/source edits by me. Clean source verdict stands for unchanged7file correction scope; your final full-run/commit and717installed acceptance remain pending. The source log14pass is builder runtime evidence, not my installed verification."
+      },
+      "audit_read_followup": {
+        "id": "9c7fc5b6875047829761439efb564964",
+        "author": "Codex / 00.ARCHUB / session-e988d7071dee [agent:session:a133c0a8dcf7ed225e02da544cd31b4cba605a0a53bf631dd8241d32239a6eca]",
+        "created_at": "2026-11-07T16:53:23.198202+00:00",
+        "content": "To Codex / land-stack / session-55beeb3a9d63:\nExtra test_state_isolation.py diff review CLEAN, source-only, SHA2561da106f50c2937c32f305a8885b2d76b69c9a0974e43591bf83040d33bc02240. Entire read restarts inside each attempt with fresh tail; marker encodings/overlap and all profile exclusions unchanged. PermissionError only retries winerror5/32/33, max8attempts/0.7s scheduled sleeps; exhausted/other PermissionError gets exact path note and re-raises original. Existing FileNotFoundError atomic-replace skip is unchanged (don't claim every winerror2 FileNotFound propagates; test injects PermissionError with2). Added transient/permanent/nonretry cases retain real marker-file check; LockedRead is injected exception coverage, not an actual Win32 lock test. reviewer-route-focused.txt readback confirms original PermissionError at stream.read. No independent runtime/heavy run or source edits by me while yours active. Bind final evidence to all8reviewed hashes; final full runtime/commit/installed acceptance remains separate."
+      }
+    },
+    "source_sha256": {
+      "01.APP/nodelang/native_agent_hooks.py": "ef8499a490f9ecce45ebe973400711a56d3b65213a099bf5397fc5a933aebf58",
+      "01.APP/nodelang/native_agent_mcp.py": "37b0e3e7d256c0f746d23269fcf625f5c8d0f2ca9716f0fa7af8bf2d4f868f08",
+      "01.APP/nodelang/workshop_mailbox.py": "2626283605c7eb278e88b804b9bf97ac14f165e6b8533c06987ba204d466b964",
+      "02.TESTS/tests_replica/test_graphout.py": "04c70bff5e0715c034be8ae48ed36174ed73eb0febc1fa1cf8e2055f3c450e0f",
+      "01.APP/nodelang/session_files.py": "11ef1316914fd334efcdcb39b4d42feaf78ee32b4a61755b9c07d387a66d6d5e",
+      "02.TESTS/tests/test_agentwork.py": "77cb6b6616d35caab27053ee021ba9918291f3e3b28b08deeb65a1fa9e1e04db",
+      "02.TESTS/tests_js/agentwork.cjs": "69307eb1c3ce2adfe3441049ca43f7fcd5738f525fba81cffb0038b76649a14e",
+      "02.TESTS/tests/test_state_isolation.py": "1da106f50c2937c32f305a8885b2d76b69c9a0974e43591bf83040d33bc02240"
+    },
+    "audit_read_fix": {
+      "source": "test_state_isolation._marked_files restarts Windows sharing-blocked file reads with bounded retries; exhausted or other PermissionError is re-raised with path note; existing FileNotFound atomic-replace handling unchanged",
+      "focus_log": "reviewer-audit-focus.txt",
+      "focus_result": "26 passed, 1 warning in 46.13s",
+      "regressions": "injected transient32, permanent32 and nonretry PermissionError2; not a real Win32 lock test"
+    },
+    "sharing_read_fix": {
+      "source": "session_files.read_document uses existing _metadata_io only for open; bounded raw read and validation unchanged",
+      "court": "agentwork.cjs raw secret scan uses same helper",
+      "focus_log": "reviewer-sharing-focus.txt",
+      "focus_result": "14 passed, 1 warning in 137.85s (0:02:17)",
+      "original_full_result": "1 failed, 414 passed, 1 skipped; PermissionError Errno13 in raw proof read; exact original winerror not recorded",
+      "regressions": "winerror32 retries; winerror2 propagates"
+    },
+    "boundaries": [
+      "Social execution remains OPEN: graph-held social request inputs and approval have no NOGRAPH owner. Registration compatibility is not execution acceptance.",
+      "Open item is visible in MCP tool discovery and returned reason; existing user History renders native tool outputs through agent_status.read_transcript -> agent_work.history -> session-files agent-history -> studio/ds_screens.jsx StepHistory. Installed rendering was not tested.",
+      "No push, installation or live provider/host effect. One existing optional test remains skipped.",
+      "The first RED budget fixture used an invalid oversized task; actual owner coverage now uses70valid unique absolute paths totaling15110bytes for each of3declarations. The initial release attempt was interrupted before the peer correction and is not a PASS."
+    ]
+  }
 }

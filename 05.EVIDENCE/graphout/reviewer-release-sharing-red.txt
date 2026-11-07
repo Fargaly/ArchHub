@@ -1,0 +1,93 @@
+........................................................................ [ 17%]
+........................................................................ [ 34%]
+..................................F..................................... [ 51%]
+........................................................................ [ 69%]
+......................................................s................. [ 86%]
+........................................................TESTISO final profile leaks: []; protected write attempts: 0
+                                                                         [100%]
+================================== FAILURES ===================================
+___________________________ test_rendered_agentwork ___________________________
+
+    def test_rendered_agentwork():
+        import os
+        from pathlib import Path
+        import subprocess
+        import sys
+        root = Path(__file__).resolve().parents[2]
+        cache = os.environ.get('PLAYWRIGHT_BROWSERS_PATH') or subprocess.check_output(
+            ['node', '-p', "require('node:path').join(require('node:os').userInfo().homedir,'AppData/Local/ms-playwright')"],
+            text=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)).strip()
+        for command in (['node', '--max-old-space-size=512', '03.TOOLS/packaging/compile_studio.cjs'],
+                        ['node', '02.TESTS/tests_js/agentwork.cjs']):
+            result = subprocess.run(command, cwd=root, capture_output=True, text=True, encoding='utf-8', timeout=240,
+                                    env={**os.environ, 'PLAYWRIGHT_BROWSERS_PATH': cache, 'ARCHHUB_COURT_PYTHON': sys.executable},
+                                    creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            print(result.stdout)
+>           assert result.returncode == 0, result.stdout + result.stderr
+E           AssertionError: PASS codex: 7 typed steps within 2s, edited read Run, History by id, dashed dependency, shell has no Run, write held then approved, Fork copies 7 normal nodes, secret-free file, Home one task per session
+E             AssertionError [ERR_ASSERTION]: Traceback (most recent call last):
+E               File "<string>", line 62, in <module>
+E                 raw=Path(row['session_path']).read_text(encoding='utf-8')
+E               File "C:\Users\fargaly\AppData\Local\Python\pythoncore-3.14-64\Lib\pathlib\__init__.py", line 787, in read_text
+E                 with self.open(mode='r', encoding=encoding, errors=errors, newline=newline) as f:
+E                      ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               File "C:\Users\fargaly\AppData\Local\Python\pythoncore-3.14-64\Lib\pathlib\__init__.py", line 771, in open
+E                 return io.open(self, mode, buffering, encoding, errors, newline)
+E                        ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E             PermissionError: [Errno 13] Permission denied: 'C:\\Users\\fargaly\\AppData\\Local\\Temp\\land-stack\\.cache\\agentwork-oyueltc5\\state\\Sessions\\BA details claude.archhub'
+E             
+E             + actual - expected
+E             
+E             + 'Traceback (most recent call last):\n' +
+E             +   '  File "<string>", line 62, in <module>\n' +
+E             +   "    raw=Path(row['session_path']).read_text(encoding='utf-8')\n" +
+E             +   '  File "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\pathlib\\__init__.py", line 787, in read_text\n' +
+E             +   "    with self.open(mode='r', encoding=encoding, errors=errors, newline=newline) as f:\n" +
+E             +   '         ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n' +
+E             +   '  File "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\pathlib\\__init__.py", line 771, in open\n' +
+E             +   '    return io.open(self, mode, buffering, encoding, errors, newline)\n' +
+E             +   '           ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n' +
+E             +   "PermissionError: [Errno 13] Permission denied: 'C:\\\\Users\\\\fargaly\\\\AppData\\\\Local\\\\Temp\\\\land-stack\\\\.cache\\\\agentwork-oyueltc5\\\\state\\\\Sessions\\\\BA details claude.archhub'\n"
+E             - undefined
+E             
+E                 at command (C:\Users\fargaly\AppData\Local\Temp\land-stack\02.TESTS\tests_js\agentwork.cjs:88:135)
+E                 at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+E                 at async C:\Users\fargaly\AppData\Local\Temp\land-stack\02.TESTS\tests_js\agentwork.cjs:127:66 {
+E               generatedMessage: false,
+E               code: 'ERR_ASSERTION',
+E               actual: 'Traceback (most recent call last):\n' +
+E                 '  File "<string>", line 62, in <module>\n' +
+E                 "    raw=Path(row['session_path']).read_text(encoding='utf-8')\n" +
+E                 '  File "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\pathlib\\__init__.py", line 787, in read_text\n' +
+E                 "    with self.open(mode='r', encoding=encoding, errors=errors, newline=newline) as f:\n" +
+E                 '         ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n' +
+E                 '  File "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\pathlib\\__init__.py", line 771, in open\n' +
+E                 '    return io.open(self, mode, buffering, encoding, errors, newline)\n' +
+E                 '           ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n' +
+E                 "PermissionError: [Errno 13] Permission denied: 'C:\\\\Users\\\\fargaly\\\\AppData\\\\Local\\\\Temp\\\\land-stack\\\\.cache\\\\agentwork-oyueltc5\\\\state\\\\Sessions\\\\BA details claude.archhub'\n" +
+E                 '...',
+E               expected: undefined,
+E               operator: 'strictEqual',
+E               diff: 'simple'
+E             }
+E             
+E           assert 1 == 0
+E            +  where 1 = CompletedProcess(args=['node', '02.TESTS/tests_js/agentwork.cjs'], returncode=1, stdout='PASS codex: 7 typed steps wit...s claude.archhub\'\\n" +\n    \'...\',\n  expected: undefined,\n  operator: \'strictEqual\',\n  diff: \'simple\'\n}\n').returncode
+
+02.TESTS\tests\test_agentwork.py:250: AssertionError
+---------------------------- Captured stdout call -----------------------------
+{"ok":true,"action":"compile","files":40,"output_bytes":1889410,"manifest_sha256":"9f4129e1761556cc15b2986ec90a23f980ab192be1e4c81fd73e252b84b96548","babel_version":"7.29.0"}
+
+PASS codex: 7 typed steps within 2s, edited read Run, History by id, dashed dependency, shell has no Run, write held then approved, Fork copies 7 normal nodes, secret-free file, Home one task per session
+
+============================== warnings summary ===============================
+..\..\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434
+  C:\Users\fargaly\AppData\Local\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434: PytestConfigWarning: Unknown config option: cache_dir
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+PROFILE-WRITE-GUARD: protected write attempts=0
+=========================== short test summary info ===========================
+FAILED 02.TESTS/tests/test_agentwork.py::test_rendered_agentwork - AssertionE...
+1 failed, 414 passed, 1 skipped, 1 warning in 1182.10s (0:19:42)

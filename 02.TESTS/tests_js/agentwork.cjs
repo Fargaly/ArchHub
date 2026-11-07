@@ -60,10 +60,10 @@ try:
                 declare(vendor)
                 answer={'ok':True,'edited':str(edited)}
             elif command['action']=='proof':
-                from nodelang.session_files import read_document
+                from nodelang.session_files import read_document, _metadata_io
                 with application_history() as history:
                     row=tasks.get(history,held[vendor]['taskId'])
-                raw=Path(row['session_path']).read_text(encoding='utf-8')
+                raw=_metadata_io(Path(row['session_path']).read_text,encoding='utf-8')
                 assert 'fixture-secret-text' not in raw
                 answer={'ok':True,'written':(root/vendor/'reviewed.txt').exists(),'nodes':len(read_document(row['session_path'])['nodes'])}
             else:

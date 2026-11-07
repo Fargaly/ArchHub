@@ -320,7 +320,7 @@ def local_path(path):
 
 def read_document(path):
     target = local_path(str(path))
-    with target.open('rb') as stream:
+    with _metadata_io(target.open, 'rb') as stream:
         raw = stream.read(MAX_BYTES + 1)
     if len(raw) > MAX_BYTES:
         raise ValueError('Session exceeds 8 MiB')

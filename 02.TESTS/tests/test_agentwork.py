@@ -211,6 +211,33 @@ def test_noop_autosave_move_allows_open_readers():
     assert list(path.parent.glob('*.archhub')) == [path]
 
 
+@pytest.mark.parametrize('winerror', [32, 2])
+def test_document_read_retries_only_windows_sharing_errors(tmp_path, monkeypatch, winerror):
+    from pathlib import Path
+    from nodelang.session_files import new_document, write_document, read_document
+    path = tmp_path / 'Readers.archhub'
+    document = new_document('Readers')
+    write_document(path, document)
+    original = Path.open
+    attempts = []
+    def sharing_once(target, *args, **kwargs):
+        if target == path:
+            attempts.append(target)
+            if len(attempts) == 1:
+                error = PermissionError('Simulated Windows read handle')
+                error.winerror = winerror
+                raise error
+        return original(target, *args, **kwargs)
+    monkeypatch.setattr(Path, 'open', sharing_once)
+    if winerror == 32:
+        assert read_document(path) == document
+        assert len(attempts) == 2
+    else:
+        with pytest.raises(PermissionError):
+            read_document(path)
+        assert len(attempts) == 1
+
+
 def test_home_fold_only_changes_archive_flag(history):
     from nodelang import workshop_tasks as tasks
     current = tasks._declared_id('agent')

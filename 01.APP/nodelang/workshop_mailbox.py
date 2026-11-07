@@ -1095,13 +1095,19 @@ def _read(history, body, identity, runtime=None):
     if type(since) is not int or not 0 <= since < 2**63:
         raise ValueError("Message cursor is invalid")
     after = body.get("declarations_after", "")
+    newest = body.get("newest", False)
+    if type(newest) is not bool or newest and since != 0:
+        raise ValueError("Newest context requires a zero read cursor")
     if type(after) is not str or len(after) > 512 or type(body.get("include_archived", False)) is not bool:
         raise ValueError("Declaration cursor is invalid")
     with history._transaction():
         cursor = history._db.execute("SELECT * FROM messages WHERE conversation_id=? AND public=1 "
-                                     "AND sequence>? AND NOT (author=? AND category=?) ORDER BY sequence LIMIT 101",
+                                     "AND sequence>? AND NOT (author=? AND category=?) ORDER BY sequence "
+                                     + ("DESC" if newest else "ASC") + " LIMIT 101",
                                      (ROOM, since, DELIVERY_AUTHOR, DELIVERY_CATEGORY))
         messages, more = history._collect(cursor, 100, 180000)
+        if newest:
+            messages.reverse()
         peers = _recent_mailbox_peers(history, ROOM)
         read_cursor = min(since, history._head(ROOM))
     declarations = read_declarations(history._db, include_archived=body.get("include_archived", False))
@@ -1152,7 +1158,7 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
                 "declare": {"task", "paths", "status", "request_id"},
                 "task_create": {"title"}, "task_list": set(), "task_claim": {"id"}, "task_release": {"id"},
                 "task_complete": {"id"}, "task_set_session": {"id"}, "task_open": {"id"}, "task_archive": {"id"}}
-    optional = {"send": {"reply_to", "idempotency_key", "native_control"}, "read": {"declarations_after", "include_archived"}, "declare": {"display_name", "model", "role", "title"}, "pending":set(), "seen":set(),
+    optional = {"send": {"reply_to", "idempotency_key", "native_control"}, "read": {"declarations_after", "include_archived", "newest"}, "declare": {"display_name", "model", "role", "title"}, "pending":set(), "seen":set(),
                 "task_create": set(), "task_list": set(), "task_claim": {"lease_seconds"}, "task_release": set(),
                 "task_complete": {"result"},
                 "task_set_session": {"scope", "rules", "agents", "plan", "progress", "folders", "references"},

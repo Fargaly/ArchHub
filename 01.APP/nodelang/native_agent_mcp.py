@@ -432,6 +432,17 @@ def _register_work_tools(server):
         from .native_host_tools import _host_state
         return _host_state()
 
+    @server.tool(name="social.work_prepare")
+    def social_work_prepare(work_root: str, note: str = "") -> dict[str, object]:
+        """Open item: graph-held social Works have no NOGRAPH request owner yet. Posts nothing."""
+        return {'ok': False, 'state': 'not_available',
+                'reason': 'Open item: graph-held social Work inputs and approval have no NOGRAPH owner yet. Nothing was posted.'}
+
+    @server.tool(name="social.work_execute")
+    def social_work_execute(work_root: str) -> dict[str, object]:
+        """Open item: graph-held social approval cannot execute without a NOGRAPH owner."""
+        return social_work_prepare(work_root)
+
 
 def _work_continuation(server):
     return {'level': server._mcpfresh_level}

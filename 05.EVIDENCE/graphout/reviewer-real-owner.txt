@@ -1,0 +1,1 @@
+Real owner: 3 declarations, 15110 path bytes each; caller retained; <=32768 bytes; read state unchanged

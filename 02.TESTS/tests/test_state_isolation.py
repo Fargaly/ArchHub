@@ -154,21 +154,60 @@ def _marked_files(root, marker, *, since=None):
         if marker in relative:
             marked.add(str(path))
             continue
-        try:
-            if since is not None and path.stat().st_mtime < since:
-                continue  # A fresh run marker cannot predate this run; writes are also audit-guarded.
-            with path.open('rb') as stream:
-                tail = b''
-                while chunk := stream.read(1024 * 1024):
-                    chunk = tail + chunk
-                    if any(pattern in chunk for pattern in patterns):
-                        marked.add(str(path))
-                        break
-                    tail = chunk[-overlap:] if overlap else b''
-        except FileNotFoundError:
-            # Live owners may atomically replace files between enumeration and read.
-            continue
+        for attempt in range(8):
+            try:
+                if since is not None and path.stat().st_mtime < since:
+                    break  # A fresh run marker cannot predate this run; writes are also audit-guarded.
+                with path.open('rb') as stream:
+                    tail = b''
+                    while chunk := stream.read(1024 * 1024):
+                        chunk = tail + chunk
+                        if any(pattern in chunk for pattern in patterns):
+                            marked.add(str(path))
+                            break
+                        tail = chunk[-overlap:] if overlap else b''
+                break
+            except FileNotFoundError:
+                # Live owners may atomically replace files between enumeration and read.
+                break
+            except PermissionError as error:
+                if getattr(error, 'winerror', None) not in (5, 32, 33) or attempt == 7:
+                    error.add_note('Profile audit file: ' + str(path))
+                    raise
+                time.sleep(.025 * (attempt + 1))
     return marked
+
+
+@pytest.mark.parametrize('winerror,failures,attempts', [(32, 1, 2), (32, 99, 8), (2, 1, 1)])
+def test_marker_scan_restarts_locked_reads_and_never_skips_unreadable_files(tmp_path, monkeypatch, winerror, failures, attempts):
+    path = tmp_path / 'owner.json'
+    marker = 'profile-audit-read-fixture'
+    path.write_text(marker, encoding='utf-8')
+    original = Path.open
+    calls = []
+    class LockedRead:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def read(self, *args):
+            error = PermissionError('Simulated Windows read handle')
+            error.winerror = winerror
+            raise error
+    def open_file(target, *args, **kwargs):
+        if target == path:
+            calls.append(target)
+            if len(calls) <= failures:
+                return LockedRead()
+        return original(target, *args, **kwargs)
+    monkeypatch.setattr(Path, 'open', open_file)
+    if failures == 1 and winerror == 32:
+        assert _marked_files(tmp_path, marker) == {str(path)}
+    else:
+        with pytest.raises(PermissionError) as caught:
+            _marked_files(tmp_path, marker)
+        assert any(str(path) in note for note in caught.value.__notes__)
+    assert len(calls) == attempts
 
 
 def _sqlite_records(path):

@@ -7,18 +7,17 @@
   "deleted_application_python_modules": 277,
   "import_entries": 38,
   "unique_import_files": 146,
-  "python_acceptance_inventory": 410,
-  "acceptance_note": "GRAPHOUT release-environment follow-up: both cases pass separately, the browser also with controlled producer delay; exact supplied entry PATH and installed release interpreter, complete one-process release union: 409 passed, 0 failed, 1 skipped. Source-only commit; no push or installed-app acceptance.",
+  "python_acceptance_inventory": 421,
+  "acceptance_note": "GRAPHOUT reviewer correction release: 420passed, 0failed, 1skipped; exact prior release entry PATH/interpreter/29-file order; new runtime regressions included. Social registrations restored as visible open items; social execution remains OPEN. Source-only commit; no push or installation.",
   "test_results": {
     "release": {
-      "passed": 409,
+      "passed": 420,
       "failed": 0,
       "skipped": 1,
-      "warnings": 1,
-      "log": "release-env-full-green.txt",
+      "log": "reviewer-release.txt",
       "single_pytest_process": true,
       "test_files": 29,
-      "environment_proof": "release-env-verified.json"
+      "environment_proof": "reviewer-release-env.json"
     },
     "graphout": {
       "passed": 14,
@@ -62,11 +61,22 @@
     "No installation or push",
     "Historical journal contents were not inspected or migrated; per-behaviour coverage remains explicitly unverified"
   ],
-  "source_index_tree": "f978606829e2b9a4c5d4efe2c985f5c3d7745302",
   "filename_guard": "Three isolated journal and sidecar fixtures refused before SQLite open; fixture bytes unchanged (filename-guard.txt).",
-  "final_index_admission": "The mandatory commit-msg compiler gate validates the complete final index; no new store, docs edit, hook bypass, installation or push.",
+  "final_index_admission": "Normal pre-commit publication scan and scoped compiler validate the final staged index; no bypass, push or installation.",
   "verification_strategy": "Complete release suite against the frozen source, plus isolated route/boot/checker/sidecar and compiler regression courts. Focused counts overlap the main release suite.",
   "cleanup_observation": "Automatic approval review rejected deletion of this run's ignored failed Cargo debug cache: blocked by policy.",
   "code_commit_before_evidence_amend": "7d791a986d98e65a0bb9dd87840747c9f365d26f",
-  "followup_report": "fixes-report.json"
+  "followup_report": "fixes-report.json",
+  "reviewer_followup_report": "fixes-report.json#reviewer_followup",
+  "previous_source_index_tree": "f978606829e2b9a4c5d4efe2c985f5c3d7745302",
+  "source_sha256": {
+    "01.APP/nodelang/native_agent_hooks.py": "ef8499a490f9ecce45ebe973400711a56d3b65213a099bf5397fc5a933aebf58",
+    "01.APP/nodelang/native_agent_mcp.py": "37b0e3e7d256c0f746d23269fcf625f5c8d0f2ca9716f0fa7af8bf2d4f868f08",
+    "01.APP/nodelang/workshop_mailbox.py": "2626283605c7eb278e88b804b9bf97ac14f165e6b8533c06987ba204d466b964",
+    "02.TESTS/tests_replica/test_graphout.py": "04c70bff5e0715c034be8ae48ed36174ed73eb0febc1fa1cf8e2055f3c450e0f",
+    "01.APP/nodelang/session_files.py": "11ef1316914fd334efcdcb39b4d42feaf78ee32b4a61755b9c07d387a66d6d5e",
+    "02.TESTS/tests/test_agentwork.py": "77cb6b6616d35caab27053ee021ba9918291f3e3b28b08deeb65a1fa9e1e04db",
+    "02.TESTS/tests_js/agentwork.cjs": "69307eb1c3ce2adfe3441049ca43f7fcd5738f525fba81cffb0038b76649a14e",
+    "02.TESTS/tests/test_state_isolation.py": "1da106f50c2937c32f305a8885b2d76b69c9a0974e43591bf83040d33bc02240"
+  }
 }

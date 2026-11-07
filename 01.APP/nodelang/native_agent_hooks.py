@@ -74,13 +74,45 @@ def _remaining(deadline):
 def user_prompt_submit_context(control=None, selected=None, *, context=None):
     from .workshop_mailbox import call
     from .native_agent_mcp import _default_context
-    page = call('read', {'since': 0}, context or _default_context())
+    page = call('read', {'since': 0, 'newest': True}, context or _default_context())
+    page['older_messages_omitted'] = page.pop('more', False) or len(page.get('messages', [])) > _PAGE_LIMIT
+    page['newer_messages_since'] = page.pop('next_since', 0)
+    page['older_messages_recovery'] = 'Use read(since=0), then follow its ordinary next_since pages.'
     page['messages'] = [{**row, 'content': str(row.get('content') or '')[:_EXCERPT_CHARS]}
                         for row in page.get('messages', [])[-_PAGE_LIMIT:]]
-    page['declarations'] = page.get('declarations', [])[:_PAGE_LIMIT]
-    text = _INTRO + json.dumps(page, ensure_ascii=True)
-    if len(text.encode('utf-8')) > _CONTEXT_BYTES:
-        raise ValueError('Workshop context exceeds its bounded interface')
+    declarations = page.get('declarations', [])
+    caller = next((row for row in declarations if row.get('session') and row['session'] == page.get('sender_key')), None)
+    page['declarations_more'] = page.get('declarations_more', False) or len(declarations) > _PAGE_LIMIT
+    page['declarations'] = declarations[:_PAGE_LIMIT]
+    if caller is not None and caller not in page['declarations']:
+        page['declarations'][-1:] = [caller]
+    page['peers'] = list(page.get('peers', []))
+    page['peers_omitted'] = 0
+    while True:
+        # A context can omit noncontiguous rows to retain its caller; restart the ordinary read to recover them.
+        page['declarations_after'] = '' if page['declarations_more'] else (
+            page['declarations'][-1]['root'] if page['declarations'] else '')
+        page['oldest_included_sequence'] = page['messages'][0].get('sequence') if page['messages'] else None
+        text = _INTRO + json.dumps(page, ensure_ascii=True, separators=(',', ':'))
+        if len(text.encode('utf-8')) <= _CONTEXT_BYTES:
+            break
+        removable = next((row for row in reversed(page['declarations']) if row is not caller), None)
+        if page['peers']:
+            page['peers'].pop()
+            page['peers_omitted'] += 1
+        elif removable is not None:
+            page['declarations'].remove(removable)
+            page['declarations_more'] = True
+        elif page['messages']:
+            page['messages'].pop(0)
+            page['older_messages_omitted'] = True
+        elif caller is not None and page['declarations'] and not caller.get('context_truncated'):
+            caller = {key: caller[key] for key in ('root', 'session', 'agent', 'task', 'status', 'request_id') if key in caller}
+            caller['context_truncated'] = True
+            page['declarations'] = [caller]
+            page['declarations_more'] = True
+        else:
+            raise ValueError('Workshop context exceeds its bounded interface')
     return {'hookSpecificOutput': {'hookEventName': 'UserPromptSubmit', 'additionalContext': text}}
 
 

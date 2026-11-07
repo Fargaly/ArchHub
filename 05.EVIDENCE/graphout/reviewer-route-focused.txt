@@ -1,0 +1,55 @@
+.E                                                                       [100%]
+=================================== ERRORS ====================================
+______ ERROR at teardown of test_file_route_does_not_read_or_write_graph ______
+
+request = <SubRequest 'testiso_run' for <Function test_file_route_does_not_read_or_write_graph>>
+
+    @pytest.fixture(scope='session', autouse=True)
+    def testiso_run(request):
+        """Own the final scan regardless of the scan test's position in the release list."""
+        yield request.config._testiso_context
+        context = _run_context()
+>       leaks = _profile_leaks(context['before'], context['run'], time.time())
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+02.TESTS\conftest.py:70: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+02.TESTS\tests\test_state_isolation.py:220: in _profile_leaks
+    marked = _marked_files(root, marker, since=run['started'])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+root = WindowsPath('C:/Users/fargaly/AppData/Local/ArchHub')
+marker = '69c0c090-8c47-4932-9de9-6e03f7f71b31'
+
+    def _marked_files(root, marker, *, since=None):
+        patterns = [marker.encode(encoding) for encoding in ('utf-8', 'utf-16-le', 'utf-16-be')]
+        # Retain enough bytes for the longest encoded marker crossing a read boundary.
+        overlap = max(map(len, patterns)) - 1
+        marked = set()
+        for path in _profile_files(root):
+            relative = path.relative_to(root).as_posix()
+            if relative.startswith('runtime-context/') or relative in _LIVE_HOOK_FILES:
+                continue
+            if marker in relative:
+                marked.add(str(path))
+                continue
+            try:
+                if since is not None and path.stat().st_mtime < since:
+                    continue  # A fresh run marker cannot predate this run; writes are also audit-guarded.
+                with path.open('rb') as stream:
+                    tail = b''
+>                   while chunk := stream.read(1024 * 1024):
+                                   ^^^^^^^^^^^^^^^^^^^^^^^^
+E                   PermissionError: [Errno 13] Permission denied
+
+02.TESTS\tests\test_state_isolation.py:162: PermissionError
+============================== warnings summary ===============================
+..\..\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434
+  C:\Users\fargaly\AppData\Local\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434: PytestConfigWarning: Unknown config option: cache_dir
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+PROFILE-WRITE-GUARD: protected write attempts=0
+1 passed, 1 warning, 1 error in 33.08s

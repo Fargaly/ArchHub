@@ -1,0 +1,43 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.3, pytest-9.0.3, pluggy-1.6.0 -- C:\Users\fargaly\00.ARCHUB\10.PRODUCT\11.ARCHHUB-APP\.venv\Scripts\python.exe
+rootdir: C:\Users\fargaly\AppData\Local\Temp\land-stack
+configfile: pyproject.toml
+plugins: anyio-4.15.1
+collecting ... collected 1 item
+
+02.TESTS/tests_replica/test_graphout.py::test_every_route_lazily_imports_no_retired_modules FAILED [100%]
+================================== FAILURES ===================================
+_____________ test_every_route_lazily_imports_no_retired_modules ______________
+02.TESTS\tests_replica\test_graphout.py:116: in test_every_route_lazily_imports_no_retired_modules
+    response = handler(server, request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+01.APP\nodelang\nograph_server.py:1560: in r_brain
+    return {'ok': True, 'facts': json.loads(_brain_call('brain.list_facts', {'limit': wanted}))}
+                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+01.APP\nodelang\pipeline_engines.py:260: in _brain_call
+    answer = brain_files.call(tool, dict(arguments))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+01.APP\nodelang\brain_files.py:364: in call
+    return list_facts(arguments.get('limit', params['list_limit']), arguments.get('offset', 0))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+01.APP\nodelang\brain_files.py:223: in list_facts
+    connection = _db()
+                 ^^^^^
+01.APP\nodelang\brain_files.py:74: in _db
+    import sqlite_vec  # requirements.txt pins it; the installer ships it in the wheelhouse
+    ^^^^^^^^^^^^^^^^^
+E   ModuleNotFoundError: No module named 'sqlite_vec'
+-------------------------- Captured stdout teardown ---------------------------
+
+TESTISO final profile leaks: []; protected write attempts: 0
+============================== warnings summary ===============================
+..\..\..\..\00.ARCHUB\10.PRODUCT\11.ARCHHUB-APP\.venv\Lib\site-packages\_pytest\config\__init__.py:1434
+  C:\Users\fargaly\00.ARCHUB\10.PRODUCT\11.ARCHHUB-APP\.venv\Lib\site-packages\_pytest\config\__init__.py:1434: PytestConfigWarning: Unknown config option: cache_dir
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+PROFILE-WRITE-GUARD: protected write attempts=0
+=========================== short test summary info ===========================
+FAILED 02.TESTS/tests_replica/test_graphout.py::test_every_route_lazily_imports_no_retired_modules - ModuleNotFoundError: No module named 'sqlite_vec'
+================== 1 failed, 1 warning in 125.81s (0:02:05) ===================

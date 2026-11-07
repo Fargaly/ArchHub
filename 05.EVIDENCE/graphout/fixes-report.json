@@ -1,0 +1,83 @@
+{
+  "request": "Continue GRAPHOUT on lane/graphout at 9afdeaa4; fix three release failures; compare origin/main; targeted then complete release in one pytest process via run-heavy; commit without push.",
+  "base_head": "9afdeaa4a4a3e682b04b0dcc1d6e854ab751454e",
+  "origin_main": "9a1a3a7974e99d3e311ba34973b37b53f34e90e0",
+  "baseline_method": "Extract the three unchanged test function ASTs from origin/main; run against origin/main launcher/setup/installer/packager blobs under the same 02.TESTS conftest profile guard and release interpreter. No live host or user-state writes.",
+  "baseline_result": "3 failed, 1 warning in 122.39s (0:02:02)",
+  "classification": {
+    "test_window_icon_is_the_one_the_installer_ships": "pre-existing: assertion still targeted the bootstrap launcher after Qt icon setup moved into nograph_launcher.run",
+    "test_assistant_receipt_uses_the_launcher_state_root": "pre-existing: source spelling assertions predated the shared user_paths.state_directory owner",
+    "test_bridge_packager_omits_failed_year_and_keeps_supported_year": "pre-existing environment-sensitive failure: bare pwsh resolves the Store execution alias; same guarded main fixture raises PermissionError WinError 5. Absolute installed executable succeeds with child PATH empty."
+  },
+  "source_comparison": [
+    {
+      "path": "01.APP/nodelang/launcher.py",
+      "origin_main_sha256": "a2c7fa5d47007bae2c7e7302a385b2f002ba4cc69700ab6d2a103617c7a3d807",
+      "same_git_blob": false,
+      "working_tree_sha256": "99ac1d95a91071f2f93834fc9a10cfc7eb7bcc2aed3181a6f670ddbdc3a34557"
+    },
+    {
+      "path": "01.APP/nodelang/nograph_launcher.py",
+      "origin_main_sha256": "2695e101308c96b4f814ab38590cbd5472de46fd070656c0c6d1f6fecf90a599",
+      "same_git_blob": true,
+      "working_tree_sha256": "2695e101308c96b4f814ab38590cbd5472de46fd070656c0c6d1f6fecf90a599"
+    },
+    {
+      "path": "01.APP/nodelang/user_paths.py",
+      "origin_main_sha256": "865c6918b62e8c861431ff836309de83f8203e831a82a1bb7541b7c52cbdc1dd",
+      "same_git_blob": true,
+      "working_tree_sha256": "865c6918b62e8c861431ff836309de83f8203e831a82a1bb7541b7c52cbdc1dd"
+    },
+    {
+      "path": "01.APP/colleague_setup.py",
+      "origin_main_sha256": "7431011bc15f6f71d9412f9d07685ce0a8726f1d8ca3da618ea55cd7d51fe716",
+      "same_git_blob": true,
+      "working_tree_sha256": "8d300819060c07188ccfab5599fb8626699b75d7bde86e9dfe4d399dce0e3b9f"
+    },
+    {
+      "path": "03.TOOLS/installer/build_host_bridges.ps1",
+      "origin_main_sha256": "c698d0c4d62b4c9e249953e41ac37b0d1bd5d423468ee53d75bbc22a7635e82d",
+      "same_git_blob": true,
+      "working_tree_sha256": "3ebf5c23f5acc93325c9bb7803867a274d4fdce0d2e759e7b392876a8a91dd9a"
+    }
+  ],
+  "independent_review": "No remaining concrete findings after exact shipped-icon path assertion; reviewer did not run tests.",
+  "boundaries": [
+    "No push or installation",
+    "Two optional tests skipped",
+    "Existing uncommitted design evidence restored byte-for-byte"
+  ],
+  "release_files": "fixes-release-files.json",
+  "release_invocation": "C:/Users/fargaly/00.ARCHUB/10.PRODUCT/11.ARCHHUB-APP/.venv/Scripts/python.exe -u -m pytest -v -p no:cacheprovider --tb=short 02.TESTS/tests_replica/test_raildoors.py 02.TESTS/tests/test_designbuild.py 02.TESTS/tests_replica/test_app_folder_tidy.py 02.TESTS/tests_replica/test_session_files.py 02.TESTS/tests_replica/test_canvas_parametric.py 02.TESTS/tests_replica/test_ng_workshop.py 02.TESTS/tests_replica/test_baboom_work_presence.py 02.TESTS/tests_replica/test_baboom_nograph.py 02.TESTS/tests_replica/test_baboom_native_companion.py 02.TESTS/tests_replica/test_baboom_native_runtime.py 02.TESTS/tests/test_task_session_roundtrip.py 02.TESTS/tests/test_agentcanvas.py 02.TESTS/tests/test_agentwork.py 02.TESTS/tests/test_preflight_imports.py 02.TESTS/tests/test_state_isolation.py 02.TESTS/tests/test_task_session_keeps_canvas.py 02.TESTS/tests_replica/test_colleague_install.py 02.TESTS/tests_replica/test_file_path_links.py 02.TESTS/tests_replica/test_fresh_machine_host_brokers.py 02.TESTS/tests_replica/test_graphout.py 02.TESTS/tests_replica/test_multidelete.py 02.TESTS/tests_replica/test_node_params.py 02.TESTS/tests_replica/test_presence1_acceptance.py 02.TESTS/tests_replica/test_real_app_check_tool.py 02.TESTS/tests_replica/test_recent_json_lock.py 02.TESTS/tests_replica/test_remote_agents_relay.py 02.TESTS/tests_replica/test_revit_addin_packaging.py 02.TESTS/tests_replica/test_settings_node_bridge.py 02.TESTS/tests_replica/test_the_menu_opens_and_the_cockpit_signs_in.py > 05.EVIDENCE/graphout/fixes-release.txt 2>&1",
+  "targeted_result": "3 passed, 1 warning in 145.80s (0:02:25)",
+  "targeted_profile_guard": "TESTISO final profile leaks: []; protected write attempts: 0",
+  "release_interpreter": "C:/Users/fargaly/00.ARCHUB/10.PRODUCT/11.ARCHHUB-APP/.venv/Scripts/python.exe",
+  "prior_art": "Existing nograph_launcher.run icon setup, user_paths.state_directory, colleague_setup._launcher_state_root; Python subprocess documentation recommends fully qualified executable paths.",
+  "environment_repair": "The release .venv had Qt but lacked the already-pinned sqlite-vec==0.1.9. Installed that exact existing local wheel from the installed app wheelhouse using pip --python --no-index --no-deps; no project dependency or product source changed.",
+  "incomplete_release_attempt": "First 29-file invocation reached one brain-route failure and two optional skips, then its combined baseline/targeted/release run-heavy budget expired at 28 minutes during final tests/profile scan. This is not a completed release result.",
+  "changed_test_hashes": {
+    "02.TESTS/tests_replica/test_colleague_install.py": "3e9125ee7991039b077732c6c7d43be9095fbddb9bb20735ecbf8b6cc9594aee",
+    "02.TESTS/tests_replica/test_revit_addin_packaging.py": "58ea46cab449772891753083bd46ab7cd75c5a274b4e34dad9c36c5d7b484227"
+  },
+  "release_runner": "Existing run-heavy.ps1, shared machine queue, 8192 MB job limit, BelowNormal inherited priority; final route and release budget 36 minutes.",
+  "release_result": {
+    "passed": 408,
+    "failed": 0,
+    "skipped": 2,
+    "warnings": 1,
+    "log": "fixes-release.txt",
+    "single_pytest_process": true,
+    "test_files": 29
+  },
+  "secret_scanner": "Betterleaks 1.9.0, staged scan required before commit",
+  "preserved_existing_design_evidence": {
+    "files": 14,
+    "sha256_readback": "all original hashes restored"
+  },
+  "final_profile_scan": {
+    "report": ".cache\\testiso-release\\pytest-h054kotb\\profile-leaks.json",
+    "leaks": [],
+    "protected_write_attempts": 0
+  },
+  "supplemental_check": "1 passed, 1 warning in 128.78s (0:02:08)"
+}

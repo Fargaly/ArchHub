@@ -131,9 +131,30 @@ def test_installer_preserves_the_current_setup_receipt_schema(tmp_path):
     assert (tmp_path / ".archhub-ready").read_text(encoding="ascii").strip() == expected
 
 
-def test_window_icon_is_the_one_the_installer_ships():
-    launcher = (ROOT / "01.APP/nodelang/launcher.py").read_text(encoding="utf-8")
-    assert "Path(__file__).resolve().parents[1] / \"archhub.ico\"" in launcher
+def test_window_icon_is_the_one_the_installer_ships(tmp_path, monkeypatch):
+    import ast
+    import subprocess
+    launcher = ROOT / "01.APP/nodelang/nograph_launcher.py"
+    tree = ast.parse(launcher.read_text(encoding="utf-8"))
+    run = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "run")
+    assignments = {node.targets[0].id: node for node in ast.walk(run)
+                   if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)}
+    icon_call = next(node for node in ast.walk(run) if isinstance(node, ast.Expr)
+                     and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute)
+                     and node.value.func.attr == "setWindowIcon")
+    code = ast.unparse(ast.Module(body=[assignments[name] for name in
+                       ("app_root", "icon_path", "icon")] + [icon_call], type_ignores=[]))
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    result = subprocess.run([sys.executable, "-c",
+        "from pathlib import Path\nfrom PyQt6.QtGui import QIcon\n"
+        "from PyQt6.QtWidgets import QApplication\napp = QApplication([])\n"
+        f"__file__ = {str(launcher)!r}\n" + code +
+        f"\nassert icon_path == Path({str(ROOT / '01.APP/archhub.ico')!r})\n"
+        "assert not app.windowIcon().isNull()\n"
+        "assert app.windowIcon().cacheKey() == icon.cacheKey()\n"],
+        capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
     iss = (ROOT / "03.TOOLS/installer" / "ArchHub.iss").read_text(encoding="utf-8")
     assert "archhub.ico" in iss
 
@@ -311,13 +332,26 @@ def test_assistant_integration_cannot_block_a_ready_build():
                    for handler in guard.handlers for inner in ast.walk(handler))
 
 
-def test_assistant_receipt_uses_the_launcher_state_root():
+def test_assistant_receipt_uses_the_launcher_state_root(tmp_path, monkeypatch):
     """One state location: setup derives it exactly as the installed launcher does."""
     launcher = (ROOT / "01.APP/nodelang/launcher.py").read_text(encoding="utf-8")
-    setup = (ROOT / "01.APP/colleague_setup.py").read_text(encoding="utf-8")
-    for part in ('os.environ.get("ARCHHUB_TEST_STATE_DIR")',
-                 'Path(os.environ["LOCALAPPDATA"]) / "ArchHub"'):
-        assert part in launcher and part in setup
+    import ast
+    from nodelang.user_paths import state_directory
+    tree = ast.parse(launcher)
+    assignment = next(node for node in tree.body if isinstance(node, ast.Assign)
+                      and any(isinstance(target, ast.Name) and target.id == "state_dir"
+                              for target in node.targets))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    monkeypatch.delenv("ARCHHUB_TEST_STATE_DIR", raising=False)
+    monkeypatch.delenv("ARCHHUB_STATE_DIR", raising=False)
+    for variable, expected in ((None, tmp_path / "local/ArchHub"),
+                               ("ARCHHUB_STATE_DIR", tmp_path / "selected"),
+                               ("ARCHHUB_TEST_STATE_DIR", tmp_path / "fixture")):
+        if variable:
+            monkeypatch.setenv(variable, str(expected))
+        namespace = {"state_directory": state_directory}
+        exec(compile(ast.Module(body=[assignment], type_ignores=[]), str(ROOT / "01.APP/nodelang/launcher.py"), "exec"), namespace)
+        assert namespace["state_dir"] == colleague_setup._launcher_state_root() == expected
 
 
 def test_reexecuted_setup_keeps_the_path_the_shortcut_opened(tmp_path, monkeypatch):

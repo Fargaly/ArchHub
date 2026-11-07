@@ -1,0 +1,11 @@
+...TESTISO final profile leaks: []; protected write attempts: 0
+                                                                         [100%]
+============================== warnings summary ===============================
+..\..\..\..\00.ARCHUB\10.PRODUCT\11.ARCHHUB-APP\.venv\Lib\site-packages\_pytest\config\__init__.py:1434
+  C:\Users\fargaly\00.ARCHUB\10.PRODUCT\11.ARCHHUB-APP\.venv\Lib\site-packages\_pytest\config\__init__.py:1434: PytestConfigWarning: Unknown config option: cache_dir
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+PROFILE-WRITE-GUARD: protected write attempts=0
+3 passed, 1 warning in 145.80s (0:02:25)

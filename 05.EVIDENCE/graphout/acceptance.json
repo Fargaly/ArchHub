@@ -7,13 +7,17 @@
   "deleted_application_python_modules": 277,
   "import_entries": 38,
   "unique_import_files": 146,
-  "python_acceptance_inventory": 256,
-  "acceptance_note": "The complete frozen release suite and GRAPHOUT tests passed: 256 passed, 0 failed. Supplemental isolated checker and sidecar courts: 54 passed, 2 optional cases skipped. Compiler regressions: 46 passed, 0 failed.",
+  "python_acceptance_inventory": 410,
+  "acceptance_note": "GRAPHOUT follow-up: the three requested cases pass alone. Expanded complete release union in one pytest process via run-heavy: 408 passed, 0 failed, 2 optional tests skipped. All three original failures also reproduced on origin/main.",
   "test_results": {
     "release": {
-      "passed": 256,
+      "passed": 408,
       "failed": 0,
-      "log": "release-final.txt"
+      "skipped": 2,
+      "warnings": 1,
+      "log": "fixes-release.txt",
+      "single_pytest_process": true,
+      "test_files": 29
     },
     "graphout": {
       "passed": 14,
@@ -30,6 +34,11 @@
       "passed": 46,
       "failed": 0,
       "log": "compiler-regression.txt"
+    },
+    "requested_three": {
+      "passed": 3,
+      "failed": 0,
+      "log": "fixes-targeted.txt"
     }
   },
   "scoped_compiler_gate": "PASS",
@@ -41,7 +50,12 @@
     "compiler-regression.txt": "b8c6800a5cdd8871a865cd5588baa38f9e6d056fc3a0ccff1331e26994d31b35",
     "full-module-guard.txt": "cae3affe38ac90143cf5c3d02165c11217fb3cf653ffd7ac281c0c111e6fe1d6",
     "filename-guard.txt": "cdb0960ef30c0e8f7cd9ad363da9ac1f271806a4e7e75b973b90e939737c8e35",
-    "red-tree.txt": "18ac7467a569b5a1a56aa5d2e02b2d4229a3149d187a7739e70ce0b30eb2be89"
+    "red-tree.txt": "18ac7467a569b5a1a56aa5d2e02b2d4229a3149d187a7739e70ce0b30eb2be89",
+    "fixes-baseline-guarded.txt": "e61f7dcd03f92ff66487cd181aceb2b4e44906bc3e93019b871e83a5a1429b60",
+    "fixes-targeted.txt": "76b642139e2a97d2f5c9e3473f2d0721048b3da5c628e47329aa6ab2e13ba149",
+    "fixes-release.txt": "cac0d4e80223e2c27ac199869d9e7e972b714f1ccfd0549fce3fd088c823f07b",
+    "fixes-release-files.json": "f1205bda411e5d33d53b1c56f9ea31f6463537aea7fe1f6251266d8075b0c9d6",
+    "fixes-report.json": "28b7eb591d82e343c71f8c8cad7f26f5a22152f2136cc08e7dcfa77601937158"
   },
   "untested_boundaries": [
     "No installation or push",
@@ -52,5 +66,6 @@
   "final_index_admission": "The mandatory commit-msg compiler gate validates the complete final index; no new store, docs edit, hook bypass, installation or push.",
   "verification_strategy": "Complete release suite against the frozen source, plus isolated route/boot/checker/sidecar and compiler regression courts. Focused counts overlap the main release suite.",
   "cleanup_observation": "Automatic approval review rejected deletion of this run's ignored failed Cargo debug cache: blocked by policy.",
-  "code_commit_before_evidence_amend": "7d791a986d98e65a0bb9dd87840747c9f365d26f"
+  "code_commit_before_evidence_amend": "7d791a986d98e65a0bb9dd87840747c9f365d26f",
+  "followup_report": "fixes-report.json"
 }

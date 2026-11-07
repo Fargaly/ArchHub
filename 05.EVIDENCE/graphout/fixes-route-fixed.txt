@@ -1,0 +1,17 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.3, pytest-9.0.3, pluggy-1.6.0 -- C:\Users\fargaly\00.ARCHUB\10.PRODUCT\11.ARCHHUB-APP\.venv\Scripts\python.exe
+rootdir: C:\Users\fargaly\AppData\Local\Temp\land-stack
+configfile: pyproject.toml
+plugins: anyio-4.15.1
+collecting ... collected 1 item
+
+02.TESTS/tests_replica/test_graphout.py::test_every_route_lazily_imports_no_retired_modules PASSED [100%]
+============================== warnings summary ===============================
+..\..\..\..\00.ARCHUB\10.PRODUCT\11.ARCHHUB-APP\.venv\Lib\site-packages\_pytest\config\__init__.py:1434
+  C:\Users\fargaly\00.ARCHUB\10.PRODUCT\11.ARCHHUB-APP\.venv\Lib\site-packages\_pytest\config\__init__.py:1434: PytestConfigWarning: Unknown config option: cache_dir
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+PROFILE-WRITE-GUARD: protected write attempts=0
+================== 1 passed, 1 warning in 128.78s (0:02:08) ===================

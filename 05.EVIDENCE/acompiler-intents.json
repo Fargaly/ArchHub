@@ -10918,6 +10918,22 @@
         "05.EVIDENCE/prunerig/",
         "04.DOCS/DECISIONS.md"
       ]
+    },
+    "AGENTSFIX": {
+      "source": "Founder sole-builder request on lane/postinstall HEAD 6649cc0b: isolate machine-agent discovery under ARCHHUB_TEST_STATE_DIR through an injected fixture roster, derive rendered sessions and working count/footer/Home badge from one owner snapshot, replace timing/order assumptions with state waits, three standalone browser proofs and the full release union in one process; commit without push.",
+      "scope": [
+        "01.APP/nodelang/agent_runtime_registry.py",
+        "01.APP/nodelang/nograph_server.py",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/ds_home2.jsx",
+        "01.APP/nodelang/studio/ds_screens.jsx",
+        "02.TESTS/tests/test_agentcanvas.py",
+        "02.TESTS/tests_js/agentcanvas.cjs",
+        "02.TESTS/tests_js/studio_agenttrail.test.cjs",
+        "02.TESTS/tests_js/studio_designmatch.test.cjs",
+        "04.DOCS/FAILURE_LOG.md",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

@@ -419,7 +419,8 @@
   const SLOT = {background: SPEC.slot, borderRadius: 5, padding: '6px 9px', position: 'relative', display: 'flex', alignItems: 'center', gap: 6, minHeight: 28, boxSizing: 'border-box'};
   const edgeSocket = (side, top, inset = 0) => ({position: 'absolute', [side === 'in' ? 'left' : 'right']: -11 - inset, top, transform: 'translateY(-50%)', lineHeight: 0, zIndex: 2});
   function ValueWidget({n, p, value, u}) {
-    const [draft, setDraft] = React.useState(null), shown = draft ?? value, label = n.title + ' ' + p.key;
+    const [draft, setDraft] = React.useState(null), [focused,setFocused] = React.useState(false), raw = draft ?? value,
+      shown = !focused && n.agentWork && ['file','folder'].includes(p.dataType) && typeof raw==='string' ? raw.split(/[\\/]/).filter(Boolean).pop() || raw : raw, label = n.title + ' ' + p.key;
     const save = v => { setDraft(v); return u.act(() => api.setNodeParam(n.id, p.key, v)).then(() => setDraft(null)); };
     if (!p.editable) return <span title={String(shown)}>{summary(shown)}</span>;
     if (p.type === 'boolean') return <D.Toggle label={label} checked={!!shown} onCheckedChange={save} />;
@@ -427,7 +428,18 @@
     const unbounded = ['min', 'max'].includes(p.key) && (shown == null || shown === '');
     return <input className="nodrag" aria-label={label} title={unbounded ? 'Unbounded' : String(shown)} type={p.type === 'number' ? 'number' : 'text'} min={p.min} max={p.max} step={p.step ?? 'any'} placeholder={unbounded ? 'Unbounded' : undefined}
       value={shown == null ? '' : typeof shown === 'object' ? JSON.stringify(shown) : shown} style={{flex: 1, minWidth: 0, width: 0, background: 'transparent', border: 0, color: SPEC.text, font: 'inherit', fontSize: 'calc(13px * var(--text-scale,1))'}}
-      onChange={e => { if (p.type !== 'number') save(e.target.value); else if (e.target.value === '') save(null); else if (Number.isFinite(e.target.valueAsNumber)) save(e.target.valueAsNumber); }} />;
+      onFocus={()=>setFocused(true)} onBlur={()=>setFocused(false)} onChange={e => { if (p.type !== 'number') save(e.target.value); else if (e.target.value === '') save(null); else if (Number.isFinite(e.target.valueAsNumber)) save(e.target.valueAsNumber); }} />;
+  }
+  function StepHistory({n,u}) {
+    const [history,setHistory] = React.useState(null), [error,setError] = React.useState('');
+    const load = async () => {try {setHistory(await api.readStepHistory(n.id));setError('');}catch(e){setError(e.message);}};
+    return <div className="nodrag" style={{padding:'8px 12px',display:'grid',gap:8}}>
+      <div style={{display:'flex',gap:12}}>{n.agentWork.runnable && <button className="button-reset" onClick={event=>executeAction('projects.controls.activate',{handler:async()=>{const result=await u.act(()=>api.runNode(n.id));if(result?.approvalId)u.show('Approve',{id:result.approvalId});}},event)}>Run</button>}
+        <button className="button-reset" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.forkNode(n.id))},event)}>Fork from here</button></div>
+      <details onToggle={e=>{if(e.currentTarget.open)load();}}><summary>History</summary>
+        {error && <p role="alert">{error}</p>}{history && <pre data-step-history style={{maxHeight:220,overflow:'auto',whiteSpace:'pre-wrap',fontSize:11}}>{history.calls.length ? JSON.stringify(history.calls,null,2) : 'detail not available'}</pre>}
+        {history?.limited && <small>Recent transcript only</small>}</details>
+    </div>;
   }
   function ParameterNode({n, socket, selected, u}) {
     // LimitParameter: one typed value, inline stepper and slider, one output socket; the value lives in this node only.
@@ -460,7 +472,8 @@
   function FlowCard({n, s, u, selected, refusal, onConvert, socket, members, onMember, onDetach, menu}) {
     // Spec section 0b P0: the default card is full capability (every row); compact (first three rows) is an opt-in toggle.
     const [compact, setCompact] = React.useState(false);
-    if (n.agentStep || n.workflowStart) return <AgentWorkflowCard n={{...n,role:n.workflowStart?'start':'step',kicker:n.workflowStart?'Start':'Step · '+(n.params.vendor||'Agent'),status:n.params.status||n.status,by:n.params.display_name||n.params.agent,result:n.params.result||n.params.message_id,
+    if (n.agentStep || n.workflowStart) return <AgentWorkflowCard n={{...n,role:n.workflowStart?'start':'step',kicker:n.workflowStart?'Start':'Agent · '+(n.params.vendor||'Agent'),status:n.params.status||n.status,by:n.params.display_name||n.params.agent,result:n.params.result||n.params.message_id,
+      actions:n.agentWork?<div style={{display:'grid',gap:6}}><span>Goal: {n.params.goal}</span><span>Model: {n.params.model}</span><span>{n.params.detail}</span><button className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.forkNode(n.id))},event)}>Fork from here</button></div>:null,
       openResult:()=>u.openTaskFile(n.agentTask,'workshop'),
       inputs:n.workflowStart?[]:n.inputs.filter(p=>p.id==='task').map(p=>({...p,name:'Step'})),outputs:n.outputs.filter(p=>p.id===(n.workflowStart?'value':'result')).map(p=>({...p,name:'Step'}))}}
       renderPort={(p,i,side)=><div className="canvas-port-row" style={{position:'relative',height:22,display:'flex',alignItems:'center',justifyContent:side==='out'?'flex-end':undefined,padding:'0 12px',fontSize:12}}>{socket(p,side)}Step</div>}
@@ -516,6 +529,7 @@
         {shown.length > 3 && <button type="button" className="button-reset nodrag canvas-card-more" aria-pressed={compact} style={{justifySelf: 'start', color: SPEC.label}} onClick={event => executeAction('projects.controls.activate', {handler: () => setCompact(!compact)}, event)}>{compact ? `+${shown.length - 3} more` : 'Compact'}</button>}
         {n.loop && <div data-node-loop="" style={{color: SPEC.label}} title={'Trigger ' + n.loop.trigger + ' · stops when ' + n.loop.stop + (n.loop.evaluator ? ' · evaluator ' + n.loop.evaluator : '')}>Loop · cap {n.loop.cap} · until {n.loop.stop}</div>}
         {n.dataset && <DatasetEditor n={n} u={u} />}
+        {n.agentWork?.role==='step' && <StepHistory n={n} u={u} />}
         {!n.dataset && !n.column && n.paramDefs && api.addNodeParameter && <AddParameter n={n} u={u} />}
         {n.outputs.map(p => <div key={p.id} data-port-row="out" style={{position: 'relative', color: SPEC.label, minHeight: 18, display: 'flex', alignItems: 'center'}}>
           <span>{p.name} · {typeName(p)}</span><span style={edgeSocket('out', '50%', 12)}>{socket(p, 'out')}</span></div>)}
@@ -606,7 +620,7 @@
     // xyflow anchors at the Handle's outer edge; the spec wire meets the socket centre (Handle is 22 px wide, see SOCKET_STYLE).
     const d = wirePath({x: sourceX - 11, y: sourceY}, {x: targetX + 11, y: targetY}, data.route);
     return <>{data.selected && <path d={d} stroke={A.ink} strokeWidth="8" opacity=".22" fill="none" />}
-      <WirePath id={id} state={data.state} route={data.route} d={d} color={data.color} opacity={data.opacity} />
+      <WirePath id={id} state={data.state} route={data.route} d={d} color={data.color} dash={data.inferred?'6 4':undefined} opacity={data.opacity} />
       <path className="react-flow__edge-interaction" d={d} stroke="transparent" strokeWidth="16" fill="none" aria-label={'Inspect wire ' + id} />
     </>;
   }
@@ -947,7 +961,7 @@
       .filter(w => shownIds.has(w.from) && shownIds.has(w.to)).map(w => {
         const color = w.rejected ? A.err : wireColor(w, s.graph.nodes), shown = s.graph.wireVisibility, portVisibility = s.graph.nodes.find(n=>n.id===w.from)?.portVisibility?.[w.fromPort];
         return {id: w.id, type: 'archhub', source: w.from, target: w.to, sourceHandle: w.fromPort, targetHandle: w.toPort, selectable: !w.rejected, focusable: !w.rejected, selected: selectedWires.includes(w.id),
-          data: {color, route: w.route, state: w.rejected ? 'rejected' : color === A.warn ? 'affected' : 'compatible', selected: (wireId === w.id || selectedWires.includes(w.id)) && shown !== 'Hidden',
+          data: {color, inferred:w.inferred, route: w.route, state: w.rejected ? 'rejected' : color === A.warn ? 'affected' : 'compatible', selected: (wireId === w.id || selectedWires.includes(w.id)) && shown !== 'Hidden',
             opacity: w.rejected ? 1 : shown==='Hidden'||portVisibility==='Hidden' ? 0 : shown==='Faint'||portVisibility==='Faint' ? .2 : .9}};
       });
     const fit = (persist = true) => {

@@ -55,13 +55,43 @@ def read_transcript(runtime, native_id):
     path = transcript_path(runtime, native_id)
     if path is None:
         raise ValueError('No native transcript is available for this session.')
-    messages = []
-    for row in _tail_rows(path):
+    messages, calls, by_id = [], [], {}
+    turn, model = '', ''
+    from .agent_work import redact
+    for index, row in enumerate(_tail_rows(path, 2 * 1024 * 1024)):
         if not isinstance(row, dict):
             continue
         message = row.get('payload', {}) if runtime == 'codex' else row.get('message', {})
         if not isinstance(message, dict):
             continue
+        if runtime == 'codex' and row.get('type') == 'turn_context':
+            turn = str(message.get('turn_id') or index)
+            model = str(message.get('model') or model)
+        model = str(message.get('model') or model)
+        if runtime == 'claude' and row.get('type') == 'user' and (isinstance(message.get('content'), str) or
+                (isinstance(message.get('content'), list) and any(isinstance(p, dict) and p.get('type') == 'text' for p in message['content']))):
+            turn = str(row.get('uuid') or index)
+        blocks = message.get('content', []) if runtime == 'claude' else [message] if row.get('type') == 'response_item' else []
+        for block in blocks if isinstance(blocks, list) else []:
+            if not isinstance(block, dict):
+                continue
+            kind = block.get('type')
+            if kind in ('tool_use', 'function_call'):
+                identity = block.get('id') if kind == 'tool_use' else block.get('call_id')
+                arguments = block.get('input', {}) if kind == 'tool_use' else block.get('arguments', '{}')
+                if isinstance(arguments, str):
+                    try:
+                        arguments = json.loads(arguments)
+                    except ValueError:
+                        arguments = {'unparsed': arguments}
+                call = {'id': str(identity or index), 'tool': str(block.get('name') or ''),
+                        'input': arguments, 'turn': turn or 'tail', 'at': row.get('timestamp', ''), 'model': model}
+                calls.append(call)
+                by_id[identity] = call
+            elif kind in ('tool_result', 'function_call_output'):
+                identity = block.get('tool_use_id') if kind == 'tool_result' else block.get('call_id')
+                if identity in by_id:
+                    by_id[identity]['output'] = block.get('content') if kind == 'tool_result' else block.get('output')
         if runtime == 'codex' and (row.get('type') != 'response_item' or message.get('type') != 'message'):
             continue
         if runtime == 'claude' and (row.get('type') not in ('user', 'assistant') or row.get('isSidechain')):
@@ -77,7 +107,8 @@ def read_transcript(runtime, native_id):
                              and part.get('type') in ('text', 'input_text', 'output_text') and isinstance(part.get('text'), str))
         if text:
             messages.append({'role': role, 'text': text, 'at': row.get('timestamp', '')})
-    return {'messages': messages[-200:], 'limited': path.stat().st_size > 65536 or len(messages) > 200}
+    return redact({'messages': messages[-200:], 'calls': calls[-500:], 'model': model,
+                   'limited': path.stat().st_size > 2 * 1024 * 1024 or len(messages) > 200 or len(calls) > 500})
 
 
 def _codex(native_id):

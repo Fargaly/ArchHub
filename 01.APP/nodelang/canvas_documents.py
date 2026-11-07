@@ -153,6 +153,32 @@ def _run_file(params, feeds):
     return {'path': str(path), 'text': raw.decode('utf-8', 'replace')}, '%d bytes read' % len(raw)
 
 
+def _write_file(params, feeds):
+    from .hook_decision import _RELEASING
+    import os
+    import tempfile
+    if not _RELEASING.get(False):
+        raise PermissionError('File writes require the Approve card.')
+    path = Path(str(params['path']))
+    if not path.is_absolute() or str(path).startswith(('\\\\', '//')):
+        raise ValueError('Choose an absolute local output file.')
+    content = str(params.get('content', ''))
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', newline='', dir=path.parent, delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None and temporary.exists():
+            temporary.unlink()
+    if path.read_bytes() != content.encode('utf-8'):
+        raise OSError('File write readback did not match.')
+    return {'path': str(path)}, 'File written and re-read'
+
+
 def _run_workshop(params, feeds):
     from .nograph_server import _list_messages
     page = _list_messages()
@@ -185,6 +211,7 @@ THING_ENGINES = {
     'thing.host': {'pure': True, 'run': _run_host, 'in': [], 'out': [_port('sessions', 'list'), _port('elements', 'list')]},
     'thing.workspace': {'pure': True, 'run': _run_workspace, 'in': [], 'out': [_port('path', 'string'), _port('files', 'list')]},
     'thing.file': {'pure': True, 'run': _run_file, 'in': [], 'out': [_port('path', 'file'), _port('text', 'string')]},
+    'thing.file.write': {'pure': False, 'run': _write_file, 'in': [], 'out': [_port('path', 'file')]},
     'thing.workshop': {'pure': True, 'run': _run_workshop, 'in': [], 'out': [_port('messages', 'list')],
                        'engine': 'thing.workshop', 'params': {'thread': 'app:workshop', 'limit': 20}},
     'thing.setting': {'pure': True, 'run': _run_setting, 'in': [_port('value')], 'out': [_port('value')]},
@@ -242,6 +269,7 @@ def thing_items():
         items.append(card('thing:workspace:unreadable', 'workspaces', 'Workspaces', 'workspaces.json unreadable: %s' % error,
                           'thing.workspace', {'path': ''}))
     items.append(card('thing:file', 'files', 'File or folder', 'A local file or folder reference', 'thing.file', {'path': ''}))
+    items.append(card('thing:file:write', 'files', 'Write file', 'Writes after Approve, then re-reads', 'thing.file.write', {'path': '', 'content': ''}))
     items.append(card('thing:workshop', 'workshop', 'Workshop thread', 'Messages in the Workshop room', 'thing.workshop',
                       dict(THING_ENGINES['thing.workshop']['params'])))
     # The value is router.json's own; a profile whose router.json sets no temperature shows "unset", never a default.

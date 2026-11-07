@@ -344,7 +344,7 @@ def record_step(history, task, owner, label, title, status, result=""):
     message = latest_agent_message(history, label + ' [' + owner + ']')
     declaration = None
     if history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_declarations'").fetchone():
-        declaration = history._db.execute("SELECT json_extract(record,'$.runtime'),json_extract(record,'$.display_name') FROM workshop_declarations "
+        declaration = history._db.execute("SELECT json_extract(record,'$.runtime'),json_extract(record,'$.display_name'),record FROM workshop_declarations "
                                          "WHERE json_extract(record,'$.session')=? LIMIT 1", (owner,)).fetchone()
     identity = 'step-' + sha256(owner.encode()).hexdigest()[:24]
     def change(document):
@@ -371,6 +371,18 @@ def record_step(history, task, owner, label, title, status, result=""):
             node['params']['display_name'] = declaration[1] or label
         if message:
             node['params'].update(message_id=message[0], last_message=message[1], message_at=message[2])
+        from .agent_work import project, redact
+        from .agent_status import read_transcript
+        import json
+        detail = json.loads(declaration[2]) if declaration else {}
+        try:
+            transcript = read_transcript(detail.get('runtime'), detail.get('native_session_id'))
+        except (OSError, ValueError):
+            transcript = {}
+        # A session owns the real tool steps; old no-detail sessions keep their existing card.
+        project(document, node, detail, transcript)
+        node['params'] = redact(node['params'])
+        node['title'] = redact(node['title'])
         return []
     canvas_documents.edit(path, label, 'agent step ' + status, change, solve_changed=False)
 
@@ -488,6 +500,7 @@ def column(history, project=None, stale_hours=None):
     from .workshop_mailbox import read_declarations
     hours = TASKS_NODE["params"]["stale_hours"] if stale_hours is None else stale_hours
     declarations = read_declarations(history._db, include_archived=True)
+    fold_declarations(history, declarations)
     live = {}
     for item in declarations:
         if not item.get("current"):
@@ -550,6 +563,41 @@ def column(history, project=None, stale_hours=None):
              'sessionOpen': bool(row.get('session_path') and row['session_path'] == current),
              'inProgress': shown in ("WIP", "IN REVIEW")})
     return built
+
+
+def fold_declarations(history, declarations):
+    """Hide superseded declare rows using only the reversible archive flag."""
+    held = rows(history, settle=False)
+    for declaration in declarations:
+        owner = declaration.get('session')
+        if not owner:
+            continue
+        canonical = _declared_id(owner)
+        legacy = {_declaration_task_id(d) for d in declarations if d.get('session') == owner and d.get('root') and d.get('request_id')}
+        candidates = [r for r in held if r['id'] == canonical or r['id'] in legacy or
+                      (r['id'].startswith('declared-') and r.get('owner') == owner)]
+        if not candidates:
+            continue
+        keep = next((r['id'] for r in candidates if r['id'] == canonical),
+                    max(candidates, key=lambda r: (not r['archived'], r['updated_at'], r['created_at'], r['id']))['id'])
+        for row in candidates:
+            if row['id'] != keep and not row['archived']:
+                _write(history, 'UPDATE workshop_tasks SET archived=1, revision=revision+1 WHERE id=? AND archived=0', (row['id'],))
+
+
+def refresh_steps(path):
+    """The existing head/read poll reconciles native calls that arrive after declare()."""
+    from .workshop_mailbox import application_history
+    with application_history() as history:
+        task = next((r for r in rows(history, settle=False) if r.get('session_path') == str(path)), None)
+        if not task:
+            return
+        from .session_files import read_document
+        document = read_document(path)
+        for node in document['nodes']:
+            if node.get('params', {}).get('workshop_step'):
+                p = node['params']
+                record_step(history, task['id'], p['session'], p['agent'], None, p['status'], p.get('result', ''))
 
 
 def set_status(history, task, status, revision=None):

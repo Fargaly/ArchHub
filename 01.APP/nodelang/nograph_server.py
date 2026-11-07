@@ -733,6 +733,19 @@ def r_canvas_op(s, req):
     if op == 'library_ports':
         from .session_files import catalogue
         return {'ok': True, 'result': catalogue()}
+    if op == 'fork_node':
+        from .session_files import SessionFiles, read_document
+        from .canvas_documents import edit
+        from .agent_work import fork
+        path = SessionFiles().current_path()
+        if not path:
+            raise Refused('Open a task workflow before forking.')
+        changed = []
+        def change(document):
+            changed.extend(fork(document, args[0]))
+            return []
+        edit(path, 'Studio', 'Fork from here', change, solve_changed=False)
+        return {'ok': True, 'result': {'id': changed[0] if changed else '', 'ids': changed, 'document': read_document(path)}}
     files = s.files['project-files']
     if op == 'project_files':
         return {'ok': True, 'result': files.read()['files']}

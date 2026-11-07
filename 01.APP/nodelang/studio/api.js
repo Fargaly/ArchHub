@@ -234,7 +234,7 @@ async function refreshTasks(details=true) {
    workshopMessages:room.messages||[],liveAgents:Array.isArray(liveAgents)?liveAgents:[],workshopMessagesMore:room.more===true,workshopMessagesBefore:room.next_before,workshopMessagesScope:binding});
  projectProviders();
  const current=tasks.find(row=>row.sessionOpen&&row.sessionPath);
- if(current&&!Array.isArray(opened.get(current.id)?.workflow)){
+ if(current&&!openingTask&&!Array.isArray(opened.get(current.id)?.workflow)){
   try{await api.openTaskGraph(current.id);}
   catch(error){publish({connectionNotice:error.message||'This task session did not open.'});}
  }
@@ -808,7 +808,22 @@ async function taskFileAction(method,id,...args){
 }
 api.setTaskSession=(id,values)=>taskFileAction('setTaskSession',id,values);
 for(const method of ['checkpointTask','restoreTaskCheckpoint'])api[method]=async(id,...args)=>{const result=await taskFileAction(method,id,...args);await refreshTasks(false);return result;};
-api.openTaskGraph=async id=>{const result=await workshop('openTaskGraph',[id]);if(!result||result.ok===false)throw Error(result?.message||result?.error||'This task has no session file.');const opened=await api.selectGraph(result.path||result.id);return {...opened,...rememberTask(result)};};
+let openingTask=null;
+api.openTaskGraph=id=>{
+ if(openingTask?.id===id)return openingTask.promise;
+ const held={id,promise:null};
+ held.promise=(async()=>{
+  try{
+   const result=await workshop('openTaskGraph',[id]);
+   if(openingTask!==held)return {cancelled:true};
+   if(!result||result.ok===false)throw Error(result?.message||result?.error||'This task has no session file.');
+   const opened=await api.selectGraph(result.path||result.id);
+   return openingTask===held?{...opened,...rememberTask(result)}:{cancelled:true};
+  }finally{if(openingTask===held)openingTask=null;}
+ })();
+ openingTask=held;
+ return held.promise;
+};
 api.refreshOfficeAwareness=async()=>{const rows=await workshop('refreshOfficeAwareness');if(!Array.isArray(rows))throw Error(rows?.message||'Office task read failed; retry.');publish({officeItems:rows,officeUpdated:'Read from current Workshop'});return rows;};
 
 
@@ -1491,7 +1506,7 @@ function fileNode(node){
  const dataset=node.type==='data.dataset'?{fields:defs,records:node.records||[]}:null;
  const feed=node.type==='data.field'&&sessionDocument.wires.find(w=>w.to.node===node.id&&w.to.socket==='column');
  const column=node.type==='data.field'?{dataset:feed?sessionDocument.nodes.find(n=>n.id===feed.from.node)?.title||'':'',field:feed?feed.from.socket.replace(/^field:/,''):'',label:(COLUMN_LABEL[node.params.type]||'Any')+'[]'}:null;
- return {id:node.id,type:node.type,agentStep:node.params?.workshop_step===true,agentTask:sessionDocument.properties?.taskContext?.task,workflowStart:node.id==='start'&&!!sessionDocument.properties?.taskContext?.task,pure:item?.pure??node.pure,budget:node.budget||item?.budget||null,loop:node.loop||item?.loop||null,settingsKeys:item?.settingsKeys||[],dataset,column,title:node.title||item?.title||node.type,kind:node.children?'Group':item?.title||node.type,category:item?.cat||'Node',x:node.position.x,y:node.position.y,
+ return {id:node.id,type:node.type,agentWork:node.agentWork,agentStep:node.params?.workshop_step===true,agentTask:sessionDocument.properties?.taskContext?.task,workflowStart:node.id==='start'&&!!sessionDocument.properties?.taskContext?.task,pure:item?.pure??node.pure,budget:node.budget||item?.budget||null,loop:node.loop||item?.loop||null,settingsKeys:item?.settingsKeys||[],dataset,column,title:node.title||item?.title||node.type,kind:node.children?'Group':item?.title||node.type,category:node.agentWork?.role==='step'?node.agentWork.kind+' · '+node.agentWork.tool:item?.cat||'Node',x:node.position.x,y:node.position.y,
   params,defaults:item?.params||{},parameterSchema:schema,paramDefs:defs,bind,
   inputs:(ports.target||[]).map(p=>({...p,name:p.label||p.id,type:p.type==='unknown'?'any':p.type})),outputs:(ports.source||[]).map(p=>({...p,name:p.label||p.id,type:p.type==='unknown'?'any':p.type})),
   children:node.children||[],members:(Array.isArray(node.members)?node.members:[]).filter(m=>m&&typeof m.id==='string'&&m.id).map(m=>({id:m.id,title:m.title||m.name||m.id,agent:m.agent||m.id})),parent:node.parent||null,icon:NODE_ICONS.includes(node.icon)?node.icon:'',color:typeof node.color==='string'&&/^#[0-9a-f]{6}$/i.test(node.color)?node.color:undefined,frozen:!!node.frozen,pinned:!!node.pinned,portVisibility:node.portVisibility||{},parameterPresentation:node.parameterPresentation||{},
@@ -1500,7 +1515,7 @@ function fileNode(node){
 // session_files.py _WIRE_MENUS, mirrored for the inspector. First choice is the omitted-field value.
 const WIRE_MENUS=[['matching',['By index','Longest','Shortest','Cross']],['order',['Source order','Reverse']],['missing',['Preserve','Drop','Blank']],['units',['From source','From target']],['conversion',['None','Number','Text']],['route',['Bezier','Straight','Step']]];
 function projectSessionWire(w,nodes){
- const row={id:w.id,from:w.from.node,fromPort:w.from.socket,to:w.to.node,toPort:w.to.socket,rule:w.rule||'',type:nodes.find(n=>n.id===w.from.node)?.outputs.find(p=>p.id===w.from.socket)?.type||'any'};
+ const row={id:w.id,inferred:!!w.inferred,from:w.from.node,fromPort:w.from.socket,to:w.to.node,toPort:w.to.socket,rule:w.rule||'',type:nodes.find(n=>n.id===w.from.node)?.outputs.find(p=>p.id===w.from.socket)?.type||'any'};
  for(const [name,choices] of WIRE_MENUS)row[name]=choices.includes(w[name])?w[name]:choices[0];
  return row;
 }
@@ -1611,6 +1626,7 @@ api.readSystemGraph=async()=>{
 };
 api.readAgentsGraph=()=>request('/api/universal/agents-canvas');
 api.readAgentTranscript=session=>request('/api/universal/agents-transcript',{session});
+api.readStepHistory=node=>sessionRequest('agent-history',{document:portableDocument(),node});
 api.setSessionViewport=viewport=>{
  if(!sessionDocument||['x','y','zoom'].every(key=>sessionDocument.viewport?.[key]===viewport[key]))return;
  sessionDocument.viewport=copy(viewport);
@@ -1720,12 +1736,12 @@ api.runNode=async id=>{
  const epoch=runEpoch,document=portableDocument();
  for(const node of sessionDocument.nodes)node.result={status:'Running'};projectFile();
  try{const result=await sessionRequest('run',{document,...(id?{roots:[id]}:{})});if(epoch!==runEpoch)throw Error('Session changed during Run; run the new values again.');
-  for(const node of sessionDocument.nodes)node.result=result.results[node.id]||{status:'Idle'};projectFile();queueAutosave();const run={id:window.crypto.randomUUID(),title:sessionDocument.title,status:result.succeeded?'Done':'Needs review',rows:Object.entries(result.results).map(([node,value])=>({node:state.graph.nodes.find(n=>n.id===node)?.title||node,status:value.status,output:JSON.stringify(value.output),error:value.error||''}))};publish({lastResult:run,runs:[...state.runs,run]});return {...result,id:run.id};
+  for(const node of sessionDocument.nodes)node.result=result.results[node.id]||{status:'Idle'};projectFile();queueAutosave();if(result.approvalId)await refreshApprovals();const run={id:window.crypto.randomUUID(),title:sessionDocument.title,status:result.succeeded?'Done':'Needs review',rows:Object.entries(result.results).map(([node,value])=>({node:state.graph.nodes.find(n=>n.id===node)?.title||node,status:value.status,output:JSON.stringify(value.output),error:value.error||''}))};publish({lastResult:run,runs:[...state.runs,run]});return {...result,id:run.id};
  }catch(error){if(epoch===runEpoch){for(const node of sessionDocument.nodes)node.result={status:'Error',error:error.message};projectFile();}throw error;}
 };
 api.runToHere=api.runNode;
 api.setNodeFlags=async(id,values)=>fileEdit(d=>Object.assign(d.nodes.find(n=>n.id===id),values),[id]);
-api.forkNode=async id=>{const node=copy(sessionDocument.nodes.find(n=>n.id===id));node.id=window.crypto.randomUUID();node.position.x+=40;node.position.y+=40;delete node.result;fileEdit(d=>d.nodes.push(node));return state.graph.nodes.find(n=>n.id===node.id);};
+api.forkNode=async id=>{const result=await sessionRequest('fork-node',{document:portableDocument(),node:id});fileEdit(d=>{d.nodes=result.document.nodes;d.wires=result.document.wires;});return state.graph.nodes.find(n=>n.id===result.ids[0]);};
 api.arrangeGraph=async()=>fileEdit(d=>d.nodes.forEach((n,i)=>{n.position={x:80+i%4*300,y:100+Math.floor(i/4)*220};}));
 api.groupNodes=async ids=>{const group={id:window.crypto.randomUUID(),type:'note',title:'Group',params:{},position:{x:80,y:100},children:ids};return fileEdit(d=>{d.nodes.push(group);for(const n of d.nodes)if(ids.includes(n.id))n.parent=group.id;d.groups.push({id:group.id,nodes:ids});});};
 api.ungroupNode=api.deleteNode;

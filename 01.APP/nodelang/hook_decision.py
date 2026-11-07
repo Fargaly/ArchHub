@@ -1349,6 +1349,8 @@ def _ask_who(event, data) -> str:
 
 
 def _ask_text(action, data):
+    if isinstance(data, dict) and isinstance(data.get('node'), dict) and isinstance(data.get('feeds'), dict):
+        return json.dumps({'parameters': data['node'].get('params'), 'inputs': data['feeds']}, ensure_ascii=False, indent=2), 'Parameters to run'
     if action not in ("send", "publish") or not isinstance(data, dict):
         return "", ""
     label = "Text to post" if action == "publish" else "Text to send"
@@ -1366,6 +1368,8 @@ def _ask_text(action, data):
 
 def _ask_replay(event, action) -> dict:
     data = event["input"] if isinstance(event["input"], dict) else {}
+    if event['tool'] == 'canvas.run':
+        return {'kind': 'canvas', 'payload': data}
     if data.get("connector") and "arguments" in data:
         return {"kind": "connector", "connector": str(data.get("connector") or ""),
                 "action": event["tool"], "arguments": data.get("arguments")}
@@ -1622,6 +1626,9 @@ def _short_result(value) -> str:
 def _release_ask(replay: dict):
     from . import host_exec as host_runtime
     kind = replay.get("kind")
+    if kind == 'canvas':
+        from .agent_work import release
+        return release(replay['payload'])
     if kind == "connector":
         if replay.get("connector") not in host_runtime.INVOKERS:
             host_runtime._ensure_registry()

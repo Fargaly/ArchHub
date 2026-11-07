@@ -94,6 +94,7 @@
         handleContextmenusjsx1
       })(id, ...args);
     }
+    if (n?.agentWork?.runnable === false || n?.agentWork?.role === 'session') groups = groups.map(group=>group.filter(row=>!['Rerun','Run to here','Repeat this'].includes(row[0])));
     return <><div className="context-dismiss" onMouseDown={close} /><section className="context-menu" role="menu" aria-label={kind} style={{
         left,
         top

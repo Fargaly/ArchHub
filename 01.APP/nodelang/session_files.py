@@ -182,6 +182,14 @@ def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, de
     from .node_params import PARAM_ENGINE, bound_value, coerce
     from .pipeline_engines import PIPELINE_ENGINES
     from .stem_graph_evaluation import run_stem_operation
+    from .hook_decision import _RELEASING
+    work = node.get('agentWork', {})
+    if work.get('runnable') is False:
+        raise ValueError('Shell and edit steps require the escape hatch; replay is unavailable.')
+    if not _RELEASING.get(False) and not canvas_documents.is_pure(engine) and (work.get('role') == 'step' or node.get('approvalRequired') or engine == 'thing.file.write'):
+        from .agent_work import request_approval
+        card = request_approval(node, params, feeds)
+        return {'approvalId': card['id']}, 'Waiting for approval'
     if engine == PARAM_ENGINE:
         value = bound_value(document, node) if node.get('bind') else feeds.get('value', params.get('value'))
         owner = next((n for n in document['nodes'] if n['id'] == (node.get('bind') or {}).get('node')), node)
@@ -652,11 +660,11 @@ def _move_session(path, destination, *, before_move=None):
     if not _cleanup_plain(path) or not _cleanup_plain(destination):
         raise OSError('Linked session paths are retained')
     with canvas_documents.locked(path):
-        _unlocked(path)
         document = read_document(path)
         target = document_path(destination, document)
         if path.resolve() == target.resolve():
             return str(target)
+        _unlocked(path)
         with canvas_documents.locked(target):
             if target.exists():
                 if target.read_bytes() == path.read_bytes():
@@ -828,6 +836,8 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
     outgoing = {key: [] for key in nodes}
     known = {row['id']: row for row in catalogue()}
     for wire in document['wires']:
+        if wire.get('inferred'):
+            continue
         incoming[wire['to']['node']].append(wire)
         outgoing[wire['from']['node']].append(wire)
     selected = set(nodes)
@@ -862,6 +872,8 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
     from .node_params import PARAM_ENGINE, ports as node_ports
     for key in order:
         node = nodes[key]
+        if node.get('agentWork', {}).get('role') == 'session':
+            continue
         engine = node['type']
         if engine not in PIPELINE_ENGINES and engine not in STEM_RUN_ENGINES and engine not in ('note', 'skill', PARAM_ENGINE, 'data.dataset', 'data.field') and engine not in THING_ENGINES:
             raise ValueError('Missing engine: '+engine)
@@ -905,6 +917,10 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
             continue
         engine = node['type']
         try:
+            if node.get('agentWork', {}).get('role') == 'session':
+                outputs[key] = {'result': node['params'].get('result', '')}
+                results[key] = {'status': 'Skipped', 'output': outputs[key]}
+                continue
             shaped, streams = _split_each_wires(wired, nodes, outputs, engine, key)
             _match_feeds(shaped)
             constants = {}
@@ -920,9 +936,15 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
 
             if plans is None:
                 produced, display = run_once(constants)
+                if node.get('agentWork') or node.get('approvalRequired'):
+                    from .agent_work import redact
+                    produced, display = redact(produced), redact(display)
                 json.dumps(produced, allow_nan=False)
                 outputs[key] = produced
                 results[key] = {'status':'Done', 'output':produced, 'display':display}
+                if isinstance(produced, dict) and produced.get('approvalId'):
+                    results[key]['status'] = 'Waiting for approval'
+                    return {'ok': True, 'succeeded': False, 'results': results, 'order': order, 'approvalId': produced['approvalId']}
             else:
                 # foreach.each: one run per item. decide() stays inside the effect.
                 rows = []
@@ -994,7 +1016,7 @@ class SessionFiles:
                 temporary = stream.name
                 json.dump(stamp_test_write({'id':identity,'path':str(local_path(path)) if path else ''}),stream)
             try:
-                os.replace(temporary,current)
+                _metadata_io(os.replace, temporary, current)
             finally:
                 if os.path.exists(temporary):
                     os.unlink(temporary)
@@ -1166,6 +1188,8 @@ class SessionFiles:
             path = local_path(body.get('path')) if body.get('path') else next((row['path'] for row in load_skills() if row['skill']['id'] == body.get('id')), self.directory/'missing.archhub')
             if not re.fullmatch(r'[A-Za-z0-9_-]{0,128}', str(body.get('id',''))) or not path.exists():
                 return {'ok':True,'revision':-1}
+            from .workshop_tasks import refresh_steps
+            refresh_steps(path)
             document = read_document(path)
             canvas_documents.remember(path, document)
             history = document.get('properties',{}).get('history',[])
@@ -1184,4 +1208,13 @@ class SessionFiles:
             return {'ok':True,'document':validate(body.get('document'))}
         if action == 'run':
             return run_document(body.get('document'),invoke=invoke,roots=body.get('roots'),stopped=stopped)
+        if action in ('agent-history', 'fork-node'):
+            document = validate(body.get('document'))
+            node = next(n for n in document['nodes'] if n['id'] == body.get('node'))
+            if action == 'agent-history':
+                from .agent_work import history
+                return {'ok': True, **history(node)}
+            from .agent_work import fork
+            ids = fork(document, node['id'])
+            return {'ok': True, 'document': validate(document), 'ids': ids}
         raise ValueError('Unknown session file action')

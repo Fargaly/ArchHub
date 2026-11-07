@@ -909,12 +909,15 @@ def split_sessions(path):
     path = local_path(path)
     saved = []
     source = read_document(path)
-    if source.get('properties', {}).get('taskContext') or sum(
+    if source.get('properties', {}).get('taskContext') or source.get('properties', {}).get('sessionMigration') == 1 or sum(
             n.get('agentWork', {}).get('role') == 'session' or n['type'] == 'thing.agent' and bool(n['params'].get('session'))
             for n in source['nodes']) < 2:
         return saved
-    checkpoint(path, 'Before splitting task sessions')
+    recovery = checkpoint(path, 'Before splitting task sessions')
     def split(document):
+        document.setdefault('properties', {})['sessionMigration'] = 1
+        snapshot = next(row['document'] for row in document['properties']['checkpoints'] if row['id'] == recovery['id'])
+        snapshot.setdefault('properties', {})['sessionMigration'] = 1
         sessions = [n for n in document['nodes'] if n.get('agentWork', {}).get('role') == 'session'
                     or n['type'] == 'thing.agent' and n['params'].get('session')]
         if len(sessions) < 2:
@@ -1293,6 +1296,8 @@ class SessionFiles:
             selected_path = Path(launch) if launch else recovery
             before_migration = read_document(selected_path) if selected_path.exists() else None
             migrated = split_sessions(str(selected_path)) if before_migration else []
+            if migrated:
+                before_migration.setdefault('properties', {})['sessionMigration'] = 1
             document = read_document(selected_path) if before_migration else new_document()
             canvas_documents.solve(document, [n['id'] for n in document['nodes']], invoke=invoke, stopped=stopped)
             return {'ok':True,'document':document,'path':str(launch or held.get('path', '')),
@@ -1316,6 +1321,8 @@ class SessionFiles:
                 return self.import_file(path)
             before_migration = read_document(path)
             migrated = split_sessions(path)
+            if migrated:
+                before_migration.setdefault('properties', {})['sessionMigration'] = 1
             document = read_document(path)
             canvas_documents.solve(document, [n['id'] for n in document['nodes']], invoke=invoke, stopped=stopped)
             self.remember(local_path(path),document)

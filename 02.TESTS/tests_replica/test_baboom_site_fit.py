@@ -9,6 +9,10 @@ import socket
 import subprocess
 import sys
 import threading
+import secrets
+import time
+from http.cookies import SimpleCookie
+from urllib.error import HTTPError
 from unittest.mock import Mock
 
 import pytest
@@ -154,3 +158,141 @@ def test_real_persona_manifest_has_exact_hash_and_keeps_user_data_excluded(tmp_p
     name = 'nodelang/data/baboom/persona.json'
     assert rows[name] == hashlib.sha256((source / name).read_bytes()).hexdigest()
     assert host_addin_retarget.protected(Path(name))
+
+
+@pytest.mark.parametrize('model_answer,accepted', [
+    ('Fire doors need 999 hours. [STD-99]', False),
+    ('Fire doors need 2 hours. [STD-21] [STD-99]', False),
+    ('Fire doors need 2 hours.', False),
+    ('Fire doors need 999 hours. [STD-21]', False),
+    ('Fire doors need 2 hours. [STD-22]', False),
+    ('Fire doors need 2 hours. [STD-21]', True),
+])
+def test_model_grounding_uses_only_cited_retrieved_passages(tmp_path, model_answer, accepted):
+    path = tmp_path / 'index.json'
+    path.write_text(json.dumps({'chunks': [
+        {'id': 'STD-21', 'title': 'Fire doors', 'head': 'Rating', 'href': 'doors.html',
+         'text': 'Fire doors need 2 hours.'},
+        {'id': 'STD-22', 'title': 'Other rules', 'head': 'Other rules', 'href': 'other.html',
+         'text': 'Fire doors alternative rating is 999 hours.'}]}), encoding='utf-8')
+    index = baboom_standard.Index(path)
+    complete = Mock(side_effect=['fire doors', model_answer])
+    result = baboom_standard.answer(index, 'fire doors', token='synthetic-reader', complete=complete)
+    assert complete.call_count == 2
+    if accepted:
+        assert result['answer'].startswith('I am BABOOM, an AI assistant.')
+        assert model_answer in result['answer']
+    else:
+        assert result == baboom_standard.answer(index, 'fire doors', token='synthetic-reader')
+        assert '999' not in result['answer'] and 'STD-99' not in result['answer']
+
+
+@pytest.mark.parametrize('quantity', ['2 mm', '2 m²', '2 kg/m³', '2 °C', '2%', '2′', '2"', '2e3 Pa', '2 MPa'])
+def test_grounding_matches_the_whole_quantity_and_unit(quantity):
+    hits = [{'id': 'STD-21', 'text': 'The limit is ' + quantity + '.'}]
+    assert baboom_standard._grounded('The limit is ' + quantity + '. [STD-21]', hits)
+    assert not baboom_standard._grounded('The limit is ' + quantity.replace('2', '999', 1) + '. [STD-21]', hits)
+    if 'm³' in quantity or 'mm' in quantity:
+        changed_unit = quantity.replace('m³', 'm²').replace('mm', 'cm')
+        assert not baboom_standard._grounded('The limit is ' + changed_unit + '. [STD-21]', hits)
+    if 'MPa' in quantity:
+        assert not baboom_standard._grounded('The limit is 2 mPa. [STD-21]', hits)
+
+
+@pytest.mark.parametrize('site,state,sends', [
+    ('https://baboom.archhub.io', 'active', True),
+    ('http://baboom.archhub.io', 'active', False),
+    ('https://elsewhere.example', 'active', False),
+    ('https://baboom.archhub.io.evil.example', 'active', False),
+    ('https://baboom.archhub.io', 'expired', False),
+    ('https://baboom.archhub.io', 'refused', False),
+    ('https://baboom.archhub.io', 'absent', False),
+])
+def test_desktop_account_cookie_is_pinned_and_not_logged(monkeypatch, capsys, caplog, site, state, sends):
+    from nodelang import cloud_signin
+    credential = secrets.token_urlsafe(32)
+    held = {'token': credential, 'expires_at': time.time() + (60 if state != 'expired' else -60),
+            'refused_at': 1 if state == 'refused' else None} if state != 'absent' else {}
+    read = Mock(return_value=held)
+    monkeypatch.setattr(cloud_signin, 'read_cloud_session', read)
+    monkeypatch.setattr(baboom_standard, 'SITE', site)
+
+    def open_request(request, **kwargs):
+        cookie = SimpleCookie(request.get_header('Cookie') or '')
+        assert bool('bbm_s' in cookie) == sends
+        if sends:
+            assert bool(cookie['bbm_s'].value == credential)
+        assert credential not in request.full_url
+        response = Mock()
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        response.read.return_value = json.dumps({'answer': 'Sign in', 'links': [{'href': '/api/auth/start?next=/'}]}).encode()
+        return response
+
+    opener = Mock(open=open_request)
+    monkeypatch.setattr(baboom_standard.http, 'build_opener', lambda handler: opener)
+    assert baboom_standard.ask_standard('fire doors') == {
+        'answer': 'The standard answer is unavailable. Open the standard site.', 'links': []}
+    assert read.call_count == int(site == 'https://baboom.archhub.io')
+    output = capsys.readouterr()
+    assert credential not in output.out + output.err + caplog.text
+
+
+@pytest.mark.parametrize('status', [401, 403])
+def test_desktop_refused_account_is_truthfully_signed_out(monkeypatch, status):
+    from nodelang import cloud_signin
+    monkeypatch.setattr(cloud_signin, 'read_cloud_session', lambda path: {
+        'token': secrets.token_urlsafe(32), 'expires_at': time.time() + 60})
+    opener = Mock()
+    opener.open.side_effect = HTTPError(baboom_standard.SITE + '/api/chat', status, 'refused', {}, None)
+    monkeypatch.setattr(baboom_standard.http, 'build_opener', lambda handler: opener)
+    assert baboom_standard.ask_standard('fire doors') == {
+        'answer': 'The standard answer is unavailable. Open the standard site.', 'links': []}
+
+
+@pytest.mark.parametrize('refusal', [401, 403])
+def test_desktop_cookie_reaches_existing_site_validation(sites, monkeypatch, refusal):
+    from nodelang import cloud_signin
+    candidate = sites[1]
+    credential = secrets.token_urlsafe(32)
+    cloud_signin.write_cloud_session(cloud_signin.cloud_session_path(), {
+        'token': credential, 'expires_at': time.time() + 60})
+    with running(candidate) as port:
+        real_opener = baboom_standard.http.build_opener(baboom_standard._NoRedirect)
+
+        def tunnel(request, **kwargs):
+            # Network mock: the production request stays HTTPS-pinned; only this test bridges to loopback.
+            assert request.full_url == 'https://baboom.archhub.io/api/chat'
+            local = baboom_standard.http.Request(f'http://127.0.0.1:{port}/api/chat', request.data,
+                                                dict(request.header_items()), method='POST')
+            return real_opener.open(local, **kwargs)
+
+        monkeypatch.setattr(baboom_standard.http, 'build_opener', lambda handler: Mock(open=tunnel))
+        assert '[STD-21]' in baboom_standard.ask_standard('project folders')['answer']
+        assert all(bool(call.args[0] == credential) for call in candidate.complete.call_args_list)
+        candidate.complete.side_effect = candidate.CloudError(refusal)
+        assert baboom_standard.ask_standard('project folders')['answer'] == 'The standard answer is unavailable. Open the standard site.'
+    candidate.cloud.assert_not_called()
+
+
+def test_desktop_redirect_does_not_forward_cookie(monkeypatch):
+    from nodelang import cloud_signin
+    credential = secrets.token_urlsafe(32)
+    monkeypatch.setattr(cloud_signin, 'read_cloud_session', lambda path: {
+        'token': credential, 'expires_at': time.time() + 60})
+    calls = []
+
+    class Redirect(baboom_standard.http.BaseHandler):
+        handler_order = 100
+
+        def https_open(self, request):
+            calls.append(request.full_url)
+            return self.parent.error('http', request, None, 302, 'redirect',
+                                     {'Location': 'https://elsewhere.example/api/chat'})
+
+    build = baboom_standard.http.build_opener
+    monkeypatch.setattr(baboom_standard.http, 'build_opener', lambda handler: build(handler, Redirect))
+    with pytest.raises(HTTPError) as refused:
+        baboom_standard.ask_standard('fire doors')
+    assert refused.value.code == 302
+    assert calls == ['https://baboom.archhub.io/api/chat']

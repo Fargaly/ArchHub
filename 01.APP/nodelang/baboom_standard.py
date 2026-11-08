@@ -4,6 +4,9 @@ import json
 import math
 from pathlib import Path
 import re
+import time
+from http.cookies import SimpleCookie
+from urllib.error import HTTPError
 from urllib import parse, request as http
 
 from .baboom_persona import IDENTITY, identity_answer, persona_instructions, public_reply, speech
@@ -16,6 +19,21 @@ _GROUND_STOP = set('where go should must put keep standard std'.split())
 
 def words(text):
     return [w for w in re.findall(r'[a-z0-9]+', text.lower()) if w not in _STOP]
+
+
+def _grounded(result, hits):
+    citations = re.findall(r'\[([^\[\]]+)\]', result)
+    passages = {c['id']: [] for c in hits if c.get('id')}
+    for chunk in hits:
+        if chunk.get('id'):
+            passages[chunk['id']].append(' '.join(chunk['text'].split()[:110]))
+    if not citations or any(c not in passages for c in citations):
+        return False
+    quantities = (r'(?<![\w.])[+-]?\d+(?:[.,]\d+)*(?:[eE][+-]?\d+)?\s*'
+                  r'''(?:[°µμ]?[^\W\d_]+(?:[²³]|\^?[+-]?\d+)?(?:\s*[/·*]\s*[^\W\d_]+(?:[²³]|\^?[+-]?\d+)?)*|[%‰°′″'"])''')
+    pairs = lambda text: {re.sub(r'\s+', '', value) for value in re.findall(quantities, text)}
+    # shortcut: valid citations and matching numbers do not prove every fact in a sentence; semantic grounding needs a stronger check.
+    return pairs(result) <= set().union(*(pairs(text) for c in citations for text in passages[c]))
 
 
 class Index:
@@ -71,7 +89,7 @@ def answer(index, question, token='', page='/', *, complete=None):
             query += ' ' + complete(token, 'Rewrite this question about an office BIM standard (Revit, AutoCAD, ISO 19650) as 6-12 English '
                                     'search keywords a BIM standard would use. Output only the keywords.', question, 400, 15)
         except Exception as exc:
-            if getattr(exc, 'code', None) == 401:
+            if getattr(exc, 'code', None) in (401, 403):
                 raise
     hits = index.search(query, 5, strict=bool(token and not complete))
     links, seen = [], set()
@@ -99,11 +117,11 @@ def answer(index, question, token='', page='/', *, complete=None):
                               'Cite every fact with its document number in brackets, like [STD-21]. ' + lang,
                               f'Passages:\n{context}\n\nQuestion: {question}\n\n{lang}')
         except Exception as exc:
-            if getattr(exc, 'code', None) == 401:
+            if getattr(exc, 'code', None) in (401, 403):
                 raise
-            result = ("خلص رصيد الأسئلة المجانية النهارده. دي أقرب المستندات:" if arabic else
-                      "Today's free questions are used up. These documents cover it:") if getattr(exc, 'code', None) == 402 else ''
-        return {'answer': public_reply(result) if result else ('دي أقرب المستندات:' if arabic else 'These documents cover it:'), 'links': links}
+            result = ''
+        if result and _grounded(result, hits):
+            return {'answer': public_reply(result), 'links': links}
     hits = [c for c in hits if c.get('id')]
     if not hits:
         return {'answer': IDENTITY + ' I cannot find that rule in the standard index.', 'links': []}
@@ -126,11 +144,30 @@ class _NoRedirect(http.HTTPRedirectHandler):
 
 def ask_standard(question):
     """Desktop and future phone clients ask the existing site owner, never a local rule copy."""
+    headers = {'Content-Type': 'application/json'}
+    if SITE == 'https://baboom.archhub.io':
+        from .cloud_signin import read_cloud_session
+        from .cloud_session import cloud_session_path
+        try:
+            held = read_cloud_session(cloud_session_path())
+        except (OSError, ValueError):
+            held = {}
+        token, expires = held.get('token'), held.get('expires_at')
+        if (isinstance(token, str) and token and not held.get('refused_at')
+                and type(expires) in (int, float) and expires > time.time()):
+            cookie = SimpleCookie()
+            cookie['bbm_s'] = token
+            headers['Cookie'] = cookie.output(header='').strip()
     request = http.Request(SITE + '/api/chat',
                                     json.dumps({'question': question, 'page': '/'}).encode(),
-                                    {'Content-Type': 'application/json'}, method='POST')
-    with http.build_opener(_NoRedirect).open(request, timeout=STANDARD_NODE['params']['request_seconds']) as response:
-        raw = response.read(65537)
+                                    headers, method='POST')
+    try:
+        with http.build_opener(_NoRedirect).open(request, timeout=STANDARD_NODE['params']['request_seconds']) as response:
+            raw = response.read(65537)
+    except HTTPError as exc:
+        if exc.code in (401, 403):
+            return {'answer': 'The standard answer is unavailable. Open the standard site.', 'links': []}
+        raise
     if len(raw) > 65536:
         raise ValueError('Standard answer exceeds its display budget')
     result = json.loads(raw)

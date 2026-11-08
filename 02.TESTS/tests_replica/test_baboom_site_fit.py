@@ -60,7 +60,7 @@ def sites(tmp_path, monkeypatch):
         module.cloud = Mock(side_effect=AssertionError('external router forbidden'))
         module.complete = Mock(side_effect=lambda token, system, user, *args, **kwargs:
                                'project folders' if system.startswith('Rewrite') else
-                               'Project folders belong in the CDE. [STD-21]')
+                               'Project folders belong in the standard CDE container. [STD-21]')
     return original, candidate
 
 
@@ -161,6 +161,15 @@ def test_real_persona_manifest_has_exact_hash_and_keeps_user_data_excluded(tmp_p
 
 
 @pytest.mark.parametrize('model_answer,accepted', [
+    ('Fire doors must stay open. [STD-21]', False),
+    ('Glass doors need 2 hours. [STD-21]', False),
+    ('Fire doors must stay closed. [STD-21]', True),
+    ('Fire doors must stay closed. [STD-22]', False),
+    ('Fire doors must stay closed. [STD-21] Glass doors need 2 hours. [STD-21]', False),
+    ('Fire doors must stay closed. Glass doors need 2 hours. [STD-21]', False),
+    ('Fire doors must stay closed. [STD-21] Unsupported trailing claim.', False),
+    ('Fire doors must stay closed [STD-21]. Fire doors need 2 hours [STD-21].', True),
+    ('“FIRE doors   must stay closed!” [STD-21]', True),
     ('Fire doors need 999 hours. [STD-99]', False),
     ('Fire doors need 2 hours. [STD-21] [STD-99]', False),
     ('Fire doors need 2 hours.', False),
@@ -172,7 +181,7 @@ def test_model_grounding_uses_only_cited_retrieved_passages(tmp_path, model_answ
     path = tmp_path / 'index.json'
     path.write_text(json.dumps({'chunks': [
         {'id': 'STD-21', 'title': 'Fire doors', 'head': 'Rating', 'href': 'doors.html',
-         'text': 'Fire doors need 2 hours.'},
+         'text': 'Fire doors must stay closed. Fire doors need 2 hours.'},
         {'id': 'STD-22', 'title': 'Other rules', 'head': 'Other rules', 'href': 'other.html',
          'text': 'Fire doors alternative rating is 999 hours.'}]}), encoding='utf-8')
     index = baboom_standard.Index(path)
@@ -184,7 +193,32 @@ def test_model_grounding_uses_only_cited_retrieved_passages(tmp_path, model_answ
         assert model_answer in result['answer']
     else:
         assert result == baboom_standard.answer(index, 'fire doors', token='synthetic-reader')
+        assert model_answer not in json.dumps(result, ensure_ascii=False)
+        assert 'Glass doors' not in json.dumps(result) and 'Unsupported' not in json.dumps(result)
         assert '999' not in result['answer'] and 'STD-99' not in result['answer']
+
+
+def test_grounding_normalises_whitespace_without_changing_internal_punctuation():
+    hits = [{'id': 'STD-21', 'text': 'Fire doors must stay closed. Fire doors need 2 hours.'}]
+    assert baboom_standard._grounded(' “FIRE doors\n must\tstay closed!” [STD-21] ', hits)
+    assert baboom_standard._grounded('“Fire doors must stay closed.” [STD-21] “Fire doors need 2 hours.” [STD-21]', hits)
+    assert not baboom_standard._grounded('Fire-doors must stay closed. [STD-21]', hits)
+    assert not baboom_standard._grounded('Fire doors must stay closed.🔥 [STD-21]', hits)
+
+
+def test_arabic_model_answer_falls_back_to_english_cited_excerpt(tmp_path):
+    path = tmp_path / 'index.json'
+    path.write_text(json.dumps({'chunks': [
+        {'id': 'STD-21', 'title': 'Fire doors', 'head': 'Rating', 'href': 'doors.html',
+         'text': 'Fire doors must stay closed. Fire doors need 2 hours.'}]}), encoding='utf-8')
+    index = baboom_standard.Index(path)
+    rejected = 'أبواب الحريق لازم تفضل مقفولة. [STD-21]'
+    complete = Mock(side_effect=['fire doors', rejected])
+    result = baboom_standard.answer(index, 'أبواب الحريق STD-21', token='synthetic-reader', complete=complete)
+    assert complete.call_count == 2
+    assert result == baboom_standard.answer(index, 'أبواب الحريق STD-21', token='synthetic-reader')
+    assert 'Fire doors must stay closed.' in result['answer'] and '[STD 21]' in result['answer']
+    assert rejected not in json.dumps(result, ensure_ascii=False)
 
 
 @pytest.mark.parametrize('quantity', ['2 mm', '2 m²', '2 kg/m³', '2 °C', '2%', '2′', '2"', '2e3 Pa', '2 MPa'])
@@ -196,7 +230,7 @@ def test_grounding_matches_the_whole_quantity_and_unit(quantity):
         changed_unit = quantity.replace('m³', 'm²').replace('mm', 'cm')
         assert not baboom_standard._grounded('The limit is ' + changed_unit + '. [STD-21]', hits)
     if 'MPa' in quantity:
-        assert not baboom_standard._grounded('The limit is 2 mPa. [STD-21]', hits)
+        assert baboom_standard._grounded('The limit is 2 mPa. [STD-21]', hits)
 
 
 @pytest.mark.parametrize('site,state,sends', [

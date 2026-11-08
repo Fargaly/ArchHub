@@ -1,6 +1,13 @@
 {
   "schema_version": 1,
   "intents": {
+    "BUILDFETCHRETRY": {
+      "source": "Founder 2026-11-08: continue the reviewed Betterleaks retry fix in lane/build-fetch-retry; preserve the 60 second timeout, waits 5/15/30/60/120 and pinned hashes and URLs; fix compiler findings at source, run isolated retry tests and commit with all hooks on; no push, build, installation or live profile.",
+      "scope": [
+        "03.TOOLS/packaging/windows/stage_betterleaks.py",
+        "02.TESTS/tests_replica/test_betterleaks_download.py"
+      ]
+    },
     "PUBLISHSAFE": {
       "source": "Founder 2026-11-08: continue lane/payload-identity at e1e813ae; fail closed on refused or malformed checker reports, bind tag/source revision/assets to the build, stop every native gh error, prevent refused build auto-publication, prove zero gh calls with fake PATH commands, run complete release set and commit without push.",
       "scope": [

@@ -10941,6 +10941,7 @@
         "01.APP/nodelang/studio/api.js",
         "02.TESTS/tests_js/multidelete.mjs",
         "02.TESTS/tests_js/agentcanvas.cjs",
+        "02.TESTS/tests_js/agentwork.cjs",
         "01.APP/nodelang/studio/app.jsx",
         "01.APP/nodelang/host_addin_retarget.py",
         "01.APP/nodelang/legacy_cleanup_identities.json",

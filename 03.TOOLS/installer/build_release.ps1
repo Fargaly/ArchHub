@@ -192,6 +192,7 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
         # The generic JavaScript allowlist must never admit stale compiled files.
         if ($Path.StartsWith('nodelang/studio/compiled/', [StringComparison]::OrdinalIgnoreCase)) { return $false }
         if ($Path -cin @(
+            'nodelang/legacy_cleanup_identities.json',
             'nodelang/launcher.py', 'nodelang/studio/style.css', 'nodelang/studio/design-tokens.json', 'colleague_setup.py', 'requirements.txt',
             'NOTICE', 'docs/SPEC.md', 'packaging/windows/goose-pin.json', 'packaging/windows/stage_goose.py',
             'packaging/windows/betterleaks-pin.json', 'packaging/windows/stage_betterleaks.py',

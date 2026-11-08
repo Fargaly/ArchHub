@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import shutil
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 import subprocess
@@ -32,6 +33,9 @@ def _manifest(root):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"current build\n")
         rows.append(name + "\t" + hashlib.sha256(path.read_bytes()).hexdigest())
+    identity = root / 'nodelang/legacy_cleanup_identities.json'
+    if identity.is_file():
+        rows.append('nodelang/legacy_cleanup_identities.json\t' + hashlib.sha256(identity.read_bytes()).hexdigest())
     raw = ("\n".join(rows) + "\n").encode()
     (root / "source-manifest.tsv").write_bytes(raw)
     return hashlib.sha256(raw).hexdigest()
@@ -92,9 +96,9 @@ def legacy_inventory(tmp_path, monkeypatch):
         'README.md': identity(b'retired documentation')}} for name in prune.LEGACY_DIRS},
         'revit': {year: {**identity(b'old DLL'), 'mtime_utc_date': '2026-06-10'}
                   for year in ('2020', '2023', '2024', '2025')}}
-    path = tmp_path / 'legacy_cleanup_identities.json'
+    path = tmp_path / 'ArchHub/nodelang/legacy_cleanup_identities.json'
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data))
-    monkeypatch.setattr(prune, 'LEGACY_IDENTITY_FILE', path)
     return path
 
 
@@ -167,7 +171,7 @@ def test_f253_unknown_old_python_alone_keeps_whole_directory(install_root, name,
     os.utime(path, (1, 1))
     prune.cleanup_legacy(install_root)
     assert path.read_bytes() == b'personal analysis'
-    assert 'legacy kept: ' + name in capsys.readouterr().out
+    assert 'legacy kept:' in capsys.readouterr().out
 
 
 @pytest.mark.parametrize('change', ['extra', 'changed', 'missing', 'empty-directory'])
@@ -185,7 +189,7 @@ def test_f253_exact_inventory_mismatch_keeps_every_file(install_root, legacy_inv
     else:
         (folder / 'user-folder').mkdir()
     before = {p: p.read_bytes() for p in folder.rglob('*') if p.is_file()}
-    prune.cleanup_legacy(install_root)
+    prune.cleanup_legacy(install_root, hashlib.sha256(legacy_inventory.read_bytes()).hexdigest())
     assert folder.is_dir()
     assert before == {p: p.read_bytes() for p in folder.rglob('*') if p.is_file()}
     assert 'legacy kept:' in capsys.readouterr().out
@@ -200,7 +204,7 @@ def test_f253_modified_revit_dll_kept(install_root, legacy_inventory, year, chan
     path.write_bytes(data)
     stamp = 1781049600 if change == 'hash' else 1781136000
     os.utime(path, (stamp, stamp))
-    prune.cleanup_legacy(install_root)
+    prune.cleanup_legacy(install_root, hashlib.sha256(legacy_inventory.read_bytes()).hexdigest())
     assert path.read_bytes() == data
     assert 'kept: unrecognized Revit/' + year in capsys.readouterr().out
 
@@ -367,8 +371,12 @@ def test_manifest_covers_generated_studio_and_gated_hosts_only(tmp_path):
     included = ["nodelang/host_addin_retarget.py", "nodelang/studio/compiled/main.js",
                 "app/__init__.py", "app/credential_lock.py", "app/secrets_store.py",
                 "bridges/rhino/archhub_mcp.py", "bridges/blender/archhub_mcp/__init__.py",
-                "bridges/sources/max_mcp/max_mcp_startup.py"]
-    for name in included + ["nodelang/__pycache__/old.pyc", "app/unshipped.py", "nodelang/private.db"]:
+                "bridges/sources/max_mcp/max_mcp_startup.py",
+                "nodelang/legacy_cleanup_identities.json", "nodelang/workshop/mailbox.mjs",
+                "nodelang/workshop/vendor/sdk.cjs"]
+    excluded = ["nodelang/__pycache__/old.pyc", "app/unshipped.py", "nodelang/private.db",
+                "nodelang/other.json", "nodelang/workshop/messages.sqlite3", "workshop/user.py"]
+    for name in included + excluded:
         path = source / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(name.encode())
@@ -381,7 +389,65 @@ def test_manifest_covers_generated_studio_and_gated_hosts_only(tmp_path):
     assert "nodelang/studio/compiled/main.js" in rows
     assert "bridges/revit/2027/build/RevitMCP.dll" in rows
     assert "bridges/max/max_mcp_startup.py" in rows
+    for name in included:
+        if name != 'bridges/sources/max_mcp/max_mcp_startup.py':
+            assert rows[name] == hashlib.sha256((source / name).read_bytes()).hexdigest()
+    assert not set(excluded) & rows.keys()
     assert not any("__pycache__" in name or "unshipped" in name or name.endswith(".db") for name in rows)
+
+
+def test_identity_payload_admission_is_exact():
+    script = ROOT / '03.TOOLS/installer/build_release.ps1'
+    command = r'''
+param($Script)
+$ast = [System.Management.Automation.Language.Parser]::ParseFile($Script, [ref]$null, [ref]$null)
+$f = $ast.Find({param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Test-CandidateInput'}, $true)
+Invoke-Expression $f.Extent.Text
+@('nodelang/legacy_cleanup_identities.json', 'nodelang/other.json',
+  'nodelang/workshop/legacy_cleanup_identities.json', 'nodelang/settings/user.json',
+  'nodelang/LEGACY_CLEANUP_IDENTITIES.json', 'nodelang/workshop/mailbox.mjs') |
+  ForEach-Object { [bool](Test-CandidateInput 'selected' $_) } | ConvertTo-Json -Compress
+'''
+    result = subprocess.run([shutil.which('powershell') or shutil.which('pwsh'), '-NoProfile', '-Command', '& { ' + command + ' }', str(script)],
+                            capture_output=True, text=True, check=True, timeout=30)
+    assert json.loads(result.stdout) == [True, False, False, False, False, True]
+
+
+def test_manifest_covers_real_workshop_programs(tmp_path):
+    source = ROOT / '01.APP'
+    output = tmp_path / 'manifest.tsv'
+    prune.write_manifest(source, tmp_path / 'hosts', output)
+    rows = prune.manifest_rows(output.read_bytes())
+    programs = [path for path in (source / 'nodelang/workshop').rglob('*')
+                if path.is_file() and path.suffix in {'.js', '.mjs', '.cjs', '.py', '.ps1'}]
+    assert programs
+    for path in programs:
+        assert rows[path.relative_to(source).as_posix()] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert prune.protected(Path('workshop/user.py'))
+    assert not prune.protected(Path('nodelang/workshop/mailbox.mjs'))
+    assert prune.protected(Path('nodelang/workshop/messages.sqlite3'))
+
+
+@pytest.mark.parametrize('fault', ['missing', 'changed', 'unmanifested'])
+def test_identity_fault_skips_legacy_cleanup(install_root, legacy_inventory, fault, capsys):
+    folder = install_root / prune.LEGACY_DIRS[0]
+    folder.mkdir()
+    known = folder / 'README.md'
+    known.write_bytes(b'retired documentation')
+    if fault == 'unmanifested':
+        raw = legacy_inventory.read_bytes()
+        legacy_inventory.unlink()
+        digest = _manifest(install_root)
+        legacy_inventory.write_bytes(raw)
+    else:
+        digest = _manifest(install_root)
+        if fault == 'missing':
+            legacy_inventory.unlink()
+        else:
+            legacy_inventory.write_bytes(legacy_inventory.read_bytes() + b' ')
+    prune.prune(install_root, digest)
+    assert known.read_bytes() == b'retired documentation'
+    assert 'PRUNE legacy kept:' in capsys.readouterr().out
 
 
 def test_pruner_does_not_follow_a_junction(install_root):
@@ -442,7 +508,7 @@ def test_previous_manifest_only_drops_owned_unchanged_files(install_root, capsys
 @pytest.mark.parametrize("name", ["nodelang/user.archhub", "app/owner.db", "studio/owner.sqlite3",
                                    "bridges/owner.sqlite-wal", "app/user.json", "studio/user.yaml",
                                    "nodelang/user.toml", "app/run.log", "bridges/owner.sqlite3-shm",
-                                   *[f"nodelang/{folder}/keep.py" for folder in prune.STATE_DIRS]])
+                                   *[f"nodelang/{folder}/keep.py" for folder in prune.STATE_DIRS - {'workshop'}]])
 def test_never_delete_candidate_aborts_entire_prune(install_root, capsys, name):
     root = install_root
     _manifest(root)

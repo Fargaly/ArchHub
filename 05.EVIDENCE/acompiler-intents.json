@@ -1,6 +1,19 @@
 {
   "schema_version": 1,
   "intents": {
+    "BABOOMSITEFIT": {
+      "source": "Independent release da12106 checks: e988 c1c0f04a signed-out response regression and 717 site deployment check; persona installed-manifest gap. Builder repair scope, not founder words. Preserve live signed-out response, router and truthful desktop handling; admit exact persona identity with hashes and all user-data exclusions. Commit only; no push, install, release or live-site change.",
+      "scope": [
+        "01.APP/nodelang/baboom_standard.py",
+        "01.APP/nodelang/host_addin_retarget.py",
+        "03.TOOLS/tools/prepare_baboom_site.py",
+        "02.TESTS/tests_replica/test_baboom_persona_standard_reactions.py",
+        "02.TESTS/tests_replica/test_baboom_site_fit.py",
+        "02.TESTS/tests_replica/test_install_prune.py",
+        "04.DOCS/BABOOM.md",
+        "04.DOCS/FAILURE_LOG.md"
+      ]
+    },
     "BUILDFETCHRETRY": {
       "source": "Founder 2026-11-08: continue the reviewed Betterleaks retry fix in lane/build-fetch-retry; preserve the 60 second timeout, waits 5/15/30/60/120 and pinned hashes and URLs; fix compiler findings at source, run isolated retry tests and commit with all hooks on; no push, build, installation or live profile.",
       "scope": [

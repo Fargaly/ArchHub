@@ -235,6 +235,9 @@ def decline_canvas(payload):
                 row['result'] = {'status': 'Blocked', 'output': {}, 'error': 'Canvas approval was rejected.'}
         return []
     canvas_documents.edit(continuation['path'], 'You', 'reject Canvas Run', change, solve_changed=False)
+    if continuation.get('parent'):
+        parent = continuation['parent']
+        decline_canvas({'node': parent['node'], 'continuation': parent})
 
 
 def release(payload):
@@ -244,35 +247,59 @@ def release(payload):
     continuation = payload.get('continuation')
     if continuation:
         from . import canvas_documents
-        from .session_files import run_document
+        from .session_files import read_document, run_document, skill_result
         from .hook_decision import _RELEASING
         def inputs(document):
             return {'id': document['id'], 'title': document['title'], 'nodes': [{key:value for key,value in row.items() if key != 'result'} for row in document['nodes']],
                     'wires': document['wires'], 'groups': document['groups'], 'notes': document['notes'],
                     'taskContext': document.get('properties', {}).get('taskContext')}
+        outcome = {}
         def resume(document):
-            if inputs(document) != inputs(continuation['document']):
+            if inputs(document) != inputs(continuation.get('source') or continuation['document']):
                 raise ValueError('The canvas changed after this approval. Run its current values again.')
-            output, display = _dispatch_node(document, node, node['type'], node['params'], feeds,
-                                             invoke=guard_effect, stopped=None, depth=0)
+            execution = copy.deepcopy(continuation['document'])
+            released = payload.get('released')
+            error = payload.get('error')
+            if released is None:
+                try:
+                    output, display = _dispatch_node(execution, node, node['type'], node['params'], feeds,
+                                                     invoke=guard_effect, stopped=None, depth=continuation.get('depth', 0))
+                except Exception as failure:
+                    output, display, error = {}, str(failure), str(failure)
+            else:
+                output, display = released
             completed = dict(continuation['completed'])
             each = continuation.get('each')
             if each:
                 from .stem_graph_evaluation import each_fault
-                each = {node['id']: {'rows': each['rows'] + [(output, display, each_fault(output, display))], 'remaining': each['remaining']}}
+                each = {node['id']: {'rows': each['rows'] + [(output, display, error or each_fault(output, display))], 'remaining': each['remaining']}}
             else:
-                completed[node['id']] = {'status': 'Done', 'output': output, 'display': display}
+                completed[node['id']] = {'status': 'Error' if error else 'Done', 'output': output, 'display': display,
+                                         **({'error': error} if error else {})}
             token = _RELEASING.set(False)
             try:
-                result = run_document(document, invoke=guard_effect, roots=continuation['roots'], path=continuation['path'], _resume=completed, _each=each)
+                result = run_document(execution, invoke=guard_effect, roots=continuation['roots'], path=continuation['path'],
+                                      depth=continuation.get('depth', 0), _resume=completed, _each=each,
+                                      _source=continuation.get('source'), _parent=continuation.get('parent'))
             finally:
                 _RELEASING.reset(token)
             for row in document['nodes']:
                 if row['id'] in result['results']:
                     row['result'] = result['results'][row['id']]
+            outcome.update(result)
             return list(result['results'])
+        parent = continuation.get('parent')
+        ancestor = parent
+        while ancestor:
+            if inputs(read_document(ancestor['path'])) != inputs(ancestor.get('source') or ancestor['document']):
+                raise ValueError('The calling canvas changed after this approval. Run its current values again.')
+            ancestor = ancestor.get('parent')
         document, _ = canvas_documents.edit(continuation['path'], 'You', 'approve and resume Canvas Run', resume, solve_changed=False)
-        return {'results': {row['id']: row.get('result') for row in document['nodes']}, 'path': continuation['path']}
+        if parent and not outcome.get('approvalId'):
+            error = '; '.join(row.get('error', '') for row in outcome['results'].values() if row.get('error'))
+            produced = skill_result(outcome) if outcome['succeeded'] else ({}, error)
+            return release({'node': parent['node'], 'feeds': {}, 'continuation': parent, 'released': produced, 'error': error})
+        return {**outcome, 'path': continuation['path']}
     document = new_document('Approved step')
     document['nodes'] = [node]
     validate(document)

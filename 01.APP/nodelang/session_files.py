@@ -187,7 +187,7 @@ def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, de
     work = node.get('agentWork', {})
     if work.get('runnable') is False:
         raise ValueError('Shell and edit steps require the escape hatch; replay is unavailable.')
-    if not _RELEASING.get(False) and (engine == 'approval.gate' or not canvas_documents.is_pure(engine) and (work.get('role') == 'step' or node.get('approvalRequired') or engine == 'thing.file.write')):
+    if not _RELEASING.get(False) and (engine == 'approval.gate' or not canvas_documents.is_pure(engine, params) and (work.get('role') == 'step' or node.get('approvalRequired') or engine == 'thing.file.write')):
         from .agent_work import request_approval
         card = request_approval(node, params, feeds, continuation=continuation)
         return {'approvalId': card['id']}, 'Waiting for approval'
@@ -210,7 +210,8 @@ def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, de
     if engine in THING_ENGINES:
         return run_thing(engine, params, feeds)
     if engine == 'skill':
-        return run_skill({**params, 'called_by': document['title']}, invoke=invoke, stopped=stopped, depth=depth, feeds=feeds)
+        return run_skill({**params, 'called_by': document['title']}, invoke=invoke, stopped=stopped, depth=depth, feeds=feeds,
+                         parent={**continuation, 'node': node} if continuation else None)
     if engine == 'note':
         return {}, node.get('title', 'Note')
     if engine in STEM_RUN_ENGINES:
@@ -814,7 +815,7 @@ def skill_ports(skill, items=()):
     return {'source': source, 'target': target}
 
 
-def run_skill(params, *, invoke, stopped, depth, feeds=None):
+def run_skill(params, *, invoke, stopped, depth, feeds=None, parent=None):
     if depth > 8:
         raise ValueError('Skills nest at most 8 deep')
     name = str(params.get('skill',''))
@@ -825,9 +826,11 @@ def run_skill(params, *, invoke, stopped, depth, feeds=None):
     if path:
         path, skill = linked_session(params)
     else:
-        skill = next((row['skill'] for row in load_skills() if row['skill']['id'] == name), None)
+        saved = next((row for row in load_skills() if row['skill']['id'] == name), None)
+        path, skill = (str(saved['path']), saved['skill']) if saved else (None, None)
     if skill is None:
         raise ValueError('Saved session is unavailable')
+    source = copy.deepcopy(skill)
     original = {n['id']: dict(n['params']) for n in skill['nodes']}
     inputs = {n['id']: n for n in skill['nodes'] if n['type'] in (PARAM_ENGINE, 'thing.session') and not n.get('bind')}
     for socket, value in (feeds or {}).items():
@@ -847,7 +850,8 @@ def run_skill(params, *, invoke, stopped, depth, feeds=None):
             skill['wires'].append({'id': identity, 'from': {'node': identity, 'socket': 'value'}, 'to': {'node': endpoint[0], 'socket': endpoint[1]}})
             continue
         held['params']['value'] = coerce(held['params'].get('type', 'json'), value)   # a wired value sets the inner Parameter
-    inner = run_document(skill, invoke=invoke, stopped=stopped, depth=depth+1)
+    inner = run_document(skill, invoke=invoke, stopped=stopped, depth=depth+1, path=path,
+                         _source=source, _parent=parent)
     if path:
         def record(document):
             for node in document['nodes']:
@@ -859,6 +863,10 @@ def run_skill(params, *, invoke, stopped, depth, feeds=None):
         return {'approvalId': inner['approvalId']}, 'Waiting for approval'
     if not inner['succeeded']:
         raise ValueError('Skill failed: '+'; '.join(r.get('error','') for r in inner['results'].values() if r.get('error')))
+    return skill_result(inner)
+
+
+def skill_result(inner):
     last = inner['results'][inner['order'][-1]]['output'] if inner['order'] else {}
     produced = {'out': last}
     for key, result in inner['results'].items():
@@ -1000,7 +1008,7 @@ def split_sessions(path):
     return saved
 
 
-def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, plan_only=False, cached=(), only=None, path=None, _resume=None, _each=None):
+def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, plan_only=False, cached=(), only=None, path=None, _resume=None, _each=None, _source=None, _parent=None):
     """Validate the whole plan before invoking existing engines in wire order."""
     from collections import deque
     from .library_engines import STEM_RUN_ENGINES
@@ -1117,7 +1125,8 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
                 return _dispatch_node(
                     document, node, engine, params, bound,
                     invoke=invoke, stopped=stopped, depth=depth,
-                    continuation={'document': document, 'roots': roots, 'completed': results, 'path': str(path), 'each': each_state} if path else None)
+                    continuation={'document': document, 'source': _source or document, 'roots': roots, 'completed': results,
+                                  'path': str(path), 'each': each_state, 'parent': _parent, 'depth': depth} if path else None)
 
             if plans is None:
                 produced, display = run_once(constants)

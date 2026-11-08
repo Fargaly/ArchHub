@@ -59,6 +59,23 @@ def test_notes_attach_without_send_and_pins_reference_only_the_task(monkeypatch)
         assert workshop_tasks.pin_message(history, task['taskId'], note['id'], False)['pinnedMessages'] == []
 
 
+def test_fixed_agent_binding_solves_without_sending(monkeypatch):
+    from nodelang import workshop_mailbox
+    monkeypatch.setattr(workshop_mailbox, 'call', lambda *a, **k: pytest.fail('Solving invoked the mailbox'))
+    with application_history() as history:
+        task = workshop_tasks.create_session(history, 'Binding only', agent='BABOOM')
+        document = session_files.read_document(task['path'])
+        agent = next(node for node in document['nodes'] if node['type'] == 'thing.agent')
+        agent['params']['agent'] = 'Codex'
+        solved = canvas_documents.solve(document, [agent['id']])
+        assert solved['results'][agent['id']]['output']['agent'] == 'Codex'
+        assert solved['results']['start']['output']['agent'] == 'Codex'
+        assert canvas_documents.is_pure('thing.agent', agent['params'])
+        agent['params']['reference'] = False
+        stale = canvas_documents.solve(document, [agent['id']])
+        assert agent['id'] in stale['stale']
+
+
 def approval_document(tmp_path):
     document = session_files.new_document('Approval and resume')
     document['nodes'] = [
@@ -146,3 +163,81 @@ def test_canvas_reject_stops_without_target_effect(tmp_path):
     assert ask_apply(card['id'], card['input_digest'], 'deny')['status'] == 'declined'
     assert not (tmp_path / 'target.txt').exists()
     assert session_files.read_document(path)['nodes'][0]['result']['status'] == 'Declined'
+
+
+def linked_approval_document(tmp_path):
+    child = session_files.new_document('Linked writer')
+    child['nodes'] = [{'id': 'write', 'type': 'thing.file.write', 'params': {'path': str(tmp_path / 'child.txt'), 'content': 'Child approved'}, 'position': {'x': 0, 'y': 0}}]
+    child_path = tmp_path / 'child.archhub'
+    session_files.write_document(child_path, child)
+    caller = session_files.new_document('Calling canvas')
+    linked = session_files.insert_session(caller, str(child_path))
+    caller['nodes'].append({'id': 'tail', 'type': 'thing.file.write', 'params': {'path': str(tmp_path / 'caller.txt'), 'content': 'Caller approved'}, 'position': {'x': 300, 'y': 0}})
+    path = tmp_path / 'caller.archhub'
+    session_files.write_document(path, caller)
+    return caller, path, child_path, linked['id']
+
+
+def test_linked_approval_resumes_caller_without_replaying_child(tmp_path):
+    from nodelang.hook_decision import ask_apply, ask_reviews
+    caller, path, child_path, linked = linked_approval_document(tmp_path)
+    result = session_files.run_document(caller, path=path)
+    assert result['results'][linked]['status'] == 'Waiting for approval'
+    first = next(card for card in ask_reviews() if card['id'] == result['approvalId'])
+    assert ask_apply(first['id'], first['input_digest'], 'approve')['status'] == 'approved'
+    assert (tmp_path / 'child.txt').read_text() == 'Child approved'
+    assert not (tmp_path / 'caller.txt').exists()
+    held = session_files.read_document(path)
+    assert held['nodes'][0]['result']['status'] == 'Done'
+    assert held['nodes'][1]['result']['status'] == 'Waiting for approval'
+    stamp = (tmp_path / 'child.txt').stat().st_mtime_ns
+    second = next(card for card in ask_reviews() if card['status'] == 'pending')
+    ask_apply(second['id'], second['input_digest'], 'approve')
+    assert (tmp_path / 'caller.txt').read_text() == 'Caller approved'
+    assert (tmp_path / 'child.txt').stat().st_mtime_ns == stamp
+    assert session_files.read_document(child_path)['nodes'][0]['result']['status'] == 'Done'
+    assert all(node['result']['status'] == 'Done' for node in session_files.read_document(path)['nodes'])
+
+
+def test_linked_approval_refuses_changed_caller_before_child_write(tmp_path):
+    from nodelang.hook_decision import ask_apply, ask_reviews
+    caller, path, _, _ = linked_approval_document(tmp_path)
+    result = session_files.run_document(caller, path=path)
+    caller['nodes'][-1]['params']['content'] = 'Changed after request'
+    session_files.write_document(path, caller)
+    card = next(card for card in ask_reviews() if card['id'] == result['approvalId'])
+    with pytest.raises(ValueError, match='calling canvas changed'):
+        ask_apply(card['id'], card['input_digest'], 'approve')
+    assert not (tmp_path / 'child.txt').exists()
+    assert not (tmp_path / 'caller.txt').exists()
+
+
+def test_linked_rejection_stops_both_documents(tmp_path):
+    from nodelang.hook_decision import ask_apply, ask_reviews
+    caller, path, child_path, _ = linked_approval_document(tmp_path)
+    result = session_files.run_document(caller, path=path)
+    card = next(card for card in ask_reviews() if card['id'] == result['approvalId'])
+    ask_apply(card['id'], card['input_digest'], 'deny')
+    assert session_files.read_document(child_path)['nodes'][0]['result']['status'] == 'Declined'
+    assert session_files.read_document(path)['nodes'][0]['result']['status'] == 'Declined'
+    assert not (tmp_path / 'child.txt').exists()
+    assert not (tmp_path / 'caller.txt').exists()
+
+
+def test_failed_linked_target_marks_caller_error_and_blocks_its_downstream(tmp_path):
+    from nodelang.hook_decision import ask_apply, ask_reviews
+    caller, path, child_path, linked = linked_approval_document(tmp_path)
+    child = session_files.read_document(child_path)
+    child['nodes'][0]['params']['path'] = str(tmp_path)
+    session_files.write_document(child_path, child)
+    caller['nodes'][-1]['paramDefs'] = [{'id': 'content', 'name': 'Content', 'type': 'text'}]
+    caller['wires'] = [{'id': 'child-tail', 'from': {'node': linked, 'socket': 'out'}, 'to': {'node': 'tail', 'socket': 'param:content'}}]
+    session_files.write_document(path, caller)
+    result = session_files.run_document(caller, path=path)
+    card = next(card for card in ask_reviews() if card['id'] == result['approvalId'])
+    ask_apply(card['id'], card['input_digest'], 'approve')
+    assert session_files.read_document(child_path)['nodes'][0]['result']['status'] == 'Error'
+    held = session_files.read_document(path)
+    assert held['nodes'][0]['result']['status'] == 'Error'
+    assert held['nodes'][1]['result']['status'] == 'Blocked'
+    assert not (tmp_path / 'caller.txt').exists()

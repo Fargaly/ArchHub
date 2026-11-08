@@ -1648,8 +1648,16 @@ def _ask_card(row: dict) -> dict:
             "description": row.get("summary") or "", "status": row.get("status") or "pending",
             "error": row.get("error") or "", "rows": [], "rubric": {}, "events": []}
     if continuation:
+        refs, current, node = [], continuation, (row.get('replay') or {}).get('payload', {}).get('node', {})
+        while current:
+            refs.append({'path': current['path'], 'nodeId': node.get('id'),
+                         'taskId': current['document'].get('properties', {}).get('taskContext', {}).get('task') or ''})
+            current = current.get('parent')
+            node = current.get('node', {}) if current else {}
+        task = refs[-1]['taskId'] or task
         card.update(approvalKind='canvas', kind='canvas', taskId=task or '', work=task or row['id'],
-                    path=continuation.get('path') or '', nodeId=(row.get('replay') or {}).get('payload', {}).get('node', {}).get('id'))
+                    path=continuation.get('path') or '', nodeId=refs[0]['nodeId'], canvasNodes=refs,
+                    taskIds=list(dict.fromkeys(ref['taskId'] for ref in refs if ref['taskId'])))
     return card
 
 

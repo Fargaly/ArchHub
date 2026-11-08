@@ -33,10 +33,12 @@ _READ = re.compile(r'\.(read|info|list|search|inbox|get|query|ping|status|previe
 
 
 # --------------------------------------------------------------- purity --
-def is_pure(engine):
+def is_pure(engine, params=None):
     """Pure nodes solve on edit; anything that writes waits for Run."""
     from .library_engines import STEM_RUN_ENGINES
     from .pipeline_engines import PIPELINE_ENGINES
+    if engine == 'thing.agent' and (params or {}).get('reference') is True:
+        return True
     if engine in STEM_RUN_ENGINES or engine in ('note', 'data.convert', 'param.value', 'data.dataset', 'data.field'):
         return True
     if engine in THING_ENGINES:
@@ -74,7 +76,7 @@ def check_contract(node):
                              or type(loop['cap']) is not int or loop['cap'] < 1):
         raise ValueError('Node loop must declare trigger, stop, evaluator and a positive cap')
     if 'pure' in node:  # a file may carry the flag for readers; the value is always the engine's (unknown = side effect)
-        node['pure'] = is_pure(node.get('type'))
+        node['pure'] = is_pure(node.get('type'), node.get('params'))
 
 
 # ------------------------------------------------------- app things as nodes --
@@ -483,14 +485,14 @@ def solve(document, changed, *, invoke=None, stopped=None):
     # A node waits for Run if it writes, is disabled, or is fed by a node that waits.
     plan = run_document(document, roots=sorted(affected), plan_only=True)['order'] if affected else []
     # Like Grasshopper, an upstream pure node that never solved solves now too.
-    unsolved = {k for k in plan if is_pure(nodes[k]['type']) and not nodes[k].get('frozen')
+    unsolved = {k for k in plan if is_pure(nodes[k]['type'], nodes[k]['params']) and not nodes[k].get('frozen')
                 and (nodes[k].get('result') or {}).get('status') not in ('Done',)}
     if unsolved - affected:
         affected = downstream(document, affected | unsolved)
         plan = run_document(document, roots=sorted(affected), plan_only=True)['order']
     for key in plan:
         node = nodes[key]
-        if key in affected and (not is_pure(node['type']) or node.get('frozen')
+        if key in affected and (not is_pure(node['type'], node['params']) or node.get('frozen')
                                 or any(source in stale for source in incoming.get(key, []))):
             stale.add(key)
     pure = [key for key in plan if key in affected and key not in stale]

@@ -10988,7 +10988,8 @@
         "05.EVIDENCE/acompiler-intents.json",
         "01.APP/nodelang/baboom_native_host.py",
         "01.APP/nodelang/baboom_native_visual.py",
-        "03.TOOLS/installer/build_release.ps1"
+        "03.TOOLS/installer/build_release.ps1",
+        "04.DOCS/DECISIONS.md"
       ]
     }
   }

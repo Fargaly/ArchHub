@@ -34,7 +34,7 @@ def peer(tmp_path, monkeypatch):
         observed = SimpleNamespace(pid=process.pid, created_at=psutil.Process(process.pid).create_time(), cwd=str(directory))
         declaration = mailbox.call('declare', {'task': 'isolated receiver', 'paths': [str(directory)],
             'status': 'working', 'request_id': 'unassigned'}, context, peer=observed)['declaration']
-        mailbox.call('declare', {'task': 'isolated sender', 'paths': [str(tmp_path / 'OtherProject')],
+        mailbox.call('declare', {'task': 'isolated sender', 'paths': [sender(tmp_path).cwd],
             'status': 'working', 'request_id': 'unassigned'}, {'threadId': 'wsreturned-sender'}, peer=sender(tmp_path))
         monkeypatch.setattr(mailbox, '_sender_may_push', lambda *a: True)
         label = 'Claude Code / ArchHub / session-' + sha256(native.encode()).hexdigest()[:12]
@@ -56,7 +56,8 @@ def peer(tmp_path, monkeypatch):
 
 def sender(tmp_path):
     process = psutil.Process()
-    return SimpleNamespace(pid=process.pid, created_at=process.create_time(), cwd=str(tmp_path / 'OtherProject'))
+    # Synthetic peer metadata must not inherit an ArchHub checkout in the pytest temp path.
+    return SimpleNamespace(pid=process.pid, created_at=process.create_time(), cwd=str(Path(tmp_path.anchor) / 'OtherProject'))
 
 
 def wait_receipts(result):
@@ -116,18 +117,35 @@ def test_existing_exact_label_still_delivered(peer, tmp_path):
     print('EXISTING: recorded; durable delivered receipt; peer received')
 
 
-def test_dead_role_session_label_never_redirects_to_successor(peer, tmp_path):
+@pytest.mark.parametrize('address', ['agent', 'native_session_id', 'session'])
+def test_dead_role_session_label_never_redirects_to_successor(peer, tmp_path, address):
     _declaration, _label, transcript, _context, observed = peer
     body = {'task': 'role handover', 'paths': [str(tmp_path)], 'request_id': 'unassigned', 'role': 'design'}
     dead = mailbox.call('declare', {**body, 'status': 'done'},
         {'claude/sessionID': 'old-role-session'}, peer=observed)['declaration']
     mailbox.call('declare', {**body, 'status': 'working'},
         {'claude/sessionID': 'new-role-session'}, peer=observed)
-    result = mailbox.call('send', {'to': dead['agent'], 'text': 'must not redirect'},
+    result = mailbox.call('send', {'to': dead[address], 'text': 'must not redirect'},
         {'threadId': 'wsreturned-sender'}, peer=sender(tmp_path))
     assert result['status'] == 'returned', result
     assert [row['state'] for row in result['delivery']] == ['returned'], result
+    assert result['live_agents'], result
     assert not transcript.exists()
+
+
+def test_role_and_human_aliases_still_inherit(peer, tmp_path):
+    _declaration, _label, _transcript, _context, observed = peer
+    body = {'task': 'role handover', 'paths': [str(tmp_path)], 'request_id': 'unassigned', 'role': 'design'}
+    mailbox.call('declare', {**body, 'status': 'done', 'display_name': 'Design owner'},
+        {'claude/sessionID': 'old-role-session'}, peer=observed)
+    successor = mailbox.call('declare', {**body, 'status': 'working'},
+        {'claude/sessionID': 'new-role-session'}, peer=observed)['declaration']
+    with mailbox.application_history() as history:
+        rows = mailbox.read_declarations(history._db)
+        for alias in ('design', 'designer', 'Design owner'):
+            message = {'content': 'To ' + alias + ':\nrole handover', 'category': mailbox.CATEGORY,
+                       'author': 'another sender'}
+            assert [row['session'] for row in mailbox._recipient_rows(message, rows)] == [successor['session']]
 
 
 def test_existing_handle_still_delivered(peer, tmp_path):

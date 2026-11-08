@@ -972,6 +972,11 @@ def _session_alive(row):
     return bool(native and native["runtime"] == row["runtime"] and _alive(native))
 
 
+def _exact_session_alias(alias, row):
+    return (alias.casefold() in {str(row.get(key) or "").casefold() for key in ("native_session_id", "session")}
+            or re.fullmatch(r".+ / .+ / session-[0-9a-f]{12}", alias.casefold()) is not None)
+
+
 def read_declarations(connection, *, include_archived=False):
     if not connection.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_declarations'").fetchone():
         return []
@@ -988,9 +993,9 @@ def read_declarations(connection, *, include_archived=False):
         holder = max(holders, key=lambda other: other.get("updated_at", ""), default=None)
         row["role_current"] = row is holder
         if holder is not None and not row["current"]:
-            # Role names follow their owner; an exact session label never names its successor.
+            # Role and human names follow their owner; exact session identities never do.
             holder.setdefault("aliases", []).extend(alias for alias in _aliases({}, row)
-                if not re.fullmatch(r".+ / .+ / session-[0-9a-f]{12}", alias))
+                if not _exact_session_alias(alias, row))
     return [row for row in rows if include_archived or row["current"]]
 
 
@@ -1458,8 +1463,7 @@ def _send(history, body, identity, *, queued=(), sender_binding=None, resolve_li
     recipients = _recipient_rows(probe, declarations)
     targets = [part for part in _header_targets(probe) if part.casefold() not in _ROOM_TARGETS]
     waiting = [part for part in targets if _role(part) in {"717", "research", "design", "tbp"}
-               or any((row.get("current") or (row.get("role") and not
-                   re.fullmatch(r".+ / .+ / session-[0-9a-f]{12}", part.casefold())))
+               or any((row.get("current") or (row.get("role") and not _exact_session_alias(part, row)))
                    and part.casefold() in _aliases({}, row) for row in declarations)]
     resolved = set()
     if resolve_live and targets:

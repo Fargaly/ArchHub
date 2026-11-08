@@ -319,8 +319,12 @@ def test_queue_and_handover_100_messages(database):
         record = dict(old['declaration'], status='done')
         history._db.execute('UPDATE workshop_declarations SET record=? WHERE root=?',
                             (json.dumps(record), record['root']))
-        ids = [mb._send(history, {'to': ('design', '717', 'retired designer', old['sender_key'])[i % 4],
-                                'text': 'replay ' + str(i)}, sender)['message_id'] for i in range(100)]
+        sent = [mb._send(history, {'to': ('design', '717', 'retired designer', old['sender_key'])[i % 4],
+                                 'text': 'replay ' + str(i)}, sender) for i in range(100)]
+        ids = [row['message_id'] for row in sent if row['status'] != 'returned']
+        returned = [row for row in sent if row['status'] == 'returned']
+        assert len(returned) == 25
+        assert all(row['unresolved'] == [old['sender_key']] for row in returned)
     design = declare(database, 'next-design', 'design')
     coordinator = declare(database, 'next-717', '717')
     delivered = []
@@ -333,9 +337,9 @@ def test_queue_and_handover_100_messages(database):
                 batch = [m['id'] for m in pending]
                 delivered.extend(batch)
                 mb._seen(history, {'message_ids': batch, 'channel': 'hook'}, ident(holder), 'codex')
-        assert len(delivered) == len(set(delivered)) == 100
+        assert len(delivered) == len(set(delivered)) == 75
         assert set(delivered) == set(ids)
-        assert not history._db.execute("SELECT 1 FROM messages WHERE idempotency_key LIKE 'workshop-unresolved:%'").fetchone()
+        assert history._db.execute("SELECT count(*) FROM messages WHERE idempotency_key LIKE 'workshop-unresolved:%'").fetchone()[0] == 25
 
 
 def test_session_start_declares_role(tmp_path, monkeypatch, database):

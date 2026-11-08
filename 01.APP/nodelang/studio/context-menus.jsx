@@ -39,9 +39,10 @@
         ['Meeting notes', 'docs', '', () => u.show('Attach meeting notes')]]];
     } else if (kind === 'Task message menu' && message) {
       const task = s.tasks.find(row=>row.id===taskId), pinned = task?.pinnedMessages?.includes(message.id);
+      const referencedNode = s.graph.nodes.find(row=>row.title && String(message.text).includes(row.title));
       groups = [[['Copy text', 'docs', '', () => run(async () => {await navigator.clipboard.writeText(String(message.text));return {ok:true};})],
         ['Reply', 'workshop', '', () => {close();open?.();}],
-        ['Show on canvas', 'canvas', '', () => run(async () => {const node=s.graph.nodes.find(row=>row.title && String(message.text).includes(row.title));if(!node)throw Error('This message names no node on this canvas.');u.setSelectedNodeId(node.id);return {ok:true};})],
+        ['Show on canvas', 'canvas', '', () => run(async () => {if(!referencedNode)throw Error('This message names no node on this canvas.');u.setSelectedNodeId(referencedNode.id);return {ok:true};}), false, referencedNode ? false : 'This message names no node on this canvas.'],
         ['Make a task from this', 'plus', '', () => run(async () => {const made=await api.createTask(String(message.text).slice(0,2000));if(made.taskId)await u.openTaskFile(made.taskId);return made;})],
         [pinned ? 'Unpin' : 'Pin to the task', 'pin', '', () => run(() => api.pinTaskMessage(taskId,message.id,!pinned))]]];
     } else if (kind === 'Task tab menu') {
@@ -118,7 +119,7 @@
       })(id, ...args);
     }
     if (n?.agentWork?.runnable === false || n?.agentWork?.role === 'session') groups = groups.map(group=>group.filter(row=>!['Rerun','Run to here','Repeat this'].includes(row[0])));
-    return <><div className="context-dismiss" onMouseDown={close} /><section className="context-menu" role="menu" aria-label={kind} style={{
+    return <><div className="context-dismiss" onMouseDown={close} /><section className="context-menu" data-design={kind === 'Open tasks' ? 'tab.picker' : undefined} role="menu" aria-label={kind} style={{
         left,
         top
       }} onKeyDown={(e) => {
@@ -129,7 +130,7 @@
           buttons[(at + (e.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length]?.focus();
         }
         if (e.key === 'Escape') close();
-      }}><window.UI.ActionStatus action={actionState} />{groups.map((rows, i) => <div className="context-group" key={i}>{rows.map(([label, icon, key, action, danger, disabled]) => <button data-design={'menu.' + label.toLowerCase().replace(/\W+/g,'-')} key={label} disabled={disabled} className={danger ? 'danger' : ''} onClick={(event) => dispatch("context-menus.1", action, event)}><Icon name={icon} size={15} /><span>{label}</span><kbd>{key}</kbd></button>)}</div>)}</section></>;
+      }}><window.UI.ActionStatus action={actionState} />{groups.map((rows, i) => <div className="context-group" key={i}>{rows.map(([label, icon, key, action, danger, disabled]) => <button data-design={'menu.' + label.toLowerCase().replace(/\W+/g,'-')} key={label} disabled={!!disabled} title={typeof disabled === 'string' ? disabled : undefined} className={danger ? 'danger' : ''} onClick={(event) => dispatch("context-menus.1", action, event)}><Icon name={icon} size={15} /><span>{label}</span><kbd>{key}</kbd></button>)}</div>)}</section></>;
   }
   window.UI.ContextMenu = ContextMenu;
 })();

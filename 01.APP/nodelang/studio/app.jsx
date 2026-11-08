@@ -508,7 +508,7 @@
             padding: '10px 0 8px',
             gap: 0,
             overflow: 'auto'
-          }}>{rail.map(([g, l, r]) => <D.Rail key={r} variant="home" glyph={<window.AHIcon name={g} size={18} />} label={l} active={route === r || (route === "task-file" && r === taskFace)} onDragOver={e => {
+          }}>{rail.map(([g, l, r]) => <D.Rail key={r} variant="home" glyph={<window.AHIcon name={g} size={18} />} label={l} active={route === r || (route === "task-file" && r === "canvas")} onDragOver={e => {
               if (r === 'canvas') e.preventDefault();
             }} onDragEnter={() => {
               if (r === 'canvas') go(r);

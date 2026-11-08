@@ -58,24 +58,27 @@ class JsonFile:
     """One settings owner = one small JSON file, replaced atomically."""
 
     def __init__(self, path, default):
-        self.path, self.default, self.lock = Path(path), default, threading.RLock()
+        from .session_files import _METADATA_LOCK
+        self.path, self.default, self.lock = Path(path), default, _METADATA_LOCK
 
     def read(self):
         from .user_paths import strip_test_write
-        try:
-            return strip_test_write(json.loads(self.path.read_text(encoding='utf-8')))
-        except FileNotFoundError:
-            return json.loads(json.dumps(self.default))
+        with self.lock:
+            try:
+                return strip_test_write(json.loads(self.path.read_text(encoding='utf-8')))
+            except FileNotFoundError:
+                return json.loads(json.dumps(self.default))
 
     def write(self, value):
         from .user_paths import stamp_test_write
+        from .session_files import _metadata_io
         with self.lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             fd, temporary = tempfile.mkstemp(dir=self.path.parent, suffix='.tmp')
             try:
                 with os.fdopen(fd, 'w', encoding='utf-8') as stream:
                     json.dump(stamp_test_write(value), stream, ensure_ascii=False, indent=1)
-                os.replace(temporary, self.path)
+                _metadata_io(os.replace, temporary, self.path)
             finally:
                 if os.path.exists(temporary):
                     os.unlink(temporary)

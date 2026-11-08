@@ -96,11 +96,15 @@ def test_task_rename_updates_its_bound_file_and_refuses_partial_failure(monkeypa
 
 
 @pytest.mark.parametrize('code', [5, 32, 33, 13])
-def test_canvas_settings_preserve_data_through_windows_reader_conflicts(tmp_path, monkeypatch, code):
+@pytest.mark.parametrize('kind', ['account', 'json'])
+def test_canvas_settings_preserve_data_through_windows_reader_conflicts(tmp_path, monkeypatch, code, kind):
     import os
     from nodelang.settings_owner import AccountFiles
-    owner = AccountFiles(tmp_path / 'settings.json')
-    owner.write('other-page', {'preserved': True})
+    from nodelang.nograph_server import JsonFile
+    owner = AccountFiles(tmp_path / 'settings.json') if kind == 'account' else JsonFile(tmp_path / 'settings.json', {})
+    write = owner.write if kind == 'account' else lambda key, value: owner.update({key: value})
+    read = owner.read if kind == 'account' else lambda key: owner.read()[key]
+    write('other-page', {'preserved': True})
     before = owner.path.read_bytes()
     replace, attempts = os.replace, []
     def busy_reader(source, target):
@@ -114,14 +118,51 @@ def test_canvas_settings_preserve_data_through_windows_reader_conflicts(tmp_path
     monkeypatch.setattr(os, 'replace', busy_reader)
     if code == 13:
         with pytest.raises(PermissionError):
-            owner.write('canvasTabs', {'active': 'task'})
+            write('canvasTabs', {'active': 'task'})
         assert owner.path.read_bytes() == before
         assert len(attempts) == 1
     else:
-        owner.write('canvasTabs', {'active': 'task'})
-        assert owner.read('canvasTabs') == {'active': 'task'}
-        assert owner.read('other-page') == {'preserved': True}
+        write('canvasTabs', {'active': 'task'})
+        assert read('canvasTabs') == {'active': 'task'}
+        assert read('other-page') == {'preserved': True}
         assert len(attempts) == 3
+
+
+def test_settings_instances_preserve_concurrent_page_updates(tmp_path, monkeypatch):
+    import concurrent.futures
+    import threading
+    from nodelang.nograph_server import JsonFile
+    path = tmp_path / 'settings.json'
+    one, two = JsonFile(path, {}), JsonFile(path, {})
+    one.write({})
+    entered, release, competing, second_read = (threading.Event() for _ in range(4))
+    original, reads = Path.read_text, []
+    def paused_read(target, *args, **kwargs):
+        value = original(target, *args, **kwargs)
+        if target == path:
+            reads.append(value)
+            if len(reads) == 1:
+                entered.set()
+                assert release.wait(5)
+            else:
+                second_read.set()
+        return value
+    monkeypatch.setattr(Path, 'read_text', paused_read)
+    def update_other_page():
+        competing.set()
+        return two.update({'notifications': ['message:one']})
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(one.update, {'canvasTabs': {'active': 'task'}})
+        try:
+            assert entered.wait(5)
+            second = pool.submit(update_other_page)
+            assert competing.wait(5)
+            assert not second_read.wait(.1)
+        finally:
+            release.set()
+        first.result(timeout=5)
+        second.result(timeout=5)
+    assert one.read() == {'canvasTabs': {'active': 'task'}, 'notifications': ['message:one']}
 
 
 def approval_document(tmp_path):

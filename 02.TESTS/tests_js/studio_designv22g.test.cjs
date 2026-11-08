@@ -102,6 +102,8 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
     assert.equal(await page.locator('.react-flow').count(),1);
     assert.equal(await page.locator('textarea[aria-label="Message"]').count(),1);
     assert.equal(await page.locator('[data-design="thread.msg"]').inputValue(),'Unsent draft');
+    await page.locator('[data-design="thread.rules"]').click();
+    assert.equal(await page.locator('[data-design="inspector.selection"]').getAttribute('aria-selected'),'true');
     await page.getByRole('button',{name:'Close thread',exact:true}).click();
     assert.equal(await page.locator('[data-design="composer.msg"]').inputValue(),'Unsent draft');
   });
@@ -113,6 +115,8 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
     await page.locator('body').press('Control+\\');
     const message=page.locator('[data-design="thread.message"]').filter({hasText:'Reviewed north entrance at the real meeting.'});
     await message.waitFor();await message.click({button:'right'});
+    assert.equal(await page.getByRole('button',{name:'Show on canvas',exact:true}).isDisabled(),true);
+    assert.equal(await page.getByRole('button',{name:'Show on canvas',exact:true}).getAttribute('title'),'This message names no node on this canvas.');
     await page.getByRole('button',{name:'Pin to the task',exact:true}).click();
     await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().tasks.some(task=>task.pinnedMessages?.length===1));
     assert.equal(await message.getAttribute('data-pinned'),'true');
@@ -205,6 +209,29 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
     await page.locator('body').press('Escape');
     await page.getByRole('button',{name:'Notifications',exact:true}).click();
     assert.equal(await page.locator('[role="dialog"][aria-label="Notifications"]').count(),1);
+  });
+  await t.test('Dropping another task creates one linked node and Detach copies explicitly',async()=>{
+    await page.locator('body').press('Escape');
+    const source=await page.evaluate(id=>window.ArchHubAPI.getSnapshot().tasks.find(task=>task.id===id).sessionPath,first);
+    const original=fs.readFileSync(source,'utf8');
+    const before=await page.evaluate(()=>window.ArchHubAPI.getSessionDocument().nodes.length);
+    const transfer=await page.evaluateHandle(()=>new window.DataTransfer());
+    await page.getByRole('tab',{name:'Canvas UI first',exact:true}).locator('..').dispatchEvent('dragstart',{dataTransfer:transfer});
+    await page.locator('[aria-label="Workflow canvas"]').dispatchEvent('drop',{dataTransfer:transfer,clientX:650,clientY:400});
+    await transfer.dispose();
+    await page.waitForFunction(source=>window.ArchHubAPI.getSessionDocument().nodes.some(node=>node.params.session_file===source),source);
+    assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSessionDocument().nodes.length),before+1);
+    const id=await page.evaluate(source=>window.ArchHubAPI.getSessionDocument().nodes.find(node=>node.params.session_file===source).id,source);
+    await page.getByRole('button',{name:'Fit',exact:true}).click();
+    await page.locator('[data-graph-node="'+id+'"] .node-header').click();
+    await page.locator('[data-design="toolbar.more"]').click();
+    await page.getByRole('menuitem',{name:'Detach session (copy)',exact:true}).click();
+    await page.waitForFunction(({id,source})=>window.ArchHubAPI.getSessionDocument().nodes.find(node=>node.id===id).params.session_file!==source,{id,source});
+    const detached=await page.evaluate(id=>window.ArchHubAPI.getSessionDocument().nodes.find(node=>node.id===id).params.session_file,id);
+    assert.equal(fs.readFileSync(source,'utf8'),original);
+    assert.deepEqual(JSON.parse(fs.readFileSync(detached,'utf8')).nodes,JSON.parse(original).nodes);
+    assert.notEqual(JSON.parse(fs.readFileSync(detached,'utf8')).id,JSON.parse(original).id);
+    assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSessionDocument().nodes.length),before+1);
   });
   assert.deepEqual(errors,[]);
 });

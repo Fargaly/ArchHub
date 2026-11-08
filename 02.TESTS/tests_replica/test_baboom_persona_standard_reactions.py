@@ -90,15 +90,15 @@ def test_shared_index_http_answer_and_unknown_rule(tmp_path, monkeypatch):
          'href': 'folders.html', 'text': 'Project folders belong in the project CDE container.'}]}), encoding='utf-8')
     index = baboom_standard.Index(index_path)
     question = 'where do project folders go?'
-    expected = baboom_standard.answer(index, question)
+    expected = baboom_standard.answer(index, question, token='synthetic-reader')
     assert expected['answer'].startswith(baboom_persona.IDENTITY)
     assert '[STD FOLDERS-02]' in expected['answer']
-    assert not baboom_standard.answer(index, 'interstellar quantum rules')['links']
+    assert not baboom_standard.answer(index, 'interstellar quantum rules', token='synthetic-reader')['links']
 
     class Site(BaseHTTPRequestHandler):
         def do_POST(self):
             q = json.loads(self.rfile.read(int(self.headers['Content-Length'])))['question']
-            body = json.dumps(baboom_standard.answer(index, q)).encode()
+            body = json.dumps(baboom_standard.answer(index, q, token='synthetic-reader')).encode()
             self.send_response(200)
             self.end_headers()
             self.wfile.write(body)
@@ -164,7 +164,7 @@ def test_existing_compact_standard_ids_resolve_only_the_indexed_rule(tmp_path):
     index = baboom_standard.Index(path)
     for question in ('STD21', 'what does STD-21 say?', 'standard 21'):
         assert {c['id'] for c in index.search(question)} == {'STD-21'}
-        assert '[STD 21]' in baboom_standard.answer(index, question)['answer']
+        assert '[STD 21]' in baboom_standard.answer(index, question, token='synthetic-reader')['answer']
     for question in ('STD1', 'STD-01', 'standard 1'):
         assert {c['id'] for c in index.search(question)} == {'STD-01'}
     assert not index.search('STD99')

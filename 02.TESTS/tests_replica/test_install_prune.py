@@ -372,10 +372,11 @@ def test_manifest_covers_generated_studio_and_gated_hosts_only(tmp_path):
                 "app/__init__.py", "app/credential_lock.py", "app/secrets_store.py",
                 "bridges/rhino/archhub_mcp.py", "bridges/blender/archhub_mcp/__init__.py",
                 "bridges/sources/max_mcp/max_mcp_startup.py",
-                "nodelang/legacy_cleanup_identities.json", "nodelang/workshop/mailbox.mjs",
+                "nodelang/legacy_cleanup_identities.json", "nodelang/data/baboom/persona.json", "nodelang/workshop/mailbox.mjs",
                 "nodelang/workshop/vendor/sdk.cjs"]
     excluded = ["nodelang/__pycache__/old.pyc", "app/unshipped.py", "nodelang/private.db",
-                "nodelang/other.json", "nodelang/workshop/messages.sqlite3", "workshop/user.py"]
+                "nodelang/other.json", "nodelang/data/baboom/notes.json", "nodelang/data/baboom/credentials.json",
+                "nodelang/settings/user.json", "nodelang/workshop/messages.sqlite3", "workshop/user.py"]
     for name in included + excluded:
         path = source / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -426,6 +427,20 @@ def test_manifest_covers_real_workshop_programs(tmp_path):
     assert prune.protected(Path('workshop/user.py'))
     assert not prune.protected(Path('nodelang/workshop/mailbox.mjs'))
     assert prune.protected(Path('nodelang/workshop/messages.sqlite3'))
+
+
+def test_changed_persona_hash_refuses_before_pruning(install_root):
+    _manifest(install_root)
+    persona = install_root / 'nodelang/data/baboom/persona.json'
+    persona.parent.mkdir(parents=True)
+    persona.write_bytes((ROOT / '01.APP/nodelang/data/baboom/persona.json').read_bytes())
+    manifest = install_root / 'source-manifest.tsv'
+    raw = manifest.read_bytes() + ('nodelang/data/baboom/persona.json\t' + hashlib.sha256(persona.read_bytes()).hexdigest() + '\n').encode()
+    manifest.write_bytes(raw)
+    persona.write_bytes(b'changed')
+    with pytest.raises(ValueError, match='installed payload differs from source manifest'):
+        prune.prune(install_root, hashlib.sha256(raw).hexdigest())
+    assert (install_root / 'nodelang/current.py').read_bytes() == b'current build\n'
 
 
 @pytest.mark.parametrize('fault', ['missing', 'changed', 'unmanifested'])

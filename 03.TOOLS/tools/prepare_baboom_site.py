@@ -28,9 +28,11 @@ def prepare(server, out):
     for name in ('baboom_standard.py', 'baboom_persona.py'):
         shutil.copyfile(app / name, package / name)
     shutil.copyfile(app / 'data' / 'baboom' / 'persona.json', package / 'data' / 'baboom' / 'persona.json')
-    header = ('from nodelang.baboom_standard import Index, answer\n'
+    header = ('from functools import partial\n'
+              'from nodelang.baboom_standard import Index, answer\n'
               'from nodelang.baboom_persona import persona_instructions\n'
-              'VOICE = persona_instructions()\n')
+              'VOICE = persona_instructions()\n'
+              'answer = partial(answer, complete=lambda *args, **kwargs: complete(*args, **kwargs))\n')
     (out / 'server.py').write_text(header + ''.join(lines), encoding='utf-8')
 
 

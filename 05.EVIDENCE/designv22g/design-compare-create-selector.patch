@@ -1,0 +1,17 @@
+--- a/design_compare.js
++++ b/design_compare.js
+@@ -78,1 +78,1 @@
+-    E('newtask.create', '.overlay [data-a="1"]', 'button@Create task', { geo: 'wh' }), E('newtask.cancel', '.overlay [data-a="0"]'),
++    E('newtask.create', '.overlay [data-a="1"]', '[data-design="newtask.create"]', { geo: 'wh' }), E('newtask.cancel', '.overlay [data-a="0"]'),
+@@ -144,1 +144,1 @@
+-    b: async p => { await p.click('button:has-text("New task")'); await p.waitForTimeout(500); await p.fill('[aria-label="Task name"]', 'Probe task'); await p.click('button:text-is("Create task")'); await p.waitForTimeout(2500); return await vis(p, '.react-flow') ? 'canvas' : 'other'; } },
++    b: async p => { await p.click('button:has-text("New task")'); await p.waitForTimeout(500); await p.fill('[aria-label="Task name"]', 'Probe task'); await p.click('[data-design="newtask.create"]'); await p.waitForTimeout(2500); return await vis(p, '.react-flow') ? 'canvas' : 'other'; } },
+@@ -206,1 +206,1 @@
+-  const proc = spawn(path.join(APP, '.venv/Scripts/python.exe'), ['-E', '-s', '-c', py], { env, cwd: APP, windowsHide: true });
++  const proc = spawn(path.join(APP, '.venv/Scripts/python.exe'), ['-E', '-s', '-B', '-c', py], { env, cwd: APP, windowsHide: true });
+@@ -246,1 +246,1 @@
+-  await bp.click('button:has-text("New task")'); await bp.waitForTimeout(500); await bp.fill('[aria-label="Task name"]', 'Room data sheets'); await bp.click('button:text-is("Create task")'); await bp.waitForTimeout(2500);
++  await bp.click('button:has-text("New task")'); await bp.waitForTimeout(500); await bp.fill('[aria-label="Task name"]', 'Room data sheets'); await bp.click('[data-design="newtask.create"]'); await bp.waitForTimeout(2500);
+@@ -251,1 +251,1 @@
+-  for (const s of Object.values(SEEDS).filter(x => x.task !== 'Room data sheets')) { await bp.click('.app-rail button:has-text("Home")'); await bp.waitForTimeout(1200); await bp.click('button:has-text("New task")'); await bp.waitForTimeout(500); await bp.fill('[aria-label="Task name"]', s.task); await bp.click('button:text-is("Create task")'); await bp.waitForTimeout(2500); }
++  for (const s of Object.values(SEEDS).filter(x => x.task !== 'Room data sheets')) { await bp.click('.app-rail button:has-text("Home")'); await bp.waitForTimeout(1200); await bp.click('button:has-text("New task")'); await bp.waitForTimeout(500); await bp.fill('[aria-label="Task name"]', s.task); await bp.click('[data-design="newtask.create"]'); await bp.waitForTimeout(2500); }

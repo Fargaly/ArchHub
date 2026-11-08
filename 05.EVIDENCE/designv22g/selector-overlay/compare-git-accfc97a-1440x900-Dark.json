@@ -1,0 +1,1501 @@
+{
+ "head": [
+  "design v22g index.html b758d55509f3 app.js a978580e161a",
+  "build git-accfc97a manifest e82cface2dd7 at C:\\Users\\fargaly\\AppData\\Local\\Temp\\lane-designv22g\\01.APP",
+  "viewport 1440x900 Dark, tolerance 4px / 6 rgb"
+ ],
+ "states": [
+  {
+   "state": "canvas.running",
+   "reached": true,
+   "why": "",
+   "mustBeGone": "ok",
+   "rows": [
+    {
+     "id": "header.mark",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "header.workspace",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "header.new",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "header.search",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "header.tray",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "header.bell",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.home",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.workshop",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.canvas",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.automations",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.docs",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.settings",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.account",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "tab.active",
+     "present": "ok",
+     "geometry": "w 171 vs 143",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "tab.close",
+     "present": "ok",
+     "geometry": "x 217 vs 189",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "tab.add",
+     "present": "ok",
+     "geometry": "x 934 vs 221",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "toolbar.run",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "toolbar.layout",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "toolbar.thread",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "toolbar.more",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "canvas.stage",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "canvas.fit",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "node.step",
+     "present": "ok",
+     "geometry": "w 268 vs 241, h 310 vs 299",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "pin.session",
+     "present": "ok",
+     "geometry": "w 236 vs 212, h 264 vs 280",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "pin.agent",
+     "present": "ok",
+     "geometry": "w 236 vs 212",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "pin.you",
+     "present": "ok",
+     "geometry": "w 236 vs 212",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "pin.workshop",
+     "present": "ok",
+     "geometry": "w 236 vs 212, h 139 vs 150",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "composer.to",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "composer.msg",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "composer.attach",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "composer.send",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "inspector.tab",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "inspector.task",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "inspector.selection",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "inspector.describe",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "node.running",
+     "present": "ok",
+     "geometry": "w 268 vs 241, h 310 vs 285",
+     "colour": "ok",
+     "type": "ok"
+    }
+   ]
+  },
+  {
+   "state": "task.t1",
+   "reached": true,
+   "why": "",
+   "rows": [
+    {
+     "id": "header.mark",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "header.workspace",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "header.new",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "header.search",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "header.tray",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "header.bell",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.home",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.workshop",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.canvas",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.automations",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.docs",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.settings",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.account",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "tab.active",
+     "present": "ok",
+     "geometry": "x 390 vs 217",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "tab.close",
+     "present": "ok",
+     "geometry": "x 543 vs 370",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "tab.add",
+     "present": "ok",
+     "geometry": "x 934 vs 402",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "toolbar.run",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "toolbar.layout",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "toolbar.thread",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "toolbar.more",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "canvas.stage",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "canvas.fit",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "node.step",
+     "present": "ok",
+     "geometry": "w 268 vs 241, h 310 vs 282",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "pin.session",
+     "present": "ok",
+     "geometry": "w 236 vs 212",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "pin.agent",
+     "present": "ok",
+     "geometry": "w 236 vs 212",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "pin.you",
+     "present": "ok",
+     "geometry": "w 236 vs 212",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "pin.workshop",
+     "present": "ok",
+     "geometry": "w 236 vs 212, h 139 vs 150",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "composer.to",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "composer.msg",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "composer.attach",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "composer.send",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "inspector.tab",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "inspector.task",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "inspector.selection",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "inspector.describe",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "node.done",
+     "present": "ok",
+     "geometry": "w 268 vs 241, h 310 vs 282",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "node.pending",
+     "present": "ok",
+     "geometry": "w 268 vs 241, h 310 vs 144",
+     "colour": "ok",
+     "type": "ok"
+    }
+   ]
+  },
+  {
+   "state": "task.t2.approval",
+   "reached": true,
+   "why": "",
+   "rows": [
+    {
+     "id": "header.mark",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "header.workspace",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "header.new",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "header.search",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "header.tray",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "header.bell",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.home",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.workshop",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.canvas",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.automations",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.docs",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.settings",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.account",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "tab.active",
+     "present": "ok",
+     "geometry": "x 571 vs 217, w 193 vs 219",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "tab.close",
+     "present": "ok",
+     "geometry": "x 738 vs 410",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "tab.add",
+     "present": "ok",
+     "geometry": "x 934 vs 442",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "toolbar.run",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "toolbar.layout",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "toolbar.thread",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "toolbar.more",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "canvas.stage",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "canvas.fit",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "node.step",
+     "present": "ok",
+     "geometry": "h 298 vs 272",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "pin.session",
+     "present": "ok",
+     "geometry": "h 264 vs 311",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "pin.agent",
+     "present": "ok",
+     "geometry": "h 139 vs 150",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "pin.you",
+     "present": "ok",
+     "geometry": "h 139 vs 150",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "pin.workshop",
+     "present": "ok",
+     "geometry": "h 139 vs 166",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "composer.to",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "composer.msg",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "composer.attach",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "composer.send",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "inspector.tab",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "inspector.task",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "inspector.selection",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "inspector.describe",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "node.waiting",
+     "present": "ok",
+     "geometry": "h 298 vs 283",
+     "colour": "ok",
+     "type": "ok"
+    }
+   ]
+  },
+  {
+   "state": "task.t3",
+   "reached": true,
+   "why": "",
+   "rows": [
+    {
+     "id": "header.mark",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "header.workspace",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "header.new",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "header.search",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "header.tray",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "header.bell",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.home",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.workshop",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.canvas",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.automations",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.docs",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.settings",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.account",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "tab.active",
+     "present": "ok",
+     "geometry": "x 766 vs 217",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "tab.close",
+     "present": "ok",
+     "geometry": "x 906 vs 356",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "tab.add",
+     "present": "ok",
+     "geometry": "x 934 vs 388",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "toolbar.run",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "toolbar.layout",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "toolbar.thread",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "toolbar.more",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "canvas.stage",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "canvas.fit",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "node.step",
+     "present": "ok",
+     "geometry": "h 310 vs 218",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "pin.session",
+     "present": "ok",
+     "geometry": "h 264 vs 311",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "pin.agent",
+     "present": "ok",
+     "geometry": "h 139 vs 150",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "pin.you",
+     "present": "ok",
+     "geometry": "h 139 vs 150",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "pin.workshop",
+     "present": "ok",
+     "geometry": "h 139 vs 166",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "composer.to",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "composer.msg",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "composer.attach",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "composer.send",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "inspector.tab",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "inspector.task",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "inspector.selection",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "inspector.describe",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "node.failed",
+     "present": "ok",
+     "geometry": "h 310 vs 218",
+     "colour": "ok",
+     "type": "ok"
+    }
+   ]
+  },
+  {
+   "state": "approval.card",
+   "reached": true,
+   "why": "",
+   "rows": [
+    {
+     "id": "approval.panel",
+     "present": "ok",
+     "geometry": "h 335 vs 324",
+     "colour": "ok",
+     "type": "ok"
+    }
+   ]
+  },
+  {
+   "state": "tabs.many",
+   "reached": true,
+   "why": "",
+   "rows": [
+    {
+     "id": "tab.active",
+     "present": "ok",
+     "geometry": "x 766 vs 243",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "tab.close",
+     "present": "ok",
+     "geometry": "x 906 vs 382",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "tab.add",
+     "present": "ok",
+     "geometry": "x 934 vs 414",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "toolbar.run",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "toolbar.layout",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "toolbar.thread",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "toolbar.more",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "tab.other",
+     "present": "ok",
+     "geometry": "w 110 vs 169",
+     "colour": "ok",
+     "type": "ok"
+    }
+   ]
+  },
+  {
+   "state": "menu.tab",
+   "reached": true,
+   "why": "",
+   "rows": [
+    {
+     "id": "menu.keep-open",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "menu.open-beside",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "menu.rename",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "fill #1d1d22 [bgRaised] vs #25252a [c24242b]",
+     "type": "ok"
+    },
+    {
+     "id": "menu.show-on-home",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "menu.close-tab",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "menu.close-other-tabs",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "text #ece8e0 [ink] vs #938e89 [off-token]",
+     "type": "ok"
+    }
+   ]
+  },
+  {
+   "state": "split.thread",
+   "reached": true,
+   "why": "",
+   "rows": [
+    {
+     "id": "header.mark",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "header.workspace",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "header.new",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "header.search",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "header.tray",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "header.bell",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.home",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.workshop",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.canvas",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.automations",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.docs",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.settings",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "rail.account",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "tab.active",
+     "present": "ok",
+     "geometry": "w 171 vs 143",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "tab.close",
+     "present": "ok",
+     "geometry": "x 217 vs 189",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "tab.add",
+     "present": "ok",
+     "geometry": "x 934 vs 221",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "toolbar.run",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "toolbar.layout",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "toolbar.thread",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "toolbar.more",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "thread.close",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "thread.rules",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "thread.message",
+     "present": "ok",
+     "geometry": "h 42 vs 94",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "thread.to",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "thread.msg",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "thread.more",
+     "present": "ok",
+     "geometry": "y 500 vs 581",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "thread.send",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    }
+   ]
+  },
+  {
+   "state": "menu.msg",
+   "reached": true,
+   "why": "",
+   "rows": [
+    {
+     "id": "menu.copy-text",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "fill #1d1d22 [bgRaised] vs #25252a [c24242b]",
+     "type": "ok"
+    },
+    {
+     "id": "menu.reply",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "menu.show-on-canvas",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "menu.make-a-task-from-this",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "menu.pin-to-the-task",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    }
+   ]
+  },
+  {
+   "state": "dialog.newsession",
+   "reached": true,
+   "why": "",
+   "rows": [
+    {
+     "id": "newtask.name",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "newtask.agent",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "newtask.workspace",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "newtask.create",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    },
+    {
+     "id": "newtask.cancel",
+     "present": "ok",
+     "geometry": "ok",
+     "colour": "ok",
+     "type": "ok"
+    }
+   ]
+  }
+ ],
+ "interactions": [
+  {
+   "id": "Ctrl N opens New task",
+   "design": "dialog",
+   "build": "dialog",
+   "ok": true
+  },
+  {
+   "id": "New task opens on the Canvas",
+   "design": "canvas",
+   "build": "canvas",
+   "ok": true
+  },
+  {
+   "id": "Composer on the Canvas sends",
+   "design": "sent",
+   "build": "sent",
+   "ok": true
+  },
+  {
+   "id": "Ctrl \\ opens the thread beside the Canvas",
+   "design": "split",
+   "build": "split",
+   "ok": true
+  },
+  {
+   "id": "Plus opens another task",
+   "design": "picker",
+   "build": "picker",
+   "ok": true
+  }
+ ],
+ "totals": {
+  "states reached": 10,
+  "present": 197,
+  "geometry ok": 150,
+  "colour ok": 194,
+  "type ok": 197,
+  "geometry diff": 47,
+  "colour diff": 3,
+  "interaction ok": 5
+ }
+}

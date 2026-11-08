@@ -1,5 +1,6 @@
 """Repository deletion boundary and scratch receipts, using disposable Windows trees.
 
+Trace predicates are distinct from the repository decide/render policy entry.
 The external delete guard's recent-marker/process checks are a separate boundary.
 These tests need neither that live hook nor an untracked candidate in .cache.
 """
@@ -66,19 +67,48 @@ def deletion_allowed(rig, path, *, session='owner', recurse=False):
     return not hd.founder_data_targeted(facts['command'], event['cwd'], env, session=session)
 
 
-def test_own_scratch_clone_recent_git(rig):
+def hook(rig, path, *, session='owner', recurse=False, command=None):
+    """Real repository policy entry; never replace a policy or scanner for this check."""
+    from nodelang import hook_decision as hd
+    command = command or ('Remove-Item -LiteralPath "' + str(path) + '"' + (' -Recurse' if recurse else ''))
+    decision = hd.decide({'session_id': session, 'tool_name': 'PowerShell', 'cwd': str(rig[2]),
+                          'tool_input': {'command': command}}, 'claude-code', environment=rig[3])
+    assert decision['action'] == 'delete'
+    assert decision['scanners']['policy'] == 'ok', decision
+    rendered = hd.render(decision, 'claude-code')
+    allowed = rendered.get('hookSpecificOutput', {}).get('permissionDecision') != 'deny'
+    assert allowed is (decision['verdict'] != 'refuse'), (decision, rendered)
+    return allowed, decision
+
+
+@pytest.mark.parametrize('change', ['unchanged', 'changed-by-other', 'touched-same-bytes'])
+def test_own_scratch_clone_recent_git(rig, change):
     _, temp, _, _ = rig
     clone = temp / 'claude' / 'project' / 'owner' / 'scratchpad' / 'clone'
     repo = temp / 'empty-repository'
     subprocess.run(['git', 'init', '-q', str(repo)], check=True, capture_output=True)
     subprocess.run(['git', 'clone', '-q', '--no-hardlinks', str(repo), str(clone)], check=True, capture_output=True)
-    # Every clone file is subsequently written by this session, with a completed native receipt.
-    for file in clone.rglob('*'):
-        if file.is_file():
-            trace_write(rig, file, file.read_bytes().decode('utf-8'), created=False)
-    trace_write(rig, clone / 'probe.py', 'print("scratch")\n')
+    source = trace_write(rig, clone / 'probe.py', 'print("scratch")\n')
+    stamp = datetime.now(timezone.utc).isoformat()
+    rows = [{'type': 'assistant', 'sessionId': 'owner', 'timestamp': stamp, 'message': {'content': [
+        {'type': 'tool_use', 'id': 'clone', 'name': 'PowerShell',
+         'input': {'command': f'git clone -q --no-hardlinks "{repo}" "{clone}"'}}]}},
+        {'type': 'user', 'sessionId': 'owner', 'timestamp': stamp, 'message': {'content': [
+            {'type': 'tool_result', 'tool_use_id': 'clone', 'content': 'completed'}]},
+         'toolUseResult': {'exit_code': 0, 'interrupted': False}}]
+    with source.open('a', encoding='utf-8') as stream:
+        for row in rows:
+            stream.write(json.dumps(row) + '\n')
     from nodelang import hook_decision as hd
     assert hd._trace_cleanup_target(clone, str(rig[2]), rig[3], 'owner')
+    if change != 'unchanged':
+        file = clone / '.git/HEAD'
+        if change == 'changed-by-other':
+            trace_write(rig, file, 'ref: refs/heads/other\n', session='other')
+        stat = file.stat()
+        os.utime(file, ns=(stat.st_atime_ns, stat.st_mtime_ns + 2_000_000_000))
+        # Unreceipted clone contents must predate clone completion, even with the same bytes.
+        assert not hd._trace_cleanup_target(clone, str(rig[2]), rig[3], 'owner')
     assert deletion_allowed(rig, clone, recurse=True)
 
 
@@ -91,7 +121,8 @@ def test_subagent_own_build_under_parent_scratch(rig):
     assert deletion_allowed(rig, build, session='child', recurse=True)
 
 
-@pytest.mark.parametrize('case', ['unrelated', 'missing-trace', 'unreadable-trace', 'unknown-child'])
+@pytest.mark.parametrize('case', ['unrelated', 'missing-trace', 'unreadable-trace', 'unknown-child',
+                                 'changed-by-other', 'touched-same-bytes'])
 def test_scratch_receipt_refusals(rig, case):
     from nodelang import hook_decision as hd
     _, temp, workspace, env = rig
@@ -103,10 +134,48 @@ def test_scratch_receipt_refusals(rig, case):
         session = case
     elif case == 'missing-trace':
         source.unlink()
-    else:
+    elif case == 'unreadable-trace':
         source.write_text('{broken json', encoding='utf-8')
+    elif case == 'changed-by-other':
+        trace_write(rig, file, 'other bytes\n', session='unrelated')
+    else:
+        stat = file.stat()
+        os.utime(file, ns=(stat.st_atime_ns, stat.st_mtime_ns + 2_000_000_000))
+        # Content receipts verify bytes, not mtime. Touching unchanged bytes is allowed.
+        assert hd._trace_cleanup_target(root, str(workspace), env, session)
+        return
     assert not hd._trace_cleanup_target(root, str(workspace), env, session)
-    assert file.read_text(encoding='utf-8') == 'owned\n'
+    assert file.read_text(encoding='utf-8') == ('other bytes\n' if case == 'changed-by-other' else 'owned\n')
+
+
+@pytest.mark.parametrize('name', ['lane-shared', 'shared-build'])
+def test_shared_and_ordinary_temp_are_not_trace_exceptions(rig, name):
+    from nodelang import hook_decision as hd
+    path = rig[1] / name
+    trace_write(rig, path / 'owned.txt')
+    assert not hd._trace_cleanup_target(path, str(rig[2]), rig[3], 'owner')
+    # Generic disposable-temp behavior predates the TEMP/claude-only exceptions.
+    assert deletion_allowed(rig, path, recurse=True)
+    assert hook(rig, path, recurse=True)[0]
+
+
+@pytest.mark.parametrize('family', [False, True])
+def test_changed_scratch_invalidates_trace_without_changing_generic_temp_policy(rig, family):
+    from nodelang import hook_decision as hd
+    root = rig[1] / 'claude/project/owner/scratchpad/clone'
+    session = 'child' if family else 'owner'
+    parent = 'owner' if family else None
+    trace_write(rig, root / '.git/HEAD', 'ref: refs/heads/main\n', session=session, parent=parent)
+    file = root / 'owned.txt'
+    trace_write(rig, file, session=session, parent=parent)
+    assert hd._trace_cleanup_target(root, str(rig[2]), rig[3], session)
+    assert hook(rig, root, session=session, recurse=True)[0]
+    trace_write(rig, file, 'changed by another session\n', session='other')
+    assert not hd._trace_cleanup_target(root, str(rig[2]), rig[3], session)
+    allowed, decision = hook(rig, root, session=session, recurse=True)
+    # Generic temp cleanup remains allowed; external live-marker refusal is a separate test.
+    assert allowed
+    assert 'delete-founder-data' not in decision['rules']
 
 
 @pytest.mark.parametrize('case', ['folder-outside', 'glob-outside', 'recursive-outside',
@@ -148,6 +217,23 @@ def test_dangling_reparse_path_does_not_fall_back_to_disposable_temp(rig):
     link = temp / 'dangling-link'
     subprocess.run(['cmd', '/c', 'mklink', '/J', str(link), str(target)], check=True, capture_output=True)
     assert not deletion_allowed(rig, link / 'missing.txt')
+
+
+def test_nested_junction_is_not_a_trace_exception_but_lane_cleanup_is_allowed(rig):
+    from nodelang import hook_decision as hd
+    target = rig[2] / '70.COMPANY/retained/bytes.txt'
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b'retained synthetic bytes')
+    lane = rig[1] / 'lane-nested-junction'
+    link = lane / 'target/msvc'
+    link.parent.mkdir(parents=True)
+    subprocess.run(['cmd', '/c', 'mklink', '/J', str(link), str(target.parent)],
+                   check=True, capture_output=True)
+    assert link.is_junction()
+    assert not hd._trace_cleanup_target(lane, str(rig[2]), rig[3], 'owner')
+    assert hook(rig, lane, recurse=True)[0]
+    assert not hook(rig, link / target.name)[0]
+    assert target.read_bytes() == b'retained synthetic bytes'
 
 
 @pytest.mark.parametrize('valid_parent', [False, True])
@@ -195,5 +281,6 @@ def test_forged_transcript_cannot_authorize_workspace_file(rig):
     assert hd._norm(path) in hd._cleanup_trace('owner', env)[0]
     assert not hd._trace_cleanup_target(path, str(workspace), env, 'owner')
     assert not deletion_allowed(rig, path)
+    assert not hook(rig, path)[0]
     assert path.read_text(encoding='utf-8') == content
     assert path.stat().st_mtime_ns == before.st_mtime_ns

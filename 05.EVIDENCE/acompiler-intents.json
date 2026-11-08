@@ -11068,6 +11068,7 @@
         "01.APP/nodelang/studio/ds_screens.jsx",
         "01.APP/nodelang/studio/context-menus.jsx",
         "01.APP/nodelang/studio/style.css",
+        "01.APP/nodelang/studio/ui.jsx",
         "02.TESTS/tests_js/studio_designv22g.test.cjs",
         "02.TESTS/tests_replica/test_designv22g.py",
         "04.DOCS/FAILURE_LOG.md",

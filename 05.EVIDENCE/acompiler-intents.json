@@ -6,6 +6,7 @@
       "scope": [
         "01.APP/nodelang/workshop_mailbox.py",
         "02.TESTS/tests_replica/test_workshop_returned_truth.py",
+        "02.TESTS/tests_replica/test_ng_workshop.py",
         "04.DOCS/FAILURE_LOG.md"
       ]
     },

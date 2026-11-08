@@ -10934,6 +10934,20 @@
         "04.DOCS/FAILURE_LOG.md",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "F304F253": {
+      "source": "Founder sole-builder F304 unbound legacy document Canvas Ctrl Z/save/reopen/reload; F253 exact legacy directories, old Revit DLLs and bounded root logs. Isolated install only, preserve user data, commit no push.",
+      "scope": [
+        "01.APP/nodelang/studio/app.jsx",
+        "01.APP/nodelang/host_addin_retarget.py",
+        "01.APP/nodelang/log_rotation.py",
+        "02.TESTS/tests_js/checkpoint_browser.cjs",
+        "02.TESTS/tests_replica/test_install_prune.py",
+        "04.DOCS/FAILURE_LOG.md",
+        "05.EVIDENCE/acompiler-intents.json",
+        "05.EVIDENCE/prunerig/",
+        "05.EVIDENCE/app-folder-allowlist.md"
+      ]
     }
   }
 }

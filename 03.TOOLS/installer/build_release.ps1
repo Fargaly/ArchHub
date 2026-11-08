@@ -216,6 +216,7 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
             'nodelang/workshop/agent-skill.md',
             'nodelang/assets/LUCIDE-1.25.0-LICENSE.txt',
             'nodelang/assets/lucide-icons-1.25.0.json', 'nodelang/data/public_runtime_map.json',
+            'nodelang/data/baboom/persona.json',
             'nodelang/samples/sample-plan.dxf'
         )) { return $true }
         # The public website the app serves carries brand files and the three OFL faces it

@@ -1,8 +1,8 @@
-"""Volatile Node Language host for BABOOM's graph-held stewardship presence.
+"""Volatile Node Language host for BABOOM's application-owned stewardship presence.
 
 This host is intentionally not a supervisor, task queue, model worker, or
-state store. It binds one founder-approved device to the existing Universal
-runtime, renews that graph-held presence, reads the bounded BABOOM context
+state store. It binds one founder-approved device to the existing application
+runtime, renews that application-owned presence, reads the bounded BABOOM context
 lens, and may record one deduplicated safe stewardship observation. A desktop
 or Workshop projection can render its latest in-memory snapshot but cannot
 derive authority from it.
@@ -461,7 +461,7 @@ class BaboomNativeHost:
                 raise RuntimeError("BABOOM connection changed during the host read")
 
     def resolve_input(self, utterance: str) -> Mapping[str, object]:
-        """Resolve typed input through the graph-held command catalog only.
+        """Resolve typed input through the application-owned command catalog only.
 
         This is intentionally not command execution. The caller receives the
         graph-declared proposed intent and must use the separate approval and

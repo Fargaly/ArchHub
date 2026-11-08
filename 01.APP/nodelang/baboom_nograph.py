@@ -16,6 +16,7 @@ from __future__ import annotations
 from .user_paths import state_directory
 
 import json
+import re
 import threading
 import time
 from pathlib import Path
@@ -83,6 +84,18 @@ def reason():
 
 def ask(prompt, context=''):
     """One BABOOM turn with its tools; returns {'text', 'steps', 'via', 'actions'}."""
+    from .baboom_persona import host_outcome, identity_answer, speech
+    from .baboom_standard import ask_standard, is_standard_question
+    identity = identity_answer(prompt)
+    if identity:
+        return {'text': identity, 'steps': [], 'via': {'family': 'local', 'provider': 'BABOOM', 'model': 'persona'}, 'actions': []}
+    if is_standard_question(prompt):
+        try:
+            grounded = ask_standard(prompt)
+        except (OSError, ValueError):
+            grounded = {'answer': 'The standard index did not answer. Try again later.', 'links': []}
+        return {'text': grounded['answer'], 'links': grounded['links'], 'steps': [],
+                'via': {'family': 'standard', 'provider': 'BABOOM', 'model': 'shared-index'}, 'actions': []}
     current = _STATE['brain']
     if current is None:
         raise RuntimeError(reason())
@@ -128,6 +141,12 @@ def ask(prompt, context=''):
             index += 1
     if shaped is not None:
         result = {**result, 'text': shaped['answer'], 'actions': shaped.get('actions') or []}
+    outcome = host_outcome(result.get('steps') or [])
+    if not result.get('steps') and re.match(r'(?i)\s*(done|completed|succeeded|all done)\b', result['text']):
+        outcome = 'No tool outcome is confirmed. Open the task for its status.'
+    result = {**result, 'text': outcome or speech(result['text'])}
+    if outcome:
+        result['actions'] = []
     return result
 
 
@@ -217,10 +236,11 @@ def _answer(text, message_id):
     to = sender.group(1) if sender else 'Ahmed'
     try:
         result = _turn(text)
-        reply = result['text'] + ''.join('\n• %s: %s' % (s.get('tool'), s.get('status')) for s in result.get('steps', []))
+        reply = result['text']
     except Exception as refused:  # noqa: BLE001 - the sender sees why BABOOM could not answer
         reply = 'BABOOM could not answer: %s' % refused
-    call('send', {'to': to, 'text': reply[:60000], 'reply_to': message_id}, {'goose/sessionID': 'baboom'})
+    from .baboom_persona import public_reply
+    call('send', {'to': to, 'text': public_reply(reply), 'reply_to': message_id}, {'goose/sessionID': 'baboom'})
 
 
 class NoGraphTransport:
@@ -260,7 +280,8 @@ class NoGraphTransport:
     def respond_baboom_command(self, *, utterance, on_progress=None):
         answer = _turn(utterance)
         return {'command': {'intent': 'ask', 'catalog': 'app:baboom-command-catalog:v1'},
-                'response': {'kind': 'answer', 'summary': answer['text'], 'data': {'steps': answer.get('steps', [])}}}
+                'response': {'kind': 'answer', 'summary': answer['text'],
+                             'data': {'steps': answer.get('steps', []), 'links': answer.get('links', [])}}}
 
     def execute_baboom_command(self, *, utterance):
         answer = _turn(utterance)

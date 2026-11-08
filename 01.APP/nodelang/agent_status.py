@@ -15,8 +15,9 @@ import re
 from pathlib import Path
 
 
-def _home():
-    return Path(os.environ.get('ARCHHUB_AGENT_PROFILE') or Path.home())
+def _home(environment=None):
+    env = os.environ if environment is None else environment
+    return Path(env.get('ARCHHUB_AGENT_PROFILE') or env.get('USERPROFILE') or env.get('HOME') or Path.home())
 
 
 def _tail_rows(path, limit=65536):
@@ -34,15 +35,15 @@ def _tail_rows(path, limit=65536):
     return rows
 
 
-def transcript_path(runtime, native_id):
+def transcript_path(runtime, native_id, environment=None):
     """Resolve only this provider's named transcript under the existing profile."""
     if not isinstance(native_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', native_id):
         return None
     if runtime == 'codex':
-        root = _home() / '.codex' / 'sessions'
+        root = _home(environment) / '.codex' / 'sessions'
         found = list(root.rglob('rollout-*%s.jsonl' % native_id)) if root.is_dir() else []
     elif runtime == 'claude':
-        root = _home() / '.claude' / 'projects'
+        root = _home(environment) / '.claude' / 'projects'
         found = list(root.glob('*/%s.jsonl' % native_id)) if root.is_dir() else []
     else:
         return None
@@ -115,6 +116,7 @@ def _codex(native_id):
     path = transcript_path('codex', native_id)
     if path is None:
         return None
+    project_baboom_reaction('codex', native_id, path)
     for row in reversed(_tail_rows(path)):
         kind = (row.get('payload') or {}).get('type')
         if kind in ('task_complete', 'turn_aborted'):
@@ -128,6 +130,7 @@ def _claude(native_id):
     path = transcript_path('claude', native_id)
     if path is None:
         return None
+    project_baboom_reaction('claude', native_id, path)
     for row in reversed(_tail_rows(path)):
         if row.get('isSidechain'):
             continue
@@ -137,3 +140,56 @@ def _claude(native_id):
         if row.get('type') == 'user':
             return 'working'
     return None
+
+
+_REACTION_FILES = {}
+
+
+def project_baboom_reaction(runtime, native_id, path=None, *, environment=None):
+    """Project the latest native event only; retain no prompt, path or code in Workshop."""
+    import hashlib
+    import time
+    from .baboom_reactions import emit, reaction_kind
+    from .user_paths import state_directory
+    key = (runtime, native_id, str(state_directory(environment)))
+    cached = _REACTION_FILES.get(key)
+    path = path or (cached[0] if cached else (transcript_path(runtime, native_id) if environment is None
+                                           else transcript_path(runtime, native_id, environment=environment)))
+    if path is None:
+        return
+    try:
+        stat = path.stat()
+        # Windows can keep an open writer's mtime unchanged while its log grows.
+        stamp = (stat.st_mtime_ns, stat.st_size)
+        if cached and cached[1] == stamp:
+            return
+        if len(_REACTION_FILES) >= 64:
+            _REACTION_FILES.clear()
+        _REACTION_FILES[key] = (path, stamp)
+        for row in reversed(_tail_rows(path)):
+            if not isinstance(row, dict) or row.get('isSidechain'):
+                continue
+            payload = row.get('payload') if runtime == 'codex' else row.get('message')
+            if not isinstance(payload, dict):
+                continue
+            event = dict(payload)
+            if runtime == 'claude':
+                blocks = payload.get('content')
+                tools = [b for b in blocks if isinstance(b, dict) and b.get('type') == 'tool_use'] if isinstance(blocks, list) else []
+                if tools:
+                    event = {**tools[-1], 'tool_name': tools[-1].get('name'), 'tool_input': tools[-1].get('input')}
+                elif payload.get('stop_reason') == 'end_turn':
+                    event = {'type': 'task_complete'}
+                elif row.get('type') == 'user':
+                    failed = isinstance(blocks, list) and any(isinstance(b, dict) and b.get('is_error') for b in blocks)
+                    event = {'type': 'failure' if failed else 'task_started'}
+            if reaction_kind(event):
+                from .baboom_work_presence import _parsed_time
+                recorded = _parsed_time(row.get('timestamp'))
+                if time.time() - (recorded.timestamp() if recorded else stat.st_mtime) > 10:
+                    return
+                identity = hashlib.sha256(json.dumps(row, sort_keys=True).encode()).hexdigest()
+                emit({**event, 'session_id': native_id}, runtime, event_id=identity, environment=environment)
+                return
+    except (OSError, ValueError):
+        return

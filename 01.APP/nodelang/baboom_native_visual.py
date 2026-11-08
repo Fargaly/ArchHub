@@ -32,6 +32,8 @@ _MOTION_ROWS = {
     "talk": 6,
     "cast": 7,
     "turn": 8,
+    "present": 6,
+    "ponder": 8,
     "warning": 6,
     "working": 7,
     "review": 8,

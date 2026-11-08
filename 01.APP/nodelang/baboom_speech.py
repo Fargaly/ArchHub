@@ -175,6 +175,8 @@ def compose_baboom_speech(
     directive: Mapping | None = None,
     *,
     hour: int | None = None,
+    moment: str | None = None,
+    language: str = 'en',
 ) -> str:
     """Compose one to three plain sentences from one admitted briefing.
 
@@ -185,6 +187,13 @@ def compose_baboom_speech(
 
     A malformed briefing is refused, never spoken as a calm empty sentence.
     """
+    if moment is not None:
+        from .baboom_persona import load_persona, speech
+        data = load_persona()['moments'][moment]
+        # Completion/check counts in the book are samples, never live outcomes.
+        if moment in ('done', 'check_failed'):
+            raise ValueError('A factual outcome record is required for this moment')
+        return speech(data[language])
     _refuse_malformed(briefing)
     data = briefing
     directive = _mapping(directive)

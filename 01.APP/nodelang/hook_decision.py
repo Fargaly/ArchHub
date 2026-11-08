@@ -1155,6 +1155,8 @@ def decide(payload: dict, vendor: str = "", *, environment=None):
     vendor = _ALIAS.get(vendor, vendor)
     event = normalize(payload, vendor)
     action, facts = classify(event, environment)
+    from .baboom_reactions import emit
+    emit(payload, vendor, environment=environment)
     scanners = {"secrets": "skipped", "pii": "skipped", "policy": "skipped", "trace": "skipped"}
     findings, notes = [], []
     secret_version = ""
@@ -1241,6 +1243,8 @@ def decide(payload: dict, vendor: str = "", *, environment=None):
         except OSError:
             notes.append("Refusal log unavailable; rule and paths remain in this decision.")
         decision["paths"] = paths
+    if verdict in ('ask', 'refuse'):
+        emit(payload, vendor, verdict=verdict, environment=environment)
     return decision
 
 

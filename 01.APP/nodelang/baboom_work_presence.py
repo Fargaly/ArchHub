@@ -25,6 +25,10 @@ _STATE_MOTION = {
     "needs-you": "wave",
     "done": "talk",
     "error": "crouch",
+    "editing": "cast",
+    "testing": "ponder",
+    "waiting": "ponder",
+    "success": "cast",
 }
 _RANK = {"needs-you": 0, "error": 1, "thinking": 2, "done": 3}
 _SKIP_WORDS = {"a", "an", "the", "of", "to", "for", "and", "in", "on"}

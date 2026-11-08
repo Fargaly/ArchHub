@@ -123,6 +123,8 @@ class PromptHookError(RuntimeError):
 
 
 def query_prompt(payload, *, vendor, environment=None):
+    from .baboom_reactions import emit
+    emit({**payload, 'hook_event_name': 'UserPromptSubmit'}, vendor, environment=environment)
     from .agent_runtime_registry import RUNTIMES
     runtime = 'claude' if vendor == 'claude-code' else vendor
     identity = payload.get('session_id')

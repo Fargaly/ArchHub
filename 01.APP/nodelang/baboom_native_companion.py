@@ -40,6 +40,7 @@ from .baboom_native_voice import (
     BaboomVoiceInput,
 )
 from .baboom_speech import compose_baboom_speech, plain_count, plain_title
+from .baboom_persona import speech
 from .baboom_visual_assets import BaboomSpriteAtlas
 
 
@@ -977,6 +978,11 @@ def create_baboom_native_companion_window(
             self._projection_timer = QTimer(self)
             self._projection_timer.setInterval(750)
             self._projection_timer.timeout.connect(self.refresh)
+            self._reaction_state = 'idle'
+            self._reaction_timer = QTimer(self)
+            from .baboom_reactions import REACTION_NODE
+            self._reaction_timer.setInterval(REACTION_NODE['params']['poll_ms'])
+            self._reaction_timer.timeout.connect(self._check_reactions)
             self._animation_timer = QTimer(self)
             # A companion that changes pose three times a second reads as
             # restless. It breathes, it does not fidget.
@@ -1071,17 +1077,30 @@ def create_baboom_native_companion_window(
             """Keep polling until dismissed; hidden and idle sprites need no animation."""
             if self._dismissed or self._stopped:
                 self._projection_timer.stop()
+                self._reaction_timer.stop()
                 self._animation_timer.stop()
                 return
             self._projection_timer.setInterval(750 if self._timers_active() else 5000)
             if not self._projection_timer.isActive():
                 self._projection_timer.start()
+            if not self._reaction_timer.isActive():
+                self._reaction_timer.start()
             if not self.isVisible() or self.isMinimized() or self._motion_reduced() or not self._timers_active():
                 self._animation_timer.stop()
                 return
             self._animation_timer.setInterval(125 if self._transition_left > 0 else 900)
             if not self._animation_timer.isActive():
                 self._animation_timer.start()
+
+        def _check_reactions(self):
+            if self._dismissed or self._stopped or self._dragged:
+                return
+            from .baboom_reactions import latest
+            reaction = latest()
+            state = reaction.state if reaction is not None else 'idle'
+            if state != self._reaction_state:
+                self._reaction_state = state
+                self.refresh()
 
         def _overlay_work_pose(self, frame):
             from .baboom_work_presence import BaboomWorkPresence, baboom_work_presence
@@ -1091,12 +1110,20 @@ def create_baboom_native_companion_window(
                 presence = baboom_work_presence(self._work_rows())
             except Exception:
                 presence = BaboomWorkPresence("idle", "", "idle", False, "")
+            from .baboom_reactions import latest
+            from .baboom_persona import speech
+            reaction = latest()
+            if reaction is not None:
+                presence = reaction
             snapshot = controller.latest_snapshot
             work = snapshot.context.get("work", {}) if snapshot is not None else {}
             active = work.get("active_turns", 0) if isinstance(work, Mapping) else 0
             if presence.state in {"idle", "done"} and (self._busy or (type(active) is int and active > 0)):
                 name = self._submitted_utterance or "Working on your request"
                 presence = BaboomWorkPresence("thinking", name, "think", False, name)
+            if presence.bubble:
+                from dataclasses import replace
+                presence = replace(presence, bubble=speech(presence.bubble))
             if reduced:
                 self._transition_left = 0
             elif presence.state != previous:
@@ -1120,6 +1147,8 @@ def create_baboom_native_companion_window(
                 reduced_motion=reduced,
                 transitioning=self._transition_left > 0 and not reduced,
             )
+            if presence is not None and presence.motion in ('ponder', 'present'):
+                motion = presence.motion
             shown = 0 if reduced else controller._animation_tick
             source = baboom_sprite_source(
                 controller._atlas, motion=motion, animation_tick=shown
@@ -1240,12 +1269,14 @@ def create_baboom_native_companion_window(
                 return
             self._dismissed = False
             self._projection_timer.start()
+            self._reaction_timer.start()
             self._animation_timer.start()
             self.refresh()
 
         def stop_projection(self) -> None:
             self._dismissed = True
             self._projection_timer.stop()
+            self._reaction_timer.stop()
             self._animation_timer.stop()
             self._tray.hide()
 
@@ -1319,7 +1350,7 @@ def create_baboom_native_companion_window(
             # this width and take the larger answer, so no last line is lost.
             asked = 0
             try:
-                self._report.setText(text)
+                self._report.setText(speech(text))
                 asked = int(self._report.heightForWidth(width))
             except Exception:
                 asked = 0
@@ -1500,7 +1531,7 @@ def create_baboom_native_companion_window(
                     )
                 self._message_rect = message_rect
                 if not self._input.isVisible():
-                    self._report.setText(report)
+                    self._report.setText(speech(report))
                     self._report.setGeometry(panel_rect)
                     self._report.show()
                 self._input.setGeometry(message_rect)
@@ -1875,6 +1906,7 @@ def create_baboom_native_companion_window(
             # hover and was immediately restacked underneath the companion,
             # so the founder saw a menu whose rows never opened (2026-09-07).
             self._projection_timer.stop()
+            self._reaction_timer.stop()
             self._animation_timer.stop()
             try:
                 menu.exec(event.globalPos())
@@ -2066,7 +2098,7 @@ def create_baboom_native_companion_window(
             self._interaction_requested = False
             self._input.setEnabled(False)
             self._transient_report = "Asking ArchHub…"
-            self._report.setText(self._transient_report)
+            self._report.setText(speech(self._transient_report))
             self._report.show()
             self._input.hide()
             self._talk.hide()
@@ -2095,8 +2127,9 @@ def create_baboom_native_companion_window(
             if generation != self._interaction_generation or self._dismissed or self._stopped:
                 return
             self._steps[str(step["tool"])] = dict(step)
-            self._transient_report = "\n".join("%s · %s%s" % (row["tool"], row["status"],
-                (" — " + row["summary"]) if row.get("summary") else "") for row in self._steps.values())
+            from .baboom_persona import host_outcome
+            self._transient_report = ('A tool is running.' if step.get('status') == 'running'
+                                      else host_outcome([step]) or 'A tool completed.')
             self.refresh()
 
         def _toggle_voice_capture(self) -> None:
@@ -2203,7 +2236,8 @@ def create_baboom_native_companion_window(
                 self._transient_report = compact_baboom_response_report(response)
                 steps = (response.get("data") or {}).get("steps") or []
                 if steps:
-                    self._transient_report += "\n" + "\n".join("%s · %s" % (row.get("tool", "Tool"), row.get("status", "unavailable")) for row in steps[:12])
+                    from .baboom_persona import host_outcome
+                    self._transient_report = host_outcome(steps) or self._transient_report
                 self._transient_revision = (
                     self._frame.revision if self._frame is not None else None
                 )
@@ -2272,7 +2306,7 @@ def create_baboom_native_companion_window(
                 self._approval.hide()
             self._confirm.hide()
             self._cancel.hide()
-            self._report.setText(self._act_progress or "Working...")
+            self._report.setText(speech(self._act_progress or "Working..."))
             self._transient_report = self._act_progress or "Working…"
             self._report.show()
 

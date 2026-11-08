@@ -1,4 +1,4 @@
-"""Explicit assembly for the packaged, graph-connected BABOOM projection.
+"""Explicit assembly for the packaged, file-owner-connected BABOOM projection.
 
 Creating this assembly does not connect a device, start a heartbeat, show a
 window, or activate voice.  A caller must pass the normal device-proof
@@ -35,7 +35,7 @@ def create_baboom_native_runtime(
     atlas_path: Path | None = None,
     position_path: Path | None = None,
 ) -> tuple[BaboomNativeHost, Any]:
-    """Assemble one dormant projection; the graph remains the only authority."""
+    """Assemble one dormant projection; the application remains the only authority."""
     host = create_baboom_native_host(
         transport,
         external_session_id=external_session_id,

@@ -229,9 +229,10 @@ class GooseAdapter:
             if stopped():
                 raise GooseRefused("Stopped by you")
             from .agent_composer import _SYSTEM
+            from .baboom_persona import persona_instructions
             settings = {"goose_provider": provider, "goose_model": selected}
             recipe = {"version": "1.0.0", "title": "BABOOM", "description": "ArchHub agent",
-                      "instructions": _SYSTEM, "settings": settings}
+                      "instructions": _SYSTEM + '\n' + persona_instructions(), "settings": settings}
             encoded = base64.urlsafe_b64encode(json.dumps(recipe).encode()).decode().rstrip("=")
             # Goose owns this MCP client; messages go to the existing Workshop.
             session = transport.request("session/new", {

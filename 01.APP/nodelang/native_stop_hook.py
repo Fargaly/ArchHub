@@ -128,6 +128,8 @@ _STOP_IDENTITY_ENV={'claude':('CLAUDE_CODE_SESSION_ID','CLAUDE_SESSION_ID'),'cod
 
 
 def query_stop(payload, *, vendor, vault=None, environment=None):
+    from .baboom_reactions import emit
+    emit({**payload, 'hook_event_name': payload.get('hook_event_name') or 'Stop'}, vendor, environment=environment)
     from .native_agent_hooks import declare_session
     declare_session(payload, vendor)
     return {}

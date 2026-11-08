@@ -1,0 +1,194 @@
+"""Delete guard (founder order 2026-10-16: "before deleting, there is a validation").
+
+PreToolUse hook for Bash/PowerShell. Before any recursive delete or reset, it
+refuses when the target folder is in live use by another agent or holds a link
+to shared tooling. Only real harm is blocked; the refusal says what to change.
+
+Refuses when a delete target (or anything under it, shallow scan):
+  1. is the working directory of, or named on the command line of, a running
+     process (a live lane worker, build or rig);
+  2. holds a .git, PROGRESS.md, READ-PROOF.md or RESULT-*.md changed in the
+     last 30 minutes (an active lane);
+  3. contains a junction/symlink (deleting through it destroys its target,
+     e.g. the shared MSVC toolchain); remove the link itself first.
+Commands covered: rm -r/-rf, rmdir /s, Remove-Item -Recurse, git clean -f(d),
+git reset --hard, and `mv`/`Move-Item` over an existing folder is not touched.
+Exit code 2 + stderr = refuse (Claude Code PreToolUse contract); 0 = allow.
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+RECENT_SECONDS = 30 * 60
+LANE_MARKERS = (".git", "PROGRESS.md", "READ-PROOF.md")
+SCAN_DEPTH = 3
+SCAN_LIMIT = 4000
+
+
+def _targets(command: str) -> list[str]:
+    found: list[str] = []
+    for segment in re.split(r"(?:&&|\|\||;|\n|\|)", command):
+        seg = segment.strip()
+        if not seg:
+            continue
+        try:
+            # posix shlex eats Windows backslashes (C:\Users -> C:Users); paths accept "/" on Windows.
+            tokens = shlex.split(seg.replace("\\", "/"), posix=True)
+        except ValueError:
+            tokens = seg.split()
+        if not tokens:
+            continue
+        verb = os.path.basename(tokens[0]).lower()
+        args = tokens[1:]
+        flags = " ".join(a for a in args if a.startswith("-") or a.startswith("/")).lower()
+        paths = [a for a in args if not (a.startswith("-") or a.startswith("/s") or a.startswith("/q"))]
+        if verb in ("rm",) and re.search(r"-\w*r", flags):
+            found += paths
+        elif verb in ("rmdir", "rd") and "/s" in flags:
+            found += paths
+        elif verb in ("remove-item", "ri", "del", "erase") and "-recurse" in flags:
+            found += [p for p in paths if not p.lower().startswith("-")]
+        elif verb == "git" and args:
+            sub = args[0].lower()
+            if sub == "clean" and re.search(r"-\w*f", flags):
+                found.append(os.getcwd())
+            if sub == "reset" and "--hard" in args:
+                found.append(os.getcwd())
+    return [t for t in found if t and not t.startswith("$(")]
+
+
+def _resolve(path: str) -> Path | None:
+    p = path.strip().strip('"').strip("'")
+    if re.match(r"^/[a-zA-Z]/", p):  # Git Bash /c/... form
+        p = p[1].upper() + ":" + p[2:]
+    p = os.path.expandvars(os.path.expanduser(p))
+    try:
+        r = Path(p).resolve()
+    except OSError:
+        return None
+    return r if r.exists() and r.is_dir() else None
+
+
+def _is_link(entry: os.DirEntry) -> bool:
+    try:
+        if entry.is_symlink():
+            return True
+        st = entry.stat(follow_symlinks=False)
+        return bool(getattr(st, "st_file_attributes", 0) & 0x400)  # REPARSE_POINT
+    except OSError:
+        return False
+
+
+def _scan(root: Path) -> tuple[list[str], list[str]]:
+    links, live = [], []
+    now = time.time()
+    seen = 0
+    stack = [(root, 0)]
+    while stack and seen < SCAN_LIMIT:
+        folder, depth = stack.pop()
+        try:
+            entries = list(os.scandir(folder))
+        except OSError:
+            continue
+        for e in entries:
+            seen += 1
+            if _is_link(e):
+                links.append(e.path)
+                continue
+            name = e.name
+            if name in LANE_MARKERS or (name.startswith("RESULT-") and name.endswith(".md")):
+                try:
+                    newest = e.stat().st_mtime
+                    if name == ".git" and e.is_dir():
+                        for sub in ("index", "HEAD", "logs"):
+                            sp = Path(e.path) / sub
+                            if sp.exists():
+                                newest = max(newest, sp.stat().st_mtime)
+                    if now - newest < RECENT_SECONDS:
+                        live.append(f"{e.path} changed {int((now - newest) / 60)} min ago")
+                except OSError:
+                    pass
+            if e.is_dir(follow_symlinks=False) and depth < SCAN_DEPTH and name not in (".git", "node_modules", "target"):
+                stack.append((Path(e.path), depth + 1))
+    return links, live
+
+
+def _processes_using(root: Path) -> list[str]:
+    needle = str(root).lower()
+    users = []
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId)`t$($_.ParentProcessId)`t$($_.Name)`t$($_.CommandLine)\" }"],
+            capture_output=True, text=True, timeout=20).stdout
+    except Exception:
+        return users
+    rows, parent = [], {}
+    for line in out.splitlines():
+        parts = line.split("\t", 3)
+        try:
+            pid, ppid = int(parts[0]), int(parts[1])
+        except (ValueError, IndexError):
+            continue
+        parent[pid] = ppid
+        if len(parts) == 4 and parts[3]:
+            rows.append((pid, parts[2], parts[3]))
+    # The requesting agent's own process chain (its prompt/command names the folder) is never a "user".
+    me, cur = set(), os.getpid()
+    while cur and cur not in me:
+        me.add(cur)
+        cur = parent.get(cur)
+    for pid, name, cmdline in rows:
+        if pid in me:
+            continue
+        parts = [None, name]
+        cmd = cmdline.lower().replace("/", "\\")
+        if needle in cmd and "delete_guard" not in cmd and "pretooluse" not in cmd:
+            users.append(f"pid {pid} {parts[1]}")
+    return users[:5]
+
+
+def main() -> int:
+    try:
+        event = json.load(sys.stdin)
+    except Exception:
+        return 0
+    # Every installed agent names its shell tool differently (founder 2026-10-28: provider agnostic).
+    tool = event.get("tool_name") or event.get("toolName") or ""
+    if tool.lower() not in ("bash", "powershell", "shell", "run_shell_command", "run_in_terminal", "execute_command"):
+        return 0
+    args = event.get("tool_input") or event.get("toolArgs") or {}
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except ValueError:
+            args = {"command": args}
+    command = args.get("command") or event.get("command") or ""
+    problems = []
+    for raw in _targets(command):
+        root = _resolve(raw)
+        if root is None or len(root.parts) <= 2:
+            continue
+        links, live = _scan(root)
+        users = _processes_using(root)
+        if links:
+            problems.append(f"{root}: contains link(s) {links[:3]} - remove the link itself first (rmdir/Delete() on the link), never delete through it")
+        if live:
+            problems.append(f"{root}: active lane files {live[:3]} - another agent is working here; use a new folder name or ask its owner in the Workshop")
+        if users:
+            problems.append(f"{root}: in use by {users} - wait for them to finish or ask the owner")
+    if problems:
+        sys.stderr.write("DELETE GUARD refused (founder rule: validate before deleting):\n- " + "\n- ".join(problems) + "\n")
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

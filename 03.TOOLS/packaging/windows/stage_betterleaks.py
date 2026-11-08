@@ -8,10 +8,13 @@ one published in that release's checksums.txt.
 from __future__ import annotations
 
 import hashlib
+from http.client import IncompleteRead
 import json
 from pathlib import Path, PurePosixPath
 import shutil
 import tempfile
+import time
+from urllib.error import HTTPError, URLError
 import urllib.request
 import zipfile
 
@@ -32,20 +35,34 @@ def fetch_betterleaks(destination, *, pin_path=Path(__file__).with_name("betterl
         return _stage(archive, destination, pin, digest)
 
 
-def _download(url, dest, limit):
+def _download(url, dest, limit, *, timeout: int = 60,
+              waits: tuple[int, ...] = (5, 15, 30, 60, 120)):
     if not str(url).startswith("https://github.com/betterleaks/betterleaks/releases/download/v"):
         raise ValueError("Betterleaks download URL is not a pinned GitHub release")
     request = urllib.request.Request(url, headers={"User-Agent": "ArchHub-release"})
-    size = 0
-    with urllib.request.urlopen(request) as response, dest.open("wb") as output:
-        while True:
-            chunk = response.read(1 << 20)
-            if not chunk:
-                break
-            size += len(chunk)
-            if size > limit:
-                raise ValueError("Betterleaks download exceeds the pinned size")
-            output.write(chunk)
+    for attempt in range(len(waits) + 1):
+        try:
+            size = 0
+            with dest.open("wb") as output, urllib.request.urlopen(request, timeout=timeout) as response:
+                expected = response.headers.get("Content-Length")
+                while True:
+                    chunk = response.read(1 << 20)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > limit:
+                        raise ValueError("Betterleaks download exceeds the pinned size")
+                    output.write(chunk)
+                if expected is not None and size < int(expected):
+                    raise IncompleteRead(b"", int(expected) - size)
+            break
+        except (URLError, TimeoutError, ConnectionError, IncompleteRead) as error:
+            dest.unlink(missing_ok=True)
+            if isinstance(error, HTTPError) and not (error.code == 429 or 500 <= error.code < 600):
+                raise
+            if attempt == len(waits):
+                raise
+            time.sleep(waits[attempt])
     return dest
 
 

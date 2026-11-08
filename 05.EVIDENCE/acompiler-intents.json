@@ -1,6 +1,15 @@
 {
   "schema_version": 1,
   "intents": {
+    "GUARDOWNSCRATCH": {
+      "source": "R&D res-018 section 5b, 75cacd99, dc5bc991 and e988 review 59da247f; research and review provenance, not founder words. Builder assignment: three bounded trace-proven own-scratch exceptions; default deny missing evidence, unrelated sessions, shared lanes, modified files, private paths and reparse points. Commit only, hooks on; no push, installation or release.",
+      "scope": [
+        "01.APP/nodelang/hook_decision.py",
+        "02.TESTS/tests_replica/test_guard_own_scratch.py",
+        "04.DOCS/FAILURE_LOG.md",
+        "05.EVIDENCE/guardownscratch/"
+      ]
+    },
     "BABOOMSITEFIT": {
       "source": "Independent release da12106 checks: e988 c1c0f04a signed-out response regression and 717 site deployment check; persona installed-manifest gap. Builder repair scope, not founder words. Preserve live signed-out response, router and truthful desktop handling; admit exact persona identity with hashes and all user-data exclusions. Commit only; no push, install, release or live-site change.",
       "scope": [

@@ -132,6 +132,7 @@ class AccountFiles:
 
     def _write(self, root, values):
         import tempfile
+        from .session_files import _metadata_io
         try:
             data = json.loads(self.path.read_text(encoding='utf-8'))
         except FileNotFoundError:
@@ -147,7 +148,7 @@ class AccountFiles:
         try:
             with os.fdopen(fd, 'w', encoding='utf-8') as stream:
                 stream.write(encoded)
-            os.replace(temporary, self.path)
+            _metadata_io(os.replace, temporary, self.path)
         finally:
             if os.path.exists(temporary):
                 os.unlink(temporary)

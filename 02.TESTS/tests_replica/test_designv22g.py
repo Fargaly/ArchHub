@@ -76,6 +76,54 @@ def test_fixed_agent_binding_solves_without_sending(monkeypatch):
         assert agent['id'] in stale['stale']
 
 
+def test_task_rename_updates_its_bound_file_and_refuses_partial_failure(monkeypatch):
+    with application_history() as history:
+        task = workshop_tasks.create_session(history, 'Original task')
+        before = session_files.read_document(task['path'])
+        workshop_tasks.rename(history, task['taskId'], 'Renamed task')
+        renamed = session_files.read_document(task['path'])
+        assert renamed['title'] == workshop_tasks.get(history, task['taskId'])['title'] == 'Renamed task'
+        assert renamed['id'] == before['id']
+        assert renamed['nodes'] == before['nodes']
+        with monkeypatch.context() as patch:
+            def refused(*args, **kwargs):
+                raise OSError('Target file write refused')
+            patch.setattr(canvas_documents, 'edit', refused)
+            with pytest.raises(OSError, match='Target file write refused'):
+                workshop_tasks.rename(history, task['taskId'], 'Must not persist')
+        assert workshop_tasks.get(history, task['taskId'])['title'] == 'Renamed task'
+        assert session_files.read_document(task['path']) == renamed
+
+
+@pytest.mark.parametrize('code', [5, 32, 33, 13])
+def test_canvas_settings_preserve_data_through_windows_reader_conflicts(tmp_path, monkeypatch, code):
+    import os
+    from nodelang.settings_owner import AccountFiles
+    owner = AccountFiles(tmp_path / 'settings.json')
+    owner.write('other-page', {'preserved': True})
+    before = owner.path.read_bytes()
+    replace, attempts = os.replace, []
+    def busy_reader(source, target):
+        if Path(target) == owner.path:
+            attempts.append(target)
+            if len(attempts) <= 2:
+                error = PermissionError('Fixture reader has the previous settings open')
+                error.winerror = code
+                raise error
+        return replace(source, target)
+    monkeypatch.setattr(os, 'replace', busy_reader)
+    if code == 13:
+        with pytest.raises(PermissionError):
+            owner.write('canvasTabs', {'active': 'task'})
+        assert owner.path.read_bytes() == before
+        assert len(attempts) == 1
+    else:
+        owner.write('canvasTabs', {'active': 'task'})
+        assert owner.read('canvasTabs') == {'active': 'task'}
+        assert owner.read('other-page') == {'preserved': True}
+        assert len(attempts) == 3
+
+
 def approval_document(tmp_path):
     document = session_files.new_document('Approval and resume')
     document['nodes'] = [

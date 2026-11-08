@@ -168,27 +168,37 @@
       {listOpen && <div role="listbox" aria-label="Recipients" className="ws-to-list">{choices.map(c => <button type="button" role="option" key={c.key} aria-selected={c.handle === to} disabled={c.handle === undefined} className="listbutton spread" title={c.handle === undefined ? c.name + ' is running but has not joined this Workshop, so it cannot receive messages yet' : 'Send to ' + c.name} onClick={() => executeAction("ui.select", () => { setTo(c.handle); setListOpen(false); })}><span>{c.name}</span><span className="ws-small" data-agent-gate={c.gate || undefined} data-agent-breaches={c.breaches == null ? undefined : String(c.breaches)}>{[c.detail, gateLine(c.gate, c.breaches)].filter(Boolean).join(' · ')}</span></button>)}</div>}
     </div>;
   }
-  function TaskComposer({choices, to, setTo, sendRef, replyTo, setReplyTo}) {
+  function TaskComposer({choices, to, setTo, sendRef, replyTo, setReplyTo, draft, setDraft, onSend, docked = false, thread = false, busy = false}) {
     const s = useData(), u = useApp();
-    const [text, setText] = React.useState(''), [sending, setSending] = React.useState(false);
+    const [localText, setLocalText] = React.useState(''), [sending, setSending] = React.useState(false);
+    const [expanded, setExpanded] = React.useState(false);
+    const text = draft === undefined ? localText : draft, setText = setDraft || setLocalText;
     const files = s.composerAttachments || [];
     const send = async (body = text) => {
-      if (!body.trim()) return;
+      if (onSend) return onSend();
+      if (!body.trim()) return null;
       const prompt = (!to || new RegExp('(^|\\s)@' + to + '\\b').test(body) ? '' : '@' + to + ' ') + body +
         (files.length ? '\nAttached project file nodes: ' + JSON.stringify(files.map(f => ({id: f.id, path: f.path}))) : '');
       if (body === text) setText('');
       setSending(true);
       try {
         const sent = await u.act(() => api.apiRouterChat(prompt, 'BABOOM', replyTo && replyTo.handle === to ? replyTo.id : undefined));
-        if (!sent) { if (body === text) setText(body); return; }
+        if (!sent) { if (body === text) setText(body); return null; }
         files.forEach(f => api.removeComposerAttachment(f.id));
         setReplyTo?.(null);
         await api.listTasks?.();
+        return sent;
       } finally {
         setSending(false);
       }
     };
-    sendRef.current = send;
+    if (sendRef) sendRef.current = send;
+    if (docked) return <D.Composer as="form" className="dx-composer v22g-composer" data-expanded={expanded} data-dx="composer" onBlur={e=>{if(!e.currentTarget.contains(e.relatedTarget))setExpanded(false);}} onSubmit={e=>{e.preventDefault();send();}}>
+      <span data-design={thread ? 'thread.to' : 'composer.to'}><AgentPicker choices={choices} to={to} setTo={setTo} /></span>
+      <textarea data-design={thread ? 'thread.msg' : 'composer.msg'} aria-label="Message" placeholder="Message this task…" rows={1} value={text} onFocus={()=>setExpanded(true)} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}}} />
+      <button type="button" className="dx-quiet" data-design={thread ? 'thread.more' : 'composer.attach'} aria-label="Attach" onClick={()=>u.show('Canvas attachments')}>+</button>
+      <Btn p type="button" data-design={thread ? 'thread.send' : 'composer.send'} aria-busy={busy} disabled={!text.trim()||busy} onClick={event=>executeAction('ui.select',send,event)}>Send</Btn>
+    </D.Composer>;
     return <D.Composer as="form" className="ws-composer" onSubmit={e => { e.preventDefault(); executeAction("ui.select", send); }} style={{width: '100%', padding: '14px 16px', gap: 8}}>
       <AgentPicker choices={choices} to={to} setTo={setTo} />
       {replyTo && <div className="flex ws-small">Replying to {replyTo.name}<button type="button" className="ws-link" aria-label="Stop replying" onClick={() => executeAction("ui.select", () => setReplyTo(null))}>×</button></div>}
@@ -316,6 +326,7 @@
   </Column>
  </Group>;
   }
+  window.UI.TaskComposer = TaskComposer;
   window.UI.Workshop = Win;
   window.UI.TaskSession = TaskSession;
   window.UI.AgentPicker = AgentPicker;

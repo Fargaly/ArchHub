@@ -169,18 +169,25 @@ def _text(value, label, maximum):
 
 def rename(history, task, title, revision=None):
     """The founder edits the task name. The row keeps the full text; the list shows the short name."""
-    row = get(history, task)
-    if row is None:
-        raise TaskNotFound(task)
     text = _text(title, "title", 2000)
-    if revision is not None and int(revision) != row["revision"]:
-        raise TaskConflict(task, revision)
-    if text != row["title"]:
-        def statement(expected):
-            return ("UPDATE workshop_tasks SET title=?, updated_at=?, revision=revision+1 WHERE id=? AND revision=?",
-                    (text, _now(), task, expected))
-        if not _update(history, task, revision, statement):
-            raise TaskConflict(task, revision if revision is not None else row["revision"])
+    with history._transaction(write=True):
+        row = get(history, task)
+        if row is None:
+            raise TaskNotFound(task)
+        if revision is not None and int(revision) != row["revision"]:
+            raise TaskConflict(task, revision)
+        if text != row["title"]:
+            def statement(expected):
+                return ("UPDATE workshop_tasks SET title=?, updated_at=?, revision=revision+1 WHERE id=? AND revision=?",
+                        (text, _now(), task, expected))
+            if not _update(history, task, revision, statement):
+                raise TaskConflict(task, revision if revision is not None else row["revision"])
+        if row.get('session_path'):
+            from . import canvas_documents
+            def retitle(document):
+                document['title'] = short_title(text)
+                return []
+            canvas_documents.edit(row['session_path'], 'You', 'rename task', retitle, solve_changed=False)
     return {"ok": True, "id": task, "title": short_title(text), "description": text}
 
 

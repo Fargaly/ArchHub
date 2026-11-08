@@ -261,9 +261,9 @@
         setBusy(false);
       }
     };
-    if (c.approvalKind === 'ask') {
+    if (c.approvalKind === 'ask' || c.approvalKind === 'canvas') {
       const word = c.status === 'approved' ? 'Released' : c.status === 'declined' ? 'Refused' : c.status === 'failed' ? (c.error || 'The held action failed') : c.status;
-      return <Card data-approval={id} data-ask-card="" style={{
+      return <Card data-design={c.approvalKind === 'canvas' ? 'approval.panel' : undefined} data-approval={id} data-ask-card="" style={{
         border: '1px solid ' + (c.status === 'pending' ? A.warn : A.line),
         borderRadius: A.rad.lg,
         padding: 16,
@@ -277,7 +277,7 @@
         {c.summary && <p style={{fontSize: 13, margin: 0, color: A.inkSoft}}>{c.summary}</p>}
         {c.text ? <div><div style={{fontSize: 11, color: A.inkSoft, marginBottom: 4}}>{c.textLabel || 'Text'}</div><pre style={{margin: 0, whiteSpace: 'pre-wrap', font: '13px/1.45 Inter, sans-serif', background: A.bgSoft, border: '1px solid ' + A.line, borderRadius: A.rad.md, padding: '10px 12px'}}>{c.text}</pre></div> : null}
         {decisionError && <p role="alert">{decisionError}</p>}
-        {c.status === 'pending' ? <div className="flex" style={{gap: 8}}><Btn p sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.ApproveOnce.13", {decide}, event)}>Approve</Btn><Btn sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.Decline.15", {decide}, event)}>Deny</Btn></div> : <p style={{margin: 0, color: c.status === 'approved' ? A.ok : c.status === 'failed' ? A.err : A.inkSoft}}>{word}</p>}
+        {c.status === 'pending' ? <div className="flex" style={{gap: 8}}><Btn p sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.ApproveOnce.13", {decide}, event)}>Approve</Btn>{c.approvalKind==='canvas' && <Btn sm disabled={busy} onClick={event=>executeAction('projects.controls.activate',{handler:()=>{const key=JSON.stringify(['task-file',c.taskId || u.task]);u.setComposerDraft(current=>({...current,[key]:{text:'Why does '+c.title+' need approval?',revision:(current[key]?.revision||0)+1}}));u.setTaskFace('split');u.close();}},event)}>Ask why</Btn>}<Btn sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.Decline.15", {decide}, event)}>{c.approvalKind==='canvas'?'Reject':'Deny'}</Btn></div> : <p style={{margin: 0, color: c.status === 'approved' ? A.ok : c.status === 'failed' ? A.err : A.inkSoft}}>{word}</p>}
       </Card>;
     }
     return <Card data-approval={id} style={{

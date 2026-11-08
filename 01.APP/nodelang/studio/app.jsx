@@ -20,6 +20,21 @@
   } = window.UI;
   const routeNames = window.ArchHubRouteNames;
   const modalActions = {'Talk':'startVoiceInput','Timesheet':'settleTimesheet','Import skill':'importHostSkill','Contest decision':'contestDecision','Add comment':'addComment','Change plan':'changePlan','Connector bundle':'inspectConnectorBundle','Notifications':'readNotification'};
+  // v22g applyLook: the approved palette's contrast calculation, shared by these controls.
+  function canvasColours(light) {
+    const style=window.getComputedStyle(document.documentElement), read=key=>style.getPropertyValue('--color-'+key).trim();
+    if(!['bg-panel','bg-canvas','accent','accent-hi','accent-press','ink-soft'].every(key=>/^#[0-9a-f]{6}$/i.test(read(key))))return;
+    const rgb=value=>value.slice(1).match(/../g).map(part=>parseInt(part,16));
+    const mix=(a,b,k)=>'#'+rgb(a).map((value,i)=>Math.round(value*(1-k)+rgb(b)[i]*k).toString(16).padStart(2,'0')).join('');
+    const lum=value=>rgb(value).map(value=>{const c=value/255;return c<=.04045?c/12.92:((c+.055)/1.055)**2.4;}).reduce((sum,c,i)=>sum+c*[.2126,.7152,.0722][i],0);
+    const ratio=(a,b)=>(Math.max(lum(a),lum(b))+.05)/(Math.min(lum(a),lum(b))+.05);
+    const panel=read('bg-panel'),toward=light?'#000000':'#ffffff',accent=read('accent');
+    const surfaces=[panel,mix(panel,toward,.035),mix(panel,toward,.045),mix(panel,toward,.07),read('bg-canvas'),mix(panel,'#000000',light?.02:.33)];
+    const ensure=(fg,backgrounds)=>{let value=fg,k=0;while(backgrounds.some(bg=>ratio(value,bg)<4.6)&&k<1){k+=.03;value=mix(fg,toward,k);}return value;};
+    const soft=mix(accent,panel,light?.86:.8),set=(key,value)=>document.documentElement.style.setProperty('--v22g-'+key,value);
+    set('accent-soft',soft);set('accent-ink',ensure(read(light?'accent-press':'accent-hi'),[...surfaces,soft,mix(soft,accent,.2)]));
+    set('ink2',ensure(read('ink-soft'),surfaces));set('ink3',ensure(mix(read('ink-soft'),panel,.2),surfaces));
+  }
   function App() {
     const s = useData();
     const [route, setRoute] = React.useState('home'),  // SPEC § and founder 2026-11-02: the app opens on Home; the task session stays on that page
@@ -34,6 +49,22 @@
       [libraryOpen, setLibraryOpen] = React.useState(false),
       [selectedNodeId, setSelectedNodeId] = React.useState(null);
     const [agentLoad, setAgentLoad] = React.useState({status: 'empty'});
+    const [canvasTabs, setCanvasTabs] = React.useState({tabs: [], active: '', split: '', collapsed: false});
+    const tabsRef = React.useRef(canvasTabs), tabWrites = React.useRef(Promise.resolve());
+    const saveCanvasTabs = value => {
+      tabsRef.current = value;
+      setCanvasTabs(value);
+      const write = tabWrites.current.then(() => api.setCanvasTabs(value));
+      tabWrites.current = write.catch(error => setToast(error.message));
+      return write;
+    };
+    React.useEffect(() => {
+      let live = true;
+      api.readCanvasTabs().then(result => {
+        if (live && result.canvasTabs) { tabsRef.current = result.canvasTabs; setCanvasTabs(result.canvasTabs); }
+      }).catch(error => setToast(error.message));
+      return () => {live = false;};
+    }, []);
     const agentLoadGeneration = React.useRef(0);
     const reloadWorkshop = async () => {
       const generation = ++agentLoadGeneration.current;
@@ -101,7 +132,7 @@
     }
     React.useEffect(() => {
       const preference = window.matchMedia('(prefers-color-scheme: dark)');
-      const applyTheme = () => { document.documentElement.dataset.theme = theme === 'System' ? (preference.matches ? 'Dark' : 'Light') : theme; };
+      const applyTheme = () => { document.documentElement.dataset.theme = theme === 'System' ? (preference.matches ? 'Dark' : 'Light') : theme; canvasColours(document.documentElement.dataset.theme==='Light'); };
       applyTheme();
       if (theme === 'System') preference.addEventListener('change', applyTheme);
       document.documentElement.dataset.contrast = String(s.settings.find(r => r.id === 'Appearance.High contrast')?.value);
@@ -196,14 +227,38 @@
         return null;
       }
     };
-    const taskFace = taskFaces.get(task) || 'workshop';
+    const taskFace = taskFaces.get(task) || 'canvas';
     const setTaskFace = face => setTaskFaces(current => new Map(current).set(task, face));
-    const openTaskFile = async (id, face = taskFaces.get(id) || 'workshop') => {
+    const openTaskFile = async (id, face = taskFaces.get(id) || 'canvas') => {
       const opened = await act(() => api.openTaskGraph(id));
       if (!opened || opened.cancelled) return;
+      const held = tabsRef.current;
+      const tabs = held.tabs.some(tab => tab.id === id) ? held.tabs : [...held.tabs.filter(tab => tab.kept || tab.id === held.split), {id, kept: false}];
+      await act(() => saveCanvasTabs({...held, tabs, active: id, split: held.split === id ? '' : held.split}));
       setTask(id);
-      setTaskFaces(current => new Map(current).set(id, face));
+      setTaskFaces(current => new Map(current).set(id, face === 'workshop' ? 'split' : face));
       go('task-file');
+    };
+    const keepTaskTab = id => saveCanvasTabs({...tabsRef.current, tabs: tabsRef.current.tabs.map(tab => tab.id === id ? {...tab, kept: true} : tab)});
+    React.useEffect(()=>{
+      const id=api.getSessionDocument?.()?.properties?.taskContext?.task || tabsRef.current.active;
+      const tab=tabsRef.current.tabs.find(tab=>tab.id===id);
+      if(tab && !tab.kept && (api.hasSessionEdits?.() || s.graph.nodes.some(node=>node.status==='Running')))keepTaskTab(id).catch(error=>setToast(error.message));
+    },[s.sessionDirty,s.graph.nodes]);
+    const openTaskBeside = id => {
+      if (id === task) return;
+      const held=tabsRef.current, tabs=held.tabs.some(tab=>tab.id===id) ? held.tabs : [...held.tabs,{id,kept:true}];
+      return saveCanvasTabs({...held,tabs:tabs.map(tab=>tab.id===task||tab.id===id?{...tab,kept:true}:tab),split:id});
+    };
+    const closeTaskTab = async id => {
+      const held = tabsRef.current, tabs = held.tabs.filter(tab => tab.id !== id);
+      const active = held.active === id ? tabs.at(-1)?.id || '' : held.active;
+      if (held.active === id && active) {
+        const opened = await act(() => api.openTaskGraph(active));
+        if (!opened || opened.cancelled) return;
+      }
+      await saveCanvasTabs({...held, tabs, active, split: held.split === id || held.split === active ? '' : held.split});
+      if (task === id) {setTask(active); if (!active) go('home');}
     };
     const confirm = (title, run) => show('Confirm', {
       title,
@@ -266,6 +321,11 @@
       setTask,
       taskFace,
       setTaskFace,
+      canvasTabs,
+      saveCanvasTabs,
+      keepTaskTab,
+      openTaskBeside,
+      closeTaskTab,
       settingsOrigin: settingsOrigin.current,
       openTaskFile,
       go,
@@ -293,6 +353,18 @@
     }, [toast, s.runtimeParameters?.toast_visible_ms]);
     React.useEffect(() => {
       const key = e => {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') {
+          e.preventDefault(); show('New task'); return;
+        }
+        if (route === 'task-file' && (e.ctrlKey || e.metaKey)) {
+          if (e.key === '\\') {e.preventDefault();setTaskFace(taskFace === 'split' ? 'canvas' : 'split');return;}
+          if (e.key.toLowerCase() === 'w') {e.preventDefault();act(() => closeTaskTab(task));return;}
+          if (e.key === 'PageDown' || e.key === 'PageUp') {
+            e.preventDefault(); const tabs = tabsRef.current.tabs, index = tabs.findIndex(tab => tab.id === task);
+            if (tabs.length) openTaskFile(tabs[(index + (e.key === 'PageDown' ? 1 : -1) + tabs.length) % tabs.length].id);
+            return;
+          }
+        }
         if (e.ctrlKey && e.key.toLowerCase() === 'k') {
           e.preventDefault();
           show('Search');
@@ -316,7 +388,7 @@
           })), duration);
         }
         if (e.key === 'Escape') {
-          if (modal) close();else if (companion) setCompanion(false);else if (route !== 'home') go('home');
+          if (modal) close();else if (companion) setCompanion(false);else if (route !== 'home' && route !== 'task-file') go('home');
         }
         if (e.key === '/' && !e.target.matches('input,textarea,select')) {
           e.preventDefault();
@@ -337,7 +409,7 @@
         window.removeEventListener('keyup', up);
         clearTimeout(talkTimer.current);
       };
-    }, [modal, companion, route]);
+    }, [modal, companion, route, task, taskFace]);
     React.useEffect(() => {
       const openRequestedTask = event => {
         const id = event.detail?.task_id;
@@ -391,7 +463,7 @@
         height: '100%',
         display: 'grid',
         gridTemplateColumns: 'minmax(0,1fr)',
-        gridTemplateRows: fullPage ? '48px minmax(0,1fr)' : '48px minmax(0,1fr) 22px'
+        gridTemplateRows: route==='task-file' ? '48px minmax(0,1fr) 24px' : fullPage ? '48px minmax(0,1fr)' : '48px minmax(0,1fr) 22px'
       }}>
    <header className="flex app-header" data-window-caption style={{
           height: 48,
@@ -400,24 +472,24 @@
           borderBottom: '1px solid ' + A.lineSoft,
           fontSize: 'calc(13px * var(--text-scale,1))',
           gap: 0
-        }}><button className="button-reset header-mark" style={{
+        }}><button data-design="header.mark" className="button-reset header-mark" style={{
             color: A.accent
           }} aria-label="ArchHub menu" title="ArchHub menu" onClick={event => executeAction("appShell.ArchHubMenu.1", {
             show
-          }, event)}><ArchMark size={20} /></button><button className="button-reset header-workspace" aria-label="Workspace" title="Workspace" onClick={event => executeAction("appShell.Control.4", {
+          }, event)}><ArchMark size={20} /></button><button data-design="header.workspace" className="button-reset header-workspace" aria-label="Workspace" title="Workspace" onClick={event => executeAction("appShell.Control.4", {
             show
           }, event)}><span>{s.workspaces.find(w => w.id === s.activeWorkspace)?.name || s.workspaces.find(w => w.builtIn)?.name || 'Add workspace'}</span><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true"><path d="M3 4.5l3 3 3-3" /></svg></button><i className="header-divider" /><span className="muted">/</span><button className="button-reset header-page" onClick={event => executeAction("appShell.ArchHub.2", {
             go
-          }, event)}>{(route.startsWith("settings/") ? "Settings" : route === "task-file" ? (taskFace === "workshop" ? "Workshop" : "Canvas") : routeNames[route]) || route.split('/').at(-1)}</button><span className="fill" /><button className="button-reset header-search" onClick={event => executeAction("appShell.SearchCtrlK.5", {
+          }, event)}>{(route.startsWith("settings/") ? "Settings" : route === "task-file" ? (taskFace === "workshop" ? "Workshop" : "Canvas") : routeNames[route]) || route.split('/').at(-1)}</button><span className="fill" /><button data-design="header.new" className="button-reset header-new" onClick={event=>executeAction('projects.controls.activate',{handler:() => show('New task')},event)}><window.AHIcon name="plus" size={14} />New task</button><button data-design="header.search" className="button-reset header-search" onClick={event => executeAction("appShell.SearchCtrlK.5", {
             show
           }, event)} aria-label="Search · Ctrl K"><window.AHIcon name="search" size={15} /><span className="fill">Search...</span><kbd>Ctrl K</kbd></button>{(s.update.available || s.update.state==='failed') && <button className="button-reset header-update" title={s.update.state==='failed' ? (s.update.detail || 'Update failed') : `${s.update.installed} → ${s.update.next}. Unsent text is lost; your saved graphs and settings stay with you.`} aria-label={s.update.state==='failed' ? (s.update.detail || 'Update failed') : 'Update available'} onClick={event => executeAction("appShell.Control.3", {
             act,
             api,
             go,
             s
-          }, event)}>{s.update.state==='failed' ? 'Update failed' : 'Update'}</button>}<button className="button-reset header-icon" aria-label="Tray menu" title="Tray menu" onClick={event => executeAction("appShell.TrayMenu.7", {
+          }, event)}>{s.update.state==='failed' ? 'Update failed' : 'Update'}</button>}<button data-design="header.tray" className="button-reset header-icon" aria-label="Tray menu" title="Tray menu" onClick={event => executeAction("appShell.TrayMenu.7", {
             show
-          }, event)}><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3" cy="8" r="1.3" /><circle cx="8" cy="8" r="1.3" /><circle cx="13" cy="8" r="1.3" /></svg></button><button className="button-reset header-icon" aria-label="Notifications" title="Notifications" onClick={event => executeAction("appShell.Notifications.6", {
+          }, event)}><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3" cy="8" r="1.3" /><circle cx="8" cy="8" r="1.3" /><circle cx="13" cy="8" r="1.3" /></svg></button><button data-design="header.bell" className="button-reset header-icon" aria-label="Notifications" title="Notifications" onClick={event => executeAction("appShell.Notifications.6", {
             show
           }, event)}><window.AHIcon name="bell" size={16} />{s.notifications.some(n => !n.read) && <b className="header-count">{s.notifications.filter(n => !n.read).length}</b>}</button>{window.ARCHHUB_ONE_TITLE_BAR && <div className="window-controls" role="group" aria-label="Window">{[['minimize', 'Minimize', '\uE921'], ['maximize', 'Maximize', '\uE922'], ['close', 'Close', '\uE8BB']].map(([action, name, glyph]) => [action, action === 'maximize' && document.documentElement.dataset.windowMaximized === 'true' ? 'Restore' : name, glyph]).map(([action, label, glyph]) => <button key={action} className="button-reset" data-window-button={action} aria-label={label} title={label} onClick={event => executeAction("appShell.WindowControl.99", {
             api,
@@ -462,13 +534,14 @@
               fontSize: 'calc(12px * var(--text-scale,1))',
               flex: 'none'
             }}>{s.profile.name.split(' ').map(n => n[0]).join('').slice(0, 2)}</button></nav><div className="screen-with-composer has-local-composer" style={{'--canvas-library-width':libraryOpen ? '248px' : '0px'}}>{(canvasOpened || route==='canvas') && <div hidden={route!=='canvas'} ref={element=>{element?.toggleAttribute('inert',route!=='canvas'||!!s.graphOpening);}} style={{display:route==='canvas'?'grid':'none',minHeight:0,height:'100%'}}><window.UI.Canvas key={s.graph.scopeKey || s.graph.id} active={route==='canvas'&&!s.graphOpening} /></div>}{screen}{route === 'canvas' && <div className="canvas-status" role="status"><span>{s.connectionNotice && s.connectionNotice !== 'Checking for updates…' ? '1 notice · see Receipts' : s.connectionNotice || '● Local session'}</span><span>{(s.agentSummary||'Checking running agents…')} · {(n => n ? n + ' wait for you' : 'Nothing waiting for you')(s.approvals.filter(c=>c.status==='pending').length)}</span>{agentLoad.status==='error' && <button className="button-reset" onClick={event=>executeAction('appShell.RetryWorkshop',{reloadWorkshop},event)}>Retry Workshop connection</button>}</div>}{route === 'canvas' && <div className="global-composer canvas-composer"><window.UI.Composer compact /></div>}</div></div>
-    {!fullPage && <footer className="flex" style={{
-          fontSize: 'calc(11px * var(--text-scale,1))',
+    {(!fullPage || route==='task-file') && <footer className="flex" style={{
+          fontSize: route==='task-file' ? 'calc(12px * var(--text-scale,1))' : 'calc(11px * var(--text-scale,1))',
           gap: 16,
           padding: '0 14px',
-          background: '#0f0f13',
+          marginLeft: route==='task-file' ? 64 : 0,
+          background: route==='task-file' ? A.bgDeep : '#0f0f13',
           borderTop: '1px solid ' + A.lineSoft,
-          color: A.inkSoft
+          color: route==='task-file' ? 'var(--v22g-ink2)' : A.inkSoft
         }}>{s.connectionNotice && s.connectionNotice !== 'Checking for updates…' ? <button className="button-reset muted" onClick={event => executeAction("appShell.Receipts.16", {go}, event)}>1 notice · see Receipts</button> : <span>{s.connectionNotice || '● Local session'}</span>}
           {agentLoad.status === 'waiting' && <span role="status">Loading Workshop settings…</span>}
           {agentLoad.status === 'error' && <span role="alert">{agentLoad.message}<Btn aria-label="Retry Workshop connection" onClick={event => executeAction("appShell.RetryWorkshop", {reloadWorkshop}, event)}>Retry</Btn></span>}
@@ -478,9 +551,9 @@
             go
             }, event)}>{(s.hosts||[]).filter(h=>h.state==='connected'||h.state==='listening').map(h=>h.name+' ready').join(' · ') || s.files.find(f => f.id === s.activeFile)?.name || (s.hostsProbing?'Checking programs…':'Open Connections to connect a program')}</button><button className="button-reset muted" title={(s.agents||[]).map(a=>a.name+' · '+a.task).join(' · ')} onClick={event => executeAction("appShell.RunningWaitForYou.14", {
             go
-          }, event)}>{s.agentSummary||'Checking running agents…'} · {(n => n ? n + ' wait for you' : 'Nothing waiting for you')(s.approvals.filter(c => c.status === 'pending').length)}</button><span className="fill" /><button className="button-reset muted" onClick={event => executeAction("appShell.CtrlK.15", {
+          }, event)}>{s.agentSummary||'Checking running agents…'} · {(n => n ? n + ' wait for you' : 'Nothing waiting for you')(s.approvals.filter(c => c.status === 'pending').length)}</button><span className="fill" /><button hidden={route==='task-file'} className="button-reset muted" onClick={event => executeAction("appShell.CtrlK.15", {
             show
-          }, event)}>Ctrl K</button><button className="button-reset muted" onClick={event => executeAction("appShell.Receipts.16", {
+          }, event)}>Ctrl K</button><button hidden={route==='task-file'} className="button-reset muted" onClick={event => executeAction("appShell.Receipts.16", {
             go
           }, event)}>Receipts</button></footer>}
   </div>}
@@ -511,6 +584,7 @@
       u = window.UI.useApp();
     const [text, setText] = React.useState(m.text || ''),
       [extra, setExtra] = React.useState(''),
+      [taskWorkspace, setTaskWorkspace] = React.useState(''),
       [query, setQuery] = React.useState(''),
       [mode, setMode] = React.useState('All'),
       [listening, setListening] = React.useState(false),
@@ -548,6 +622,7 @@
       if (result) close();
     };
     const k = m.kind;
+    if(k==='Approve' && s.approvals.find(card=>card.id===m.id)?.approvalKind==='canvas') return <section ref={ref} className="v22g-approval-pop" role="dialog" aria-label="Approve Canvas Run" style={{position:'fixed',zIndex:1000,width:440,maxWidth:'calc(100vw - 32px)',left:Math.max(16,Math.min(m.anchor?.x || 400,window.innerWidth-456)),top:Math.max(16,Math.min(m.anchor?.y || 180,window.innerHeight-360))}}><window.UI.ApprovalCard id={m.id} /></section>;
     if (modalActions[k] && !api.supportsAction(modalActions[k])) return null;
     let body;
     if (k === 'Compatible nodes') body = <><input aria-label="Search compatible nodes" placeholder="Find a compatible node…" value={query} onChange={e => setQuery(e.target.value)} /><div className="grid">{api.compatibleNodes(m.endpoint).filter(c => c.name.toLowerCase().includes(query.toLowerCase())).map(c => <button className="listbutton spread" key={c.id} onClick={event => executeAction("appShell.Control.18", {
@@ -671,12 +746,15 @@
           }, event)}><span>{item.label}</span><span className="muted" style={{
               fontSize: 'calc(11px * var(--text-scale,1))'
             }}>{item.group}</span></button>)}{!items.length && <Empty>No results.</Empty>}</div></>;
-    } else if (k === 'Confirm') body = <><p>{m.title}</p><p className="muted">Undo brings it back.</p><div className="flex"><Btn onClick={event => executeAction("appShell.Cancel.31", {
+    }
+    else if (k === 'Rename task') body = <><label className="grid">Task name<input aria-label="Task name" value={text} onChange={e => setText(e.target.value)} /></label><div className="flex"><Btn onClick={event=>executeAction('projects.controls.activate',{handler:close},event)}>Cancel</Btn><Btn p disabled={!text.trim()} onClick={event=>executeAction('projects.controls.activate',{handler:() => u.act(async () => {const result=await api.renameTask(m.id,text.trim());if(result)close();return result;})},event)}>Rename</Btn></div></>;
+    else if (k === 'Attach meeting notes') body = <><label className="grid">Meeting notes<textarea aria-label="Meeting notes" rows={8} maxLength={4000} value={text} onChange={e=>setText(e.target.value)} /></label><div className="flex"><Btn onClick={event=>executeAction('projects.controls.activate',{handler:close},event)}>Cancel</Btn><Btn p disabled={!text.trim()} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(async()=>{const result=await api.attachMeetingNotes(u.task,text);if(result)close();return result;})},event)}>Attach to thread</Btn></div></>;
+    else if (k === 'Confirm') body = <><p>{m.title}</p><p className="muted">Undo brings it back.</p><div className="flex"><Btn onClick={event => executeAction("appShell.Cancel.31", {
           close
         }, event)}>Cancel</Btn><Btn danger onClick={event => executeAction("appShell.Confirm.32", {
           m,
           saved
-        }, event)}>Confirm</Btn></div></>;else if (k === 'New task') body = <><label className="grid">Task name<input aria-label="Task name" value={text} onChange={e => setText(e.target.value)} placeholder="Name this task" /></label><Btn p disabled={!text.trim()} onClick={event => executeAction("ui.select", async () => { const made = await u.act(() => api.createTask(text.trim())); if (made?.taskId) { await u.openTaskFile(made.taskId); } }, event)}>Create task</Btn></>;else if (k === 'Account') body = <><h2>{s.profile.name}</h2><p className="muted">{s.profile.firm} · {s.people.length} people</p><div className="grid">{['My profile', 'My secrets', 'My files', 'Workspaces'].map(t => <Btn key={t} onClick={event => executeAction("appShell.Control.33", {
+        }, event)}>Confirm</Btn></div></>;else if (k === 'New task') body = <><label className="grid">Task name<input data-design="newtask.name" aria-label="Task name" value={text} onChange={e => setText(e.target.value)} placeholder="Name this task" /></label><div className="v22g-task-options"><label className="grid">Agent<select data-design="newtask.agent" aria-label="Agent" value={extra} onChange={e => setExtra(e.target.value)}><option value="">No agent</option>{(window.UI.workshopPeople?.(s).choices || []).filter(row=>row.key!=='everyone').map(row=><option key={row.key} value={row.handle || row.name}>{row.name}</option>)}</select></label><label className="grid">Workspace<select data-design="newtask.workspace" aria-label="Workspace" value={taskWorkspace} onChange={e => setTaskWorkspace(e.target.value)}><option value="">Sessions folder</option>{s.workspaces.filter(row=>!row.builtIn && row.available!==false).map(row=><option key={row.id} value={row.id}>{row.name}</option>)}</select></label></div><p className="v22g-task-hint">Opens its own .archhub file on the Canvas with the Agent, You, Workshop and Session nodes already in it. Nothing runs until you press Run.</p><div className="flex"><Btn data-design="newtask.cancel" onClick={event=>executeAction('projects.controls.activate',{handler:close},event)}>Cancel</Btn><Btn p data-design="newtask.create" disabled={!text.trim()} onClick={event=>executeAction('projects.controls.activate',{handler:() => u.act(async () => {const made=await api.createTask(text.trim(),extra,taskWorkspace);if(made?.taskId){await u.openTaskFile(made.taskId);await u.keepTaskTab(made.taskId);}return made;})},event)}>Create and open</Btn></div></>; else if (k === 'Account') body = <><h2>{s.profile.name}</h2><p className="muted">{s.profile.firm} · {s.people.length} people</p><div className="grid">{['My profile', 'My secrets', 'My files', 'Workspaces'].map(t => <Btn key={t} onClick={event => executeAction("appShell.Control.33", {
           t,
           u
         }, event)}>{t}</Btn>)}<Btn onClick={event => executeAction("appShell.AccountSettings.34", {
@@ -941,7 +1019,7 @@
       }, event)}>Updates &amp; About</Btn></>;else if (k === 'Ask why') body = <p>The read-only steps find untagged doors and check the prefix before the write step. Approve once runs that proposed change.</p>;else if (k === 'Website') body = <><h2>ArchHub</h2><p>The same catalogue powers the app and its documentation.</p><Btn onClick={event => executeAction("appShell.OpenDocs.97", {
         u
       }, event)}>Open docs</Btn></>;else body = <p>{m.text || 'Choose an action from the app.'}</p>;
-    if (['Node menu', 'Canvas menu', 'App menu', 'Tray', 'Port menu'].includes(k)) return <window.UI.ContextMenu kind={k} nodeId={m.id} port={m.port} paramKey={m.paramKey} open={m.open} selected={m.selected} group={m.group} remove={m.remove} anchor={m.anchor} close={close} />;
+    if (['Node menu', 'Canvas menu', 'App menu', 'Tray', 'Port menu', 'Task tab menu', 'Open tasks', 'Task message menu', 'Canvas attachments'].includes(k)) return <window.UI.ContextMenu kind={k} nodeId={m.id} message={m.message} taskId={m.taskId} port={m.port} paramKey={m.paramKey} open={m.open} selected={m.selected} group={m.group} remove={m.remove} anchor={m.anchor} close={close} />;
     return <div className="overlay" onMouseDown={e => {
       if (e.target === e.currentTarget) close();
     }}><section ref={ref} className="dialog" role="dialog" aria-modal="true" aria-label={k} style={{
@@ -1337,8 +1415,12 @@
     u
   }, event) {
     const handler = async () => {
-      await u.act(() => api.readNotification(n.id));
-      u.go('workshop');
+      const result = await u.act(() => api.readNotification(n.id));
+      if(!result)return;
+      const card=api.getSnapshot().approvals.find(card=>card.status==='pending' && (card.taskId===n.taskId || card.work===n.taskId));
+      if(card)u.show('Approve',{id:card.id});
+      else if(n.taskId)await u.openTaskFile(n.taskId,'split');
+      else u.close();
     };
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
   }

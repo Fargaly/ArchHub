@@ -217,7 +217,7 @@ async function refreshApprovals() {
  const approvals=await workshop('listApprovals');
  if(epoch!==scopeEpoch||binding!==JSON.stringify(workshopBinding()))return state.approvals;
  if(!Array.isArray(approvals))return approvals;  // same contract as refreshTasks: the owner's refusal is the answer, not a throw
- const tasks=state.tasks.map(task=>({...task,approvalId:approvals.findLast(card=>card.work===task.id&&card.status!=='superseded')?.id}));
+ const tasks=state.tasks.map(task=>({...task,approvalId:approvals.findLast(card=>(card.work===task.id||card.taskIds?.includes(task.id))&&card.status!=='superseded')?.id}));
  publish({approvals,tasks,approvalActionsReady:true});return approvals;
 }
 async function refreshTasks(details=true) {
@@ -449,7 +449,7 @@ api.supportsAction=(name,mode)=>boundAction(name,mode)&&
  (!desktopActions.includes(name)||state.desktopReady===true&&!state.nativeApproval)&&
  (!watcherActions.includes(name)||state.watcherReady===true&&!state.nativeApproval)&&
  (!hostSkillActions.includes(name)||state.hostSkillsReady===true&&!state.nativeApproval)&&
- (name!=='decline'||state.nativeApproval||state.approvals.some(card=>['watcher','hostskills','desktop','schedule'].includes(card.approvalKind)&&card.status==='pending'))&&
+ (name!=='decline'||state.nativeApproval||state.approvals.some(card=>['watcher','hostskills','desktop','schedule','ask','canvas'].includes(card.approvalKind)&&card.status==='pending'))&&
  (!['startVoiceInput','stopVoiceInput'].includes(name)||typeof window.ARCHHUB_VOICE_START==='function'&&typeof window.ARCHHUB_VOICE_STOP==='function')&&
  (name!=='speak'||typeof window.speechSynthesis?.speak==='function'&&typeof window.SpeechSynthesisUtterance==='function');
 window.addEventListener('archhub:capabilities',()=>publish());
@@ -708,9 +708,11 @@ for(const name of hostSkillActions)api[name]=async(...args)=>{
 const approveDelegation=api.approve;
 api.approve=async(id,...args)=>{
  const card=state.approvals.find(c=>c.id===id);
- if(card?.approvalKind==='ask'){
-  const result=await workshop('answerApproval',['ask',id,card.input_digest,'approve']);
+ if(['ask','canvas'].includes(card?.approvalKind)){
+  if(card.approvalKind==='canvas')await flushAutosave();
+  const result=await workshop('answerApproval',[card.approvalKind,id,card.input_digest,'approve']);
   if(result?.status!=='approved')throw Error(result?.error||result?.message||'The held action was not released.');
+  if(card.approvalKind==='canvas' && card.path===sessionPath)await pollFile();
   await refreshApprovals();return result;
  }
  if(['desktop','schedule'].includes(card?.approvalKind)){
@@ -731,9 +733,11 @@ api.approve=async(id,...args)=>{
 };
 api.decline=async id=>{
  const card=state.approvals.find(c=>c.id===id);
- if(card?.approvalKind==='ask'){
-  const result=await workshop('answerApproval',['ask',id,card.input_digest,'deny']);
+ if(['ask','canvas'].includes(card?.approvalKind)){
+  if(card.approvalKind==='canvas')await flushAutosave();
+  const result=await workshop('answerApproval',[card.approvalKind,id,card.input_digest,'deny']);
   if(result?.status!=='declined')throw Error(result?.error||result?.message||'The held action was not refused.');
+  if(card.approvalKind==='canvas'&&card.path===sessionPath)await pollFile();
   await refreshApprovals();return result;
  }
  if(['desktop','schedule'].includes(card?.approvalKind)){
@@ -784,14 +788,14 @@ function rememberTask(result, select=true){
  if(!result||!result.taskId)return result;
  const session={taskId:result.taskId,path:result.path||'',sessionId:result.id||'',scope:result.scope,rules:result.rules||[],agents:result.agents||[],plan:result.plan||[],
   progress:result.progress||{},workflow:result.workflow||[],activity:result.activity||[],parameters:result.parameters||[],fileMessages:result.messages||[],
-  folders:result.folders||[],references:result.references||[]};
+  folders:result.folders||[],references:result.references||[],workspace:result.workspace||'',homePinned:result.homePinned===true,pinnedMessages:result.pinnedMessages||[]};
  const tasks=state.tasks.map(t=>t.id===result.taskId?{...t,...session,sessionPath:session.path,sessionOpen:select?true:Boolean(t.sessionOpen)}
   :(select?{...t,sessionOpen:Boolean(t.sessionPath&&session.path&&t.sessionPath===session.path)}:t));
  publish(select?{focusedTask:result.taskId,tasks}:{tasks});
  return session;
 }
-api.createTask=async title=>{const result=await workshop('createTask',[title]);if(!result||result.ok===false)throw Error(result?.message||result?.error||'The task was not created.');await refreshTasks();return {...result,...rememberTask(result)};};
-api.renameTask=async(id,title)=>{const result=await workshop('renameTask',[id,title]);if(!result||result.ok===false)throw Error(result?.message||result?.error||'The task title was not saved.');await refreshTasks(false);return result;};
+api.createTask=async(title,agent='',workspace='')=>{const result=await workshop('createTask',[title,agent,workspace]);if(!result||result.ok===false)throw Error(result?.message||result?.error||'The task was not created.');await refreshTasks();return {...result,...rememberTask(result)};};
+api.renameTask=async(id,title)=>{const result=await taskFileAction('renameTask',id,title);await refreshTasks(false);return result;};
 async function taskFileAction(method,id,...args){
  const navigation=fileNavigation;
  if(sessionDocument)await flushAutosave();
@@ -808,6 +812,8 @@ async function taskFileAction(method,id,...args){
  return {...result,...rememberTask(result,false)};
 }
 api.setTaskSession=(id,values)=>taskFileAction('setTaskSession',id,values);
+api.pinTaskMessage=(id,message,pinned)=>taskFileAction('pinTaskMessage',id,message,pinned);
+api.attachMeetingNotes=async(id,text)=>{const result=await workshop('attachMeetingNotes',[id,text]);if(!result||result.ok===false)throw Error(result?.error||'Meeting notes were not attached.');await refreshTasks(false);return result;};
 for(const method of ['checkpointTask','restoreTaskCheckpoint'])api[method]=async(id,...args)=>{const result=await taskFileAction(method,id,...args);await refreshTasks(false);return result;};
 let openingTask=null;
 api.openTaskGraph=id=>{
@@ -1180,6 +1186,8 @@ function setAppearance(id,value){
  });
 }
 api.setInspectorWidth=value=>setAppearance('Appearance.Inspector width',value);
+api.readCanvasTabs=()=>settingsAction('readCanvasTabs');
+api.setCanvasTabs=value=>settingsAction('setCanvasTabs',[value]);
 api.setSettingsScope=async scope=>{const result=await settingsAction('setSettingsScope',[scope,state.activeWorkspace||state.graph.workspaceIds?.[0]||'',state.graph.id]);scopeEpoch++;publish({hostSkillsReady:false,hostSkills:[],connectorBundle:null});await commands.load();project();await api.refreshSettingsOperations();await refreshHostSkills();return result;};
 const settingsListWorkspaces=api.listWorkspaces;
 api.listWorkspaces=async()=>{await settingsListWorkspaces();if(state.profile.signedIn)await api.refreshSettingsOperations();return copy(state.workspaces);};
@@ -1520,9 +1528,9 @@ function datasetPorts(node){
  if(node.type!=='data.dataset')return null;
  return {source:[{id:'records',type:'list',label:'Record[]'},...(node.paramDefs||[]).map(d=>({id:'field:'+d.id,type:'list',label:d.name+' \u00b7 '+(COLUMN_LABEL[d.type]||'Any')+'[]'}))],target:[]};
 }
-function fileNode(node){
+function fileNode(node, document=sessionDocument){
  const item=state.libraryPorts.find(row=>row.id===node.item)||state.libraryPorts.find(row=>row.engine===node.type), base=node.ports||item?.ports||{source:[],target:[]};
- const defs=(node.paramDefs||[]).map(d=>node.type==='param.value'&&d.id==='value'?{...d,type:node.params.type}:d), bind=node.type==='param.value'?node.bind:null, owner=bind&&sessionDocument.nodes.find(n=>n.id===bind.node);
+ const defs=(node.paramDefs||[]).filter(d=>!node.fixed||!['reference','thread','limit','workspace'].includes(d.id)).map(d=>node.type==='param.value'&&d.id==='value'?{...d,type:node.params.type}:d), bind=node.type==='param.value'?node.bind:null, owner=bind&&document.nodes.find(n=>n.id===bind.node);
  const ports=datasetPorts(node)||{source:node.type==='param.value'?[{id:'value',type:PARAM_SOCKET[node.params.type]||'any'}]:base.source||[],
   target:[...(base.target||[]).map(p=>node.type==='param.value'&&p.id==='value'?{...p,type:PARAM_SOCKET[node.params.type]||'any'}:p),...defs.map(d=>({id:'param:'+d.id,type:PARAM_SOCKET[d.type]||'any',label:d.name}))]};
  const params=bind?{type:node.params.type,value:owner?.params[bind.param]}:item?.setting?{value:item.setting.value}:{...node.params};
@@ -1530,16 +1538,16 @@ function fileNode(node){
  const schema=Object.keys(params).map(key=>{const kind=typeOf(key),def=item?.setting||defs.find(d=>d.id===key)||(bind&&owner?.paramDefs?.find(d=>d.id===bind.param))||{};
    return {key,label:node.type==='param.value'&&key==='type'?'Type':def.name||key,type:(['min','max','step'].includes(key)||kind==='number'||kind==='integer')?'number':PARAM_EDITOR[kind]||(kind?'text':typeof params[key]==='number'?'number':typeof params[key]==='boolean'?'boolean':'text'),
    dataType:kind||'',min:def.min,max:def.max,step:def.step??(kind==='integer'?1:undefined),unit:node.type==='param.value'&&key==='type'?'':def.unit||'',options:['enum','choice'].includes(kind)?def.options||[]:undefined,
-   editable:!(['param.value','data.field'].includes(node.type)&&key==='type'),userParam:!!defs.find(d=>d.id===key),promoted:defs.find(d=>d.id===key)?.promoted||null,
+   editable:!(node.fixed&&['reference','thread','limit','workspace'].includes(key))&&!(['param.value','data.field'].includes(node.type)&&key==='type'),userParam:!!defs.find(d=>d.id===key),promoted:defs.find(d=>d.id===key)?.promoted||null,
    linkedTo:bind&&key==='value'?(owner?.title||'')+' \u00b7 '+(owner?.paramDefs?.find(d=>d.id===bind.param)?.name||bind.param):''};});
  const dataset=node.type==='data.dataset'?{fields:defs,records:node.records||[]}:null;
- const feed=node.type==='data.field'&&sessionDocument.wires.find(w=>w.to.node===node.id&&w.to.socket==='column');
- const column=node.type==='data.field'?{dataset:feed?sessionDocument.nodes.find(n=>n.id===feed.from.node)?.title||'':'',field:feed?feed.from.socket.replace(/^field:/,''):'',label:(COLUMN_LABEL[node.params.type]||'Any')+'[]'}:null;
- return {id:node.id,type:node.type,agentWork:node.agentWork,agentStep:node.params?.workshop_step===true,agentTask:sessionDocument.properties?.taskContext?.task,workflowStart:node.id==='start'&&!!sessionDocument.properties?.taskContext?.task,pure:item?.pure??node.pure,budget:node.budget||item?.budget||null,loop:node.loop||item?.loop||null,settingsKeys:item?.settingsKeys||[],dataset,column,title:node.title||item?.title||node.type,kind:node.children?'Group':item?.title||node.type,category:node.agentWork?.role==='step'?node.agentWork.kind+' · '+node.agentWork.tool:item?.cat||'Node',x:node.position.x,y:node.position.y,
+ const feed=node.type==='data.field'&&document.wires.find(w=>w.to.node===node.id&&w.to.socket==='column');
+ const column=node.type==='data.field'?{dataset:feed?document.nodes.find(n=>n.id===feed.from.node)?.title||'':'',field:feed?feed.from.socket.replace(/^field:/,''):'',label:(COLUMN_LABEL[node.params.type]||'Any')+'[]'}:null;
+ return {id:node.id,type:node.type,fixed:!!node.fixed,agentWork:node.agentWork,agentStep:node.params?.workshop_step===true,agentTask:document.properties?.taskContext?.task,workflowStart:node.id==='start'&&!!document.properties?.taskContext?.task,pure:node.type==='thing.agent'&&node.params.reference===true?true:item?.pure??node.pure,budget:node.budget||item?.budget||null,loop:node.loop||item?.loop||null,settingsKeys:item?.settingsKeys||[],dataset,column,title:node.title||item?.title||node.type,kind:node.children?'Group':item?.title||node.type,category:node.agentWork?.role==='step'?node.agentWork.kind+' · '+node.agentWork.tool:item?.cat||'Node',x:node.position.x,y:node.position.y,
   params,defaults:item?.params||{},parameterSchema:schema,paramDefs:defs,bind,
   inputs:(ports.target||[]).map(p=>({...p,name:p.label||p.id,type:p.type==='unknown'?'any':p.type})),outputs:(ports.source||[]).map(p=>({...p,name:p.label||p.id,type:p.type==='unknown'?'any':p.type})),
   children:node.children||[],members:(Array.isArray(node.members)?node.members:[]).filter(m=>m&&typeof m.id==='string'&&m.id).map(m=>({id:m.id,title:m.title||m.name||m.id,agent:m.agent||m.id})),parent:node.parent||null,icon:NODE_ICONS.includes(node.icon)?node.icon:'',color:typeof node.color==='string'&&/^#[0-9a-f]{6}$/i.test(node.color)?node.color:undefined,frozen:!!node.frozen,pinned:!!node.pinned,portVisibility:node.portVisibility||{},parameterPresentation:node.parameterPresentation||{},
-  output:node.result?.output||[],status:node.result?.status||'Idle',error:node.result?.error||'',display:node.result?.display||''};
+  output:node.result?.output||[],status:node.result?.status||'Idle',error:node.result?.error||'',display:node.result?.display||'',elapsedMs:node.result?.elapsed_ms};
 }
 // session_files.py _WIRE_MENUS, mirrored for the inspector. First choice is the omitted-field value.
 const WIRE_MENUS=[['matching',['By index','Longest','Shortest','Cross']],['order',['Source order','Reverse']],['missing',['Preserve','Drop','Blank']],['units',['From source','From target']],['conversion',['None','Number','Text']],['route',['Bezier','Straight','Step']]];
@@ -1550,10 +1558,16 @@ function projectSessionWire(w,nodes){
 }
 function projectFile(){
  if(!sessionDocument)return;
- const properties=sessionDocument.properties||{}, nodes=sessionDocument.nodes.map(fileNode), graph={...properties,id:sessionDocument.id,scopeKey:sessionDocument.id+':'+scopeEpoch,name:sessionDocument.title,system:false,
+ const properties=sessionDocument.properties||{}, nodes=sessionDocument.nodes.map(node=>fileNode(node)), graph={...properties,id:sessionDocument.id,scopeKey:sessionDocument.id+':'+scopeEpoch,name:sessionDocument.title,system:false,
   nodes,wires:sessionDocument.wires.map(w=>projectSessionWire(w,nodes)),viewport:sessionDocument.viewport};
  publish({graph,sessionFile:sessionPath,sessionDirty:localDirty || !sessionPath,graphOpening:false,sync:solveNote||'Local session file'});
 }
+api.readTaskPreview=async id=>{
+ const task=state.tasks.find(row=>row.id===id);
+ if(!task?.sessionPath)throw Error('This task has no session file.');
+ const read=await sessionRequest('read',{path:task.sessionPath}),document=read.document,nodes=document.nodes.map(node=>fileNode(node,document));
+ return {...document.properties,id:document.id,scopeKey:document.id+':preview',name:document.title,nodes,wires:document.wires.map(wire=>projectSessionWire(wire,nodes)),viewport:document.viewport};
+};
 // Parametric (Grasshopper): an edit re-solves the pure nodes downstream of it, then stops.
 let sessionRevision=0, localDirty=false, solveIds=new Set(), solveParams=[], solveTimer=null, solveNote='', solveCount=0;
 function fileEdit(edit,solveFor=null,param=null){
@@ -1653,6 +1667,7 @@ api.saveSession=async(path=sessionPath,saveAs=false)=>{
 };
 api.saveSessionAs=()=>api.saveSession('',true);
 api.getSessionDocument=()=>copy(portableDocument());
+api.hasSessionEdits=()=>fileHistory.length>0;
 api.readSystemGraph=async()=>{
  const data=await request('/api/universal/canvas'),previous=canvas;
  try{canvas=normalise(data);systemProjection=canvas;await commands.adopt(canvas);return {nodes:canvas.nodes.map(nodeDto),wires:(canvas.wires||[]).map(w=>({id:w.id,from:w.source||w.from,to:w.target||w.to,fromPort:w.source_interface||w.fromPort,toPort:w.target_interface||w.toPort,type:w.value_type||'any'}))};}
@@ -1749,6 +1764,7 @@ api.setNodePresentation=async(id,values)=>{
 };
 api.renameNode=async(id,title)=>fileEdit(d=>{const n=d.nodes.find(n=>n.id===id);if(n)n.title=title;});
 api.deleteSelection=async(nodes=[],wires=[])=>{
+ if(sessionDocument.nodes.some(node=>node.fixed&&nodes.includes(node.id)))throw Error('The four fixed nodes stay on every task canvas.');
  const removedNodes=new Set(nodes),removedWires=new Set(wires),removed=w=>removedWires.has(w.id)||removedNodes.has(w.from.node)||removedNodes.has(w.to.node);
  return fileEdit(d=>{
   d.nodes=d.nodes.filter(n=>!removedNodes.has(n.id));d.wires=d.wires.filter(w=>!removed(w));
@@ -1771,8 +1787,8 @@ api.runNode=async id=>{
  const navigation=fileNavigation;await flushAutosave();if(navigation!==fileNavigation)return {cancelled:true};
  const epoch=runEpoch,document=portableDocument();
  for(const node of sessionDocument.nodes)node.result={status:'Running'};projectFile();
- try{const result=await sessionRequest('run',{document,...(id?{roots:[id]}:{})});if(epoch!==runEpoch)throw Error('Session changed during Run; run the new values again.');
-  for(const node of sessionDocument.nodes)node.result=result.results[node.id]||{status:'Idle'};projectFile();queueAutosave();if(result.approvalId)await refreshApprovals();const run={id:window.crypto.randomUUID(),title:sessionDocument.title,status:result.succeeded?'Done':'Needs review',rows:Object.entries(result.results).map(([node,value])=>({node:state.graph.nodes.find(n=>n.id===node)?.title||node,status:value.status,output:JSON.stringify(value.output),error:value.error||''}))};publish({lastResult:run,runs:[...state.runs,run]});return {...result,id:run.id};
+ try{const result=await sessionRequest('run',{document,path:sessionPath,...(id?{roots:[id]}:{})});if(epoch!==runEpoch)throw Error('Session changed during Run; run the new values again.');
+  for(const node of sessionDocument.nodes)node.result=result.results[node.id]||{status:'Idle'};projectFile();queueAutosave();if(result.approvalId){await refreshApprovals();await refreshNotifications();}const run={id:window.crypto.randomUUID(),title:sessionDocument.title,status:result.succeeded?'Done':'Needs review',rows:Object.entries(result.results).map(([node,value])=>({node:state.graph.nodes.find(n=>n.id===node)?.title||node,status:value.status,output:JSON.stringify(value.output),error:value.error||''}))};publish({lastResult:run,runs:[...state.runs,run]});return {...result,id:run.id};
  }catch(error){if(epoch===runEpoch){for(const node of sessionDocument.nodes)node.result={status:'Error',error:error.message};projectFile();}throw error;}
 };
 api.runToHere=api.runNode;

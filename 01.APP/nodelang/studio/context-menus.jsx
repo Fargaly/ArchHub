@@ -9,6 +9,8 @@
   function ContextMenu({
     kind,
     nodeId,
+    message,
+    taskId,
     port,
     paramKey,
     open,
@@ -26,10 +28,31 @@
       const result = await actionState.run(fn);
       if (result?.approvalId) u.show('Approve', {
         id: result.approvalId
-      });else if (result) close();
+      });else if (result !== null) close();
     };
     let groups = [];
-    if (kind === 'Port menu' && n) {
+    if (kind === 'Open tasks') {
+      groups = [s.tasks.filter(row => row.status !== 'ARCHIVED' && !u.canvasTabs.tabs.some(tab => tab.id === row.id)).map(row =>
+        [row.title, 'canvas', '', () => run(() => u.openTaskFile(row.id))])];
+    } else if (kind === 'Canvas attachments') {
+      groups = [[['File', 'folder', '', () => {close();u.pickFile();}],
+        ['Meeting notes', 'docs', '', () => u.show('Attach meeting notes')]]];
+    } else if (kind === 'Task message menu' && message) {
+      const task = s.tasks.find(row=>row.id===taskId), pinned = task?.pinnedMessages?.includes(message.id);
+      groups = [[['Copy text', 'docs', '', () => run(async () => {await navigator.clipboard.writeText(String(message.text));return {ok:true};})],
+        ['Reply', 'workshop', '', () => {close();open?.();}],
+        ['Show on canvas', 'canvas', '', () => run(async () => {const node=s.graph.nodes.find(row=>row.title && String(message.text).includes(row.title));if(!node)throw Error('This message names no node on this canvas.');u.setSelectedNodeId(node.id);return {ok:true};})],
+        ['Make a task from this', 'plus', '', () => run(async () => {const made=await api.createTask(String(message.text).slice(0,2000));if(made.taskId)await u.openTaskFile(made.taskId);return made;})],
+        [pinned ? 'Unpin' : 'Pin to the task', 'pin', '', () => run(() => api.pinTaskMessage(taskId,message.id,!pinned))]]];
+    } else if (kind === 'Task tab menu') {
+      const tab = u.canvasTabs.tabs.find(row => row.id === nodeId);
+      groups = [[['Keep open', 'pin', '', () => run(() => u.keepTaskTab(nodeId)), false, tab?.kept],
+        ['Open beside', 'canvas', '', () => run(() => u.openTaskBeside(nodeId)), false, nodeId===u.task],
+        ['Rename', 'edit', '', () => u.show('Rename task', {id: nodeId, text: s.tasks.find(row => row.id === nodeId)?.title || ''})],
+        ['Show on Home', 'home', '', () => run(async () => {await api.setTaskSession(nodeId,{homePinned:true});u.setTask(nodeId);u.go('home');return {ok:true};})]],
+        [['Close tab', 'close', 'Ctrl W', () => run(() => u.closeTaskTab(nodeId))],
+        ['Close other tabs', 'close', '', () => run(async () => {for (const row of [...u.canvasTabs.tabs]) if(row.id !== nodeId) await u.closeTaskTab(row.id);}), false, u.canvasTabs.tabs.length<2]]];
+    } else if (kind === 'Port menu' && n) {
       const param = !n.bind && n.parameterSchema?.find(p =>
         p.editable && p.key !== 'engine' && (paramKey === p.key || port === 'param:' + p.key));
       groups = [['Visible', 'Faint', 'Hidden'].map(v => [v + ' wires', 'link', '', () => actionState.run(() => api.setPortVisibility(n.id, port, v))])];
@@ -106,7 +129,7 @@
           buttons[(at + (e.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length]?.focus();
         }
         if (e.key === 'Escape') close();
-      }}><window.UI.ActionStatus action={actionState} />{groups.map((rows, i) => <div className="context-group" key={i}>{rows.map(([label, icon, key, action, danger, disabled]) => <button key={label} disabled={disabled} className={danger ? 'danger' : ''} onClick={(event) => dispatch("context-menus.1", action, event)}><Icon name={icon} size={15} /><span>{label}</span><kbd>{key}</kbd></button>)}</div>)}</section></>;
+      }}><window.UI.ActionStatus action={actionState} />{groups.map((rows, i) => <div className="context-group" key={i}>{rows.map(([label, icon, key, action, danger, disabled]) => <button data-design={'menu.' + label.toLowerCase().replace(/\W+/g,'-')} key={label} disabled={disabled} className={danger ? 'danger' : ''} onClick={(event) => dispatch("context-menus.1", action, event)}><Icon name={icon} size={15} /><span>{label}</span><kbd>{key}</kbd></button>)}</div>)}</section></>;
   }
   window.UI.ContextMenu = ContextMenu;
 })();

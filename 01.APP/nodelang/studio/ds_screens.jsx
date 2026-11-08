@@ -15,6 +15,11 @@
   const curve = (a, b) => `M${a.x} ${a.y} C${(a.x + b.x) / 2} ${a.y},${(a.x + b.x) / 2} ${b.y},${b.x} ${b.y}`;
   const wirePath = (a, b, kind) => kind === 'Straight' ? `M${a.x} ${a.y} L${b.x} ${b.y}` : kind === 'Step' ? `M${a.x} ${a.y} L${(a.x + b.x) / 2} ${a.y} L${(a.x + b.x) / 2} ${b.y} L${b.x} ${b.y}` : curve(a, b);
   const isGroup = n => n.children?.length > 0 || n.kind === 'Group' || n.kind === 'Workshop';
+  const NODE_FAMILY_STYLE = {
+    get:[A.cyan,'folder'],host:[A.cyan,'folder'],read:[A.cyan,'folder'],input:[A.blue,'code'],trigger:[A.cyan,'clock'],
+    change:[A.warn,'edit'],shape:[A.warn,'group'],filter:[A.warn,'group'],transform:[A.warn,'edit'],document:[A.accent,'docs'],compose:[A.accent,'docs'],annotate:[A.accent,'edit'],
+    decide:[A.purple,'brain'],logic:[A.purple,'code'],ai:[A.purple,'brain'],agent:[A.purple,'user'],
+    see:[A.ok,'eye'],watch:[A.ok,'eye'],watcher:[A.ok,'eye'],check:[A.ok,'check'],send:[A.ok,'send'],output:[A.ok,'export']};
   function fitCanvasViewport(boxes, width, height, zoomMin, zoomMax, zoomFitMax) {
     if (!boxes.length || !(width > 0) || !(height > 0)) return null;
     const minX = Math.min(...boxes.map(box => box.x)), minY = Math.min(...boxes.map(box => box.y));
@@ -207,12 +212,12 @@
     </D.Node>;
   }
   // e6e4a367 studio-lm.jsx NodeRenderer: category header, role edge and parameter body.
-  function AgentWorkflowCard({n, renderPort, headerProps, selected, headerEnd}) {
+  function AgentWorkflowCard({n, renderPort, headerProps, selected, headerEnd, width = 304}) {
     const status = n.role==='step'&&n.status==='blocked' ? 'Blocked' : ({working:'Working',blocked:'Waiting for you',done:'Done',idle:'Idle',resting:'Idle',stopped:'Stopped',failed:'Failed',open:'Planned',claimed:'In progress'})[n.status] || n.status;
     const color = /Working|Done|progress/.test(status) ? A.ok : /Waiting|Blocked/.test(status) ? A.warn : /Failed/.test(status) ? A.err : A.inkMuted;
     const message=n.message, at=message?.at ? new Date(message.at) : null, minutes=at ? Math.max(0,Math.floor((Date.now()-at.getTime())/60000)) : null;
     const textStyle={overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'};
-    return <D.Node w={304} className="agent-workflow-card" selected={selected} gc={color} glyph={<window.AHIcon name={n.role==='task'?'docs':'workshop'} size={12} />}
+    return <D.Node w={width} className="agent-workflow-card" selected={selected} gc={color} glyph={<window.AHIcon name={n.role==='task'?'docs':'workshop'} size={12} />}
       title={<><span style={{display:'block',fontSize:11,fontWeight:500,color:A.inkSoft,textTransform:'uppercase'}}>{n.kicker}</span><span title={n.title}>{n.title}</span></>}
       sub="" ins={n.inputs} outs={n.outputs} renderPort={renderPort} headerProps={headerProps} headerEnd={headerEnd}
       style={{borderTop:'2px solid '+color}} foot={null}>
@@ -232,11 +237,7 @@
     const exact = catalogue.find(c=>c.id===n.definition||c.id===n.assembly||c.name===n.assembly||c.id===n.kind||c.name===n.kind),
       engines=catalogue.filter(c=>c.descriptor?.engine===n.kind), category=exact||(engines.length===1 ? engines[0] : null),
       family = (n.category || category?.family || n.kind).toLowerCase(), grouped = isGroup(n),
-      [color, icon] = grouped ? [A.purple,'group'] : ({
-        get:[A.cyan,'folder'],host:[A.cyan,'folder'],read:[A.cyan,'folder'],input:[A.blue,'code'],trigger:[A.cyan,'clock'],
-        change:[A.warn,'edit'],shape:[A.warn,'group'],filter:[A.warn,'group'],transform:[A.warn,'edit'],document:[A.accent,'docs'],compose:[A.accent,'docs'],annotate:[A.accent,'edit'],
-        decide:[A.purple,'brain'],logic:[A.purple,'code'],ai:[A.purple,'brain'],agent:[A.purple,'user'],
-        see:[A.ok,'eye'],watch:[A.ok,'eye'],watcher:[A.ok,'eye'],check:[A.ok,'check'],send:[A.ok,'send'],output:[A.ok,'export']})[family] || [A.blue,'canvas'],
+      [color, icon] = grouped ? [A.purple,'group'] : NODE_FAMILY_STYLE[family] || [A.blue,'canvas'],
       state = n.frozen ? 'Disabled' : n.previewOff ? 'Preview off' : n.status || 'Idle',
       stateColor = /error|fail|refus/i.test(state) ? A.err : /await/i.test(state) ? A.inkSoft : /saved/i.test(state) ? A.ok : /working|wip/i.test(state) ? A.accent : /approval|wait|warning|changed/i.test(state) ? A.warn : /running/i.test(state) ? A.accent : /done|ran/i.test(state) ? A.ok : A.inkSoft;
     // Plate 4.3: only the first three human values; Properties keeps every parameter.
@@ -462,7 +463,6 @@
     </div>;
   }
   // Successful output speaks for itself; the footer carries only actionable states.
-  const FOOT = {display: 'inline-block', justifySelf: 'start', padding: '1px 8px', borderRadius: 10, border: '1px solid ' + SPEC.fieldLine};
   function RefusedChip({refusal, onConvert}) {
     return <div data-refused-chip="" role="status" style={{color: A.err, display: 'flex', flexWrap: 'wrap', gap: 4}}>
       {refusal.outType === refusal.inType && refusal.reason ? <span>{refusal.reason}</span> : <><span>Needs a {refusal.outType} → {refusal.inType} converter ·</span>
@@ -470,25 +470,31 @@
     </div>;
   }
   function FlowCard({n, s, u, selected, refusal, onConvert, socket, members, onMember, onDetach, menu}) {
-    // Spec section 0b P0: the default card is full capability (every row); compact (first three rows) is an opt-in toggle.
-    const [compact, setCompact] = React.useState(false);
-    if (n.agentStep || n.workflowStart) return <AgentWorkflowCard n={{...n,role:n.workflowStart?'start':'step',kicker:n.workflowStart?'Start':'Agent · '+(n.params.vendor||'Agent'),status:n.params.status||n.status,by:n.params.display_name||n.params.agent,result:n.params.result||n.params.message_id,
+    // v22g keeps three rows on the card; every parameter remains available in the Inspector.
+    const [compact, setCompact] = React.useState(true);
+    const pinned = n.fixed && n.type !== 'thing.session', task = s.tasks.find(row=>row.id===n.agentTask), messages = window.UI.homeTaskMessages?.(task) || [];
+    const pinnedSummary = n.type==='thing.you' ? [s.profile.name || 'Not signed in',s.profile.role].filter(Boolean).join(' · ')
+      : n.type==='thing.workshop' ? messages.length+' messages'+(messages.length ? ' · '+messages.at(-1).text : '')
+      : n.params.agent || 'Pick an agent, or message the thread';
+    const approval = (s.approvals || []).find(card=>card.approvalKind==='canvas' && (card.nodeId===n.id && card.path===api.getSessionPath() || card.canvasNodes?.some(ref=>ref.nodeId===n.id && ref.path===api.getSessionPath())) && card.status==='pending');
+    if (n.agentStep || n.workflowStart && !n.fixed) return <AgentWorkflowCard n={{...n,role:n.workflowStart?'start':'step',kicker:n.workflowStart?'Start':'Agent · '+(n.params.vendor||'Agent'),status:n.params.status||n.status,by:n.params.display_name||n.params.agent,result:n.params.result||n.params.message_id,
       actions:n.agentWork?<div style={{display:'grid',gap:6}}><span>Goal: {n.params.goal}</span><span>Model: {n.params.model}</span><span>{n.params.detail}</span><button className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.forkNode(n.id))},event)}>Fork from here</button></div>:null,
       openResult:()=>u.openTaskFile(n.agentTask,'workshop'),
       inputs:n.workflowStart?[]:n.inputs.filter(p=>p.id==='task').map(p=>({...p,name:'Step'})),outputs:n.outputs.filter(p=>p.id===(n.workflowStart?'value':'result')).map(p=>({...p,name:'Step'}))}}
       renderPort={(p,i,side)=><div className="canvas-port-row" style={{position:'relative',height:22,display:'flex',alignItems:'center',justifyContent:side==='out'?'flex-end':undefined,padding:'0 12px',fontSize:12}}>{socket(p,side)}Step</div>}
-      headerProps={{className:'node-header'}} selected={selected} headerEnd={menu} />;
+      headerProps={{className:'node-header'}} selected={selected} headerEnd={menu} width={268} />;
     const field = n.column && fieldColumn(n, s.graph);
     if (field) return <FieldNode n={n} field={field} selected={selected} headerProps={{className: 'node-header'}} renderSocket={socket} />;
     const scalarParameter = ['thing.setting', 'param.value'].includes(n.type) && n.outputs.length === 1 && (typeof n.params.value === 'number' || n.params.value === null);
     if (scalarParameter) return <ParameterNode n={n} socket={socket} selected={selected} u={u} />;
-    const [state, stateColor] = nodeState(n, !!refusal), wiresIn = s.graph.wires.filter(w => w.to === n.id),
+    const liveSession=n.fixed && n.type==='thing.session' && (s.liveAgents || []).find(agent=>task?.declarations?.some(row=>row.agent===agent.agent) || agent.task && [task?.title,task?.description].includes(agent.task));
+    const [state, stateColor] = n.fixed && n.type==='thing.session' ? [liveSession ? String(liveSession.status || 'Unknown').replace(/^./,c=>c.toUpperCase()) : 'Idle',liveSession && /running|working/i.test(liveSession.status) ? A.accent : A.inkSoft] : nodeState(n, !!refusal), wiresIn = s.graph.wires.filter(w => w.to === n.id),
       sourceOf = port => { const w = wiresIn.find(x => x.toPort === port), a = w && s.graph.nodes.find(x => x.id === w.from); return a && a.title + '.' + (a.outputs.find(p => p.id === w.fromPort)?.name || w.fromPort); },
       slotPorts = new Set(), settingsKeys = new Set(n.settingsKeys || []),
       // Internal ids, hashes and serialized JSON stay in Properties; the face shows human values (CARDPOLISH), first three until expanded.
-      shown = (n.parameterSchema || []).filter(p => p.editable || (!HIDDEN_PARAM.test(p.key) && (n.params[p.key] === null || typeof n.params[p.key] !== 'object') && !HIDDEN_VALUE.test(String(n.params[p.key]))))
+      shown = (n.parameterSchema || []).filter(p => !n.fixed || !['reference','thread','limit','workspace'].includes(p.key)).filter(p => p.editable || (!HIDDEN_PARAM.test(p.key) && (n.params[p.key] === null || typeof n.params[p.key] !== 'object') && !HIDDEN_VALUE.test(String(n.params[p.key]))))
         .filter(p => !(p.key === 'prompt' && n.inputs.some(x => x.id === 'prompt'))),
-      params = compact ? shown.slice(0, 3) : shown,
+      params = pinned && compact ? [] : compact ? shown.slice(0, 3) : shown,
       refusedHere = port => refusal && refusal.to.port === port && <RefusedChip refusal={refusal} onConvert={onConvert} />;
     for (const p of params) for (const port of n.inputs.filter(x => x.id === p.key || x.id === 'param:' + p.key)) slotPorts.add(port.id);
     const repeatsValue = (output, value) => Object.is(output, value) || (typeof output === 'string' && output.trim() === String(value)) || (output && typeof output === 'object' && !Array.isArray(output) && Object.keys(output).length === 1 && Object.hasOwn(output, 'value') && (Object.is(output.value, value) || String(output.value) === String(value))) || (Array.isArray(output) && output.length === 1 && (Object.is(output[0], value) || String(output[0]) === String(value)));
@@ -497,28 +503,33 @@
     const headerSetting=s.settings.find(row=>row.id==='Appearance.Node header colour');
     const requestedHeader=n.color || (headerSetting?.value!==headerSetting?.default ? headerSetting?.value : '');
     const headerColor=typeof requestedHeader==='string'&&/^#[0-9a-f]{6}$/i.test(requestedHeader)?requestedHeader:undefined;
+    const [familyColor,familyIcon] = NODE_FAMILY_STYLE[String(n.category||'').toLowerCase()] || [A.blue,'canvas'];
     const luminance = headerColor && headerColor.slice(1).match(/../g).map(hex => {const channel=parseInt(hex,16)/255;return channel<=0.04045?channel/12.92:((channel+0.055)/1.055)**2.4;}).reduce((sum,channel,index)=>sum+channel*[0.2126,0.7152,0.0722][index],0);
-    return <div data-ds-node="" className="lm-node" data-spec={n.dataset ? 'dataset' : 'operation'} data-node-state={state.split(' · ')[0]}
-      style={{...CARD, width: n.dataset ? LAYOUT.datasetWidth : LAYOUT.nodeWidth, borderRadius:'var(--node-radius,8px)', paddingBottom: 10, border: '1px solid ' + (refusal ? A.err : SPEC.fieldLine), borderTop: '2px solid ' + stateColor, outline: selected ? '1.5px solid ' + A.accent : 'none', outlineOffset: 2}}>
-      <div data-node-kind="">{n.category && n.category !== 'Node' ? n.category : n.kind}</div>
-      <div className="node-header" style={{display: 'flex', alignItems: 'flex-start', gap: 8, padding: '12px 12px 0', background: headerColor, color: headerColor ? luminance > 0.179 ? '#000000' : '#ffffff' : SPEC.text}}>
-        <div data-node-card-title="" style={{flex: 1, minWidth: 0, fontSize: 'calc(15px * var(--text-scale,1))', fontWeight: 600, lineHeight: 1.25, overflowWrap: 'anywhere'}}>{n.title}</div>
-        {!n.pure && <span data-node-pure="false" style={{paddingTop:2,color:A.inkSoft,display:'inline-flex',alignItems:'center',gap:4,fontSize:'var(--type-size-meta)',fontWeight:500}}
-          title={'Side effect: waits for Run' + (n.budget ? ' · budget ' + [n.budget.seconds != null && n.budget.seconds + ' s', n.budget.calls != null && n.budget.calls + ' call(s)'].filter(Boolean).join(', ') : '')}><window.AHIcon name="clock" size={12} /><span>Effect</span></span>}{menu}
-      </div>
+    return <D.Node className="v22g-node" data-pinned-card={pinned || undefined} data-design={!n.fixed ? 'node.' + (n.status==='Running'?'running':n.status==='Done'?'done':/approval/i.test(n.status)?'waiting':/error|fail/i.test(n.status)?'failed':'pending') : undefined} data-spec={n.dataset ? 'dataset' : 'operation'} data-node-state={state.split(' · ')[0]}
+      w={n.fixed ? 236 : n.dataset ? LAYOUT.datasetWidth : 268} title={n.title} sub={pinned ? n.type==='thing.you' ? 'Profile · every agent reads it' : n.type==='thing.workshop' ? "This task’s thread" : 'Agent · '+(n.params.agent || 'pick one') : n.category && n.category!=='Node' ? n.category : n.kind}
+      glyph={n.fixed && ['thing.agent','thing.session'].includes(n.type) ? <window.UI.Av id={n.params.agent || task?.agents?.[0] || ''} size={20}/> : <window.AHIcon name={n.icon || (n.type==='thing.you' ? 'user' : n.type==='thing.workshop' ? 'workshop' : familyIcon)} size={12}/>} gc={n.fixed ? A.purple : familyColor}
+      selected={selected} headerProps={{className:'node-header',style:{background:headerColor,color:headerColor ? luminance>.179?'#000000':'#ffffff':SPEC.text}}} headerEnd={pinned ? <span className="v22g-pinned-badge">Pinned</span> : menu}
+      style={{fontSize:'calc(12px * var(--text-scale,1))',borderRadius:'var(--node-radius,8px)'}}
+      ins={n.inputs.filter(port=>!slotPorts.has(port.id))} outs={n.outputs}
+      renderPort={(port,index,side)=><div data-port-row={side} style={{position:'relative',height:22,display:'flex',alignItems:'center',justifyContent:side==='out'?'flex-end':undefined,padding:'0 12px'}}><span style={{position:'absolute',[side==='out'?'right':'left']:-11,top:0}}>{socket(port,side)}</span>{port.name}</div>}
+      foot={pinned ? <span className="spread"><button type="button" className="button-reset nodrag" aria-expanded={!compact} onClick={event=>executeAction('projects.controls.activate',{handler:()=>setCompact(!compact)},event)}>{compact?'Parameters':'Fewer'}</button>{n.type==='thing.you' ? <button type="button" className="button-reset nodrag" onClick={()=>u.go('settings/Account')}>Settings › You</button> : n.type==='thing.workshop' ? <button type="button" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.setTaskFace('split')},event)}>Open thread</button> : null}</span> : <span title={n.error || state}>{state.split(' · ')[0]}{Number.isFinite(n.elapsedMs)?' · '+n.elapsedMs+' ms':''}</span>} footc={pinned ? A.inkSoft : stateColor}>
 
       {members.length > 0 && <div className="canvas-members">{members.map(m => <button key={m.id} data-group-member={m.id} draggable={m.chip || undefined} className="canvas-member nodrag" title={m.chip ? 'Drag ' + m.title + ' out of the group' : 'Open ' + m.title} onDragStart={event => { if (!m.chip) return; event.stopPropagation(); event.dataTransfer.setData('text/plain', m.id); event.dataTransfer.effectAllowed = 'move'; event.currentTarget.dataset.dragged = '1'; }} onDragEnd={event => { if (!m.chip || !onDetach) return; onDetach(m, event); }} onClick={event => { if (event.currentTarget.dataset.dragged === '1') { event.currentTarget.dataset.dragged = ''; return; } executeAction('projects.controls.activate', {handler: () => onMember(m)}, event); }}><span style={{background: A.purple, color: A.onFill}}>{m.title.slice(0, 1)}</span>{m.title}</button>)}</div>}
-      <div style={{display: 'grid', gap: 'var(--layout-node-row-gap,4px)', padding: '8px 12px 0'}}>
+      {pinned && compact && <div className="v22g-pinned-summary">{pinnedSummary}</div>}
+      <div style={{display: 'grid', gap: 'var(--layout-node-row-gap,4px)', padding: pinned && compact ? 0 : '8px 12px 0'}}>
+        {pinned && !compact && n.type==='thing.you' && <><b>{s.profile.name || 'Not signed in'}</b><span>{s.profile.role || 'No role set'}</span></>}
+        {pinned && !compact && n.type==='thing.workshop' && <span>{task?.rules?.join(' · ') || 'No rules set'}</span>}
+        {n.fixed && n.type==='thing.session' && <span>{s.workspaces.find(row=>row.id===n.params.workspace)?.name || 'Sessions folder'}</span>}
         {/* Full-node row (archhub-full-node-controls-native.png): name over its type, then the linked source or an inline control, then a row menu. Real data or empty. */}
-        {[...n.inputs.filter(p => !slotPorts.has(p.id)).map(p => ({key: p.id, port: p})), ...params.map(p => ({key: 'param:' + p.key, param: p, port: n.inputs.find(x => (x.id === p.key || x.id === 'param:' + p.key) && wiresIn.some(wire=>wire.toPort===x.id)) || n.inputs.find(x => x.id === 'param:' + p.key) || n.inputs.find(x => x.id === p.key)}))].map(({key, port, param}) => {
+        {params.map(p => ({key: 'param:' + p.key, param: p, port: n.inputs.find(x => (x.id === p.key || x.id === 'param:' + p.key) && wiresIn.some(wire=>wire.toPort===x.id)) || n.inputs.find(x => x.id === 'param:' + p.key) || n.inputs.find(x => x.id === p.key)})).map(({key, port, param}) => {
           const ports = param ? n.inputs.filter(x => x.id === param.key || x.id === 'param:' + param.key) : port ? [port] : [];
           const from = ports.map(alias=>sourceOf(alias.id)).filter(Boolean).join(' · '), name = param ? (param.label && param.label !== param.key ? param.label : param.key.replace(/_/g, ' ')) : port.name,
             type = param ? ((['min', 'max', 'step'].includes(param.key) || param.type === 'number' || ['number', 'integer'].includes(param.dataType)) ? 'number' : (param.dataType || (param.options?.length ? 'enum' : param.type === 'boolean' ? 'boolean' : 'string'))) + (param.unit ? ' · ' + param.unit : '') + (settingsKeys.has(param.key) ? ' · From Settings' : '') : typeName(port);
           return <React.Fragment key={key}><div data-port-row={param ? undefined : 'in'} data-parameter={param ? param.key : undefined}
-            style={{...SLOT, display: 'grid', gridTemplateColumns: '88px minmax(0,1fr) 16px', minHeight:36, gap: 6, padding: '4px 10px', alignItems: 'center'}}>
+            style={{...SLOT, display: 'grid', gridTemplateColumns: 'minmax(64px,.8fr) minmax(0,1.3fr) 16px', minHeight:30, gap: 6, padding: '2px 0', alignItems: 'center'}}>
             {ports.map(alias=><span key={alias.id} aria-hidden={alias.id!==port.id||undefined} style={{...edgeSocket('in', '50%', 12),opacity:alias.id===port.id?1:0,pointerEvents:alias.id===port.id?undefined:'none'}}>{socket(alias, 'in')}</span>)}
             <span style={{minWidth: 0}}><span style={{display: 'block', fontSize: 'calc(var(--type-size-label) * var(--text-scale,1))', lineHeight: 1.25, overflowWrap: 'anywhere'}} title={param ? param.label || param.key : port.name}>{name}</span>
-              <span style={{display: 'block', color: SPEC.label}}>{type}</span></span>
+              <span data-row-type="" style={{display: 'none', color: SPEC.label}}>{type}</span></span>
             <span data-row-value="" style={{display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>
               {from ? <span data-linked-source="" style={{color: SPEC.label}} title={from}>{from}</span>
                 : !param ? null : n.params[param.key] === null && !(param.type === 'number' && ['min','max'].includes(param.key)) ? <span data-unset="" style={{color: SPEC.label}}>unset</span> : <ValueWidget n={n} p={param} value={n.params[param.key]} u={u} />}</span>
@@ -526,17 +537,15 @@
               onClick={event => executeAction('projects.controls.activate', {handler: () => u.show('Port menu', {id: n.id, port: port?.id || 'param:' + param.key, paramKey: param?.key, anchor: {x: event.clientX, y: event.clientY}})}, event)}>⋮</button>
           </div>{ports.map(alias=><React.Fragment key={alias.id}>{refusedHere(alias.id)}</React.Fragment>)}</React.Fragment>;
         })}
-        {shown.length > 3 && <button type="button" className="button-reset nodrag canvas-card-more" aria-pressed={compact} style={{justifySelf: 'start', color: SPEC.label}} onClick={event => executeAction('projects.controls.activate', {handler: () => setCompact(!compact)}, event)}>{compact ? `+${shown.length - 3} more` : 'Compact'}</button>}
+        {!pinned && shown.length > 3 && <button type="button" className="button-reset nodrag canvas-card-more" aria-pressed={compact} style={{justifySelf: 'start', color: SPEC.label}} onClick={event => executeAction('projects.controls.activate', {handler: () => setCompact(!compact)}, event)}>{compact ? `+${shown.length - 3} more` : 'Compact'}</button>}
         {n.loop && <div data-node-loop="" style={{color: SPEC.label}} title={'Trigger ' + n.loop.trigger + ' · stops when ' + n.loop.stop + (n.loop.evaluator ? ' · evaluator ' + n.loop.evaluator : '')}>Loop · cap {n.loop.cap} · until {n.loop.stop}</div>}
         {n.dataset && <DatasetEditor n={n} u={u} />}
         {n.agentWork?.role==='step' && <StepHistory n={n} u={u} />}
-        {!n.dataset && !n.column && n.paramDefs && api.addNodeParameter && <AddParameter n={n} u={u} />}
-        {n.outputs.map(p => <div key={p.id} data-port-row="out" style={{position: 'relative', color: SPEC.label, minHeight: 18, display: 'flex', alignItems: 'center'}}>
-          <span>{p.name} · {typeName(p)}</span><span style={edgeSocket('out', '50%', 12)}>{socket(p, 'out')}</span></div>)}
-        {n.outputs.length > 0 && !repeatedValue && <div data-node-result="" data-todo="output-summary-expanded" style={{...SLOT, color: result ? SPEC.text : SPEC.label, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block'}} title={result}>{result ? result.replace(/^\w+_out\s+/, '') : wiresIn.length || !n.inputs.length ? 'Run to inspect output' : 'Connect data to inspect output'}</div>}
-        {<span data-node-status="" style={{...FOOT, fontSize: 'calc(13px * var(--text-scale,1))', lineHeight: 1.2, color: stateColor}} title={n.error || state}>{state === 'Done' ? 'Complete' : state.split(' · ')[0]}</span>}
+        {!n.dataset && !n.column && (!n.fixed || n.type==='thing.session') && n.paramDefs && api.addNodeParameter && <AddParameter n={n} u={u} />}
+        {!pinned && n.outputs.length > 0 && !repeatedValue && <div data-node-result="" data-todo="output-summary-expanded" style={{...SLOT, color: result ? SPEC.text : SPEC.label, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block'}} title={result}>{result ? result.replace(/^\w+_out\s+/, '') : wiresIn.length || !n.inputs.length ? 'Run to inspect output' : 'Connect data to inspect output'}</div>}
+        {approval && <button type="button" className="button-reset nodrag" onClick={e=>u.show('Approve',{id:approval.id,anchor:{x:e.clientX,y:e.clientY}})}>Review</button>}
       </div>
-    </div>;
+    </D.Node>;
   }
   // DESIGNSYS-050 4.9 Inspector (plate archhub-inspector-changed-native.png): Properties of the one selected node; its Inputs and Output, editable.
   function NodeInspector({n, s, u, embedded = false}) {
@@ -614,7 +623,8 @@
       if (box.current) observer.observe(box.current);
       return () => observer.disconnect();
     }, [id, handles, updateInternals]);
-    return <div ref={box} data-graph-node={id}>{c.renderNode(n, selected)}</div>;
+    const design = n.fixed ? ({'thing.session':'pin.session','thing.agent':'pin.agent','thing.you':'pin.you','thing.workshop':'pin.workshop'}[n.type]) : 'node.step';
+    return <div ref={box} data-graph-node={id} data-design={design} data-fixed={n.fixed || undefined} style={{fontSize:'calc(12px * var(--text-scale,1))'}}><div inert={c.preview || undefined}>{c.renderNode(n, selected)}</div></div>;
   }
   function FlowWire({id, sourceX, sourceY, targetX, targetY, data}) {
     // xyflow anchors at the Handle's outer edge; the spec wire meets the socket centre (Handle is 22 px wide, see SOCKET_STYLE).
@@ -629,14 +639,17 @@
     minWidth: 0, minHeight: 0, background: 'transparent', border: 0, borderRadius: 0};
   function Canvas({
     active = true,
+    preview = null,
+    onActivate,
     embedded = false,
     externalInspector = false,
     onInspect,
     onHandoff,
     controlsRef
   }) {
-    const s = useData(),
+    const live = useData(), s = preview ? {...live, graph: preview, sessionBreadcrumbs: []} : live,
       u = useApp();
+    const api = preview ? {getSnapshot:()=>s, refreshProjects:async()=>preview, setSessionViewport:()=>{}} : window.UI.api;
     const zoomRow = s.settings.find(r => r.id === 'Appearance.Default zoom') || s.settings.find(r => r.page === 'Appearance' && (r.label === 'Zoom percentage' || r.key === 'Zoom percentage'))
       || s.settings.find(r => r.id === 'Appearance.Zoom percentage');
     const zoomMin = Number(s.canvasPolicy?.zoom_min ?? .1), zoomMax = Number(s.canvasPolicy?.zoom_max ?? 4);
@@ -720,7 +733,7 @@
         setRequestState(s.graph.nodes.length ? 'loaded' : 'empty');
     }, [s.graph.nodes.length]);
     // A node whose group is not a node at this level is drawn here, never dropped.
-    const atLevel = n => !s.graph.system && !n.application && ((n.parent || null) === parent || (parent === null && !s.graph.nodes.some(x => x.id === n.parent)));
+    const atLevel = n => !(u.canvasTabs?.collapsed && n.fixed && n.type!=='thing.session') && !s.graph.system && !n.application && ((n.parent || null) === parent || (parent === null && !s.graph.nodes.some(x => x.id === n.parent)));
     const scope = s.graph.id + ':' + (parent || ''), sourceNodes = s.graph.nodes.filter(atLevel);
     const visible = sourceNodes.map(n => ({...n, ...(layout.scope === scope ? layout.positions[n.id] : {})})),
       node = s.graph.nodes.find(n => n.id === selected.at(-1)),
@@ -730,7 +743,7 @@
       onInspect?.({nodeId: inspected?.id || null, wireId: wire?.id || null});
     }, [inspected?.id, wire?.id]);
     React.useLayoutEffect(() => {
-      if (!active) return;
+      if (!active || preview) return;
       const place = event => {
         if (!area.current || !['loaded','empty'].includes(requestState)) return;
         const {zoom:z,pan:p} = view.current, rect = area.current.getBoundingClientRect(),
@@ -801,6 +814,7 @@
     React.useEffect(() => {
       if (!active) return;
       const listener = e => {
+        if (preview) return;
         if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's') {
           if (e.defaultPrevented) return;
           e.preventDefault();
@@ -839,7 +853,7 @@
       window.addEventListener('keydown', listener);
       return () => window.removeEventListener('keydown', listener);
     });
-    React.useEffect(() => u.setSelectedNodeId(selected.at(-1) || null), [selected.join(',')]);
+    React.useEffect(() => {if(!preview)u.setSelectedNodeId(selected.at(-1) || null);}, [selected.join(',')]);
     // The file is the source; xyflow keeps only what it measured (sizes) and an in-flight drag.
     React.useEffect(() => {
       setFlowNodes(old => {
@@ -851,7 +865,7 @@
             position: f?.dragging ? f.position : held.current?.[n.id] || {x: n.x, y: n.y}};
         });
       });
-    }, [s.graph, layout, parent, selected.join(','), requestState]);
+    }, [s.graph, layout, parent, selected.join(','), requestState, u.canvasTabs?.collapsed]);
     const onNodesChange = changes => {
       setFlowNodes(nodes => RF.applyNodeChanges(changes.filter(c => c.type !== 'remove'), nodes));
       const picks = changes.filter(c => c.type === 'select');
@@ -927,7 +941,7 @@
       return {x: (point.clientX - r.left - view.current.pan.x) / view.current.zoom, y: (point.clientY - r.top - view.current.pan.y) / view.current.zoom};
     };
     const socket = (n, p, side) => {
-      const locked = p.connectable === false || p.read_only;
+      const locked = !!preview || p.connectable === false || p.read_only;
       return <RF.Handle type={side === 'out' ? 'source' : 'target'} position={side === 'out' ? RF.Position.Right : RF.Position.Left} id={p.id} isConnectable={!locked}
         data-port-key={`${n.id}:${side}:${p.id}`} className="socket" data-port-type={p.type} data-port-list={p.list || undefined}
         title={`${p.name} · ${p.type}${p.list ? " list" : ""}${p.unit ? " · "+p.unit : ""}`} aria-disabled={locked || undefined} aria-label={`${n.title} ${side} ${p.name}`}
@@ -982,7 +996,7 @@
       fit();
     }, [requestState, scope, layout, u.libraryOpen, active, embedded]);
     React.useEffect(() => {
-      if (!active) return undefined;
+      if (!active || preview) return undefined;
       window.UI.requestCanvasFit = fit;
       return () => { if (window.UI.requestCanvasFit === fit) window.UI.requestCanvasFit = null; };
     });
@@ -992,15 +1006,28 @@
         if (userViewport.current) return;
         const boxes=[...area.current.querySelectorAll('[data-graph-node]')].map(element=>{
           const node=visible.find(node=>node.id===element.dataset.graphNode);
-          return node && {x:node.x,y:node.y,w:element.offsetWidth,h:element.offsetHeight};
+          return node && {node,x:node.x,y:node.y,w:element.offsetWidth,h:element.offsetHeight};
         }).filter(Boolean);
         if (!boxes.length || boxes.length !== visible.length || boxes.some(box=>!box.w||!box.h)) return;
         const width=area.current.clientWidth,height=area.current.clientHeight;
         if (width<=48 || height<=144) return;
-        const minX=Math.min(...boxes.map(box=>box.x)),minY=Math.min(...boxes.map(box=>box.y));
-        const spanW=Math.max(...boxes.map(box=>box.x+box.w))-minX,spanH=Math.max(...boxes.map(box=>box.y+box.h))-minY;
-        const fitted=Math.min(1,(width-48)/spanW,(height-144)/spanH),z=fitted>=.75?fitted:1;
-        updateView({zoom:z,pan:{x:24-minX*z,y:120-minY*z}},false);
+        const work=boxes.filter(box=>!box.node.fixed),focus=work.find(box=>/approval/i.test(box.node.status)) || work.find(box=>/error|fail/i.test(box.node.status)) || work.find(box=>box.node.status==='Running') || work.find(box=>!['Done','Solved'].includes(box.node.status)) || work.at(-1) || boxes.find(box=>box.node.type==='thing.session') || boxes[0];
+        const bottom=height-72,top=56,defaultZoom=Number(zoomRow?.value || 100);
+        let best;
+        for(let pct=defaultZoom;pct>=Math.min(90,defaultZoom);pct-=2){
+          const z=pct/100,x=width/2-(focus.x+focus.w/2)*z;
+          const horizontal=boxes.filter(box=>(box.x+box.w)*z+x>0 && box.x*z+x<width);
+          const rowTop=Math.min(focus.y,...horizontal.filter(box=>box.y>=focus.y-300 && box.y<=focus.y).map(box=>box.y));
+          const y=top+20-rowTop*z,cross=horizontal.filter(box=>box.y*z+y<bottom-1 && (box.y+box.h)*z+y>bottom+1);
+          best={z,x,y,horizontal,cross};
+          if(!cross.length)break;
+        }
+        if(best.cross.length){
+          const {z,horizontal}=best;
+          const candidates=horizontal.flatMap(box=>[bottom-(box.y+box.h)*z-2,bottom-box.y*z+2]).filter(y=>focus.y*z+y>=top+4 && (focus.y+focus.h)*z+y<=bottom && !horizontal.some(box=>box.y*z+y<bottom-1 && (box.y+box.h)*z+y>bottom+1)).sort((a,b)=>Math.abs(a-best.y)-Math.abs(b-best.y));
+          if(candidates.length)best.y=candidates[0];
+        }
+        updateView({zoom:best.z,pan:{x:best.x,y:best.y}},false);
       };
       const observer=new window.ResizeObserver(frame);
       observer.observe(area.current);
@@ -1031,12 +1058,15 @@
       more: () => setMore(value => !value)
     }));
     const stateCounts=new Map();
+    const fixedSession=visible.find(node=>node.fixed && node.type==='thing.session'), fixedPosition=fixedSession && (layout.positions[fixedSession.id] || fixedSession);
+    const pinFrame=fixedPosition && {x:fixedPosition.x-318,y:fixedPosition.y-80,height:u.canvasTabs?.collapsed ? 44 : Math.max(...visible.filter(node=>node.fixed && node.type!=='thing.session').map(node=>{const box=layout.positions[node.id] || {...node,h:140};return box.y+box.h;}),fixedPosition.y)+18-(fixedPosition.y-80)};
     for(const node of visible){const state=nodeState(node,false)[0].split(' · ')[0],label=state==='Done'?'complete':state.toLowerCase();stateCounts.set(label,(stateCounts.get(label)||0)+1);}
     const actionsMenu = <> {more && <div role="menu" aria-label="Canvas actions" data-canvas-more="" onKeyDown={e => { if (e.key === 'Escape') setMore(false); }} style={{position:'absolute',right:0,top:8,display:'grid',minWidth:200,maxHeight:'calc(100% - 16px)',overflow:'auto',padding:6,gap:2,
           background:A.bgPanel,border:'1px solid '+A.lineSoft,borderRadius:6,zIndex:20}}>{[
             ['Add node · Ctrl K', () => executeAction("projects.ds_screens.AddANodeCtrlK.24", {u})], ['New', () => u.act(() => api.newSession())], ['Open…', () => u.act(() => api.openSession())], ['Save · Ctrl S', () => u.act(() => api.saveSession())],
             ['Save as…', () => u.act(() => api.saveSessionAs())], ['Save as workflow', () => u.act(() => api.saveSession())], ['Save as skill…', () => u.show('Save skill')], ['Add automation', () => u.act(() => api.addAutomation())], ['Workspaces · ' + s.workspaces.length, () => u.show('Workspaces')],
             ['Detach session (copy)', () => u.act(() => api.detachSession(selected[0])), selected.length!==1||!s.graph.nodes.find(n=>n.id===selected[0])?.params.session_file],
+            ...(embedded && onHandoff ? [['Handoff map',onHandoff]] : []),
             [(u.libraryOpen ? 'Hide' : 'Show') + ' Library', () => u.setLibraryOpen(v => !v)], ['Group · Ctrl G', group, selected.length < 2],
             ['Undo · Ctrl Z', () => u.act(api.undo)], ['Redo · Ctrl Shift Z', () => u.act(api.redo)], ['Arrange', () => u.act(api.arrangeGraph)],
             ['Wires: ' + (s.graph.wireVisibility || 'Visible') + ' → ' + ({Visible: 'Faint', Faint: 'Hidden', Hidden: 'Visible'})[s.graph.wireVisibility || 'Visible'],
@@ -1084,6 +1114,7 @@
         onDoubleClick={e => { if (e.target.classList?.contains('react-flow__pane')) fit(); }}
         onDragOver={e => e.preventDefault()} onDrop={e => {
           e.preventDefault();
+          if(preview)return;
           if(e.dataTransfer.files?.length){u.act(()=>api.importSession(e.dataTransfer.files[0]));return;}
           const session=e.dataTransfer.getData('session');
           const task=e.dataTransfer.getData('task');
@@ -1093,30 +1124,32 @@
           if (name) u.act(() => api.addNode(name, toFlow(e)));
         }} onContextMenu={e => {
           e.preventDefault();
+          if(preview)return;
           u.show('Canvas menu', {
             selected,
             group,
             remove
           });
         }}>
-    <CanvasContext.Provider value={{renderNode, openNode}}>
-     <RF.ReactFlow nodes={flowNodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
+    <CanvasContext.Provider value={{renderNode, openNode, preview:!!preview}}>
+     <RF.ReactFlow nodes={flowNodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} nodesDraggable={!preview} nodesConnectable={!preview}
        viewport={{x: pan.x, y: pan.y, zoom}} onMove={(event,v) => {if(event instanceof window.Event) updateView({zoom:v.zoom,pan:{x:v.x,y:v.y}},false);}}
        onMoveEnd={(event, v) => { if (event instanceof window.Event) persistView(v); }} minZoom={zoomMin} maxZoom={zoomMax}
-       onNodesChange={onNodesChange} onNodeClick={(event,node)=>onInspect?.({nodeId:node.id,wireId:null})} onNodeDragStop={onNodeDragStop} onNodeDoubleClick={(e, f) => openNode(f.data.n)}
+       onNodesChange={onNodesChange} onNodeClick={(event,node)=>preview ? onActivate?.() : onInspect?.({nodeId:node.id,wireId:null})} onNodeDragStop={onNodeDragStop} onNodeDoubleClick={(e, f) => preview ? onActivate?.() : openNode(f.data.n)}
        onEdgesChange={changes => setSelectedWires(old => {const next=new Set(old);for(const c of changes)if(c.type==='select'&&c.id!=='rejected')c.selected?next.add(c.id):next.delete(c.id);return [...next];})}
        onConnect={c => connect({id: c.source, port: c.sourceHandle}, {id: c.target, port: c.targetHandle})}
        onConnectEnd={(e, state) => {
+         if(preview)return;
          // A wire dropped on empty canvas offers the nodes that can take it (spec Compatible nodes).
          if (!state || state.isValid || state.toHandle || !state.fromHandle || e.target.closest?.('.react-flow__node')) return;
          u.show('Compatible nodes', {endpoint: {id: state.fromNode.id, side: state.fromHandle.type === 'source' ? 'out' : 'in', port: state.fromHandle.id}, position: toFlow(e)});
        }}
        onEdgeClick={(e, edge) => { if (edge.id !== 'rejected') { setWireId(edge.id); if(!e.shiftKey&&!e.ctrlKey)setSelected([]); } }}
-       onPaneClick={() => { setSelected([]); setWireId(null); setSelectedWires([]); setRejected(null); }}
+       onPaneClick={() => { if(preview){onActivate?.();return;} setSelected([]); setWireId(null); setSelectedWires([]); setRejected(null); }}
        selectionOnDrag panOnDrag={[1]} panActivationKeyCode="Space" multiSelectionKeyCode="Shift" selectionKeyCode={null} deleteKeyCode={null}
-       zoomOnDoubleClick={false} connectionLineStyle={{stroke: A.cyan, strokeWidth: 2}} proOptions={{hideAttribution: true}} />
+       zoomOnDoubleClick={false} connectionLineStyle={{stroke: A.cyan, strokeWidth: 2}} proOptions={{hideAttribution: true}}>{pinFrame && <RF.ViewportPortal><div className="v22g-pinframe" data-folded={u.canvasTabs?.collapsed || undefined} style={{transform:`translate(${pinFrame.x}px,${pinFrame.y}px)`,width:256,height:pinFrame.height}}><div><b>On every canvas</b>{!preview && <button type="button" className="button-reset nodrag nopan" aria-label={'On every canvas · '+(u.canvasTabs.collapsed?'Expand':'Collapse')} aria-expanded={!u.canvasTabs.collapsed} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>u.saveCanvasTabs({...u.canvasTabs,collapsed:!u.canvasTabs.collapsed}))},event)}>{u.canvasTabs.collapsed?'Show Agent, You, Workshop':'Collapse'}</button>}</div></div></RF.ViewportPortal>}</RF.ReactFlow>
     </CanvasContext.Provider>
-    <div data-canvas-overlay="" className="canvas-toolbar">{embedded&&(s.sessionBreadcrumbs||[]).length>0&&<button type="button" className="dx-quiet" aria-label="Parent session" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.leaveSession())},event)}>{s.sessionBreadcrumbs.map(row=>row.title).join(' / ')} / {s.graph.name} · ← Parent</button>}{parent && <button type="button" className="dx-quiet" onClick={event=>executeAction("projects.ds_screens.Parent.6",{parent,s,setParent,setSelected},event)}>← {s.graph.nodes.find(node=>node.id===parent)?.title || 'Parent'}</button>}<Btn variant="controls" sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom">{Math.round(zoom * 100)}%</button><Btn variant="controls" sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><button type="button" className="dx-quiet" onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</button>{embedded && onHandoff && <button type="button" className="dx-quiet" onClick={event=>executeAction("projects.controls.activate",{handler:onHandoff},event)}>Handoff map</button>}</div>
+    <div data-canvas-overlay="" className="canvas-toolbar">{embedded&&(s.sessionBreadcrumbs||[]).length>0&&<button type="button" className="dx-quiet" aria-label="Parent session" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.leaveSession())},event)}>{s.sessionBreadcrumbs.map(row=>row.title).join(' / ')} / {s.graph.name} · ← Parent</button>}{parent && <button type="button" className="dx-quiet" onClick={event=>executeAction("projects.ds_screens.Parent.6",{parent,s,setParent,setSelected},event)}>← {s.graph.nodes.find(node=>node.id===parent)?.title || 'Parent'}</button>}<Btn variant="controls" sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom">{Math.round(zoom * 100)}%</button><Btn variant="controls" sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><button type="button" className="dx-quiet" onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</button></div>
     {embedded && <><div data-canvas-summary="" aria-label="Workflow status">{[...stateCounts].map(([label,count])=>count+' '+label).join(' · ')}</div></>}
    </div>
    {!externalInspector && inspected && <NodeInspector n={inspected} s={s} u={u} />}
@@ -1263,7 +1296,10 @@ function projectsdsscreensjsxSaveSkill14({u}, event) {
 function projectsdsscreensjsxRun15({api,u}, event) {
   const handler = async () => {
             const t = await u.act(() => api.runNode());
-            if (t) {
+            if (t?.approvalId) {
+              const card=api.getSnapshot().approvals.find(row=>row.id===t.approvalId),box=card?.nodeId && document.querySelector('[data-graph-node="'+window.CSS.escape(card.nodeId)+'"]')?.getBoundingClientRect();
+              u.show('Approve',{id:t.approvalId,...(box?{anchor:{x:box.right+12,y:box.top}}:{})});
+            } else if (t && !api.getSessionDocument?.()?.properties?.taskContext?.task) {
               u.show('Run', {id:t.id});
             }
           };

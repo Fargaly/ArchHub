@@ -72,7 +72,7 @@
     return null;
   };
   const taskNotes = rows => (Array.isArray(rows) ? rows : []).filter(item => item && typeof item === 'object' && (!item.role || item.role === 'task'));
-  const taskMessages = task => [...new Map([...taskNotes(task && task.fileMessages), ...taskNotes(task && task.messages)].map((item, index) => [item.id || 'file-' + index, item])).values()];
+  const taskMessages = task => [...new Map([...taskNotes(task && task.fileMessages), ...taskNotes(task && task.agentLog), ...taskNotes(task && task.messages)].map((item, index) => [item.id || 'file-' + index, item])).values()];
   const homeDestination = route => {
     if (route === 'workshop' || route === 'canvas') return {route: 'home', face: route, library: false};
     if (route === 'library' || route === 'skills') return {route: 'home', face: 'canvas', library: true};
@@ -127,6 +127,16 @@
   }
   function Home({fileWorkspace = false, initialFace = fileWorkspace ? 'canvas' : 'workshop'} = {}) {
     const s = useData(), u = useApp();
+    const [preview, setPreview] = React.useState(null), [previewError, setPreviewError] = React.useState('');
+    const beside = fileWorkspace ? u.canvasTabs?.split : '';
+    React.useEffect(()=>{setPreview(null);setPreviewError('');},[beside]);
+    React.useEffect(()=>{
+      let live=true;
+      if(!beside)return;
+      const read=()=>api.readTaskPreview(beside).then(value=>{if(live){setPreview(value);setPreviewError('');}}).catch(error=>{if(live)setPreviewError(error.message);});
+      read();
+      return()=>{live=false;};
+    },[beside,s.tasks]);
     const [query, setQuery] = React.useState('');
     const [status, setStatus] = React.useState('');
     const [history, setHistory] = React.useState(false);
@@ -137,9 +147,7 @@
     const [localFace, setLocalFace] = React.useState(initialFace);
     const face = fileWorkspace ? u.taskFace : localFace;
     const setFace = fileWorkspace ? u.setTaskFace : setLocalFace;
-    const [router, setRouter] = React.useState(null);
     const [detailId, setDetailId] = React.useState('');
-    const [runMode, setRunMode] = React.useState({status: 'waiting', value: '', message: ''});
     const [request, setRequest] = React.useState('loaded');
     const [failure, setFailure] = React.useState('');
     const [layoutReady, setLayoutReady] = React.useState(false);
@@ -155,9 +163,9 @@
     const inspectedWire = s.graph.wires.find(wire => wire.id === inspection.wireId);
     const inspect = value => {
       setInspection(value);
-      setPropertyTab(value.nodeId || value.wireId || fileWorkspace && face === 'canvas' ? 'Selection' : 'Task');
+      setPropertyTab(value.nodeId || value.wireId ? 'Selection' : 'Task');
     };
-    React.useEffect(() => {setPropertyTab(fileWorkspace && face === 'canvas' ? 'Selection' : 'Task');}, [fileWorkspace,face]);
+    React.useEffect(() => {setPropertyTab('Task');}, [fileWorkspace]);
     const clearInspection = () => { canvasRef.current?.clearSelection(); inspect({nodeId:null,wireId:null}); };
     React.useEffect(() => {
       if (!inspectorSetting || layoutReady) return;
@@ -179,36 +187,17 @@
       migrate();
     }, [inspectorSetting, s.homeLayout, layoutReady]);
     React.useLayoutEffect(() => {
-      if (layoutReady) inspectorRef.current?.resize(inspectorWidth);
+      if (layoutReady) {
+        if(fileWorkspace && face==='split')inspectorRef.current?.collapse();
+        else inspectorRef.current?.resize(inspectorWidth);
+      }
     }, [inspectorWidth, layoutReady, fileWorkspace, face]);
     React.useEffect(() => {
-      if (face !== 'canvas') {u.setSelectedNodeId(null);inspect({nodeId:null,wireId:null});}
+      if (!fileWorkspace && face !== 'canvas') {u.setSelectedNodeId(null);inspect({nodeId:null,wireId:null});}
     }, [face]);
-    React.useEffect(() => {
-      let live = true;
-      if (typeof api.readPermissions !== 'function') {
-        setRunMode({status: 'empty', value: '', message: ''});
-        return undefined;
-      }
-      api.readPermissions().then(result => {
-        if (!live) return;
-        const mode = result && typeof result.runMode === 'string' ? result.runMode : '';
-        setRunMode({status: mode ? 'loaded' : 'empty', value: mode, message: ''});
-      }).catch(error => {
-        if (!live) return;
-        setRunMode({status: 'error', value: '', message: error instanceof Error ? error.message : String(error)});
-      });
-      return () => { live = false; };
-    }, []);
-    React.useEffect(() => {
-      if (typeof api.refreshRouter !== 'function') return undefined;
-      let live = true;
-      api.refreshRouter().then(result => { if (live && result) setRouter(result); }).catch(() => { if (live) setRouter(null); });
-      return () => { live = false; };
-    }, []);
     homeSetFace = setFace;
     ensureHomeView();
-    const tasks = (s.tasks || []).filter(t => history || t.status !== 'ARCHIVED');
+    const tasks = (s.tasks || []).filter(t => history || t.status !== 'ARCHIVED').sort((a,b)=>Number(!!b.homePinned)-Number(!!a.homePinned));
     const waiting = new Set((s.approvals || []).filter(c => c.status === 'pending').map(c => c.taskId));
     const list = tasks.filter(t => (!status || t.status === status) && (!query || `${t.title} ${t.status}`.toLowerCase().includes(query.toLowerCase())));
     const focus = u.task || s.focusedTask;
@@ -246,9 +235,6 @@
     if (!choices.length) choices.push({key:'baboom',handle:'',name:'BABOOM'});
     const assigned = choices.find(choice => agents.some(name => [choice.name,choice.handle,choice.key].includes(name)));
     const recipient = to ?? assigned?.handle ?? (task && (s.liveAgents || []).find(a => a.agent === task.owner)?.handle) ?? choices[0]?.handle ?? '';
-    const personModel = (people.people || []).find(p => p.handle && p.handle === recipient)?.model || '';
-    const models = router ? [...new Set([router.default_model, ...(router.models || []), ...(router.fallback_models || [])].filter(Boolean))] : [];
-    const modelName = router?.default_model || personModel || '';
     const running = (s.hosts || []).filter(h => ['connected', 'listening', 'running'].includes(h.state));
     const footer = (running.length ? running.map(h => [h.name, h.file].filter(Boolean).join(' · ')).join(' · ') : 'No program selected.') + ' Model policy: Free first.';
     const persistWidth = async value => {
@@ -292,7 +278,9 @@
       if (!body || sendingRef.current) return;
       sendingRef.current = true;
       setSending(true);
-      const prompt = (!recipient || new RegExp('(^|\\s)@' + recipient + '\\b').test(body) ? '' : '@' + recipient + ' ') + body;
+      const files = s.composerAttachments || [];
+      const prompt = (!recipient || new RegExp('(^|\\s)@' + recipient + '\\b').test(body) ? '' : '@' + recipient + ' ') + body +
+        (files.length ? '\nAttached project file nodes: ' + JSON.stringify(files.map(file=>({id:file.id,path:file.path}))) : '');
       const clearedRevision = (u.composerDraft[draftKey]?.revision || 0) + 1;
       setText('');
       try {
@@ -301,7 +289,7 @@
           const held = current[draftKey];
           return held?.revision === clearedRevision ? {...current,[draftKey]:{text:body,revision:held.revision+1}} : current;
         });
-        else await api.listTasks?.();
+        else {for(const file of files) await api.removeComposerAttachment(file.id);await api.listTasks?.();}
       } finally {
         sendingRef.current = false;
         setSending(false);
@@ -343,22 +331,17 @@
         {needsEvidence ? <button type="button" className="dx-evidence" aria-label={'Evidence for ' + t.title} onClick={() => executeAction('ui.select', () => openEvidence(t))}><Icon name="eye" size={14} /></button> : null}
       </div>;
     };
-    const makeFile = () => u.act(() => api.newSession()).then(result => { if (result && !result.cancelled) u.go('canvas'); return result; });
     const openFile = () => u.act(() => api.openSession()).then(result => { if (result && !result.cancelled) u.go('canvas'); return result; });
     const saveFile = asCopy => u.act(() => asCopy ? api.saveSessionAs() : api.saveSession());
-    const importFile = () => u.pickFlow?.();
-    const openLibrary = () => { if (fileWorkspace) setFace('canvas'); else u.go('canvas'); return u.setLibraryOpen(value => !value); };
     const fileKeys = event => {
       if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
       const tag = event.target && event.target.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (event.target && event.target.isContentEditable)) return;
       const key = String(event.key || '').toLowerCase();
-      if (key === 'n') { event.preventDefault(); makeFile(); }
+      if (key === 'n') { event.preventDefault(); u.show('New task'); }
       else if (key === 'o') { event.preventDefault(); openFile(); }
       else if (key === 's') { event.preventDefault(); saveFile(event.shiftKey); }
     };
-    const namedMode = runMode.status === 'loaded' && runMode.value && runMode.value !== 'Accept edits' ? runMode.value : '';
-    const runLabel = runMode.status === 'error' ? runMode.message : namedMode || 'Mode unavailable';
     const replyToMessage = message => {
       const sender = message.sender_key || message.who || '';
       const choice = choices.find(item => item.handle === sender || item.name === sender || item.key === sender);
@@ -390,14 +373,16 @@
                         return <li key={index} data-step={recorded.kind}><Icon name={recorded.kind === 'done' ? 'check' : recorded.kind === 'working' ? 'clock' : 'arrow'} size={14} /><b>{label}</b><span>{recorded.label}</span><small>{recorded.owner}</small></li>;
                       })}</ol></details>
                 </section>);
+    const composerForm = <window.UI.TaskComposer docked thread={face === 'split'} choices={choices} to={recipient} setTo={setTo} draft={text} setDraft={setText} onSend={send} busy={sending} />;
+    const composer = face === 'split' ? composerForm : <div className="v22g-composer-dock">{composerForm}</div>;
     const propertiesPane = <aside className="shared-properties" data-properties-pane="" aria-label="Properties">
       <header className="shared-properties-head">
         {!fileWorkspace && <span className="properties-eyebrow">TASK PROPERTIES</span>}
         <h2>{fileWorkspace ? face === 'canvas' ? inspectedNode?.title || s.graph.name || task?.title || 'Workflow' : 'Task parameters' : task?.title || 'Task properties'}</h2>
         {fileWorkspace ? <p>{face === 'canvas' ? inspectedNode ? 'Node parameters' : 'Workflow parameters' : 'Applies to this task file'}</p> : task && <p data-status={toneOf(task)}>{statusText(task.status)}</p>}
-        <div role="tablist" aria-label="Properties view">{['Task','Selection'].map(tab => <button type="button" role="tab" aria-selected={propertyTab === tab} key={tab} onClick={() => executeAction('ui.select', () => setPropertyTab(tab))}>{tab}</button>)}</div>
+        <div data-design="inspector.tab" role="tablist" aria-label="Properties view">{['Task','Selection'].map(tab => <button data-design={'inspector.' + tab.toLowerCase()} type="button" role="tab" aria-selected={propertyTab === tab} key={tab} onClick={() => executeAction('ui.select', () => setPropertyTab(tab))}>{tab}</button>)}</div>
       </header>
-      <div className="shared-properties-task" hidden={propertyTab !== 'Task'}>{task ? taskParameters : <p className="muted">Select a task</p>}</div>
+      <div className="shared-properties-task" hidden={propertyTab !== 'Task'}>{task ? <>{fileWorkspace && <label className="grid">Describe the workflow<textarea data-design="inspector.describe" aria-label="Workflow description" rows={3} defaultValue={s.graph.documentation || ''} onBlur={e=>{if(e.target.value!==(s.graph.documentation||''))u.act(()=>api.updateGraph(s.graph.id,{documentation:e.target.value}));}} /></label>}{taskParameters}</> : <p className="muted">Select a task</p>}</div>
       {task && !fileWorkspace && <div className="dx-preview-actions" hidden={propertyTab !== 'Task'}>
         <Btn sm p onClick={() => executeAction('ui.select', () => u.openTaskFile(task.id))}>Open task</Btn>
       </div>}
@@ -438,64 +423,22 @@
           <Column id="params" className="dx-home-preview" panelRef={inspectorRef} defaultSize={initialInspectorWidth.current} minSize={280} maxSize={480} groupResizeBehavior="preserve-pixel-size">{propertiesPane}</Column>
         </Group> :
           <div className="dx-workspace" data-dx="workspace" data-task-face={face}>
+            <div className="v22g-strip">
+              <div className="v22g-tabs" role="tablist" aria-label="Open tasks">{(u.canvasTabs?.tabs || []).map(tab => <div key={tab.id} className="v22g-tab" data-design={tab.id === task?.id ? 'tab.active' : undefined} data-active={tab.id === task?.id} draggable onDragStart={e => {e.dataTransfer.setData('text/archhub-tab', tab.id);e.dataTransfer.setData('task',tab.id);}} onDragOver={e => e.preventDefault()} onDrop={e => {e.preventDefault();const from=e.dataTransfer.getData('text/archhub-tab'),held=u.canvasTabs;const moved=held.tabs.find(t=>t.id===from);if(!moved||from===tab.id)return;const tabs=held.tabs.filter(t=>t.id!==from);tabs.splice(tabs.findIndex(t=>t.id===tab.id),0,moved);u.act(()=>u.saveCanvasTabs({...held,tabs}));}} onContextMenu={e => {e.preventDefault();u.show('Task tab menu',{id:tab.id});}}>
+                <span className="v22g-tab-state" aria-hidden="true" style={{background:tab.id===task?.id && s.graph.nodes.some(node=>node.status==='Running') ? 'var(--color-accent)' : s.approvals.some(card=>card.work===tab.id && card.status==='pending') ? 'var(--color-warn)' : tasks.find(row=>row.id===tab.id)?.status==='DONE' ? 'var(--color-ok)' : 'var(--v22g-ink3)'}}/><button type="button" role="tab" aria-selected={tab.id === task?.id} data-preview={!tab.kept} onClick={event=>executeAction('ui.select',() => {if(tab.id!==task?.id)u.openTaskFile(tab.id);},event)} onDoubleClick={() => u.act(() => u.keepTaskTab(tab.id))}>{tasks.find(t=>t.id===tab.id)?.title || 'Task unavailable'}</button>
+                <button type="button" data-design={tab.id === task?.id ? 'tab.close' : undefined} aria-label={'Close ' + (tasks.find(t=>t.id===tab.id)?.title || 'task')} onClick={event=>executeAction('ui.select',() => u.act(() => u.closeTaskTab(tab.id)),event)}><Icon name="close" size={12} /></button>
+              </div>)}<button type="button" className="dx-quiet" data-design="tab.add" aria-label="Open tasks" onClick={() => u.show('Open tasks')}>+</button></div>
+              <div className="v22g-toolbar"><button type="button" data-design="toolbar.run" className="dx-quiet dx-primary-run" onClick={event=>executeAction('ui.select',() => u.act(async () => {await u.keepTaskTab(task.id);return canvasRef.current?.run();}),event)}>Run</button><button type="button" data-design="toolbar.layout" className="dx-quiet" aria-label="Layout" onClick={event=>executeAction('ui.select',() => canvasRef.current?.more(),event)}><Icon name="arrange" size={14} /></button><button type="button" data-design="toolbar.thread" className="dx-quiet" aria-label="Thread" aria-pressed={face === 'split'} onClick={event=>executeAction('ui.select',() => setFace(face === 'split' ? 'canvas' : 'split'),event)}><Icon name="workshop" size={14} /></button><button type="button" data-design="toolbar.more" className="dx-quiet" aria-label="More canvas actions" onClick={event=>executeAction('ui.select',() => canvasRef.current?.more(),event)}><Icon name="more" size={14} /></button></div>
+            </div>
             <Group key={layoutReady ? 'saved' : 'loading'} id="home-context" className="dx-split" orientation="horizontal" onLayoutChanged={(_, meta) => { if (meta?.isUserInteraction && inspectorRef.current) persistWidth(Math.round(inspectorRef.current.getSize().inPixels)); }}>
               <Column id="main" className="dx-col dx-task-column" minSize={320}>
-            <header className="dx-head" data-dx="head">
-              <h1 className="dx-task-heading" aria-label={task?.title || "Task"}><input className="dx-title" aria-label="Task title" key={(task?.id || '') + ':' + (task?.title || '')} defaultValue={task?.title || ''} disabled={!task} onBlur={event => {
-                if (!task) return false;
-                const title = event.target.value.trim();
-                if (!title || title === (task.title || '')) {
-                  if (!title) event.target.value = task.title || '';
-                  return false;
-                }
-                setRequest('waiting');
-                return u.act(() => api.renameTask(task.id, title)).then(result => {
-                  if (result == null || result.ok === false) {
-                    setFailure(result?.message || result?.error || 'The task title was not saved.');
-                    setRequest('error');
-                    return result;
-                  }
-                  setFailure('');
-                  setRequest('loaded');
-                  return result;
-                }).catch(error => {
-                  setFailure(error instanceof Error ? error.message : String(error));
-                  setRequest('error');
-                  return {ok: false, error: error instanceof Error ? error.message : String(error)};
-                });
-              }} /></h1>
-              <details className="dx-actions" data-dx="file-menu"><summary aria-label="Task actions" title="Task actions">⋯</summary><div className="dx-file-popup" role="menu" aria-label="File">
-                <button type="button" role="menuitem" className="dx-file-link" onClick={() => executeAction('ui.select', makeFile)}>New file</button>
-                <button type="button" role="menuitem" className="dx-file-link" onClick={() => executeAction('ui.select', openFile)}>Open file…</button>
-                <button type="button" role="menuitem" className="dx-file-link" onClick={() => executeAction('ui.select', importFile)}>Import…</button>
-                <button type="button" role="menuitem" className="dx-file-link" onClick={() => executeAction('ui.select', openLibrary)}>Library</button>
-                <section className="dx-message-options" aria-label="Message options">
-                      {u.pickFile && <button type="button" className="dx-link" onClick={() => executeAction('ui.select', u.pickFile)}>Attach</button>}
-                      {u.voice && <button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => u.voice(setText))}>Voice</button>}
-                      <label className="dx-model">Model
-                        <select aria-label="Model" value={modelName} disabled={!models.length} onChange={event => {
-                          const value = event.target.value;
-                          u.act(() => api.setRouterSettings({default_model: value})).then(result => { if (result) setRouter(result); });
-                        }}>
-                          {models.map(item => <option key={item} value={item}>{item}</option>)}
-                          {!models.length ? <option value={modelName}>{modelName || 'Unavailable'}</option> : null}
-                        </select>
-                        <small>Free models first</small>
-                      </label>
-                      </section>
-                <div className="dx-runmode" data-run-mode={namedMode || 'unavailable'} role={runMode.status === 'error' ? 'alert' : 'status'}>{runLabel}{runMode.status === 'error' ? <button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => { setRunMode({status: 'waiting', value: '', message: ''}); api.readPermissions().then(result => { const mode = result && typeof result.runMode === 'string' ? result.runMode : ''; setRunMode({status: mode ? 'loaded' : 'empty', value: mode, message: ''}); }).catch(error => setRunMode({status: 'error', value: '', message: error instanceof Error ? error.message : String(error)})); })}>Retry</button> : null}</div>
-              </div></details>
-            </header>
-            <p className="dx-session-meta">{task?.title && (fileName || session) ? task.title + ".archhub" : "Unsaved workflow"}{task?.sessionPath ? s.sessionDirty ? " · Unsaved changes" : " · Saved" : ""}</p>
-            <div className="dx-task-toolbar"><div className="dx-toggle" data-dx="views" role="group" aria-label="Task view"><button type="button" aria-label="Canvas view" aria-pressed={face === "canvas"} onClick={() => executeAction("ui.select", showCanvas)}>Canvas</button><button type="button" aria-label="Workshop view" aria-pressed={face === "workshop"} onClick={() => executeAction("ui.select", () => setFace("workshop"))}>Workshop</button></div><div className="dx-toolbar-actions">{face === 'canvas' && <><button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => canvasRef.current?.addNode())}>Add node</button><button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => canvasRef.current?.connections())}>Connection checks</button><button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => u.schedule(task.id))}>{(s.schedules || []).find(row => row.taskId === task?.id)?.time ? 'Repeat · ' + (s.schedules || []).find(row => row.taskId === task?.id).time : 'Repeat'}</button><button type="button" className="dx-quiet dx-primary-run" onClick={() => executeAction('ui.select', () => canvasRef.current?.run())}>Run</button><button type="button" className="dx-quiet" aria-label="More canvas actions" onClick={() => executeAction('ui.select', () => canvasRef.current?.more())}>⋯</button></>}{face === 'workshop' && <button type="button" className="dx-quiet" title="Open this task workflow and its real Agent/Workshop nodes" onClick={() => executeAction("ui.select", showCanvas)}>Handoff map</button>}{face === 'workshop' && <button type="button" className="dx-quiet" onClick={() => executeAction("ui.select", () => document.querySelector(".dx-composer textarea")?.focus())}>Ask agent</button>}</div></div>
-
-                <div className="dx-surface-body">{face === 'canvas' ? <window.UI.Canvas active embedded externalInspector controlsRef={canvasRef} onInspect={inspect} onHandoff={showCanvas} /> : <div className="dx-main" data-dx="main" data-home-face={face}>
+                <div className="dx-surface-body">{!u.libraryOpen && <div className="v22g-library-rail"><button type="button" aria-label="Library" onClick={event=>executeAction('ui.select',()=>u.setLibraryOpen(true),event)}><Icon name="library" size={14}/><span>Library</span></button></div>}<Group className="v22g-views" orientation="horizontal"><Column id="task-canvas" minSize={320}><div className="v22g-canvas" data-design="canvas.stage"><window.UI.Canvas active embedded externalInspector controlsRef={canvasRef} onInspect={inspect} onHandoff={showCanvas} />{face !== 'split' && composer}</div></Column>{beside && <><Separator className="pane-splitter" aria-label="Resize session split" /><Column id="beside-canvas" minSize={320}><div className="v22g-beside"><header className="spread"><button type="button" className="dx-quiet" onClick={event=>executeAction('ui.select',()=>u.openTaskFile(beside),event)}>{s.tasks.find(row=>row.id===beside)?.title || 'Task'} · Open</button><button type="button" className="dx-quiet" aria-label="Close split" onClick={event=>executeAction('ui.select',()=>u.act(()=>u.saveCanvasTabs({...u.canvasTabs,split:''})),event)}>×</button></header>{previewError ? <p role="alert">{previewError}</p> : preview ? <window.UI.Canvas key={beside} active embedded externalInspector preview={preview} onActivate={()=>u.openTaskFile(beside)} /> : <p role="status">Loading task…</p>}</div></Column></>}{face === 'split' && <><Separator className="pane-splitter" aria-label="Resize thread" /><Column id="task-thread" defaultSize="44%" minSize={300}><div className="dx-main v22g-thread" data-dx="main" data-home-face="split">
                   <div className="dx-thread-layout"><aside className="dx-threads" aria-label="Threads"><header><h2>Threads</h2><button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => u.go('home'))}>All tasks</button></header>{tasks.map(t => <button type="button" className="dx-thread-row" key={t.id} aria-selected={t.id === task?.id} onClick={() => executeAction('ui.select', () => u.openTaskFile(t.id, 'workshop'))}><b>{t.title}</b>{ownerOf(t) ? <span>You → {ownerOf(t)}</span> : null}<span>{window.UI.taskRowReason(t) || statusText(t.status)}{reasonOf(t) ? ' · ' + reasonOf(t) : ''}</span></button>)}</aside>
                   <div className="dx-work-scroll">
                   <div className="dx-mid" data-plan={plan.length ? 'shown' : 'hidden'}>
                     <div className="dx-stage">
                     <section className="dx-talk dx-thread" data-dx="conversation" aria-label="Conversation">
-                      <h2>Thread activity</h2><p className="dx-thread-status">{ownerOf(task) && <span>You → {ownerOf(task)}</span>}<span>{statusText(task?.status)}</span></p>
+                      <div className="spread"><h2>Thread</h2><button type="button" data-design="thread.close" className="dx-quiet" aria-label="Close thread" onClick={event=>executeAction('ui.select',()=>setFace('canvas'),event)}><Icon name="close" size={14}/></button></div><button type="button" data-design="thread.rules" className="dx-quiet" onClick={event=>executeAction('ui.select',()=>setPropertyTab('Task'),event)}>Rules · {rules.length ? rules.join(' · ') : 'No rules set'}</button><p className="dx-thread-status">{ownerOf(task) && <span>You → {ownerOf(task)}</span>}<span>{statusText(task?.status)}</span></p>
                       {window.UI.taskRowReason(task || {}) === 'interrupted' ? <div className="dx-task-notice" role="status"><p>Interrupted · outcome unknown{reasonOf(task) ? ' · ' + reasonOf(task) : ''}</p><button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => u.go('receipts'))}>View activity</button></div> : null}
                       {window.UI.taskRowReason(task || {}) === 'limit reached' ? <div className="dx-task-notice" role="status"><p>Limit reached{task?.limits ? ' · ' + describe(task.limits) : ''}{reasonOf(task) ? ' · ' + reasonOf(task) : ''}</p><button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => u.go('runs'))}>View active runs</button></div> : null}
                       {task?.blocked_by ? <div className="dx-task-notice" role="status"><p>Blocked by {describe(task.blocked_by)}</p>{tasks.some(t => t.id === task.blocked_by) ? <button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => u.openTaskFile(task.blocked_by, 'workshop'))}>View dependency</button> : null}</div> : null}
@@ -507,7 +450,7 @@
                         const attention = window.UI.deliveryAttention?.(m);
                         const who = m.sender_key || m.who || sender;
                         const open = detailId === (m.id || who);
-                        return <article key={m.id} className="dx-msg"><span className="dx-avatar" style={{background:'var(--color-bg-soft)',color:'var(--color-ink-soft)'}} aria-hidden="true" title={sender}>{own && (!s.profile.name || s.profile.name === 'You') ? 'You' : String(own ? s.profile.name : sender || '?').trim().split(/\s+/).map(word => word[0]).join('').slice(0,2).toUpperCase()}</span><div className="dx-msg-line"><div><div className="dx-msg-heading"><b>{sender}</b><span>→ {m.to ? (people.whoIs ? people.whoIs(m.to).name : m.to) : own ? ownerOf(task) || 'Agent' : 'You'}</span></div><p>{typeof m.text === 'object' ? describe(m.text) : m.text}</p><span hidden={!attention} className="dx-delivery-chip" data-delivery-attention={attention || undefined} role="status">{attention}</span>{m.event ? <p className="dx-delivery">Task event: {describe(m.event)}</p> : null}{open ? <p className="dx-delivery">{[m.id, m.created_at, delivery].filter(Boolean).join(' · ') || 'No delivery record'}</p> : null}</div><span className="dx-msg-actions"><button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => replyToMessage(m))}>Reply</button><button type="button" className="dx-quiet" aria-expanded={open} onClick={() => executeAction('ui.select', () => setDetailId(open ? '' : (m.id || who)))}>Details</button></span></div></article>;
+                        return <article key={m.id} data-design="thread.message" data-pinned={task?.pinnedMessages?.includes(m.id)} className="dx-msg" onContextMenu={e=>{e.preventDefault();u.show('Task message menu',{taskId:task.id,message:m,open:()=>replyToMessage(m)});}}><span className="dx-avatar" style={{background:'var(--color-bg-soft)',color:'var(--color-ink-soft)'}} aria-hidden="true" title={sender}>{own && (!s.profile.name || s.profile.name === 'You') ? 'You' : String(own ? s.profile.name : sender || '?').trim().split(/\s+/).map(word => word[0]).join('').slice(0,2).toUpperCase()}</span><div className="dx-msg-line"><div><div className="dx-msg-heading"><b>{sender}</b><span>→ {m.to ? (people.whoIs ? people.whoIs(m.to).name : m.to) : own ? ownerOf(task) || 'Agent' : 'You'}</span></div><p>{typeof m.text === 'object' ? describe(m.text) : m.text}</p><span hidden={!attention} className="dx-delivery-chip" data-delivery-attention={attention || undefined} role="status">{attention}</span>{m.event ? <p className="dx-delivery">Task event: {describe(m.event)}</p> : null}{open ? <p className="dx-delivery">{[m.id, m.created_at, delivery].filter(Boolean).join(' · ') || 'No delivery record'}</p> : null}</div><span className="dx-msg-actions"><button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => replyToMessage(m))}>Reply</button><button type="button" className="dx-quiet" aria-expanded={open} onClick={() => executeAction('ui.select', () => setDetailId(open ? '' : (m.id || who)))}>Details</button></span></div></article>;
                       })}
                     </section>
                     </div>
@@ -518,22 +461,17 @@
                       {outputs.map((row, index) => <article key={index} className="dx-output" data-output=""><span className="dx-output-preview">{row.thumb ? <img alt="" src={row.thumb} /> : <Icon name="docs" size={18} />}</span><div><b>{row.name || 'Output'}</b>{row.excerpt ? <p>{row.excerpt}</p> : null}</div></article>)}
                     </section> : null}
                   </div> : null}
+                  {composer}
                   </div>
                   </div>
                   <div className="dx-task-activity">
                     <section className="dx-panel" data-dx="activity" aria-label="Activity"><h2>Activity</h2>{activity.length ? activity.map(row => <p key={row.id}>{[statusText(row.status),describe(row.output)].filter(Boolean).join(' · ')}</p>) : <div className="dx-empty-activity"><p>Nothing has run yet.</p><button type="button" className="dx-link" onClick={() => executeAction('projects.ds_screens.Run.15', {api,u})}>Run workflow</button></div>}</section></div>
-                  {face === "workshop" && <form className="dx-composer" data-dx="composer" onSubmit={e => { e.preventDefault(); executeAction('ui.select', send); }}>
-                    <window.UI.AgentPicker choices={choices} to={recipient} setTo={setTo} />
-                    <textarea aria-label="Message" placeholder="Message this task…" rows={2} value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} />
-                    <div className="dx-tools"><Btn p type="submit" loading={sending} disabled={!text.trim()}>Send</Btn>
-                    </div>
-                  </form>}
                   <p className="dx-foot" data-dx="footer">{footer}</p>
-                </div>}</div>
+                </div></Column></>}</Group></div>
               </Column>
               <Separator className="pane-splitter" aria-label="Resize the Properties pane" />
-              <Column id="params" className="dx-col dx-properties-column" panelRef={inspectorRef} defaultSize={initialInspectorWidth.current} minSize={280} maxSize={480} groupResizeBehavior="preserve-pixel-size">
-                {propertiesPane}
+              <Column id="params" className="dx-col dx-properties-column" collapsible collapsedSize={36} panelRef={inspectorRef} defaultSize={initialInspectorWidth.current} minSize={280} maxSize={480} groupResizeBehavior="preserve-pixel-size">
+                <div hidden={face==='split'} style={{height:'100%'}}>{propertiesPane}</div>{face==='split' && <button type="button" className="v22g-inspector-rail" aria-label="Open Inspector" onClick={event=>executeAction('ui.select',()=>setFace('canvas'),event)}><Icon name="settings" size={14}/></button>}
               </Column>
             </Group>
           </div>

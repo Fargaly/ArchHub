@@ -142,9 +142,20 @@ test('CHECKPOINT: document round trip and inspector owner width', async () => {
     await page.waitForFunction(() => window.ArchHubAPI && !document.getElementById('studio-boot'));
     await page.waitForFunction(() => document.querySelectorAll('.react-flow__node').length === 4);
     await canvas.click();
+    // Scope to the rail: the header's Canvas button intentionally returns Home.
+    const visibleNodeIds = () => page.evaluate(() => [...new Set([...document.querySelectorAll('[data-graph-node]')].filter(e => e.getClientRects().length).map(e => e.dataset.graphNode))].sort());
+    assert.deepEqual(await visibleNodeIds(), ['a', 'a-step', 'b', 'b-step']);
+    await page.locator('header .header-page').click();
+    await page.locator('[data-home-page]').waitFor({state:'visible'});
+    assert.deepEqual(await visibleNodeIds(), []);
+    await canvas.click();
+    await page.waitForFunction(() => !document.querySelector('[data-home-page]') && document.querySelector('nav[aria-label="Main navigation"] button[aria-label="Canvas"][aria-current="page"]'));
+    assert.deepEqual(await visibleNodeIds(), ['a', 'a-step', 'b', 'b-step']);
+    assert.equal(await page.getByText('Pick a task on Home.', {exact:true}).count(), 0);
     assert.deepEqual((await page.evaluate(() => window.ArchHubAPI.getSessionDocument())).groups, restored.groups);
     assert.deepEqual((await page.evaluate(() => window.ArchHubAPI.getSessionDocument())).notes, restored.notes);
     console.log('PASS F304 Ctrl Z/save/reopen/reload: unbound Canvas renders 4 nodes and retains groups/notes');
+    console.log('PASS F304 CANVASNAV header -> Home -> rail Canvas: visible node ids ' + (await visibleNodeIds()).join(','));
     phase('F304 complete');
     assert.deepEqual(errors, []);
   } finally { await browser.close(); }

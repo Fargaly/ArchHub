@@ -1,0 +1,60 @@
+{
+  "requirement": "F304 CANVASNAV",
+  "base_revision": "5485e440932816690e53eae6ef497435ee8f246a",
+  "root_cause": "Reviewer clickText Canvas selects header-page button, whose existing action opens Home; the rail route works.",
+  "product_changes": [],
+  "prior_art": "ONETASK openTaskFile/api.openTaskGraph; F304 5db8c25b shared go('canvas'); session_files document owner",
+  "baseline": {
+    "result": "FAIL: step(s) failed: Unbound document alone survives reload and Canvas navigation",
+    "code_sha256": "b027c6a297c627975147a67a805c73073e8b68bed30faa897ed46d3a0310be2e",
+    "report": "01.BASELINE/report.json"
+  },
+  "diagnostic": {
+    "report": "02.DIAGNOSTIC/clicks.json",
+    "target": "<button class=\"button-reset header-page\">Canvas</button>",
+    "target_rect": {
+      "x": 234.84375,
+      "y": 7.5,
+      "w": 62,
+      "h": 32
+    },
+    "before": "ArchHub · Canvas",
+    "after": "ArchHub · Home",
+    "rail_rect": {
+      "x": -0.5,
+      "y": 184,
+      "w": 64,
+      "h": 58
+    }
+  },
+  "scoped": {
+    "result": "PASS",
+    "code_sha256_before": "b027c6a297c627975147a67a805c73073e8b68bed30faa897ed46d3a0310be2e",
+    "code_sha256_after": "b027c6a297c627975147a67a805c73073e8b68bed30faa897ed46d3a0310be2e",
+    "visible": [
+      "a",
+      "a-step",
+      "b",
+      "b-step"
+    ],
+    "task": null,
+    "refused": false,
+    "report": "03.SCOPED/report.json",
+    "change": "Only Canvas click selector scoped to Main navigation; original reviewer scenario and onetask scenario unchanged."
+  },
+  "regression": {
+    "file": "02.TESTS/tests_js/checkpoint_browser.cjs",
+    "output": [
+      "PASS checkpoint: UI save -> time/label listed -> edit -> UI restore -> document equal -> reload retains checkpoint and document",
+      "PASS pane: {\"before\":320,\"live\":375,\"stored\":375,\"reopened\":375,\"bounds\":375}",
+      "PASS F304 Ctrl Z/save/reopen/reload: unbound Canvas renders 4 nodes and retains groups/notes",
+      "PASS F304 CANVASNAV header -> Home -> rail Canvas: visible node ids a,a-step,b,b-step",
+      "ℹ tests 1",
+      "ℹ pass 1",
+      "ℹ fail 0",
+      "PASS real UI regression: test_rendered_checkpoint_and_width"
+    ],
+    "log": "regression-output.txt"
+  },
+  "boundary": "Compiled candidate --app 01.APP on hidden desktop with isolated profile; stock rig label INSTALLED BUILD is not an installation claim. No push, installation or release."
+}

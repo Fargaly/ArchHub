@@ -83,7 +83,22 @@ def test_bad_manifest_or_copy_aborts_before_any_delete(install_root):
     assert all((tmp_path / name).exists() for name in orphans)
 
 
-def test_f253_exact_legacy_cleanup_and_log_retention(install_root, capsys):
+@pytest.fixture
+def legacy_inventory(tmp_path, monkeypatch):
+    # Synthetic bytes exercise the same identity contract without copying installed data.
+    def identity(data):
+        return {'size': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
+    data = {'directories': {name: {'directories': [], 'files': {
+        'README.md': identity(b'retired documentation')}} for name in prune.LEGACY_DIRS},
+        'revit': {year: {**identity(b'old DLL'), 'mtime_utc_date': '2026-06-10'}
+                  for year in ('2020', '2023', '2024', '2025')}}
+    path = tmp_path / 'legacy_cleanup_identities.json'
+    path.write_text(json.dumps(data))
+    monkeypatch.setattr(prune, 'LEGACY_IDENTITY_FILE', path)
+    return path
+
+
+def test_f253_exact_legacy_cleanup_and_log_retention(install_root, capsys, legacy_inventory):
     root = install_root
     digest = _manifest(root)
     names = ['_config_backup_2026-06-01', '_deploy_backup_20260623-002259',
@@ -98,6 +113,7 @@ def test_f253_exact_legacy_cleanup_and_log_retention(install_root, capsys):
         path = root / 'Revit' / year / 'RevitMCP.dll'
         path.parent.mkdir(parents=True)
         path.write_bytes(b'old DLL')
+        os.utime(path, (1781049600, 1781049600))
     before = {}
     for name in ('settings/user.json', 'workshop/messages.sqlite3', 'Sessions/user.archhub',
                  'user.db', 'user.sqlite-wal', 'launcher.log', 'updates.log',
@@ -136,11 +152,57 @@ def test_f253_keeps_entire_unsafe_legacy_directory(install_root, unsafe, capsys)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b'preserve')
     if unsafe != 'new':
-        stamp = prune.LEGACY_CUTOFF if unsafe == 'cutoff' else 1
+        stamp = 1782864000 if unsafe == 'cutoff' else 1
         os.utime(path, (stamp, stamp))
     prune.prune(root, digest)
     assert path.read_bytes() == b'preserve' and known.read_text() == '{}'
     assert 'kept' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('name', prune.LEGACY_DIRS)
+def test_f253_unknown_old_python_alone_keeps_whole_directory(install_root, name, capsys):
+    path = install_root / name / 'my-analysis.py'
+    path.parent.mkdir()
+    path.write_bytes(b'personal analysis')
+    os.utime(path, (1, 1))
+    prune.cleanup_legacy(install_root)
+    assert path.read_bytes() == b'personal analysis'
+    assert 'legacy kept: ' + name in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('change', ['extra', 'changed', 'missing', 'empty-directory'])
+def test_f253_exact_inventory_mismatch_keeps_every_file(install_root, legacy_inventory, change, capsys):
+    folder = install_root / prune.LEGACY_DIRS[0]
+    folder.mkdir()
+    known = folder / 'README.md'
+    known.write_bytes(b'retired documentation')
+    if change == 'extra':
+        (folder / 'my-analysis.py').write_bytes(b'user code')
+    elif change == 'changed':
+        known.write_bytes(b'RETIRED documentation')
+    elif change == 'missing':
+        known.unlink()
+    else:
+        (folder / 'user-folder').mkdir()
+    before = {p: p.read_bytes() for p in folder.rglob('*') if p.is_file()}
+    prune.cleanup_legacy(install_root)
+    assert folder.is_dir()
+    assert before == {p: p.read_bytes() for p in folder.rglob('*') if p.is_file()}
+    assert 'legacy kept:' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('year', ['2020', '2023', '2024', '2025'])
+@pytest.mark.parametrize('change', ['hash', 'date'])
+def test_f253_modified_revit_dll_kept(install_root, legacy_inventory, year, change, capsys):
+    path = install_root / 'Revit' / year / 'RevitMCP.dll'
+    path.parent.mkdir(parents=True)
+    data = b'new DLL' if change == 'hash' else b'old DLL'
+    path.write_bytes(data)
+    stamp = 1781049600 if change == 'hash' else 1781136000
+    os.utime(path, (stamp, stamp))
+    prune.cleanup_legacy(install_root)
+    assert path.read_bytes() == data
+    assert 'kept: unrecognized Revit/' + year in capsys.readouterr().out
 
 
 def _owned():
@@ -210,17 +272,18 @@ def _held_open(path):
 
 
 @pytest.mark.skipif(sys.platform != 'win32', reason='real Windows file locks')
-def test_f253_locked_revit_and_logs_defer_then_retry(install_root, capsys):
+def test_f253_locked_revit_and_logs_defer_then_retry(install_root, capsys, legacy_inventory):
     root = install_root
     digest = _manifest(root)
     dll = root / 'Revit/2024/RevitMCP.dll'
     dll.parent.mkdir(parents=True)
-    dll.write_bytes(b'old')
+    dll.write_bytes(b'old DLL')
+    os.utime(dll, (1781049600, 1781049600))
     log = root / 'candidate-held.log'
     log.write_bytes(b'held log')
     with _held_open(dll), _held_open(log):
         prune.prune(root, digest)
-        assert dll.read_bytes() == b'old' and log.read_bytes() == b'held log'
+        assert dll.read_bytes() == b'old DLL' and log.read_bytes() == b'held log'
         assert 'deferred: in use by a running program' in capsys.readouterr().out
     prune.prune(root, digest)
     assert not dll.parent.exists() and not log.exists()
@@ -463,7 +526,7 @@ def test_forbidden_candidate_keeps_pending_lock_retry(install_root):
     assert (root / "app/user.json").read_bytes() == b"user data"
 
 @pytest.mark.parametrize("fault", [False, True, "outside", "receipt", "terminated", "founder", "legacy"])
-def test_production_postinstall_events(tmp_path, install_root, monkeypatch, fault):
+def test_production_postinstall_events(tmp_path, install_root, monkeypatch, fault, legacy_inventory):
     """Execute production event code, including its error handling, without host/profile effects."""
     compiler = Path("C:/Program Files (x86)/Inno Setup 6/ISCC.exe")
     app = install_root
@@ -473,12 +536,13 @@ def test_production_postinstall_events(tmp_path, install_root, monkeypatch, faul
         for name in prune.LEGACY_DIRS:
             path = app / name / 'README.md'
             path.parent.mkdir()
-            path.write_bytes(b'retired')
+            path.write_bytes(b'retired documentation')
             os.utime(path, (1, 1))
         for year in ('2020', '2023', '2024', '2025'):
             path = app / 'Revit' / year / 'RevitMCP.dll'
             path.parent.mkdir(parents=True)
-            path.write_bytes(b'old bridge')
+            path.write_bytes(b'old DLL')
+            os.utime(path, (1781049600, 1781049600))
         for i in range(92):
             path = app / f'candidate-{i:02}.log'
             path.write_text(str(i))
@@ -509,6 +573,7 @@ def test_production_postinstall_events(tmp_path, install_root, monkeypatch, faul
     bridge.write_bytes(b"new bridge")
     target = shipped / "nodelang/host_addin_retarget.py"
     target.write_bytes(helper.read_bytes())
+    (shipped / 'nodelang/legacy_cleanup_identities.json').write_bytes(legacy_inventory.read_bytes())
     (shipped / 'nodelang/log_rotation.py').write_bytes((ROOT / '01.APP/nodelang/log_rotation.py').read_bytes())
     for name, data in {"nodelang/__init__.py": b"", "nodelang/assistant_registration.py": b"",
                        "nodelang/host_broker_installation.py": b"def _read_registration(path): raise RegistrationRefused()\ndef _parse_registration(*args): pass\ndef _same_id(value): return False\nCLASS_NAME=VENDOR_ID=\"court\"\nclass RegistrationRefused(Exception): pass\n",

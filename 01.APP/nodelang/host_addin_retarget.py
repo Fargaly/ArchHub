@@ -14,6 +14,7 @@ import os
 import re
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 
@@ -25,22 +26,26 @@ DATA_TYPES = {".archhub", ".db", ".sqlite", ".sqlite3", ".json", ".yaml", ".yml"
 PROGRAM_TYPES = {".py", ".pyc", ".pyd", ".pyi", ".js", ".jsx", ".mjs", ".cjs", ".css", ".map"}
 LEGACY_DIRS = ('_config_backup_2026-06-01', '_deploy_backup_20260623-002259',
                '_syncrung_backup_20260623-005335', '.retired-v1-docs')
-LEGACY_CUTOFF = 1782864000  # 2026-07-01 UTC, exclusive.
-LEGACY_NAMES = {'settings.json', 'config.json', 'version.json', 'build_metadata.json',
-                'host_artifacts.json', 'readme.md', 'claude.md', 'agents.md', 'spec.md',
-                'authority.md', 'founder_mandates.md', 'failure_log.md', 'decisions.md',
-                'requirements.txt', 'notice', 'build_id', 'archhub.bat', 'archhub.vbs',
-                'quickstart.md', 'version', '_config.yml'}
+LEGACY_IDENTITY_FILE = Path(__file__).with_name('legacy_cleanup_identities.json')
 
 
 def cleanup_legacy(root):
-    """Exact founder-authorized remnants; unknown or recent contents keep the whole folder."""
+    """Remove only the recorded installed remnants; changed contents are user-owned."""
+    try:
+        identities = json.loads(LEGACY_IDENTITY_FILE.read_text(encoding='utf-8'))
+    except (OSError, ValueError) as exc:
+        print('PRUNE legacy kept: identity inventory unavailable: ' + str(exc), flush=True)
+        return
     for name in LEGACY_DIRS:
         folder = root / name
         if not folder.exists():
             continue
         entries = []
+        directories = []
         reasons = []
+        expected = identities['directories'].get(name)
+        if expected is None:
+            reasons.append('no recorded identity')
         if not _plain(folder) or not folder.is_dir():
             reasons.append('redirected or non-directory target')
         else:
@@ -49,24 +54,27 @@ def cleanup_legacy(root):
                     reasons.append('unreadable directory ' + str(error.filename))):
                 for child in list(dirs):
                     path = Path(directory) / child
-                    if not plain(path) or child.casefold() in STATE_DIRS | {'keys'}:
-                        reasons.append('protected/redirected directory ' + path.relative_to(root).as_posix())
-                        if not plain(path):
-                            dirs.remove(child)
+                    directories.append(path.relative_to(folder).as_posix())
+                    if not plain(path):
+                        reasons.append('redirected directory ' + path.relative_to(root).as_posix())
+                        dirs.remove(child)
                 for child in names:
                     path = Path(directory) / child
                     relative = path.relative_to(root).as_posix()
                     entries.append(path)
                     if not plain(path) or not path.is_file():
                         reasons.append('redirected/non-file ' + relative)
-                    elif path.stat().st_mtime >= LEGACY_CUTOFF:
-                        reasons.append('newer file ' + relative)
-                    elif (path.name.casefold() not in LEGACY_NAMES
-                          and path.suffix.casefold() not in PROGRAM_TYPES | {'.ps1', '.iss', '.html'}
-                          and not (name == '.retired-v1-docs' and path.relative_to(folder).parts[0] == 'docs'
-                                   and (path.suffix.casefold() == '.md' or path.relative_to(folder).as_posix()
-                                        in {'docs/_meta/freshness.json', 'docs/_meta/index.json'}))):
-                        reasons.append('unknown/user file ' + relative)
+                    else:
+                        recorded = expected['files'].get(path.relative_to(folder).as_posix()) if expected else None
+                        try:
+                            if (recorded is None or path.stat().st_size != recorded['size']
+                                    or hashlib.sha256(path.read_bytes()).hexdigest() != recorded['sha256']):
+                                reasons.append('unknown/changed file ' + relative)
+                        except OSError:
+                            reasons.append('unreadable file ' + relative)
+            if expected and (set(directories) != set(expected['directories'])
+                    or {path.relative_to(folder).as_posix() for path in entries} != set(expected['files'])):
+                reasons.append('contents differ from recorded identity')
         print('PRUNE LEGACY INVENTORY ' + name + ' ' + json.dumps(
             [path.relative_to(root).as_posix() for path in entries]), flush=True)
         if reasons:
@@ -86,6 +94,14 @@ def cleanup_legacy(root):
         if not _plain(path) or not path.is_file():
             continue
         try:
+            recorded = identities['revit'].get(year)
+            if (recorded is None or path.stat().st_size != recorded['size']
+                    or datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).date().isoformat()
+                    != recorded['mtime_utc_date']
+                    or recorded['mtime_utc_date'] != '2026-06-10'
+                    or hashlib.sha256(path.read_bytes()).hexdigest() != recorded['sha256']):
+                print('PRUNE kept: unrecognized Revit/' + year + '/RevitMCP.dll', flush=True)
+                continue
             path.unlink()
         except OSError:
             print('PRUNE Revit/' + year + '/RevitMCP.dll deferred: in use by a running program', flush=True)

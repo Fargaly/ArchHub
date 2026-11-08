@@ -1024,6 +1024,7 @@ kbd{font-size:var(--type-size-meta)!important;font-weight:500!important}
 .v22g-library-rail span{writing-mode:vertical-rl}.v22g-inspector-rail{width:36px;height:36px;padding:0;background:transparent;border:0;color:var(--v22g-ink2)}
 .v22g-thread{padding:0;background:var(--color-bg)}.v22g-thread .dx-work-scroll{padding:16px}
 .v22g-thread-head{margin:-16px -16px 0;padding:14px 24px;border-bottom:1px solid var(--color-line-hair)}.v22g-thread-head p{margin:2px 0 0;color:var(--v22g-ink2);font-size:12px}
+.pane-splitter[data-collapsed]{width:1px;min-width:1px}
 .v22g-thread .dx-talk{padding:0}.v22g-thread [data-design="thread.rules"]{width:100%;text-align:left;font-size:12px;background:var(--color-line-soft);color:var(--v22g-ink2)}
 .v22g-thread [data-design="thread.close"]{height:30px;width:30px;padding:0;background:none;color:var(--v22g-ink2)}
 .v22g-thread .dx-work-scroll>.dx-mid{flex:none;min-height:0}

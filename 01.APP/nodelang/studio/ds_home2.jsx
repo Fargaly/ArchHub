@@ -472,7 +472,7 @@
                   <p className="dx-foot" data-dx="footer">{footer}</p>
                 </div></Column></>}</Group></div>
               </Column>
-              <Separator className="pane-splitter" aria-label="Resize the Properties pane" />
+              <Separator className="pane-splitter" data-collapsed={fileWorkspace && face==='split' && !splitInspector || undefined} aria-label="Resize the Properties pane" />
               <Column id="params" className="dx-col dx-properties-column" collapsible collapsedSize={36} panelRef={inspectorRef} defaultSize={initialInspectorWidth.current} minSize={280} maxSize={480} groupResizeBehavior="preserve-pixel-size">
                 <div hidden={face==='split' && !splitInspector} style={{height:'100%'}}>{propertiesPane}</div>{face==='split' && !splitInspector && <button type="button" className="v22g-inspector-rail" aria-label="Open Inspector" onClick={event=>executeAction('ui.select',()=>setSplitInspector(true),event)}><Icon name="settings" size={14}/></button>}
               </Column>

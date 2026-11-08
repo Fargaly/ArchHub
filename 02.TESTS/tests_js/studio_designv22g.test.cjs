@@ -101,6 +101,7 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
     await page.locator('[data-design="composer.msg"]').fill('Unsent draft');
     await page.locator('body').press('Control+\\');
     await page.locator('[data-design="thread.msg"]').waitFor();
+    await page.waitForFunction(()=>document.querySelector('[aria-label="Resize the Properties pane"]').getBoundingClientRect().width===1);
     assert.equal(await page.locator('.react-flow').count(),1);
     assert.equal(await page.locator('textarea[aria-label="Message"]').count(),1);
     assert.equal(await page.locator('[data-design="thread.msg"]').inputValue(),'Unsent draft');
@@ -108,6 +109,7 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
     assert.equal(await page.locator('[data-design="inspector.selection"]').getAttribute('aria-selected'),'true');
     const rules=page.locator('.shared-properties-selection [data-dx-list="Rules"]');
     await rules.locator('summary').click();
+    assert.equal((await page.locator('[aria-label="Resize the Properties pane"]').boundingBox()).width,6);
     await rules.getByRole('button',{name:'+ Add',exact:true}).click();
     await rules.getByRole('textbox',{name:'Rules 1',exact:true}).fill('Keep the entrance reference with this task.');
     await rules.getByRole('textbox',{name:'Rules 1',exact:true}).press('Tab');

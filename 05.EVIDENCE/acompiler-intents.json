@@ -11,10 +11,11 @@
       ]
     },
     "GUARDOWNSCRATCH": {
-      "source": "R&D res-018 section 5b, 75cacd99, dc5bc991 and e988 review 59da247f; research and review provenance, not founder words. Builder assignment: three bounded trace-proven own-scratch exceptions; default deny missing evidence, unrelated sessions, shared lanes, modified files, private paths and reparse points. Commit only, hooks on; no push, installation or release.",
+      "source": "R&D res-018 section 5b, 75cacd99, dc5bc991 and e988 review 59da247f; research and review provenance, not founder words. Follow-up source: reviewer e988 9f954081 (founder-supplied review reference, not a local commit or founder words). Tests-only restoration: repository decision entry and TEMP/claude trace cases 1 and 2; hermetic external guard snapshot plus patch, process inventory and inner-junction proofs. hook_decision.py and live hooks unchanged. Commit only, hooks on; no push, installation or release.",
       "scope": [
         "01.APP/nodelang/hook_decision.py",
         "02.TESTS/tests_replica/test_guard_own_scratch.py",
+        "02.TESTS/tests_replica/test_external_delete_guard.py",
         "04.DOCS/FAILURE_LOG.md",
         "05.EVIDENCE/guardownscratch/"
       ]

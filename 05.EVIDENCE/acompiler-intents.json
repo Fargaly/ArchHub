@@ -1,6 +1,14 @@
 {
   "schema_version": 1,
   "intents": {
+    "WSRETURNEDTRUTH": {
+      "source": "717 and design owner report 2026-11-08, not founder words: Workshop returned sends falsely say sent; Claude Code / ArchHub session labels fail to resolve a live session. Builder assignment: reuse Workshop mailbox and Session Link, truthful nonblocking send results and exact live-agent routing across projects; isolated runtime proofs, existing tests, hooks on, commit only, no push/install/release or live profile access.",
+      "scope": [
+        "01.APP/nodelang/workshop_mailbox.py",
+        "02.TESTS/tests_replica/test_workshop_returned_truth.py",
+        "04.DOCS/FAILURE_LOG.md"
+      ]
+    },
     "GUARDOWNSCRATCH": {
       "source": "R&D res-018 section 5b, 75cacd99, dc5bc991 and e988 review 59da247f; research and review provenance, not founder words. Builder assignment: three bounded trace-proven own-scratch exceptions; default deny missing evidence, unrelated sessions, shared lanes, modified files, private paths and reparse points. Commit only, hooks on; no push, installation or release.",
       "scope": [

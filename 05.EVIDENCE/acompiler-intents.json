@@ -11072,6 +11072,9 @@
         "02.TESTS/tests_js/studio_designv22g.test.cjs",
         "02.TESTS/tests_js/agentwork.cjs",
         "02.TESTS/tests_replica/test_designv22g.py",
+        "02.TESTS/tests_replica/test_canvas_parametric.py",
+        "02.TESTS/tests_replica/test_file_path_links.py",
+        "02.TESTS/tests/test_onetask.py",
         "04.DOCS/FAILURE_LOG.md",
         "05.EVIDENCE/designv22g/"
       ]

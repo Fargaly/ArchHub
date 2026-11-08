@@ -1,0 +1,12 @@
+--- a/install-hold.ps1
++++ b/install-hold.ps1
+@@ -3,7 +3,8 @@
+ # shortcut: stops agents' Workshop connectors for the install window; CONNSTABLE (launcher outside the folder) removes this.
+ param([Parameter(Mandatory)][string]$Out)
+ $root = "$env:LOCALAPPDATA\ArchHub\"
+-function Stop-AppUsers { Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine -match 'AppData\\Local\\ArchHub\\' -and $_.CommandLine -notmatch 'ArchHub-Test' -and $_.Name -ne 'ArchHub-Setup-0.exe' -and $_.Name -notmatch '^ArchHub-Setup' -and $_.Name -notmatch '\.tmp$' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } }
++# Setup owns the prune and assistant-registration workers; keep them alive.
++function Stop-AppUsers { Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine -match 'AppData\\Local\\ArchHub\\' -and $_.CommandLine -notmatch 'ArchHub-Test' -and $_.CommandLine -notmatch 'host_addin_retarget\.py|nodelang\.assistant_registration' -and $_.Name -ne 'ArchHub-Setup-0.exe' -and $_.Name -notmatch '^ArchHub-Setup' -and $_.Name -notmatch '\.tmp$' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } }
+ Stop-AppUsers
+ $exe = Join-Path $Out 'ArchHub-Setup-0.exe'
+ $meta = Get-Content (Join-Path $Out 'BUILD_METADATA.json') -Raw | ConvertFrom-Json

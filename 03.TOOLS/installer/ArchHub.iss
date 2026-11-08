@@ -459,11 +459,16 @@ begin
   if PostInstallFailed then Result := 10;
 end;
 
-procedure OnConnectorLog(const S: String; const Error, FirstLine: Boolean);
+procedure OnPostInstallLog(const S: String; const Error, FirstLine: Boolean);
 begin
   Log(S);
-  if PostInstallFailed then
-    SaveStringToFile(ExpandConstant('{app}\logs\postinstall.log'), S + #13#10, True);
+  if not SaveStringToFile(ExpandConstant('{app}\logs\postinstall.log'), S + #13#10, True) then
+    RaiseException('Post-install log could not be written.');
+end;
+
+procedure OnConnectorLog(const S: String; const Error, FirstLine: Boolean);
+begin
+  if PostInstallFailed then OnPostInstallLog(S, Error, FirstLine) else Log(S);
   BackupProgress.SetText(S, 'Checking existing assistant connections.');
   BackupProgress.Animate();
   if Pos('Connector warning:', S) > 0 then
@@ -475,6 +480,7 @@ var
   ReadyPath: String;
   ReadyIdentity: AnsiString;
   ConnectorCode: Integer;
+  PrunePython: String;
 begin
   { Match the private-environment receipt schema used by colleague_setup.py.
     Preserve a same-build receipt; invalidate older setup BEFORE replacing
@@ -482,10 +488,14 @@ begin
   if CurStep = ssInstall then
   begin
     CloseInstallConnectors();
+    if not ForceDirectories(ExpandConstant('{app}\logs')) then
+      RaiseException('Post-install log directory could not be created.');
+    if not SaveStringToFile(ExpandConstant('{app}\logs\postinstall.log'), '', False) then
+      RaiseException('Post-install log could not be opened.');
     ExtractTemporaryFile('host_addin_retarget.py');
     ExtractTemporaryFile('source-manifest.tsv');
     if not ExecAndLogOutput(FindPython(), '-u -E -s -B "' + ExpandConstant('{tmp}') + '\host_addin_retarget.py" --prepare "' + ExpandConstant('{app}') + '" "' + ExpandConstant('{tmp}') + '\source-manifest.tsv" {#InstalledManifestSha256}',
-        ExpandConstant('{tmp}'), SW_HIDE, ewWaitUntilTerminated, ConnectorCode, @OnConnectorLog) then
+        ExpandConstant('{tmp}'), SW_HIDE, ewWaitUntilTerminated, ConnectorCode, @OnPostInstallLog) then
       RaiseException('Product prune preparation could not start; installation refused.')
     else if ConnectorCode <> 0 then
       RaiseException('Product prune preparation failed; installation refused. See the install log.');
@@ -507,22 +517,21 @@ begin
     PostInstallFailed := True;
     try
       HostFilesInstalled();
-      if not ForceDirectories(ExpandConstant('{app}\logs')) then
-        RaiseException('Post-install log directory could not be created.');
-      if not SaveStringToFile(ExpandConstant('{app}\logs\postinstall.log'), '', False) then
-        RaiseException('Post-install log could not be opened.');
       { Prune reads the previous BUILD_ID time only for pre-baseline installs.
         Its own saved manifest/time survives replacement of source-manifest.tsv. }
-      if not ExecAndLogOutput(FindPython(), '-u -E -s -B "' + ExpandConstant('{app}') + '\nodelang\host_addin_retarget.py" --prune "' + ExpandConstant('{app}') + '" {#InstalledManifestSha256}',
-          ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ConnectorCode, @OnConnectorLog) then
-        RaiseException('Product prune could not start; installation is incomplete.');
+      PrunePython := FindPython();
+      OnPostInstallLog('Product prune starting: ' + PrunePython + ' --prune "' + ExpandConstant('{app}') + '" manifest={#InstalledManifestSha256}', False, True);
+      if not ExecAndLogOutput(PrunePython, '-u -E -s -B "' + ExpandConstant('{app}') + '\nodelang\host_addin_retarget.py" --prune "' + ExpandConstant('{app}') + '" {#InstalledManifestSha256}',
+          ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ConnectorCode, @OnPostInstallLog) then
+        RaiseException('Product prune could not start (Windows error ' + IntToStr(ConnectorCode) + '); installation is incomplete.');
+      OnPostInstallLog('Product prune exited ' + IntToStr(ConnectorCode), False, False);
       if ConnectorCode <> 0 then
-        RaiseException('Product prune failed; installation is incomplete. See the install log.');
+        RaiseException('Product prune failed (exit ' + IntToStr(ConnectorCode) + '); installation is incomplete. See the install log.');
       { Retarget reviewed host payloads and retire unsupported Revit manifests.
         The helper logs third-party manifest hashes before and after its work. }
       begin
         if not ExecAndLogOutput(FindPython(), '-u -E -s -B "' + ExpandConstant('{app}') + '\nodelang\host_addin_retarget.py" "' + ExpandConstant('{app}') + '"',
-            ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ConnectorCode, @OnConnectorLog) then
+            ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ConnectorCode, @OnPostInstallLog) then
           RaiseException('Host add-in retarget could not start; installation is incomplete.')
         else if ConnectorCode <> 0 then
           RaiseException('Host add-in retarget exited ' + IntToStr(ConnectorCode) + '; installation is incomplete.');

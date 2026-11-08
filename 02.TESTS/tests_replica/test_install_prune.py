@@ -384,13 +384,21 @@ def test_forbidden_candidate_keeps_pending_lock_retry(install_root):
     assert prune.prune(root, digest) == ["bridges/revit/2027/old/locked.dll"]
     assert (root / "app/user.json").read_bytes() == b"user data"
 
-@pytest.mark.parametrize("fault", [False, True, "outside", "receipt"])
+@pytest.mark.parametrize("fault", [False, True, "outside", "receipt", "terminated", "founder"])
 def test_production_postinstall_events(tmp_path, install_root, monkeypatch, fault):
     """Execute production event code, including its error handling, without host/profile effects."""
     compiler = Path("C:/Program Files (x86)/Inno Setup 6/ISCC.exe")
     app = install_root
     digest, orphans, before = _seed(app)
     (app / "BUILD_ID").write_text("20261107-2320-37990c4")
+    if fault == "founder":
+        for name in list(orphans):
+            if not Path(name).name.startswith("cell_"):
+                (app / name).unlink()
+                orphans.remove(name)
+        assert len(orphans) == 12
+        prune.save_state(app, {"manifest": None, "installed_at_ns": 1794080448225386100,
+                               "pending_prune": {}, "bridge_years": []})
     source = ROOT / "03.TOOLS/installer/ArchHub.iss"
     text = source.read_text()
     callback = text[text.index("var\n  BackupProgress:"):text.index("function PrepareToInstall(")]
@@ -421,7 +429,9 @@ def test_production_postinstall_events(tmp_path, install_root, monkeypatch, faul
     manifest.write_text('\n'.join(rows) + '\n')
     digest = hashlib.sha256(manifest.read_bytes()).hexdigest()
     if fault is True:
-        target.write_bytes(b"raise RuntimeError('forced postinstall failure')\n")
+        target.write_bytes(b"import sys\nprint('helper stdout', flush=True)\nprint('helper stderr', file=sys.stderr, flush=True)\nraise RuntimeError('forced postinstall failure')\n")
+    elif fault == "terminated":
+        target.write_bytes(b"import ctypes\nctypes.windll.kernel32.TerminateProcess(ctypes.c_void_p(-1), 0xffffffff)\n")
     script = tmp_path / 'production.iss'
     script.write_text(r'''[Setup]
 AppName=ArchHub postinstall court
@@ -472,11 +482,19 @@ end;
         assert 'Product prune preparation failed' in output
         assert (app / 'BUILD_ID').read_text() == '20261107-2320-37990c4'
         assert before == {name: (app / name).read_bytes() for name in before}
-    elif fault is True:
+    elif fault is True or fault == "terminated":
         assert done.returncode != 0, output
         assert 'ArchHub Setup refused:' in output
         assert done.returncode == 10
         assert 'Post-install failed' in (app / 'logs/postinstall.log').read_text()
+        for captured in (output, (app / 'logs/postinstall.log').read_text()):
+            assert 'Product prune starting:' in captured
+            assert ('Product prune exited 1' if fault is True else 'Product prune exited -1') in captured
+            if fault is True:
+                assert 'helper stdout' in captured
+                assert 'helper stderr' in captured
+                assert 'Traceback (most recent call last)' in captured
+                assert "RuntimeError: forced postinstall failure" in captured
         assert (app / 'BUILD_ID').read_text() == '20261107-2320-37990c4'
     else:
         assert done.returncode == 0, output

@@ -1,0 +1,167 @@
+{
+  "before": {
+    "exit": 4294967295,
+    "stdout_bytes": 0,
+    "stderr_bytes": 0,
+    "orphans": 12,
+    "manifest_null": true,
+    "selector_exit": 0,
+    "selector_stderr": "",
+    "wrapper_sha256": "dff8449068fb89f596f8321183bf8e53932a6053da0c8c195a216c4269220677"
+  },
+  "after": {
+    "exit": 0,
+    "stdout_bytes": 14836,
+    "stderr_bytes": 0,
+    "orphans": 0,
+    "manifest_null": false,
+    "selector_exit": 0,
+    "selector_stderr": "",
+    "wrapper_sha256": "c5a028ea7a24d4ec2fbc97b0a42c0f3a1de474a24caa6944c8a7e77458eb691f"
+  },
+  "manifest_sha256": "966c3e55a9fc85fc58f77fb942e569a41a278776008954555937eb09686f6d1d",
+  "copy": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\land-stack\\.cache\\prunefail\\hold-reproduction\\AppData\\Local\\ArchHub",
+  "user_data_sha256": {
+    "settings/user.json": "666543196e56bbfb7125560be94ecb3000b5301d4ce9429e01ebbc92011ed4c1",
+    "workshop/messages.sqlite3": "c589d9dd661289d55f9169c147ed9068a2ebffbe270beaca942c3c4c87c5119a",
+    "nodelang/user.archhub": "3aaf196a551303b7fe849d50609e1ea8a7d6493428a3ea3762743749658d2cec",
+    "app/user.db": "588384bed5a90f58ad83a83bfb7b214ca5e52bcccc8d082fea2ad9abe0e30ca5",
+    "studio/user.sqlite3-wal": "291f76166ca77f1994c3fb481373f0bf70cca0214d56c66b6c37081afe92bd24"
+  },
+  "live_prune_executed": false,
+  "wrapper": "C:\\Users\\fargaly\\AppData\\Local\\Temp\\claude\\C--Users-fargaly-00-ARCHUB\\9df7d82e-cf7b-4916-b0ba-7d9ee744173a\\scratchpad\\717-only\\install-hold.ps1",
+  "cause": "install-hold.ps1 Stop-AppUsers terminates the installer helper by matching its command line; native process termination produces no Python exception or traceback",
+  "baseline_revision": "ed79824e66f5dd1cc42c3e873ac5282f199b8747",
+  "release_files": [
+    "02.TESTS/tests_replica/test_app_folder_tidy.py",
+    "02.TESTS/tests_replica/test_baboom_native_companion.py",
+    "02.TESTS/tests_replica/test_baboom_native_runtime.py",
+    "02.TESTS/tests_replica/test_baboom_nograph.py",
+    "02.TESTS/tests_replica/test_baboom_work_presence.py",
+    "02.TESTS/tests_replica/test_canvas_parametric.py",
+    "02.TESTS/tests_replica/test_clean_coordination_task_install.py",
+    "02.TESTS/tests_replica/test_colleague_install.py",
+    "02.TESTS/tests_replica/test_file_path_links.py",
+    "02.TESTS/tests_replica/test_fresh_machine_host_brokers.py",
+    "02.TESTS/tests_replica/test_graphout.py",
+    "02.TESTS/tests_replica/test_install_prune.py",
+    "02.TESTS/tests_replica/test_multidelete.py",
+    "02.TESTS/tests_replica/test_ng_workshop.py",
+    "02.TESTS/tests_replica/test_node_params.py",
+    "02.TESTS/tests_replica/test_presence1_acceptance.py",
+    "02.TESTS/tests_replica/test_raildoors.py",
+    "02.TESTS/tests_replica/test_real_app_check_tool.py",
+    "02.TESTS/tests_replica/test_recent_json_lock.py",
+    "02.TESTS/tests_replica/test_release_ships_committed_bytes.py",
+    "02.TESTS/tests_replica/test_remote_agents_relay.py",
+    "02.TESTS/tests_replica/test_revit_addin_packaging.py",
+    "02.TESTS/tests_replica/test_session_files.py",
+    "02.TESTS/tests_replica/test_settings_node_bridge.py",
+    "02.TESTS/tests_replica/test_the_menu_opens_and_the_cockpit_signs_in.py",
+    "02.TESTS/tests_replica/test_update_release_path.py",
+    "02.TESTS/tests/test_agentcanvas.py",
+    "02.TESTS/tests/test_agentwork.py",
+    "02.TESTS/tests/test_designbuild.py",
+    "02.TESTS/tests/test_onetask.py",
+    "02.TESTS/tests/test_preflight_imports.py",
+    "02.TESTS/tests/test_state_isolation.py",
+    "02.TESTS/tests/test_task_session_keeps_canvas.py",
+    "02.TESTS/tests/test_task_session_roundtrip.py",
+    "06.CLOUD/cloud_backend/tests/test_openrouter_free.py",
+    "06.CLOUD/cloud_backend/tests/test_relay_models.py"
+  ],
+  "release_command": "python -B -m pytest -q -p no:cacheprovider --tb=short 02.TESTS/tests_replica/test_app_folder_tidy.py 02.TESTS/tests_replica/test_baboom_native_companion.py 02.TESTS/tests_replica/test_baboom_native_runtime.py 02.TESTS/tests_replica/test_baboom_nograph.py 02.TESTS/tests_replica/test_baboom_work_presence.py 02.TESTS/tests_replica/test_canvas_parametric.py 02.TESTS/tests_replica/test_clean_coordination_task_install.py 02.TESTS/tests_replica/test_colleague_install.py 02.TESTS/tests_replica/test_file_path_links.py 02.TESTS/tests_replica/test_fresh_machine_host_brokers.py 02.TESTS/tests_replica/test_graphout.py 02.TESTS/tests_replica/test_install_prune.py 02.TESTS/tests_replica/test_multidelete.py 02.TESTS/tests_replica/test_ng_workshop.py 02.TESTS/tests_replica/test_node_params.py 02.TESTS/tests_replica/test_presence1_acceptance.py 02.TESTS/tests_replica/test_raildoors.py 02.TESTS/tests_replica/test_real_app_check_tool.py 02.TESTS/tests_replica/test_recent_json_lock.py 02.TESTS/tests_replica/test_release_ships_committed_bytes.py 02.TESTS/tests_replica/test_remote_agents_relay.py 02.TESTS/tests_replica/test_revit_addin_packaging.py 02.TESTS/tests_replica/test_session_files.py 02.TESTS/tests_replica/test_settings_node_bridge.py 02.TESTS/tests_replica/test_the_menu_opens_and_the_cockpit_signs_in.py 02.TESTS/tests_replica/test_update_release_path.py 02.TESTS/tests/test_agentcanvas.py 02.TESTS/tests/test_agentwork.py 02.TESTS/tests/test_designbuild.py 02.TESTS/tests/test_onetask.py 02.TESTS/tests/test_preflight_imports.py 02.TESTS/tests/test_state_isolation.py 02.TESTS/tests/test_task_session_keeps_canvas.py 02.TESTS/tests/test_task_session_roundtrip.py 06.CLOUD/cloud_backend/tests/test_openrouter_free.py 06.CLOUD/cloud_backend/tests/test_relay_models.py > .cache/prunefail/release.txt 2>&1",
+  "source_sha256": {
+    "03.TOOLS/installer/ArchHub.iss": "845aa95b44ff2c1c3c2171631bd9887d4372b368c4a31b3bf981ceda23b904b9",
+    "02.TESTS/tests_replica/test_install_prune.py": "858a2a1adf44c56d097be34a9897e78aa48405af50b31a2cd41fcae3ae12042a"
+  },
+  "scope_boundary": "Commit-only product repair and applied existing external install-hold.ps1 fix, retained as patch. No live prune, install, launch or push.",
+  "probe_safety": "The exact old/new wrapper predicate and Stop-Process are constrained to the PID of our one disposable child. A runpy bootstrap delays helper startup for 10 seconds for a deterministic before-first-output termination; helper bytes are unchanged. Separate direct CLI runs without the bootstrap both exited 0.",
+  "production_cases": {
+    "traceback": {
+      "setup_log_excerpt": [
+        "2026-11-08 04:38:21.286   Product prune starting: C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\11.ARCHHUB-APP\\.venv\\Scripts\\python.exe --prune \"C:\\Users\\fargaly\\AppData\\Local\\Temp\\pytest-of-Fargaly\\pytest-214\\test_production_postinstall_ev1\\ArchHub\" manifest=79cc976e195e2138a716f9e190d9f203ff26626032e70df2730166a580778d5c",
+        "2026-11-08 04:38:21.712   helper stdout",
+        "2026-11-08 04:38:21.713   helper stderr",
+        "2026-11-08 04:38:21.823   Traceback (most recent call last):",
+        "2026-11-08 04:38:21.827   RuntimeError: forced postinstall failure",
+        "2026-11-08 04:38:21.835   Product prune exited 1",
+        "2026-11-08 04:38:21.836   ArchHub Setup refused: Post-install failed: Product prune failed (exit 1); installation is incomplete. See the install log.",
+        "                          ArchHub Setup refused: Post-install failed: Product prune failed (exit 1); installation is incomplete. See the install log."
+      ],
+      "postinstall_log_excerpt": [
+        "Product prune starting: C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\11.ARCHHUB-APP\\.venv\\Scripts\\python.exe --prune \"C:\\Users\\fargaly\\AppData\\Local\\Temp\\pytest-of-Fargaly\\pytest-214\\test_production_postinstall_ev1\\ArchHub\" manifest=79cc976e195e2138a716f9e190d9f203ff26626032e70df2730166a580778d5c",
+        "helper stdout",
+        "helper stderr",
+        "Traceback (most recent call last):",
+        "RuntimeError: forced postinstall failure",
+        "Product prune exited 1",
+        "ArchHub Setup refused: Post-install failed: Product prune failed (exit 1); installation is incomplete. See the install log."
+      ],
+      "build_id": "20261107-2320-37990c4",
+      "cell_orphans": [
+        "cell_attention_reactions.py",
+        "cell_baboom_model_execution.py",
+        "cell_baboom_steward.py",
+        "cell_brain_fanout.py",
+        "cell_brain_federation.py",
+        "cell_legacy_brain_governance.py",
+        "cell_legacy_core_nodes.py",
+        "cell_legacy_custom_nodes.py",
+        "cell_legacy_self_extension.py",
+        "cell_legacy_surface_catalog.py",
+        "cell_legacy_webshell_host.py",
+        "cell_transparency_witness.py"
+      ]
+    },
+    "native_termination": {
+      "setup_log_excerpt": [
+        "2026-11-08 04:38:41.298   Product prune starting: C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\11.ARCHHUB-APP\\.venv\\Scripts\\python.exe --prune \"C:\\Users\\fargaly\\AppData\\Local\\Temp\\pytest-of-Fargaly\\pytest-214\\test_production_postinstall_ev4\\ArchHub\" manifest=79cc976e195e2138a716f9e190d9f203ff26626032e70df2730166a580778d5c",
+        "2026-11-08 04:38:41.488   Product prune exited -1",
+        "2026-11-08 04:38:41.489   ArchHub Setup refused: Post-install failed: Product prune failed (exit -1); installation is incomplete. See the install log.",
+        "                          ArchHub Setup refused: Post-install failed: Product prune failed (exit -1); installation is incomplete. See the install log."
+      ],
+      "postinstall_log_excerpt": [
+        "Product prune starting: C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\11.ARCHHUB-APP\\.venv\\Scripts\\python.exe --prune \"C:\\Users\\fargaly\\AppData\\Local\\Temp\\pytest-of-Fargaly\\pytest-214\\test_production_postinstall_ev4\\ArchHub\" manifest=79cc976e195e2138a716f9e190d9f203ff26626032e70df2730166a580778d5c",
+        "Product prune exited -1",
+        "ArchHub Setup refused: Post-install failed: Product prune failed (exit -1); installation is incomplete. See the install log."
+      ],
+      "build_id": "20261107-2320-37990c4",
+      "cell_orphans": [
+        "cell_attention_reactions.py",
+        "cell_baboom_model_execution.py",
+        "cell_baboom_steward.py",
+        "cell_brain_fanout.py",
+        "cell_brain_federation.py",
+        "cell_legacy_brain_governance.py",
+        "cell_legacy_core_nodes.py",
+        "cell_legacy_custom_nodes.py",
+        "cell_legacy_self_extension.py",
+        "cell_legacy_surface_catalog.py",
+        "cell_legacy_webshell_host.py",
+        "cell_transparency_witness.py"
+      ]
+    },
+    "founder_seed": {
+      "setup_log_excerpt": [
+        "2026-11-08 04:38:47.259   Product prune starting: C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\11.ARCHHUB-APP\\.venv\\Scripts\\python.exe --prune \"C:\\Users\\fargaly\\AppData\\Local\\Temp\\pytest-of-Fargaly\\pytest-214\\test_production_postinstall_ev5\\ArchHub\" manifest=79cc976e195e2138a716f9e190d9f203ff26626032e70df2730166a580778d5c",
+        "2026-11-08 04:38:47.764   Product prune exited 0"
+      ],
+      "postinstall_log_excerpt": [
+        "Product prune starting: C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\11.ARCHHUB-APP\\.venv\\Scripts\\python.exe --prune \"C:\\Users\\fargaly\\AppData\\Local\\Temp\\pytest-of-Fargaly\\pytest-214\\test_production_postinstall_ev5\\ArchHub\" manifest=79cc976e195e2138a716f9e190d9f203ff26626032e70df2730166a580778d5c",
+        "Product prune exited 0"
+      ],
+      "build_id": "20261108-0143-37d007e",
+      "cell_orphans": []
+    }
+  },
+  "compiler": "ACOMPILER PASS",
+  "cleanup": "Removed only .cache/prunefail/reproduction, hold-reproduction and install-hold-before.ps1 after retaining the root-cause evidence and exact external patch.",
+  "release_summary": "534 passed, 2 skipped, 1 warning in 917.55s (0:15:17)",
+  "passed": 534,
+  "failed": 0,
+  "skipped": 2,
+  "release_log_sha256": "079d26f1196ae97c92e4c6b7b126e6d67f2e765167ded0f56868cb671fe81221",
+  "profile_guard": "TESTISO final profile leaks: []; protected write attempts: 0; PROFILE-WRITE-GUARD: protected write attempts=0",
+  "live_readback": "BUILD_ID 20261107-2320-37990c4; receipt manifest null; 12 cell_*.py orphans remain, as expected with no live prune/install."
+}

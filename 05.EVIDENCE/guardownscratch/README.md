@@ -25,9 +25,10 @@ Repository boundary tests stay in `test_guard_own_scratch.py` and exercise
 
 Review source: e988 `9f954081`, supplied by the founder; that reference is not an
 available local Git commit. This supersedes stale blanket refusal expectations:
-ordinary temp is disposable, unchanged bytes survive an mtime-only touch, inner
-junctions do not make the lane root unsafe, and traces never authorize workspace
-files outside TEMP/claude.
+ordinary temp is disposable; Write receipts verify unchanged bytes despite an
+mtime-only touch, but unreceipted clone contents newer than clone completion
+invalidate the clone exception. Inner junctions do not make the lane root unsafe,
+and traces never authorize workspace files outside TEMP/claude.
 
 The junction proofs from `07cfc452` are restored with the current repository
 entry helper. The PowerShell proof uses the current interpreter (`sys.executable`

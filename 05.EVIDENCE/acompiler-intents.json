@@ -1,6 +1,15 @@
 {
   "schema_version": 1,
   "intents": {
+    "PUBLISHSAFE": {
+      "source": "Founder 2026-11-08: continue lane/payload-identity at e1e813ae; fail closed on refused or malformed checker reports, bind tag/source revision/assets to the build, stop every native gh error, prevent refused build auto-publication, prove zero gh calls with fake PATH commands, run complete release set and commit without push.",
+      "scope": [
+        "03.TOOLS/packaging/windows/publish_release.ps1",
+        "03.TOOLS/installer/build_release.ps1",
+        "02.TESTS/tests_replica/test_update_release_path.py",
+        "04.DOCS/FAILURE_LOG.md"
+      ]
+    },
     "ONETASK": {
       "source": "Founder ONETASK: one task one session one file; linked session groups; Home session list; task-scoped workflow skill automation; reversible migration. Sole builder; release set plus new tests; commit no push or installation.",
       "scope": [

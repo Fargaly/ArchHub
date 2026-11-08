@@ -472,7 +472,7 @@
   function FlowCard({n, s, u, selected, refusal, onConvert, socket, members, onMember, onDetach, menu}) {
     // v22g keeps three rows on the card; every parameter remains available in the Inspector.
     const [compact, setCompact] = React.useState(true);
-    const pinned = n.fixed && n.type !== 'thing.session', task = s.tasks.find(row=>row.id===n.agentTask), messages = window.UI.homeTaskMessages?.(task) || [];
+    const pinned = n.fixed && n.type !== 'thing.session', task = n.fixed ? (s.tasks || []).find(row=>row.id===n.agentTask) : null, messages = window.UI.homeTaskMessages?.(task) || [];
     const pinnedSummary = n.type==='thing.you' ? [s.profile.name || 'Not signed in',s.profile.role].filter(Boolean).join(' · ')
       : n.type==='thing.workshop' ? messages.length+' messages'+(messages.length ? ' · '+messages.at(-1).text : '')
       : n.params.agent || 'Pick an agent, or message the thread';

@@ -16,6 +16,17 @@
         "04.DOCS/FAILURE_LOG.md"
       ]
     },
+    "F304CANVASNAV": {
+      "source": "Founder 2026-11-08 F304 CANVASNAV: reproduce the reviewer f304.mjs scenario before code, distinguish rig clicks from shared routing, preserve task-bound and no-document behavior, prove isolated built-byte Canvas nodes, commit only with hooks on; no push, install or live profile access.",
+      "scope": [
+        "01.APP/nodelang/studio/app.jsx",
+        "03.TOOLS/tools/real_app_check/harness.mjs",
+        "03.TOOLS/tools/real_app_check/scenarios/f304.mjs",
+        "02.TESTS/tests_js/checkpoint_browser.cjs",
+        "04.DOCS/FAILURE_LOG.md",
+        "05.EVIDENCE/F304CANVASNAV/"
+      ]
+    },
     "PUBLISHSAFE": {
       "source": "Founder 2026-11-08: continue lane/payload-identity at e1e813ae; fail closed on refused or malformed checker reports, bind tag/source revision/assets to the build, stop every native gh error, prevent refused build auto-publication, prove zero gh calls with fake PATH commands, run complete release set and commit without push.",
       "scope": [

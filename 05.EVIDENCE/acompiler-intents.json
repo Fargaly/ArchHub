@@ -8,6 +8,14 @@
         "02.TESTS/tests_replica/test_betterleaks_download.py"
       ]
     },
+    "RENAMEONOPEN": {
+      "source": "717 coordinator 2026-11-08, not founder words, ledger item RENAME-ON-OPEN T1: opening never renames or moves files; preserve external paths across edit/autosave/save/reopen, retain managed Sessions APPTIDY rename and follow-identity. Isolated real-file proofs, hooks on, commit only.",
+      "scope": [
+        "01.APP/nodelang/session_files.py",
+        "02.TESTS/tests_replica/test_session_files.py",
+        "04.DOCS/FAILURE_LOG.md"
+      ]
+    },
     "PUBLISHSAFE": {
       "source": "Founder 2026-11-08: continue lane/payload-identity at e1e813ae; fail closed on refused or malformed checker reports, bind tag/source revision/assets to the build, stop every native gh error, prevent refused build auto-publication, prove zero gh calls with fake PATH commands, run complete release set and commit without push.",
       "scope": [

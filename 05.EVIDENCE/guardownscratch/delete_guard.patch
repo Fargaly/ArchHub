@@ -1,0 +1,67 @@
+--- a/delete_guard.py
++++ b/delete_guard.py
+@@ -120,16 +120,32 @@
+     return links, live
+ 
+ 
+-def _processes_using(root: Path) -> list[str]:
++def _processes_using(root: Path, structured=False) -> list[str] | None:
+     needle = str(root).lower()
+     users = []
+     try:
+-        out = subprocess.run(
+-            ["powershell", "-NoProfile", "-Command",
+-             "Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId)`t$($_.ParentProcessId)`t$($_.Name)`t$($_.CommandLine)\" }"],
+-            capture_output=True, text=True, timeout=20).stdout
++        command = 'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId)`t$($_.ParentProcessId)`t$($_.Name)`t$($_.CommandLine)" }'
++        if structured:
++            command = "$ErrorActionPreference = 'Stop'; " + 'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine | ConvertTo-Json -Compress'
++        result = subprocess.run(["powershell", "-NoProfile", "-Command", command],
++                                capture_output=True, text=True, timeout=20)
++        out = result.stdout
++        if structured:
++            if result.returncode:
++                return None
++            inventory = json.loads(out)
++            inventory = inventory if isinstance(inventory, list) else [inventory]
++            rows = []
++            for p in inventory:
++                if (not isinstance(p, dict) or type(p.get('ProcessId')) is not int
++                        or type(p.get('ParentProcessId')) is not int
++                        or not isinstance(p.get('Name'), str)
++                        or not isinstance(p.get('CommandLine'), (str, type(None)))):
++                    return None
++                rows.append(f"{p['ProcessId']}\t{p['ParentProcessId']}\t{p['Name']}\t{p.get('CommandLine') or ''}".replace('\r', ' ').replace('\n', ' '))
++            out = '\n'.join(rows)
+     except Exception:
+-        return users
++        return None if structured else users
+     rows, parent = [], {}
+     for line in out.splitlines():
+         parts = line.split("\t", 3)
+@@ -178,6 +194,25 @@
+             continue
+         links, live = _scan(root)
+         users = _processes_using(root)
++        # A lane root may contain junctions: removal unlinks them, never walks their targets.
++        try:
++            from nodelang.hook_decision import _trace_cleanup_target, _resolve_target, _delete_path_safe
++            cwd = event.get('cwd') or os.getcwd()
++            lexical = _resolve_target(raw, cwd, os.environ)
++            temp = Path(os.environ['TEMP']).resolve()
++            lane = (lexical.parent == temp and lexical.name.startswith(('lane-', 'nograph-'))
++                    and _delete_path_safe(lexical, os.environ))
++            own = _trace_cleanup_target(lexical, cwd, os.environ,
++                                        event.get('agent_id') or event.get('session_id') or '')
++        except (ImportError, OSError, ValueError, TypeError, KeyError):
++            lane = own = False
++        if lane:
++            links = []
++        if own and live:
++            inventory = _processes_using(root, structured=True)
++            if inventory is not None:
++                users += inventory
++                live = []
+         if links:
+             problems.append(f"{root}: contains link(s) {links[:3]} - remove the link itself first (rmdir/Delete() on the link), never delete through it")
+         if live:

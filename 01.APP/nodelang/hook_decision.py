@@ -36,7 +36,9 @@ the asked record and the decided record. Run modes stay as they are.
 from __future__ import annotations
 
 
+import builtins
 import contextvars
+from datetime import datetime
 import fnmatch
 import hashlib
 import json
@@ -48,8 +50,9 @@ import tempfile
 import time
 from pathlib import Path
 
-if not __package__:
+if not globals().get('__package__'):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    __package__ = 'nodelang'
 from nodelang.user_paths import state_directory
 
 HERE = Path(__file__).resolve().parent
@@ -192,7 +195,7 @@ def normalize(payload: dict, vendor: str) -> dict:
             data = json.loads(data)
         except ValueError:
             data = {"value": data}
-    return {"vendor": vendor, "session": str(payload.get("session_id") or payload.get("sessionId") or ""),
+    return {"vendor": vendor, "session": str(payload.get("agent_id") or payload.get("session_id") or payload.get("sessionId") or ""),
             "tool": str(tool), "input": data if isinstance(data, dict) else {"value": data},
             "cwd": str(payload.get("cwd") or os.getcwd())}
 
@@ -838,6 +841,158 @@ def _plot_publish_override(command: str, cwd: str, environment) -> bool | None:
     return None
 
 
+def _delete_path_safe(path: Path, environment) -> bool:
+    """Check the lexical chain before resolve erases a junction's identity."""
+    home = Path(environment.get('USERPROFILE') or environment.get('HOME') or Path.home())
+    local = Path(environment.get('LOCALAPPDATA') or home / 'AppData' / 'Local')
+    protected = [home / '.archhub', home / 'My Drive', local / 'ArchHub', local / 'ArchHub-Test',
+                 Path('G:/My Drive'), Path('E:/01.PERSONAL')]
+    if (any(char in str(path) for char in '*?[]') or _PRIVATE_PATH.search(str(path))
+            or any(parent.name.casefold() in ('my drive', 'onedrive', 'google drive') for parent in (path, *path.parents))):
+        return False
+    if any(_same_tree(path, root) or _same_tree(root, path) for root in protected):
+        return False
+    try:
+        for parent in (path, *path.parents):
+            try:
+                stat = parent.lstat()
+            except FileNotFoundError:
+                continue
+            if parent.is_symlink() or getattr(stat, 'st_file_attributes', 0) & 0x400:
+                return False
+        return True
+    except OSError:
+        return False
+
+
+def _cleanup_trace(session: str, environment):
+    """Completed native writes, never a command argument or a file's authorship claim."""
+    from .agent_status import transcript_path
+    source = transcript_path('claude', session, environment)
+    parent_session = session
+    if source is None:
+        home = Path(environment.get('USERPROFILE') or environment.get('HOME') or Path.home())
+        if not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', session):
+            return {}, set(), ''
+        # Parent folder is the native session id, not a path supplied by the deletion.
+        found = list((home / '.claude' / 'projects').glob('*/*/subagents/agent-' + session + '.jsonl'))
+        if len(found) != 1:
+            return {}, set(), ''
+        source = found[0]
+        parent_session = source.parent.parent.name
+    if not _delete_path_safe(source, environment):
+        return {}, set(), ''
+    with source.open('rb') as stream:
+        raw = stream.read(4 * 1024 * 1024 + 1)
+    if len(raw) > 4 * 1024 * 1024:
+        return {}, set(), ''
+    rows = [json.loads(line) for line in raw.decode('utf-8').splitlines()]
+    pending, writes, children = {}, {}, set()
+    for row in rows:
+        if isinstance(row, dict) and row.get('type') not in ('assistant', 'user'):
+            continue
+        message = row.get('message') if isinstance(row, dict) else None
+        if not isinstance(message, dict):
+            return {}, set(), ''
+        blocks = message.get('content')
+        if not isinstance(blocks, list):
+            continue
+        if row.get('sessionId') != parent_session or (parent_session != session and row.get('agentId') != session):
+            return {}, set(), ''
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            if row.get('type') == 'assistant' and block.get('type') == 'tool_use':
+                identity = block.get('id')
+                if not isinstance(identity, str) or not identity or identity in pending:
+                    return {}, set(), ''
+                pending[identity] = block
+            if row.get('type') != 'user' or block.get('type') != 'tool_result':
+                continue
+            call = pending.pop(block.get('tool_use_id'), {})
+            if not call:
+                return {}, set(), ''
+            name = str(call.get('name') or '')
+            result = row.get('toolUseResult')
+            if block.get('is_error') or not isinstance(result, dict):
+                continue
+            if call.get('name') in ('Task', 'Agent') and isinstance(result.get('agentId'), str):
+                children.add(result['agentId'])
+            data = call.get('input') or {}
+            if not isinstance(data, dict):
+                return {}, set(), ''
+            clone = _tokenize(data.get('command', '')) if name in ('Bash', 'PowerShell') else []
+            clone = (len(clone) >= 4 and clone[:2] == ['git', 'clone']
+                     and all(flag in ('-q', '--quiet', '--no-hardlinks', '--local') for flag in clone[2:-2])
+                     and all(_is_path_token(token) for token in clone[-2:])) and clone[-1]
+            if clone and (result.get('interrupted') or result.get('exit_code', 0) != 0):
+                continue
+            target = clone or data.get('file_path')
+            if not clone and (name != 'Write' or not isinstance(data.get('content'), str)
+                              or not isinstance(target, str) or result.get('filePath') != target):
+                continue
+            if not isinstance(target, str) or not Path(target).is_absolute():
+                continue
+            if clone and not re.search(r'(?:Z|[+-]\d{2}:\d{2})$', row.get('timestamp', '')):
+                return {}, set(), ''
+            writes[_norm(Path(target))] = (datetime.fromisoformat(row['timestamp'].replace('Z', '+00:00')).timestamp()
+                                          if clone else hashlib.sha256(data['content'].encode('utf-8')).hexdigest())
+    return writes, children, parent_session
+
+
+def _trace_cleanup_target(path: Path, cwd: str, environment, session: str) -> bool:
+    """Editable traces can authorize disposable TEMP/claude scratch only."""
+    try:
+        scratch = Path(environment.get('TEMP') or tempfile.gettempdir()) / 'claude'
+        if (not session or not _same_tree(path, scratch)
+                or not _delete_path_safe(path, environment)
+                or not _same_tree(path.resolve(), scratch.resolve())):
+            return False
+        own, children, parent_session = _cleanup_trace(session, environment)
+        written = dict(own)
+        if parent_session != session:
+            parent_writes, siblings, _ = _cleanup_trace(parent_session, environment)
+            if session in siblings:
+                written.update(parent_writes)
+        for child in children:
+            child_writes, _, owner = _cleanup_trace(child, environment)
+            if owner != session:
+                return False
+            written.update(child_writes)
+        clone_at = own.get(_norm(path))
+        clone = (isinstance(clone_at, float) and clone_at <= time.time() and path.is_dir()
+                 and any(parent.name == 'scratchpad' and parent.parent.name == session for parent in path.parents))
+        targets = [path]
+        files = 0
+        for target in targets:
+            if len(targets) > 4000:
+                return False
+            if (not _delete_path_safe(target, environment)
+                    or not _same_tree(target.resolve(), scratch.resolve())):
+                return False
+            if target.is_dir():
+                targets.extend(target.iterdir())
+                continue
+            key = _norm(target)
+            if key not in written and not clone:
+                return False
+            digest = written.get(key)
+            stat = target.stat()
+            if (stat.st_nlink != 1 or (digest and stat.st_size > 4 * 1024 * 1024)
+                    or (key not in written and clone and max(stat.st_mtime, stat.st_ctime) > clone_at)):
+                return False
+            if digest:
+                with target.open('rb') as stream:
+                    content = stream.read(4 * 1024 * 1024 + 1)
+                if hashlib.sha256(content).hexdigest() != digest:
+                    return False
+            files += 1
+        return files > 0
+    except (OSError, ValueError, TypeError, KeyError, builtins.AttributeError, builtins.OverflowError, builtins.RecursionError):
+        return False
+
+
+
 def _own_scratch_target(path: Path, cwd: str, environment, session: str) -> bool:
     """Exact paths only, with real-path containment so junctions cannot expose founder data."""
     if any(char in str(path) for char in '*?[]') or _PRIVATE_PATH.search(str(path)):
@@ -882,14 +1037,37 @@ def founder_data_targeted(command: str, cwd: str, environment, cleanup_candidate
     the newest three are kept. Client, personal, and ArchHub data, repo sources
     outside temp, and PAT/hatch, settings, profiles, models, and first90 stay protected.
     """
-    plot = _plot_publish_override(command, cwd, environment)
-    if plot is not None:
-        return plot
     disposable = _disposable_roots(environment)
     allowlist = _allowlist_entries(environment, cleanup_candidates)
     roots = _founder_roots(environment)
+    targets = []
     for raw in _delete_targets(command, cwd):
         path = _resolve_target(raw, cwd, environment)
+        # Only target ancestors affect resolution, not junctions contained in a folder.
+        try:
+            existing = None
+            linked = False
+            for component in (path, *path.parents):
+                try:
+                    stat = component.lstat()
+                except FileNotFoundError:
+                    continue
+                if existing is None:
+                    existing = component
+                linked |= component.is_symlink() or bool(getattr(stat, 'st_file_attributes', 0) & 0x400)
+            if linked:
+                resolved = existing.resolve(strict=True) / path.relative_to(existing)
+                targets.append((raw, resolved))
+        except (OSError, ValueError, RuntimeError):
+            return True
+        targets.append((raw, path))
+    plot = _plot_publish_override(command, cwd, environment)
+    # A lexical log exception cannot authorize a different, resolved target.
+    if any(path != _resolve_target(raw, cwd, environment) for raw, path in targets):
+        plot = None
+    if plot is not None:
+        return plot
+    for raw, path in targets:
         if (any(char in raw for char in '*?[]') and
                 any(_same_tree(path, Path(environment[key])) for key in ('TEMP', 'TMP') if environment.get(key))):
             return True
@@ -900,10 +1078,9 @@ def founder_data_targeted(command: str, cwd: str, environment, cleanup_candidate
         # A cache that sits inside a client or project folder is still his data.
         if _is_free(path, disposable, allowlist) and not inside and not contains:
             continue
-        if inside or contains:
-            return True
-        if _inside_protected_repo(path, disposable):
-            return True
+        if inside or contains or _inside_protected_repo(path, disposable):
+            if not _trace_cleanup_target(path, cwd, environment, session):
+                return True
     return False
 
 

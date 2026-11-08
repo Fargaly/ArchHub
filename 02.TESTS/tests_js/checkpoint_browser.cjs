@@ -56,7 +56,7 @@ test('CHECKPOINT: document round trip and inspector owner width', async () => {
     await page.getByRole('textbox', {name:'Task title',exact:true}).waitFor();
     assert.deepEqual(content(await page.evaluate(() => window.ArchHubAPI.getSessionDocument())), content(original));
     console.log('PASS checkpoint: UI save -> time/label listed -> edit -> UI restore -> document equal -> reload retains checkpoint and document');
-    if (process.env.CHECKPOINT_WIDTH !== '1') return;
+    if (process.env.CHECKPOINT_WIDTH === '1') {
     const params = page.locator('#params');
     const handle = await page.getByRole('separator', {name:'Resize the Properties pane'}).boundingBox();
     const before = await params.boundingBox();
@@ -95,6 +95,43 @@ test('CHECKPOINT: document round trip and inspector owner width', async () => {
     assert.equal(await params.evaluate(element => element.offsetWidth), 375);
     assert.ok(Math.abs(reopened.width-375) < 0.5, JSON.stringify({reopened:reopened.width}));
     console.log('PASS pane: ' + JSON.stringify({before:before.width,live,stored,reopened:await params.evaluate(element => element.offsetWidth),bounds:after.width}));
+    }
+    // F304: opening splits a legacy file; Undo must leave a usable, unbound document.
+    const legacy = await page.evaluate(async () => {
+      const api = window.ArchHubAPI;
+      await api.newSession('Legacy unbound');
+      const document = api.getSessionDocument();
+      for (const id of ['a', 'b']) document.nodes.push(
+        {id, type:'thing.agent', title:id, params:{session:id}, agentWork:{role:'session'}, position:{x:0,y:id==='a'?0:300}},
+        {id:id+'-step', type:'note', title:id+' step', params:{}, agentWork:{role:'step',owner:id}, position:{x:300,y:id==='a'?0:300}});
+      document.groups = [{id:'frame',nodes:['a-step','b-step']}];
+      document.notes = [{id:'note',text:'Keep legacy annotation',position:{x:10,y:10}}];
+      await api.importSession({name:'legacy.archhub',size:1000,text:async()=>JSON.stringify(document)});
+      return (await api.saveSession()).path;
+    });
+    await page.evaluate(path => window.ArchHubAPI.openSession(path), legacy);
+    assert.equal((await page.evaluate(() => window.ArchHubAPI.getSessionDocument())).nodes.length, 2);
+    const undoInput = await page.context().newCDPSession(page);
+    await undoInput.send('Input.dispatchKeyEvent', {type:'keyDown',key:'z',code:'KeyZ',modifiers:2});
+    await undoInput.send('Input.dispatchKeyEvent', {type:'keyUp',key:'z',code:'KeyZ',modifiers:2});
+    await undoInput.detach();
+    await page.waitForFunction(() => window.ArchHubAPI.getSessionDocument().nodes.length === 4);
+    const restored = await page.evaluate(async () => {
+      await window.ArchHubAPI.saveSession();
+      return window.ArchHubAPI.getSessionDocument();
+    });
+    assert.ok(!restored.properties?.taskContext);
+    await page.evaluate(path => window.ArchHubAPI.openSession(path), legacy);
+    const canvas = page.getByRole('navigation', {name:'Main navigation'}).getByRole('button', {name:'Canvas',exact:true});
+    await canvas.click();
+    await page.waitForFunction(() => document.querySelectorAll('.react-flow__node').length === 4);
+    await page.reload({waitUntil:'domcontentloaded'});
+    await page.waitForFunction(() => window.ArchHubAPI && !document.getElementById('studio-boot'));
+    await page.waitForFunction(() => document.querySelectorAll('.react-flow__node').length === 4);
+    await canvas.click();
+    assert.deepEqual((await page.evaluate(() => window.ArchHubAPI.getSessionDocument())).groups, restored.groups);
+    assert.deepEqual((await page.evaluate(() => window.ArchHubAPI.getSessionDocument())).notes, restored.notes);
+    console.log('PASS F304 Ctrl Z/save/reopen/reload: unbound Canvas renders 4 nodes and retains groups/notes');
     assert.deepEqual(errors, []);
   } finally { await browser.close(); }
 });

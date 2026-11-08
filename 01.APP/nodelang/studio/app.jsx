@@ -129,6 +129,15 @@
       return () => window.removeEventListener('archhub:open-home', openHome);
     }, []);
     const settingsOrigin = React.useRef('home');
+    React.useEffect(() => {
+      if (window.performance.getEntriesByType('navigation')[0]?.type === 'reload'
+          && s.sessionFile && !api.getSessionDocument?.()?.properties?.taskContext) {
+        setTask('');
+        setCanvasOpened(true);
+        api.setActiveSurface?.('canvas');
+        setRoute('canvas');
+      }
+    }, [s.sessionFile]);
     const go = async (r, taskId = '') => {
       if (r === 'system') r = 'settings/System graph';
       if (r === 'baboom') {
@@ -136,7 +145,11 @@
         setModal(null);
         return;
       }
-      const home = window.UI.homeDestination?.(r);
+      const document = api.getSessionDocument?.();
+      const unboundCanvas = r === 'canvas' && document && !document.properties?.taskContext
+        && (!taskId || taskId === api.getSessionPath?.());
+      const home = !unboundCanvas && window.UI.homeDestination?.(r);
+      if (unboundCanvas) setTask('');
       if (home) {
         if (home.library) setLibraryOpen(true);
         const selected = taskId ? s.tasks.find(t => t.id === taskId || t.sessionPath === taskId)

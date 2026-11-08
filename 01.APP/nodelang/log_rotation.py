@@ -16,6 +16,42 @@ GEOMETRY_LOG_BYTES = 512 * 1024
 LOG_KEEP = 3
 
 
+def collect_root_logs(root):
+    """Keep root log history under logs/root, separate from active owner logs."""
+    root = Path(root)
+    target = root / 'logs' / 'root'
+    if any(path.is_symlink() or path.is_junction() for path in (root / 'logs', target)):
+        print('PRUNE root logs kept: redirected log directory', flush=True)
+        return
+    for path in sorted(root.glob('*.log')):
+        if (path.name.casefold() in {'launcher.log', 'updates.log'} or not path.is_file()
+                or path.is_symlink() or path.is_junction()):
+            continue
+        target.mkdir(parents=True, exist_ok=True)
+        destination = target / path.name
+        if destination.exists():
+            print('PRUNE root log kept: destination exists ' + path.name, flush=True)
+            continue
+        try:
+            path.rename(destination)
+        except OSError:
+            print('PRUNE ' + path.name + ' deferred: in use by a running program', flush=True)
+        else:
+            print('PRUNE log moved logs/root/' + path.name, flush=True)
+    if not target.is_dir():
+        return
+    logs = sorted((path for path in target.glob('*.log') if path.is_file()
+                   and not path.is_symlink() and not path.is_junction()),
+                  key=lambda path: (path.stat().st_mtime_ns, path.name), reverse=True)
+    for path in logs[LOG_KEEP:]:
+        try:
+            path.unlink()
+        except OSError:
+            print('PRUNE log retention deferred: ' + path.name, flush=True)
+        else:
+            print('PRUNE log expired logs/root/' + path.name, flush=True)
+
+
 def rotate(path, max_bytes, keep):
     """Move path aside when it reached max_bytes, then shift path.1..path.keep.
 

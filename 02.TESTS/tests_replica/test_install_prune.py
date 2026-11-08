@@ -83,6 +83,66 @@ def test_bad_manifest_or_copy_aborts_before_any_delete(install_root):
     assert all((tmp_path / name).exists() for name in orphans)
 
 
+def test_f253_exact_legacy_cleanup_and_log_retention(install_root, capsys):
+    root = install_root
+    digest = _manifest(root)
+    names = ['_config_backup_2026-06-01', '_deploy_backup_20260623-002259',
+             '_syncrung_backup_20260623-005335', '.retired-v1-docs']
+    for name in names:
+        folder = root / name
+        folder.mkdir()
+        path = folder / 'README.md'
+        path.write_text('retired documentation')
+        os.utime(path, (1, 1))
+    for year in ('2020', '2023', '2024', '2025'):
+        path = root / 'Revit' / year / 'RevitMCP.dll'
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b'old DLL')
+    before = {}
+    for name in ('settings/user.json', 'workshop/messages.sqlite3', 'Sessions/user.archhub',
+                 'user.db', 'user.sqlite-wal', 'launcher.log', 'updates.log',
+                 '_deploy_backup_unknown/README.md', 'Revit/2026/RevitMCP.dll'):
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(name.encode())
+        before[name] = path.read_bytes()
+    for i in range(92):
+        path = root / f'candidate-{i:02}.log'
+        path.write_text(str(i))
+        os.utime(path, (i + 1, i + 1))
+    prune.prune(root, digest)
+    assert all(not (root / name).exists() for name in names)
+    assert all(not (root / 'Revit' / year).exists() for year in ('2020', '2023', '2024', '2025'))
+    assert before == {name:(root / name).read_bytes() for name in before}
+    from nodelang.log_rotation import LOG_KEEP
+    retained = list((root / 'logs').rglob('candidate-*.log'))
+    assert sorted(path.name for path in retained) == [f'candidate-{i:02}.log' for i in range(92 - LOG_KEEP, 92)]
+    assert not list(root.glob('candidate-*.log'))
+    output = capsys.readouterr().out
+    assert all(name + '/README.md' in output for name in names)
+
+
+@pytest.mark.parametrize('unsafe', ['unknown.bin', 'user.archhub', 'user.db', 'user.sqlite3-wal',
+                                   'settings/user.json', 'keys/token.key', 'unknown.md', 'new', 'cutoff'])
+def test_f253_keeps_entire_unsafe_legacy_directory(install_root, unsafe, capsys):
+    root = install_root
+    digest = _manifest(root)
+    folder = root / '_config_backup_2026-06-01'
+    folder.mkdir()
+    known = folder / 'settings.json'
+    known.write_text('{}')
+    os.utime(known, (1, 1))
+    path = folder / ('README.md' if unsafe in {'new', 'cutoff'} else unsafe)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b'preserve')
+    if unsafe != 'new':
+        stamp = prune.LEGACY_CUTOFF if unsafe == 'cutoff' else 1
+        os.utime(path, (stamp, stamp))
+    prune.prune(root, digest)
+    assert path.read_bytes() == b'preserve' and known.read_text() == '{}'
+    assert 'kept' in capsys.readouterr().out
+
+
 def _owned():
     return ('<RevitAddIns><AddIn><AddInId>%s</AddInId><FullClassName>%s</FullClassName>'
             '<VendorId>%s</VendorId></AddIn></RevitAddIns>' % (ADDIN_ID, CLASS_NAME, VENDOR_ID)).encode()
@@ -147,6 +207,24 @@ def _held_open(path):
         yield
     finally:
         assert close(handle)
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='real Windows file locks')
+def test_f253_locked_revit_and_logs_defer_then_retry(install_root, capsys):
+    root = install_root
+    digest = _manifest(root)
+    dll = root / 'Revit/2024/RevitMCP.dll'
+    dll.parent.mkdir(parents=True)
+    dll.write_bytes(b'old')
+    log = root / 'candidate-held.log'
+    log.write_bytes(b'held log')
+    with _held_open(dll), _held_open(log):
+        prune.prune(root, digest)
+        assert dll.read_bytes() == b'old' and log.read_bytes() == b'held log'
+        assert 'deferred: in use by a running program' in capsys.readouterr().out
+    prune.prune(root, digest)
+    assert not dll.parent.exists() and not log.exists()
+    assert (root / 'logs/root/candidate-held.log').read_bytes() == b'held log'
 
 
 @pytest.mark.parametrize("locked", [False, True])
@@ -384,13 +462,27 @@ def test_forbidden_candidate_keeps_pending_lock_retry(install_root):
     assert prune.prune(root, digest) == ["bridges/revit/2027/old/locked.dll"]
     assert (root / "app/user.json").read_bytes() == b"user data"
 
-@pytest.mark.parametrize("fault", [False, True, "outside", "receipt", "terminated", "founder"])
+@pytest.mark.parametrize("fault", [False, True, "outside", "receipt", "terminated", "founder", "legacy"])
 def test_production_postinstall_events(tmp_path, install_root, monkeypatch, fault):
     """Execute production event code, including its error handling, without host/profile effects."""
     compiler = Path("C:/Program Files (x86)/Inno Setup 6/ISCC.exe")
     app = install_root
     digest, orphans, before = _seed(app)
     (app / "BUILD_ID").write_text("20261107-2320-37990c4")
+    if fault == 'legacy':
+        for name in prune.LEGACY_DIRS:
+            path = app / name / 'README.md'
+            path.parent.mkdir()
+            path.write_bytes(b'retired')
+            os.utime(path, (1, 1))
+        for year in ('2020', '2023', '2024', '2025'):
+            path = app / 'Revit' / year / 'RevitMCP.dll'
+            path.parent.mkdir(parents=True)
+            path.write_bytes(b'old bridge')
+        for i in range(92):
+            path = app / f'candidate-{i:02}.log'
+            path.write_text(str(i))
+            os.utime(path, (i + 1, i + 1))
     if fault == "founder":
         for name in list(orphans):
             if not Path(name).name.startswith("cell_"):
@@ -417,6 +509,7 @@ def test_production_postinstall_events(tmp_path, install_root, monkeypatch, faul
     bridge.write_bytes(b"new bridge")
     target = shipped / "nodelang/host_addin_retarget.py"
     target.write_bytes(helper.read_bytes())
+    (shipped / 'nodelang/log_rotation.py').write_bytes((ROOT / '01.APP/nodelang/log_rotation.py').read_bytes())
     for name, data in {"nodelang/__init__.py": b"", "nodelang/assistant_registration.py": b"",
                        "nodelang/host_broker_installation.py": b"def _read_registration(path): raise RegistrationRefused()\ndef _parse_registration(*args): pass\ndef _same_id(value): return False\nCLASS_NAME=VENDOR_ID=\"court\"\nclass RegistrationRefused(Exception): pass\n",
                        "colleague_setup.py": b"def register_revit_add_ins(root): return []\ndef register_autocad_add_ins(root): return []\n"}.items():
@@ -504,3 +597,11 @@ end;
         assert 'bridges/autocad/2026' in state['bridge_years']
         assert all(not (app / name).exists() for name in orphans)
         assert before == {name: (app / name).read_bytes() for name in before}
+        if fault == 'legacy':
+            assert all(not (app / name).exists() for name in prune.LEGACY_DIRS)
+            assert all(not (app / 'Revit' / year).exists() for year in ('2020', '2023', '2024', '2025'))
+            from nodelang.log_rotation import LOG_KEEP
+            assert sorted(path.name for path in (app / 'logs/root').glob('*.log')) == [
+                f'candidate-{i:02}.log' for i in range(92 - LOG_KEEP, 92)]
+            for captured in (output, (app / 'logs/postinstall.log').read_text()):
+                assert all(name + '/README.md' in captured for name in prune.LEGACY_DIRS)

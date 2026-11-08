@@ -23,6 +23,81 @@ HEADER = "ARCHHUB_INSTALLED_SOURCE_MANIFEST_V1"
 RECEIPT = "installed-source-state.json"
 DATA_TYPES = {".archhub", ".db", ".sqlite", ".sqlite3", ".json", ".yaml", ".yml", ".toml", ".log"}
 PROGRAM_TYPES = {".py", ".pyc", ".pyd", ".pyi", ".js", ".jsx", ".mjs", ".cjs", ".css", ".map"}
+LEGACY_DIRS = ('_config_backup_2026-06-01', '_deploy_backup_20260623-002259',
+               '_syncrung_backup_20260623-005335', '.retired-v1-docs')
+LEGACY_CUTOFF = 1782864000  # 2026-07-01 UTC, exclusive.
+LEGACY_NAMES = {'settings.json', 'config.json', 'version.json', 'build_metadata.json',
+                'host_artifacts.json', 'readme.md', 'claude.md', 'agents.md', 'spec.md',
+                'authority.md', 'founder_mandates.md', 'failure_log.md', 'decisions.md',
+                'requirements.txt', 'notice', 'build_id', 'archhub.bat', 'archhub.vbs',
+                'quickstart.md', 'version', '_config.yml'}
+
+
+def cleanup_legacy(root):
+    """Exact founder-authorized remnants; unknown or recent contents keep the whole folder."""
+    for name in LEGACY_DIRS:
+        folder = root / name
+        if not folder.exists():
+            continue
+        entries = []
+        reasons = []
+        if not _plain(folder) or not folder.is_dir():
+            reasons.append('redirected or non-directory target')
+        else:
+            # Do not traverse links, even to produce the required inventory.
+            for directory, dirs, names in os.walk(folder, followlinks=False, onerror=lambda error:
+                    reasons.append('unreadable directory ' + str(error.filename))):
+                for child in list(dirs):
+                    path = Path(directory) / child
+                    if not plain(path) or child.casefold() in STATE_DIRS | {'keys'}:
+                        reasons.append('protected/redirected directory ' + path.relative_to(root).as_posix())
+                        if not plain(path):
+                            dirs.remove(child)
+                for child in names:
+                    path = Path(directory) / child
+                    relative = path.relative_to(root).as_posix()
+                    entries.append(path)
+                    if not plain(path) or not path.is_file():
+                        reasons.append('redirected/non-file ' + relative)
+                    elif path.stat().st_mtime >= LEGACY_CUTOFF:
+                        reasons.append('newer file ' + relative)
+                    elif (path.name.casefold() not in LEGACY_NAMES
+                          and path.suffix.casefold() not in PROGRAM_TYPES | {'.ps1', '.iss', '.html'}
+                          and not (name == '.retired-v1-docs' and path.relative_to(folder).parts[0] == 'docs'
+                                   and (path.suffix.casefold() == '.md' or path.relative_to(folder).as_posix()
+                                        in {'docs/_meta/freshness.json', 'docs/_meta/index.json'}))):
+                        reasons.append('unknown/user file ' + relative)
+        print('PRUNE LEGACY INVENTORY ' + name + ' ' + json.dumps(
+            [path.relative_to(root).as_posix() for path in entries]), flush=True)
+        if reasons:
+            print('PRUNE legacy kept: ' + name + ' ' + '; '.join(reasons), flush=True)
+            continue
+        try:
+            for path in entries:
+                path.unlink()
+            for directory, _, _ in os.walk(folder, topdown=False):
+                Path(directory).rmdir()
+        except OSError:
+            print('PRUNE ' + name + ' deferred: in use by a running program', flush=True)
+        else:
+            print('PRUNE legacy removed ' + name, flush=True)
+    for year in ('2020', '2023', '2024', '2025'):
+        path = root / 'Revit' / year / 'RevitMCP.dll'
+        if not _plain(path) or not path.is_file():
+            continue
+        try:
+            path.unlink()
+        except OSError:
+            print('PRUNE Revit/' + year + '/RevitMCP.dll deferred: in use by a running program', flush=True)
+            continue
+        print('PRUNE Revit/' + year + '/RevitMCP.dll', flush=True)
+        if not any(path.parent.iterdir()):
+            path.parent.rmdir()
+    # Also works when invoked as the installer's standalone script.
+    if any(root.glob('*.log')) or (root / 'logs' / 'root').exists():
+        from importlib import import_module
+        rotation = import_module('nodelang.log_rotation' if __package__ else 'log_rotation')
+        rotation.collect_root_logs(root)
 
 
 def protected(relative):
@@ -235,6 +310,7 @@ def prune(root, expected):
             removed.append(name)
             print("PRUNE " + name, flush=True)
     save_receipt(root, raw, deferred, years)
+    cleanup_legacy(root)
     return removed
 
 

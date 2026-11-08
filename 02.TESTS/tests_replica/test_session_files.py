@@ -1,7 +1,77 @@
 """Portable sessions: real engines, atomic save and shareable file contracts."""
 import copy
+import os
+from pathlib import Path
+import stat
 import pytest
 from nodelang.session_files import SessionFiles, catalogue, new_document, read_document, run_document, write_document
+
+
+def test_external_filename_survives_open_autosave_save_and_reopen(tmp_path):
+    owner = SessionFiles()
+    path = tmp_path / 'bbc4-af-wfl-all-001-2026-11-08.archhub'
+    document = new_document('Different document title')
+    document['nodes'] = [{'id': 'effect', 'type': 'thing.file.write', 'params': {},
+                          'position': {'x': 0, 'y': 0}}]
+    write_document(path, document)
+    before = path.read_bytes()
+    effects = []
+    opened = owner.dispatch({'action': 'open', 'path': str(path)}, invoke=lambda *args: effects.append(args))
+    assert opened['path'] == str(path) and path.read_bytes() == before and effects == []
+    edited = opened['document']
+    edited['title'] = 'Updated internal title'
+    edited['notes'].append({'id': 'edit', 'text': 'External edit persists'})
+    saved = owner.dispatch({'action': 'autosave', 'path': str(path), 'document': edited})
+    assert saved['path'] == str(path) and path.exists()
+    assert read_document(path)['notes'] == edited['notes']
+    saved['document']['title'] = 'Explicit save title'
+    saved = owner.dispatch({'action': 'save', 'path': str(path), 'document': saved['document']})
+    reopened = owner.dispatch({'action': 'open', 'path': str(path)}, invoke=lambda *args: effects.append(args))
+    assert saved['path'] == reopened['path'] == str(path)
+    assert reopened['document']['title'] == 'Explicit save title'
+    assert read_document(path)['notes'] == edited['notes'] and path.read_bytes() != before
+    assert list(tmp_path.glob('*.archhub')) == [path] and effects == []
+    assert owner.current_path() == str(path)
+    assert owner.recent()[0]['path'] == str(path)
+
+
+def test_managed_open_keeps_filename_until_autosave_and_follows_identity():
+    from nodelang import session_files
+    owner = SessionFiles()
+    saved = owner.dispatch({'action': 'save', 'document': new_document('Original')})
+    path = Path(saved['path'])
+    changed = saved['document']
+    changed['title'] = 'Managed title'
+    write_document(path, changed)
+    before = path.read_bytes()
+    opened = owner.dispatch({'action': 'open', 'path': str(path)})
+    assert opened['path'] == str(path) and path.read_bytes() == before
+    renamed = owner.dispatch({'action': 'autosave', 'path': str(path), 'document': opened['document']})
+    target = owner.directory / 'Managed title.archhub'
+    assert renamed['path'] == str(target) and target.exists() and not path.exists()
+    assert owner.current_path() == str(target) and owner.recent()[0]['path'] == str(target)
+    linked, document = session_files.linked_session({'session_file': str(path), 'skill': changed['id']})
+    assert linked == str(target) and document['id'] == changed['id']
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows read-only file attribute')
+def test_readonly_external_open_preserves_file_and_save_reports_error(tmp_path):
+    owner = SessionFiles()
+    path = tmp_path / 'readonly-external.archhub'
+    write_document(path, new_document('A different title'))
+    before = path.read_bytes()
+    path.chmod(stat.S_IREAD)
+    try:
+        opened = owner.dispatch({'action': 'open', 'path': str(path)})
+        assert opened['path'] == str(path) and path.read_bytes() == before
+        opened['document']['title'] = 'Cannot save this'
+        for action in ('save', 'autosave'):
+            with pytest.raises(PermissionError):
+                owner.dispatch({'action': action, 'path': str(path), 'document': opened['document']})
+            assert path.read_bytes() == before
+        assert list(tmp_path.glob('*.archhub')) == [path]
+    finally:
+        path.chmod(stat.S_IREAD | stat.S_IWRITE)
 
 
 def definition():

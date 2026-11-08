@@ -211,6 +211,11 @@ def _aliases(identity, declaration=None):
     label = str(identity.get("sender_label") or declaration.get("agent") or "").split(" / ", 1)[0]
     if label:
         aliases.add(label.casefold())
+    native = declaration.get("native_session_id")
+    project = declaration.get("project")
+    if native and project and label:
+        # The project label and the connector's cwd basename can differ for the same session.
+        aliases.add((label + " / " + project + " / session-" + sha256(native.encode()).hexdigest()[:12]).casefold())
     runtime_alias = {"vscode-copilot":"copilot", "grok-bot":"grok"}.get(declaration.get("runtime"))
     if runtime_alias:
         aliases.add(runtime_alias)
@@ -983,7 +988,9 @@ def read_declarations(connection, *, include_archived=False):
         holder = max(holders, key=lambda other: other.get("updated_at", ""), default=None)
         row["role_current"] = row is holder
         if holder is not None and not row["current"]:
-            holder.setdefault("aliases", []).extend(_aliases({}, row))
+            # Role names follow their owner; an exact session label never names its successor.
+            holder.setdefault("aliases", []).extend(alias for alias in _aliases({}, row)
+                if not re.fullmatch(r".+ / .+ / session-[0-9a-f]{12}", alias))
     return [row for row in rows if include_archived or row["current"]]
 
 
@@ -1220,9 +1227,15 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
             # SQLite has no writer fairness; jitter only transactions, never native effects.
             time.sleep(min(remaining, random.uniform(0.01, 0.04)))
     # A failed live push is not a failed send: an agent told "failed" sent the same reply again.
-    result["note"] = ("Sent and recorded; do not send it again. A failed live push only means the "
-                      "recipient reads it in the Workshop.")
-    # Live delivery now, into each recipient's running session; no pending state, no queue.
+    result["note"] = "Recorded in the Workshop; do not send it again. Live injection is not yet confirmed."
+    if result.get("status") == "returned":
+        result["note"] = "Not delivered to unmatched recipients. Live agents: " + (", ".join(result["live_agents"]) or "none")
+        returned = [row for target in result["unresolved"]
+                    for row in _receipt(database, result, {**body, "to": target}, "returned", result["note"])]
+        if not result.get("matched"):
+            result["delivery"] = returned
+            return result
+    # Push beside the sender; recording alone never proves arrival in a session.
     if body["to"].strip().casefold() in ("ahmed", "founder", "you"):
         result["delivery"] = []  # the founder reads the Workshop screen; nothing to push
         return result
@@ -1251,10 +1264,13 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
         result["delivery"] = _receipt(database, result, body, "uncertain", "The live push did not finish in %d s; it may "
             "still land. Recorded in the Workshop; do not send it again." % one_shot_wait, one_shot_wait)
         return result
-    # Say plainly that the message is sent: an agent told "delivering" re-sent the same reply.
+    # Recording the message is not confirmation that its live push reached the session.
     result["delivery"] = done.get("rows") if "rows" in done else [
-        {"agent": body["to"], "state": "sent", "reason": "Sent and recorded; do not send it again. "
-         "Its live push into each recipient session is finishing now."}]
+        {"agent": target.strip(), "state": "pending", "reason": "Recorded; do not send it again. "
+         "Live injection is not yet confirmed."} for target in body["to"].split(",")
+        if target.strip() not in result.get("unresolved", [])]
+    if result.get("status") == "returned":
+        result["delivery"].extend(returned)
     return result
 
 
@@ -1442,14 +1458,30 @@ def _send(history, body, identity, *, queued=(), sender_binding=None, resolve_li
     recipients = _recipient_rows(probe, declarations)
     targets = [part for part in _header_targets(probe) if part.casefold() not in _ROOM_TARGETS]
     waiting = [part for part in targets if _role(part) in {"717", "research", "design", "tbp"}
-               or any(part.casefold() in _aliases({}, row) for row in declarations)]
+               or any((row.get("current") or (row.get("role") and not
+                   re.fullmatch(r".+ / .+ / session-[0-9a-f]{12}", part.casefold())))
+                   and part.casefold() in _aliases({}, row) for row in declarations)]
     resolved = set()
     if resolve_live and targets:
-        from .workshop_live import discover_target
+        from .workshop_live import discover_target, live_agents
         for part in targets:
             if part in waiting or _recipient_rows({**probe, "content":"To " + part + ":\nx"}, declarations):
                 continue
-            found = discover_target(part)
+            wanted = part.strip().lstrip("@").casefold()
+            handles = [re.sub(r"[^a-z0-9]+", "-", str(row.get("display_name") or row["agent"]).split(" (")[0].casefold()).strip("-")[:40]
+                       for row in declarations if row.get("current")]
+            found = []
+            if part.strip().startswith("@") or any(wanted == handle or wanted.startswith(handle + "-") for handle in handles):
+                found = [{"session": row["session"], "agent": row["name"], "runtime": row["app"],
+                          "native_session_id": row["native_session_id"]} for row in live_agents()
+                         if row["session"] != identity["sender_key"]
+                         and wanted in {row["name"].casefold(), row["handle"], row["agent"].casefold()}]
+            previous = {(row.get("runtime"), row["native_session_id"]) for row in declarations
+                        if row.get("native_session_id") and part.casefold() in _aliases({}, row)}
+            binding = next(iter(previous)) if len(previous) == 1 else None
+            found = found or discover_target(binding[1] if binding else part)
+            if binding:
+                found = [row for row in found if row["runtime"] == binding[0]]
             if found:
                 recipients.extend(found)
                 resolved.add(part)
@@ -1498,6 +1530,9 @@ def _send(history, body, identity, *, queued=(), sender_binding=None, resolve_li
                 category=CATEGORY, refs=(identity["sender_key"],),
                 idempotency_key="workshop-language:" + message["id"])
         return {**identity, "to": target, "text": text, "message_id": message["id"], "sequence": message["sequence"],
+                "live_agents": [row["agent"] for row in declarations if row.get("current")],
+                "matched": len(routing["recipients"]),
+                "unresolved": missing,
                 "status": "returned" if missing else "queued for " + target if waiting and not routing["recipients"] else "recorded"}
 
 

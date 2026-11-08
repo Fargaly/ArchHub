@@ -24,6 +24,8 @@
       u = useApp(),
       actionState = window.UI.useAction(),
       n = s.graph.nodes.find((n) => n.id === nodeId);
+    const menuRef = React.useRef(null);
+    React.useLayoutEffect(()=>{menuRef.current?.querySelector('button:not(:disabled)')?.focus({preventScroll:true});},[kind,nodeId,message?.id]);
     const run = async (fn) => {
       const result = await actionState.run(fn);
       if (result?.approvalId) u.show('Approve', {
@@ -119,7 +121,7 @@
       })(id, ...args);
     }
     if (n?.agentWork?.runnable === false || n?.agentWork?.role === 'session') groups = groups.map(group=>group.filter(row=>!['Rerun','Run to here','Repeat this'].includes(row[0])));
-    return <><div className="context-dismiss" onMouseDown={close} /><section className="context-menu" data-design={kind === 'Open tasks' ? 'tab.picker' : undefined} role="menu" aria-label={kind} style={{
+    return <><div className="context-dismiss" onMouseDown={close} /><section ref={menuRef} className="context-menu" data-design={kind === 'Open tasks' ? 'tab.picker' : undefined} role="menu" aria-label={kind} style={{
         left,
         top
       }} onKeyDown={(e) => {

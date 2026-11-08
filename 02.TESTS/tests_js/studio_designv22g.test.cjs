@@ -41,6 +41,8 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
     assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSessionDocument().nodes.some(node=>node.result)),false);
     assert.equal(await page.locator('[data-graph-node="start"] [data-node-footer-status]').innerText(),'Idle');
     assert.ok(await page.locator('[data-design="composer.msg"]').isVisible());
+    assert.equal(await page.getByRole('button',{name:'Layout',exact:true}).isDisabled(),true);
+    assert.equal(await page.getByRole('button',{name:'Layout',exact:true}).getAttribute('title'),'Layout presets are built in group d of the approved plan.');
     assert.equal(await page.getByRole('tab',{name:'Canvas UI first',exact:true}).getAttribute('data-preview'),'false');
     const profile=page.locator('[data-graph-node="fixed-you"]');
     await profile.getByRole('button',{name:'Parameters',exact:true}).click();
@@ -104,6 +106,13 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
     assert.equal(await page.locator('[data-design="thread.msg"]').inputValue(),'Unsent draft');
     await page.locator('[data-design="thread.rules"]').click();
     assert.equal(await page.locator('[data-design="inspector.selection"]').getAttribute('aria-selected'),'true');
+    const rules=page.locator('.shared-properties-selection [data-dx-list="Rules"]');
+    await rules.locator('summary').click();
+    await rules.getByRole('button',{name:'+ Add',exact:true}).click();
+    await rules.getByRole('textbox',{name:'Rules 1',exact:true}).fill('Keep the entrance reference with this task.');
+    await rules.getByRole('textbox',{name:'Rules 1',exact:true}).press('Tab');
+    await page.waitForFunction(()=>window.ArchHubAPI.getSessionDocument().nodes.find(node=>node.id==='fixed-workshop').result?.output?.rules?.includes('Keep the entrance reference with this task.'));
+    assert.equal(await page.locator('[data-node-inspector="fixed-workshop"]').getByText('Inputs',{exact:true}).count(),1);
     await page.getByRole('button',{name:'Close thread',exact:true}).click();
     assert.equal(await page.locator('[data-design="composer.msg"]').inputValue(),'Unsent draft');
   });
@@ -115,6 +124,11 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
     await page.locator('body').press('Control+\\');
     const message=page.locator('[data-design="thread.message"]').filter({hasText:'Reviewed north entrance at the real meeting.'});
     await message.waitFor();await message.click({button:'right'});
+    assert.equal(await page.evaluate(()=>document.activeElement.textContent.trim()),'Copy text');
+    await page.getByRole('button',{name:'Copy text',exact:true}).press('ArrowDown');
+    assert.equal(await page.evaluate(()=>document.activeElement.textContent.trim()),'Reply');
+    await page.getByRole('menu',{name:'Task message menu',exact:true}).getByRole('button',{name:'Reply',exact:true}).press('ArrowDown');
+    assert.equal(await page.evaluate(()=>document.activeElement.textContent.trim()),'Make a task from this');
     assert.equal(await page.getByRole('button',{name:'Show on canvas',exact:true}).isDisabled(),true);
     assert.equal(await page.getByRole('button',{name:'Show on canvas',exact:true}).getAttribute('title'),'This message names no node on this canvas.');
     await page.getByRole('button',{name:'Pin to the task',exact:true}).click();

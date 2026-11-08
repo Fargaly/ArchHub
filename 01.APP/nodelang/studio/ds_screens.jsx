@@ -548,10 +548,10 @@
     </D.Node>;
   }
   // DESIGNSYS-050 4.9 Inspector (plate archhub-inspector-changed-native.png): Properties of the one selected node; its Inputs and Output, editable.
-  function NodeInspector({n, s, u, embedded = false}) {
+  function NodeInspector({n, s, u, embedded = false, children}) {
     const Tag = embedded ? 'section' : 'aside';
     const sourceOf = port => { const w = s.graph.wires.find(x => x.to === n.id && x.toPort === port), a = w && s.graph.nodes.find(x => x.id === w.from); return a && a.title + ' · ' + (a.outputs.find(p => p.id === w.fromPort)?.name || w.fromPort); };
-    const params = (n.parameterSchema || []).filter(p => p.editable), [state] = nodeState(n, false), result = n.status === 'Done' ? summary(n.output) : '';
+    const params = (n.parameterSchema || []).filter(p => p.editable && !(n.fixed && n.type==='thing.workshop' && ['thread','limit'].includes(p.key))), [state] = nodeState(n, false), result = n.status === 'Done' ? summary(n.output) : '';
     const headerSetting=s.settings.find(row=>row.id==='Appearance.Node header colour');
     const defaultColor=headerSetting?.value!==headerSetting?.default ? headerSetting?.value : window.getComputedStyle(document.documentElement).getPropertyValue('--color-bg-panel').trim() || A.bgPanel;
     const cap = {fontSize: 'calc(12px * var(--text-scale,1))', color: SPEC.label, margin: '16px 0 6px'};
@@ -565,6 +565,7 @@
         <label>Colour<span className="node-colour-value"><input type="color" aria-label="Node colour" value={n.color || defaultColor} onChange={event=>u.act(()=>api.setNodePresentation(n.id,{color:event.target.value}))} /><span>{n.color || defaultColor}</span></span></label>
       </div>
       <div style={cap}>Inputs</div>
+      {children}
       <div style={{display: 'grid', gap: 6}}>{n.inputs.filter(p => !params.some(q => q.key === p.id || 'param:' + q.key === p.id)).map(p => <div key={p.id} style={SLOT}>
         <span style={{flex: 1, minWidth: 0}}><span style={{display: 'block', color: SPEC.label, fontSize: 'calc(11px * var(--text-scale,1))'}}>{p.name} · {typeName(p)}</span>{sourceOf(p.id) ? <span data-linked-source="">{sourceOf(p.id)}</span> : <span style={{color: SPEC.label}}>Not connected</span>}</span></div>)}
         {params.map(p => <label key={p.key} style={SLOT}><span style={{flex: 1, minWidth: 0}}><span style={{display: 'block', color: SPEC.label, fontSize: 'calc(11px * var(--text-scale,1))'}}>{p.label || p.key.replace(/_/g, ' ')}</span>

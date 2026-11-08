@@ -811,7 +811,14 @@ async function taskFileAction(method,id,...args){
  }
  return {...result,...rememberTask(result,false)};
 }
-api.setTaskSession=(id,values)=>taskFileAction('setTaskSession',id,values);
+api.setTaskSession=async(id,values)=>{
+ const result=await taskFileAction('setTaskSession',id,values);
+ if(Object.hasOwn(values,'rules')&&sessionDocument?.properties?.taskContext?.task===id){
+  const changed=sessionDocument.nodes.filter(node=>node.fixed&&node.type==='thing.workshop').map(node=>node.id);
+  if(changed.length)scheduleSolve(changed,null);
+ }
+ return result;
+};
 api.pinTaskMessage=(id,message,pinned)=>taskFileAction('pinTaskMessage',id,message,pinned);
 api.attachMeetingNotes=async(id,text)=>{const result=await workshop('attachMeetingNotes',[id,text]);if(!result||result.ok===false)throw Error(result?.error||'Meeting notes were not attached.');await refreshTasks(false);return result;};
 for(const method of ['checkpointTask','restoreTaskCheckpoint'])api[method]=async(id,...args)=>{const result=await taskFileAction(method,id,...args);await refreshTasks(false);return result;};

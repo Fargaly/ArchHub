@@ -159,10 +159,12 @@
     const initialInspectorWidth = React.useRef(inspectorWidth);
     const [inspection, setInspection] = React.useState({nodeId: null, wireId: null});
     const [propertyTab, setPropertyTab] = React.useState('Task');
+    const [splitInspector, setSplitInspector] = React.useState(false);
     const inspectedNode = s.graph.nodes.find(node => node.id === inspection.nodeId);
     const inspectedWire = s.graph.wires.find(wire => wire.id === inspection.wireId);
     const inspect = value => {
       setInspection(value);
+      if(value.nodeId || value.wireId)setSplitInspector(true);
       setPropertyTab(value.nodeId || value.wireId ? 'Selection' : 'Task');
     };
     React.useEffect(() => {setPropertyTab('Task');}, [fileWorkspace]);
@@ -188,10 +190,11 @@
     }, [inspectorSetting, s.homeLayout, layoutReady]);
     React.useLayoutEffect(() => {
       if (layoutReady) {
-        if(fileWorkspace && face==='split')inspectorRef.current?.collapse();
+        if(fileWorkspace && face==='split' && !splitInspector)inspectorRef.current?.collapse();
         else inspectorRef.current?.resize(inspectorWidth);
       }
-    }, [inspectorWidth, layoutReady, fileWorkspace, face]);
+    }, [inspectorWidth, layoutReady, fileWorkspace, face, splitInspector]);
+    React.useEffect(()=>{setSplitInspector(false);},[face]);
     React.useEffect(() => {
       if (!fileWorkspace && face !== 'canvas') {u.setSelectedNodeId(null);inspect({nodeId:null,wireId:null});}
     }, [face]);
@@ -386,7 +389,7 @@
       {task && !fileWorkspace && <div className="dx-preview-actions" hidden={propertyTab !== 'Task'}>
         <Btn sm p onClick={() => executeAction('ui.select', () => u.openTaskFile(task.id))}>Open task</Btn>
       </div>}
-      <div className="shared-properties-selection" hidden={propertyTab !== 'Selection'}>{inspectedWire ? <window.UI.WireInspector embedded wire={inspectedWire} s={s} u={u} onClose={clearInspection} /> : inspectedNode ? <window.UI.NodeInspector embedded n={inspectedNode} s={s} u={u} /> : fileWorkspace && face === 'canvas' ? <window.UI.GraphProperties g={s.graph} s={s} u={u} /> : <p>Select a node or wire.</p>}</div>
+      <div className="shared-properties-selection" hidden={propertyTab !== 'Selection'}>{inspectedWire ? <window.UI.WireInspector embedded wire={inspectedWire} s={s} u={u} onClose={clearInspection} /> : inspectedNode ? <window.UI.NodeInspector embedded n={inspectedNode} s={s} u={u}>{inspectedNode.fixed && inspectedNode.type === 'thing.workshop' && <ItemList label="Rules" icon="shield" items={rules} onCommit={next => saveSession({rules: next})} />}</window.UI.NodeInspector> : fileWorkspace && face === 'canvas' ? <window.UI.GraphProperties g={s.graph} s={s} u={u} /> : <p>Select a node or wire.</p>}</div>
     </aside>;
     if (!Array.isArray(s.tasks)) return <div className="dx-home-root dx-loading-layout" data-home-loading="" aria-busy="true" aria-label="Loading tasks"><div>{[0,1,2].map(row=><div className="dx-skeleton" key={row} />)}</div><aside>{[0,1,2].map(row=><div className="dx-skeleton" key={row} />)}</aside></div>;
     return <div className="dx-home-root" data-screen={fileWorkspace ? "task-file" : "home"} data-home-page={fileWorkspace ? undefined : ""} data-start={document.documentElement.dataset.start || 'cold'} onKeyDown={event => { if(event.key === 'Escape' && (inspection.nodeId || inspection.wireId)) {event.preventDefault();event.stopPropagation();clearInspection();} else fileKeys(event);}}>
@@ -428,7 +431,7 @@
                 <span className="v22g-tab-state" aria-hidden="true" style={{background:tab.id===task?.id && s.graph.nodes.some(node=>node.status==='Running') ? 'var(--color-accent)' : s.approvals.some(card=>card.work===tab.id && card.status==='pending') ? 'var(--color-warn)' : tasks.find(row=>row.id===tab.id)?.status==='DONE' ? 'var(--color-ok)' : 'var(--v22g-ink3)'}}/><button type="button" role="tab" aria-selected={tab.id === task?.id} data-preview={!tab.kept} onClick={event=>executeAction('ui.select',() => {if(tab.id!==task?.id)u.openTaskFile(tab.id);},event)} onDoubleClick={() => u.act(() => u.keepTaskTab(tab.id))}>{tasks.find(t=>t.id===tab.id)?.title || 'Task unavailable'}</button>
                 <button type="button" data-design={tab.id === task?.id ? 'tab.close' : undefined} aria-label={'Close ' + (tasks.find(t=>t.id===tab.id)?.title || 'task')} onClick={event=>executeAction('ui.select',() => u.act(() => u.closeTaskTab(tab.id)),event)}><Icon name="close" size={12} /></button>
               </div>)}<button type="button" className="dx-quiet" data-design="tab.add" aria-label="Open tasks" onClick={() => u.show('Open tasks')}>+</button></div>
-              <div className="v22g-toolbar"><button type="button" data-design="toolbar.run" className="dx-quiet dx-primary-run" onClick={event=>executeAction('ui.select',() => u.act(async () => {await u.keepTaskTab(task.id);return canvasRef.current?.run();}),event)}>Run</button><button type="button" data-design="toolbar.layout" className="dx-quiet" aria-label="Layout" onClick={event=>executeAction('ui.select',() => canvasRef.current?.more(),event)}><Icon name="arrange" size={14} /></button><button type="button" data-design="toolbar.thread" className="dx-quiet" aria-label="Thread" aria-pressed={face === 'split'} onClick={event=>executeAction('ui.select',() => setFace(face === 'split' ? 'canvas' : 'split'),event)}><Icon name="workshop" size={14} /></button><button type="button" data-design="toolbar.more" className="dx-quiet" aria-label="More canvas actions" onClick={event=>executeAction('ui.select',() => canvasRef.current?.more(),event)}><Icon name="more" size={14} /></button></div>
+              <div className="v22g-toolbar"><button type="button" data-design="toolbar.run" className="dx-quiet dx-primary-run" onClick={event=>executeAction('ui.select',() => u.act(async () => {await u.keepTaskTab(task.id);return canvasRef.current?.run();}),event)}>Run</button><button type="button" data-design="toolbar.layout" className="dx-quiet" aria-label="Layout" disabled title="Layout presets are built in group d of the approved plan." onClick={event=>executeAction('ui.select',()=>u.setToast('Layout presets are built in group d of the approved plan.'),event)}><Icon name="arrange" size={14} /></button><button type="button" data-design="toolbar.thread" className="dx-quiet" aria-label="Thread" aria-pressed={face === 'split'} onClick={event=>executeAction('ui.select',() => setFace(face === 'split' ? 'canvas' : 'split'),event)}><Icon name="workshop" size={14} /></button><button type="button" data-design="toolbar.more" className="dx-quiet" aria-label="More canvas actions" onClick={event=>executeAction('ui.select',() => canvasRef.current?.more(),event)}><Icon name="more" size={14} /></button></div>
             </div>
             <Group key={layoutReady ? 'saved' : 'loading'} id="home-context" className="dx-split" orientation="horizontal" onLayoutChanged={(_, meta) => { if (meta?.isUserInteraction && inspectorRef.current) persistWidth(Math.round(inspectorRef.current.getSize().inPixels)); }}>
               <Column id="main" className="dx-col dx-task-column" minSize={320}>
@@ -471,7 +474,7 @@
               </Column>
               <Separator className="pane-splitter" aria-label="Resize the Properties pane" />
               <Column id="params" className="dx-col dx-properties-column" collapsible collapsedSize={36} panelRef={inspectorRef} defaultSize={initialInspectorWidth.current} minSize={280} maxSize={480} groupResizeBehavior="preserve-pixel-size">
-                <div hidden={face==='split'} style={{height:'100%'}}>{propertiesPane}</div>{face==='split' && <button type="button" className="v22g-inspector-rail" aria-label="Open Inspector" onClick={event=>executeAction('ui.select',()=>setFace('canvas'),event)}><Icon name="settings" size={14}/></button>}
+                <div hidden={face==='split' && !splitInspector} style={{height:'100%'}}>{propertiesPane}</div>{face==='split' && !splitInspector && <button type="button" className="v22g-inspector-rail" aria-label="Open Inspector" onClick={event=>executeAction('ui.select',()=>setSplitInspector(true),event)}><Icon name="settings" size={14}/></button>}
               </Column>
             </Group>
           </div>

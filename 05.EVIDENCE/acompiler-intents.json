@@ -10940,6 +10940,7 @@
       "scope": [
         "01.APP/nodelang/studio/app.jsx",
         "01.APP/nodelang/host_addin_retarget.py",
+        "01.APP/nodelang/legacy_cleanup_identities.json",
         "01.APP/nodelang/log_rotation.py",
         "02.TESTS/tests_js/checkpoint_browser.cjs",
         "02.TESTS/tests_replica/test_install_prune.py",

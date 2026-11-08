@@ -169,7 +169,7 @@ def test_real_persona_manifest_has_exact_hash_and_keeps_user_data_excluded(tmp_p
     ('Fire doors must stay closed. Glass doors need 2 hours. [STD-21]', False),
     ('Fire doors must stay closed. [STD-21] Unsupported trailing claim.', False),
     ('Fire doors must stay closed [STD-21]. Fire doors need 2 hours [STD-21].', True),
-    ('“FIRE doors   must stay closed!” [STD-21]', True),
+    ('“FIRE doors   must stay closed!” [STD-21]', False),
     ('Fire doors need 999 hours. [STD-99]', False),
     ('Fire doors need 2 hours. [STD-21] [STD-99]', False),
     ('Fire doors need 2 hours.', False),
@@ -200,7 +200,8 @@ def test_model_grounding_uses_only_cited_retrieved_passages(tmp_path, model_answ
 
 def test_grounding_normalises_whitespace_without_changing_internal_punctuation():
     hits = [{'id': 'STD-21', 'text': 'Fire doors must stay closed. Fire doors need 2 hours.'}]
-    assert baboom_standard._grounded(' “FIRE doors\n must\tstay closed!” [STD-21] ', hits)
+    assert not baboom_standard._grounded(' “FIRE doors\n must\tstay closed!” [STD-21] ', hits)
+    assert baboom_standard._grounded(' “Fire doors\n must\tstay closed.” [STD-21] ', hits)
     assert baboom_standard._grounded('“Fire doors must stay closed.” [STD-21] “Fire doors need 2 hours.” [STD-21]', hits)
     assert not baboom_standard._grounded('Fire-doors must stay closed. [STD-21]', hits)
     assert not baboom_standard._grounded('Fire doors must stay closed.🔥 [STD-21]', hits)
@@ -230,7 +231,43 @@ def test_grounding_matches_the_whole_quantity_and_unit(quantity):
         changed_unit = quantity.replace('m³', 'm²').replace('mm', 'cm')
         assert not baboom_standard._grounded('The limit is ' + changed_unit + '. [STD-21]', hits)
     if 'MPa' in quantity:
-        assert baboom_standard._grounded('The limit is 2 mPa. [STD-21]', hits)
+        assert not baboom_standard._grounded('The limit is 2 mPa. [STD-21]', hits)
+
+
+@pytest.mark.parametrize('passage,model_answer,accepted', [
+    ('Do not leave fire doors open.', 'Leave fire doors open. [STD-21]', False),
+    ('Only after the alarm is reset, open the fire door.', 'Open the fire door. [STD-21]', False),
+    ('The limit is 2 MPa.', 'The limit is 2 mPa. [STD-21]', False),
+    ('Do not leave fire doors open.', 'Do not leave fire doors open. [STD-21]', True),
+    ('“Do  not leave fire doors open.”', ' “Do not\tleave fire doors\n open.” [STD-21] ', True),
+    ('Do not leave fire doors open.', 'Do not leave Fire doors open. [STD-21]', False),
+    ('Do not leave fire doors open.', 'fire doors open. [STD-21]', False),
+    ('Do not leave fire doors open.', 'Do not leave fire doors open! [STD-21]', False),
+    ('The limit is +2 MPa.', 'The limit is 2 MPa. [STD-21]', False),
+    (' '.join(['word'] * 110) + ' until reset.', ' '.join(['word'] * 110) + ' [STD-21]', False),
+    (' '.join(['word'] * 110) + ' until reset.', ' '.join(['word'] * 110) + '. [STD-21]', False),
+    (' '.join(['word'] * 110) + ' until reset.', ' '.join(['word'] * 110) + ' until reset. [STD-21]', False),
+    (' '.join(['word'] * 109) + ' reset.', ' '.join(['word'] * 109) + ' reset. [STD-21]', True),
+    ('Keep closed. ' + ' '.join(['word'] * 110) + ' until reset.', 'Keep closed. [STD-21]', True),
+    ('Keep closed. Reset first.', 'Keep closed. [STD-21] Reset first. [STD-21]', True),
+    ('Keep closed. Reset first.', 'Keep closed. [STD-21] Open now. [STD-21]', False),
+])
+def test_model_requires_complete_exact_source_sentences(tmp_path, passage, model_answer, accepted):
+    path = tmp_path / 'index.json'
+    path.write_text(json.dumps({'chunks': [
+        {'id': 'STD-21', 'title': 'Fire doors', 'head': 'Rules', 'href': 'doors.html',
+         'text': passage}]}), encoding='utf-8')
+    index = baboom_standard.Index(path)
+    complete = Mock(side_effect=['', model_answer])
+    result = baboom_standard.answer(index, 'STD-21', token='synthetic-reader', complete=complete)
+    assert complete.call_count == 2
+    assert baboom_standard._grounded(model_answer, index.chunks) is accepted
+    if accepted:
+        assert result['answer'] == baboom_standard.public_reply(model_answer)
+        assert result['links'][0]['title'] == 'STD-21 Fire doors'
+    else:
+        assert result == baboom_standard.answer(index, 'STD-21', token='synthetic-reader')
+        assert model_answer not in json.dumps(result, ensure_ascii=False)
 
 
 @pytest.mark.parametrize('site,state,sends', [

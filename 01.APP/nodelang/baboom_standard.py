@@ -5,7 +5,6 @@ import math
 from pathlib import Path
 import re
 import time
-import unicodedata
 from http.cookies import SimpleCookie
 from urllib.error import HTTPError
 from urllib import parse, request as http
@@ -24,28 +23,40 @@ def words(text):
 
 def _grounded(result, hits):
     def normalise(text):
-        text = ' '.join(text.casefold().split())
-        while text and unicodedata.category(text[0]).startswith('P'):
+        text = ' '.join(text.split())
+        while text and text[0] in '\"\'“”‘’«»':
             text = text[1:].lstrip()
-        while text and unicodedata.category(text[-1]).startswith('P'):
+        while text and text[-1] in '\"\'“”‘’«»':
             text = text[:-1].rstrip()
         return text
+
+    def sentences(text):
+        return re.split(r"(?<=[.!?؟])[\"'”’»]*\s+", text.strip())
 
     passages = {}
     for chunk in hits:
         if chunk.get('id'):
-            passages.setdefault(chunk['id'], []).append(normalise(' '.join(chunk['text'].split()[:110])))
+            supplied = passages.setdefault(chunk['id'], set())
+            count = 0
+            # Split before the word limit so a cut sentence can never become evidence.
+            for sentence in sentences(chunk['text']):
+                count += len(sentence.split())
+                if count > 110:
+                    break
+                text = normalise(sentence)
+                if text.endswith(('.', '!', '?', '؟')):
+                    supplied.add(text)
     # Keep citations after a sentence's punctuation attached to that sentence.
     result = re.sub(r"([.!?؟]+[\"'”’»)*_}]*)(\s*(?:\[[^\[\]]+\]\s*)+)", r'\2\1 ', result)
-    sentences = re.split(r"(?<=[.!?؟])[\"'”’»)*_}]*\s+", result.strip())
-    for sentence in sentences:
+    answer_sentences = sentences(result)
+    for sentence in answer_sentences:
         citations = re.findall(r'\[([^\[\]]+)\]', sentence)
-        text = normalise(re.sub(r'\[[^\[\]]+\]', '', sentence))
+        text = normalise(re.sub(r'\s*\[[^\[\]]+\]\s*', '', sentence))
         if not text or not citations or any(c not in passages for c in citations):
             return False
-        if any(not any(text in passage for passage in passages[c]) for c in citations):
+        if any(text not in passages[c] for c in citations):
             return False
-    return bool(sentences)
+    return bool(answer_sentences)
 
 
 class Index:

@@ -30,14 +30,30 @@ try {
     const d = window.ArchHubAPI.getSessionDocument();
     return {nodes:d.nodes.map(({result,...n})=>n),wires:d.wires,groups:d.groups};
   });
+  let releaseDeletedSave;
+  let deletedSaveSeen;
+  const deletedSave = new Promise(resolve => { deletedSaveSeen=resolve; });
+  await page.route('**/api/session-files',async route=>{
+    const body=route.request().postDataJSON();
+    if(body.action==='autosave'&&body.document.nodes.length===0&&!releaseDeletedSave){
+      const response=await route.fetch();
+      const resume=new Promise(resolve=>{releaseDeletedSave=resolve;});
+      deletedSaveSeen();
+      await resume;
+      await route.fulfill({response});
+    }else await route.continue();
+  });
   const canvas = page.getByLabel('Workflow canvas', {exact:true});
   await canvas.focus();
   await key('a',65,2);
   await key('Delete',46);
   await page.getByRole('button',{name:'Confirm',exact:true}).click();
   await page.waitForFunction(() => window.ArchHubAPI.getSessionDocument().nodes.length === 0);
+  await deletedSave;
   await key('z',90,2);
+  releaseDeletedSave();
   await page.waitForFunction(() => window.ArchHubAPI.getSessionDocument().nodes.length > 0);
+  await page.evaluate(()=>window.ArchHubAPI.saveSession());
   const restored = await page.evaluate(() => {
     const d=window.ArchHubAPI.getSessionDocument();
     return {nodes:d.nodes.map(({result,...n})=>n),wires:d.wires,groups:d.groups};

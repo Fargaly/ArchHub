@@ -3,9 +3,9 @@
   "baseline_revision": "094452b971232055f14019139e2d057d611dbf43",
   "scope_registration_revision": "fa48eed40ab32b7430cf2f9928e9a5966b2dbe9d",
   "branch": "lane/f304-f253",
-  "result": "2 failed, 560 passed, 2 skipped, 1 warning in 913.13s (0:15:13)",
-  "passed": 560,
-  "failed": 2,
+  "result": "562 passed, 2 skipped, 1 warning in 955.11s (0:15:55)",
+  "passed": 562,
+  "failed": 0,
   "skipped": 2,
   "release_files": [
     "02.TESTS/tests_replica/test_app_folder_tidy.py",
@@ -45,16 +45,16 @@
     "06.CLOUD/cloud_backend/tests/test_openrouter_free.py",
     "06.CLOUD/cloud_backend/tests/test_relay_models.py"
   ],
-  "release_command": "\"C:/Users/fargaly/00.ARCHUB/10.PRODUCT/11.ARCHHUB-APP/.venv/Scripts/python.exe\" -B -m pytest -q -p no:cacheprovider --tb=short 02.TESTS/tests_replica/test_app_folder_tidy.py 02.TESTS/tests_replica/test_baboom_native_companion.py 02.TESTS/tests_replica/test_baboom_native_runtime.py 02.TESTS/tests_replica/test_baboom_nograph.py 02.TESTS/tests_replica/test_baboom_work_presence.py 02.TESTS/tests_replica/test_canvas_parametric.py 02.TESTS/tests_replica/test_clean_coordination_task_install.py 02.TESTS/tests_replica/test_colleague_install.py 02.TESTS/tests_replica/test_file_path_links.py 02.TESTS/tests_replica/test_fresh_machine_host_brokers.py 02.TESTS/tests_replica/test_graphout.py 02.TESTS/tests_replica/test_install_prune.py 02.TESTS/tests_replica/test_multidelete.py 02.TESTS/tests_replica/test_ng_workshop.py 02.TESTS/tests_replica/test_node_params.py 02.TESTS/tests_replica/test_presence1_acceptance.py 02.TESTS/tests_replica/test_raildoors.py 02.TESTS/tests_replica/test_real_app_check_tool.py 02.TESTS/tests_replica/test_recent_json_lock.py 02.TESTS/tests_replica/test_release_ships_committed_bytes.py 02.TESTS/tests_replica/test_remote_agents_relay.py 02.TESTS/tests_replica/test_revit_addin_packaging.py 02.TESTS/tests_replica/test_session_files.py 02.TESTS/tests_replica/test_settings_node_bridge.py 02.TESTS/tests_replica/test_the_menu_opens_and_the_cockpit_signs_in.py 02.TESTS/tests_replica/test_update_release_path.py 02.TESTS/tests/test_agentcanvas.py 02.TESTS/tests/test_agentwork.py 02.TESTS/tests/test_designbuild.py 02.TESTS/tests/test_onetask.py 02.TESTS/tests/test_preflight_imports.py 02.TESTS/tests/test_state_isolation.py 02.TESTS/tests/test_task_session_keeps_canvas.py 02.TESTS/tests/test_task_session_roundtrip.py 06.CLOUD/cloud_backend/tests/test_openrouter_free.py 06.CLOUD/cloud_backend/tests/test_relay_models.py > .cache/f304f253-review-release.txt 2>&1",
-  "isolation": "TESTISO final profile leaks: []; protected write attempts: 0",
+  "release_command": "\"C:/Users/fargaly/00.ARCHUB/10.PRODUCT/11.ARCHHUB-APP/.venv/Scripts/python.exe\" -B -m pytest -q -p no:cacheprovider --tb=short 02.TESTS/tests_replica/test_app_folder_tidy.py 02.TESTS/tests_replica/test_baboom_native_companion.py 02.TESTS/tests_replica/test_baboom_native_runtime.py 02.TESTS/tests_replica/test_baboom_nograph.py 02.TESTS/tests_replica/test_baboom_work_presence.py 02.TESTS/tests_replica/test_canvas_parametric.py 02.TESTS/tests_replica/test_clean_coordination_task_install.py 02.TESTS/tests_replica/test_colleague_install.py 02.TESTS/tests_replica/test_file_path_links.py 02.TESTS/tests_replica/test_fresh_machine_host_brokers.py 02.TESTS/tests_replica/test_graphout.py 02.TESTS/tests_replica/test_install_prune.py 02.TESTS/tests_replica/test_multidelete.py 02.TESTS/tests_replica/test_ng_workshop.py 02.TESTS/tests_replica/test_node_params.py 02.TESTS/tests_replica/test_presence1_acceptance.py 02.TESTS/tests_replica/test_raildoors.py 02.TESTS/tests_replica/test_real_app_check_tool.py 02.TESTS/tests_replica/test_recent_json_lock.py 02.TESTS/tests_replica/test_release_ships_committed_bytes.py 02.TESTS/tests_replica/test_remote_agents_relay.py 02.TESTS/tests_replica/test_revit_addin_packaging.py 02.TESTS/tests_replica/test_session_files.py 02.TESTS/tests_replica/test_settings_node_bridge.py 02.TESTS/tests_replica/test_the_menu_opens_and_the_cockpit_signs_in.py 02.TESTS/tests_replica/test_update_release_path.py 02.TESTS/tests/test_agentcanvas.py 02.TESTS/tests/test_agentwork.py 02.TESTS/tests/test_designbuild.py 02.TESTS/tests/test_onetask.py 02.TESTS/tests/test_preflight_imports.py 02.TESTS/tests/test_state_isolation.py 02.TESTS/tests/test_task_session_keeps_canvas.py 02.TESTS/tests/test_task_session_roundtrip.py 06.CLOUD/cloud_backend/tests/test_openrouter_free.py 06.CLOUD/cloud_backend/tests/test_relay_models.py > .cache/f304f253-continuation-release-verified.txt 2>&1",
+  "isolation": "TESTISO final profile leaks: []; protected write attempts: 0; PROFILE-WRITE-GUARD: protected write attempts=0",
   "source_sha256": {
     "01.APP/nodelang/studio/app.jsx": "9955b6697a94fe540edded8782249e5e5c1a0e56b57a342a836111729a3dc732",
     "01.APP/nodelang/host_addin_retarget.py": "b9cc2540d7d76f7ba0a5430c9905169afbe65df046c92588cb12d865ea388261",
     "01.APP/nodelang/log_rotation.py": "bc91b5360e5ec25abf5b286d7dafb576b7582ca79b73a56274ccc90629683561",
-    "02.TESTS/tests_js/checkpoint_browser.cjs": "7d89badd8091c542f8acc6dddb6b01863cc87dbe576591e0ac07489305695e19",
+    "02.TESTS/tests_js/checkpoint_browser.cjs": "cfe79fd6597907a5e211871103a2d3f3fa097ccfd5aaec7c6b78c78a3f9626a4",
     "02.TESTS/tests_replica/test_install_prune.py": "8f63377e3b6ca2c1be823137c6163c3bd6051297b0a271a151811e630da25539",
     "01.APP/nodelang/legacy_cleanup_identities.json": "3e13d73067dacee17c6233b03ad8b47a5005565e8f0c7373ec5a7f220c30d596",
-    "04.DOCS/FAILURE_LOG.md": "226aa14253888e92e126ed8bb787794dc169e51aed4da9688386d69d9b11326e"
+    "04.DOCS/FAILURE_LOG.md": "dc875d62322849e81555caeeee4187f73b7bdaece264609f985f71b882f8e4b9"
   },
   "environment": {
     "ARCHHUB_NODE_MODULES": "%TEMP%/land-stack/node_modules",
@@ -64,7 +64,7 @@
     "RUSTUP_HOME": "%LOCALAPPDATA%/rs/rustup",
     "pytest": "9.0.3",
     "interpreter": "C:/Users/fargaly/00.ARCHUB/10.PRODUCT/11.ARCHHUB-APP/.venv/Scripts/python.exe",
-    "ARCHHUB_INTENT_CONTEXT": "%TEMP%/stack-ctx.json",
+    "ARCHHUB_INTENT_CONTEXT": "%TEMP%/land-stack/.cache/f304f253-review-intent.json",
     "CARGO_HOME": "%LOCALAPPDATA%/rs/cargo",
     "fastapi": "0.141.1",
     "PATH": "product venv Scripts + machine PATH + user PATH",
@@ -72,12 +72,12 @@
   },
   "courts": {
     "F253": "63 focused installer tests passed: exact recorded directory/file sets and size/SHA-256; unknown old Python alone, extra/changed/missing files and extra empty directories keep whole directory; all four Revit year SHA/size/2026-06-10 UTC date predicates; modified/date-changed DLLs kept; held DLL/log retry and log retention preserved. Production Inno event harness passed.",
-    "F304": "Existing checkpoint browser sequence passed in the complete release set; separate multidelete and rendered agentcanvas browser courts failed. Product/UI and those harness sources are unchanged in this installer repair. Release remains NOT CLEAN."
+    "F304": "Full release checkpoint passed all original assertions, including unbound Canvas reopen/reload. Checkpoint additions are phase diagnostics only; no assertions or timeouts relaxed. Original rendered multi-delete and agentcanvas courts passed with deterministic regression controls."
   },
   "red": "10 failed, 35 deselected, 1 warning in 89.23s",
-  "focused": "46 passed, 1 warning in 154.04s",
-  "boundary": "Commit only; no live ArchHub install, prune, UI or push. Full release set ran but is NOT CLEAN (two browser failures); no release claimed. Live installed folder was only listed/hashed.",
-  "cleanup": "Restored only the tracked designbuild artifacts generated by the release run; no scratch scripts or product processes retained. Raw verification logs remain under .cache/f304f253-review-*.",
+  "focused": "Original failing pair: 2 passed in 88.74s; final browser group: 3 passed, 1 warning in 114.32s (0:01:54)",
+  "boundary": "Commit only; no push or live installation/prune/UI. Complete release set passed in one pytest process. Two skipped checks remain skipped; prior checkpoint timeout was unreproduced, not claimed fixed.",
+  "cleanup": "Restored generated tracked designbuild artifacts only. Interrupted owned job stopped; automatic approval review rejected fixture removal as blocked by policy, so .cache/agentwork-cexwlfik (274722 bytes) remains. Raw verification logs retained under .cache/f304f253-*.",
   "pre_admission_release": "546 passed, 2 skipped, 1 warning in 882.42s (0:14:42)",
   "admission_corrections": "Qualified window.performance; one standard importlib binding for package/script log owner; headless Ctrl Z through the existing CDP input pattern; Rust environment value recorded as a receipt, not a parameter. Full release rerun after these corrections.",
   "installer_identity_review": {
@@ -148,5 +148,61 @@
       "f304f253-review-browser-retry.txt": "d59c07937ac8c0ffc8df4da578d54a2588a1d1518889c7430019a6aee8027865",
       "f304f253-review-release-final.txt": "164f869995979467fb39306d1b2f054abeeba613f08630f4eff8c2429bd32227"
     }
+  },
+  "browser_continuation": {
+    "baseline_revision": "914120bf4ec5ce021bc0347f10582c05aa673047",
+    "scope_registration_revisions": [
+      "02d3541f",
+      "344a41cd"
+    ],
+    "recorded_at_utc": "2026-11-08T05:12:56.722161+00:00",
+    "root_cause": "Undo restored history before a pending deletion save acknowledged its revision, so the subsequent three-way merge retained deleted wires. Run also captured its epoch before a queued save/poll settled, discarding an already-created approval response. Flush the existing save queue before Undo/Redo/Run and reject stale poll reads; preserve server merge and concurrent agent edits.",
+    "protocol_repair": "Capture JSON protocol stdout before app imports; send diagnostics to stderr.",
+    "controlled_red": "Original failing pair: 2 failed in 83.68s; controlled Run approval race: 1 failed in 103.67s.",
+    "focused": "Original failing pair: 2 passed in 88.74s; final three browser courts: 3 passed in 114.32s.",
+    "prior_full_results": [
+      "561 passed, 1 failed, 2 skipped in 1025.75s: agentwork approval race, fixed and controlled.",
+      "561 passed, 1 failed, 2 skipped in 1144.15s: checkpoint subprocess timeout at unchanged 120 seconds."
+    ],
+    "checkpoint_boundary": "Passed isolated in 59.48s and final full process. Prior timeout unreproduced, not claimed fixed; added phase diagnostics only.",
+    "final_result": "562 passed, 2 skipped, 1 warning in 955.11s (0:15:55)",
+    "failed": 0,
+    "release_log": ".cache/f304f253-continuation-release-verified.txt",
+    "raw_logs_sha256": {
+      ".cache/f304f253-continuation-red.txt": "5be793ec5ff5a207232f19c87b3baa87afbc2e9c8a009b6ed66356def0e5f76f",
+      ".cache/f304f253-continuation-focused-compiled.txt": "814f8afc6b7a2d8b7d806b8eb0f38108d62c3969839dedf1200bc03157f42a36",
+      ".cache/f304f253-continuation-release.txt": "341bf9ffcf40877afac0d0aafd29fe7007f2e3784b8e86d49fd8020f779ae30e",
+      ".cache/f304f253-continuation-run-red.txt": "40596b443ccc250c442a747628a18108f689466bf3591bf25b6d045f4aea6ae6",
+      ".cache/f304f253-continuation-three-browser-final.txt": "cf3c55605809de38ab6d309d75473539513a1d696bb2128ad8289225aeb88189",
+      ".cache/f304f253-continuation-release-final.txt": "b80dcdb158d47607cf1c4fe8422861b8fb0b32feb22b9e5273410c32e02aa438",
+      ".cache/f304f253-checkpoint-focused.txt": "c8da571891203cc32800c8eb2ad39dfdb0d8ad0054261536248f6449a1fd0916",
+      ".cache/f304f253-continuation-release-clean.txt": "5bb3009afa6afa0ebd006e430674906588e32fcddf437034ca0fa95d26f79dc0",
+      ".cache/f304f253-continuation-focused-verified.txt": "72519032054a2c6b8e1bb948b4b2b16ada11810195ac402f72ea8ff015ddc5d7",
+      ".cache/f304f253-continuation-release-verified.txt": "4b215f789901c3425bd933ea8442b20dfbe0c2738962fa903055baf39a3e5e95"
+    },
+    "compiled_manifest_sha256": "e3771bb72b8b194c8344f79d006629611cdabff5b3b1721f5ef38ad8da58ff80",
+    "independent_review": "review_history: no must-fix on final save/poll/Run implementation and controlled browser orders; checkpoint diagnostics preserve assertions/timeouts/F304 checks; final explicit response binding preserves exact await ordering. Read-only source review; no independent test execution.",
+    "preserved": "F304 app.jsx and exact-identity installer sources/data byte-unchanged from 914120bf. All original assertions and timeouts retained.",
+    "cleanup_rejection": "Automatic approval review rejected removing .cache/agentwork-cexwlfik: blocked by policy. Owned job stopped; retained fixture 274722 bytes; no alternative deletion attempted.",
+    "additional_source_sha256": [
+      {
+        "path": "01.APP/nodelang/studio/api.js",
+        "sha256": "6c45fc5f4d8dfd53e9a5fb09f3b82bdd8b961a8eb14b901c2a5d948723073ebf"
+      },
+      {
+        "path": "02.TESTS/tests_js/multidelete.mjs",
+        "sha256": "c45b0e790e1827b063c6fdb82564d4700ad159898a88198f970fdf3bdbd42796"
+      },
+      {
+        "path": "02.TESTS/tests_js/agentcanvas.cjs",
+        "sha256": "c5f62b0f9fc8c914d97534dc3c63ca1efe7a8a62d605a02560eb62b68196c3b0"
+      },
+      {
+        "path": "02.TESTS/tests_js/agentwork.cjs",
+        "sha256": "f972e39c9b6ad5e96b631903208bc3817827438b3c1c17be069151a611af6a70"
+      }
+    ],
+    "compiler_compatibility": "ACOMPILER rejected the nested await in the fixture as E0020. Split it into an explicit response binding with equivalent await ordering, confirmed by independent review; repeated focused and full release verification.",
+    "pre_compiler_clean_release": "562 passed, 2 skipped, 1 warning in 951.49s (0:15:51)"
   }
 }

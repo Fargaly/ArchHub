@@ -1608,7 +1608,7 @@ async function pollFile(){
  const id=sessionDocument.id,path=sessionPath,head=await sessionRequest('head',{path,id});
  if(!(head.revision>sessionRevision)||localDirty||sessionDocument?.id!==id)return;
  const read=await sessionRequest('read',{path,id});
- if(localDirty||sessionDocument?.id!==id)return;
+ if(localDirty||sessionDocument?.id!==id||read.revision<=sessionRevision)return;
  fileHistory.push(copy(sessionDocument));sessionDocument=copy(read.document);sessionRevision=read.revision;runEpoch++;
  solveNote=read.by&&read.by!=='You'?'Updated by '+read.by:solveNote;projectFile();publish({liveEditBy:read.by,liveRevision:read.revision});
 }
@@ -1621,7 +1621,11 @@ async function adoptFile(document,path='',navigation=++fileNavigation){
  if(navigation!==fileNavigation)return {cancelled:true};
  sessionDocument=copy(checked.document);sessionPath=path;sessionRevision=checked.document.properties?.revision||0;localDirty=false;solveNote='';fileHistory=[];fileFuture=[];runEpoch++;scopeEpoch++;projectFile();queueAutosave();return state.graph;
 }
-async function flushAutosave(){clearTimeout(autosaveTimer);if(sessionDocument)await saveNow();}
+async function flushAutosave(){
+ const navigation=fileNavigation;
+ // A solve or edit during the save leaves the revision unacknowledged; drain it before restoring history.
+ do{clearTimeout(autosaveTimer);if(!sessionDocument)return;await saveNow();}while(navigation===fileNavigation&&localDirty);
+}
 api.newSession=async title=>{
  sessionBreadcrumbs=[];publish({sessionBreadcrumbs:[]});
  const zoom=(state.settings.find(row=>row.id==='Appearance.Default zoom')?.value??100)/100;
@@ -1764,6 +1768,7 @@ api.connectSockets=async wire=>{
  return fileEdit(d=>d.wires.push({id:window.crypto.randomUUID(),from:{node:from.id,socket:out.id},to:{node:to.id,socket:input.id}}),[to.id]);
 };
 api.runNode=async id=>{
+ const navigation=fileNavigation;await flushAutosave();if(navigation!==fileNavigation)return {cancelled:true};
  const epoch=runEpoch,document=portableDocument();
  for(const node of sessionDocument.nodes)node.result={status:'Running'};projectFile();
  try{const result=await sessionRequest('run',{document,...(id?{roots:[id]}:{})});if(epoch!==runEpoch)throw Error('Session changed during Run; run the new values again.');
@@ -1776,8 +1781,8 @@ api.forkNode=async id=>{const result=await sessionRequest('fork-node',{document:
 api.arrangeGraph=async()=>fileEdit(d=>d.nodes.forEach((n,i)=>{n.position={x:80+i%4*300,y:100+Math.floor(i/4)*220};}));
 api.groupNodes=async ids=>{const group={id:window.crypto.randomUUID(),type:'note',title:'Group',params:{},position:{x:80,y:100},children:ids};return fileEdit(d=>{d.nodes.push(group);for(const n of d.nodes)if(ids.includes(n.id))n.parent=group.id;d.groups.push({id:group.id,nodes:ids});});};
 api.ungroupNode=api.deleteNode;
-api.undo=async()=>{if(fileHistory.length){fileFuture.push(copy(sessionDocument));sessionDocument=fileHistory.pop();localDirty=true;runEpoch++;projectFile();queueAutosave();scheduleSolve(sessionDocument.nodes.map(n=>n.id),null);}return {ok:true};};
-api.redo=async()=>{if(fileFuture.length){fileHistory.push(copy(sessionDocument));sessionDocument=fileFuture.pop();localDirty=true;runEpoch++;projectFile();queueAutosave();scheduleSolve(sessionDocument.nodes.map(n=>n.id),null);}return {ok:true};};
+api.undo=async()=>{const navigation=fileNavigation;await flushAutosave();if(navigation!==fileNavigation)return {cancelled:true};if(fileHistory.length){fileFuture.push(copy(sessionDocument));sessionDocument=fileHistory.pop();localDirty=true;runEpoch++;projectFile();queueAutosave();scheduleSolve(sessionDocument.nodes.map(n=>n.id),null);}return {ok:true};};
+api.redo=async()=>{const navigation=fileNavigation;await flushAutosave();if(navigation!==fileNavigation)return {cancelled:true};if(fileFuture.length){fileHistory.push(copy(sessionDocument));sessionDocument=fileFuture.pop();localDirty=true;runEpoch++;projectFile();queueAutosave();scheduleSolve(sessionDocument.nodes.map(n=>n.id),null);}return {ok:true};};
 api.wireMenus=WIRE_MENUS;
 api.setWireRule=async(id,rule)=>fileEdit(d=>{const w=d.wires.find(w=>w.id===id);if(w)w.rule=rule;});
 api.setWireParam=async(id,key,value)=>{

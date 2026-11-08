@@ -10,6 +10,8 @@ const {chromium} = require(require.resolve('playwright', {paths:[modules]}));
 const serverScript = String.raw`
 import json, os, sys, tempfile, traceback
 from pathlib import Path
+protocol_stdout=sys.stdout
+sys.stdout=sys.stderr
 def main():
     temporary=tempfile.mkdtemp(prefix='agentcanvas-', dir=os.environ.get('ARCHHUB_TEST_STATE_DIR') or tempfile.gettempdir())
     root=Path(temporary).resolve()
@@ -63,7 +65,7 @@ def main():
         graph=r_agents_canvas(server,None)
         assert len(graph['sessions'])==5, graph
         assert len(graph['wires'])==3, graph
-        print(json.dumps({'url':server.public_url,'cookie':server._cookie_token,'task':task['taskId'],'missing':missing['taskId'],'profile':str(root)}),flush=True)
+        print(json.dumps({'url':server.public_url,'cookie':server._cookie_token,'task':task['taskId'],'missing':missing['taskId'],'profile':str(root)}),file=protocol_stdout,flush=True)
         for line in sys.stdin:
             command=json.loads(line)
             try:
@@ -77,6 +79,7 @@ def main():
                         held=tasks.get(history,task['taskId'])
                     answer['steps']=[{'title':n['title'],'status':n['params'].get('status'),'result':n['params'].get('result')} for n in read_document(held['session_path'])['nodes'] if n['type']=='thing.agent']
                 elif command['action']=='legacy':
+                    print('Refreshing legacy workflow fixture',flush=True)
                     from nodelang.session_files import SessionFiles,new_document,write_document
                     document=new_document('Legacy task composition')
                     for key in ('a','b'):
@@ -96,9 +99,9 @@ def main():
                     answer={'ok':True}
                 else:
                     raise ValueError('Unknown court command')
-                print(json.dumps(answer),flush=True)
+                print(json.dumps(answer),file=protocol_stdout,flush=True)
             except Exception:
-                print(json.dumps({'courtError':traceback.format_exc()}),flush=True)
+                print(json.dumps({'courtError':traceback.format_exc()}),file=protocol_stdout,flush=True)
     finally:
         client.close()
         server.close()

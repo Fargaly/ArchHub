@@ -114,7 +114,26 @@ finally:
    assert.equal(await editor.inputValue(),'INDEX.csv');
    await editor.click();await editor.fill(receipt.edited);await step.locator('[data-node-card-title]').click();
    await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().sessionDirty===false);
+   await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().graph.nodes.some(n=>n.title==='Read details index'&&n.output?.text==='edited index')&&window.ArchHubAPI.getSnapshot().sessionDirty===false);
+   const saveSeen=Promise.withResolvers(),pollSeen=Promise.withResolvers(),runSeen=Promise.withResolvers();
+   const readRunSeen=Promise.withResolvers();
+   const saveReply=Promise.withResolvers(),pollReply=Promise.withResolvers(),runReply=Promise.withResolvers();
+   let heldSave=false,heldPoll=false,heldRun=false,readRan=false,pollRevision;
+   const hold=async route=>{
+    const body=route.request().postDataJSON();
+    if(body.action==='run'&&body.document.nodes.some(n=>n.id===body.roots?.[0]&&n.title==='Read details index')){
+     const response=await route.fetch();readRan=true;await route.fulfill({response});readRunSeen.resolve();
+    }else if(body.action==='autosave'&&readRan&&!heldSave&&body.document.nodes.some(n=>n.title==='Read details index'&&n.result?.output?.text==='edited index')){
+     heldSave=true;const response=await route.fetch();saveSeen.resolve();await saveReply.promise;await route.fulfill({response});
+    }else if(body.action==='read'&&heldSave&&!heldPoll){
+     heldPoll=true;const response=await route.fetch();pollRevision=(await response.json()).revision;pollSeen.resolve();await pollReply.promise;await route.fulfill({response});
+    }else if(body.action==='run'&&!heldRun&&body.document.nodes.some(n=>n.id===body.roots?.[0]&&n.title==='Write reviewed details')){
+     heldRun=true;const response=await route.fetch();runSeen.resolve();await runReply.promise;await route.fulfill({response});
+    }else await route.continue();
+   };
+   await page.route('**/api/session-files',hold);
    await step.getByRole('button',{name:'Run',exact:true}).click();
+   await readRunSeen.promise;
    try{await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().graph.nodes.some(n=>n.title==='Read details index'&&n.output?.text==='edited index'));}
    catch(e){console.log(JSON.stringify(await page.evaluate(()=>({nodes:window.ArchHubAPI.getSnapshot().graph.nodes,notice:window.ArchHubAPI.getSnapshot().connectionNotice}))));throw e;}
    await step.locator('summary').filter({hasText:'History'}).click();await step.locator('[data-step-history]').waitFor();
@@ -123,8 +142,22 @@ finally:
    assert.equal(await shellNode.getByRole('button',{name:'Run',exact:true}).count(),0);
    assert.ok(await page.locator('[data-graph-wire][stroke-dasharray="6 4"]').count()>0);
    const write=page.locator('.react-flow__node').filter({has:page.getByText('Write reviewed details',{exact:true})});
+   await saveSeen.promise;await pollSeen.promise;
    await write.getByRole('button',{name:'Run',exact:true}).click();
-   await page.locator('[data-ask-card]').waitFor();assert.equal((await command('proof',vendor)).written,false);
+   if(vendor==='codex'){
+    pollReply.resolve();
+    await page.waitForFunction(revision=>window.ArchHubAPI.getSnapshot().liveRevision===revision,pollRevision);
+    saveReply.resolve();await runSeen.promise;
+   }else{
+    saveReply.resolve();await runSeen.promise;
+    const received=page.waitForResponse(response=>{try{return response.request().postDataJSON()?.action==='read';}catch{return false;}});
+    pollReply.resolve();const response=await received;await response.finished();await page.evaluate(()=>new Promise(requestAnimationFrame));
+   }
+   runReply.resolve();
+   try{await page.locator('[data-ask-card]').waitFor();}
+   catch(error){console.log(JSON.stringify(await page.evaluate(()=>({text:document.body.innerText.slice(-3000),graph:window.ArchHubAPI.getSnapshot().graph,approvals:window.ArchHubAPI.getSnapshot().approvals}))));throw error;}
+   await page.unroute('**/api/session-files',hold);
+   assert.equal((await command('proof',vendor)).written,false);
    await page.locator('[data-ask-card]').getByRole('button',{name:'Approve',exact:true}).click();
    await page.locator('[data-ask-card]').getByText('Released',{exact:true}).first().waitFor();
    assert.equal((await command('proof',vendor)).written,true);

@@ -7,6 +7,10 @@ const {chromium} = require('playwright');
 const {test} = require('node:test');
 
 test('CHECKPOINT: document round trip and inspector owner width', async () => {
+  const tracePath = path.resolve('.cache/f304f253-checkpoint-phases.txt');
+  fs.writeFileSync(tracePath, '');
+  const phase = name => {const line = new Date().toISOString() + ' ' + name;fs.appendFileSync(tracePath,line+'\n');console.log(line);};
+  phase('launching browser');
   const cache = process.env.PLAYWRIGHT_BROWSERS_PATH || path.join(os.userInfo().homedir, 'AppData/Local/ms-playwright');
   const shell = fs.readdirSync(cache).filter(name => /^chromium_headless_shell-\d+$/.test(name)).sort((a,b) => Number(b.split('-').at(-1))-Number(a.split('-').at(-1)))[0];
   const full = fs.readdirSync(cache).filter(name => /^chromium-\d+$/.test(name)).sort((a,b) => Number(b.split('-').at(-1))-Number(a.split('-').at(-1)))[0];
@@ -20,6 +24,7 @@ test('CHECKPOINT: document round trip and inspector owner width', async () => {
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(process.env.CHECKPOINT_URL, {waitUntil:'domcontentloaded'});
     await page.waitForFunction(() => window.ArchHubAPI && !document.getElementById('studio-boot') && document.querySelector('[data-home-ready]'));
+    phase('initial file actions');
     const task = await page.evaluate(async () => {
       const api = window.ArchHubAPI;
       await api.ready;
@@ -33,6 +38,7 @@ test('CHECKPOINT: document round trip and inspector owner width', async () => {
     await page.getByRole('navigation', {name:'Main navigation'}).getByRole('button', {name:'Workshop',exact:true}).click();
     await page.getByRole('textbox', {name:'Task title',exact:true}).waitFor();
     const original = await page.evaluate(() => window.ArchHubAPI.getSessionDocument());
+    phase('checkpoint save and restore');
     await page.locator('details').filter({has:page.locator('summary', {hasText:'Checkpoints'})}).locator('summary').click();
     await page.getByRole('button', {name:'Save checkpoint',exact:true}).click();
     await page.waitForFunction(id => window.ArchHubAPI.getSnapshot().tasks.find(t=>t.id===id)?.checkpoints?.length === 1, task.taskId);
@@ -56,7 +62,9 @@ test('CHECKPOINT: document round trip and inspector owner width', async () => {
     await page.getByRole('textbox', {name:'Task title',exact:true}).waitFor();
     assert.deepEqual(content(await page.evaluate(() => window.ArchHubAPI.getSessionDocument())), content(original));
     console.log('PASS checkpoint: UI save -> time/label listed -> edit -> UI restore -> document equal -> reload retains checkpoint and document');
+    phase('checkpoint complete');
     if (process.env.CHECKPOINT_WIDTH === '1') {
+    phase('width drag and save');
     const params = page.locator('#params');
     const handle = await page.getByRole('separator', {name:'Resize the Properties pane'}).boundingBox();
     const before = await params.boundingBox();
@@ -80,6 +88,7 @@ test('CHECKPOINT: document round trip and inspector owner width', async () => {
     assert.equal(await page.locator('#home-context').evaluate(element => element.offsetWidth), groupWidth);
     assert.equal(await params.evaluate(element => element.offsetWidth), 375);
     releaseWidthSave();
+    phase('width save released');
     await page.waitForFunction(() => window.ArchHubAPI.getSnapshot().settings.find(row=>row.id==='Appearance.Inspector width').value === 375);
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const after = await params.boundingBox();
@@ -95,8 +104,10 @@ test('CHECKPOINT: document round trip and inspector owner width', async () => {
     assert.equal(await params.evaluate(element => element.offsetWidth), 375);
     assert.ok(Math.abs(reopened.width-375) < 0.5, JSON.stringify({reopened:reopened.width}));
     console.log('PASS pane: ' + JSON.stringify({before:before.width,live,stored,reopened:await params.evaluate(element => element.offsetWidth),bounds:after.width}));
+    phase('width complete');
     }
     // F304: opening splits a legacy file; Undo must leave a usable, unbound document.
+    phase('legacy new/import/save');
     const legacy = await page.evaluate(async () => {
       const api = window.ArchHubAPI;
       await api.newSession('Legacy unbound');
@@ -110,6 +121,7 @@ test('CHECKPOINT: document round trip and inspector owner width', async () => {
       return (await api.saveSession()).path;
     });
     await page.evaluate(path => window.ArchHubAPI.openSession(path), legacy);
+    phase('legacy opened, undo');
     assert.equal((await page.evaluate(() => window.ArchHubAPI.getSessionDocument())).nodes.length, 2);
     const undoInput = await page.context().newCDPSession(page);
     await undoInput.send('Input.dispatchKeyEvent', {type:'keyDown',key:'z',code:'KeyZ',modifiers:2});
@@ -120,6 +132,7 @@ test('CHECKPOINT: document round trip and inspector owner width', async () => {
       await window.ArchHubAPI.saveSession();
       return window.ArchHubAPI.getSessionDocument();
     });
+    phase('legacy restored and saved');
     assert.ok(!restored.properties?.taskContext);
     await page.evaluate(path => window.ArchHubAPI.openSession(path), legacy);
     const canvas = page.getByRole('navigation', {name:'Main navigation'}).getByRole('button', {name:'Canvas',exact:true});
@@ -132,6 +145,7 @@ test('CHECKPOINT: document round trip and inspector owner width', async () => {
     assert.deepEqual((await page.evaluate(() => window.ArchHubAPI.getSessionDocument())).groups, restored.groups);
     assert.deepEqual((await page.evaluate(() => window.ArchHubAPI.getSessionDocument())).notes, restored.notes);
     console.log('PASS F304 Ctrl Z/save/reopen/reload: unbound Canvas renders 4 nodes and retains groups/notes');
+    phase('F304 complete');
     assert.deepEqual(errors, []);
   } finally { await browser.close(); }
 });

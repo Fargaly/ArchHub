@@ -951,6 +951,8 @@ if ($env:GITHUB_ACTIONS) {
     # A reviewed local release must not end at a file the founder installs by
     # hand. Use the same reconciler/publisher as CI; candidates never enter here.
     & (Join-Path $selectedRoot 'packaging/windows/publish_release.ps1') `
+        -ReleaseDirectory $output -ExpectedSourceRevision $sourceRevision -PythonPath $PythonPath -DryRun
+    & (Join-Path $selectedRoot 'packaging/windows/publish_release.ps1') `
         -ReleaseDirectory $output -ExpectedSourceRevision $sourceRevision -PythonPath $PythonPath
     [IO.File]::WriteAllText((Join-Path $output $statusName), "PUBLISHED: exact reviewed release promoted and read back through the installed updater.`n", $utf8)
 }

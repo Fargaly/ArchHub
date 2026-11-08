@@ -18,6 +18,8 @@ import os
 from pathlib import Path
 import re
 import sqlite3
+import shutil
+import subprocess
 
 import pytest
 
@@ -30,6 +32,103 @@ offer_check = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(offer_check)
 
 REVISION = "72bcaaecc5c3c69d83a3155c9b691c9b8cf5d8d1"
+# Match the existing snapshot courts: inbox PowerShell runs inside release jobs.
+PWSH = shutil.which("powershell") or shutil.which("pwsh")
+
+
+@pytest.mark.parametrize("fault", ["refused", "empty_tag", "empty_revision", "wrong_tag", "wrong_revision",
+                                  "wrong_build", "empty_asset", "wrong_asset", "string_ok", "malformed",
+                                  "native_checker", "auth", "create", "edit", "valid"])
+def test_publisher_fails_closed_before_github_mutations(tmp_path, monkeypatch, fault):
+    if not PWSH:
+        pytest.skip("PowerShell required")
+    monkeypatch.delenv("PSModulePath", raising=False)
+    release = _build_output(tmp_path / "release", "20261108-test", "2026-11-08T01:00:00Z")
+    report = offer_check.check(release)
+    if fault == "refused":
+        report = {"ok": False, "refused": "HTTP 422", "offer": {"tag": "", "source_revision": ""}}
+    elif fault in ("empty_tag", "empty_revision", "wrong_tag", "wrong_revision", "wrong_build"):
+        field = {"tag": "tag", "revision": "source_revision", "build": "build_id"}[fault.split("_")[1]]
+        report["offer"][field] = "" if fault.startswith("empty") else "wrong"
+    elif fault in ("empty_asset", "wrong_asset"):
+        manifest = json.loads((release / "release.json").read_text())
+        manifest["asset_name"] = "" if fault == "empty_asset" else "other.exe"
+        (release / "release.json").write_text(json.dumps(manifest))
+    elif fault == "string_ok":
+        report["ok"] = "true"
+    report_path = tmp_path / "report.json"
+    report_path.write_text("not JSON" if fault == "malformed" else json.dumps(report))
+    # Native stand-ins on PATH: no real checker, network, or GitHub writes.
+    (tmp_path / "checker.cmd").write_text(
+        '@echo off\r\ntype "%REPORT_PATH%"\r\nexit /b ' + ("7" if fault == "native_checker" else "0") + '\r\n')
+    (tmp_path / "gh.cmd").write_text(
+        '@echo off\r\necho %*>>"%GH_CALLS%"\r\n'
+        'if "%1"=="auth" if "%GH_FAIL%"=="auth" exit /b 9\r\n'
+        'if "%2"=="create" if "%GH_FAIL%"=="create" exit /b 9\r\n'
+        'if "%2"=="edit" if "%GH_FAIL%"=="edit" exit /b 9\r\nexit /b 0\r\n')
+    calls = tmp_path / "gh-calls.txt"
+    monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ["PATH"])
+    monkeypatch.setenv("REPORT_PATH", str(report_path))
+    monkeypatch.setenv("GH_CALLS", str(calls))
+    monkeypatch.setenv("GH_FAIL", fault)
+    launcher = tmp_path / "publish-parent.ps1"
+    launcher.write_text('''param($Publisher, $ReleaseDirectory, $PythonPath, $ExpectedSourceRevision, [switch]$DryRun)
+# Reproduce the build caller's stale native exit status in the parent scope.
+$ErrorActionPreference = 'Stop'
+$LASTEXITCODE = 0
+& $Publisher -ReleaseDirectory $ReleaseDirectory -PythonPath $PythonPath -ExpectedSourceRevision $ExpectedSourceRevision -DryRun:$DryRun
+''')
+    command = [PWSH, "-NoProfile", "-NonInteractive", "-File",
+               str(launcher), "-Publisher",
+               str(ROOT / "03.TOOLS/packaging/windows/publish_release.ps1"),
+               "-ReleaseDirectory", str(release), "-PythonPath", str(tmp_path / "checker.cmd"),
+               "-ExpectedSourceRevision", REVISION]
+    if fault == "valid":
+        command.append("-DryRun")
+    result = subprocess.run(command, capture_output=True, text=True, timeout=60)
+    recorded = calls.read_text().splitlines() if calls.exists() else []
+    assert result.returncode == (0 if fault == "valid" else 1), result.stdout + result.stderr
+    assert len(recorded) == {"auth": 1, "create": 2, "edit": 3}.get(fault, 0), recorded
+    if fault == "valid":
+        assert "PLAN 1: gh release create build-20261108-test" in result.stdout
+    elif fault not in ("auth", "create", "edit"):
+        assert "PLAN 1" not in result.stdout
+
+
+def test_build_does_not_auto_publish_after_refused_dry_run(tmp_path, monkeypatch):
+    if not PWSH:
+        pytest.skip("PowerShell required")
+    monkeypatch.delenv("PSModulePath", raising=False)
+    publisher = tmp_path / "packaging/windows/publish_release.ps1"
+    publisher.parent.mkdir(parents=True)
+    publisher.write_text('param($ReleaseDirectory, $ExpectedSourceRevision, $PythonPath, [switch]$DryRun)\n'
+                         'Add-Content -LiteralPath $env:GH_CALLS -Value "dryrun=$DryRun"\n'
+                         "if ($DryRun) { throw 'HTTP 422: refused' }\n")
+    calls = tmp_path / "calls.txt"
+    monkeypatch.setenv("GH_CALLS", str(calls))
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    harness = tmp_path / "build-tail.ps1"
+    harness.write_text('''param($Build, $Root)
+$ErrorActionPreference = 'Stop'
+$tokens = $null; $errors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile($Build, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'build script does not parse' }
+$tail = $ast.Find({ param($node)
+    $node -is [System.Management.Automation.Language.IfStatementAst] -and
+    $node.Clauses[0].Item1.Extent.Text -eq '$env:GITHUB_ACTIONS'
+}, $true)
+if (-not $tail) { throw 'missing automatic publication branch' }
+$selectedRoot = $Root; $output = $Root; $sourceRevision = 'fixture'; $PythonPath = 'fixture'
+$statusName = 'status.txt'; $utf8 = [Text.UTF8Encoding]::new($false)
+& ([scriptblock]::Create($tail.ElseClause.Extent.Text.Trim().Substring(1).TrimEnd().TrimEnd('}')))
+''')
+    result = subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-File", str(harness),
+                             "-Build", str(ROOT / "03.TOOLS/installer/build_release.ps1"),
+                             "-Root", str(tmp_path)], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "HTTP 422: refused" in result.stderr
+    assert calls.read_text().splitlines() == ["dryrun=True"]
+    assert not (tmp_path / "status.txt").exists()
 
 
 def _sha(data: bytes) -> str:

@@ -57,7 +57,7 @@ def test_effect_nodes_wait_for_run(profile):
 
 
 @pytest.mark.parametrize('action', ['open', 'initial'])
-def test_reopen_solves_saved_parameters_without_effects(profile, monkeypatch, action):
+def test_reopen_preserves_results_until_explicit_solve(profile, monkeypatch, action):
     import sys
     from nodelang.canvas_documents import solve
     from nodelang.session_files import SessionFiles, read_document, write_document
@@ -75,11 +75,14 @@ def test_reopen_solves_saved_parameters_without_effects(profile, monkeypatch, ac
     calls = []
     opened = SessionFiles(owner.directory).dispatch(
         {'action': action, 'path': str(path)}, invoke=lambda *args: calls.append(args))['document']
-    assert opened['nodes'][2]['result']['output'] == {'count': 4}
-    assert opened['nodes'][3]['result']['status'] == 'Out of date'
+    assert opened['nodes'][2]['result']['output'] == {'count': 3}
+    assert opened['nodes'][3]['result']['status'] == 'Done'
     assert calls == []
     assert read_document(path)['nodes'][1]['params']['count'] == '4'
-    print(f'PARAMREOPEN {action}: saved=4 pure=4 effect=Out of date effect_runs={len(calls)}')
+    solve(opened, ['list'])
+    assert opened['nodes'][2]['result']['output'] == {'count': 4}
+    assert opened['nodes'][3]['result']['status'] == 'Out of date'
+    print(f'PARAMREOPEN {action}: open preserved pure=3 effect=Done; explicit solve pure=4 effect=Out of date; effect_runs={len(calls)}')
 
 
 def test_cycle_refused():
@@ -137,26 +140,27 @@ try {
   await page.waitForFunction(() => window.ArchHubAPI);
   await page.evaluate(() => window.ArchHubAPI.ready);
   await page.evaluate(file => window.ArchHubAPI.openSession(file), config.path);
-  const check = async label => {
+  const check = async (label, count) => {
     const doc = await page.evaluate(() => window.ArchHubAPI.getSessionDocument());
-    assert.equal(doc.nodes.find(n => n.id === 'count').result.output.count, 4);
+    assert.equal(doc.nodes.find(n => n.id === 'count').result.output.count, count);
     assert.equal(doc.nodes.find(n => n.id === 'agent').result.status, 'Out of date');
     assert.equal(requests.filter(r => r.body?.action === 'run' || /\/host\/|\/baboom\/turn/.test(r.url)).length, 0);
-    console.log(`PARAMREOPEN browser ${label}: pure=4 effect=Out of date effect_requests=0`);
+    console.log(`PARAMREOPEN browser ${label}: preserved pure=${count} effect=Out of date effect_requests=0`);
   };
-  await check('open');
+  await check('open', 3);
   await page.evaluate(async file => {
     const api = window.ArchHubAPI;
     await api.setNodeParam('slice', 'count', '3');
     await api.solveNow();
     await api.saveSession(file);
     await api.setNodeParam('slice', 'count', '4');
+    await api.solveNow();
     await api.saveSession(file);
   }, config.path);
   await page.reload();
   await page.waitForFunction(() => window.ArchHubAPI);
   await page.evaluate(() => window.ArchHubAPI.ready);
-  await check('reload');
+  await check('reload', 4);
 } finally {
   await browser.close();
 }

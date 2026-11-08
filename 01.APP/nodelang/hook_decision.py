@@ -1640,11 +1640,17 @@ def approval_record(environment, hold_id):
 
 
 def _ask_card(row: dict) -> dict:
-    return {"id": row["id"], "delegation": row["id"], "work": row["id"], "input_digest": row["input_digest"],
+    continuation = (row.get('replay') or {}).get('payload', {}).get('continuation') or {}
+    task = continuation.get('document', {}).get('properties', {}).get('taskContext', {}).get('task')
+    card = {"id": row["id"], "delegation": row["id"], "work": row["id"], "input_digest": row["input_digest"],
             "approvalKind": "ask", "kind": "ask", "title": row.get("title") or "Run", "who": row.get("who") or "This run",
             "text": row.get("text") or "", "textLabel": row.get("textLabel") or "", "summary": row.get("summary") or "",
             "description": row.get("summary") or "", "status": row.get("status") or "pending",
             "error": row.get("error") or "", "rows": [], "rubric": {}, "events": []}
+    if continuation:
+        card.update(approvalKind='canvas', kind='canvas', taskId=task or '', work=task or row['id'],
+                    path=continuation.get('path') or '', nodeId=(row.get('replay') or {}).get('payload', {}).get('node', {}).get('id'))
+    return card
 
 
 def expire_approval(environment, hold_id, who="clock"):
@@ -1845,6 +1851,7 @@ def ask_apply(root, digest, decision, environment=None, decided_by="founder"):
             row["status"] = "declined"
             _write_holds(path, held)
             claimed["card"] = _ask_card(row)
+            claimed["row"] = json.loads(json.dumps(row, default=str))
             return None
         _stamp_decision(row, decided_by, "approved")
         row["status"] = "releasing"
@@ -1857,6 +1864,9 @@ def ask_apply(root, digest, decision, environment=None, decided_by="founder"):
     except OSError as exc:
         raise ValueError("The approval could not be saved.") from exc
     if claimed["card"] is not None:
+        if claimed['card'].get('approvalKind') == 'canvas' and claimed['card'].get('status') == 'declined':
+            from .agent_work import decline_canvas
+            decline_canvas((claimed['row'].get('replay') or {})['payload'])
         return claimed["card"]
     token = _RELEASING.set(True)
     status, error, permit, outcome = "approved", "", False, None

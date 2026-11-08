@@ -851,14 +851,14 @@ def _rename_task(task, title):
         return {'ok': False, 'error': str(refused)}
 
 
-def _create_task(s, title):
+def _create_task(s, title, agent='', workspace=''):
     """The studio's new task: one Workshop row and the .archhub file that is its session."""
     from .workshop_mailbox import application_history
     from .workshop_tasks import create_session
     try:
         with application_history() as history:
             zoom = s.files['settings'].read().get('appearanceDefaultZoom', 100)
-            return create_session(history, title, zoom=zoom / 100)
+            return create_session(history, title, zoom=zoom / 100, agent=agent, workspace=workspace)
     except ValueError as refused:
         return {'ok': False, 'error': str(refused)}
 
@@ -872,6 +872,19 @@ def _set_task_session(task, values):
             return update_session(history, task, values)
     except ValueError as refused:
         return {'ok': False, 'error': str(refused)}
+
+
+def _pin_task_message(task, message, pinned):
+    from .workshop_mailbox import application_history
+    from .workshop_tasks import pin_message
+    with application_history() as history:
+        return pin_message(history, task, message, pinned)
+
+
+def _attach_task_notes(task, text):
+    from .workshop_mailbox import application_history, attach_meeting_notes
+    with application_history() as history:
+        return attach_meeting_notes(history, task, text)
 
 
 def _checkpoint_task(task, checkpoint=None, label=None, *, restore=False):
@@ -992,7 +1005,7 @@ def _watcher(request_id=''):
 
 def _answer_approval(request_id, kind, root, digest, decision):
     from .hook_decision import decide
-    if kind == 'ask':
+    if kind in ('ask', 'canvas'):
         return decide({'approval': 'ask', 'id': root, 'digest': digest, 'decision': decision})
     owners = {'hostskills': _host_skills, 'watcher': _watcher}
     if kind not in owners:
@@ -1027,11 +1040,43 @@ OWNER_ACTIONS = {
 }
 
 
+def _list_notifications():
+    from .settings_owner import notification_reads
+    from hashlib import sha256
+    read = notification_reads(settings=_SERVER.files['settings'])
+    result = []
+    def add(kind, identity, text, task=''):
+        key = kind + ':' + sha256(str(identity).encode()).hexdigest()
+        result.append({'id': key, 'text': text, 'taskId': task, 'read': key in read})
+    for card in _list_approvals():
+        if card.get('status') == 'pending':
+            add('approval', card['id'], card.get('title') or 'Approval needed', card.get('taskId') or card.get('work') or '')
+    for task in _list_tasks():
+        for activity in task.get('activity') or []:
+            if activity.get('status') == 'Error':
+                add('failed', task['id'] + ':' + activity['id'], task['title'] + ': a step failed', task['id'])
+        replies = [row for row in task.get('agentLog') or [] if row.get('who') != 'You']
+        if replies:
+            last = replies[-1]
+            add('message', last['id'], task['title'] + ': ' + str(last.get('text') or '')[:200], task['id'])
+    return {'notifications': result[-100:]}
+
+
+def _read_notification(identity):
+    from .settings_owner import notification_reads
+    if not any(row['id'] == identity for row in _list_notifications()['notifications']):
+        raise ValueError('This notification is no longer current.')
+    notification_reads(identity, settings=_SERVER.files['settings'])
+    return {**_list_notifications(), 'receipt': {'id': identity, 'read': True}}
+
+
 WORKSHOP_READS = {
     'listTasks': lambda *a: _list_tasks(),
     'renameTask': _rename_task,
     'openTaskGraph': _open_task_graph,
     'setTaskSession': _set_task_session,
+    'pinTaskMessage': _pin_task_message,
+    'attachMeetingNotes': _attach_task_notes,
     'checkpointTask': lambda task, label=None: _checkpoint_task(task, label=label),
     'restoreTaskCheckpoint': lambda task, checkpoint: _checkpoint_task(task, checkpoint, restore=True),
     'setTaskStatus': _set_task_status,
@@ -1039,7 +1084,8 @@ WORKSHOP_READS = {
     'listWorkshopMessages': lambda before=None, *a: (_SERVER._messages.get()
         if before is None else _list_messages(before)),
     'listApprovals': lambda *a: _list_approvals(),
-    'listNotifications': lambda *a: {'notifications': []},
+    'listNotifications': _list_notifications,
+    'readNotification': _read_notification,
     'readWatcher': lambda *a: _watcher().read(),
     'readDesktop': lambda *a: _read_desktop(),
     'readHostSkills': lambda *a: _host_skills().read(),
@@ -1173,6 +1219,9 @@ def r_settings_action(s, req):
             if path:
                 moved = set_sessions_directory(path)
         return {'ok': True, 'result': {'sessionsFolder': str(sessions_directory()), 'moved': moved}}
+    if function in ('readCanvasTabs', 'setCanvasTabs'):
+        from .settings_owner import canvas_tabs
+        return {'ok': True, 'result': canvas_tabs(function, args, settings)}
     if function in ('readLibraryCollapsed', 'setLibraryCollapsed'):
         if function == 'setLibraryCollapsed':
             groups = args[0] if args else None

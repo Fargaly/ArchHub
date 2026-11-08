@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from .user_paths import state_directory, test_writer, stamp_test_write, strip_test_write
 
+import copy
 import hashlib
 import json
 import logging
@@ -175,7 +176,7 @@ def _params_and_feeds(node, engine, feeds):
     return {**params, **extra}, feeds
 
 
-def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, depth):
+def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, depth, continuation=None):
     """One engine call. Effect engines receive the application invoke boundary."""
     from .canvas_documents import THING_ENGINES, run_thing
     from .library_engines import STEM_RUN_ENGINES
@@ -186,10 +187,17 @@ def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, de
     work = node.get('agentWork', {})
     if work.get('runnable') is False:
         raise ValueError('Shell and edit steps require the escape hatch; replay is unavailable.')
-    if not _RELEASING.get(False) and not canvas_documents.is_pure(engine) and (work.get('role') == 'step' or node.get('approvalRequired') or engine == 'thing.file.write'):
+    if not _RELEASING.get(False) and (engine == 'approval.gate' or not canvas_documents.is_pure(engine) and (work.get('role') == 'step' or node.get('approvalRequired') or engine == 'thing.file.write')):
         from .agent_work import request_approval
-        card = request_approval(node, params, feeds)
+        card = request_approval(node, params, feeds, continuation=continuation)
         return {'approvalId': card['id']}, 'Waiting for approval'
+    if engine == 'approval.gate' and _RELEASING.get(False):
+        from hashlib import sha256
+        from .nodeslib_v2_engines import approval_gate
+        digest = sha256(json.dumps({'node': node, 'feeds': feeds}, sort_keys=True).encode()).hexdigest()
+        granted = {**params, 'grant': {'digest': digest, 'operations': [params.get('operation', '*')], 'scope': params.get('scope', 'revit.write')}}
+        produced, _display = approval_gate(granted, feeds)
+        return produced, 'Approved'
     if engine == PARAM_ENGINE:
         value = bound_value(document, node) if node.get('bind') else feeds.get('value', params.get('value'))
         owner = next((n for n in document['nodes'] if n['id'] == (node.get('bind') or {}).get('node')), node)
@@ -790,7 +798,7 @@ def skill_ports(skill, items=()):
     known = {item['id']: item for item in items}
     read = {w['from']['node'] for w in skill['wires']}
     target = [{'id': 'in:' + n['id'], 'type': socket_type(n['params'].get('type')), 'label': n.get('title') or 'Input'}
-              for n in skill['nodes'] if n['type'] == PARAM_ENGINE and not n.get('bind')]
+              for n in skill['nodes'] if n['type'] in (PARAM_ENGINE, 'thing.session') and not n.get('bind')]
     source = [{'id': 'out', 'type': 'any', 'label': 'Result'}]
     for n in skill['nodes']:
         if n['id'] in read or n['type'] in (PARAM_ENGINE, 'note'):
@@ -821,7 +829,7 @@ def run_skill(params, *, invoke, stopped, depth, feeds=None):
     if skill is None:
         raise ValueError('Saved session is unavailable')
     original = {n['id']: dict(n['params']) for n in skill['nodes']}
-    inputs = {n['id']: n for n in skill['nodes'] if n['type'] == PARAM_ENGINE and not n.get('bind')}
+    inputs = {n['id']: n for n in skill['nodes'] if n['type'] in (PARAM_ENGINE, 'thing.session') and not n.get('bind')}
     for socket, value in (feeds or {}).items():
         held = inputs.get(str(socket)[3:]) if str(socket).startswith('in:') else None
         if held is None:
@@ -992,7 +1000,7 @@ def split_sessions(path):
     return saved
 
 
-def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, plan_only=False, cached=(), only=None):
+def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, plan_only=False, cached=(), only=None, path=None, _resume=None, _each=None):
     """Validate the whole plan before invoking existing engines in wire order."""
     from collections import deque
     from .library_engines import STEM_RUN_ENGINES
@@ -1056,8 +1064,11 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
                 sockets = {p['id'] for p in node_ports(node, base or entry['ports'])[side]}
                 if any(wire[end]['socket'] not in sockets for wire in wires):
                     raise ValueError('Unknown socket on '+node.get('title',key))
-    outputs, results = {}, {}
+    results = copy.deepcopy(_resume or {})
+    outputs = {key: value.get('output', {}) for key, value in results.items() if value.get('status') in ('Done', 'Solved', 'Skipped')}
     for key in order:
+        if key in results:
+            continue
         if stopped is not None and stopped():
             for pending_key in order:
                 if pending_key not in results:
@@ -1087,6 +1098,7 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
             results[key] = {'status':'Blocked', 'output':{}, 'error':'Upstream node did not produce output'}
             continue
         engine = node['type']
+        started = time.perf_counter()
         try:
             if node.get('agentWork', {}).get('role') == 'session':
                 outputs[key] = {'result': node['params'].get('result', '')}
@@ -1099,11 +1111,13 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
                 constants[socket_name] = value
             plans = longest_each_plans(streams, constants)
 
+            each_state = None
             def run_once(plan):
                 params, bound = _params_and_feeds(node, engine, dict(plan))
                 return _dispatch_node(
                     document, node, engine, params, bound,
-                    invoke=invoke, stopped=stopped, depth=depth)
+                    invoke=invoke, stopped=stopped, depth=depth,
+                    continuation={'document': document, 'roots': roots, 'completed': results, 'path': str(path), 'each': each_state} if path else None)
 
             if plans is None:
                 produced, display = run_once(constants)
@@ -1112,19 +1126,31 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
                     produced, display = redact(produced), redact(display)
                 json.dumps(produced, allow_nan=False)
                 outputs[key] = produced
-                results[key] = {'status':'Done', 'output':produced, 'display':display}
+                results[key] = {'status':'Done', 'output':produced, 'display':display, 'elapsed_ms': round((time.perf_counter() - started) * 1000, 2)}
                 if isinstance(produced, dict) and produced.get('approvalId'):
                     results[key]['status'] = 'Waiting for approval'
+                    for pending_key in order:
+                        if pending_key not in results:
+                            results[pending_key] = {'status': 'Waiting', 'output': {}, 'error': 'Waiting for approval before continuing.'}
                     return {'ok': True, 'succeeded': False, 'results': results, 'order': order, 'approvalId': produced['approvalId']}
             else:
                 # foreach.each: one run per item. decide() stays inside the effect.
-                rows = []
-                for plan in plans:
+                held_each = (_each or {}).get(key)
+                rows = copy.deepcopy(held_each['rows']) if held_each else []
+                plans = held_each['remaining'] if held_each else list(plans)
+                for index, plan in enumerate(plans):
                     if stopped is not None and stopped():
                         rows.append((None, None, 'Stopped by you.'))
                         continue
                     try:
+                        each_state = {'rows': rows, 'remaining': plans[index+1:]}
                         produced, display = run_once(plan)
+                        if isinstance(produced, dict) and produced.get('approvalId'):
+                            results[key] = {'status': 'Waiting for approval', 'output': produced, 'display': display}
+                            for pending_key in order:
+                                if pending_key not in results:
+                                    results[pending_key] = {'status': 'Waiting', 'output': {}, 'error': 'Waiting for approval before continuing.'}
+                            return {'ok': True, 'succeeded': False, 'results': results, 'order': order, 'approvalId': produced['approvalId']}
                         json.dumps(produced, allow_nan=False)
                         rows.append((produced, display, each_fault(produced, display)))
                     except Exception as error:
@@ -1141,7 +1167,7 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
                     held_result['error'] = error
                 results[key] = held_result
         except Exception as error:
-            results[key] = {'status':'Error', 'output':{}, 'error':str(error)}
+            results[key] = {'status':'Error', 'output':{}, 'error':str(error), 'elapsed_ms': round((time.perf_counter() - started) * 1000, 2)}
     return {'ok':True, 'succeeded':all(r['status'] in ('Done','Disabled','Skipped') for r in results.values()), 'results':results, 'order':order}
 
 
@@ -1299,7 +1325,6 @@ class SessionFiles:
             if migrated:
                 before_migration.setdefault('properties', {})['sessionMigration'] = 1
             document = read_document(selected_path) if before_migration else new_document()
-            canvas_documents.solve(document, [n['id'] for n in document['nodes']], invoke=invoke, stopped=stopped)
             return {'ok':True,'document':document,'path':str(launch or held.get('path', '')),
                     **({'migrationDocument': before_migration} if migrated else {})}
         if action == 'starter':
@@ -1324,7 +1349,6 @@ class SessionFiles:
             if migrated:
                 before_migration.setdefault('properties', {})['sessionMigration'] = 1
             document = read_document(path)
-            canvas_documents.solve(document, [n['id'] for n in document['nodes']], invoke=invoke, stopped=stopped)
             self.remember(local_path(path),document)
             self._current(document['id'], path)
             return {'ok':True,'document':document,'path':str(local_path(path)),
@@ -1432,7 +1456,7 @@ class SessionFiles:
         if action == 'validate':
             return {'ok':True,'document':validate(body.get('document'))}
         if action == 'run':
-            return run_document(body.get('document'),invoke=invoke,roots=body.get('roots'),stopped=stopped)
+            return run_document(body.get('document'),invoke=invoke,roots=body.get('roots'),stopped=stopped,path=body.get('path'))
         if action in ('agent-history', 'fork-node'):
             document = validate(body.get('document'))
             node = next(n for n in document['nodes'] if n['id'] == body.get('node'))

@@ -631,6 +631,46 @@ def cloud_call(method, path, body=None, *, timeout_seconds=15, session=None):
     return result
 
 
+def notification_reads(identity=None, settings=None):
+    from .nograph_server import JsonFile
+    from .session_files import profile_directory
+    settings = settings or JsonFile(profile_directory() / 'settings/settings.json', {})
+    held = settings.read().get('notificationReads', [])
+    if identity is not None:
+        if type(identity) is not str or not re.fullmatch(r'[a-z]+:[A-Za-z0-9_-]{1,160}', identity):
+            raise ValueError('Choose a current notification.')
+        held = [key for key in held if key != identity] + [identity]
+        settings.update({'notificationReads': held[-500:]})
+    return set(held)
+
+
+def canvas_tabs(function='readCanvasTabs', args=(), settings=None):
+    """Open documents are local view metadata in the existing settings file."""
+    from .nograph_server import JsonFile
+    from .session_files import profile_directory
+    settings = settings or JsonFile(profile_directory() / 'settings/settings.json', {})
+    if function == 'setCanvasTabs':
+        value = args[0] if len(args) == 1 else None
+        if type(value) is not dict or set(value) != {'tabs', 'active', 'split', 'collapsed'}:
+            raise ValueError('Choose open task tabs and their view state.')
+        tabs = value['tabs']
+        if type(tabs) is not list or len(tabs) > 100:
+            raise ValueError('Open at most 100 task tabs.')
+        identities = set()
+        for tab in tabs:
+            if (type(tab) is not dict or set(tab) != {'id', 'kept'} or
+                    type(tab['id']) is not str or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', tab['id']) or
+                    type(tab['kept']) is not bool or tab['id'] in identities):
+                raise ValueError('Each open task tab needs a unique task identity.')
+            identities.add(tab['id'])
+        if (type(value['collapsed']) is not bool or
+                any(type(value[key]) is not str or value[key] and value[key] not in identities for key in ('active', 'split')) or
+                value['split'] and value['split'] == value['active']):
+            raise ValueError('Select different open task tabs for split view.')
+        settings.update({'canvasTabs': value})
+    return {'canvasTabs': settings.read().get('canvasTabs', {'tabs': [], 'active': '', 'split': '', 'collapsed': False})}
+
+
 def appearance_settings(function='readControls', args=(), settings=None):
     """Appearance rows and node bindings use the same validated settings owner."""
     from .nograph_server import JsonFile, Refused

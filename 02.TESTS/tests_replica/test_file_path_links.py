@@ -32,14 +32,16 @@ def consultant(profile):
 def test_saved_links_reopen_and_shared_api_rewire(profile):
     from nodelang.native_agent_mcp import build_server
     from nodelang.node_params import compatible
-    from nodelang.session_files import SessionFiles, read_document, write_document
+    from nodelang.session_files import SessionFiles, read_document, write_document, run_document
     path = profile / 'Consultant path links.archhub'
     document = consultant(profile)
     write_document(path, document)
     opened = SessionFiles(profile / 'sessions').dispatch({'action': 'open', 'path': str(path)})['document']
     assert opened['wires'] == document['wires']
+    assert all('result' not in node for node in opened['nodes'])
+    result = run_document(opened)
     for i in range(2):
-        assert next(n for n in opened['nodes'] if n['id'] == 'read%d' % i)['result']['output']['text'] == 'consultant input %d' % i
+        assert result['results']['read%d' % i]['output']['text'] == 'consultant input %d' % i
     server = build_server()
     for i in range(2):
         asyncio.run(server.call_tool('canvas.wire', {'path': str(path), 'source': 'file%d.value' % i, 'target': 'read%d.path' % i}))

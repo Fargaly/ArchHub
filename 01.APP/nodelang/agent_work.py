@@ -202,13 +202,15 @@ def history(node):
     return {**transcript, 'calls': [c for c in transcript['calls'] if c['id'] in meta.get('calls', [])]}
 
 
-def request_approval(node, params, feeds):
+def request_approval(node, params, feeds, *, continuation=None):
     """Use the existing one-shot Ask owner and Approve card, with an exact immutable input."""
     from .hook_decision import _remember, ask_reviews
     clean = copy.deepcopy(node)
     clean['params'] = params
     clean.pop('result', None)
     payload = {'node': clean, 'feeds': feeds}
+    if continuation:
+        payload['continuation'] = copy.deepcopy(continuation)
     digest = sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     event = {'tool': 'canvas.run', 'input': payload, 'vendor': 'archhub', 'session': 'canvas'}
     identity = _remember(event, 'write', 'canvas', digest, 'Run ' + node.get('title', node['type']), __import__('os').environ)
@@ -217,10 +219,60 @@ def request_approval(node, params, feeds):
     return next(card for card in ask_reviews() if card['id'] == identity)
 
 
+def decline_canvas(payload):
+    from . import canvas_documents
+    continuation = payload.get('continuation')
+    if not continuation:
+        return
+    def change(document):
+        node = next((row for row in document['nodes'] if row['id']==payload['node']['id']), None)
+        original = next(row for row in continuation['document']['nodes'] if row['id']==payload['node']['id'])
+        if not node or node['params'] != original['params']:
+            return []
+        node['result'] = {'status': 'Declined', 'output': {}, 'error': 'Rejected by you.'}
+        for row in document['nodes']:
+            if row['id'] != node['id'] and row.get('result', {}).get('status') == 'Waiting':
+                row['result'] = {'status': 'Blocked', 'output': {}, 'error': 'Canvas approval was rejected.'}
+        return []
+    canvas_documents.edit(continuation['path'], 'You', 'reject Canvas Run', change, solve_changed=False)
+
+
 def release(payload):
     from .session_files import _dispatch_node, new_document, validate
     from .enforce import guard_effect
     node, feeds = payload['node'], payload['feeds']
+    continuation = payload.get('continuation')
+    if continuation:
+        from . import canvas_documents
+        from .session_files import run_document
+        from .hook_decision import _RELEASING
+        def inputs(document):
+            return {'id': document['id'], 'title': document['title'], 'nodes': [{key:value for key,value in row.items() if key != 'result'} for row in document['nodes']],
+                    'wires': document['wires'], 'groups': document['groups'], 'notes': document['notes'],
+                    'taskContext': document.get('properties', {}).get('taskContext')}
+        def resume(document):
+            if inputs(document) != inputs(continuation['document']):
+                raise ValueError('The canvas changed after this approval. Run its current values again.')
+            output, display = _dispatch_node(document, node, node['type'], node['params'], feeds,
+                                             invoke=guard_effect, stopped=None, depth=0)
+            completed = dict(continuation['completed'])
+            each = continuation.get('each')
+            if each:
+                from .stem_graph_evaluation import each_fault
+                each = {node['id']: {'rows': each['rows'] + [(output, display, each_fault(output, display))], 'remaining': each['remaining']}}
+            else:
+                completed[node['id']] = {'status': 'Done', 'output': output, 'display': display}
+            token = _RELEASING.set(False)
+            try:
+                result = run_document(document, invoke=guard_effect, roots=continuation['roots'], path=continuation['path'], _resume=completed, _each=each)
+            finally:
+                _RELEASING.reset(token)
+            for row in document['nodes']:
+                if row['id'] in result['results']:
+                    row['result'] = result['results'][row['id']]
+            return list(result['results'])
+        document, _ = canvas_documents.edit(continuation['path'], 'You', 'approve and resume Canvas Run', resume, solve_changed=False)
+        return {'results': {row['id']: row.get('result') for row in document['nodes']}, 'path': continuation['path']}
     document = new_document('Approved step')
     document['nodes'] = [node]
     validate(document)

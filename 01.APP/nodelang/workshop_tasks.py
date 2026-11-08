@@ -184,10 +184,10 @@ def rename(history, task, title, revision=None):
     return {"ok": True, "id": task, "title": short_title(text), "description": text}
 
 
-def create(history, title, creator):
+def create(history, title, creator, *, agent='', workspace='', zoom=1):
     task = uuid4().hex
     title = _text(title, "title", 2000)
-    path = _start_session(task, title)
+    path = _start_session(task, title, zoom, agent=agent, workspace=workspace)
     _write(history, "INSERT INTO workshop_tasks(id,title,status,created_by,created_at,updated_at,session_path) "
            "VALUES(?,?,'open',?,?,?,?)", (task, title, creator, _now(), _now(), path))
     return get(history, task)
@@ -581,6 +581,8 @@ def column(history, project=None, stale_hours=None):
              'declarations': [declaration] if declaration else [],
              'scope': session.get("scope") or (" · ".join(paths) if paths else ""),
              'rules': list(session.get("rules") or []),
+             'pinnedMessages': list(session.get('pinnedMessages') or []),
+             'homePinned': session.get('homePinned') is True, 'workspace': session.get('workspace') or '',
              'agents': agents, 'folders': list(session.get("folders") or []) or paths,
              'references': list(session.get("references") or []),
              'session': row.get("session_path") or ((declaration or {}).get("session") if declaration else "") or "",
@@ -687,12 +689,15 @@ def _held_context(document):
     agents = list(held["agents"]) if isinstance(held.get("agents"), list) else []
     for node in nodes:
         if node.get("type") == "thing.agent":
-            name = str((node.get("params") or {}).get("agent") or node.get("title") or "")
+            name = str((node.get("params") or {}).get("agent") or ('' if node.get('fixed') else node.get("title")) or "")
             if name and name not in agents:
                 agents.append(name)
     return {
         "scope": "" if held.get("scope") == document["id"] else (held.get("scope") or ""),
         "rules": held["rules"] if isinstance(held.get("rules"), list) else [],
+        "pinnedMessages": list(held.get('pinnedMessages') or []),
+        "workspace": held.get('workspace') or '',
+        "homePinned": held.get('homePinned') is True,
         "agents": agents,
         "plan": held["plan"] if isinstance(held.get("plan"), list) else [],
         "progress": held["progress"] if isinstance(held.get("progress"), dict) else {},
@@ -768,7 +773,7 @@ def session_filename(task):
     return (task if safe else 'task-' + sha256(task.encode()).hexdigest()) + '.archhub'
 
 
-def _start_session(task, title, zoom=1, *, purpose='', generation=''):
+def _start_session(task, title, zoom=1, *, purpose='', generation='', agent='', workspace=''):
     from . import canvas_documents
     from .session_files import document_path, sessions_directory
     directory = sessions_directory()
@@ -786,8 +791,20 @@ def _start_session(task, title, zoom=1, *, purpose='', generation=''):
             document['id'] = identity
         if not document['nodes']:
             document['viewport']['zoom'] = zoom
-            document['nodes'].append({'id': 'start', 'type': 'param.value', 'title': 'Start · ' + title,
-                                      'params': {'type': 'text', 'value': title}, 'position': {'x': 80, 'y': 80}})
+            context.update(workspace=workspace, agents=[agent] if agent else [])
+            fixed = [('start', 'thing.session', 'Session', {'value': title, 'workspace': workspace}, 80, 80),
+                     ('fixed-agent', 'thing.agent', agent or 'No agent yet', {'agent': agent, 'reference': True}, -220, 40),
+                     ('fixed-you', 'thing.you', 'You', {}, -220, 215),
+                     ('fixed-workshop', 'thing.workshop', 'Workshop', {'thread': task}, -220, 395)]
+            for node_id, kind, label, params, x, y in fixed:
+                ports = {'source': [{'id': 'value' if node_id == 'start' else 'agent' if kind == 'thing.agent' else 'profile' if kind == 'thing.you' else 'rules',
+                                     'type': 'string' if node_id in ('start', 'fixed-agent') else 'list' if kind == 'thing.workshop' else 'any'}],
+                         'target': [{'id': 'value', 'type': 'any'}, {'id': 'agent', 'type': 'string'}, {'id': 'profile', 'type': 'any'}, {'id': 'rules', 'type': 'list'}] if node_id == 'start' else []}
+                document['nodes'].append({'id': node_id, 'type': kind, 'title': label, 'fixed': True,
+                                          'params': params, 'ports': ports, 'position': {'x': x, 'y': y}})
+            for node_id, socket in [('fixed-agent', 'agent'), ('fixed-you', 'profile'), ('fixed-workshop', 'rules')]:
+                document['wires'].append({'id': 'fixed-' + socket, 'from': {'node': node_id, 'socket': socket},
+                                          'to': {'node': 'start', 'socket': socket}})
         return []
     canvas_documents.edit(path, 'Workshop', 'create task workflow', start,
                           create_title=title, solve_changed=False)
@@ -863,13 +880,46 @@ def checkpoint_session(history, task, identity=None, label=None):
     return _show(task, view["path"], document, select=False)
 
 
-def create_session(history, title, creator="founder", *, select=True, zoom=1):
+def pin_message(history, task, message, pinned):
+    """Pin a reference to an existing task message, without copying its content."""
+    from . import canvas_documents
+    from .session_files import read_document
+    if type(pinned) is not bool or type(message) is not str:
+        raise ValueError('Choose a task message and pin state.')
+    row = get(history, task)
+    if not row:
+        raise ValueError('No such Workshop task')
+    path = row['session_path']
+    bound = {item['id'] for item in _bound_messages(history, task)}
+    def change(document):
+        if message not in bound | {item['id'] for item in _file_messages(document)}:
+            raise ValueError('That message does not belong to this task.')
+        context = document.setdefault('properties', {}).setdefault('taskContext', {})
+        held = [identity for identity in context.get('pinnedMessages', []) if identity != message]
+        if pinned:
+            if len(held) >= 80:
+                raise ValueError('Pin at most 80 task messages.')
+            held.append(message)
+        context['pinnedMessages'] = held
+        return []
+    canvas_documents.edit(path, 'You', 'pin task message' if pinned else 'unpin task message', change, solve_changed=False)
+    return _show(task, path, read_document(path), select=False)
+
+
+def create_session(history, title, creator="founder", *, select=True, zoom=1, agent='', workspace=''):
     """A new task and the .archhub file that holds its session."""
-    row = create(history, title, creator)
+    if type(agent) is not str or len(agent) > 80 or '\0' in agent:
+        raise ValueError('Choose a task agent.')
+    if type(workspace) is not str or len(workspace) > 128:
+        raise ValueError('Choose a registered task workspace.')
+    if workspace:
+        from .settings_owner import SettingsOwner
+        SettingsOwner(None)._workspace(workspace)
+    row = create(history, title, creator, agent=agent, workspace=workspace, zoom=zoom)
     return open_session(history, row["id"], select=select, zoom=zoom)
 
 
-_SESSION_FIELDS = {"scope", "rules", "agents", "plan", "progress", "nodes", "parameters", "messages", "folders", "references"}
+_SESSION_FIELDS = {"scope", "rules", "agents", "plan", "progress", "nodes", "parameters", "messages", "folders", "references", "homePinned"}
 _NODE_TYPES = {"note", "thing.agent"}
 _SECRET_NAME = re.compile(r"(^|_)(password|secret|token|api_key|private_key|credential)(_|$)", re.I)
 
@@ -989,7 +1039,7 @@ def _apply_messages(document, rows):
 
 def update_session(history, task, values):
     """Write this task's parameters, plan, agents and progress into its .archhub file."""
-    from .session_files import read_document, validate, write_document
+    from .session_files import read_document
     if type(values) is not dict or set(values) - _SESSION_FIELDS:
         raise ValueError("Unsupported task session fields")
     row = get(history, task)
@@ -999,35 +1049,40 @@ def update_session(history, task, values):
         open_session(history, task, select=False)
         row = get(history, task)
     path = row["session_path"]
-    document = read_document(path)
-    props = dict(document.get("properties") or {})
-    held = dict(props.get("taskContext") or {})
-    if "scope" in values:
-        held["scope"] = _short_text(values["scope"], "scope", 200)
-    if "rules" in values:
-        held["rules"] = _text_list(values["rules"], "rules")
-    if "agents" in values:
-        held["agents"] = _text_list(values["agents"], "agents")
-    if "plan" in values:
-        held["plan"] = _text_list(values["plan"], "plan")
-    if "folders" in values:
-        held["folders"] = _session_list(values["folders"], "folders")
-    if "references" in values:
-        held["references"] = _session_list(values["references"], "references")
-    if "progress" in values:
-        progress = values["progress"]
-        if type(progress) is not dict:
-            raise ValueError("Task progress must be an object")
-        held["progress"] = _plain(progress)
-    held["task"] = task
-    props["taskContext"] = held
-    document["properties"] = props
-    if "nodes" in values:
-        _apply_nodes(document, values["nodes"])
-    if "parameters" in values:
-        _apply_parameters(document, values["parameters"])
-    if "messages" in values:
-        _apply_messages(document, values["messages"])
-    validate(document)
-    write_document(path, document)
+    from . import canvas_documents
+    def change(document):
+        props = dict(document.get("properties") or {})
+        held = dict(props.get("taskContext") or {})
+        if 'homePinned' in values:
+            if type(values['homePinned']) is not bool:
+                raise ValueError('Choose whether to show this task at the top of Home.')
+            held['homePinned'] = values['homePinned']
+        if "scope" in values:
+            held["scope"] = _short_text(values["scope"], "scope", 200)
+        if "rules" in values:
+            held["rules"] = _text_list(values["rules"], "rules")
+        if "agents" in values:
+            held["agents"] = _text_list(values["agents"], "agents")
+        if "plan" in values:
+            held["plan"] = _text_list(values["plan"], "plan")
+        if "folders" in values:
+            held["folders"] = _session_list(values["folders"], "folders")
+        if "references" in values:
+            held["references"] = _session_list(values["references"], "references")
+        if "progress" in values:
+            progress = values["progress"]
+            if type(progress) is not dict:
+                raise ValueError("Task progress must be an object")
+            held["progress"] = _plain(progress)
+        held["task"] = task
+        props["taskContext"] = held
+        document["properties"] = props
+        if "nodes" in values:
+            _apply_nodes(document, values["nodes"])
+        if "parameters" in values:
+            _apply_parameters(document, values["parameters"])
+        if "messages" in values:
+            _apply_messages(document, values["messages"])
+        return []
+    canvas_documents.edit(path, 'You', 'update task session', change, solve_changed=False)
     return _show(task, path, read_document(path), select=False)

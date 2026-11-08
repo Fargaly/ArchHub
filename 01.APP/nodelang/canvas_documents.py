@@ -108,6 +108,8 @@ def _run_model(params, feeds):
 
 
 def _run_agent(params, feeds):
+    if params.get('reference') is True:
+        return {'agent': params.get('agent', '')}, params.get('agent') or 'No agent yet'
     from .workshop_mailbox import call
     instructions = str(params.get('instructions') or '').strip()
     task = str(feeds.get('task') or '').strip()
@@ -180,11 +182,32 @@ def _write_file(params, feeds):
 
 
 def _run_workshop(params, feeds):
+    limit = int(params.get('limit') or 20)
+    if params.get('thread') and params['thread'] != 'app:workshop':
+        from .workshop_mailbox import application_history
+        from .workshop_tasks import rows, _held_context, _file_messages, _bound_messages
+        from .session_files import read_document
+        with application_history() as history:
+            task = next(iter(rows(history, params['thread'], settle=False)), None)
+            if not task:
+                raise ValueError('No such Workshop task')
+            document = read_document(task['session_path'])
+            messages = (_file_messages(document) + _bound_messages(history, params['thread']))[-limit:]
+        return {'messages': messages, 'rules': _held_context(document)['rules']}, '%d messages' % len(messages)
     from .nograph_server import _list_messages
     page = _list_messages()
-    limit = int(params.get('limit') or 20)
     messages = [{'who': m.get('who'), 'text': m.get('text')} for m in page['messages'][-limit:]]
     return {'messages': messages}, '%d messages' % len(messages)
+
+
+def _run_session(params, feeds):
+    return {'value': feeds.get('value', params.get('value', '')), 'agent': feeds.get('agent', ''),
+            'profile': feeds.get('profile'), 'rules': feeds.get('rules', [])}, 'Session parameters'
+
+
+def _run_you(params, feeds):
+    # The portable document carries a binding, never a copy of account identity.
+    return {'profile': {'owner': 'account', 'scope': 'current'}}, 'Current profile in Settings'
 
 
 def _run_setting(params, feeds):
@@ -205,14 +228,18 @@ def _run_foreign(params, feeds):
 # engine -> sockets, purity, executor, and which parameter writes through to which owner.
 THING_ENGINES = {
     'thing.agent': {'pure': False, 'run': _run_agent, 'in': [_port('task'), _port('files', 'list')],
-                    'out': [_port('result'), _port('messages', 'list')]},
+                    'out': [_port('result'), _port('messages', 'list'), _port('agent', 'string')]},
+    'thing.session': {'pure': True, 'run': _run_session,
+                      'in': [_port('value'), _port('agent', 'string'), _port('profile'), _port('rules', 'list')],
+                      'out': [_port('value', 'string'), _port('agent', 'string'), _port('profile'), _port('rules', 'list')]},
+    'thing.you': {'pure': True, 'run': _run_you, 'in': [], 'out': [_port('profile')]},
     'thing.model': {'pure': False, 'run': _run_model, 'in': [_port('prompt', 'string'), _port('temperature', 'number'), _port('system', 'string')],
                     'out': [_port('text', 'string'), _port('model', 'string')]},
     'thing.host': {'pure': True, 'run': _run_host, 'in': [], 'out': [_port('sessions', 'list'), _port('elements', 'list')]},
     'thing.workspace': {'pure': True, 'run': _run_workspace, 'in': [], 'out': [_port('path', 'string'), _port('files', 'list')]},
     'thing.file': {'pure': True, 'run': _run_file, 'in': [], 'out': [_port('path', 'file'), _port('text', 'string')]},
     'thing.file.write': {'pure': False, 'run': _write_file, 'in': [], 'out': [_port('path', 'file')]},
-    'thing.workshop': {'pure': True, 'run': _run_workshop, 'in': [], 'out': [_port('messages', 'list')],
+    'thing.workshop': {'pure': True, 'run': _run_workshop, 'in': [], 'out': [_port('messages', 'list'), _port('rules', 'list')],
                        'engine': 'thing.workshop', 'params': {'thread': 'app:workshop', 'limit': 20}},
     'thing.setting': {'pure': True, 'run': _run_setting, 'in': [_port('value')], 'out': [_port('value')]},
     # Not a Library card: only importers place it; its sockets live on the node.
@@ -270,6 +297,8 @@ def thing_items():
                           'thing.workspace', {'path': ''}))
     items.append(card('thing:file', 'files', 'File or folder', 'A local file or folder reference', 'thing.file', {'path': ''}))
     items.append(card('thing:file:write', 'files', 'Write file', 'Writes after Approve, then re-reads', 'thing.file.write', {'path': '', 'content': ''}))
+    items.append(card('thing:session', 'workshop', 'Session', 'Task parameters', 'thing.session', {'value': '', 'workspace': ''}))
+    items.append(card('thing:you', 'settings', 'You', 'Current profile in Settings', 'thing.you', {}))
     items.append(card('thing:workshop', 'workshop', 'Workshop thread', 'Messages in the Workshop room', 'thing.workshop',
                       dict(THING_ENGINES['thing.workshop']['params'])))
     # The value is router.json's own; a profile whose router.json sets no temperature shows "unset", never a default.
@@ -562,6 +591,9 @@ def edit(path, by, op, change, *, create_title=None, solve_changed=True, always_
             raise FileNotFoundError('No .archhub file at ' + str(path))
         document = copy.deepcopy(before) if before else new_document(create_title or Path(path).stem)
         touched = change(document) or []
+        fixed = {node['id'] for node in (before or {}).get('nodes', []) if node.get('fixed')}
+        if fixed - {node['id'] for node in document['nodes'] if node.get('fixed')}:
+            raise ValueError('The four fixed nodes stay on every task canvas.')
         mutated = document != before
         validate(document)
         solved = None

@@ -1279,6 +1279,17 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
     return result
 
 
+def attach_meeting_notes(history, task, text):
+    """A thread attachment in the existing mailbox; attaching never sends to an agent."""
+    from .workshop_tasks import get, _short_text
+    if not get(history, task):
+        raise ValueError('No such Workshop task')
+    text = _short_text(text, 'meeting notes', 4000)
+    return history.append(ROOM, author='You', content=text, refs=[task],
+                          category=ROOM + ':category:meeting-notes', recipients=(), evidence=['meeting-notes'],
+                          idempotency_key='meeting-notes:' + sha256((task + '\0' + text).encode()).hexdigest())
+
+
 def _task(history, method, body, identity):
     from . import workshop_tasks
     me, label = identity["sender_key"], identity["sender_label"]

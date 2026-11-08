@@ -108,7 +108,7 @@ finally:
    const started=Date.now(),receipt=await command('declare',vendor);
    const step=page.locator('.react-flow__node').filter({has:page.getByText('Read details index',{exact:true})});
    await step.waitFor({timeout:2000});assert.ok(Date.now()-started<=2000);
-   assert.equal(await page.locator('.react-flow__node').count(),9,JSON.stringify(await page.evaluate(()=>window.ArchHubAPI.getSnapshot().graph.nodes.map(n=>({id:n.id,title:n.title,work:n.agentWork})))));
+   assert.equal(await page.locator('.react-flow__node').count(),12,JSON.stringify(await page.evaluate(()=>window.ArchHubAPI.getSnapshot().graph.nodes.map(n=>({id:n.id,title:n.title,work:n.agentWork})))));
    await page.getByText('Model: fixture-model',{exact:true}).waitFor();
    const editor=step.getByRole('textbox',{name:'Read details index path'});
    assert.equal(await editor.inputValue(),'INDEX.csv');
@@ -161,9 +161,9 @@ finally:
    await page.locator('[data-ask-card]').getByRole('button',{name:'Approve',exact:true}).click();
    await page.locator('[data-ask-card]').getByText('Released',{exact:true}).first().waitFor();
    assert.equal((await command('proof',vendor)).written,true);
-   await page.getByRole('button',{name:'Close dialog',exact:true}).click();
+   await page.getByRole('dialog').press('Escape');
    await step.getByRole('button',{name:'Fork from here',exact:true}).click();
-   await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().graph.nodes.filter(n=>!n.agentWork&&!n.workflowStart).length===7);
+   await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().graph.nodes.filter(n=>!n.agentWork&&!n.workflowStart&&!n.fixed).length===7);
    // Return to the graph via the existing task route after inspecting the approval.
    await page.getByRole('button',{name:'Home',exact:true}).click();
    await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().tasks.filter(t=>t.description?.startsWith('BA details')).length===2);

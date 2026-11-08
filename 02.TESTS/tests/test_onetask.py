@@ -49,7 +49,8 @@ def test_automation_changes_only_selected_task(history):
     before = Path(b['session_path']).read_bytes()
     result = SessionFiles().dispatch({'action': 'add-automation', 'path': a['session_path'], 'trigger': 'manual'})
     document = read_document(a['session_path'])
-    assert result['ok'] and len(document['nodes']) == 2 and document['wires']
+    assert result['ok'] and len(document['nodes']) == 5 and document['wires']
+    assert sum(node.get('fixed') is True for node in document['nodes']) == 4
     assert Path(b['session_path']).read_bytes() == before
 
 
@@ -97,7 +98,7 @@ def test_missing_reference_can_open_for_repair_but_cannot_run(history):
                           'position': {'x': 0, 'y': 0}, 'children': []}]
     path = files.directory / 'repair.archhub'
     write_document(path, document)
-    assert files.dispatch({'action': 'open', 'path': str(path)})['document']['nodes'][0]['result']['status'] == 'Out of date'
+    assert 'result' not in files.dispatch({'action': 'open', 'path': str(path)})['document']['nodes'][0]
     with pytest.raises(ValueError, match='missing'):
         run_document(document)
 
@@ -162,7 +163,7 @@ def test_markerless_transcript_cannot_project_and_legacy_steps_are_recoverable(h
     from nodelang.session_files import read_document, restore_checkpoint
     tasks.declared(history, 'root', 'TASK', 'Only this task', 'working', 'agent', 'Agent')
     row = tasks.get(history, tasks._declared_id('agent'))
-    agent = next(n for n in read_document(row['session_path'])['nodes'] if n['type'] == 'thing.agent')
+    agent = next(n for n in read_document(row['session_path'])['nodes'] if n['type'] == 'thing.agent' and not n.get('fixed'))
     def contaminate(document):
         document['nodes'].append({'id': 'foreign', 'type': 'note', 'title': 'Foreign step', 'params': {},
             'position': {'x': 0, 'y': 0}, 'agentWork': {'role': 'step', 'owner': agent['id']}})
@@ -189,7 +190,7 @@ def test_linked_parent_and_child_share_one_approval(history, monkeypatch):
     parent = new_document('Caller')
     insert_session(parent, str(path))
     calls = []
-    def approve(*args):
+    def approve(*args, **kwargs):
         calls.append(args)
         return {'id': 'shared-approval'}
     monkeypatch.setattr(agent_work, 'request_approval', approve)

@@ -69,7 +69,7 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
     await page.goto('about:blank');child.stdin.end();await ended;server=await start();
     await page.goto(server.url+'/studio?bootstrap='+server.bootstrap);await page.locator('[data-home-ready]').waitFor({state:'attached'});
     await page.getByRole('button',{name:/^Canvas UI second/}).click();
-    await page.getByRole('button',{name:'Open task',exact:true}).click();
+    await page.getByRole('button',{name:'Open its Canvas',exact:true}).click();
     await opened('Canvas UI second');
     await page.locator('.v22g-strip').waitFor();
     assert.equal(await page.locator('.v22g-tab').count(),2);
@@ -87,7 +87,7 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
     await page.getByRole('button',{name:'Show on Home',exact:true}).click();
     await page.locator('[data-home-page]').waitFor();
     assert.equal(await page.evaluate(id=>window.ArchHubAPI.getSnapshot().tasks.find(row=>row.id===id).homePinned,second),true);
-    await page.getByRole('button',{name:'Open task',exact:true}).click();
+    await page.getByRole('button',{name:'Open its Canvas',exact:true}).click();
     await opened('Canvas renamed');
   });
   await t.test('Plus opens a closed task as a preview and editing keeps it open',async()=>{

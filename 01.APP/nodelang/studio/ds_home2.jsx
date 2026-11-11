@@ -13,17 +13,6 @@
   }
   const statusText = st => ({'IN REVIEW': 'Needs you', WIP: 'Working', PLANNED: 'Planned', DONE: 'Done', ARCHIVED: 'Archived', STOPPED: 'Blocked'})[st] || st || '';
   const KEY = 'archhub.home.layout.v1';
-  let homeSetFace = detail => { void detail; };
-  const ensureHomeView = () => {
-    if (ensureHomeView.bound) return;
-    ensureHomeView.bound = true;
-    window.addEventListener('archhub:home-view', event => {
-      if (event.detail === 'canvas' || event.detail === 'workshop') {
-        window.ArchHubHomeFace = event.detail;
-        homeSetFace(event.detail);
-      }
-    });
-  };
   const writeInspectorWidth = value => api.setInspectorWidth(value);
   const describe = value => {
     if (value == null || value === '') return '';
@@ -125,7 +114,7 @@
       <button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => setRows(current => [...current, '']))}>{choices ? '+ Add agent' : '+ Add'}</button>
     </details>;
   }
-  function Home({fileWorkspace = false, initialFace = fileWorkspace ? 'canvas' : 'workshop'} = {}) {
+  function Home({fileWorkspace = false} = {}) {
     const s = useData(), u = useApp();
     const [preview, setPreview] = React.useState(null), [previewError, setPreviewError] = React.useState('');
     const beside = fileWorkspace ? u.canvasTabs?.split : '';
@@ -137,16 +126,33 @@
       read();
       return()=>{live=false;};
     },[beside,s.tasks]);
-    const [query, setQuery] = React.useState('');
-    const [status, setStatus] = React.useState('');
-    const [history, setHistory] = React.useState(false);
+    const [homeLayout, setHomeLayout] = React.useState({width:300,collapsed:false,resume:'',order:[],hidden:[]});
+    const homeRef = React.useRef(homeLayout), homeWrites = React.useRef(Promise.resolve()), sessionsRef = React.useRef(null);
+    const initialSessionsSize = React.useRef(window.innerWidth<1100?56:300);
+    const [sessionsRail, setSessionsRail] = React.useState(false), [sessionsPeek, setSessionsPeek] = React.useState(false), [homeUndo, setHomeUndo] = React.useState(null);
+    const saveHome = patch => {
+      const value = {...homeRef.current,...patch};
+      homeRef.current = value; setHomeLayout(value);
+      const write = homeWrites.current.then(()=>api.setHomeLayout(value));
+      homeWrites.current = write.catch(error=>u.setToast(error.message));
+      return write;
+    };
+    React.useEffect(()=>{
+      if(fileWorkspace)return undefined;
+      let active=true;
+      const read=()=>{
+        setRequest('waiting');
+        return api.readHomeLayout().then(result=>{if(active){homeRef.current=result.homeLayout;setHomeLayout(result.homeLayout);setRequest(s.tasks?.length?'loaded':'empty');}}).catch(error=>{if(active){setFailure(error.message);setRequest('error');retrySave.current=read;}});
+      };
+      read();
+      return()=>{active=false;};
+    },[fileWorkspace]);
     const [sending, setSending] = React.useState(false);
     const sendingRef = React.useRef(false);
     const [to, setTo] = React.useState(null);
     const [checkpoint, setCheckpoint] = React.useState('');
-    const [localFace, setLocalFace] = React.useState(initialFace);
-    const face = fileWorkspace ? u.taskFace : localFace;
-    const setFace = fileWorkspace ? u.setTaskFace : setLocalFace;
+    const face = u.taskFace;
+    const setFace = u.setTaskFace;
     const [detailId, setDetailId] = React.useState('');
     const [request, setRequest] = React.useState('loaded');
     const [failure, setFailure] = React.useState('');
@@ -155,6 +161,14 @@
     const inspectorRef = React.useRef(null), canvasRef = React.useRef(null);
     const shellRef = React.useRef(null), tabsRef = React.useRef(null);
     const [shellWidth, setShellWidth] = React.useState(window.innerWidth - 64), [tabsWidth, setTabsWidth] = React.useState(600);
+    React.useLayoutEffect(()=>{
+      if(fileWorkspace)return undefined;
+      const frame=window.requestAnimationFrame(()=>{
+        if(homeLayout.collapsed||shellWidth<1036)sessionsRef.current?.collapse();
+        else sessionsRef.current?.resize(homeLayout.width);
+      });
+      return()=>window.cancelAnimationFrame(frame);
+    },[fileWorkspace,homeLayout.collapsed,homeLayout.width,shellWidth<1036]);
     const [inspectorRail, setInspectorRail] = React.useState(false);
     const threadRef = React.useRef(null), [threadRail, setThreadRail] = React.useState(false), [threadPeek, setThreadPeek] = React.useState(false);
     React.useLayoutEffect(() => {
@@ -223,15 +237,17 @@
     }, [inspectorWidth, layoutReady, fileWorkspace, face, splitInspector, shellWidth]);
     React.useEffect(()=>{setSplitInspector(false);},[face]);
     React.useEffect(() => {
-      if (!fileWorkspace && face !== 'canvas') {u.setSelectedNodeId(null);inspect({nodeId:null,wireId:null});}
-    }, [face]);
-    homeSetFace = setFace;
-    ensureHomeView();
-    const tasks = (s.tasks || []).filter(t => history || t.status !== 'ARCHIVED').sort((a,b)=>Number(!!b.homePinned)-Number(!!a.homePinned));
-    const waiting = new Set((s.approvals || []).filter(c => c.status === 'pending').map(c => c.taskId));
-    const list = tasks.filter(t => (!status || t.status === status) && (!query || `${t.title} ${t.status}`.toLowerCase().includes(query.toLowerCase())));
-    const focus = u.task || s.focusedTask;
-    const task = fileWorkspace ? tasks.find(t => t.id === u.task) : tasks.find(t => t.id === focus);
+      if (!fileWorkspace) {u.setSelectedNodeId(null);inspect({nodeId:null,wireId:null});}
+    }, [fileWorkspace]);
+    const waiting = new Set((s.approvals || []).filter(c => c.status === 'pending').flatMap(c => [c.taskId,c.task_id,c.work,...(c.taskIds||[])]));
+    const rank=id=>{const index=homeLayout.order.indexOf(id);return index<0?homeLayout.order.length:index;};
+    const tasks = (s.tasks || []).filter(t => t.status !== 'ARCHIVED').sort((a,b)=>Number(waiting.has(b.id)||b.status==='IN REVIEW')-Number(waiting.has(a.id)||a.status==='IN REVIEW')||Number(!!b.homePinned)-Number(!!a.homePinned)||rank(a.id)-rank(b.id));
+    const list = tasks.filter(t => !homeLayout.hidden.includes(t.id));
+    const focus = homeLayout.resume || u.task || s.focusedTask;
+    const task = fileWorkspace ? tasks.find(t => t.id === u.task) : list.find(t => t.id === focus) || list.find(t=>t.homePinned) || list[0];
+    React.useEffect(()=>{
+      if(!fileWorkspace&&request!=='waiting'&&request!=='error')setRequest(tasks.length?'loaded':'empty');
+    },[fileWorkspace,tasks.length,request]);
     const people = window.UI.workshopPeople ? window.UI.workshopPeople(s) : {people: [], choices: [], whoIs: label => ({name: label || 'Agent'})};
     const ownerOf = t => {
       if (!t) return '';
@@ -333,14 +349,6 @@
       return /^[A-Z_]+$/.test(reason) ? reason.toLowerCase().replace(/_/g, ' ') : reason;
     };
     const toneOf = t => t.status === 'IN REVIEW' || waiting.has(t.id) ? 'review' : t.status === 'WIP' ? 'working' : t.status === 'STOPPED' ? 'stopped' : t.status === 'PLANNED' ? 'planned' : 'done';
-    const openEvidence = async t => {
-      await openTask(t);
-      const card = (s.approvals || []).find(item => item.taskId === t.id || item.task_id === t.id);
-      if (card) return u.show('Action evidence', {id: card.id});
-      const node = document.querySelector('[data-dx="outputs"]') || document.querySelector('[data-dx="activity"]');
-      if (node) node.focus();
-      return true;
-    };
     const lastUpdate = t => {
       const event = (t.activity || []).at(-1), text = (event && describe(event.output || event.text)) || reasonOf(t);
       if (!text) return '';
@@ -349,18 +357,17 @@
       const minutes = Math.max(0, Math.floor((Date.now() - stamp) / 60000));
       return text + ' · ' + (minutes < 1 ? 'now' : minutes < 60 ? minutes + 'm' : minutes < 1440 ? Math.floor(minutes / 60) + 'h' : Math.floor(minutes / 1440) + 'd');
     };
-    const taskRow = t => {
-      const needsEvidence = t.status === 'IN REVIEW' || t.status === 'STOPPED' || waiting.has(t.id);
-      return <div key={t.id} className={'dx-task-row' + (task?.id === t.id ? ' on' : '')} data-status={toneOf(t)} draggable={!!t.sessionPath} onDragStart={e=>{e.dataTransfer.setData('task',t.id);if(t.sessionPath)e.dataTransfer.setData('session',t.sessionPath);}}>
-        <button type="button" className="dx-task" aria-selected={task?.id === t.id} onClick={() => executeAction('ui.select', () => u.setTask(t.id))} onDoubleClick={() => executeAction('ui.select', () => openTask(t))}>
-          <b title={t.title}>{t.title}</b>
-          <span className={!ownerOf(t) ? "muted" : undefined} title={ownerOf(t)}>{ownerOf(t) || "Not assigned"}</span>
-          <span data-task-row-state={window.UI.taskRowReason(t) || undefined}>{window.UI.taskRowReason(t) || statusText(t.status)}</span>
-          <span data-line="reason" title={lastUpdate(t)}>{lastUpdate(t)}</span>
-        </button>
-        {needsEvidence ? <button type="button" className="dx-evidence" aria-label={'Evidence for ' + t.title} onClick={() => executeAction('ui.select', () => openEvidence(t))}><Icon name="eye" size={14} /></button> : null}
-      </div>;
+    const selectResume = t => {u.setTask(t.id);return saveHome({resume:t.id});};
+    const openOwner = t => {
+      const agent=[...(s.agents||[]),...(s.providers||[])].find(a=>a.id===t.owner||a.name===ownerOf(t));
+      if(agent)u.show('Agent',{id:agent.id});else u.go('settings/Agents');
     };
+    const taskRow = t => <div key={t.id} className={'dx-task-row resume-row'+(task?.id===t.id?' on':'')} data-status={waiting.has(t.id)||t.status==='IN REVIEW'?'review':toneOf(t)} draggable onDragStart={event=>{event.dataTransfer.setData('task',t.id);event.dataTransfer.setData('text/archhub-home-row',t.id);if(t.sessionPath)event.dataTransfer.setData('session',t.sessionPath);}} onDragOver={event=>event.preventDefault()} onDrop={event=>{event.preventDefault();const id=event.dataTransfer.getData('text/archhub-home-row');if(!list.some(row=>row.id===id)||id===t.id)return;const order=list.map(row=>row.id).filter(key=>key!==id);order.splice(order.indexOf(t.id),0,id);executeAction('ui.select',()=>saveHome({order}));}}>
+      <button type="button" className="resume-avatar" aria-label={ownerOf(t)?'Open agent '+ownerOf(t):'Resume '+t.title} title={ownerOf(t)||t.title} onClick={()=>executeAction('ui.select',()=>ownerOf(t)?openOwner(t):selectResume(t))}>{ownerOf(t)?<window.UI.Av id={ownerOf(t)} size={28}/>:<Icon name="canvas" size={18}/>}</button>
+      <button type="button" className="dx-task" aria-selected={task?.id===t.id} title={t.title} onClick={()=>executeAction('ui.select',()=>selectResume(t))} onDoubleClick={()=>executeAction('ui.select',()=>openTask(t))}><b>{t.title}</b><span>{waiting.has(t.id)?'Waits for you':window.UI.taskRowReason(t)||statusText(t.status)}{lastUpdate(t)?' · '+lastUpdate(t):''}</span></button>
+      <button type="button" className="resume-pin" aria-label={(t.homePinned?'Unpin ':'Pin ')+t.title} aria-pressed={!!t.homePinned} onClick={()=>executeAction('ui.select',()=>u.act(()=>api.setTaskSession(t.id,{homePinned:!t.homePinned})))}><Icon name="pin" size={13}/></button>
+      <button type="button" className="resume-hide" aria-label={'Hide '+t.title+' from Home'} onClick={()=>executeAction('ui.select',()=>{setHomeUndo(homeLayout);return saveHome({hidden:[...homeLayout.hidden,t.id],resume:task?.id===t.id?'':homeLayout.resume});})}>×</button>
+    </div>;
     const openFile = () => u.act(() => api.openSession()).then(result => { if (result && !result.cancelled) u.go('canvas'); return result; });
     const saveFile = asCopy => u.act(() => asCopy ? api.saveSessionAs() : api.saveSession());
     const fileKeys = event => {
@@ -408,6 +415,18 @@
     const tabs = u.canvasTabs?.tabs || [], tabCount = Math.max(1, Math.floor((tabsWidth - 100) / 150));
     const visibleTabs = tabs.length <= tabCount ? tabs : tabs.filter(tab => tab.id === task?.id || tabs.filter(row => row.id !== task?.id).indexOf(tab) < tabCount - 1);
     const hiddenTabs = tabs.filter(tab => !visibleTabs.includes(tab));
+    const liveNodes=task?.sessionOpen?s.graph.nodes:[];
+    const work=(task?.workflow||[]).filter(node=>!['fixed-agent','fixed-you','fixed-workshop','start'].includes(node.id));
+    const resumeSteps=(work.length?work:plan.map((step,index)=>({id:stepKeys(step)[0]||String(index),title:describe(step),planStep:step}))).map(step=>{
+      const live=liveNodes.find(node=>node.id===step.id), activityRow=activity.find(row=>row.id===step.id);
+      const state=live?stepOf(step,{[step.id]:live.status}):activityRow?stepOf(step,{[step.id]:activityRow.status}):stepOf(step.planStep||step,task?.progress);
+      const output=outputRecord(live?.output||activityRow?.output||recordedStep(step.planStep||step,task?.progress)?.output);
+      return {...step,state,output:useLabel(output?.name||output?.excerpt||''),preview:useLabel(output?.excerpt||'')};
+    });
+    const pendingApproval=(s.approvals||[]).find(card=>card.status==='pending'&&(card.taskId===task?.id||card.work===task?.id||card.taskIds?.includes(task?.id)));
+    const heldIndex=resumeSteps.findIndex(step=>step.id===pendingApproval?.nodeId);
+    const currentStep=heldIndex>=0?heldIndex:Math.max(0,resumeSteps.findIndex(step=>step.state.kind!=='done'));
+    const stepLine=resumeSteps.length?resumeSteps.every(step=>step.state.kind==='done')?'All '+resumeSteps.length+' steps done':'Step '+(currentStep+1)+' of '+resumeSteps.length+': '+resumeSteps[currentStep].title+(pendingApproval?', waits for you':''):statusText(task?.status);
     const propertiesPane = <aside className="shared-properties" data-properties-pane="" aria-label="Properties">
       <header className="shared-properties-head">
         {!fileWorkspace && <span className="properties-eyebrow">TASK PROPERTIES</span>}
@@ -423,37 +442,27 @@
     </aside>;
     if (!Array.isArray(s.tasks)) return <div className="dx-home-root dx-loading-layout" data-home-loading="" aria-busy="true" aria-label="Loading tasks"><div>{[0,1,2].map(row=><div className="dx-skeleton" key={row} />)}</div><aside>{[0,1,2].map(row=><div className="dx-skeleton" key={row} />)}</aside></div>;
     return <div ref={shellRef} className="dx-home-root" data-screen={fileWorkspace ? "task-file" : "home"} data-home-page={fileWorkspace ? undefined : ""} data-start={document.documentElement.dataset.start || 'cold'} onKeyDown={event => { if(event.key === 'Escape' && (inspection.nodeId || inspection.wireId)) {event.preventDefault();event.stopPropagation();clearInspection();} else fileKeys(event);}}>
-      {request === 'waiting' ? <p role="status">Saving</p> : null}
+      {request === 'waiting' ? <p role="status">{fileWorkspace?'Saving':'Loading sessions…'}</p> : null}
       {request === 'error' ? <p role="alert">{failure} <button type="button" onClick={() => executeAction('ui.select', () => retrySave.current())}>Retry</button></p> : null}
-      {request === 'empty' ? <p role="status">No tasks yet.</p> : null}
       {request === 'loaded' ? <span data-home-ready="" /> : null}
       <div className="dx-home">
-        {!fileWorkspace ? <Group id="home-context" className="dx-home-landing dx-split" orientation="horizontal" onLayoutChanged={(_, meta) => {if(meta?.isUserInteraction && inspectorRef.current) persistWidth(Math.round(inspectorRef.current.getSize().inPixels));}}>
-          <Column id="main" className="dx-task-index" minSize={320}><div className="dx-home-list">          <aside className="dx-tasks" data-dx="tasks" aria-label="Tasks">
-            <div className="dx-tasks-head">
-              <h1>Tasks</h1>
-            </div>
-            {!task && <p className="dx-task-hint">Select a task to see its properties.</p>}
-            <div className="dx-find">
-              <input aria-label="Find a task" placeholder="Search tasks" value={query} onChange={e => setQuery(e.target.value)} />
-              <label className="dx-status" data-active={!status}><span className="sr-only">Status</span>
-                <select aria-label="Status" value={status} onChange={e => { setStatus(e.target.value); setHistory(e.target.value === 'ARCHIVED'); }}>
-                  <option value="">All tasks</option>
-                  {['IN REVIEW', 'WIP', 'PLANNED', 'STOPPED', 'DONE', 'ARCHIVED'].map(v => <option key={v} value={v}>{statusText(v)}</option>)}
-                </select>
-              </label>
-              <button type="button" className="dx-quiet" aria-pressed={status === 'IN REVIEW'} onClick={() => executeAction('ui.select', () => setStatus(status === 'IN REVIEW' ? '' : 'IN REVIEW'))}>Needs you</button>
-              <button type="button" className="dx-quiet" data-view-link="" onClick={() => executeAction('ui.select', () => u.go('automations'))}>Automations</button>
-              <button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => u.go('agents'))}>Agents {s.agentWorkingCount||0}</button>
-              <button type="button" className="dx-new-task" onClick={() => executeAction('ui.show', u, 'New task')}>New task</button>
-            </div>
-            <div className="dx-task-columns" aria-hidden="true"><span>Task</span><span>Assigned to</span><span>Status</span><span>Last update</span></div>
-            <div className="dx-tasks-list">
-              {list.map(taskRow)}
-            </div>
-          </aside></div></Column>
-          <Separator className="pane-splitter" aria-label="Resize the Properties pane" />
-          <Column id="params" className="dx-home-preview" panelRef={inspectorRef} defaultSize={initialInspectorWidth.current} minSize={280} maxSize={480} groupResizeBehavior="preserve-pixel-size">{propertiesPane}</Column>
+        {!fileWorkspace ? <Group id="home-context" className={'dx-home-landing dx-split resume-home'+(sessionsRail&&!sessionsPeek?' sessions-rail':'')} orientation="horizontal" onLayoutChanged={(_,meta)=>{if(meta?.isUserInteraction&&sessionsRef.current){const size=sessionsRef.current.getSize().inPixels;saveHome({collapsed:size<=57,width:size<=57?homeLayout.width:Math.max(240,Math.min(440,Math.round(size)))});}}}>
+          <Column id="sessions" panelRef={sessionsRef} collapsible collapsedSize={56} minSize={240} maxSize={440} defaultSize={initialSessionsSize.current} groupResizeBehavior="preserve-pixel-size" onResize={size=>setSessionsRail(size.inPixels<=57)}>
+            <aside className="resume-sessions" data-peek={sessionsRail&&sessionsPeek||undefined} aria-label="Sessions"><header><h2>Sessions</h2><button type="button" className="dx-quiet" aria-label={sessionsRail&&!sessionsPeek?'Open the list':'Fold the list to avatars'} onClick={()=>executeAction('ui.select',()=>{if(shellWidth<1036){setSessionsPeek(!sessionsPeek);return undefined;}return saveHome({collapsed:!sessionsRail});})}>{sessionsRail?'›':'‹'}</button></header>
+              <div className="resume-session-scroll">{list.map(taskRow)}{(s.agents||[]).filter(agent=>agent.runtime&&!tasks.some(t=>t.owner===agent.id||t.owner===agent.name)).map(agent=><div className="dx-task-row resume-row" key={'agent:'+agent.id}><button type="button" className="resume-avatar" aria-label={'Open agent '+agent.name} onClick={()=>executeAction('ui.show',u,'Agent',{id:agent.id})}><window.UI.Av id={agent.id} size={28}/></button><button type="button" className="dx-task" onClick={()=>executeAction('ui.show',u,'Agent',{id:agent.id})}><b>{agent.name}</b><span>{agent.status_text||agent.status}</span></button></div>)}</div>
+              {!!homeLayout.hidden.length&&<button type="button" className="dx-quiet" onClick={()=>executeAction('ui.select',()=>saveHome({hidden:[]}))}>+ {homeLayout.hidden.length} hidden</button>}
+              {homeUndo&&<button type="button" className="dx-quiet" onClick={()=>executeAction('ui.select',()=>{const previous=homeUndo;setHomeUndo(null);return saveHome(previous);})}>Undo Home change</button>}
+            </aside>
+          </Column>
+          <Separator className="pane-splitter" aria-label="Resize the session list" />
+          <Column id="resume" minSize={320}>
+            <main className="resume-main"><div className="resume-home-controls"><span>1 Resume</span><button type="button" className="dx-quiet" onClick={()=>executeAction('ui.select',()=>{setHomeUndo(homeLayout);return saveHome({width:300,collapsed:false,resume:'',order:[],hidden:[]});})}>Reset Home</button></div>
+              {task?<section className="resume-task" aria-label="Resumed session"><header className="resume-heading"><div><h1>{task.title}</h1><p>{stepLine}</p></div><div className="resume-people">{agents.map(name=><button type="button" key={name} aria-label={'Open agent '+name} title={name} onClick={()=>executeAction('ui.select',()=>openOwner(task))}><window.UI.Av id={name} size={28}/></button>)}</div><Btn sm onClick={()=>executeAction('ui.select',()=>openTask(task))}>Open its Canvas</Btn></header>
+                <div className="resume-steps">{resumeSteps.map((step,index)=><article key={step.id} data-resume-step={step.id} data-state={step.state.kind} className="resume-step"><header><span className="resume-step-tile"><Icon name={step.state.kind==='done'?'check':'canvas'} size={14}/></span><b>{step.title}</b></header><p>{step.state.label}{step.output?' · '+step.output:''}</p>{step.preview&&<pre className="resume-preview">{step.preview}</pre>}{pendingApproval&&currentStep===index&&<window.UI.ApprovalCard id={pendingApproval.id} compact/>}</article>)}</div>
+                {messages.length>0&&<section className="resume-thread" aria-label="Last thread lines"><h2>In the thread</h2>{messages.slice(-3).map(message=><button type="button" key={message.id} onClick={()=>executeAction('ui.select',()=>u.openTaskFile(task.id,'split'))}><window.UI.Av id={message.who||'Agent'} size={24}/><span><b>{message.who}</b> {describe(message.text)}</span></button>)}</section>}
+              </section>:request === 'empty'?<section className="resume-zero"><h1>What do you need?</h1>{['Review a drawing set','Check a model against the standard','Collect files for an issue'].map(prompt=><button type="button" key={prompt} onClick={()=>executeAction('ui.select',()=>{const key=JSON.stringify(['home','']);u.setComposerDraft(current=>({...current,[key]:{text:prompt,revision:(current[key]?.revision||0)+1}}));document.querySelector('.global-composer textarea')?.focus();})}><Icon name="brain" size={18}/>{prompt}</button>)}</section>:null}
+            </main>
+          </Column>
         </Group> :
           <div className="dx-workspace" data-dx="workspace" data-task-face={face}>
             <div className="v22g-strip">

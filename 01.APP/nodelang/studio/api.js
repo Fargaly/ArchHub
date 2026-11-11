@@ -1195,6 +1195,8 @@ function setAppearance(id,value){
 api.setInspectorWidth=value=>setAppearance('Appearance.Inspector width',value);
 api.readCanvasTabs=()=>settingsAction('readCanvasTabs');
 api.setCanvasTabs=value=>settingsAction('setCanvasTabs',[value]);
+api.readHomeLayout=()=>settingsAction('readHomeLayout');
+api.setHomeLayout=value=>settingsAction('setHomeLayout',[value]);
 api.setSettingsScope=async scope=>{const result=await settingsAction('setSettingsScope',[scope,state.activeWorkspace||state.graph.workspaceIds?.[0]||'',state.graph.id]);scopeEpoch++;publish({hostSkillsReady:false,hostSkills:[],connectorBundle:null});await commands.load();project();await api.refreshSettingsOperations();await refreshHostSkills();return result;};
 const settingsListWorkspaces=api.listWorkspaces;
 api.listWorkspaces=async()=>{await settingsListWorkspaces();if(state.profile.signedIn)await api.refreshSettingsOperations();return copy(state.workspaces);};

@@ -178,11 +178,13 @@
       setSending(true);
       try {
         const t = await u.act(() => {
+          if(u.route==='home'&&!taskId&&!onSent)return api.createTask(message);
           if (!taskId && typeof api.apiRouterChat === 'function') return api.apiRouterChat(message, 'BABOOM');
           return api.sendToBaboom(message, {taskId, scope: u.selectedNodeId || s.graph.id});
         });
         if (!t) setDraft(current => current.text ? current : {text,revision:current.revision+1});
         if (t) {
+          if(u.route==='home'&&!taskId&&!onSent){await u.openTaskFile(t.taskId);return;}
           if (typeof t.answer === 'string') {
             onSent?.(t);
             return;
@@ -209,7 +211,7 @@
       }}><button type="button" className="tab-button" aria-label="Composer scope" onClick={event => executeAction("sharedUI.ComposerScope.1", {
           contextOpen,
           setContextOpen
-        }, event)}><window.AHIcon name="canvas" size={12} /> {u.selectedNodeId ? api.contextLabel(u.selectedNodeId) : s.graph.name}</button><button type="button" className="icon-button" aria-label="Mention context" title="Add nodes, workflows, agents or sessions" onClick={event => executeAction("sharedUI.MentionContext.2", {
+        }, event)}><window.AHIcon name="canvas" size={12} /> {u.route==='home'?'New session':u.selectedNodeId ? api.contextLabel(u.selectedNodeId) : s.graph.name}</button><button type="button" className="icon-button" aria-label="Mention context" title="Add nodes, workflows, agents or sessions" onClick={event => executeAction("sharedUI.MentionContext.2", {
           contextOpen,
           setContextOpen
         }, event)}>＠</button></div>{contextOpen && <div className="composer-mentions" role="region" aria-label="Context choices">{[['Nodes', s.graph.nodes], ['Workflows', s.graphs], ['Agents', s.providers], ['Sessions', s.tasks]].map(([label, rows]) => <details key={label}><summary>{label}</summary>{rows.slice(0, 20).map(r => <button type="button" key={r.id} onClick={event => executeAction("sharedUI.Control.3", {
@@ -238,7 +240,7 @@
           api,
           tool,
           u
-        }, event)}><window.AHIcon name={icon} size={15} /></button>)}{window.UI.AgentPicker && <window.UI.AgentPicker choices={window.UI.workshopPeople(s).choices} to={to} setTo={setTo} />}<span className="fill" />{api.supportsAction?.('startVoiceInput') !== false && <Btn sm onClick={event => executeAction("sharedUI.TalkF2.8", {
+        }, event)}><window.AHIcon name={icon} size={15} /></button>)}{u.route!=='home' && window.UI.AgentPicker && <window.UI.AgentPicker choices={window.UI.workshopPeople(s).choices} to={to} setTo={setTo} />}<span className="fill" />{api.supportsAction?.('startVoiceInput') !== false && <Btn sm onClick={event => executeAction("sharedUI.TalkF2.8", {
           setText,
           u
         }, event)} title="Talk · F2">🎙 Talk</Btn>}<Btn p sm type="submit" aria-label="Send ↵" title="Send · Enter" aria-busy={sending} disabled={!text.trim()}><window.AHIcon name="send" size={15} /></Btn></div>
@@ -261,6 +263,7 @@
       try {
         const result = await u.act(() => mode === 'decline' ? api.decline(id) : api.approve(id, mode));
         if (result?.ok === false) setDecisionError(result.message);
+        if(result&&result.ok!==false)await api.listTasks?.();
       } catch (error) {
         setDecisionError(error.message || 'Approval was refused');
       } finally {
@@ -275,8 +278,8 @@
         padding: 16,
         display: 'grid',
         gap: 10,
-        maxHeight: c.approvalKind === 'canvas' ? 324 : undefined,
-        height: c.approvalKind === 'canvas' ? 324 : undefined,
+        maxHeight: c.approvalKind === 'canvas' && !compact ? 324 : undefined,
+        height: c.approvalKind === 'canvas' && !compact ? 324 : undefined,
         overflowY: c.approvalKind === 'canvas' ? 'auto' : undefined
       }}>
         <div className="flex" style={{alignItems: 'flex-start', gap: 12}}>
@@ -286,7 +289,7 @@
         {c.summary && <p style={{fontSize: 13, margin: 0, color: A.inkSoft, lineHeight: c.approvalKind === 'canvas' ? 1.45 : undefined}}>{c.summary}</p>}
         {c.text ? <div><div style={{fontSize: 11, color: A.inkSoft, marginBottom: 4}}>{c.textLabel || 'Text'}</div><pre style={{margin: 0, whiteSpace: 'pre-wrap', font: '13px/1.45 Inter, sans-serif', background: A.bgSoft, border: '1px solid ' + A.line, borderRadius: A.rad.md, padding: '10px 12px'}}>{c.text}</pre></div> : null}
         {decisionError && <p role="alert">{decisionError}</p>}
-        {c.status === 'pending' ? <div className="flex" style={{gap: 8}}><Btn p sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.ApproveOnce.13", {decide}, event)}>Approve</Btn>{c.approvalKind==='canvas' && <Btn sm disabled={busy} onClick={event=>executeAction('projects.controls.activate',{handler:()=>{const key=JSON.stringify(['task-file',c.taskId || u.task]);u.setComposerDraft(current=>({...current,[key]:{text:'Why does '+c.title+' need approval?',revision:(current[key]?.revision||0)+1}}));u.setTaskFace('split');u.close();}},event)}>Ask why</Btn>}<Btn sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.Decline.15", {decide}, event)}>{c.approvalKind==='canvas'?'Reject':'Deny'}</Btn></div> : <p style={{margin: 0, color: c.status === 'approved' ? A.ok : c.status === 'failed' ? A.err : A.inkSoft}}>{word}</p>}
+        {c.status === 'pending' ? <div className="flex" style={{gap: 8}}><Btn p sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.ApproveOnce.13", {decide}, event)}>Approve</Btn>{c.approvalKind==='canvas' && <Btn sm disabled={busy} onClick={event=>executeAction('projects.controls.activate',{handler:()=>{const target=c.taskId||c.work||u.task,key=JSON.stringify(['task-file',target]);u.setComposerDraft(current=>({...current,[key]:{text:'Why does '+c.title+' need approval?',revision:(current[key]?.revision||0)+1}}));u.close();return u.openTaskFile(target,'split');}},event)}>Ask why</Btn>}<Btn sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.Decline.15", {decide}, event)}>{c.approvalKind==='canvas'?'Reject':'Deny'}</Btn></div> : <p style={{margin: 0, color: c.status === 'approved' ? A.ok : c.status === 'failed' ? A.err : A.inkSoft}}>{word}</p>}
       </Card>;
     }
     return <Card data-approval={id} style={{

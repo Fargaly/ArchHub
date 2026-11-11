@@ -1140,16 +1140,16 @@
       position: 'relative',
       minHeight: 0,
       height: embedded ? '100%' : undefined,
-      '--canvas-bg': A.bgCanvas,
-      '--canvas-panel': A.bgPanel,
-      '--canvas-soft': A.bgSoft,
-      '--canvas-hover': A.bgHover,
-      '--canvas-line': A.line,
-      '--canvas-line-soft': A.lineSoft,
-      '--canvas-ink': A.ink,
-      '--canvas-muted': A.inkSoft,
-      '--canvas-accent': A.accent,
-      '--canvas-accent-dim': A.accentDim
+      '--canvas-bg': 'var(--color-bg-canvas)',
+      '--canvas-panel': 'var(--color-bg-panel)',
+      '--canvas-soft': 'var(--color-bg-soft)',
+      '--canvas-hover': 'var(--color-bg-hover)',
+      '--canvas-line': 'var(--color-line)',
+      '--canvas-line-soft': 'var(--color-line-soft)',
+      '--canvas-ink': 'var(--color-ink)',
+      '--canvas-muted': 'var(--color-ink-soft)',
+      '--canvas-accent': 'var(--color-accent)',
+      '--canvas-accent-dim': 'var(--color-accent-dim)'
     }}>
   {/* Spec d9c0d514 top bar: name · Unsaved, + Add node, ⋯, Run. Everything else lives in ⋯; saving is autosave plus Ctrl+S. */}
   {!embedded && <div data-canvas-overlay="" data-canvas-topbar="" className="spread" style={{
@@ -1208,7 +1208,7 @@
          if (!state || state.isValid || state.toHandle || !state.fromHandle || e.target.closest?.('.react-flow__node')) return;
          u.show('Compatible nodes', {endpoint: {id: state.fromNode.id, side: state.fromHandle.type === 'source' ? 'out' : 'in', port: state.fromHandle.id}, position: toFlow(e)});
        }}
-       onEdgeClick={(e, edge) => { if (edge.id !== 'rejected') { setWireId(edge.id); if(!e.shiftKey&&!e.ctrlKey)setSelected([]); } }}
+       onEdgeClick={(e, edge) => { if (edge.id !== 'rejected') { setWireId(edge.id); if(!e.shiftKey&&!e.ctrlKey)setSelected([]); onInspect?.({nodeId:null,wireId:edge.id}); } }}
        onPaneClick={() => { if(preview){onActivate?.();return;} setSelected([]); setWireId(null); setSelectedWires([]); setRejected(null); }}
        selectionOnDrag panOnDrag={[1]} panActivationKeyCode="Space" multiSelectionKeyCode={['Shift','Control','Meta']} selectionKeyCode={null} deleteKeyCode={null}
        zoomOnDoubleClick={false} connectionLineStyle={{stroke: A.cyan, strokeWidth: 2}} proOptions={{hideAttribution: true}}>{pinFrame && <RF.ViewportPortal><div className="v22g-pinframe" data-folded={u.canvasTabs?.collapsed || undefined} style={{transform:`translate(${pinFrame.x}px,${pinFrame.y}px)`,width:256,height:pinFrame.height}}><div><b>On every canvas</b>{!preview && <button type="button" className="button-reset nodrag nopan" aria-label={'On every canvas · '+(u.canvasTabs.collapsed?'Expand':'Collapse')} aria-expanded={!u.canvasTabs.collapsed} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>u.saveCanvasTabs({...u.canvasTabs,collapsed:!u.canvasTabs.collapsed}))},event)}>{u.canvasTabs.collapsed?'Show Agent, You, Workshop':'Collapse'}</button>}</div></div></RF.ViewportPortal>}</RF.ReactFlow>

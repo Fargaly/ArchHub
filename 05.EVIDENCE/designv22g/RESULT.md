@@ -1,4 +1,4 @@
-# DESIGNV22G Canvas slice (a): branch evidence
+# DESIGNV22G branch evidence
 
 ## Version 47 evening continuation, 2026-11-11
 
@@ -30,7 +30,6 @@ TESTISO final profile leaks: []; protected write attempts: 0
 
 Focused existing Canvas regression file, same serialized runner and isolated server:
 ```text
-✔ DESIGNV22G Canvas behaviours on compiled Studio and real file owners (26415.7533ms)
 ℹ tests 25
 ℹ pass 25
 ℹ fail 0
@@ -489,3 +488,29 @@ page errors design 0, build 0
 ```
 
 This rechecks the measured corrections only; it does not replace the full group-b totals or resolve its unvisited states. Hooks stayed enabled. The owner and main UI commits both ended with ACOMPILER PASS; the correction commit runs the same hook. Full Studio suites and full multi-group comparisons were not rerun.
+
+### Part 2 Resume and zero-session acceptance, 2026-11-12
+
+Existing Home is now direction 1 Resume: one waiting-first session list, pin marks from the existing task-file homePinned flag, real agent avatars, actual workflow steps (or the task's recorded plan), current-step approval, and recent thread lines. The Settings owner validates and saves homeLayout (resumed session, width, collapse, order and hidden rows) in its existing settings file. Changing Inspector width removes only the legacy inner layout, preserving current Home metadata under the same lock.
+
+The New session composer creates through createTask and opens that file's Canvas; it does not call a model or Run. Zero sessions has three starter prompts which fill that composer. Existing ApprovalCard handles Approve and Reject through answerApproval; Ask why opens the real task thread with its question draft. A real gate is run, rejected, and a second gate approved and re-read in the isolated UI proof. Width, fold, hide/restore and reset/undo round-trip through homeLayout. Pins use the existing task owner rather than a second preference.
+
+Replaced-screen coverage was migrated, not disabled: Home's old Properties preview is now Resume; properties remain editable on its Canvas. Workshop-view assertions now exercise the Thread pane. Fixed inspector coordinates are replaced by adaptive rails/peeks and stable bounds; the old 256 px card fixture uses the current 268 px card with a clear wire gap. Scope, rules, folders, references, plan progress, typed inputs, linked-source visibility, undo/redo, custom header contrast, theme mutation, Library, native open/error routing, Settings/back navigation, width drag, file/browser reopen and appearance reset checks remain executable. Obsolete Penpot capture coordinates were replaced by current built-UI checks at the three requested sizes. The 25-case Canvas regression file retains its cases and changes only the replaced Open task label and the omitted dead Layout control assertion.
+
+That retained coverage exposed two real UI defects: selecting the same wire after a node did not notify the external Inspector again; Canvas surfaces held dark literals instead of the theme token. Both now use their existing owner path. Home clears shared inspection context when entered; flow import navigates to the actual Canvas instead of the removed Home face event. No fixed-node positions, arrange algorithm or rail picker changed.
+
+Compiled manifest: dfc5931a1b76a498fc407c13eeda0587042622d374ed106a9ab2c9f5f7b4d67e; 2058827 output bytes, 40 files. One queued BelowNormal job at a time, one headless browser at a time, isolated profile and real Studio/files. All servers and browsers close in finally. The two deliberately stopped diagnostic jobs were closed through their own job-object runner, including their descendants.
+
+Final focused current-source output:
+```text
+6 passed, 3 deselected, 1 warning in 58.25s
+# tests 25
+# pass 25
+# fail 0
+# skipped 0
+TESTISO final profile leaks: []; protected write attempts: 0
+```
+
+The six cases are Canvas, canvas_fit, fluid_shell, resume, zero_home and appearance_owner. The migrated Home, Thread, Settings and fit/save/reopen cases also passed in the preceding focused run; its one Canvas-selection failure was repaired and the Canvas case repeated above. Resume and all four shell routes pass at 1009x940, 1366x768 and 1864x949, with zero cut controls and no opaque bottom strip. Current captures remain in ignored .cache/designv22g-resume-{1009,1366,1864}.png. The existing cache_dir warning remains. Full suites, benchmarks, installed acceptance, push and release were not run.
+
+The Settings layout read now drives the existing request state through waiting, loaded/empty and error with Retry; the zero-session section is its rendered empty branch. UI input reuses this suite's original CDP session helpers, confined to its launched headless browser. No desktop pointer call or fabricated idle/away guard is used. The hook and its R100 rule were not changed.

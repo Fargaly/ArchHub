@@ -672,6 +672,31 @@ def canvas_tabs(function='readCanvasTabs', args=(), settings=None):
     return {'canvasTabs': settings.read().get('canvasTabs', {'tabs': [], 'active': '', 'split': '', 'collapsed': False})}
 
 
+def home_layout(function='readHomeLayout', args=(), settings=None):
+    """Home view metadata stays with the existing Settings owner."""
+    from .nograph_server import JsonFile
+    from .session_files import profile_directory
+    settings = settings or JsonFile(profile_directory() / 'settings/settings.json', {})
+    default = {'width': 300, 'collapsed': False, 'resume': '', 'order': [], 'hidden': []}
+    if function == 'setHomeLayout':
+        value = args[0] if len(args) == 1 else None
+        if type(value) is not dict or set(value) != set(default):
+            raise ValueError('Choose the session list and resumed session.')
+        if type(value['width']) is not int or not 240 <= value['width'] <= 440 or type(value['collapsed']) is not bool:
+            raise ValueError('Choose a session list width from 240 to 440 pixels.')
+        def valid_id(item):
+            return type(item) is str and bool(re.fullmatch(r'[A-Za-z0-9_-]{1,128}', item))
+        if type(value['resume']) is not str or value['resume'] and not valid_id(value['resume']):
+            raise ValueError('Choose a session to resume.')
+        for key in ('order', 'hidden'):
+            rows = value[key]
+            if type(rows) is not list or len(rows) > 1000 or any(not valid_id(item) for item in rows) or len(set(rows)) != len(rows):
+                raise ValueError('Choose unique sessions for the Home list.')
+        settings.update({'homeLayout': value})
+    held = settings.read().get('homeLayout', {})
+    return {'homeLayout': {key: held.get(key, value) for key, value in default.items()}}
+
+
 def appearance_settings(function='readControls', args=(), settings=None):
     """Appearance rows and node bindings use the same validated settings owner."""
     from .nograph_server import JsonFile, Refused
@@ -716,7 +741,16 @@ def appearance_settings(function='readControls', args=(), settings=None):
         limits = dimensions.get(key, {})
         if 'min' in limits and (type(value) is not int or not limits['min'] <= value <= limits['max']):
             raise Refused('Choose a value within the Appearance setting limits.')
-        preferences = settings.update({key: value}, remove=('homeLayout',) if key == 'appearanceInspectorWidth' else ())
+        with settings.lock:
+            patch, remove = {key: value}, ()
+            layout = settings.read().get('homeLayout', {})
+            if key == 'appearanceInspectorWidth' and 'inner' in layout:
+                layout = {name: item for name, item in layout.items() if name != 'inner'}
+                if layout:
+                    patch['homeLayout'] = layout
+                else:
+                    remove = ('homeLayout',)
+            preferences = settings.update(patch, remove=remove)
     rows = [{'id': id, 'page': 'Appearance', 'label': label, 'default': default,
              'type': 'enum' if choices else 'boolean' if type(default) is bool else 'number' if type(default) is int else 'color',
              'value': preferences.get(key, default), 'overridden': key in preferences,

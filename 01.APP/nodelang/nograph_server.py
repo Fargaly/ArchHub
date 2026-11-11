@@ -1225,6 +1225,9 @@ def r_settings_action(s, req):
     if function in ('readCanvasTabs', 'setCanvasTabs'):
         from .settings_owner import canvas_tabs
         return {'ok': True, 'result': canvas_tabs(function, args, settings)}
+    if function in ('readHomeLayout', 'setHomeLayout'):
+        from .settings_owner import home_layout
+        return {'ok': True, 'result': home_layout(function, args, settings)}
     if function in ('readLibraryCollapsed', 'setLibraryCollapsed'):
         if function == 'setLibraryCollapsed':
             groups = args[0] if args else None

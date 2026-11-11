@@ -421,8 +421,7 @@
     React.useEffect(() => {
       document.title = 'ArchHub · ' + ((route.startsWith("settings/") ? "Settings" : route === "task-file" ? (taskFace === "workshop" ? "Workshop" : "Canvas") : routeNames[route]) || route.split('/').at(-1));
     }, [route, taskFace]);
-    const fullPage=['home','canvas','task-file','system','account','connections','hooks','privacy','appearance'].includes(route)||route.startsWith('settings/');
-    const rail = [['home', 'Home', 'home'], ['workshop', 'Workshop', 'workshop'], ['canvas', 'Canvas', 'canvas'], ['clock', 'Automations', 'automations'], ['docs', 'Docs', 'docs']];
+    const rail = [['home', 'Home', 'home'], ['canvas', 'Canvas', 'canvas']];
     const screen = route === 'meetings' ? <window.UI.Meetings /> : route === 'dependencies' ? <window.UI.Dependencies /> : route === 'present' ? <window.UI.Present /> : route === 'community' ? <window.UI.Community /> : route === 'model-review' ? <window.UI.ModelReview /> : route === 'interface' ? <window.UI.InterfaceStudio /> : route === 'social' ? <window.UI.Social /> : route === 'xray' ? <window.UI.Xray /> : route === 'access' ? <window.UI.Access /> : route === 'routing' ? <window.UI.Routing /> : route === 'home' ? <window.UI.Home key="home" /> : route === 'task-file' ? <window.UI.Home key={task} fileWorkspace initialFace={taskFace} /> : route === 'workshop' ? <window.UI.Workshop /> : route === 'canvas' ? null : route === 'system' ? <window.UI.Settings page="System graph" /> : route === 'agents' ? <window.UI.AgentsCanvas /> : route === 'colleagues' ? <window.UI.Colleagues /> : route === 'brain' ? <window.UI.Brain /> : route === 'watcher' ? <window.UI.Watcher /> : route === 'first-run' ? <window.UI.FirstRun /> : route === 'runs' ? <window.UI.Runs /> : route === 'receipts' ? <window.UI.Receipts /> : route === 'docs' ? <window.UI.Docs /> : route === 'feedback' ? <window.UI.Feedback /> : route === 'automations' ? <window.UI.Automations /> : route.startsWith('settings/') ? <window.UI.Settings key={route} page={route.slice(9)} /> : <window.UI.Settings key={route} page={{
       account: 'Account',
       connections: 'Connections',
@@ -463,7 +462,7 @@
         height: '100%',
         display: 'grid',
         gridTemplateColumns: 'minmax(0,1fr)',
-        gridTemplateRows: route==='task-file' ? '48px minmax(0,1fr) 24px' : fullPage ? '48px minmax(0,1fr)' : '48px minmax(0,1fr) 22px'
+        gridTemplateRows: '48px minmax(0,1fr)'
       }}>
    <header className="flex app-header" data-window-caption style={{
           height: 48,
@@ -480,7 +479,20 @@
             show
           }, event)}><span>{s.workspaces.find(w => w.id === s.activeWorkspace)?.name || s.workspaces.find(w => w.builtIn)?.name || 'Add workspace'}</span><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true"><path d="M3 4.5l3 3 3-3" /></svg></button><i className="header-divider" /><span className="muted">/</span><button className="button-reset header-page" onClick={event => executeAction("appShell.ArchHub.2", {
             go
-          }, event)}>{(route.startsWith("settings/") ? "Settings" : route === "task-file" ? (taskFace === "workshop" ? "Workshop" : "Canvas") : routeNames[route]) || route.split('/').at(-1)}</button><span className="fill" /><button data-design="header.new" className="button-reset header-new" onClick={event=>executeAction('projects.controls.activate',{handler:() => show('New task')},event)}><window.AHIcon name="plus" size={14} />New task</button><button data-design="header.search" className="button-reset header-search" onClick={event => executeAction("appShell.SearchCtrlK.5", {
+          }, event)}>{(route.startsWith("settings/") ? "Settings" : route === "task-file" ? (taskFace === "workshop" ? "Workshop" : "Canvas") : routeNames[route]) || route.split('/').at(-1)}</button><span className="fill" /><div className="header-status" aria-label="Session status">{s.connectionNotice && s.connectionNotice !== 'Checking for updates…' ? <button className="button-reset muted" onClick={event => executeAction("appShell.Receipts.16", {go}, event)}>1 notice · see Receipts</button> : <span>{s.connectionNotice || '● Local session'}</span>}
+          {agentLoad.status === 'waiting' && <span role="status">Loading Workshop settings…</span>}
+          {agentLoad.status === 'error' && <span role="alert">{agentLoad.message}<Btn aria-label="Retry Workshop connection" onClick={event => executeAction("appShell.RetryWorkshop", {reloadWorkshop}, event)}>Retry</Btn></span>}
+          {agentLoad.status === 'empty' && <span role="status">Select a workflow for Workshop settings.</span>}
+          {agentLoad.status === 'loaded' && <span className="sr-only" aria-label="Workshop settings ready" title="Workshop settings ready">✓</span>}
+          <button className="button-reset muted" onClick={event => executeAction("appShell.Control.13", {
+            go
+            }, event)}>{(s.hosts||[]).filter(h=>h.state==='connected'||h.state==='listening').map(h=>h.name+' ready').join(' · ') || s.files.find(f => f.id === s.activeFile)?.name || (s.hostsProbing?'Checking programs…':'Open Connections to connect a program')}</button><button className="button-reset muted" title={(s.agents||[]).map(a=>a.name+' · '+a.task).join(' · ')} onClick={event => executeAction("appShell.RunningWaitForYou.14", {
+            go
+          }, event)}>{s.agentSummary||'Checking running agents…'} · {(n => n ? n + ' wait for you' : 'Nothing waiting for you')(s.approvals.filter(c => c.status === 'pending').length)}</button><span className="fill" /><button hidden={route==='task-file'} className="button-reset muted" onClick={event => executeAction("appShell.CtrlK.15", {
+            show
+          }, event)}>Ctrl K</button><button hidden={route==='task-file'} className="button-reset muted" onClick={event => executeAction("appShell.Receipts.16", {
+            go
+          }, event)}>Receipts</button></div><button data-design="header.search" className="button-reset header-search" onClick={event => executeAction("appShell.SearchCtrlK.5", {
             show
           }, event)} aria-label="Search · Ctrl K"><window.AHIcon name="search" size={15} /><span className="fill">Search...</span><kbd>Ctrl K</kbd></button>{(s.update.available || s.update.state==='failed') && <button className="button-reset header-update" title={s.update.state==='failed' ? (s.update.detail || 'Update failed') : `${s.update.installed} → ${s.update.next}. Unsent text is lost; your saved graphs and settings stay with you.`} aria-label={s.update.state==='failed' ? (s.update.detail || 'Update failed') : 'Update available'} onClick={event => executeAction("appShell.Control.3", {
             act,
@@ -517,7 +529,7 @@
               r
             }, event)} badge={r === 'workshop' ? s.tasks.filter(t => t.status === 'IN REVIEW').length || undefined : undefined} style={{
               flex: 'none', width: 64, height: 58
-            }} />)}<span className="fill" /><D.Rail variant="home" glyph={<window.AHIcon name="settings" size={18} />} label="Settings" active={route.startsWith('settings/')} onClick={event => executeAction("appShell.Control.11", {
+            }} />)}<span className="fill" /><D.Rail variant="home" glyph={<window.AHIcon name="docs" size={18} />} label="Docs" active={route==='docs'} onClick={()=>go('docs')} style={{flex:'none',width:64,height:58}} /><D.Rail variant="home" glyph={<window.AHIcon name="settings" size={18} />} label="Settings" active={route.startsWith('settings/')} onClick={event => executeAction("appShell.Control.11", {
               go
             }, event)} style={{
               flex: 'none', width: 64, height: 58
@@ -533,44 +545,23 @@
               fontWeight: 700,
               fontSize: 'calc(12px * var(--text-scale,1))',
               flex: 'none'
-            }}>{s.profile.name.split(' ').map(n => n[0]).join('').slice(0, 2)}</button></nav><div className="screen-with-composer has-local-composer" style={{'--canvas-library-width':libraryOpen ? '248px' : '0px'}}>{(canvasOpened || route==='canvas') && <div hidden={route!=='canvas'} ref={element=>{element?.toggleAttribute('inert',route!=='canvas'||!!s.graphOpening);}} style={{display:route==='canvas'?'grid':'none',minHeight:0,height:'100%'}}><window.UI.Canvas key={s.graph.scopeKey || s.graph.id} active={route==='canvas'&&!s.graphOpening} /></div>}{screen}{route === 'canvas' && <div className="canvas-status" role="status"><span>{s.connectionNotice && s.connectionNotice !== 'Checking for updates…' ? '1 notice · see Receipts' : s.connectionNotice || '● Local session'}</span><span>{(s.agentSummary||'Checking running agents…')} · {(n => n ? n + ' wait for you' : 'Nothing waiting for you')(s.approvals.filter(c=>c.status==='pending').length)}</span>{agentLoad.status==='error' && <button className="button-reset" onClick={event=>executeAction('appShell.RetryWorkshop',{reloadWorkshop},event)}>Retry Workshop connection</button>}</div>}{route === 'canvas' && <div className="global-composer canvas-composer"><window.UI.Composer compact /></div>}</div></div>
-    {(!fullPage || route==='task-file') && <footer className="flex" style={{
-          fontSize: route==='task-file' ? 'calc(12px * var(--text-scale,1))' : 'calc(11px * var(--text-scale,1))',
-          gap: 16,
-          padding: '0 14px',
-          marginLeft: route==='task-file' ? 64 : 0,
-          background: route==='task-file' ? A.bgDeep : '#0f0f13',
-          borderTop: '1px solid ' + A.lineSoft,
-          color: route==='task-file' ? 'var(--v22g-ink2)' : A.inkSoft
-        }}>{s.connectionNotice && s.connectionNotice !== 'Checking for updates…' ? <button className="button-reset muted" onClick={event => executeAction("appShell.Receipts.16", {go}, event)}>1 notice · see Receipts</button> : <span>{s.connectionNotice || '● Local session'}</span>}
-          {agentLoad.status === 'waiting' && <span role="status">Loading Workshop settings…</span>}
-          {agentLoad.status === 'error' && <span role="alert">{agentLoad.message}<Btn aria-label="Retry Workshop connection" onClick={event => executeAction("appShell.RetryWorkshop", {reloadWorkshop}, event)}>Retry</Btn></span>}
-          {agentLoad.status === 'empty' && <span role="status">Select a workflow for Workshop settings.</span>}
-          {agentLoad.status === 'loaded' && <span className="sr-only" aria-label="Workshop settings ready" title="Workshop settings ready">✓</span>}
-          <button className="button-reset muted" onClick={event => executeAction("appShell.Control.13", {
-            go
-            }, event)}>{(s.hosts||[]).filter(h=>h.state==='connected'||h.state==='listening').map(h=>h.name+' ready').join(' · ') || s.files.find(f => f.id === s.activeFile)?.name || (s.hostsProbing?'Checking programs…':'Open Connections to connect a program')}</button><button className="button-reset muted" title={(s.agents||[]).map(a=>a.name+' · '+a.task).join(' · ')} onClick={event => executeAction("appShell.RunningWaitForYou.14", {
-            go
-          }, event)}>{s.agentSummary||'Checking running agents…'} · {(n => n ? n + ' wait for you' : 'Nothing waiting for you')(s.approvals.filter(c => c.status === 'pending').length)}</button><span className="fill" /><button hidden={route==='task-file'} className="button-reset muted" onClick={event => executeAction("appShell.CtrlK.15", {
-            show
-          }, event)}>Ctrl K</button><button hidden={route==='task-file'} className="button-reset muted" onClick={event => executeAction("appShell.Receipts.16", {
-            go
-          }, event)}>Receipts</button></footer>}
+            }}>{s.profile.name.split(' ').map(n => n[0]).join('').slice(0, 2)}</button></nav><div className="screen-with-composer has-local-composer" style={{'--canvas-library-width':libraryOpen ? '248px' : '0px'}}>{(canvasOpened || route==='canvas') && <div hidden={route!=='canvas'} ref={element=>{element?.toggleAttribute('inert',route!=='canvas'||!!s.graphOpening);}} style={{display:route==='canvas'?'grid':'none',minHeight:0,height:'100%'}}><window.UI.Canvas key={s.graph.scopeKey || s.graph.id} active={route==='canvas'&&!s.graphOpening} /></div>}{screen}{route !== 'task-file' && <div className="global-composer"><window.UI.Composer compact /></div>}</div></div>
   </div>}
   <window.UI.BaboomSprite open={companion} setOpen={setCompanion} />
   {toast && <div role="alert" className="flex" style={{
         position: 'fixed',
-        bottom: 36,
+        top: 100,
         left: '50%',
         transform: 'translateX(-50%)',
         maxWidth: '70vw',
+        pointerEvents: 'none',
         border: '1px solid ' + A.line,
         borderRadius: 10,
         background: '#24242b',
         padding: '12px 18px',
         zIndex: 200,
         boxShadow: '0 8px 30px #0008'
-      }}><span>{toast}</span><Btn sm ghost onClick={event => executeAction("appShell.Dismiss.17", {
+      }}><span>{toast}</span><Btn sm ghost style={{pointerEvents:'auto'}} onClick={event => executeAction("appShell.Dismiss.17", {
           setToast
         }, event)}>Dismiss</Btn></div>}
   {modal && <Dialog key={modal.kind + ':' + (modal.id || '')} modal={modal} close={close} />}

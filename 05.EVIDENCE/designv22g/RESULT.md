@@ -1,5 +1,44 @@
 # DESIGNV22G Canvas slice (a): branch evidence
 
+## Version 47 evening continuation, 2026-11-11
+
+Founder: "بس حلو الديزاين ده أنا عاوز أشوفه نفسه في الريليس الجاي على الابليكيشن اللي شغال" (this design is good; I want to see this same design in the next release on the running app).
+This run is branch-only preparation, not installed or release acceptance. Origin was fetched and the lane rebased onto f6dc2d1d. Intent conflicts retained main's Workshop/guard registrations and DESIGNV22G; no hook or rule changed.
+
+Prior art: approved archhub-directions index.html/app.js and CHANGES.md from Home study through version 47; res-031; existing ds_workshop3.jsx splitter, ds_home2.jsx task files/composer, ds_screens.jsx Canvas and ui.jsx approval owner. The supplied res-033 filename currently contains JournalClub episodes 763–766, not a session/layout brief. The current founder scope and the approved Home study control this implementation.
+
+Part 1 adapts those components: one floating composer on every page; work extends to the bottom with no band; status is in the header; Home/Canvas rail, Docs/Settings above the account. Canvas uses the existing resizable-panels dependency, collapsible rails and peeks. Tab overflow preserves the active tab and +; folded Thread remains in More. Composer, Thread and Inspector answer to their own containers. A stale rail height that added the retired footer's 24 px was removed. Toast content lets pointer events through; Dismiss remains clickable.
+
+Not in this release:
+- Invite/collaboration: no verified collaborative-session owner; no Invite control added.
+- Packages browser: no verified package-catalogue owner; no Packages control added. The existing reviewed local mod manager remains.
+- Layout presets: no implemented preset owner; the dead disabled toolbar control is removed. Existing Arrange remains in More; its behavior and fixed-node layout are unchanged.
+- Home direction 2, fixed-node lane redesign, auto-arrange changes and rail + picker: outside this run's ordered Resume slice; existing behavior retained.
+
+Validation and commits for each part are appended here after the checks finish. Earlier evidence below belongs to the earlier dated implementation.
+
+### Part 1 isolated acceptance
+
+Compiled Studio manifest: `3c507f50bf9f7fa6ad8c5c83794f3c58cd7c7c6a27e547421142c8d8e91e4add` (40 files, 2046612 output bytes). Existing designbuild suite, `-k fluid_shell`, through the supplied run-heavy.ps1 and Python. One headless browser, synthetic profile; actual Studio/server/file owners, no replacement APIs. Home, Canvas, Docs and Settings at 1009x940, 1366x768 and 1864x949 each report `cut=0 opaqueStrip=0 floatingComposer=true`. Inspector/Thread peeks and actual tab-overflow selection pass. Captures: ignored `.cache/designv22g-shell-{1009,1366,1864}.png`.
+
+```text
+PASS fluid shell: narrow Thread and Inspector peek over Canvas; one floating composer
+PASS fluid shell: tabs fold into n more; active tab and + stay visible; hidden tab opens
+TESTISO final profile leaks: []; protected write attempts: 0
+1 passed, 6 deselected, 1 warning in 31.02s
+```
+
+Focused existing Canvas regression file, same serialized runner and isolated server:
+```text
+✔ DESIGNV22G Canvas behaviours on compiled Studio and real file owners (26415.7533ms)
+ℹ tests 25
+ℹ pass 25
+ℹ fail 0
+ℹ skipped 0
+```
+
+The dead Layout assertion now checks absence; the other Canvas cases retain real Run/Approve, undo, wire, edit, split, save/restart and file readback coverage. Their wide inspector cases use 1864x949; narrow behavior is exercised in designbuild. A new executable RED found the retired footer's extra rail height before removal. Subsequent checks found collapsed-content and toast hit-target problems, which were corrected in the final bytes. Earlier startup timeouts are not counted as RED. The warning is the existing cache_dir/cacheprovider configuration warning. No full suites or benchmarks ran; no installed/live-profile acceptance is claimed.
+
 Current continuation: [Resume closeout 2026-11-11](#resume-closeout-2026-11-11). Earlier sections are dated evidence, not current completion claims.
 
 Status: implementation committed; isolated behaviour checks pass; visual match remains incomplete. This is not installation or release evidence.

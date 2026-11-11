@@ -8,7 +8,7 @@ import pytest
 from test_task_session_roundtrip import _isolate, _Studio, _post
 
 
-@pytest.mark.parametrize("board", ["home", "workshop", "canvas", "settings", "canvas_fit"])
+@pytest.mark.parametrize("board", ["home", "workshop", "canvas", "settings", "canvas_fit", "fluid_shell"])
 def test_designbuild_board(tmp_path, monkeypatch, board):
     browser_cache = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '')
     if not browser_cache:
@@ -64,7 +64,7 @@ def test_designbuild_board(tmp_path, monkeypatch, board):
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         print(result.stdout)
         assert result.returncode == 0, result.stdout + result.stderr
-        if board == 'canvas_fit' or os.environ.get('ARCHHUB_DESIGNPOLISH_PHASE'):
+        if board in ('canvas_fit', 'fluid_shell') or os.environ.get('ARCHHUB_DESIGNPOLISH_PHASE'):
             return
         reopened = client.workshop('openTaskGraph', task['taskId'])
         assert reopened['scope'] == 'Review the current issue'

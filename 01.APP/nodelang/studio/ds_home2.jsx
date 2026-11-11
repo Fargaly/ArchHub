@@ -153,6 +153,29 @@
     const [layoutReady, setLayoutReady] = React.useState(false);
     const retrySave = React.useRef(() => {});
     const inspectorRef = React.useRef(null), canvasRef = React.useRef(null);
+    const shellRef = React.useRef(null), tabsRef = React.useRef(null);
+    const [shellWidth, setShellWidth] = React.useState(window.innerWidth - 64), [tabsWidth, setTabsWidth] = React.useState(600);
+    const [inspectorRail, setInspectorRail] = React.useState(false);
+    const threadRef = React.useRef(null), [threadRail, setThreadRail] = React.useState(false), [threadPeek, setThreadPeek] = React.useState(false);
+    React.useLayoutEffect(() => {
+      const frame = window.requestAnimationFrame(() => {
+        if (shellWidth < 1180) threadRef.current?.collapse();
+        else threadRef.current?.expand();
+      });
+      setThreadPeek(false);
+      return () => window.cancelAnimationFrame(frame);
+    }, [shellWidth < 1180, face]);
+    React.useLayoutEffect(() => {
+      const observer = new window.ResizeObserver(entries => {
+        for (const entry of entries) {
+          if (entry.target === shellRef.current) setShellWidth(entry.contentRect.width);
+          if (entry.target === tabsRef.current) setTabsWidth(entry.contentRect.width);
+        }
+      });
+      if (shellRef.current) observer.observe(shellRef.current);
+      if (tabsRef.current) observer.observe(tabsRef.current);
+      return () => observer.disconnect();
+    }, [fileWorkspace]);
     const inspectorSetting = s.settings.find(row => row.id === 'Appearance.Inspector width');
     const inspectorWidth = inspectorSetting?.value ?? 320;
     // Changing defaultSize re-registers the panel; owner updates use resize().
@@ -190,10 +213,14 @@
     }, [inspectorSetting, s.homeLayout, layoutReady]);
     React.useLayoutEffect(() => {
       if (layoutReady) {
-        if(fileWorkspace && face==='split' && !splitInspector)inspectorRef.current?.collapse();
-        else inspectorRef.current?.resize(inspectorWidth);
+        const frame = window.requestAnimationFrame(() => {
+          if(fileWorkspace && (shellWidth < 1436 || face==='split' && !splitInspector))inspectorRef.current?.collapse();
+          else inspectorRef.current?.resize(inspectorWidth);
+        });
+        return () => window.cancelAnimationFrame(frame);
       }
-    }, [inspectorWidth, layoutReady, fileWorkspace, face, splitInspector]);
+      return undefined;
+    }, [inspectorWidth, layoutReady, fileWorkspace, face, splitInspector, shellWidth]);
     React.useEffect(()=>{setSplitInspector(false);},[face]);
     React.useEffect(() => {
       if (!fileWorkspace && face !== 'canvas') {u.setSelectedNodeId(null);inspect({nodeId:null,wireId:null});}
@@ -377,7 +404,10 @@
                       })}</ol></details>
                 </section>);
     const composerForm = <window.UI.TaskComposer docked thread={face === 'split'} choices={choices} to={recipient} setTo={setTo} draft={text} setDraft={setText} onSend={send} busy={sending} />;
-    const composer = face === 'split' ? composerForm : <div className="v22g-composer-dock">{composerForm}</div>;
+    const composer = <div className="v22g-composer-dock">{composerForm}</div>;
+    const tabs = u.canvasTabs?.tabs || [], tabCount = Math.max(1, Math.floor((tabsWidth - 100) / 150));
+    const visibleTabs = tabs.length <= tabCount ? tabs : tabs.filter(tab => tab.id === task?.id || tabs.filter(row => row.id !== task?.id).indexOf(tab) < tabCount - 1);
+    const hiddenTabs = tabs.filter(tab => !visibleTabs.includes(tab));
     const propertiesPane = <aside className="shared-properties" data-properties-pane="" aria-label="Properties">
       <header className="shared-properties-head">
         {!fileWorkspace && <span className="properties-eyebrow">TASK PROPERTIES</span>}
@@ -392,7 +422,7 @@
       <div className="shared-properties-selection" hidden={propertyTab !== 'Selection'}>{inspectedWire ? <window.UI.WireInspector embedded wire={inspectedWire} s={s} u={u} onClose={clearInspection} /> : inspectedNode ? <window.UI.NodeInspector embedded n={inspectedNode} s={s} u={u}>{inspectedNode.fixed && inspectedNode.type === 'thing.workshop' && <ItemList label="Rules" icon="shield" items={rules} onCommit={next => saveSession({rules: next})} />}</window.UI.NodeInspector> : fileWorkspace && face === 'canvas' ? <window.UI.GraphProperties g={s.graph} s={s} u={u} /> : <p>Select a node or wire.</p>}</div>
     </aside>;
     if (!Array.isArray(s.tasks)) return <div className="dx-home-root dx-loading-layout" data-home-loading="" aria-busy="true" aria-label="Loading tasks"><div>{[0,1,2].map(row=><div className="dx-skeleton" key={row} />)}</div><aside>{[0,1,2].map(row=><div className="dx-skeleton" key={row} />)}</aside></div>;
-    return <div className="dx-home-root" data-screen={fileWorkspace ? "task-file" : "home"} data-home-page={fileWorkspace ? undefined : ""} data-start={document.documentElement.dataset.start || 'cold'} onKeyDown={event => { if(event.key === 'Escape' && (inspection.nodeId || inspection.wireId)) {event.preventDefault();event.stopPropagation();clearInspection();} else fileKeys(event);}}>
+    return <div ref={shellRef} className="dx-home-root" data-screen={fileWorkspace ? "task-file" : "home"} data-home-page={fileWorkspace ? undefined : ""} data-start={document.documentElement.dataset.start || 'cold'} onKeyDown={event => { if(event.key === 'Escape' && (inspection.nodeId || inspection.wireId)) {event.preventDefault();event.stopPropagation();clearInspection();} else fileKeys(event);}}>
       {request === 'waiting' ? <p role="status">Saving</p> : null}
       {request === 'error' ? <p role="alert">{failure} <button type="button" onClick={() => executeAction('ui.select', () => retrySave.current())}>Retry</button></p> : null}
       {request === 'empty' ? <p role="status">No tasks yet.</p> : null}
@@ -427,21 +457,21 @@
         </Group> :
           <div className="dx-workspace" data-dx="workspace" data-task-face={face}>
             <div className="v22g-strip">
-              <div className="v22g-tabs" role="tablist" aria-label="Open tasks">{(u.canvasTabs?.tabs || []).map(tab => <div key={tab.id} className="v22g-tab" data-design={tab.id === task?.id ? 'tab.active' : undefined} data-active={tab.id === task?.id} draggable onDragStart={e => {e.dataTransfer.setData('text/archhub-tab', tab.id);e.dataTransfer.setData('task',tab.id);}} onDragOver={e => e.preventDefault()} onDrop={e => {e.preventDefault();const from=e.dataTransfer.getData('text/archhub-tab'),held=u.canvasTabs;const moved=held.tabs.find(t=>t.id===from);if(!moved||from===tab.id)return;const tabs=held.tabs.filter(t=>t.id!==from);tabs.splice(tabs.findIndex(t=>t.id===tab.id),0,moved);u.act(()=>u.saveCanvasTabs({...held,tabs}));}} onContextMenu={e => {e.preventDefault();u.show('Task tab menu',{id:tab.id});}}>
+              <div ref={tabsRef} className="v22g-tabs" role="tablist" aria-label="Open tasks">{visibleTabs.map(tab => <div key={tab.id} className="v22g-tab" data-design={tab.id === task?.id ? 'tab.active' : undefined} data-active={tab.id === task?.id} draggable onDragStart={e => {e.dataTransfer.setData('text/archhub-tab', tab.id);e.dataTransfer.setData('task',tab.id);}} onDragOver={e => e.preventDefault()} onDrop={e => {e.preventDefault();const from=e.dataTransfer.getData('text/archhub-tab'),held=u.canvasTabs;const moved=held.tabs.find(t=>t.id===from);if(!moved||from===tab.id)return;const tabs=held.tabs.filter(t=>t.id!==from);tabs.splice(tabs.findIndex(t=>t.id===tab.id),0,moved);u.act(()=>u.saveCanvasTabs({...held,tabs}));}} onContextMenu={e => {e.preventDefault();u.show('Task tab menu',{id:tab.id});}}>
                 <span className="v22g-tab-state" aria-hidden="true" style={{background:tab.id===task?.id && s.graph.nodes.some(node=>node.status==='Running') ? 'var(--color-accent)' : s.approvals.some(card=>card.work===tab.id && card.status==='pending') ? 'var(--color-warn)' : tasks.find(row=>row.id===tab.id)?.status==='DONE' ? 'var(--color-ok)' : 'var(--v22g-ink3)'}}/><button type="button" role="tab" aria-selected={tab.id === task?.id} data-preview={!tab.kept} onClick={event=>executeAction('ui.select',() => {if(tab.id!==task?.id)u.openTaskFile(tab.id);},event)} onDoubleClick={() => u.act(() => u.keepTaskTab(tab.id))}>{tasks.find(t=>t.id===tab.id)?.title || 'Task unavailable'}</button>
                 <button type="button" data-design={tab.id === task?.id ? 'tab.close' : undefined} aria-label={'Close ' + (tasks.find(t=>t.id===tab.id)?.title || 'task')} onClick={event=>executeAction('ui.select',() => u.act(() => u.closeTaskTab(tab.id)),event)}><Icon name="close" size={12} /></button>
-              </div>)}<button type="button" className="dx-quiet" data-design="tab.add" aria-label="Open tasks" onClick={() => u.show('Open tasks')}>+</button></div>
-              <div className="v22g-toolbar"><button type="button" data-design="toolbar.run" className="dx-quiet dx-primary-run" onClick={event=>executeAction('ui.select',() => u.act(async () => {await u.keepTaskTab(task.id);return canvasRef.current?.run();}),event)}>Run</button><button type="button" data-design="toolbar.layout" className="dx-quiet" aria-label="Layout" disabled title="Layout presets are built in group d of the approved plan." onClick={event=>executeAction('ui.select',()=>u.setToast('Layout presets are built in group d of the approved plan.'),event)}><Icon name="arrange" size={14} /></button><button type="button" data-design="toolbar.thread" className="dx-quiet" aria-label="Thread" aria-pressed={face === 'split'} onClick={event=>executeAction('ui.select',() => setFace(face === 'split' ? 'canvas' : 'split'),event)}><Icon name="workshop" size={14} /></button><button type="button" data-design="toolbar.more" className="dx-quiet" aria-label="More canvas actions" onClick={event=>executeAction('ui.select',() => canvasRef.current?.more(),event)}><Icon name="more" size={14} /></button></div>
+              </div>)}{hiddenTabs.length>0&&<details className="v22g-tab-overflow"><summary>{hiddenTabs.length} more</summary><div role="menu" aria-label="More open tasks">{hiddenTabs.map(tab=><button key={tab.id} type="button" role="menuitem" onClick={event=>executeAction("ui.select",()=>{event.currentTarget.closest("details").open=false;return u.openTaskFile(tab.id);})}>{tasks.find(t=>t.id===tab.id)?.title || "Task unavailable"}</button>)}</div></details>}<button type="button" className="dx-quiet" data-design="tab.add" aria-label="Open tasks" onClick={() => u.show('Open tasks')}>+</button></div>
+              <div className="v22g-toolbar"><button type="button" data-design="toolbar.run" className="dx-quiet dx-primary-run" onClick={event=>executeAction('ui.select',() => u.act(async () => {await u.keepTaskTab(task.id);return canvasRef.current?.run();}),event)}>Run</button><button type="button" data-design="toolbar.thread" className="dx-quiet v22g-foldable" aria-label="Thread" aria-pressed={face === 'split'} onClick={event=>executeAction('ui.select',() => setFace(face === 'split' ? 'canvas' : 'split'),event)}><Icon name="workshop" size={14} /></button><button type="button" data-design="toolbar.more" className="dx-quiet" aria-label="More canvas actions" onClick={event=>executeAction('ui.select',() => canvasRef.current?.more(),event)}>…</button></div>
             </div>
             <Group key={layoutReady ? 'saved' : 'loading'} id="home-context" className="dx-split" orientation="horizontal" onLayoutChanged={(_, meta) => { if (meta?.isUserInteraction && inspectorRef.current) persistWidth(Math.round(inspectorRef.current.getSize().inPixels)); }}>
               <Column id="main" className="dx-col dx-task-column" minSize={320}>
-                <div className="dx-surface-body">{!u.libraryOpen && <div className="v22g-library-rail"><button type="button" aria-label="Library" onClick={event=>executeAction('ui.select',()=>u.setLibraryOpen(true),event)}><Icon name="library" size={14}/><span>Library</span></button></div>}<Group className="v22g-views" orientation="horizontal"><Column id="task-canvas" minSize={320}><div className="v22g-canvas" data-design="canvas.stage"><window.UI.Canvas active embedded externalInspector controlsRef={canvasRef} onInspect={inspect} onHandoff={showCanvas} />{face !== 'split' && composer}</div></Column>{beside && <><Separator className="pane-splitter" aria-label="Resize session split" /><Column id="beside-canvas" minSize={320}><div className="v22g-beside"><header className="spread"><button type="button" className="dx-quiet" onClick={event=>executeAction('ui.select',()=>u.openTaskFile(beside),event)}>{s.tasks.find(row=>row.id===beside)?.title || 'Task'} · Open</button><button type="button" className="dx-quiet" aria-label="Close split" onClick={event=>executeAction('ui.select',()=>u.act(()=>u.saveCanvasTabs({...u.canvasTabs,split:''})),event)}>×</button></header>{previewError ? <p role="alert">{previewError}</p> : preview ? <window.UI.Canvas key={beside} active embedded externalInspector preview={preview} onActivate={()=>u.openTaskFile(beside)} /> : <p role="status">Loading task…</p>}</div></Column></>}{face === 'split' && <><Separator className="pane-splitter" aria-label="Resize thread" /><Column id="task-thread" defaultSize="44%" minSize={300}><div className="dx-main v22g-thread" data-dx="main" data-home-face="split">
+                <div className="dx-surface-body">{!u.libraryOpen && <div className="v22g-library-rail"><button type="button" aria-label="Library" onClick={event=>executeAction('ui.select',()=>u.setLibraryOpen(true),event)}><Icon name="library" size={14}/><span>Library</span></button></div>}<Group className="v22g-views" orientation="horizontal"><Column id="task-canvas" minSize={320}><div className="v22g-canvas" data-design="canvas.stage"><window.UI.Canvas active embedded externalInspector controlsRef={canvasRef} onInspect={inspect} onHandoff={showCanvas} /></div></Column>{beside && <><Separator className="pane-splitter" aria-label="Resize session split" /><Column id="beside-canvas" minSize={320}><div className="v22g-beside"><header className="spread"><button type="button" className="dx-quiet" onClick={event=>executeAction('ui.select',()=>u.openTaskFile(beside),event)}>{s.tasks.find(row=>row.id===beside)?.title || 'Task'} · Open</button><button type="button" className="dx-quiet" aria-label="Close split" onClick={event=>executeAction('ui.select',()=>u.act(()=>u.saveCanvasTabs({...u.canvasTabs,split:''})),event)}>×</button></header>{previewError ? <p role="alert">{previewError}</p> : preview ? <window.UI.Canvas key={beside} active embedded externalInspector preview={preview} onActivate={()=>u.openTaskFile(beside)} /> : <p role="status">Loading task…</p>}</div></Column></>}{face === 'split' && <><Separator className="pane-splitter" aria-label="Resize thread" /><Column id="task-thread" panelRef={threadRef} collapsible collapsedSize={48} onResize={size=>setThreadRail(size.inPixels<=49)} defaultSize="44%" minSize={300}>{threadRail&&<button type="button" className="canvas-pane-rail" aria-label="Open Thread" onClick={()=>executeAction("ui.select",()=>setThreadPeek(!threadPeek))}>Thread</button>}<div hidden={threadRail&&!threadPeek} data-thread-peek={threadRail&&threadPeek||undefined} className="dx-main v22g-thread" data-dx="main" data-home-face="split">
                   <div className="dx-thread-layout"><aside className="dx-threads" aria-label="Threads"><header><h2>Threads</h2><button type="button" className="dx-quiet" onClick={() => executeAction('ui.select', () => u.go('home'))}>All tasks</button></header>{tasks.map(t => <button type="button" className="dx-thread-row" key={t.id} aria-selected={t.id === task?.id} onClick={() => executeAction('ui.select', () => u.openTaskFile(t.id, 'workshop'))}><b>{t.title}</b>{ownerOf(t) ? <span>You → {ownerOf(t)}</span> : null}<span>{window.UI.taskRowReason(t) || statusText(t.status)}{reasonOf(t) ? ' · ' + reasonOf(t) : ''}</span></button>)}</aside>
                   <div className="dx-work-scroll">
                   <div className="dx-mid" data-plan={plan.length ? 'shown' : 'hidden'}>
                     <div className="dx-stage">
                     <section className="dx-talk dx-thread" data-dx="conversation" aria-label="Conversation">
-                      <div className="spread v22g-thread-head"><div><b>Workshop</b><p>{ownerOf(task) || task?.title} · {statusText(task?.status)}</p></div><button type="button" data-design="thread.close" className="dx-quiet" aria-label="Close thread" onClick={event=>executeAction('ui.select',()=>setFace('canvas'),event)}><Icon name="close" size={14}/></button></div><button type="button" data-design="thread.rules" className="dx-quiet" onClick={event=>executeAction('ui.select',()=>{const node=s.graph.nodes.find(row=>row.fixed && row.type==='thing.workshop');if(node)inspect({nodeId:node.id});},event)}>Rules · {rules.length ? rules.join(' · ') : 'No rules set'}</button><p className="dx-thread-status">{ownerOf(task) && <span>You → {ownerOf(task)}</span>}<span>{statusText(task?.status)}</span></p>
+                      <div className="spread v22g-thread-head"><div><b>Thread</b><p>{ownerOf(task) || task?.title} · {statusText(task?.status)}</p></div><button type="button" data-design="thread.close" className="dx-quiet" aria-label="Close thread" onClick={event=>executeAction('ui.select',()=>{setThreadPeek(false);setFace('canvas');},event)}><Icon name="close" size={14}/></button></div><button type="button" data-design="thread.rules" className="dx-quiet" onClick={event=>executeAction('ui.select',()=>{const node=s.graph.nodes.find(row=>row.fixed && row.type==='thing.workshop');if(node)inspect({nodeId:node.id});},event)}>Rules · {rules.length ? rules.join(' · ') : 'No rules set'}</button><p className="dx-thread-status">{ownerOf(task) && <span>You → {ownerOf(task)}</span>}<span>{statusText(task?.status)}</span></p>
                       {window.UI.taskRowReason(task || {}) === 'interrupted' ? <div className="dx-task-notice" role="status"><p>Interrupted · outcome unknown{reasonOf(task) ? ' · ' + reasonOf(task) : ''}</p><button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => u.go('receipts'))}>View activity</button></div> : null}
                       {window.UI.taskRowReason(task || {}) === 'limit reached' ? <div className="dx-task-notice" role="status"><p>Limit reached{task?.limits ? ' · ' + describe(task.limits) : ''}{reasonOf(task) ? ' · ' + reasonOf(task) : ''}</p><button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => u.go('runs'))}>View active runs</button></div> : null}
                       {task?.blocked_by ? <div className="dx-task-notice" role="status"><p>Blocked by {describe(task.blocked_by)}</p>{tasks.some(t => t.id === task.blocked_by) ? <button type="button" className="dx-link" onClick={() => executeAction('ui.select', () => u.openTaskFile(task.blocked_by, 'workshop'))}>View dependency</button> : null}</div> : null}
@@ -464,7 +494,6 @@
                       {outputs.map((row, index) => <article key={index} className="dx-output" data-output=""><span className="dx-output-preview">{row.thumb ? <img alt="" src={row.thumb} /> : <Icon name="docs" size={18} />}</span><div><b>{row.name || 'Output'}</b>{row.excerpt ? <p>{row.excerpt}</p> : null}</div></article>)}
                     </section> : null}
                   </div> : null}
-                  {composer}
                   </div>
                   </div>
                   <div className="dx-task-activity">
@@ -472,14 +501,15 @@
                   <p className="dx-foot" data-dx="footer">{footer}</p>
                 </div></Column></>}</Group></div>
               </Column>
-              <Separator className="pane-splitter" data-collapsed={fileWorkspace && face==='split' && !splitInspector || undefined} aria-label="Resize the Properties pane" />
-              <Column id="params" className="dx-col dx-properties-column" collapsible collapsedSize={36} panelRef={inspectorRef} defaultSize={initialInspectorWidth.current} minSize={280} maxSize={480} groupResizeBehavior="preserve-pixel-size">
-                <div hidden={face==='split' && !splitInspector} style={{height:'100%'}}>{propertiesPane}</div>{face==='split' && !splitInspector && <button type="button" className="v22g-inspector-rail" aria-label="Open Inspector" onClick={event=>executeAction('ui.select',()=>setSplitInspector(true),event)}><Icon name="settings" size={14}/></button>}
+              <Separator className="pane-splitter" data-collapsed={inspectorRail || undefined} aria-label="Resize the Properties pane" />
+              <Column id="params" className="dx-col dx-properties-column" collapsible collapsedSize={48} onResize={size=>setInspectorRail(size.inPixels<=49)} panelRef={inspectorRef} defaultSize={initialInspectorWidth.current} minSize={280} maxSize={480} groupResizeBehavior="preserve-pixel-size">
+                {!inspectorRail&&shellWidth>=1436&&propertiesPane}{(inspectorRail||shellWidth<1436) && <button type="button" className="v22g-inspector-rail" aria-label="Open Inspector" onClick={event=>executeAction('ui.select',()=>{if(shellWidth>=1436)inspectorRef.current?.expand();setSplitInspector(true);},event)}><Icon name="settings" size={14}/></button>}
               </Column>
-            </Group>
+            </Group>{shellWidth<1436&&splitInspector&&<div className="v22g-inspector-peek"><button type="button" className="dx-quiet" aria-label="Close Inspector" onClick={()=>executeAction("ui.select",()=>setSplitInspector(false))}>×</button>{propertiesPane}</div>}
           </div>
         }
       </div>
+      {fileWorkspace && composer}
     </div>;
   }
   window.UI.Home = Home;

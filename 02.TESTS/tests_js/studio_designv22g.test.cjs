@@ -25,7 +25,7 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
   let server=await start();
   const courtChrome=path.join(process.env.LOCALAPPDATA,'ms-playwright/chromium-1228/chrome-win64/chrome.exe');
   browser=await chromium.launch({headless:true,executablePath:fs.existsSync(courtChrome)?courtChrome:'C:/Program Files/Google/Chrome/Application/chrome.exe'});
-  const page=await browser.newPage({viewport:{width:1440,height:900}}),errors=[];
+  const page=await browser.newPage({viewport:{width:1864,height:949}}),errors=[];
   page.setDefaultTimeout(15000);
   page.on('pageerror',error=>errors.push(error.message));
   const url=server.url+'/studio?bootstrap='+server.bootstrap;
@@ -42,8 +42,7 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
     assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSessionDocument().nodes.some(node=>node.result)),false);
     assert.equal(await page.locator('[data-graph-node="start"] [data-node-footer-status]').innerText(),'Idle');
     assert.ok(await page.locator('[data-design="composer.msg"]').isVisible());
-    assert.equal(await page.getByRole('button',{name:'Layout',exact:true}).isDisabled(),true);
-    assert.equal(await page.getByRole('button',{name:'Layout',exact:true}).getAttribute('title'),'Layout presets are built in group d of the approved plan.');
+    assert.equal(await page.getByRole('button',{name:'Layout',exact:true}).count(),0);
     await page.locator('.react-flow__pane').click({button:'right',position:{x:700,y:520}});
     assert.equal(await page.locator('[data-design="menu.paste-here"]').isDisabled(),true);
     assert.equal(await page.locator('[data-design="menu.paste-here"]').getAttribute('title'),'Copy nodes first.');

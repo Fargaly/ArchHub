@@ -164,7 +164,7 @@
   function AgentPicker({choices, to, setTo, startOpen = false, label = 'Recipient'}) {
     const [listOpen, setListOpen] = React.useState(startOpen);
     return <div className="ws-to" onKeyDown={e => e.key === 'Escape' && setListOpen(false)}>
-      <button type="button" className="ws-link" aria-haspopup="listbox" aria-expanded={listOpen} aria-label={label} onClick={() => executeAction("ui.select", () => setListOpen(!listOpen))}>{label === 'Recipient' ? 'To ' : ''}{choices.find(c => c.handle === to)?.name || to || 'BABOOM'} ▾</button>
+      <button type="button" className="ws-link" aria-haspopup="listbox" aria-expanded={listOpen} aria-label={label} onClick={() => executeAction("ui.select", () => setListOpen(!listOpen))}><window.AHIcon name="users" size={14}/><span className="recipient-name">{label === 'Recipient' ? 'To ' : ''}{choices.find(c => c.handle === to)?.name || to || 'BABOOM'} ▾</span></button>
       {listOpen && <div role="listbox" aria-label="Recipients" className="ws-to-list">{choices.map(c => <button type="button" role="option" key={c.key} aria-selected={c.handle === to} disabled={c.handle === undefined} className="listbutton spread" title={c.handle === undefined ? c.name + ' is running but has not joined this Workshop, so it cannot receive messages yet' : 'Send to ' + c.name} onClick={() => executeAction("ui.select", () => { setTo(c.handle); setListOpen(false); })}><span>{c.name}</span><span className="ws-small" data-agent-gate={c.gate || undefined} data-agent-breaches={c.breaches == null ? undefined : String(c.breaches)}>{[c.detail, gateLine(c.gate, c.breaches)].filter(Boolean).join(' · ')}</span></button>)}</div>}
     </div>;
   }
@@ -172,6 +172,12 @@
     const s = useData(), u = useApp();
     const [localText, setLocalText] = React.useState(''), [sending, setSending] = React.useState(false);
     const [expanded, setExpanded] = React.useState(false);
+    const inputRef = React.useRef(null), [composerWidth, setComposerWidth] = React.useState(760);
+    React.useLayoutEffect(() => {
+      const observer = new window.ResizeObserver(entries => setComposerWidth(entries[0].contentRect.width));
+      if (inputRef.current) observer.observe(inputRef.current.closest('form'));
+      return () => observer.disconnect();
+    }, []);
     const text = draft === undefined ? localText : draft, setText = setDraft || setLocalText;
     const files = s.composerAttachments || [];
     const send = async (body = text) => {
@@ -195,7 +201,7 @@
     if (sendRef) sendRef.current = send;
     if (docked) return <D.Composer as="form" className="dx-composer v22g-composer" data-expanded={expanded} data-dx="composer" onBlur={e=>{if(!e.currentTarget.contains(e.relatedTarget))setExpanded(false);}} onSubmit={e=>{e.preventDefault();send();}}>
       <span data-design={thread ? 'thread.to' : 'composer.to'}><AgentPicker choices={choices} to={to} setTo={setTo} /></span>
-      <textarea data-design={thread ? 'thread.msg' : 'composer.msg'} aria-label="Message" placeholder="Message this task…" rows={1} value={text} onFocus={()=>setExpanded(true)} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}}} />
+      <textarea ref={inputRef} data-design={thread ? 'thread.msg' : 'composer.msg'} aria-label="Message" placeholder={composerWidth<420?"Message…":composerWidth<560?"Message agents…":"Message this task…"} rows={1} value={text} onFocus={()=>setExpanded(true)} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}}} />
       <button type="button" className="dx-quiet" data-design={thread ? 'thread.more' : 'composer.attach'} aria-label="Attach" onClick={()=>u.show('Canvas attachments')}>+</button>
       <Btn p type="button" data-design={thread ? 'thread.send' : 'composer.send'} aria-busy={busy} disabled={!text.trim()||busy} onClick={event=>executeAction('ui.select',send,event)}>Send</Btn>
     </D.Composer>;

@@ -24,6 +24,81 @@ const {chromium} = require('playwright');
     const errors = [];
     page.on('pageerror', error => {errors.push(error.message);console.error('PAGEERROR '+error.message);});
     await page.goto(input.url);
+    if (input.board === 'fluid_shell') {
+      const nav = page.getByRole('navigation', {name:'Main navigation'});
+      await nav.waitFor();
+      assert.equal(await nav.getByRole('button', {name:'Workshop',exact:true}).count(), 0);
+      assert.equal(await nav.getByRole('button', {name:'Automations',exact:true}).count(), 0);
+      for (const size of [{width:1009,height:940},{width:1366,height:768},{width:1864,height:949}]) {
+        await page.setViewportSize(size);
+        for (const route of ['Home','Canvas','Docs','Settings']) {
+          await nav.getByRole('button', {name:route,exact:true}).click();
+          await page.waitForTimeout(200);
+          const result = await page.evaluate(() => {
+            const visible = el => {
+              const r=el.getBoundingClientRect(),s=window.getComputedStyle(el);
+              if(r.width<=0||r.height<=0||s.visibility==='hidden'||s.display==='none'||el.closest('[hidden]'))return false;
+              for(let parent=el.parentElement;parent;parent=parent.parentElement){
+                const style=window.getComputedStyle(parent),box=parent.getBoundingClientRect();
+                if(/auto|scroll|hidden|clip/.test(style.overflowY)&&(r.bottom<=box.top||r.top>=box.bottom))return false;
+                if(/auto|scroll|hidden|clip/.test(style.overflowX)&&(r.right<=box.left||r.left>=box.right))return false;
+              }
+              return true;
+            };
+            const controls = [...document.querySelectorAll('button,input,select,textarea')].filter(visible).filter(el=>!el.closest('.react-flow__viewport,[role=listbox],.context-menu'));
+            const cut = controls.filter(el=>{
+              const r=el.getBoundingClientRect();
+              if(r.left<-.5||r.right>window.innerWidth+.5)return true;
+              for(let parent=el.parentElement;parent;parent=parent.parentElement)if(/auto|scroll/.test(window.getComputedStyle(parent).overflowY)&&parent.scrollHeight>parent.clientHeight)return false;
+              return r.top<-.5||r.bottom>window.innerHeight+.5;
+            }).map(el=>({label:el.getAttribute('aria-label')||el.textContent,box:el.getBoundingClientRect().toJSON()}));
+            const strips = [...document.querySelectorAll('body *')].filter(visible).filter(el=>{
+              const r=el.getBoundingClientRect(),s=window.getComputedStyle(el);
+              return r.width>window.innerWidth*.6&&r.height>1&&r.height<=160&&r.bottom>=window.innerHeight-1&&s.backgroundColor!=='rgba(0, 0, 0, 0)'&&s.backgroundColor!=='transparent';
+            }).map(el=>el.className);
+            const composer=document.querySelector('.global-composer,.v22g-composer-dock');
+            return {cut,strips,composer:composer&&window.getComputedStyle(composer).position,footer:!!document.querySelector('.app-window>footer'),bottom:document.querySelector('.screen-with-composer').getBoundingClientRect().bottom};
+          });
+          assert.deepEqual(result.cut, [], `${size.width} ${route}: cut ${JSON.stringify(result.cut)}`);
+          assert.deepEqual(result.strips, [], `${size.width} ${route}: opaque strip ${JSON.stringify(result.strips)}`);
+          assert.equal(result.footer,false);
+          assert.equal(result.composer,'fixed', `${route} composer must float`);
+          assert.equal(result.bottom,size.height);
+          if(route==='Canvas')await page.screenshot({path:path.resolve('.cache',`designv22g-shell-${size.width}.png`)});
+          console.log(`PASS fluid shell ${size.width}x${size.height} ${route}: cut=0 opaqueStrip=0 floatingComposer=true`);
+        }
+      }
+      await page.setViewportSize({width:1009,height:940});
+      await nav.getByRole('button',{name:'Canvas',exact:true}).click();
+      await page.locator('[data-design="canvas.stage"]').waitFor();
+      await page.getByRole('button',{name:'More canvas actions',exact:true}).click();
+      await page.getByRole('menuitem',{name:'Thread',exact:true}).click();
+      await page.getByRole('button',{name:'Open Thread',exact:true}).click();
+      await page.getByRole('button',{name:'Close thread',exact:true}).waitFor();
+      assert.equal(await page.locator('textarea[aria-label="Message"]').count(),1);
+      assert.equal(await page.locator('.v22g-composer-dock').evaluate(el=>window.getComputedStyle(el).position),'fixed');
+      await page.getByRole('button',{name:'Open Inspector',exact:true}).click();
+      await page.locator('.v22g-inspector-peek').waitFor();
+      assert.equal(await page.locator('.v22g-inspector-peek').evaluate(el=>el.getBoundingClientRect().right<=window.innerWidth),true);
+      await page.getByRole('button',{name:'Close Inspector',exact:true}).click();
+      await page.getByRole('button',{name:'Close thread',exact:true}).click();
+      console.log('PASS fluid shell: narrow Thread and Inspector peek over Canvas; one floating composer');
+      for(const title of ['Drawing set review','Sheet index check','Export issue package','Update drawing references','Model view audit']){
+        await nav.getByRole('button',{name:'Home',exact:true}).click();
+        await page.locator('.dx-task').filter({hasText:title}).first().dblclick();
+        await page.getByRole('tab',{name:title,exact:true}).dblclick();
+      }
+      const overflow=page.locator('.v22g-tab-overflow');
+      await overflow.locator('summary').click();
+      const hiddenTab=overflow.getByRole('menuitem').first(),title=await hiddenTab.innerText();
+      await hiddenTab.click();
+      await page.getByRole('tab',{name:title,exact:true,selected:true}).waitFor();
+      assert.equal(await page.locator('[data-design="tab.add"]').isVisible(),true);
+      assert.equal(await page.locator('[data-design="tab.active"]').evaluate(el=>{const r=el.getBoundingClientRect();return r.left>=64&&r.right<=window.innerWidth;}),true);
+      console.log('PASS fluid shell: tabs fold into n more; active tab and + stay visible; hidden tab opens');
+      assert.deepEqual(errors, []);
+      return;
+    }
     let preview = page.getByRole('complementary',{name:'Properties'});
     await preview.waitFor({timeout:45000}).catch(async error=>{throw Error(error.message+' errors='+JSON.stringify(errors)+' body='+await page.locator('body').innerText());});
     await page.getByRole('button',{name:/Drawing set review/}).first().click();

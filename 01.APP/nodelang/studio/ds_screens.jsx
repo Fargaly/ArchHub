@@ -649,6 +649,7 @@
     </>;
   }
   const nodeTypes = {archhub: FlowNode}, edgeTypes = {archhub: FlowWire};
+  const {Group: CanvasGroup, Panel: CanvasPanel, Separator: CanvasSeparator} = window.ReactResizablePanels;
   const SOCKET_STYLE = {position: 'relative', inset: 'auto', transform: 'none', display: 'inline-grid', placeItems: 'center', width: 22, height: 22,
     minWidth: 0, minHeight: 0, background: 'transparent', border: 0, borderRadius: 0};
   function Canvas({
@@ -683,9 +684,16 @@
       pendingZoomWrites = React.useRef(0);
     const fittedScope = React.useRef(null);
     const userViewport = React.useRef(false);
+    const paneBox = React.useRef(null), libraryPanel = React.useRef(null), inspectionPanel = React.useRef(null);
+    const [paneWidth, setPaneWidth] = React.useState(window.innerWidth - 64), [libraryRail, setLibraryRail] = React.useState(false), [inspectionRail, setInspectionRail] = React.useState(false), [peek, setPeek] = React.useState('');
     const {zoom, pan} = viewport;
     const [requestState, setRequestState] = React.useState('waiting');
     const [requestError, setRequestError] = React.useState('');
+    React.useLayoutEffect(() => {
+      const observer = new window.ResizeObserver(entries => setPaneWidth(entries[0].contentRect.width));
+      if (paneBox.current) observer.observe(paneBox.current);
+      return () => observer.disconnect();
+    }, [requestState]);
     const zoomSetting = zoomRow?.value;
     const appliedZoomSetting = React.useRef(zoomSetting);
     const zoomSaveDelay = Number(s.canvasPolicy?.viewport_commit_debounce_ms ?? 140);
@@ -1105,11 +1113,20 @@
     const fixedSession=visible.find(node=>node.fixed && node.type==='thing.session'), fixedPosition=fixedSession && (layout.positions[fixedSession.id] || fixedSession);
     const pinFrame=fixedPosition && {x:fixedPosition.x-318,y:fixedPosition.y-80,height:u.canvasTabs?.collapsed ? 44 : Math.max(...visible.filter(node=>node.fixed && node.type!=='thing.session').map(node=>{const box=layout.positions[node.id] || {...node,h:140};return box.y+box.h;}),fixedPosition.y)+18-(fixedPosition.y-80)};
     for(const node of visible){const state=nodeState(node,false)[0].split(' · ')[0],label=state==='Done'?'complete':state.toLowerCase();stateCounts.set(label,(stateCounts.get(label)||0)+1);}
+    React.useLayoutEffect(() => {
+      const frame = window.requestAnimationFrame(() => {
+        for (const [panel, narrow] of [[libraryPanel, paneWidth < 1180], [inspectionPanel, paneWidth < 1436]]) {
+          if(narrow) panel.current?.collapse(); else panel.current?.expand();
+        }
+      });
+      return () => window.cancelAnimationFrame(frame);
+    }, [paneWidth < 1180, paneWidth < 1436, u.libraryOpen, Boolean(inspected || wire)]);
     const actionsMenu = <> {more && <div role="menu" aria-label="Canvas actions" data-canvas-more="" onKeyDown={e => { if (e.key === 'Escape') setMore(false); }} style={{position:'absolute',right:0,top:8,display:'grid',minWidth:200,maxHeight:'calc(100% - 16px)',overflow:'auto',padding:6,gap:2,
           background:A.bgPanel,border:'1px solid '+A.lineSoft,borderRadius:6,zIndex:20}}>{[
             ['Add node · Ctrl K', () => executeAction("projects.ds_screens.AddANodeCtrlK.24", {u})], ['New', () => u.act(() => api.newSession())], ['Open…', () => u.act(() => api.openSession())], ['Save · Ctrl S', () => u.act(() => api.saveSession())],
             ['Save as…', () => u.act(() => api.saveSessionAs())], ['Save as workflow', () => u.act(() => api.saveSession())], ['Save as skill…', () => u.show('Save skill')], ['Add automation', () => u.act(() => api.addAutomation())], ['Workspaces · ' + s.workspaces.length, () => u.show('Workspaces')],
             ['Detach session (copy)', () => u.act(() => api.detachSession(selected[0])), selected.length!==1||!s.graph.nodes.find(n=>n.id===selected[0])?.params.session_file],
+            ...(embedded ? [['Thread', () => u.setTaskFace(u.taskFace==='split'?'canvas':'split')]] : []),
             ...(embedded && onHandoff ? [['Handoff map',onHandoff]] : []),
             [(u.libraryOpen ? 'Hide' : 'Show') + ' Library', () => u.setLibraryOpen(v => !v)], ['Group · Ctrl G', group, selected.length < 2],
             ['Undo · Ctrl Z', () => u.act(api.undo)], ['Redo · Ctrl Shift Z', () => u.act(api.redo)], ['Arrange', () => u.act(api.arrangeGraph)],
@@ -1117,7 +1134,7 @@
               () => u.act(() => api.setWireVisibility(({Visible: 'Faint', Faint: 'Hidden', Hidden: 'Visible'})[s.graph.wireVisibility || 'Visible']))],
           ].map(([label, run, disabled]) => <button key={label} role="menuitem" type="button" className="button-reset listbutton" disabled={disabled} style={{textAlign:'left',padding:'6px 8px'}}
             onClick={event => executeAction('projects.controls.activate', {handler: () => { setMore(false); return run(); }}, event)}>{label}</button>)}</div>} </>;
-    const body = <div data-screen="canvas" style={{
+    const body = <div ref={paneBox} data-screen="canvas" style={{
       display: 'grid',
       gridTemplateRows: 'minmax(0,1fr)',
       position: 'relative',
@@ -1147,11 +1164,11 @@
         <Btn variant="controls" p sm onClick={event => executeAction("projects.ds_screens.Run.15", {api,u}, event)}>▶ Run</Btn>
 </div></div>}
   {actionsMenu}
-  <div className="canvas-panes" data-compact-inspection={!embedded && !!(wire || inspected) ? '' : undefined} style={{
-        display: 'grid',
-        '--canvas-pane-columns': (u.libraryOpen ? '248px ' : '') + 'minmax(0,1fr)' + (!externalInspector && (wire || inspected) ? ' var(--layout-inspector-width,320px)' : ''),
-        minHeight: 0
-      }}>{u.libraryOpen && <window.UI.LibraryShelf onClose={() => u.setLibraryOpen(false)} />}
+  <CanvasGroup className="canvas-panes" orientation="horizontal">
+    {u.libraryOpen && <><CanvasPanel id="canvas-library" panelRef={libraryPanel} collapsible collapsedSize={48} minSize={200} maxSize={360} defaultSize={248} groupResizeBehavior="preserve-pixel-size" onResize={size=>setLibraryRail(size.inPixels<=49)}>
+      {libraryRail ? <button type="button" className="canvas-pane-rail" aria-label="Open Library" onClick={event=>executeAction("projects.controls.activate",{handler:()=>setPeek(peek==='library'?'':'library')},event)}>Library</button> : <window.UI.LibraryShelf onClose={()=>u.setLibraryOpen(false)} />}
+    </CanvasPanel><CanvasSeparator className="pane-splitter" aria-label="Resize Library" /></>}
+    <CanvasPanel id="canvas-work" minSize={240}>
    <div ref={area} className={'node-canvas' + (visible.some(n => n.status === 'Running') ? ' running-wires' : '')} tabIndex={0} aria-label="Workflow canvas" style={{position:'relative',minHeight:0,'--xy-selection-background-color':A.accent+'16','--xy-selection-border':'1px solid '+A.accent,'--xy-background-color':'transparent'}}
         onKeyDownCapture={e=>{if(e.key==='Escape'&&!parent&&(s.sessionBreadcrumbs||[]).length&&!e.target.closest?.('input,textarea,select,[contenteditable="true"]')){e.preventDefault();e.stopPropagation();u.act(()=>api.leaveSession());}}}
         title="Drag to select · Shift adds · Middle or Space-drag to pan · Wheel to zoom · Double-click to fit"
@@ -1199,10 +1216,14 @@
     <div data-canvas-overlay="" className="canvas-toolbar">{embedded&&(s.sessionBreadcrumbs||[]).length>0&&<button type="button" className="dx-quiet" aria-label="Parent session" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.leaveSession())},event)}>{s.sessionBreadcrumbs.map(row=>row.title).join(' / ')} / {s.graph.name} · ← Parent</button>}{parent && <button type="button" data-design="group.back" className="dx-quiet" onClick={event=>executeAction("projects.ds_screens.Parent.6",{parent,s,setParent,setSelected},event)}>← {s.graph.nodes.find(node=>node.id===parent)?.title || 'Parent'}</button>}<Btn variant="controls" sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom">{Math.round(zoom * 100)}%</button><Btn variant="controls" sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><button type="button" className="dx-quiet" onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</button></div>
     {embedded && <><div data-canvas-summary="" aria-label="Workflow status">{[...stateCounts].map(([label,count])=>count+' '+label).join(' · ')}</div></>}
    </div>
-   {!externalInspector && inspected && <NodeInspector n={inspected} s={s} u={u} />}
-   {!externalInspector && wire && <WireInspector wire={wire} s={s} u={u} onClose={() => setWireId(null)} />}
+   </CanvasPanel>
+   {!externalInspector && (inspected || wire) && <><CanvasSeparator className="pane-splitter" aria-label="Resize Inspector" /><CanvasPanel id="canvas-inspection" panelRef={inspectionPanel} collapsible collapsedSize={48} minSize={280} maxSize={480} defaultSize={320} groupResizeBehavior="preserve-pixel-size" onResize={size=>setInspectionRail(size.inPixels<=49)}>
+     {inspectionRail ? <button type="button" className="canvas-pane-rail" aria-label="Open Inspector" onClick={event=>executeAction("projects.controls.activate",{handler:()=>setPeek(peek==='inspector'?'':'inspector')},event)}>Inspector</button> : inspected ? <NodeInspector n={inspected} s={s} u={u} /> : <WireInspector wire={wire} s={s} u={u} onClose={()=>setWireId(null)} />}
+   </CanvasPanel></>}
+  </CanvasGroup>
+  {peek==='library'&&u.libraryOpen&&<div className="canvas-pane-peek" data-side="library"><window.UI.LibraryShelf onClose={()=>setPeek('')} /></div>}
+  {peek==='inspector'&&!externalInspector&&(inspected||wire)&&<div className="canvas-pane-peek" data-side="inspector"><button type="button" className="dx-quiet" aria-label="Close Inspector" onClick={event=>executeAction("projects.controls.activate",{handler:()=>setPeek('')},event)}>×</button>{inspected?<NodeInspector n={inspected} s={s} u={u}/>:<WireInspector wire={wire} s={s} u={u} onClose={()=>setPeek('')} />}</div>}
 
-  </div>
  </div>;
     return <>
       {requestState === 'waiting' && <div role="status">Loading your workflow…</div>}

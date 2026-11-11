@@ -161,6 +161,12 @@
       [sending, setSending] = React.useState(false),
       [contextOpen, setContextOpen] = React.useState(false);
     const pending = React.useRef(0);
+    const inputRef = React.useRef(null), [composerWidth, setComposerWidth] = React.useState(760);
+    React.useLayoutEffect(() => {
+      const observer = new window.ResizeObserver(entries => setComposerWidth(entries[0].contentRect.width));
+      if (inputRef.current) observer.observe(inputRef.current.closest('form'));
+      return () => observer.disconnect();
+    }, []);
     const send = async () => {
       if (!text.trim()) return;
       // DESIGNSYS-050 4.9: the same To-list as the Workshop; a chosen agent is @mentioned exactly as the Workshop composer does.
@@ -215,7 +221,7 @@
           api,
           id,
           u
-        }, event)}>{api.contextLabel(id)} ×</button>)}</div>}<textarea className="composer-input" rows={compact ? 2 : 2} aria-label="Message" placeholder={placeholder} value={text} onChange={e => {
+        }, event)}>{api.contextLabel(id)} ×</button>)}</div>}<textarea ref={inputRef} className="composer-input" rows={compact ? 2 : 2} aria-label="Message" placeholder={composerWidth<420?"Message…":composerWidth<640?"Ask or @ an agent…":placeholder} value={text} onChange={e => {
         setText(e.target.value);
         if (e.target.value.endsWith('@')) setContextOpen(true);
       }} onKeyDown={e => {

@@ -11051,7 +11051,7 @@
       ]
     },
     "DESIGNV22G": {
-      "source": "Founder 2026-11-08: الديزاين الجديد تمام ... بس عاوز التنفيذ يبقى زي ما الديزاين بيقول مش أي هبل وخلاص (the design is approved; the build must be what the design says). Sole design builder on lane/design-v22g. Continuation 2026-11-11: finish group a against frozen v22g, compare the existing Studio suite with origin/main in one isolated environment and fix introduced failures without deleting coverage, then group b in existing Studio, session_files and engine owners: node/wire/parameters/Inspector/menus, safe grouping and undo, Script, Save as node type and safety scan, Add parameter and wire rules. Coordinator routed v23 redesign pauses for pinned sizing, Workshop/rail, To picker styling, header avatar and Canvas More items. Built-byte comparisons, real UI and owner proofs; reviewable commits with hooks on. No push, installation, release, protected profiles, founder screen, client or personal reads. Compare tool remains its design owner's.",
+      "source": "Founder 2026-11-08: الديزاين الجديد تمام ... بس عاوز التنفيذ يبقى زي ما الديزاين بيقول مش أي هبل وخلاص (the design is approved; the build must be what the design says). Sole design builder on lane/design-v22g. Continuation 2026-11-11: finish group a against frozen v22g, compare the existing Studio suite with origin/main in one isolated environment and fix introduced failures without deleting coverage, then group b in existing Studio, session_files and engine owners: node/wire/parameters/Inspector/menus, safe grouping and undo, Script, Save as node type and safety scan, Add parameter and wire rules. Coordinator routed v23 redesign pauses for pinned sizing, Workshop/rail, To picker styling, header avatar and Canvas More items. Built-byte comparisons, real UI and owner proofs; reviewable commits with hooks on. No push, installation, release, protected profiles, founder screen, client or personal reads. Compare tool remains its design owner's. Founder 2026-11-11 evening: approved version 47+ design must appear exactly in the next release. This run: part 1 fluid shell with floating composer and header status; part 2 Resume Home with real approvals and New session; part 3 readable Canvas opening. Branch commits only; no push/install/release or live profiles; leave fixed-node lane, layout rules and rail picker unchanged.",
       "scope": [
         "01.APP/nodelang/session_files.py",
         "01.APP/nodelang/host_exec.py",
@@ -11081,7 +11081,9 @@
         "02.TESTS/tests_replica/test_file_path_links.py",
         "02.TESTS/tests/test_onetask.py",
         "04.DOCS/FAILURE_LOG.md",
-        "05.EVIDENCE/designv22g/"
+        "05.EVIDENCE/designv22g/",
+        "02.TESTS/tests/test_designbuild.py",
+        "02.TESTS/tests_js/designbuild.cjs"
       ]
     }
   }

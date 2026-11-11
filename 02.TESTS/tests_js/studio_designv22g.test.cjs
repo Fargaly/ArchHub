@@ -535,5 +535,72 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
     await page.locator('body').press('Control+z');
     await page.waitForFunction(count=>window.ArchHubAPI.getSessionDocument().nodes.length===count,count);
   });
+  await t.test('Save acknowledgements reconcile concurrent view and title without losing in-flight edits',async()=>{
+    const file=path.join(profile,'concurrent.archhub');
+    await page.evaluate(async file=>{const api=window.ArchHubAPI,d=api.getSessionDocument();delete d.properties.taskContext;d.id=window.crypto.randomUUID();const text=JSON.stringify(d);await api.importSession(new File([text],'concurrent.archhub'));await api.saveSession(file,true);},file);
+    await page.getByRole('navigation',{name:'Main navigation'}).getByRole('button',{name:'Canvas',exact:true}).click();
+    const rendered=()=>page.locator('.react-flow__viewport').evaluate(el=>{const m=new window.DOMMatrix(window.getComputedStyle(el).transform);return {x:m.e,y:m.f,zoom:m.a};});
+    for(const mirror of [false,true]){
+      await page.evaluate(()=>window.ArchHubAPI.saveSession());
+      const base=await page.evaluate(()=>window.ArchHubAPI.getSessionDocument());
+      const remote=JSON.parse(JSON.stringify(base)),title=mirror?'Editor A title':'Browser title';
+      let view={x:147,y:-67,zoom:.8};
+      remote.notes.push({text:'Concurrent owner note '+mirror});
+      if(mirror)remote.title=title;else {remote.viewport=view;remote.properties.viewportSaved=true;}
+      let release,acknowledged;
+      const held=new Promise(resolve=>release=resolve),received=new Promise(resolve=>acknowledged=resolve);
+      let intercepted=false;
+      const handler=async route=>{
+        const sent=route.request().postDataJSON();
+        if(sent.action!=='autosave'||intercepted)return route.continue();
+        intercepted=true;
+        const owner=await page.request.post(route.request().url(),{headers:route.request().headers(),data:{...sent,document:remote,base_revision:base.properties.revision}});
+        assert.equal(owner.ok(),true);
+        const committed=await owner.json();
+        const response=await route.fetch({postData:JSON.stringify({...sent,path:committed.path})});
+        const merged=await response.json();
+        assert.deepEqual(merged.document.viewport,mirror?sent.document.viewport:view);
+        assert.equal(merged.document.title,mirror?title:sent.document.title);
+        acknowledged();await held;return route.fulfill({response});
+      };
+      await page.route('**/api/session-files',handler);
+      try{
+        await page.evaluate(mirror=>mirror?window.ArchHubAPI.setSessionViewport({x:21,y:13,zoom:1}):window.ArchHubAPI.updateGraph(null,{name:'Browser title sent'}),mirror);
+        await received;
+        if(mirror){
+          await page.waitForFunction(()=>{const m=new window.DOMMatrix(window.getComputedStyle(document.querySelector('.react-flow__viewport')).transform);return m.e===21&&m.f===13&&m.a===1;});
+          const pane=await page.locator('.react-flow__pane').boundingBox(),x=pane.x+pane.width-100,y=pane.y+100,input=await page.context().newCDPSession(page);
+          try{
+            await input.send('Input.dispatchMouseEvent',{type:'mouseMoved',x,y});
+            await input.send('Input.dispatchMouseEvent',{type:'mousePressed',x,y,button:'middle',buttons:4,clickCount:1});
+            for(let step=1;step<=8;step++)await input.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:x-72*step/8,y:y+45*step/8,button:'middle',buttons:4});
+            await input.send('Input.dispatchMouseEvent',{type:'mouseReleased',x:x-72,y:y+45,button:'middle',buttons:0,clickCount:1});
+          }finally{await input.detach();}
+          await page.waitForFunction(()=>JSON.stringify(window.ArchHubAPI.getSessionDocument().viewport)!==JSON.stringify({x:21,y:13,zoom:1}));
+          view=await page.evaluate(()=>window.ArchHubAPI.getSessionDocument().viewport);
+          assert.notDeepEqual(view,{x:21,y:13,zoom:1});
+        }else await page.evaluate(title=>window.ArchHubAPI.updateGraph(null,{name:title}),title);
+        release();
+        await page.waitForFunction(({title,view})=>{const d=window.ArchHubAPI.getSessionDocument();return d.title===title&&JSON.stringify(d.viewport)===JSON.stringify(view)&&d.properties.viewportSaved===true;},{title,view});
+        assert.deepEqual(await rendered(),view);
+        assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSnapshot().graph.name),title);
+        assert.deepEqual(await page.evaluate(()=>window.ArchHubAPI.getSessionDocument().notes),remote.notes);
+        await page.evaluate(()=>window.ArchHubAPI.saveSession());
+      }finally{release();await page.unrouteAll({behavior:'wait'});}
+      await page.goto('about:blank');child.stdin.end();await ended;server=await start();
+      await page.goto(server.url+'/studio?bootstrap='+server.bootstrap);await page.locator('[data-home-page]').waitFor({state:'attached'});
+      await page.waitForFunction(()=>Array.isArray(window.ArchHubAPI.getSnapshot().libraryPorts));
+      await page.evaluate(file=>window.ArchHubAPI.openSession(file),file);
+      await page.getByRole('navigation',{name:'Main navigation'}).getByRole('button',{name:'Canvas',exact:true}).click();
+      await page.waitForFunction(id=>window.ArchHubAPI.getSessionDocument()?.id===id,base.id);
+      await page.waitForFunction(()=>!window.ArchHubAPI.getSnapshot().sessionDirty);
+      await page.waitForFunction(view=>{const el=document.querySelector('.react-flow__viewport');if(!el)return false;const m=new window.DOMMatrix(window.getComputedStyle(el).transform);return m.e===view.x&&m.f===view.y&&m.a===view.zoom;},view);
+      assert.deepEqual(await rendered(),view);
+      const before=fs.readFileSync(file);await page.waitForTimeout(5000);
+      assert.equal(fs.readFileSync(file).equals(before),true);
+      const saved=JSON.parse(before);assert.equal(saved.title,title);assert.deepEqual(saved.viewport,view);assert.equal(saved.properties.viewportSaved,true);
+      console.log('PASS acknowledged '+(mirror?'remote title + local pan':'remote view + local title')+': in-flight edit retained; next save + restart + 5s idle preserve both');
+    }
+  });
   assert.deepEqual(errors,[]);
 });

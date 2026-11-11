@@ -1622,20 +1622,27 @@ async function runSolve(){
  if(solved.written?.length)api.refreshRouter?.().catch(()=>{});
  return solved;
 }
+function acknowledgeSave(sent,saved){
+ // After every acknowledged save, adopt the owner's document for every field not changed locally since the sent snapshot.
+ const current=portableDocument(),same=(a,b)=>JSON.stringify(a)===JSON.stringify(b),viewUnchanged=same(current.viewport,sent.viewport)&&same(current.properties?.viewportSaved,sent.properties?.viewportSaved);
+ for(const key of new Set([...Object.keys(sent),...Object.keys(saved.document)])){
+  if(key==='properties'||key==='viewport'&&!viewUnchanged)continue;
+  if(same(current[key],sent[key])){if(Object.hasOwn(saved.document,key))sessionDocument[key]=copy(saved.document[key]);else delete sessionDocument[key];}
+ }
+ for(const key of new Set([...Object.keys(sent.properties||{}),...Object.keys(saved.document.properties||{})])){
+  if(key==='viewportSaved'?!viewUnchanged:!same(current.properties?.[key],sent.properties?.[key]))continue;
+  if(Object.hasOwn(saved.document.properties||{},key))sessionDocument.properties[key]=copy(saved.document.properties[key]);else delete sessionDocument.properties[key];
+ }
+ if(same(current,sent))sessionRevision=saved.revision??saved.document.properties?.revision??0;
+ localDirty=!same(sessionDocument,saved.document);projectFile();
+}
 function saveNow(){
  const id=sessionDocument?.id;
  fileWrites=fileWrites.catch(()=>{}).then(async()=>{
   if(sessionDocument?.id!==id)return {cancelled:true};
-  const sent=portableDocument(),currentPath=sessionPath,base=sessionRevision,text=JSON.stringify(sent);
+  const sent=portableDocument(),currentPath=sessionPath,base=sessionRevision;
   const saved=await sessionRequest('autosave',{document:sent,path:currentPath,base_revision:base});
-  if(sessionDocument?.id===sent.id&&sessionPath===currentPath){sessionPath=saved.path;publish({sessionFile:sessionPath});}
-  // Adopt the merged file only if nothing changed here meanwhile; otherwise the next save merges from the same base.
-  if(sessionDocument?.id===sent.id&&JSON.stringify(portableDocument())===text){
-   localDirty=false;sessionRevision=saved.revision;
-   if(JSON.stringify([saved.document.nodes,saved.document.wires])!==JSON.stringify([sent.nodes,sent.wires])){sessionDocument=copy(saved.document);projectFile();}
-   else sessionDocument.properties=saved.document.properties;
-   publish({sessionDirty:!sessionPath});
-  }
+  if(sessionDocument?.id===sent.id&&sessionPath===currentPath){sessionPath=saved.path;acknowledgeSave(sent,saved);}
   return saved;
  });
  return fileWrites;
@@ -1692,7 +1699,7 @@ api.saveSession=async(path=sessionPath,saveAs=false)=>{
  fileWrites=fileWrites.catch(()=>{}).then(async()=>{
  if(navigation!==fileNavigation)return {cancelled:true};
  const document=portableDocument(),saved=await sessionRequest('save',{path,document,save_as:saveAs});
- if(saved.cancelled)return saved;if(navigation===fileNavigation&&sessionDocument.id===document.id){sessionPath=saved.path;if(saveAs&&sessionDocument.title===document.title){sessionDocument.title=saved.document.title;projectFile();}publish({sessionFile:sessionPath,sessionDirty:JSON.stringify(portableDocument())!==JSON.stringify(document)});queueAutosave();}return saved;
+ if(saved.cancelled)return saved;if(navigation===fileNavigation&&sessionDocument.id===document.id){sessionPath=saved.path;acknowledgeSave(document,saved);queueAutosave();}return saved;
  });const saved=await fileWrites;await refreshGraphs();return saved;
 };
 api.saveSessionAs=()=>api.saveSession('',true);

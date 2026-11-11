@@ -590,3 +590,31 @@ Final UI input uses the existing private-headless-page CDP path, not desktop poi
 # duration_ms 43568.6971
 02:01:24 [77048] DONE  DESIGNV22G saved-view final headless input exit=0 ran 44s (job empty)
 ```
+
+### Browser save acknowledgement reconciliation, 2026-11-12
+
+Continuation from 1a81dd49f4d67c4d00754d08b230bb26dadf824a, intent DESIGNV22G. Both autosave and explicit Save now reconcile the owner's returned document against the request snapshot before advancing sessionRevision. Unchanged document fields and individual properties adopt the owner value; edits made locally during the request stay dirty for the next save. While there are in-flight local edits, the previous revision base is retained so the next owner merge also preserves concurrent node/wire edits. Viewport and viewportSaved are reconciled together. No new persistent flags. Canvas observes returned viewport values so the acknowledged view is rendered, without persisting automatic framing.
+
+Prior art: adapt the existing portableDocument snapshot, serialized fileWrites queue, owner three-way merge and isolated compiled-browser harness; no new merge owner or dependency. Snapshot comparison reference: https://tanstack.com/query/latest/docs/framework/react/guides/optimistic-updates . The test uses a standalone file through the existing import/open and Main navigation Canvas paths, avoiding task-owner retitling during a document merge test.
+
+The regression first failed against unchanged compiled Studio at the acknowledgement assertion (page.waitForFunction: Timeout 15000ms exceeded.; 25 pass, 2 fail including the parent). It now holds an actual owner's autosave response, verifies that response contains the concurrent merge, changes the browser document while the response is held, then verifies the adopted title, rendered viewport, viewportSaved and concurrent note. Both directions survive explicit Save, server restart, reopening and five seconds idle with identical file bytes. The mirror case uses a real middle-button pan through the private headless page's CDP input; the test waits for the starting transform to paint and drains route handlers during cleanup.
+
+Only the two requested test files ran, sequentially through the existing DESIGNV22G isolated environment and run-heavy.ps1 BelowNormal job. Owner output is in ignored .cache/designv22g-saved-view-owner.log; RED output in .cache/designv22g-ack-red.tap; final browser output in .cache/designv22g-ack-ui.tap.
+
+```text
+python -m pytest 02.TESTS/tests_replica/test_designv22g.py -q -s -p no:cacheprovider
+TESTISO final profile leaks: []; protected write attempts: 0
+PROFILE-WRITE-GUARD: protected write attempts=0
+32 passed, 1 warning in 21.27s
+
+node --max-old-space-size=512 --test --test-reporter=tap --test-concurrency=1 02.TESTS/tests_js/studio_designv22g.test.cjs
+# PASS acknowledged remote view + local title: in-flight edit retained; next save + restart + 5s idle preserve both
+# PASS acknowledged remote title + local pan: in-flight edit retained; next save + restart + 5s idle preserve both
+# tests 27
+# pass 27
+# fail 0
+# skipped 0
+# duration_ms 55564.3278
+```
+
+Compiled Studio: 40 files, 2064700 output bytes, Babel 7.29.0, manifest SHA256 19ccce87cb3a251c2e7789d870efc2925f4bd42b8d774d593984e31ab2650502. The existing 26 UI checks and 32 owner checks remain green; one acknowledgement regression brings UI total to 27. Browser/server teardown closes owned processes; successful run profiles were removed. Two failed-run disposable profiles remain: .cache/testiso-designv22g-ui-iI4a4J and .cache/testiso-designv22g-ui-xsTy8W. Their exact resolved paths were verified inside this lane's .cache; automatic approval review rejected native PowerShell cleanup with "blocked by policy". No deletion retry through another tool. No push, install, release, live profile, founder screen, or reads of 20.CLIENTS/60.PERSONAL. Full suites and installed acceptance were not run. The existing pytest cache_dir configuration warning remains.

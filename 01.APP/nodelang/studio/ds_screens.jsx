@@ -710,7 +710,7 @@
       const saved = s.graph.viewport;
       userViewport.current = s.graph.viewportSaved === true;
       if (userViewport.current) updateView({zoom:saved.zoom,pan:{x:saved.x,y:saved.y}}, false);
-    }, [s.graph.scopeKey, embedded]);
+    }, [s.graph.scopeKey, embedded, s.graph.viewportSaved, s.graph.viewport?.x, s.graph.viewport?.y, s.graph.viewport?.zoom]);
     const zoomAt = (value, client = null) => {
       const bounds = area.current?.getBoundingClientRect();
       if (!bounds) return;

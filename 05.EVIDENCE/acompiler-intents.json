@@ -11084,7 +11084,14 @@
         "04.DOCS/FAILURE_LOG.md",
         "05.EVIDENCE/designv22g/",
         "02.TESTS/tests/test_designbuild.py",
-        "02.TESTS/tests_js/designbuild.cjs"
+        "02.TESTS/tests_js/designbuild.cjs",
+        "02.TESTS/tests/test_agentcanvas.py",
+        "02.TESTS/tests/test_task_session_roundtrip.py",
+        "02.TESTS/tests_replica/test_session_files.py",
+        "02.TESTS/tests_js/agentcanvas.cjs",
+        "02.TESTS/tests_js/raildoors.test.cjs",
+        "02.TESTS/tests_js/apptidy_sessions.test.mjs",
+        "02.TESTS/tests_js/checkpoint_browser.cjs"
       ]
     }
   }

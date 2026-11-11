@@ -1550,30 +1550,50 @@ function fileNode(node, document=sessionDocument){
  const dataset=node.type==='data.dataset'?{fields:defs,records:node.records||[]}:null;
  const feed=node.type==='data.field'&&document.wires.find(w=>w.to.node===node.id&&w.to.socket==='column');
  const column=node.type==='data.field'?{dataset:feed?document.nodes.find(n=>n.id===feed.from.node)?.title||'':'',field:feed?feed.from.socket.replace(/^field:/,''):'',label:(COLUMN_LABEL[node.params.type]||'Any')+'[]'}:null;
- return {id:node.id,type:node.type,fixed:!!node.fixed,agentWork:node.agentWork,agentStep:node.params?.workshop_step===true,agentTask:document.properties?.taskContext?.task,workflowStart:node.id==='start'&&!!document.properties?.taskContext?.task,pure:node.type==='thing.agent'&&node.params.reference===true?true:item?.pure??node.pure,budget:node.budget||item?.budget||null,loop:node.loop||item?.loop||null,settingsKeys:item?.settingsKeys||[],dataset,column,title:node.title||item?.title||node.type,kind:node.children?'Group':item?.title||node.type,category:node.agentWork?.role==='step'?node.agentWork.kind+' · '+node.agentWork.tool:item?.cat||'Node',x:node.position.x,y:node.position.y,
+ return {id:node.id,type:node.type,fixed:!!node.fixed,agentWork:node.agentWork,agentStep:node.params?.workshop_step===true,agentTask:document.properties?.taskContext?.task,workflowStart:node.id==='start'&&!!document.properties?.taskContext?.task,pure:node.type==='script.python'?(node.pure??item?.pure):node.type==='thing.agent'&&node.params.reference===true?true:item?.pure??node.pure,budget:node.budget||item?.budget||null,loop:node.loop||item?.loop||null,settingsKeys:item?.settingsKeys||[],dataset,column,title:node.title||item?.title||node.type,kind:node.children?'Group':item?.title||node.type,category:node.agentWork?.role==='step'?node.agentWork.kind+' · '+node.agentWork.tool:item?.cat||'Node',x:node.position.x,y:node.position.y,
   params,defaults:item?.params||{},parameterSchema:schema,paramDefs:defs,bind,
   inputs:(ports.target||[]).map(p=>({...p,name:p.label||p.id,type:p.type==='unknown'?'any':p.type})),outputs:(ports.source||[]).map(p=>({...p,name:p.label||p.id,type:p.type==='unknown'?'any':p.type})),
-  children:node.children||[],members:(Array.isArray(node.members)?node.members:[]).filter(m=>m&&typeof m.id==='string'&&m.id).map(m=>({id:m.id,title:m.title||m.name||m.id,agent:m.agent||m.id})),parent:node.parent||null,icon:NODE_ICONS.includes(node.icon)?node.icon:'',color:typeof node.color==='string'&&/^#[0-9a-f]{6}$/i.test(node.color)?node.color:undefined,frozen:!!node.frozen,pinned:!!node.pinned,portVisibility:node.portVisibility||{},parameterPresentation:node.parameterPresentation||{},
+  children:node.children||[],frameMembers:node.frameMembers,collapsed:node.collapsed!==false,members:(Array.isArray(node.members)?node.members:[]).filter(m=>m&&typeof m.id==='string'&&m.id).map(m=>({id:m.id,title:m.title||m.name||m.id,agent:m.agent||m.id})),parent:node.parent||null,icon:NODE_ICONS.includes(node.icon)?node.icon:'',color:typeof node.color==='string'&&/^#[0-9a-f]{6}$/i.test(node.color)?node.color:undefined,frozen:!!node.frozen,pinned:!!node.pinned,bypassed:!!node.bypassed,portVisibility:node.portVisibility||{},parameterPresentation:node.parameterPresentation||{},
   output:node.result?.output||[],status:node.result?.status||'Idle',error:node.result?.error||'',display:node.result?.display||'',elapsedMs:node.result?.elapsed_ms};
 }
 // session_files.py _WIRE_MENUS, mirrored for the inspector. First choice is the omitted-field value.
 const WIRE_MENUS=[['matching',['By index','Longest','Shortest','Cross']],['order',['Source order','Reverse']],['missing',['Preserve','Drop','Blank']],['units',['From source','From target']],['conversion',['None','Number','Text']],['route',['Bezier','Straight','Step']]];
 function projectSessionWire(w,nodes){
- const row={id:w.id,inferred:!!w.inferred,from:w.from.node,fromPort:w.from.socket,to:w.to.node,toPort:w.to.socket,rule:w.rule||'',type:nodes.find(n=>n.id===w.from.node)?.outputs.find(p=>p.id===w.from.socket)?.type||'any'};
+ const row={id:w.id,inferred:!!w.inferred,from:w.from.node,fromPort:w.from.socket,to:w.to.node,toPort:w.to.socket,rule:w.rule||'',enabled:w.enabled!==false,type:nodes.find(n=>n.id===w.from.node)?.outputs.find(p=>p.id===w.from.socket)?.type||'any'};
  for(const [name,choices] of WIRE_MENUS)row[name]=choices.includes(w[name])?w[name]:choices[0];
  return row;
+}
+function projectGroups(nodes,wires){
+ const byId=new Map(nodes.map(n=>[n.id,n]));
+ const owner=id=>{let node=byId.get(id),group=null;const seen=new Set();while(node?.parent&&!seen.has(node.parent)){seen.add(node.parent);node=byId.get(node.parent);if(node?.children.length&&!node.fixed&&node.collapsed)group=node;}return group;};
+ for(const group of nodes.filter(n=>!n.fixed&&n.children.length)){
+  group.inputs=[];group.outputs=[];group.output={};
+  const members=group.children.map(id=>byId.get(id)).filter(Boolean);
+  group.status=members.some(n=>/error|fail/i.test(n.status))?'Error':members.some(n=>/approval/i.test(n.status))?'Waiting for approval':members.some(n=>n.status==='Running')?'Running':members.every(n=>['Done','Solved','Skipped'].includes(n.status))?'Done':'Idle';
+ }
+ for(const wire of wires){
+  const from=owner(wire.from),to=owner(wire.to);if(from?.id===to?.id)continue;
+  for(const [side,group] of [['from',from],['to',to]])if(group){
+   const member=byId.get(wire[side]),port=member?.[side==='from'?'outputs':'inputs'].find(p=>p.id===wire[side+'Port']);if(!port)continue;
+   const id=(side==='from'?'out:':'in:')+member.id+':'+port.id,ports=side==='from'?group.outputs:group.inputs;
+   if(!ports.some(p=>p.id===id))ports.push({...port,id,name:member.title+' · '+port.name,member:{node:member.id,port:port.id}});
+   if(side==='from')group.output[id]=member.output?.[port.id];
+   wire[side]=group.id;wire[side+'Port']=id;
+  }
+ }
+ return {nodes,wires};
 }
 function projectFile(){
  if(!sessionDocument)return;
  const properties=sessionDocument.properties||{}, nodes=sessionDocument.nodes.map(node=>fileNode(node)), graph={...properties,id:sessionDocument.id,scopeKey:sessionDocument.id+':'+scopeEpoch,name:sessionDocument.title,system:false,
-  nodes,wires:sessionDocument.wires.map(w=>projectSessionWire(w,nodes)),viewport:sessionDocument.viewport};
+  ...projectGroups(nodes,sessionDocument.wires.map(w=>projectSessionWire(w,nodes))),viewport:sessionDocument.viewport};
  publish({graph,sessionFile:sessionPath,sessionDirty:localDirty || !sessionPath,graphOpening:false,sync:solveNote||'Local session file'});
 }
 api.readTaskPreview=async id=>{
  const task=state.tasks.find(row=>row.id===id);
  if(!task?.sessionPath)throw Error('This task has no session file.');
  const read=await sessionRequest('read',{path:task.sessionPath}),document=read.document,nodes=document.nodes.map(node=>fileNode(node,document));
- return {...document.properties,id:document.id,scopeKey:document.id+':preview',name:document.title,nodes,wires:document.wires.map(wire=>projectSessionWire(wire,nodes)),viewport:document.viewport};
+ return {...document.properties,id:document.id,scopeKey:document.id+':preview',name:document.title,...projectGroups(nodes,document.wires.map(wire=>projectSessionWire(wire,nodes))),viewport:document.viewport};
 };
 // Parametric (Grasshopper): an edit re-solves the pure nodes downstream of it, then stops.
 let sessionRevision=0, localDirty=false, solveIds=new Set(), solveParams=[], solveTimer=null, solveNote='', solveCount=0;
@@ -1591,9 +1611,9 @@ function scheduleSolve(ids,param){
 async function runSolve(){
  const changed=[...solveIds].filter(id=>sessionDocument?.nodes.some(n=>n.id===id)),params=solveParams;solveIds=new Set();solveParams=[];
  if(!sessionDocument||!changed.length)return;
- const id=sessionDocument.id;solveCount++;
+ const id=sessionDocument.id,epoch=runEpoch;solveCount++;
  const solved=await sessionRequest('solve',{document:portableDocument(),changed,params});
- if(sessionDocument?.id!==id)return;
+ if(sessionDocument?.id!==id||epoch!==runEpoch)return;
  for(const n of sessionDocument.nodes)if(solved.results[n.id])n.result=solved.results[n.id];
  solveNote='Solved '+solved.solved.length+' node'+(solved.solved.length===1?'':'s')+' in '+solved.ms+' ms'+(solved.stale.length?' · '+solved.stale.length+' out of date (Run)':'');
  localDirty=true;projectFile();publish({solveMs:solved.ms,solveCount,solveStale:solved.stale});queueAutosave();
@@ -1709,16 +1729,22 @@ api.refreshLibraryPorts=async()=>{
 };
 async function refreshGraphs(){return refreshSessionFiles();}
 const refreshSessionFiles=async()=>{const data=await sessionRequest('catalogue');publish({graphs:data.sessions.map(row=>({...row,id:row.path,name:row.title}))});return data.sessions;};
+function libraryNode(item,position){return {id:window.crypto.randomUUID(),type:item.engine,item:item.id,title:item.title,pure:item.pure===true,budget:copy(item.budget||{}),...(item.engine==='script.python'?{ports:{source:[{id:'result',type:'text'}],target:[{id:'a',type:'text'}]}}:{}),...(item.loop?{loop:copy(item.loop)}:{}),params:copy(item.params),...(item.paramDefs?{paramDefs:copy(item.paramDefs)}:{}),position:{x:position.x,y:position.y??100}};}
 api.addNode=async(name,position={})=>{
  const item=state.libraryPorts.find(i=>i.id===name||i.title===name);
  if(!item||item.noEngine)throw Error('Choose an executable Library node.');
  if(position.x===undefined){const detail={reserved:[],point:null,error:null};window.dispatchEvent(new CustomEvent('archhub:canvas-insertion',{detail}));if(detail.error)throw Error(detail.error);position=detail.point||{x:80,y:100};}
  if(item.engine==='skill'&&item.params.session_file)return api.insertSession(item.params.session_file,position);
- const node={id:window.crypto.randomUUID(),type:item.engine,item:item.id,title:item.title,pure:item.pure===true,budget:copy(item.budget||{}),...(item.loop?{loop:copy(item.loop)}:{}),params:copy(item.params),...(item.paramDefs?{paramDefs:copy(item.paramDefs)}:{}),position:{x:position.x,y:position.y??100}};
+ const node=libraryNode(item,position);
  fileEdit(d=>d.nodes.push(node),[node.id]);return state.graph.nodes.find(n=>n.id===node.id);
 };
 api.moveNode=(id,position)=>api.moveNodes({[id]:position});
-api.moveNodes=async positions=>fileEdit(d=>{for(const [id,point] of Object.entries(positions)){const node=d.nodes.find(n=>n.id===id);if(node)node.position={x:point.x,y:point.y};}});
+api.moveNodes=async positions=>fileEdit(d=>{
+ const changes={...positions};
+ const move=(id,dx,dy)=>{const node=d.nodes.find(n=>n.id===id);if(!node||changes[id])return;changes[id]={x:node.position.x+dx,y:node.position.y+dy};for(const child of node.children||node.frameMembers||[])move(child,dx,dy);};
+ for(const [id,point] of Object.entries(positions)){const node=d.nodes.find(n=>n.id===id);if(node)for(const child of node.children||node.frameMembers||[])move(child,point.x-node.position.x,point.y-node.position.y);}
+ for(const [id,point] of Object.entries(changes)){const node=d.nodes.find(n=>n.id===id);if(node)node.position={x:point.x,y:point.y};}
+});
 api.setNodeParam=async(id,key,value)=>{
  if(!sessionDocument.nodes.some(n=>n.id===id)&&systemProjection?.nodes.some(n=>n.id===id)){try{await commands.adopt(systemProjection);const result=await nodeProperty(id,key,value);systemProjection=commands.getSnapshot().canvas;publish({systemRevision:(state.systemRevision||0)+1});return result;}finally{projectFile();}}
  const held=sessionDocument.nodes.find(n=>n.id===id);
@@ -1771,17 +1797,19 @@ api.setNodePresentation=async(id,values)=>{
 };
 api.renameNode=async(id,title)=>fileEdit(d=>{const n=d.nodes.find(n=>n.id===id);if(n)n.title=title;});
 api.deleteSelection=async(nodes=[],wires=[])=>{
+ const navigation=fileNavigation;await flushAutosave();if(navigation!==fileNavigation)return {cancelled:true};
  if(sessionDocument.nodes.some(node=>node.fixed&&nodes.includes(node.id)))throw Error('The four fixed nodes stay on every task canvas.');
  const removedNodes=new Set(nodes),removedWires=new Set(wires),removed=w=>removedWires.has(w.id)||removedNodes.has(w.from.node)||removedNodes.has(w.to.node);
  return fileEdit(d=>{
   d.nodes=d.nodes.filter(n=>!removedNodes.has(n.id));d.wires=d.wires.filter(w=>!removed(w));
-  for(const n of d.nodes){if(n.children)n.children=n.children.filter(id=>!removedNodes.has(id));if(removedNodes.has(n.parent))delete n.parent;}
+  for(const n of d.nodes){if(n.children)n.children=n.children.filter(id=>!removedNodes.has(id));if(n.frameMembers)n.frameMembers=n.frameMembers.filter(id=>!removedNodes.has(id));if(removedNodes.has(n.parent))delete n.parent;}
   d.groups=d.groups.filter(g=>!removedNodes.has(g.id)).map(g=>({...g,nodes:g.nodes.filter(id=>!removedNodes.has(id))}));
  },sessionDocument.wires.filter(removed).map(w=>w.to.node));
 };
 api.deleteNode=async id=>api.deleteSelection([id]);
 api.deleteWire=async id=>api.deleteSelection([],[id]);
 api.connectSockets=async wire=>{
+ for(const [side,ports] of [['from','outputs'],['to','inputs']]){const node=state.graph.nodes.find(n=>n.id===wire[side]),port=node?.[ports].find(p=>p.id===wire[side+'Port']);if(port?.member)wire={...wire,[side]:port.member.node,[side+'Port']:port.member.port};}
  const from=state.graph.nodes.find(n=>n.id===wire.from),to=state.graph.nodes.find(n=>n.id===wire.to),out=from?.outputs.find(p=>p.id===wire.fromPort),input=to?.inputs.find(p=>p.id===wire.toPort);
  if(!out||!input||from.id===to.id)throw Error('Choose an output and another node input.');
  if(!api.socketCompatible(out,input)){throw Error('Wrong type: a '+out.type+' output cannot feed a '+input.type+' input. Insert Convert.');}
@@ -1791,23 +1819,90 @@ api.connectSockets=async wire=>{
  return fileEdit(d=>d.wires.push({id:window.crypto.randomUUID(),from:{node:from.id,socket:out.id},to:{node:to.id,socket:input.id}}),[to.id]);
 };
 api.runNode=async id=>{
- const navigation=fileNavigation;await flushAutosave();if(navigation!==fileNavigation)return {cancelled:true};
- const epoch=runEpoch,document=portableDocument();
- for(const node of sessionDocument.nodes)node.result={status:'Running'};projectFile();
- try{const result=await sessionRequest('run',{document,path:sessionPath,...(id?{roots:[id]}:{})});if(epoch!==runEpoch)throw Error('Session changed during Run; run the new values again.');
+ const navigation=fileNavigation;clearTimeout(solveTimer);await runSolve();await flushAutosave();if(navigation!==fileNavigation)return {cancelled:true};
+ const epoch=++runEpoch,document=portableDocument();
+ for(const node of sessionDocument.nodes)node.result={status:'Running'};localDirty=true;projectFile();
+ const seen=new Set(),expand=key=>{if(seen.has(key))return [];seen.add(key);const node=document.nodes.find(n=>n.id===key),members=node?.children?.length?node.children:node?.frameMembers;return members?.length?members.flatMap(expand):[key];};
+ const roots=id?(Array.isArray(id)?id:[id]).flatMap(expand):null;
+ try{const result=await sessionRequest('run',{document,path:sessionPath,...(roots?{roots}:{})});if(epoch!==runEpoch)throw Error('Session changed during Run; run the new values again.');
   for(const node of sessionDocument.nodes)node.result=result.results[node.id]||{status:'Idle'};projectFile();queueAutosave();if(result.approvalId){await refreshApprovals();await refreshNotifications();}const run={id:window.crypto.randomUUID(),title:sessionDocument.title,status:result.succeeded?'Done':'Needs review',rows:Object.entries(result.results).map(([node,value])=>({node:state.graph.nodes.find(n=>n.id===node)?.title||node,status:value.status,output:JSON.stringify(value.output),error:value.error||''}))};publish({lastResult:run,runs:[...state.runs,run]});return {...result,id:run.id};
- }catch(error){if(epoch===runEpoch){for(const node of sessionDocument.nodes)node.result={status:'Error',error:error.message};projectFile();}throw error;}
+ }catch(error){if(epoch===runEpoch){for(const node of sessionDocument.nodes)node.result={status:'Error',error:error.message};projectFile();queueAutosave();}throw error;}
 };
 api.runToHere=api.runNode;
+api.runSelection=ids=>api.runNode(ids);
 api.setNodeFlags=async(id,values)=>fileEdit(d=>Object.assign(d.nodes.find(n=>n.id===id),values),[id]);
 api.forkNode=async id=>{const result=await sessionRequest('fork-node',{document:portableDocument(),node:id});fileEdit(d=>{d.nodes=result.document.nodes;d.wires=result.document.wires;});return state.graph.nodes.find(n=>n.id===result.ids[0]);};
 api.arrangeGraph=async()=>fileEdit(d=>d.nodes.forEach((n,i)=>{n.position={x:80+i%4*300,y:100+Math.floor(i/4)*220};}));
-api.groupNodes=async ids=>{const group={id:window.crypto.randomUUID(),type:'note',title:'Group',params:{},position:{x:80,y:100},children:ids};return fileEdit(d=>{d.nodes.push(group);for(const n of d.nodes)if(ids.includes(n.id))n.parent=group.id;d.groups.push({id:group.id,nodes:ids});});};
-api.ungroupNode=api.deleteNode;
+api.groupNodes=async(ids,frame=false)=>{
+ if(!Array.isArray(ids))throw Error('Choose nodes to group.');
+ const members=sessionDocument.nodes.filter(n=>ids.includes(n.id));
+ if(new Set(ids).size!==ids.length||members.length!==ids.length||ids.length<(frame?1:2)||members.some(n=>n.fixed)||new Set(members.map(n=>n.parent||'')).size!==1)throw Error(frame?'Choose at least one editable node for the frame.':'Choose at least two editable nodes in the same group.');
+ const node={id:window.crypto.randomUUID(),type:'note',title:frame?'Frame':'Group',params:{},position:{x:Math.min(...members.map(n=>n.position.x))-24,y:Math.min(...members.map(n=>n.position.y))-44},...(members[0].parent?{parent:members[0].parent}:{}),...(frame?{frameMembers:[...ids]}:{children:[...ids],collapsed:false})};
+ fileEdit(d=>{d.nodes.push(node);if(!frame){const parent=d.nodes.find(n=>n.id===node.parent);if(parent?.children)parent.children=[...parent.children.filter(id=>!ids.includes(id)),node.id];const listing=d.groups.find(g=>g.id===node.parent);if(listing)listing.nodes=[...listing.nodes.filter(id=>!ids.includes(id)),node.id];for(const n of members)n.parent=node.id;d.groups.push({id:node.id,nodes:[...ids]});}});
+ return state.graph.nodes.find(n=>n.id===node.id);
+};
+api.ungroupNode=async id=>{
+ const navigation=fileNavigation;await flushAutosave();if(navigation!==fileNavigation)return {cancelled:true};
+ const group=sessionDocument.nodes.find(n=>n.id===id);
+ if(!group||group.fixed||!group.children?.length&&!group.frameMembers)throw Error('Choose an editable group or frame.');
+ if(sessionDocument.wires.some(w=>w.from.node===id||w.to.node===id))throw Error('Disconnect this group’s own wires before ungrouping. Member wires stay connected.');
+ return fileEdit(d=>{for(const n of d.nodes)if(n.parent===id){if(group.parent)n.parent=group.parent;else delete n.parent;}d.nodes=d.nodes.filter(n=>n.id!==id);d.groups=d.groups.filter(g=>g.id!==id);for(const n of d.nodes)if(n.children?.includes(id))n.children=n.children.flatMap(child=>child===id?group.children||[]:[child]);for(const g of d.groups)g.nodes=g.nodes.flatMap(child=>child===id?group.children||[]:[child]);});
+};
+api.setGroupCollapsed=async(id,collapsed)=>fileEdit(d=>{const node=d.nodes.find(n=>n.id===id);if(!node?.children?.length||node.fixed)throw Error('Choose an editable group.');node.collapsed=!!collapsed;});
+api.setScriptPorts=async(id,ports,rename)=>{
+ const node=sessionDocument.nodes.find(n=>n.id===id);
+ if(node?.type!=='script.python')throw Error('Choose a Script node.');
+ for(const side of ['source','target'])if(!Array.isArray(ports[side])||new Set(ports[side].map(p=>p.id)).size!==ports[side].length||ports[side].some(p=>!/^[_a-zA-Z][_a-zA-Z0-9]*$/.test(p.id)||p.id.startsWith('_')||!['text','number','file','elements','color','event','any'].includes(p.type)))throw Error('Use unique socket names and a supported type.');
+ if(!ports.source.length)throw Error('Keep at least one output.');
+ return fileEdit(d=>{const n=d.nodes.find(n=>n.id===id),old=n.ports;if(rename){if(!["source","target"].includes(rename.side)||!old[rename.side].some(p=>p.id===rename.from)||!ports[rename.side].some(p=>p.id===rename.to))throw Error("Choose the socket to rename.");for(const w of d.wires){const end=rename.side==="source"?w.from:w.to;if(end.node===id&&end.socket===rename.from)end.socket=rename.to;if(end.node===id&&end.socket==="param:"+rename.from)end.socket="param:"+rename.to;}if(rename.side==="target"){n.params[rename.to]=n.params[rename.from];delete n.params[rename.from];for(const d of n.paramDefs||[])if(d.id===rename.from){d.id=rename.to;d.name=rename.to;}}}n.ports=copy(ports);for(const p of ports.target){const kind=['number','file'].includes(p.type)?p.type:'text';const def=(n.paramDefs||[]).find(d=>d.id===p.id);if(def)def.type=kind;else(n.paramDefs||=[]).push({id:p.id,name:p.id,type:kind});if(!Object.hasOwn(n.params,p.id)||n.params[p.id]==='')n.params[p.id]=kind==='number'?0:'';}for(const p of old?.target||[])if(!ports.target.some(row=>row.id===p.id)){delete n.params[p.id];n.paramDefs=(n.paramDefs||[]).filter(d=>d.id!==p.id);}d.wires=d.wires.filter(w=>(w.from.node!==id||ports.source.some(p=>p.id===w.from.socket))&&(w.to.node!==id||ports.target.some(p=>p.id===w.to.socket)||w.to.socket.startsWith('param:')));},[id]);
+};
+api.scanNodeType=(ids,name,category,publicParameters)=>sessionRequest('scan-node-type',{document:portableDocument(),ids,name,category,public:publicParameters});
+api.saveNodeType=async(ids,name,category,publicParameters,kind)=>{const result=await sessionRequest('save-node-type',{document:portableDocument(),ids,name,category,public:publicParameters,kind});await api.refreshLibraryPorts();return result;};
+let copiedNodes=null;
+api.copyNodes=async ids=>{
+ const selected=new Set(ids),include=id=>{const node=sessionDocument.nodes.find(n=>n.id===id);for(const child of [...(node?.children||[]),...(node?.frameMembers||[])]){if(selected.has(child))continue;selected.add(child);include(child);}};
+ for(const id of ids)include(id);
+ const nodes=sessionDocument.nodes.filter(n=>selected.has(n.id));
+ if(!nodes.length||nodes.some(n=>n.fixed))throw Error('Choose editable nodes to copy.');
+ copiedNodes={nodes:copy(nodes),wires:copy(sessionDocument.wires.filter(w=>selected.has(w.from.node)&&selected.has(w.to.node))),groups:copy(sessionDocument.groups.filter(g=>selected.has(g.id)))};
+ return {ok:true};
+};
+api.pasteNodes=async point=>{
+ if(!copiedNodes)throw Error('Copy nodes from a canvas first.');
+ const source=copy(copiedNodes),ids=new Map(source.nodes.map(n=>[n.id,window.crypto.randomUUID()])),dx=(point?.x??Math.min(...source.nodes.map(n=>n.position.x))+32)-Math.min(...source.nodes.map(n=>n.position.x)),dy=(point?.y??Math.min(...source.nodes.map(n=>n.position.y))+32)-Math.min(...source.nodes.map(n=>n.position.y));
+ for(const n of source.nodes){n.id=ids.get(n.id);n.position={x:n.position.x+dx,y:n.position.y+dy};delete n.result;if(n.parent&&ids.has(n.parent))n.parent=ids.get(n.parent);else delete n.parent;if(n.children)n.children=n.children.map(id=>ids.get(id));if(n.frameMembers)n.frameMembers=n.frameMembers.filter(id=>ids.has(id)).map(id=>ids.get(id));if(n.bind&&ids.has(n.bind.node))n.bind.node=ids.get(n.bind.node);for(const p of n.paramDefs||[])if(p.promoted)p.promoted=ids.get(p.promoted)||null;}
+ for(const w of source.wires){w.id=window.crypto.randomUUID();w.from.node=ids.get(w.from.node);w.to.node=ids.get(w.to.node);}
+ fileEdit(d=>{d.nodes.push(...source.nodes);d.wires.push(...source.wires);d.groups.push(...source.groups.map(g=>({...g,id:ids.get(g.id),nodes:g.nodes.map(id=>ids.get(id))})));},source.nodes.map(n=>n.id));
+ return {ids:source.nodes.filter(n=>!n.parent).map(n=>n.id)};
+};
+api.duplicateNodes=async ids=>{await api.copyNodes(ids);return api.pasteNodes();};
+api.cutNodes=async ids=>{await api.copyNodes(ids);return api.deleteSelection(copiedNodes.nodes.map(n=>n.id));};
+api.deleteGroup=async id=>{await api.copyNodes([id]);return api.deleteSelection(copiedNodes.nodes.map(n=>n.id));};
+api.addNote=async(text,position={x:80,y:100})=>{
+ if(typeof text!=='string'||!text.trim())throw Error('Write a note first.');
+ const node={id:window.crypto.randomUUID(),type:'note',title:'Note',params:{text:text.trim()},position};fileEdit(d=>d.nodes.push(node));return node;
+};
+api.alignNodes=async(ids,axis)=>{
+ if(!['x','y'].includes(axis))throw Error('Choose left or top alignment.');
+ const nodes=sessionDocument.nodes.filter(n=>ids.includes(n.id));if(nodes.length<2||nodes.some(n=>n.fixed))throw Error('Choose two editable nodes.');
+ const at=Math.min(...nodes.map(n=>n.position[axis]));return api.moveNodes(Object.fromEntries(nodes.map(n=>[n.id,{...n.position,[axis]:at}])));
+};
 api.undo=async()=>{const navigation=fileNavigation;await flushAutosave();if(navigation!==fileNavigation)return {cancelled:true};if(fileHistory.length){fileFuture.push(copy(sessionDocument));sessionDocument=fileHistory.pop();localDirty=true;runEpoch++;projectFile();queueAutosave();scheduleSolve(sessionDocument.nodes.map(n=>n.id),null);}return {ok:true};};
 api.redo=async()=>{const navigation=fileNavigation;await flushAutosave();if(navigation!==fileNavigation)return {cancelled:true};if(fileFuture.length){fileHistory.push(copy(sessionDocument));sessionDocument=fileFuture.pop();localDirty=true;runEpoch++;projectFile();queueAutosave();scheduleSolve(sessionDocument.nodes.map(n=>n.id),null);}return {ok:true};};
 api.wireMenus=WIRE_MENUS;
-api.setWireRule=async(id,rule)=>fileEdit(d=>{const w=d.wires.find(w=>w.id===id);if(w)w.rule=rule;});
+api.setWireRule=async(id,rule)=>{const wire=sessionDocument.wires.find(w=>w.id===id);if(!wire)throw Error('Choose a wire.');const checked=await sessionRequest('wire-rule',{document:portableDocument(),id,rule});return fileEdit(d=>{const current=d.wires.find(w=>w.id===id);if(!current)throw Error('This wire was removed.');current.rule=checked.rule;},[wire.to.node]);};
+api.setWireEnabled=async(id,enabled)=>{const wire=sessionDocument.wires.find(w=>w.id===id);if(!wire||typeof enabled!=='boolean')throw Error('Choose a wire and its enabled state.');return fileEdit(d=>{const w=d.wires.find(w=>w.id===id);if(enabled)delete w.enabled;else w.enabled=false;},[wire.to.node]);};
+api.insertNodeOnWire=async(id,name,point)=>{
+ const wire=sessionDocument.wires.find(w=>w.id===id),item=state.libraryPorts.find(i=>i.id===name||i.title===name),from=state.graph.nodes.find(n=>n.id===wire?.from.node),to=state.graph.nodes.find(n=>n.id===wire?.to.node);
+ if(!wire||!item||item.noEngine||!from||!to)throw Error('Choose a wire and an executable node.');
+ const node=libraryNode(item,point||{x:(from.x+to.x)/2,y:(from.y+to.y)/2+120});
+ if(item.engine==='data.convert')node.params.target_type=to.inputs.find(p=>p.id===wire.to.socket)?.type==='number'?'number':'text';
+ const projected=fileNode(node),out=from.outputs.find(p=>p.id===wire.from.socket),input=to.inputs.find(p=>p.id===wire.to.socket),into=projected.inputs.find(p=>api.socketCompatible(out,p)),away=projected.outputs.find(p=>api.socketCompatible(p,input));
+ if(!into||!away)throw Error('This node has no compatible input and output for this wire.');
+ fileEdit(d=>{d.nodes.push(node);d.wires=d.wires.filter(w=>w.id!==id);d.wires.push({...copy(wire),id:window.crypto.randomUUID(),to:{node:node.id,socket:into.id}},{id:window.crypto.randomUUID(),from:{node:node.id,socket:away.id},to:copy(wire.to)});},[node.id,to.id]);
+ return state.graph.nodes.find(n=>n.id===node.id);
+};
+api.insertConvertOnWire=id=>api.insertNodeOnWire(id,'data.convert');
 api.setWireParam=async(id,key,value)=>{
  if(!sessionDocument)throw Error('Open a session first.');
  const current=sessionDocument.wires.find(w=>w.id===id);

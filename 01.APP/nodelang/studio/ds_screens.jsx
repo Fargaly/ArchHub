@@ -294,7 +294,7 @@
       })}
       {!grouped && n.dataset && <DatasetEditor n={n} u={u} />}
       {!grouped && n.column && <small data-column-of={n.column.dataset+'.'+n.column.field} className="muted">{n.column.dataset ? <>{n.column.dataset}.{n.column.field} {'\u00b7'} {n.column.label} {'\u00b7'} values live in {n.column.dataset}</> : 'Unbound: wire a dataset field into column'}</small>}
-      {!grouped && !n.bind && !n.dataset && !n.column && n.paramDefs && api.addNodeParameter && <AddParameter n={n} u={u} />}
+      {!grouped && !n.bind && !n.dataset && !n.column && !n.children?.length && api.addNodeParameter && <AddParameter n={n} u={u} />}
       {!grouped && n.status==='Done' && <output aria-label={n.title+' output'} style={{display:'block',maxHeight:100,overflow:'auto',whiteSpace:'pre-wrap'}}>{typeof n.output==='object'?JSON.stringify(n.output):String(n.output)}</output>}
       {!grouped && compact && parameters.length>3 && <button className="button-reset canvas-card-more" onClick={event=>executeAction('projects.controls.activate',{handler:()=>setExpanded(!expanded)},event)}>{expanded ? 'Show less' : `+${parameters.length-3} more`}</button>}
     </D.Node>;
@@ -323,10 +323,10 @@
   }
   // Spec FieldTypeMenu: a listbox of the server's parameter types (node_params.py), labelled as the design names them.
   const TYPE_LABEL = {bool: 'Boolean', integer: 'Integer', number: 'Number · units', text: 'Text', choice: 'Choice', date: 'Date', file: 'File', folder: 'Folder', object: 'Object', list: 'List'};
-  function FieldTypeMenu({label, value, onChange}) {
+  function FieldTypeMenu({label, value, onChange, design}) {
     const [open, setOpen] = React.useState(false);
     return <span style={{position: 'relative', display: 'block'}}>
-      <button type="button" className="button-reset spec-input" aria-label={label} aria-haspopup="listbox" aria-expanded={open} onClick={event => executeAction('projects.controls.activate', {handler: () => setOpen(!open)}, event)}>
+      <button type="button" data-design={design} className="button-reset spec-input" aria-label={label} aria-haspopup="listbox" aria-expanded={open} onClick={event => executeAction('projects.controls.activate', {handler: () => setOpen(!open)}, event)}>
         {typeGlyph(value) && typeGlyph(value) + '  '}{(TYPE_LABEL[value] || value).split(' · ')[0]}{'  ⌄'}</button>
       {open && <div role="listbox" aria-label="Field type" data-field-type-menu className="spec-type-menu" onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); } }}>
         <b>Field type</b>{api.parameterTypes().map(t => <button type="button" role="option" aria-selected={t === value} key={t} className="button-reset"
@@ -334,23 +334,25 @@
     </span>;
   }
   // Spec AddField numeric editor: one form for a dataset field and a node parameter; the value is checked once, on the server.
-  function AddField({kind, title, sub, onAdd, onClose}) {
+  function AddField({kind, title, sub, onAdd, onClose, modal=false}) {
+    const action=window.UI.useAction();
     const [name, setName] = React.useState(''), [type, setType] = React.useState('number'), [value, setValue] = React.useState(''), [options, setOptions] = React.useState(''),
       [limits, setLimits] = React.useState({min: '', max: '', step: '', unit: ''}), [asNode, setAsNode] = React.useState(false);
-    const numeric = ['number', 'integer'].includes(type),
-      limit = (key, text) => <label key={key}>{text}<input className="spec-input small" aria-label={kind + ' ' + key} type="number" step="any" placeholder={key === 'step' ? 'Auto' : 'Unbounded'} value={limits[key]} onChange={e => setLimits(old => ({...old, [key]: e.target.value === '' ? '' : e.target.valueAsNumber}))} /></label>;
-    return <div data-add-field-form role="dialog" aria-label={title} className="spec-add-field" onPointerDown={e => e.stopPropagation()} onKeyDown={e => { if (e.key === 'Escape') onClose(); }}>
-      <b>{title}</b><p>{sub}</p>
-      <div className="spec-add-row"><label>Name<input className="spec-input" aria-label={kind + ' name'} placeholder="Width" value={name} onChange={e => setName(e.target.value)} /></label>
-        <label>Type<FieldTypeMenu label={kind + ' type'} value={type} onChange={setType} /></label></div>
-      {type === 'choice' && <label>Choices<input className="spec-input" aria-label={kind + ' options'} placeholder="Choices, comma separated" value={options} onChange={e => setOptions(e.target.value)} /></label>}
-      <label><span>Default{type === 'number' && <> {'·'} <input className="spec-unit" aria-label={kind + ' unit'} placeholder="unit" value={limits.unit} onChange={e => setLimits(old => ({...old, unit: e.target.value}))} /></>}</span>
-        <input className="spec-input" aria-label={kind + ' value'} type={numeric ? 'number' : type === 'date' ? 'date' : 'text'} value={value} onChange={e => setValue(e.target.value)} /></label>
+    const numeric = ['number', 'integer'].includes(type),tag=id=>kind==='Parameter'?'field.'+id:undefined,
+      limit = (key, text) => <label key={key}>{text}<input data-design={tag({min:'minimum',max:'maximum',step:'step'}[key])} className="spec-input small" aria-label={kind + ' ' + key} type="number" step="any" placeholder={key === 'step' ? 'Auto' : 'Unbounded'} value={limits[key]} onChange={e => setLimits(old => ({...old, [key]: e.target.value === '' ? '' : e.target.valueAsNumber}))} /></label>;
+    return <div data-add-field-form role="dialog" aria-label={title} className={'spec-add-field'+(modal?' v22g-add-parameter':'')} onPointerDown={e => e.stopPropagation()} onKeyDown={e => { if (e.key === 'Escape') onClose(); }}>
+      <b>{title}</b><p>{sub}</p><window.UI.ActionStatus action={action}/>
+      <div className="spec-add-row"><label>Name<input data-design={tag('name')} className="spec-input" aria-label={kind + ' name'} placeholder="Width" value={name} onChange={e => setName(e.target.value)} /></label>
+        <label>Type{modal?<span data-design="field.type"><select data-design="param.type" aria-label="Parameter type" value={(TYPE_LABEL[type]||type).split(' · ')[0]} onChange={e=>setType(Object.keys(TYPE_LABEL).find(key=>TYPE_LABEL[key].split(' · ')[0]===e.target.value))}>{Object.entries(TYPE_LABEL).map(([key,label])=><option key={key}>{label.split(' · ')[0]}</option>)}</select></span>:<FieldTypeMenu design={tag('type')} label={kind + ' type'} value={type} onChange={setType} />}</label></div>
+      {type === 'choice' && <label>Choices<input data-design={tag('choices')} className="spec-input" aria-label={kind + ' options'} placeholder="Choices, comma separated" value={options} onChange={e => setOptions(e.target.value)} /></label>}
+      <label><span>Default{type === 'number' && <> {'·'} <input data-design={tag('parameter-unit')} className="spec-unit" aria-label={kind + ' unit'} placeholder="unit" value={limits.unit} onChange={e => setLimits(old => ({...old, unit: e.target.value}))} /></>}</span>
+        <input data-design={tag('default')} className="spec-input" aria-label={kind + ' value'} type={numeric ? 'number' : type === 'date' ? 'date' : type==='bool'?'checkbox':'text'} {...(type==='bool'?{checked:value===true||value==='true'}:{value})} onChange={e => setValue(type==='bool'?e.target.checked:e.target.value)} /></label>
       {numeric && <div className="spec-add-limits">{limit('min', 'Minimum')}{limit('max', 'Maximum')}{limit('step', 'Step')}</div>}
-      <div className="spec-add-foot"><label><input type="checkbox" aria-label="Show as node" checked={asNode} onChange={e => setAsNode(e.target.checked)} /> Expose as node</label>
-        <button type="button" className="button-reset spec-add-go" aria-label={title} onClick={event => executeAction('projects.controls.activate', {handler: () => onAdd({name, type, value, showAsNode: asNode,
+      <div className="spec-add-foot"><label><input data-design={tag('apx')} type="checkbox" aria-label="Show as node" checked={asNode} onChange={e => setAsNode(e.target.checked)} /> Expose as node</label>
+        {modal&&<button type="button" data-design="action.cancel" className="button-reset" onClick={event=>executeAction('projects.controls.activate',{handler:onClose},event)}>Cancel</button>}
+        <button type="button" data-design={modal?'action.add-parameter':undefined} className="button-reset spec-add-go" disabled={!name.trim()} aria-label={title} onClick={event => executeAction('projects.controls.activate', {handler: () => action.run(()=>onAdd({name, type, value, showAsNode: asNode,
           ...(numeric ? Object.fromEntries(Object.entries(limits).filter(([, v]) => v !== '').map(([k, v]) => [k, k === 'unit' ? v : Number(v)])) : {}),
-          options: type === 'choice' ? options.split(',').map(x => x.trim()).filter(Boolean) : undefined}).then(onClose)}, event)}>{title}{'  →'}</button></div>
+          options: type === 'choice' ? options.split(',').map(x => x.trim()).filter(Boolean) : undefined})).then(result=>{if(result)onClose();})}, event)}>{title}{modal?'':'  →'}</button></div>
     </div>;
   }
   // Spec Dataset: fields are columns, records are rows, cells are typed values; an exposed field is highlighted and marked.
@@ -386,10 +388,8 @@
   }
   // Add parameter: the same AddField editor, opened from the card's + (spec NodeCard "Add parameter").
   function AddParameter({n, u}) {
-    const [open, setOpen] = React.useState(false);
     return <>
-      <button className="button-reset canvas-card-add" data-add-parameter aria-label={'Add parameter to ' + n.title} title="Add parameter" onClick={event => executeAction('projects.controls.activate', {handler: () => setOpen(!open)}, event)}>+ Parameter</button>
-      {open && <AddField kind="Parameter" title="Add parameter" sub="A value on this node" onClose={() => setOpen(false)} onAdd={input => u.act(() => api.addNodeParameter(n.id, input))} />}
+      <button className="button-reset canvas-card-add" data-add-parameter aria-label={'Add parameter to ' + n.title} title="Add parameter" onClick={event => executeAction('projects.controls.activate', {handler: () => u.show('Add parameter',{id:n.id})}, event)}>+ Parameter</button>
     </>;
   }
   // CANVASXY node grammar, archhub-canvas-build-spec.json (Penpot 1052): compact parameter nodes (LimitParameter 180x80),
@@ -469,7 +469,7 @@
       <button type="button" className="button-reset nodrag" style={{color: A.err, textDecoration: 'underline'}} onClick={event => executeAction('projects.controls.activate', {handler: onConvert}, event)}>Insert converter</button></>}
     </div>;
   }
-  function FlowCard({n, s, u, selected, refusal, onConvert, socket, members, onMember, onDetach, menu}) {
+  function FlowCard({n, s, u, selected, refusal, onConvert, socket, members, onMember, onDetach, onOpen, menu}) {
     // v22g keeps three rows on the card; every parameter remains available in the Inspector.
     const [compact, setCompact] = React.useState(true);
     const pinned = n.fixed && n.type !== 'thing.session', task = n.fixed ? (s.tasks || []).find(row=>row.id===n.agentTask) : null, messages = window.UI.homeTaskMessages?.(task) || [];
@@ -494,7 +494,8 @@
       // Internal ids, hashes and serialized JSON stay in Properties; the face shows human values (CARDPOLISH), first three until expanded.
       shown = (n.parameterSchema || []).filter(p => !n.fixed || !['reference','thread','limit','workspace'].includes(p.key)).filter(p => p.editable || (!HIDDEN_PARAM.test(p.key) && (n.params[p.key] === null || typeof n.params[p.key] !== 'object') && !HIDDEN_VALUE.test(String(n.params[p.key]))))
         .filter(p => !(p.key === 'prompt' && n.inputs.some(x => x.id === 'prompt'))),
-      params = pinned && compact ? [] : compact ? shown.slice(0, 3) : shown,
+      pending = compact && !n.fixed && !n.children?.length && !n.dataset && !n.column && ['Idle','Pending','Out of date',''].includes(n.status || ''),
+      params = pending || pinned && compact ? [] : compact ? shown.slice(0, 3) : shown,
       refusedHere = port => refusal && refusal.to.port === port && <RefusedChip refusal={refusal} onConvert={onConvert} />;
     for (const p of params) for (const port of n.inputs.filter(x => x.id === p.key || x.id === 'param:' + p.key)) slotPorts.add(port.id);
     const repeatsValue = (output, value) => Object.is(output, value) || (typeof output === 'string' && output.trim() === String(value)) || (output && typeof output === 'object' && !Array.isArray(output) && Object.keys(output).length === 1 && Object.hasOwn(output, 'value') && (Object.is(output.value, value) || String(output.value) === String(value))) || (Array.isArray(output) && output.length === 1 && (Object.is(output[0], value) || String(output[0]) === String(value)));
@@ -509,12 +510,12 @@
       w={n.fixed ? 236 : n.dataset ? LAYOUT.datasetWidth : 268} title={n.title} sub={pinned ? n.type==='thing.you' ? 'Profile · every agent reads it' : n.type==='thing.workshop' ? "This task’s thread" : 'Agent · '+(n.params.agent || 'pick one') : n.category && n.category!=='Node' ? n.category : n.kind}
       glyph={n.fixed && ['thing.agent','thing.session'].includes(n.type) ? <window.UI.Av id={n.params.agent || task?.agents?.[0] || ''} size={20}/> : <window.AHIcon name={n.icon || (n.type==='thing.you' ? 'user' : n.type==='thing.workshop' ? 'workshop' : familyIcon)} size={12}/>} gc={n.fixed ? A.purple : familyColor}
       selected={selected} headerProps={{className:'node-header',style:{background:headerColor,color:headerColor ? luminance>.179?'#000000':'#ffffff':SPEC.text}}} headerEnd={pinned ? <span className="v22g-pinned-badge">Pinned</span> : menu}
-      style={{fontSize:'calc(12px * var(--text-scale,1))',borderRadius:'var(--node-radius,8px)'}}
-      ins={n.inputs.filter(port=>!slotPorts.has(port.id))} outs={n.outputs}
+      style={{fontSize:'calc(12px * var(--text-scale,1))',borderRadius:'var(--node-radius,8px)',minHeight:pending?160:undefined}}
+      ins={n.inputs.filter(port=>!slotPorts.has(port.id)&&(!pending||port.id===n.inputs[0]?.id||port.id==='param:'+n.inputs[0]?.id||wiresIn.some(w=>w.toPort===port.id)))} outs={n.outputs}
       renderPort={(port,index,side)=><div data-port-row={side} style={{position:'relative',height:22,display:'flex',alignItems:'center',justifyContent:side==='out'?'flex-end':undefined,padding:'0 12px'}}><span style={{position:'absolute',[side==='out'?'right':'left']:-11,top:0}}>{socket(port,side)}</span>{port.name}</div>}
-      foot={pinned ? <span className="spread"><button type="button" className="button-reset nodrag" aria-expanded={!compact} onClick={event=>executeAction('projects.controls.activate',{handler:()=>setCompact(!compact)},event)}>{compact?'Parameters':'Fewer'}</button>{n.type==='thing.you' ? <button type="button" className="button-reset nodrag" onClick={()=>u.go('settings/Account')}>Settings › You</button> : n.type==='thing.workshop' ? <button type="button" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.setTaskFace('split')},event)}>Open thread</button> : null}</span> : <span title={n.error || state}>{state.split(' · ')[0]}{Number.isFinite(n.elapsedMs)?' · '+n.elapsedMs+' ms':''}</span>} footc={pinned ? A.inkSoft : stateColor}>
+      foot={n.children?.length&&!n.fixed?<span className="spread"><span>{n.children.length} nodes</span><button type="button" data-design="group.open" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:onOpen},event)}>Open</button></span>:pinned ? <span className="spread"><button type="button" className="button-reset nodrag" aria-expanded={!compact} onClick={event=>executeAction('projects.controls.activate',{handler:()=>setCompact(!compact)},event)}>{compact?'Parameters':'Fewer'}</button>{n.type==='thing.you' ? <button type="button" className="button-reset nodrag" onClick={()=>u.go('settings/Account')}>Settings › You</button> : n.type==='thing.workshop' ? <button type="button" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.setTaskFace('split')},event)}>Open thread</button> : null}</span> : <span title={n.error || state}>{state.split(' · ')[0]}{Number.isFinite(n.elapsedMs)?' · '+n.elapsedMs+' ms':''}</span>} footc={pinned ? A.inkSoft : stateColor}>
 
-      {members.length > 0 && <div className="canvas-members">{members.map(m => <button key={m.id} data-group-member={m.id} draggable={m.chip || undefined} className="canvas-member nodrag" title={m.chip ? 'Drag ' + m.title + ' out of the group' : 'Open ' + m.title} onDragStart={event => { if (!m.chip) return; event.stopPropagation(); event.dataTransfer.setData('text/plain', m.id); event.dataTransfer.effectAllowed = 'move'; event.currentTarget.dataset.dragged = '1'; }} onDragEnd={event => { if (!m.chip || !onDetach) return; onDetach(m, event); }} onClick={event => { if (event.currentTarget.dataset.dragged === '1') { event.currentTarget.dataset.dragged = ''; return; } executeAction('projects.controls.activate', {handler: () => onMember(m)}, event); }}><span style={{background: A.purple, color: A.onFill}}>{m.title.slice(0, 1)}</span>{m.title}</button>)}</div>}
+      {members.length > 0 && (n.fixed || !n.children?.length) && <div className="canvas-members">{members.map(m => <button key={m.id} data-group-member={m.id} draggable={m.chip || undefined} className="canvas-member nodrag" title={m.chip ? 'Drag ' + m.title + ' out of the group' : 'Open ' + m.title} onDragStart={event => { if (!m.chip) return; event.stopPropagation(); event.dataTransfer.setData('text/plain', m.id); event.dataTransfer.effectAllowed = 'move'; event.currentTarget.dataset.dragged = '1'; }} onDragEnd={event => { if (!m.chip || !onDetach) return; onDetach(m, event); }} onClick={event => { if (event.currentTarget.dataset.dragged === '1') { event.currentTarget.dataset.dragged = ''; return; } executeAction('projects.controls.activate', {handler: () => onMember(m)}, event); }}><span style={{background: A.purple, color: A.onFill}}>{m.title.slice(0, 1)}</span>{m.title}</button>)}</div>}
       {pinned && compact && <div className="v22g-pinned-summary">{pinnedSummary}</div>}
       <div style={{display: 'grid', gap: 'var(--layout-node-row-gap,4px)', padding: pinned && compact ? 0 : '8px 12px 0'}}>
         {pinned && !compact && n.type==='thing.you' && <><b>{s.profile.name || 'Not signed in'}</b><span>{s.profile.role || 'No role set'}</span></>}
@@ -537,17 +538,26 @@
               onClick={event => executeAction('projects.controls.activate', {handler: () => u.show('Port menu', {id: n.id, port: port?.id || 'param:' + param.key, paramKey: param?.key, anchor: {x: event.clientX, y: event.clientY}})}, event)}>⋮</button>
           </div>{ports.map(alias=><React.Fragment key={alias.id}>{refusedHere(alias.id)}</React.Fragment>)}</React.Fragment>;
         })}
-        {!pinned && shown.length > 3 && <button type="button" className="button-reset nodrag canvas-card-more" aria-pressed={compact} style={{justifySelf: 'start', color: SPEC.label}} onClick={event => executeAction('projects.controls.activate', {handler: () => setCompact(!compact)}, event)}>{compact ? `+${shown.length - 3} more` : 'Compact'}</button>}
+        {!pending && !pinned && shown.length > 3 && <button type="button" className="button-reset nodrag canvas-card-more" aria-pressed={compact} style={{justifySelf: 'start', color: SPEC.label}} onClick={event => executeAction('projects.controls.activate', {handler: () => setCompact(!compact)}, event)}>{compact ? `+${shown.length - 3} more` : 'Compact'}</button>}
         {n.loop && <div data-node-loop="" style={{color: SPEC.label}} title={'Trigger ' + n.loop.trigger + ' · stops when ' + n.loop.stop + (n.loop.evaluator ? ' · evaluator ' + n.loop.evaluator : '')}>Loop · cap {n.loop.cap} · until {n.loop.stop}</div>}
         {n.dataset && <DatasetEditor n={n} u={u} />}
-        {n.agentWork?.role==='step' && <StepHistory n={n} u={u} />}
-        {!n.dataset && !n.column && (!n.fixed || n.type==='thing.session') && n.paramDefs && api.addNodeParameter && <AddParameter n={n} u={u} />}
-        {!pinned && n.outputs.length > 0 && !repeatedValue && <div data-node-result="" data-todo="output-summary-expanded" style={{...SLOT, color: result ? SPEC.text : SPEC.label, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block'}} title={result}>{result ? result.replace(/^\w+_out\s+/, '') : wiresIn.length || !n.inputs.length ? 'Run to inspect output' : 'Connect data to inspect output'}</div>}
+        {!n.dataset && !n.column && (!n.fixed || n.type==='thing.session') && !n.children?.length && api.addNodeParameter && <div className="flex">{pending&&<button type="button" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:()=>setCompact(false)},event)}>Parameters</button>}<AddParameter n={n} u={u} /></div>}
+        {!pending && !pinned && n.outputs.length > 0 && !repeatedValue && <div data-node-result="" data-todo="output-summary-expanded" style={{...SLOT, color: result ? SPEC.text : SPEC.label, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block'}} title={result}>{result ? result.replace(/^\w+_out\s+/, '') : wiresIn.length || !n.inputs.length ? 'Run to inspect output' : 'Connect data to inspect output'}</div>}
         {approval && <button type="button" className="button-reset nodrag" onClick={e=>u.show('Approve',{id:approval.id,anchor:{x:e.clientX,y:e.clientY}})}>Review</button>}
       </div>
     </D.Node>;
   }
   // DESIGNSYS-050 4.9 Inspector (plate archhub-inspector-changed-native.png): Properties of the one selected node; its Inputs and Output, editable.
+  function ScriptInspector({n,u}) {
+    const action=window.UI.useAction(),ports={source:n.outputs.filter(p=>!p.id.startsWith('param:')),target:n.inputs.filter(p=>!p.id.startsWith('param:')&&!['code','kind','timeout'].includes(p.id))};
+    const edit=(side,index,patch)=>action.run(()=>api.setScriptPorts(n.id,{...ports,[side]:ports[side].map((p,i)=>i===index?{id:p.id,type:p.type,...patch}:{id:p.id,type:p.type})},patch.id?{side,from:ports[side][index].id,to:patch.id}:undefined));
+    const add=side=>{const base=side==='target'?'abcdefgh'.split(''):['result','out2','out3','out4','out5','out6'],id=base.find(id=>!ports[side].some(p=>p.id===id))||'p'+ports[side].length;return action.run(()=>api.setScriptPorts(n.id,{...ports,[side]:[...ports[side].map(p=>({id:p.id,type:p.type})),{id,type:'text'}]}));};
+    return <section className="v22g-script"><window.UI.ActionStatus action={action}/>{[['target','Inputs','addin'],['source','Outputs','addout']].map(([side,label,tag])=><React.Fragment key={side}><b>{label}</b>{ports[side].map((p,i)=><div className="v22g-script-row" key={p.id}><input aria-label={(side==='target'?'Input':'Output')+' name'} defaultValue={p.id} onBlur={e=>{if(e.target.value!==p.id)edit(side,i,{id:e.target.value});}}/><select aria-label={'Type of '+p.id} value={p.type} onChange={e=>edit(side,i,{type:e.target.value})}>{['text','number','file','elements','color','event','any'].map(t=><option key={t}>{t}</option>)}</select><button type="button" aria-label={'Remove '+p.id} disabled={side==='source'&&ports.source.length===1} onClick={event=>executeAction('projects.controls.activate',{handler:()=>action.run(()=>api.setScriptPorts(n.id,{...ports,[side]:ports[side].filter((_,index)=>index!==i)}))},event)}>×</button></div>)}<button type="button" className="dx-link" data-design={'script.'+tag} onClick={event=>executeAction('projects.controls.activate',{handler:()=>add(side)},event)}>+ {side==='target'?'Input':'Output'}</button></React.Fragment>)}
+      <b>Runs in</b><div className="flex"><span>Python</span><span aria-disabled="true" title="Use Run in program for the existing host broker">Revit · later</span><span aria-disabled="true" title="Use Run in program for the existing host broker">AutoCAD · later</span></div>
+      <label>Code<textarea data-design="script.code" aria-label="Script code" key={n.id+':'+n.params.code} defaultValue={n.params.code} spellCheck={false} rows={7} onBlur={e=>{if(e.target.value!==n.params.code)action.run(()=>api.setNodeParam(n.id,'code',e.target.value));}}/></label>
+      <p className="muted">Inputs arrive as arguments. Return a dictionary with one value per output.</p><b>Kind</b><div className="flex" role="group" aria-label="Pure or effect"><button type="button" aria-pressed={n.pure} onClick={event=>executeAction('projects.controls.activate',{handler:()=>action.run(()=>api.setNodeParam(n.id,'kind','pure'))},event)}>Pure</button><button type="button" aria-pressed={!n.pure} onClick={event=>executeAction('projects.controls.activate',{handler:()=>action.run(()=>api.setNodeParam(n.id,'kind','effect'))},event)}>Effect</button></div><p className="muted">{n.pure?'Re-solves on every edit and writes nothing outside the file.':'Waits for Run and stops at Approve every time. Code outside the pure subset is always an Effect.'}</p><button type="button" data-design="script.savetype" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.show('Save node type',{id:n.id})},event)}>Save as node type</button>
+    </section>;
+  }
   function NodeInspector({n, s, u, embedded = false, children}) {
     const Tag = embedded ? 'section' : 'aside';
     const sourceOf = port => { const w = s.graph.wires.find(x => x.to === n.id && x.toPort === port), a = w && s.graph.nodes.find(x => x.id === w.from); return a && a.title + ' · ' + (a.outputs.find(p => p.id === w.fromPort)?.name || w.fromPort); };
@@ -559,6 +569,8 @@
       {!embedded && <div className="muted" style={{fontSize: 'calc(12px * var(--text-scale,1))'}}>Properties</div>}
       {!embedded && <h2 style={{margin:'4px 0 0'}}>{n.title}</h2>}
       <div style={{color: SPEC.label, fontSize: 'calc(12px * var(--text-scale,1))', marginTop: 2}}>{state} · {n.pure ? 'pure' : 'side effect'}{n.kind ? ' · ' + n.kind : ''}</div>
+      {n.type==='script.python'&&<ScriptInspector n={n} u={u}/>}
+      {n.agentWork?.role==='step' && <StepHistory n={n} u={u} />}
       <div className="node-presentation" style={{display:'grid',gap:8,marginTop:16}}>
         <label>Label<input aria-label="Node label" key={n.id+':'+n.title} defaultValue={n.title} onBlur={event=>{const title=event.target.value.trim();if(title && title!==n.title)u.act(()=>api.renameNode(n.id,title));else event.target.value=n.title;}} /></label>
         <label>Icon<select aria-label="Node icon" value={n.icon || ''} onChange={event=>u.act(()=>api.setNodePresentation(n.id,{icon:event.target.value}))}><option value="">Default</option>{api.nodeIcons.map(name=><option key={name} value={name}>{name}</option>)}</select></label>
@@ -586,7 +598,7 @@
       carried = a?.status === 'Done' ? (a.output && typeof a.output === 'object' && !Array.isArray(a.output) && wire.fromPort in a.output ? a.output[wire.fromPort] : a.output) : undefined,
       listSocket = !!(out?.list || into?.list || out?.type === 'list' || into?.type === 'list'),
       [runLabel] = nodeState(b || {}, !!wire.rejected),
-      observed = wire.rejected || runLabel === 'Types do not match' ? 'Rejected' : runLabel === 'Not run' ? 'Not observed' : /^(Updating|Out of date)/.test(runLabel) ? 'Affected' : runLabel === 'Done' ? 'Compatible' : runLabel;
+      observed = wire.enabled===false?'Disabled':wire.rejected || runLabel === 'Types do not match' ? 'Rejected' : runLabel === 'Not run' ? 'Not observed' : /^(Updating|Out of date)/.test(runLabel) ? 'Affected' : runLabel === 'Done' ? 'Compatible' : runLabel;
     const shown = (name, choices) => choices.includes(wire[name]) ? wire[name] : choices[0];
     const read = (name, text, note) => <div data-wire-param={name} style={{display: 'grid', gap: 2}}><span style={labelStyle}>{name}</span><div style={field}><span style={{color: A.ink}}>{text}</span>{note && <span style={{color: A.inkMuted}}>{' · ' + note}</span>}</div></div>;
     return <Tag className={embedded ? "inspector-content" : "pane inspector"} style={{borderLeft: embedded ? 0 : '1px solid ' + A.line, padding: embedded ? 0 : 16, overflow: 'auto', minHeight: 0}} aria-label="Wire">
@@ -594,7 +606,7 @@
       <div data-wire-inspection="" style={{display: 'grid', gap: window.AH.sp.sm, marginTop: window.AH.sp.md}}>
         {read('From', (a?.title || wire.from) + '.' + (out?.name || wire.fromPort), '')}
         {read('To', (b?.title || wire.to) + '.' + (into?.name || wire.toPort), '')}
-        <label data-wire-param="Rule" style={{display: 'grid', gap: 2}}><span style={labelStyle}>Rule</span><input aria-label="Rule" value={wire.rule || ''} placeholder="None" onChange={e=>u.act(()=>api.setWireRule(wire.id, e.target.value))} style={field} /></label>
+        <label data-wire-param="Rule" style={{display: 'grid', gap: 2}}><span style={labelStyle}>Rule</span><input aria-label="Rule" key={wire.id+':'+wire.rule} defaultValue={wire.rule || ''} placeholder="None" onBlur={e=>{if(e.target.value!==wire.rule)u.act(()=>api.setWireRule(wire.id,e.target.value));}} style={field} /></label>
         {read('Data', out ? typeName(out) : (wire.type || 'Any'), 'derived')}
         {read('Access', listSocket ? 'List' : 'Item', 'derived')}
         {read('Direction', 'Output to input', 'derived')}
@@ -625,7 +637,8 @@
       return () => observer.disconnect();
     }, [id, handles, updateInternals]);
     const design = n.fixed ? ({'thing.session':'pin.session','thing.agent':'pin.agent','thing.you':'pin.you','thing.workshop':'pin.workshop'}[n.type]) : 'node.step';
-    return <div ref={box} data-graph-node={id} data-design={design} data-fixed={n.fixed || undefined} style={{fontSize:'calc(12px * var(--text-scale,1))'}}><div inert={c.preview || undefined}>{c.renderNode(n, selected)}</div></div>;
+    const frame=n.frameMembers || !n.fixed && n.children?.length && !n.collapsed;
+    return <div ref={box} data-graph-node={id} data-design={frame ? n.frameMembers ? 'frame.box' : 'group.frame' : !n.fixed&&n.children?.length ? 'group.node' : design} data-fixed={n.fixed || undefined} style={{fontSize:'calc(12px * var(--text-scale,1))'}}><div inert={c.preview || undefined}>{frame ? c.renderFrame(n,selected) : c.renderNode(n, selected)}</div></div>;
   }
   function FlowWire({id, sourceX, sourceY, targetX, targetY, data}) {
     // xyflow anchors at the Handle's outer edge; the spec wire meets the socket centre (Handle is 22 px wide, see SOCKET_STYLE).
@@ -734,7 +747,12 @@
         setRequestState(s.graph.nodes.length ? 'loaded' : 'empty');
     }, [s.graph.nodes.length]);
     // A node whose group is not a node at this level is drawn here, never dropped.
-    const atLevel = n => !(u.canvasTabs?.collapsed && n.fixed && n.type!=='thing.session') && !s.graph.system && !n.application && ((n.parent || null) === parent || (parent === null && !s.graph.nodes.some(x => x.id === n.parent)));
+    const atLevel = n => {
+      if(u.canvasTabs?.collapsed&&n.fixed&&n.type!=='thing.session'||s.graph.system||n.application)return false;
+      let owner=n.parent||null;const seen=new Set([n.id]);
+      while(owner&&owner!==parent){if(seen.has(owner))return false;seen.add(owner);const group=s.graph.nodes.find(x=>x.id===owner);if(!group)return parent===null;if(group.collapsed!==false)return false;owner=group.parent||null;}
+      return owner===parent;
+    };
     const scope = s.graph.id + ':' + (parent || ''), sourceNodes = s.graph.nodes.filter(atLevel);
     const visible = sourceNodes.map(n => ({...n, ...(layout.scope === scope ? layout.positions[n.id] : {})})),
       node = s.graph.nodes.find(n => n.id === selected.at(-1)),
@@ -812,10 +830,11 @@
       }
       setLayout(old => old.scope === scope && JSON.stringify(old.positions) === JSON.stringify(positions) ? old : {scope,positions});
     }, [requestState, scope, s.graph.nodes, active]);
-    React.useEffect(() => {
+    React.useLayoutEffect(() => {
       if (!active) return;
       const listener = e => {
         if (preview) return;
+        if(e.defaultPrevented)return;
         if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's') {
           if (e.defaultPrevented) return;
           e.preventDefault();
@@ -831,8 +850,16 @@
         }
         if (e.ctrlKey && e.key.toLowerCase() === 'g') {
           e.preventDefault();
-          group();
+          e.altKey ? frame() : e.shiftKey && node?.children?.length ? u.act(()=>api.ungroupNode(node.id)) : group();
         }
+        const editable=selected.filter(id=>!s.graph.nodes.find(n=>n.id===id)?.fixed);
+        const center={x:(area.current?.clientWidth/2-view.current.pan.x)/view.current.zoom,y:(area.current?.clientHeight/2-view.current.pan.y)/view.current.zoom,...(parent?{parent}:{})};
+        if(e.ctrlKey&&['c','x','v','d'].includes(e.key.toLowerCase())){e.preventDefault();u.act(()=>e.key.toLowerCase()==='c'?api.copyNodes(editable):e.key.toLowerCase()==='x'?api.cutNodes(editable):e.key.toLowerCase()==='d'?api.duplicateNodes(editable):api.pasteNodes(center));}
+        if(e.ctrlKey&&e.key.toLowerCase()==='f'){e.preventDefault();u.show('Find node');}
+        if(e.shiftKey&&!e.ctrlKey&&!e.altKey&&e.key.toLowerCase()==='a'){e.preventDefault();u.show('Add node',{point:center});}
+        if(!e.ctrlKey&&!e.altKey&&e.key.toLowerCase()==='n'){e.preventDefault();u.show('Note',{point:center});}
+        if(e.key==='F2'&&node&&!node.fixed){e.preventDefault();u.show('Rename node',{id:node.id,text:node.title});}
+        if(!e.ctrlKey&&!e.altKey&&e.key.toLowerCase()==='r'&&editable.length){e.preventDefault();u.act(()=>api.runSelection(editable));}
         if (e.key === 'Delete' && (selected.length || selectedWires.length)) {
           e.preventDefault();
           remove();
@@ -854,7 +881,14 @@
       window.addEventListener('keydown', listener);
       return () => window.removeEventListener('keydown', listener);
     });
-    React.useEffect(() => {if(!preview)u.setSelectedNodeId(selected.at(-1) || null);}, [selected.join(',')]);
+    React.useLayoutEffect(() => {if(!preview&&active)u.setSelectedNodeId(selected.at(-1) || null);}, [selected.join(','),active]);
+    React.useLayoutEffect(()=>{if(!preview&&active&&u.selectedNodeId&&!selected.includes(u.selectedNodeId)&&s.graph.nodes.some(n=>n.id===u.selectedNodeId))setSelected([u.selectedNodeId]);},[u.selectedNodeId,active]);
+    React.useLayoutEffect(()=>{
+      const nodes=new Set(s.graph.nodes.map(n=>n.id)),wires=new Set(s.graph.wires.map(w=>w.id));
+      setSelected(old=>old.some(id=>!nodes.has(id))?old.filter(id=>nodes.has(id)):old);
+      setSelectedWires(old=>old.some(id=>!wires.has(id))?old.filter(id=>wires.has(id)):old);
+      if(wireId&&!wires.has(wireId))setWireId(null);
+    },[s.graph.nodes.map(n=>n.id).join(','),s.graph.wires.map(w=>w.id).join(',')]);
     // The file is the source; xyflow keeps only what it measured (sizes) and an in-flight drag.
     React.useEffect(() => {
       setFlowNodes(old => {
@@ -862,7 +896,7 @@
         return visible.map(n => {
           const f = prior.get(n.id);
           // ComfyUI/Grasshopper: a card moves by its title bar; its fields and buttons keep the pointer.
-          return {id: n.id, type: 'archhub', data: {n}, dragHandle: '.node-header', selected: selected.includes(n.id), measured: f?.measured, dragging: f?.dragging,
+          return {id: n.id, type: 'archhub', data: {n}, zIndex:n.frameMembers||!n.fixed&&n.children?.length&&!n.collapsed?-1:0, dragHandle: '.node-header', selected: selected.includes(n.id), measured: f?.measured, dragging: f?.dragging,
             position: f?.dragging ? f.position : held.current?.[n.id] || {x: n.x, y: n.y}};
         });
       });
@@ -894,7 +928,7 @@
       Promise.resolve(u.act(() => api.moveNodes(positions))).finally(() => { if (held.current === positions) held.current = null; });
     };
     const group = async () => {
-      const g = await u.act(() => api.groupNodes(selected));
+      const g = await u.act(() => api.groupNodes(selected.filter(id=>!s.graph.nodes.find(n=>n.id===id)?.fixed)));
       if (g) setSelected([g.id]);
     };
     const remove = () => u.confirm(`Delete ${selected.length + selectedWires.length} selected item(s)?`, async () => {
@@ -941,6 +975,14 @@
       const r = area.current.getBoundingClientRect(), point = e.changedTouches?.[0] || e;
       return {x: (point.clientX - r.left - view.current.pan.x) / view.current.zoom, y: (point.clientY - r.top - view.current.pan.y) / view.current.zoom};
     };
+    const frame = async()=>{const made=await u.act(()=>api.groupNodes(selected.filter(id=>!s.graph.nodes.find(n=>n.id===id)?.fixed),true));if(made)setSelected([made.id]);};
+    const canvasActions = point=>({point:{...point,...(parent?{parent}:{})},group,frame,fit,select:ids=>setSelected(ids),selectAll:()=>setSelected(visible.map(n=>n.id)),inspectWire:id=>{setWireId(id);setSelected([]);}});
+    const renderFrame = (n,isSelected)=>{
+      const members=(n.frameMembers||n.children).map(id=>visible.find(row=>row.id===id)||s.graph.nodes.find(row=>row.id===id)).filter(Boolean);
+      const width=Math.max(241,...members.map(child=>child.x+(area.current?.querySelector('[data-graph-node="'+child.id+'"]')?.offsetWidth||241)-n.x))+24;
+      const height=Math.max(100,...members.map(child=>child.y+(area.current?.querySelector('[data-graph-node="'+child.id+'"]')?.offsetHeight||160)-n.y))+24;
+      return <div className="v22g-group-frame" data-frame={n.frameMembers?true:undefined} style={{width,height,borderColor:n.color||undefined,outline:isSelected?'2px solid var(--color-accent)':undefined}}><header className="node-header"><b data-design="group.title">{n.title}</b><span>{members.length} nodes</span>{!n.frameMembers&&<button type="button" className="button-reset nodrag" data-design="group.collapse" aria-label="Collapse group" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.setGroupCollapsed(n.id,true))},event)}>−</button>}<button type="button" className="button-reset canvas-node-menu nodrag" aria-label={n.title+' menu'} onClick={()=>u.show(n.frameMembers?'Frame menu':'Group menu',{id:n.id,selected,open:()=>openNode(n),canvas:canvasActions({x:n.x,y:n.y})})}>⋯</button></header></div>;
+    };
     const socket = (n, p, side) => {
       const locked = !!preview || p.connectable === false || p.read_only;
       return <RF.Handle type={side === 'out' ? 'source' : 'target'} position={side === 'out' ? RF.Position.Right : RF.Position.Left} id={p.id} isConnectable={!locked}
@@ -966,10 +1008,11 @@
         }
       }
       const members = [...childMembers, ...chips];
-      return <FlowCard n={n} s={s} u={u} selected={isSelected} refusal={rejected?.to.id === n.id ? rejected : null} onConvert={insertConverter} members={members} socket={(p, side = 'in') => socket(n, p, side)}
+      if(n.type==='note'&&!n.children?.length&&!n.frameMembers)return <div className="v22g-note node-header" style={{background:n.color||undefined}} onDoubleClick={()=>u.show('Note',{id:n.id,text:n.params.text||''})}>{n.params.text||n.title}</div>;
+      return <FlowCard onOpen={()=>openNode(n)} n={n} s={s} u={u} selected={isSelected} refusal={rejected?.to.id === n.id ? rejected : null} onConvert={insertConverter} members={members} socket={(p, side = 'in') => socket(n, p, side)}
         onMember={m=>{if (s.graph.nodes.some(row => row.id === m.id)) {setParent(n.id);setSelected([m.id]);} else {setParent(null);u.act(async()=>{await api.selectGraph(n.id);setSelected([m.id]);});}}}
         onDetach={(m, event) => { const under = document.elementFromPoint(event.clientX, event.clientY); if (under && under.closest && under.closest('[data-graph-node="' + n.id + '"]')) return; u.act(() => api.detachMember(n.id, {id: m.id, title: m.title, agent: m.agent || m.id}, toFlow(event))); }}
-        menu={<button className="button-reset canvas-node-menu nodrag" aria-label={n.title+' menu'} title={n.title+' actions'} onClick={event=>executeAction('projects.ds_screens.NodeMenu.16',{n,openNode,setSelected,u},event)}>⋯</button>} />;
+        menu={<button className="button-reset canvas-node-menu nodrag" aria-label={n.title+' menu'} title={n.title+' actions'} onClick={event=>executeAction('projects.ds_screens.NodeMenu.16',{n,openNode,setSelected,u,canvas:canvasActions({x:n.x,y:n.y})},event)}>⋯</button>} />;
     };
     const stale = (s.solveStale || []).filter(id => s.graph.nodes.some(n => n.id === id)).length;
     const shownIds = new Set(visible.map(n => n.id));
@@ -977,8 +1020,8 @@
       .filter(w => shownIds.has(w.from) && shownIds.has(w.to)).map(w => {
         const color = w.rejected ? A.err : wireColor(w, s.graph.nodes), shown = s.graph.wireVisibility, portVisibility = s.graph.nodes.find(n=>n.id===w.from)?.portVisibility?.[w.fromPort];
         return {id: w.id, type: 'archhub', source: w.from, target: w.to, sourceHandle: w.fromPort, targetHandle: w.toPort, selectable: !w.rejected, focusable: !w.rejected, selected: selectedWires.includes(w.id),
-          data: {color, inferred:w.inferred, route: w.route, state: w.rejected ? 'rejected' : color === A.warn ? 'affected' : 'compatible', selected: (wireId === w.id || selectedWires.includes(w.id)) && shown !== 'Hidden',
-            opacity: w.rejected ? 1 : shown==='Hidden'||portVisibility==='Hidden' ? 0 : shown==='Faint'||portVisibility==='Faint' ? .2 : .9}};
+          data: {color, inferred:w.inferred||w.enabled===false, route: w.route, state: w.rejected ? 'rejected' : color === A.warn ? 'affected' : 'compatible', selected: (wireId === w.id || selectedWires.includes(w.id)) && shown !== 'Hidden',
+            opacity: w.rejected ? 1 : shown==='Hidden'||portVisibility==='Hidden' ? 0 : shown==='Faint'||portVisibility==='Faint'||w.enabled===false ? .2 : .9}};
       });
     const fit = (persist = true) => {
       if (!visible.length || !area.current) return;
@@ -1129,14 +1172,17 @@
           u.show('Canvas menu', {
             selected,
             group,
-            remove
+            remove,
+            canvas:canvasActions(toFlow(e))
           });
         }}>
-    <CanvasContext.Provider value={{renderNode, openNode, preview:!!preview}}>
+    <CanvasContext.Provider value={{renderNode, renderFrame, openNode, preview:!!preview}}>
      <RF.ReactFlow nodes={flowNodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} nodesDraggable={!preview} nodesConnectable={!preview}
        viewport={{x: pan.x, y: pan.y, zoom}} onMove={(event,v) => {if(event instanceof window.Event) updateView({zoom:v.zoom,pan:{x:v.x,y:v.y}},false);}}
        onMoveEnd={(event, v) => { if (event instanceof window.Event) persistView(v); }} minZoom={zoomMin} maxZoom={zoomMax}
        onNodesChange={onNodesChange} onNodeClick={(event,node)=>preview ? onActivate?.() : onInspect?.({nodeId:node.id,wireId:null})} onNodeDragStop={onNodeDragStop} onNodeDoubleClick={(e, f) => preview ? onActivate?.() : openNode(f.data.n)}
+       onNodeContextMenu={(event,node)=>{event.preventDefault();event.stopPropagation();if(preview)return;const next=selected.includes(node.id)?selected:[node.id];setSelected(next);u.show(next.length>1?'Selection menu':node.data.n.frameMembers?'Frame menu':node.data.n.children?.length&&!node.data.n.fixed?'Group menu':'Node menu',{id:node.id,selected:next,open:()=>openNode(node.data.n),canvas:canvasActions(toFlow(event)),anchor:{x:event.clientX,y:event.clientY}});}}
+       onEdgeContextMenu={(event,edge)=>{event.preventDefault();event.stopPropagation();if(preview||edge.id==='rejected')return;setWireId(edge.id);setSelected([]);u.show('Wire menu',{wireId:edge.id,canvas:canvasActions(toFlow(event)),anchor:{x:event.clientX,y:event.clientY}});}}
        onEdgesChange={changes => setSelectedWires(old => {const next=new Set(old);for(const c of changes)if(c.type==='select'&&c.id!=='rejected')c.selected?next.add(c.id):next.delete(c.id);return [...next];})}
        onConnect={c => connect({id: c.source, port: c.sourceHandle}, {id: c.target, port: c.targetHandle})}
        onConnectEnd={(e, state) => {
@@ -1147,10 +1193,10 @@
        }}
        onEdgeClick={(e, edge) => { if (edge.id !== 'rejected') { setWireId(edge.id); if(!e.shiftKey&&!e.ctrlKey)setSelected([]); } }}
        onPaneClick={() => { if(preview){onActivate?.();return;} setSelected([]); setWireId(null); setSelectedWires([]); setRejected(null); }}
-       selectionOnDrag panOnDrag={[1]} panActivationKeyCode="Space" multiSelectionKeyCode="Shift" selectionKeyCode={null} deleteKeyCode={null}
+       selectionOnDrag panOnDrag={[1]} panActivationKeyCode="Space" multiSelectionKeyCode={['Shift','Control','Meta']} selectionKeyCode={null} deleteKeyCode={null}
        zoomOnDoubleClick={false} connectionLineStyle={{stroke: A.cyan, strokeWidth: 2}} proOptions={{hideAttribution: true}}>{pinFrame && <RF.ViewportPortal><div className="v22g-pinframe" data-folded={u.canvasTabs?.collapsed || undefined} style={{transform:`translate(${pinFrame.x}px,${pinFrame.y}px)`,width:256,height:pinFrame.height}}><div><b>On every canvas</b>{!preview && <button type="button" className="button-reset nodrag nopan" aria-label={'On every canvas · '+(u.canvasTabs.collapsed?'Expand':'Collapse')} aria-expanded={!u.canvasTabs.collapsed} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>u.saveCanvasTabs({...u.canvasTabs,collapsed:!u.canvasTabs.collapsed}))},event)}>{u.canvasTabs.collapsed?'Show Agent, You, Workshop':'Collapse'}</button>}</div></div></RF.ViewportPortal>}</RF.ReactFlow>
     </CanvasContext.Provider>
-    <div data-canvas-overlay="" className="canvas-toolbar">{embedded&&(s.sessionBreadcrumbs||[]).length>0&&<button type="button" className="dx-quiet" aria-label="Parent session" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.leaveSession())},event)}>{s.sessionBreadcrumbs.map(row=>row.title).join(' / ')} / {s.graph.name} · ← Parent</button>}{parent && <button type="button" className="dx-quiet" onClick={event=>executeAction("projects.ds_screens.Parent.6",{parent,s,setParent,setSelected},event)}>← {s.graph.nodes.find(node=>node.id===parent)?.title || 'Parent'}</button>}<Btn variant="controls" sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom">{Math.round(zoom * 100)}%</button><Btn variant="controls" sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><button type="button" className="dx-quiet" onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</button></div>
+    <div data-canvas-overlay="" className="canvas-toolbar">{embedded&&(s.sessionBreadcrumbs||[]).length>0&&<button type="button" className="dx-quiet" aria-label="Parent session" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.leaveSession())},event)}>{s.sessionBreadcrumbs.map(row=>row.title).join(' / ')} / {s.graph.name} · ← Parent</button>}{parent && <button type="button" data-design="group.back" className="dx-quiet" onClick={event=>executeAction("projects.ds_screens.Parent.6",{parent,s,setParent,setSelected},event)}>← {s.graph.nodes.find(node=>node.id===parent)?.title || 'Parent'}</button>}<Btn variant="controls" sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom">{Math.round(zoom * 100)}%</button><Btn variant="controls" sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><button type="button" className="dx-quiet" onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</button></div>
     {embedded && <><div data-canvas-summary="" aria-label="Workflow status">{[...stateCounts].map(([label,count])=>count+' '+label).join(' · ')}</div></>}
    </div>
    {!externalInspector && inspected && <NodeInspector n={inspected} s={s} u={u} />}
@@ -1199,6 +1245,7 @@
   }
   window.UI.RunModeChip = RunModeChip;
   window.UI.Canvas = Canvas;
+  window.UI.AddField = AddField;
   window.UI.NodeInspector = NodeInspector;
   window.UI.WireInspector = WireInspector;
   window.UI.fitCanvasViewport = fitCanvasViewport;
@@ -1306,12 +1353,12 @@ function projectsdsscreensjsxRun15({api,u}, event) {
           };
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }
-function projectsdsscreensjsxNodeMenu16({n,openNode,setSelected,u}, event) {
+function projectsdsscreensjsxNodeMenu16({n,openNode,setSelected,u,canvas}, event) {
   const handler = () => {
                   setSelected([n.id]);
                   u.show('Node menu', {
                     id: n.id,
-                    open: () => openNode(n)
+                    open: () => openNode(n), canvas, selected: [n.id]
                   });
                 };
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;

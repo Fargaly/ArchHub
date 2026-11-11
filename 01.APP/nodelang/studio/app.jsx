@@ -32,7 +32,7 @@
     const surfaces=[panel,mix(panel,toward,.035),mix(panel,toward,.045),mix(panel,toward,.07),read('bg-canvas'),mix(panel,'#000000',light?.02:.33)];
     const ensure=(fg,backgrounds)=>{let value=fg,k=0;while(backgrounds.some(bg=>ratio(value,bg)<4.6)&&k<1){k+=.03;value=mix(fg,toward,k);}return value;};
     const soft=mix(accent,panel,light?.86:.8),set=(key,value)=>document.documentElement.style.setProperty('--v22g-'+key,value);
-    set('accent-soft',soft);set('accent-ink',ensure(read(light?'accent-press':'accent-hi'),[...surfaces,soft,mix(soft,accent,.2)]));
+    set('hover',surfaces[3]);set('accent-soft',soft);set('accent-ink',ensure(read(light?'accent-press':'accent-hi'),[...surfaces,soft,mix(soft,accent,.2)]));
     set('ink2',ensure(read('ink-soft'),surfaces));set('ink3',ensure(mix(read('ink-soft'),panel,.2),surfaces));
   }
   function App() {
@@ -161,7 +161,7 @@
     }, []);
     const settingsOrigin = React.useRef('home');
     React.useEffect(() => {
-      if (window.performance.getEntriesByType('navigation')[0]?.type === 'reload'
+      if (window.performance.getEntriesByType?.('navigation')?.[0]?.type === 'reload'
           && s.sessionFile && !api.getSessionDocument?.()?.properties?.taskContext) {
         setTask('');
         setCanvasOpened(true);
@@ -576,12 +576,25 @@
   {modal && <Dialog key={modal.kind + ':' + (modal.id || '')} modal={modal} close={close} />}
  </Ctx.Provider>;
   }
+  function NodeTypeForm({modal,close}) {
+    const s=useData(),api=window.UI.api,ids=modal.ids||[modal.id],nodes=s.graph.nodes;
+    const selected=new Set(ids),pending=[...ids];while(pending.length)for(const id of nodes.find(n=>n.id===pending.pop())?.children||[])if(!selected.has(id)){selected.add(id);pending.push(id);}
+    const parameters=nodes.filter(n=>selected.has(n.id)).flatMap(n=>(n.paramDefs||[]).filter(p=>n.type!=='script.python'||p.id==='timeout').map(p=>({node:n.id,key:p.id,name:p.name||p.id,value:n.params[p.id]})));
+    const [kind,setKind]=React.useState('pure'),[scanAttempt,setScanAttempt]=React.useState(0);
+    const [name,setName]=React.useState(nodes.find(n=>n.id===modal.id)?.title||'Node type'),[category,setCategory]=React.useState('Scripts'),[picked,setPicked]=React.useState(modal.id&&nodes.find(n=>n.id===modal.id)?.type==='script.python'?parameters.map(p=>p.node+':'+p.key):[]),[scan,setScan]=React.useState(null),[error,setError]=React.useState(''),[busy,setBusy]=React.useState(false);
+    const publicParameters=parameters.filter(p=>picked.includes(p.node+':'+p.key)).map(({node,key})=>({node,key}));
+    React.useEffect(()=>{let current=true;setScan(null);setError('');if(!name.trim())return;api.scanNodeType(ids,name,category,publicParameters).then(result=>{if(current){setScan(result);setError('');}},e=>{if(current)setError(e.message);});return()=>{current=false;};},[name,category,JSON.stringify(picked),scanAttempt]);
+    const save=async()=>{setBusy(true);try{await api.saveNodeType(ids,name,category,publicParameters,scan.pure?kind:"effect");close();}catch(e){setError(e.message);}finally{setBusy(false);}};
+    const requestState=error?'error':!name.trim()?'empty':scan?'loaded':'waiting';
+    return <div className="v22g-node-type"><label>Name<input data-design="field.name" aria-label="Node type name" value={name} onChange={e=>setName(e.target.value)}/></label><div className="flex"><label>Category<select data-design="field.category" aria-label="Category" value={category} onChange={e=>setCategory(e.target.value)}>{['Scripts','Files','Checks','Project','Skills: yours'].map(c=><option key={c}>{c}</option>)}</select></label><label>Kind<div className="flex" role="group" aria-label="Pure or effect"><button type="button" disabled={!scan?.pure} title={!scan?.pure?"This definition contains effects":undefined} aria-pressed={!!scan?.pure&&kind==="pure"} onClick={event=>executeAction('projects.controls.activate',{handler:()=>setKind("pure")},event)}>Pure</button><button type="button" aria-pressed={!scan?.pure||kind==="effect"} onClick={event=>executeAction('projects.controls.activate',{handler:()=>setKind("effect")},event)}>Effect</button></div></label></div><b>Sockets</b>{nodes.filter(n=>selected.has(n.id)).map(n=><p key={n.id}>{n.inputs.length?n.inputs.map(p=>p.name).join(', '):'No inputs'} → {n.outputs.length?n.outputs.map(p=>p.name).join(', '):'No outputs'}</p>)}<b>Public parameters</b><p>Ticked ones appear on the node. The others stay as they are inside.</p>{parameters.map(p=><label className="flex" key={p.node+':'+p.key}><input type="checkbox" checked={picked.includes(p.node+':'+p.key)} onChange={e=>setPicked(old=>e.target.checked?[...old,p.node+':'+p.key]:old.filter(key=>key!==p.node+':'+p.key))}/>{p.name}<span>{String(p.value)}</span></label>)}{!parameters.length&&<p>It has no parameters.</p>}{requestState==='waiting'&&<p role="status">Checking the selected nodes…</p>}{requestState==='empty'&&<p>Name the node type to check it.</p>}{requestState==='loaded'&&<p role="status">No embedded credentials detected. {scan.paths?'Local paths are present; expose them as parameters before sharing.':scan.pure?'Pure nodes only.':'Effects keep their Run and Approve boundary.'}</p>}{requestState==='error'&&<p role="alert">{error}<button type="button" onClick={event=>executeAction('projects.controls.activate',{handler:()=>setScanAttempt(value=>value+1)},event)}>Retry check</button></p>}<div className="flex"><button type="button" data-design="action.cancel" onClick={event=>executeAction('projects.controls.activate',{handler:close},event)}>Cancel</button><button type="button" data-design="action.save" disabled={!scan||busy||!name.trim()} onClick={event=>executeAction('projects.controls.activate',{handler:save},event)}>Save</button></div></div>;
+  }
   function Dialog({
     modal: m,
     close
   }) {
     const s = useData(),
       u = window.UI.useApp();
+    const formAction=window.UI.useAction();
     const [text, setText] = React.useState(m.text || ''),
       [extra, setExtra] = React.useState(''),
       [taskWorkspace, setTaskWorkspace] = React.useState(''),
@@ -621,7 +634,13 @@
       const result = await u.act(fn);
       if (result) close();
     };
+    const saveForm=async fn=>{const result=await formAction.run(fn);if(result)close();};
     const k = m.kind;
+    if(k==='Save node type')return <div className="overlay"><section ref={ref} className="dialog v22g-form" role="dialog" aria-modal="true" aria-label={m.skill?'Save as skill':'Save as node type'}><h2>{m.skill?'Save as skill':'Save as node type'}</h2><NodeTypeForm modal={m} close={close}/></section></div>;
+    if(['Rename node','Note','Wire rule','Node colour','Find node','Add node'].includes(k))return <div className="overlay" onMouseDown={e=>{if(e.target===e.currentTarget)close();}}><section ref={ref} className="dialog v22g-form" role="dialog" aria-modal="true" aria-label={k}><h2>{k==='Rename node'?'Rename':k==='Note'?'Add note':k}</h2><window.UI.ActionStatus action={formAction}/>
+      {k==='Find node'||k==='Add node'?<><input data-design={k==='Find node'?'find.input':'addnode.input'} aria-label={k==='Find node'?'Find a node':'Add node'} placeholder={k==='Find node'?'Find a node…':'Search the Library…'} value={query} onChange={e=>setQuery(e.target.value)}/><div className="v22g-results">{(k==='Find node'?s.graph.nodes:s.libraryPorts.filter(n=>!n.noEngine)).filter(n=>n.title.toLowerCase().includes(query.toLowerCase())).map(n=><button type="button" className="listbutton" key={n.id} onClick={event=>executeAction('projects.controls.activate',{handler:()=>saveForm(async()=>{if(k==='Find node'){u.setSelectedNodeId(n.id);return {ok:true};}const node=m.wireId?await api.insertNodeOnWire(m.wireId,n.id,m.point):await api.addNode(n.id,m.point);u.setSelectedNodeId(node.id);return node;})},event)}>{n.title}</button>)}</div></>:k==='Node colour'?<label>Colour<input type="color" aria-label="Node colour" value={text||s.graph.nodes.find(n=>n.id===m.id)?.color||'#d97757'} onChange={e=>setText(e.target.value)}/></label>:<label>{k==='Wire rule'?'Only pass values when':k==='Note'?'Note':'Name'}{k==='Note'?<textarea data-design="field.note" aria-label="Note" value={text} onChange={e=>setText(e.target.value)}/>:<input data-design={k==='Wire rule'?'field.only-pass-values-when':'field.rnt'} aria-label={k==='Wire rule'?'Only pass values when':'Node name'} value={text} onChange={e=>setText(e.target.value)}/>}</label>}
+      {k==='Wire rule'&&<p className="muted">Use the existing wire condition expression, for example value &gt; 0.</p>}{!['Find node','Add node'].includes(k)&&<div className="flex"><button type="button" data-design="action.cancel" onClick={event=>executeAction('projects.controls.activate',{handler:close},event)}>Cancel</button><button type="button" data-design={k==='Rename node'?'action.rename':'action.save'} disabled={k!=='Wire rule'&&!text.trim()} onClick={event=>executeAction('projects.controls.activate',{handler:()=>saveForm(()=>k==='Rename node'?api.renameNode(m.id,text):k==='Note'?(m.id?api.setNodeParam(m.id,'text',text):api.addNote(text,m.point)):k==='Wire rule'?api.setWireRule(m.id,text):api.setNodePresentation(m.id,{color:text}))},event)}>{k==='Rename node'?'Rename':'Save'}</button></div>}</section></div>;
+    if(k==='Add parameter')return <div className="overlay" ref={ref} onMouseDown={event=>{if(event.target===event.currentTarget)close();}}><window.UI.AddField modal kind="Parameter" title="Add parameter" sub="A value on this node" onClose={close} onAdd={input=>executeAction('appShell.AddParameter.28',{api,m,input,u})}/></div>;
     if(k==='Approve' && s.approvals.find(card=>card.id===m.id)?.approvalKind==='canvas') return <section ref={ref} className="v22g-approval-pop" role="dialog" aria-label="Approve Canvas Run" style={{position:'fixed',zIndex:1000,width:440,maxWidth:'calc(100vw - 32px)',left:Math.max(16,Math.min(m.anchor?.x || 400,window.innerWidth-456)),top:Math.max(16,Math.min(m.anchor?.y || 180,window.innerHeight-360))}}><window.UI.ApprovalCard id={m.id} /></section>;
     if (modalActions[k] && !api.supportsAction(modalActions[k])) return null;
     let body;
@@ -679,13 +698,7 @@
       }, event)}>Restart and update</Btn><Btn onClick={event => executeAction("appShell.ReadStatus.27", {
         api,
         u
-      }, event)}>Read status</Btn></>;else if (k === 'Add parameter') body = <><label className="grid">Parameter name<input aria-label="Parameter name" value={text} onChange={e => setText(e.target.value)} /></label><label className="grid">Type<select aria-label="Parameter type" value={mode === 'All' ? 'text' : mode} onChange={e => setMode(e.target.value)}>{['text', 'number', 'boolean'].map(t => <option key={t}>{t}</option>)}</select></label><Btn p disabled={!text.trim()} onClick={event => executeAction("appShell.AddParameter.28", {
-        api,
-        m,
-        mode,
-        saved,
-        text
-      }, event)}>Add parameter</Btn></>;else if (k === 'Approve') body = <window.UI.ApprovalCard id={m.id} />;else if (k === 'Search') {
+      }, event)}>Read status</Btn></>;else if (k === 'Approve') body = <window.UI.ApprovalCard id={m.id} />;else if (k === 'Search') {
       const searchOrder = ['Agents', 'Workflows', 'Hosts', 'Settings', 'Chats', 'Pages', 'Add node'];
       const items = [...s.catalogue.map(c => ({
         label: c.name,
@@ -733,7 +746,7 @@
         action: () => u.go(r)
       }))].filter(x => (mode === 'All' || x.group === mode) && x.label.toLowerCase().includes(query.toLowerCase()))
         .sort((a, b) => searchOrder.indexOf(a.group) - searchOrder.indexOf(b.group));  // stable: agents, workflows, hosts, settings first; nodes last
-      body = <><input aria-label="Search everything" placeholder="Find an agent, workflow, program, setting, node or chat…" value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => {
+      body = <><input data-design="palette.input" aria-label="Search everything" placeholder="Find an agent, workflow, program, setting, node or chat…" value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => {
           if (e.key === 'Enter') items[0]?.action();
         }} /><div className="flex">{['All', ...searchOrder].map(t => <Btn key={t} sm ghost plain aria-pressed={mode === t} onClick={event => executeAction("appShell.Control.29", {
             setMode,
@@ -741,7 +754,7 @@
           }, event)}>{t}</Btn>)}</div><div style={{
           maxHeight: '55vh',
           overflow: 'auto'
-        }}>{items.map((item, i) => <button className="listbutton spread" key={i} onClick={event => executeAction("appShell.Control.30", {
+        }}>{items.map((item, i) => <button data-design="palette.row" className="listbutton spread" key={i} onClick={event => executeAction("appShell.Control.30", {
             item
           }, event)}><span>{item.label}</span><span className="muted" style={{
               fontSize: 'calc(11px * var(--text-scale,1))'
@@ -1019,7 +1032,7 @@
       }, event)}>Updates &amp; About</Btn></>;else if (k === 'Ask why') body = <p>The read-only steps find untagged doors and check the prefix before the write step. Approve once runs that proposed change.</p>;else if (k === 'Website') body = <><h2>ArchHub</h2><p>The same catalogue powers the app and its documentation.</p><Btn onClick={event => executeAction("appShell.OpenDocs.97", {
         u
       }, event)}>Open docs</Btn></>;else body = <p>{m.text || 'Choose an action from the app.'}</p>;
-    if (['Node menu', 'Canvas menu', 'App menu', 'Tray', 'Port menu', 'Task tab menu', 'Open tasks', 'Task message menu', 'Canvas attachments'].includes(k)) return <window.UI.ContextMenu kind={k} nodeId={m.id} message={m.message} taskId={m.taskId} port={m.port} paramKey={m.paramKey} open={m.open} selected={m.selected} group={m.group} remove={m.remove} anchor={m.anchor} close={close} />;
+    if (['Node menu', 'Group menu', 'Frame menu', 'Wire menu', 'Selection menu', 'Canvas menu', 'App menu', 'Tray', 'Port menu', 'Task tab menu', 'Open tasks', 'Task message menu', 'Canvas attachments'].includes(k)) return <window.UI.ContextMenu kind={k} nodeId={m.id} wireId={m.wireId} canvas={m.canvas} message={m.message} taskId={m.taskId} port={m.port} paramKey={m.paramKey} open={m.open} selected={m.selected} group={m.group} remove={m.remove} anchor={m.anchor} close={close} />;
     return <div className="overlay" onMouseDown={e => {
       if (e.target === e.currentTarget) close();
     }}><section ref={ref} className="dialog" role="dialog" aria-modal="true" aria-label={k} style={{
@@ -1249,15 +1262,10 @@
   function appShellAddParameter28({
     api,
     m,
-    mode,
-    saved,
-    text
+    input,
+    u
   }, event) {
-    const handler = () => saved(() => api.addNodeParameter(m.id, {
-      label: text,
-      type: mode,
-      value: mode === 'number' ? 0 : mode === 'boolean' ? false : ''
-    }));
+    const handler = () => api.addNodeParameter(m.id,input);
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
   }
   function appShellControl29({

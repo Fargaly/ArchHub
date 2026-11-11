@@ -15,6 +15,8 @@
     paramKey,
     open,
     selected = [],
+    wireId,
+    canvas,
     group,
     remove,
     close,
@@ -25,7 +27,8 @@
       actionState = window.UI.useAction(),
       n = s.graph.nodes.find((n) => n.id === nodeId);
     const menuRef = React.useRef(null);
-    React.useLayoutEffect(()=>{menuRef.current?.querySelector('button:not(:disabled)')?.focus({preventScroll:true});},[kind,nodeId,message?.id]);
+    const [more,setMore]=React.useState(false);
+    React.useLayoutEffect(()=>{menuRef.current?.querySelector('button:not(:disabled)')?.focus({preventScroll:true});},[kind,nodeId,message?.id,more]);
     const run = async (fn) => {
       const result = await actionState.run(fn);
       if (result?.approvalId) u.show('Approve', {
@@ -55,28 +58,56 @@
         ['Show on Home', 'home', '', () => run(async () => {await api.setTaskSession(nodeId,{homePinned:true});u.setTask(nodeId);u.go('home');return {ok:true};})]],
         [['Close tab', 'close', 'Ctrl W', () => run(() => u.closeTaskTab(nodeId))],
         ['Close other tabs', 'close', '', () => run(async () => {for (const row of [...u.canvasTabs.tabs]) if(row.id !== nodeId) await u.closeTaskTab(row.id);}), false, u.canvasTabs.tabs.length<2]]];
+    } else if (kind === 'Wire menu') {
+      const wire=s.graph.wires.find(w=>w.id===wireId);
+      if(!wire)return null;
+      groups=[[['Add rule', 'edit', '',()=>u.show('Wire rule',{id:wire.id,text:wire.rule||''})],
+        [wire.enabled===false?'Enable':'Disable','stop','',()=>run(()=>api.setWireEnabled(wire.id,wire.enabled===false))],
+        ['Insert Convert','link','',()=>run(()=>api.insertConvertOnWire(wire.id))],
+        ['Insert node here','plus','',()=>u.show('Add node',{wireId:wire.id,point:canvas?.point})],
+        ['Show in Inspector','settings','',()=>{close();canvas?.inspectWire?.(wire.id);}]],
+        [['Delete','trash','Del',()=>run(()=>api.deleteWire(wire.id)),true]]];
     } else if (kind === 'Port menu' && n) {
       const param = !n.bind && n.parameterSchema?.find(p =>
         p.editable && p.key !== 'engine' && (paramKey === p.key || port === 'param:' + p.key));
       groups = [['Visible', 'Faint', 'Hidden'].map(v => [v + ' wires', 'link', '', () => actionState.run(() => api.setPortVisibility(n.id, port, v))])];
+      const connected=s.graph.wires.filter(w=>w.from===n.id&&w.fromPort===port||w.to===n.id&&w.toPort===port);
+      groups.unshift([['Disconnect','close','',()=>run(()=>api.deleteSelection([],connected.map(w=>w.id))),false,!connected.length],['Show compatible nodes','plus','',()=>u.show('Compatible nodes',{endpoint:{id:n.id,side:n.outputs.some(p=>p.id===port)?'out':'in',port}})]]);
       if (param && api.promoteParam) groups.unshift([[param.promoted ? 'Return to inline parameter' : 'Expose as node', 'link', '', () =>
         run(() => param.promoted ? api.demoteParam(n.id, param.key) : api.promoteParam(n.id, param.key))]]);
-    } else if (kind === 'Node menu' && n) groups = [[['Open', 'arrow', 'Enter', () => {
-      close();
-      if (open) open();else u.go('canvas');
-    }], ['Properties', 'settings', '', () => {
-      close();
-      u.show('Node', {id: n.id});
-    }], ['Output', 'eye', '', () => u.show('Node output', {
-      id: n.id
-    })]], [['Rerun', 'refresh', '', () => run(() => api.runNode(n.id))], ['Run to here', 'play', '', () => run(() => api.runToHere(n.id))], [n.frozen ? 'Unfreeze' : 'Freeze', 'shield', '', () => actionState.run(() => api.setNodeFlags(n.id, {
-      frozen: !n.frozen
-    }))], [n.pinned ? 'Unpin output' : 'Pin output', 'pin', '', () => actionState.run(() => api.setNodeFlags(n.id, {
-      pinned: !n.pinned
-    }))]], [['Fork', 'canvas', '', () => run(() => api.forkNode(n.id))], ['Repeat this', 'clock', '', () => u.schedule(n.id)], ['Trace back', 'back', '', () => u.trace(n.id, 'back')], ['Trace forward', 'arrow', '', () => u.trace(n.id, 'forward')], ...(n.children ? [['Ungroup', 'group', '', () => run(() => api.ungroupNode(n.id))]] : [])], [['Delete…', 'trash', 'Del', () => u.confirm('Delete ' + n.title + '?', () => api.deleteNode(n.id)), true]]];else if (kind === 'Canvas menu') groups = [[['Add node', 'plus', 'Ctrl K', () => u.show('Search')], ['Arrange', 'arrange', '', () => run(api.arrangeGraph)], ['Group · Ctrl G', 'group', 'Ctrl G', () => actionState.run(() => {
-      if (typeof group !== 'function') throw Error('Select nodes on Canvas and reopen the Group menu.');
-      return group();
-    }), false, selected.length < 2], ['Save as skill', 'pin', '', () => u.show('Save skill')]], [['Delete…', 'trash', 'Del', () => actionState.run(() => { if (typeof remove !== 'function') throw Error('Select nodes on Canvas and reopen the Delete menu.'); return remove(); }), true]]];else if (kind === 'Tray') groups = [[['Open ArchHub', 'home', '', () => run(() => api.windowAction('open'))], ['BABOOM', 'brain', 'F2', () => {
+    } else if ((kind === 'Node menu' || kind === 'Group menu' || kind === 'Frame menu') && n) {
+      const group=n.children?.length>0&&!n.fixed,frame=!!n.frameMembers;
+      if(frame)groups=[[['Rename','edit','F2',()=>u.show('Rename node',{id:n.id,text:n.title})],['Colour','settings','',()=>u.show('Node colour',{id:n.id})],['Select contents','canvas','',()=>{canvas?.select?.(n.frameMembers);close();}],['Remove frame, keep nodes','close','',()=>run(()=>api.ungroupNode(n.id))]]];
+      else if(group)groups=[[['Open','arrow','Enter',()=>{close();open?.();}],
+        [n.collapsed?'Expand':'Collapse','group','',()=>run(()=>api.setGroupCollapsed(n.id,!n.collapsed))],
+        ['Rename','edit','F2',()=>u.show('Rename node',{id:n.id,text:n.title})],['Colour','settings','',()=>u.show('Node colour',{id:n.id})],
+        ['Select contents','canvas','',()=>{canvas?.select?.(n.children);close();}]],
+        [['Save as skill','library','',()=>u.show('Save node type',{id:n.id,skill:true})],['Save as node type','library','',()=>u.show('Save node type',{id:n.id})]],
+        [['Ungroup','group','',()=>run(()=>api.ungroupNode(n.id))],['Delete group and nodes','trash','Del',()=>u.confirm('Delete '+n.title+' and its nodes?',()=>api.deleteGroup(n.id)),true]]];
+      else groups=[[['Properties','settings','',()=>{close();u.setSelectedNodeId(n.id);}],
+        ...(!n.fixed||n.type==='thing.session'?[['Add parameter','plus','',()=>u.show('Add parameter',{id:n.id})]]:[]),
+        ['Show output','eye','',()=>u.show('Node output',{id:n.id})],['Ask the agent','brain','',()=>{close();u.setSelectedNodeId(n.id);u.setTaskFace('split');}]],
+        [['Rerun','refresh','R',()=>run(()=>api.runNode(n.id))],['Run to here','play','',()=>run(()=>api.runToHere(n.id))],
+        [n.frozen?'Unfreeze':'Freeze','shield','',()=>run(()=>api.setNodeFlags(n.id,{frozen:!n.frozen}))],
+        [n.bypassed?'Unbypass':'Bypass','link','',()=>run(()=>api.setNodeFlags(n.id,{bypassed:!n.bypassed}))]],
+        [['Duplicate','canvas','Ctrl D',()=>run(()=>api.duplicateNodes([n.id]))],['Copy','docs','Ctrl C',()=>run(()=>api.copyNodes([n.id]))],['Cut','edit','Ctrl X',()=>run(()=>api.cutNodes([n.id]))],
+        ['Rename','edit','F2',()=>u.show('Rename node',{id:n.id,text:n.title})],['Colour','settings','',()=>u.show('Node colour',{id:n.id})]],
+        [['Group','group','Ctrl G',()=>run(()=>canvas?.group?.()),false,selected.length<2],['Frame','canvas','Ctrl Alt G',()=>run(()=>canvas?.frame?.()),false,selected.length<1],
+        ...(n.type==='script.python'?[['Save as node type','library','',()=>u.show('Save node type',{id:n.id})]]:[]),
+        ['More','more','',()=>setMore(true)]],
+        [['Delete','trash','Del',()=>u.confirm('Delete '+n.title+'?',()=>api.deleteNode(n.id)),true,n.fixed?'Pinned nodes stay on this task.':false]]];
+    } else if (kind === 'Selection menu') {
+      const editable=selected.filter(id=>!s.graph.nodes.find(n=>n.id===id)?.fixed);
+      groups=[[['Run '+editable.length+' steps','play','R',()=>run(()=>api.runSelection(editable))],['Ask the agent','brain','',()=>{close();u.setTaskFace('split');}]],
+        [['Group','group','Ctrl G',()=>run(()=>canvas?.group?.())],['Frame','canvas','Ctrl Alt G',()=>run(()=>canvas?.frame?.())],['Save as skill','library','',()=>u.show('Save node type',{ids:editable,skill:true})]],
+        [['Align left','arrange','',()=>run(()=>api.alignNodes(editable,'x'))],['Align top','arrange','',()=>run(()=>api.alignNodes(editable,'y'))]],
+        [['Duplicate','canvas','Ctrl D',()=>run(()=>api.duplicateNodes(editable))],['Copy','docs','Ctrl C',()=>run(()=>api.copyNodes(editable))],['Cut','edit','Ctrl X',()=>run(()=>api.cutNodes(editable))]],
+        [['Delete '+editable.length+' nodes','trash','Del',()=>u.confirm('Delete '+editable.length+' nodes?',()=>api.deleteSelection(editable)),true]]];
+    } else if (kind === 'Canvas menu') groups=[[['Add node here','plus','Shift A',()=>u.show('Add node',{point:canvas?.point})],['Paste here','docs','Ctrl V',()=>run(()=>api.pasteNodes(canvas?.point))],['Add note','edit','N',()=>u.show('Note',{point:canvas?.point})],['Find a node','search','Ctrl F',()=>u.show('Find node')]],
+      [['Select all','canvas','Ctrl A',()=>{canvas?.selectAll?.();close();}],['Arrange','arrange','',()=>run(api.arrangeGraph)],['Fit','fit','',()=>{canvas?.fit?.();close();}]],
+      [['Undo','undo','Ctrl Z',()=>run(api.undo)],['Redo','redo','Ctrl Shift Z',()=>run(api.redo)]],
+      [['Ask the agent','brain','',()=>{close();u.setTaskFace('split');}],['Show the thread','workshop','Ctrl \\',()=>{close();u.setTaskFace('split');}]]];
+    else if (kind === 'Tray') groups = [[['Open ArchHub', 'home', '', () => run(() => api.windowAction('open'))], ['BABOOM', 'brain', 'F2', () => {
       close();
       u.go('baboom');
     }], ['Stop everything', 'stop', '', () => run(api.stopEverything)]], [['Hide', 'eye', '', () => run(() => api.windowAction('hide'))], ['Quit', 'close', '', () => run(() => api.windowAction('quit')), true]]];else {
@@ -120,6 +151,7 @@
         handleContextmenusjsx1
       })(id, ...args);
     }
+    if(more&&kind==='Node menu'&&n)groups=[[['Back','back','',()=>setMore(false)]],[[n.pinned?'Unpin output':'Pin output','pin','',()=>run(()=>api.setNodeFlags(n.id,{pinned:!n.pinned}))],['Fork','canvas','',()=>run(()=>api.forkNode(n.id))],['Repeat this','clock','',()=>{close();u.schedule(n.id);}]],[[ 'Trace back','back','',()=>{close();u.trace(n.id,'back');}],['Trace forward','arrow','',()=>{close();u.trace(n.id,'forward');}]]];
     if (n?.agentWork?.runnable === false || n?.agentWork?.role === 'session') groups = groups.map(group=>group.filter(row=>!['Rerun','Run to here','Repeat this'].includes(row[0])));
     return <><div className="context-dismiss" onMouseDown={close} /><section ref={menuRef} className="context-menu" data-design={kind === 'Open tasks' ? 'tab.picker' : undefined} role="menu" aria-label={kind} style={{
         left,

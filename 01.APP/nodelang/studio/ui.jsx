@@ -268,13 +268,16 @@
         borderRadius: A.rad.lg,
         padding: 16,
         display: 'grid',
-        gap: 10
+        gap: 10,
+        maxHeight: c.approvalKind === 'canvas' ? 324 : undefined,
+        height: c.approvalKind === 'canvas' ? 324 : undefined,
+        overflowY: c.approvalKind === 'canvas' ? 'auto' : undefined
       }}>
         <div className="flex" style={{alignItems: 'flex-start', gap: 12}}>
           <div className="fill"><h2 style={{fontSize: 15, margin: 0}}>{c.title}</h2><p className="muted" style={{fontSize: 12, margin: '4px 0 0'}}>{c.who} asked</p></div>
           <Chip c={c.status === 'pending' ? A.warn : c.status === 'failed' ? A.err : A.ok}>{c.status === 'pending' ? 'Needs your OK' : word}</Chip>
         </div>
-        {c.summary && <p style={{fontSize: 13, margin: 0, color: A.inkSoft}}>{c.summary}</p>}
+        {c.summary && <p style={{fontSize: 13, margin: 0, color: A.inkSoft, lineHeight: c.approvalKind === 'canvas' ? 1.45 : undefined}}>{c.summary}</p>}
         {c.text ? <div><div style={{fontSize: 11, color: A.inkSoft, marginBottom: 4}}>{c.textLabel || 'Text'}</div><pre style={{margin: 0, whiteSpace: 'pre-wrap', font: '13px/1.45 Inter, sans-serif', background: A.bgSoft, border: '1px solid ' + A.line, borderRadius: A.rad.md, padding: '10px 12px'}}>{c.text}</pre></div> : null}
         {decisionError && <p role="alert">{decisionError}</p>}
         {c.status === 'pending' ? <div className="flex" style={{gap: 8}}><Btn p sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.ApproveOnce.13", {decide}, event)}>Approve</Btn>{c.approvalKind==='canvas' && <Btn sm disabled={busy} onClick={event=>executeAction('projects.controls.activate',{handler:()=>{const key=JSON.stringify(['task-file',c.taskId || u.task]);u.setComposerDraft(current=>({...current,[key]:{text:'Why does '+c.title+' need approval?',revision:(current[key]?.revision||0)+1}}));u.setTaskFace('split');u.close();}},event)}>Ask why</Btn>}<Btn sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.Decline.15", {decide}, event)}>{c.approvalKind==='canvas'?'Reject':'Deny'}</Btn></div> : <p style={{margin: 0, color: c.status === 'approved' ? A.ok : c.status === 'failed' ? A.err : A.inkSoft}}>{word}</p>}

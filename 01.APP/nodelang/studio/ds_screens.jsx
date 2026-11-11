@@ -509,7 +509,7 @@
     return <D.Node className="v22g-node" data-pinned-card={pinned || undefined} data-design={!n.fixed ? 'node.' + (n.status==='Running'?'running':n.status==='Done'?'done':/approval/i.test(n.status)?'waiting':/error|fail/i.test(n.status)?'failed':'pending') : undefined} data-spec={n.dataset ? 'dataset' : 'operation'} data-node-state={state.split(' · ')[0]}
       w={n.fixed ? 236 : n.children?.length ? 224 : n.dataset ? LAYOUT.datasetWidth : 268} title={n.title} sub={pinned ? n.type==='thing.you' ? 'Profile · every agent reads it' : n.type==='thing.workshop' ? "This task’s thread" : 'Agent · '+(n.params.agent || 'pick one') : n.category && n.category!=='Node' ? n.category : n.kind}
       glyph={n.fixed && ['thing.agent','thing.session'].includes(n.type) ? <window.UI.Av id={n.params.agent || task?.agents?.[0] || ''} size={20}/> : <window.AHIcon name={n.icon || (n.type==='thing.you' ? 'user' : n.type==='thing.workshop' ? 'workshop' : familyIcon)} size={12}/>} gc={n.fixed ? A.purple : familyColor}
-      selected={selected} headerProps={{className:'node-header',style:{background:headerColor,color:headerColor ? luminance>.179?'#000000':'#ffffff':SPEC.text}}} headerEnd={pinned ? <span className="v22g-pinned-badge">Pinned</span> : menu}
+      selected={selected} headerProps={{className:'node-header','data-custom-header':headerColor?true:undefined,style:{background:headerColor,color:headerColor ? luminance>.179?'#000000':'#ffffff':SPEC.text}}} headerEnd={pinned ? <span className="v22g-pinned-badge">Pinned</span> : menu}
       style={{fontSize:'calc(12px * var(--text-scale,1))',borderRadius:'var(--node-radius,8px)',minHeight:pending?160:undefined}}
       ins={n.inputs.filter(port=>!slotPorts.has(port.id)&&(!pending||port.id===n.inputs[0]?.id||port.id==='param:'+n.inputs[0]?.id||wiresIn.some(w=>w.toPort===port.id)))} outs={n.outputs}
       renderPort={(port,index,side)=><div data-port-row={side} style={{position:'relative',height:22,display:'flex',alignItems:'center',justifyContent:side==='out'?'flex-end':undefined,padding:'0 12px'}}><span style={{position:'absolute',[side==='out'?'right':'left']:-11,top:0}}>{socket(port,side)}</span>{port.name}</div>}
@@ -708,7 +708,7 @@
     };
     React.useEffect(() => {
       const saved = s.graph.viewport;
-      userViewport.current = Boolean(saved && (saved.x !== 0 || saved.y !== 0 || saved.zoom !== 1));
+      userViewport.current = s.graph.viewportSaved ?? Boolean(saved);
       if (userViewport.current) updateView({zoom:saved.zoom,pan:{x:saved.x,y:saved.y}}, false);
     }, [s.graph.scopeKey, embedded]);
     const zoomAt = (value, client = null) => {

@@ -8,13 +8,14 @@ import pytest
 from test_task_session_roundtrip import _isolate, _Studio, _post
 
 
-@pytest.mark.parametrize("board", ["home", "workshop", "canvas", "settings", "canvas_fit", "fluid_shell", "resume", "zero_home", "canvas_open", "canvas_reading"])
+@pytest.mark.parametrize("board", ["home", "workshop", "canvas", "settings", "canvas_fit", "fluid_shell", "resume", "zero_home", "canvas_open", "canvas_reading", "approval_wrong", "approval_nested"])
 def test_designbuild_board(tmp_path, monkeypatch, board):
     browser_cache = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '')
     if not browser_cache:
         browser_cache = subprocess.check_output(['node', '-p', "require('node:path').join(require('node:os').userInfo().homedir,'AppData/Local/ms-playwright')"], text=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)).strip()
     _isolate(monkeypatch, tmp_path / 'desk')
     from nodelang.nograph_server import NoGraphServer
+    from nodelang.session_files import new_document, insert_session, write_document
 
     monkeypatch.setattr(NoGraphServer, "_probe_hosts", staticmethod(lambda: []))
     state = tmp_path / 'desk' / 'LOCALAPPDATA' / 'ArchHub'
@@ -60,7 +61,6 @@ def test_designbuild_board(tmp_path, monkeypatch, board):
                     opened['document']['wires'] = opened['document']['wires'][:1]
                 client.files('save', path=view['path'], document=opened['document'])
                 if board == 'canvas_reading':
-                    from nodelang.session_files import new_document, write_document
                     standalone = new_document('Standalone opening check')
                     standalone.update(nodes=copy.deepcopy(nodes), wires=copy.deepcopy(opened['document']['wires']))
                     unbound_path = str(state / 'standalone-opening.archhub')
@@ -68,6 +68,24 @@ def test_designbuild_board(tmp_path, monkeypatch, board):
             for title in ['Sheet index check', 'Export issue package', 'Update drawing references', 'Model view audit']:
                 client.workshop('createTask', title)
             client.workshop('openTaskGraph', task['taskId'])
+            if board in ('approval_wrong', 'approval_nested'):
+                view = client.workshop('openTaskGraph', task['taskId'])
+                original = client.files('read', path=view['path'])['document']
+                document = new_document('Drawing set review')
+                document.update(id=original['id'], properties=original['properties'])
+                document['nodes'] = [{'id': 'held', 'type': 'param.value', 'params': {'type': 'number', 'value': 1}, 'position': {'x': 0, 'y': 0}}]
+                gate = {'id': 'start', 'type': 'approval.gate', 'params': {}, 'position': {'x': 300, 'y': 0}}
+                if board == 'approval_nested':
+                    child = new_document('Nested gate')
+                    child['nodes'] = [{**gate, 'id': 'held'}]
+                    child_path = state / 'nested-gate.archhub'
+                    write_document(child_path, child)
+                    insert_session(document, str(child_path))
+                else:
+                    document['nodes'].append(gate)
+                client.files('save', path=view['path'], document=document)
+                held = client.files('run', path=view['path'], document=document)
+                assert held['approvalId']
         result = subprocess.run(
             ['node', '02.TESTS/tests_js/designbuild.cjs'],
             input=json.dumps({'url': server.public_url, 'cookie': server._cookie_token,
@@ -79,7 +97,7 @@ def test_designbuild_board(tmp_path, monkeypatch, board):
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         print(result.stdout)
         assert result.returncode == 0, result.stdout + result.stderr
-        if board in ('canvas_fit', 'fluid_shell', 'resume', 'zero_home', 'canvas_open', 'canvas_reading') or os.environ.get('ARCHHUB_DESIGNPOLISH_PHASE'):
+        if board in ('canvas_fit', 'fluid_shell', 'resume', 'zero_home', 'canvas_open', 'canvas_reading', 'approval_wrong', 'approval_nested') or os.environ.get('ARCHHUB_DESIGNPOLISH_PHASE'):
             return
         reopened = client.workshop('openTaskGraph', task['taskId'])
         assert reopened['scope'] == 'Review the current issue'

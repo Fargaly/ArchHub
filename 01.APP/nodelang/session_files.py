@@ -231,7 +231,7 @@ def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, de
 def new_document(title='Untitled'):
     return {'format': 'archhub', 'version': 1, 'id': str(uuid4()), 'title': title,
             'nodes': [], 'wires': [], 'groups': [], 'notes': [],
-            'viewport': {'x': 0, 'y': 0, 'zoom': 1}}
+            'viewport': {'x': 0, 'y': 0, 'zoom': 1}, 'properties': {'viewportSaved': False}}
 
 
 def wire_rule(document, identity, rule):

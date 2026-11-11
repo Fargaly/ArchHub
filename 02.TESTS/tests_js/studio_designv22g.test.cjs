@@ -161,6 +161,27 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
     await page.locator('.v22g-beside .react-flow').waitFor();
     assert.equal(await page.locator('.react-flow').count(),2);
     assert.equal(await current(),second);
+    await page.getByRole('button',{name:'Thread',exact:true}).click();
+    for(const size of [{width:900,height:700},{width:1009,height:940}]){
+      await page.setViewportSize(size);await page.waitForTimeout(250);
+      const panes=await page.locator('.v22g-views > [data-panel]').evaluateAll(elements=>elements.map(el=>({id:el.id,width:el.getBoundingClientRect().width})));
+      for(const pane of panes.filter(pane=>!pane.id.includes('thread')))assert.ok(pane.width>=319,JSON.stringify({size,panes}));
+      const toggle=page.getByRole('group',{name:'Visible canvas',exact:true});
+      if(await toggle.count()){
+        assert.equal(await page.locator('.react-flow').count(),1);
+        await toggle.getByRole('button',{name:'Canvas UI first',exact:true}).click();
+        await page.locator('.v22g-beside .react-flow').waitFor();
+        assert.equal(await page.locator('.react-flow').count(),1);
+        await toggle.getByRole('button',{name:'Canvas renamed',exact:true}).click();
+        await page.locator('.v22g-canvas .react-flow').waitFor();
+      }else assert.equal(await page.locator('.react-flow').count(),2);
+      console.log(`PASS side-by-side ${size.width}x${size.height}: canvas minimums preserved; visible switch when collapsed`);
+    }
+    await page.setViewportSize({width:900,height:700});
+    await page.getByRole('group',{name:'Visible canvas',exact:true}).waitFor();
+    await page.getByRole('button',{name:'More canvas actions',exact:true}).click();
+    await page.getByRole('menuitem',{name:'Thread',exact:true}).click();
+    await page.setViewportSize({width:1864,height:949});
     await page.getByRole('button',{name:'Close split',exact:true}).click();
   });
   await t.test('Canvas selection, pointer capture, wheel zoom, middle pan, wiring and keyboard stay live',async()=>{

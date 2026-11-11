@@ -24,6 +24,49 @@ const {chromium} = require('playwright');
     const errors = [];
     page.on('pageerror', error => {errors.push(error.message);console.error('PAGEERROR '+error.message);});
     await page.goto(input.url);
+    const assertReadable=async label=>{
+      const measured=await page.evaluate(()=>{
+        const visible=el=>{const r=el.getBoundingClientRect();return r.width>1&&r.height>1&&!el.closest('[hidden]')&&window.getComputedStyle(el).visibility!=='hidden'&&window.getComputedStyle(el).display!=='none';};
+        const text=[...document.querySelectorAll('body *')].filter(el=>visible(el)&&[...el.childNodes].some(n=>{if(n.nodeType!==3||!n.textContent.trim())return false;const range=document.createRange();range.selectNodeContents(n);const box=range.getBoundingClientRect();return box.width>0&&box.height>0;}));
+        const small=text.filter(el=>parseFloat(window.getComputedStyle(el).fontSize)<11).map(el=>({text:el.textContent.slice(0,60),size:window.getComputedStyle(el).fontSize}));
+        const rgb=s=>(s.match(/[\d.]+/g)||[]).map(Number);
+        const luminance=c=>c.slice(0,3).map(v=>v/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4).reduce((a,v,i)=>a+v*[.2126,.7152,.0722][i],0);
+        const colors=['--color-ink-soft','--color-ink-muted','--color-ink-dim'].map(name=>{const probe=document.createElement('i');probe.style.color=`var(${name})`;document.body.append(probe);const color=window.getComputedStyle(probe).color;probe.remove();return color;});
+        const secondary=text.filter(el=>colors.includes(window.getComputedStyle(el).color)||el.matches('[data-custom-header] [data-node-card-title],[data-custom-header] [data-node-card-subtitle]')).map(el=>{
+          let ancestor=el,bg;
+          while(ancestor){bg=rgb(window.getComputedStyle(ancestor).backgroundColor);if(bg.length<4||bg[3]===1)break;ancestor=ancestor.parentElement;}
+          const fg=luminance(rgb(window.getComputedStyle(el).color)),back=luminance(bg||[14,14,17]);
+          return {text:el.textContent.slice(0,60),ratio:(Math.max(fg,back)+.05)/(Math.min(fg,back)+.05)};
+        });
+        return {small,secondary};
+      });
+      assert.deepEqual(measured.small,[],label+': '+JSON.stringify(measured.small));
+      assert.ok(measured.secondary.length>0,label+': secondary text must be measured');
+      assert.deepEqual(measured.secondary.filter(row=>row.ratio<4.5),[],label+': contrast');
+    };
+    if(['approval_wrong','approval_nested'].includes(input.board)){
+      await page.locator('.dx-task').filter({hasText:'Drawing set review'}).first().click();
+      const region=page.getByRole('region',{name:'Resumed session',exact:true});
+      await region.locator('[data-approval]').waitFor();
+      const card=await page.evaluate(()=>window.ArchHubAPI.getSnapshot().approvals.find(card=>card.status==='pending'));
+      assert.equal(await region.locator('[data-approval]').count(),1);
+      assert.equal(await region.locator('[data-resume-step="held"] [data-approval]').count(),0,'A matching id from another canvas must not own this approval');
+      if(input.board==='approval_wrong')assert.equal(await region.locator('[data-resume-step] [data-approval]').count(),0);
+      else {
+        assert.equal(card.canvasNodes.length,2);
+        const parent=card.canvasNodes.find(ref=>ref.taskId===card.taskId);
+        assert.equal(await region.locator('[data-resume-step="'+parent.nodeId+'"] [data-approval]').count(),1);
+      }
+      const answers=[];
+      page.on('request',request=>{try{const body=request.postDataJSON();if(body?.function==='answerApproval'&&body.args[1]===card.id)answers.push(body.args);}catch{}});
+      await region.getByRole('button',{name:'Approve',exact:true}).evaluate(button=>{button.click();button.click();});
+      await page.waitForFunction(id=>window.ArchHubAPI.getSnapshot().approvals.find(card=>card.id===id)?.status==='approved',card.id);
+      assert.equal(answers.length,1,'Double-click Approve sends one decision');
+      assert.equal(await region.getByRole('button',{name:'Approve',exact:true}).count(),0);
+      assert.deepEqual(errors,[]);
+      console.log(`PASS ${input.board}: exact canvas step or session fallback; one card per digest; double-click sends one approval`);
+      return;
+    }
     if(['canvas_open','canvas_reading'].includes(input.board)){
       const nav=page.getByRole('navigation',{name:'Main navigation'});
       await nav.waitFor();
@@ -35,7 +78,7 @@ const {chromium} = require('playwright');
         return {area:box.toJSON(),nodes,left,top,right,bottom,zoom:matrix.a,x:matrix.e,y:matrix.f,readable:(right-left)/matrix.a*.62<=box.width-60&&(bottom-top)/matrix.a*.62<=box.height-60};
       });
       let positions, fitted=0, reading=0;
-      for(const size of [{width:1009,height:940},{width:1366,height:768},{width:1864,height:949}]){
+      for(const size of [{width:900,height:700},{width:1009,height:940},{width:1366,height:768},{width:1864,height:949}]){
         await page.setViewportSize(size);
         await page.getByRole('button',{name:'Open its Canvas',exact:true}).click();
         await page.locator('.react-flow__node').first().waitFor();await page.waitForTimeout(250);
@@ -53,7 +96,7 @@ const {chromium} = require('playwright');
         await nav.getByRole('button',{name:'Home',exact:true}).click();
       }
       if(input.board==='canvas_open')assert.ok(fitted>0&&reading>0,'Opening proof must exercise both readable fit and reading-size fallback');
-      else assert.equal(reading,3);
+      else assert.equal(reading,4);
       await page.setViewportSize({width:1009,height:940});
       await page.getByRole('button',{name:'Open its Canvas',exact:true}).click();
       await page.getByRole('button',{name:'More canvas actions',exact:true}).click();
@@ -83,7 +126,7 @@ const {chromium} = require('playwright');
       if(input.unboundPath){
         await page.evaluate(file=>window.ArchHubAPI.openSession(file),input.unboundPath);
         await nav.getByRole('button',{name:'Canvas',exact:true}).click();
-        for(const size of [{width:1009,height:940},{width:1366,height:768},{width:1864,height:949}]){
+        for(const size of [{width:900,height:700},{width:1009,height:940},{width:1366,height:768},{width:1864,height:949}]){
           await page.setViewportSize(size);await page.waitForTimeout(250);
           const standalone=await measure();
           assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSessionDocument().title),'Standalone opening check');
@@ -124,9 +167,10 @@ const {chromium} = require('playwright');
       assert.equal(await page.locator('[data-resume-step][data-state=done]').count(),2);
       await page.getByRole('button',{name:'Pin Drawing set review',exact:true}).click();
       await page.getByRole('button',{name:'Unpin Drawing set review',exact:true}).waitFor();
-      for(const size of [{width:1009,height:940},{width:1366,height:768},{width:1864,height:949}]){
+      for(const size of [{width:900,height:700},{width:1009,height:940},{width:1366,height:768},{width:1864,height:949}]){
         await page.setViewportSize(size);await page.waitForTimeout(150);
         const result=await page.locator('[aria-label="Resumed session"]').evaluate(el=>({scroll:el.scrollHeight>el.clientHeight+1,steps:[...el.querySelectorAll('[data-resume-step]')].map(node=>node.getBoundingClientRect().toJSON()),composer:document.querySelector('.global-composer').getBoundingClientRect().toJSON(),bottom:document.querySelector('.screen-with-composer').getBoundingClientRect().bottom}));
+        await assertReadable(size.width+' Resume');
         assert.equal(result.bottom,size.height);
         for(const box of result.steps)assert.ok(box.left>=64&&box.right<=size.width&&box.top>=48&&box.bottom<result.composer.top,JSON.stringify(result));
         await page.screenshot({path:path.resolve('.cache',`designv22g-resume-${size.width}.png`)});
@@ -187,7 +231,7 @@ const {chromium} = require('playwright');
       await nav.waitFor();
       assert.equal(await nav.getByRole('button', {name:'Workshop',exact:true}).count(), 0);
       assert.equal(await nav.getByRole('button', {name:'Automations',exact:true}).count(), 0);
-      for (const size of [{width:1009,height:940},{width:1366,height:768},{width:1864,height:949}]) {
+      for (const size of [{width:900,height:700},{width:1009,height:940},{width:1366,height:768},{width:1864,height:949}]) {
         await page.setViewportSize(size);
         for (const route of ['Home','Canvas','Docs','Settings']) {
           await nav.getByRole('button', {name:route,exact:true}).click();
@@ -217,6 +261,7 @@ const {chromium} = require('playwright');
             const composer=document.querySelector('.global-composer,.v22g-composer-dock');
             return {cut,strips,composer:composer&&window.getComputedStyle(composer).position,footer:!!document.querySelector('.app-window>footer'),bottom:document.querySelector('.screen-with-composer').getBoundingClientRect().bottom};
           });
+          await assertReadable(size.width+' '+route);
           assert.deepEqual(result.cut, [], `${size.width} ${route}: cut ${JSON.stringify(result.cut)}`);
           assert.deepEqual(result.strips, [], `${size.width} ${route}: opaque strip ${JSON.stringify(result.strips)}`);
           assert.equal(result.footer,false);
@@ -255,6 +300,11 @@ const {chromium} = require('playwright');
       assert.equal(await page.locator('[data-design="tab.add"]').isVisible(),true);
       assert.equal(await page.locator('[data-design="tab.active"]').evaluate(el=>{const r=el.getBoundingClientRect();return r.left>=64&&r.right<=window.innerWidth;}),true);
       console.log('PASS fluid shell: tabs fold into n more; active tab and + stay visible; hidden tab opens');
+      await page.setViewportSize({width:300,height:700});
+      const floor=await page.locator('.v22g-composer-dock').boundingBox();
+      assert.ok(floor.width>=320);
+      assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth>=900));
+      console.log('PASS below 900px: shell scrolls at its floor; composer width >= 320px');
       assert.deepEqual(errors, []);
       return;
     }
@@ -298,6 +348,16 @@ const {chromium} = require('playwright');
       const saved=await page.evaluate(()=>window.ArchHubAPI.getSnapshot().graph.viewport);
       await nav.getByRole('button',{name:'Home',exact:true}).click();await page.getByRole('button',{name:'Open its Canvas',exact:true}).click();
       assert.deepEqual(await page.evaluate(()=>window.ArchHubAPI.getSnapshot().graph.viewport),saved);
+      await page.evaluate(async()=>{window.ArchHubAPI.setSessionViewport({x:0,y:0,zoom:1});await window.ArchHubAPI.saveSession();});
+      const file=await page.evaluate(()=>window.ArchHubAPI.getSessionPath());
+      assert.deepEqual(JSON.parse(fs.readFileSync(file,'utf8')).viewport,{x:0,y:0,zoom:1});
+      await page.reload();
+      await page.getByRole('button',{name:'Open its Canvas',exact:true}).click();
+      await page.locator('.react-flow__viewport').waitFor();await page.waitForTimeout(250);
+      assert.deepEqual(await page.evaluate(()=>window.ArchHubAPI.getSessionDocument().viewport),{x:0,y:0,zoom:1});
+      const restored=await page.locator('.react-flow__viewport').evaluate(el=>{const m=new window.DOMMatrix(window.getComputedStyle(el).transform);return {x:m.e,y:m.f,zoom:m.a};});
+      assert.deepEqual(restored,{x:0,y:0,zoom:1},'The rendered viewport must restore the saved origin at 100%');
+      console.log('PASS saved viewport {x:0,y:0,zoom:1}: file readback and reopened rendered transform unchanged');
       assert.deepEqual(errors,[]);console.log('PASS canvas_fit: real nodes fit; wheel viewport saves and reopens unchanged');return;
     }
     if(input.board==='canvas'){
@@ -352,13 +412,15 @@ const {chromium} = require('playwright');
       await field.locator('summary').click();await field.getByRole('textbox').fill(value);await key('Tab',9);
       await page.waitForFunction(({label,value})=>{const task=window.ArchHubAPI.getSnapshot().tasks.find(task=>task.title==='Drawing set review'),key={Scope:'scope',Rules:'rules',References:'references',Folders:'folders'}[label];return task&&JSON.stringify(task[key]).includes(value);},{label,value});await field.locator('summary').click();
     }
+    await assertReadable(input.board);
     await page.evaluate(()=>window.ArchHubAPI.saveSession());
+    const savedViewport=input.board==='canvas'?await page.evaluate(()=>window.ArchHubAPI.getSnapshot().graph.viewport):null;
     assert.deepEqual(await page.evaluate(()=>({id:window.ArchHubAPI.getSnapshot().graph.id,path:window.ArchHubAPI.getSessionPath()})),cleanSession);
     if(input.board==='settings'){
       const look=async()=>{await nav.getByRole('button',{name:'Settings',exact:true}).click();await page.getByRole('navigation',{name:'Settings categories'}).getByRole('button',{name:'Appearance',exact:true}).click();await page.getByRole('combobox',{name:'Theme',exact:true}).waitFor();await page.getByRole('button',{name:'Show advanced',exact:true}).click();};
       await look();await page.getByRole('spinbutton',{name:'Row spacing',exact:true}).fill('8');await page.getByRole('spinbutton',{name:'Node radius',exact:true}).fill('12');
       await page.getByRole('spinbutton',{name:'Text scale',exact:true}).fill('150');await page.waitForFunction(()=>window.getComputedStyle(document.querySelector('.settings-sheet h1')).fontSize==='42px');await page.getByRole('spinbutton',{name:'Text scale',exact:true}).fill('100');
-      for(const size of [{width:1009,height:940},{width:1366,height:768},{width:1864,height:949}]){await page.setViewportSize(size);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth),size.width);assert.equal(await page.locator('.sheet-content').evaluate(el=>el.scrollWidth>el.clientWidth),false);}
+      for(const size of [{width:900,height:700},{width:1009,height:940},{width:1366,height:768},{width:1864,height:949}]){await page.setViewportSize(size);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth),size.width);assert.equal(await page.locator('.sheet-content').evaluate(el=>el.scrollWidth>el.clientWidth),false);}
       for(const theme of ['Light','Dark']){await page.getByRole('combobox',{name:'Theme',exact:true}).selectOption(theme);await page.waitForFunction(theme=>document.documentElement.dataset.theme===theme,theme);}
       await page.reload();await look();assert.equal(await page.getByRole('spinbutton',{name:'Row spacing',exact:true}).inputValue(),'8');assert.equal(await page.getByRole('spinbutton',{name:'Node radius',exact:true}).inputValue(),'12');
       await page.getByRole('button',{name:'Changed only',exact:true}).click();assert.equal(await page.getByRole('combobox',{name:'Theme',exact:true}).count(),0);await page.getByRole('button',{name:'Changed only',exact:true}).click();await page.getByRole('button',{name:'Reset Appearance',exact:true}).click();await page.waitForFunction(()=>window.ArchHubAPI.getSnapshot().settings.find(row=>row.id==='Appearance.Row spacing').value===4);
@@ -368,8 +430,9 @@ const {chromium} = require('playwright');
     await page.getByRole('region',{name:'Resumed session'}).waitFor();await page.getByRole('button',{name:'Open its Canvas',exact:true}).click();
     if(input.board==='workshop')await page.getByRole('button',{name:'Open Inspector',exact:true}).click();
     await preview.getByText('Review the current issue',{exact:true}).waitFor();
-    assert.ok(Math.abs((await preview.boundingBox()).width-400)<=8||input.board==='settings');
+    assert.ok(Math.abs((await preview.boundingBox()).width-(input.board==='settings'?320:400))<=8);
     if(input.board==='canvas'){
+      assert.deepEqual(await page.evaluate(()=>window.ArchHubAPI.getSnapshot().graph.viewport),savedViewport);
       const saved=await page.evaluate(()=>window.ArchHubAPI.getSnapshot().graph.nodes.find(node=>node.id==='slice'));
       assert.equal(saved.title,'Review first sheets');assert.equal(saved.color,'#743b27');assert.equal(saved.icon,'docs');
     }
@@ -386,6 +449,10 @@ const {chromium} = require('playwright');
     await page.getByRole('region',{name:'Resumed session'}).waitFor();await page.getByRole('button',{name:'Open its Canvas',exact:true}).click();
     if(await page.getByRole('button',{name:'Open Inspector',exact:true}).isVisible())await page.getByRole('button',{name:'Open Inspector',exact:true}).click();
     await page.getByRole('complementary',{name:'Properties'}).getByText('Review the current issue',{exact:true}).waitFor();
+    if(input.board==='canvas'){
+      assert.deepEqual(await page.evaluate(()=>window.ArchHubAPI.getSnapshot().graph.viewport),savedViewport);
+      await page.waitForFunction(saved=>{const element=document.querySelector('.react-flow__viewport');if(!element)return false;const matrix=new window.DOMMatrix(window.getComputedStyle(element).transform);return Math.abs(matrix.e-saved.x)<.001&&Math.abs(matrix.f-saved.y)<.001&&Math.abs(matrix.a-saved.zoom)<.001;},savedViewport);
+    }
     assert.deepEqual(errors,[]);
     console.log('PASS '+input.board+': current shell, real fields, styles and Settings; file and browser reopen preserve owner state');
   } finally {await browser.close();}

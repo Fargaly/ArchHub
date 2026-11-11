@@ -247,6 +247,7 @@
  {s.composerAnswer&&<div className="composer-answer" role="status" aria-label="Model answer"><small className="muted">{s.composerAnswer.provider} · {s.composerAnswer.model}</small><p style={{whiteSpace:'pre-wrap'}}>{s.composerAnswer.answer}</p></div>}
  </D.Composer>;
   }
+  const approvalDecisions = new Set();
   function ApprovalCard({
     id,
     compact = false
@@ -258,6 +259,9 @@
       [decisionError, setDecisionError] = React.useState('');
     if (!c) return <Empty>No action is waiting for approval.</Empty>;
     const decide = async mode => {
+      const digest = c.input_digest || id;
+      if (approvalDecisions.has(digest) || api.getSnapshot().approvals.find(card=>card.id===id)?.status !== 'pending') return;
+      approvalDecisions.add(digest);
       setBusy(true);
       setDecisionError('');
       try {
@@ -267,6 +271,7 @@
       } catch (error) {
         setDecisionError(error.message || 'Approval was refused');
       } finally {
+        approvalDecisions.delete(digest);
         setBusy(false);
       }
     };

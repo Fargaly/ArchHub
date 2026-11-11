@@ -1672,7 +1672,7 @@ async function flushAutosave(){
 api.newSession=async title=>{
  sessionBreadcrumbs=[];publish({sessionBreadcrumbs:[]});
  const zoom=(state.settings.find(row=>row.id==='Appearance.Default zoom')?.value??100)/100;
- return adoptFile({format:'archhub',version:1,id:window.crypto.randomUUID(),title:title||'Untitled',nodes:[],wires:[],groups:[],notes:[],viewport:{x:0,y:0,zoom}});
+ return adoptFile({format:'archhub',version:1,id:window.crypto.randomUUID(),title:title||'Untitled',nodes:[],wires:[],groups:[],notes:[],viewport:{x:0,y:0,zoom},properties:{viewportSaved:false}});
 };
 api.openSession=async(path,linked=false)=>{
  if(!path&&typeof window.ARCHHUB_WINDOW_ACTION!=='function')return new Promise((resolve,reject)=>{
@@ -1706,10 +1706,11 @@ api.readAgentsGraph=async()=>{await refreshAgents();return state.agentGraph;};
 api.readAgentTranscript=session=>request('/api/universal/agents-transcript',{session});
 api.readStepHistory=node=>sessionRequest('agent-history',{document:portableDocument(),node});
 api.setSessionViewport=viewport=>{
- if(!sessionDocument||['x','y','zoom'].every(key=>sessionDocument.viewport?.[key]===viewport[key]))return;
+ if(!sessionDocument||sessionDocument.properties?.viewportSaved&&['x','y','zoom'].every(key=>sessionDocument.viewport?.[key]===viewport[key]))return;
  sessionDocument.viewport=copy(viewport);
+ sessionDocument.properties={...sessionDocument.properties,viewportSaved:true};
  localDirty=true;
- publish({graph:{...state.graph,viewport:sessionDocument.viewport},sessionDirty:true});
+ publish({graph:{...state.graph,viewport:sessionDocument.viewport,viewportSaved:true},sessionDirty:true});
  queueAutosave();
 };
 api.addGraph=api.newSession;

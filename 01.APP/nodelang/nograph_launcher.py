@@ -94,6 +94,7 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
         app.setWindowIcon(icon)
         window = QMainWindow()
         window.setWindowTitle('ArchHub')
+        window.setMinimumWidth(900)
         view = QWebEngineView(window)
         window.setCentralWidget(view)
         window.resize(1440, 900)

@@ -8,6 +8,102 @@ from nodelang import canvas_documents, session_files, workshop_tasks
 from nodelang.workshop_mailbox import application_history, attach_meeting_notes
 
 
+def test_script_uses_timed_python_and_pure_classification():
+    from nodelang.host_exec import script_is_pure
+    document = session_files.new_document('Script proof')
+    document['nodes'] = [{'id': 'script', 'type': 'script.python', 'item': 'script_python',
+                          'params': {'code': 'def run(a):\n    return {"result": a + 2}', 'a': 3, 'kind': 'pure', 'timeout': 2},
+                          'position': {'x': 0, 'y': 0}}]
+    assert canvas_documents.is_pure('script.python', document['nodes'][0]['params'])
+    result = session_files.run_document(document)
+    assert result['results']['script']['output'] == {'result': 5}
+    for code in ('import os\ndef run(a):\n    return {"result": os.getcwd()}',
+                 'def run(a):\n    return {"result": open(a).read()}',
+                 'def run(a):\n    return {"result": a.__class__}',
+                 'def run(a):\n    while True: pass',
+                 'def run(a):\n    return {"result": run(a)}'):
+        assert not script_is_pure(code)
+    document['nodes'][0]['params']['kind'] = 'effect'
+    assert not canvas_documents.is_pure('script.python', document['nodes'][0]['params'])
+
+
+def test_effect_script_waits_for_one_approval_without_running(monkeypatch):
+    from nodelang import agent_work, host_exec
+    asked = []
+    monkeypatch.setattr(agent_work, 'request_approval', lambda *a, **k: asked.append(a) or {'id': 'approval-proof'})
+    monkeypatch.setattr(host_exec, '_python', lambda *a: pytest.fail('effect ran before approval'))
+    document = session_files.new_document('Held script')
+    document['nodes'] = [{'id': 'script', 'type': 'script.python', 'params': {'code': 'def run():\n    return {}', 'kind': 'effect'}, 'position': {'x': 0, 'y': 0}}]
+    result = session_files.run_document(document)
+    assert result['approvalId'] == 'approval-proof'
+    assert result['results']['script']['status'] == 'Waiting for approval'
+    assert len(asked) == 1
+    document['nodes'][0]['params'].update(kind='pure', code='def run(a):\n    return {"result": a}')
+    document['nodes'].append({'id': 'code', 'type': 'param.value', 'params': {'type': 'text', 'value': 'import os\ndef run(a):\n    return {}'}, 'position': {'x': 0, 'y': 0}})
+    document['wires'] = [{'id': 'code-wire', 'from': {'node': 'code', 'socket': 'value'}, 'to': {'node': 'script', 'socket': 'param:code'}}]
+    document['nodes'][0]['paramDefs'] = [{'id': 'code', 'name': 'Code', 'type': 'text'}]
+    asked.clear()
+    solved = canvas_documents.solve(document, ['code'])
+    assert solved['results']['script']['status'] == 'Out of date'
+    assert asked == []
+
+
+def test_pure_saved_script_solves_without_writing_its_definition():
+    document = session_files.new_document('Pure reusable script')
+    document['nodes'] = [{'id': 'script', 'type': 'script.python', 'params': {'code': 'def run(a):\n    return {"result": a + 1}', 'kind': 'pure', 'a': 4, 'timeout': 2}, 'position': {'x': 0, 'y': 0}}]
+    saved = session_files.node_type_document(document, ['script'], 'Pure add')
+    path = session_files.document_path(session_files.sessions_directory(), saved)
+    session_files.write_document(path, saved)
+    before = path.read_bytes()
+    parent = session_files.new_document('Caller')
+    node = session_files.insert_session(parent, str(path))
+    assert node['pure'] is True
+    solved = canvas_documents.solve(parent, [node['id']])
+    assert solved['results'][node['id']]['output']['out:script:result'] == 5
+    assert path.read_bytes() == before
+    saved['properties']['nodeType']['kind'] = 'effect'
+    session_files.write_document(path, saved)
+    assert canvas_documents.is_pure('skill', {'skill': saved['id'], 'session_file': str(path)}) is False
+
+
+def test_bypass_and_disabled_wire_change_real_run():
+    document = session_files.new_document('Bypass')
+    document['nodes'] = [
+        {'id': 'a', 'type': 'math.expression', 'item': 'math_expression', 'params': {'expression': '7', 'a': 0, 'b': 0}, 'position': {'x': 0, 'y': 0}},
+        {'id': 'b', 'type': 'math.expression', 'item': 'math_expression', 'params': {'expression': 'a * 10', 'a': 2, 'b': 0}, 'bypassed': True, 'position': {'x': 300, 'y': 0}}]
+    document['wires'] = [{'id': 'ab', 'from': {'node': 'a', 'socket': 'value'}, 'to': {'node': 'b', 'socket': 'a'}}]
+    invoke = lambda _engine, effect, params, feeds: effect(params, feeds)
+    assert session_files.run_document(document, invoke=invoke)['results']['b']['output'] == {'value': 7, 'out': 7}
+    document['nodes'][1]['bypassed'] = False
+    document['wires'][0]['enabled'] = False
+    assert session_files.run_document(document, invoke=invoke)['results']['b']['output'] == {'value': 20, 'out': 20}
+    document['wires'][0]['enabled'] = 'false'
+    with pytest.raises(ValueError, match='Boolean'):
+        session_files.validate(document)
+    assert session_files.wire_rule(document, 'ab', 'value > 0') == 'value > 0'
+    assert session_files.wire_rule(document, 'ab', '') == ''
+    with pytest.raises(ValueError, match='comparison'):
+        session_files.wire_rule(document, 'ab', 'not a comparison')
+
+
+def test_saved_node_type_keeps_source_and_public_parameter_round_trip():
+    document = session_files.new_document('Private task')
+    document['properties'] = {'taskContext': {'task': 'private task'}}
+    document['nodes'] = [{'id': 'calc', 'type': 'math.expression', 'item': 'math_expression', 'params': {'expression': 'a + 1', 'a': 2, 'b': 0},
+                          'paramDefs': [{'id': 'a', 'name': 'Amount', 'type': 'number'}], 'result': {'status': 'Done', 'output': {'value': 3}}, 'position': {'x': 0, 'y': 0}}]
+    before = copy.deepcopy(document)
+    saved = session_files.node_type_document(document, ['calc'], 'Add one', 'Checks', [{'node': 'calc', 'key': 'a'}])
+    assert document == before
+    assert saved['id'] != document['id']
+    assert 'taskContext' not in saved['properties'] and 'result' not in saved['nodes'][0]
+    session_files.write_document(session_files.document_path(session_files.sessions_directory(), saved), saved)
+    result, _ = session_files.run_skill({'skill': saved['id'], 'public_0': 9}, feeds={}, depth=0, invoke=lambda _engine, effect, params, feeds: effect(params, feeds), stopped=None)
+    assert result['out:calc:value'] == 10
+    document['nodes'][0]['params']['expression'] = 'api_key="example-sensitive-value"'
+    with pytest.raises(ValueError, match='credentials'):
+        session_files.node_type_document(document, ['calc'], 'Refused')
+
+
 def test_open_tabs_round_trip_and_refuse_invalid_view_state():
     from nodelang.settings_owner import canvas_tabs
     state = {'tabs': [{'id': 'one', 'kept': True}, {'id': 'two', 'kept': False}],

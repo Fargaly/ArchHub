@@ -123,6 +123,8 @@ def default(entry):
 def add_param(document, node_ref, name, kind, value=None, **limits):
     """Add a typed user parameter (with its input socket) to a node. Returns the node id."""
     node = _node(document, node_ref)
+    if node.get('fixed') and node['type'] != 'thing.session' or node.get('children') or node.get('frameMembers'):
+        raise ValueError('Add parameters to a step or session; pinned values belong in Settings and groups expose public parameters.')
     identity = re.sub(r'[^a-z0-9_]+', '_', str(name).strip().casefold()).strip('_')[:60]
     if not identity or identity in node['params']:
         raise ValueError('Choose a new parameter name for this node.')

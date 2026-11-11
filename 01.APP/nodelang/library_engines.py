@@ -2263,6 +2263,7 @@ def _type_entry(entry):
     entry["ports"] = ports
     params = dict(entry.get("params") or {})
     bounds = _setting_bounds(entry.get("id"))
+    supplied = {p['id']: p for p in entry.get('paramDefs', [])}
     definitions = []
     for name, value in params.items():
         kind = _param_kind(entry.get("id"), name, value, ports, explicit)
@@ -2278,6 +2279,8 @@ def _type_entry(entry):
             high = None if high in ("", None) else high
         params[name] = coerced
         definition = {"id": name, "name": name.replace("_", " "), "type": kind}
+        if name in supplied:
+            definition.update(supplied[name])
         if kind in ("number", "integer") and (name in ("min", "max") or coerced is None):
             definition["optional"] = True
         if kind in ("number", "integer") and name not in ("min", "max") and low is not None:
@@ -2375,13 +2378,20 @@ def _skill_entry(loaded, items):
     from .session_files import skill_ports
     skill, path = loaded["skill"], loaded["path"]
     ports = skill_ports(skill, items)
+    definition = skill.get('properties', {}).get('nodeType', {})
+    public = definition.get('public', [])
+    for index, entry in enumerate(public):
+        for port in ports['target']:
+            if port['id'] == entry['socket']:
+                port['id'] = 'public_' + str(index)
     return {
         "id": "skill:" + skill["id"],
-        "cat": "sessions",
+        "cat": definition.get('category') or "sessions",
         "title": skill["title"],
         "sub": "Session · %d nodes" % len(skill["nodes"]),
         "engine": "skill",
-        "params": {"skill": skill["id"], "session_file": str(path)},
+        "params": {"skill": skill["id"], "session_file": str(path), **{'public_'+str(i): entry['value'] for i, entry in enumerate(public)}},
+        "paramDefs": [{'id': 'public_'+str(i), **{k: v for k, v in entry['definition'].items() if k != 'id'}} for i, entry in enumerate(public)],
         "path": str(path),
         "ports": ports,
     }
@@ -2443,6 +2453,9 @@ def _complete_library(groups):
         add(_skill_entry(loaded, items))
     for item in items:
         item.update(node_contract(item.get("engine")))
+        if item.get('engine') in ('script.python', 'skill'):
+            from .canvas_documents import is_pure
+            item['pure'] = is_pure(item['engine'], item.get('params'))
     order, buckets = [], {}
     for group in groups:
         order.append(group["cat"])
@@ -2684,6 +2697,11 @@ LIBRARY_PRESENTATION = LIBRARY_PRESENTATION + (('logic', (('research_valuation',
 
 # Two generic nodes. Limits live here as parameters; host_exec reads them.
 from .host_exec import host_exec as _host_exec, connector_call as _connector_call
+from .host_exec import script_python as _script_python
+LIBRARY_ENGINES['script.python'] = _script_python
+LIBRARY_ITEM_ENGINES['script_python'] = {'engine': 'script.python', 'params': {
+    'code': 'def run(a):\n    return {"result": a}\n', 'kind': 'pure', 'timeout': 30, 'a': ''}}
+ENGINE_SOCKETS['script.python'] = {'source': ('result',), 'target': ('a', 'code', 'kind', 'timeout')}
 LIBRARY_ENGINES["host.exec"] = _host_exec
 LIBRARY_ENGINES["connector.call"] = _connector_call
 LIBRARY_ITEM_ENGINES["host_exec"] = {"engine": "host.exec", "params": {
@@ -2707,6 +2725,7 @@ ENGINE_SOCKETS["connector.call"] = {
 }
 LIBRARY_PRESENTATION = LIBRARY_PRESENTATION + (
     ("host", (
+        ('script_python', 'Script', 'Python with typed inputs and outputs'),
         ("host_exec", "Run in program", "Run code in the program you pick"),
         ("connector_call", "Connector action", "Run one action from a connected account"),
     )),

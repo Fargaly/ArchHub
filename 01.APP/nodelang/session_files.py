@@ -187,7 +187,7 @@ def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, de
     work = node.get('agentWork', {})
     if work.get('runnable') is False:
         raise ValueError('Shell and edit steps require the escape hatch; replay is unavailable.')
-    if not _RELEASING.get(False) and (engine == 'approval.gate' or not canvas_documents.is_pure(engine, params) and (work.get('role') == 'step' or node.get('approvalRequired') or engine == 'thing.file.write')):
+    if not _RELEASING.get(False) and (engine == 'approval.gate' or not canvas_documents.is_pure(engine, params) and (work.get('role') == 'step' or node.get('approvalRequired') or engine in ('thing.file.write', 'script.python'))):
         from .agent_work import request_approval
         card = request_approval(node, params, feeds, continuation=continuation)
         return {'approvalId': card['id']}, 'Waiting for approval'
@@ -214,6 +214,12 @@ def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, de
                          parent={**continuation, 'node': node} if continuation else None)
     if engine == 'note':
         return {}, node.get('title', 'Note')
+    if engine == 'script.python':
+        from .host_exec import script_python
+        produced, display = script_python(params, {**{p['id']: params.get(p['id'], '') for p in node.get('ports', {'target': [{'id': 'a'}]}).get('target', [])}, **feeds})
+        if any(p['id'] not in produced for p in node.get('ports', {}).get('source', [])):
+            raise ValueError('Return a value for every declared output.')
+        return produced, display
     if engine in STEM_RUN_ENGINES:
         return run_stem_operation(engine, params, feeds)
     effect = PIPELINE_ENGINES[engine]
@@ -226,6 +232,16 @@ def new_document(title='Untitled'):
     return {'format': 'archhub', 'version': 1, 'id': str(uuid4()), 'title': title,
             'nodes': [], 'wires': [], 'groups': [], 'notes': [],
             'viewport': {'x': 0, 'y': 0, 'zoom': 1}}
+
+
+def wire_rule(document, identity, rule):
+    from .stem_graph_evaluation import rule_holds
+    wire = next((w for w in document['wires'] if w['id'] == identity), None)
+    if wire is None:
+        raise ValueError('Choose a wire.')
+    if not isinstance(rule, str) or len(rule) > 4096 or rule.strip() and rule_holds(rule, None) is None:
+        raise ValueError('Use a wire comparison such as value > 0 or count >= 1.')
+    return rule
 
 
 def validate(document):
@@ -278,10 +294,25 @@ def validate(document):
             for side in ('source','target'):
                 if not isinstance(node['ports'].get(side),list) or any(not isinstance(port,dict) or not isinstance(port.get('id'),str) for port in node['ports'][side]):
                     raise ValueError('Node ports must declare source and target sockets')
+        if node['type'] == 'script.python':
+            if not isinstance(node['params'].get('code', ''), str) or len(node['params'].get('code', '')) > 65536:
+                raise ValueError('Script code must be text, up to 64 KiB.')
+            if node['params'].get('kind', 'pure') not in ('pure', 'effect'):
+                raise ValueError('Script kind must be Pure or Effect.')
+            for side, ports in node.get('ports', {}).items():
+                if len({p['id'] for p in ports}) != len(ports) or any(not re.fullmatch(r'[a-zA-Z][a-zA-Z0-9_]*', p['id']) or p.get('type') not in ('text','number','file','elements','color','event','any') for p in ports):
+                    raise ValueError('Use unique Script socket names and a supported type.')
+            if node.get('ports') and not node['ports']['source']:
+                raise ValueError('Keep at least one Script output.')
         nodes[node['id']] = node
     for node in nodes.values():
         if node.get('parent') and node['parent'] not in nodes or any(child not in nodes for child in node.get('children',[])):
             raise ValueError('Group members must exist')
+        if 'frameMembers' in node and (not isinstance(node['frameMembers'], list) or len(set(node['frameMembers'])) != len(node['frameMembers']) or any(not isinstance(child, str) or child not in nodes or child == node['id'] for child in node['frameMembers'])):
+            raise ValueError('Frame members must name existing nodes once.')
+        for flag in ('collapsed', 'bypassed'):
+            if flag in node and type(node[flag]) is not bool:
+                raise ValueError('Node ' + flag + ' must be Boolean')
     for group in document['groups']:
         if not isinstance(group,dict) or not isinstance(group.get('id'),str) or not isinstance(group.get('nodes'),list) or any(key not in nodes for key in group['nodes']):
             raise ValueError('Groups must name existing nodes')
@@ -303,6 +334,8 @@ def validate(document):
         inputs.add(target)
         if 'rule' in wire and not isinstance(wire.get('rule'), str):
             raise ValueError('Wire rule must be text')
+        if 'enabled' in wire and type(wire['enabled']) is not bool:
+            raise ValueError('Wire enabled state must be Boolean')
         for name, _choices in _WIRE_MENUS:
             if name in wire:
                 wire_choice(wire, name)
@@ -815,6 +848,65 @@ def skill_ports(skill, items=()):
     return {'source': source, 'target': target}
 
 
+def node_type_document(document, ids, name, category='Scripts', public=(), kind=None):
+    """Extract one reusable file; the source task and its private metadata stay put."""
+    from .agent_work import redact
+    document = validate(copy.deepcopy(document))
+    if not isinstance(ids, list) or not ids or not isinstance(name, str) or not name.strip():
+        raise ValueError('Choose nodes and name the node type.')
+    selected = set(ids)
+    by_id = {n['id']: n for n in document['nodes']}
+    if any(key not in by_id or by_id[key].get('fixed') for key in selected):
+        raise ValueError('Choose editable nodes for the node type.')
+    pending = list(selected)
+    while pending:
+        node = by_id[pending.pop()]
+        for child in [*node.get('children', []), *node.get('frameMembers', [])]:
+            if child not in selected:
+                selected.add(child)
+                pending.append(child)
+    saved = new_document(name.strip())
+    saved['nodes'] = [n for n in document['nodes'] if n['id'] in selected]
+    saved['wires'] = [w for w in document['wires'] if w['from']['node'] in selected and w['to']['node'] in selected]
+    saved['groups'] = [g for g in document['groups'] if g['id'] in selected]
+    for node in saved['nodes']:
+        node.pop('result', None)
+        node.pop('agentWork', None)
+        if node.get('parent') not in selected:
+            node.pop('parent', None)
+    if redact(saved) != saved:
+        raise ValueError('Remove credentials before saving. Nothing was saved.')
+    ports = skill_ports(saved, catalogue())
+    public_parameters = []
+    for item in public:
+        if not isinstance(item, dict) or item.get('node') not in selected:
+            raise ValueError('Public parameter must belong to the selected nodes.')
+        node, key = by_id[item['node']], item.get('key')
+        definition = next((p for p in node.get('paramDefs', []) if p['id'] == key), None)
+        if definition is None or key not in node['params']:
+            raise ValueError('Choose a declared public parameter.')
+        socket = 'in:' + node['id'] + ':param:' + key
+        ports['target'].append({'id': socket, 'label': definition.get('name', key), 'type': definition['type']})
+        public_parameters.append({'node': node['id'], 'key': key, 'socket': socket, 'definition': definition, 'value': node['params'][key]})
+    for wire in document['wires']:
+        if wire['from']['node'] not in selected and wire['to']['node'] in selected:
+            target = wire['to']
+            socket = 'in:' + target['node'] + ':' + target['socket']
+            if not any(p['id'] == socket for p in ports['target']):
+                ports['target'].append({'id': socket, 'label': target['socket'], 'type': 'any'})
+        if wire['from']['node'] in selected and wire['to']['node'] not in selected:
+            source = wire['from']
+            socket = 'out:' + source['node'] + ':' + source['socket']
+            if not any(p['id'] == socket for p in ports['source']):
+                ports['source'].append({'id': socket, 'label': source['socket'], 'type': 'any'})
+    pure = all(canvas_documents.is_pure(n['type'], n['params']) for n in saved['nodes'])
+    if kind not in (None, 'pure', 'effect') or kind == 'pure' and not pure:
+        raise ValueError('This definition contains effects and cannot be saved as Pure.')
+    saved['properties'] = {'nodeType': {'category': str(category)[:80], 'public': public_parameters, 'kind': kind or ('pure' if pure else 'effect')}, 'sessionPorts': ports}
+    validate(saved)
+    return saved
+
+
 def run_skill(params, *, invoke, stopped, depth, feeds=None, parent=None):
     if depth > 8:
         raise ValueError('Skills nest at most 8 deep')
@@ -833,7 +925,11 @@ def run_skill(params, *, invoke, stopped, depth, feeds=None, parent=None):
     source = copy.deepcopy(skill)
     original = {n['id']: dict(n['params']) for n in skill['nodes']}
     inputs = {n['id']: n for n in skill['nodes'] if n['type'] in (PARAM_ENGINE, 'thing.session') and not n.get('bind')}
-    for socket, value in (feeds or {}).items():
+    feeds = dict(feeds or {})
+    for index, entry in enumerate(skill.get('properties', {}).get('nodeType', {}).get('public', [])):
+        key = 'public_' + str(index)
+        feeds[entry['socket']] = feeds.pop(key, params.get(key, entry['value']))
+    for socket, value in feeds.items():
         held = inputs.get(str(socket)[3:]) if str(socket).startswith('in:') else None
         if held is None:
             endpoint = []
@@ -852,7 +948,7 @@ def run_skill(params, *, invoke, stopped, depth, feeds=None, parent=None):
         held['params']['value'] = coerce(held['params'].get('type', 'json'), value)   # a wired value sets the inner Parameter
     inner = run_document(skill, invoke=invoke, stopped=stopped, depth=depth+1, path=path,
                          _source=source, _parent=parent)
-    if path:
+    if path and source.get('properties', {}).get('nodeType', {}).get('kind') != 'pure':
         def record(document):
             for node in document['nodes']:
                 if node['id'] in inner['results'] and node['params'] == original.get(node['id']):
@@ -915,6 +1011,13 @@ def insert_session(document, path, x=80, y=100):
     node = {'id': str(uuid4()), 'type': 'skill', 'title': child['title'], 'children': [],
             'params': {'skill': child['id'], 'session_file': str(path)},
             'ports': skill_ports(child, catalogue()), 'position': {'x': x, 'y': y}}
+    item = next((row for row in catalogue() if row['id'] == 'skill:' + child['id']), None)
+    if item:
+        node.update(item=item['id'], params=copy.deepcopy(item['params']), ports=copy.deepcopy(item['ports']),
+                    paramDefs=copy.deepcopy(item.get('paramDefs', [])))
+        node.update(canvas_documents.node_contract('skill'))
+        node['pure'] = canvas_documents.is_pure('skill', item['params'])
+        node['approvalRequired'] = child.get('properties', {}).get('nodeType', {}).get('kind') == 'effect'
     document['nodes'].append(node)
     return node
 
@@ -1022,7 +1125,7 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
     outgoing = {key: [] for key in nodes}
     known = {row['id']: row for row in catalogue()}
     for wire in document['wires']:
-        if wire.get('inferred'):
+        if wire.get('inferred') or wire.get('enabled') is False:
             continue
         incoming[wire['to']['node']].append(wire)
         outgoing[wire['from']['node']].append(wire)
@@ -1068,7 +1171,7 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
             raise ValueError('Library item and engine disagree')
         if entry:
             for side, wires, end in [('source', outgoing[key], 'from'), ('target', incoming[key], 'to')]:
-                base = node.get('ports') if engine == 'skill' else None
+                base = node.get('ports') if engine in ('skill', 'script.python') else None
                 sockets = {p['id'] for p in node_ports(node, base or entry['ports'])[side]}
                 if any(wire[end]['socket'] not in sockets for wire in wires):
                     raise ValueError('Unknown socket on '+node.get('title',key))
@@ -1104,6 +1207,15 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
         blocked = next((w['from']['node'] for w in wired if w['from']['node'] not in outputs), None)
         if blocked:
             results[key] = {'status':'Blocked', 'output':{}, 'error':'Upstream node did not produce output'}
+            continue
+        if node.get('bypassed'):
+            values = [outputs[w['from']['node']][w['from']['socket']] for w in wired]
+            ports = node_ports(node, (known.get(node.get('item')) or {}).get('ports', {}))['source']
+            if len(values) != 1 or not ports or len({p.get('type', 'any') for p in ports}) != 1:
+                results[key] = {'status': 'Error', 'output': {}, 'error': 'Bypass needs one connected input and outputs of one type.'}
+                continue
+            outputs[key] = {p['id']: values[0] for p in ports}
+            results[key] = {'status': 'Skipped', 'output': outputs[key]}
             continue
         engine = node['type']
         started = time.perf_counter()
@@ -1400,6 +1512,13 @@ class SessionFiles:
             if not re.fullmatch(r'[A-Za-z0-9_-]{1,128}',document['id']):
                 raise ValueError('Skill id must be a portable filename identifier')
             return self.dispatch({'action':'save', 'document':document, **({'path': body['path']} if body.get('path') else {})})
+        if action in ('scan-node-type', 'save-node-type'):
+            document = node_type_document(body.get('document'), body.get('ids'), body.get('name'),
+                                          body.get('category', 'Scripts'), body.get('public', []), body.get('kind'))
+            if action == 'scan-node-type':
+                return {'ok': True, 'pure': all(canvas_documents.is_pure(n['type'], n['params']) for n in document['nodes']),
+                        'paths': bool(re.search(r'(?:[A-Za-z]:[\\/]|/Users/|/home/)', json.dumps(document)))}
+            return self.dispatch({'action': 'save-skill', 'document': document})
         if action == 'param-op':
             # One implementation of typed parameters for the window and the agents (node_params.py).
             from . import node_params
@@ -1420,6 +1539,9 @@ class SessionFiles:
             else:
                 changed = operation(document, *args)
             return {'ok': True, 'document': validate(document), 'changed': changed}
+        if action == 'wire-rule':
+            document = validate(body.get('document'))
+            return {'ok': True, 'rule': wire_rule(document, body.get('id'), body.get('rule'))}
         if action == 'dataset-op':
             # One implementation of fields, records and cells for the window and the agents (node_datasets.py).
             from . import node_datasets

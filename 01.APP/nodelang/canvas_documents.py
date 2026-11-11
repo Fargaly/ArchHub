@@ -30,6 +30,7 @@ DOCUMENT_NODE = {'id': 'canvas.document', 'params': {'history_limit': 200, 'lock
                                                      'budget': {'seconds': 60, 'calls': 1, 'cost_usd': 0.0},
                                                      'loop': {'trigger': 'Run', 'stop': 'list exhausted', 'evaluator': '', 'cap': 1000}}}
 _READ = re.compile(r'\.(read|info|list|search|inbox|get|query|ping|status|preview|probe)(_|$)')
+_PURITY = threading.local()
 
 
 # --------------------------------------------------------------- purity --
@@ -37,6 +38,25 @@ def is_pure(engine, params=None):
     """Pure nodes solve on edit; anything that writes waits for Run."""
     from .library_engines import STEM_RUN_ENGINES
     from .pipeline_engines import PIPELINE_ENGINES
+    if engine == 'script.python':
+        from .host_exec import script_is_pure
+        return (params or {}).get('kind') != 'effect' and script_is_pure((params or {}).get('code', ''))
+    if engine == 'skill':
+        from .session_files import linked_session
+        active = getattr(_PURITY, 'active', set())
+        identity = (params or {}).get('session_file') or (params or {}).get('skill')
+        if not identity or identity in active or len(active) >= 8:
+            return False
+        _PURITY.active = active | {identity}
+        try:
+            _path, document = linked_session(params)
+            if document.get('properties', {}).get('nodeType', {}).get('kind') != 'pure':
+                return False
+            return all(is_pure(n['type'], n['params']) for n in document['nodes'])
+        except (OSError, ValueError, KeyError):
+            return False
+        finally:
+            _PURITY.active = active
     if engine == 'thing.agent' and (params or {}).get('reference') is True:
         return True
     if engine in STEM_RUN_ENGINES or engine in ('note', 'data.convert', 'param.value', 'data.dataset', 'data.field'):
@@ -479,20 +499,25 @@ def solve(document, changed, *, invoke=None, stopped=None):
     nodes = {n['id']: n for n in document['nodes']}
     affected = downstream(document, [c for c in changed if c in nodes])
     incoming = {}
+    controlled_scripts = set()
     for wire in document['wires']:
+        if wire.get('enabled') is False:
+            continue
         incoming.setdefault(wire['to']['node'], []).append(wire['from']['node'])
+        if nodes[wire['to']['node']]['type'] == 'script.python' and wire['to']['socket'] in ('code', 'kind', 'param:code', 'param:kind'):
+            controlled_scripts.add(wire['to']['node'])
     stale = set()
     # A node waits for Run if it writes, is disabled, or is fed by a node that waits.
     plan = run_document(document, roots=sorted(affected), plan_only=True)['order'] if affected else []
     # Like Grasshopper, an upstream pure node that never solved solves now too.
-    unsolved = {k for k in plan if is_pure(nodes[k]['type'], nodes[k]['params']) and not nodes[k].get('frozen')
+    unsolved = {k for k in plan if k not in controlled_scripts and is_pure(nodes[k]['type'], nodes[k]['params']) and not nodes[k].get('frozen')
                 and (nodes[k].get('result') or {}).get('status') not in ('Done',)}
     if unsolved - affected:
         affected = downstream(document, affected | unsolved)
         plan = run_document(document, roots=sorted(affected), plan_only=True)['order']
     for key in plan:
         node = nodes[key]
-        if key in affected and (not is_pure(node['type'], node['params']) or node.get('frozen')
+        if key in affected and (key in controlled_scripts or not is_pure(node['type'], node['params']) or node.get('frozen')
                                 or any(source in stale for source in incoming.get(key, []))):
             stale.add(key)
     pure = [key for key in plan if key in affected and key not in stale]

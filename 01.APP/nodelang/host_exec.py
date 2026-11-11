@@ -9,6 +9,7 @@ A Python run is the same write admission, in the app's own interpreter.
 from __future__ import annotations
 
 import hashlib
+import ast
 import json
 import os
 import re
@@ -31,6 +32,43 @@ PROGRAMS = (
     ("office", "Office"),
     ("python", "Python"),
 )
+
+
+def script_is_pure(code):
+    """Only bounded, expression-based Python can re-solve without approval."""
+    try:
+        tree = ast.parse(code)
+    except (SyntaxError, TypeError):
+        return False
+    allowed = (ast.Module, ast.FunctionDef, ast.arguments, ast.arg, ast.Return, ast.Assign,
+               ast.If, ast.IfExp, ast.Expr, ast.Dict, ast.List, ast.Tuple, ast.Constant,
+               ast.Name, ast.Load, ast.Store, ast.BinOp, ast.UnaryOp, ast.BoolOp, ast.Compare,
+               ast.Subscript, ast.Slice, ast.Call, ast.keyword, ast.operator, ast.unaryop,
+               ast.boolop, ast.cmpop)
+    calls = {'str', 'int', 'float', 'bool', 'len', 'min', 'max', 'sum', 'abs', 'round', 'sorted', 'list', 'dict', 'tuple'}
+    return (len(tree.body) == 1 and isinstance(tree.body[0], ast.FunctionDef)
+            and tree.body[0].name == 'run' and not tree.body[0].decorator_list
+            and all(isinstance(n, allowed)
+                    and not (isinstance(n, ast.FunctionDef) and n is not tree.body[0])
+                    and not (isinstance(n, (ast.Name, ast.arg)) and (getattr(n, 'id', getattr(n, 'arg', '')).startswith('_')))
+                    and not (isinstance(n, ast.Call) and (not isinstance(n.func, ast.Name) or n.func.id not in calls))
+                    for n in ast.walk(tree)))
+
+
+def script_python(params, feeds):
+    """Script nodes reuse the existing timed Python process, never a second runner."""
+    code = params.get('code', '')
+    if not isinstance(code, str) or len(code) > 65536:
+        raise ValueError('Script code must be text, up to 64 KiB.')
+    if params.get('kind', 'pure') not in ('pure', 'effect'):
+        raise ValueError('Script kind must be Pure or Effect.')
+    inputs = {key: value for key, value in feeds.items() if key not in ('code', 'kind', 'timeout')}
+    if 'a' in params:
+        inputs.setdefault('a', params['a'])
+    result, log = _python(code + '\nresult = run(**_archhub_inputs)', {'_archhub_inputs': inputs}, params.get('timeout', 30))
+    if not isinstance(result, dict):
+        raise ValueError('Return a dictionary with one value per output.')
+    return result, log or 'Script returned %d outputs' % len(result)
 
 _CONTROL = frozenset({
     "host", "code", "transaction_name", "transaction", "document",

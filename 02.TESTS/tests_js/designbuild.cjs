@@ -24,6 +24,78 @@ const {chromium} = require('playwright');
     const errors = [];
     page.on('pageerror', error => {errors.push(error.message);console.error('PAGEERROR '+error.message);});
     await page.goto(input.url);
+    if(['canvas_open','canvas_reading'].includes(input.board)){
+      const nav=page.getByRole('navigation',{name:'Main navigation'});
+      await nav.waitFor();
+      await page.locator('.dx-task').filter({hasText:'Drawing set review'}).first().click();
+      const measure=()=>page.getByLabel('Workflow canvas',{exact:true}).evaluate(area=>{
+        const box=area.getBoundingClientRect(),matrix=new window.DOMMatrix(window.getComputedStyle(area.querySelector('.react-flow__viewport')).transform);
+        const nodes=[...area.querySelectorAll('.react-flow__node')].map(node=>({id:node.dataset.id,...node.getBoundingClientRect().toJSON()}));
+        const left=Math.min(...nodes.map(node=>node.left)),top=Math.min(...nodes.map(node=>node.top)),right=Math.max(...nodes.map(node=>node.right)),bottom=Math.max(...nodes.map(node=>node.bottom));
+        return {area:box.toJSON(),nodes,left,top,right,bottom,zoom:matrix.a,x:matrix.e,y:matrix.f,readable:(right-left)/matrix.a*.62<=box.width-60&&(bottom-top)/matrix.a*.62<=box.height-60};
+      });
+      let positions, fitted=0, reading=0;
+      for(const size of [{width:1009,height:940},{width:1366,height:768},{width:1864,height:949}]){
+        await page.setViewportSize(size);
+        await page.getByRole('button',{name:'Open its Canvas',exact:true}).click();
+        await page.locator('.react-flow__node').first().waitFor();await page.waitForTimeout(250);
+        const view=await measure();
+        assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSessionDocument().title),'Drawing set review');
+        assert.equal(view.nodes.length,await page.evaluate(()=>window.ArchHubAPI.getSessionDocument().nodes.length));
+        if(input.board==='canvas_reading')assert.equal(view.readable,false,'The wide fixture must require the reading-size fallback');
+        assert.ok(view.top>=view.area.top-1,JSON.stringify(view));
+        if(view.readable){fitted++;assert.ok(view.zoom>=.62&&view.left>=view.area.left-1&&view.right<=view.area.right+1&&view.bottom<=view.area.bottom+1,JSON.stringify(view));}
+        else {reading++;assert.ok(Math.abs(view.zoom-.8)<.005,JSON.stringify(view));assert.ok(view.left>=view.area.left-1,JSON.stringify(view));}
+        const current=await page.evaluate(()=>window.ArchHubAPI.getSessionDocument().nodes.map(node=>({id:node.id,position:node.position})));
+        if(positions)assert.deepEqual(current,positions);else positions=current;
+        await page.screenshot({path:path.resolve('.cache',`designv22g-${input.board}-${size.width}.png`)});
+        console.log(`PASS ${input.board} ${size.width}x${size.height}: ${view.readable?'whole session fits':'reading size at left edge'}; zoom=${view.zoom}; topCut=0`);
+        await nav.getByRole('button',{name:'Home',exact:true}).click();
+      }
+      if(input.board==='canvas_open')assert.ok(fitted>0&&reading>0,'Opening proof must exercise both readable fit and reading-size fallback');
+      else assert.equal(reading,3);
+      await page.setViewportSize({width:1009,height:940});
+      await page.getByRole('button',{name:'Open its Canvas',exact:true}).click();
+      await page.getByRole('button',{name:'More canvas actions',exact:true}).click();
+      await page.getByRole('menuitem',{name:'Thread',exact:true}).click();
+      await page.getByRole('button',{name:'Open Thread',exact:true}).click();await page.waitForTimeout(250);
+      let session=await page.locator('.react-flow__node[data-id="start"]').boundingBox();
+      const thread=await page.locator('[data-thread-peek]').boundingBox();
+      assert.ok(session.x>=100&&session.x+session.width<thread.x&&session.y>=89,JSON.stringify({session,thread}));
+      await page.getByRole('button',{name:'Close thread',exact:true}).click();
+      await page.getByRole('button',{name:'Open Inspector',exact:true}).click();await page.waitForTimeout(250);
+      session=await page.locator('.react-flow__node[data-id="start"]').boundingBox();
+      const inspector=await page.locator('.v22g-inspector-peek').boundingBox();
+      assert.ok(session.x>=100&&session.x+session.width<inspector.x&&session.y>=89,JSON.stringify({session,inspector}));
+      await page.getByRole('button',{name:'Close Inspector',exact:true}).click();
+      console.log(`PASS ${input.board}: Thread and Inspector peek keep the session node readable`);
+      await nav.getByRole('button',{name:'Home',exact:true}).click();
+      await page.getByRole('button',{name:'Open its Canvas',exact:true}).click();await page.waitForTimeout(250);
+      const view=await measure(),before=await page.evaluate(()=>JSON.stringify(window.ArchHubAPI.getSnapshot().graph.viewport));
+      await inputSession.send('Input.dispatchMouseEvent',{type:'mouseWheel',x:view.area.right-20,y:view.area.bottom-160,deltaX:0,deltaY:-140});
+      await page.waitForFunction(before=>JSON.stringify(window.ArchHubAPI.getSnapshot().graph.viewport)!==before,before);
+      await page.evaluate(()=>window.ArchHubAPI.saveSession());
+      const manual=await measure();
+      await page.setViewportSize({width:1009,height:940});await page.waitForTimeout(250);
+      const kept=await measure();
+      for(const key of ['zoom','x','y'])assert.ok(Math.abs(kept[key]-manual[key])<.1,JSON.stringify({manual,kept}));
+      assert.deepEqual(await page.evaluate(()=>window.ArchHubAPI.getSessionDocument().nodes.map(node=>({id:node.id,position:node.position}))),positions);
+      if(input.unboundPath){
+        await page.evaluate(file=>window.ArchHubAPI.openSession(file),input.unboundPath);
+        await nav.getByRole('button',{name:'Canvas',exact:true}).click();
+        for(const size of [{width:1009,height:940},{width:1366,height:768},{width:1864,height:949}]){
+          await page.setViewportSize(size);await page.waitForTimeout(250);
+          const standalone=await measure();
+          assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSessionDocument().title),'Standalone opening check');
+          assert.equal(standalone.nodes.length,4);
+          assert.ok(Math.abs(standalone.zoom-.8)<.005&&standalone.left>=standalone.area.left-1&&standalone.top>=standalone.area.top-1,JSON.stringify(standalone));
+          console.log(`PASS standalone Canvas ${size.width}x${size.height}: reading size at left edge; topCut=0`);
+        }
+      }
+      assert.deepEqual(errors,[]);
+      console.log(`PASS ${input.board}: resize honors manual zoom/pan; node positions unchanged`);
+      return;
+    }
     if(input.board==='zero_home'){
       await page.getByRole('heading',{name:'What do you need?',exact:true}).waitFor();
       assert.equal(await page.locator('[data-resume-step]').count(),0);

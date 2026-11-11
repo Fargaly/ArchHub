@@ -660,7 +660,8 @@
     externalInspector = false,
     onInspect,
     onHandoff,
-    controlsRef
+    controlsRef,
+    occludedWidth = 0
   }) {
     const live = useData(), s = preview ? {...live, graph: preview, sessionBreadcrumbs: []} : live,
       u = useApp();
@@ -682,7 +683,6 @@
       held = React.useRef(null),
       zoomWrites = React.useRef(Promise.resolve()),
       pendingZoomWrites = React.useRef(0);
-    const fittedScope = React.useRef(null);
     const userViewport = React.useRef(false);
     const paneBox = React.useRef(null), libraryPanel = React.useRef(null), inspectionPanel = React.useRef(null);
     const [paneWidth, setPaneWidth] = React.useState(window.innerWidth - 64), [libraryRail, setLibraryRail] = React.useState(false), [inspectionRail, setInspectionRail] = React.useState(false), [peek, setPeek] = React.useState('');
@@ -708,7 +708,7 @@
     };
     React.useEffect(() => {
       const saved = s.graph.viewport;
-      userViewport.current = Boolean(saved && (!embedded || saved.x !== 0 || saved.y !== 0 || saved.zoom !== 1));
+      userViewport.current = Boolean(saved && (saved.x !== 0 || saved.y !== 0 || saved.zoom !== 1));
       if (userViewport.current) updateView({zoom:saved.zoom,pan:{x:saved.x,y:saved.y}}, false);
     }, [s.graph.scopeKey, embedded]);
     const zoomAt = (value, client = null) => {
@@ -1043,50 +1043,34 @@
       if (fitted) updateView(fitted, persist);
     };
     React.useEffect(() => {
-      if (embedded || s.graph.viewport || !active || requestState !== 'loaded' || layout.scope !== scope || fittedScope.current === scope+':'+u.libraryOpen) return;
-      fittedScope.current = scope+':'+u.libraryOpen;
-      fit();
-    }, [requestState, scope, layout, u.libraryOpen, active, embedded]);
-    React.useEffect(() => {
       if (!active || preview) return undefined;
       window.UI.requestCanvasFit = fit;
       return () => { if (window.UI.requestCanvasFit === fit) window.UI.requestCanvasFit = null; };
     });
     React.useLayoutEffect(() => {
-      if (!embedded || !active || !visible.length || !area.current) return;
+      if (!active || !visible.length || !area.current || requestState!=='loaded' || layout.scope!==scope) return undefined;
       const frame = () => {
         if (userViewport.current) return;
         const boxes=[...area.current.querySelectorAll('[data-graph-node]')].map(element=>{
           const node=visible.find(node=>node.id===element.dataset.graphNode);
           return node && {node,x:node.x,y:node.y,w:element.offsetWidth,h:element.offsetHeight};
         }).filter(Boolean);
-        if (!boxes.length || boxes.length !== visible.length || boxes.some(box=>!box.w||!box.h)) return;
-        const width=area.current.clientWidth,height=area.current.clientHeight;
+        if (boxes.length!==visible.length || boxes.some(box=>!box.w||!box.h)) return;
+        const left=peek==='library'?248:0,right=peek==='inspector'?380:occludedWidth;
+        const width=area.current.clientWidth-left-right,height=area.current.clientHeight;
         if (width<=48 || height<=144) return;
-        const work=boxes.filter(box=>!box.node.fixed),focus=work.find(box=>/approval/i.test(box.node.status)) || work.find(box=>/error|fail/i.test(box.node.status)) || work.find(box=>box.node.status==='Running') || work.find(box=>!['Done','Solved'].includes(box.node.status)) || work.at(-1) || boxes.find(box=>box.node.type==='thing.session') || boxes[0];
-        const bottom=height-72,top=56,defaultZoom=Number(zoomRow?.value || 100);
-        let best;
-        for(let pct=defaultZoom;pct>=Math.min(90,defaultZoom);pct-=2){
-          const z=pct/100,x=width/2-(focus.x+focus.w/2)*z;
-          const horizontal=boxes.filter(box=>(box.x+box.w)*z+x>0 && box.x*z+x<width);
-          const rowTop=Math.min(focus.y,...horizontal.filter(box=>box.y>=focus.y-300 && box.y<=focus.y).map(box=>box.y));
-          const y=top+20-rowTop*z,cross=horizontal.filter(box=>box.y*z+y<bottom-1 && (box.y+box.h)*z+y>bottom+1);
-          best={z,x,y,horizontal,cross};
-          if(!cross.length)break;
-        }
-        if(best.cross.length){
-          const {z,horizontal}=best;
-          const candidates=horizontal.flatMap(box=>[bottom-(box.y+box.h)*z-2,bottom-box.y*z+2]).filter(y=>focus.y*z+y>=top+4 && (focus.y+focus.h)*z+y<=bottom && !horizontal.some(box=>box.y*z+y<bottom-1 && (box.y+box.h)*z+y>bottom+1)).sort((a,b)=>Math.abs(a-best.y)-Math.abs(b-best.y));
-          if(candidates.length)best.y=candidates[0];
-        }
-        updateView({zoom:best.z,pan:{x:best.x,y:best.y}},false);
+        const fitted=fitCanvasViewport(boxes,width,height,zoomMin,zoomMax,1);
+        if(fitted && fitted.zoom>=.62){updateView({...fitted,pan:{...fitted.pan,x:fitted.pan.x+left}},false);return;}
+        const session=right>0&&boxes.find(box=>box.node.type==='thing.session');
+        const x=session?session.x:Math.min(...boxes.map(box=>box.x)),y=Math.min(...boxes.map(box=>box.y));
+        updateView({zoom:.8,pan:{x:left+32-x*.8,y:32-y*.8}},false);
       };
       const observer=new window.ResizeObserver(frame);
       observer.observe(area.current);
       for (const element of area.current.querySelectorAll('[data-graph-node]')) observer.observe(element);
       const tick=window.requestAnimationFrame(frame);
       return () => {observer.disconnect();window.cancelAnimationFrame(tick);};
-    }, [embedded,active,requestState,scope,layout,flowNodes.length]);
+    }, [active,requestState,scope,layout,flowNodes.length,occludedWidth,peek]);
     const openNode = n => {
       if (n.params?.session_file) { setParent(null);setSelected([]);u.act(() => api.enterSession(n.id));return; }
       if (n.kind.toLowerCase().includes('meeting')) u.go('meetings');else if (n.kind === 'Watch program') u.act(() => api.windowAction('hide'));else if (n.kind === 'Present') u.go('present');else if (['Community', 'Community group', 'Marketplace listing', 'Project charge'].includes(n.kind)) u.go('community');else if (n.kind === 'Interface studio' || n.kind === 'UI element') u.go('interface');else if (n.kind.startsWith('TBP ')) u.go('model-review');else if (n.kind === 'Theme') u.go('settings/Appearance');else if (n.kind === 'Workflow link') {

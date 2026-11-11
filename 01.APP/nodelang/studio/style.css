@@ -1088,7 +1088,7 @@ kbd{font-size:var(--type-size-meta)!important;font-weight:500!important}
 .canvas-pane-peek,.v22g-inspector-peek{position:absolute;top:40px;bottom:0;right:48px;width:min(380px,calc(100% - 96px));z-index:30;border:1px solid var(--color-line);background:var(--color-bg-panel);box-shadow:0 8px 28px #0007;min-height:0}
 .canvas-pane-peek[data-side=library]{left:48px;right:auto;width:248px}.canvas-pane-peek>.library-shelf{height:100%;width:100%!important}
 .v22g-inspector-peek>.shared-properties{height:calc(100% - 30px)}
-.v22g-thread[data-thread-peek]{position:fixed;top:88px;bottom:0;right:112px;width:min(380px,calc(100vw - 200px));height:auto;z-index:30;border:1px solid var(--color-line);box-shadow:0 8px 28px #0007}
+.v22g-thread[data-thread-peek]{position:fixed;top:88px;bottom:0;right:48px;width:min(380px,calc(100vw - 200px));height:auto;z-index:30;border:1px solid var(--color-line);box-shadow:0 8px 28px #0007}
 .shared-properties{container:inspector / inline-size;min-width:0}.v22g-thread{container:thread / inline-size}
 .dx-tasks-list,.shared-properties-task,.shared-properties-selection,.dx-work-scroll,.settings-sheet main,.docs-layout main{padding-bottom:112px}
 .v22g-strip{container:toolbar / inline-size}.v22g-tabs{overflow:visible;position:relative;align-items:center}.v22g-tab{width:150px;min-width:0;flex:none}.v22g-tab [role=tab]{min-width:0;flex:1}

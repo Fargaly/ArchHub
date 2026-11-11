@@ -514,3 +514,26 @@ TESTISO final profile leaks: []; protected write attempts: 0
 The six cases are Canvas, canvas_fit, fluid_shell, resume, zero_home and appearance_owner. The migrated Home, Thread, Settings and fit/save/reopen cases also passed in the preceding focused run; its one Canvas-selection failure was repaired and the Canvas case repeated above. Resume and all four shell routes pass at 1009x940, 1366x768 and 1864x949, with zero cut controls and no opaque bottom strip. Current captures remain in ignored .cache/designv22g-resume-{1009,1366,1864}.png. The existing cache_dir warning remains. Full suites, benchmarks, installed acceptance, push and release were not run.
 
 The Settings layout read now drives the existing request state through waiting, loaded/empty and error with Retry; the zero-session section is its rendered empty branch. UI input reuses this suite's original CDP session helpers, confined to its launched headless browser. No desktop pointer call or fabricated idle/away guard is used. The hook and its R100 rule were not changed.
+
+### Part 3 opening view acceptance, 2026-11-12
+
+Prior art: reused Canvas's existing fitCanvasViewport, ResizeObserver, persisted viewport and userViewport flag; both task-bound and standalone Canvas use the same framing effect. Automatic framing fits the whole session when the resulting scale is at least 62%; otherwise it opens at 80% from the left edge, with the top node fully visible. Thread/Inspector peeks reserve their visible width and keep the session node readable. Automatic framing does not save a viewport or move any node. A saved/manual view retains precedence, including after pane/window resize. Explicit Fit remains the existing user action. Fixed-node positions, arrange/layout rules and rail + are unchanged.
+
+The existing designbuild suite adds normal and very wide task-file fixtures which retain the real fixed nodes. The normal fixture exercises both outcomes: 1009x940 opens at 80%; 1366x768 fits at 71.0688%; 1864x949 fits at 84.6437%. The wide fixture opens at 80% at all three sizes. Each checks every actual node's top, document membership and unchanged stored positions. Both also open Thread and Inspector peeks and prove manual zoom/pan survives resize. An actual standalone .archhub file opens through openSession at each size with the same 80% left-edge fallback and zero top clipping. All files and profiles are synthetic and isolated.
+
+Compiled manifest: b626f521301da12cbdced1751eb24cca81cdcafe4581fc845964265d5e87d9f7; 2057014 output bytes, 40 files; Babel 7.29.0. Focused proof on that compiled Studio:
+```text
+4 passed, 7 deselected, 1 warning in 40.28s
+1 passed, 10 deselected, 1 warning in 23.49s
+# tests 25
+# pass 25
+# fail 0
+# skipped 0
+TESTISO final profile leaks: []; protected write attempts: 0
+```
+
+The four cases are canvas_fit, fluid_shell, canvas_open and canvas_reading. The final single-case run adds the standalone-file proof to canvas_reading. The 25 Canvas regression cases also pass. At 1009x940, 1366x768 and 1864x949, Home, Canvas, Docs and Settings each report cut=0, opaqueStrip=0, floatingComposer=true. Opening captures and exact command output remain in ignored .cache/designv22g-{canvas_open,canvas_reading}-*.png and designv22g-{opening-ui,standalone-ui,opening-regressions}.log/.tap. git diff --check passes. Existing pytest cache_dir warning remains.
+
+Not in this release: Invite/collaboration, because no verified collaboration-session owner is available; no dead Invite control was added. Not in this release: Packages browser, because no verified catalogue owner is available; the existing local mod manager remains. Not in this release: Layout presets, because the drawn disabled control had no working owner; the existing Arrange action remains. Not in this release: Home direction 2, deferred after completing the requested Resume direction. The fixed-node lane redesign, auto-arrange/layout rules and rail + picker remain outside this run by explicit instruction.
+
+These are branch/build proofs only. No push, install or release was performed, and installed appearance is untested. Full suites and benchmarks were not run. One BelowNormal job and one headless browser ran at a time; each successful test closes its server and browser.

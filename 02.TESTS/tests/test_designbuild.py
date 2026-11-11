@@ -8,7 +8,7 @@ import pytest
 from test_task_session_roundtrip import _isolate, _Studio, _post
 
 
-@pytest.mark.parametrize("board", ["home", "workshop", "canvas", "settings", "canvas_fit", "fluid_shell", "resume", "zero_home"])
+@pytest.mark.parametrize("board", ["home", "workshop", "canvas", "settings", "canvas_fit", "fluid_shell", "resume", "zero_home", "canvas_open", "canvas_reading"])
 def test_designbuild_board(tmp_path, monkeypatch, board):
     browser_cache = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '')
     if not browser_cache:
@@ -22,6 +22,7 @@ def test_designbuild_board(tmp_path, monkeypatch, board):
     monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(state))
     server = NoGraphServer(state).start()
     client = _Studio(server)
+    unbound_path = ''
     try:
         if board != 'zero_home':
             task = client.workshop('createTask', 'Drawing set review')
@@ -32,26 +33,38 @@ def test_designbuild_board(tmp_path, monkeypatch, board):
                 'progress': {'Read sheet index': 'done', 'Review drawings': 'done'},
                 'messages': [{'id':'review-complete','who':'Drawing coordinator','text':'Review is complete. The drawing index matches the reviewed set.'},{'id':'ask-export','who':'You','text':'What is holding up the export?'}],
             })
-            if board in ('canvas', 'canvas_fit'):
+            if board in ('canvas', 'canvas_fit', 'canvas_open', 'canvas_reading'):
                 import copy
                 from nodelang.session_files import catalogue
                 items = {row['id']: row for row in catalogue()}
                 nodes = [{'id': key, 'item': item, 'type': items[item]['engine'], 'title': items[item]['title'],
                           'params': copy.deepcopy(items[item]['params']), 'position': {'x': x, 'y': 0}}
                          for key, item, x in [('list','n_list',0),('slice','s_slice',340),('count','s_count',680),('pdf','o_pdf_handoff',1020)]]
-                if board == 'canvas_fit':
+                if board in ('canvas_fit', 'canvas_open'):
                     nodes = nodes[:2]
+                if board == 'canvas_reading':
+                    for node in nodes:
+                        node['position']['x'] *= 4
+                if board in ('canvas_open', 'canvas_reading'):
+                    for node in nodes:
+                        node['position']['x'] += 800
                 nodes[0]['params']['value'] = '[10, 20, 30, 40, 50]'
                 nodes[1]['params']['count'] = '3'
                 view = client.workshop('openTaskGraph', task['taskId'])
                 opened = client.files('read', path=view['path'], id=view['id'])
-                opened['document']['nodes'] = nodes
+                opened['document']['nodes'] = [*opened['document']['nodes'], *nodes] if board in ('canvas_open', 'canvas_reading') else nodes
                 opened['document']['wires'] = [
                     {'id':'first','from':{'node':'list','socket':'value'},'to':{'node':'slice','socket':'items'}},
                     {'id':'second','from':{'node':'slice','socket':'items_out'},'to':{'node':'count','socket':'items'}}]
-                if board == 'canvas_fit':
+                if board in ('canvas_fit', 'canvas_open'):
                     opened['document']['wires'] = opened['document']['wires'][:1]
                 client.files('save', path=view['path'], document=opened['document'])
+                if board == 'canvas_reading':
+                    from nodelang.session_files import new_document, write_document
+                    standalone = new_document('Standalone opening check')
+                    standalone.update(nodes=copy.deepcopy(nodes), wires=copy.deepcopy(opened['document']['wires']))
+                    unbound_path = str(state / 'standalone-opening.archhub')
+                    write_document(unbound_path, standalone)
             for title in ['Sheet index check', 'Export issue package', 'Update drawing references', 'Model view audit']:
                 client.workshop('createTask', title)
             client.workshop('openTaskGraph', task['taskId'])
@@ -59,13 +72,14 @@ def test_designbuild_board(tmp_path, monkeypatch, board):
             ['node', '02.TESTS/tests_js/designbuild.cjs'],
             input=json.dumps({'url': server.public_url, 'cookie': server._cookie_token,
                               'browserCache': browser_cache, 'board': board,
+                              'unboundPath': unbound_path,
                               'polish': os.environ.get('ARCHHUB_DESIGNPOLISH_PHASE', '')}),
             cwd=Path(__file__).resolve().parents[2], capture_output=True, text=True,
             encoding='utf-8', timeout=120,
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         print(result.stdout)
         assert result.returncode == 0, result.stdout + result.stderr
-        if board in ('canvas_fit', 'fluid_shell', 'resume', 'zero_home') or os.environ.get('ARCHHUB_DESIGNPOLISH_PHASE'):
+        if board in ('canvas_fit', 'fluid_shell', 'resume', 'zero_home', 'canvas_open', 'canvas_reading') or os.environ.get('ARCHHUB_DESIGNPOLISH_PHASE'):
             return
         reopened = client.workshop('openTaskGraph', task['taskId'])
         assert reopened['scope'] == 'Review the current issue'

@@ -8,6 +8,50 @@ from nodelang import canvas_documents, session_files, workshop_tasks
 from nodelang.workshop_mailbox import application_history, attach_meeting_notes
 
 
+def test_viewport_flag_only_save_and_noop_write_count(tmp_path, monkeypatch):
+    document = session_files.new_document('Legacy view')
+    document['properties'].pop('viewportSaved')
+    path = tmp_path / 'view.archhub'
+    session_files.write_document(path, document)
+    writes, write = [], session_files.write_document
+    monkeypatch.setattr(session_files, 'write_document', lambda p, d: (writes.append(copy.deepcopy(d)), write(p, d))[1])
+    canvas_documents.remember(path, document)
+    saved = copy.deepcopy(document)
+    saved['properties']['viewportSaved'] = True
+    result = canvas_documents.commit_ui(path, saved, 0)
+    assert result['properties']['viewportSaved'] is True
+    assert session_files.read_document(path)['viewport'] == {'x': 0, 'y': 0, 'zoom': 1}
+    for _ in range(5):
+        result = canvas_documents.commit_ui(path, result, canvas_documents.revision(result))
+    assert len(writes) == 1
+    metadata = copy.deepcopy(result)
+    metadata['properties']['history'] = []
+    canvas_documents.commit_ui(path, metadata, canvas_documents.revision(result))
+    assert len(writes) == 1
+    print('PASS viewport flag-only origin save: writes=1; unchanged autosaves=5; additional writes=0')
+
+
+@pytest.mark.parametrize('view_first', [False, True])
+@pytest.mark.parametrize('viewport', [{'x': 0, 'y': 0, 'zoom': 1}, {'x': 142, 'y': -73, 'zoom': .8}])
+def test_concurrent_viewport_merge_keeps_flag_and_other_edit(tmp_path, view_first, viewport):
+    base = session_files.new_document('Concurrent view')
+    base['properties'].pop('viewportSaved')
+    path = tmp_path / 'merge.archhub'
+    session_files.write_document(path, base)
+    canvas_documents.remember(path, base)
+    view, other = copy.deepcopy(base), copy.deepcopy(base)
+    view['viewport'] = viewport
+    view['properties']['viewportSaved'] = True
+    other['title'] = 'Other editor'
+    for document in (view, other) if view_first else (other, view):
+        canvas_documents.commit_ui(path, document, 0)
+    result = session_files.read_document(path)
+    assert result['viewport'] == view['viewport']
+    assert result['properties']['viewportSaved'] is True
+    assert result['title'] == 'Other editor'
+    print(f'PASS concurrent viewport merge: view_first={view_first}; flag=True; both edits retained')
+
+
 def test_script_uses_timed_python_and_pure_classification():
     from nodelang.host_exec import script_is_pure
     document = session_files.new_document('Script proof')

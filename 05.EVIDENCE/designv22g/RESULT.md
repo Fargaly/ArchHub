@@ -537,3 +537,56 @@ The four cases are canvas_fit, fluid_shell, canvas_open and canvas_reading. The 
 Not in this release: Invite/collaboration, because no verified collaboration-session owner is available; no dead Invite control was added. Not in this release: Packages browser, because no verified catalogue owner is available; the existing local mod manager remains. Not in this release: Layout presets, because the drawn disabled control had no working owner; the existing Arrange action remains. Not in this release: Home direction 2, deferred after completing the requested Resume direction. The fixed-node lane redesign, auto-arrange/layout rules and rail + picker remain outside this run by explicit instruction.
 
 These are branch/build proofs only. No push, install or release was performed, and installed appearance is untested. Full suites and benchmarks were not run. One BelowNormal job and one headless browser ran at a time; each successful test closes its server and browser.
+
+
+### Part 4 saved Canvas view owner repair, 2026-11-12
+
+Continuation from 6087903c4c8a5c01e3bf23bcbcacec5c7795e777 on lane/design-v22g; intent DESIGNV22G. Strict true viewportSaved restores the stored view, including origin at 100%. Missing legacy flags frame once after measurement without mutating the document. The existing active Canvas supplies its current local view on explicit Save; gestures use the existing setSessionViewport path. No second view store.
+
+canvas_documents merges viewport and viewportSaved as one authored value. Only viewportSaved participates in properties change detection; revision/history metadata alone stays a no-op. Other property ownership is unchanged. Owner tests reproduce KeyError: viewportSaved on the original unchanged-origin commit and concurrent merge, then prove flag-only origin persistence, both concurrent edit orders at origin and at a panned view, and five unchanged autosaves with zero additional writes.
+
+Prior art: existing fitCanvasViewport, viewport state, scope reset, commit_ui and three-way merge; React Flow instance save/restore contract https://reactflow.dev/api-reference/types/react-flow-instance. Existing isolated real-owner/browser harnesses are extended. Home readiness now handles empty Resume; fixture seeding follows pagehide drainage so the previous page cannot overwrite the legacy fixture. UI audit counts actual atomic .archhub replacements. Real window resizing also preserves the one-time framing.
+
+Only the two touched test files ran, sequentially in one BelowNormal run-heavy job with the existing isolated DESIGNV22G environment. Commands:
+```text
+python -m pytest 02.TESTS/tests_replica/test_designv22g.py -q -s -p no:cacheprovider
+node --max-old-space-size=512 --test --test-reporter=tap --test-concurrency=1 02.TESTS/tests_js/studio_designv22g.test.cjs
+```
+
+Compiled Studio:
+```text
+{"ok":true,"action":"compile","files":40,"output_bytes":2062739,"manifest_sha256":"451ae81073d52450b25bcf1f93b6a8a8037d0e32b890105cada2f1e7aede83db","babel_version":"7.29.0"}
+```
+
+Final exact output:
+```text
+PASS viewport flag-only origin save: writes=1; unchanged autosaves=5; additional writes=0
+PASS concurrent viewport merge: view_first=False; flag=True; both edits retained
+PASS concurrent viewport merge: view_first=True; flag=True; both edits retained
+PASS concurrent viewport merge: view_first=False; flag=True; both edits retained
+PASS concurrent viewport merge: view_first=True; flag=True; both edits retained
+TESTISO final profile leaks: []; protected write attempts: 0
+PROFILE-WRITE-GUARD: protected write attempts=0
+32 passed, 1 warning in 18.77s
+# PASS legacy viewport: framed on open; bytes unchanged after open and 5s idle; writes=0
+# PASS user pan: viewport + flag persisted; reopen exact; 5s unchanged idle writes=0
+# PASS saved origin: {x:0,y:0,zoom:1} + flag restored exactly
+# PASS explicit Save: untouched legacy framing + flag persisted; reopen exact
+# tests 26
+# pass 26
+# fail 0
+# skipped 0
+01:57:25 [77300] DONE  DESIGNV22G saved-view final checks exit=0 ran 63s (job empty)
+```
+
+Raw output: ignored .cache/designv22g-saved-view-owner.log and .cache/designv22g-saved-view-ui.tap. Browser and server close in teardown; the job is empty. Automatic approval review rejected removal of three diagnostic disposable profiles with blocked by policy; testiso-designv22g-ui-l6HpVd, testiso-designv22g-ui-vdCKZc and testiso-designv22g-ui-Woj9lD remain under .cache. Deletion was not retried through another tool. No push/install/release/live profile/founder screen or reads of 20.CLIENTS/60.PERSONAL. Full suites, installed acceptance and benchmarks were not run. The pytest cache_dir configuration warning remains.
+
+Final UI input uses the existing private-headless-page CDP path, not desktop pointer controls or an artificial idle guard. The compiler caught the added page.mouse calls and unqualified getComputedStyle; the test now uses its existing CDP mechanism and window.getComputedStyle. Repeated full touched UI file:
+```text
+# tests 26
+# pass 26
+# fail 0
+# skipped 0
+# duration_ms 43568.6971
+02:01:24 [77048] DONE  DESIGNV22G saved-view final headless input exit=0 ran 44s (job empty)
+```

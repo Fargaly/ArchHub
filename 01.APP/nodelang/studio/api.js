@@ -1686,6 +1686,7 @@ api.openStarter=async id=>{const navigation=++fileNavigation,opened=await sessio
 api.startTemplate=async id=>{const opened=await api.openTemplateGraph(id);if(opened?.cancelled)return opened;await api.runNode();return {ok:true};};
 api.importSession=async file=>{const navigation=++fileNavigation;if(!file.name.toLowerCase().endsWith('.archhub')||file.size>8388608)throw Error('Choose an .archhub file up to 8 MiB.');return adoptFile(JSON.parse(await file.text()),'',navigation);};
 api.saveSession=async(path=sessionPath,saveAs=false)=>{
+ if(sessionDocument && sessionDocument.properties?.viewportSaved!==true)api.setSessionViewport(window.UI?.requestCanvasViewport?.() || sessionDocument.viewport);
  const navigation=fileNavigation,previousPath=sessionPath;await flushAutosave();
  if(navigation!==fileNavigation)return {cancelled:true};if(!saveAs&&path===previousPath)path=sessionPath;
  fileWrites=fileWrites.catch(()=>{}).then(async()=>{

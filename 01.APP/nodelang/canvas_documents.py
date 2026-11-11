@@ -674,9 +674,17 @@ def merge(base, ours, theirs):
     result['wires'] = [w for w in result['wires'] if w['from']['node'] in node_ids and w['to']['node'] in node_ids]
     seen = set()
     result['wires'] = [w for w in result['wires'] if not ((w['to']['node'], w['to']['socket']) in seen or seen.add((w['to']['node'], w['to']['socket'])))]
-    for key in ('title', 'viewport', 'groups', 'notes'):
+    for key in ('title', 'groups', 'notes'):
         if (base or {}).get(key) != ours.get(key):
             result[key] = copy.deepcopy(ours[key])
+    # The view and its explicit-save marker are one value; unrelated properties stay with their owner.
+    if (base or {}).get('viewport') != ours.get('viewport') or \
+            (base or {}).get('properties', {}).get('viewportSaved') != ours.get('properties', {}).get('viewportSaved'):
+        result['viewport'] = copy.deepcopy(ours['viewport'])
+        if 'viewportSaved' in ours.get('properties', {}):
+            result.setdefault('properties', {})['viewportSaved'] = ours['properties']['viewportSaved']
+        else:
+            result.get('properties', {}).pop('viewportSaved', None)
     return result
 
 
@@ -701,7 +709,9 @@ def commit_ui(path, document, base_revision, by='You'):
             base = _SNAPSHOTS.get(str(path).lower(), {}).get(base_revision)
             document = merge(base, document, current)
             validate(document)
-        if current is not None and json.dumps({k: v for k, v in document.items() if k != 'properties'}, sort_keys=True) == \
+        # Only viewportSaved participates from properties: revision/history churn must not trigger autosave writes.
+        if current is not None and document.get('properties', {}).get('viewportSaved') == current.get('properties', {}).get('viewportSaved') and \
+                json.dumps({k: v for k, v in document.items() if k != 'properties'}, sort_keys=True) == \
                 json.dumps({k: v for k, v in current.items() if k != 'properties'}, sort_keys=True):
             remember(path, current)
             return current

@@ -708,7 +708,7 @@
     };
     React.useEffect(() => {
       const saved = s.graph.viewport;
-      userViewport.current = s.graph.viewportSaved ?? Boolean(saved);
+      userViewport.current = s.graph.viewportSaved === true;
       if (userViewport.current) updateView({zoom:saved.zoom,pan:{x:saved.x,y:saved.y}}, false);
     }, [s.graph.scopeKey, embedded]);
     const zoomAt = (value, client = null) => {
@@ -1045,7 +1045,12 @@
     React.useEffect(() => {
       if (!active || preview) return undefined;
       window.UI.requestCanvasFit = fit;
-      return () => { if (window.UI.requestCanvasFit === fit) window.UI.requestCanvasFit = null; };
+      const currentViewport = () => ({x:view.current.pan.x,y:view.current.pan.y,zoom:view.current.zoom});
+      window.UI.requestCanvasViewport = currentViewport;
+      return () => {
+        if (window.UI.requestCanvasFit === fit) window.UI.requestCanvasFit = null;
+        if (window.UI.requestCanvasViewport === currentViewport) window.UI.requestCanvasViewport = null;
+      };
     });
     React.useLayoutEffect(() => {
       if (!active || !visible.length || !area.current || requestState!=='loaded' || layout.scope!==scope) return undefined;
@@ -1059,6 +1064,8 @@
         const left=peek==='library'?248:0,right=peek==='inspector'?380:occludedWidth;
         const width=area.current.clientWidth-left-right,height=area.current.clientHeight;
         if (width<=48 || height<=144) return;
+        // Initial framing is local and happens once; only a gesture or explicit Save persists the view.
+        userViewport.current = true;
         const fitted=fitCanvasViewport(boxes,width,height,zoomMin,zoomMax,1);
         if(fitted && fitted.zoom>=.62){updateView({...fitted,pan:{...fitted.pan,x:fitted.pan.x+left}},false);return;}
         const session=right>0&&boxes.find(box=>box.node.type==='thing.session');

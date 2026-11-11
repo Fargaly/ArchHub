@@ -11091,7 +11091,11 @@
         "02.TESTS/tests_js/agentcanvas.cjs",
         "02.TESTS/tests_js/raildoors.test.cjs",
         "02.TESTS/tests_js/apptidy_sessions.test.mjs",
-        "02.TESTS/tests_js/checkpoint_browser.cjs"
+        "02.TESTS/tests_js/checkpoint_browser.cjs",
+        "02.TESTS/tests/test_state_isolation.py",
+        "02.TESTS/tests_replica/test_graphout.py",
+        "02.TESTS/tests_js/multidelete.mjs",
+        "02.TESTS/tests_js/settings_node_bridge.mjs"
       ]
     }
   }

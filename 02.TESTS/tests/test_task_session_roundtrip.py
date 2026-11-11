@@ -167,10 +167,12 @@ def _expect(view, spec):
     assert view["agents"] == spec["agents"]
     assert view["plan"] == spec["plan"]
     assert view["progress"] == spec["progress"]
-    assert view["workflow"][1:] == spec["workflow"]
+    fixed = {'start', 'fixed-agent', 'fixed-you', 'fixed-workshop'}
+    assert [row for row in view["workflow"] if row['id'] not in fixed] == spec["workflow"]
+    assert {row['id'] for row in view["workflow"] if row['id'] in fixed} == fixed
     assert view["workflow"][0]["id"] == "start"
     assert view["activity"] == spec["activity"]
-    assert view["parameters"][1:] == spec["parameters"]
+    assert [row for row in view["parameters"] if row['id'] not in fixed] == spec["parameters"]
     assert view["messages"] == [{"role": "task", **note} for note in spec["messages"]]
     on_disk = json.loads(Path(view["path"]).read_text(encoding="utf-8"))
     held = on_disk["properties"]["taskContext"]

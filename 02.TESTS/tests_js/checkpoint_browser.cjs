@@ -35,8 +35,9 @@ test('CHECKPOINT: document round trip and inspector owner width', async () => {
       await api.saveSession();
       return task;
     });
-    await page.getByRole('navigation', {name:'Main navigation'}).getByRole('button', {name:'Workshop',exact:true}).click();
-    await page.getByRole('textbox', {name:'Task title',exact:true}).waitFor();
+    await page.getByRole('navigation', {name:'Main navigation'}).getByRole('button', {name:'Canvas',exact:true}).click();
+    await page.getByRole('tab', {name:'Checkpoint browser task',exact:true}).waitFor();
+    await page.getByRole('button', {name:'Open Inspector',exact:true}).click();
     const original = await page.evaluate(() => window.ArchHubAPI.getSessionDocument());
     phase('checkpoint save and restore');
     await page.locator('details').filter({has:page.locator('summary', {hasText:'Checkpoints'})}).locator('summary').click();
@@ -58,13 +59,17 @@ test('CHECKPOINT: document round trip and inspector owner width', async () => {
     await page.waitForFunction(id => window.ArchHubAPI?.getSnapshot().tasks.some(t=>t.id===id&&t.checkpoints?.length===1), task.taskId);
     await page.getByRole('navigation', {name:'Main navigation'}).getByRole('button', {name:'Home',exact:true}).click();
     await page.locator('.dx-task').filter({hasText:'Checkpoint browser task'}).click();
-    await page.getByRole('navigation', {name:'Main navigation'}).getByRole('button', {name:'Workshop',exact:true}).click();
-    await page.getByRole('textbox', {name:'Task title',exact:true}).waitFor();
+    await page.getByRole('navigation', {name:'Main navigation'}).getByRole('button', {name:'Canvas',exact:true}).click();
+    await page.getByRole('tab', {name:'Checkpoint browser task',exact:true}).waitFor();
     assert.deepEqual(content(await page.evaluate(() => window.ArchHubAPI.getSessionDocument())), content(original));
     console.log('PASS checkpoint: UI save -> time/label listed -> edit -> UI restore -> document equal -> reload retains checkpoint and document');
     phase('checkpoint complete');
     if (process.env.CHECKPOINT_WIDTH === '1') {
     phase('width drag and save');
+    await page.setViewportSize({width:1600,height:1000});
+    await page.waitForFunction(() => document.querySelector('#params')?.offsetWidth >= 280);
+    await page.waitForFunction(()=>Math.abs(document.getElementById('params').getBoundingClientRect().width-window.ArchHubAPI.getSnapshot().settings.find(row=>row.id==='Appearance.Inspector width').value)<.5);
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
     const params = page.locator('#params');
     const handle = await page.getByRole('separator', {name:'Resize the Properties pane'}).boundingBox();
     const before = await params.boundingBox();
@@ -98,6 +103,7 @@ test('CHECKPOINT: document round trip and inspector owner width', async () => {
     assert.ok(Math.abs(after.width-live) < 0.5, JSON.stringify({live,bounds:after.width}));
     await page.reload({waitUntil:'domcontentloaded'});
     await page.waitForFunction(() => window.ArchHubAPI && !document.getElementById('studio-boot') && document.querySelector('[data-home-ready]'));
+    await page.locator('.dx-task').filter({hasText:'Checkpoint browser task'}).dblclick();
     await page.waitForFunction(() => window.ArchHubAPI.getSnapshot().settings.find(row=>row.id==='Appearance.Inspector width')?.value === 375 && document.getElementById('params')?.offsetWidth === 375);
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const reopened = await params.boundingBox();

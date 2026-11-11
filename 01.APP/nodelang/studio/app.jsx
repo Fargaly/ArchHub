@@ -1134,7 +1134,7 @@
   function appShellRunningWaitForYou14({
     go
   }, event) {
-    const handler = () => go('workshop');
+    const handler = () => go('agents');
     return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
   }
   function appShellCtrlK15({

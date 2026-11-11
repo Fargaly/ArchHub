@@ -1108,7 +1108,7 @@ body{min-width:900px;overflow-x:auto}.app-window{min-width:900px}.app-window>div
 .resume-sessions>header{display:flex;align-items:center;justify-content:space-between;height:48px;flex:none;padding:0 10px 0 16px}.resume-sessions h2{font-size:calc(13px * var(--text-scale,1));font-weight:600;margin:0}
 .resume-sessions[data-peek]{position:fixed;top:48px;left:64px;bottom:0;width:300px;height:auto;z-index:35;box-shadow:0 8px 28px #0007}
 .resume-session-scroll{overflow:auto;min-height:0;flex:1;padding:0 8px 112px;display:flex;flex-direction:column;gap:2px}
-.resume-row.dx-task-row{position:relative;display:grid;grid-template-columns:28px minmax(0,1fr) 24px 24px;gap:8px;padding:10px 8px;border:0;border-radius:8px;min-height:58px;flex:none}
+.resume-row.dx-task-row{position:relative;display:grid;grid-template-columns:28px minmax(0,1fr) 24px 24px;gap:8px;padding:10px 8px;border:0;border-radius:8px;min-height:58px;height:auto;flex:none}
 .resume-row.on{background:var(--v22g-accent-soft)}.resume-row[data-status=review]::before{content:'';position:absolute;left:0;top:12px;bottom:12px;width:3px;border-radius:3px;background:var(--color-warn)}
 .resume-row .dx-task{display:grid;grid-template-columns:minmax(0,1fr);height:auto;min-height:0;gap:3px;padding:0;text-align:left;background:none;border:0;color:var(--color-ink);align-self:center}
 .resume-row .dx-task b{font-size:calc(14px * var(--text-scale,1));font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.resume-row .dx-task span{font-size:calc(12.5px * var(--text-scale,1));color:var(--color-ink-soft);white-space:normal;overflow-wrap:anywhere}

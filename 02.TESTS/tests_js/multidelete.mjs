@@ -22,9 +22,8 @@ try {
   await page.goto(config.url);
   await page.waitForFunction(() => window.ArchHubAPI);
   await page.evaluate(() => window.ArchHubAPI.ready);
-  await page.getByRole('button', {name:/Multi-delete test/}).click();
-  await page.getByRole('button', {name:'Open task',exact:true}).click();
-  await page.getByRole('button',{name:'Canvas view',exact:true}).click();
+  await page.locator('.dx-task').filter({hasText:'Multi-delete test'}).click();
+  await page.getByRole('region',{name:'Resumed session'}).getByRole('button',{name:'Open its Canvas',exact:true}).click();
   await page.locator('[data-graph-node="list"]').waitFor();
   const before = await page.evaluate(() => {
     const d = window.ArchHubAPI.getSessionDocument();

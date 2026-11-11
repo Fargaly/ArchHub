@@ -19,7 +19,10 @@ def test_create_has_start_and_does_not_select_file(history):
     from nodelang.session_files import SessionFiles, read_document
     row = tasks.create(history, 'Review drawings', 'founder')
     document = read_document(row['session_path'])
-    assert document['nodes'][0]['title'] == 'Start \u00b7 Review drawings'
+    start = document['nodes'][0]
+    assert (start['id'], start['type'], start['title']) == ('start', 'thing.session', 'Session')
+    assert start['params']['value'] == 'Review drawings'
+    assert len(document['nodes']) == 4 and all(n['fixed'] for n in document['nodes'])
     assert document['properties']['taskContext']['task'] == row['id']
     assert not SessionFiles().current_path()
     assert tasks.open_session(history, row['id'], select=False)['path'] == row['session_path']
@@ -101,18 +104,19 @@ def test_declare_and_complete_write_ordered_steps_without_canvas_calls(history):
         assert tasks.release(history, task['id'], owner)
     assert tasks.declared(history, 'root-codex-session', task['id'], 'Export drawings', 'working', 'codex-session', 'Codex')
     document = read_document(task['session_path'])
-    steps = [n for n in document['nodes'] if n['type'] == 'thing.agent']
+    steps = [n for n in document['nodes'] if n.get('params', {}).get('workshop_step')]
     assert len(steps) == 2
     assert steps[0]['title'] == 'Export drawings'
     assert steps[0]['params']['status'] == 'working'
-    assert [(w['from']['node'], w['to']['node']) for w in document['wires']] == [
+    assert [(w['from']['node'], w['to']['node']) for w in document['wires'] if w['to']['node'] != 'start'] == [
         ('start', steps[0]['id']), (steps[0]['id'], steps[1]['id'])]
     assert tasks.complete(history, task['id'], 'codex-session', 'commit 12345678')
     updated = read_document(task['session_path'])
     step = next(n for n in updated['nodes'] if n['id'] == steps[0]['id'])
     assert step['params']['status'] == 'done'
     assert step['params']['result'] == 'commit 12345678'
-    assert len(updated['nodes']) == 3
+    assert len(updated['nodes']) == 6
+    assert len([n for n in updated['nodes'] if n.get('fixed')]) == 4
 
 
 def test_legacy_open_creates_start_once(history):
@@ -123,7 +127,10 @@ def test_legacy_open_creates_start_once(history):
     first = tasks.open_session(history, 'legacy', select=False)
     second = tasks.open_session(history, 'legacy', select=False)
     assert first['path'] == second['path']
-    assert read_document(first['path'])['nodes'][0]['params'] == {'type': 'text', 'value': 'Legacy task'}
+    document = read_document(first['path'])
+    assert document['nodes'][0]['params'] == {'value': 'Legacy task', 'workspace': ''}
+    assert len(document['nodes']) == 4 and len(document['wires']) == 3
+    assert len([n for n in document['nodes'] if n['id'] == 'start']) == 1
 
 
 def test_bound_open_reuses_workflow_even_with_another_path(history, tmp_path):
@@ -159,8 +166,8 @@ def test_declaration_records_own_step_without_taking_another_agents_lease(histor
     task = tasks.create(history, 'Held task', 'founder')
     tasks.claim(history, task['id'], 'first', 'First')
     assert not tasks.declared(history, 'second-root', task['id'], 'Wrong holder', 'working', 'second', 'Second')
-    steps = read_document(task['session_path'])['nodes']
-    assert len(steps) == 2 and steps[-1]['params']['agent'] == 'Second'
+    steps = [n for n in read_document(task['session_path'])['nodes'] if n.get('params', {}).get('workshop_step')]
+    assert len(steps) == 1 and steps[-1]['params']['agent'] == 'Second'
     assert tasks.get(history, task['id'])['owner'] == 'first'
     assert not tasks.complete(history, task['id'], 'second', 'not the holder')
     assert read_document(task['session_path'])['nodes'][-1]['params']['status'] == 'working'

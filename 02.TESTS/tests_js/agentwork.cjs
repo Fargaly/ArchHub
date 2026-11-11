@@ -94,7 +94,7 @@ finally:
   const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto(input.url);await page.locator('[data-home-ready]').waitFor({state:'attached',timeout:60000});
   for(const vendor of ['codex','claude']){
-   await page.getByRole('button',{name:/^Agents \d+$/}).click();
+   await page.getByRole('button',{name:/^\d+ working · \d+ idle ·/}).click();
    await page.locator('[data-agent-task="'+input.tasks[vendor].taskId+'"]').dblclick();
    try{await page.locator('.react-flow__node[data-id="start"]').waitFor();}
    catch(e){console.log(JSON.stringify(await page.evaluate(()=>{const s=window.ArchHubAPI.getSnapshot();return {file:s.sessionFile,opening:s.graphOpening,notice:s.connectionNotice,nodes:s.graph.nodes.map(n=>({id:n.id,title:n.title})),text:document.body.innerText.slice(-1500)};})));console.log(JSON.stringify(errors));throw e;}

@@ -231,14 +231,16 @@
     }, [inspectorSetting, s.homeLayout, layoutReady]);
     React.useLayoutEffect(() => {
       if (layoutReady) {
-        const frame = window.requestAnimationFrame(() => {
-          if(fileWorkspace && (shellWidth < 1436 || face==='split' && !splitInspector))inspectorRef.current?.collapse();
-          else inspectorRef.current?.resize(inspectorWidth);
+        let frame = window.requestAnimationFrame(() => {
+          frame = window.requestAnimationFrame(() => {
+            if(fileWorkspace && (shellWidth < 1436 || face==='split' && !splitInspector))inspectorRef.current?.collapse();
+            else inspectorRef.current?.resize(inspectorWidth);
+          });
         });
         return () => window.cancelAnimationFrame(frame);
       }
       return undefined;
-    }, [inspectorWidth, layoutReady, fileWorkspace, face, splitInspector, shellWidth]);
+    }, [inspectorWidth, layoutReady, fileWorkspace, face, splitInspector, shellWidth, inspectorRail]);
     React.useEffect(()=>{setSplitInspector(false);},[face]);
     React.useEffect(() => {
       if (!fileWorkspace) {u.setSelectedNodeId(null);inspect({nodeId:null,wireId:null});}

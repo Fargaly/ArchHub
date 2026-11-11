@@ -21,13 +21,11 @@ try {
   assert.equal(JSON.parse(exported.content).format, 'archhub');
   assert.equal(JSON.parse(exported.content).title, 'Facade study');
   await page.getByRole('button', {name: /Library entry/}).first().click();
-  await page.getByRole('complementary', {name: 'Properties'}).getByRole('button', {name: 'Open task', exact: true}).click();
-  await page.getByRole('button',{name:'Canvas view',exact:true}).click();
-  await page.getByRole('button',{name:'Add node',exact:true}).click();
+  await page.getByRole('region', {name: 'Resumed session'}).getByRole('button', {name: 'Open its Canvas', exact: true}).click();
+  await page.getByRole('button',{name:'Library',exact:true}).click();
   const shelf = page.getByRole('complementary', {name: 'Library shelf'});
   await shelf.getByRole('button', {name: 'Close Library', exact: true}).click();
-  await page.getByLabel('Task actions', {exact: true}).click();
-  await page.getByRole('menuitem', {name: 'Library', exact: true}).click();
+  await page.getByRole('button',{name:'Library',exact:true}).click();
   await shelf.getByRole('button', {name: 'Sessions', exact: true}).click();
   assert.equal(await shelf.getByRole('button', {name: 'Skills', exact: true}).count(), 0);
   assert.equal(await shelf.getByRole('button', {name: 'Workflows', exact: true}).count(), 0);

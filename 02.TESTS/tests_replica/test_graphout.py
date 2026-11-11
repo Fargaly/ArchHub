@@ -34,7 +34,10 @@ def preflight():
 
 
 def test_release_tree_has_no_retired_runtime():
-    offenders = [str(path.relative_to(SOURCE)) for path in SOURCE.rglob('*.py') if retired('.'.join(path.relative_to(SOURCE).with_suffix('').parts))]
+    paths = subprocess.check_output(['git', 'ls-files', '-z', '--', '01.APP/*.py'], cwd=ROOT).decode('utf-8').split('\0')
+    paths = [Path(path).relative_to('01.APP') for path in paths if path]
+    assert paths
+    offenders = [str(path) for path in paths if retired('.'.join(path.with_suffix('').parts))]
     assert not offenders, offenders
 
 

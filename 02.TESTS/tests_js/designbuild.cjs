@@ -160,6 +160,7 @@ const {chromium} = require('playwright');
     }
     if (input.board === 'resume') {
       await page.getByRole('navigation',{name:'Main navigation'}).waitFor();
+      await page.getByRole('heading',{name:'Sessions',exact:true}).waitFor();
       assert.equal(await page.getByRole('heading',{name:'Sessions',exact:true}).count(),1);
       await page.locator('.dx-task').filter({hasText:'Drawing set review'}).first().click();
       await page.getByRole('region',{name:'Resumed session',exact:true}).getByRole('heading',{name:'Drawing set review',exact:true}).waitFor();

@@ -198,13 +198,15 @@ def test_file_route_does_not_read_or_write_graph(tmp_path, monkeypatch):
         assert post({'action':'save','path':path,'document':doc})[0]==200
         from pathlib import Path
         before = Path(path).read_bytes()
-        expected = copy.deepcopy(doc)
-        from nodelang.canvas_documents import solve
-        from nodelang.enforce import guard_effect
-        solve(expected, [node['id'] for node in expected['nodes']], invoke=guard_effect)
-        assert post({'action':'open','path':path})[1]['document']==expected
-        assert expected['nodes'][2]['result']['output']['out']=='hello'
+        from nodelang import canvas_documents, session_files
+        with monkeypatch.context() as opening:
+            opening.setattr(canvas_documents, 'solve', lambda *a, **k: pytest.fail('Opening solved a document'))
+            opening.setattr(session_files, 'run_document',
+                            lambda *a, **k: pytest.fail('Opening ran a document'))
+            assert post({'action':'open','path':path})[1]['document']==doc
         assert Path(path).read_bytes()==before and read_document(path)==doc
+        solved = post({'action':'solve','document':doc,'changed':[node['id'] for node in doc['nodes']]})[1]
+        assert solved['results']['2']['output']['out']=='hello'
         assert post({'action':'run','document':doc})[1]['succeeded']
     finally:
         server.httpd.shutdown()

@@ -9,7 +9,7 @@ const {chromium} = require('playwright');
 const studio = path.resolve(__dirname, '../../01.APP/nodelang/studio');
 process.stdout.write(execFileSync(process.execPath, ['--max-old-space-size=512', path.resolve(__dirname, '../../03.TOOLS/packaging/compile_studio.cjs')], {windowsHide: true}));
 const compiled = name => fs.readFileSync(path.join(studio, 'compiled', name.replace(/\//g, '-').replace(/\.jsx$/, '.js')), 'utf8');
-const sources = ['tokens.jsx', 'ds/index.jsx', 'icons.jsx', 'ui.jsx', 'ds_home2.jsx', 'ds_workshop3.jsx', 'surfaces.jsx', 'app.jsx'].map(compiled);
+const sources = ['tokens.jsx', 'ds/index.jsx', 'icons.jsx', 'ui.jsx', 'answer-widgets.jsx', 'ds_home2.jsx', 'ds_workshop3.jsx', 'surfaces.jsx', 'app.jsx'].map(compiled);
 
 test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation clicks', async () => {
   // Pytest isolates LOCALAPPDATA; browser binaries remain in the OS account's cache.
@@ -61,6 +61,10 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
           window.ArchHubAPI = {...window.ArchHubAPI, getSnapshot: () => s, subscribe: () => () => {},
             executeAction: (id, callback) => { if (id === 'ui.select') return callback(); throw Error('Unexpected action: ' + id); },
             setActiveSurface: () => {}, supportsAction: () => true,
+            readCanvasTabs: async () => ({canvasTabs:{tabs:[],active:'',split:'',collapsed:false}}),
+            setCanvasTabs: async () => ({ok:true}),
+            readHomeLayout: async () => ({homeLayout:{width:300,collapsed:false,resume:'',order:[],hidden:[]}}),
+            setHomeLayout: async () => ({ok:true}),
             setInspectorWidth: async value => { s.settings.find(row=>row.id==='Appearance.Inspector width').value=value; return {ok:true}; },
             refreshAgentSurface: async () => null, apiRouterChat: async () => window.holdSend ? new Promise(resolve => { window.finishSend = resolve; }) : null,
             addSchedule: async (id, time) => { window.scheduledTasks.push({id, time}); return {ok: true}; },
@@ -83,8 +87,8 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
       await mount();
       const nav = page.getByRole('navigation', {name: 'Main navigation'});
       await nav.waitFor();
-      const labels = ['Home', 'Workshop', 'Canvas', 'Automations', 'Docs', 'Settings'];
-      assert.deepEqual(await nav.getByRole('button').evaluateAll(buttons => buttons.slice(0, 6).map(b => b.getAttribute('aria-label'))), labels);
+      const labels = ['Home', 'Canvas', 'Docs', 'Settings', 'Your account'];
+      assert.deepEqual(await nav.getByRole('button').evaluateAll(buttons => buttons.map(b => b.getAttribute('aria-label'))), labels);
       assert.equal(await page.locator('[data-home-face]').count(), 0, 'Home starts with the task list');
       assert.deepEqual(await page.evaluate(() => window.openedTasks), []);
       if (mode === 'repeat') {
@@ -107,8 +111,8 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
       if (mode === 'uxflow') {
         for (const [state, label] of [['interrupted', 'interrupted'], ['limit reached', 'limit reached'], ['LIMIT_REACHED', 'limit reached']]) {
           const row = page.locator('.dx-task').filter({has: page.locator('b', {hasText: 'State ' + state})});
-          assert.equal(await row.locator('[data-line="reason"]').innerText(), 'Planned, not started');
-          assert.equal(await row.locator('[data-task-row-state]').innerText(), label);
+          assert.match(await row.innerText(), new RegExp(label));
+          assert.equal(await row.getAttribute('aria-selected'), 'false');
         }
         assert.equal(await page.locator('[data-task-row-state^="blocked"]').count(), 0);
         // The same owner renders Workshop task rows; unsupported dependency data stays hidden.
@@ -124,9 +128,13 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
         console.log('PASS task reasons: Home + Workshop interrupted / limit reached; generic status retained; blocked-by hidden');
         const open = async title => {
           await nav.getByRole('button', {name: 'Home', exact: true}).click();
-          await page.locator('.dx-task').filter({hasText: title}).click();
-          await nav.getByRole('button', {name: 'Workshop', exact: true}).click();
-          await page.getByRole('button', {name: 'Workshop view', exact: true}).click();
+          if(page.viewportSize().width<1100) await page.getByRole('button',{name:'Open the list',exact:true}).click();
+          await page.locator('.dx-task').filter({hasText: title}).dblclick();
+          const thread = page.getByRole('button', {name: 'Thread', exact: true, includeHidden:true});
+          if(await thread.getAttribute('aria-pressed') !== 'true') {
+            if(await thread.isVisible()) await thread.click();
+            else await page.locator('body').press('Control+Backslash');
+          }
         };
         await open('Selected task');
         await page.getByRole('button', {name: 'Recipient', exact:true}).click();
@@ -136,8 +144,14 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
         await page.getByRole('button',{name:'Recipient',exact:true}).click();
         await page.getByRole('option',{name:/BABOOM/}).click();
         assert.match(await page.getByRole('button',{name:'Recipient',exact:true}).innerText(),/BABOOM/);
+        await page.setViewportSize({width:1680,height:900});
+        await page.getByRole('button',{name:'Open Inspector',exact:true}).click();
+        await page.waitForFunction(()=>document.getElementById('params').offsetWidth>=280);
         const separator = page.getByRole('separator', {name: 'Resize the Properties pane'});
         const params = page.locator('#params');
+        await page.waitForFunction(()=>document.querySelector('[aria-label="Resize the Properties pane"]').getBoundingClientRect().width>=6);
+        await page.waitForFunction(()=>Math.abs(document.getElementById('params').getBoundingClientRect().width-window.fixture.settings.find(row=>row.id==='Appearance.Inspector width').value)<.5);
+        await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
         const before = await params.boundingBox(), handle = await separator.boundingBox();
         assert.ok(handle.width >= 6);
         assert.equal(await separator.evaluate(el => window.getComputedStyle(el).cursor), 'col-resize');
@@ -154,16 +168,26 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
         await page.waitForFunction(() => window.fixture.settings.find(row=>row.id==='Appearance.Inspector width').value > 320);
         inspectorWidth = await page.evaluate(() => window.fixture.settings.find(row=>row.id==='Appearance.Inspector width').value);
         await page.reload(); await mount(); await open('Selected task');
+        await page.getByRole('button',{name:'Open Inspector',exact:true}).click();
+        await page.waitForFunction(()=>document.getElementById('params').offsetWidth>=280);
+        await page.waitForFunction(width=>Math.abs(document.getElementById('params').getBoundingClientRect().width-width)<1,after.width);
+        await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
         const restored = await params.boundingBox();
         assert.ok(Math.abs(restored.width - after.width) < 1, JSON.stringify({after, restored}));
         console.log('PASS pointer resize + reload: ' + JSON.stringify({before: before.width, after: after.width, restored: restored.width}));
         for (const [width, height] of [[1440, 900], [800, 500]]) {
           await page.setViewportSize({width, height});
+          await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+          const closeInspector=page.getByRole('button',{name:'Close Inspector',exact:true});
+          if(await closeInspector.isVisible()) await closeInspector.click();
+          const openThread=page.getByRole('button',{name:'Open Thread',exact:true});
+          if(await openThread.isVisible()) await openThread.click();
           const token = page.locator('.dx-msg-line p').filter({hasText: 'x'.repeat(900)});
           const sizes = await token.evaluate(el => ({client: el.clientWidth, scroll: el.scrollWidth, page: document.documentElement.scrollWidth}));
           assert.ok(sizes.scroll <= sizes.client, JSON.stringify(sizes));
-          assert.ok(sizes.page <= width, JSON.stringify(sizes));
+          assert.equal(sizes.page, Math.max(width,900), JSON.stringify(sizes));
           const details = page.getByRole('button', {name: 'Details', exact: true});
+          await token.hover();
           await details.click(); assert.equal(await details.getAttribute('aria-expanded'), 'true');
           await details.click(); assert.equal(await details.getAttribute('aria-expanded'), 'false');
           await page.getByRole('button', {name: 'Reply', exact: true}).click();
@@ -190,13 +214,14 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
       }
       if (mode === 'clicked') {
         await page.locator('.dx-task').filter({hasText: 'Selected task'}).dblclick();
-        await page.locator('.dx-main[data-home-face="workshop"]').waitFor();
+        await page.getByRole('tab', {name:'Selected task',exact:true}).waitFor();
       }
       const boxes = [];
       for (const label of labels) boxes.push(await nav.getByRole('button', {name: label, exact: true}).boundingBox());
       boxes.forEach((box, index) => { assert.ok(box && box.height > 0); if (index) assert.ok(box.y >= boxes[index - 1].y + boxes[index - 1].height, labelAt(index)); });
-      for (const face of ['Workshop', 'Canvas']) {
-        await nav.getByRole('button', {name: face, exact: true}).click();
+      for (const face of ['Canvas', 'split']) {
+        if(face==='Canvas' || ['empty','first','last','cancelled','refused'].includes(mode)) await nav.getByRole('button', {name: 'Canvas', exact: true}).click();
+        else await page.getByRole('button', {name: 'Thread', exact: true}).click();
         if (['empty', 'first', 'last'].includes(mode)) {
           await page.getByRole('alert').filter({hasText: 'Pick a task on Home.'}).waitFor();
           assert.deepEqual(await page.evaluate(() => window.openedTasks), []);
@@ -211,33 +236,40 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
         } else {
           assert.deepEqual(errors, []);
           await page.locator('.dx-workspace[data-task-face="' + face.toLowerCase() + '"]').waitFor();
-          assert.equal(await page.getByRole('textbox', {name: 'Task title', exact: true}).inputValue(), mode === 'first' ? 'Recent task' : 'Selected task');
+          await page.getByRole('tab', {name:'Selected task',exact:true}).waitFor();
           assert.equal(await page.evaluate(() => window.openedTasks.at(-1)), mode === 'first' ? 'recent' : 'selected');
-          assert.equal(await nav.getByRole('button', {name: face, exact: true}).getAttribute('aria-current'), 'page');
+          if(face==='split') await page.getByRole('region', {name:'Conversation',exact:true}).waitFor();
+          assert.equal(await nav.getByRole('button', {name: 'Canvas', exact: true}).getAttribute('aria-current'), 'page');
         }
       }
       if (mode === 'selected') {
-        await page.getByRole('button', {name: 'Workshop view', exact: true}).click();
         await nav.getByRole('button', {name: 'Home', exact: true}).click();
         await page.locator('.dx-task').filter({hasText: 'Recent task'}).dblclick();
-        await page.locator('.dx-main[data-home-face="workshop"]').waitFor();
+        await page.getByRole('tab', {name:'Recent task',exact:true}).waitFor();
         await nav.getByRole('button', {name: 'Canvas', exact: true}).click();
         await page.locator('.dx-workspace[data-task-face="canvas"]').waitFor();
         await nav.getByRole('button', {name: 'Home', exact: true}).click();
         await page.locator('.dx-task').filter({hasText: 'Selected task'}).dblclick();
-        await page.locator('.dx-main[data-home-face="workshop"]').waitFor();
+        await page.getByRole('tab', {name:'Selected task',exact:true}).waitFor();
+        await page.getByRole('region', {name:'Conversation',exact:true}).waitFor();
         await nav.getByRole('button', {name: 'Home', exact: true}).click();
         await page.locator('.dx-task').filter({hasText: 'Recent task'}).dblclick();
         await page.locator('.dx-workspace[data-task-face="canvas"]').waitFor();
         console.log('PASS per-task faces: new task Workshop; selected Workshop; recent Canvas');
-        await nav.getByRole('button', {name: 'Automations', exact: true}).click();
+        await nav.getByRole('button', {name: 'Home', exact: true}).click();
+        await page.getByRole('region', {name:'Resumed session',exact:true}).waitFor();
+        await page.locator('body').press('/');
+        await page.getByRole('textbox', {name: 'Search everything', exact: true}).fill('Automations');
+        await page.getByRole('button', {name: 'Pages', exact: true}).click();
+        await page.getByRole('button', {name: 'Automations Pages', exact: true}).click();
         await page.getByRole('button', {name: 'Repeat recent task', exact: true}).click();
         await page.locator('.dx-workspace[data-task-face="canvas"]').waitFor();
-        assert.equal(await page.getByRole('textbox', {name: 'Task title', exact: true}).inputValue(), 'Recent task');
+        await page.getByRole('tab', {name:'Recent task',exact:true}).waitFor();
         assert.equal(await page.evaluate(() => window.openedTasks.at(-1)), 'recent');
       }
       await nav.getByRole('button', {name: 'Home', exact: true}).click();
-      await page.locator('.dx-home-preview').waitFor();
+      if(mode==='empty') await page.getByRole('heading', {name:'What do you need?',exact:true}).waitFor();
+      else await page.getByRole('region', {name:'Resumed session',exact:true}).waitFor();
       assert.equal(await page.getByRole('textbox', {name: 'Task title', exact: true}).count(), 0);
       assert.deepEqual(errors, []);
       console.log('PASS rendered rail + non-overlap + task face clicks: ' + mode);

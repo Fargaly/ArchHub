@@ -252,11 +252,12 @@ def _sqlite_records(path):
 def _profile_leaks(before, run, end):
     leaks = []
     marker = run['marker']
+    since = run['started'] - 1  # Windows file timestamps can lag the wall clock at a write boundary.
     for name, snapshot in before.items():
         root = Path(name)
         if not root.exists():
             continue
-        marked = _marked_files(root, marker, since=run['started'])
+        marked = _marked_files(root, marker, since=since)
         new_sessions = set(_sessions_snapshot(root)) - set(snapshot)
         for path in _profile_files(root):
             relative = path.relative_to(root).as_posix()
@@ -274,7 +275,7 @@ def _profile_leaks(before, run, end):
                     continue
                 stat = path.stat()
                 born = getattr(stat, 'st_birthtime', stat.st_ctime)
-                if stat.st_mtime < run['started'] and born < run['started']:
+                if stat.st_mtime < since and born < since:
                     continue
                 if path.suffix.casefold() in ('.sqlite', '.sqlite3', '.db'):
                     for table, record in _sqlite_records(path):
@@ -283,7 +284,7 @@ def _profile_leaks(before, run, end):
                             break
                 elif path.suffix.casefold() in ('.json', '.jsonl', '.archhub'):
                     # Existing documents may be updated, so still inspect their writer records.
-                    if relative in new_sessions or stat.st_mtime >= run['started'] or born >= run['started']:
+                    if relative in new_sessions or stat.st_mtime >= since or born >= since:
                         raw = path.read_text(encoding='utf-8-sig')
                         rows = [json.loads(line) for line in raw.splitlines() if line] if path.suffix == '.jsonl' else json.loads(raw)
                         if _owned_record(rows, run, end, born):
@@ -462,6 +463,26 @@ def test_deliberate_leak_is_refused(tmp_path, kind):
         path = root / ('Sessions/leak.archhub' if kind == 'session' else 'settings/account.json')
         path.parent.mkdir()
         path.write_text(json.dumps({'writer_session': 'test-session', 'created_at': time.time()}))
+    with pytest.raises(AssertionError, match='Test writes reached real profiles'):
+        _assert_profiles_clean(before, run, time.time())
+
+
+@pytest.mark.parametrize('kind', ['content', 'settings'])
+def test_fresh_leak_with_lagging_file_timestamp_is_refused(tmp_path, monkeypatch, kind):
+    from types import SimpleNamespace
+    root = tmp_path / 'real'
+    root.mkdir()
+    before = {str(root): _sessions_snapshot(root)}
+    run = _fixture_run()
+    path = root / ('leak.txt' if kind == 'content' else 'settings/account.json')
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(run['marker'] if kind == 'content' else json.dumps({
+        'writer_session': 'test-session', 'created_at': time.time()}), encoding='utf-8')
+    stat = Path.stat
+    mode = path.stat().st_mode
+    monkeypatch.setattr(Path, 'stat', lambda target, *a, **k: SimpleNamespace(
+        st_mode=mode, st_mtime=run['started']-.25, st_ctime=run['started']-.25,
+        st_birthtime=run['started']-.25) if target == path else stat(target, *a, **k))
     with pytest.raises(AssertionError, match='Test writes reached real profiles'):
         _assert_profiles_clean(before, run, time.time())
 

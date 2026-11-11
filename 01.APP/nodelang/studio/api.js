@@ -1625,6 +1625,10 @@ async function runSolve(){
 function acknowledgeSave(sent,saved){
  // After every acknowledged save, adopt the owner's document for every field not changed locally since the sent snapshot.
  const current=portableDocument(),same=(a,b)=>JSON.stringify(a)===JSON.stringify(b),viewUnchanged=same(current.viewport,sent.viewport)&&same(current.properties?.viewportSaved,sent.properties?.viewportSaved);
+ if(same(current,sent)){
+  sessionDocument=copy(saved.document);sessionRevision=saved.revision??saved.document.properties?.revision??0;
+  localDirty=false;projectFile();return;
+ }
  for(const key of new Set([...Object.keys(sent),...Object.keys(saved.document)])){
   if(key==='properties'||key==='viewport'&&!viewUnchanged)continue;
   if(same(current[key],sent[key])){if(Object.hasOwn(saved.document,key))sessionDocument[key]=copy(saved.document[key]);else delete sessionDocument[key];}
@@ -1633,7 +1637,6 @@ function acknowledgeSave(sent,saved){
   if(key==='viewportSaved'?!viewUnchanged:!same(current.properties?.[key],sent.properties?.[key]))continue;
   if(Object.hasOwn(saved.document.properties||{},key))sessionDocument.properties[key]=copy(saved.document.properties[key]);else delete sessionDocument.properties[key];
  }
- if(same(current,sent))sessionRevision=saved.revision??saved.document.properties?.revision??0;
  localDirty=!same(sessionDocument,saved.document);projectFile();
 }
 function saveNow(){

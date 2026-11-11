@@ -1,5 +1,7 @@
 # DESIGNV22G Canvas slice (a): branch evidence
 
+Current continuation: [Resume closeout 2026-11-11](#resume-closeout-2026-11-11). Earlier sections are dated evidence, not current completion claims.
+
 Status: implementation committed; isolated behaviour checks pass; visual match remains incomplete. This is not installation or release evidence.
 
 Prior art reused: the installed Studio `ds_*.jsx`, ArchMark, AHIcon, Node/Socket/Wire, TaskComposer, ContextMenu, ApprovalCard, Canvas file adapter, Workshop task/mailbox owners and settings JSON owner. No new store, dependency, logo, palette or parallel runtime was added.
@@ -239,3 +241,212 @@ Automatic approval review rejected removal of the exact disposable `.cache/testi
 ℹ todo 0
 ℹ duration_ms 14992.2277
 ```
+
+## Resume closeout 2026-11-11
+
+This section supersedes the earlier mutable results above. Scope: finish group-b behaviour and affected owners on `lane/design-v22g`; preserve step width 268 and the frozen v22g comparison target. No v26 Home, Workshop page, Automate page, pinned/avatar/profile styling or Canvas header Save/Automate work was added. No push, installation or release.
+
+- `dd710006`: Script Python engine, pure/effect classification, saved node types and public parameters, wire rules/disable/bypass, owner validation; ordinary linked-task Run history is preserved and pure saved definitions are read-only during solve.
+- `5f8edb25`: node/wire/socket/selection menus, safe group/frame/ungroup and undo, Inspector Script editor, Add parameter on steps and agent sessions, node type scan/retry, find/add/note/rename, existing action bindings, save-before-Run ordering. Agent-step parameters, Run and History remain reachable in the Inspector. The fixed nodes cannot be grouped or deleted.
+- Heavy jobs ran sequentially through `run-heavy.ps1` using `.cache/testiso-designv22g` for USERPROFILE, HOME, LOCALAPPDATA, APPDATA and application state. UI fixtures use private headless browser pages and real NoGraphServer/file owners. Test cleanup closes browser and server; no watchers.
+
+### Exact focused results
+
+```text
+1..1
+# tests 25
+# suites 0
+# pass 25
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 27273.9468
+```
+
+Node owners:
+```text
+...........................TESTISO final profile leaks: []; protected write attempts: 0
+                                                                         [100%]
+PROFILE-WRITE-GUARD: protected write attempts=0
+27 passed in 28.99s
+```
+
+Linked task Run history:
+```text
+.TESTISO final profile leaks: []; protected write attempts: 0
+                                                                         [100%]
+1 passed, 14 deselected in 27.34s
+```
+
+Reopen without effects:
+```text
+.TESTISO final profile leaks: []; protected write attempts: 0
+                                                                         [100%]
+PROFILE-WRITE-GUARD: protected write attempts=0
+1 passed, 11 deselected in 34.22s
+```
+
+File/path links:
+```text
+..TESTISO final profile leaks: []; protected write attempts: 0
+                                                                         [100%]
+PROFILE-WRITE-GUARD: protected write attempts=0
+2 passed in 37.93s
+```
+
+Native-format agent-step UI:
+```text
+.TESTISO final profile leaks: []; protected write attempts: 0
+                                                                         [100%]
+1 passed, 13 deselected in 54.16s
+```
+
+### Saved suite comparison, not rerun during this closeout
+
+The completed comparison used main snapshot `c4577fe61c9c7b0f5ee70b2aca48f9809112c987`. Current origin/main is `f6dc2d1ded546a8a6e6e51c81a37c7d00a3e889d`; the saved comparison is not represented as a check of that newer revision. The resume instruction says Part 2 is done and forbids a full Studio suite rerun.
+
+```text
+main snapshot
+# tests 376
+# pass 297
+# fail 73
+# skipped 6
+# duration_ms 457540.2059
+branch snapshot
+# tests 391
+# pass 310
+# fail 75
+# skipped 6
+# duration_ms 552743.6704
+```
+
+The added snapshot failures were Ungroup preservation and its parent test. Both now pass in the focused compiled UI file. The snapshot has 73 failures shared with main, no failures unique to main. This is not a full-suite pass for the current branch.
+
+Baseline failures shared with the branch, generated from the saved TAP logs:
+
+- the existing Task used by Workshop and Board renders runtime facts and honest flags
+- BABOOM5 native HTML mounts the actual shared Approve card and awaits its channel receipt
+- 02.TESTS\\tests_js\\studio_boot38.test.cjs
+- 12 nodes in 3 groups open without overlaps, fitted at each scope; groups show members
+- Library is present on open and a real drag adds the selected definition at its drop point
+- flat overlapping ordinary nodes use the canvas build spec operation anatomy and 2px wires
+- saving a drag keeps untouched cards at their repaired display positions
+- actual adapter preserves declared types, cardinality, units and real endpoint IDs
+- every wire terminates at the real socket centers
+- logical type mismatch never writes a wire; compatible socket activation writes the real IDs
+- real shell gives canvas all height below top bar, floats composer and fills Library to bottom
+- explicit Settings system navigation preserves and restores the last admitted user graph
+- a slow System canvas response cannot overwrite newer explicit user navigation
+- desktop assembly objects and library_ports metadata render real typed interfaces without a clean-only schema
+- fast Settings-to-Canvas refresh cancels the old System read and restores the admitted user graph
+- plain box selection, Shift-click add, Escape and empty click give visible selection
+- node body drag and selected group drag persist through the real move adapter without snapping back
+- non-interface parameters remain editable widgets without fabricated socket IDs
+- Settings hosts the grouped system graph in the actual shell
+- System graph exposes a refused read and retries the same owner
+- CARDPOLISH bounds human rows while retaining internal parameters and every socket
+- CARDPOLISH declared editable text remains reachable regardless of key or value shape
+- the bundled xyflow loads on the Studio React and exposes the canvas pieces
+- no studio CSS rule carries a colour of its own
+- each DESIGNSYS-050 4.9 building block maps to one Penpot design and exists once in code
+- 02.TESTS\\tests_js\\studio_designmatch.test.cjs
+- DS-PORT plate button snapshots and native disabled/focus behavior
+- DS-PORT native button refs work with the actual shipped React 18 runtime
+- DS-PORT Toggle and changed Row match plate geometry and invoke the owner
+- DS-PORT typed Socket and Node anatomy snapshots match ds.jsx and ds_node.jsx
+- DS-PORT live theme mutation recolours typed sockets and shared muted text
+- DS-PORT Card, Rail, Composer and actionable EmptyState share plate shells
+- DS-PORT error copy hides internal roots, paths, addresses and tokens while retaining ordinary errors
+- DS-PORT compact EmptyState ports the dashed empty-session plate shell
+- nested Canvas move saves through the real adapter with one mutation and no graph re-read
+- parameter and wire acknowledgements update the graph without a full GET
+- overlapping first Canvas opens share one graph request
+- overlapping moves each confirm once without adopting an older acknowledgement
+- parameter and move share one authority queue and both acknowledgements confirm
+- concurrent parameter and move deltas merge against the queued authority revision
+- saved graph opens once even while background graph discovery is pending
+- a refused parameter remains refused without automatically replaying the write
+- native typed wire uses its current graph interaction in one mutation
+- a no-longer-editable parameter retains its explicit refusal without a graph read
+- same-scope bootstrap does not cancel an explicit graph switch or reread its acknowledgement
+- native wire resolves the exact dropped socket from the shared scoped target table
+- visible Canvas combines scheduling and conditional freshness in one timer request
+- 30 shell tab returns preserve the actual Canvas, viewport, selection and draft without graph requests
+- 02.TESTS\\tests_js\\studio_footerretry.test.cjs
+- DS-FOUNDATIONS P9 text below 13px does not use inkMuted
+- 02.TESTS\\tests_js\\studio_hidden_work.test.cjs
+- LIBRARY-64 p4 row ports equal the served canonical interface for every row
+- NODEPLACE wide graph inserts in visible viewport, not past the last node
+- NODEPLACE actual Canvas centres, avoids occupied/repaired cards, follows selection and current pan/zoom
+- NODEPLACE explicit drops bypass placement and failed creation releases the reservation
+- NODEPLACE real API plus Canvas: concurrent and same-turn adds, tall card, explicit drop and unmount
+- NODEPLACE concurrent revision-root creations return their own selected node
+- NODEPLACE bounded rendering wait does not move a node after navigation
+- NODEPLACE actual-height overflow keeps the new node and reports direction without deleting
+- NODEPLACE full viewport still creates through real API and Canvas without removal or camera movement
+- a: first screen and Studio shell never expose internal host-probe or unknown text
+- 02.TESTS\\tests_js\\studio_update_notice.test.cjs
+- rules and agents round-trip without splitting on periods
+- home canvas at 1440 keeps fitted nodes off the plan pane
+- a 1440 canvas fit keeps canonical nodes inside the graph and off the plan pane
+- a step shows only the status the progress dict recorded
+- workshop and canvas routes open that face of the selected task on Home
+- the workshop face shows task-file messages and refreshes them when the task opens
+- home at 1440 keeps the conversation dominant and says an empty task once
+- server: the participant host comes from the runtime catalog; revoke is a workflow action of the one route
+- Workshop renders each real projected delivery state alongside its message
+- Workshop discards an older page that arrives after a graph or account switch
+- Workshop room renders real mailbox projection even with no Work tasks
+
+### Remaining acceptance boundary
+
+Comparison results will be recorded below. Layout presets remain disabled because they belong to group d. Revit and AutoCAD inside the Python Script editor are labelled unavailable there; the existing Run in program node owns those host brokers. Invalid context actions retain their explicit reasons. No installation, release, live profile or founder-screen check was performed.
+
+Automatic approval review rejected deletion of the stopped run's disposable .cache/agentwork-pzfy2yyt profile with blocked by policy. It was left in place; no alternative deletion was attempted.
+
+### Built-byte visual reports
+
+Frozen target: v22g `index.html b758d55509f3`, `app.js a978580e161a`. Comparison tool SHA256 `1f3a687264edcd67f8b31a4c35d304fc902e12e4c0ec3dcaf9eef0ef7a2eca43`; the design owner corrected the fixed-node selectors. The tool itself was not edited here. All reports use 1440x900 Dark, tolerance 4 px / 6 RGB.
+
+Full group reports, source commit `5f8edb25`, manifest `b86b6cf800ffa5ef61207944c04f19bb49ac9c9766d1a220985e90de79b25979`:
+
+Group a: [per-state report](resume-a-final/compare-git-5f8edb25-1440x900-Dark.md).
+```text
+{"states reached":10,"present":168,"geometry ok":153,"colour ok":166,"type ok":168,"geometry diff":15,"colour diff":2,"missing":29,"interaction ok":5}
+page errors design 0, build 0
+```
+
+Group b: [per-state report](resume-b-final/compare-git-5f8edb25-1440x900-Dark.md).
+```text
+{"states reached":13,"present":57,"geometry ok":54,"colour ok":51,"type ok":53,"colour diff":6,"type diff":4,"states not reachable":9,"geometry diff":3,"missing":15,"interaction diff":2}
+page errors design 0, build 0
+```
+
+These are raw results, not visual acceptance. Group a includes the paused pinned-card dimensions and a route/state mismatch with missing Canvas elements. Group b leaves 9 states unreachable and 15 missing elements; the tool reuses seeded nodes after collapsing them, and calls matchTabs after opening non-menu states. Those are fixture hypotheses routed to the design owner through the coordinator (Workshop sequence 12607); they are not adjudicated as all fixture-only. The 2 interaction differences in that batch remain recorded, alongside the real UI grouping/ungrouping/undo proof.
+
+Follow-up source corrections: collapsed groups use 224 px while steps stay 268; group frame/title/Open match the measured typography; the command palette uses the raised surface and correct input/row sizing. Its grid permits content to shrink and the filter row wraps. Empty clipboard Paste is disabled with “Copy nodes first.”. No pinned-node sizing/styling was changed.
+
+Final compiled bytes: manifest `5b0d5be79617892877812d4dc9df10787cbfecbbb4ad978e3d8755b0c6fd641d`, 40 files, 2036534 output bytes, Babel 7.29.0. The follow-up report labels HEAD `5f8edb25` because the correction commit had not yet run; its manifest binds the actual corrected bytes. Compiled outputs and generated compare reports remain gitignored; this checked-in result records their identities and exact totals.
+
+Final single UI file output, including the empty clipboard assertion and scan failure/retry:
+
+```text
+1..1
+# tests 25
+# suites 0
+# pass 25
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 38808.9942
+```
+
+Final scoped comparison: [group, group.collapsed, palette](resume-b-corrections-final/compare-git-5f8edb25-1440x900-Dark.md).
+```text
+{"states reached":3,"present":7,"geometry ok":7,"colour ok":7,"type ok":7}
+page errors design 0, build 0
+```
+
+This rechecks the measured corrections only; it does not replace the full group-b totals or resolve its unvisited states. Hooks stayed enabled. The owner and main UI commits both ended with ACOMPILER PASS; the correction commit runs the same hook. Full Studio suites and full multi-group comparisons were not rerun.

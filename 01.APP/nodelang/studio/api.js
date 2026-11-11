@@ -1859,6 +1859,7 @@ api.setScriptPorts=async(id,ports,rename)=>{
 api.scanNodeType=(ids,name,category,publicParameters)=>sessionRequest('scan-node-type',{document:portableDocument(),ids,name,category,public:publicParameters});
 api.saveNodeType=async(ids,name,category,publicParameters,kind)=>{const result=await sessionRequest('save-node-type',{document:portableDocument(),ids,name,category,public:publicParameters,kind});await api.refreshLibraryPorts();return result;};
 let copiedNodes=null;
+api.hasCopiedNodes=()=>!!copiedNodes;
 api.copyNodes=async ids=>{
  const selected=new Set(ids),include=id=>{const node=sessionDocument.nodes.find(n=>n.id===id);for(const child of [...(node?.children||[]),...(node?.frameMembers||[])]){if(selected.has(child))continue;selected.add(child);include(child);}};
  for(const id of ids)include(id);

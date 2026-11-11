@@ -44,6 +44,10 @@ test('DESIGNV22G Canvas behaviours on compiled Studio and real file owners', {ti
     assert.ok(await page.locator('[data-design="composer.msg"]').isVisible());
     assert.equal(await page.getByRole('button',{name:'Layout',exact:true}).isDisabled(),true);
     assert.equal(await page.getByRole('button',{name:'Layout',exact:true}).getAttribute('title'),'Layout presets are built in group d of the approved plan.');
+    await page.locator('.react-flow__pane').click({button:'right',position:{x:700,y:520}});
+    assert.equal(await page.locator('[data-design="menu.paste-here"]').isDisabled(),true);
+    assert.equal(await page.locator('[data-design="menu.paste-here"]').getAttribute('title'),'Copy nodes first.');
+    await page.locator('.context-dismiss').click({position:{x:10,y:10}});
     assert.equal(await page.getByRole('tab',{name:'Canvas UI first',exact:true}).getAttribute('data-preview'),'false');
     const profile=page.locator('[data-graph-node="fixed-you"]');
     await profile.getByRole('button',{name:'Parameters',exact:true}).click();

@@ -103,7 +103,7 @@
         [['Align left','arrange','',()=>run(()=>api.alignNodes(editable,'x'))],['Align top','arrange','',()=>run(()=>api.alignNodes(editable,'y'))]],
         [['Duplicate','canvas','Ctrl D',()=>run(()=>api.duplicateNodes(editable))],['Copy','docs','Ctrl C',()=>run(()=>api.copyNodes(editable))],['Cut','edit','Ctrl X',()=>run(()=>api.cutNodes(editable))]],
         [['Delete '+editable.length+' nodes','trash','Del',()=>u.confirm('Delete '+editable.length+' nodes?',()=>api.deleteSelection(editable)),true]]];
-    } else if (kind === 'Canvas menu') groups=[[['Add node here','plus','Shift A',()=>u.show('Add node',{point:canvas?.point})],['Paste here','docs','Ctrl V',()=>run(()=>api.pasteNodes(canvas?.point))],['Add note','edit','N',()=>u.show('Note',{point:canvas?.point})],['Find a node','search','Ctrl F',()=>u.show('Find node')]],
+    } else if (kind === 'Canvas menu') groups=[[['Add node here','plus','Shift A',()=>u.show('Add node',{point:canvas?.point})],['Paste here','docs','Ctrl V',()=>run(()=>api.pasteNodes(canvas?.point)),false,!api.hasCopiedNodes()?'Copy nodes first.':false],['Add note','edit','N',()=>u.show('Note',{point:canvas?.point})],['Find a node','search','Ctrl F',()=>u.show('Find node')]],
       [['Select all','canvas','Ctrl A',()=>{canvas?.selectAll?.();close();}],['Arrange','arrange','',()=>run(api.arrangeGraph)],['Fit','fit','',()=>{canvas?.fit?.();close();}]],
       [['Undo','undo','Ctrl Z',()=>run(api.undo)],['Redo','redo','Ctrl Shift Z',()=>run(api.redo)]],
       [['Ask the agent','brain','',()=>{close();u.setTaskFace('split');}],['Show the thread','workshop','Ctrl \\',()=>{close();u.setTaskFace('split');}]]];

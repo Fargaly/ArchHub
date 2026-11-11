@@ -751,7 +751,7 @@
         }} /><div className="flex">{['All', ...searchOrder].map(t => <Btn key={t} sm ghost plain aria-pressed={mode === t} onClick={event => executeAction("appShell.Control.29", {
             setMode,
             t
-          }, event)}>{t}</Btn>)}</div><div style={{
+          }, event)}>{t}</Btn>)}</div><div className="v22g-palette-results" style={{
           maxHeight: '55vh',
           overflow: 'auto'
         }}>{items.map((item, i) => <button data-design="palette.row" className="listbutton spread" key={i} onClick={event => executeAction("appShell.Control.30", {
@@ -1035,7 +1035,7 @@
     if (['Node menu', 'Group menu', 'Frame menu', 'Wire menu', 'Selection menu', 'Canvas menu', 'App menu', 'Tray', 'Port menu', 'Task tab menu', 'Open tasks', 'Task message menu', 'Canvas attachments'].includes(k)) return <window.UI.ContextMenu kind={k} nodeId={m.id} wireId={m.wireId} canvas={m.canvas} message={m.message} taskId={m.taskId} port={m.port} paramKey={m.paramKey} open={m.open} selected={m.selected} group={m.group} remove={m.remove} anchor={m.anchor} close={close} />;
     return <div className="overlay" onMouseDown={e => {
       if (e.target === e.currentTarget) close();
-    }}><section ref={ref} className="dialog" role="dialog" aria-modal="true" aria-label={k} style={{
+    }}><section ref={ref} className={'dialog'+(k==='Search'?' v22g-palette':'')} role="dialog" aria-modal="true" aria-label={k} style={{
         width: k === 'Workshop board' ? 'min(1250px,95vw)' : k === 'Approve' ? 'min(850px,95vw)' : undefined
       }}><header className="spread"><h2>{k}</h2><Btn sm ghost aria-label="Close dialog" onClick={event => executeAction("appShell.CloseDialog.98", {
             close

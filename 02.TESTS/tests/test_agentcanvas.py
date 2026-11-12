@@ -108,7 +108,13 @@ def test_declare_and_complete_write_ordered_steps_without_canvas_calls(history):
     assert len(steps) == 2
     assert steps[0]['title'] == 'Export drawings'
     assert steps[0]['params']['status'] == 'working'
-    assert [(w['from']['node'], w['to']['node']) for w in document['wires'] if w['to']['node'] != 'start'] == [
+    scaffold_wires = {('fixed-agent', 'agent', 'start', 'agent'),
+                      ('fixed-you', 'profile', 'start', 'profile'),
+                      ('fixed-workshop', 'rules', 'start', 'rules')}
+    step_wires = [w for w in document['wires']
+                  if (w['from']['node'], w['from']['socket'], w['to']['node'], w['to']['socket']) not in scaffold_wires]
+    assert all(w['to']['node'] != 'start' for w in step_wires)
+    assert [(w['from']['node'], w['to']['node']) for w in step_wires] == [
         ('start', steps[0]['id']), (steps[0]['id'], steps[1]['id'])]
     assert tasks.complete(history, task['id'], 'codex-session', 'commit 12345678')
     updated = read_document(task['session_path'])

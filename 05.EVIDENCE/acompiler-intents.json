@@ -14,6 +14,9 @@
     "02.TESTS/tests_replica/test_skills_library.py",
     "02.TESTS/tests_replica/test_the_library_only_offers_what_runs.py",
     "02.TESTS/tests_js/studio_workflows_categories.test.cjs",
+    "02.TESTS/tests_js/raildoors.test.cjs",
+    "02.TESTS/tests_js/designbuild.cjs",
+    "01.APP/nodelang/studio/ds_screens.jsx",
     "04.DOCS/FAILURE_LOG.md"
   ]
 },

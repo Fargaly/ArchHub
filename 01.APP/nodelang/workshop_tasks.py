@@ -700,6 +700,9 @@ def column(history, project=None, stale_hours=None, *, include_archived=False):
              'pinnedMessages': list(session.get('pinnedMessages') or []),
              'homePinned': session.get('homePinned') is True, 'workspace': session.get('workspace') or '',
              'agents': agents, 'folders': list(session.get("folders") or []) or paths,
+             # Every agent on this piece of work, lead (first to join) first; live while its lease runs.
+             'members': [{'name': m.get('label') or m['owner'], 'live': (m.get('lease_until') or 0) >= time.time()}
+                         for m in row.get('members') or []],
              'references': list(session.get("references") or []),
              'session': row.get("session_path") or ((declaration or {}).get("session") if declaration else "") or "",
              'plan': plan, 'planInferred': not bool(session.get('plan')), 'handover': session.get('handover') or {}, 'sessionTitle': session.get('sessionTitle') or short_title(row['title']), 'progress': session.get("progress") or {},

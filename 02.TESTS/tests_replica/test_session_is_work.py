@@ -219,3 +219,13 @@ def tasks_column():
     from nodelang.workshop_mailbox import application_history
     with application_history() as history:
         return tasks.column(history)
+
+
+def test_rendered_home_rows_are_pieces_of_work():
+    import subprocess
+    root = Path(__file__).resolve().parents[2]
+    result = subprocess.run(['node', '--test', str(root / '02.TESTS/tests_js/studio_sessionwork.test.cjs')],
+                            cwd=root, capture_output=True, text=True, encoding='utf-8', timeout=180,
+                            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    print(result.stdout)
+    assert result.returncode == 0, result.stdout + result.stderr

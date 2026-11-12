@@ -261,8 +261,11 @@
       if(row){row.workingNow=true;liveIds.add(row.id);}
       else sessionRows.unshift({id:'live:'+agent.id,title:agent.name,kind:'agent-session',workingNow:true,runtimeAgent:agent});
     }
+    // A piece of work (F337) that lost its agent stays an open row; old per-agent-run rows go under Older.
+    const interruptedWork=row=>(row.members||[]).length>0&&!String(row.id).startsWith('declared-')&&row.status!=='DONE'&&row.status!=='ARCHIVED'&&(row.outcome==='interrupted'||row.outcome==='unknown');
     const sectionOf=row=>{
       if(row.workingNow)return 'Working now';
+      if(interruptedWork(row))return 'Needs you';
       if(row.status==='ARCHIVED'||row.stale||row.status==='stale'||['interrupted','unknown'].includes(row.outcome)||window.UI.taskRowReason(row)==='interrupted')return 'Older / archived';
       if(waiting.has(row.id)||row.status==='IN REVIEW')return 'Needs you';
       const date=new Date(row.updated_at||row.modified||row.updatedAt||0),today=new Date();today.setHours(0,0,0,0);
@@ -398,8 +401,10 @@
       if(agent)u.show('Agent',{id:agent.id});else u.go('settings/Agents');
     };
     const taskRow = t => <div key={t.id} data-design="home1.row" className={'dx-task-row resume-row'+(task?.id===t.id?' on':'')} data-status={waiting.has(t.id)||t.status==='IN REVIEW'?'review':toneOf(t)} draggable={!t.fileOnly} onDragStart={event=>{event.dataTransfer.setData('task',t.id);event.dataTransfer.setData('text/archhub-home-row',t.id);if(t.sessionPath)event.dataTransfer.setData('session',t.sessionPath);}} onDragOver={event=>event.preventDefault()} onDrop={event=>{event.preventDefault();const id=event.dataTransfer.getData('text/archhub-home-row');if(t.fileOnly||!list.some(row=>row.id===id)||id===t.id)return;const order=list.map(row=>row.id).filter(key=>key!==id);order.splice(order.indexOf(t.id),0,id);executeAction('ui.select',()=>saveHome({order}));}}>
-      <button type="button" className="resume-avatar" aria-label={ownerOf(t)?'Open agent '+ownerOf(t):'Resume '+t.title} title={ownerOf(t)||t.title} onClick={()=>executeAction('ui.select',()=>ownerOf(t)?openOwner(t):selectResume(t))}>{ownerOf(t)?<window.UI.Av id={ownerOf(t)} size={28}/>:<Icon name="canvas" size={18}/>}</button>
-      <button type="button" className="dx-task" aria-selected={task?.id===t.id} title={t.title} onClick={()=>executeAction('ui.select',()=>selectResume(t))} onDoubleClick={()=>executeAction('ui.select',()=>t.fileOnly?undefined:openTask(t))}><b>{workTitle(t)}</b><span>{waiting.has(t.id)?'Waits for you':window.UI.taskRowReason(t)||statusText(t.status)}{lastUpdate(t)?' · '+lastUpdate(t):''}</span></button>
+      {(()=>{const lead=(t.members||[])[0]?.name||ownerOf(t);return <button type="button" className="resume-avatar" aria-label={lead?'Open agent '+lead:'Resume '+t.title} title={lead||t.title} onClick={()=>executeAction('ui.select',()=>lead?openOwner(t,lead):selectResume(t))}>{lead?<window.UI.Av id={lead} size={28}/>:<Icon name="canvas" size={18}/>}</button>;})()}
+      <button type="button" className="dx-task" aria-selected={task?.id===t.id} title={t.title} onClick={()=>executeAction('ui.select',()=>selectResume(t))} onDoubleClick={()=>executeAction('ui.select',()=>t.fileOnly?undefined:openTask(t))}><b>{workTitle(t)}</b><span>{interruptedWork(t)?'Interrupted · waiting for an agent':(waiting.has(t.id)?'Waits for you':window.UI.taskRowReason(t)||statusText(t.status))+(lastUpdate(t)?' · '+lastUpdate(t):'')}</span></button>
+      {interruptedWork(t)&&<button type="button" className="dx-link resume-continue" title="Pick any agent; it continues on the same graph and the same thread" onClick={()=>executeAction('ui.select',()=>selectResume(t))}>Continue</button>}
+      {(t.members||[]).length>1&&<span className="resume-members" title={'Also on this work: '+t.members.slice(1).map(m=>m.name).join(', ')}>{t.members.slice(1,4).map(m=><window.UI.Av key={m.name} id={m.name} size={18}/>)}</span>}
       {!t.fileOnly&&<><button type="button" className="resume-pin" aria-label={(t.homePinned?'Unpin ':'Pin ')+t.title} aria-pressed={!!t.homePinned} onClick={()=>executeAction('ui.select',()=>u.act(()=>api.setTaskSession(t.id,{homePinned:!t.homePinned})))}><Icon name="pin" size={13}/></button>
       <button type="button" className="resume-hide" aria-label={'Hide '+t.title+' from Home'} onClick={()=>executeAction('ui.select',()=>{setHomeUndo(homeLayout);return saveHome({hidden:[...homeLayout.hidden,t.id],resume:task?.id===t.id?'':homeLayout.resume});})}>×</button></>}
     </div>;

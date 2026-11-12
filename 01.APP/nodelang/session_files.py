@@ -1019,6 +1019,8 @@ def run_skill(params, *, invoke, stopped, depth, feeds=None, parent=None):
             for node in document['nodes']:
                 if node['id'] in inner['results'] and node['params'] == original.get(node['id']):
                     node['result'] = inner['results'][node['id']]
+            if inner.get('run'):
+                document.setdefault('properties', {})['canvasRun'] = inner['run']
             return []
         canvas_documents.edit(path, 'Session', 'called by ' + str(params.get('called_by') or 'canvas'), record, solve_changed=False, always_record=True)
     if inner.get('approvalId'):
@@ -1265,7 +1267,8 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
         elif _resume is None:
             _resume = {key: copy.deepcopy(nodes[key]['result']) for key in order
                        if key not in invalid and nodes[key].get('result')
-                       and nodes[key]['result'].get('status') != 'Out of date'}
+                       and nodes[key]['result'].get('status') not in ('Idle', 'Running', 'Out of date')
+                       and not (nodes[key]['type'] == 'skill' and nodes[key]['params'].get('session_file'))}
         document.setdefault('properties', {})['canvasRun'] = run
 
     def finish(results, approval_id=None):

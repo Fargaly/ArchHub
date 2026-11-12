@@ -548,7 +548,7 @@
               fontWeight: 700,
               fontSize: 'calc(12px * var(--text-scale,1))',
               flex: 'none'
-            }}>{s.profile.name.split(' ').map(n => n[0]).join('').slice(0, 2)}</button></nav><div className="screen-with-composer has-local-composer" style={{'--canvas-library-width':libraryOpen ? '248px' : '0px'}}>{(canvasOpened || route==='canvas') && <div hidden={route!=='canvas'} ref={element=>{element?.toggleAttribute('inert',route!=='canvas'||!!s.graphOpening);}} style={{display:route==='canvas'?'grid':'none',minHeight:0,height:'100%'}}><window.UI.Canvas key={s.graph.scopeKey || s.graph.id} active={route==='canvas'&&!s.graphOpening} /></div>}{screen}{route !== 'task-file' && !route.startsWith('settings/') && <div className="global-composer"><window.UI.Composer compact /></div>}</div></div>
+            }}>{window.UI.profileInitials(s.profile)}</button></nav><div className="screen-with-composer has-local-composer" style={{'--canvas-library-width':libraryOpen ? '248px' : '0px'}}>{(canvasOpened || route==='canvas') && <div hidden={route!=='canvas'} ref={element=>{element?.toggleAttribute('inert',route!=='canvas'||!!s.graphOpening);}} style={{display:route==='canvas'?'grid':'none',minHeight:0,height:'100%'}}><window.UI.Canvas key={s.graph.scopeKey || s.graph.id} active={route==='canvas'&&!s.graphOpening} /></div>}{screen}{route !== 'task-file' && !route.startsWith('settings/') && <div className="global-composer"><window.UI.Composer compact /></div>}</div></div>
   </div>}
   <window.UI.BaboomSprite open={companion} setOpen={setCompanion} />
   {toast && <div role="alert" className="flex" style={{

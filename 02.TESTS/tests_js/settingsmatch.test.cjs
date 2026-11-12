@@ -204,3 +204,33 @@ test('SETTINGSMATCH review: a refused surface report is retried on the next chan
   await new Promise(resolve => setTimeout(resolve, 10));
   assert.deepEqual(requests.filter(row => row.url === '/api/universal/studio-surface').map(row => row.body.surface), ['settings/Account', 'settings/Account']);
 });
+
+test('SETTINGSMATCH name: the Name row shows the real profile name or asks for one, never a placeholder word', async () => {
+  for (const [account, expected] of [[{signed_in: false}, ''], [{signed_in: true, email: 'person@example.test', display_name: 'Fixture Person'}, 'Fixture Person'], [{signed_in: true, email: 'person@example.test'}, '']]) {
+    const window = {ARCHHUB_AUTHORITY: {}, structuredClone: globalThis.structuredClone, ARCHHUB_BOOT: {home_load_ms: 60000, token: 'lease', csrf: 'csrf'},
+      Uint8Array: globalThis.Uint8Array, dispatchEvent() {}, addEventListener() {}, AH: {inkSoft: '#888'}, crypto: require('node:crypto')};
+    window.ArchHubStudioAuthority = {create: ({get}) => { let snapshot = null; return {load: async () => { snapshot = {canvas: await get('/api/universal/canvas')}; return snapshot.canvas; }, getSnapshot: () => snapshot, clear: () => { snapshot = null; }, adopt: async canvas => { snapshot = {canvas}; return canvas; }, transact: async action => { const canvas = await action(); snapshot = {canvas}; return canvas; }}; }};
+    const context = {window, setTimeout, clearTimeout, document: {hidden: true, addEventListener() {}}, CustomEvent: class {}, sessionStorage: {getItem() { return null; }},
+      URLSearchParams, TextEncoder: globalThis.TextEncoder, AbortSignal: globalThis.AbortSignal, console,
+      fetch: async url => ({ok: true, status: 200, json: async () => url === '/api/universal/canvas' ? {root: 'canvas', nodes: [], wires: [], authorization: {principal: 'local-process'}} : url === '/api/universal/cloud-session' ? {...account} : {ok: true, result: {profile: {}, officeInvitations: [], controlErrors: {}}}})};
+    vm.runInNewContext(fs.readFileSync(path.join(studio, 'api.js'), 'utf8'), context);
+    await window.ArchHubAPI.ready;
+    await window.ArchHubAPI.syncAccount();
+    assert.equal(window.ArchHubAPI.getSnapshot().profile.name, expected, JSON.stringify(account));
+  }
+  const browser = await chromium.launch({headless: true, executablePath: executable()});
+  try {
+    for (const [name, shown, initial] of [['', 'Add your name', 'P'], ['Fixture Person', 'Fixture Person', 'FP']]) {
+      const page = await browser.newPage({viewport: {width: 1009, height: 940}});
+      await mount(page, {name, email: 'person@example.test', signedIn: true, checking: false});
+      const nav = page.getByRole('navigation', {name: 'Main navigation'});
+      assert.equal((await nav.getByRole('button', {name: 'Your account', exact: true}).innerText()).trim(), initial);
+      await nav.getByRole('button', {name: 'Settings', exact: true}).click();
+      await page.locator('[data-screen="settings/Account"] .sheet-columns:not([hidden])').waitFor();
+      const row = page.locator('.sheet-field').filter({has: page.locator(':scope > span', {hasText: /^Name/})}).first();
+      assert.equal((await row.locator(':scope > div').innerText()).trim(), shown);
+      await page.close();
+    }
+  } finally { await browser.close(); }
+});
+

@@ -436,7 +436,10 @@
     const failed = states.find(state => /fail|error|denied|refused|not delivered|undelivered|timeout/.test(state));
     return failed || (states.some(state => /queue|pending/.test(state)) ? 'Queued' : '');
   }
+  // The avatar letters come from the real name, else the account email; never from a placeholder.
+  const profileInitials = profile => (profile.name ? profile.name.split(' ').filter(Boolean).map(n => n[0]).join('').slice(0, 2) : (profile.email || '').slice(0, 1)).toUpperCase();
   window.UI = {
+    profileInitials,
     deliveryAttention,
     taskRowReason,
     api,

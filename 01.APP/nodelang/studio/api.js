@@ -306,7 +306,7 @@ async function refreshAccount() {
   if(['done','failed','idle'].includes(attempt.phase)||account.signed_in===true)accountSignInPending=false;
  }
  publish({profile:{...state.profile,id:account.signed_in===true?(account.user_id||account.email||''):'',
-  name:account.signed_in===true?(account.display_name||account.name||account.email||'Account'):'Account',
+  name:account.signed_in===true?(account.display_name||account.name||''):'',
   email:account.email||'',signedIn:account.signed_in===true,checking:account.checking===true,
   isFounder:account.signed_in===true&&account.founder===true},
   sync:account.signed_in===true?'Account connected':accountSignInPending?'Complete sign-in in your browser':account.state==='expired'?'Sign in again':'Signed out',

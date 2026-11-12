@@ -195,8 +195,13 @@ def create(history, title, creator, *, agent='', workspace='', zoom=1):
     task = uuid4().hex
     title = _text(title, "title", 2000)
     path = _start_session(task, title, zoom, agent=agent, workspace=workspace)
-    _write(history, "INSERT INTO workshop_tasks(id,title,status,created_by,created_at,updated_at,session_path) "
-           "VALUES(?,?,'open',?,?,?,?)", (task, title, creator, _now(), _now(), path))
+    project = ''
+    if workspace:
+        from .workspace_roots_catalogue import read_registered_roots
+        roots, _ = read_registered_roots()
+        project = (roots.get(workspace) or {}).get('label') or workspace
+    _write(history, "INSERT INTO workshop_tasks(id,title,status,created_by,created_at,updated_at,session_path,project) "
+           "VALUES(?,?,'open',?,?,?,?,?)", (task, title, creator, _now(), _now(), path, project or None))
     return get(history, task)
 
 
@@ -295,56 +300,72 @@ def archive(history, task, revision=None):
 
 
 def _declared_id(owner):
-    """One declared task row per agent identity."""
+    """The id older builds gave one agent's declared row. Kept to read those rows; new work never uses it."""
     return "declared-" + sha256(("agent\0" + owner).encode()).hexdigest()[:32]
 
 
-def declared(history, root, request_id, title, status, owner, label, project=""):
-    """One declared task per agent. Re-declare updates it. A new purpose closes the previous one as done."""
-    addressed = get(history, request_id)
-    if addressed:
-        if status == 'done':
-            won = complete(history, request_id, owner)
-            result = (addressed.get('result') or '') if addressed['owner'] == owner else ''
-            record_step(history, request_id, owner, label, title, status, result)
-            return won
-        won = claim(history, request_id, owner, label)
-        record_step(history, request_id, owner, label, title, status)
-        return won
-    task = _declared_id(owner)
+SESSION_PREFIX = "session-"
+
+
+def _open_session(history, task):
+    row = get(history, task) if task else None
+    return row if row and row["status"] != "done" and not row.get("archived") else None
+
+
+def _session_for(history, owner, project, hours):
+    """The session an agent with no id given joins, or None for a new one.
+
+    Its own open session first (re-declaring never moves it); else THE one open session of
+    its registered project active in the last `hours`. Two or more, or no project: None, never a guess.
+    Rows from older builds (declared-*) are never joined, so their files stay as they are.
+    """
+    open_rows = "status!='done' AND IFNULL(archived,0)=0 AND id NOT LIKE 'declared-%'"
+    mine = history._db.execute(
+        "SELECT id FROM workshop_tasks WHERE " + open_rows + " AND owner=? ORDER BY updated_at DESC LIMIT 1",
+        (owner,)).fetchone()
+    if mine:
+        return mine[0]
+    if not project:
+        return None
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    found = history._db.execute("SELECT id FROM workshop_tasks WHERE " + open_rows + " AND project=? AND updated_at>=? "
+                                "LIMIT 2", (project, cutoff)).fetchall()
+    return found[0][0] if len(found) == 1 else None
+
+
+def declared(history, root, request_id, title, status, owner, label, project="", inherited=""):
+    """An agent's declare joins one session (a piece of work) and returns its task id, or False.
+
+    The session is, in order: the task id the starter passed (request_id), the session of the agent that
+    started this one (inherited), the agent's own open session, else the single open session of its project.
+    With none of these it starts a new one. A new purpose never closes or restarts a session.
+    """
     title = _text(title, "title", 2000)
-    if status == "done":
-        return complete(history, task, owner)
-    existing = get(history, task)
-    if existing and existing.get("purpose") not in (None, "", request_id):
-        archive = "declared-" + sha256((owner + "\0" + str(existing.get("purpose") or "") + "\0"
-                                        + str(existing.get("created_at") or "")).encode()).hexdigest()[:32]
-        if get(history, archive) is None:
-            _write(history, "INSERT INTO workshop_tasks(id,title,status,owner,owner_label,result,created_by,"
-                   "created_at,updated_at,purpose,project,session_path) VALUES(?,?,'done',?,?,?,?,?,?,?,?,?)",
-                   (archive, existing["title"], existing["owner"], existing["owner_label"], "closed: new purpose",
-                    existing["created_by"], existing["created_at"], _now(), existing.get("purpose"), existing.get("project"), existing.get('session_path')))
-        if existing.get('session_path'):
-            from .session_files import read_document
-            old_path = existing['session_path']
-            _stamp(old_path, archive, read_document(old_path))
-        _write(history, 'UPDATE workshop_tasks SET session_path=NULL,created_at=? WHERE id=?', (_now(), task))
-        if existing["status"] == "done":
-            _write(history, "UPDATE workshop_tasks SET status='open', owner=NULL, owner_label=NULL, lease_until=NULL, "
-                   "result=NULL, updated_at=?, revision=revision+1 WHERE id=? AND status='done'", (_now(), task))
-    _write(history, "INSERT INTO workshop_tasks(id,title,status,created_by,created_at,updated_at,purpose,project) "
-           "VALUES(?,?,'open',?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title, "
-           "purpose=excluded.purpose, project=excluded.project, updated_at=excluded.updated_at, "
-           "revision=workshop_tasks.revision+1 WHERE status!='done'",
-           (task, title, label, _now(), _now(), request_id, project or None))
+    task = request_id if get(history, request_id) else ""
+    if not task and _open_session(history, inherited):
+        task = inherited
+    if not task:
+        with history._transaction(write=True):
+            _ensure(history)
+            task = _session_for(history, owner, project, TASKS_NODE["params"]["stale_hours"])
+            if not task:
+                if status == "done":
+                    return False
+                task = SESSION_PREFIX + uuid4().hex
+                history._db.execute("INSERT INTO workshop_tasks(id,title,status,created_by,created_at,updated_at,purpose,project) "
+                                    "VALUES(?,?,'open',?,?,?,?,?)", (task, title, label, _now(), _now(), request_id, project or None))
+    if status == 'done':
+        row = get(history, task)
+        won = complete(history, task, owner)
+        result = (row.get('result') or '') if row['owner'] == owner else ''
+        record_step(history, task, owner, label, title, status, result, request=request_id)
+        return task if won else False
     won = claim(history, task, owner, label)
-    if won:
-        backfill_sessions(history)
-        record_step(history, task, owner, label, title, status)
-    return won
+    record_step(history, task, owner, label, title, status, request=request_id)
+    return task if won else False
 
 
-def record_step(history, task, owner, label, title, status, result=""):
+def record_step(history, task, owner, label, title, status, result="", request=""):
     """Project the existing declaration/completion into its task file, without executing it."""
     from . import canvas_documents
     from .workshop_mailbox import latest_agent_message
@@ -401,9 +422,11 @@ def record_step(history, task, owner, label, title, status, result=""):
         selected, belongs = [], False
         for call in calls:
             if _tool(call) == 'declare':
-                request = call.get('input', {}).get('request_id') if isinstance(call.get('input'), dict) else None
-                if request:
-                    belongs = request in (task, row.get('purpose'))
+                called = call.get('input', {}).get('request_id') if isinstance(call.get('input'), dict) else None
+                if called:
+                    # The agent's own purpose counts once it joined this session with it.
+                    belongs = called in (task, row.get('purpose'), request or None) or (
+                        detail.get('work') == task and called == detail.get('request_id'))
             if belongs:
                 selected.append(call)
         transcript = {**transcript, 'calls': selected}
@@ -527,7 +550,11 @@ def _declaration_for(row, declarations):
     """The declaration this task row projects: the old root id, or this agent's current purpose."""
     matched = []
     for item in declarations:
-        if item.get("root") and item.get("request_id") and _declaration_task_id(item) == row["id"]:
+        if item.get("work") == row["id"]:
+            matched.append(item)
+        elif item.get("root") and item.get("request_id") and _declaration_task_id(item) == row["id"]:
+            matched.append(item)
+        elif not item.get("work") and row["id"].startswith(SESSION_PREFIX) and item.get("session") == row.get("owner"):
             matched.append(item)
         elif item.get("session") and _declared_id(item["session"]) == row["id"]:
             if not row.get("purpose") or item.get("request_id") in (None, "", row.get("purpose")):
@@ -551,6 +578,8 @@ def column(history, project=None, stale_hours=None, *, include_archived=False):
             live[_declared_id(item["session"])] = item["status"]
         if item.get("root") and item.get("request_id"):
             live[_declaration_task_id(item)] = item["status"]
+        if item.get("work"):
+            live[item["work"]] = "blocked" if "blocked" in (item["status"], live.get(item["work"])) else item["status"]
     def state(row):
         if _is_stale(row, declarations, hours):
             return "stale"

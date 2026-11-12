@@ -1091,8 +1091,13 @@ def _declare(history, body, context, identity, runtime, peer, native_session):
                                 "AND json_extract(record,'$.updated_at')<?", (archived, cutoff))
     if row["request_id"] != "unassigned":
         from .workshop_tasks import declared
-        declared(history, root, row["request_id"], row["task"], row["status"],
-                 identity["sender_key"], identity["sender_label"], row["project"])
+        work = declared(history, root, row["request_id"], row["task"], row["status"],
+                        identity["sender_key"], identity["sender_label"], row["project"])
+        if work:
+            row["work"] = work
+            with history._transaction(write=True):
+                history._db.execute("UPDATE workshop_declarations SET record=json_set(record,'$.work',?) WHERE root=?",
+                                    (work, root))
     notices = []
     if changed and row["status"] != "done" and row["request_id"] != "unassigned":
         for other in read_declarations(history._db):

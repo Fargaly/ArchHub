@@ -144,7 +144,8 @@ def test_a_blocked_declaration_needs_the_founder(tmp_path, monkeypatch, legacy):
     if not legacy:
         with application_history() as history:
             with history._transaction(write=True):
-                history._db.execute("UPDATE workshop_tasks SET purpose='another-request'")
+                # The agent's declaration now names another session (piece of work): it no longer applies here.
+                history._db.execute("UPDATE workshop_declarations SET record=json_set(record,'$.work','session-another')")
         assert baboom_work_presence(read_workshop_task_rows()).state == "thinking"
 
 

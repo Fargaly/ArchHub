@@ -1149,7 +1149,7 @@ def r_agents_canvas(s, req):
         declarations = [r for r in read_declarations(history._db) if r.get('current')]
         held = {r['id']: r for r in rows(history, settle=False)}
         for row in declarations:
-            task = held.get(row.get('request_id')) or held.get(_declared_id(row['session'])) or held.get(row['root'])
+            task = held.get(row.get('work')) or held.get(row.get('request_id')) or held.get(_declared_id(row['session'])) or held.get(row['root'])
             message = history._db.execute(
                 'SELECT id,content,created_at FROM messages WHERE conversation_id=? AND author=? ORDER BY sequence DESC LIMIT 1',
                 (ROOM, row['agent'] + ' [' + row['session'] + ']')).fetchone()

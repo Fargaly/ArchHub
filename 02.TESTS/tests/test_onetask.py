@@ -11,17 +11,14 @@ def history(tmp_path, monkeypatch):
     yield from inspect.unwrap(test_agentcanvas.history)(tmp_path, monkeypatch)
 
 
-def test_new_purpose_keeps_old_file_and_gets_its_own(history):
+def test_new_purpose_stays_in_the_same_session_file(history):
     from nodelang import workshop_tasks as tasks
     from nodelang.session_files import read_document
-    tasks.declared(history, 'root', 'FIRST', 'First task', 'working', 'agent', 'Agent')
-    first = tasks.get(history, tasks._declared_id('agent'))
-    before = read_document(first['session_path'])
-    tasks.declared(history, 'root', 'SECOND', 'Second task', 'working', 'agent', 'Agent')
-    current = tasks.get(history, tasks._declared_id('agent'))
-    assert current['session_path'] != first['session_path']
-    assert read_document(first['session_path'])['nodes'] == before['nodes']
-    assert all(n.get('title') != 'First task' for n in read_document(current['session_path'])['nodes'])
+    first = tasks.get(history, tasks.declared(history, 'root', 'FIRST', 'First task', 'working', 'agent', 'Agent'))
+    current = tasks.get(history, tasks.declared(history, 'root', 'SECOND', 'Second task', 'working', 'agent', 'Agent'))
+    assert current['id'] == first['id'] and current['session_path'] == first['session_path']
+    assert current['status'] == 'claimed' and len(tasks.rows(history)) == 1
+    assert any(n.get('title') == 'Second task' for n in read_document(current['session_path'])['nodes'])
 
 
 def test_insert_references_file_and_refuses_cycles(history):
@@ -138,31 +135,28 @@ def test_native_steps_are_scoped_to_declared_task(history, monkeypatch):
             {'id': request, 'tool': 'declare', 'input': {'request_id': request, 'task': request + ' step'}, 'turn': request},
             {'id': request + '-shell', 'tool': 'Bash', 'input': {'command': 'echo ' + request}, 'turn': request}])
     monkeypatch.setattr(agent_status, 'read_transcript', lambda *args: {'calls': calls})
+    seen = []
     for request in ('FIRST', 'SECOND'):
-        tasks.declared(history, 'root', request, request + ' task', 'working', 'agent', 'Agent')
-        row = tasks.get(history, tasks._declared_id('agent'))
+        row = tasks.get(history, tasks.declared(history, 'root', request, request + ' task', 'working', 'agent', 'Agent'))
         nodes = read_document(row['session_path'])['nodes']
         steps = [n['title'] for n in nodes if n.get('agentWork', {}).get('role') == 'step']
-        assert steps == [request + ' step']
+        seen.append(request + ' step')
+        assert steps == seen                                   # one session: each purpose's own steps, never a later one
 
 
-def test_repeated_purpose_creates_new_occurrence_without_changing_archive(history):
+def test_repeated_purpose_stays_in_one_session_without_archiving(history):
     from nodelang import workshop_tasks as tasks
     paths = []
     for purpose in ('A', 'B', 'A'):
-        tasks.declared(history, 'root', purpose, purpose + ' task', 'working', 'agent', 'Agent')
-        paths.append(tasks.get(history, tasks._declared_id('agent'))['session_path'])
-        if len(paths) == 2:
-            archived = Path(paths[0]).read_bytes()
-    assert len(set(paths)) == 3
-    assert Path(paths[0]).read_bytes() == archived
+        paths.append(tasks.get(history, tasks.declared(history, 'root', purpose, purpose + ' task', 'working', 'agent', 'Agent'))['session_path'])
+    assert len(set(paths)) == 1
+    assert [row['archived'] for row in tasks.rows(history)] == [0]
 
 
 def test_markerless_transcript_cannot_project_and_legacy_steps_are_recoverable(history, monkeypatch):
     from nodelang import workshop_tasks as tasks, agent_status, canvas_documents
     from nodelang.session_files import read_document, restore_checkpoint
-    tasks.declared(history, 'root', 'TASK', 'Only this task', 'working', 'agent', 'Agent')
-    row = tasks.get(history, tasks._declared_id('agent'))
+    row = tasks.get(history, tasks.declared(history, 'root', 'TASK', 'Only this task', 'working', 'agent', 'Agent'))
     agent = next(n for n in read_document(row['session_path'])['nodes'] if n['type'] == 'thing.agent' and not n.get('fixed'))
     def contaminate(document):
         document['nodes'].append({'id': 'foreign', 'type': 'note', 'title': 'Foreign step', 'params': {},

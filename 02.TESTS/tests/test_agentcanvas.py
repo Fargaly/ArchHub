@@ -179,13 +179,13 @@ def test_declaration_records_own_step_without_taking_another_agents_lease(histor
     assert read_document(task['session_path'])['nodes'][-1]['params']['status'] == 'working'
 
 
-def test_declared_task_and_archived_purpose_have_files(history):
+def test_declared_task_and_new_purpose_share_one_file(history):
     from nodelang import workshop_tasks as tasks
     from nodelang.session_files import read_document
     for request in ('FIRST', 'SECOND'):
         assert tasks.declared(history, 'root', request, 'Declared work', 'working', 'agent', 'Agent')
     rows = tasks.rows(history)
-    assert len(rows) == 2
+    assert len(rows) == 1
     assert all(read_document(row['session_path']) for row in rows)
 
 

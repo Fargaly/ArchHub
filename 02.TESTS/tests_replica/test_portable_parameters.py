@@ -24,13 +24,19 @@ def test_typed_path_saved_relative_and_runs_after_move(tmp_path, kind):
     if kind != 'folder':
         source.write_text('Portable input', encoding='utf-8')
     doc = parameter(kind, str(source))
+    doc['nodes'].append({'id': 'read', 'type': 'thing.file', 'params': {'path': ''},
+                         'paramDefs': [{'id': 'path', 'name': 'Path', 'type': 'file'}],
+                         'position': {'x': 300, 'y': 0}})
+    doc['wires'] = [{'id': 'file', 'from': {'node': 'input', 'socket': 'value'},
+                     'to': {'node': 'read', 'socket': 'param:path'}}]
     owner = SessionFiles(tmp_path / 'owner')
     path = root / 'portable.archhub'
     saved = owner.dispatch({'action': 'save', 'path': str(path), 'document': doc})
     expected = 'inputs' if kind == 'folder' else 'inputs/data.txt'
     assert read_document(path)['nodes'][0]['params']['value'] == expected
     first = owner.dispatch({'action': 'run', 'path': str(path), 'document': saved['document']})
-    assert first['results']['input']['output']['value'] == str(source)
+    assert first['results']['input']['output']['value'] == expected
+    assert first['results']['read']['output']['path'] == str(source)
     moved = tmp_path / 'moved'
     assert root.resolve().is_relative_to(tmp_path.resolve()) and moved.resolve().is_relative_to(tmp_path.resolve())
     shutil.move(str(root), str(moved))
@@ -39,7 +45,8 @@ def test_typed_path_saved_relative_and_runs_after_move(tmp_path, kind):
     assert reopened['nodes'][0]['params']['value'] == expected
     ran = owner.dispatch({'action': 'run', 'path': str(path), 'document': reopened})
     resolved = moved / expected
-    assert ran['results']['input']['output']['value'] == str(resolved)
+    assert ran['results']['input']['output']['value'] == expected
+    assert ran['results']['read']['output']['path'] == str(resolved)
     assert resolved.is_dir() if kind == 'folder' else resolved.read_text(encoding='utf-8') == 'Portable input'
 
 
@@ -130,7 +137,8 @@ def test_promoted_file_parameter_solve_resolves_from_owner(tmp_path):
     path = tmp_path / 'promoted.archhub'
     saved = owner.dispatch({'action': 'save', 'path': str(path), 'document': doc})['document']
     solved = canvas_documents.solve(saved, ['read', promoted], path=path)
-    assert solved['results'][promoted]['output']['value'] == str(source)
+    assert solved['results'][promoted]['output']['value'] == 'input.txt'
+    assert solved['results']['read']['output']['path'] == str(source)
     assert solved['results']['read']['output']['text'] == 'Promoted file'
 
 

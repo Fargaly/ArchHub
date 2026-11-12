@@ -491,7 +491,7 @@ def downstream(document, changed):
     return seen
 
 
-def solve(document, changed, *, invoke=None, stopped=None):
+def solve(document, changed, *, invoke=None, stopped=None, path=None):
     """Re-solve the pure nodes downstream of an edit; mark effects Out of date. Mutates and returns results."""
     from .session_files import run_document, validate
     started = time.perf_counter()
@@ -524,7 +524,7 @@ def solve(document, changed, *, invoke=None, stopped=None):
     results = {}
     if pure:
         ran = run_document(document, roots=pure, invoke=invoke, stopped=stopped, cached=affected - set(pure),
-                           only=set(pure))
+                           only=set(pure), path=path)
         for key in pure:
             results[key] = ran['results'].get(key, {'status': 'Idle', 'output': {}})
     for key in stale:
@@ -607,7 +607,7 @@ def read(path):
 
 def edit(path, by, op, change, *, create_title=None, solve_changed=True, always_record=False):
     """Read-modify-write one .archhub file atomically; change(doc) returns the ids it touched."""
-    from .session_files import new_document, read_document, write_document, validate
+    from .session_files import new_document, read_document, write_document, validate, portable_parameters
     from .enforce import guard_effect
     with locked(path):
         if Path(path).exists():
@@ -618,6 +618,7 @@ def edit(path, by, op, change, *, create_title=None, solve_changed=True, always_
             raise FileNotFoundError('No .archhub file at ' + str(path))
         document = copy.deepcopy(before) if before else new_document(create_title or Path(path).stem)
         touched = change(document) or []
+        portable_parameters(document, path, before)
         fixed = {node['id'] for node in (before or {}).get('nodes', []) if node.get('fixed')}
         if fixed - {node['id'] for node in document['nodes'] if node.get('fixed')}:
             raise ValueError('The four fixed nodes stay on every task canvas.')
@@ -625,7 +626,7 @@ def edit(path, by, op, change, *, create_title=None, solve_changed=True, always_
         validate(document)
         solved = None
         if solve_changed and touched:
-            solved = solve(document, touched, invoke=guard_effect)
+            solved = solve(document, touched, invoke=guard_effect, path=path)
         if not mutated and not always_record:
             return document, solved
         _stamp(document, before, by, op)
@@ -701,7 +702,7 @@ def remember(path, document):
 
 def commit_ui(path, document, base_revision, by='You'):
     """The founder's window saves: merge with any agent edit made since its base."""
-    from .session_files import read_document, write_document, validate
+    from .session_files import read_document, write_document, validate, portable_parameters
     validate(document)
     with locked(path):
         current = read_document(path) if Path(path).exists() else None
@@ -709,6 +710,7 @@ def commit_ui(path, document, base_revision, by='You'):
             base = _SNAPSHOTS.get(str(path).lower(), {}).get(base_revision)
             document = merge(base, document, current)
             validate(document)
+        portable_parameters(document, path, current)
         # Only viewportSaved participates from properties: revision/history churn must not trigger autosave writes.
         if current is not None and document.get('properties', {}).get('viewportSaved') == current.get('properties', {}).get('viewportSaved') and \
                 json.dumps({k: v for k, v in document.items() if k != 'properties'}, sort_keys=True) == \

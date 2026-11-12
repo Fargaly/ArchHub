@@ -57,7 +57,7 @@ class TriggerService:
 
     def refresh(self):
         """Re-arm every trigger node in the known workflows (called at start and after a save)."""
-        from .session_files import read_document
+        from .session_files import read_document, file_parameters, resolve_file_parameter
         wanted = {}
         for path in self.workflows():
             try:
@@ -67,7 +67,11 @@ class TriggerService:
                 continue
             for node in document['nodes']:
                 if node['type'] in ('trigger.schedule', 'trigger.file') and not node.get('frozen'):
-                    wanted[(path, node['id'])] = (node['type'], dict(node['params']), node.get('title', ''),
+                    params = dict(node['params'])
+                    for name in file_parameters(node):
+                        if name in params:
+                            params[name] = resolve_file_parameter(params[name], path)
+                    wanted[(path, node['id'])] = (node['type'], params, node.get('title', ''),
                                                   (node.get('result') or {}).get('fired_at'))
         missed = []
         with self.lock:

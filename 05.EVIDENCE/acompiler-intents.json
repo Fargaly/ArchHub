@@ -5,6 +5,7 @@
   "source": "Founder F329 Run pause/resume and conditional F169 portable parameters, 2026-11-12. Research res-036 sections 2 and 4; SPEC 3.2. Extend existing run and approval owners, no new store/service; branch commits only, hooks on; isolated profiles, no push/install/release or live user stores.",
   "scope": [
     "01.APP/nodelang/session_files.py",
+        "01.APP/nodelang/canvas_documents.py",
     "01.APP/nodelang/agent_work.py",
     "01.APP/nodelang/canvas_tools.py",
     "01.APP/nodelang/canvas_triggers.py",

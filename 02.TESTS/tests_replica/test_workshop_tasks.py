@@ -58,7 +58,7 @@ def test_two_agents_both_join_as_members_every_time(tmp_path, monkeypatch):
     assert nograph_server._set_task_status(ids[2], "PLANNED")["status"] == "PLANNED"
     assert nograph_server._set_task_status(ids[2], "WIP")["ok"] is False
 
-    # An agent's declare() joins its session: working claims it, a new request stays in the same session, done completes it.
+    # An agent's declare() joins its session: working claims it, a new request moves it to that request's session, done completes it.
     from nodelang.workshop_mailbox import call
     me = {"claude/sessionID": "wstask-declare"}
     declare = lambda request, status: call("declare", {"task": "Fix " + request, "paths": [str(tmp_path)],
@@ -69,10 +69,10 @@ def test_two_agents_both_join_as_members_every_time(tmp_path, monkeypatch):
     first = declared_rows()
     assert len(first) == 1 and first[0]["description"] == "Fix REQ-1" and first[0]["title"] == "Fix" and first[0]["status"] == "WIP" and first[0]["owner"]
     declare("REQ-1", "working")                                              # re-declaring renews, no new row
-    declare("REQ-2", "working")                                              # a new purpose never closes or restarts the session
+    declare("REQ-2", "working")                                              # different work: its own row; REQ-1 stays, not closed
     states = {row["description"]: row["status"] for row in declared_rows()}
-    assert states == {"Fix REQ-1": "WIP"}, states
-    bound = next(row for row in declared_rows() if row["description"] == "Fix REQ-1")
+    assert states == {"Fix REQ-1": "PLANNED", "Fix REQ-2": "WIP"}, states
+    bound = next(row for row in declared_rows() if row["description"] == "Fix REQ-2")
     assert bound["owner"]
     assert bound["agents"] == [bound["owner"]]
     assert bound["folders"] and bound["scope"] == bound["folders"][0]
@@ -80,9 +80,9 @@ def test_two_agents_both_join_as_members_every_time(tmp_path, monkeypatch):
     assert bound["activity"][0]["status"] == "WIP"
     assert bound["session"]
     declare("REQ-2", "done")
-    assert {row["description"]: row["status"] for row in declared_rows()}["Fix REQ-1"] == "DONE"
+    assert {row["description"]: row["status"] for row in declared_rows()} == {"Fix REQ-1": "PLANNED", "Fix REQ-2": "DONE"}
     call("declare", {"task": "Starting", "paths": [str(tmp_path)], "status": "working", "request_id": "unassigned"}, me)
-    assert len(declared_rows()) == 1                                         # no fake rows for unassigned work
+    assert len(declared_rows()) == 2                                         # no fake rows for unassigned work
 
 
 def test_rename_records_the_title_the_founder_typed(tmp_path, monkeypatch):

@@ -1021,7 +1021,12 @@ def _inherited_work(history, root, lineage):
         if other["root"] != root and other.get("work") and parent and isinstance(parent[0], dict) \
                 and key(parent[0]) in ancestors:
             found.append((ancestors[key(parent[0])], other["work"]))
-    return min(found)[1] if found else ""
+    if not found:
+        return ""
+    nearest = min(depth for depth, _work in found)
+    works = {work for depth, work in found if depth == nearest}
+    # Two starters at the same depth: inheriting either would be a guess.
+    return works.pop() if len(works) == 1 else ""
 
 
 def _declare(history, body, context, identity, runtime, peer, native_session):

@@ -262,10 +262,13 @@
       else sessionRows.unshift({id:'live:'+agent.id,title:agent.name,kind:'agent-session',workingNow:true,runtimeAgent:agent});
     }
     // A piece of work (F337) that lost its agent stays an open row; old per-agent-run rows go under Older.
-    const interruptedWork=row=>(row.members||[]).length>0&&!String(row.id).startsWith('declared-')&&row.status!=='DONE'&&row.status!=='ARCHIVED'&&(row.outcome==='interrupted'||row.outcome==='unknown');
+    const pieceOfWork=row=>(row.members||[]).length>0&&!String(row.id).startsWith('declared-')&&row.status!=='DONE'&&row.status!=='ARCHIVED';
+    // A dead piece of work (no live agent for 24 h) sits under Older and still offers Continue.
+    const interruptedWork=row=>pieceOfWork(row)&&(row.outcome==='interrupted'||row.outcome==='unknown'||!!row.stale);
     const sectionOf=row=>{
       if(row.workingNow)return 'Working now';
-      if(interruptedWork(row))return 'Needs you';
+      if(pieceOfWork(row)&&waiting.has(row.id))return 'Needs you';
+      if(interruptedWork(row)&&!row.stale)return 'Needs you';
       if(row.status==='ARCHIVED'||row.stale||row.status==='stale'||['interrupted','unknown'].includes(row.outcome)||window.UI.taskRowReason(row)==='interrupted')return 'Older / archived';
       if(waiting.has(row.id)||row.status==='IN REVIEW')return 'Needs you';
       const date=new Date(row.updated_at||row.modified||row.updatedAt||0),today=new Date();today.setHours(0,0,0,0);

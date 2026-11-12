@@ -181,13 +181,13 @@ def test_second_agent_joins_as_member_and_finishes_only_its_step(history):
     assert read_document(task['session_path'])['nodes'][-1]['params']['status'] == 'done'
 
 
-def test_declared_task_and_new_purpose_share_one_file(history):
+def test_declared_task_and_new_purpose_have_files(history):
     from nodelang import workshop_tasks as tasks
     from nodelang.session_files import read_document
     for request in ('FIRST', 'SECOND'):
         assert tasks.declared(history, 'root', request, 'Declared work', 'working', 'agent', 'Agent')
     rows = tasks.rows(history)
-    assert len(rows) == 1
+    assert len(rows) == 2
     assert all(read_document(row['session_path']) for row in rows)
 
 
@@ -350,3 +350,16 @@ def test_rendered_agents_and_task_steps():
                                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         print(result.stdout)
         assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_agents_on_different_requests_get_separate_rows_and_cannot_finish_each_other(history):
+    from nodelang import workshop_tasks as tasks
+    from nodelang.session_files import read_document
+    first = tasks.declared(history, 'root-a', 'REQ-A', 'Work A', 'working', 'agent-a', 'Agent A', 'Tower')
+    second = tasks.declared(history, 'root-b', 'REQ-B', 'Work B', 'working', 'agent-b', 'Agent B', 'Tower')
+    assert first and second and first != second
+    assert not tasks.complete(history, first, 'agent-b', 'not my work')
+    assert not tasks.complete(history, second, 'agent-a', 'not my work')
+    for task, agent in ((first, 'Agent A'), (second, 'Agent B')):
+        steps = [n for n in read_document(tasks.get(history, task)['session_path'])['nodes'] if n.get('params', {}).get('workshop_step')]
+        assert [(s['params']['agent'], s['params']['status']) for s in steps] == [(agent, 'working')]

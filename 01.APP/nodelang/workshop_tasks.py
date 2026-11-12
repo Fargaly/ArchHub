@@ -65,28 +65,38 @@ def _now():
     return datetime.now(timezone.utc).isoformat()
 
 
+def _add_column(history, column):
+    """Two processes opening one old database together may both try the add; the second finds it done."""
+    import sqlite3
+    try:
+        history._db.execute("ALTER TABLE workshop_tasks ADD COLUMN " + column)
+    except sqlite3.OperationalError as error:
+        if "duplicate column" not in str(error).lower():
+            raise
+
+
 def _ensure(history):
     """The task table is the association: session_path is that task's .archhub file."""
     history._db.execute(SCHEMA)
     names = {row[1] for row in history._db.execute("PRAGMA table_info(workshop_tasks)")}
     if "session_path" not in names:
-        history._db.execute("ALTER TABLE workshop_tasks ADD COLUMN session_path TEXT")
+        _add_column(history, "session_path TEXT")
     if "archived" not in names:
-        history._db.execute("ALTER TABLE workshop_tasks ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+        _add_column(history, "archived INTEGER NOT NULL DEFAULT 0")
     if "purpose" not in names:
-        history._db.execute("ALTER TABLE workshop_tasks ADD COLUMN purpose TEXT")
+        _add_column(history, "purpose TEXT")
     if "project" not in names:
-        history._db.execute("ALTER TABLE workshop_tasks ADD COLUMN project TEXT")
+        _add_column(history, "project TEXT")
     if "revision" not in names:
-        history._db.execute("ALTER TABLE workshop_tasks ADD COLUMN revision INTEGER NOT NULL DEFAULT 0")
+        _add_column(history, "revision INTEGER NOT NULL DEFAULT 0")
     if "outcome" not in names:
-        history._db.execute("ALTER TABLE workshop_tasks ADD COLUMN outcome TEXT")
+        _add_column(history, "outcome TEXT")
     if "write_open" not in names:
-        history._db.execute("ALTER TABLE workshop_tasks ADD COLUMN write_open INTEGER NOT NULL DEFAULT 0")
+        _add_column(history, "write_open INTEGER NOT NULL DEFAULT 0")
     if "capacity" not in names:
-        history._db.execute("ALTER TABLE workshop_tasks ADD COLUMN capacity TEXT")
+        _add_column(history, "capacity TEXT")
     if "members" not in names:
-        history._db.execute("ALTER TABLE workshop_tasks ADD COLUMN members TEXT")
+        _add_column(history, "members TEXT")
 
 
 def _write(history, sql, values):
@@ -185,8 +195,16 @@ def _settle_lapsed(history):
            # The session stays open for the next agent; every member's lease ends with it, the members stay listed.
            "members=CASE WHEN json_valid(members) THEN (SELECT json_group_array(json_set(value,'$.lease_until',NULL)) "
            "FROM json_each(workshop_tasks.members)) ELSE members END, "
-           "write_open=0, updated_at=?, revision=revision+1 WHERE status='claimed' AND lease_until IS NOT NULL "
-           "AND lease_until<?", (_now(), now))
+           "write_open=0, revision=revision+1 WHERE status='claimed' AND lease_until IS NOT NULL "
+           "AND lease_until<? AND NOT (id LIKE 'declared-%' AND " + _LIVE_ELSEWHERE + ")", (now, now))
+
+
+# The row's owner is a live member of an open session (piece of work) today.
+_LIVE_ELSEWHERE = ("EXISTS (SELECT 1 FROM workshop_tasks AS work, json_each(CASE WHEN json_valid(work.members) "
+                   "THEN work.members ELSE '[]' END) AS member WHERE work.id NOT LIKE 'declared-%' "
+                   "AND work.status!='done' AND IFNULL(work.archived,0)=0 "
+                   "AND json_extract(member.value,'$.owner')=workshop_tasks.owner "
+                   "AND json_extract(member.value,'$.lease_until')>=?)")
 
 
 def mark_writing(history, task, owner, revision=None):
@@ -376,26 +394,41 @@ def _open_session(history, task):
     return row if row and row["status"] != "done" and not row.get("archived") else None
 
 
-def _session_for(history, owner, project, hours):
-    """The session an agent with no id given joins, or None for a new one.
+_OPEN_WORK = "status!='done' AND IFNULL(archived,0)=0 AND id NOT LIKE 'declared-%'"
+_MEMBER = ("EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(members) THEN members ELSE '[]' END) "
+           "WHERE json_extract(value,'$.owner')=?)")
 
-    Its own open session first (re-declaring never moves it); else THE one open session of
-    its registered project active in the last `hours`. Two or more, or no project: None, never a guess.
+
+def _session_for(history, owner, project, request, hours):
+    """The session an agent that passed no session id joins, or None for a new one. Never a guess.
+
+    The same work is the same project and the same request. With a request: the one open session of
+    that project started for that request. Without one: the agent's own open session, else the single
+    open session of the project active in the last `hours`, and only when that session has no request.
     Rows from older builds (declared-*) are never joined, so their files stay as they are.
     """
-    open_rows = "status!='done' AND IFNULL(archived,0)=0 AND id NOT LIKE 'declared-%'"
-    mine = history._db.execute(
-        "SELECT id FROM workshop_tasks WHERE " + open_rows + " AND EXISTS (SELECT 1 FROM json_each("
-        "CASE WHEN json_valid(members) THEN members ELSE '[]' END) WHERE json_extract(value,'$.owner')=?) "
-        "ORDER BY updated_at DESC LIMIT 1", (owner,)).fetchone()
+    if request:
+        found = history._db.execute("SELECT id FROM workshop_tasks WHERE " + _OPEN_WORK + " AND IFNULL(project,'')=? "
+                                    "AND purpose=? LIMIT 2", (project or "", request)).fetchall()
+        return found[0][0] if len(found) == 1 else None
+    mine = history._db.execute("SELECT id FROM workshop_tasks WHERE " + _OPEN_WORK + " AND " + _MEMBER +
+                               " ORDER BY updated_at DESC LIMIT 1", (owner,)).fetchone()
     if mine:
         return mine[0]
     if not project:
         return None
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
-    found = history._db.execute("SELECT id FROM workshop_tasks WHERE " + open_rows + " AND project=? AND updated_at>=? "
-                                "LIMIT 2", (project, cutoff)).fetchall()
-    return found[0][0] if len(found) == 1 else None
+    found = history._db.execute("SELECT id, purpose FROM workshop_tasks WHERE " + _OPEN_WORK + " AND project=? "
+                                "AND updated_at>=? LIMIT 2", (project, cutoff)).fetchall()
+    return found[0][0] if len(found) == 1 and not found[0][1] else None
+
+
+def _leave_other_sessions(history, task, owner):
+    """An agent that moves to another piece of work ends its lease in the one it left; it stays listed there."""
+    held = history._db.execute("SELECT id FROM workshop_tasks WHERE " + _OPEN_WORK + " AND id!=? AND status='claimed' AND "
+                               + _MEMBER, (task, owner)).fetchall()
+    for (other,) in held:
+        release(history, other, owner)
 
 
 def handover(history, task):
@@ -420,7 +453,8 @@ def declared(history, root, request_id, title, status, owner, label, project="",
     if not task:
         with history._transaction(write=True):
             _ensure(history)
-            task = _session_for(history, owner, project, TASKS_NODE["params"]["stale_hours"])
+            request = "" if request_id in (None, "", "unassigned") else request_id
+            task = _session_for(history, owner, project, request, TASKS_NODE["params"]["stale_hours"])
             if not task:
                 if status == "done":
                     return False
@@ -433,6 +467,7 @@ def declared(history, root, request_id, title, status, owner, label, project="",
         result = (row.get('result') or '') if row['owner'] == owner else ''
         record_step(history, task, owner, label, title, status, result, request=request_id)
         return task if won else False
+    _leave_other_sessions(history, task, owner)
     won = claim(history, task, owner, label)
     record_step(history, task, owner, label, title, status, request=request_id)
     return task if won else False
@@ -594,7 +629,17 @@ def _bound_messages(history, task):
 
 
 def _is_stale(row, declarations, hours):
-    """A declared task whose owner has not been live for `hours`. Never deleted."""
+    """A declared task whose owner has not been live for `hours`, or a session with no live member and no
+    activity for `hours` that is not waiting for the founder. Never deleted or archived; Continue still works."""
+    if str(row["id"]).startswith(SESSION_PREFIX) and row["status"] != "done":
+        if _live(row.get("members") or []):
+            return False
+        if any(item.get("work") == row["id"] and item.get("current") and item.get("status") == "blocked"
+               for item in declarations):
+            return False
+        seen = datetime.fromisoformat(row.get("updated_at") or "1970-01-01T00:00:00+00:00")
+        seen = seen if seen.tzinfo else seen.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) - seen >= timedelta(hours=hours)
     if not str(row["id"]).startswith("declared-") or row["status"] == "done":
         return False
     mine = [item for item in declarations if item.get("session") == row.get("owner")]
@@ -665,8 +710,13 @@ def column(history, project=None, stale_hours=None, *, include_archived=False):
         return "PLANNED"
     current = _current_session()
     built = []
-    for row in rows(history, include_archived=include_archived):
+    listed = rows(history, include_archived=include_archived)
+    working = {m["owner"] for row in listed if not row["id"].startswith("declared-") and row["status"] != "done"
+               and not row.get("archived") for m in _live(row.get("members") or [])}
+    for row in listed:
         if project and row.get("project") != project:
+            continue
+        if row["id"].startswith("declared-") and row.get("owner") in working:
             continue
         declaration = _declaration_for(row, declarations)
         session = _session_context(row.get("session_path"))
@@ -1042,6 +1092,39 @@ def create_session(history, title, creator="founder", *, select=True, zoom=1, ag
 
 _SESSION_FIELDS = {"scope", "rules", "agents", "plan", "handover", "progress", "nodes", "parameters", "messages", "folders", "references", "homePinned"}
 _HANDOVER = ("done", "next", "results")
+_ABSOLUTE = re.compile(r"(?:[A-Za-z]:[\\/]|\\\\)[^\s\"'<>|*?]+")
+
+
+def _clean_note(history, row, text):
+    """A handover note is shared with any agent: a path under a user profile or temp folder becomes relative to
+    the project root (or is dropped), environment values and secret-shaped text are removed."""
+    import os
+    import tempfile
+    from pathlib import PureWindowsPath
+    from .agent_work import redact
+    private = [PureWindowsPath(os.environ[name]) for name in ("USERPROFILE", "LOCALAPPDATA", "APPDATA", "TEMP", "TMP")
+               if os.environ.get(name)] + [PureWindowsPath(tempfile.gettempdir())]
+    roots = []
+    if row.get("project"):
+        from .workspace_roots_catalogue import read_registered_roots
+        registered, _ = read_registered_roots()
+        roots = [PureWindowsPath(item["path"]) for item in registered.values()
+                 if (item.get("label") or item.get("root_id")) == row["project"] and item.get("path")]
+
+    def place(match):
+        found = PureWindowsPath(match.group(0).rstrip(".,;:)"))
+        tail = match.group(0)[len(str(match.group(0).rstrip(".,;:)"))):]
+        if not any(found.is_relative_to(base) for base in private):
+            return match.group(0)
+        root = next((base for base in roots if found.is_relative_to(base)), None)
+        return (found.relative_to(root).as_posix() if root else "[path removed]") + tail
+    text = _ABSOLUTE.sub(place, text)
+    for value in os.environ.values():
+        if len(value) >= 12 and value in text:
+            text = text.replace(value, "[removed]")
+    return redact(text)
+
+
 _NODE_TYPES = {"note", "thing.agent"}
 _SECRET_NAME = re.compile(r"(^|_)(password|secret|token|api_key|private_key|credential)(_|$)", re.I)
 
@@ -1191,7 +1274,8 @@ def update_session(history, task, values):
             note = values["handover"]
             if type(note) is not dict or not note or set(note) - set(_HANDOVER):
                 raise ValueError("A handover note says what is done, what is next and where the results are")
-            held["handover"] = {key: _short_text(note[key], "handover " + key, 1000) for key in _HANDOVER if key in note}
+            held["handover"] = {key: _clean_note(history, row, _short_text(note[key], "handover " + key, 1000))
+                                for key in _HANDOVER if key in note}
         if "folders" in values:
             held["folders"] = _session_list(values["folders"], "folders")
         if "references" in values:

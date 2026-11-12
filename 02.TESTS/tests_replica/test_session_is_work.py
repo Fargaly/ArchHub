@@ -61,9 +61,9 @@ def steps(path):
     return [n for n in read_document(path)['nodes'] if n.get('params', {}).get('workshop_step')]
 
 
-def test_two_vendors_in_one_project_join_one_session(project):
+def test_two_vendors_on_the_same_request_in_one_project_join_one_session(project):
     first = declare(CLAUDE('a'), project, 'F337')['declaration']
-    second = declare(CODEX('b'), project, 'review-drawings', task='Review the tower sheets')['declaration']
+    second = declare(CODEX('b'), project, 'F337', task='Review the tower sheets')['declaration']
     rows = work_rows()
     assert len(rows) == 1 and first['work'] == second['work'] == rows[0]['id']
     assert len(sessions()) == 1
@@ -73,15 +73,48 @@ def test_two_vendors_in_one_project_join_one_session(project):
     assert first['runtime'] != second['runtime']
 
 
-def test_new_purpose_stays_in_the_same_session(project):
+def test_two_agents_on_different_requests_in_one_project_get_two_sessions(project):
+    first = declare(CLAUDE('a'), project, 'APP-BUILD', path=project / 'app.txt')['declaration']
+    second = declare(CODEX('b'), project, 'REVIT-RIBBON', path=project / 'ribbon.txt')['declaration']
+    assert first['work'] != second['work']
+    assert len(work_rows()) == 2 and len(sessions()) == 2
+
+
+def test_a_new_request_moves_the_agent_and_ends_its_old_membership(project):
     from nodelang import workshop_tasks as tasks
     from nodelang.workshop_mailbox import application_history
-    first = declare(CLAUDE('a'), project, 'REQ-1')['declaration']['work']
-    again = declare(CLAUDE('a'), project, 'REQ-2', task='Next step')['declaration']['work']
-    assert again == first
+    first = declare(CLAUDE('a'), project, 'REQ-1')['declaration']
     with application_history() as history:
-        assert [row['status'] for row in tasks.rows(history)] == ['claimed']
-    assert len(sessions()) == 1
+        old_path = Path(tasks.get(history, first['work'])['session_path'])
+    before = old_path.read_bytes()
+    moved = declare(CLAUDE('a'), project, 'REQ-2', task='Next step')['declaration']['work']
+    assert moved != first['work']
+    with application_history() as history:
+        old = tasks.get(history, first['work'])
+        assert old['status'] == 'open' and not old['archived']              # left as it is, never archived
+        assert [m['lease_until'] for m in old['members'] if m['owner'] == first['session']] == [None]
+        assert tasks.get(history, moved)['status'] == 'claimed'
+    assert old_path.read_bytes() == before                                 # the old file is untouched
+    assert declare(CLAUDE('a'), project, 'REQ-1')['declaration']['work'] == first['work']   # back to that work
+
+
+def test_without_a_request_never_guess_and_never_wake_a_30_hour_old_session(project):
+    from datetime import datetime, timedelta, timezone
+    from nodelang import workshop_tasks as tasks
+    from nodelang.workshop_mailbox import application_history
+    with application_history() as history:
+        quiet = tasks.declared(history, 'root-a', '', 'Quiet tower work', 'working', 'agent-a', 'Agent A', 'Tower')
+        assert tasks.declared(history, 'root-b', '', 'More tower work', 'working', 'agent-b', 'Agent B', 'Tower') == quiet
+        old = (datetime.now(timezone.utc) - timedelta(hours=30)).isoformat()
+        history._db.execute("UPDATE workshop_tasks SET updated_at=?, lease_until=0, "
+                            "members=json('[{\"owner\":\"agent-a\",\"lease_until\":0},{\"owner\":\"agent-b\",\"lease_until\":0}]') "
+                            "WHERE id=?", (old, quiet))
+        tasks.rows(history)                                                 # an app restart settles the lapsed lease
+        assert tasks.get(history, quiet)['updated_at'] == old              # settling never refreshes activity
+        assert tasks.declared(history, 'root-c', '', 'Tower again', 'working', 'agent-c', 'Agent C', 'Tower') != quiet
+        # A session that carries a request is never joined by a declare without one.
+        asked = tasks.declared(history, 'root-d', 'F337', 'Request work', 'working', 'agent-d', 'Agent D', 'Villa')
+        assert tasks.declared(history, 'root-e', '', 'Villa work', 'working', 'agent-e', 'Agent E', 'Villa') != asked
 
 
 def test_two_open_sessions_mean_a_new_one_never_a_guess(project):
@@ -123,12 +156,19 @@ def test_old_per_run_rows_and_files_are_never_joined_or_rewritten(project):
         assert tasks.get(history, old) == before_row
 
 
-def test_ten_agent_starts_in_one_project_make_one_session_file(project, capsys):
+def test_ten_agent_starts_on_ten_requests_make_ten_sessions(project):
+    for number in range(10):
+        declare((CLAUDE, CODEX)[number % 2]('agent-%d' % number), project, 'request-%d' % number,
+                path=project / ('part-%d.txt' % number))
+    assert len(sessions()) == 10 and len(work_rows()) == 10
+
+
+def test_ten_agent_starts_on_one_request_make_one_session_file(project, capsys):
     vendors = (CLAUDE, CODEX)
     timings = []
     for number in range(10):
         started = time.perf_counter()
-        declare(vendors[number % 2]('agent-%d' % number), project, 'start-%d' % number)
+        declare(vendors[number % 2]('agent-%d' % number), project, 'F337')
         timings.append(time.perf_counter() - started)
     files = sessions()
     with capsys.disabled():
@@ -189,7 +229,7 @@ def test_interrupted_session_stays_open_and_another_vendor_continues_with_plan_a
         lapsed = tasks.get(history, work)
         path = lapsed['session_path']
     assert lapsed['status'] == 'open' and lapsed['outcome'] == 'interrupted' and not lapsed['archived']
-    taken = declare(CODEX('b'), project, 'continue', path=project / 'b.txt')
+    taken = declare(CODEX('b'), project, 'F337', path=project / 'b.txt')
     assert taken['declaration']['work'] == work                             # the same session, file and thread
     assert taken['session']['path'] == path
     assert taken['session']['plan'] == ['Check sheets', 'Tag doors', 'Publish set']
@@ -198,8 +238,9 @@ def test_interrupted_session_stays_open_and_another_vendor_continues_with_plan_a
     assert len(sessions()) == 1
     shown = next(row for row in tasks_column() if row['id'] == work)
     assert shown['handover']['next'] == 'Tag the doors'
+    assert shown['status'] == 'WIP' and not shown['stale']
     # Only done or archive ends it.
-    declare(CODEX('b'), project, 'continue', status='done', path=project / 'b.txt')
+    declare(CODEX('b'), project, 'F337', status='done', path=project / 'b.txt')
     with application_history() as history:
         assert tasks.get(history, work)['status'] == 'done'
     assert declare(CLAUDE('c'), project, 'new-work', path=project / 'c.txt')['declaration']['work'] != work
@@ -211,7 +252,7 @@ def test_archive_ends_a_session(project):
     work = declare(CLAUDE('a'), project, 'F337', path=project / 'a.txt')['declaration']['work']
     with application_history() as history:
         tasks.archive(history, work)
-    assert declare(CODEX('b'), project, 'next', path=project / 'b.txt')['declaration']['work'] != work
+    assert declare(CODEX('b'), project, 'F337', path=project / 'b.txt')['declaration']['work'] != work
 
 
 def tasks_column():
@@ -229,3 +270,115 @@ def test_rendered_home_rows_are_pieces_of_work():
                             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
     print(result.stdout)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_two_starters_at_the_same_depth_mean_no_inheritance(project):
+    import subprocess
+    import sys
+    from nodelang import workshop_tasks as tasks, workshop_mailbox as mailbox
+    from nodelang.workshop_mailbox import application_history
+    with application_history() as history:
+        facade = tasks.create_session(history, 'Tower facade', select=False, workspace='tower')['taskId']
+        core = tasks.create_session(history, 'Tower core', select=False, workspace='tower')['taskId']
+    # Two starters of different vendors share this test process as their connector: same depth above the child.
+    declare(CLAUDE('one'), project, facade, path=project / 'facade.txt')
+    declare(CODEX('two'), project, core, path=project / 'core.txt')
+    child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'],
+                             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    try:
+        peer = SimpleNamespace(pid=child.pid, created_at=psutil.Process(child.pid).create_time(), cwd=str(project))
+        work = mailbox.call('declare', {'task': 'Which one?', 'paths': [str(project / 'which.txt')], 'status': 'working',
+                                        'request_id': 'child-work'}, CODEX('child'), peer=peer)['declaration']['work']
+    finally:
+        child.kill()
+        child.wait(timeout=10)
+    assert work not in (facade, core)
+
+
+def test_dead_session_leaves_the_open_list_but_one_waiting_for_the_founder_stays(project):
+    from datetime import datetime, timedelta, timezone
+    from nodelang.workshop_mailbox import application_history
+    dead = declare(CLAUDE('a'), project, 'DEAD', path=project / 'dead.txt')['declaration']['work']
+    held = declare(CODEX('b'), project, 'HELD', status='blocked', path=project / 'held.txt')['declaration']['work']
+    old = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+    with application_history() as history:
+        history._db.execute("UPDATE workshop_tasks SET updated_at=?, lease_until=0 WHERE id IN (?,?)", (old, dead, held))
+    shown = {row['id']: row for row in tasks_column()}
+    assert shown[dead]['stale'] and shown[dead]['status'] == 'stale'       # Older; never deleted or archived
+    assert not shown[held]['stale'] and shown[held]['status'] == 'IN REVIEW'
+    assert declare(CLAUDE('c'), project, 'DEAD', path=project / 'dead2.txt')['declaration']['work'] == dead   # Continue
+
+
+def test_handover_note_drops_user_paths_environment_values_and_secrets(project, monkeypatch):
+    import os
+    from nodelang import workshop_mailbox as mailbox
+    monkeypatch.setenv('SESSIONWORK_FIXTURE_VALUE', 'fixture-environment-value-123')
+    work = declare(CLAUDE('a'), project, 'F337', path=project / 'a.txt')['declaration']['work']
+    private = os.path.join(os.environ['USERPROFILE'], 'Desktop', 'notes.txt')
+    inside = str(project / 'sheets' / 'checked.pdf')
+    token = 'ghp_' + 'A1b2C3d4E5f6G7h8I9j0K1l2'
+    written = mailbox.call('task_set_session', {'id': work, 'handover': {
+        'done': 'Checked ' + inside + ' and ' + private,
+        'next': 'Use token=' + token + ' and fixture-environment-value-123',
+        'results': 'In ' + inside}}, CLAUDE('a'))['session']
+    note = written['handover']
+    assert note['results'] == 'In sheets/checked.pdf'
+    assert note['done'] == 'Checked sheets/checked.pdf and [path removed]'
+    assert token not in note['next'] and 'fixture-environment-value-123' not in note['next']
+    assert os.environ['USERPROFILE'] not in str(note)
+
+
+def test_upgrade_a_live_agents_old_row_is_one_working_row(project):
+    from nodelang import workshop_tasks as tasks
+    from nodelang.workshop_mailbox import application_history
+    me = CLAUDE('live')
+    owner = declare(me, project, 'unassigned', path=project / 'live.txt')['declaration']['session']
+    old = tasks._declared_id(owner)
+    with application_history() as history:   # the row an older build gave this running agent, lease still live
+        tasks._write(history, "INSERT INTO workshop_tasks(id,title,status,owner,owner_label,lease_until,created_by,"
+                     "created_at,updated_at,purpose,project) VALUES(?,'Old build work','claimed',?,'Live agent',?,"
+                     "'Live agent',?,?,'OLD','Tower')", (old, owner, time.time() + 600, tasks._now(), tasks._now()))
+        before = tasks.get(history, old)
+    work = declare(me, project, 'F337', path=project / 'live.txt')['declaration']['work']
+    with application_history() as history:
+        history._db.execute("UPDATE workshop_tasks SET lease_until=0 WHERE id=?", (old,))   # its old lease lapses
+        tasks.rows(history)
+        kept = tasks.get(history, old)
+    assert kept['status'] == 'claimed' and kept['outcome'] is None          # not marked interrupted while alive
+    # members is a view the owner derives from the lease for a row from before members; the stored row is unchanged.
+    derived = ('lease_until', 'lease_expired', 'members')
+    assert {k: v for k, v in kept.items() if k not in derived} == {k: v for k, v in before.items() if k not in derived}
+    with application_history() as history:
+        assert history._db.execute("SELECT members FROM workshop_tasks WHERE id=?", (old,)).fetchone()[0] is None
+    mine = [row for row in tasks_column() if row['id'] in (old, work)]
+    assert [(row['id'], row['status']) for row in mine] == [(work, 'WIP')]
+
+
+def test_two_processes_opening_an_old_database_together_both_succeed(tmp_path):
+    import sqlite3
+    import threading
+    from nodelang import workshop_tasks as tasks
+    from nodelang.workshop_mailbox import application_history
+    database = tmp_path / 'old.sqlite3'
+    with application_history(database=database) as history:                  # a real Workshop mailbox file
+        history._db.execute("DROP TABLE IF EXISTS workshop_tasks")
+        history._db.execute("CREATE TABLE workshop_tasks(id TEXT PRIMARY KEY, title TEXT NOT NULL, status TEXT NOT NULL, owner TEXT, "
+                    "owner_label TEXT, lease_until REAL, result TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL, "
+                            "updated_at TEXT NOT NULL) STRICT")                 # the task table as an older build left it
+    gate, errors = threading.Barrier(2), []
+
+    def open_it():
+        try:
+            with application_history(database=database, busy_timeout_seconds=2.0) as history:
+                gate.wait()
+                tasks.rows(history)                                         # the owner's own open path adds the columns
+                with history._transaction(write=True):
+                    tasks._add_column(history, 'members TEXT')              # a second add of the same column is tolerated
+        except Exception as error:   # pragma: no cover - the assertion below reports it
+            errors.append(error)
+    runners = [threading.Thread(target=open_it) for _ in range(2)]
+    [runner.start() for runner in runners]
+    [runner.join() for runner in runners]
+    assert errors == [], [repr(error) for error in errors]
+    with sqlite3.connect(database) as done:
+        assert 'members' in {row[1] for row in done.execute('PRAGMA table_info(workshop_tasks)')}

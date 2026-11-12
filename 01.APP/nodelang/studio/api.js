@@ -1601,12 +1601,12 @@ api.readTaskPreview=async id=>{
 };
 // Parametric (Grasshopper): an edit re-solves the pure nodes downstream of it, then stops.
 let sessionRevision=0, localDirty=false, solveIds=new Set(), solveParams=[], solveTimer=null, solveNote='', solveCount=0;
-function fileEdit(edit,solveFor=null,param=null,recordHistory=true){
+function fileEdit(edit,solveFor=null,param=null,recordHistory=true,preserveSolve=false){
  if(!sessionDocument)throw Error('Open a session first.');
  const before=copy(sessionDocument);
  if(recordHistory){fileHistory.push(before);if(fileHistory.length>100)fileHistory.shift();fileFuture=[];}
  try{edit(sessionDocument);}catch(error){sessionDocument=before;if(recordHistory)fileHistory.pop();throw error;}
- localDirty=true;runEpoch++;projectFile();queueAutosave();if(solveFor)scheduleSolve(solveFor,param);return {ok:true};
+ localDirty=true;if(!preserveSolve)runEpoch++;projectFile();queueAutosave();if(solveFor)scheduleSolve(solveFor,param);return {ok:true};
 }
 function scheduleSolve(ids,param){
  for(const id of ids)solveIds.add(id);if(param)solveParams.push(param);
@@ -1852,6 +1852,7 @@ api.runToHere=api.runNode;
 api.runSelection=ids=>api.runNode(ids);
 api.setNodeFlags=async(id,values)=>fileEdit(d=>Object.assign(d.nodes.find(n=>n.id===id),values),[id]);
 api.forkNode=async id=>{const result=await sessionRequest('fork-node',{document:portableDocument(),node:id});fileEdit(d=>{d.nodes=result.document.nodes;d.wires=result.document.wires;});return state.graph.nodes.find(n=>n.id===result.ids[0]);};
+// Arrangement changes presentation only; keep in-flight pure-node results.
 api.arrangeGraph=async(initial=false)=>fileEdit(d=>{
  const session=d.nodes.find(n=>n.fixed&&n.type==='thing.session'),nodes=d.nodes.filter(n=>(!n.fixed&&(!session||(n.agentWork?.role!=='session'||n.params?.workshop_step&&!d.nodes.some(row=>row.agentWork?.owner===n.id)))||n===session)&&!n.parent),ids=new Set(nodes.map(n=>n.id));
  const incoming=new Map(nodes.map(n=>[n.id,[]])),rank=new Map(),order=new Map(nodes.map((n,i)=>[n.id,i]));
@@ -1868,7 +1869,7 @@ api.arrangeGraph=async(initial=false)=>fileEdit(d=>{
  if(left.length){let y=y0;const width=Math.max(...left.map(n=>size(n).w));for(const n of left){n.position={x:grid(x-width-96),y:grid(y)};y+=size(n).h+32;}}
  for(const column of columns){if(!column)continue;column.sort((a,b)=>{const source=n=>incoming.get(n.id).reduce((sum,id)=>sum+nodes.find(n=>n.id===id).position.y,0)/Math.max(1,incoming.get(n.id).length);return source(a)-source(b)||order.get(a.id)-order.get(b.id);});let y=y0;for(const n of column){n.position={x:grid(x),y:grid(y)};y+=size(n).h+32;}x+=Math.max(...column.map(n=>size(n).w))+96;}
  d.properties={...d.properties,canvasLayout:'v48'};
-},null,null,!initial);
+},null,null,!initial,true);
 api.groupNodes=async(ids,frame=false)=>{
  if(!Array.isArray(ids))throw Error('Choose nodes to group.');
  const members=sessionDocument.nodes.filter(n=>ids.includes(n.id));

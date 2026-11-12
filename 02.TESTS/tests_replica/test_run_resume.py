@@ -177,3 +177,33 @@ def test_compiled_browser_uses_same_run_and_existing_approve_card(running):
         server.httpd.shutdown()
         server.httpd.server_close()
         thread.join(5)
+
+
+@pytest.mark.parametrize('length, consumed', [(22, 22), (9 * 1024 * 1024 + 1, 0), (-1, 0), ('invalid', 0)])
+def test_rejected_post_consumes_bounded_body_before_closing(running, length, consumed):
+    from email.message import Message
+    from io import BytesIO
+    from types import SimpleNamespace
+    from nodelang.nograph_server import NoGraphServer
+    path, _counts, _run = running
+    server = NoGraphServer(path.parent / 'refused-server')
+    try:
+        handler = object.__new__(server._handler())
+        raw = b'{"action":"catalogue"}'
+        handler.headers = Message()
+        handler.headers['Host'] = '127.0.0.1:' + str(server.port)
+        handler.headers['Content-Length'] = str(length)
+        handler.headers['X-ArchHub-Session'] = 'unknown'
+        handler.path = '/api/session-files'
+        handler.command = 'POST'
+        handler.request_version = 'HTTP/1.1'
+        handler.requestline = 'POST /api/session-files HTTP/1.1'
+        handler.rfile, handler.wfile = BytesIO(raw), BytesIO()
+        handler.connection = SimpleNamespace(settimeout=lambda seconds: None)
+        handler.close_connection = False
+        handler.dispatch('POST')
+        assert handler.wfile.getvalue().startswith(b'HTTP/1.1 403')
+        assert handler.rfile.tell() == consumed
+        assert handler.close_connection
+    finally:
+        server.httpd.server_close()

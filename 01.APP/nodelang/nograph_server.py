@@ -401,6 +401,7 @@ class NoGraphServer:
                     self.close_connection = True
                     raise Refused('Request body exceeds the allowed size.', 413)
                 raw = self.rfile.read(length) if length else b''
+                self._body_read = True
                 return json.loads(raw.decode('utf-8') or '{}') if raw else {}
 
             def cookie(self):
@@ -422,6 +423,7 @@ class NoGraphServer:
                 self.dispatch('POST')
 
             def dispatch(self, method):
+                self._body_read = False
                 parsed = urlparse(self.path)
                 path = parsed.path
                 try:
@@ -467,6 +469,17 @@ class NoGraphServer:
                     result = route[1](owner, SimpleNamespace(method=method, path=path, query=query, body=body, handler=self))
                     self.send_json(200, result if isinstance(result, dict) else {'ok': True, 'result': result})
                 except Refused as refusal:
+                    if method == 'POST' and not self._body_read:
+                        # Unread POST bytes can reset the socket before Windows receives the refusal.
+                        self.close_connection = True
+                        try:
+                            length = int(self.headers.get('Content-Length') or 0)
+                            if 0 < length <= (SESSION_BODY if path == '/api/session-files' else MAX_BODY):
+                                from .library_engines import LIBRARY_ITEM_ENGINES
+                                self.connection.settimeout(LIBRARY_ITEM_ENGINES['tool_workshop']['params']['worker_join_ms'] / 1000)
+                                self.rfile.read(length)
+                        except (OSError, ValueError):
+                            self.close_connection = True
                     self.send_json(refusal.status, {'ok': False, 'error': str(refusal)})
                 except (ValueError, TypeError, KeyError, OSError, RecursionError) as error:
                     self.send_json(400, {'ok': False, 'error': str(error) or type(error).__name__})

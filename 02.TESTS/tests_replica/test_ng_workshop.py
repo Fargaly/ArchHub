@@ -345,10 +345,10 @@ def test_queue_and_handover_100_messages(database):
 def test_session_start_declares_role(tmp_path, monkeypatch, database):
     from nodelang.native_agent_hooks import declare_session
     monkeypatch.setenv('ARCHHUB_WORKSHOP_ROLE', 'research')
-    value = declare_session({'session_id': 'auto', 'cwd': str(tmp_path)}, 'codex', database=database)
+    value = declare_session({'session_id': 'auto', 'cwd': str(tmp_path)}, 'codex', database=database, kind='start')
     assert value['declaration']['role'] == 'research'
     monkeypatch.delenv('ARCHHUB_WORKSHOP_ROLE')
-    again = declare_session({'session_id': 'auto', 'cwd': str(tmp_path)}, 'codex', database=database)
+    again = declare_session({'session_id': 'auto', 'cwd': str(tmp_path)}, 'codex', database=database, kind='start')
     assert again['declaration']['role'] == 'research'
 
 

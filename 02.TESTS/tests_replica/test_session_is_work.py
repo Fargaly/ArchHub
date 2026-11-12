@@ -341,6 +341,10 @@ def test_handover_note_drops_user_paths_environment_values_and_secrets(project, 
         'done': 'A C:/Users/John Smith, B C:/Users/John Smith/ and C',
         'next': 'D C:\\Users\\John Smith'}}, CLAUDE('a'))['session']['handover']
     assert folders == {'done': 'A [path removed], B [path removed]/ and C', 'next': 'D [path removed]'}
+    sentences = mailbox.call('task_set_session', {'id': work, 'handover': {
+        'done': 'C:/Users/John Smith/x.txt. Next',
+        'next': 'C:\\x\\file.txt; then ran tests'}}, CLAUDE('a'))['session']['handover']
+    assert sentences == {'done': '[path removed]. Next', 'next': '[path removed]; then ran tests'}
     assert os.environ['USERPROFILE'] not in str(note)
 
 

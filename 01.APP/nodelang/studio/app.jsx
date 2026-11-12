@@ -464,7 +464,7 @@
         gridTemplateColumns: 'minmax(0,1fr)',
         gridTemplateRows: '48px minmax(0,1fr)'
       }}>
-   <header className="flex app-header" data-window-caption style={{
+   <header className={"flex app-header" + (route.startsWith("settings/") ? " settings-header" : "")} data-window-caption style={{
           height: 48,
           padding: window.ARCHHUB_ONE_TITLE_BAR ? '0 0 0 12px' : '0 12px',
           background: '#0f0f13',
@@ -479,7 +479,7 @@
             show
           }, event)}><span>{s.workspaces.find(w => w.id === s.activeWorkspace)?.name || s.workspaces.find(w => w.builtIn)?.name || 'Add workspace'}</span><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true"><path d="M3 4.5l3 3 3-3" /></svg></button><i className="header-divider" /><span className="muted">/</span><button className="button-reset header-page" onClick={event => executeAction("appShell.ArchHub.2", {
             go
-          }, event)}>{(route.startsWith("settings/") ? "Settings" : route === "task-file" ? (taskFace === "workshop" ? "Workshop" : "Canvas") : routeNames[route]) || route.split('/').at(-1)}</button><span className="fill" /><div data-design="header.status" className="header-status" aria-label="Session status">{s.connectionNotice && s.connectionNotice !== 'Checking for updates…' ? <button className="button-reset muted" onClick={event => executeAction("appShell.Receipts.16", {go}, event)}>1 notice · see Receipts</button> : <span>{s.connectionNotice || '● Local session'}</span>}
+          }, event)}>{(route.startsWith("settings/") ? "Settings" : route === "task-file" ? (taskFace === "workshop" ? "Workshop" : "Canvas") : routeNames[route]) || route.split('/').at(-1)}</button><span className="fill" /><div data-design="header.status" className="header-status" aria-label="Session status">{route.startsWith("settings/") ? <span>{s.profile.signedIn ? 'Signed in' : 'Local session'}</span> : <>{s.connectionNotice && s.connectionNotice !== 'Checking for updates…' ? <button className="button-reset muted" onClick={event => executeAction("appShell.Receipts.16", {go}, event)}>1 notice · see Receipts</button> : <span>{s.connectionNotice || '● Local session'}</span>}
           {agentLoad.status === 'waiting' && <span role="status">Loading Workshop settings…</span>}
           {agentLoad.status === 'error' && <span role="alert">{agentLoad.message}<Btn aria-label="Retry Workshop connection" onClick={event => executeAction("appShell.RetryWorkshop", {reloadWorkshop}, event)}>Retry</Btn></span>}
           {agentLoad.status === 'empty' && <span role="status">Select a workflow for Workshop settings.</span>}
@@ -492,9 +492,9 @@
             show
           }, event)}>Ctrl K</button><button hidden={route==='task-file'} className="button-reset muted" onClick={event => executeAction("appShell.Receipts.16", {
             go
-          }, event)}>Receipts</button></div><button data-design="header.search" className="button-reset header-search" onClick={event => executeAction("appShell.SearchCtrlK.5", {
+          }, event)}>Receipts</button></>}</div><button data-design="header.search" className="button-reset header-search" onClick={event => executeAction("appShell.SearchCtrlK.5", {
             show
-          }, event)} aria-label="Search · Ctrl K"><window.AHIcon name="search" size={15} /><span className="fill">Search...</span><kbd>Ctrl K</kbd></button>{(s.update.available || s.update.state==='failed') && <button className="button-reset header-update" title={s.update.state==='failed' ? (s.update.detail || 'Update failed') : `${s.update.installed} → ${s.update.next}. Unsent text is lost; your saved graphs and settings stay with you.`} aria-label={s.update.state==='failed' ? (s.update.detail || 'Update failed') : 'Update available'} onClick={event => executeAction("appShell.Control.3", {
+          }, event)} aria-label="Search · Ctrl K"><window.AHIcon name="search" size={15} /><span className="fill">Search all…</span><kbd>Ctrl K</kbd></button>{(s.update.available || s.update.state==='failed') && <button className="button-reset header-update" title={s.update.state==='failed' ? (s.update.detail || 'Update failed') : `${s.update.installed} → ${s.update.next}. Unsent text is lost; your saved graphs and settings stay with you.`} aria-label={s.update.state==='failed' ? (s.update.detail || 'Update failed') : 'Update available'} onClick={event => executeAction("appShell.Control.3", {
             act,
             api,
             go,
@@ -545,7 +545,7 @@
               fontWeight: 700,
               fontSize: 'calc(12px * var(--text-scale,1))',
               flex: 'none'
-            }}>{s.profile.name.split(' ').map(n => n[0]).join('').slice(0, 2)}</button></nav><div className="screen-with-composer has-local-composer" style={{'--canvas-library-width':libraryOpen ? '248px' : '0px'}}>{(canvasOpened || route==='canvas') && <div hidden={route!=='canvas'} ref={element=>{element?.toggleAttribute('inert',route!=='canvas'||!!s.graphOpening);}} style={{display:route==='canvas'?'grid':'none',minHeight:0,height:'100%'}}><window.UI.Canvas key={s.graph.scopeKey || s.graph.id} active={route==='canvas'&&!s.graphOpening} /></div>}{screen}{route !== 'task-file' && <div className="global-composer"><window.UI.Composer compact /></div>}</div></div>
+            }}>{s.profile.name.split(' ').map(n => n[0]).join('').slice(0, 2)}</button></nav><div className="screen-with-composer has-local-composer" style={{'--canvas-library-width':libraryOpen ? '248px' : '0px'}}>{(canvasOpened || route==='canvas') && <div hidden={route!=='canvas'} ref={element=>{element?.toggleAttribute('inert',route!=='canvas'||!!s.graphOpening);}} style={{display:route==='canvas'?'grid':'none',minHeight:0,height:'100%'}}><window.UI.Canvas key={s.graph.scopeKey || s.graph.id} active={route==='canvas'&&!s.graphOpening} /></div>}{screen}{route !== 'task-file' && !route.startsWith('settings/') && <div className="global-composer"><window.UI.Composer compact /></div>}</div></div>
   </div>}
   <window.UI.BaboomSprite open={companion} setOpen={setCompanion} />
   {toast && <div role="alert" className="flex" style={{

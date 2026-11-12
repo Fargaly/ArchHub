@@ -383,7 +383,7 @@ function clearCanvas(){
  publish({graphOpening:false,graph:{id:'',scopeKey:'',name:'',nodes:[],wires:[],workspaceIds:[],documentation:'',customProperties:[],courtStatus:''},graphs:[],settings:[],catalogue:[],libraryPorts:[],capabilities:[],docs:[],agents:[],agentSummary:'Checking running agents…',agentHealth:'Checking running agents…',tasks:[],declaredTasks:[],workshopMessages:[],workshopMessagesMore:false,workshopMessagesBefore:null,workshopMessagesScope:null,approvals:[],notifications:[],activeWorkspace:'',activeFile:'',files:[],workspaces:[],desktopReady:false,desktop:{program:'',stage:'',taskId:null,offers:[]},watcherReady:false,watcher:copy(emptyWatcher),hostSkillsReady:false,hostSkills:[],connectorBundle:null});
 }
 function watchRefresh(){stopRefresh();if(ready&&listeners.size&&!document.hidden)refreshTimer=window.setInterval(refreshLive,ownerRefreshMs);}
-document.addEventListener('visibilitychange',()=>{watchRefresh();if(!document.hidden)refreshLive();});
+document.addEventListener('visibilitychange',()=>{watchRefresh();reportSurface();if(!document.hidden)refreshLive();});
 window.addEventListener('pagehide',stopRefresh);
 window.addEventListener('pageshow',watchRefresh);
 const canvasOperation=(op,args)=>['project_schedules','list_skills','library_ports'].includes(op)
@@ -438,7 +438,10 @@ function nodeProperty(id,key,value) {
  return write.promise;
 }
 const api={};
-api.setActiveSurface=surface=>{activeSurface=surface;};
+// The desktop companion steps aside while Settings is the open, visible screen.
+let reportedSurface='';
+function reportSurface(){const surface=document.hidden?'':activeSurface;if(surface===reportedSurface)return;reportedSurface=surface;request('/api/universal/studio-surface',{surface}).catch(()=>{reportedSurface='';});}
+api.setActiveSurface=surface=>{activeSurface=surface;reportSurface();};
 for(const name of exportedNames)api[name]=()=>unavailable(name);
 const unfinishedActions={...api};
 api.supportsAction=(name,mode)=>!(name==='approve'&&mode&&mode!=='once')&&typeof api[name]==='function'&&api[name]!==unfinishedActions[name];

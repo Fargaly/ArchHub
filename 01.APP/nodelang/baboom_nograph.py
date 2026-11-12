@@ -44,6 +44,20 @@ def shows_as_choice(state_dir):
     return choice if choice in ('Screen', 'Tray', 'Hidden') else 'Screen'
 
 
+def set_studio_surface(surface):
+    _STATE['studio_surface'] = surface
+
+
+def studio_surface():
+    return _STATE.get('studio_surface', '')
+
+
+def companion_shows_as(state_dir):
+    """The chosen presence, except that the on-screen pet steps aside while Settings is open."""
+    choice = shows_as_choice(state_dir)
+    return 'Tray' if choice == 'Screen' and studio_surface().startswith('settings/') else choice
+
+
 def start(state_dir, app_root, url=''):
     """Start the Goose brain and join the Workshop. Never raises into the app; the reason is kept."""
     _STATE['state_dir'] = state_dir
@@ -270,7 +284,7 @@ class NoGraphTransport:
                    'work': {'blocked': 0, 'review': 0, 'active_turns': _STATE['turns']}, 'attention': {'blocked_obligations': 0},
                    'workshop': {'entry_count': 0}, 'meeting_notes': {'active_sessions': 0},
                    # Without it the companion falls back to "Tray" and hides the on-screen pet every frame.
-                   'shows_as': shows_as_choice(_STATE.get('state_dir'))}
+                   'shows_as': companion_shows_as(_STATE.get('state_dir'))}
         directive = {'revision': self.revision, 'motion': 'working' if _STATE.get('turns') else 'idle',
                      'persona_form': 'baboom', 'message': '', 'compact_message': '', 'action': '',
                      'action_label': '', 'fingerprint': '', 'ttl_seconds': ttl}

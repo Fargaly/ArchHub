@@ -1608,6 +1608,17 @@ def r_terminal(s, req):
     raise Refused('Terminal action must be start, input or stop.')
 
 
+def r_studio_surface(s, req):
+    """The Studio's open screen, held in memory for the desktop companion (Settings hides the pet)."""
+    from . import baboom_nograph
+    surface = (req.body or {}).get('surface') if req.method == 'POST' else None
+    if surface is not None:
+        if not isinstance(surface, str) or len(surface) > 200:
+            raise ValueError('surface must be a short screen name')
+        baboom_nograph.set_studio_surface(surface)
+    return {'ok': True, 'surface': baboom_nograph.studio_surface()}
+
+
 def r_boot(s, req):
     return {'ok': True, 'ready': True, 'nograph': True}
 
@@ -1707,6 +1718,7 @@ ROUTES = {
     '/api/universal/notion-connect': ('host_brokers.notion_connect', r_notion_connect),
     '/api/universal/terminal': ('terminal_sessions', r_terminal),
     '/api/universal/boot': ('this server', r_boot),
+    '/api/universal/studio-surface': ('memory (companion presence)', r_studio_surface),
     '/api/universal/brain-export': BRAIN,
     '/stop-all': ('this server', r_stop),
     '/resume': ('this server', r_stop),
@@ -1715,6 +1727,6 @@ ROUTES = {
 POST_ONLY = frozenset({
     '/api/session-files', '/api/universal/canvas-op', '/api/universal/settings-action', '/api/universal/workspace-roots',
     '/api/universal/pick-file', '/api/universal/mods', '/api/universal/cloud-signout', '/api/universal/social-credential-remove',
-    '/api/universal/social-surface', '/api/universal/provider-key', '/api/universal/notion-connect', '/stop-all', '/resume',
+    '/api/universal/social-surface', '/api/universal/studio-surface', '/api/universal/provider-key', '/api/universal/notion-connect', '/stop-all', '/resume',
     '/api/universal/social-credential', '/api/universal/social-linkedin-finish', '/api/universal/social-meta-finish',
 } | {path for path, (owner, _handler) in ROUTES.items() if owner == 'graph only'})

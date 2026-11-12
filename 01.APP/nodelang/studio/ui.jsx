@@ -221,7 +221,7 @@
   <div className="spread composer-scope" style={{
         fontSize: 11,
         marginBottom: 8
-      }}><button type="button" className="tab-button" data-design="composer.to" aria-label="Composer scope" onClick={event => executeAction("sharedUI.ComposerScope.1", {
+      }}><button type="button" className="tab-button" data-design="composer.to" aria-label="Composer scope" title={u.route==='home'?'New session':u.selectedNodeId ? api.contextLabel(u.selectedNodeId) : s.graph.name} onClick={event => executeAction("sharedUI.ComposerScope.1", {
           contextOpen,
           setContextOpen
         }, event)}><window.AHIcon name="canvas" size={12} /> {u.route==='home'?'New session':u.selectedNodeId ? api.contextLabel(u.selectedNodeId) : s.graph.name}</button><button type="button" className="icon-button" aria-label="Mention context" title="Add nodes, workflows, agents or sessions" onClick={event => executeAction("sharedUI.MentionContext.2", {

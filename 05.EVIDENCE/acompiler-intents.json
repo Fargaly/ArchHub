@@ -8751,7 +8751,12 @@
         "01.APP/nodelang/studio/ds_library.jsx",
         "02.TESTS/tests/test_designbuild.py",
         "02.TESTS/tests_js/designbuild.cjs",
-        "05.EVIDENCE/designmatch/"
+        "05.EVIDENCE/designmatch/",
+        "02.TESTS/tests_js/raildoors.test.cjs",
+        "02.TESTS/tests_js/apptidy_sessions.test.mjs",
+        "02.TESTS/tests_js/checkpoint_browser.cjs",
+        "02.TESTS/tests_js/agentcanvas.cjs",
+        "02.TESTS/tests_js/agentwork.cjs"
       ]
     },
     "CARDPOLISH": {

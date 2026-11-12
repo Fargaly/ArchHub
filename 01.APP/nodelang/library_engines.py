@@ -954,13 +954,50 @@ def _house_style(tag: str) -> bool:
     ) is not None
 
 
-def _greeting_index(html: str) -> int:
-    for match in re.finditer(re.escape(_HOUSE_GREETING), html):
+# Word splits words across CR/LF, &nbsp; and tags; match the words, not the bytes.
+_GAP = r'(?:\s|&nbsp;|&#160;|&#xa0;|\xa0|<[^>]+>)'
+_GREETING_RE = re.compile(r'Dear%s*,' % _GAP, re.I)
+_CLOSE_RE = re.compile((_GAP + '+').join(map(re.escape, _HOUSE_CLOSE.split())), re.I)
+
+
+def _outside_comments(pattern, html: str) -> list:
+    found = []
+    for match in pattern.finditer(html):
         comment = html.rfind('<!--', 0, match.start())
-        if comment != -1 and html.rfind('-->', 0, match.start()) < comment:
-            continue
-        return match.start()
-    return -1
+        if comment == -1 or html.rfind('-->', 0, match.start()) > comment:
+            found.append(match)
+    return found
+
+
+def _greeting_match(html: str):
+    found = _outside_comments(_GREETING_RE, html)
+    return found[0] if found else None
+
+
+def _greeting_index(html: str) -> int:
+    match = _greeting_match(html)
+    return match.start() if match else -1
+
+
+def _has_house_skeleton(html: str) -> bool:
+    return bool(_greeting_match(html)) and bool(_outside_comments(_CLOSE_RE, html))
+
+
+def _strip_vml(html: str) -> str:
+    """Drop Word's VML picture copies (they keep the local file path); keep the plain <img>."""
+    html = re.sub(r'(?is)<!--\[if gte vml 1\]>.*?<!\[endif\]-->', '', html)
+    return re.sub(r'(?i)<!\[if !vml\]>|<!\[endif\]>', '', html)
+
+
+def _reply_header_at(html: str) -> int:
+    """Where Outlook's quoted original starts (its From: header block), or -1."""
+    match = re.search(r'(?i)<b\b[^>]*>(?:\s|<[^>]+>)*From:', html)
+    if match is None:
+        return -1
+    block = html.rfind('<div', 0, match.start())
+    if block != -1 and not _visible_mail_text(html[block:match.start()]).strip():
+        return block
+    return match.start()
 
 
 def _visible_mail_text(html: str) -> str:
@@ -978,10 +1015,10 @@ def _house_line(text: str, *, body: bool = False) -> str:
 
 
 def _insert_after_greeting(signature: str, styled: str) -> str:
-    at = _greeting_index(signature)
-    if at < 0:
+    match = _greeting_match(signature)
+    if match is None:
         return styled + signature
-    after = at + len(_HOUSE_GREETING)
+    after = match.end()
     tag = re.match(r'(?is)\s*(?:</[^>]+>\s*)+', signature[after:])
     if tag:
         after += tag.end()
@@ -991,7 +1028,7 @@ def _insert_after_greeting(signature: str, styled: str) -> str:
 def _compose_house(signature: str, content: str) -> str:
     """Put the letter inside Dear, / Thank you and best regards, never above it."""
     styled = _house_line(content, body=True)
-    if signature and _HOUSE_GREETING in signature and _HOUSE_CLOSE in signature:
+    if signature and _has_house_skeleton(signature):
         if '{{body}}' in signature:
             return signature.replace('{{body}}', styled)
         return _insert_after_greeting(signature, styled)
@@ -1004,16 +1041,17 @@ def _compose_house(signature: str, content: str) -> str:
 
 def _house_draft_error(composed: str) -> str:
     """Named refusal. Empty means the skeleton is intact and may be saved."""
-    closes = composed.count(_HOUSE_CLOSE)
-    if closes != 1:
-        return 'double-close' if closes > 1 else 'missing-close'
-    at = _greeting_index(composed)
-    if at < 0:
+    closes = _outside_comments(_CLOSE_RE, composed)
+    if len(closes) != 1:
+        return 'double-close' if closes else 'missing-close'
+    greeting = _greeting_match(composed)
+    if greeting is None:
         return 'missing-greeting'
-    if _visible_mail_text(composed[:at]).strip():
+    if len(_outside_comments(_GREETING_RE, composed)) > 1:
+        return 'double-greeting'
+    if _visible_mail_text(composed[:greeting.start()]).strip():
         return 'text-above-greeting'
-    close_at = composed.find(_HOUSE_CLOSE)
-    middle = composed[at + len(_HOUSE_GREETING):close_at]
+    middle = composed[greeting.end():closes[0].start()]
     match = re.search(r'<div\b[^>]*data-archhub-body="1"[^>]*>', middle, re.I)
     if match is None or not _house_style(match.group(0)):
         return 'body-outside-skeleton'
@@ -1056,7 +1094,7 @@ def draft_email(params: Mapping[str, object], feeds: Mapping[str, object]):
         root = Path(params['signature_dir'] or Path(os.environ.get('APPDATA', '')) / 'Microsoft' / 'Signatures')
         raw = (root / (name + '.htm')).read_bytes()
         charset = re.search(rb'charset\s*=\s*[\"\x27]?([a-zA-Z0-9_-]+)', raw)
-        signature = raw.decode(charset[1].decode('ascii') if charset else 'utf-8-sig')
+        signature = _strip_vml(raw.decode(charset[1].decode('ascii') if charset else 'utf-8-sig'))
         from urllib.parse import unquote
         def signature_image(match):
             source = html.unescape(match[3])
@@ -1087,6 +1125,14 @@ def draft_email(params: Mapping[str, object], feeds: Mapping[str, object]):
         if not signature and original is None and getattr(mail, 'GetInspector', None) is not None:
             signature = str(getattr(mail, 'HTMLBody', '') or '')
         quoted = str(getattr(mail, 'HTMLBody', '') or '') if original is not None else ''
+        header_at = _reply_header_at(quoted)
+        if header_at > 0 and _visible_mail_text(quoted[:header_at]).strip():
+            # Outlook put its own reply signature above the quote: one skeleton only.
+            head = quoted[:header_at]
+            if not signature and _has_house_skeleton(head):
+                signature = head + '</body></html>'
+            styles = re.search(r'(?is)<head\b.*?</head>', head)
+            quoted = (styles.group(0) if styles else '') + quoted[header_at:]
         if to:
             mail.To = to
         if params['cc']:

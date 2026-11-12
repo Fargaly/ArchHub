@@ -148,3 +148,29 @@ def test_two_members_write_steps_at_once_and_none_is_lost(project):
     assert joined == [work, work]
     row = next(row for row in work_rows() if row['id'] == work)
     assert len(row['members']) == 3 and len(steps(row['session_path'])) == 3
+
+
+def test_agent_started_by_another_agent_inherits_its_session(project):
+    import subprocess
+    import sys
+    from nodelang import workshop_tasks as tasks, workshop_mailbox as mailbox
+    from nodelang.workshop_mailbox import application_history
+    with application_history() as history:
+        facade = tasks.create_session(history, 'Tower facade', select=False, workspace='tower')['taskId']
+        tasks.create_session(history, 'Tower core', select=False, workspace='tower')
+    # The starter (Claude) works in the facade session; this test process is its connector.
+    assert declare(CLAUDE('starter'), project, facade, path=project / 'facade.txt')['declaration']['work'] == facade
+    # A sub-agent of another vendor runs as a child process of the starter's connector and passes no session.
+    child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'],
+                             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    try:
+        peer = SimpleNamespace(pid=child.pid, created_at=psutil.Process(child.pid).create_time(), cwd=str(project))
+        inherited = mailbox.call('declare', {'task': 'Check the facade panels', 'paths': [str(project / 'panels.txt')],
+                                             'status': 'working', 'request_id': 'panel-check'}, CODEX('sub'), peer=peer)
+    finally:
+        child.kill()
+        child.wait(timeout=10)
+    assert inherited['declaration']['work'] == facade
+    # A sibling with no starter above it never inherits: two open sessions means a new one.
+    sibling = declare(CODEX('sibling'), project, 'other-work', path=project / 'other.txt')['declaration']['work']
+    assert sibling != facade

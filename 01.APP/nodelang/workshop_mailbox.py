@@ -1006,6 +1006,24 @@ def read_declarations(connection, *, include_archived=False):
     return [row for row in rows if include_archived or row["current"]]
 
 
+def _inherited_work(history, root, lineage):
+    """The session of the declared agent that started this one, whatever its vendor.
+
+    That agent's own process (the parent of its connector) is an ancestor of this agent's
+    process. The nearest such ancestor wins. OS-observed lineage only, never sender-chosen.
+    """
+    def key(entry):
+        return entry.get("pid"), round(float(entry.get("created_at") or 0), 3)
+    ancestors = {key(entry): depth for depth, entry in enumerate(lineage[2:]) if isinstance(entry, dict)}
+    found = []
+    for other in read_declarations(history._db):
+        parent = (other.get("process_lineage") or [])[1:2]
+        if other["root"] != root and other.get("work") and parent and isinstance(parent[0], dict) \
+                and key(parent[0]) in ancestors:
+            found.append((ancestors[key(parent[0])], other["work"]))
+    return min(found)[1] if found else ""
+
+
 def _declare(history, body, context, identity, runtime, peer, native_session):
     task = _text(body["task"], "task", 1024)
     request = _text(body["request_id"], "request id", 256)
@@ -1092,7 +1110,8 @@ def _declare(history, body, context, identity, runtime, peer, native_session):
     if row["request_id"] != "unassigned":
         from .workshop_tasks import declared
         work = declared(history, root, row["request_id"], row["task"], row["status"],
-                        identity["sender_key"], identity["sender_label"], row["project"])
+                        identity["sender_key"], identity["sender_label"], row["project"],
+                        inherited=_inherited_work(history, root, row["process_lineage"]))
         if work:
             row["work"] = work
             with history._transaction(write=True):

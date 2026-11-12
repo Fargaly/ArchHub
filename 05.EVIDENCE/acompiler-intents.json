@@ -1,6 +1,26 @@
 {
   "schema_version": 1,
   "intents": {
+    "SESSIONWORK": {
+      "source": "Founder F337 SESSION-IS-THE-WORK (T0), 2026-11-12, res-039 and res-038: a session is a piece of work with one task id; whoever starts an agent passes it and the agent joins; no id joins the single open session of its registered project active in 24 h, else a new one, never a guess; sub-agents inherit the starter's session; several agents are members of one session and write steps into the one file through the canvas_documents merge; interruption keeps the session open, it ends only by done or archive; the session carries plan and handover note; Home rows are pieces of work per frozen design v50. Existing per-run files and task rows are not merged or rewritten. Isolated profile tests only, branch-only commits, hooks on, no push/install/release or live profile access.",
+      "scope": [
+        "01.APP/nodelang/workshop_tasks.py",
+        "01.APP/nodelang/workshop_mailbox.py",
+        "01.APP/nodelang/nograph_server.py",
+        "01.APP/nodelang/native_agent_mcp.py",
+        "01.APP/nodelang/studio/ds_home2.jsx",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/style.css",
+        "02.TESTS/tests_replica/test_session_is_work.py",
+        "02.TESTS/tests_replica/test_workshop_tasks.py",
+        "02.TESTS/tests/test_agentcanvas.py",
+        "02.TESTS/tests/test_onetask.py",
+        "02.TESTS/tests/test_agentwork.py",
+        "02.TESTS/tests_replica/test_baboom_work_presence.py",
+        "02.TESTS/tests_js/studio_sessionwork.test.cjs",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
     "OUTLOOKREPLY": {
       "source": "Founder-hit OUTLOOK-REPLY-DOUBLE-GREETING, Workshop seq 9524 (2026-11-06) and again 2026-11-12: outlook_reply_draft puts a second Dear, / Thank you and best regards skeleton into the new part of a reply. Whitespace-normalised greeting/close detection, one skeleton per reply, VML picture copies dropped so the logo embeds as cid; fixture tests only, no real Outlook, branch-only commits, hooks on, no push/install/release or live profile access.",
       "scope": [

@@ -1130,7 +1130,11 @@ def _declare(history, body, context, identity, runtime, peer, native_session):
                     idempotency_key="declaration-overlap:" + sha256(json.dumps(pair).encode()).hexdigest())
                 notices.append(message["id"])
     row.update(current=row["status"] != "done", process_alive=True)
-    return {**identity, "declaration": row, "coordination_messages": notices, "rules": founder_rules()}
+    joined = {}
+    if row.get("work"):
+        from .workshop_tasks import handover
+        joined = {"session": handover(history, row["work"])}
+    return {**identity, "declaration": row, "coordination_messages": notices, "rules": founder_rules(), **joined}
 
 
 def _read(history, body, identity, runtime=None):
@@ -1204,7 +1208,7 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
     optional = {"send": {"reply_to", "idempotency_key", "native_control"}, "read": {"declarations_after", "include_archived", "newest"}, "declare": {"display_name", "model", "role", "title"}, "pending":set(), "seen":set(),
                 "task_create": set(), "task_list": set(), "task_claim": {"lease_seconds"}, "task_release": set(),
                 "task_complete": {"result"},
-                "task_set_session": {"scope", "rules", "agents", "plan", "progress", "folders", "references"},
+                "task_set_session": {"scope", "rules", "agents", "plan", "handover", "progress", "folders", "references"},
                 "task_open": set(), "task_archive": set()}
     if method not in required or type(body) is not dict or not required[method] <= set(body) or set(body) - required[method] - optional[method]:
         raise ValueError("Workshop mailbox arguments are invalid")
@@ -1331,7 +1335,7 @@ def _task(history, method, body, identity):
         return {"tasks": workshop_tasks.rows(history, include_archived=False)}
     task = _text(body["id"], "task id", 64)
     if method == "task_set_session":
-        fields = ("scope", "rules", "agents", "plan", "progress", "folders", "references")
+        fields = ("scope", "rules", "agents", "plan", "handover", "progress", "folders", "references")
         return {"session": workshop_tasks.update_session(history, task, {key: body[key] for key in fields if key in body})}
     if method == "task_open":
         return {"session": workshop_tasks.open_session(history, task)}

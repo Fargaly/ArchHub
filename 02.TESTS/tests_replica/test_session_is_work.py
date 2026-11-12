@@ -174,3 +174,48 @@ def test_agent_started_by_another_agent_inherits_its_session(project):
     # A sibling with no starter above it never inherits: two open sessions means a new one.
     sibling = declare(CODEX('sibling'), project, 'other-work', path=project / 'other.txt')['declaration']['work']
     assert sibling != facade
+
+
+def test_interrupted_session_stays_open_and_another_vendor_continues_with_plan_and_handover(project):
+    from nodelang import workshop_tasks as tasks, workshop_mailbox as mailbox
+    from nodelang.workshop_mailbox import application_history
+    first = declare(CLAUDE('a'), project, 'F337', path=project / 'a.txt')
+    work, me = first['declaration']['work'], CLAUDE('a')
+    mailbox.call('task_set_session', {'id': work, 'plan': ['Check sheets', 'Tag doors', 'Publish set'],
+                                      'handover': {'done': 'Sheets checked', 'next': 'Tag the doors',
+                                                   'results': 'Tower/sheets-checked.pdf'}}, me)
+    with application_history() as history:
+        history._db.execute("UPDATE workshop_tasks SET lease_until=0 WHERE id=?", (work,))
+        lapsed = tasks.get(history, work)
+        path = lapsed['session_path']
+    assert lapsed['status'] == 'open' and lapsed['outcome'] == 'interrupted' and not lapsed['archived']
+    taken = declare(CODEX('b'), project, 'continue', path=project / 'b.txt')
+    assert taken['declaration']['work'] == work                             # the same session, file and thread
+    assert taken['session']['path'] == path
+    assert taken['session']['plan'] == ['Check sheets', 'Tag doors', 'Publish set']
+    assert taken['session']['handover'] == {'done': 'Sheets checked', 'next': 'Tag the doors',
+                                            'results': 'Tower/sheets-checked.pdf'}
+    assert len(sessions()) == 1
+    shown = next(row for row in tasks_column() if row['id'] == work)
+    assert shown['handover']['next'] == 'Tag the doors'
+    # Only done or archive ends it.
+    declare(CODEX('b'), project, 'continue', status='done', path=project / 'b.txt')
+    with application_history() as history:
+        assert tasks.get(history, work)['status'] == 'done'
+    assert declare(CLAUDE('c'), project, 'new-work', path=project / 'c.txt')['declaration']['work'] != work
+
+
+def test_archive_ends_a_session(project):
+    from nodelang import workshop_tasks as tasks
+    from nodelang.workshop_mailbox import application_history
+    work = declare(CLAUDE('a'), project, 'F337', path=project / 'a.txt')['declaration']['work']
+    with application_history() as history:
+        tasks.archive(history, work)
+    assert declare(CODEX('b'), project, 'next', path=project / 'b.txt')['declaration']['work'] != work
+
+
+def tasks_column():
+    from nodelang import workshop_tasks as tasks
+    from nodelang.workshop_mailbox import application_history
+    with application_history() as history:
+        return tasks.column(history)

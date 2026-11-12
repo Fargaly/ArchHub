@@ -292,13 +292,15 @@ def build_server(*, session=None, mailbox_call=None):
     def task_set_session(id: str, ctx: Context, scope: str = "", rules: list[str] | None = None,
                          agents: list[str] | None = None, plan: list[str] | None = None,
                          progress: dict[str, str] | None = None, folders: list[str] | None = None,
-                         references: list[str] | None = None) -> dict[str, object]:
-        """Write this task's session fields into its .archhub file. Does not switch the open canvas."""
+                         references: list[str] | None = None,
+                         handover: dict[str, str] | None = None) -> dict[str, object]:
+        """Write this task's session fields into its .archhub file. Does not switch the open canvas.
+        handover: what is done, what is next and where the results are, for the next agent of any vendor."""
         values: dict[str, object] = {}
         if scope:
             values["scope"] = scope
         for key, value in (("rules", rules), ("agents", agents), ("plan", plan), ("progress", progress),
-                           ("folders", folders), ("references", references)):
+                           ("folders", folders), ("references", references), ("handover", handover)):
             if value is not None:
                 values[key] = value
         return call("task_set_session", {"id": id, **values}, _caller_context(ctx))

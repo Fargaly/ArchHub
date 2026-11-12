@@ -182,6 +182,9 @@ def _settle_lapsed(history):
     now = time.time()
     _write(history, "UPDATE workshop_tasks SET outcome=CASE WHEN IFNULL(write_open,0)=1 THEN 'unknown' "
            "ELSE 'interrupted' END, status='open', owner=NULL, owner_label=NULL, lease_until=NULL, "
+           # The session stays open for the next agent; every member's lease ends with it, the members stay listed.
+           "members=CASE WHEN json_valid(members) THEN (SELECT json_group_array(json_set(value,'$.lease_until',NULL)) "
+           "FROM json_each(workshop_tasks.members)) ELSE members END, "
            "write_open=0, updated_at=?, revision=revision+1 WHERE status='claimed' AND lease_until IS NOT NULL "
            "AND lease_until<?", (_now(), now))
 
@@ -393,6 +396,14 @@ def _session_for(history, owner, project, hours):
     found = history._db.execute("SELECT id FROM workshop_tasks WHERE " + open_rows + " AND project=? AND updated_at>=? "
                                 "LIMIT 2", (project, cutoff)).fetchall()
     return found[0][0] if len(found) == 1 else None
+
+
+def handover(history, task):
+    """What a joining agent needs to continue: the work, its file, the plan and the last handover note."""
+    row = get(history, task)
+    context = _session_context(row.get("session_path")) if row else {}
+    return {"task": task, "title": short_title(row["title"]) if row else "", "path": (row or {}).get("session_path") or "",
+            "plan": list(context.get("plan") or []), "handover": dict(context.get("handover") or {})}
 
 
 def declared(history, root, request_id, title, status, owner, label, project="", inherited=""):
@@ -691,7 +702,7 @@ def column(history, project=None, stale_hours=None, *, include_archived=False):
              'agents': agents, 'folders': list(session.get("folders") or []) or paths,
              'references': list(session.get("references") or []),
              'session': row.get("session_path") or ((declaration or {}).get("session") if declaration else "") or "",
-             'plan': plan, 'planInferred': not bool(session.get('plan')), 'sessionTitle': session.get('sessionTitle') or short_title(row['title']), 'progress': session.get("progress") or {},
+             'plan': plan, 'planInferred': not bool(session.get('plan')), 'handover': session.get('handover') or {}, 'sessionTitle': session.get('sessionTitle') or short_title(row['title']), 'progress': session.get("progress") or {},
              'checkpoints': list(session.get("checkpoints") or []),
              'workflow': list(session.get("workflow") or []), 'activity': activity,
              'updated_at': row['updated_at'], 'sessionPath': row.get('session_path'),
@@ -806,6 +817,7 @@ def _held_context(document):
         "homePinned": held.get('homePinned') is True,
         "agents": agents,
         "plan": held["plan"] if isinstance(held.get("plan"), list) else [],
+        "handover": held["handover"] if isinstance(held.get("handover"), dict) else {},
         "progress": held["progress"] if isinstance(held.get("progress"), dict) else {},
         "workflow": [{"id": node["id"], "type": node.get("type", ""), "title": node.get("title", "")} for node in nodes],
         "parameters": [{"id": node["id"], "params": node.get("params") or {}} for node in nodes],
@@ -1025,7 +1037,8 @@ def create_session(history, title, creator="founder", *, select=True, zoom=1, ag
     return open_session(history, row["id"], select=select, zoom=zoom)
 
 
-_SESSION_FIELDS = {"scope", "rules", "agents", "plan", "progress", "nodes", "parameters", "messages", "folders", "references", "homePinned"}
+_SESSION_FIELDS = {"scope", "rules", "agents", "plan", "handover", "progress", "nodes", "parameters", "messages", "folders", "references", "homePinned"}
+_HANDOVER = ("done", "next", "results")
 _NODE_TYPES = {"note", "thing.agent"}
 _SECRET_NAME = re.compile(r"(^|_)(password|secret|token|api_key|private_key|credential)(_|$)", re.I)
 
@@ -1171,6 +1184,11 @@ def update_session(history, task, values):
             held["agents"] = _text_list(values["agents"], "agents")
         if "plan" in values:
             held["plan"] = _text_list(values["plan"], "plan")
+        if "handover" in values:
+            note = values["handover"]
+            if type(note) is not dict or not note or set(note) - set(_HANDOVER):
+                raise ValueError("A handover note says what is done, what is next and where the results are")
+            held["handover"] = {key: _short_text(note[key], "handover " + key, 1000) for key in _HANDOVER if key in note}
         if "folders" in values:
             held["folders"] = _session_list(values["folders"], "folders")
         if "references" in values:

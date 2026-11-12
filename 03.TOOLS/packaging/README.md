@@ -17,6 +17,15 @@ imports the application, catalogue runtime or retired Cell graph. The previous
 `cell_website.py` publication path was removed; its instructions survive in Git
 history, not as a second publisher.
 
+The page layout follows frozen `archhub-directions-v48/site.html`. The four
+1600 × 1000 PNG screens under `website/assets/` are headless renders of that
+design's `index.html`: Home, Canvas, Library and the Session node with its thread.
+Captions identify design/example data rather than completed work. The generator
+copies these assets and root branding into its output. The Docker build includes
+both asset directories and retains the coordinator's runtime static COPY.
+Public release notes omit source lines and commit identifiers; `CHANGELOG.md`
+keeps them. Exact build, installer URL and SHA-256 live in generated `download.json`.
+
 At release time, fill the empty `Next build` section of `CHANGELOG.md` with the
 actual build id and release notes, or replace that heading with the build id.
 Keep the newest entry first. Notes describe Git changes, not unverified installed

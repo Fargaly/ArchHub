@@ -618,3 +618,47 @@ node --max-old-space-size=512 --test --test-reporter=tap --test-concurrency=1 02
 ```
 
 Compiled Studio: 40 files, 2064700 output bytes, Babel 7.29.0, manifest SHA256 19ccce87cb3a251c2e7789d870efc2925f4bd42b8d774d593984e31ab2650502. The existing 26 UI checks and 32 owner checks remain green; one acknowledgement regression brings UI total to 27. Browser/server teardown closes owned processes; successful run profiles were removed. Two failed-run disposable profiles remain: .cache/testiso-designv22g-ui-iI4a4J and .cache/testiso-designv22g-ui-xsTy8W. Their exact resolved paths were verified inside this lane's .cache; automatic approval review rejected native PowerShell cleanup with "blocked by policy". No deletion retry through another tool. No push, install, release, live profile, founder screen, or reads of 20.CLIENTS/60.PERSONAL. Full suites and installed acceptance were not run. The existing pytest cache_dir configuration warning remains.
+
+### Stopped checkpoint release-set repair, 2026-11-12
+
+Request: continue lane/design-v22g from 0acdf403, preserve approved design and existing behaviour, classify failures, keep hooks enabled, commit on the branch only. Compared source with origin/main f6dc2d1d; main was not rerun. The supplied release log contains the summary and only its first twelve failure names, without assertion traces. Isolated reproductions and the exact set supplied the complete current traces.
+
+Tested implementation commit: de07c8970b8c2fe6b2801cdd865d5eab70b5c4a5. Its hook ended ACOMPILER PASS. Scope-registration commits: 2398021d and b1e9f4d9. No new owner, store, dependency, runtime, navigation rail item or release path.
+
+| Failure | Decision | Fix and retained coverage |
+|---|---|---|
+| test_rendered_raildoors | a | studio/ds_home2.jsx:235 restores saved pixel width after the expanded sash is measured; real drag/reload remains 320 -> 395 -> 395. Updated fixture navigation, action-hook loading, hover actions, collapsed-list controls and the approved 900px floor. Both original message viewports, distinct-task recurrence and delayed-send draft isolation remain covered. |
+| test_designbuild_board[resume] | a | studio/style.css:1111 lets session rows grow with wrapped status text, preventing one row intercepting the next. Resume still tests pinning, layout undo, real approvals and reload. |
+| test_rendered_library_opens_the_real_session_and_exports_archhub | b | tests_js/apptidy_sessions.test.mjs:24 uses Resume's Open its Canvas and the current Library control; real-file opening, Run, Save As and export remain asserted. |
+| test_file_route_does_not_read_or_write_graph | b | tests_replica/test_session_files.py:200 asserts unchanged bytes and document on open, refuses open-time solve/Run and proves the same computation through explicit Solve and Run. |
+| test_rendered_checkpoint_and_width | a | studio/ds_home2.jsx:235 restores canonical pixel geometry. tests_js/checkpoint_browser.cjs:69 waits for the docked saved width before dragging; exact 375px live/stored/reopened checks and checkpoint/migration round trips remain. Navigation uses the current Canvas and Inspector. |
+| test_tasks_a_and_b_round_trip_through_the_studio_server | b | tests/test_task_session_roundtrip.py:170 separates the four approved fixed nodes from exact user workflow/parameter comparisons; task identity, contents, messages, restart and file readback remain. |
+| test_create_has_start_and_does_not_select_file | b | tests/test_agentcanvas.py:22 asserts the approved fixed Session start, original title value, four fixed nodes and unchanged unselected-file behaviour. |
+| test_declare_and_complete_write_ordered_steps_without_canvas_calls | b | tests/test_agentcanvas.py:107 distinguishes real workshop steps from the fixed Agent reference; ordered step wires, titles, completion status/result and full node counts remain. |
+| test_legacy_open_creates_start_once | b | tests/test_agentcanvas.py:130 checks the new scaffold's original task value, exactly one start, four nodes, three wires and stable path. |
+| test_declaration_records_own_step_without_taking_another_agents_lease | b | tests/test_agentcanvas.py:169 counts real workshop steps; foreign-lease refusal, owner identity and denied completion remain. |
+| test_rendered_agents_and_task_steps | a | studio/app.jsx:1137 restores access to the existing agent-session view from the current summary. studio/api.js:1628 adopts an unchanged acknowledgement wholesale so legacy undo/save/reopen drains rather than remaining dirty. Real declarations, completions, native transcripts, linked-session editing, migration and empty roster all remain tested. |
+| test_rendered_agentwork | a | studio/app.jsx:1137 restores the retained agent-session entry. Both real Codex/Claude fixture formats still prove typed steps, edited reads, write approval, history, shell restrictions and fork. |
+| test_multidelete_one_rendered_undo | b | tests_js/multidelete.mjs:25 scopes the task row and uses Resume's current Canvas entry. Exact whole-selection Undo/Redo, wire endpoints and Escape remain. |
+| test_settings_binding_after_reopen | b | tests_js/settings_node_bridge.mjs:20 scopes the task row and current Canvas entry; one Settings binding, bidirectional 125/130 edits, downstream solve and reopen remain. |
+
+Additional exact-set findings were repaired without excluding tests: the profile audit's filesystem-time prefilter now covers a bounded one-second timestamp lag while retaining exact writer/marker and record-time attribution; two deterministic 250ms-lag file tests were added. The retired-runtime inventory uses tracked repository Python release inputs, avoiding the pre-existing source .venv junction into third-party dependencies. Existing lazy import/boot/committed-byte checks remain. The approved 900px shell floor is retained explicitly, including its below-floor scrolling assertion.
+
+Prior art: the existing owner acknowledgement merge, resizable-panel controls, task-step discriminant, current Resume/Library controls, release source inventory and profile guard; Playwright's role locators/actionability documentation. No assertion was replaced by a skip, xfail or forced click.
+
+First exact-set diagnostic output: .cache/designv22g-release-final.log (8 failed, 752 passed, 1 skipped, 1 warning in 441.39s). Final exact selection is reconstructed directly from release-checkpoint.ps1's $tests literal plus every existing 02.TESTS test_*.py changed since f222fc38, preserving the original argument order and repeated paths. Command and revision are retained in .cache/designv22g-release-verified-command.txt and .cache/designv22g-release-verified-revision.txt. One sequential BelowNormal job per run, through the required run-heavy.ps1.
+
+Final exact-set output, .cache/designv22g-release-verified.log:
+
+```text
+PROFILE-WRITE-GUARD: protected write attempts=0
+SKIPPED [1] 02.TESTS\tests_replica\test_real_app_check_tool.py:186: this account cannot create symbolic links
+762 passed, 1 skipped, 1 warning in 400.56s (0:06:40)
+```
+
+No known-flake retry was needed. The only skip is the existing account symlink-privilege case; the existing cache_dir warning remains. The two added deterministic audit cases account for the test-count increase.
+
+The existing acknowledgement browser suite also passed against compiled Studio: 27 tests, 27 pass, 0 fail, 0 skipped, duration_ms 50916.7738. Both remote-view/local-title and remote-title/local-pan cases preserve in-flight edits across save, restart, reopening and five seconds idle. Compiled manifest SHA256 860366692acec2083d4541a17f961993ecb899120d11e20d0ed13b319d9aba74, 40 files, 2064923 output bytes, Babel 7.29.0. Output: .cache/designv22g-repair-ack-ui.tap.
+
+This is branch/source and isolated compiled-browser evidence, not installed acceptance. No push, install, release, live-profile operation, founder-screen operation, or 20.CLIENTS/60.PERSONAL read was performed.
+Cleanup: the native PowerShell deletion of current-session disposable test roots under .cache was rejected by automatic approval review with "blocked by policy" before execution. No alternate-tool deletion was attempted. These disposable profiles remain. All started process trees are closed; the final run-heavy receipt reports exit=0 and job empty.

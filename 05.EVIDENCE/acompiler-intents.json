@@ -8756,7 +8756,8 @@
         "02.TESTS/tests_js/apptidy_sessions.test.mjs",
         "02.TESTS/tests_js/checkpoint_browser.cjs",
         "02.TESTS/tests_js/agentcanvas.cjs",
-        "02.TESTS/tests_js/agentwork.cjs"
+        "02.TESTS/tests_js/agentwork.cjs",
+        "04.DOCS/FAILURE_LOG.md"
       ]
     },
     "CARDPOLISH": {

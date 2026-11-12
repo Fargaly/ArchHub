@@ -150,7 +150,7 @@ def build_site(output, build_id, installer_url, sha256):
         return f'<figure><a href="/assets/{name}.png" aria-label="View {name} design at full size"><img src="/assets/{name}.png" width="1600" height="1000" alt="ArchHub {name.title()} design" loading="{"eager" if eager else "lazy"}"></a><figcaption>{caption} Design of the current app, rendered from frozen v48; example data, not a live project or a completed run.</figcaption></figure>'
     docs = documentation_sections("getting-started", ("Install", "First open"))
     docs += "\n\n## First session\n\nOpen Home and choose a starter, then choose Start. Start places the wired nodes on the canvas. It does not run them.\n\n## The Canvas\n\n"
-    docs += documentation_sections("composer-canvas", ("Connect nodes", "Properties"))
+    docs += "## Connect nodes\n\nConnect an output socket to a compatible input socket. Select a node to inspect its parameters and results.\n\n## Properties\n\nChange the node parameters for your task. Use Save or Ctrl S to save the workflow; use Save as to keep a separate .archhub file."
     docs += "\n\n## Run and Approve\n\nCheck the source connection and parameters before Run. Read each node's result. A missing host, account, or engine is a blocker, not a completed result. Outside changes still need the existing Approve flow.\n\nPress Run in the Canvas toolbar. If an Approve card appears, review the action before approving it."
     home = '''<div class="item"><div class="intro"><h1>People, AI agents and programs.<br>One place to work together.</h1>
 <p class="lede">ArchHub is a visual node app for engineering work. Connect blocks on a canvas, then save the workflow as a <code>.archhub</code> file you can share.</p>

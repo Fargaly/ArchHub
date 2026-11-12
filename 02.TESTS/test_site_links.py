@@ -99,6 +99,8 @@ class StaticSiteTest(unittest.TestCase):
             docs = (output / "docs/getting-started/index.html").read_text(encoding="utf-8")
             self.assertIn("<h2>Install</h2>\n<ol>", docs)
             self.assertIn("<h2>First open</h2>\n<p>", docs)
+            self.assertIn("Save or Ctrl S", docs)
+            self.assertNotIn("there is no Save button", docs)
             for asset in ("favicon.svg", "favicon.ico", "og.png"):
                 self.assertGreater((output / asset).stat().st_size, 0)
             for licence in output.rglob("*.txt"):

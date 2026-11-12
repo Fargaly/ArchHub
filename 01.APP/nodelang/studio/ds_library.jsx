@@ -10,7 +10,7 @@
     Btn,
     Empty
   } = window.UI;
-  function SessionList({list, query='', onOpen, renderRow}) {
+  function SessionList({list, query='', onOpen, rows: suppliedRows, renderRow}) {
     const s = useData(), u = useApp();
     const [kind, setKind] = React.useState(s.sessionListFilters?.[list] || 'all');
     const [request, setRequest] = React.useState('waiting'), [failure, setFailure] = React.useState(''), [attempt, setAttempt] = React.useState(0);
@@ -21,9 +21,9 @@
       return () => {live = false;};
     }, [list, attempt]);
     const choose = value => u.act(async () => {await api.setSessionListFilter(list,value);setKind(value);});
-    const rows = (s.graphs||[]).filter(row=>(kind==='all'||row.kind===kind)&&(row.title||row.name).toLowerCase().includes(query.toLowerCase()));
+    const rows = (suppliedRows||s.graphs||[]).filter(row=>(kind==='all'||row.kind===kind)&&(row.title||row.name).toLowerCase().includes(query.toLowerCase()));
     const status = request==='loaded'&&!rows.length?'empty':request;
-    return <>{status==='waiting'&&<p role="status">Loading sessions…</p>}{status==='error'&&<p role="alert">{failure}<button type="button" onClick={()=>executeAction('ui.select',()=>setAttempt(attempt+1))}>Retry</button></p>}{(status==='loaded'||status==='empty')&&<><div className="shelf-tabs" role="group" aria-label="Saved document filter">{[['all','All'],['workflow','Workflows'],['agent-session','Agent sessions']].map(([value,label])=><button type="button" className="tab-button" key={value} aria-pressed={kind===value} onClick={()=>executeAction('ui.select',()=>choose(value))}>{label}</button>)}</div>{status==='loaded'&&rows.map(row=>renderRow?.(row)||<button type="button" className="listbutton" key={row.path} onClick={()=>executeAction('ui.select',async()=>{const opened=await u.act(()=>api.openSession(row.path));if(opened&&!opened.cancelled)onOpen?.();})}>{row.title||row.name}</button>)}{status==='empty'&&<p>No sessions found.</p>}</>}</>;
+    return <>{status==='waiting'&&<p role="status">Loading sessions…</p>}{status==='error'&&<p role="alert">{failure}<button type="button" onClick={()=>executeAction('ui.select',()=>setAttempt(attempt+1))}>Retry</button></p>}{(status==='loaded'||status==='empty')&&<><div className="shelf-tabs" role="group" aria-label="Saved document filter">{[['all','All'],['workflow','Workflows'],['agent-session','Agent sessions']].map(([value,label])=><button type="button" className="tab-button" key={value} aria-pressed={kind===value} onClick={()=>executeAction('ui.select',()=>choose(value))}>{label}</button>)}</div>{status==='loaded'&&rows.map(row=>renderRow?renderRow(row):<button type="button" className="listbutton" key={row.path} onClick={()=>executeAction('ui.select',async()=>{const opened=await u.act(()=>api.openSession(row.path));if(opened&&!opened.cancelled)onOpen?.();})}>{row.title||row.name}</button>)}{status==='empty'&&<p>No sessions found.</p>}</>}</>;
   }
   window.UI.SessionList = SessionList;
   function LibraryShelf({

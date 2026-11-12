@@ -249,6 +249,11 @@
     const rank=id=>{const index=homeLayout.order.indexOf(id);return index<0?homeLayout.order.length:index;};
     const tasks = (s.tasks || []).filter(t => t.status !== 'ARCHIVED').sort((a,b)=>Number(waiting.has(b.id)||b.status==='IN REVIEW')-Number(waiting.has(a.id)||a.status==='IN REVIEW')||Number(!!b.homePinned)-Number(!!a.homePinned)||rank(a.id)-rank(b.id));
     const list = tasks.filter(t => !homeLayout.hidden.includes(t.id));
+    const sessionRows = [
+      ...list.map(t=>({...t,kind:(s.graphs||[]).find(row=>row.path===t.sessionPath)?.kind||'agent-session'})),
+      ...(s.agents||[]).filter(agent=>agent.runtime&&!tasks.some(t=>t.owner===agent.id||t.owner===agent.name)).map(agent=>({id:'agent:'+agent.id,title:agent.name,kind:'agent-session',runtimeAgent:agent})),
+      ...(s.graphs||[]).filter(row=>row.kind==='workflow'&&!(s.tasks||[]).some(t=>t.sessionPath===row.path)).map(row=>({...row,id:row.path,title:row.title||row.name,sessionPath:row.path,fileOnly:true}))
+    ];
     const focus = homeLayout.resume || u.task || s.focusedTask;
     const task = fileWorkspace ? tasks.find(t => t.id === u.task) : list.find(t => t.id === focus) || list.find(t=>t.homePinned) || list[0];
     React.useEffect(()=>{
@@ -363,16 +368,16 @@
       const minutes = Math.max(0, Math.floor((Date.now() - stamp) / 60000));
       return text + ' · ' + (minutes < 1 ? 'now' : minutes < 60 ? minutes + 'm' : minutes < 1440 ? Math.floor(minutes / 60) + 'h' : Math.floor(minutes / 1440) + 'd');
     };
-    const selectResume = t => {u.setTask(t.id);return saveHome({resume:t.id});};
+    const selectResume = t => {if(t.fileOnly)return u.act(()=>api.openSession(t.sessionPath)).then(opened=>{if(opened&&!opened.cancelled)u.go('canvas');});u.setTask(t.id);return saveHome({resume:t.id});};
     const openOwner = t => {
       const agent=[...(s.agents||[]),...(s.providers||[])].find(a=>a.id===t.owner||a.name===ownerOf(t));
       if(agent)u.show('Agent',{id:agent.id});else u.go('settings/Agents');
     };
-    const taskRow = t => <div key={t.id} className={'dx-task-row resume-row'+(task?.id===t.id?' on':'')} data-status={waiting.has(t.id)||t.status==='IN REVIEW'?'review':toneOf(t)} draggable onDragStart={event=>{event.dataTransfer.setData('task',t.id);event.dataTransfer.setData('text/archhub-home-row',t.id);if(t.sessionPath)event.dataTransfer.setData('session',t.sessionPath);}} onDragOver={event=>event.preventDefault()} onDrop={event=>{event.preventDefault();const id=event.dataTransfer.getData('text/archhub-home-row');if(!list.some(row=>row.id===id)||id===t.id)return;const order=list.map(row=>row.id).filter(key=>key!==id);order.splice(order.indexOf(t.id),0,id);executeAction('ui.select',()=>saveHome({order}));}}>
+    const taskRow = t => <div key={t.id} className={'dx-task-row resume-row'+(task?.id===t.id?' on':'')} data-status={waiting.has(t.id)||t.status==='IN REVIEW'?'review':toneOf(t)} draggable={!t.fileOnly} onDragStart={event=>{event.dataTransfer.setData('task',t.id);event.dataTransfer.setData('text/archhub-home-row',t.id);if(t.sessionPath)event.dataTransfer.setData('session',t.sessionPath);}} onDragOver={event=>event.preventDefault()} onDrop={event=>{event.preventDefault();const id=event.dataTransfer.getData('text/archhub-home-row');if(t.fileOnly||!list.some(row=>row.id===id)||id===t.id)return;const order=list.map(row=>row.id).filter(key=>key!==id);order.splice(order.indexOf(t.id),0,id);executeAction('ui.select',()=>saveHome({order}));}}>
       <button type="button" className="resume-avatar" aria-label={ownerOf(t)?'Open agent '+ownerOf(t):'Resume '+t.title} title={ownerOf(t)||t.title} onClick={()=>executeAction('ui.select',()=>ownerOf(t)?openOwner(t):selectResume(t))}>{ownerOf(t)?<window.UI.Av id={ownerOf(t)} size={28}/>:<Icon name="canvas" size={18}/>}</button>
-      <button type="button" className="dx-task" aria-selected={task?.id===t.id} title={t.title} onClick={()=>executeAction('ui.select',()=>selectResume(t))} onDoubleClick={()=>executeAction('ui.select',()=>openTask(t))}><b>{t.title}</b><span>{waiting.has(t.id)?'Waits for you':window.UI.taskRowReason(t)||statusText(t.status)}{lastUpdate(t)?' · '+lastUpdate(t):''}</span></button>
-      <button type="button" className="resume-pin" aria-label={(t.homePinned?'Unpin ':'Pin ')+t.title} aria-pressed={!!t.homePinned} onClick={()=>executeAction('ui.select',()=>u.act(()=>api.setTaskSession(t.id,{homePinned:!t.homePinned})))}><Icon name="pin" size={13}/></button>
-      <button type="button" className="resume-hide" aria-label={'Hide '+t.title+' from Home'} onClick={()=>executeAction('ui.select',()=>{setHomeUndo(homeLayout);return saveHome({hidden:[...homeLayout.hidden,t.id],resume:task?.id===t.id?'':homeLayout.resume});})}>×</button>
+      <button type="button" className="dx-task" aria-selected={task?.id===t.id} title={t.title} onClick={()=>executeAction('ui.select',()=>selectResume(t))} onDoubleClick={()=>executeAction('ui.select',()=>t.fileOnly?undefined:openTask(t))}><b>{t.title}</b><span>{waiting.has(t.id)?'Waits for you':window.UI.taskRowReason(t)||statusText(t.status)}{lastUpdate(t)?' · '+lastUpdate(t):''}</span></button>
+      {!t.fileOnly&&<><button type="button" className="resume-pin" aria-label={(t.homePinned?'Unpin ':'Pin ')+t.title} aria-pressed={!!t.homePinned} onClick={()=>executeAction('ui.select',()=>u.act(()=>api.setTaskSession(t.id,{homePinned:!t.homePinned})))}><Icon name="pin" size={13}/></button>
+      <button type="button" className="resume-hide" aria-label={'Hide '+t.title+' from Home'} onClick={()=>executeAction('ui.select',()=>{setHomeUndo(homeLayout);return saveHome({hidden:[...homeLayout.hidden,t.id],resume:task?.id===t.id?'':homeLayout.resume});})}>×</button></>}
     </div>;
     const openFile = () => u.act(() => api.openSession()).then(result => { if (result && !result.cancelled) u.go('canvas'); return result; });
     const saveFile = asCopy => u.act(() => asCopy ? api.saveSessionAs() : api.saveSession());
@@ -459,7 +464,7 @@
         {!fileWorkspace ? <Group id="home-context" className={'dx-home-landing dx-split resume-home'+(sessionsRail&&!sessionsPeek?' sessions-rail':'')} orientation="horizontal" onLayoutChanged={(_,meta)=>{if(meta?.isUserInteraction&&sessionsRef.current){const size=sessionsRef.current.getSize().inPixels;saveHome({collapsed:size<=57,width:size<=57?homeLayout.width:Math.max(240,Math.min(440,Math.round(size)))});}}}>
           <Column id="sessions" panelRef={sessionsRef} collapsible collapsedSize={56} minSize={240} maxSize={440} defaultSize={initialSessionsSize.current} groupResizeBehavior="preserve-pixel-size" onResize={size=>setSessionsRail(size.inPixels<=57)}>
             <aside className="resume-sessions" data-peek={sessionsRail&&sessionsPeek||undefined} aria-label="Sessions"><header><h2>Sessions</h2><button type="button" className="dx-quiet" aria-label={sessionsRail&&!sessionsPeek?'Open the list':'Fold the list to avatars'} onClick={()=>executeAction('ui.select',()=>{if(shellWidth<1036){setSessionsPeek(!sessionsPeek);return undefined;}return saveHome({collapsed:!sessionsRail});})}>{sessionsRail?'›':'‹'}</button></header>
-              <div className="resume-session-scroll"><window.UI.SessionList list="home" onOpen={()=>u.go('canvas')} renderRow={row=>{const task=list.find(task=>task.sessionPath===row.path);return task?taskRow(task):null;}}/></div>
+              <div className="resume-session-scroll"><window.UI.SessionList list="home" rows={sessionRows} renderRow={row=>row.runtimeAgent?<div className="dx-task-row resume-row" key={row.id}><button type="button" className="resume-avatar" aria-label={'Open agent '+row.title} onClick={()=>executeAction('ui.show',u,'Agent',{id:row.runtimeAgent.id})}><window.UI.Av id={row.runtimeAgent.id} size={28}/></button><button type="button" className="dx-task" onClick={()=>executeAction('ui.show',u,'Agent',{id:row.runtimeAgent.id})}><b>{row.title}</b><span>{row.runtimeAgent.status_text||row.runtimeAgent.status}</span></button></div>:taskRow(row)}/></div>
               {!!homeLayout.hidden.length&&<button type="button" className="dx-quiet" onClick={()=>executeAction('ui.select',()=>saveHome({hidden:[]}))}>+ {homeLayout.hidden.length} hidden</button>}
               {homeUndo&&<button type="button" className="dx-quiet" onClick={()=>executeAction('ui.select',()=>{const previous=homeUndo;setHomeUndo(null);return saveHome(previous);})}>Undo Home change</button>}
             </aside>

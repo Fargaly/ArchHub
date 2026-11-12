@@ -1,0 +1,968 @@
+............................................................... [ 18%]
+......................................................F................. [ 28%]
+........................................................................ [ 37%]
+........................................................................ [ 46%]
+........................................................................ [ 56%]
+........................................................................ [ 65%]
+........................................................................ [ 74%]
+....................................................................s... [ 84%]
+........................................................................ [ 93%]
+.................................................TESTISO final profile leaks: []; protected write attempts: 0
+                                                                         [100%]
+================================== FAILURES ===================================
+_____________________ test_designbuild_board[fluid_shell] _____________________
+
+tmp_path = WindowsPath('C:/Users/fargaly/AppData/Local/Temp/lane-designmatch/.cache/canvas-release-or03tw02/TEMP/pytest-of-Fargaly/pytest-0/test_designbuild_board_fluid_s0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001BBFC29E8A0>
+board = 'fluid_shell'
+
+    @pytest.mark.parametrize("board", ["home", "workshop", "canvas", "settings", "canvas_fit", "fluid_shell", "resume", "zero_home", "canvas_open", "canvas_reading", "canvas_input", "approval_wrong", "approval_nested"])
+    def test_designbuild_board(tmp_path, monkeypatch, board):
+        browser_cache = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '')
+        if not browser_cache:
+            browser_cache = subprocess.check_output(['node', '-p', "require('node:path').join(require('node:os').userInfo().homedir,'AppData/Local/ms-playwright')"], text=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)).strip()
+        _isolate(monkeypatch, tmp_path / 'desk')
+        from nodelang.nograph_server import NoGraphServer
+        from nodelang.session_files import new_document, insert_session, write_document
+    
+        monkeypatch.setattr(NoGraphServer, "_probe_hosts", staticmethod(lambda: []))
+        state = tmp_path / 'desk' / 'LOCALAPPDATA' / 'ArchHub'
+        state.mkdir()
+        monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(state))
+        server = NoGraphServer(state).start()
+        client = _Studio(server)
+        unbound_path = ''
+        try:
+            if board != 'zero_home':
+                task = client.workshop('createTask', 'Drawing set review')
+                client.workshop('setTaskSession', task['taskId'], {
+                    'scope': 'Review and export the drawing set', 'rules': ['Review before export'],
+                    'agents': ['Drawing coordinator'], 'folders': ['Dated issue folder'],
+                    'references': ['Drawing index'], 'plan': ['Read sheet index', 'Review drawings', 'Export PDF'],
+                    'progress': {'Read sheet index': 'done', 'Review drawings': 'done'},
+                    'messages': [{'id':'review-complete','who':'Drawing coordinator','text':'Review is complete. The drawing index matches the reviewed set.'},{'id':'ask-export','who':'You','text':'What is holding up the export?'}],
+                })
+                if board in ('canvas', 'canvas_fit', 'canvas_open', 'canvas_reading', 'canvas_input'):
+                    import copy
+                    from nodelang.session_files import catalogue
+                    items = {row['id']: row for row in catalogue()}
+                    nodes = [{'id': key, 'item': item, 'type': items[item]['engine'], 'title': items[item]['title'],
+                              'params': copy.deepcopy(items[item]['params']), 'position': {'x': x, 'y': 0}}
+                             for key, item, x in [('list','n_list',0),('slice','s_slice',340),('count','s_count',680),('pdf','o_pdf_handoff',1020)]]
+                    if board in ('canvas_fit', 'canvas_open', 'canvas_input'):
+                        nodes = nodes[:2]
+                    if board == 'canvas_reading':
+                        for node in nodes:
+                            node['position']['x'] *= 4
+                    if board in ('canvas_open', 'canvas_reading', 'canvas_input'):
+                        for node in nodes:
+                            node['position']['x'] += 800
+                    nodes[0]['params']['value'] = '[10, 20, 30, 40, 50]'
+                    nodes[1]['params']['count'] = '3'
+                    view = client.workshop('openTaskGraph', task['taskId'])
+                    opened = client.files('read', path=view['path'], id=view['id'])
+                    opened['document']['nodes'] = [*opened['document']['nodes'], *nodes] if board in ('canvas_open', 'canvas_reading', 'canvas_input') else nodes
+                    opened['document']['wires'] = [
+                        {'id':'first','from':{'node':'list','socket':'value'},'to':{'node':'slice','socket':'items'}},
+                        {'id':'second','from':{'node':'slice','socket':'items_out'},'to':{'node':'count','socket':'items'}}]
+                    if board in ('canvas_fit', 'canvas_open', 'canvas_input'):
+                        opened['document']['wires'] = opened['document']['wires'][:1]
+                    client.files('save', path=view['path'], document=opened['document'])
+                    if board == 'canvas_reading':
+                        standalone = new_document('Standalone opening check')
+                        standalone.update(nodes=copy.deepcopy(nodes), wires=copy.deepcopy(opened['document']['wires']))
+                        unbound_path = str(state / 'standalone-opening.archhub')
+                        write_document(unbound_path, standalone)
+                for title in ['Sheet index check', 'Export issue package', 'Update drawing references', 'Model view audit']:
+                    client.workshop('createTask', title)
+                client.workshop('openTaskGraph', task['taskId'])
+                if board in ('approval_wrong', 'approval_nested'):
+                    view = client.workshop('openTaskGraph', task['taskId'])
+                    original = client.files('read', path=view['path'])['document']
+                    document = new_document('Drawing set review')
+                    document.update(id=original['id'], properties=original['properties'])
+                    document['nodes'] = [{'id': 'held', 'type': 'param.value', 'params': {'type': 'number', 'value': 1}, 'position': {'x': 0, 'y': 0}}]
+                    gate = {'id': 'start', 'type': 'approval.gate', 'params': {}, 'position': {'x': 300, 'y': 0}}
+                    if board == 'approval_nested':
+                        child = new_document('Nested gate')
+                        child['nodes'] = [{**gate, 'id': 'held'}]
+                        child_path = state / 'nested-gate.archhub'
+                        write_document(child_path, child)
+                        insert_session(document, str(child_path))
+                    else:
+                        document['nodes'].append(gate)
+                    client.files('save', path=view['path'], document=document)
+                    held = client.files('run', path=view['path'], document=document)
+                    assert held['approvalId']
+            result = subprocess.run(
+                ['node', '02.TESTS/tests_js/designbuild.cjs'],
+                input=json.dumps({'url': server.public_url, 'cookie': server._cookie_token,
+                                  'browserCache': browser_cache, 'board': board,
+                                  'unboundPath': unbound_path,
+                                  'polish': os.environ.get('ARCHHUB_DESIGNPOLISH_PHASE', '')}),
+                cwd=Path(__file__).resolve().parents[2], capture_output=True, text=True,
+                encoding='utf-8', timeout=120,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            print(result.stdout)
+>           assert result.returncode == 0, result.stdout + result.stderr
+E           AssertionError: locator.waitFor: Timeout 30000ms exceeded.
+E             Call log:
+E             [2m  - waiting for getByRole('navigation', { name: 'Main navigation' }) to be visible[22m
+E             
+E                 at C:\Users\fargaly\AppData\Local\Temp\lane-designmatch\02.TESTS\tests_js\designbuild.cjs:300:17 {
+E               log: [
+E                 "  - waiting for getByRole('navigation', { name: 'Main navigation' }) to be visible"
+E               ],
+E               name: 'TimeoutError'
+E             }
+E             
+E           assert 1 == 0
+E            +  where 1 = CompletedProcess(args=['node', '02.TESTS/tests_js/designbuild.cjs'], returncode=1, stdout='', stderr='locator.waitFor:...ting for getByRole(\'navigation\', { name: \'Main navigation\' }) to be visible"\n  ],\n  name: \'TimeoutError\'\n}\n').returncode
+
+02.TESTS\tests\test_designbuild.py:99: AssertionError
+---------------------------- Captured stdout call -----------------------------
+
+_______________________ test_designbuild_board[resume] ________________________
+
+tmp_path = WindowsPath('C:/Users/fargaly/AppData/Local/Temp/lane-designmatch/.cache/canvas-release-or03tw02/TEMP/pytest-of-Fargaly/pytest-0/test_designbuild_board_resume_0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001BBF8400210>
+board = 'resume'
+
+    @pytest.mark.parametrize("board", ["home", "workshop", "canvas", "settings", "canvas_fit", "fluid_shell", "resume", "zero_home", "canvas_open", "canvas_reading", "canvas_input", "approval_wrong", "approval_nested"])
+    def test_designbuild_board(tmp_path, monkeypatch, board):
+        browser_cache = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '')
+        if not browser_cache:
+            browser_cache = subprocess.check_output(['node', '-p', "require('node:path').join(require('node:os').userInfo().homedir,'AppData/Local/ms-playwright')"], text=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)).strip()
+        _isolate(monkeypatch, tmp_path / 'desk')
+        from nodelang.nograph_server import NoGraphServer
+        from nodelang.session_files import new_document, insert_session, write_document
+    
+        monkeypatch.setattr(NoGraphServer, "_probe_hosts", staticmethod(lambda: []))
+        state = tmp_path / 'desk' / 'LOCALAPPDATA' / 'ArchHub'
+        state.mkdir()
+        monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(state))
+        server = NoGraphServer(state).start()
+        client = _Studio(server)
+        unbound_path = ''
+        try:
+            if board != 'zero_home':
+                task = client.workshop('createTask', 'Drawing set review')
+                client.workshop('setTaskSession', task['taskId'], {
+                    'scope': 'Review and export the drawing set', 'rules': ['Review before export'],
+                    'agents': ['Drawing coordinator'], 'folders': ['Dated issue folder'],
+                    'references': ['Drawing index'], 'plan': ['Read sheet index', 'Review drawings', 'Export PDF'],
+                    'progress': {'Read sheet index': 'done', 'Review drawings': 'done'},
+                    'messages': [{'id':'review-complete','who':'Drawing coordinator','text':'Review is complete. The drawing index matches the reviewed set.'},{'id':'ask-export','who':'You','text':'What is holding up the export?'}],
+                })
+                if board in ('canvas', 'canvas_fit', 'canvas_open', 'canvas_reading', 'canvas_input'):
+                    import copy
+                    from nodelang.session_files import catalogue
+                    items = {row['id']: row for row in catalogue()}
+                    nodes = [{'id': key, 'item': item, 'type': items[item]['engine'], 'title': items[item]['title'],
+                              'params': copy.deepcopy(items[item]['params']), 'position': {'x': x, 'y': 0}}
+                             for key, item, x in [('list','n_list',0),('slice','s_slice',340),('count','s_count',680),('pdf','o_pdf_handoff',1020)]]
+                    if board in ('canvas_fit', 'canvas_open', 'canvas_input'):
+                        nodes = nodes[:2]
+                    if board == 'canvas_reading':
+                        for node in nodes:
+                            node['position']['x'] *= 4
+                    if board in ('canvas_open', 'canvas_reading', 'canvas_input'):
+                        for node in nodes:
+                            node['position']['x'] += 800
+                    nodes[0]['params']['value'] = '[10, 20, 30, 40, 50]'
+                    nodes[1]['params']['count'] = '3'
+                    view = client.workshop('openTaskGraph', task['taskId'])
+                    opened = client.files('read', path=view['path'], id=view['id'])
+                    opened['document']['nodes'] = [*opened['document']['nodes'], *nodes] if board in ('canvas_open', 'canvas_reading', 'canvas_input') else nodes
+                    opened['document']['wires'] = [
+                        {'id':'first','from':{'node':'list','socket':'value'},'to':{'node':'slice','socket':'items'}},
+                        {'id':'second','from':{'node':'slice','socket':'items_out'},'to':{'node':'count','socket':'items'}}]
+                    if board in ('canvas_fit', 'canvas_open', 'canvas_input'):
+                        opened['document']['wires'] = opened['document']['wires'][:1]
+                    client.files('save', path=view['path'], document=opened['document'])
+                    if board == 'canvas_reading':
+                        standalone = new_document('Standalone opening check')
+                        standalone.update(nodes=copy.deepcopy(nodes), wires=copy.deepcopy(opened['document']['wires']))
+                        unbound_path = str(state / 'standalone-opening.archhub')
+                        write_document(unbound_path, standalone)
+                for title in ['Sheet index check', 'Export issue package', 'Update drawing references', 'Model view audit']:
+                    client.workshop('createTask', title)
+                client.workshop('openTaskGraph', task['taskId'])
+                if board in ('approval_wrong', 'approval_nested'):
+                    view = client.workshop('openTaskGraph', task['taskId'])
+                    original = client.files('read', path=view['path'])['document']
+                    document = new_document('Drawing set review')
+                    document.update(id=original['id'], properties=original['properties'])
+                    document['nodes'] = [{'id': 'held', 'type': 'param.value', 'params': {'type': 'number', 'value': 1}, 'position': {'x': 0, 'y': 0}}]
+                    gate = {'id': 'start', 'type': 'approval.gate', 'params': {}, 'position': {'x': 300, 'y': 0}}
+                    if board == 'approval_nested':
+                        child = new_document('Nested gate')
+                        child['nodes'] = [{**gate, 'id': 'held'}]
+                        child_path = state / 'nested-gate.archhub'
+                        write_document(child_path, child)
+                        insert_session(document, str(child_path))
+                    else:
+                        document['nodes'].append(gate)
+                    client.files('save', path=view['path'], document=document)
+                    held = client.files('run', path=view['path'], document=document)
+                    assert held['approvalId']
+            result = subprocess.run(
+                ['node', '02.TESTS/tests_js/designbuild.cjs'],
+                input=json.dumps({'url': server.public_url, 'cookie': server._cookie_token,
+                                  'browserCache': browser_cache, 'board': board,
+                                  'unboundPath': unbound_path,
+                                  'polish': os.environ.get('ARCHHUB_DESIGNPOLISH_PHASE', '')}),
+                cwd=Path(__file__).resolve().parents[2], capture_output=True, text=True,
+                encoding='utf-8', timeout=120,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            print(result.stdout)
+>           assert result.returncode == 0, result.stdout + result.stderr
+E           AssertionError: locator.waitFor: Timeout 30000ms exceeded.
+E             Call log:
+E             [2m  - waiting for getByRole('navigation', { name: 'Main navigation' }) to be visible[22m
+E             
+E                 at C:\Users\fargaly\AppData\Local\Temp\lane-designmatch\02.TESTS\tests_js\designbuild.cjs:230:67 {
+E               log: [
+E                 "  - waiting for getByRole('navigation', { name: 'Main navigation' }) to be visible"
+E               ],
+E               name: 'TimeoutError'
+E             }
+E             
+E           assert 1 == 0
+E            +  where 1 = CompletedProcess(args=['node', '02.TESTS/tests_js/designbuild.cjs'], returncode=1, stdout='', stderr='locator.waitFor:...ting for getByRole(\'navigation\', { name: \'Main navigation\' }) to be visible"\n  ],\n  name: \'TimeoutError\'\n}\n').returncode
+
+02.TESTS\tests\test_designbuild.py:99: AssertionError
+---------------------------- Captured stdout call -----------------------------
+
+______________________ test_designbuild_board[zero_home] ______________________
+
+tmp_path = WindowsPath('C:/Users/fargaly/AppData/Local/Temp/lane-designmatch/.cache/canvas-release-or03tw02/TEMP/pytest-of-Fargaly/pytest-0/test_designbuild_board_zero_ho0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001BBF8400130>
+board = 'zero_home'
+
+    @pytest.mark.parametrize("board", ["home", "workshop", "canvas", "settings", "canvas_fit", "fluid_shell", "resume", "zero_home", "canvas_open", "canvas_reading", "canvas_input", "approval_wrong", "approval_nested"])
+    def test_designbuild_board(tmp_path, monkeypatch, board):
+        browser_cache = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '')
+        if not browser_cache:
+            browser_cache = subprocess.check_output(['node', '-p', "require('node:path').join(require('node:os').userInfo().homedir,'AppData/Local/ms-playwright')"], text=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)).strip()
+        _isolate(monkeypatch, tmp_path / 'desk')
+        from nodelang.nograph_server import NoGraphServer
+        from nodelang.session_files import new_document, insert_session, write_document
+    
+        monkeypatch.setattr(NoGraphServer, "_probe_hosts", staticmethod(lambda: []))
+        state = tmp_path / 'desk' / 'LOCALAPPDATA' / 'ArchHub'
+        state.mkdir()
+        monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(state))
+        server = NoGraphServer(state).start()
+        client = _Studio(server)
+        unbound_path = ''
+        try:
+            if board != 'zero_home':
+                task = client.workshop('createTask', 'Drawing set review')
+                client.workshop('setTaskSession', task['taskId'], {
+                    'scope': 'Review and export the drawing set', 'rules': ['Review before export'],
+                    'agents': ['Drawing coordinator'], 'folders': ['Dated issue folder'],
+                    'references': ['Drawing index'], 'plan': ['Read sheet index', 'Review drawings', 'Export PDF'],
+                    'progress': {'Read sheet index': 'done', 'Review drawings': 'done'},
+                    'messages': [{'id':'review-complete','who':'Drawing coordinator','text':'Review is complete. The drawing index matches the reviewed set.'},{'id':'ask-export','who':'You','text':'What is holding up the export?'}],
+                })
+                if board in ('canvas', 'canvas_fit', 'canvas_open', 'canvas_reading', 'canvas_input'):
+                    import copy
+                    from nodelang.session_files import catalogue
+                    items = {row['id']: row for row in catalogue()}
+                    nodes = [{'id': key, 'item': item, 'type': items[item]['engine'], 'title': items[item]['title'],
+                              'params': copy.deepcopy(items[item]['params']), 'position': {'x': x, 'y': 0}}
+                             for key, item, x in [('list','n_list',0),('slice','s_slice',340),('count','s_count',680),('pdf','o_pdf_handoff',1020)]]
+                    if board in ('canvas_fit', 'canvas_open', 'canvas_input'):
+                        nodes = nodes[:2]
+                    if board == 'canvas_reading':
+                        for node in nodes:
+                            node['position']['x'] *= 4
+                    if board in ('canvas_open', 'canvas_reading', 'canvas_input'):
+                        for node in nodes:
+                            node['position']['x'] += 800
+                    nodes[0]['params']['value'] = '[10, 20, 30, 40, 50]'
+                    nodes[1]['params']['count'] = '3'
+                    view = client.workshop('openTaskGraph', task['taskId'])
+                    opened = client.files('read', path=view['path'], id=view['id'])
+                    opened['document']['nodes'] = [*opened['document']['nodes'], *nodes] if board in ('canvas_open', 'canvas_reading', 'canvas_input') else nodes
+                    opened['document']['wires'] = [
+                        {'id':'first','from':{'node':'list','socket':'value'},'to':{'node':'slice','socket':'items'}},
+                        {'id':'second','from':{'node':'slice','socket':'items_out'},'to':{'node':'count','socket':'items'}}]
+                    if board in ('canvas_fit', 'canvas_open', 'canvas_input'):
+                        opened['document']['wires'] = opened['document']['wires'][:1]
+                    client.files('save', path=view['path'], document=opened['document'])
+                    if board == 'canvas_reading':
+                        standalone = new_document('Standalone opening check')
+                        standalone.update(nodes=copy.deepcopy(nodes), wires=copy.deepcopy(opened['document']['wires']))
+                        unbound_path = str(state / 'standalone-opening.archhub')
+                        write_document(unbound_path, standalone)
+                for title in ['Sheet index check', 'Export issue package', 'Update drawing references', 'Model view audit']:
+                    client.workshop('createTask', title)
+                client.workshop('openTaskGraph', task['taskId'])
+                if board in ('approval_wrong', 'approval_nested'):
+                    view = client.workshop('openTaskGraph', task['taskId'])
+                    original = client.files('read', path=view['path'])['document']
+                    document = new_document('Drawing set review')
+                    document.update(id=original['id'], properties=original['properties'])
+                    document['nodes'] = [{'id': 'held', 'type': 'param.value', 'params': {'type': 'number', 'value': 1}, 'position': {'x': 0, 'y': 0}}]
+                    gate = {'id': 'start', 'type': 'approval.gate', 'params': {}, 'position': {'x': 300, 'y': 0}}
+                    if board == 'approval_nested':
+                        child = new_document('Nested gate')
+                        child['nodes'] = [{**gate, 'id': 'held'}]
+                        child_path = state / 'nested-gate.archhub'
+                        write_document(child_path, child)
+                        insert_session(document, str(child_path))
+                    else:
+                        document['nodes'].append(gate)
+                    client.files('save', path=view['path'], document=document)
+                    held = client.files('run', path=view['path'], document=document)
+                    assert held['approvalId']
+            result = subprocess.run(
+                ['node', '02.TESTS/tests_js/designbuild.cjs'],
+                input=json.dumps({'url': server.public_url, 'cookie': server._cookie_token,
+                                  'browserCache': browser_cache, 'board': board,
+                                  'unboundPath': unbound_path,
+                                  'polish': os.environ.get('ARCHHUB_DESIGNPOLISH_PHASE', '')}),
+                cwd=Path(__file__).resolve().parents[2], capture_output=True, text=True,
+                encoding='utf-8', timeout=120,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            print(result.stdout)
+>           assert result.returncode == 0, result.stdout + result.stderr
+E           AssertionError: locator.waitFor: Timeout 30000ms exceeded.
+E             Call log:
+E             [2m  - waiting for getByRole('heading', { name: 'What do you need?', exact: true }) to be visible[22m
+E             
+E                 at C:\Users\fargaly\AppData\Local\Temp\lane-designmatch\02.TESTS\tests_js\designbuild.cjs:211:77 {
+E               log: [
+E                 "  - waiting for getByRole('heading', { name: 'What do you need?', exact: true }) to be visible"
+E               ],
+E               name: 'TimeoutError'
+E             }
+E             
+E           assert 1 == 0
+E            +  where 1 = CompletedProcess(args=['node', '02.TESTS/tests_js/designbuild.cjs'], returncode=1, stdout='', stderr='locator.waitFor:...ByRole(\'heading\', { name: \'What do you need?\', exact: true }) to be visible"\n  ],\n  name: \'TimeoutError\'\n}\n').returncode
+
+02.TESTS\tests\test_designbuild.py:99: AssertionError
+---------------------------- Captured stdout call -----------------------------
+
+_____________________ test_designbuild_board[canvas_open] _____________________
+
+tmp_path = WindowsPath('C:/Users/fargaly/AppData/Local/Temp/lane-designmatch/.cache/canvas-release-or03tw02/TEMP/pytest-of-Fargaly/pytest-0/test_designbuild_board_canvas_2')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001BBFA65A410>
+board = 'canvas_open'
+
+    @pytest.mark.parametrize("board", ["home", "workshop", "canvas", "settings", "canvas_fit", "fluid_shell", "resume", "zero_home", "canvas_open", "canvas_reading", "canvas_input", "approval_wrong", "approval_nested"])
+    def test_designbuild_board(tmp_path, monkeypatch, board):
+        browser_cache = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '')
+        if not browser_cache:
+            browser_cache = subprocess.check_output(['node', '-p', "require('node:path').join(require('node:os').userInfo().homedir,'AppData/Local/ms-playwright')"], text=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)).strip()
+        _isolate(monkeypatch, tmp_path / 'desk')
+        from nodelang.nograph_server import NoGraphServer
+        from nodelang.session_files import new_document, insert_session, write_document
+    
+        monkeypatch.setattr(NoGraphServer, "_probe_hosts", staticmethod(lambda: []))
+        state = tmp_path / 'desk' / 'LOCALAPPDATA' / 'ArchHub'
+        state.mkdir()
+        monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(state))
+        server = NoGraphServer(state).start()
+        client = _Studio(server)
+        unbound_path = ''
+        try:
+            if board != 'zero_home':
+                task = client.workshop('createTask', 'Drawing set review')
+                client.workshop('setTaskSession', task['taskId'], {
+                    'scope': 'Review and export the drawing set', 'rules': ['Review before export'],
+                    'agents': ['Drawing coordinator'], 'folders': ['Dated issue folder'],
+                    'references': ['Drawing index'], 'plan': ['Read sheet index', 'Review drawings', 'Export PDF'],
+                    'progress': {'Read sheet index': 'done', 'Review drawings': 'done'},
+                    'messages': [{'id':'review-complete','who':'Drawing coordinator','text':'Review is complete. The drawing index matches the reviewed set.'},{'id':'ask-export','who':'You','text':'What is holding up the export?'}],
+                })
+                if board in ('canvas', 'canvas_fit', 'canvas_open', 'canvas_reading', 'canvas_input'):
+                    import copy
+                    from nodelang.session_files import catalogue
+                    items = {row['id']: row for row in catalogue()}
+                    nodes = [{'id': key, 'item': item, 'type': items[item]['engine'], 'title': items[item]['title'],
+                              'params': copy.deepcopy(items[item]['params']), 'position': {'x': x, 'y': 0}}
+                             for key, item, x in [('list','n_list',0),('slice','s_slice',340),('count','s_count',680),('pdf','o_pdf_handoff',1020)]]
+                    if board in ('canvas_fit', 'canvas_open', 'canvas_input'):
+                        nodes = nodes[:2]
+                    if board == 'canvas_reading':
+                        for node in nodes:
+                            node['position']['x'] *= 4
+                    if board in ('canvas_open', 'canvas_reading', 'canvas_input'):
+                        for node in nodes:
+                            node['position']['x'] += 800
+                    nodes[0]['params']['value'] = '[10, 20, 30, 40, 50]'
+                    nodes[1]['params']['count'] = '3'
+                    view = client.workshop('openTaskGraph', task['taskId'])
+                    opened = client.files('read', path=view['path'], id=view['id'])
+                    opened['document']['nodes'] = [*opened['document']['nodes'], *nodes] if board in ('canvas_open', 'canvas_reading', 'canvas_input') else nodes
+                    opened['document']['wires'] = [
+                        {'id':'first','from':{'node':'list','socket':'value'},'to':{'node':'slice','socket':'items'}},
+                        {'id':'second','from':{'node':'slice','socket':'items_out'},'to':{'node':'count','socket':'items'}}]
+                    if board in ('canvas_fit', 'canvas_open', 'canvas_input'):
+                        opened['document']['wires'] = opened['document']['wires'][:1]
+                    client.files('save', path=view['path'], document=opened['document'])
+                    if board == 'canvas_reading':
+                        standalone = new_document('Standalone opening check')
+                        standalone.update(nodes=copy.deepcopy(nodes), wires=copy.deepcopy(opened['document']['wires']))
+                        unbound_path = str(state / 'standalone-opening.archhub')
+                        write_document(unbound_path, standalone)
+                for title in ['Sheet index check', 'Export issue package', 'Update drawing references', 'Model view audit']:
+                    client.workshop('createTask', title)
+                client.workshop('openTaskGraph', task['taskId'])
+                if board in ('approval_wrong', 'approval_nested'):
+                    view = client.workshop('openTaskGraph', task['taskId'])
+                    original = client.files('read', path=view['path'])['document']
+                    document = new_document('Drawing set review')
+                    document.update(id=original['id'], properties=original['properties'])
+                    document['nodes'] = [{'id': 'held', 'type': 'param.value', 'params': {'type': 'number', 'value': 1}, 'position': {'x': 0, 'y': 0}}]
+                    gate = {'id': 'start', 'type': 'approval.gate', 'params': {}, 'position': {'x': 300, 'y': 0}}
+                    if board == 'approval_nested':
+                        child = new_document('Nested gate')
+                        child['nodes'] = [{**gate, 'id': 'held'}]
+                        child_path = state / 'nested-gate.archhub'
+                        write_document(child_path, child)
+                        insert_session(document, str(child_path))
+                    else:
+                        document['nodes'].append(gate)
+                    client.files('save', path=view['path'], document=document)
+                    held = client.files('run', path=view['path'], document=document)
+                    assert held['approvalId']
+            result = subprocess.run(
+                ['node', '02.TESTS/tests_js/designbuild.cjs'],
+                input=json.dumps({'url': server.public_url, 'cookie': server._cookie_token,
+                                  'browserCache': browser_cache, 'board': board,
+                                  'unboundPath': unbound_path,
+                                  'polish': os.environ.get('ARCHHUB_DESIGNPOLISH_PHASE', '')}),
+                cwd=Path(__file__).resolve().parents[2], capture_output=True, text=True,
+                encoding='utf-8', timeout=120,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            print(result.stdout)
+>           assert result.returncode == 0, result.stdout + result.stderr
+E           AssertionError: locator.waitFor: Timeout 30000ms exceeded.
+E             Call log:
+E             [2m  - waiting for getByRole('navigation', { name: 'Main navigation' }) to be visible[22m
+E             
+E                 at C:\Users\fargaly\AppData\Local\Temp\lane-designmatch\02.TESTS\tests_js\designbuild.cjs:141:17 {
+E               log: [
+E                 "  - waiting for getByRole('navigation', { name: 'Main navigation' }) to be visible"
+E               ],
+E               name: 'TimeoutError'
+E             }
+E             
+E           assert 1 == 0
+E            +  where 1 = CompletedProcess(args=['node', '02.TESTS/tests_js/designbuild.cjs'], returncode=1, stdout='', stderr='locator.waitFor:...ting for getByRole(\'navigation\', { name: \'Main navigation\' }) to be visible"\n  ],\n  name: \'TimeoutError\'\n}\n').returncode
+
+02.TESTS\tests\test_designbuild.py:99: AssertionError
+---------------------------- Captured stdout call -----------------------------
+
+___________________ test_designbuild_board[canvas_reading] ____________________
+
+tmp_path = WindowsPath('C:/Users/fargaly/AppData/Local/Temp/lane-designmatch/.cache/canvas-release-or03tw02/TEMP/pytest-of-Fargaly/pytest-0/test_designbuild_board_canvas_3')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001BBFC471C10>
+board = 'canvas_reading'
+
+    @pytest.mark.parametrize("board", ["home", "workshop", "canvas", "settings", "canvas_fit", "fluid_shell", "resume", "zero_home", "canvas_open", "canvas_reading", "canvas_input", "approval_wrong", "approval_nested"])
+    def test_designbuild_board(tmp_path, monkeypatch, board):
+        browser_cache = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '')
+        if not browser_cache:
+            browser_cache = subprocess.check_output(['node', '-p', "require('node:path').join(require('node:os').userInfo().homedir,'AppData/Local/ms-playwright')"], text=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)).strip()
+        _isolate(monkeypatch, tmp_path / 'desk')
+        from nodelang.nograph_server import NoGraphServer
+        from nodelang.session_files import new_document, insert_session, write_document
+    
+        monkeypatch.setattr(NoGraphServer, "_probe_hosts", staticmethod(lambda: []))
+        state = tmp_path / 'desk' / 'LOCALAPPDATA' / 'ArchHub'
+        state.mkdir()
+        monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(state))
+        server = NoGraphServer(state).start()
+        client = _Studio(server)
+        unbound_path = ''
+        try:
+            if board != 'zero_home':
+                task = client.workshop('createTask', 'Drawing set review')
+                client.workshop('setTaskSession', task['taskId'], {
+                    'scope': 'Review and export the drawing set', 'rules': ['Review before export'],
+                    'agents': ['Drawing coordinator'], 'folders': ['Dated issue folder'],
+                    'references': ['Drawing index'], 'plan': ['Read sheet index', 'Review drawings', 'Export PDF'],
+                    'progress': {'Read sheet index': 'done', 'Review drawings': 'done'},
+                    'messages': [{'id':'review-complete','who':'Drawing coordinator','text':'Review is complete. The drawing index matches the reviewed set.'},{'id':'ask-export','who':'You','text':'What is holding up the export?'}],
+                })
+                if board in ('canvas', 'canvas_fit', 'canvas_open', 'canvas_reading', 'canvas_input'):
+                    import copy
+                    from nodelang.session_files import catalogue
+                    items = {row['id']: row for row in catalogue()}
+                    nodes = [{'id': key, 'item': item, 'type': items[item]['engine'], 'title': items[item]['title'],
+                              'params': copy.deepcopy(items[item]['params']), 'position': {'x': x, 'y': 0}}
+                             for key, item, x in [('list','n_list',0),('slice','s_slice',340),('count','s_count',680),('pdf','o_pdf_handoff',1020)]]
+                    if board in ('canvas_fit', 'canvas_open', 'canvas_input'):
+                        nodes = nodes[:2]
+                    if board == 'canvas_reading':
+                        for node in nodes:
+                            node['position']['x'] *= 4
+                    if board in ('canvas_open', 'canvas_reading', 'canvas_input'):
+                        for node in nodes:
+                            node['position']['x'] += 800
+                    nodes[0]['params']['value'] = '[10, 20, 30, 40, 50]'
+                    nodes[1]['params']['count'] = '3'
+                    view = client.workshop('openTaskGraph', task['taskId'])
+                    opened = client.files('read', path=view['path'], id=view['id'])
+                    opened['document']['nodes'] = [*opened['document']['nodes'], *nodes] if board in ('canvas_open', 'canvas_reading', 'canvas_input') else nodes
+                    opened['document']['wires'] = [
+                        {'id':'first','from':{'node':'list','socket':'value'},'to':{'node':'slice','socket':'items'}},
+                        {'id':'second','from':{'node':'slice','socket':'items_out'},'to':{'node':'count','socket':'items'}}]
+                    if board in ('canvas_fit', 'canvas_open', 'canvas_input'):
+                        opened['document']['wires'] = opened['document']['wires'][:1]
+                    client.files('save', path=view['path'], document=opened['document'])
+                    if board == 'canvas_reading':
+                        standalone = new_document('Standalone opening check')
+                        standalone.update(nodes=copy.deepcopy(nodes), wires=copy.deepcopy(opened['document']['wires']))
+                        unbound_path = str(state / 'standalone-opening.archhub')
+                        write_document(unbound_path, standalone)
+                for title in ['Sheet index check', 'Export issue package', 'Update drawing references', 'Model view audit']:
+                    client.workshop('createTask', title)
+                client.workshop('openTaskGraph', task['taskId'])
+                if board in ('approval_wrong', 'approval_nested'):
+                    view = client.workshop('openTaskGraph', task['taskId'])
+                    original = client.files('read', path=view['path'])['document']
+                    document = new_document('Drawing set review')
+                    document.update(id=original['id'], properties=original['properties'])
+                    document['nodes'] = [{'id': 'held', 'type': 'param.value', 'params': {'type': 'number', 'value': 1}, 'position': {'x': 0, 'y': 0}}]
+                    gate = {'id': 'start', 'type': 'approval.gate', 'params': {}, 'position': {'x': 300, 'y': 0}}
+                    if board == 'approval_nested':
+                        child = new_document('Nested gate')
+                        child['nodes'] = [{**gate, 'id': 'held'}]
+                        child_path = state / 'nested-gate.archhub'
+                        write_document(child_path, child)
+                        insert_session(document, str(child_path))
+                    else:
+                        document['nodes'].append(gate)
+                    client.files('save', path=view['path'], document=document)
+                    held = client.files('run', path=view['path'], document=document)
+                    assert held['approvalId']
+            result = subprocess.run(
+                ['node', '02.TESTS/tests_js/designbuild.cjs'],
+                input=json.dumps({'url': server.public_url, 'cookie': server._cookie_token,
+                                  'browserCache': browser_cache, 'board': board,
+                                  'unboundPath': unbound_path,
+                                  'polish': os.environ.get('ARCHHUB_DESIGNPOLISH_PHASE', '')}),
+                cwd=Path(__file__).resolve().parents[2], capture_output=True, text=True,
+                encoding='utf-8', timeout=120,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            print(result.stdout)
+>           assert result.returncode == 0, result.stdout + result.stderr
+E           AssertionError: locator.waitFor: Timeout 30000ms exceeded.
+E             Call log:
+E             [2m  - waiting for getByRole('navigation', { name: 'Main navigation' }) to be visible[22m
+E             
+E                 at C:\Users\fargaly\AppData\Local\Temp\lane-designmatch\02.TESTS\tests_js\designbuild.cjs:141:17 {
+E               log: [
+E                 "  - waiting for getByRole('navigation', { name: 'Main navigation' }) to be visible"
+E               ],
+E               name: 'TimeoutError'
+E             }
+E             
+E           assert 1 == 0
+E            +  where 1 = CompletedProcess(args=['node', '02.TESTS/tests_js/designbuild.cjs'], returncode=1, stdout='', stderr='locator.waitFor:...ting for getByRole(\'navigation\', { name: \'Main navigation\' }) to be visible"\n  ],\n  name: \'TimeoutError\'\n}\n').returncode
+
+02.TESTS\tests\test_designbuild.py:99: AssertionError
+---------------------------- Captured stdout call -----------------------------
+
+____________________ test_designbuild_board[canvas_input] _____________________
+
+tmp_path = WindowsPath('C:/Users/fargaly/AppData/Local/Temp/lane-designmatch/.cache/canvas-release-or03tw02/TEMP/pytest-of-Fargaly/pytest-0/test_designbuild_board_canvas_4')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001BBFC472810>
+board = 'canvas_input'
+
+    @pytest.mark.parametrize("board", ["home", "workshop", "canvas", "settings", "canvas_fit", "fluid_shell", "resume", "zero_home", "canvas_open", "canvas_reading", "canvas_input", "approval_wrong", "approval_nested"])
+    def test_designbuild_board(tmp_path, monkeypatch, board):
+        browser_cache = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '')
+        if not browser_cache:
+            browser_cache = subprocess.check_output(['node', '-p', "require('node:path').join(require('node:os').userInfo().homedir,'AppData/Local/ms-playwright')"], text=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)).strip()
+        _isolate(monkeypatch, tmp_path / 'desk')
+        from nodelang.nograph_server import NoGraphServer
+        from nodelang.session_files import new_document, insert_session, write_document
+    
+        monkeypatch.setattr(NoGraphServer, "_probe_hosts", staticmethod(lambda: []))
+        state = tmp_path / 'desk' / 'LOCALAPPDATA' / 'ArchHub'
+        state.mkdir()
+        monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(state))
+        server = NoGraphServer(state).start()
+        client = _Studio(server)
+        unbound_path = ''
+        try:
+            if board != 'zero_home':
+                task = client.workshop('createTask', 'Drawing set review')
+                client.workshop('setTaskSession', task['taskId'], {
+                    'scope': 'Review and export the drawing set', 'rules': ['Review before export'],
+                    'agents': ['Drawing coordinator'], 'folders': ['Dated issue folder'],
+                    'references': ['Drawing index'], 'plan': ['Read sheet index', 'Review drawings', 'Export PDF'],
+                    'progress': {'Read sheet index': 'done', 'Review drawings': 'done'},
+                    'messages': [{'id':'review-complete','who':'Drawing coordinator','text':'Review is complete. The drawing index matches the reviewed set.'},{'id':'ask-export','who':'You','text':'What is holding up the export?'}],
+                })
+                if board in ('canvas', 'canvas_fit', 'canvas_open', 'canvas_reading', 'canvas_input'):
+                    import copy
+                    from nodelang.session_files import catalogue
+                    items = {row['id']: row for row in catalogue()}
+                    nodes = [{'id': key, 'item': item, 'type': items[item]['engine'], 'title': items[item]['title'],
+                              'params': copy.deepcopy(items[item]['params']), 'position': {'x': x, 'y': 0}}
+                             for key, item, x in [('list','n_list',0),('slice','s_slice',340),('count','s_count',680),('pdf','o_pdf_handoff',1020)]]
+                    if board in ('canvas_fit', 'canvas_open', 'canvas_input'):
+                        nodes = nodes[:2]
+                    if board == 'canvas_reading':
+                        for node in nodes:
+                            node['position']['x'] *= 4
+                    if board in ('canvas_open', 'canvas_reading', 'canvas_input'):
+                        for node in nodes:
+                            node['position']['x'] += 800
+                    nodes[0]['params']['value'] = '[10, 20, 30, 40, 50]'
+                    nodes[1]['params']['count'] = '3'
+                    view = client.workshop('openTaskGraph', task['taskId'])
+                    opened = client.files('read', path=view['path'], id=view['id'])
+                    opened['document']['nodes'] = [*opened['document']['nodes'], *nodes] if board in ('canvas_open', 'canvas_reading', 'canvas_input') else nodes
+                    opened['document']['wires'] = [
+                        {'id':'first','from':{'node':'list','socket':'value'},'to':{'node':'slice','socket':'items'}},
+                        {'id':'second','from':{'node':'slice','socket':'items_out'},'to':{'node':'count','socket':'items'}}]
+                    if board in ('canvas_fit', 'canvas_open', 'canvas_input'):
+                        opened['document']['wires'] = opened['document']['wires'][:1]
+                    client.files('save', path=view['path'], document=opened['document'])
+                    if board == 'canvas_reading':
+                        standalone = new_document('Standalone opening check')
+                        standalone.update(nodes=copy.deepcopy(nodes), wires=copy.deepcopy(opened['document']['wires']))
+                        unbound_path = str(state / 'standalone-opening.archhub')
+                        write_document(unbound_path, standalone)
+                for title in ['Sheet index check', 'Export issue package', 'Update drawing references', 'Model view audit']:
+                    client.workshop('createTask', title)
+                client.workshop('openTaskGraph', task['taskId'])
+                if board in ('approval_wrong', 'approval_nested'):
+                    view = client.workshop('openTaskGraph', task['taskId'])
+                    original = client.files('read', path=view['path'])['document']
+                    document = new_document('Drawing set review')
+                    document.update(id=original['id'], properties=original['properties'])
+                    document['nodes'] = [{'id': 'held', 'type': 'param.value', 'params': {'type': 'number', 'value': 1}, 'position': {'x': 0, 'y': 0}}]
+                    gate = {'id': 'start', 'type': 'approval.gate', 'params': {}, 'position': {'x': 300, 'y': 0}}
+                    if board == 'approval_nested':
+                        child = new_document('Nested gate')
+                        child['nodes'] = [{**gate, 'id': 'held'}]
+                        child_path = state / 'nested-gate.archhub'
+                        write_document(child_path, child)
+                        insert_session(document, str(child_path))
+                    else:
+                        document['nodes'].append(gate)
+                    client.files('save', path=view['path'], document=document)
+                    held = client.files('run', path=view['path'], document=document)
+                    assert held['approvalId']
+            result = subprocess.run(
+                ['node', '02.TESTS/tests_js/designbuild.cjs'],
+                input=json.dumps({'url': server.public_url, 'cookie': server._cookie_token,
+                                  'browserCache': browser_cache, 'board': board,
+                                  'unboundPath': unbound_path,
+                                  'polish': os.environ.get('ARCHHUB_DESIGNPOLISH_PHASE', '')}),
+                cwd=Path(__file__).resolve().parents[2], capture_output=True, text=True,
+                encoding='utf-8', timeout=120,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            print(result.stdout)
+>           assert result.returncode == 0, result.stdout + result.stderr
+E           AssertionError: locator.waitFor: Timeout 30000ms exceeded.
+E             Call log:
+E             [2m  - waiting for getByRole('navigation', { name: 'Main navigation' }) to be visible[22m
+E             
+E                 at C:\Users\fargaly\AppData\Local\Temp\lane-designmatch\02.TESTS\tests_js\designbuild.cjs:72:17 {
+E               log: [
+E                 "  - waiting for getByRole('navigation', { name: 'Main navigation' }) to be visible"
+E               ],
+E               name: 'TimeoutError'
+E             }
+E             
+E           assert 1 == 0
+E            +  where 1 = CompletedProcess(args=['node', '02.TESTS/tests_js/designbuild.cjs'], returncode=1, stdout='', stderr='locator.waitFor:...ting for getByRole(\'navigation\', { name: \'Main navigation\' }) to be visible"\n  ],\n  name: \'TimeoutError\'\n}\n').returncode
+
+02.TESTS\tests\test_designbuild.py:99: AssertionError
+---------------------------- Captured stdout call -----------------------------
+
+___________________ test_designbuild_board[approval_wrong] ____________________
+
+tmp_path = WindowsPath('C:/Users/fargaly/AppData/Local/Temp/lane-designmatch/.cache/canvas-release-or03tw02/TEMP/pytest-of-Fargaly/pytest-0/test_designbuild_board_approva0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001BBFC9909F0>
+board = 'approval_wrong'
+
+    @pytest.mark.parametrize("board", ["home", "workshop", "canvas", "settings", "canvas_fit", "fluid_shell", "resume", "zero_home", "canvas_open", "canvas_reading", "canvas_input", "approval_wrong", "approval_nested"])
+    def test_designbuild_board(tmp_path, monkeypatch, board):
+        browser_cache = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '')
+        if not browser_cache:
+            browser_cache = subprocess.check_output(['node', '-p', "require('node:path').join(require('node:os').userInfo().homedir,'AppData/Local/ms-playwright')"], text=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)).strip()
+        _isolate(monkeypatch, tmp_path / 'desk')
+        from nodelang.nograph_server import NoGraphServer
+        from nodelang.session_files import new_document, insert_session, write_document
+    
+        monkeypatch.setattr(NoGraphServer, "_probe_hosts", staticmethod(lambda: []))
+        state = tmp_path / 'desk' / 'LOCALAPPDATA' / 'ArchHub'
+        state.mkdir()
+        monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(state))
+        server = NoGraphServer(state).start()
+        client = _Studio(server)
+        unbound_path = ''
+        try:
+            if board != 'zero_home':
+                task = client.workshop('createTask', 'Drawing set review')
+                client.workshop('setTaskSession', task['taskId'], {
+                    'scope': 'Review and export the drawing set', 'rules': ['Review before export'],
+                    'agents': ['Drawing coordinator'], 'folders': ['Dated issue folder'],
+                    'references': ['Drawing index'], 'plan': ['Read sheet index', 'Review drawings', 'Export PDF'],
+                    'progress': {'Read sheet index': 'done', 'Review drawings': 'done'},
+                    'messages': [{'id':'review-complete','who':'Drawing coordinator','text':'Review is complete. The drawing index matches the reviewed set.'},{'id':'ask-export','who':'You','text':'What is holding up the export?'}],
+                })
+                if board in ('canvas', 'canvas_fit', 'canvas_open', 'canvas_reading', 'canvas_input'):
+                    import copy
+                    from nodelang.session_files import catalogue
+                    items = {row['id']: row for row in catalogue()}
+                    nodes = [{'id': key, 'item': item, 'type': items[item]['engine'], 'title': items[item]['title'],
+                              'params': copy.deepcopy(items[item]['params']), 'position': {'x': x, 'y': 0}}
+                             for key, item, x in [('list','n_list',0),('slice','s_slice',340),('count','s_count',680),('pdf','o_pdf_handoff',1020)]]
+                    if board in ('canvas_fit', 'canvas_open', 'canvas_input'):
+                        nodes = nodes[:2]
+                    if board == 'canvas_reading':
+                        for node in nodes:
+                            node['position']['x'] *= 4
+                    if board in ('canvas_open', 'canvas_reading', 'canvas_input'):
+                        for node in nodes:
+                            node['position']['x'] += 800
+                    nodes[0]['params']['value'] = '[10, 20, 30, 40, 50]'
+                    nodes[1]['params']['count'] = '3'
+                    view = client.workshop('openTaskGraph', task['taskId'])
+                    opened = client.files('read', path=view['path'], id=view['id'])
+                    opened['document']['nodes'] = [*opened['document']['nodes'], *nodes] if board in ('canvas_open', 'canvas_reading', 'canvas_input') else nodes
+                    opened['document']['wires'] = [
+                        {'id':'first','from':{'node':'list','socket':'value'},'to':{'node':'slice','socket':'items'}},
+                        {'id':'second','from':{'node':'slice','socket':'items_out'},'to':{'node':'count','socket':'items'}}]
+                    if board in ('canvas_fit', 'canvas_open', 'canvas_input'):
+                        opened['document']['wires'] = opened['document']['wires'][:1]
+                    client.files('save', path=view['path'], document=opened['document'])
+                    if board == 'canvas_reading':
+                        standalone = new_document('Standalone opening check')
+                        standalone.update(nodes=copy.deepcopy(nodes), wires=copy.deepcopy(opened['document']['wires']))
+                        unbound_path = str(state / 'standalone-opening.archhub')
+                        write_document(unbound_path, standalone)
+                for title in ['Sheet index check', 'Export issue package', 'Update drawing references', 'Model view audit']:
+                    client.workshop('createTask', title)
+                client.workshop('openTaskGraph', task['taskId'])
+                if board in ('approval_wrong', 'approval_nested'):
+                    view = client.workshop('openTaskGraph', task['taskId'])
+                    original = client.files('read', path=view['path'])['document']
+                    document = new_document('Drawing set review')
+                    document.update(id=original['id'], properties=original['properties'])
+                    document['nodes'] = [{'id': 'held', 'type': 'param.value', 'params': {'type': 'number', 'value': 1}, 'position': {'x': 0, 'y': 0}}]
+                    gate = {'id': 'start', 'type': 'approval.gate', 'params': {}, 'position': {'x': 300, 'y': 0}}
+                    if board == 'approval_nested':
+                        child = new_document('Nested gate')
+                        child['nodes'] = [{**gate, 'id': 'held'}]
+                        child_path = state / 'nested-gate.archhub'
+                        write_document(child_path, child)
+                        insert_session(document, str(child_path))
+                    else:
+                        document['nodes'].append(gate)
+                    client.files('save', path=view['path'], document=document)
+                    held = client.files('run', path=view['path'], document=document)
+                    assert held['approvalId']
+            result = subprocess.run(
+                ['node', '02.TESTS/tests_js/designbuild.cjs'],
+                input=json.dumps({'url': server.public_url, 'cookie': server._cookie_token,
+                                  'browserCache': browser_cache, 'board': board,
+                                  'unboundPath': unbound_path,
+                                  'polish': os.environ.get('ARCHHUB_DESIGNPOLISH_PHASE', '')}),
+                cwd=Path(__file__).resolve().parents[2], capture_output=True, text=True,
+                encoding='utf-8', timeout=120,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            print(result.stdout)
+>           assert result.returncode == 0, result.stdout + result.stderr
+E           AssertionError: locator.click: Timeout 30000ms exceeded.
+E             Call log:
+E             [2m  - waiting for locator('.dx-task').filter({ hasText: 'Drawing set review' }).first()[22m
+E             
+E                 at C:\Users\fargaly\AppData\Local\Temp\lane-designmatch\02.TESTS\tests_js\designbuild.cjs:48:85 {
+E               log: [
+E                 "  - waiting for locator('.dx-task').filter({ hasText: 'Drawing set review' }).first()"
+E               ],
+E               name: 'TimeoutError'
+E             }
+E             
+E           assert 1 == 0
+E            +  where 1 = CompletedProcess(args=['node', '02.TESTS/tests_js/designbuild.cjs'], returncode=1, stdout='', stderr='locator.click: T...g for locator(\'.dx-task\').filter({ hasText: \'Drawing set review\' }).first()"\n  ],\n  name: \'TimeoutError\'\n}\n').returncode
+
+02.TESTS\tests\test_designbuild.py:99: AssertionError
+---------------------------- Captured stdout call -----------------------------
+
+___________________ test_designbuild_board[approval_nested] ___________________
+
+tmp_path = WindowsPath('C:/Users/fargaly/AppData/Local/Temp/lane-designmatch/.cache/canvas-release-or03tw02/TEMP/pytest-of-Fargaly/pytest-0/test_designbuild_board_approva1')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001BBFC9D6F10>
+board = 'approval_nested'
+
+    @pytest.mark.parametrize("board", ["home", "workshop", "canvas", "settings", "canvas_fit", "fluid_shell", "resume", "zero_home", "canvas_open", "canvas_reading", "canvas_input", "approval_wrong", "approval_nested"])
+    def test_designbuild_board(tmp_path, monkeypatch, board):
+        browser_cache = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '')
+        if not browser_cache:
+            browser_cache = subprocess.check_output(['node', '-p', "require('node:path').join(require('node:os').userInfo().homedir,'AppData/Local/ms-playwright')"], text=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)).strip()
+        _isolate(monkeypatch, tmp_path / 'desk')
+        from nodelang.nograph_server import NoGraphServer
+        from nodelang.session_files import new_document, insert_session, write_document
+    
+        monkeypatch.setattr(NoGraphServer, "_probe_hosts", staticmethod(lambda: []))
+        state = tmp_path / 'desk' / 'LOCALAPPDATA' / 'ArchHub'
+        state.mkdir()
+        monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(state))
+        server = NoGraphServer(state).start()
+        client = _Studio(server)
+        unbound_path = ''
+        try:
+            if board != 'zero_home':
+                task = client.workshop('createTask', 'Drawing set review')
+                client.workshop('setTaskSession', task['taskId'], {
+                    'scope': 'Review and export the drawing set', 'rules': ['Review before export'],
+                    'agents': ['Drawing coordinator'], 'folders': ['Dated issue folder'],
+                    'references': ['Drawing index'], 'plan': ['Read sheet index', 'Review drawings', 'Export PDF'],
+                    'progress': {'Read sheet index': 'done', 'Review drawings': 'done'},
+                    'messages': [{'id':'review-complete','who':'Drawing coordinator','text':'Review is complete. The drawing index matches the reviewed set.'},{'id':'ask-export','who':'You','text':'What is holding up the export?'}],
+                })
+                if board in ('canvas', 'canvas_fit', 'canvas_open', 'canvas_reading', 'canvas_input'):
+                    import copy
+                    from nodelang.session_files import catalogue
+                    items = {row['id']: row for row in catalogue()}
+                    nodes = [{'id': key, 'item': item, 'type': items[item]['engine'], 'title': items[item]['title'],
+                              'params': copy.deepcopy(items[item]['params']), 'position': {'x': x, 'y': 0}}
+                             for key, item, x in [('list','n_list',0),('slice','s_slice',340),('count','s_count',680),('pdf','o_pdf_handoff',1020)]]
+                    if board in ('canvas_fit', 'canvas_open', 'canvas_input'):
+                        nodes = nodes[:2]
+                    if board == 'canvas_reading':
+                        for node in nodes:
+                            node['position']['x'] *= 4
+                    if board in ('canvas_open', 'canvas_reading', 'canvas_input'):
+                        for node in nodes:
+                            node['position']['x'] += 800
+                    nodes[0]['params']['value'] = '[10, 20, 30, 40, 50]'
+                    nodes[1]['params']['count'] = '3'
+                    view = client.workshop('openTaskGraph', task['taskId'])
+                    opened = client.files('read', path=view['path'], id=view['id'])
+                    opened['document']['nodes'] = [*opened['document']['nodes'], *nodes] if board in ('canvas_open', 'canvas_reading', 'canvas_input') else nodes
+                    opened['document']['wires'] = [
+                        {'id':'first','from':{'node':'list','socket':'value'},'to':{'node':'slice','socket':'items'}},
+                        {'id':'second','from':{'node':'slice','socket':'items_out'},'to':{'node':'count','socket':'items'}}]
+                    if board in ('canvas_fit', 'canvas_open', 'canvas_input'):
+                        opened['document']['wires'] = opened['document']['wires'][:1]
+                    client.files('save', path=view['path'], document=opened['document'])
+                    if board == 'canvas_reading':
+                        standalone = new_document('Standalone opening check')
+                        standalone.update(nodes=copy.deepcopy(nodes), wires=copy.deepcopy(opened['document']['wires']))
+                        unbound_path = str(state / 'standalone-opening.archhub')
+                        write_document(unbound_path, standalone)
+                for title in ['Sheet index check', 'Export issue package', 'Update drawing references', 'Model view audit']:
+                    client.workshop('createTask', title)
+                client.workshop('openTaskGraph', task['taskId'])
+                if board in ('approval_wrong', 'approval_nested'):
+                    view = client.workshop('openTaskGraph', task['taskId'])
+                    original = client.files('read', path=view['path'])['document']
+                    document = new_document('Drawing set review')
+                    document.update(id=original['id'], properties=original['properties'])
+                    document['nodes'] = [{'id': 'held', 'type': 'param.value', 'params': {'type': 'number', 'value': 1}, 'position': {'x': 0, 'y': 0}}]
+                    gate = {'id': 'start', 'type': 'approval.gate', 'params': {}, 'position': {'x': 300, 'y': 0}}
+                    if board == 'approval_nested':
+                        child = new_document('Nested gate')
+                        child['nodes'] = [{**gate, 'id': 'held'}]
+                        child_path = state / 'nested-gate.archhub'
+                        write_document(child_path, child)
+                        insert_session(document, str(child_path))
+                    else:
+                        document['nodes'].append(gate)
+                    client.files('save', path=view['path'], document=document)
+                    held = client.files('run', path=view['path'], document=document)
+                    assert held['approvalId']
+            result = subprocess.run(
+                ['node', '02.TESTS/tests_js/designbuild.cjs'],
+                input=json.dumps({'url': server.public_url, 'cookie': server._cookie_token,
+                                  'browserCache': browser_cache, 'board': board,
+                                  'unboundPath': unbound_path,
+                                  'polish': os.environ.get('ARCHHUB_DESIGNPOLISH_PHASE', '')}),
+                cwd=Path(__file__).resolve().parents[2], capture_output=True, text=True,
+                encoding='utf-8', timeout=120,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            print(result.stdout)
+>           assert result.returncode == 0, result.stdout + result.stderr
+E           AssertionError: locator.click: Timeout 30000ms exceeded.
+E             Call log:
+E             [2m  - waiting for locator('.dx-task').filter({ hasText: 'Drawing set review' }).first()[22m
+E             
+E                 at C:\Users\fargaly\AppData\Local\Temp\lane-designmatch\02.TESTS\tests_js\designbuild.cjs:48:85 {
+E               log: [
+E                 "  - waiting for locator('.dx-task').filter({ hasText: 'Drawing set review' }).first()"
+E               ],
+E               name: 'TimeoutError'
+E             }
+E             
+E           assert 1 == 0
+E            +  where 1 = CompletedProcess(args=['node', '02.TESTS/tests_js/designbuild.cjs'], returncode=1, stdout='', stderr='locator.click: T...g for locator(\'.dx-task\').filter({ hasText: \'Drawing set review\' }).first()"\n  ],\n  name: \'TimeoutError\'\n}\n').returncode
+
+02.TESTS\tests\test_designbuild.py:99: AssertionError
+---------------------------- Captured stdout call -----------------------------
+
+___________________________ test_rendered_agentwork ___________________________
+
+    def test_rendered_agentwork():
+        import os
+        from pathlib import Path
+        import subprocess
+        import sys
+        root = Path(__file__).resolve().parents[2]
+        cache = os.environ.get('PLAYWRIGHT_BROWSERS_PATH') or subprocess.check_output(
+            ['node', '-p', "require('node:path').join(require('node:os').userInfo().homedir,'AppData/Local/ms-playwright')"],
+            text=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)).strip()
+        for command in (['node', '--max-old-space-size=512', '03.TOOLS/packaging/compile_studio.cjs'],
+                        ['node', '02.TESTS/tests_js/agentwork.cjs']):
+            result = subprocess.run(command, cwd=root, capture_output=True, text=True, encoding='utf-8', timeout=240,
+                                    env={**os.environ, 'PLAYWRIGHT_BROWSERS_PATH': cache, 'ARCHHUB_COURT_PYTHON': sys.executable},
+                                    creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            print(result.stdout)
+>           assert result.returncode == 0, result.stdout + result.stderr
+E           AssertionError: AssertionError [ERR_ASSERTION]: [{"id":"start","title":"Session"},{"id":"fixed-agent","title":"No agent yet"},{"id":"fixed-you","title":"You"},{"id":"fixed-workshop","title":"Workshop"},{"id":"step-b773dd0a8b0c6035f81f7370","title":"BA details codex","work":{"role":"session","runtime":"codex","native":"work-codex"}},{"id":"work-006a16f48b9bc9f16d39cabb","title":"Read details index","work":{"role":"step","owner":"step-b773dd0a8b0c6035f81f7370","runtime":"codex","native":"work-codex","calls":["call-1"],"kind":"file read","tool":"Read","runnable":true,"state":"working","task":"fffdd221249b49af9d9639ddd95da077"}},{"id":"work-da851e0c67ab65663809f5ef","title":"Read converted details","work":{"role":"step","owner":"step-b773dd0a8b0c6035f81f7370","runtime":"codex","native":"work-codex","calls":["call-3"],"kind":"file read","tool":"Read","runnable":true,"state":"working","task":"fffdd221249b49af9d9639ddd95da077"}},{"id":"work-cd3d1349e82104c2b532ee96","title":"Inspect native commands","work":{"role":"step","owner":"step-b773dd0a8b0c6035f81f7370","runtime":"codex","native":"work-codex","calls":["call-5"],"kind":"shell","tool":"Bash","runnable":false,"state":"working","task":"fffdd221249b49af9d9639ddd95da077"}},{"id":"work-c51337be4d4957433de5da7f","title":"Write reviewed details","work":{"role":"step","owner":"step-b773dd0a8b0c6035f81f7370","runtime":"codex","native":"work-codex","calls":["call-7"],"kind":"file write","tool":"Write","runnable":true,"state":"working","task":"fffdd221249b49af9d9639ddd95da077"}},{"id":"work-3487c58641aee78be3c2bb85","title":"Read Revit views","work":{"role":"step","owner":"step-b773dd0a8b0c6035f81f7370","runtime":"codex","native":"work-codex","calls":["call-9"],"kind":"broker","tool":"r_views","runnable":true,"state":"working","task":"fffdd221249b49af9d9639ddd95da077"}},{"id":"work-5247429dd56a2a79ecb8b93f","title":"Set native parameters","work":{"role":"step","owner":"step-b773dd0a8b0c6035f81f7370","runtime":"codex","native":"work-codex","calls":["call-11"],"kind":"broker","tool":"b_set_parameter","runnable":true,"state":"working","task":"fffdd221249b49af9d9639ddd95da077"}},{"id":"work-ed05c1dfd79ac813b16ce681","title":"Send review summary","work":{"role":"step","owner":"step-b773dd0a8b0c6035f81f7370","runtime":"codex","native":"work-codex","calls":["call-13"],"kind":"message","tool":"send","runnable":true,"state":"working","task":"fffdd221249b49af9d9639ddd95da077"}}]
+E             
+E             9 !== 8
+E             
+E                 at C:\Users\fargaly\AppData\Local\Temp\lane-designmatch\02.TESTS\tests_js\agentwork.cjs:113:11 {
+E               generatedMessage: false,
+E               code: 'ERR_ASSERTION',
+E               actual: 9,
+E               expected: 8,
+E               operator: 'strictEqual',
+E               diff: 'simple'
+E             }
+E             
+E           assert 1 == 0
+E            +  where 1 = CompletedProcess(args=['node', '02.TESTS/tests_js/agentwork.cjs'], returncode=1, stdout='', stderr='AssertionError [ER...lse,\n  code: \'ERR_ASSERTION\',\n  actual: 9,\n  expected: 8,\n  operator: \'strictEqual\',\n  diff: \'simple\'\n}\n').returncode
+
+02.TESTS\tests\test_agentwork.py:277: AssertionError
+---------------------------- Captured stdout call -----------------------------
+{"ok":true,"action":"compile","files":40,"output_bytes":2115248,"manifest_sha256":"9f87a0de734ee748c91d9ef6f915b2f35417e6c70005fcfaea1be31ad97a5b27","babel_version":"7.29.0"}
+
+
+============================== warnings summary ===============================
+..\..\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434
+  C:\Users\fargaly\AppData\Local\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434: PytestConfigWarning: Unknown config option: cache_dir
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+PROFILE-WRITE-GUARD: protected write attempts=0
+=========================== short test summary info ===========================
+FAILED 02.TESTS/tests/test_designbuild.py::test_designbuild_board[fluid_shell]
+FAILED 02.TESTS/tests/test_designbuild.py::test_designbuild_board[resume] - A...
+FAILED 02.TESTS/tests/test_designbuild.py::test_designbuild_board[zero_home]
+FAILED 02.TESTS/tests/test_designbuild.py::test_designbuild_board[canvas_open]
+FAILED 02.TESTS/tests/test_designbuild.py::test_designbuild_board[canvas_reading]
+FAILED 02.TESTS/tests/test_designbuild.py::test_designbuild_board[canvas_input]
+FAILED 02.TESTS/tests/test_designbuild.py::test_designbuild_board[approval_wrong]
+FAILED 02.TESTS/tests/test_designbuild.py::test_designbuild_board[approval_nested]
+FAILED 02.TESTS/tests/test_agentwork.py::test_rendered_agentwork - AssertionE...
+SKIPPED [1] 02.TESTS\tests_replica\test_real_app_check_tool.py:186: this account cannot create symbolic links
+9 failed, 759 passed, 1 skipped, 1 warning in 764.49s (0:12:44)
+

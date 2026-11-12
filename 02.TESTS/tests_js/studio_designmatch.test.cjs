@@ -6,6 +6,22 @@ const path=require('node:path');
 const {JSDOM}=require('jsdom');
 const studio=path.resolve(__dirname,'../../01.APP/nodelang/studio');
 const read=name=>fs.readFileSync(path.join(studio,name),'utf8');
+test('v48 step previews render owner values including zero, false, rows and safe images',async()=>{
+ const dom=new JSDOM('<div id="root"></div>',{runScripts:'outside-only',pretendToBeVisual:true}),w=dom.window;
+ try{
+  w.eval(read('vendor/react.js'));w.eval(read('vendor/react-dom.js'));w.eval(read('compiled/tokens.js'));
+  w.UI={A:w.AH,D:{},api:{},useData(){},useApp(){}};w.registerActions=()=>{};
+  w.ReactResizablePanels={Group:()=>null,Panel:()=>null,Separator:()=>null};
+  w.eval(read('compiled/ds_screens.js'));
+  const root=w.ReactDOM.createRoot(w.document.getElementById('root'));
+  for(const [value,expected] of [[0,'0'],[false,'false'],[{},''],[{approvalId:'app:ask:fixture'},''],[[{name:'Parapet',count:10}],'namecountParapet10'],['<script>untrusted</script>','<script>untrusted</script>']]){
+   root.render(w.React.createElement(w.UI.ResultPreview,{value}));await new Promise(r=>setTimeout(r,10));
+   assert.equal(w.document.getElementById('root').textContent,expected);assert.equal(w.document.querySelectorAll('script').length,0);
+  }
+  root.render(w.React.createElement(w.UI.ResultPreview,{value:{thumbnail:'javascript:alert(1)'}}));await new Promise(r=>setTimeout(r,10));assert.equal(w.document.querySelectorAll('img').length,0);
+  root.render(w.React.createElement(w.UI.ResultPreview,{value:{thumbnail:'data:image/png;base64,AA==',name:'Actual output'}}));await new Promise(r=>setTimeout(r,10));assert.equal(w.document.querySelector('img').alt,'Actual output');
+ }finally{w.close();}
+});
 async function adapter(tasks=[],library,hosts=()=>({hosts:[]}),overrides={}){
  const requests=[],stored=[],timers=new Map();let nextTimer=0;
  const window={ARCHHUB_BOOT:{token:'fixture',csrf:'fixture'},structuredClone:globalThis.structuredClone,crypto:require('node:crypto').webcrypto,Uint8Array:globalThis.Uint8Array,addEventListener(){},dispatchEvent(){},setInterval:fn=>{timers.set(++nextTimer,fn);return nextTimer;},clearInterval:id=>timers.delete(id)};

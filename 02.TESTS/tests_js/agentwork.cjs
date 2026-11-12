@@ -108,8 +108,11 @@ finally:
    const started=Date.now(),receipt=await command('declare',vendor);
    const step=page.locator('.react-flow__node').filter({has:page.getByText('Read details index',{exact:true})});
    await step.waitFor({timeout:2000});assert.ok(Date.now()-started<=2000);
-   assert.equal(await page.locator('.react-flow__node').count(),12,JSON.stringify(await page.evaluate(()=>window.ArchHubAPI.getSnapshot().graph.nodes.map(n=>({id:n.id,title:n.title,work:n.agentWork})))));
-   await page.getByText('Model: fixture-model',{exact:true}).waitFor();
+   assert.equal((await page.evaluate(()=>window.ArchHubAPI.getSnapshot().graph.nodes.length)),12);
+   assert.equal(await page.locator('[data-design^="session.panel."]').count(),6);
+   assert.equal(await page.locator('.react-flow__node').count(),8,JSON.stringify(await page.evaluate(()=>window.ArchHubAPI.getSnapshot().graph.nodes.map(n=>({id:n.id,title:n.title,work:n.agentWork})))));
+   await page.locator('.v48-session-body').getByText('fixture-model',{exact:true}).waitFor();
+   await page.getByRole('button',{name:'Fit',exact:true}).click();
    await step.locator('[data-node-card-title]').click();
    const inspector=page.locator('[data-node-inspector]');
    const editor=inspector.getByRole('textbox',{name:'Read details index path'});
@@ -143,6 +146,7 @@ finally:
    assert.ok(await page.locator('[data-graph-wire][stroke-dasharray="6 4"]').count()>0);
    const write=page.locator('.react-flow__node').filter({has:page.getByText('Write reviewed details',{exact:true})});
    await saveSeen.promise;
+   await page.getByRole('button',{name:'Fit',exact:true}).click();
    await write.locator('[data-node-card-title]').click();
    await inspector.getByRole('button',{name:'Run',exact:true}).click();
    // Run drains pending saves; a read cannot replace the locally dirty document.

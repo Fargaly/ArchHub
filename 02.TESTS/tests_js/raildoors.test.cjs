@@ -184,10 +184,10 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
         for (const [width, height] of [[1440, 900], [800, 500]]) {
           await page.setViewportSize({width, height});
           await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
-          const closeInspector=page.getByRole('button',{name:'Close Inspector',exact:true});
+          const closeInspector=page.getByRole('button',{name:'Fold Inspector',exact:true});
           if(await closeInspector.isVisible()) await closeInspector.click();
           const openThread=page.getByRole('button',{name:'Open Thread',exact:true});
-          if(await openThread.isVisible()) await openThread.click();
+          if(!await page.locator('.v22g-thread').isVisible() && await openThread.isVisible()) await openThread.click();
           const token = page.locator('.dx-msg-line p').filter({hasText: 'x'.repeat(900)});
           const sizes = await token.evaluate(el => ({client: el.clientWidth, scroll: el.scrollWidth, page: document.documentElement.scrollWidth}));
           assert.ok(sizes.scroll <= sizes.client, JSON.stringify(sizes));

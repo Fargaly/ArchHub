@@ -37,7 +37,7 @@ test('CHECKPOINT: document round trip and inspector owner width', async () => {
     });
     await page.getByRole('navigation', {name:'Main navigation'}).getByRole('button', {name:'Canvas',exact:true}).click();
     await page.getByRole('tab', {name:'Checkpoint browser task',exact:true}).waitFor();
-    await page.getByRole('button', {name:'Open Inspector',exact:true}).click();
+    await page.getByRole('tab', {name:'Properties',exact:true}).click();
     const original = await page.evaluate(() => window.ArchHubAPI.getSessionDocument());
     phase('checkpoint save and restore');
     await page.locator('details').filter({has:page.locator('summary', {hasText:'Checkpoints'})}).locator('summary').click();

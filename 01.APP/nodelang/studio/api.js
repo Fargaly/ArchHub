@@ -1554,11 +1554,11 @@ function fileNode(node, document=sessionDocument){
  const dataset=node.type==='data.dataset'?{fields:defs,records:node.records||[]}:null;
  const feed=node.type==='data.field'&&document.wires.find(w=>w.to.node===node.id&&w.to.socket==='column');
  const column=node.type==='data.field'?{dataset:feed?document.nodes.find(n=>n.id===feed.from.node)?.title||'':'',field:feed?feed.from.socket.replace(/^field:/,''):'',label:(COLUMN_LABEL[node.params.type]||'Any')+'[]'}:null;
- return {id:node.id,type:node.type,fixed:!!node.fixed,agentWork:node.agentWork,agentStep:node.params?.workshop_step===true,agentTask:document.properties?.taskContext?.task,workflowStart:node.id==='start'&&!!document.properties?.taskContext?.task,pure:node.type==='script.python'?(node.pure??item?.pure):node.type==='thing.agent'&&node.params.reference===true?true:item?.pure??node.pure,budget:node.budget||item?.budget||null,loop:node.loop||item?.loop||null,settingsKeys:item?.settingsKeys||[],dataset,column,title:node.title||item?.title||node.type,kind:node.children?'Group':item?.title||node.type,category:node.agentWork?.role==='step'?node.agentWork.kind+' · '+node.agentWork.tool:item?.cat||'Node',x:node.position.x,y:node.position.y,
+ return {id:node.id,type:node.type,fixed:!!node.fixed,agentWork:node.agentWork,agentStep:node.params?.workshop_step===true,agentTask:document.properties?.taskContext?.task,workflowStart:node.id==='start'&&!!document.properties?.taskContext?.task,pure:node.type==='script.python'?node.params.kind!=='effect':node.type==='thing.agent'&&node.params.reference===true?true:item?.pure??node.pure,budget:node.budget||item?.budget||null,loop:node.loop||item?.loop||null,settingsKeys:item?.settingsKeys||[],dataset,column,title:node.title||item?.title||node.type,kind:node.children?'Group':item?.title||node.type,category:node.agentWork?.role==='step'?node.agentWork.kind+' · '+node.agentWork.tool:item?.cat||'Node',x:node.position.x,y:node.position.y,
   params,defaults:item?.params||{},parameterSchema:schema,paramDefs:defs,bind,
   inputs:(ports.target||[]).map(p=>({...p,name:p.label||p.id,type:p.type==='unknown'?'any':p.type})),outputs:(ports.source||[]).map(p=>({...p,name:p.label||p.id,type:p.type==='unknown'?'any':p.type})),
   children:node.children||[],frameMembers:node.frameMembers,collapsed:node.collapsed!==false,members:(Array.isArray(node.members)?node.members:[]).filter(m=>m&&typeof m.id==='string'&&m.id).map(m=>({id:m.id,title:m.title||m.name||m.id,agent:m.agent||m.id})),parent:node.parent||null,icon:NODE_ICONS.includes(node.icon)?node.icon:'',color:typeof node.color==='string'&&/^#[0-9a-f]{6}$/i.test(node.color)?node.color:undefined,frozen:!!node.frozen,pinned:!!node.pinned,bypassed:!!node.bypassed,portVisibility:node.portVisibility||{},parameterPresentation:node.parameterPresentation||{},
-  output:node.result?.output||[],status:node.result?.status||'Idle',error:node.result?.error||'',display:node.result?.display||'',elapsedMs:node.result?.elapsed_ms};
+  output:node.result?.output??[],status:node.result?.status||'Idle',error:node.result?.error||'',display:node.result?.display||'',elapsedMs:node.result?.elapsed_ms};
 }
 // session_files.py _WIRE_MENUS, mirrored for the inspector. First choice is the omitted-field value.
 const WIRE_MENUS=[['matching',['By index','Longest','Shortest','Cross']],['order',['Source order','Reverse']],['missing',['Preserve','Drop','Blank']],['units',['From source','From target']],['conversion',['None','Number','Text']],['route',['Bezier','Straight','Step']]];
@@ -1601,10 +1601,11 @@ api.readTaskPreview=async id=>{
 };
 // Parametric (Grasshopper): an edit re-solves the pure nodes downstream of it, then stops.
 let sessionRevision=0, localDirty=false, solveIds=new Set(), solveParams=[], solveTimer=null, solveNote='', solveCount=0;
-function fileEdit(edit,solveFor=null,param=null){
+function fileEdit(edit,solveFor=null,param=null,recordHistory=true){
  if(!sessionDocument)throw Error('Open a session first.');
- fileHistory.push(copy(sessionDocument));if(fileHistory.length>100)fileHistory.shift();fileFuture=[];
- try{edit(sessionDocument);}catch(error){sessionDocument=fileHistory.pop();throw error;}
+ const before=copy(sessionDocument);
+ if(recordHistory){fileHistory.push(before);if(fileHistory.length>100)fileHistory.shift();fileFuture=[];}
+ try{edit(sessionDocument);}catch(error){sessionDocument=before;if(recordHistory)fileHistory.pop();throw error;}
  localDirty=true;runEpoch++;projectFile();queueAutosave();if(solveFor)scheduleSolve(solveFor,param);return {ok:true};
 }
 function scheduleSolve(ids,param){
@@ -1709,6 +1710,7 @@ api.saveSession=async(path=sessionPath,saveAs=false)=>{
 };
 api.saveSessionAs=()=>api.saveSession('',true);
 api.getSessionDocument=()=>copy(portableDocument());
+api.pickNodeParameter=async(id,key,type)=>{const picked=await request(type==='folder'?'/api/universal/workspace-roots':'/api/universal/pick-file',type==='folder'?{action:'browse'}:{title:'Choose '+key});if(!picked.path){if(picked.note)throw Error(picked.note);return {cancelled:true};}return api.setNodeParam(id,key,picked.path);};
 api.hasSessionEdits=()=>fileHistory.length>0;
 api.readSystemGraph=async()=>{
  const data=await request('/api/universal/canvas'),previous=canvas;
@@ -1849,7 +1851,23 @@ api.runToHere=api.runNode;
 api.runSelection=ids=>api.runNode(ids);
 api.setNodeFlags=async(id,values)=>fileEdit(d=>Object.assign(d.nodes.find(n=>n.id===id),values),[id]);
 api.forkNode=async id=>{const result=await sessionRequest('fork-node',{document:portableDocument(),node:id});fileEdit(d=>{d.nodes=result.document.nodes;d.wires=result.document.wires;});return state.graph.nodes.find(n=>n.id===result.ids[0]);};
-api.arrangeGraph=async()=>fileEdit(d=>d.nodes.forEach((n,i)=>{n.position={x:80+i%4*300,y:100+Math.floor(i/4)*220};}));
+api.arrangeGraph=async(initial=false)=>fileEdit(d=>{
+ const session=d.nodes.find(n=>n.fixed&&n.type==='thing.session'),nodes=d.nodes.filter(n=>(!n.fixed&&(!session||(n.agentWork?.role!=='session'||n.params?.workshop_step))||n===session)&&!n.parent),ids=new Set(nodes.map(n=>n.id));
+ const incoming=new Map(nodes.map(n=>[n.id,[]])),rank=new Map(),order=new Map(nodes.map((n,i)=>[n.id,i]));
+ for(const w of d.wires)if(ids.has(w.from.node)&&ids.has(w.to.node))incoming.get(w.to.node).push(w.from.node);
+ const left=nodes.filter(n=>n!==session&&session&&incoming.get(session.id).includes(n.id));
+ const pending=new Set(nodes.filter(n=>!left.includes(n)).map(n=>n.id));
+ if(session){rank.set(session.id,0);pending.delete(session.id);}
+ for(const n of left)rank.set(n.id,-1);
+ while(pending.size){let changed=false;for(const id of pending){const sources=incoming.get(id);if(sources.every(key=>rank.has(key))){rank.set(id,Math.max(session&&id!==session.id?1:0,...sources.map(key=>rank.get(key)+1)));pending.delete(id);changed=true;}}if(!changed){for(const id of pending)rank.set(id,session&&id!==session.id?1:0);break;}}
+ const columns=[];
+ for(const n of nodes.filter(n=>!left.includes(n))){const r=rank.get(n.id);(columns[r]||=[]).push(n);}
+ const size=n=>{const el=[...(document.querySelectorAll?.('[data-graph-node]') || [])].find(el=>el.dataset.graphNode===n.id);return {w:el?.offsetWidth||300,h:el?.offsetHeight||160};};
+ const grid=v=>Math.round(v/8)*8,y0=grid(session?.position.y||0);let x=grid(session?.position.x||0);
+ if(left.length){let y=y0;const width=Math.max(...left.map(n=>size(n).w));for(const n of left){n.position={x:grid(x-width-96),y:grid(y)};y+=size(n).h+32;}}
+ for(const column of columns){if(!column)continue;column.sort((a,b)=>{const source=n=>incoming.get(n.id).reduce((sum,id)=>sum+nodes.find(n=>n.id===id).position.y,0)/Math.max(1,incoming.get(n.id).length);return source(a)-source(b)||order.get(a.id)-order.get(b.id);});let y=y0;for(const n of column){n.position={x:grid(x),y:grid(y)};y+=size(n).h+32;}x+=Math.max(...column.map(n=>size(n).w))+96;}
+ d.properties={...d.properties,canvasLayout:'v48'};
+},null,null,!initial);
 api.groupNodes=async(ids,frame=false)=>{
  if(!Array.isArray(ids))throw Error('Choose nodes to group.');
  const members=sessionDocument.nodes.filter(n=>ids.includes(n.id));

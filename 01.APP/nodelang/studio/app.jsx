@@ -308,6 +308,7 @@
     const pickFlow = () => flowInput.current?.click();
     const pickFile = () => act(async () => { const file = await api.addFile(); if (file) return api.addComposerAttachment(file.id); return null; });
     const value = {
+      modal,
       selectedNodeId,
       setSelectedNodeId,
       composerDraft,
@@ -478,7 +479,7 @@
             show
           }, event)}><span>{s.workspaces.find(w => w.id === s.activeWorkspace)?.name || s.workspaces.find(w => w.builtIn)?.name || 'Add workspace'}</span><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true"><path d="M3 4.5l3 3 3-3" /></svg></button><i className="header-divider" /><span className="muted">/</span><button className="button-reset header-page" onClick={event => executeAction("appShell.ArchHub.2", {
             go
-          }, event)}>{(route.startsWith("settings/") ? "Settings" : route === "task-file" ? (taskFace === "workshop" ? "Workshop" : "Canvas") : routeNames[route]) || route.split('/').at(-1)}</button><span className="fill" /><div className="header-status" aria-label="Session status">{s.connectionNotice && s.connectionNotice !== 'Checking for updates…' ? <button className="button-reset muted" onClick={event => executeAction("appShell.Receipts.16", {go}, event)}>1 notice · see Receipts</button> : <span>{s.connectionNotice || '● Local session'}</span>}
+          }, event)}>{(route.startsWith("settings/") ? "Settings" : route === "task-file" ? (taskFace === "workshop" ? "Workshop" : "Canvas") : routeNames[route]) || route.split('/').at(-1)}</button><span className="fill" /><div data-design="header.status" className="header-status" aria-label="Session status">{s.connectionNotice && s.connectionNotice !== 'Checking for updates…' ? <button className="button-reset muted" onClick={event => executeAction("appShell.Receipts.16", {go}, event)}>1 notice · see Receipts</button> : <span>{s.connectionNotice || '● Local session'}</span>}
           {agentLoad.status === 'waiting' && <span role="status">Loading Workshop settings…</span>}
           {agentLoad.status === 'error' && <span role="alert">{agentLoad.message}<Btn aria-label="Retry Workshop connection" onClick={event => executeAction("appShell.RetryWorkshop", {reloadWorkshop}, event)}>Retry</Btn></span>}
           {agentLoad.status === 'empty' && <span role="status">Select a workflow for Workshop settings.</span>}

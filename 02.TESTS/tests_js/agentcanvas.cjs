@@ -128,8 +128,11 @@ main()
     await context.addCookies([{name:'archhub_studio',value:input.cookie,url:input.url}]);
     const page=await context.newPage(), errors=[];
     const nodeCount=async count=>{
-      await page.waitForFunction(n=>document.querySelectorAll('.react-flow__node').length===n,count);
-      assert.equal(await page.locator('.react-flow__node').count(),count);
+      await page.waitForFunction(n=>{const nodes=window.ArchHubAPI.getSnapshot().graph.nodes,session=nodes.some(node=>node.fixed&&node.type==='thing.session');const hidden=nodes.filter(node=>node.fixed&&node.type!=='thing.session'||session&&node.agentWork?.role==='session'&&!node.agentStep).length;return document.querySelectorAll('.react-flow__node').length===n-hidden;},count);
+      const graph=await page.evaluate(()=>window.ArchHubAPI.getSnapshot().graph.nodes);
+      assert.equal(graph.length,count);
+      assert.equal(await page.locator('.react-flow__node').count(),count-graph.filter(node=>node.fixed&&node.type!=='thing.session'||graph.some(row=>row.fixed&&row.type==='thing.session')&&node.agentWork?.role==='session'&&!node.agentStep).length);
+      if(graph.some(node=>node.fixed&&node.type==='thing.session'))assert.equal(await page.locator('[data-design^="session.panel."]').count(),6);
     };
     // Input stays inside this private headless page, using the existing design court's CDP path.
     const inputSession=await context.newCDPSession(page);

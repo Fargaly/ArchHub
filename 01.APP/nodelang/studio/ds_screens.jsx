@@ -213,10 +213,15 @@
   }
   // e6e4a367 studio-lm.jsx NodeRenderer: category header, role edge and parameter body.
   function AgentWorkflowCard({n, renderPort, headerProps, selected, headerEnd, width = 304}) {
+    const u = useApp();
     const status = n.role==='step'&&n.status==='blocked' ? 'Blocked' : ({working:'Working',blocked:'Waiting for you',done:'Done',idle:'Idle',resting:'Idle',stopped:'Stopped',failed:'Failed',open:'Planned',claimed:'In progress'})[n.status] || n.status;
     const color = /Working|Done|progress/.test(status) ? A.ok : /Waiting|Blocked/.test(status) ? A.warn : /Failed/.test(status) ? A.err : A.inkMuted;
     const message=n.message, at=message?.at ? new Date(message.at) : null, minutes=at ? Math.max(0,Math.floor((Date.now()-at.getTime())/60000)) : null;
     const textStyle={overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'};
+    if (n.role === 'step') return <D.Node w={300} className="v22g-node" selected={selected} gc={color} glyph={<window.AHIcon name="workshop" size={12}/>} title={n.title} sub={n.kicker} ins={n.inputs} outs={n.outputs} renderPort={renderPort} headerProps={headerProps} headerEnd={headerEnd}
+      foot={<span className="v48-step-actions"><span style={{marginRight:'auto',color}}>{status}</span><button type="button" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:n.openResult},event)}>History</button>{n.agentWork?.runnable && <button type="button" className="button-reset nodrag" disabled={/Working|progress/.test(status)} onClick={event=>executeAction('projects.controls.activate',{handler:async()=>{const result=await u.act(()=>api.runNode(n.id));if(result?.approvalId)u.show('Approve',{id:result.approvalId});}},event)}>Run step</button>}</span>}>
+      <div className="v48-step-body" style={{display:'grid',gap:4,padding:'8px 10px 6px'}}><div className="v48-step-preview"><ResultPreview value={n.result || message?.text || 'Run to inspect output'}/></div>{(n.parameterSchema || []).filter(p=>['goal','model','detail','prompt','language'].includes(p.key)).map(p=><label key={p.key} className="v48-session-param"><span>{p.label || p.key}</span><ValueWidget n={n} p={p} value={n.params[p.key]} u={u}/></label>)}{n.actions && <details className="nodrag"><summary>Details</summary>{n.actions}</details>}</div>
+    </D.Node>;
     return <D.Node w={width} className="agent-workflow-card" selected={selected} gc={color} glyph={<window.AHIcon name={n.role==='task'?'docs':'workshop'} size={12} />}
       title={<><span style={{display:'block',fontSize:11,fontWeight:500,color:A.inkSoft,textTransform:'uppercase'}}>{n.kicker}</span><span title={n.title}>{n.title}</span></>}
       sub="" ins={n.inputs} outs={n.outputs} renderPort={renderPort} headerProps={headerProps} headerEnd={headerEnd}
@@ -421,10 +426,14 @@
   const edgeSocket = (side, top, inset = 0) => ({position: 'absolute', [side === 'in' ? 'left' : 'right']: -11 - inset, top, transform: 'translateY(-50%)', lineHeight: 0, zIndex: 2});
   function ValueWidget({n, p, value, u}) {
     const [draft, setDraft] = React.useState(null), [focused,setFocused] = React.useState(false), raw = draft ?? value,
-      shown = !focused && n.agentWork && ['file','folder'].includes(p.dataType) && typeof raw==='string' ? raw.split(/[\\/]/).filter(Boolean).pop() || raw : raw, label = n.title + ' ' + p.key;
+      shown = !focused && ['file','folder'].includes(p.dataType) && typeof raw==='string' ? raw.split(/[\\/]/).filter(Boolean).pop() || raw : raw, label = n.title + ' ' + p.key;
     const save = v => { setDraft(v); return u.act(() => api.setNodeParam(n.id, p.key, v)).then(() => setDraft(null)); };
     if (!p.editable) return <span title={String(shown)}>{summary(shown)}</span>;
+    if (Array.isArray(raw) && raw.every(item=>typeof item==='string')) return <details className="v48-list-widget nodrag nowheel"><summary>{raw.length} {raw.length===1?'item':'items'}</summary><div>{raw.map((item,index)=><label key={index}><input aria-label={label+' item '+(index+1)} value={item} onChange={event=>save(raw.map((value,i)=>i===index?event.target.value:value))}/><button type="button" className="button-reset" aria-label={'Remove '+label+' item '+(index+1)} onClick={event=>executeAction('projects.controls.activate',{handler:()=>save(raw.filter((_,i)=>i!==index))},event)}>×</button></label>)}<button type="button" className="button-reset" onClick={event=>executeAction('projects.controls.activate',{handler:()=>save([...raw,''])},event)}>Add item</button></div></details>;
+    if (p.type === 'json') return <input className="nodrag" aria-label={label} defaultValue={JSON.stringify(raw)} key={JSON.stringify(value)} onChange={event=>event.target.setCustomValidity('')} onBlur={event=>{try{const parsed=JSON.parse(event.target.value);if(p.dataType==='list'&&!Array.isArray(parsed))throw Error('Enter a list.');save(parsed);}catch(error){event.target.setCustomValidity(error.message);event.target.reportValidity();}}}/>;
     if (p.type === 'boolean') return <D.Toggle label={label} checked={!!shown} onCheckedChange={save} />;
+    if (['file','folder'].includes(p.dataType)) return <span className="v48-file-widget"><input className="nodrag" aria-label={label} title={String(raw || '')} value={shown || ''} onFocus={()=>setFocused(true)} onBlur={()=>setFocused(false)} onChange={e=>save(e.target.value)}/><button type="button" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.pickNodeParameter(n.id,p.key,p.dataType))},event)}>Browse</button></span>;
+    if (p.options?.length && p.options.length<=4) return <span className="v48-choice-widget" role="group" aria-label={label}>{p.options.map(option=><button type="button" className="button-reset nodrag" key={option} aria-pressed={shown===option} onClick={event=>executeAction('projects.controls.activate',{handler:()=>save(option)},event)}>{option}</button>)}</span>;
     if (p.options?.length) return <select className="nodrag" aria-label={label} value={shown} onChange={e => save(e.target.value)}>{p.options.map(o => <option key={o}>{o}</option>)}</select>;
     const unbounded = ['min', 'max'].includes(p.key) && (shown == null || shown === '');
     return <input className="nodrag" aria-label={label} title={unbounded ? 'Unbounded' : String(shown)} type={p.type === 'number' ? 'number' : 'text'} min={p.min} max={p.max} step={p.step ?? 'any'} placeholder={unbounded ? 'Unbounded' : undefined}
@@ -469,14 +478,68 @@
       <button type="button" className="button-reset nodrag" style={{color: A.err, textDecoration: 'underline'}} onClick={event => executeAction('projects.controls.activate', {handler: onConvert}, event)}>Insert converter</button></>}
     </div>;
   }
+  function ResultPreview({value}) {
+    if(value == null || value === '' || typeof value==='object' && (!Object.keys(value).length || !Array.isArray(value) && 'approvalId' in value)) return null;
+    const picture = typeof value === 'object' && (value.thumbnail || value.thumb || value.image);
+    if(typeof picture === 'string' && /^data:image\/(png|jpeg|webp|gif);base64,/.test(picture)) return <img src={picture} alt={value.name || value.title || 'Step output'} style={{width:'100%',maxHeight:148,objectFit:'contain'}}/>;
+    if(Array.isArray(value) && value.every(row=>row && typeof row==='object' && !Array.isArray(row))){const keys=[...new Set(value.flatMap(Object.keys))].slice(0,4);return <table><thead><tr>{keys.map(key=><th key={key}>{key}</th>)}</tr></thead><tbody>{value.slice(0,8).map((row,i)=><tr key={i}>{keys.map(key=><td key={key}>{typeof row[key]==='object'?JSON.stringify(row[key]):String(row[key]??'')}</td>)}</tr>)}</tbody></table>;}
+    if(Array.isArray(value))return <pre>{value.slice(0,8).map(item=>typeof item==='object'?JSON.stringify(item):String(item)).join('\n')}</pre>;
+    if(typeof value==='object'){const rows=Object.entries(value);if(rows.length===1)return <ResultPreview value={rows[0][1]}/>;return <dl>{rows.slice(0,8).map(([key,item])=><React.Fragment key={key}><dt>{key.replace(/_/g,' ')}</dt><dd><ResultPreview value={item}/></dd></React.Fragment>)}</dl>;}
+    return <pre>{String(value)}</pre>;
+  }
+  function SessionCard({n, s, u, selected, socket}) {
+    const [open, setOpen] = React.useState({});
+    const task = (s.tasks || []).find(row => row.id === n.agentTask);
+    const messages = window.UI.homeTaskMessages?.(task) || [];
+    const fixed = s.graph.nodes.filter(row => row.fixed && row.id !== n.id);
+    const sessionAgents = s.graph.nodes.filter(row=>row.agentWork?.role==='session'&&!row.parent);
+    const agent = fixed.find(row => row.type === 'thing.agent');
+    const you = fixed.find(row => row.type === 'thing.you');
+    const thread = fixed.find(row => row.type === 'thing.workshop');
+    const name = agent?.params.agent || task?.agents?.[0] || 'Session';
+    const live = (s.liveAgents || []).find(row=>[row.agent,row.name,row.handle].includes(name));
+    const panels = [
+      ['Agent', 'user', name, agent],
+      ['You', 'user', [s.profile.name, s.profile.role].filter(Boolean).join(' · ') || 'Your profile', you],
+      ['Parameters', 'settings', task?.rules?.join(' · ') || 'Session parameters', n],
+      ['Tools', 'code', (s.hosts || []).filter(h => /connected|running|listening/.test(h.state)).length + ' connected programs'],
+      ['Context', 'folder', task?.references?.join(' · ') || task?.scope || 'Task context'],
+      ['Thread', 'workshop', messages.length + ' messages · opens beside the canvas', thread]
+    ];
+    const usedPorts = (owner, side) => (owner?.[side === 'out' ? 'outputs' : 'inputs'] || []).filter(p => s.graph.wires.some(w => side === 'out' ? w.from === owner.id && w.fromPort === p.id && !s.graph.nodes.find(r => r.id === w.to)?.fixed && !sessionAgents.some(row=>row.id===w.to) : w.to === owner.id && w.toPort === p.id && !s.graph.nodes.find(r => r.id === w.from)?.fixed && !sessionAgents.some(row=>row.id===w.from)));
+    const panelSocket = (owner, p, side) => socket({...p, id: owner.id === n.id ? p.id : owner.id + ':' + p.id}, side);
+    const edit = owner => (owner?.parameterSchema || []).filter(p => p.editable).map(p => <label key={p.key} className="v48-session-param"><span>{p.label || p.key}</span><ValueWidget n={owner} p={p} value={owner.params[p.key]} u={u}/></label>);
+    return <div className={'v48-session' + (selected ? ' selected' : '')} data-design="session.node">
+      <header className="node-header"><window.UI.Av id={name} size={24}/><div><b>{name}</b><small>{agent?.params.agent ? 'Agent session' : 'Session'}</small></div><span className="v48-state-dot"/></header>
+      <div className="v48-session-body"><div><span>Task</span><b>{task?.title || s.graph.name}</b></div><div><span>Runs</span><b>{n.params.model || sessionAgents.find(row=>row.params.model)?.params.model || agent?.params.model || live?.model || 'No active agent'}</b></div>{messages.length > 0 && <p>{messages.at(-1).text}</p>}<button type="button" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.setTaskFace('split')},event)}>Open thread</button></div>
+      {(usedPorts(n, 'out').length > 0 || usedPorts(n, 'in').length > 0) && <div className="v48-session-ports">{['in','out'].map(side => usedPorts(n,side).map(p => <span key={side+p.id} data-side={side}>{panelSocket(n,p,side)}{p.id === 'value' ? 'task' : p.name}</span>))}</div>}
+      <div className="v48-session-panels">{panels.map(([label, icon, summary, owner]) => <section key={label} className="v48-session-panel">
+        <button type="button" data-design={'session.panel.' + label.toLowerCase()} className="button-reset nodrag v48-session-panel-head" aria-expanded={label === 'Thread' ? undefined : !!open[label]} onClick={event=>executeAction('projects.controls.activate',{handler:()=>label === 'Thread' ? u.setTaskFace(u.taskFace === 'split' ? 'canvas' : 'split') : setOpen(v => ({...v,[label]:!v[label]}))},event)}>
+          {label==='Agent'?<window.UI.Av id={name} size={22}/>:<span className="v48-panel-tile"><window.AHIcon name={icon} size={12}/></span>}<b>{label}</b><em>{summary}</em><span>{open[label] ? '⌄' : '→'}</span>
+        </button>
+        {(label==='Agent'?[owner,...sessionAgents]:[owner]).filter(row=>row&&row.id!==n.id).map(row=>['in','out'].map(side=>usedPorts(row,side).map(p=><span className="v48-panel-port" data-side={side} key={row.id+side+p.id}>{panelSocket(row,p,side)}</span>)))}
+        {open[label] && label !== 'Thread' && <div className="v48-session-panel-body nodrag nowheel">
+          {owner && edit(owner)}
+          {label === 'Agent' && sessionAgents.map(row=><button key={row.id} type="button" className="dx-link" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.show('Node',{id:row.id})},event)}>{row.title} · Properties</button>)}
+          {label === 'Agent' && <button type="button" className="dx-link" onClick={() => u.go('settings/Agents')}>Manage agents</button>}
+          {label === 'You' && <button type="button" className="dx-link" onClick={() => u.go('settings/Account')}>Settings › You</button>}
+          {label === 'Tools' && <>{(s.hosts || []).map(h => <div key={h.id}>{h.name} · {h.state}</div>)}<button type="button" className="dx-link" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.setLibraryOpen(true)},event)}>As nodes on this Canvas</button><button type="button" className="dx-link" onClick={() => u.go('settings/Connections')}>Connections</button></>}
+          {label === 'Context' && <>{task && <><p>{task.scope}</p>{['rules','agents','folders','references'].map(key => <div key={key}><b>{key[0].toUpperCase()+key.slice(1)}</b><p>{(task[key] || []).join(' · ') || 'None'}</p></div>)}</> }<button type="button" className="dx-link" onClick={() => u.show('Task details', {id:task?.id})}>Edit task context</button></>}
+          {label === 'Parameters' && <button type="button" className="dx-link" onClick={() => u.show('Node', {id:n.id})}>All parameters</button>}
+        </div>}
+      </section>)}</div>
+      <footer>{(s.approvals || []).some(card=>card.status==='pending' && (card.path===api.getSessionPath() || card.canvasNodes?.some(ref=>ref.path===api.getSessionPath()))) ? 'Waiting for you' : s.graph.nodes.some(row => /running|working/i.test(row.params?.status || row.status)) ? 'Working' : s.graph.nodes.some(row=>/fail|error/i.test(row.status)) ? 'Failed' : 'Idle'}</footer>
+    </div>;
+  }
   function FlowCard({n, s, u, selected, refusal, onConvert, socket, members, onMember, onDetach, onOpen, menu}) {
-    // v22g keeps three rows on the card; every parameter remains available in the Inspector.
+    // v48 shows two rows beside a preview, otherwise three; Properties keeps every parameter.
     const [compact, setCompact] = React.useState(true);
     const pinned = n.fixed && n.type !== 'thing.session', task = n.fixed ? (s.tasks || []).find(row=>row.id===n.agentTask) : null, messages = window.UI.homeTaskMessages?.(task) || [];
     const pinnedSummary = n.type==='thing.you' ? [s.profile.name || 'Not signed in',s.profile.role].filter(Boolean).join(' · ')
       : n.type==='thing.workshop' ? messages.length+' messages'+(messages.length ? ' · '+messages.at(-1).text : '')
       : n.params.agent || 'Pick an agent, or message the thread';
     const approval = (s.approvals || []).find(card=>card.approvalKind==='canvas' && (card.nodeId===n.id && card.path===api.getSessionPath() || card.canvasNodes?.some(ref=>ref.nodeId===n.id && ref.path===api.getSessionPath())) && card.status==='pending');
+    if (n.fixed && n.type === 'thing.session') return <SessionCard n={n} s={s} u={u} selected={selected} socket={socket}/>;
     if (n.agentStep || n.workflowStart && !n.fixed) return <AgentWorkflowCard n={{...n,role:n.workflowStart?'start':'step',kicker:n.workflowStart?'Start':'Agent · '+(n.params.vendor||'Agent'),status:n.params.status||n.status,by:n.params.display_name||n.params.agent,result:n.params.result||n.params.message_id,
       actions:n.agentWork?<div style={{display:'grid',gap:6}}><span>Goal: {n.params.goal}</span><span>Model: {n.params.model}</span><span>{n.params.detail}</span><button className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.forkNode(n.id))},event)}>Fork from here</button></div>:null,
       openResult:()=>u.openTaskFile(n.agentTask,'workshop'),
@@ -493,31 +556,31 @@
       slotPorts = new Set(), settingsKeys = new Set(n.settingsKeys || []),
       // Internal ids, hashes and serialized JSON stay in Properties; the face shows human values (CARDPOLISH), first three until expanded.
       shown = (n.parameterSchema || []).filter(p => !n.fixed || !['reference','thread','limit','workspace'].includes(p.key)).filter(p => p.editable || (!HIDDEN_PARAM.test(p.key) && (n.params[p.key] === null || typeof n.params[p.key] !== 'object') && !HIDDEN_VALUE.test(String(n.params[p.key]))))
-        .filter(p => !(p.key === 'prompt' && n.inputs.some(x => x.id === 'prompt'))),
-      pending = compact && !n.fixed && !n.children?.length && !n.dataset && !n.column && ['Idle','Pending','Out of date',''].includes(n.status || ''),
-      params = pending || pinned && compact ? [] : compact ? shown.slice(0, 3) : shown,
+        .filter(p => !(p.key === 'prompt' && n.inputs.some(x => x.id === 'prompt'))).sort((a,b)=>Number(!!b.userParam)-Number(!!a.userParam)),
+      pending = false,
+      hasOutput = n.output != null && n.output !== '' && (typeof n.output!=='object' || Object.keys(n.output).length>0 && !('approvalId' in n.output)),
+      rowLimit = hasOutput ? 2 : 3,
+      params = pending || pinned && compact ? [] : compact ? shown.slice(0, rowLimit) : shown,
       refusedHere = port => refusal && refusal.to.port === port && <RefusedChip refusal={refusal} onConvert={onConvert} />;
     for (const p of params) for (const port of n.inputs.filter(x => x.id === p.key || x.id === 'param:' + p.key)) slotPorts.add(port.id);
-    const repeatsValue = (output, value) => Object.is(output, value) || (typeof output === 'string' && output.trim() === String(value)) || (output && typeof output === 'object' && !Array.isArray(output) && Object.keys(output).length === 1 && Object.hasOwn(output, 'value') && (Object.is(output.value, value) || String(output.value) === String(value))) || (Array.isArray(output) && output.length === 1 && (Object.is(output[0], value) || String(output[0]) === String(value)));
-    const repeatedValue = shown.some(p=>p.key==='value') && !wiresIn.some(wire=>['value','param:value'].includes(wire.toPort)) && repeatsValue(n.output, n.params.value);
-    const result = n.status === 'Done' && !repeatedValue ? summary(n.output) : '';
     const headerSetting=s.settings.find(row=>row.id==='Appearance.Node header colour');
     const requestedHeader=n.color || (headerSetting?.value!==headerSetting?.default ? headerSetting?.value : '');
     const headerColor=typeof requestedHeader==='string'&&/^#[0-9a-f]{6}$/i.test(requestedHeader)?requestedHeader:undefined;
     const [familyColor,familyIcon] = NODE_FAMILY_STYLE[String(n.category||'').toLowerCase()] || [A.blue,'canvas'];
     const luminance = headerColor && headerColor.slice(1).match(/../g).map(hex => {const channel=parseInt(hex,16)/255;return channel<=0.04045?channel/12.92:((channel+0.055)/1.055)**2.4;}).reduce((sum,channel,index)=>sum+channel*[0.2126,0.7152,0.0722][index],0);
     return <D.Node className="v22g-node" data-pinned-card={pinned || undefined} data-design={!n.fixed ? 'node.' + (n.status==='Running'?'running':n.status==='Done'?'done':/approval/i.test(n.status)?'waiting':/error|fail/i.test(n.status)?'failed':'pending') : undefined} data-spec={n.dataset ? 'dataset' : 'operation'} data-node-state={state.split(' · ')[0]}
-      w={n.fixed ? 236 : n.children?.length ? 224 : n.dataset ? LAYOUT.datasetWidth : 268} title={n.title} sub={pinned ? n.type==='thing.you' ? 'Profile · every agent reads it' : n.type==='thing.workshop' ? "This task’s thread" : 'Agent · '+(n.params.agent || 'pick one') : n.category && n.category!=='Node' ? n.category : n.kind}
+      w={n.fixed ? 300 : n.children?.length ? 224 : n.dataset ? LAYOUT.datasetWidth : 300} title={n.title} sub={pinned ? n.type==='thing.you' ? 'Profile · every agent reads it' : n.type==='thing.workshop' ? "This task’s thread" : 'Agent · '+(n.params.agent || 'pick one') : (n.category && n.category!=='Node' ? n.category : n.kind) + ' · ' + (n.pure ? 'Runs by itself' : 'Waits for you')}
       glyph={n.fixed && ['thing.agent','thing.session'].includes(n.type) ? <window.UI.Av id={n.params.agent || task?.agents?.[0] || ''} size={20}/> : <window.AHIcon name={n.icon || (n.type==='thing.you' ? 'user' : n.type==='thing.workshop' ? 'workshop' : familyIcon)} size={12}/>} gc={n.fixed ? A.purple : familyColor}
       selected={selected} headerProps={{className:'node-header','data-custom-header':headerColor?true:undefined,style:{background:headerColor,color:headerColor ? luminance>.179?'#000000':'#ffffff':SPEC.text}}} headerEnd={pinned ? <span className="v22g-pinned-badge">Pinned</span> : menu}
       style={{fontSize:'calc(12px * var(--text-scale,1))',borderRadius:'var(--node-radius,8px)',minHeight:pending?160:undefined}}
       ins={n.inputs.filter(port=>!slotPorts.has(port.id)&&(!pending||port.id===n.inputs[0]?.id||port.id==='param:'+n.inputs[0]?.id||wiresIn.some(w=>w.toPort===port.id)))} outs={n.outputs}
       renderPort={(port,index,side)=><div data-port-row={side} style={{position:'relative',height:22,display:'flex',alignItems:'center',justifyContent:side==='out'?'flex-end':undefined,padding:'0 12px'}}><span style={{position:'absolute',[side==='out'?'right':'left']:-11,top:0}}>{socket(port,side)}</span>{port.name}</div>}
-      foot={n.children?.length&&!n.fixed?<span className="spread"><span>{n.children.length} nodes</span><button type="button" data-design="group.open" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:onOpen},event)}>Open</button></span>:pinned ? <span className="spread"><button type="button" className="button-reset nodrag" aria-expanded={!compact} onClick={event=>executeAction('projects.controls.activate',{handler:()=>setCompact(!compact)},event)}>{compact?'Parameters':'Fewer'}</button>{n.type==='thing.you' ? <button type="button" className="button-reset nodrag" onClick={()=>u.go('settings/Account')}>Settings › You</button> : n.type==='thing.workshop' ? <button type="button" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.setTaskFace('split')},event)}>Open thread</button> : null}</span> : <span title={n.error || state}>{state.split(' · ')[0]}{Number.isFinite(n.elapsedMs)?' · '+n.elapsedMs+' ms':''}</span>} footc={pinned ? A.inkSoft : stateColor}>
+      foot={n.children?.length&&!n.fixed?<span className="spread"><span>{n.children.length} nodes</span><button type="button" data-design="group.open" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:onOpen},event)}>Open</button></span>:pinned ? <span className="spread"><button type="button" className="button-reset nodrag" aria-expanded={!compact} onClick={event=>executeAction('projects.controls.activate',{handler:()=>setCompact(!compact)},event)}>{compact?'Parameters':'Fewer'}</button>{n.type==='thing.you' ? <button type="button" className="button-reset nodrag" onClick={()=>u.go('settings/Account')}>Settings › You</button> : n.type==='thing.workshop' ? <button type="button" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.setTaskFace('split')},event)}>Open thread</button> : null}</span> : <span className="v48-step-actions"><span title={n.error || state} style={{marginRight:'auto'}}>{state.split(' · ')[0]}{Number.isFinite(n.elapsedMs)?' · '+n.elapsedMs+' ms':''}</span><button type="button" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:()=>n.agentWork?.role==='step'?u.show('Node',{id:n.id}):u.go('runs')},event)}>History</button>{(!n.agentWork || n.agentWork.runnable) && <button type="button" className="button-reset nodrag" disabled={n.status==='Running'} onClick={event=>executeAction('projects.controls.activate',{handler:async()=>{const result=await u.act(()=>api.runNode(n.id));if(result?.approvalId)u.show('Approve',{id:result.approvalId});}},event)}>Run step</button>}</span>} footc={pinned ? A.inkSoft : stateColor}>
 
       {members.length > 0 && (n.fixed || !n.children?.length) && <div className="canvas-members">{members.map(m => <button key={m.id} data-group-member={m.id} draggable={m.chip || undefined} className="canvas-member nodrag" title={m.chip ? 'Drag ' + m.title + ' out of the group' : 'Open ' + m.title} onDragStart={event => { if (!m.chip) return; event.stopPropagation(); event.dataTransfer.setData('text/plain', m.id); event.dataTransfer.effectAllowed = 'move'; event.currentTarget.dataset.dragged = '1'; }} onDragEnd={event => { if (!m.chip || !onDetach) return; onDetach(m, event); }} onClick={event => { if (event.currentTarget.dataset.dragged === '1') { event.currentTarget.dataset.dragged = ''; return; } executeAction('projects.controls.activate', {handler: () => onMember(m)}, event); }}><span style={{background: A.purple, color: A.onFill}}>{m.title.slice(0, 1)}</span>{m.title}</button>)}</div>}
       {pinned && compact && <div className="v22g-pinned-summary">{pinnedSummary}</div>}
-      <div style={{display: 'grid', gap: 'var(--layout-node-row-gap,4px)', padding: pinned && compact ? 0 : '8px 12px 0'}}>
+      <div className="v48-step-body" style={{display: 'grid', gap: 'var(--layout-node-row-gap,4px)', padding: pinned && compact ? 0 : '8px 10px 6px'}}>
+        {!n.fixed && !n.children?.length && hasOutput && <div className="v48-step-preview" data-node-result="">{n.output != null && n.output !== '' && (!Array.isArray(n.output) || n.output.length) ? <ResultPreview value={n.output}/> : <span>{n.error || (n.status === 'Running' ? 'Running…' : 'Run to inspect output')}</span>}</div>}
         {pinned && !compact && n.type==='thing.you' && <><b>{s.profile.name || 'Not signed in'}</b><span>{s.profile.role || 'No role set'}</span></>}
         {pinned && !compact && n.type==='thing.workshop' && <span>{task?.rules?.join(' · ') || 'No rules set'}</span>}
         {n.fixed && n.type==='thing.session' && <span>{s.workspaces.find(row=>row.id===n.params.workspace)?.name || 'Sessions folder'}</span>}
@@ -538,11 +601,11 @@
               onClick={event => executeAction('projects.controls.activate', {handler: () => u.show('Port menu', {id: n.id, port: port?.id || 'param:' + param.key, paramKey: param?.key, anchor: {x: event.clientX, y: event.clientY}})}, event)}>⋮</button>
           </div>{ports.map(alias=><React.Fragment key={alias.id}>{refusedHere(alias.id)}</React.Fragment>)}</React.Fragment>;
         })}
-        {!pending && !pinned && shown.length > 3 && <button type="button" className="button-reset nodrag canvas-card-more" aria-pressed={compact} style={{justifySelf: 'start', color: SPEC.label}} onClick={event => executeAction('projects.controls.activate', {handler: () => setCompact(!compact)}, event)}>{compact ? `+${shown.length - 3} more` : 'Compact'}</button>}
+        {!pending && !pinned && shown.length > rowLimit && <button type="button" className="button-reset nodrag canvas-card-more" aria-pressed={compact} style={{justifySelf: 'start', color: SPEC.label}} onClick={event => executeAction('projects.controls.activate', {handler: () => setCompact(!compact)}, event)}>{compact ? `+${shown.length - rowLimit} more` : 'Compact'}</button>}
         {n.loop && <div data-node-loop="" style={{color: SPEC.label}} title={'Trigger ' + n.loop.trigger + ' · stops when ' + n.loop.stop + (n.loop.evaluator ? ' · evaluator ' + n.loop.evaluator : '')}>Loop · cap {n.loop.cap} · until {n.loop.stop}</div>}
         {n.dataset && <DatasetEditor n={n} u={u} />}
         {!n.dataset && !n.column && (!n.fixed || n.type==='thing.session') && !n.children?.length && api.addNodeParameter && <div className="flex">{pending&&<button type="button" className="button-reset nodrag" onClick={event=>executeAction('projects.controls.activate',{handler:()=>setCompact(false)},event)}>Parameters</button>}<AddParameter n={n} u={u} /></div>}
-        {!pending && !pinned && n.outputs.length > 0 && !repeatedValue && <div data-node-result="" data-todo="output-summary-expanded" style={{...SLOT, color: result ? SPEC.text : SPEC.label, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block'}} title={result}>{result ? result.replace(/^\w+_out\s+/, '') : wiresIn.length || !n.inputs.length ? 'Run to inspect output' : 'Connect data to inspect output'}</div>}
+
         {approval && <button type="button" className="button-reset nodrag" onClick={e=>u.show('Approve',{id:approval.id,anchor:{x:e.clientX,y:e.clientY}})}>Review</button>}
       </div>
     </D.Node>;
@@ -757,14 +820,21 @@
       if (requestState === 'loaded' || requestState === 'empty')
         setRequestState(s.graph.nodes.length ? 'loaded' : 'empty');
     }, [s.graph.nodes.length]);
+    const hasSession = s.graph.nodes.some(n=>n.fixed&&n.type==='thing.session');
+    const foldedOwner = n => n && (n.fixed || hasSession&&n.agentWork?.role==='session'&&!n.parent);
     // A node whose group is not a node at this level is drawn here, never dropped.
     const atLevel = n => {
-      if(u.canvasTabs?.collapsed&&n.fixed&&n.type!=='thing.session'||s.graph.system||n.application)return false;
+      if(foldedOwner(n)&&n.type!=='thing.session'||s.graph.system||n.application)return false;
       let owner=n.parent||null;const seen=new Set([n.id]);
       while(owner&&owner!==parent){if(seen.has(owner))return false;seen.add(owner);const group=s.graph.nodes.find(x=>x.id===owner);if(!group)return parent===null;if(group.collapsed!==false)return false;owner=group.parent||null;}
       return owner===parent;
     };
     const scope = s.graph.id + ':' + (parent || ''), sourceNodes = s.graph.nodes.filter(atLevel);
+    React.useLayoutEffect(() => {
+      if (!active || preview || parent || requestState !== 'loaded' || s.graph.canvasLayout === 'v48' || canvasTouched.current) return;
+      const frame = window.requestAnimationFrame(() => u.act(() => api.arrangeGraph(true)));
+      return () => window.cancelAnimationFrame(frame);
+    }, [active, requestState, scope, s.graph.canvasLayout]);
     const visible = sourceNodes.map(n => ({...n, ...(layout.scope === scope ? layout.positions[n.id] : {})})),
       node = s.graph.nodes.find(n => n.id === selected.at(-1)),
       wire = s.graph.wires.find(w => w.id === wireId),
@@ -867,6 +937,7 @@
         const center={x:(area.current?.clientWidth/2-view.current.pan.x)/view.current.zoom,y:(area.current?.clientHeight/2-view.current.pan.y)/view.current.zoom,...(parent?{parent}:{})};
         if(e.ctrlKey&&['c','x','v','d'].includes(e.key.toLowerCase())){e.preventDefault();u.act(()=>e.key.toLowerCase()==='c'?api.copyNodes(editable):e.key.toLowerCase()==='x'?api.cutNodes(editable):e.key.toLowerCase()==='d'?api.duplicateNodes(editable):api.pasteNodes(center));}
         if(e.ctrlKey&&e.key.toLowerCase()==='f'){e.preventDefault();u.show('Find node');}
+        if(e.ctrlKey&&e.key.toLowerCase()==='l'){e.preventDefault();u.act(()=>api.arrangeGraph());}
         if(e.shiftKey&&!e.ctrlKey&&!e.altKey&&e.key.toLowerCase()==='a'){e.preventDefault();u.show('Add node',{point:center});}
         if(!e.ctrlKey&&!e.altKey&&e.key.toLowerCase()==='n'){e.preventDefault();u.show('Note',{point:center});}
         if(e.key==='F2'&&node&&!node.fixed){e.preventDefault();u.show('Rename node',{id:node.id,text:node.title});}
@@ -948,7 +1019,9 @@
       setSelectedWires([]);
       setWireId(null);
     });
+    const ownerSocket = (id, port) => {const owner=s.graph.nodes.find(n=>n.fixed&&n.type!=='thing.session'&&port?.startsWith(n.id+':'));return owner ? {id:owner.id,port:port.slice(owner.id.length+1)} : {id,port};};
     const connect = async (out, input) => {
+      out=ownerSocket(out.id,out.port);input=ownerSocket(input.id,input.port);
       const word = p => (TYPE_NAME[p.type] || p.type || 'any').toLowerCase();
       if (out.id === input.id) return;
       const outputPort = s.graph.nodes.find(n=>n.id===out.id)?.outputs.find(p=>p.id===out.port),
@@ -1002,7 +1075,7 @@
         style={SOCKET_STYLE} onContextMenu={e => {
           e.preventDefault();
           e.stopPropagation();
-          u.show('Port menu', {id: n.id, port: p.id, anchor: {x: e.clientX, y: e.clientY}});
+          u.show('Port menu', {...ownerSocket(n.id,p.id), anchor: {x: e.clientX, y: e.clientY}});
         }}><span data-socket-dot="" data-wired={side === 'out' || s.graph.wires.some(w => w.to === n.id && w.toPort === p.id) || undefined} /></RF.Handle>;
     };
     const renderNode = (n, isSelected) => {
@@ -1027,7 +1100,10 @@
     };
     const stale = (s.solveStale || []).filter(id => s.graph.nodes.some(n => n.id === id)).length;
     const shownIds = new Set(visible.map(n => n.id));
+    const sessionNode = visible.find(n => n.fixed && n.type === 'thing.session');
     const edges = (rejected ? [...s.graph.wires,{id:'rejected',rejected:true,from:rejected.from.id,fromPort:rejected.from.port,to:rejected.to.id,toPort:rejected.to.port}] : s.graph.wires)
+      .filter(w => !(foldedOwner(s.graph.nodes.find(n=>n.id===w.from)) && foldedOwner(s.graph.nodes.find(n=>n.id===w.to))))
+      .map(w => { const projected={...w}; if(sessionNode)for(const side of ['from','to']){const owner=s.graph.nodes.find(n=>n.id===w[side]);if(foldedOwner(owner)&&owner.id!==sessionNode.id){projected[side]=sessionNode.id;projected[side+'Port']=owner.id+':'+w[side+'Port'];}} return projected; })
       .filter(w => shownIds.has(w.from) && shownIds.has(w.to)).map(w => {
         const color = w.rejected ? A.err : wireColor(w, s.graph.nodes), shown = s.graph.wireVisibility, portVisibility = s.graph.nodes.find(n=>n.id===w.from)?.portVisibility?.[w.fromPort];
         return {id: w.id, type: 'archhub', source: w.from, target: w.to, sourceHandle: w.fromPort, targetHandle: w.toPort, selectable: !w.rejected, focusable: !w.rejected, selected: selectedWires.includes(w.id),
@@ -1068,11 +1144,9 @@
         const width=area.current.clientWidth-left-right,height=area.current.clientHeight;
         if (width<=48 || height<=144) return;
         // Opening follows pane/node sizing only until input; touching a node does not save the viewport.
-        const fitted=fitCanvasViewport(boxes,width,height,zoomMin,zoomMax,1);
-        if(fitted && fitted.zoom>=.62){updateView({...fitted,pan:{...fitted.pan,x:fitted.pan.x+left}},false);return;}
-        const session=right>0&&boxes.find(box=>box.node.type==='thing.session');
+        const session=boxes.find(box=>box.node.type==='thing.session');
         const x=session?session.x:Math.min(...boxes.map(box=>box.x)),y=Math.min(...boxes.map(box=>box.y));
-        updateView({zoom:.8,pan:{x:left+32-x*.8,y:32-y*.8}},false);
+        updateView({zoom:1,pan:{x:left+52-x,y:124-y}},false);
       };
       const observer=new window.ResizeObserver(frame);
       observer.observe(area.current);
@@ -1100,24 +1174,23 @@
       run: () => executeAction('projects.ds_screens.Run.15', {api, u}),
       connections: () => { setSelected([]); setWireId(s.graph.wires[0]?.id || null); u.setToast(s.graph.wires.length ? 'Select a connection to inspect its declared types.' : 'This workflow has no connections.'); },
       fit: () => fit(),
-      more: () => setMore(value => !value)
+      more: () => setMore(value => !value),
+      arrange: () => u.act(() => api.arrangeGraph())
     }));
     const stateCounts=new Map();
-    const fixedSession=visible.find(node=>node.fixed && node.type==='thing.session'), fixedPosition=fixedSession && (layout.positions[fixedSession.id] || fixedSession);
-    const pinFrame=fixedPosition && {x:fixedPosition.x-318,y:fixedPosition.y-80,height:u.canvasTabs?.collapsed ? 44 : Math.max(...visible.filter(node=>node.fixed && node.type!=='thing.session').map(node=>{const box=layout.positions[node.id] || {...node,h:140};return box.y+box.h;}),fixedPosition.y)+18-(fixedPosition.y-80)};
     for(const node of visible){const state=nodeState(node,false)[0].split(' · ')[0],label=state==='Done'?'complete':state.toLowerCase();stateCounts.set(label,(stateCounts.get(label)||0)+1);}
     React.useLayoutEffect(() => {
       const frame = window.requestAnimationFrame(() => {
-        for (const [panel, narrow] of [[libraryPanel, paneWidth < 1180], [inspectionPanel, paneWidth < 1436]]) {
+        for (const [panel, narrow] of [[libraryPanel, paneWidth < 480], [inspectionPanel, paneWidth < 1436]]) {
           if(narrow) panel.current?.collapse(); else panel.current?.expand();
         }
       });
       return () => window.cancelAnimationFrame(frame);
-    }, [paneWidth < 1180, paneWidth < 1436, u.libraryOpen, Boolean(inspected || wire)]);
+    }, [paneWidth < 480, paneWidth < 1436, u.libraryOpen, Boolean(inspected || wire)]);
     const actionsMenu = <> {more && <div role="menu" aria-label="Canvas actions" data-canvas-more="" onKeyDown={e => { if (e.key === 'Escape') setMore(false); }} style={{position:'absolute',right:0,top:8,display:'grid',minWidth:200,maxHeight:'calc(100% - 16px)',overflow:'auto',padding:6,gap:2,
-          background:A.bgPanel,border:'1px solid '+A.lineSoft,borderRadius:6,zIndex:20}}>{[
+          background:A.bgPanel,border:'1px solid '+A.lineSoft,borderRadius:6,zIndex:20}}><div aria-label="Workflow status" style={{padding:'6px 8px',color:A.inkSoft,fontSize:11}}>{[...stateCounts].map(([label,count])=>count+' '+label).join(' · ')}</div>{[
             ['Add node · Ctrl K', () => executeAction("projects.ds_screens.AddANodeCtrlK.24", {u})], ['New', () => u.act(() => api.newSession())], ['Open…', () => u.act(() => api.openSession())], ['Save · Ctrl S', () => u.act(() => api.saveSession())],
-            ['Save as…', () => u.act(() => api.saveSessionAs())], ['Save as workflow', () => u.act(() => api.saveSession())], ['Save as skill…', () => u.show('Save skill')], ['Add automation', () => u.act(() => api.addAutomation())], ['Workspaces · ' + s.workspaces.length, () => u.show('Workspaces')],
+            ['Save as…', () => u.act(() => api.saveSessionAs())], ['Save as skill…', () => u.show('Save skill')], ['Add automation', () => u.act(() => api.addAutomation())], ['Workspaces · ' + s.workspaces.length, () => u.show('Workspaces')],
             ['Detach session (copy)', () => u.act(() => api.detachSession(selected[0])), selected.length!==1||!s.graph.nodes.find(n=>n.id===selected[0])?.params.session_file],
             ...(embedded ? [['Thread', () => u.setTaskFace(u.taskFace==='split'?'canvas':'split')]] : []),
             ...(embedded && onHandoff ? [['Handoff map',onHandoff]] : []),
@@ -1200,15 +1273,17 @@
          if(preview)return;
          // A wire dropped on empty canvas offers the nodes that can take it (spec Compatible nodes).
          if (!state || state.isValid || state.toHandle || !state.fromHandle || e.target.closest?.('.react-flow__node')) return;
-         u.show('Compatible nodes', {endpoint: {id: state.fromNode.id, side: state.fromHandle.type === 'source' ? 'out' : 'in', port: state.fromHandle.id}, position: toFlow(e)});
+         u.show('Compatible nodes', {endpoint: {...ownerSocket(state.fromNode.id,state.fromHandle.id), side: state.fromHandle.type === 'source' ? 'out' : 'in'}, position: toFlow(e)});
        }}
        onEdgeClick={(e, edge) => { if (edge.id !== 'rejected') { setWireId(edge.id); if(!e.shiftKey&&!e.ctrlKey)setSelected([]); onInspect?.({nodeId:null,wireId:edge.id}); } }}
        onPaneClick={() => { if(preview){onActivate?.();return;} setSelected([]); setWireId(null); setSelectedWires([]); setRejected(null); }}
        selectionOnDrag panOnDrag={[1]} panActivationKeyCode="Space" multiSelectionKeyCode={['Shift','Control','Meta']} selectionKeyCode={null} deleteKeyCode={null}
-       zoomOnDoubleClick={false} connectionLineStyle={{stroke: A.cyan, strokeWidth: 2}} proOptions={{hideAttribution: true}}>{pinFrame && <RF.ViewportPortal><div className="v22g-pinframe" data-folded={u.canvasTabs?.collapsed || undefined} style={{transform:`translate(${pinFrame.x}px,${pinFrame.y}px)`,width:256,height:pinFrame.height}}><div><b>On every canvas</b>{!preview && <button type="button" className="button-reset nodrag nopan" aria-label={'On every canvas · '+(u.canvasTabs.collapsed?'Expand':'Collapse')} aria-expanded={!u.canvasTabs.collapsed} onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>u.saveCanvasTabs({...u.canvasTabs,collapsed:!u.canvasTabs.collapsed}))},event)}>{u.canvasTabs.collapsed?'Show Agent, You, Workshop':'Collapse'}</button>}</div></div></RF.ViewportPortal>}</RF.ReactFlow>
+       zoomOnDoubleClick={false} connectionLineStyle={{stroke: A.cyan, strokeWidth: 2}} proOptions={{hideAttribution: true}} />
     </CanvasContext.Provider>
-    <div data-canvas-overlay="" className="canvas-toolbar">{embedded&&(s.sessionBreadcrumbs||[]).length>0&&<button type="button" className="dx-quiet" aria-label="Parent session" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.leaveSession())},event)}>{s.sessionBreadcrumbs.map(row=>row.title).join(' / ')} / {s.graph.name} · ← Parent</button>}{parent && <button type="button" data-design="group.back" className="dx-quiet" onClick={event=>executeAction("projects.ds_screens.Parent.6",{parent,s,setParent,setSelected},event)}>← {s.graph.nodes.find(node=>node.id===parent)?.title || 'Parent'}</button>}<Btn variant="controls" sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom">{Math.round(zoom * 100)}%</button><Btn variant="controls" sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><button type="button" className="dx-quiet" onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</button></div>
-    {embedded && <><div data-canvas-summary="" aria-label="Workflow status">{[...stateCounts].map(([label,count])=>count+' '+label).join(' · ')}</div></>}
+    {embedded && <div className="v48-canvas-title" data-design="canvas.title"><b>{s.graph.name}</b><span>{visible.filter(n=>!n.fixed&&n.status==='Done').length} of {visible.filter(n=>!n.fixed).length} steps · {visible.some(n=>/approval|waiting/i.test(n.status))?'Needs you':visible.some(n=>n.status==='Running')?'Working':visible.some(n=>/fail|error/i.test(n.status))?'Failed':'Idle'}</span></div>}
+    {visible.some(n=>!n.fixed && n.x*zoom+pan.x>(area.current?.clientWidth||paneWidth)-32) && <button type="button" className="v48-more-steps" data-design="canvas.more" onClick={event=>executeAction('projects.controls.activate',{handler:()=>{const next=visible.filter(n=>!n.fixed&&n.x*zoom+pan.x>(area.current?.clientWidth||paneWidth)-32).sort((a,b)=>a.x-b.x)[0];updateView({zoom,pan:{x:40-next.x*zoom,y:pan.y}});}},event)}>{visible.filter(n=>!n.fixed&&n.x*zoom+pan.x>(area.current?.clientWidth||paneWidth)-32).length} more steps →</button>}
+    <div data-canvas-overlay="" className="canvas-toolbar">{embedded&&(s.sessionBreadcrumbs||[]).length>0&&<button type="button" className="dx-quiet" aria-label="Parent session" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.leaveSession())},event)}>{s.sessionBreadcrumbs.map(row=>row.title).join(' / ')} / {s.graph.name} · ← Parent</button>}{parent && <button type="button" data-design="group.back" className="dx-quiet" onClick={event=>executeAction("projects.ds_screens.Parent.6",{parent,s,setParent,setSelected},event)}>← {s.graph.nodes.find(node=>node.id===parent)?.title || 'Parent'}</button>}<Btn variant="controls" sm ghost aria-label="Zoom out" onClick={event => executeAction("projects.ds_screens.ZoomOut.20", {zoomAt,view}, event)}>−</Btn><button className="button-reset" onClick={event => executeAction("projects.ds_screens.ResetZoom.21", {zoomAt}, event)} title="Reset zoom">{Math.round(zoom * 100)}%</button><Btn variant="controls" sm ghost aria-label="Zoom in" onClick={event => executeAction("projects.ds_screens.ZoomIn.22", {zoomAt,view}, event)}>+</Btn><button type="button" data-design="canvas.fit" className="dx-quiet" onClick={event => executeAction("projects.ds_screens.Fit.23", {fit}, event)}>Fit</button></div>
+
    </div>
    </CanvasPanel>
    {!externalInspector && (inspected || wire) && <><CanvasSeparator className="pane-splitter" aria-label="Resize Inspector" /><CanvasPanel id="canvas-inspection" panelRef={inspectionPanel} collapsible collapsedSize={48} minSize={280} maxSize={480} defaultSize={320} groupResizeBehavior="preserve-pixel-size" onResize={size=>setInspectionRail(size.inPixels<=49)}>
@@ -1260,6 +1335,7 @@
   }
   window.UI.RunModeChip = RunModeChip;
   window.UI.Canvas = Canvas;
+  window.UI.ResultPreview = ResultPreview;
   window.UI.AddField = AddField;
   window.UI.NodeInspector = NodeInspector;
   window.UI.WireInspector = WireInspector;

@@ -2,6 +2,16 @@
 
 ## Next build
 
+## 20261113-0022-60dc0f8
+
+- A session is one piece of work. An agent that starts in a project joins the open piece of work there; a request always goes to the session of that same project and request. An interruption does not end it: the next agent continues on the same file and thread, with a short handover note.
+- Home shows one row per piece of work, with the agents on it as avatars.
+- Settings follows the approved board: no composer or companion over the page, one-line value boxes, a description under each label, real account state, and no rows or sections that do nothing.
+- Known gaps: on a new computer the "agent started" signal is not set up by the installer yet, so the join happens only where that signal exists; OpenCode and Goose do not send it. Canvas step previews, the Library tree and project grouping are still to come.
+- Outlook reply drafts carry one greeting and one closing.
+
+Source: 514b9379..60dc0f8e.
+
 ## 20261112-1644-514b937
 
 - Home shows your open work only: sessions that are live, waiting for you, or from today. Interrupted, archived and stale ones sit under a folded "Older" heading.

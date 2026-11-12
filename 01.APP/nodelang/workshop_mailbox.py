@@ -172,20 +172,27 @@ _GENERIC_ALIASES = {"claude", "claude code", "codex", "opencode", "cursor", "cop
 
 
 def project_of(cwd, paths=()):
-    """ArchHub product is ArchHub. A client workspace (BBC4/Borouge) is its own project."""
-    places = [str(cwd or "")] + [str(path) for path in paths or ()]
-    segments = []
-    for place in places:
-        segments.extend(part for part in place.replace("\\", "/").casefold().split("/") if part)
-    if "bbc4" in segments or "borouge" in segments:
-        return "BBC4"
-    if "10.product" in segments or "00.archub" in segments or "archhub" in segments:
-        return "ArchHub"
-    for place in places:
-        name = Path(place.replace("\\", "/")).name
-        if name:
-            return name
-    return "ArchHub"
+    """Resolve only registered workspace labels, including their git worktrees."""
+    from .workspace_roots_catalogue import read_registered_roots
+    roots, _ = read_registered_roots()
+    places = [Path(str(place)).resolve() for place in [cwd, *(paths or ())] if place]
+    for place in list(places):
+        for parent in (place, *place.parents):
+            marker = parent / '.git'
+            if marker.is_file():
+                text = marker.read_text(encoding='utf-8').strip()
+                if text.startswith('gitdir: '):
+                    gitdir = (parent / text[8:]).resolve()
+                    common = gitdir / 'commondir'
+                    if common.is_file():
+                        places.append((gitdir / common.read_text(encoding='utf-8').strip()).resolve().parent)
+                break
+            if marker.is_dir():
+                break
+    matches = [(len(Path(row['path']).parts), row.get('label') or row['root_id'])
+               for row in roots.values() for place in places
+               if place.is_relative_to(Path(row['path']).resolve())]
+    return max(matches)[1] if matches else ''
 
 
 def _header_targets(message):

@@ -168,3 +168,24 @@ def test_designbuild_appearance_owner(tmp_path, monkeypatch):
     finally:
         client.close()
         server.close()
+
+
+def test_project_uses_registered_workspace_and_worktree(tmp_path, monkeypatch):
+    from nodelang import workspace_roots_catalogue, workshop_mailbox as mailbox
+    root = tmp_path / 'registered'
+    root.mkdir()
+    lane = tmp_path / 'scratch-lane'
+    lane.mkdir()
+    gitdir = root / '.git' / 'worktrees' / 'lane'
+    gitdir.mkdir(parents=True)
+    (gitdir / 'commondir').write_text('../..', encoding='utf-8')
+    (lane / '.git').write_text('gitdir: ' + str(gitdir), encoding='utf-8')
+    monkeypatch.setattr(workspace_roots_catalogue, 'read_registered_roots',
+                        lambda: ({'studio': {'root_id': 'studio', 'label': 'Registered studio', 'path': str(root)}}, None))
+    assert mailbox.project_of(root / 'drawings') == 'Registered studio'
+    assert mailbox.project_of(lane) == 'Registered studio'
+    assert mailbox.project_of(tmp_path / 'unknown') == ''
+    # Project names are data: changing the registration changes the result.
+    monkeypatch.setattr(workspace_roots_catalogue, 'read_registered_roots',
+                        lambda: ({'other': {'root_id': 'other', 'label': 'Another studio', 'path': str(root)}}, None))
+    assert mailbox.project_of(root) == 'Another studio'

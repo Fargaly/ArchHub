@@ -41,6 +41,29 @@ def test_legacy_agent_markers_and_explicit_workflow_kind():
     assert document_kind(document) == 'workflow'
 
 
+def test_every_engine_has_one_declared_category_and_unavailable_cards_have_reasons(monkeypatch):
+    from nodelang.library_engines import LIBRARY_PRESENTATION, library_catalogue, engine_categories, _engine_category
+    from nodelang.pipeline_engines import PIPELINE_ENGINES
+    groups = library_catalogue()
+    declared = {category for category, _ in LIBRARY_PRESENTATION}
+    seen = {}
+    for group in groups:
+        assert group['cat'] in declared, group['cat']
+        for item in group['items']:
+            seen.setdefault(item['engine'], set()).add(item['cat'])
+            if item.get('noEngine'):
+                assert item.get('reason') and not item.get('hidden'), item['id']
+    assert set(PIPELINE_ENGINES) <= set(seen)
+    assert not {engine: cats for engine, cats in seen.items() if len(cats) != 1}
+    assert all(category in declared for category in engine_categories(groups).values())
+    assert sum(item['title'] == 'Schedule' for group in groups for item in group['items']) == 1
+    with pytest.raises(ValueError, match='unclassified.new_engine'):
+        _engine_category('unclassified.new_engine')
+    monkeypatch.setitem(PIPELINE_ENGINES, 'unclassified.new_engine', lambda params, feeds: ({}, ''))
+    with pytest.raises(ValueError, match='unclassified.new_engine'):
+        library_catalogue()
+
+
 def test_external_filename_survives_open_autosave_save_and_reopen(tmp_path):
     owner = SessionFiles()
     path = tmp_path / 'bbc4-af-wfl-all-001-2026-11-08.archhub'

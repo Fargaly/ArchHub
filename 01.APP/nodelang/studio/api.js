@@ -1738,7 +1738,7 @@ api.refreshProjects=async()=>{if(!ready)await api.ready;projectFile();return cop
 api.tickSchedules=async()=>[];
 api.refreshLibraryPorts=async()=>{
  const data=await sessionRequest('catalogue');fileDirectory=data.directory;
- publish({sessionsFolder:data.directory,libraryPorts:data.items,catalogue:data.items.filter(i=>!i.noEngine).map(i=>({id:i.id,name:i.title,family:i.cat,description:i.sub,descriptor:{engine:i.engine}})),graphs:data.sessions.map(row=>({...row,id:row.path,name:row.title})),templates:[...state.templates.filter(row=>String(row.id).startsWith('starter:')),...data.sessions.map(row=>({...row,id:'skill:'+row.id}))]});
+ publish({sessionsFolder:data.directory,libraryPorts:data.items,catalogue:data.items.map(i=>({id:i.id,name:i.title,family:i.cat,description:i.sub,unavailable:!!i.noEngine,reason:i.reason,descriptor:{engine:i.engine}})),graphs:data.sessions.map(row=>({...row,id:row.path,name:row.title})),templates:[...state.templates.filter(row=>String(row.id).startsWith('starter:')),...data.sessions.map(row=>({...row,id:'skill:'+row.id}))]});
  projectFile();return data.items;
 };
 async function refreshGraphs(){return refreshSessionFiles();}

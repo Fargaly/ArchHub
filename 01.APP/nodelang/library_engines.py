@@ -1960,7 +1960,7 @@ LIBRARY_PRESENTATION = (
         ("d_tag_rooms", "Tag rooms", "Tag every untagged room"),
         ("d_place_tags", "Place tags", "Tag every untagged element"),
         ("d_place_sheet", "Place on sheet", "Put named views on a sheet"),
-        ("d_schedule", "Schedule", "A table from the stream"),
+        ("d_schedule", "Table schedule", "A table from the stream"),
         ("d_legend", "Legend", "One entry per symbol"),
     )),
     ("file", (
@@ -2003,6 +2003,98 @@ LIBRARY_PRESENTATION = (
     ("skill", (
         ("sk_skill", "Skill", "A saved graph as one node"),
     )),
+    ('host', (
+        ('h_revit', 'Revit', 'live sessions on this machine'),
+        ('h_autocad', 'AutoCAD', 'line work from the live drawing'),
+        ('h_max', '3ds Max', 'MAXScript / Python in the open scene'),
+        ('h_rhino', 'Rhino', 'RhinoPython in the open model'),
+        ('h_blender', 'Blender', 'Python in the open scene'),
+        ('h_excel', 'Excel', 'open workbooks and their sheets'),
+        ('h_word', 'Word', 'open documents and their paragraphs'),
+        ('h_ppt', 'PowerPoint', 'open decks and their slides'),
+        ('h_outlook', 'Outlook', 'the inbox, newest first'),
+        ('h_notion', 'Notion', 'search your workspace'),
+        ('h_dropbox', 'Dropbox', 'files in your Dropbox folder'),
+        ('h_speckle', 'Speckle', 'commit the wired rows to a branch'),
+    )),
+    ('input', (
+        ('r_walls', 'list_walls', 'pull walls from active view'),
+        ('r_doors', 'list_doors', 'pull doors + swings + marks'),
+        ('r_windows', 'list_windows', 'pull windows + types'),
+        ('r_sheets', 'list_sheets', 'enumerate sheets in set'),
+        ('r_views', 'list_views', 'plans, sections, schedules'),
+        ('r_levels', 'list_levels', 'levels + elevations'),
+        ('r_selection', 'get_selection', 'whatever is selected in host'),
+        ('r_warnings', 'list_warnings', 'host warnings · by severity'),
+        ('r_xl_sheets', 'excel worksheets', 'sheets of the workbook in front'),
+        ('r_doc_paras', 'word paragraphs', 'paragraphs of the document in front'),
+        ('r_ppt_slides', 'powerpoint slides', 'slides of the deck in front'),
+    )),
+    ('shape', (
+        ('f_type', 'where type', 'by family/type'),
+        ('f_cat', 'where category', 'by Revit category'),
+        ('f_level', 'where level', 'by level reference'),
+        ('f_param', 'where parameter', 'predicate on a parameter'),
+        ('f_pred', 'where custom', 'a comparison rule, e.g. item.height >= 3000'),
+    )),
+    ('transform', (
+        ('t_setp', 'set parameter', 'sets a field on the stream'),
+        ('t_move', 'move', 'translation'),
+        ('t_rot', 'rotate', 'rotation'),
+        ('t_scale', 'scale', 'uniform'),
+        ('t_group', 'group by', 'key → list'),
+        ('t_sort', 'sort by', 'asc / desc on key'),
+    )),
+    ('document', (
+        ('a_dims', 'create_dimensions', 'aligned, parallel, baseline'),
+        ('a_tags', 'place_tags', 'tag every untagged element of a category'),
+        ('a_text', 'add_text', 'text note · positioned'),
+        ('a_rooms', 'tag_rooms', 'tag every untagged room in the view'),
+    )),
+    ('document', (
+        ('c_sched', 'build_schedule', 'table from a stream'),
+        ('c_sheet', 'place_on_sheet', 'named views onto a sheet'),
+        ('c_legend', 'make_legend', 'symbol legend block'),
+    )),
+    ('logic', (
+        ('l_if', 'if', 'rule → out (true) / false branches'),
+        ('l_switch', 'switch', 'key → branch a / b / c by its cases'),
+        ('l_loop', 'loop', 'iterate a list: each (first) and out (all)'),
+        ('l_merge', 'merge', 'concat / dedupe streams in + b'),
+    )),
+    ('ai', (
+        ('i_think', 'think', 'reason with the picked model'),
+        ('i_vis', 'vision', 'read a sketch / screenshot with the picked model'),
+        ('i_match', 'match_skill', 'best saved skill for an intent'),
+        ('i_embed', 'embed', 'similar facts from the brain'),
+    )),
+    ('agents', (
+        ('w_workshop', 'Workshop', 'this conversation; routes wired agents into it'),
+        ('w_agent', 'Agent session', 'one live native session through Workshop'),
+        ('w_review', 'Independent review', 'a different agent reviews the wired artifact'),
+    )),
+    ('settings', (
+        ('tool_studio', 'Studio', 'canvas and session workspace settings'),
+        ('tool_workshop', 'Workshop', 'projects, tasks and governed work settings'),
+        ('tool_brain', 'Brain', 'memory, facts and recall settings'),
+        ('tool_baboom', 'BABOOM', 'desktop companion settings'),
+        ('tool_connectors', 'Connectors', 'host bridge settings'),
+        ('tool_cloud', 'Cloud', 'account, devices and relay settings'),
+    )),
+    ('output', (
+        ('o_skill', 'save_skill', 'template this run'),
+        ('o_pdf', 'publish_pdf', 'sheets → PDF files via the live Revit'),
+        ('o_spk', 'push_speckle', 'commit the wired rows to a branch'),
+        ('o_email', 'draft_email', 'draft in Outlook · you send'),
+        ('o_notify', 'notify', 'desktop notification'),
+        ('o_term', 'terminal', 'a shell in a folder this ArchHub admits'),
+    )),
+    ('models', ()),
+    ('files', ()),
+    ('workshop', ()),
+    ('connectors', ()),
+    ('workspaces', ()),
+    ('daily work', ()),
 )
 
 
@@ -2077,81 +2169,6 @@ LEGACY_LIBRARY_ITEM_ENGINES = {'a_dims': {'engine': 'library.dimensions', 'param
                    'params': {'archive_after_idle_days': '20',
                               'stale_claim_after_idle_minutes': '30',
                               'tool': 'workshop'}}}
-LEGACY_LIBRARY_PRESENTATION = (('host',
-  (('h_revit', 'Revit', 'live sessions on this machine'),
-   ('h_autocad', 'AutoCAD', 'line work from the live drawing'),
-   ('h_max', '3ds Max', 'MAXScript / Python in the open scene'),
-   ('h_rhino', 'Rhino', 'RhinoPython in the open model'),
-   ('h_blender', 'Blender', 'Python in the open scene'),
-   ('h_excel', 'Excel', 'open workbooks and their sheets'),
-   ('h_word', 'Word', 'open documents and their paragraphs'),
-   ('h_ppt', 'PowerPoint', 'open decks and their slides'),
-   ('h_outlook', 'Outlook', 'the inbox, newest first'),
-   ('h_notion', 'Notion', 'search your workspace'),
-   ('h_dropbox', 'Dropbox', 'files in your Dropbox folder'),
-   ('h_speckle', 'Speckle', 'commit the wired rows to a branch'))),
- ('read',
-  (('r_walls', 'list_walls', 'pull walls from active view'),
-   ('r_doors', 'list_doors', 'pull doors + swings + marks'),
-   ('r_windows', 'list_windows', 'pull windows + types'),
-   ('r_sheets', 'list_sheets', 'enumerate sheets in set'),
-   ('r_views', 'list_views', 'plans, sections, schedules'),
-   ('r_levels', 'list_levels', 'levels + elevations'),
-   ('r_selection', 'get_selection', 'whatever is selected in host'),
-   ('r_warnings', 'list_warnings', 'host warnings · by severity'),
-   ('r_xl_sheets', 'excel worksheets', 'sheets of the workbook in front'),
-   ('r_doc_paras', 'word paragraphs', 'paragraphs of the document in front'),
-   ('r_ppt_slides', 'powerpoint slides', 'slides of the deck in front'))),
- ('filter',
-  (('f_type', 'where type', 'by family/type'),
-   ('f_cat', 'where category', 'by Revit category'),
-   ('f_level', 'where level', 'by level reference'),
-   ('f_param', 'where parameter', 'predicate on a parameter'),
-   ('f_pred', 'where custom', 'a comparison rule, e.g. item.height >= 3000'))),
- ('transform',
-  (('t_setp', 'set parameter', 'sets a field on the stream'),
-   ('t_move', 'move', 'translation'),
-   ('t_rot', 'rotate', 'rotation'),
-   ('t_scale', 'scale', 'uniform'),
-   ('t_group', 'group by', 'key → list'),
-   ('t_sort', 'sort by', 'asc / desc on key'))),
- ('annotate',
-  (('a_dims', 'create_dimensions', 'aligned, parallel, baseline'),
-   ('a_tags', 'place_tags', 'tag every untagged element of a category'),
-   ('a_text', 'add_text', 'text note · positioned'),
-   ('a_rooms', 'tag_rooms', 'tag every untagged room in the view'))),
- ('compose',
-  (('c_sched', 'build_schedule', 'table from a stream'),
-   ('c_sheet', 'place_on_sheet', 'named views onto a sheet'),
-   ('c_legend', 'make_legend', 'symbol legend block'))),
- ('logic',
-  (('l_if', 'if', 'rule → out (true) / false branches'),
-   ('l_switch', 'switch', 'key → branch a / b / c by its cases'),
-   ('l_loop', 'loop', 'iterate a list: each (first) and out (all)'),
-   ('l_merge', 'merge', 'concat / dedupe streams in + b'))),
- ('ai',
-  (('i_think', 'think', 'reason with the picked model'),
-   ('i_vis', 'vision', 'read a sketch / screenshot with the picked model'),
-   ('i_match', 'match_skill', 'best saved skill for an intent'),
-   ('i_embed', 'embed', 'similar facts from the brain'))),
- ('workshop',
-  (('w_workshop', 'Workshop', 'this conversation; routes wired agents into it'),
-   ('w_agent', 'Agent session', 'one live native session through Workshop'),
-   ('w_review', 'Independent review', 'a different agent reviews the wired artifact'))),
- ('tools',
-  (('tool_studio', 'Studio', 'canvas and session workspace settings'),
-   ('tool_workshop', 'Workshop', 'projects, tasks and governed work settings'),
-   ('tool_brain', 'Brain', 'memory, facts and recall settings'),
-   ('tool_baboom', 'BABOOM', 'desktop companion settings'),
-   ('tool_connectors', 'Connectors', 'host bridge settings'),
-   ('tool_cloud', 'Cloud', 'account, devices and relay settings'))),
- ('output',
-  (('o_skill', 'save_skill', 'template this run'),
-   ('o_pdf', 'publish_pdf', 'sheets → PDF files via the live Revit'),
-   ('o_spk', 'push_speckle', 'commit the wired rows to a branch'),
-   ('o_email', 'draft_email', 'draft in Outlook · you send'),
-   ('o_notify', 'notify', 'desktop notification'),
-   ('o_term', 'terminal', 'a shell in a folder this ArchHub admits'))))
 for _legacy_item, _legacy_binding in LEGACY_LIBRARY_ITEM_ENGINES.items():
     LIBRARY_ITEM_ENGINES.setdefault(_legacy_item, _legacy_binding)
 
@@ -2316,16 +2333,28 @@ def _type_entry(entry):
 
 
 def _engine_category(engine):
+    for category, rows in LIBRARY_PRESENTATION:
+        if any(binding.get(item, {}).get('engine') == engine for item, _title, _summary in rows
+               for binding in (LIBRARY_ITEM_ENGINES, LEGACY_LIBRARY_ITEM_ENGINES)):
+            return category
+    if engine == 'skill':
+        return 'skill'
     families = (
-        (("vision.", "cad."), "read"),
-        (("lines.",), "annotate"),
+        (("vision.", "cad."), "input"),
+        (("lines.",), "watch"),
         (("revit.", "max.", "rhino.", "blender.", "office.", "outlook.", "notion.",
-          "dropbox.", "acad.", "hosts.", "host.", "connector."), "host"),
+          "dropbox.", "acad.", "autocad.", "hosts.", "host.", "connector."), "host"),
         (("brain.", "ai.", "baboom."), "ai"),
-        (("tool.",), "tools"),
+        (("tool.",), "settings"),
         (("trigger.",), "trigger"),
+        (("skills.", "skill."), "skill"),
+        (("control.", "mods."), "logic"),
+        (("library.publish_package",), "output"),
     )
-    return next((category for prefixes, category in families if str(engine).startswith(prefixes)), "logic")
+    category = next((category for prefixes, category in families if str(engine).startswith(prefixes)), None)
+    if category is None:
+        raise ValueError('Uncategorised engine: ' + str(engine))
+    return category
 
 
 def _engine_entry(engine):
@@ -2386,7 +2415,7 @@ def _skill_entry(loaded, items):
                 port['id'] = 'public_' + str(index)
     return {
         "id": "skill:" + skill["id"],
-        "cat": definition.get('category') or "sessions",
+        "cat": "skill",
         "title": skill["title"],
         "sub": "Session · %d nodes" % len(skill["nodes"]),
         "engine": "skill",
@@ -2456,17 +2485,15 @@ def _complete_library(groups):
         if item.get('engine') in ('script.python', 'skill'):
             from .canvas_documents import is_pure
             item['pure'] = is_pure(item['engine'], item.get('params'))
-    order, buckets = [], {}
-    for group in groups:
-        order.append(group["cat"])
-        buckets[group["cat"]] = []
+    categories = engine_categories([{'items': items}])
+    buckets = {category: [] for category, _rows in LIBRARY_PRESENTATION}
     for item in items:
-        category = item.get("cat") or "logic"
+        category = categories.get(item['engine'])
         if category not in buckets:
-            buckets[category] = []
-            order.append(category)
+            raise ValueError('Uncategorised engine: ' + item['engine'])
+        item['cat'] = category
         buckets[category].append(item)
-    groups[:] = [{"cat": category, "items": buckets[category]} for category in order if buckets[category]]
+    groups[:] = [{"cat": category, "items": rows} for category, rows in buckets.items() if rows]
 
 
 def _type_seed_params():
@@ -2491,29 +2518,19 @@ def _type_seed_params_now():
 
 
 def library_catalogue() -> list:
-    """Canonical cards plus hidden compatibility bindings for exact old IDs.
-
-    Generated cards (engines, host tools, skills) are rebuilt on each call.
-    They are not part of the hand-kept seed, so a deleted skill file leaves
-    the catalogue. Ordinary projections omit hidden rows before counts and
-    search; explicit old placements keep their IDs.
-    """
+    """One category tree, including old placement IDs and unavailable-card reasons."""
     from .pipeline_engines import PIPELINE_ENGINES
     for item_id in [key for key in LIBRARY_ITEM_ENGINES if key not in _SEED_ITEM_IDS]:
         del LIBRARY_ITEM_ENGINES[item_id]
-    visible_ids = {item for _category, rows in LIBRARY_PRESENTATION for item, _title, _summary in rows}
-    legacy_rows = {item: (category, title, summary)
-                   for category, rows in LEGACY_LIBRARY_PRESENTATION
-                   for item, title, summary in rows}
+    listed_ids = {item for _category, rows in LIBRARY_PRESENTATION for item, _title, _summary in rows}
     sections = {}
     for category, rows in LIBRARY_PRESENTATION:
         sections.setdefault(category, []).extend(rows)
     for item, wiring in list(LIBRARY_ITEM_ENGINES.items()):
         if item not in _SEED_ITEM_IDS:
             continue
-        if item not in visible_ids:
-            category, title, summary = legacy_rows.get(item, ("compatibility", item, "Existing graph placement binding"))
-            sections.setdefault(category, []).append((item, title, summary))
+        if item not in listed_ids:
+            raise ValueError('Uncategorised Library item: ' + item + ' (' + wiring['engine'] + ')')
     groups = []
     for category, rows in sections.items():
         items = []
@@ -2527,8 +2544,6 @@ def library_catalogue() -> list:
                 "sockets": {side: list(names) for side, names in engine_sockets(wiring["engine"]).items()},
                 "ports": library_item_ports(item, wiring["engine"], title),
             }
-            if item not in visible_ids:
-                entry["hidden"] = True
             legacy = LEGACY_LIBRARY_ITEM_ENGINES.get(item)
             if legacy is not None and legacy != wiring:
                 entry["compatibility"] = {legacy["engine"]: {
@@ -2594,42 +2609,26 @@ def library_item_ports(item: str, engine: str, title: str = "") -> dict:
 
 
 def engine_categories(groups=None) -> dict:
-    """engine -> the category its card is drawn in, for every engine this build runs.
-
-    A library card's category is its own; an engine no card lists (the seed's
-    sketch, CAD, watch, walls, brain and BABOOM cards) is placed by its family.
-    """
+    """Every engine uses the category assigned by the single Library tree."""
     from .pipeline_engines import PIPELINE_ENGINES
-    held = {}
+    categories = {}
+    for category, rows in LIBRARY_PRESENTATION:
+        for item, _title, _summary in rows:
+            for binding in (LIBRARY_ITEM_ENGINES, LEGACY_LIBRARY_ITEM_ENGINES):
+                if item in binding:
+                    categories.setdefault(binding[item]['engine'], category)
+    for item in _canvas_extra_items():
+        categories.setdefault(item['engine'], item['cat'])
+    engines = set(PIPELINE_ENGINES) | STEM_RUN_ENGINES | {'baboom.status', 'baboom.presence', 'skill'}
     if groups is not None:
-        # The served library (graph relations) decides a card's category.
         for group in groups:
-            if group.get("cat") == "compatibility":
-                continue
-            for entry in group.get("items") or ():
-                if entry.get("hidden"):
-                    continue
-                held.setdefault(entry["engine"], group["cat"])
-    else:
-        for category, rows in LIBRARY_PRESENTATION:
-            for item, _title, _summary in rows:
-                if item in LIBRARY_ITEM_ENGINES:
-                    held.setdefault(LIBRARY_ITEM_ENGINES[item]["engine"], category)
-    families = (
-        (("vision.", "cad."), "read"), (("lines.",), "annotate"),
-        (("revit.",), "host"), (("brain.", "ai.", "baboom."), "ai"),
-        (("tool.",), "tools"), (("trigger.",), "trigger"),
-    )
-    for engine in sorted(
-        set(PIPELINE_ENGINES) | STEM_RUN_ENGINES | {"baboom.status", "baboom.presence"}
-    ):
-        if engine in held:
-            continue
-        held[engine] = next(
-            (category for prefixes, category in families if engine.startswith(prefixes)),
-            "logic")
-    return held
-
+            for item in group['items']:
+                categories.setdefault(item['engine'], item['cat'])
+                engines.add(item['engine'])
+    for engine in sorted(engines):
+        if engine not in categories:
+            categories[engine] = _engine_category(engine)
+    return categories
 
 __all__ = [
     "LIBRARY_ENGINES",

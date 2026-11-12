@@ -20,7 +20,10 @@ test('Home and Library show exactly three workflows apart from five agent sessio
     window.opened = []; window.routes = [];
     const graphs = Array.from({length:8}, (_, i) => ({id:String(i), path:'fixture-'+i+'.archhub',
       title:(i<3?'Workflow ':'Agent ')+i, kind:i<3?'workflow':'agent-session'}));
-    const data = {graphs, catalogue:[], templates:[], runs:[], mods:[], tasks:[], settings:[], agents:[],
+    const catalogue = [{id:'clock', name:'Clock node', family:'trigger', description:'Starts a node'},
+      {id:'host', name:'Host node', family:'host', description:'Host node unavailable', unavailable:true,
+        reason:'Needs an attached host node'}];
+    const data = {graphs, catalogue, templates:[], runs:[], mods:[], tasks:[], settings:[], agents:[],
       graph:{nodes:[], wires:[]}, watcher:{geometry:{walls:[]}}, composerAttachments:[]};
     const app = {composerDraft:{}, act:fn=>fn(), setSelectedNodeId:()=>{}, taskFace:'canvas', go:route=>window.routes.push(route)};
     const api = {executeAction:(_id, fn)=>fn(), openSession:async p=>{window.opened.push(p);return {id:p};},
@@ -40,6 +43,15 @@ test('Home and Library show exactly three workflows apart from five agent sessio
   for (const name of ['ds_library.jsx', 'ds_home2.jsx'])
     await page.addScriptTag({content:transformSync(fs.readFileSync(path.join(studio, name),'utf8'),{loader:'jsx'}).code});
   await page.evaluate(() => window.mount('LibraryShelf'));
+  await page.getByLabel('Search nodes', {exact:true}).fill('node');
+  assert.deepEqual(await page.locator('.family-chips button').allTextContents(), ['All', 'trigger', 'host']);
+  for (const category of ['trigger', 'host']) {
+    await page.locator('.family-chips').getByRole('button', {name:category, exact:true}).click();
+    assert.equal(await page.locator('.shelf-node').count(), 1);
+  }
+  assert.equal(await page.getByRole('button', {name:'Add Host node', exact:true}).isDisabled(), true);
+  assert.equal(await page.getByText('Needs an attached host node', {exact:true}).count(), 1);
+  await page.getByLabel('Search nodes', {exact:true}).fill('');
   await page.getByRole('button', {name:'Sessions', exact:true}).click();
   assert.equal(await page.locator('.scroll button').filter({hasText:/^Workflow /}).count(), 3);
   assert.equal(await page.locator('.scroll button').filter({hasText:/^Agent /}).count(), 0);

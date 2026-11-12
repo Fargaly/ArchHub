@@ -8795,7 +8795,9 @@
         "02.TESTS/tests_replica/test_workshop_returned_truth.py",
         "01.APP/nodelang/baboom_nograph.py",
         "02.TESTS/tests_js/settingsmatch.test.cjs",
-        "02.TESTS/tests_replica/test_baboom_shows_on_screen.py"
+        "02.TESTS/tests_replica/test_baboom_shows_on_screen.py",
+        "01.APP/nodelang/nograph_launcher.py",
+        "01.APP/nodelang/window_commands.py"
       ]
     },
     "CARDPOLISH": {

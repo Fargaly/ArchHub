@@ -554,3 +554,6 @@ Final TESTISO verification: TESTISO release result: 224 passed, 0 failed through
 
 - F169 release compatibility: parameter sockets retain the user's typed reference, including opaque/nonexistent file values; file consumers resolve that reference against the document. The new portability court now wires the parameter into a real reader and checks both the unchanged reference and actual resolved target after moving the folder. Pre-lane tests/assertions unchanged. Combined owner, compiled Studio parameter/socket, approval, move and isolation checks: 26 passed, 1 warning in 19.11s; protected write attempts: 0.
 
+
+- Final release-set transport repair: 1 failed, 782 passed, 1 skipped, 1 warning in 481.32s; the sole failure was Windows WinError 10053 on the existing invalid-session 403 assertion. Deterministic RED showed 0 of 22 request bytes consumed. The existing HTTP handler now drains only bounded early-refused POST bodies with the existing Workshop worker_join_ms budget before closing; admission, CSRF, request limits and routing unchanged. Bounded/oversized/negative/malformed length and existing real HTTP assertions: 12 passed, 1 warning in 6.63s; protected write attempts: 0. No pre-lane assertion modified.
+

@@ -7,13 +7,16 @@ render.py seeds a disposable profile through the real task and file owners: one 
 Pairs (frozen v48 left, this worktree's compiled Studio right): `home-pair-*.png` and `canvas-pair-*.png` at 1920x1032, 1366x768 and 1009x940. `canvas-planned-app-1920x1032.png` shows the plan-only session.
 
 Asserted by render.cjs on the rendered app:
-- Home cards for steps with output hold a table, an image or text from the step's own result, never an empty box; the held step carries Approve / Ask why / Reject and no preview.
-- The Send label fits inside its one button together with its icon.
-- No number is drawn over the avatar initials in session rows.
-- A name that fits two lines is shown on two lines.
-- The plan-only session has nodes plan-1 and plan-2 on its canvas; the title pill and the Inspector both read "0 of 2 steps".
+- Home cards for steps with output hold a table, an image or text from the step's own result, never an empty box.
+- The held step carries Approve / Ask why / Reject and reads as named rows; outside its Details disclosure it has no braces and no folder path.
+- The Send label fits inside its one button together with its icon; no number is drawn over avatar initials; a name that fits two lines is shown on two lines.
+- The last thread line scrolls clear of the floating composer.
+- The open list has no row for the four-day-old session or the interrupted one; both sit under one collapsed "Older" heading with count 2; no row title is an agent label (the labelled session shows its scope).
+- The plan-only session shows its two steps left to right as a view projection (no graph node, no button, state "Planned"); after 5 s the session is not dirty; the title pill and the Inspector both read "0 of 2 steps".
 - On the five-step session the pill and the Inspector read the same count.
 
-One preview component (`ResultPreview` in ds_screens.jsx) draws Home cards, Canvas nodes and the Inspector list.
+Open finding, not fixed here: render.py prints that the plan-only file is REWRITTEN after its first Canvas open. The owner open route does not write (test_opening_a_planned_session_never_writes_its_file); the write comes from the Canvas first-open auto-arrange, api.arrangeGraph(true) in ds_screens.jsx, present since fe371217.
 
-Remaining differences from the design: previews draw the step's real result (table, text, stored thumbnail), not the reference's CAD sheet tiles or file icons; the approval card shows the run's parameters instead of the design's To / Attached rows; plan steps are placed as note-type nodes and show a "plan step" switch; project subgroups inside sections (item D) were not built; spacing is approximate. No push, install or release; installed behaviour is not claimed.
+One preview component (ResultPreview in ds_screens.jsx) draws Home cards, Canvas nodes and the Inspector list.
+
+Remaining differences from the design: previews draw the step's real result, not the reference's CAD sheet tiles or file icons; the approval rows are the run's named parameters, with no undo row because the approval record carries no such field; projected plan steps are drawn cards joined by a line, not graph nodes with wires, and are not written when a plan is recorded; project subgroups were not built; spacing is approximate. No push, install or release; installed behaviour is not claimed.

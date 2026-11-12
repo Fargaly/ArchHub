@@ -24,11 +24,30 @@ const sizes=[[1920,1032],[1366,768],[1009,940]],designUrl='file:///C:/Users/farg
   assert.equal(await app.locator('.resume-row .agent-avatar>small').evaluateAll(rows=>rows.filter(row=>row.offsetParent!==null).length),0);
   // A3: a long name wraps to two lines and is not cut.
   const long=await app.locator('.resume-row .dx-task b').filter({hasText:'Check every detail'}).evaluate(el=>{const range=document.createRange();range.selectNodeContents(el);const lines=new Set([...range.getClientRects()].map(rect=>Math.round(rect.top))).size,style=window.getComputedStyle(el);return {lines,shown:Math.round(el.clientHeight/parseFloat(style.lineHeight)),width:el.clientWidth};});assert.equal(long.lines,2,JSON.stringify(long));assert.equal(long.shown,2,JSON.stringify(long));
+  // 4: the held step reads as rows; no raw JSON and no folder path outside the Details disclosure.
+  const card=await app.locator('[data-resume-step="demo-4"] [data-approval]').evaluate(el=>{const copy=el.cloneNode(true);copy.querySelectorAll('details').forEach(node=>node.remove());return copy.innerText;});
+  assert.match(card,/reviewed-detail\.txt/);assert.ok(!/[{}]|[A-Za-z]:\\|AppData/.test(card),card);
+  // 5: the last thread line scrolls clear of the floating composer.
+  const clear=await app.evaluate(()=>{const last=[...document.querySelectorAll('.resume-thread>button')].at(-1);last.scrollIntoView({block:'end'});return {line:last.getBoundingClientRect().bottom,composer:document.querySelector('.global-composer form').getBoundingClientRect().top};});
+  assert.ok(clear.line<=clear.composer,JSON.stringify(clear));
+  // 6: the open list holds live, waiting and today's sessions; the rest sit under one collapsed Older heading; titles name the work.
+  const older=app.locator('[data-home-section="Older / archived"]>.home-section-heading');
+  assert.equal(await older.getAttribute('aria-expanded'),'false');assert.match(await older.innerText(),/Older\s*2$/);
+  const titles=await app.locator('.resume-row .dx-task b').allTextContents();
+  assert.ok(!titles.some(title=>/Last week model audit|Interrupted export run/.test(title)),JSON.stringify(titles));
+  assert.ok(!titles.some(title=>/^[^/]{1,40} \/ [^/]+ \/ /.test(title)),JSON.stringify(titles));
+  assert.ok(titles.includes('Check the door schedule against the standard'),JSON.stringify(titles));
+  assert.equal(await app.locator('[data-home-section="Earlier this week"]').count(),0);
+  await app.locator('.resume-task').evaluate(el=>{el.scrollTop=0;});
   await shots('home');
   // C: a planned session shows its steps as nodes; the pill and the Inspector read the same count.
   const openCanvas=async(id,title)=>{await home();await app.evaluate(id=>window.ArchHubAPI.openTaskGraph(id),id);await app.locator('.dx-task').filter({hasText:title}).first().dblclick();await app.locator('[data-design="session.node"]').waitFor();await app.locator('[data-design="session.node"]>.node-header').click();await app.getByRole('tab',{name:'This task',exact:true}).click();};
   await openCanvas(input.planned,'Check every detail');
-  await app.locator('[data-graph-node="plan-1"]').waitFor();assert.equal(await app.locator('[data-graph-node="plan-2"]').count(),1);
+  await app.locator('[data-plan-step="1"]').waitFor();assert.equal(await app.locator('[data-plan-step]').count(),2);
+  assert.equal(await app.locator('[data-graph-node^="plan-"]').count(),0);assert.equal(await app.locator('[data-plan-projection]').getByRole('button').count(),0);
+  assert.deepEqual(await app.locator('[data-plan-step] span').allTextContents(),['Planned','Planned']);
+  const boxes=await app.locator('[data-plan-step]').evaluateAll(rows=>rows.map(row=>row.getBoundingClientRect().toJSON()));assert.ok(boxes[1].left-boxes[0].right>0&&Math.abs(boxes[1].top-boxes[0].top)<1,JSON.stringify(boxes));
+  await app.waitForTimeout(5000);assert.equal(await app.evaluate(()=>!!window.ArchHubAPI.getSnapshot().sessionDirty),false);
   const pill=await app.locator('[data-design="canvas.title"] span').innerText(),line=await app.locator('.v48-progress-line').innerText();
   assert.match(pill,/^0 of 2 steps/);assert.match(line,/^0 of 2 steps done, now Read details index/);
   await app.screenshot({path:path.join(out,'canvas-planned-app-1920x1032.png')});
@@ -39,6 +58,6 @@ const sizes=[[1920,1032],[1366,768],[1009,940]],designUrl='file:///C:/Users/farg
   assert.ok(await app.locator('.v48-made img').count()>=1);
   await design.locator('.app-rail [data-go=canvas]').click();
   await shots('canvas');
-  assert.deepEqual(errors,[]);console.log('PASS previews: Home cards 4 made + 1 held; Send fits; no avatar number; two-line name; planned canvas "'+pill+'" = Inspector "'+line+'"; details canvas "'+pill2+'" = "'+line2+'"');
+  assert.deepEqual(errors,[]);console.log('PASS previews: Home cards 4 made + 1 held as rows; Send fits; no avatar number; two-line name; thread clear of composer; Older 2 collapsed, work titles; planned canvas (view only) "'+pill+'" = Inspector "'+line+'"; details canvas "'+pill2+'" = "'+line2+'"');
  }finally{await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

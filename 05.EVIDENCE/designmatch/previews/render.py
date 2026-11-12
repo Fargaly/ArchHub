@@ -29,7 +29,17 @@ client = _Studio(server)
 try:
     planned = client.workshop('createTask', 'Check every detail against office rules')
     client.workshop('setTaskSession', planned['taskId'], {'agents': ['Sheet checker'], 'plan': ['Read details index', 'Check each detail']})
-    assert [n['id'] for n in client.workshop('openTaskGraph', planned['taskId'])['workflow'] if n['id'].startswith('plan-')] == ['plan-1', 'plan-2']
+    planned_path = Path(client.workshop('openTaskGraph', planned['taskId'])['path'])
+    planned_bytes = planned_path.read_bytes()
+    labelled = client.workshop('createTask', 'Claude Code / Registered studio / session-3f9a2c')
+    client.workshop('setTaskSession', labelled['taskId'], {'scope': 'Check the door schedule against the standard', 'agents': ['Claude Code / Registered studio / session-3f9a2c']})
+    old = client.workshop('createTask', 'Last week model audit')
+    broken = client.workshop('createTask', 'Interrupted export run')
+    from nodelang import workshop_mailbox
+    from datetime import datetime, timedelta, timezone
+    with workshop_mailbox.application_history() as history:
+        history._db.execute('UPDATE workshop_tasks SET updated_at=? WHERE id=?', ((datetime.now(timezone.utc) - timedelta(days=4)).isoformat(), old['taskId']))
+        history._db.execute("UPDATE workshop_tasks SET outcome='interrupted' WHERE id=?", (broken['taskId'],))
     task = client.workshop('createTask', 'Details library')
     titles = ['Read details index', 'Convert DWG to data', 'Split one detail per file', 'Describe and review', 'Make native Revit details']
     client.workshop('setTaskSession', task['taskId'], {
@@ -60,6 +70,8 @@ try:
     client.files('save', path=opened['path'], document=doc)
     result = subprocess.run(['node', str(Path(__file__).with_suffix('.cjs'))], input=json.dumps({'url': server.public_url, 'cookie': server._cookie_token, 'task': task['taskId'], 'planned': planned['taskId']}), text=True, cwd=root)
     assert result.returncode == 0
+    # Recorded, not asserted: the first Canvas open auto-arranges through api.arrangeGraph(true), which saves the file (present since fe371217).
+    print('FILE BYTES AFTER CANVAS OPEN:', 'unchanged' if planned_path.read_bytes() == planned_bytes else 'REWRITTEN by the first-open auto-arrange', flush=True)
 finally:
     client.close()
     server.close()

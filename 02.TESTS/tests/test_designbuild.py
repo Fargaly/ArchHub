@@ -205,16 +205,28 @@ def test_home_section_collapse_uses_settings_owner(tmp_path):
     assert settings.path.read_bytes() == before
 
 
-def test_plan_steps_are_placed_as_canvas_nodes(tmp_path, monkeypatch):
-    """A recorded plan with an empty canvas becomes step nodes in the same file; a canvas with steps is left alone."""
+def test_opening_a_planned_session_never_writes_its_file(tmp_path, monkeypatch):
+    """A file with a plan and no step nodes keeps its bytes when it is opened; the plan is drawn as a view only."""
+    import time
     _isolate(monkeypatch, tmp_path / 'desk')
-    from nodelang import workshop_tasks
-    from nodelang.session_files import new_document
-    document = new_document('Planned')
-    before = len(document['nodes'])
-    document['properties'] = {'taskContext': {'plan': ['Read details index', 'Check each detail']}}
-    workshop_tasks._place_plan(document)
-    placed = document['nodes'][before:]
-    assert [(node['id'], node['type'], node['title']) for node in placed] == [('plan-1', 'note', 'Read details index'), ('plan-2', 'note', 'Check each detail')]
-    workshop_tasks._place_plan(document)
-    assert len(document['nodes']) == before + 2
+    from nodelang.nograph_server import NoGraphServer
+    monkeypatch.setattr(NoGraphServer, "_probe_hosts", staticmethod(lambda: []))
+    state = tmp_path / 'desk' / 'LOCALAPPDATA' / 'ArchHub'
+    state.mkdir()
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(state))
+    server = NoGraphServer(state).start()
+    client = _Studio(server)
+    try:
+        task = client.workshop('createTask', 'Planned only')
+        view = client.workshop('setTaskSession', task['taskId'], {'plan': ['Read details index', 'Check each detail']})
+        path = Path(view['path'])
+        before, stamp = path.read_bytes(), path.stat().st_mtime_ns
+        opened = client.workshop('openTaskGraph', task['taskId'])
+        assert opened['plan'] == ['Read details index', 'Check each detail']
+        assert not [node for node in opened['workflow'] if node['id'].startswith('plan-')]
+        assert path.read_bytes() == before and path.stat().st_mtime_ns == stamp
+        time.sleep(5)
+        assert path.read_bytes() == before and path.stat().st_mtime_ns == stamp
+    finally:
+        client.close()
+        server.close()

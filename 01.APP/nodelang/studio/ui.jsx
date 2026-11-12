@@ -14,6 +14,14 @@
   const useApp = () => React.useContext(Ctx);
   // F178.2: no dependency label until the task owner supplies a real blocked_by field.
   const blockedDependencyReason = () => '';
+  // Named parameters of a held run as readable rows: a file shows its name, never its folder path.
+  const approvalRows = text => {
+    let held = null;
+    try { held = JSON.parse(text); } catch (error) { console.warn('Approval text is not structured; shown as written: ' + error.message); return null; }
+    const named = held && typeof held === 'object' && held.parameters && typeof held.parameters === 'object' && !Array.isArray(held.parameters) ? Object.entries(held.parameters) : [];
+    const leaf = value => String(typeof value === 'object' && value !== null ? JSON.stringify(value) : value).replace(/(?:[A-Za-z]:[\\/]|\\\\)[^\n"]+/g, path => path.trim().split(/[\\/]/).filter(Boolean).pop() || path);
+    return named.length ? named.slice(0, 8).map(([name, value]) => [name.replace(/_/g, ' '), leaf(value)]) : null;
+  };
   const taskRowReason = task => {
     const state = String(task.rowState || '').toLowerCase().replace(/_/g, ' ');
     if (state === 'interrupted' || task.outcome === 'interrupted') return 'interrupted';
@@ -297,7 +305,7 @@
           <Chip c={c.status === 'pending' ? A.warn : c.status === 'failed' ? A.err : A.ok}>{c.status === 'pending' ? 'Needs your OK' : word}</Chip>
         </div>
         {c.summary && <p style={{fontSize: 13, margin: 0, color: A.inkSoft, lineHeight: c.approvalKind === 'canvas' ? 1.45 : undefined}}>{c.summary}</p>}
-        {c.text ? <div><div style={{fontSize: 11, color: A.inkSoft, marginBottom: 4}}>{c.textLabel || 'Text'}</div><pre style={{margin: 0, whiteSpace: 'pre-wrap', font: '13px/1.45 Inter, sans-serif', background: A.bgSoft, border: '1px solid ' + A.line, borderRadius: A.rad.md, padding: '10px 12px'}}>{c.text}</pre></div> : null}
+        {c.text && compact && approvalRows(c.text) ? <><dl className="approval-rows">{approvalRows(c.text).map(([name,value])=><React.Fragment key={name}><dt>{name}</dt><dd>{value}</dd></React.Fragment>)}</dl><details className="approval-details"><summary>Details</summary><pre>{c.text}</pre></details></> : c.text ? <div><div style={{fontSize: 11, color: A.inkSoft, marginBottom: 4}}>{c.textLabel || 'Text'}</div><pre style={{margin: 0, whiteSpace: 'pre-wrap', font: '13px/1.45 Inter, sans-serif', background: A.bgSoft, border: '1px solid ' + A.line, borderRadius: A.rad.md, padding: '10px 12px'}}>{c.text}</pre></div> : null}
         {decisionError && <p role="alert">{decisionError}</p>}
         {c.status === 'pending' ? <div className="flex" style={{gap: 8}}><Btn p sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.ApproveOnce.13", {decide}, event)}>Approve</Btn>{c.approvalKind==='canvas' && <Btn sm disabled={busy} onClick={event=>executeAction('projects.controls.activate',{handler:()=>{const target=c.taskId||c.work||u.task,key=JSON.stringify(['task-file',target]);u.setComposerDraft(current=>({...current,[key]:{text:'Why does '+c.title+' need approval?',revision:(current[key]?.revision||0)+1}}));u.close();return u.openTaskFile(target,'split');}},event)}>Ask why</Btn>}<Btn sm={compact} disabled={busy} onClick={event => executeAction("sharedUI.Decline.15", {decide}, event)}>{c.approvalKind==='canvas'?'Reject':'Deny'}</Btn></div> : <p style={{margin: 0, color: c.status === 'approved' ? A.ok : c.status === 'failed' ? A.err : A.inkSoft}}>{word}</p>}
       </Card>;

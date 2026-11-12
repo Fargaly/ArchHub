@@ -203,10 +203,7 @@ def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, de
         owner = next((n for n in document['nodes'] if n['id'] == (node.get('bind') or {}).get('node')), node)
         key = (node.get('bind') or {}).get('param', 'value')
         entry = next((d for d in owner.get('paramDefs', []) if d['id'] == key), {})
-        value = coerce(node['params'].get('type', 'json'), value, entry)
-        if node['params'].get('type') in ('file', 'folder', 'path'):
-            value = resolve_file_parameter(value, (continuation or {}).get('path'))
-        return {'value': value}, str(value)
+        return {'value': coerce(node['params'].get('type', 'json'), value, entry)}, str(value)
     if engine in ('data.dataset', 'data.field'):
         from .node_datasets import outputs as dataset_outputs
         return dataset_outputs(node, feeds)
@@ -1345,12 +1342,12 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
             each_state = None
             def run_once(plan):
                 params, bound = _params_and_feeds(node, engine, dict(plan))
-                for name in file_parameters(node):
+                for name in file_parameters(node) if engine != PARAM_ENGINE else ():
                     if name in params:
                         params[name] = resolve_file_parameter(params[name], path)
                 entry = known.get(node.get('item')) or next((r for r in known.values() if r['engine'] == engine), {})
                 for port in node_ports(node, node.get('ports') or entry.get('ports', {}))['target']:
-                    if port.get('type') == 'file' and port['id'] in bound:
+                    if engine != PARAM_ENGINE and port.get('type') == 'file' and port['id'] in bound:
                         bound[port['id']] = resolve_file_parameter(bound[port['id']], path)
                 return _dispatch_node(
                     document, node, engine, params, bound,

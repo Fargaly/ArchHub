@@ -551,3 +551,6 @@ Final TESTISO verification: TESTISO release result: 224 passed, 0 failed through
 
 - Exact release-set follow-up: unrun Idle nodes from a partial Run must not be cached as completed. Linked calls still enter their existing child owner and record invocation history; child run identity is saved so completed child effects are reused. Existing agentwork browser, linked-history and checkpoint assertions unchanged: 3 passed, 1 warning in 36.83s. Initial full-set diagnostics retained in .cache/final-pytest.log until the final rerun.
 
+
+- F169 release compatibility: parameter sockets retain the user's typed reference, including opaque/nonexistent file values; file consumers resolve that reference against the document. The new portability court now wires the parameter into a real reader and checks both the unchanged reference and actual resolved target after moving the folder. Pre-lane tests/assertions unchanged. Combined owner, compiled Studio parameter/socket, approval, move and isolation checks: 26 passed, 1 warning in 19.11s; protected write attempts: 0.
+

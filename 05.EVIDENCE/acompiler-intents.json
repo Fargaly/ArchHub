@@ -16,6 +16,7 @@
     "02.TESTS/tests_replica/test_run_resume.py",
     "02.TESTS/tests_replica/test_portable_parameters.py",
     "02.TESTS/tests_js/run_resume.test.cjs",
+    "02.TESTS/tests_js/apptidy_sessions.test.mjs",
     "04.DOCS/FAILURE_LOG.md"
   ]
 },

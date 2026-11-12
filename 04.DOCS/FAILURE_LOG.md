@@ -536,3 +536,7 @@ Final TESTISO verification: TESTISO release result: 224 passed, 0 failed through
 
 - Final release-set transport repair: 1 failed, 782 passed, 1 skipped, 1 warning in 481.32s; the sole failure was Windows WinError 10053 on the existing invalid-session 403 assertion. Deterministic RED showed 0 of 22 request bytes consumed. The existing HTTP handler now drains only bounded early-refused POST bodies with the existing Workshop worker_join_ms budget before closing; admission, CSRF, request limits and routing unchanged. Bounded/oversized/negative/malformed length and existing real HTTP assertions: 12 passed, 1 warning in 6.63s; protected write attempts: 0. No pre-lane assertion modified.
 
+
+- Exact F329 upstream proof added: a separate integer Parameter node feeds only effect3; changing it solves that parameter, leaves effects1/2 Done, marks only effect3 Out of date, and Run yields counts 1/1/2. Isolated result: 1 passed, 1 warning in 0.80s; protected write attempts: 0.
+- Latest exact release set: 1 failed, 786 passed, 1 skipped, 1 warning in 491.26s. Sole remaining assertion conflict predates this lane: apptidy_sessions.test.mjs checks zero Workflows buttons across the shelf, while studio_workflows_categories.test.cjs requires the Workflows filter in that shelf. Product and original assertions untouched; a two-line tab-scope patch is prepared in .cache/library-tab-scope-proposal.patch for founder decision under the explicit no-assertion-loosening instruction.
+

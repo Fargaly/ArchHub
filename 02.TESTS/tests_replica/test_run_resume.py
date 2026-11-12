@@ -159,6 +159,28 @@ def test_edit_while_waiting_replaces_card_without_repeating_success(running):
     assert counts == {'one': 1, 'two': 1, 'three': 1}
 
 
+def test_upstream_parameter_only_invalidates_third_effect(running):
+    from nodelang import canvas_documents, session_files
+    path, counts, run = running
+    document = session_files.read_document(path)
+    document['nodes'].append({'id': 'tail-input', 'type': 'param.value',
+                              'params': {'type': 'integer', 'value': 1}, 'position': {'x': 300, 'y': 300}})
+    document['nodes'][2]['paramDefs'] = [{'id': 'tail', 'name': 'Tail', 'type': 'integer'}]
+    document['nodes'][2]['params']['tail'] = 0
+    document['wires'].append({'id': 'tail-wire', 'from': {'node': 'tail-input', 'socket': 'value'},
+                              'to': {'node': 'three', 'socket': 'param:tail'}})
+    session_files.write_document(path, document)
+    approve(run())
+    assert counts == {'one': 1, 'two': 1, 'three': 1}
+    def change(document):
+        document['nodes'][3]['params']['value'] = 2
+        return ['tail-input']
+    changed, _ = canvas_documents.edit(path, 'test', 'change upstream tail parameter', change)
+    assert [n['result']['status'] for n in changed['nodes'][:3]] == ['Done', 'Done', 'Out of date']
+    assert run()['succeeded']
+    assert counts == {'one': 1, 'two': 1, 'three': 2}
+
+
 def test_compiled_browser_uses_same_run_and_existing_approve_card(running):
     from nodelang.nograph_server import NoGraphServer
     path, counts, _run = running

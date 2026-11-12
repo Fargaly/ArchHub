@@ -334,10 +334,12 @@ const {chromium} = require('playwright');
           assert.deepEqual(result.cut, [], `${size.width} ${route}: cut ${JSON.stringify(result.cut)}`);
           assert.deepEqual(result.strips, [], `${size.width} ${route}: opaque strip ${JSON.stringify(result.strips)}`);
           assert.equal(result.footer,false);
-          assert.equal(result.composer,'fixed', `${route} composer must float`);
+          // Board r1963: Settings has no composer at all; every other screen keeps the floating one.
+          if(route==='Settings')assert.equal(result.composer,null, `${route} has no composer`);
+          else assert.equal(result.composer,'fixed', `${route} composer must float`);
           assert.equal(result.bottom,size.height);
           if(route==='Canvas')await page.screenshot({path:path.resolve('.cache',`designv22g-shell-${size.width}.png`)});
-          console.log(`PASS fluid shell ${size.width}x${size.height} ${route}: cut=0 opaqueStrip=0 floatingComposer=true`);
+          console.log(`PASS fluid shell ${size.width}x${size.height} ${route}: cut=0 opaqueStrip=0 ${route==='Settings'?'composer=absent':'floatingComposer=true'}`);
         }
       }
       await page.setViewportSize({width:1009,height:940});

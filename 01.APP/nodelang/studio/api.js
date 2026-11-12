@@ -1853,7 +1853,7 @@ api.runSelection=ids=>api.runNode(ids);
 api.setNodeFlags=async(id,values)=>fileEdit(d=>Object.assign(d.nodes.find(n=>n.id===id),values),[id]);
 api.forkNode=async id=>{const result=await sessionRequest('fork-node',{document:portableDocument(),node:id});fileEdit(d=>{d.nodes=result.document.nodes;d.wires=result.document.wires;});return state.graph.nodes.find(n=>n.id===result.ids[0]);};
 api.arrangeGraph=async(initial=false)=>fileEdit(d=>{
- const session=d.nodes.find(n=>n.fixed&&n.type==='thing.session'),nodes=d.nodes.filter(n=>(!n.fixed&&(!session||(n.agentWork?.role!=='session'||n.params?.workshop_step))||n===session)&&!n.parent),ids=new Set(nodes.map(n=>n.id));
+ const session=d.nodes.find(n=>n.fixed&&n.type==='thing.session'),nodes=d.nodes.filter(n=>(!n.fixed&&(!session||(n.agentWork?.role!=='session'||n.params?.workshop_step&&!d.nodes.some(row=>row.agentWork?.owner===n.id)))||n===session)&&!n.parent),ids=new Set(nodes.map(n=>n.id));
  const incoming=new Map(nodes.map(n=>[n.id,[]])),rank=new Map(),order=new Map(nodes.map((n,i)=>[n.id,i]));
  for(const w of d.wires)if(ids.has(w.from.node)&&ids.has(w.to.node))incoming.get(w.to.node).push(w.from.node);
  const left=nodes.filter(n=>n!==session&&session&&incoming.get(session.id).includes(n.id));

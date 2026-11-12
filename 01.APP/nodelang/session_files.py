@@ -1130,7 +1130,7 @@ def split_sessions(path):
     return saved
 
 
-def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, plan_only=False, cached=(), only=None, path=None, _resume=None, _each=None, _source=None, _parent=None):
+def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, plan_only=False, cached=(), only=None, path=None, again=False, _resume=None, _each=None, _source=None, _parent=None):
     """Validate the whole plan before invoking existing engines in wire order."""
     from collections import deque
     from .library_engines import STEM_RUN_ENGINES
@@ -1194,7 +1194,47 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
                 sockets = {p['id'] for p in node_ports(node, base or entry['ports'])[side]}
                 if any(wire[end]['socket'] not in sockets for wire in wires):
                     raise ValueError('Unknown socket on '+node.get('title',key))
+    run = None
+    if only is None:
+        signatures = {key: hashlib.sha256(json.dumps({
+            'node': {k: v for k, v in nodes[key].items() if k not in ('result', 'position', 'title', 'color', 'icon')},
+            'incoming': incoming[key]}, sort_keys=True).encode()).hexdigest() for key in nodes}
+        previous = document.get('properties', {}).get('canvasRun', {})
+        invalid = canvas_documents.downstream(document, [key for key in nodes if signatures[key] != previous.get('inputs', {}).get(key)])
+        if previous and (invalid or again) and _resume is None:
+            from .hook_decision import ask_reviews, withdraw_approval
+            pending = {c['id'] for c in ask_reviews() if c['status'] == 'pending'}
+            waiting_nodes = [key for key in nodes if nodes[key].get('result', {}).get('status') == 'Waiting for approval']
+            invalid.update(canvas_documents.downstream(document, waiting_nodes))
+            for key in waiting_nodes:
+                identity = nodes[key]['result'].get('output', {}).get('approvalId')
+                if identity in pending:
+                    withdraw_approval(os.environ, identity, 'canvas input changed' if not again else 'Run all again')
+        run = {'id': previous.get('id') or str(uuid4()), 'inputs': signatures}
+        if again:
+            run['id'] = str(uuid4())
+        elif _resume is None:
+            _resume = {key: copy.deepcopy(nodes[key]['result']) for key in order
+                       if key not in invalid and nodes[key].get('result')
+                       and nodes[key]['result'].get('status') != 'Out of date'}
+        document.setdefault('properties', {})['canvasRun'] = run
+
+    def finish(results, approval_id=None):
+        if run is not None:
+            for key, result in results.items():
+                nodes[key]['result'] = copy.deepcopy(result)
+        answer = {'ok': True, 'succeeded': all(r['status'] in ('Done', 'Disabled', 'Skipped') for r in results.values()),
+                  'results': results, 'order': order}
+        if run is not None:
+            answer['run'] = run
+        if approval_id:
+            answer['approvalId'] = approval_id
+        return answer
+
     results = copy.deepcopy(_resume or {})
+    waiting = next((r.get('output', {}).get('approvalId') for r in results.values() if r.get('status') == 'Waiting for approval'), None)
+    if waiting:
+        return finish(results, waiting)
     outputs = {key: value.get('output', {}) for key, value in results.items() if value.get('status') in ('Done', 'Solved', 'Skipped')}
     for key in order:
         if key in results:
@@ -1272,7 +1312,7 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
                     for pending_key in order:
                         if pending_key not in results:
                             results[pending_key] = {'status': 'Waiting', 'output': {}, 'error': 'Waiting for approval before continuing.'}
-                    return {'ok': True, 'succeeded': False, 'results': results, 'order': order, 'approvalId': produced['approvalId']}
+                    return finish(results, produced['approvalId'])
             else:
                 # foreach.each: one run per item. decide() stays inside the effect.
                 held_each = (_each or {}).get(key)
@@ -1290,7 +1330,7 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
                             for pending_key in order:
                                 if pending_key not in results:
                                     results[pending_key] = {'status': 'Waiting', 'output': {}, 'error': 'Waiting for approval before continuing.'}
-                            return {'ok': True, 'succeeded': False, 'results': results, 'order': order, 'approvalId': produced['approvalId']}
+                            return finish(results, produced['approvalId'])
                         json.dumps(produced, allow_nan=False)
                         rows.append((produced, display, each_fault(produced, display)))
                     except Exception as error:
@@ -1301,14 +1341,15 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
                     p['id'] for p in node_ports(node, (entry or {}).get('ports') or {}).get('source') or []
                     if isinstance(p, dict) and p.get('id')]
                 output, shown, error = collect_each_runs(rows, names)
-                outputs[key] = output
+                if not error:
+                    outputs[key] = output
                 held_result = {'status': 'Error' if error else 'Done', 'output': output, 'display': shown}
                 if error:
                     held_result['error'] = error
                 results[key] = held_result
         except Exception as error:
             results[key] = {'status':'Error', 'output':{}, 'error':str(error), 'elapsed_ms': round((time.perf_counter() - started) * 1000, 2)}
-    return {'ok':True, 'succeeded':all(r['status'] in ('Done','Disabled','Skipped') for r in results.values()), 'results':results, 'order':order}
+    return finish(results)
 
 
 class SessionFiles:
@@ -1607,7 +1648,23 @@ class SessionFiles:
         if action == 'validate':
             return {'ok':True,'document':validate(body.get('document'))}
         if action == 'run':
-            return run_document(body.get('document'),invoke=invoke,roots=body.get('roots'),stopped=stopped,path=body.get('path'))
+            outcome = {}
+            def execute(document):
+                shown = validate(body.get('document'))
+                def inputs(value):
+                    return {'id': value['id'], 'nodes': [{k: v for k, v in n.items() if k != 'result'} for n in value['nodes']],
+                            'wires': value['wires']}
+                if inputs(shown) != inputs(document):
+                    raise ValueError('The canvas changed before Run. Reopen its current values.')
+                outcome.update(run_document(document, invoke=invoke, roots=body.get('roots'), stopped=stopped,
+                                            path=body.get('path'), again=body.get('again') is True))
+                return []
+            if body.get('path'):
+                document, _ = canvas_documents.edit(local_path(body['path']), 'You', 'Run all again' if body.get('again') else 'Run',
+                                                     execute, solve_changed=False)
+                return {**outcome, 'document': document, 'revision': canvas_documents.revision(document)}
+            execute(validate(body.get('document')))
+            return outcome
         if action in ('agent-history', 'fork-node'):
             document = validate(body.get('document'))
             node = next(n for n in document['nodes'] if n['id'] == body.get('node'))

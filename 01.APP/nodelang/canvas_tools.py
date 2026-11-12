@@ -229,7 +229,7 @@ def register_canvas_tools(server):
         from .session_files import run_document
         def change(document):
             roots = [_end(document, node + '.x')[0]['id']] if node else None
-            ran = run_document(document, invoke=guard_effect, roots=roots)
+            ran = run_document(document, invoke=guard_effect, roots=roots, path=path)
             for n in document['nodes']:
                 if n['id'] in ran['results']:
                     n['result'] = {k: v for k, v in ran['results'][n['id']].items() if k in ('status', 'output', 'error', 'display')}

@@ -229,7 +229,8 @@ def decline_canvas(payload):
         original = next(row for row in continuation['document']['nodes'] if row['id']==payload['node']['id'])
         if not node or node['params'] != original['params']:
             return []
-        node['result'] = {'status': 'Declined', 'output': {}, 'error': 'Rejected by you.'}
+        # Keep the saved status understood by existing approval readers.
+        node['result'] = {'status': 'Declined', 'display': 'Rejected', 'output': {}, 'error': 'Rejected by you.'}
         for row in document['nodes']:
             if row['id'] != node['id'] and row.get('result', {}).get('status') == 'Waiting':
                 row['result'] = {'status': 'Blocked', 'output': {}, 'error': 'Canvas approval was rejected.'}
@@ -286,6 +287,8 @@ def release(payload):
             for row in document['nodes']:
                 if row['id'] in result['results']:
                     row['result'] = result['results'][row['id']]
+            if result.get('run'):
+                document.setdefault('properties', {})['canvasRun'] = result['run']
             outcome.update(result)
             return list(result['results'])
         parent = continuation.get('parent')

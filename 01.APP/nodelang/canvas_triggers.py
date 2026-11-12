@@ -149,7 +149,7 @@ class TriggerService:
 
         def change(document):
             downstream = sorted(docs.downstream(document, [node_id]))
-            ran = run_document(document, invoke=guard_effect, roots=downstream)
+            ran = run_document(document, invoke=guard_effect, roots=downstream, path=path, again=True)
             for node in document['nodes']:
                 if node['id'] in ran['results']:
                     node['result'] = {k: v for k, v in ran['results'][node['id']].items()

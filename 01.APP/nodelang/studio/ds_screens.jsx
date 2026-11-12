@@ -1064,8 +1064,7 @@
         const left=peek==='library'?248:0,right=peek==='inspector'?380:occludedWidth;
         const width=area.current.clientWidth-left-right,height=area.current.clientHeight;
         if (width<=48 || height<=144) return;
-        // Initial framing is local and happens once; only a gesture or explicit Save persists the view.
-        userViewport.current = true;
+        // Unsaved framing follows pane/node sizing until a gesture or explicit Save owns the view.
         const fitted=fitCanvasViewport(boxes,width,height,zoomMin,zoomMax,1);
         if(fitted && fitted.zoom>=.62){updateView({...fitted,pan:{...fitted.pan,x:fitted.pan.x+left}},false);return;}
         const session=right>0&&boxes.find(box=>box.node.type==='thing.session');

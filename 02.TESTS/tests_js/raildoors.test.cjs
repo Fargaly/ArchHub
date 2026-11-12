@@ -9,7 +9,7 @@ const {chromium} = require('playwright');
 const studio = path.resolve(__dirname, '../../01.APP/nodelang/studio');
 process.stdout.write(execFileSync(process.execPath, ['--max-old-space-size=512', path.resolve(__dirname, '../../03.TOOLS/packaging/compile_studio.cjs')], {windowsHide: true}));
 const compiled = name => fs.readFileSync(path.join(studio, 'compiled', name.replace(/\//g, '-').replace(/\.jsx$/, '.js')), 'utf8');
-const sources = ['tokens.jsx', 'ds/index.jsx', 'icons.jsx', 'ui.jsx', 'answer-widgets.jsx', 'ds_home2.jsx', 'ds_workshop3.jsx', 'surfaces.jsx', 'app.jsx'].map(compiled);
+const sources = ['tokens.jsx', 'ds/index.jsx', 'icons.jsx', 'ui.jsx', 'answer-widgets.jsx', 'ds_home2.jsx', 'ds_library.jsx', 'ds_workshop3.jsx', 'surfaces.jsx', 'app.jsx'].map(compiled);
 
 test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation clicks', async () => {
   // Pytest isolates LOCALAPPDATA; browser binaries remain in the OS account's cache.
@@ -63,6 +63,8 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
             setActiveSurface: () => {}, supportsAction: () => true,
             readCanvasTabs: async () => ({canvasTabs:{tabs:[],active:'',split:'',collapsed:false}}),
             setCanvasTabs: async () => ({ok:true}),
+            readSessionListFilters: async () => ({sessionListFilters:{home:'all',library:'all'}}),
+            setSessionListFilter: async () => ({ok:true}),
             readHomeLayout: async () => ({homeLayout:{width:300,collapsed:false,resume:'',order:[],hidden:[]}}),
             setHomeLayout: async () => ({ok:true}),
             setInspectorWidth: async value => { s.settings.find(row=>row.id==='Appearance.Inspector width').value=value; return {ok:true}; },
@@ -87,6 +89,10 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
       await mount();
       const nav = page.getByRole('navigation', {name: 'Main navigation'});
       await nav.waitFor();
+      const filter = page.getByRole('group', {name:'Saved document filter',exact:true});
+      await filter.waitFor();
+      assert.deepEqual(await filter.getByRole('button').allTextContents(), ['All', 'Workflows', 'Agent sessions']);
+      assert.equal(await filter.getByRole('button', {name:'All',exact:true}).getAttribute('aria-pressed'), 'true');
       const labels = ['Home', 'Canvas', 'Docs', 'Settings', 'Your account'];
       assert.deepEqual(await nav.getByRole('button').evaluateAll(buttons => buttons.map(b => b.getAttribute('aria-label'))), labels);
       assert.equal(await page.locator('[data-home-face]').count(), 0, 'Home starts with the task list');

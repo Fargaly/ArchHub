@@ -256,9 +256,10 @@
     ];
     const liveWorking=(s.agentGraph?.sessions||[]).filter(agent=>agent.status==='working');
     const liveIds=new Set();
+    // One row per piece of work: a further live agent on it is an avatar on that row, never a second row.
     for(const agent of liveWorking){
-      const row=sessionRows.find(row=>row.id===agent.task&&!liveIds.has(row.id));
-      if(row){row.workingNow=true;liveIds.add(row.id);}
+      const row=sessionRows.find(row=>row.id===agent.task);
+      if(row){row.workingNow=true;liveIds.add(row.id);if(agent.name&&!(row.members||[]).some(member=>member.name===agent.name))row.members=[...(row.members||[]),{name:agent.name,live:true}];}
       else sessionRows.unshift({id:'live:'+agent.id,title:agent.name,kind:'agent-session',workingNow:true,runtimeAgent:agent});
     }
     // A piece of work (F337) that lost its agent stays an open row; old per-agent-run rows go under Older.

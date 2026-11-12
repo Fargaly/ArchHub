@@ -1112,7 +1112,7 @@ def _declare(history, body, context, identity, runtime, peer, native_session):
         for archived in expired:
             history._db.execute("DELETE FROM workshop_declarations WHERE root=? "
                                 "AND json_extract(record,'$.updated_at')<?", (archived, cutoff))
-    if row["request_id"] != "unassigned":
+    if row["request_id"]:   # every declare joins a piece of work; "unassigned" is a declare with no request (rule 3)
         from .workshop_tasks import declared
         work = declared(history, root, row["request_id"], row["task"], row["status"],
                         identity["sender_key"], identity["sender_label"], row["project"],

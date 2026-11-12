@@ -190,7 +190,7 @@ def test_two_members_write_steps_at_once_and_none_is_lost(project):
     assert len(row['members']) == 3 and len(steps(row['session_path'])) == 3
 
 
-def test_agent_started_by_another_agent_inherits_its_session(project):
+def test_agent_started_by_another_agent_inherits_only_the_same_work(project):
     import subprocess
     import sys
     from nodelang import workshop_tasks as tasks, workshop_mailbox as mailbox
@@ -206,11 +206,14 @@ def test_agent_started_by_another_agent_inherits_its_session(project):
     try:
         peer = SimpleNamespace(pid=child.pid, created_at=psutil.Process(child.pid).create_time(), cwd=str(project))
         inherited = mailbox.call('declare', {'task': 'Check the facade panels', 'paths': [str(project / 'panels.txt')],
-                                             'status': 'working', 'request_id': 'panel-check'}, CODEX('sub'), peer=peer)
+                                             'status': 'working', 'request_id': 'unassigned'}, CODEX('sub'), peer=peer)
+        other = mailbox.call('declare', {'task': 'Another request', 'paths': [str(project / 'other-request.txt')],
+                                         'status': 'working', 'request_id': 'panel-check'}, CLAUDE('sub2'), peer=peer)
     finally:
         child.kill()
         child.wait(timeout=10)
-    assert inherited['declaration']['work'] == facade
+    assert inherited['declaration']['work'] == facade                       # no request: the starter's work
+    assert other['declaration']['work'] != facade                           # a different request is different work
     # A sibling with no starter above it never inherits: two open sessions means a new one.
     sibling = declare(CODEX('sibling'), project, 'other-work', path=project / 'other.txt')['declaration']['work']
     assert sibling != facade
@@ -288,7 +291,7 @@ def test_two_starters_at_the_same_depth_mean_no_inheritance(project):
     try:
         peer = SimpleNamespace(pid=child.pid, created_at=psutil.Process(child.pid).create_time(), cwd=str(project))
         work = mailbox.call('declare', {'task': 'Which one?', 'paths': [str(project / 'which.txt')], 'status': 'working',
-                                        'request_id': 'child-work'}, CODEX('child'), peer=peer)['declaration']['work']
+                                        'request_id': 'unassigned'}, CODEX('child'), peer=peer)['declaration']['work']
     finally:
         child.kill()
         child.wait(timeout=10)
@@ -317,13 +320,17 @@ def test_handover_note_drops_user_paths_environment_values_and_secrets(project, 
     private = os.path.join(os.environ['USERPROFILE'], 'Desktop', 'notes.txt')
     inside = str(project / 'sheets' / 'checked.pdf')
     token = 'ghp_' + 'A1b2C3d4E5f6G7h8I9j0K1l2'
+    spaced = 'D:\\Office Share\\Tower Drawings\\set.pdf'
+    unc = '\\\\server\\share\\Tower set\\a.dwg'
+    long_path = 'Z:\\' + '\\'.join(['folder%03d' % n for n in range(90)]) + '\\end.txt'   # 1100+ chars before cleaning
     written = mailbox.call('task_set_session', {'id': work, 'handover': {
-        'done': 'Checked ' + inside + ' and ' + private,
+        'done': 'Checked ' + inside + ' and ' + private + ', ' + spaced + ' and ' + unc,
         'next': 'Use token=' + token + ' and fixture-environment-value-123',
-        'results': 'In ' + inside}}, CLAUDE('a'))['session']
+        'results': 'In ' + inside + ' and ' + long_path}}, CLAUDE('a'))['session']
     note = written['handover']
-    assert note['results'] == 'In sheets/checked.pdf'
-    assert note['done'] == 'Checked sheets/checked.pdf and [path removed]'
+    assert len('In ' + inside + ' and ' + long_path) > 1000                 # the limit applies after cleaning
+    assert note['results'] == 'In sheets/checked.pdf and [path removed]'
+    assert note['done'] == 'Checked sheets/checked.pdf and [path removed], [path removed] and [path removed]'
     assert token not in note['next'] and 'fixture-environment-value-123' not in note['next']
     assert os.environ['USERPROFILE'] not in str(note)
 
@@ -382,3 +389,32 @@ def test_two_processes_opening_an_old_database_together_both_succeed(tmp_path):
     assert errors == [], [repr(error) for error in errors]
     with sqlite3.connect(database) as done:
         assert 'members' in {row[1] for row in done.execute('PRAGMA table_info(workshop_tasks)')}
+
+
+def test_real_starts_without_a_request_join_the_single_open_session(project):
+    # Both vendors' start paths declare request id "unassigned"; no session exists yet.
+    first = declare(CLAUDE('start'), project, 'unassigned', task='Session start', path=project / 'start-a.txt')
+    second = declare(CODEX('start'), project, 'unassigned', task='Session start', path=project / 'start-b.txt')
+    assert first['declaration']['work'] and second['declaration']['work'] == first['declaration']['work']
+    assert len(sessions()) == 1
+    again = declare(CLAUDE('start'), project, 'unassigned', task='Session start', path=project / 'start-a.txt')
+    assert again['declaration']['work'] == first['declaration']['work']   # its own session, no second file
+    assert len(sessions()) == 1
+
+
+def test_real_starts_without_a_request_join_a_session_started_from_home(project):
+    from nodelang import workshop_tasks as tasks
+    from nodelang.workshop_mailbox import application_history
+    with application_history() as history:
+        home = tasks.create_session(history, 'Tower facade', select=False, workspace='tower')['taskId']
+    assert declare(CLAUDE('home'), project, 'unassigned', path=project / 'h1.txt')['declaration']['work'] == home
+    assert declare(CODEX('home'), project, 'n/a', path=project / 'h2.txt')['declaration']['work'] == home   # placeholder id
+
+
+def test_same_request_in_an_unregistered_folder_never_joins(project, tmp_path):
+    loose = tmp_path / 'Loose'
+    loose.mkdir()
+    first = declare(CLAUDE('loose'), loose, 'F337', path=loose / 'a.txt')['declaration']
+    second = declare(CODEX('loose'), loose, 'F337', path=loose / 'b.txt')['declaration']
+    assert first['project'] == '' and first['work'] != second['work']
+    assert declare(CLAUDE('loose'), loose, 'F337', path=loose / 'a.txt')['declaration']['work'] == first['work']

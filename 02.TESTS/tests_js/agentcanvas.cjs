@@ -64,7 +64,7 @@ def main():
             history._db.execute('UPDATE workshop_tasks SET session_path=NULL WHERE id=?',(missing['taskId'],))
         graph=r_agents_canvas(server,None)
         assert len(graph['sessions'])==5, graph
-        assert len(graph['wires'])==3, graph
+        assert len(graph['wires'])==4, graph  # F337: the unassigned start now joins or starts a piece of work
         print(json.dumps({'url':server.public_url,'cookie':server._cookie_token,'task':task['taskId'],'missing':missing['taskId'],'profile':str(root)}),file=protocol_stdout,flush=True)
         for line in sys.stdin:
             command=json.loads(line)
@@ -154,7 +154,9 @@ main()
     assert.ok(await view.locator('[data-agent-task]').count()>=2);
     assert.equal(await view.locator('[data-graph-wire]').count(),0);
     await view.getByText(/Waiting for you/).first().waitFor();
-    await view.getByText(/No task/).first().waitFor();
+    // F337: the unassigned start (Fixture 3) now works in a piece of work, so it no longer reads "No task".
+    assert.equal(await view.locator('[data-agent-session]').filter({hasText:'Fixture 3'}).count(),1);
+    assert.equal(await view.locator('[data-agent-session]').filter({hasText:'Fixture 3'}).filter({hasText:'No task'}).count(),0);
     await view.getByText('No workflow file',{exact:true}).waitFor();
     assert.equal(await view.getByRole('button',{name:'Run',exact:true}).count(),0);
     for(const [width,height] of [[1366,768],[1680,893]]){

@@ -40,6 +40,10 @@ test('SESSIONWORK: one row per piece of work, lead and member avatars, interrupt
          messages: [], updated_at: now, members: [{name: 'Details assistant', live: false}]},
         {id: 'declared-oldrun', title: 'Old agent run', status: 'PLANNED', outcome: 'interrupted', rowState: 'interrupted', sessionPath: 'old.archhub',
          messages: [], updated_at: now, members: []}];
+      // Two live agents on one piece of work: still one row, the second is an avatar on it.
+      s.agentGraph = {...(s.agentGraph || {}), sessions: [
+        {id: 'live-a', name: 'Drawing coordinator', status: 'working', task: 'session-review'},
+        {id: 'live-b', name: 'Site reviewer', status: 'working', task: 'session-review'}]};
       s.focusedTask = '';
       window.selected = [];
       window.ArchHubAPI = {...window.ArchHubAPI, getSnapshot: () => s, subscribe: () => () => {},
@@ -66,8 +70,10 @@ test('SESSIONWORK: one row per piece of work, lead and member avatars, interrupt
     assert.equal(await row('Drawing set review').count(), 1);
     assert.equal(await row('Drawing set review').locator('.resume-avatar').getAttribute('title'), 'Drawing coordinator');
     const more = row('Drawing set review').locator('.resume-members');
-    assert.equal(await more.getAttribute('title'), 'Also on this work: Model checker, Code checker');
-    assert.equal(await more.locator(':scope > *').count(), 2);
+    assert.equal(await more.getAttribute('title'), 'Also on this work: Model checker, Code checker, Site reviewer');
+    assert.equal(await more.locator(':scope > *').count(), 3);
+    assert.equal(await page.locator('.resume-row').filter({has: page.locator('b', {hasText: 'Site reviewer'})}).count(), 0);
+    assert.equal(await page.locator('.resume-row').filter({has: page.locator('b', {hasText: 'Drawing coordinator'})}).count(), 0);
     const lead = await row('Drawing set review').locator('.resume-avatar').boundingBox();
     const edge = await more.boundingBox();
     assert.ok(edge.x > lead.x + 100, 'member avatars sit at the row\'s right edge');

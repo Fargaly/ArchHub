@@ -408,6 +408,12 @@ def _session_for(history, owner, project, request, hours):
     Rows from older builds (declared-*) are never joined, so their files stay as they are.
     """
     if request:
+        mine = history._db.execute("SELECT id FROM workshop_tasks WHERE " + _OPEN_WORK + " AND purpose=? AND " + _MEMBER +
+                                   " ORDER BY updated_at DESC LIMIT 1", (request, owner)).fetchone()
+        if mine:
+            return mine[0]
+        if not project:
+            return None
         found = history._db.execute("SELECT id FROM workshop_tasks WHERE " + _OPEN_WORK + " AND IFNULL(project,'')=? "
                                     "AND purpose=? LIMIT 2", (project or "", request)).fetchall()
         return found[0][0] if len(found) == 1 else None
@@ -439,6 +445,14 @@ def handover(history, task):
             "plan": list(context.get("plan") or []), "handover": dict(context.get("handover") or {})}
 
 
+_NO_REQUEST = {"", "unassigned", "none", "n/a", "-"}
+
+
+def _request_of(request_id):
+    """A placeholder request id (unassigned, none, n/a, -, empty) is no request."""
+    return "" if str(request_id or "").strip().casefold() in _NO_REQUEST else request_id
+
+
 def declared(history, root, request_id, title, status, owner, label, project="", inherited=""):
     """An agent's declare joins one session (a piece of work) and returns its task id, or False.
 
@@ -447,20 +461,22 @@ def declared(history, root, request_id, title, status, owner, label, project="",
     With none of these it starts a new one. A new purpose never closes or restarts a session.
     """
     title = _text(title, "title", 2000)
-    task = request_id if get(history, request_id) else ""
-    if not task and _open_session(history, inherited):
+    request = _request_of(request_id)
+    task = request if request and get(history, request) else ""
+    parent = _open_session(history, inherited) if not task else None
+    if parent and (parent.get("project") or "") == (project or "") and (
+            not request or request in (parent.get("purpose"), parent["id"])):
         task = inherited
     if not task:
         with history._transaction(write=True):
             _ensure(history)
-            request = "" if request_id in (None, "", "unassigned") else request_id
             task = _session_for(history, owner, project, request, TASKS_NODE["params"]["stale_hours"])
             if not task:
                 if status == "done":
                     return False
                 task = SESSION_PREFIX + uuid4().hex
                 history._db.execute("INSERT INTO workshop_tasks(id,title,status,created_by,created_at,updated_at,purpose,project) "
-                                    "VALUES(?,?,'open',?,?,?,?,?)", (task, title, label, _now(), _now(), request_id, project or None))
+                                    "VALUES(?,?,'open',?,?,?,?,?)", (task, title, label, _now(), _now(), request or None, project or None))
     if status == 'done':
         row = get(history, task)
         won = complete(history, task, owner)
@@ -1092,18 +1108,16 @@ def create_session(history, title, creator="founder", *, select=True, zoom=1, ag
 
 _SESSION_FIELDS = {"scope", "rules", "agents", "plan", "handover", "progress", "nodes", "parameters", "messages", "folders", "references", "homePinned"}
 _HANDOVER = ("done", "next", "results")
-_ABSOLUTE = re.compile(r"(?:[A-Za-z]:[\\/]|\\\\)[^\s\"'<>|*?]+")
+# A drive-letter or UNC path; inner folders may hold spaces, the last part ends at a space.
+_ABSOLUTE = re.compile(r"(?:\b[A-Za-z]:|\\\\[^\\/\s\"'<>|*?:]+)(?:[\\/][^\\/\n\"'<>|*?:]+)*[\\/][^\\/\s\"'<>|*?:]+")
 
 
 def _clean_note(history, row, text):
-    """A handover note is shared with any agent: a path under a user profile or temp folder becomes relative to
-    the project root (or is dropped), environment values and secret-shaped text are removed."""
+    """A handover note is shared with any agent: every absolute path becomes relative to the project root
+    or is dropped, and environment values and secret-shaped text are removed."""
     import os
-    import tempfile
     from pathlib import PureWindowsPath
     from .agent_work import redact
-    private = [PureWindowsPath(os.environ[name]) for name in ("USERPROFILE", "LOCALAPPDATA", "APPDATA", "TEMP", "TMP")
-               if os.environ.get(name)] + [PureWindowsPath(tempfile.gettempdir())]
     roots = []
     if row.get("project"):
         from .workspace_roots_catalogue import read_registered_roots
@@ -1112,12 +1126,11 @@ def _clean_note(history, row, text):
                  if (item.get("label") or item.get("root_id")) == row["project"] and item.get("path")]
 
     def place(match):
-        found = PureWindowsPath(match.group(0).rstrip(".,;:)"))
-        tail = match.group(0)[len(str(match.group(0).rstrip(".,;:)"))):]
-        if not any(found.is_relative_to(base) for base in private):
-            return match.group(0)
+        whole = match.group(0)
+        path = whole.rstrip(".,;:)")
+        found = PureWindowsPath(path)
         root = next((base for base in roots if found.is_relative_to(base)), None)
-        return (found.relative_to(root).as_posix() if root else "[path removed]") + tail
+        return (found.relative_to(root).as_posix() if root else "[path removed]") + whole[len(path):]
     text = _ABSOLUTE.sub(place, text)
     for value in os.environ.values():
         if len(value) >= 12 and value in text:
@@ -1274,8 +1287,8 @@ def update_session(history, task, values):
             note = values["handover"]
             if type(note) is not dict or not note or set(note) - set(_HANDOVER):
                 raise ValueError("A handover note says what is done, what is next and where the results are")
-            held["handover"] = {key: _clean_note(history, row, _short_text(note[key], "handover " + key, 1000))
-                                for key in _HANDOVER if key in note}
+            held["handover"] = {key: _short_text(_clean_note(history, row, _short_text(note[key], "handover " + key, 8000)),
+                                                 "handover " + key, 1000) for key in _HANDOVER if key in note}
         if "folders" in values:
             held["folders"] = _session_list(values["folders"], "folders")
         if "references" in values:

@@ -1,0 +1,13 @@
+[
+  {"name":"GitHub repository","url":"https://github.com/Fargaly/ArchHub","kind":"repo"},
+  {"name":"Latest release","url":"https://github.com/Fargaly/ArchHub/releases/latest","kind":"release"},
+  {"name":"Website","url":"https://archhub.io","kind":"site"},
+  {"name":"Getting started","url":"https://archhub.io/docs/getting-started/","kind":"docs"},
+  {"name":"Community","url":"https://archhub.io/community/","kind":"community"},
+  {"name":"BABOOM","url":"https://baboom.archhub.io","kind":"baboom"},
+  {"name":"Notion","url":"https://www.fargool.com/archhub","kind":"notion"},
+  {"name":"Report a problem","url":"https://github.com/Fargaly/ArchHub/issues","kind":"issues"},
+  {"name":"GitHub Discussions","url":"https://github.com/Fargaly/ArchHub/discussions","kind":"discuss"},
+  {"name":"Font licence","url":"https://openfontlicense.org","kind":"font-license"},
+  {"name":"JetBrains Mono source","url":"https://github.com/JetBrains/JetBrainsMono","kind":"font-source"}
+]

@@ -8724,7 +8724,7 @@
       ]
     },
     "DESIGNMATCH": {
-      "source": "Founder DESIGNMATCH RUN 2: wire Home, Workshop, Settings Connections and Canvas to EXISTING real Workshop tasks/agents/conversation store, workflow/template nodes, host bridges and accounts/credential names. Prove authenticated real server routes with app-produced synthetic fixture; no sample-data proxy. Preserve working behavior and approved tokens. No installed app, live data, founder screen, approved-design or workspace-roots owner writes (ROOTSREPUB owns republish). Review 2 RUN 3: fix Workshop room Work visibility across selected project roots, project declared display identity/model, and repair template composition membership/socket scheduling in existing owners. No waiver or second evaluator.",
+      "source": "Founder DESIGNMATCH RUN 2: wire Home, Workshop, Settings Connections and Canvas to EXISTING real Workshop tasks/agents/conversation store, workflow/template nodes, host bridges and accounts/credential names. Prove authenticated real server routes with app-produced synthetic fixture; no sample-data proxy. Preserve working behavior and approved tokens. No installed app, live data, founder screen, approved-design or workspace-roots owner writes (ROOTSREPUB owns republish). Review 2 RUN 3: fix Workshop room Work visibility across selected project roots, project declared display identity/model, and repair template composition membership/socket scheduling in existing owners. No waiver or second evaluator. Founder 2026-11-12: reproduce frozen archhub-directions-v48 exactly, Canvas then Home 1 then Library then Home 2, real owners, omit ownerless controls, per-screen PNG and test evidence, commit only on lane/design-match; no push/install/release/live profile access.",
       "scope": [
         "01.APP/nodelang/agent_declarations.py",
         "01.APP/nodelang/studio/api.js",
@@ -8747,7 +8747,11 @@
         "01.APP/nodelang/canvas_graph_owner.py",
         "01.APP/nodelang/universal_pipeline.py",
         "01.APP/nodelang/workshop_mailbox.py",
-        "01.APP/nodelang/native_agent_mcp.py"
+        "01.APP/nodelang/native_agent_mcp.py",
+        "01.APP/nodelang/studio/ds_library.jsx",
+        "02.TESTS/tests/test_designbuild.py",
+        "02.TESTS/tests_js/designbuild.cjs",
+        "05.EVIDENCE/designmatch/"
       ]
     },
     "CARDPOLISH": {

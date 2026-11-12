@@ -116,6 +116,12 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
         continue;
       }
       if (mode === 'uxflow') {
+        // Interrupted rows sit under the collapsed Older heading and appear when it is expanded.
+        const older = page.locator('.home-section-heading').filter({hasText: 'Older'});
+        assert.equal(await older.getAttribute('aria-expanded'), 'false');
+        assert.equal(await page.locator('.dx-task').filter({has: page.locator('b', {hasText: 'State interrupted'})}).count(), 0);
+        await older.click();
+        assert.equal(await older.getAttribute('aria-expanded'), 'true');
         for (const [state, label] of [['interrupted', 'interrupted'], ['limit reached', 'limit reached'], ['LIMIT_REACHED', 'limit reached']]) {
           const row = page.locator('.dx-task').filter({has: page.locator('b', {hasText: 'State ' + state})});
           assert.match(await row.innerText(), new RegExp(label));

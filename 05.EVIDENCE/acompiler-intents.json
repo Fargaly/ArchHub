@@ -16,6 +16,7 @@
     "02.TESTS/tests_js/studio_workflows_categories.test.cjs",
     "02.TESTS/tests_js/raildoors.test.cjs",
     "02.TESTS/tests_js/designbuild.cjs",
+    "02.TESTS/tests/test_designbuild.py",
     "01.APP/nodelang/studio/ds_screens.jsx",
     "04.DOCS/FAILURE_LOG.md"
   ]

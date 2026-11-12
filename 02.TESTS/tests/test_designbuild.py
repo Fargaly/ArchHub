@@ -203,3 +203,18 @@ def test_home_section_collapse_uses_settings_owner(tmp_path):
     with pytest.raises(ValueError):
         home_layout('setHomeLayout', [{**value, 'sections': ['unknown']}], settings)
     assert settings.path.read_bytes() == before
+
+
+def test_plan_steps_are_placed_as_canvas_nodes(tmp_path, monkeypatch):
+    """A recorded plan with an empty canvas becomes step nodes in the same file; a canvas with steps is left alone."""
+    _isolate(monkeypatch, tmp_path / 'desk')
+    from nodelang import workshop_tasks
+    from nodelang.session_files import new_document
+    document = new_document('Planned')
+    before = len(document['nodes'])
+    document['properties'] = {'taskContext': {'plan': ['Read details index', 'Check each detail']}}
+    workshop_tasks._place_plan(document)
+    placed = document['nodes'][before:]
+    assert [(node['id'], node['type'], node['title']) for node in placed] == [('plan-1', 'note', 'Read details index'), ('plan-2', 'note', 'Check each detail')]
+    workshop_tasks._place_plan(document)
+    assert len(document['nodes']) == before + 2

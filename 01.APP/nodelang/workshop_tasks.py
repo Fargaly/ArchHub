@@ -868,6 +868,9 @@ def open_session(history, task, path=None, *, select=True, zoom=1):
         raise ValueError("No such Workshop task")
     bound = row.get("session_path")
     if bound:
+        if _plan_unplaced(read_document(bound)):
+            from . import canvas_documents
+            canvas_documents.edit(bound, 'You', 'place plan steps', lambda document: _place_plan(document) or [], solve_changed=False)
         return _show(task, bound, read_document(bound), select=select)
     if path is not None:
         target = str(local_path(path))
@@ -1026,6 +1029,28 @@ def _apply_nodes(document, specs):
                 raise ValueError("Node result error must be short text")
 
 
+_FIXED_STEP_IDS = {"start", "fixed-agent", "fixed-you", "fixed-workshop"}
+
+
+def _plan_unplaced(document):
+    """A recorded plan whose canvas holds no step yet."""
+    plan = ((document.get("properties") or {}).get("taskContext") or {}).get("plan")
+    return bool(isinstance(plan, list) and any(isinstance(step, str) and step for step in plan) and not any(
+        not node.get("fixed") and node["id"] not in _FIXED_STEP_IDS and node.get("type") != "thing.session"
+        for node in document["nodes"]))
+
+
+def _place_plan(document):
+    """Each plan step becomes one node in the same file; a canvas that already has steps is left alone."""
+    if not _plan_unplaced(document):
+        return
+    plan = [step for step in document["properties"]["taskContext"]["plan"] if isinstance(step, str) and step][:40]
+    _apply_nodes(document, [{"id": "plan-%d" % (index + 1), "type": "note", "title": step[:200], "params": {"plan_step": True}}
+                            for index, step in enumerate(plan)])
+    for index in range(len(plan)):
+        next(node for node in document["nodes"] if node["id"] == "plan-%d" % (index + 1))["position"] = {"x": 80 + index * 384, "y": 80}
+
+
 def _apply_parameters(document, rows):
     if type(rows) is not list or len(rows) > 40:
         raise ValueError("Parameters must name nodes")
@@ -1093,6 +1118,8 @@ def update_session(history, task, values):
         document["properties"] = props
         if "nodes" in values:
             _apply_nodes(document, values["nodes"])
+        if "plan" in values:
+            _place_plan(document)
         if "parameters" in values:
             _apply_parameters(document, values["parameters"])
         if "messages" in values:

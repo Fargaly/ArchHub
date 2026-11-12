@@ -2,6 +2,28 @@
 
 ## Next build
 
+## 20261112-1644-514b937
+
+- Home shows your open work only: sessions that are live, waiting for you, or from today. Interrupted, archived and stale ones sit under a folded "Older" heading.
+- A row's title is the work, not the agent's name. Each avatar shows clear initials with a small state dot.
+- Home step cards show what each step made: tables, text and thumbnails. The step that waits for you carries Approve, Ask why and Reject.
+- A session with a plan shows its planned steps on its canvas, left to right with wires. The step count is the same in the Canvas title and the Inspector.
+- Opening a file never changes it.
+- Known gaps: several agents cannot yet join one session; sessions are not grouped by project; Canvas step cards do not show the design's preview pictures yet.
+
+Source: b976a451..514b9379.
+
+## 20261112-1419-b976a45
+
+- Canvas: one Session node with fold-out rows (Agent, You, Parameters, Tools, Context, Thread) replaces the box of pinned nodes. The toolbar has Save, Automate, Run all, undo and redo. The Inspector has This task, Properties and Automate, with the Approve card and what the task made.
+- Home: the sessions list opens on a wide window and is grouped under Needs you, Working now, Today, Earlier and Older, each with a count. Archived sessions sit under Older. Each agent has its own initials and colour.
+- The composer is one row on Home and Canvas.
+- A Settings node on a canvas stays linked to its setting after the file is reopened.
+- Project names for sessions come from your registered workspaces.
+- Known gaps: step cards do not show previews of what a step made yet; sessions are not grouped by project yet.
+
+Source: 43c6e9be..b976a451.
+
 ## 20261112-0647-43c6e9b
 
 - Workflows are listed apart from agent sessions, with an All | Workflows | Agent sessions filter.

@@ -1,0 +1,4 @@
+page.click: Timeout 8000ms exceeded.
+Call log:
+  - waiting for locator('button:has-text("New task")')
+

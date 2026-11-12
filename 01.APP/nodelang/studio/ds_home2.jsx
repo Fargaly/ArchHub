@@ -71,9 +71,9 @@
     const recorded = recordedStep(step, progress);
     const raw = recorded == null || recorded === '' ? '' : (typeof recorded === 'object' ? String(recorded.status || recorded.state || '') : String(recorded));
     const named = source => source && typeof source === 'object' ? String(source.ownerName || source.owner || source.agent || source.who || '').trim() : '';
-    const owner = (recorded && typeof recorded === 'object' && named(recorded)) || named(step) || 'not reported';
+    const owner = (recorded && typeof recorded === 'object' && named(recorded)) || named(step) || '';
     const text = raw.trim();
-    if (!text) return {kind: 'unreported', label: 'not reported', owner};
+    if (!text) return {kind: 'unreported', label: 'Planned', owner};
     if (/error|fail/i.test(text)) return {kind: 'error', label: 'error', owner};
     if (/block/i.test(text)) return {kind: 'blocked', label: 'blocked', owner};
     if (/done|complete|saved/i.test(text)) return {kind: 'done', label: 'done', owner};
@@ -166,11 +166,11 @@
     React.useLayoutEffect(()=>{
       if(fileWorkspace)return undefined;
       const frame=window.requestAnimationFrame(()=>{
-        if(homeLayout.collapsed||shellWidth<1036)sessionsRef.current?.collapse();
+        if(homeLayout.collapsed||window.innerWidth<1100)sessionsRef.current?.collapse();
         else sessionsRef.current?.resize(homeLayout.width);
       });
       return()=>window.cancelAnimationFrame(frame);
-    },[fileWorkspace,homeLayout.collapsed,homeLayout.width,shellWidth<1036]);
+    },[fileWorkspace,homeLayout.collapsed,homeLayout.width,window.innerWidth<1100]);
     const [inspectorRail, setInspectorRail] = React.useState(false);
     const threadRef = React.useRef(null), [threadRail, setThreadRail] = React.useState(false), [threadPeek, setThreadPeek] = React.useState(false);
     React.useLayoutEffect(() => {
@@ -251,10 +251,26 @@
     const tasks = (s.tasks || []).filter(t => t.status !== 'ARCHIVED').sort((a,b)=>Number(waiting.has(b.id)||b.status==='IN REVIEW')-Number(waiting.has(a.id)||a.status==='IN REVIEW')||Number(!!b.homePinned)-Number(!!a.homePinned)||rank(a.id)-rank(b.id));
     const list = tasks.filter(t => !homeLayout.hidden.includes(t.id));
     const sessionRows = [
-      ...list.map(t=>({...t,kind:(s.graphs||[]).find(row=>row.path===t.sessionPath)?.kind||'agent-session'})),
-      ...(s.agents||[]).filter(agent=>agent.runtime&&!tasks.some(t=>t.owner===agent.id||t.owner===agent.name)).map(agent=>({id:'agent:'+agent.id,title:agent.name,kind:'agent-session',runtimeAgent:agent})),
+      ...(s.tasks||[]).filter(t=>!homeLayout.hidden.includes(t.id)).sort((a,b)=>tasks.indexOf(a)-tasks.indexOf(b)).map(t=>({...t,kind:(s.graphs||[]).find(row=>row.path===t.sessionPath)?.kind||'agent-session'})),
       ...(s.graphs||[]).filter(row=>row.kind==='workflow'&&!(s.tasks||[]).some(t=>t.sessionPath===row.path)).map(row=>({...row,id:row.path,title:row.title||row.name,sessionPath:row.path,fileOnly:true}))
     ];
+    const liveWorking=(s.agentGraph?.sessions||[]).filter(agent=>agent.status==='working');
+    const liveIds=new Set();
+    for(const agent of liveWorking){
+      const row=sessionRows.find(row=>row.id===agent.task&&!liveIds.has(row.id));
+      if(row){row.workingNow=true;liveIds.add(row.id);}
+      else sessionRows.unshift({id:'live:'+agent.id,title:agent.name,kind:'agent-session',workingNow:true,runtimeAgent:agent});
+    }
+    const sectionOf=row=>{
+      if(row.workingNow)return 'Working now';
+      if(row.status==='ARCHIVED')return 'Older / archived';
+      if(waiting.has(row.id)||row.status==='IN REVIEW')return 'Needs you';
+      const date=new Date(row.updated_at||row.modified||row.updatedAt||0),today=new Date();today.setHours(0,0,0,0);
+      if(date>=today)return 'Today';
+      return date.getTime()>=today.getTime()-7*86400000?'Earlier this week':'Older / archived';
+    };
+    const collapsedSections=homeLayout.sections||['Older / archived'];
+    const toggleSection=name=>saveHome({sections:collapsedSections.includes(name)?collapsedSections.filter(value=>value!==name):[...collapsedSections,name]});
     const focus = homeLayout.resume || u.task || s.focusedTask;
     const task = fileWorkspace ? tasks.find(t => t.id === u.task) : list.find(t => t.id === focus) || list.find(t=>t.homePinned) || list[0];
     React.useEffect(()=>{
@@ -277,7 +293,7 @@
     const scopeValue = describe(task?.scope) || declaredPaths.join(' · ');
     const session = task?.sessionPath || (typeof task?.session === 'string' ? task.session : '') || (typeof declared?.session === 'string' ? declared.session : '');
     const fileName = task?.sessionPath ? task.sessionPath.split(/[/\\]/).pop() : '';
-    const plan = Array.isArray(task?.plan) ? task.plan : [];
+    const plan = task?.planInferred ? [] : Array.isArray(task?.plan) ? task.plan : [];
     const activity = Array.isArray(task?.activity) ? task.activity : [];
     const outputs = (Array.isArray(task?.outputs) && task.outputs.length ? task.outputs : [task?.result, ...activity.map(row => row.output)]).map(outputRecord).filter(Boolean);
     const draftKey = JSON.stringify(['task-file', task?.id || '']);
@@ -374,7 +390,7 @@
       const agent=[...(s.agents||[]),...(s.providers||[])].find(a=>a.id===name||a.name===name||!name&&a.id===t.owner);
       if(agent)u.show('Agent',{id:agent.id});else u.go('settings/Agents');
     };
-    const taskRow = t => <div key={t.id} className={'dx-task-row resume-row'+(task?.id===t.id?' on':'')} data-status={waiting.has(t.id)||t.status==='IN REVIEW'?'review':toneOf(t)} draggable={!t.fileOnly} onDragStart={event=>{event.dataTransfer.setData('task',t.id);event.dataTransfer.setData('text/archhub-home-row',t.id);if(t.sessionPath)event.dataTransfer.setData('session',t.sessionPath);}} onDragOver={event=>event.preventDefault()} onDrop={event=>{event.preventDefault();const id=event.dataTransfer.getData('text/archhub-home-row');if(t.fileOnly||!list.some(row=>row.id===id)||id===t.id)return;const order=list.map(row=>row.id).filter(key=>key!==id);order.splice(order.indexOf(t.id),0,id);executeAction('ui.select',()=>saveHome({order}));}}>
+    const taskRow = t => <div key={t.id} data-design="home1.row" className={'dx-task-row resume-row'+(task?.id===t.id?' on':'')} data-status={waiting.has(t.id)||t.status==='IN REVIEW'?'review':toneOf(t)} draggable={!t.fileOnly} onDragStart={event=>{event.dataTransfer.setData('task',t.id);event.dataTransfer.setData('text/archhub-home-row',t.id);if(t.sessionPath)event.dataTransfer.setData('session',t.sessionPath);}} onDragOver={event=>event.preventDefault()} onDrop={event=>{event.preventDefault();const id=event.dataTransfer.getData('text/archhub-home-row');if(t.fileOnly||!list.some(row=>row.id===id)||id===t.id)return;const order=list.map(row=>row.id).filter(key=>key!==id);order.splice(order.indexOf(t.id),0,id);executeAction('ui.select',()=>saveHome({order}));}}>
       <button type="button" className="resume-avatar" aria-label={ownerOf(t)?'Open agent '+ownerOf(t):'Resume '+t.title} title={ownerOf(t)||t.title} onClick={()=>executeAction('ui.select',()=>ownerOf(t)?openOwner(t):selectResume(t))}>{ownerOf(t)?<window.UI.Av id={ownerOf(t)} size={28}/>:<Icon name="canvas" size={18}/>}</button>
       <button type="button" className="dx-task" aria-selected={task?.id===t.id} title={t.title} onClick={()=>executeAction('ui.select',()=>selectResume(t))} onDoubleClick={()=>executeAction('ui.select',()=>t.fileOnly?undefined:openTask(t))}><b>{t.title}</b><span>{waiting.has(t.id)?'Waits for you':window.UI.taskRowReason(t)||statusText(t.status)}{lastUpdate(t)?' · '+lastUpdate(t):''}</span></button>
       {!t.fileOnly&&<><button type="button" className="resume-pin" aria-label={(t.homePinned?'Unpin ':'Pin ')+t.title} aria-pressed={!!t.homePinned} onClick={()=>executeAction('ui.select',()=>u.act(()=>api.setTaskSession(t.id,{homePinned:!t.homePinned})))}><Icon name="pin" size={13}/></button>
@@ -428,7 +444,7 @@
     const visibleTabs = tabs.length <= tabCount ? tabs : tabs.filter(tab => tab.id === task?.id || tabs.filter(row => row.id !== task?.id).indexOf(tab) < tabCount - 1);
     const hiddenTabs = tabs.filter(tab => !visibleTabs.includes(tab));
     const liveNodes=task?.sessionOpen?s.graph.nodes:[];
-    const work=(task?.workflow||[]).filter(node=>!['fixed-agent','fixed-you','fixed-workshop','start'].includes(node.id));
+    const work=(task?.workflow||[]).filter(node=>node.type!=='thing.session'&&!['fixed-agent','fixed-you','fixed-workshop','start'].includes(node.id));
     const resumeSteps=(work.length?work:plan.map((step,index)=>({id:stepKeys(step)[0]||String(index),title:describe(step),planStep:step}))).map(step=>{
       const live=liveNodes.find(node=>node.id===step.id), activityRow=activity.find(row=>row.id===step.id);
       const state=live?stepOf(step,{[step.id]:live.status}):activityRow?stepOf(step,{[step.id]:activityRow.status}):stepOf(step.planStep||step,task?.progress);
@@ -465,19 +481,19 @@
       <div className="dx-home">
         {!fileWorkspace ? <Group id="home-context" className={'dx-home-landing dx-split resume-home'+(sessionsRail&&!sessionsPeek?' sessions-rail':'')} orientation="horizontal" onLayoutChanged={(_,meta)=>{if(meta?.isUserInteraction&&sessionsRef.current){const size=sessionsRef.current.getSize().inPixels;saveHome({collapsed:size<=57,width:size<=57?homeLayout.width:Math.max(240,Math.min(440,Math.round(size)))});}}}>
           <Column id="sessions" panelRef={sessionsRef} collapsible collapsedSize={56} minSize={240} maxSize={440} defaultSize={initialSessionsSize.current} groupResizeBehavior="preserve-pixel-size" onResize={size=>setSessionsRail(size.inPixels<=57)}>
-            <aside className="resume-sessions" data-peek={sessionsRail&&sessionsPeek||undefined} aria-label="Sessions"><header><h2>Sessions</h2><button type="button" className="dx-quiet" aria-label={sessionsRail&&!sessionsPeek?'Open the list':'Fold the list to avatars'} onClick={()=>executeAction('ui.select',()=>{if(shellWidth<1036){setSessionsPeek(!sessionsPeek);return undefined;}return saveHome({collapsed:!sessionsRail});})}>{sessionsRail?'›':'‹'}</button></header>
-              <div className="resume-session-scroll"><window.UI.SessionList list="home" rows={sessionRows} renderRow={row=>row.runtimeAgent?<div className="dx-task-row resume-row" key={row.id}><button type="button" className="resume-avatar" aria-label={'Open agent '+row.title} onClick={()=>executeAction('ui.show',u,'Agent',{id:row.runtimeAgent.id})}><window.UI.Av id={row.runtimeAgent.id} size={28}/></button><button type="button" className="dx-task" onClick={()=>executeAction('ui.show',u,'Agent',{id:row.runtimeAgent.id})}><b>{row.title}</b><span>{row.runtimeAgent.status_text||row.runtimeAgent.status}</span></button></div>:taskRow(row)}/></div>
+            <aside data-design="home1.list" className="resume-sessions" data-peek={sessionsRail&&sessionsPeek||undefined} aria-label="Sessions"><header><h2>Sessions</h2><button type="button" className="dx-quiet" data-design="home1.fold" aria-label={sessionsRail&&!sessionsPeek?'Open the list':'Fold the list to avatars'} onClick={()=>executeAction('ui.select',()=>{if(window.innerWidth<1100){setSessionsPeek(!sessionsPeek);return undefined;}return saveHome({collapsed:!sessionsRail});})}>{sessionsRail?'›':'‹'}</button></header>
+              <div className="resume-session-scroll"><window.UI.SessionList list="home" rows={sessionRows} sectionOf={sectionOf} collapsedSections={collapsedSections} toggleSection={toggleSection} renderRow={row=>row.runtimeAgent?<div className="dx-task-row resume-row" key={row.id}><button type="button" className="resume-avatar" aria-label={'Open agent '+row.title} onClick={()=>executeAction('ui.select',()=>row.runtimeAgent.task?u.openTaskFile(row.runtimeAgent.task):u.go('settings/Agents'))}><window.UI.Av id={row.runtimeAgent.name} size={28}/></button><button type="button" className="dx-task" onClick={()=>executeAction('ui.select',()=>row.runtimeAgent.task?u.openTaskFile(row.runtimeAgent.task):u.go('settings/Agents'))}><b>{row.title}</b><span>{row.runtimeAgent.status_text||row.runtimeAgent.status}</span></button></div>:taskRow(row)}/></div>
               {!!homeLayout.hidden.length&&<button type="button" className="dx-quiet" onClick={()=>executeAction('ui.select',()=>saveHome({hidden:[]}))}>+ {homeLayout.hidden.length} hidden</button>}
               {homeUndo&&<button type="button" className="dx-quiet" onClick={()=>executeAction('ui.select',()=>{const previous=homeUndo;setHomeUndo(null);return saveHome(previous);})}>Undo Home change</button>}
             </aside>
           </Column>
           <Separator className="pane-splitter" aria-label="Resize the session list" />
           <Column id="resume" minSize={320}>
-            <main className="resume-main"><div className="resume-home-controls"><span>1 Resume</span><button type="button" className="dx-quiet" onClick={()=>executeAction('ui.select',()=>{setHomeUndo(homeLayout);return saveHome({width:300,collapsed:false,resume:'',order:[],hidden:[]});})}>Reset Home</button></div>
-              {task?<section className="resume-task" aria-label="Resumed session"><header className="resume-heading"><div><h1>{task.title}</h1><p>{stepLine}</p></div><div className="resume-people">{agents.map(name=><button type="button" key={name} aria-label={'Open agent '+name} title={name} onClick={()=>executeAction('ui.select',()=>openOwner(task))}><window.UI.Av id={name} size={28}/></button>)}</div><Btn sm onClick={()=>executeAction('ui.select',()=>openTask(task))}>Open its Canvas</Btn></header>
-                <div className="resume-steps">{resumeSteps.map((step,index)=><article key={step.id} data-resume-step={step.id} data-state={step.state.kind} className="resume-step"><header><span className="resume-step-tile"><Icon name={step.state.kind==='done'?'check':'canvas'} size={14}/></span><b>{step.title}</b></header><p>{step.state.label}{step.output?' · '+step.output:''}</p>{step.preview&&<pre className="resume-preview">{step.preview}</pre>}{approvalSteps.filter(row=>row.index===index).map(({card})=><window.UI.ApprovalCard key={card.id} id={card.id} compact/>)}</article>)}</div>
+            <main className="resume-main"><div className="resume-home-controls"><button type="button" data-design="home1.reset" className="dx-quiet" onClick={()=>executeAction('ui.select',()=>{setHomeUndo(homeLayout);return saveHome({width:300,collapsed:false,resume:'',order:[],hidden:[]});})}>Reset Home</button></div>
+              {task?<section className="resume-task" aria-label="Resumed session"><header data-design="home1.head" className="resume-heading"><div><h1>{task.sessionTitle||task.title}</h1><p>{stepLine}</p></div><div className="resume-people">{agents.map(name=><button type="button" key={name} aria-label={'Open agent '+name} title={name} onClick={()=>executeAction('ui.select',()=>openOwner(task))}><window.UI.Av id={name} size={28}/></button>)}</div><Btn data-design="home1.open" sm onClick={()=>executeAction('ui.select',()=>openTask(task))}>Open its Canvas</Btn></header>
+                {!resumeSteps.length&&<section className="resume-summary" aria-label="Session activity"><p>{statusText(task.status)}{ownerOf(task)?' · '+ownerOf(task):''}</p>{outputs.map((output,index)=><pre className="resume-preview" key={index}>{useLabel(output.name||output.excerpt)}</pre>)}{!messages.length&&!outputs.length&&<p>{reasonOf(task)||'No messages yet.'}</p>}</section>}<div className="resume-steps">{resumeSteps.map((step,index)=><article key={step.id} data-resume-step={step.id} data-state={step.state.kind} data-design="home1.step" className="resume-step"><header><span className="resume-step-tile"><Icon name={step.state.kind==='done'?'check':'canvas'} size={14}/></span><b>{step.title}</b></header><p>{step.state.label}{step.output?' · '+step.output:''}</p>{step.preview&&<pre className="resume-preview">{step.preview}</pre>}{approvalSteps.filter(row=>row.index===index).map(({card})=><window.UI.ApprovalCard key={card.id} id={card.id} compact/>)}</article>)}</div>
                 {approvalSteps.filter(row=>row.index<0).map(({card})=><window.UI.ApprovalCard key={card.id} id={card.id} compact/>)}
-                {messages.length>0&&<section className="resume-thread" aria-label="Last thread lines"><h2>In the thread</h2>{messages.slice(-3).map(message=><button type="button" key={message.id} onClick={()=>executeAction('ui.select',()=>u.openTaskFile(task.id,'split'))}><window.UI.Av id={message.who||'Agent'} size={24}/><span><b>{message.who}</b> {describe(message.text)}</span></button>)}</section>}
+                {messages.length>0&&<section data-design="home1.thread" className="resume-thread" aria-label="Last thread lines"><h2>In the thread</h2>{messages.slice(-3).map(message=><button type="button" key={message.id} onClick={()=>executeAction('ui.select',()=>u.openTaskFile(task.id,'split'))}><window.UI.Av id={message.who||'Agent'} size={24}/><span><b>{message.who}</b> {describe(message.text)}</span></button>)}</section>}
               </section>:request === 'empty'?<section className="resume-zero"><h1>What do you need?</h1>{['Review a drawing set','Check a model against the standard','Collect files for an issue'].map(prompt=><button type="button" key={prompt} onClick={()=>executeAction('ui.select',()=>{const key=JSON.stringify(['home','']);u.setComposerDraft(current=>({...current,[key]:{text:prompt,revision:(current[key]?.revision||0)+1}}));document.querySelector('.global-composer textarea')?.focus();})}><Icon name="brain" size={18}/>{prompt}</button>)}</section>:null}
             </main>
           </Column>

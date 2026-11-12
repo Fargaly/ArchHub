@@ -189,3 +189,17 @@ def test_project_uses_registered_workspace_and_worktree(tmp_path, monkeypatch):
     monkeypatch.setattr(workspace_roots_catalogue, 'read_registered_roots',
                         lambda: ({'other': {'root_id': 'other', 'label': 'Another studio', 'path': str(root)}}, None))
     assert mailbox.project_of(root) == 'Another studio'
+
+
+def test_home_section_collapse_uses_settings_owner(tmp_path):
+    from nodelang.nograph_server import JsonFile
+    from nodelang.settings_owner import home_layout
+    settings = JsonFile(tmp_path / 'settings.json', {})
+    initial = home_layout(settings=settings)['homeLayout']
+    value = {**initial, 'sections': ['Older / archived', 'Earlier this week']}
+    assert home_layout('setHomeLayout', [value], settings)['homeLayout'] == value
+    assert home_layout(settings=settings)['homeLayout'] == value
+    before = settings.path.read_bytes()
+    with pytest.raises(ValueError):
+        home_layout('setHomeLayout', [{**value, 'sections': ['unknown']}], settings)
+    assert settings.path.read_bytes() == before

@@ -363,6 +363,12 @@ def record_step(history, task, owner, label, title, status, result=""):
         context = document.get('properties', {}).get('taskContext', {})
         if context.get('task') != task:
             raise ValueError('Session file belongs to another task')
+        if row.get('project'):
+            context['project'] = row['project']
+            if not context.get('workspace'):
+                from .workspace_roots_catalogue import read_registered_roots
+                roots, _ = read_registered_roots()
+                context['workspace'] = next((key for key, value in roots.items() if value.get('label') == row['project']), '')
         steps = [n for n in document['nodes'] if n.get('params', {}).get('workshop_step')]
         node = next((n for n in steps if n['id'] == identity), None)
         if node is None:
@@ -475,6 +481,7 @@ def _session_context(path):
         context = _held_context(document)
     except (OSError, ValueError, KeyError, TypeError):
         return {}
+    context["sessionTitle"] = document["title"]
     context["fileMessages"] = _file_messages(document)
     return context
 
@@ -529,7 +536,7 @@ def _declaration_for(row, declarations):
     return (current or matched or [None])[0]
 
 
-def column(history, project=None, stale_hours=None):
+def column(history, project=None, stale_hours=None, *, include_archived=False):
     """Studio Work rows. Declaration fields fill the view. A project shows only its own tasks.
     Stale declared work leaves in-progress."""
     from .workshop_mailbox import read_declarations
@@ -556,13 +563,13 @@ def column(history, project=None, stale_hours=None):
         return "PLANNED"
     current = _current_session()
     built = []
-    for row in rows(history, include_archived=False):
+    for row in rows(history, include_archived=include_archived):
         if project and row.get("project") != project:
             continue
         declaration = _declaration_for(row, declarations)
         session = _session_context(row.get("session_path"))
         paths = [item for item in ((declaration or {}).get("paths") or []) if isinstance(item, str)]
-        shown = state(row)
+        shown = "ARCHIVED" if row.get("archived") else state(row)
         result = recorded_result(history, row)
         waiting = "limit reached" if row.get("capacity") == "LIMIT_REACHED" and shown == "PLANNED" else (
             row.get("outcome") if shown == "PLANNED" and row.get("outcome") in ("interrupted", "unknown") else "")
@@ -593,7 +600,7 @@ def column(history, project=None, stale_hours=None):
              'agents': agents, 'folders': list(session.get("folders") or []) or paths,
              'references': list(session.get("references") or []),
              'session': row.get("session_path") or ((declaration or {}).get("session") if declaration else "") or "",
-             'plan': plan, 'progress': session.get("progress") or {},
+             'plan': plan, 'planInferred': not bool(session.get('plan')), 'sessionTitle': session.get('sessionTitle') or short_title(row['title']), 'progress': session.get("progress") or {},
              'checkpoints': list(session.get("checkpoints") or []),
              'workflow': list(session.get("workflow") or []), 'activity': activity,
              'updated_at': row['updated_at'], 'sessionPath': row.get('session_path'),

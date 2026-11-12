@@ -824,12 +824,12 @@ def _declarations():
         return read_declarations(history._db, include_archived=True)
 
 
-def _list_tasks():
+def _list_tasks(include_archived=False):
     """The Work column: the Workshop tasks table (claimed atomically by agents with task.claim)."""
     from .workshop_mailbox import application_history
     from .workshop_tasks import column
     with application_history() as history:
-        return column(history)
+        return column(history, include_archived=include_archived is True)
 
 
 def _open_task_graph(task, path=None):
@@ -1074,7 +1074,7 @@ def _read_notification(identity):
 
 
 WORKSHOP_READS = {
-    'listTasks': lambda *a: _list_tasks(),
+    'listTasks': lambda *a: _list_tasks(a[0] if a else False),
     'renameTask': _rename_task,
     'openTaskGraph': _open_task_graph,
     'setTaskSession': _set_task_session,

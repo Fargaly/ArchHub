@@ -222,7 +222,7 @@ async function refreshApprovals() {
 }
 async function refreshTasks(details=true) {
  const epoch=scopeEpoch,binding=JSON.stringify(workshopBinding());
- const tasks=await workshop('listTasks');if(!Array.isArray(tasks))return tasks;
+ const tasks=await workshop('listTasks',[true]);if(!Array.isArray(tasks))return tasks;
  const room=await workshop('listWorkshopMessages');
  const liveAgents=await workshop('listLiveAgents').catch(()=>[]);
  if(epoch!==scopeEpoch||binding!==JSON.stringify(workshopBinding()))return state.tasks;
@@ -712,7 +712,7 @@ api.approve=async(id,...args)=>{
   if(card.approvalKind==='canvas')await flushAutosave();
   const result=await workshop('answerApproval',[card.approvalKind,id,card.input_digest,'approve']);
   if(result?.status!=='approved')throw Error(result?.error||result?.message||'The held action was not released.');
-  if(card.approvalKind==='canvas' && card.path===sessionPath)await pollFile();
+  if(card.approvalKind==='canvas' && card.path===sessionPath)await pollFile(true);
   await refreshApprovals();return result;
  }
  if(['desktop','schedule'].includes(card?.approvalKind)){
@@ -737,7 +737,7 @@ api.decline=async id=>{
   if(card.approvalKind==='canvas')await flushAutosave();
   const result=await workshop('answerApproval',[card.approvalKind,id,card.input_digest,'deny']);
   if(result?.status!=='declined')throw Error(result?.error||result?.message||'The held action was not refused.');
-  if(card.approvalKind==='canvas'&&card.path===sessionPath)await pollFile();
+  if(card.approvalKind==='canvas'&&card.path===sessionPath)await pollFile(true);
   await refreshApprovals();return result;
  }
  if(['desktop','schedule'].includes(card?.approvalKind)){
@@ -794,7 +794,7 @@ function rememberTask(result, select=true){
  publish(select?{focusedTask:result.taskId,tasks}:{tasks});
  return session;
 }
-api.createTask=async(title,agent='',workspace='')=>{const result=await workshop('createTask',[title,agent,workspace]);if(!result||result.ok===false)throw Error(result?.message||result?.error||'The task was not created.');await refreshTasks();return {...result,...rememberTask(result)};};
+api.createTask=async(title,agent='',workspace=state.activeWorkspace||'')=>{const result=await workshop('createTask',[title,agent,workspace]);if(!result||result.ok===false)throw Error(result?.message||result?.error||'The task was not created.');await refreshTasks();return {...result,...rememberTask(result)};};
 api.renameTask=async(id,title)=>{const result=await taskFileAction('renameTask',id,title);await refreshTasks(false);return result;};
 async function taskFileAction(method,id,...args){
  const navigation=fileNavigation;
@@ -1659,12 +1659,12 @@ function queueAutosave(){
  },Number(state.canvasPolicy?.viewport_commit_debounce_ms??140));
 }
 // The open file is shared with agents: pick up their edits (file revision), no background solve.
-async function pollFile(){
+async function pollFile(force=false){
  if(!sessionDocument||localDirty||document.hidden)return;
  const id=sessionDocument.id,path=sessionPath,head=await sessionRequest('head',{path,id});
- if(!(head.revision>sessionRevision)||localDirty||sessionDocument?.id!==id)return;
+ if((!force&&!(head.revision>sessionRevision))||localDirty||sessionDocument?.id!==id)return;
  const read=await sessionRequest('read',{path,id});
- if(localDirty||sessionDocument?.id!==id||read.revision<=sessionRevision)return;
+ if(localDirty||sessionDocument?.id!==id||(!force&&read.revision<=sessionRevision))return;
  fileHistory.push(copy(sessionDocument));sessionDocument=copy(read.document);sessionRevision=read.revision;runEpoch++;
  solveNote=read.by&&read.by!=='You'?'Updated by '+read.by:solveNote;projectFile();publish({liveEditBy:read.by,liveRevision:read.revision});
 }

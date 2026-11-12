@@ -1168,3 +1168,22 @@ body{min-width:900px;overflow-x:auto}.app-window{min-width:900px}.app-window>div
 .v48-current-approval [data-approval]{display:contents!important}.v48-current-approval [data-approval]>.flex:first-child,.v48-current-approval [data-approval]>div:has(>pre){display:none}.v48-current-approval [data-approval]>.flex:last-child{order:1}.v48-current-approval h3{font-size:13px}.v48-approval-parameters{font-size:11px;color:var(--color-ink-soft)}.v48-approval-parameters pre{max-height:200px;overflow:auto;white-space:pre-wrap;font:11px/1.5 var(--type-family-mono);margin:8px 0 0}
 
 .v48-task-progress i[data-state=awaiting]{background:var(--color-warn)}
+
+/* Home 1: a floating single row; extra actions remain in its context menu. */
+.screen-with-composer:has([data-home-page])>.global-composer form{display:grid;grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"scope message tools";align-items:center;min-height:48px;padding:8px 10px!important;gap:10px}
+.screen-with-composer:has([data-home-page]) .composer-scope{margin:0!important;max-width:none}
+.screen-with-composer:has([data-home-page]) .composer-scope>button+button,.screen-with-composer:has([data-home-page]) .composer-tools>button:not([aria-label="Add context"]):not([type="submit"]){display:none}
+.screen-with-composer:has([data-home-page]) .composer-input{min-height:28px;height:28px;resize:none;padding:4px 0}
+.screen-with-composer:has([data-home-page]) .composer-tools{flex-wrap:nowrap;gap:6px}
+.screen-with-composer:has([data-home-page]) .composer-scope .tab-button{font-size:12px;max-width:none;white-space:nowrap}
+.resume-session-scroll>.shelf-tabs{position:sticky;top:0;background:var(--color-bg-panel);z-index:2;display:flex;flex-wrap:wrap;flex:none;padding:8px 0}
+.resume-session-scroll>.shelf-tabs button{white-space:nowrap;padding:5px 7px;font-size:11px;flex:none}
+.sessions-rail .resume-session-scroll>.shelf-tabs{position:fixed;top:50px;left:124px;border:1px solid var(--color-line);border-radius:7px;padding:4px;box-shadow:0 4px 12px #0005}
+.agent-avatar{position:relative;display:inline-flex;flex:none}.agent-avatar>small{position:absolute;right:-4px;bottom:-3px;min-width:13px;padding:0 2px;border-radius:4px;background:var(--color-bg-panel);color:var(--color-ink);font:11px/13px var(--type-family-ui);border:1px solid var(--color-line)}
+.resume-row .dx-task span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.resume-step>p:empty{display:none}.resume-summary p{color:var(--color-ink-soft);font-size:13px}
+.header-status>button{max-width:none;overflow:visible;text-overflow:clip;flex:none}
+@media(max-width:1450px){.header-status>button:first-of-type{display:none}}
+@media(max-width:1100px){.header-status>span{display:none}}
+
+.home-session-section{flex:none;min-width:0}.home-section-heading{display:flex;align-items:center;justify-content:space-between;width:100%;padding:12px 6px 5px;border:0;background:none;color:var(--color-ink-soft);font-size:11px;text-align:left}.home-section-heading b{font-size:11px;font-weight:500}.sessions-rail .home-section-heading{font-size:0;padding:5px}.sessions-rail .home-section-heading b{font-size:11px}

@@ -680,7 +680,7 @@ def home_layout(function='readHomeLayout', args=(), settings=None):
     default = {'width': 300, 'collapsed': False, 'resume': '', 'order': [], 'hidden': []}
     if function == 'setHomeLayout':
         value = args[0] if len(args) == 1 else None
-        if type(value) is not dict or set(value) != set(default):
+        if type(value) is not dict or set(value) - {'sections'} != set(default):
             raise ValueError('Choose the session list and resumed session.')
         if type(value['width']) is not int or not 240 <= value['width'] <= 440 or type(value['collapsed']) is not bool:
             raise ValueError('Choose a session list width from 240 to 440 pixels.')
@@ -692,9 +692,11 @@ def home_layout(function='readHomeLayout', args=(), settings=None):
             rows = value[key]
             if type(rows) is not list or len(rows) > 1000 or any(not valid_id(item) for item in rows) or len(set(rows)) != len(rows):
                 raise ValueError('Choose unique sessions for the Home list.')
+        if 'sections' in value and (type(value['sections']) is not list or any(item not in ('Needs you', 'Working now', 'Today', 'Earlier this week', 'Older / archived') for item in value['sections'])):
+            raise ValueError('Choose Home sections to collapse.')
         settings.update({'homeLayout': value})
     held = settings.read().get('homeLayout', {})
-    return {'homeLayout': {key: held.get(key, value) for key, value in default.items()}}
+    return {'homeLayout': {**{key: held.get(key, value) for key, value in default.items()}, **({'sections': held['sections']} if 'sections' in held else {})}}
 
 
 def appearance_settings(function='readControls', args=(), settings=None):

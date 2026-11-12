@@ -113,7 +113,12 @@
       ini: String(id || '').trim().split(/[\s._-]+/).filter(Boolean).map(w => w[0].toUpperCase()).join('').slice(0, 2),  // initials of the display name
       col: A.userAv
     };
-    return <D.Avatar agent={p} size={size} />;
+    const name=String(p.name||id||'Agent').split(/\s+\/\s+/).at(-1).trim();
+    const peers=[...new Set([...(s.agents||[]).map(a=>a.name),...(s.agentGraph?.sessions||[]).map(a=>a.name),...(s.tasks||[]).flatMap(t=>[t.owner,...(t.agents||[])])].filter(Boolean).map(String))].sort();
+    const initials=name.split(/[\s._-]+/).filter(Boolean).map(word=>word[0].toUpperCase()).join('').slice(0,2)||'?';
+    const index=peers.indexOf(String(p.name||id));
+    const hue=Array.from(String(p.name||id)).reduce((hash,char)=>(hash*31+char.charCodeAt(0))%360,0);
+    return <span className="agent-avatar" title={p.name||id}><D.Avatar agent={{...p,name,ini:initials,col:[A.accent,A.blue,A.purple,A.ok,A.warn,A.cyan][hue%6]}} size={size}/>{index>=0&&<small>{index+1}</small>}</span>;
   };
   function Heading({
     title,
@@ -198,7 +203,7 @@
         if (!pending.current) setSending(false);
       }
     };
-    return <D.Composer variant="home" as="form" onSubmit={e => {
+    return <D.Composer data-design="composer.surface" variant="home" as="form" onSubmit={e => {
       e.preventDefault();
       executeAction("sharedUI.Send", {send}, e);
     }} style={{
@@ -208,13 +213,13 @@
   <div className="spread composer-scope" style={{
         fontSize: 11,
         marginBottom: 8
-      }}><button type="button" className="tab-button" aria-label="Composer scope" onClick={event => executeAction("sharedUI.ComposerScope.1", {
+      }}><button type="button" className="tab-button" data-design="composer.to" aria-label="Composer scope" onClick={event => executeAction("sharedUI.ComposerScope.1", {
           contextOpen,
           setContextOpen
         }, event)}><window.AHIcon name="canvas" size={12} /> {u.route==='home'?'New session':u.selectedNodeId ? api.contextLabel(u.selectedNodeId) : s.graph.name}</button><button type="button" className="icon-button" aria-label="Mention context" title="Add nodes, workflows, agents or sessions" onClick={event => executeAction("sharedUI.MentionContext.2", {
           contextOpen,
           setContextOpen
-        }, event)}>＠</button></div>{contextOpen && <div className="composer-mentions" role="region" aria-label="Context choices">{[['Nodes', s.graph.nodes], ['Workflows', s.graphs], ['Agents', s.providers], ['Sessions', s.tasks]].map(([label, rows]) => <details key={label}><summary>{label}</summary>{rows.slice(0, 20).map(r => <button type="button" key={r.id} onClick={event => executeAction("sharedUI.Control.3", {
+        }, event)}>＠</button></div>{contextOpen && <div className="composer-mentions" role="region" aria-label="Context choices">{u.route==='home'&&<div className="flex"><button type="button" onClick={event=>executeAction('sharedUI.Commands.6',{u},event)}>Commands</button>{['Sketch','Mark','Mask'].map(tool=><button type="button" key={tool} onClick={event=>executeAction('sharedUI.Control.7',{api,tool,u},event)}>{tool}</button>)}</div>}{[['Nodes', s.graph.nodes], ['Workflows', s.graphs], ['Agents', s.providers], ['Sessions', s.tasks]].map(([label, rows]) => <details key={label}><summary>{label}</summary>{rows.slice(0, 20).map(r => <button type="button" key={r.id} onClick={event => executeAction("sharedUI.Control.3", {
             api,
             r,
             setContextOpen,
@@ -223,7 +228,7 @@
           api,
           id,
           u
-        }, event)}>{api.contextLabel(id)} ×</button>)}</div>}<textarea ref={inputRef} className="composer-input" rows={compact ? 2 : 2} aria-label="Message" placeholder={composerWidth<420?"Message…":composerWidth<640?"Ask or @ an agent…":placeholder} value={text} onChange={e => {
+        }, event)}>{api.contextLabel(id)} ×</button>)}</div>}<textarea ref={inputRef} data-design="composer.msg" className="composer-input" rows={u.route==='home'?1:2} aria-label="Message" placeholder={composerWidth<420?"Message…":composerWidth<640?"Ask or @ an agent…":placeholder} value={text} onChange={e => {
         setText(e.target.value);
         if (e.target.value.endsWith('@')) setContextOpen(true);
       }} onKeyDown={e => {
@@ -240,10 +245,10 @@
           api,
           tool,
           u
-        }, event)}><window.AHIcon name={icon} size={15} /></button>)}{u.route!=='home' && window.UI.AgentPicker && <window.UI.AgentPicker choices={window.UI.workshopPeople(s).choices} to={to} setTo={setTo} />}<span className="fill" />{api.supportsAction?.('startVoiceInput') !== false && <Btn sm onClick={event => executeAction("sharedUI.TalkF2.8", {
+        }, event)}><window.AHIcon name={icon} size={15} /></button>)}{u.route!=='home' && window.UI.AgentPicker && <window.UI.AgentPicker choices={window.UI.workshopPeople(s).choices} to={to} setTo={setTo} />}<span className="fill" />{u.route!=='home' && api.supportsAction?.('startVoiceInput') !== false && <Btn sm onClick={event => executeAction("sharedUI.TalkF2.8", {
           setText,
           u
-        }, event)} title="Talk · F2">🎙 Talk</Btn>}<Btn p sm type="submit" aria-label="Send ↵" title="Send · Enter" aria-busy={sending} disabled={!text.trim()}><window.AHIcon name="send" size={15} /></Btn></div>
+        }, event)} title="Talk · F2">🎙 Talk</Btn>}<Btn data-design="composer.send" p sm type="submit" aria-label="Send ↵" title="Send · Enter" aria-busy={sending} disabled={!text.trim()}><window.AHIcon name="send" size={15} />{u.route==='home'?'Send':null}</Btn></div>
  {s.composerAnswer&&<div className="composer-answer" role="status" aria-label="Model answer"><small className="muted">{s.composerAnswer.provider} · {s.composerAnswer.model}</small><p style={{whiteSpace:'pre-wrap'}}>{s.composerAnswer.answer}</p></div>}
  </D.Composer>;
   }

@@ -1197,6 +1197,7 @@
             ...(embedded ? [['Thread', () => u.setTaskFace(u.taskFace==='split'?'canvas':'split')]] : []),
             ...(embedded && onHandoff ? [['Handoff map',onHandoff]] : []),
             [(u.libraryOpen ? 'Hide' : 'Show') + ' Library', () => u.setLibraryOpen(v => !v)], ['Group · Ctrl G', group, selected.length < 2],
+            ['Run all again', () => executeAction('projects.ds_screens.Run.15', {api,u,again:true})],
             ['Undo · Ctrl Z', () => u.act(api.undo)], ['Redo · Ctrl Shift Z', () => u.act(api.redo)], ['Arrange', () => u.act(api.arrangeGraph)],
             ['Wires: ' + (s.graph.wireVisibility || 'Visible') + ' → ' + ({Visible: 'Faint', Faint: 'Hidden', Hidden: 'Visible'})[s.graph.wireVisibility || 'Visible'],
               () => u.act(() => api.setWireVisibility(({Visible: 'Faint', Faint: 'Hidden', Hidden: 'Visible'})[s.graph.wireVisibility || 'Visible']))],
@@ -1434,9 +1435,9 @@ function projectsdsscreensjsxSaveSkill14({u}, event) {
   const handler = () => u.show('Save skill');
   return handler ? Reflect.apply(handler, undefined, [event]) : undefined;
 }
-function projectsdsscreensjsxRun15({api,u}, event) {
+function projectsdsscreensjsxRun15({api,u,again=false}, event) {
   const handler = async () => {
-            const t = await u.act(() => api.runNode());
+            const t = await u.act(() => api.runNode(undefined,again));
             if (t?.approvalId) {
               const card=api.getSnapshot().approvals.find(row=>row.id===t.approvalId),box=card?.nodeId && document.querySelector('[data-graph-node="'+window.CSS.escape(card.nodeId)+'"]')?.getBoundingClientRect();
               u.show('Approve',{id:t.approvalId,...(box?{anchor:{x:box.right+12,y:box.top}}:{})});

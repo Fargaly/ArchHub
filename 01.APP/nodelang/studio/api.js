@@ -1561,7 +1561,7 @@ function fileNode(node, document=sessionDocument){
   params,defaults:item?.params||{},parameterSchema:schema,paramDefs:defs,bind,
   inputs:(ports.target||[]).map(p=>({...p,name:p.label||p.id,type:p.type==='unknown'?'any':p.type})),outputs:(ports.source||[]).map(p=>({...p,name:p.label||p.id,type:p.type==='unknown'?'any':p.type})),
   children:node.children||[],frameMembers:node.frameMembers,collapsed:node.collapsed!==false,members:(Array.isArray(node.members)?node.members:[]).filter(m=>m&&typeof m.id==='string'&&m.id).map(m=>({id:m.id,title:m.title||m.name||m.id,agent:m.agent||m.id})),parent:node.parent||null,icon:NODE_ICONS.includes(node.icon)?node.icon:'',color:typeof node.color==='string'&&/^#[0-9a-f]{6}$/i.test(node.color)?node.color:undefined,frozen:!!node.frozen,pinned:!!node.pinned,bypassed:!!node.bypassed,portVisibility:node.portVisibility||{},parameterPresentation:node.parameterPresentation||{},
-  output:node.result?.output??[],status:node.result?.status||'Idle',error:node.result?.error||'',display:node.result?.display||'',elapsedMs:node.result?.elapsed_ms};
+  output:node.result?.output??[],status:node.result?.status==='Declined'?'Rejected':node.result?.status||'Idle',error:node.result?.error||'',display:node.result?.display||'',elapsedMs:node.result?.elapsed_ms};
 }
 // session_files.py _WIRE_MENUS, mirrored for the inspector. First choice is the omitted-field value.
 const WIRE_MENUS=[['matching',['By index','Longest','Shortest','Cross']],['order',['Source order','Reverse']],['missing',['Preserve','Drop','Blank']],['units',['From source','From target']],['conversion',['None','Number','Text']],['route',['Bezier','Straight','Step']]];
@@ -1841,13 +1841,14 @@ api.connectSockets=async wire=>{
  if(reaches.has(from.id))throw Error('Cycle detected: disconnect a feedback wire first.');
  return fileEdit(d=>d.wires.push({id:window.crypto.randomUUID(),from:{node:from.id,socket:out.id},to:{node:to.id,socket:input.id}}),[to.id]);
 };
-api.runNode=async id=>{
+api.runNode=async(id,again=false)=>{
  const navigation=fileNavigation;clearTimeout(solveTimer);await runSolve();await flushAutosave();if(navigation!==fileNavigation)return {cancelled:true};
  const epoch=++runEpoch,document=portableDocument();
  for(const node of sessionDocument.nodes)node.result={status:'Running'};localDirty=true;projectFile();
  const seen=new Set(),expand=key=>{if(seen.has(key))return [];seen.add(key);const node=document.nodes.find(n=>n.id===key),members=node?.children?.length?node.children:node?.frameMembers;return members?.length?members.flatMap(expand):[key];};
  const roots=id?(Array.isArray(id)?id:[id]).flatMap(expand):null;
- try{const result=await sessionRequest('run',{document,path:sessionPath,...(roots?{roots}:{})});if(epoch!==runEpoch)throw Error('Session changed during Run; run the new values again.');
+ try{const result=await sessionRequest('run',{document,path:sessionPath,again,...(roots?{roots}:{})});if(epoch!==runEpoch)throw Error('Session changed during Run; run the new values again.');
+  if(result.document){sessionDocument=copy(result.document);sessionRevision=result.revision;}else if(result.run)sessionDocument.properties.canvasRun=copy(result.run);
   for(const node of sessionDocument.nodes)node.result=result.results[node.id]||{status:'Idle'};projectFile();queueAutosave();if(result.approvalId){await refreshApprovals();await refreshNotifications();}const run={id:window.crypto.randomUUID(),title:sessionDocument.title,status:result.succeeded?'Done':'Needs review',rows:Object.entries(result.results).map(([node,value])=>({node:state.graph.nodes.find(n=>n.id===node)?.title||node,status:value.status,output:JSON.stringify(value.output),error:value.error||''}))};publish({lastResult:run,runs:[...state.runs,run]});return {...result,id:run.id};
  }catch(error){if(epoch===runEpoch){for(const node of sessionDocument.nodes)node.result={status:'Error',error:error.message};projectFile();queueAutosave();}throw error;}
 };

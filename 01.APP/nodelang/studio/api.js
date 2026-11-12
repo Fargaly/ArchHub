@@ -1620,7 +1620,7 @@ async function runSolve(){
  const changed=[...solveIds].filter(id=>sessionDocument?.nodes.some(n=>n.id===id)),params=solveParams;solveIds=new Set();solveParams=[];
  if(!sessionDocument||!changed.length)return;
  const id=sessionDocument.id,epoch=runEpoch;solveCount++;
- const solved=await sessionRequest('solve',{document:portableDocument(),changed,params});
+ const solved=await sessionRequest('solve',{document:portableDocument(),path:sessionPath,changed,params});
  if(sessionDocument?.id!==id||epoch!==runEpoch)return;
  for(const n of sessionDocument.nodes)if(solved.results[n.id])n.result=solved.results[n.id];
  solveNote='Solved '+solved.solved.length+' node'+(solved.solved.length===1?'':'s')+' in '+solved.ms+' ms'+(solved.stale.length?' · '+solved.stale.length+' out of date (Run)':'');

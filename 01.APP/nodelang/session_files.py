@@ -203,7 +203,10 @@ def _dispatch_node(document, node, engine, params, feeds, *, invoke, stopped, de
         owner = next((n for n in document['nodes'] if n['id'] == (node.get('bind') or {}).get('node')), node)
         key = (node.get('bind') or {}).get('param', 'value')
         entry = next((d for d in owner.get('paramDefs', []) if d['id'] == key), {})
-        return {'value': coerce(node['params'].get('type', 'json'), value, entry)}, str(value)
+        value = coerce(node['params'].get('type', 'json'), value, entry)
+        if node['params'].get('type') in ('file', 'folder', 'path'):
+            value = resolve_file_parameter(value, (continuation or {}).get('path'))
+        return {'value': value}, str(value)
     if engine in ('data.dataset', 'data.field'):
         from .node_datasets import outputs as dataset_outputs
         return dataset_outputs(node, feeds)
@@ -392,6 +395,48 @@ def read_document(path):
         if not properties and not writer.get('had_properties', False):
             document.pop('properties')
     return document
+
+
+def file_parameters(node):
+    """Declared file/folder parameters, including the existing file-reference cards."""
+    keys = {d['id'] for d in node.get('paramDefs', []) if d.get('type') in ('file', 'folder', 'path')}
+    keys.update(p['id'].removeprefix('param:') for p in node.get('ports', {}).get('target', []) if p.get('type') == 'file')
+    if node['type'] == 'param.value' and node['params'].get('type') in ('file', 'folder', 'path'):
+        keys.add('value')
+    if node['type'] in ('thing.file', 'thing.file.write', 'thing.workspace'):
+        keys.add('path')
+    if node['type'] == 'trigger.file':
+        keys.add('folder')
+    return keys
+
+
+def resolve_file_parameter(value, path):
+    if not isinstance(value, str) or not value or not path:
+        return value
+    sample = resolve_sample_input(value)
+    if sample:
+        return sample
+    target = Path(value)
+    if target.drive and not target.is_absolute():
+        raise ValueError('Choose an absolute path or a path relative to the document.')
+    return str(target if target.is_absolute() else (local_path(str(path)).parent / target).resolve())
+
+
+def portable_parameters(document, path, previous=None):
+    """Only new/edited path values change; metadata-only legacy saves retain their values."""
+    old = {n['id']: n for n in (previous or {}).get('nodes', [])}
+    root = local_path(str(path)).parent
+    for node in document['nodes']:
+        before = old.get(node['id'], {})
+        old_keys = file_parameters(before) if before else set()
+        for key in file_parameters(node):
+            value = node['params'].get(key)
+            if not isinstance(value, str) or not value or key in old_keys and before['params'].get(key) == value:
+                continue
+            if resolve_sample_input(value):
+                continue
+            target = Path(resolve_file_parameter(value, path)).resolve()
+            node['params'][key] = target.relative_to(root).as_posix() if target.is_relative_to(root) else str(target)
 
 
 def write_document(path, document):
@@ -1200,7 +1245,9 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
     if only is None:
         signatures = {key: hashlib.sha256(json.dumps({
             'node': {k: v for k, v in nodes[key].items() if k not in ('result', 'position', 'title', 'color', 'icon')},
-            'incoming': incoming[key]}, sort_keys=True).encode()).hexdigest() for key in nodes}
+            'incoming': incoming[key],
+            'paths': {p: resolve_file_parameter(nodes[key]['params'].get(p), path) for p in file_parameters(nodes[key])}},
+            sort_keys=True).encode()).hexdigest() for key in nodes}
         previous = document.get('properties', {}).get('canvasRun', {})
         invalid = canvas_documents.downstream(document, [key for key in nodes if signatures[key] != previous.get('inputs', {}).get(key)])
         if previous and (invalid or again) and _resume is None:
@@ -1295,6 +1342,13 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
             each_state = None
             def run_once(plan):
                 params, bound = _params_and_feeds(node, engine, dict(plan))
+                for name in file_parameters(node):
+                    if name in params:
+                        params[name] = resolve_file_parameter(params[name], path)
+                entry = known.get(node.get('item')) or next((r for r in known.values() if r['engine'] == engine), {})
+                for port in node_ports(node, node.get('ports') or entry.get('ports', {}))['target']:
+                    if port.get('type') == 'file' and port['id'] in bound:
+                        bound[port['id']] = resolve_file_parameter(bound[port['id']], path)
                 return _dispatch_node(
                     document, node, engine, params, bound,
                     invoke=invoke, stopped=stopped, depth=depth,
@@ -1565,6 +1619,7 @@ class SessionFiles:
                 return {'ok':True,'cancelled':True}
             if body.get('save_as'):
                 document = {**document, 'title': Path(path).stem}
+            portable_parameters(document, path, read_document(path) if Path(path).exists() else None)
             path = write_document(path,document)
             canvas_documents.remember(path, document)
             self.remember(path,document)
@@ -1626,7 +1681,7 @@ class SessionFiles:
                 node = next((n for n in document['nodes'] if n['id'] == change.get('node')), None)
                 if node is not None and write_through(node, change.get('key'), change.get('value')):
                     written.append(change.get('key'))
-            return {**solve(document, list(body.get('changed') or []), invoke=invoke, stopped=stopped), 'written': written}
+            return {**solve(document, list(body.get('changed') or []), invoke=invoke, stopped=stopped, path=body.get('path')), 'written': written}
         if action in ('head', 'read'):
             path = local_path(body.get('path')) if body.get('path') else next((row['path'] for row in load_skills() if row['skill']['id'] == body.get('id')), self.directory/'missing.archhub')
             if not re.fullmatch(r'[A-Za-z0-9_-]{0,128}', str(body.get('id',''))) or not path.exists():

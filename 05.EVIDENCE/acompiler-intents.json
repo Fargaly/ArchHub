@@ -1,6 +1,21 @@
 {
   "schema_version": 1,
   "intents": {
+    "FOCUSWFCAT": {
+  "source": "Founder sole-builder F326 F327 F328, 2026-11-12; res-036 2026-11-11: existing owners only, workflow/agent-session classification, one category tree, one skills location; branch-only commits, hooks on, isolated profiles, no push/install/release or live data access.",
+  "scope": [
+    "01.APP/nodelang/session_files.py",
+    "01.APP/nodelang/library_engines.py",
+    "01.APP/nodelang/studio/api.js",
+    "01.APP/nodelang/studio/ds_library.jsx",
+    "01.APP/nodelang/studio/ds_home2.jsx",
+    "02.TESTS/tests_replica/test_session_files.py",
+    "02.TESTS/tests_replica/test_skills_library.py",
+    "02.TESTS/tests_replica/test_the_library_only_offers_what_runs.py",
+    "02.TESTS/tests_js/studio_workflows_categories.test.cjs",
+    "04.DOCS/FAILURE_LOG.md"
+  ]
+},
     "WSRETURNEDTRUTH": {
       "source": "717 and design owner report 2026-11-08, not founder words: Workshop returned sends falsely say sent; Claude Code / ArchHub session labels fail to resolve a live session. Builder assignment: reuse Workshop mailbox and Session Link, truthful nonblocking send results and exact live-agent routing across projects; isolated runtime proofs, existing tests, hooks on, commit only, no push/install/release or live profile access.",
       "scope": [

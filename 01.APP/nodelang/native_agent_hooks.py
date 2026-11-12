@@ -164,7 +164,7 @@ def refresh_cursor_identity(payload, *, database=None):
     roots = payload.get("workspace_roots")
     path = roots[0] if (type(roots) is list and roots and type(roots[0]) is str and roots[0].strip()) else os.getcwd()
     return call("declare", {"task": "Cursor chat", "paths": [path], "status": "working",
-                            "request_id": "unassigned"}, cursor_context(conversation), database=database)
+                            "request_id": "unassigned", "kind": "refresh"}, cursor_context(conversation), database=database)
 
 
 def _cursor_followup(messages):
@@ -303,7 +303,7 @@ def install_cursor_hook_entries(home, command=None):
     return path
 
 
-def declare_session(payload, vendor, *, database=None):
+def declare_session(payload, vendor, *, database=None, kind="start"):
     """Best-effort session-start registration; identity still comes from the real caller."""
     from .agent_declarations import SESSION_KEYS
     from .workshop_mailbox import call, _role
@@ -320,7 +320,8 @@ def declare_session(payload, vendor, *, database=None):
     if not role:
         lane = Path(cwd).name
         role = "builder:" + lane[5:] if lane.startswith("lane-") else "builder:" + runtime.replace("-", "_") + "-" + hashlib.sha256(str(session).encode()).hexdigest()[:8]
-    body = {"task": "Session start", "paths": [cwd], "status": "working", "request_id": "unassigned", "role": role}
+    body = {"task": "Session start", "paths": [cwd], "status": "working", "request_id": "unassigned", "role": role,
+            "kind": kind}
     for field in ("display_name", "title"):
         if payload.get(field):
             body[field] = payload[field]

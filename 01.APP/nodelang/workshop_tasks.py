@@ -280,7 +280,8 @@ def claim(history, task, owner, label, lease_seconds=None, revision=None):
         if mine is None:
             mine = {"owner": owner}
             members.append(mine)
-        mine.update(label=label, lease_until=now + lease_seconds)
+        mine.update(label=label, lease_until=now + lease_seconds, seen=now)
+        mine.pop("left", None)
         _, _, _, lease = _seat(members, now)
         return ("UPDATE workshop_tasks SET status='claimed', owner=?, owner_label=?, lease_until=?, members=?, "
                 "outcome=NULL, write_open=0, updated_at=?, revision=revision+1 WHERE id=? AND revision=? "
@@ -295,6 +296,7 @@ def _leave(history, task, owner, now):
     for member in members:
         if member["owner"] == owner:
             member["lease_until"] = None
+            member["left"] = True
     return members, _seat(members, now)
 
 
@@ -405,25 +407,45 @@ _LIVE_MEMBER = ("EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(members) T
                 "WHERE json_extract(value,'$.owner')=? AND json_extract(value,'$.lease_until')>=?)")
 
 
-def _session_for(history, owner, project, request, inherited, hours):
-    """The session an agent that passed no session id joins, or None. Never a guess.
+def _own_membership(history, owner, project):
+    """The open session this agent most recently worked in, in this project, unless it left it."""
+    found = history._db.execute(
+        "SELECT work.id FROM workshop_tasks AS work, json_each(CASE WHEN json_valid(work.members) THEN work.members "
+        "ELSE '[]' END) AS member WHERE work.status!='done' AND IFNULL(work.archived,0)=0 AND work.id NOT LIKE 'declared-%' "
+        "AND IFNULL(work.project,'')=? AND json_extract(member.value,'$.owner')=? "
+        "AND IFNULL(json_extract(member.value,'$.left'),0)=0 "
+        "ORDER BY IFNULL(json_extract(member.value,'$.seen'),0) DESC LIMIT 1", (project or "", owner)).fetchone()
+    return found[0] if found else None
 
-    First the work the agent is a live member of now (for a request: of that project and request), so a
-    Stop or refresh declare never moves it. Then the starter's session when it is the same work (same
-    project, and no request or that session's own request or id). Then, in a registered project only:
-    for a request, the one open session started for it; without one, the single open session active in
-    the last `hours` that has no request. Rows from older builds (declared-*) are never joined.
+
+def _session_for(history, owner, project, request, inherited, hours, kind="refresh"):
+    """The session a declare without a session id joins, or None. Never a guess. The caller states the kind.
+
+    With a request: the agent's own session of that project and request, the starter's session when it is
+    the same work, else in a registered project the one open session started for that request.
+    Without a request, by kind: "refresh" (Stop, per-prompt, connector refresh) only renews the work the
+    agent already has (live, else its most recent membership in this project); "start" (the session-start
+    hook) may also take the starter's session or the single open session of the project active in the
+    last `hours` that has no request; "alias" (the connector's startup alias) touches nothing.
+    Rows from older builds (declared-*) are never joined.
     """
     now = time.time()
-    if request:
-        mine = history._db.execute("SELECT id FROM workshop_tasks WHERE " + _OPEN_WORK + " AND IFNULL(project,'')=? "
-                                   "AND purpose=? AND " + _LIVE_MEMBER + " ORDER BY updated_at DESC LIMIT 1",
-                                   (project or "", request, owner, now)).fetchone()
-    else:
+    if not request:
+        if kind == "alias":
+            return None
         mine = history._db.execute("SELECT id FROM workshop_tasks WHERE " + _OPEN_WORK + " AND " + _LIVE_MEMBER +
                                    " ORDER BY updated_at DESC LIMIT 1", (owner, now)).fetchone()
-    if mine:
-        return mine[0]
+        if mine:
+            return mine[0]
+        mine = _own_membership(history, owner, project)
+        if mine or kind != "start":
+            return mine
+    else:
+        mine = history._db.execute("SELECT id FROM workshop_tasks WHERE " + _OPEN_WORK + " AND IFNULL(project,'')=? "
+                                   "AND purpose=? AND " + _MEMBER + " ORDER BY updated_at DESC LIMIT 1",
+                                   (project or "", request, owner)).fetchone()
+        if mine:
+            return mine[0]
     parent = _open_session(history, inherited)
     if parent and (parent.get("project") or "") == (project or "") and (
             not request or request in (parent.get("purpose"), parent["id"])):
@@ -464,7 +486,7 @@ def _request_of(request_id):
     return "" if str(request_id or "").strip().casefold() in _NO_REQUEST else request_id
 
 
-def declared(history, root, request_id, title, status, owner, label, project="", inherited="", changed=True):
+def declared(history, root, request_id, title, status, owner, label, project="", inherited="", changed=True, kind="refresh"):
     """An agent's declare joins one session (a piece of work) and returns its task id, or False.
 
     A declare with a request (a task id, a founder or plan request id) is a real step: it joins that work
@@ -474,13 +496,13 @@ def declared(history, root, request_id, title, status, owner, label, project="",
     """
     title = _text(title, "title", 2000)
     request = _request_of(request_id)
-    if not request and status == "done":
+    if not request and (status == "done" or kind == "alias"):
         return False
     task = request if request and get(history, request) else ""
     if not task:
         with history._transaction(write=True):
             _ensure(history)
-            task = _session_for(history, owner, project, request, inherited, TASKS_NODE["params"]["stale_hours"])
+            task = _session_for(history, owner, project, request, inherited, TASKS_NODE["params"]["stale_hours"], kind)
             if not task:
                 if not request or status == "done":
                     return False
@@ -1136,8 +1158,8 @@ _HANDOVER = ("done", "next", "results")
 # A drive-letter or UNC path; inner folders may hold spaces, the last part ends at a space.
 _ABSOLUTE = re.compile(
     r"(?:\b[A-Za-z]:|\\\\[^\\/\s\"'<>|*?:]+)(?:\\[^\\/\n\"'<>|*?:]+)*\\[^\\/\s\"'<>|*?:]+"   # C:\a b\c.txt, \\server\share
-    r"|\b[A-Za-z]:(?:/[^\\/\s\"'<>|*?:]+)+"                                              # C:/a/b.txt
-    r"|(?<![\w/.~-])/[A-Za-z]/[^/\s\"'<>|*?:]+(?:/[^/\s\"'<>|*?:]+)*")                     # /c/Users/name/a.txt (git bash)
+    r"|\b[A-Za-z]:(?:/(?:(?!\.[A-Za-z0-9]{1,8}\s)[^\\/\n\"'<>|*?:])+)*/[^\\/\s\"'<>|*?:]+"      # C:/John Smith/b.txt
+    r"|(?<![\w/.~-])/[A-Za-z](?:/(?:(?!\.[A-Za-z0-9]{1,8}\s)[^/\n\"'<>|*?:])+)*/[^/\s\"'<>|*?:]+")   # /c/Users/John Smith/a.txt
 
 
 def _clean_note(history, row, text):

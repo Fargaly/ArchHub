@@ -131,7 +131,7 @@ def query_stop(payload, *, vendor, vault=None, environment=None):
     from .baboom_reactions import emit
     emit({**payload, 'hook_event_name': payload.get('hook_event_name') or 'Stop'}, vendor, environment=environment)
     from .native_agent_hooks import declare_session
-    declare_session(payload, vendor)
+    declare_session(payload, vendor, kind='refresh')   # end of a turn: renew the work it has, never join
     return {}
 
 
@@ -745,7 +745,7 @@ def main():
     if args.session_start:
         try:
             from nodelang.native_agent_hooks import declare_session
-            declare_session(json.loads(sys.stdin.buffer.read(65537) or b'{}'), args.vendor)
+            declare_session(json.loads(sys.stdin.buffer.read(65537) or b'{}'), args.vendor, kind='start')
         except Exception as failure:
             print('Workshop session declaration failed (%s); retry declare in the session. Startup continues.'
                   % type(failure).__name__, file=sys.stderr)

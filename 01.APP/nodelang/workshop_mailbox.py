@@ -1034,6 +1034,9 @@ def _declare(history, body, context, identity, runtime, peer, native_session):
     request = _text(body["request_id"], "request id", 256)
     if any(char in task + request for char in "\r\n") or body["status"] not in ("working", "blocked", "done"):
         raise ValueError("Declare one task line with working, blocked or done status")
+    kind = body.get("kind", "refresh")
+    if kind not in ("start", "refresh", "alias"):
+        raise ValueError("Declare kind is start, refresh or alias")
     if type(body["paths"]) is not list or not 1 <= len(body["paths"]) <= 128:
         raise ValueError("Declare between 1 and 128 paths")
     paths = sorted({canonical_path(value, peer.cwd) for value in body["paths"]})
@@ -1116,7 +1119,7 @@ def _declare(history, body, context, identity, runtime, peer, native_session):
         from .workshop_tasks import declared
         work = declared(history, root, row["request_id"], row["task"], row["status"],
                         identity["sender_key"], identity["sender_label"], row["project"],
-                        inherited=_inherited_work(history, root, row["process_lineage"]), changed=changed)
+                        inherited=_inherited_work(history, root, row["process_lineage"]), changed=changed, kind=kind)
         if work:
             row["work"] = work
             with history._transaction(write=True):
@@ -1207,10 +1210,10 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
             or not 0 <= store_busy_timeout_seconds <= 2):
         raise ValueError("Workshop store lock wait must be between zero and two seconds")
     required = {"send": {"to", "text"}, "read": {"since"}, "pending": set(), "seen": {"message_ids", "channel"},
-                "declare": {"task", "paths", "status", "request_id"},
+                "declare": {"task", "paths", "status", "request_id"},  # optional kind: start, refresh (default), alias
                 "task_create": {"title"}, "task_list": set(), "task_claim": {"id"}, "task_release": {"id"},
                 "task_complete": {"id"}, "task_set_session": {"id"}, "task_open": {"id"}, "task_archive": {"id"}}
-    optional = {"send": {"reply_to", "idempotency_key", "native_control"}, "read": {"declarations_after", "include_archived", "newest"}, "declare": {"display_name", "model", "role", "title"}, "pending":set(), "seen":set(),
+    optional = {"send": {"reply_to", "idempotency_key", "native_control"}, "read": {"declarations_after", "include_archived", "newest"}, "declare": {"display_name", "model", "role", "title", "kind"}, "pending":set(), "seen":set(),
                 "task_create": set(), "task_list": set(), "task_claim": {"lease_seconds"}, "task_release": set(),
                 "task_complete": {"result"},
                 "task_set_session": {"scope", "rules", "agents", "plan", "handover", "progress", "folders", "references"},

@@ -36,12 +36,12 @@ def project(tmp_path, monkeypatch):
     return folder
 
 
-def declare(context, folder, request, status='working', task='Coordinate the tower drawings', path=None):
+def declare(context, folder, request, status='working', task='Coordinate the tower drawings', path=None, kind=None):
     from nodelang import workshop_mailbox as mailbox
     process = psutil.Process()
     peer = SimpleNamespace(pid=process.pid, created_at=process.create_time(), cwd=str(folder))
-    return mailbox.call('declare', {'task': task, 'paths': [str(path or folder)], 'status': status,
-                                    'request_id': request}, context, peer=peer)
+    body = {'task': task, 'paths': [str(path or folder)], 'status': status, 'request_id': request}
+    return mailbox.call('declare', {**body, 'kind': kind} if kind else body, context, peer=peer)
 
 
 def sessions():
@@ -104,18 +104,18 @@ def test_without_a_request_never_guess_and_never_wake_a_30_hour_old_session(proj
     from nodelang.workshop_mailbox import application_history
     with application_history() as history:
         quiet = tasks.create_session(history, 'Quiet tower work', select=False, workspace='tower')['taskId']
-        assert tasks.declared(history, 'root-a', '', 'Tower work', 'working', 'agent-a', 'Agent A', 'Tower') == quiet
-        assert tasks.declared(history, 'root-b', '', 'More tower work', 'working', 'agent-b', 'Agent B', 'Tower') == quiet
+        assert tasks.declared(history, 'root-a', '', 'Tower work', 'working', 'agent-a', 'Agent A', 'Tower', kind='start') == quiet
+        assert tasks.declared(history, 'root-b', '', 'More tower work', 'working', 'agent-b', 'Agent B', 'Tower', kind='start') == quiet
         old = (datetime.now(timezone.utc) - timedelta(hours=30)).isoformat()
         history._db.execute("UPDATE workshop_tasks SET updated_at=?, lease_until=0, "
                             "members=json('[{\"owner\":\"agent-a\",\"lease_until\":0},{\"owner\":\"agent-b\",\"lease_until\":0}]') "
                             "WHERE id=?", (old, quiet))
         tasks.rows(history)                                                 # an app restart settles the lapsed lease
         assert tasks.get(history, quiet)['updated_at'] == old              # settling never refreshes activity
-        assert tasks.declared(history, 'root-c', '', 'Tower again', 'working', 'agent-c', 'Agent C', 'Tower') != quiet
+        assert tasks.declared(history, 'root-c', '', 'Tower again', 'working', 'agent-c', 'Agent C', 'Tower', kind='start') != quiet
         # A session that carries a request is never joined by a declare without one.
         asked = tasks.declared(history, 'root-d', 'F337', 'Request work', 'working', 'agent-d', 'Agent D', 'Villa')
-        assert tasks.declared(history, 'root-e', '', 'Villa work', 'working', 'agent-e', 'Agent E', 'Villa') != asked
+        assert tasks.declared(history, 'root-e', '', 'Villa work', 'working', 'agent-e', 'Agent E', 'Villa', kind='start') != asked
 
 
 def test_two_open_sessions_mean_a_new_one_never_a_guess(project):
@@ -207,7 +207,7 @@ def test_agent_started_by_another_agent_inherits_only_the_same_work(project):
     try:
         peer = SimpleNamespace(pid=child.pid, created_at=psutil.Process(child.pid).create_time(), cwd=str(project))
         inherited = mailbox.call('declare', {'task': 'Check the facade panels', 'paths': [str(project / 'panels.txt')],
-                                             'status': 'working', 'request_id': 'unassigned'}, CODEX('sub'), peer=peer)
+                                             'status': 'working', 'request_id': 'unassigned', 'kind': 'start'}, CODEX('sub'), peer=peer)
         other = mailbox.call('declare', {'task': 'Another request', 'paths': [str(project / 'other-request.txt')],
                                          'status': 'working', 'request_id': 'panel-check'}, CLAUDE('sub2'), peer=peer)
     finally:
@@ -292,11 +292,11 @@ def test_two_starters_at_the_same_depth_mean_no_inheritance(project):
     try:
         peer = SimpleNamespace(pid=child.pid, created_at=psutil.Process(child.pid).create_time(), cwd=str(project))
         work = mailbox.call('declare', {'task': 'Which one?', 'paths': [str(project / 'which.txt')], 'status': 'working',
-                                        'request_id': 'unassigned'}, CODEX('child'), peer=peer)['declaration'].get('work')
+                                        'request_id': 'unassigned', 'kind': 'start'}, CODEX('child'), peer=peer)['declaration'].get('work')
     finally:
         child.kill()
         child.wait(timeout=10)
-    assert work not in (facade, core)
+    assert work is None                                                      # no guess: no work at all
 
 
 def test_dead_session_leaves_the_open_list_but_one_waiting_for_the_founder_stays(project):
@@ -333,6 +333,10 @@ def test_handover_note_drops_user_paths_environment_values_and_secrets(project, 
     assert note['results'] == 'In sheets/checked.pdf and [path removed]'
     assert note['done'] == 'Checked sheets/checked.pdf and [path removed], [path removed] and [path removed]'
     assert token not in note['next'] and 'fixture-environment-value-123' not in note['next']
+    again = mailbox.call('task_set_session', {'id': work, 'handover': {
+        'results': 'Saw C:/Users/John Smith/x.txt and /c/Users/John Smith/y.txt and/or later'}}, CLAUDE('a'))['session']
+    assert again['handover']['results'] == 'Saw [path removed] and [path removed] and/or later'
+    assert 'Smith' not in str(again['handover'])
     assert os.environ['USERPROFILE'] not in str(note)
 
 
@@ -394,8 +398,8 @@ def test_two_processes_opening_an_old_database_together_both_succeed(tmp_path):
 
 def test_real_starts_without_a_request_create_nothing_when_no_work_is_open(project):
     # Both vendors' start paths declare request id "unassigned"; no session exists yet: no row, no file.
-    first = declare(CLAUDE('start'), project, 'unassigned', task='Session start', path=project / 'start-a.txt')
-    second = declare(CODEX('start'), project, 'unassigned', task='Session start', path=project / 'start-b.txt')
+    first = declare(CLAUDE('start'), project, 'unassigned', task='Session start', path=project / 'start-a.txt', kind='start')
+    second = declare(CODEX('start'), project, 'unassigned', task='Session start', path=project / 'start-b.txt', kind='start')
     assert 'work' not in first['declaration'] and 'work' not in second['declaration']
     assert sessions() == [] and work_rows() == []
 
@@ -405,8 +409,8 @@ def test_real_starts_without_a_request_join_a_session_started_from_home(project)
     from nodelang.workshop_mailbox import application_history
     with application_history() as history:
         home = tasks.create_session(history, 'Tower facade', select=False, workspace='tower')['taskId']
-    assert declare(CLAUDE('home'), project, 'unassigned', path=project / 'h1.txt')['declaration']['work'] == home
-    assert declare(CODEX('home'), project, 'n/a', path=project / 'h2.txt')['declaration']['work'] == home   # placeholder id
+    assert declare(CLAUDE('home'), project, 'unassigned', path=project / 'h1.txt', kind='start')['declaration']['work'] == home
+    assert declare(CODEX('home'), project, 'n/a', path=project / 'h2.txt', kind='start')['declaration']['work'] == home   # placeholder id
 
 
 def test_same_request_in_an_unregistered_folder_never_joins(project, tmp_path):
@@ -464,7 +468,7 @@ def test_parent_in_another_project_is_not_inherited(project, tmp_path):
     try:
         peer = SimpleNamespace(pid=child.pid, created_at=psutil.Process(child.pid).create_time(), cwd=str(project))
         work = mailbox.call('declare', {'task': 'Session start', 'paths': [str(project / 'x.txt')], 'status': 'working',
-                                        'request_id': 'unassigned'}, CODEX('villa-child'), peer=peer)['declaration']['work']
+                                        'request_id': 'unassigned', 'kind': 'start'}, CODEX('villa-child'), peer=peer)['declaration']['work']
     finally:
         child.kill()
         child.wait(timeout=10)
@@ -479,12 +483,20 @@ def test_startup_alias_pair_changes_nothing(project):
     before = sessions()
     process = psutil.Process()
     peer = SimpleNamespace(pid=process.pid, created_at=process.create_time(), cwd=str(project))
+    with application_history() as history:
+        untouched = tasks.get(history, home)
     for status in ('working', 'done'):                                       # native_agent_mcp.py start alias
         mailbox.call('declare', {'task': 'Starting; task details pending', 'paths': [str(project)], 'status': status,
-                                 'request_id': 'unassigned'}, {}, peer=peer)
+                                 'request_id': 'unassigned', 'kind': 'alias'}, {}, peer=peer)
     with application_history() as history:
-        assert tasks.get(history, home)['status'] != 'done'
+        after = tasks.get(history, home)
+    assert after['members'] == untouched['members'] == [] and after['status'] == untouched['status']
     assert sessions() == before and steps(before[0]) == []
+    real = CLAUDE('real')
+    assert declare(real, project, home, path=project / 'real.txt')['declaration']['work'] == home
+    declare(real, project, home, status='done', path=project / 'real.txt')
+    with application_history() as history:
+        assert tasks.get(history, home)['status'] == 'done'                # no ghost member keeps it open
 
 
 def test_request_from_another_project_never_stays_in_this_projects_session(project, tmp_path):
@@ -502,7 +514,7 @@ def test_no_request_starts_spray_no_files(project, tmp_path):
     loose.mkdir()
     for number in range(10):
         declare((CLAUDE, CODEX)[number % 2]('loose-%d' % number), loose, 'unassigned', task='Session start',
-                path=loose / ('l%d.txt' % number))
+                path=loose / ('l%d.txt' % number), kind='start')
     assert sessions() == [] and work_rows() == []
     with application_history() as history:
         tasks.create_session(history, 'Tower facade', select=False, workspace='tower')
@@ -510,7 +522,7 @@ def test_no_request_starts_spray_no_files(project, tmp_path):
     before = sessions()
     for number in range(10):
         declare((CLAUDE, CODEX)[number % 2]('reg-%d' % number), project, 'unassigned', task='Session start',
-                path=project / ('r%d.txt' % number))
+                path=project / ('r%d.txt' % number), kind='start')
     assert sessions() == before and len(work_rows()) == 2
 
 
@@ -558,5 +570,34 @@ def test_no_change_stop_declare_with_500_rows_is_fast(project, capsys):
     seconds = time.perf_counter() - started
     with capsys.disabled():
         print('\nSESSIONWORK measured: no-change Stop declare with 500 task rows = %.3f s' % seconds)
+    assert stop['work'] == work and seconds < 0.5
+    held = steps(next(row for row in work_rows() if row['id'] == work)['session_path'])
+    assert [step['title'] for step in held] == ['Coordinate the tower drawings']   # a Stop never renames the step
+
+
+def test_stop_after_a_lapsed_lease_renews_its_own_work_and_joins_nothing_else(project):
+    from nodelang import workshop_tasks as tasks
+    from nodelang.workshop_mailbox import application_history
+    with application_history() as history:
+        home = tasks.create_session(history, 'Tower facade', select=False, workspace='tower')['taskId']
+    agent = CLAUDE('lapsed')
+    work = declare(agent, project, 'F337', path=project / 'f.txt')['declaration']['work']
+    with application_history() as history:
+        history._db.execute("UPDATE workshop_tasks SET lease_until=0 WHERE id=?", (work,))
+        tasks.rows(history)                                                  # the lease lapses: interrupted
+    stop = declare(agent, project, 'unassigned', task='Session start', path=project / 'f.txt')['declaration']
     assert stop['work'] == work
-    assert len(steps(next(row for row in work_rows() if row['id'] == work)['session_path'])) == 1
+    with application_history() as history:
+        assert tasks.get(history, home)['members'] == []                    # no ghost in any other session
+        assert tasks.get(history, work)['status'] == 'claimed'
+
+
+def test_refresh_with_no_work_and_no_request_joins_nothing(project):
+    from nodelang import workshop_tasks as tasks
+    from nodelang.workshop_mailbox import application_history
+    with application_history() as history:
+        home = tasks.create_session(history, 'Tower facade', select=False, workspace='tower')['taskId']
+    for context in (CLAUDE('refresh'), CODEX('refresh')):
+        assert 'work' not in declare(context, project, 'unassigned', task='Session start', path=project / 's.txt')['declaration']
+    with application_history() as history:
+        assert tasks.get(history, home)['members'] == []

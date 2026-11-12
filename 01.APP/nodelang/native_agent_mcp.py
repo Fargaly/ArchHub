@@ -135,7 +135,7 @@ def build_server(*, session=None, mailbox_call=None):
         if context and state["bootstrap_only"]:
             try:
                 background_call("declare", {"task":"Starting; task details pending", "paths":[str(Path.cwd())],
-                    "status":"done", "request_id":"unassigned"}, {})
+                    "status":"done", "request_id":"unassigned", "kind":"alias"}, {})
             except Exception:
                 logging.getLogger(__name__).warning("Workshop startup alias could not be archived; task continues.")
             else:
@@ -152,8 +152,9 @@ def build_server(*, session=None, mailbox_call=None):
             try:
                 with lock:
                     body = declarations.get(key, {"task": "Starting; task details pending", "paths": [str(Path.cwd())],
-                        "status": "working", "request_id": "unassigned"})
-                background_call("declare", body, context)
+                        "status": "working", "request_id": "unassigned", "kind": "alias"})
+                # A repeated real declaration is a refresh; the startup alias never touches a session.
+                background_call("declare", {**body, "kind": body.get("kind") or "refresh"}, context)
                 retry_at.pop(key, None)
                 retry_delay.pop(key, None)
                 failures.discard((key, "declare"))

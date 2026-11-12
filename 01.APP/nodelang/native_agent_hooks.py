@@ -303,7 +303,7 @@ def install_cursor_hook_entries(home, command=None):
     return path
 
 
-def declare_session(payload, vendor, *, database=None, kind="start"):
+def declare_session(payload, vendor, *, database=None, kind="refresh"):
     """Best-effort session-start registration; identity still comes from the real caller."""
     from .agent_declarations import SESSION_KEYS
     from .workshop_mailbox import call, _role

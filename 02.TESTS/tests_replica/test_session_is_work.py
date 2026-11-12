@@ -337,6 +337,10 @@ def test_handover_note_drops_user_paths_environment_values_and_secrets(project, 
         'results': 'Saw C:/Users/John Smith/x.txt and /c/Users/John Smith/y.txt and/or later'}}, CLAUDE('a'))['session']
     assert again['handover']['results'] == 'Saw [path removed] and [path removed] and/or later'
     assert 'Smith' not in str(again['handover'])
+    folders = mailbox.call('task_set_session', {'id': work, 'handover': {
+        'done': 'A C:/Users/John Smith, B C:/Users/John Smith/ and C',
+        'next': 'D C:\\Users\\John Smith'}}, CLAUDE('a'))['session']['handover']
+    assert folders == {'done': 'A [path removed], B [path removed]/ and C', 'next': 'D [path removed]'}
     assert os.environ['USERPROFILE'] not in str(note)
 
 
@@ -419,7 +423,12 @@ def test_same_request_in_an_unregistered_folder_never_joins(project, tmp_path):
     first = declare(CLAUDE('loose'), loose, 'F337', path=loose / 'a.txt')['declaration']
     second = declare(CODEX('loose'), loose, 'F337', path=loose / 'b.txt')['declaration']
     assert first['project'] == '' and first['work'] != second['work']
+    from nodelang.workshop_mailbox import application_history
+    with application_history() as history:
+        history._db.execute("UPDATE workshop_tasks SET lease_until=0 WHERE id=?", (first['work'],))
+    rows, files = len(work_rows()), len(sessions())                        # the lease lapsed (settled on read)
     assert declare(CLAUDE('loose'), loose, 'F337', path=loose / 'a.txt')['declaration']['work'] == first['work']
+    assert len(work_rows()) == rows and len(sessions()) == files
 
 
 def test_stop_declare_keeps_the_current_work_and_never_returns_to_an_old_one(project):
@@ -601,3 +610,66 @@ def test_refresh_with_no_work_and_no_request_joins_nothing(project):
         assert 'work' not in declare(context, project, 'unassigned', task='Session start', path=project / 's.txt')['declaration']
     with application_history() as history:
         assert tasks.get(history, home)['members'] == []
+
+
+def test_each_real_caller_states_its_declare_kind(project, monkeypatch, capsys):
+    """The body each caller sends: Stop = refresh, session-start = start, connector alias = alias, repeat = refresh."""
+    import io
+    import json
+    import sys
+    import threading
+    import anyio
+    from mcp.shared.memory import create_connected_server_and_client_session
+    from nodelang import workshop_mailbox, baboom_reactions, native_stop_hook, native_agent_mcp as native
+    sent = []
+    monkeypatch.setattr(workshop_mailbox, 'call', lambda method, body, context, **kwargs: sent.append(body) or {})
+    monkeypatch.setattr(baboom_reactions, 'emit', lambda *args, **kwargs: None)
+    payload = {'session_id': 'kind-session', 'cwd': str(project)}
+    native_stop_hook.query_stop(payload, vendor='claude-code')
+    assert [body['kind'] for body in sent] == ['refresh']                    # native_stop_hook.query_stop
+    sent.clear()
+    monkeypatch.setattr(sys, 'argv', ['native_stop_hook', '--session-start', '--vendor', 'claude-code'])
+    monkeypatch.setattr(sys, 'stdin', SimpleNamespace(buffer=io.BytesIO(json.dumps(payload).encode())))
+    native_stop_hook.main()
+    capsys.readouterr()
+    assert [body['kind'] for body in sent] == ['start']                      # --session-start
+    # The connector: startup alias (done and working) and the repeat of a real declaration.
+    bodies, hold, released = [], threading.Event(), threading.Event()
+
+    def mailbox(method, body, context, **kwargs):
+        if method == 'pending':
+            return {'pending': [], 'more': False}
+        if method == 'read':
+            return {'messages': [], 'declarations': [], 'sender_key': 'kind-connector', 'next_since': 0}
+        if method == 'declare':
+            bodies.append(dict(body))
+            if body.get('kind') == 'alias' and body['status'] == 'working' and not hold.is_set():
+                hold.set()
+                released.wait(10)                                            # a real declare lands meanwhile
+        return {'ok': True}
+    monkeypatch.setattr(native, '_default_context', lambda: {})
+    monkeypatch.setattr(native, '_caller_context', lambda ctx: {'threadId': 'kind-connector'})
+    server = native.build_server(mailbox_call=mailbox)
+    real = {'task': 'Real work', 'paths': [str(project)], 'status': 'working', 'request_id': 'F337'}
+
+    async def run():
+        async with create_connected_server_and_client_session(server._mcp_server) as session:
+            await session.call_tool('read', {'since': 0})
+            for _ in range(200):
+                if hold.is_set():
+                    break
+                await anyio.sleep(0.02)
+            await session.call_tool('declare', real)
+            released.set()
+            for _ in range(200):
+                if any(body.get('kind') == 'refresh' for body in bodies):
+                    break
+                await anyio.sleep(0.02)
+    try:
+        anyio.run(run)
+    finally:
+        released.set()
+        server._mailbox_stop()
+    kinds = [(body['status'], body.get('kind')) for body in bodies]
+    assert ('done', 'alias') in kinds and ('working', 'alias') in kinds     # retire_bootstrap and the startup alias
+    assert any(body.get('kind') == 'refresh' and body['request_id'] == 'F337' for body in bodies)   # the repeat

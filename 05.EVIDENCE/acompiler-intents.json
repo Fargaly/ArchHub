@@ -1,6 +1,13 @@
 {
   "schema_version": 1,
   "intents": {
+    "OUTLOOKREPLY": {
+      "source": "Founder-hit OUTLOOK-REPLY-DOUBLE-GREETING, Workshop seq 9524 (2026-11-06) and again 2026-11-12: outlook_reply_draft puts a second Dear, / Thank you and best regards skeleton into the new part of a reply. Whitespace-normalised greeting/close detection, one skeleton per reply, VML picture copies dropped so the logo embeds as cid; fixture tests only, no real Outlook, branch-only commits, hooks on, no push/install/release or live profile access.",
+      "scope": [
+        "01.APP/nodelang/library_engines.py",
+        "02.TESTS/tests_replica/test_outlook_reply_greeting.py"
+      ]
+    },
     "FOCUSWFCAT": {
   "source": "Founder sole-builder F326 F327 F328, 2026-11-12; res-036 2026-11-11: existing owners only, workflow/agent-session classification, one category tree, one skills location; branch-only commits, hooks on, isolated profiles, no push/install/release or live data access.",
   "scope": [

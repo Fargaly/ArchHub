@@ -8759,7 +8759,8 @@
         "02.TESTS/tests_js/agentwork.cjs",
         "04.DOCS/FAILURE_LOG.md",
         "01.APP/nodelang/workshop_tasks.py",
-        "01.APP/nodelang/settings_owner.py"
+        "01.APP/nodelang/settings_owner.py",
+        "01.APP/nodelang/nograph_server.py"
       ]
     },
     "CARDPOLISH": {

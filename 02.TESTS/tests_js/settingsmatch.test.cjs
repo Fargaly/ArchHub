@@ -47,7 +47,7 @@ async function mount(page, profile, extra = {}) {
       readCanvasTabs: async () => ({canvasTabs: {tabs: [], active: '', split: '', collapsed: false}}), setCanvasTabs: async () => ({ok: true}),
       readSessionListFilters: async () => ({sessionListFilters: {home: 'all', library: 'all'}}), setSessionListFilter: async () => ({ok: true}),
       readHomeLayout: async () => ({homeLayout: {width: 300, collapsed: false, resume: '', order: [], hidden: []}}), setHomeLayout: async () => ({ok: true}),
-      refreshAgentSurface: async () => null, refreshRouter: async () => ({default_model: 'free', models: [], fallback_models: [], requests: [], free_first: true}),
+      refreshAgentSurface: async () => { if (extra.agentError) throw Error(extra.agentError); return null; }, refreshRouter: async () => ({default_model: 'free', models: [], fallback_models: [], requests: [], free_first: true}),
       readHostAvailability: async () => [], listAgentsWorking: async () => [], refreshSettingsControls: async () => ({}), readSessionsFolder: async () => SESSIONS};
   }, {profile, SESSIONS, LONG_TASK, extra});
   for (let i = 0; i < sources.length - 1; i++) await page.addScriptTag({content: sources[i]});
@@ -234,3 +234,41 @@ test('SETTINGSMATCH name: the Name row shows the real profile name or asks for o
   } finally { await browser.close(); }
 });
 
+test('SETTINGSMATCH second review: value boxes open, Retry stays visible, no empty sections, empty fallback reads None', async () => {
+  const browser = await chromium.launch({headless: true, executablePath: executable()});
+  try {
+    // 1. The Account value box opens My profile when signed in, sign-in when signed out; it never signs out.
+    for (const [signedIn, dialog] of [[true, 'My profile'], [false, 'Sign in']]) {
+      const page = await browser.newPage({viewport: {width: 1440, height: 900}});
+      await mount(page, {name: 'Fixture Person', email: EMAIL, signedIn, checking: false});
+      await page.evaluate(() => { window.ArchHubAPI.signIn = async () => { window.signedOut = true; }; });
+      await page.getByRole('navigation', {name: 'Main navigation'}).getByRole('button', {name: 'Settings', exact: true}).click();
+      await page.locator('[data-screen="settings/Account"] .sheet-columns:not([hidden])').waitFor();
+      await page.locator('.sheet-field').filter({has: page.locator(':scope > span', {hasText: /^Account/})}).first().locator('button').click();
+      await page.getByRole('heading', {name: dialog}).first().waitFor();
+      assert.equal(await page.evaluate(() => window.signedOut === true), false);
+      await page.close();
+    }
+    // 2. A 200-character Workshop error keeps Retry in view.
+    const error = 'Workshop settings could not be read because '.padEnd(200, 'x');
+    let page = await browser.newPage({viewport: {width: 1009, height: 940}});
+    await mount(page, {name: 'Fixture Person', email: EMAIL, signedIn: true, checking: false}, {agentError: error});
+    await page.getByRole('navigation', {name: 'Main navigation'}).getByRole('button', {name: 'Settings', exact: true}).click();
+    const retry = page.getByRole('button', {name: 'Retry Workshop connection', exact: true});
+    await retry.waitFor();
+    const box = await retry.boundingBox(), header = await page.locator('.app-header').boundingBox();
+    assert.ok(box && box.width > 10 && box.x >= header.x && box.x + box.width <= header.x + header.width, JSON.stringify({box, header}));
+    assert.equal(await page.locator('.header-error-text').getAttribute('title'), error);
+    // 3 + 4. Changed only on Appearance with nothing changed: no bare headings, one line instead.
+    await page.getByRole('navigation', {name: 'Settings categories'}).getByRole('button', {name: 'Appearance', exact: true}).click();
+    await page.getByRole('button', {name: 'Changed only', exact: true}).click();
+    await page.getByText('Nothing changed from the defaults.', {exact: true}).waitFor();
+    assert.equal(await page.getByRole('heading', {name: 'Interface', exact: true}).count(), 0);
+    assert.equal(await page.getByRole('heading', {name: 'Canvas', exact: true}).count(), 0);
+    await page.getByRole('navigation', {name: 'Settings categories'}).getByRole('button', {name: 'Models', exact: true}).click();
+    const fallback = page.locator('.sheet-field').filter({hasText: 'Fallback order'}).locator(':scope > div');
+    await fallback.waitFor();
+    assert.equal((await fallback.innerText()).trim(), 'None');
+    await page.close();
+  } finally { await browser.close(); }
+});

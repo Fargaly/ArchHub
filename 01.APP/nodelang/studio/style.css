@@ -1237,3 +1237,6 @@ body{min-width:900px;overflow-x:auto}.app-window{min-width:900px}.app-window>div
 .app-header.settings-header .header-phrase>*{display:inline-flex!important;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .settings-sheet .sheet-field select{appearance:none;-webkit-appearance:none;background:transparent;background-image:none;border:0;padding:0;font-weight:600}
 @media(min-width:900px){.settings-sheet .sheet-page-heading{flex-wrap:nowrap}.settings-sheet .sheet-page-heading>div:first-child{min-width:0}.settings-sheet .sheet-page-heading>.flex{flex:none;flex-wrap:nowrap}}
+.app-header.settings-header .header-phrase>.header-error{max-width:360px;overflow:visible;gap:8px;align-items:center}
+.app-header.settings-header .header-error-text{min-width:0;flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.app-header.settings-header .header-error>button{flex:none}

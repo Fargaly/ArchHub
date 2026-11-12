@@ -8,7 +8,7 @@ import pytest
 from test_task_session_roundtrip import _isolate, _Studio, _post
 
 
-@pytest.mark.parametrize("board", ["home", "workshop", "canvas", "settings", "canvas_fit", "fluid_shell", "resume", "zero_home", "canvas_open", "canvas_reading", "approval_wrong", "approval_nested"])
+@pytest.mark.parametrize("board", ["home", "workshop", "canvas", "settings", "canvas_fit", "fluid_shell", "resume", "zero_home", "canvas_open", "canvas_reading", "canvas_input", "approval_wrong", "approval_nested"])
 def test_designbuild_board(tmp_path, monkeypatch, board):
     browser_cache = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '')
     if not browser_cache:
@@ -34,30 +34,30 @@ def test_designbuild_board(tmp_path, monkeypatch, board):
                 'progress': {'Read sheet index': 'done', 'Review drawings': 'done'},
                 'messages': [{'id':'review-complete','who':'Drawing coordinator','text':'Review is complete. The drawing index matches the reviewed set.'},{'id':'ask-export','who':'You','text':'What is holding up the export?'}],
             })
-            if board in ('canvas', 'canvas_fit', 'canvas_open', 'canvas_reading'):
+            if board in ('canvas', 'canvas_fit', 'canvas_open', 'canvas_reading', 'canvas_input'):
                 import copy
                 from nodelang.session_files import catalogue
                 items = {row['id']: row for row in catalogue()}
                 nodes = [{'id': key, 'item': item, 'type': items[item]['engine'], 'title': items[item]['title'],
                           'params': copy.deepcopy(items[item]['params']), 'position': {'x': x, 'y': 0}}
                          for key, item, x in [('list','n_list',0),('slice','s_slice',340),('count','s_count',680),('pdf','o_pdf_handoff',1020)]]
-                if board in ('canvas_fit', 'canvas_open'):
+                if board in ('canvas_fit', 'canvas_open', 'canvas_input'):
                     nodes = nodes[:2]
                 if board == 'canvas_reading':
                     for node in nodes:
                         node['position']['x'] *= 4
-                if board in ('canvas_open', 'canvas_reading'):
+                if board in ('canvas_open', 'canvas_reading', 'canvas_input'):
                     for node in nodes:
                         node['position']['x'] += 800
                 nodes[0]['params']['value'] = '[10, 20, 30, 40, 50]'
                 nodes[1]['params']['count'] = '3'
                 view = client.workshop('openTaskGraph', task['taskId'])
                 opened = client.files('read', path=view['path'], id=view['id'])
-                opened['document']['nodes'] = [*opened['document']['nodes'], *nodes] if board in ('canvas_open', 'canvas_reading') else nodes
+                opened['document']['nodes'] = [*opened['document']['nodes'], *nodes] if board in ('canvas_open', 'canvas_reading', 'canvas_input') else nodes
                 opened['document']['wires'] = [
                     {'id':'first','from':{'node':'list','socket':'value'},'to':{'node':'slice','socket':'items'}},
                     {'id':'second','from':{'node':'slice','socket':'items_out'},'to':{'node':'count','socket':'items'}}]
-                if board in ('canvas_fit', 'canvas_open'):
+                if board in ('canvas_fit', 'canvas_open', 'canvas_input'):
                     opened['document']['wires'] = opened['document']['wires'][:1]
                 client.files('save', path=view['path'], document=opened['document'])
                 if board == 'canvas_reading':
@@ -97,7 +97,7 @@ def test_designbuild_board(tmp_path, monkeypatch, board):
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         print(result.stdout)
         assert result.returncode == 0, result.stdout + result.stderr
-        if board in ('canvas_fit', 'fluid_shell', 'resume', 'zero_home', 'canvas_open', 'canvas_reading', 'approval_wrong', 'approval_nested') or os.environ.get('ARCHHUB_DESIGNPOLISH_PHASE'):
+        if board in ('canvas_fit', 'fluid_shell', 'resume', 'zero_home', 'canvas_open', 'canvas_reading', 'canvas_input', 'approval_wrong', 'approval_nested') or os.environ.get('ARCHHUB_DESIGNPOLISH_PHASE'):
             return
         reopened = client.workshop('openTaskGraph', task['taskId'])
         assert reopened['scope'] == 'Review the current issue'

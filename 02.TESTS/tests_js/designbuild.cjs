@@ -67,6 +67,75 @@ const {chromium} = require('playwright');
       console.log(`PASS ${input.board}: exact canvas step or session fallback; one card per digest; double-click sends one approval`);
       return;
     }
+    if(input.board==='canvas_input'){
+      const nav=page.getByRole('navigation',{name:'Main navigation'});
+      await nav.waitFor();
+      await page.locator('.dx-task').filter({hasText:'Drawing set review'}).first().click();
+      const canvas=page.getByLabel('Workflow canvas',{exact:true});
+      const transform=()=>canvas.locator('.react-flow__viewport').evaluate(el=>window.getComputedStyle(el).transform);
+      const open=async (resize=null)=>{
+        await page.getByRole('button',{name:'Open its Canvas',exact:true}).click();
+        await canvas.locator('.react-flow__node[data-id="slice"]').waitFor();
+        const initial=await transform();
+        if(resize)await page.setViewportSize(resize);
+        await page.waitForTimeout(300);
+        return initial;
+      };
+      await page.setViewportSize({width:1864,height:949});
+      await open();
+      const before=await transform();
+      const position=()=>page.evaluate(()=>window.ArchHubAPI.getSessionDocument().nodes.find(n=>n.id==='slice').position);
+      const original=await position();
+      const header=await canvas.locator('.react-flow__node[data-id="slice"] .node-header').boundingBox();
+      const x=header.x+header.width/2,y=header.y+header.height/2;
+      await pointer('mouseMoved',x,y);
+      await pointer('mousePressed',x,y,true);
+      for(let step=1;step<=11;step++)await pointer('mouseMoved',x-step*20,y,true);
+      await pointer('mouseReleased',x-220,y);
+      await page.waitForFunction(original=>window.ArchHubAPI.getSessionDocument().nodes.find(n=>n.id==='slice').position.x!==original.x,original);
+      await page.waitForTimeout(300);
+      const moved=await position();
+      assert.equal(await transform(),before,'Node drag must leave the camera unchanged');
+      const zoom=await canvas.locator('.react-flow__viewport').evaluate(el=>new window.DOMMatrix(window.getComputedStyle(el).transform).a);
+      assert.ok(Math.abs((original.x-moved.x)*zoom-200)<2,'The node must actually move 200 screen pixels: '+JSON.stringify({original,moved,zoom}));
+      assert.equal(await page.evaluate(()=>window.ArchHubAPI.getSnapshot().graph.viewportSaved),false,'Node drag must not own the stored viewport');
+      await page.setViewportSize({width:1366,height:768});await page.waitForTimeout(300);
+      assert.equal(await transform(),before,'Resize after canvas input must not reframe');
+      console.log('PASS canvas_input: 200 px node drag and subsequent resize preserve the transform; viewportSaved=false');
+      await nav.getByRole('button',{name:'Home',exact:true}).click();
+      const fresh=await open({width:1864,height:949});
+      assert.notEqual(await transform(),fresh,'Fresh untouched open must still follow box resizing');
+      const framed=await canvas.evaluate(area=>{
+        const box=area.getBoundingClientRect();
+        return [...area.querySelectorAll('.react-flow__node')].every(node=>{
+          const r=node.getBoundingClientRect();return r.left>=box.left-1&&r.top>=box.top-1&&r.right<=box.right+1&&r.bottom<=box.bottom+1;
+        });
+      });
+      assert.equal(framed,true,'Untouched opening must frame all nodes after the box settles');
+      for(const input of ['node pointer','pane pointer','key','wheel']){
+        await nav.getByRole('button',{name:'Home',exact:true}).click();
+        await open();
+        const box=await canvas.boundingBox();
+        if(input==='key'){
+          await canvas.focus();await key('Alt',18);
+        } else if(input==='wheel'){
+          await inputSession.send('Input.dispatchMouseEvent',{type:'mouseWheel',x:box.x+box.width/2,y:box.y+box.height/2,deltaX:0,deltaY:-80});
+          await page.waitForTimeout(300);
+        } else {
+          const target=input==='node pointer'?await canvas.locator('.react-flow__node[data-id="slice"] .node-header').boundingBox():{x:box.x+box.width-20,y:box.y+box.height-20,width:1,height:1};
+          const x=target.x+target.width/2,y=target.y+target.height/2;
+          await pointer('mouseMoved',x,y);await pointer('mousePressed',x,y,true);await pointer('mouseReleased',x,y);
+        }
+        const touched=await transform();
+        await page.setViewportSize({width:1366,height:768});await page.waitForTimeout(300);
+        assert.equal(await transform(),touched,input+' immediately ends automatic framing');
+        await page.setViewportSize({width:1864,height:949});await page.waitForTimeout(300);
+        assert.equal(await transform(),touched,input+' keeps automatic framing stopped');
+      }
+      assert.deepEqual(errors,[]);
+      console.log('PASS canvas_input: fresh untouched open reframes during settling; node/pane pointer, key and wheel stop automatic framing');
+      return;
+    }
     if(['canvas_open','canvas_reading'].includes(input.board)){
       const nav=page.getByRole('navigation',{name:'Main navigation'});
       await nav.waitFor();

@@ -684,6 +684,9 @@
       zoomWrites = React.useRef(Promise.resolve()),
       pendingZoomWrites = React.useRef(0);
     const userViewport = React.useRef(false);
+    const canvasTouched = React.useRef(false);
+    React.useLayoutEffect(() => { canvasTouched.current = false; }, [s.graph.scopeKey, embedded]);
+    const stopAutoFrame = () => { canvasTouched.current = true; };
     const paneBox = React.useRef(null), libraryPanel = React.useRef(null), inspectionPanel = React.useRef(null);
     const [paneWidth, setPaneWidth] = React.useState(window.innerWidth - 64), [libraryRail, setLibraryRail] = React.useState(false), [inspectionRail, setInspectionRail] = React.useState(false), [peek, setPeek] = React.useState('');
     const {zoom, pan} = viewport;
@@ -1055,7 +1058,7 @@
     React.useLayoutEffect(() => {
       if (!active || !visible.length || !area.current || requestState!=='loaded' || layout.scope!==scope) return undefined;
       const frame = () => {
-        if (userViewport.current) return;
+        if (userViewport.current || canvasTouched.current) return;
         const boxes=[...area.current.querySelectorAll('[data-graph-node]')].map(element=>{
           const node=visible.find(node=>node.id===element.dataset.graphNode);
           return node && {node,x:node.x,y:node.y,w:element.offsetWidth,h:element.offsetHeight};
@@ -1064,7 +1067,7 @@
         const left=peek==='library'?248:0,right=peek==='inspector'?380:occludedWidth;
         const width=area.current.clientWidth-left-right,height=area.current.clientHeight;
         if (width<=48 || height<=144) return;
-        // Unsaved framing follows pane/node sizing until a gesture or explicit Save owns the view.
+        // Opening follows pane/node sizing only until input; touching a node does not save the viewport.
         const fitted=fitCanvasViewport(boxes,width,height,zoomMin,zoomMax,1);
         if(fitted && fitted.zoom>=.62){updateView({...fitted,pan:{...fitted.pan,x:fitted.pan.x+left}},false);return;}
         const session=right>0&&boxes.find(box=>box.node.type==='thing.session');
@@ -1160,10 +1163,11 @@
     </CanvasPanel><CanvasSeparator className="pane-splitter" aria-label="Resize Library" /></>}
     <CanvasPanel id="canvas-work" minSize={240}>
    <div ref={area} className={'node-canvas' + (visible.some(n => n.status === 'Running') ? ' running-wires' : '')} tabIndex={0} aria-label="Workflow canvas" style={{position:'relative',minHeight:0,'--xy-selection-background-color':A.accent+'16','--xy-selection-border':'1px solid '+A.accent,'--xy-background-color':'transparent'}}
-        onKeyDownCapture={e=>{if(e.key==='Escape'&&!parent&&(s.sessionBreadcrumbs||[]).length&&!e.target.closest?.('input,textarea,select,[contenteditable="true"]')){e.preventDefault();e.stopPropagation();u.act(()=>api.leaveSession());}}}
+        onPointerDownCapture={stopAutoFrame} onWheelCapture={stopAutoFrame} onDragStartCapture={stopAutoFrame}
+        onKeyDownCapture={e=>{stopAutoFrame();if(e.key==='Escape'&&!parent&&(s.sessionBreadcrumbs||[]).length&&!e.target.closest?.('input,textarea,select,[contenteditable="true"]')){e.preventDefault();e.stopPropagation();u.act(()=>api.leaveSession());}}}
         title="Drag to select · Shift adds · Middle or Space-drag to pan · Wheel to zoom · Double-click to fit"
         onDoubleClick={e => { if (e.target.classList?.contains('react-flow__pane')) fit(); }}
-        onDragOver={e => e.preventDefault()} onDrop={e => {
+        onDragOver={e => { stopAutoFrame(); e.preventDefault(); }} onDrop={e => {
           e.preventDefault();
           if(preview)return;
           if(e.dataTransfer.files?.length){u.act(()=>api.importSession(e.dataTransfer.files[0]));return;}

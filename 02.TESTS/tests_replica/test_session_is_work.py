@@ -36,11 +36,11 @@ def project(tmp_path, monkeypatch):
     return folder
 
 
-def declare(context, folder, request, status='working', task='Coordinate the tower drawings'):
+def declare(context, folder, request, status='working', task='Coordinate the tower drawings', path=None):
     from nodelang import workshop_mailbox as mailbox
     process = psutil.Process()
     peer = SimpleNamespace(pid=process.pid, created_at=process.create_time(), cwd=str(folder))
-    return mailbox.call('declare', {'task': task, 'paths': [str(folder)], 'status': status,
+    return mailbox.call('declare', {'task': task, 'paths': [str(path or folder)], 'status': status,
                                     'request_id': request}, context, peer=peer)
 
 
@@ -65,8 +65,9 @@ def test_two_vendors_in_one_project_join_one_session(project):
     first = declare(CLAUDE('a'), project, 'F337')['declaration']
     second = declare(CODEX('b'), project, 'review-drawings', task='Review the tower sheets')['declaration']
     rows = work_rows()
-    assert len(rows) == 1 and first['work'] == rows[0]['id']
+    assert len(rows) == 1 and first['work'] == second['work'] == rows[0]['id']
     assert len(sessions()) == 1
+    assert sorted(m['owner'] for m in rows[0]['members']) == sorted([first['session'], second['session']])
     agents = sorted(step['params']['agent'] for step in steps(rows[0]['session_path']))
     assert len(agents) == 2 and agents[0] != agents[1]
     assert first['runtime'] != second['runtime']
@@ -134,3 +135,16 @@ def test_ten_agent_starts_in_one_project_make_one_session_file(project, capsys):
         print('\nSESSIONWORK measured: session files after 10 agent starts = %d; join seconds first=%.3f '
               'median of joins=%.3f max=%.3f' % (len(files), timings[0], sorted(timings[1:])[4], max(timings[1:])))
     assert len(files) == 1 and len(work_rows()) == 1
+
+
+def test_two_members_write_steps_at_once_and_none_is_lost(project):
+    from concurrent.futures import ThreadPoolExecutor
+    work = declare(CLAUDE('a'), project, 'F337', path=project / 'a.txt')['declaration']['work']
+    # Separate paths: the overlap notice is not under test here, only the one file both write.
+    with ThreadPoolExecutor(2) as pool:
+        joined = list(pool.map(lambda pair: declare(pair[0], project, work, task=pair[1],
+                                                    path=project / (pair[1] + '.txt'))['declaration']['work'],
+                               [(CODEX('b'), 'Check the sheets'), (CLAUDE('c'), 'Tag the doors')]))
+    assert joined == [work, work]
+    row = next(row for row in work_rows() if row['id'] == work)
+    assert len(row['members']) == 3 and len(steps(row['session_path'])) == 3

@@ -1,4 +1,4 @@
-"""Workshop tasks: two agents claim the same task 100 times; exactly one wins each time.
+"""Workshop tasks: two agents claim the same task 100 times; both join it as members every time.
 
 Real Workshop SQLite file, two real connections racing on two threads, no mocks.
 Then release, complete, lease expiry, and the Work column the Studio reads.
@@ -9,7 +9,7 @@ from nodelang import workshop_tasks
 from nodelang.workshop_mailbox import application_history
 
 
-def test_two_agents_one_winner_every_time(tmp_path, monkeypatch):
+def test_two_agents_both_join_as_members_every_time(tmp_path, monkeypatch):
     monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(tmp_path))
     with application_history() as history:
         ids = [workshop_tasks.create(history, "task %d" % n, "founder")["id"] for n in range(100)]
@@ -25,19 +25,21 @@ def test_two_agents_one_winner_every_time(tmp_path, monkeypatch):
         racers = [threading.Thread(target=agent, args=(name,)) for name in ("agent-a", "agent-b")]
         [racer.start() for racer in racers]
         [racer.join() for racer in racers]
-        assert sorted(wins.values()) == [False, True], (task, wins)
-        winner = next(name for name, won in wins.items() if won)
+        assert sorted(wins.values()) == [True, True], (task, wins)           # a session has members, not one holder
         with application_history() as history:
-            assert workshop_tasks.get(history, task)["owner"] == winner
+            joined = workshop_tasks.get(history, task)
+            assert sorted(member["owner"] for member in joined["members"]) == ["agent-a", "agent-b"]
+            assert joined["owner"] in wins and joined["status"] == "claimed"
 
     with application_history() as history:
         task, row = ids[0], workshop_tasks.get(history, ids[0])
         holder, other = row["owner"], ({"agent-a", "agent-b"} - {row["owner"]}).pop()
         assert workshop_tasks.claim(history, task, holder, holder)            # renewing your own lease
-        assert not workshop_tasks.release(history, task, other)               # only the holder releases
+        assert not workshop_tasks.release(history, task, "agent-c")           # only a member releases
         assert workshop_tasks.release(history, task, holder)
+        assert workshop_tasks.get(history, task)["owner"] == other            # the other member keeps the session
         assert workshop_tasks.claim(history, task, other, other)
-        assert not workshop_tasks.complete(history, task, holder)             # a former holder cannot finish it
+        assert not workshop_tasks.complete(history, task, holder)             # a member who left cannot finish it
         assert workshop_tasks.complete(history, task, other, "shipped")
         assert not workshop_tasks.claim(history, task, holder, holder)        # done stays done
         # A lapsed lease closes the attempt, then the task is planned for the next agent.

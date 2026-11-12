@@ -166,17 +166,19 @@ def test_step_reads_its_own_mailbox_not_profile_database(history):
     assert step['params']['last_message'] == 'Own mailbox message'
 
 
-def test_declaration_records_own_step_without_taking_another_agents_lease(history):
+def test_second_agent_joins_as_member_and_finishes_only_its_step(history):
     from nodelang import workshop_tasks as tasks
     from nodelang.session_files import read_document
     task = tasks.create(history, 'Held task', 'founder')
     tasks.claim(history, task['id'], 'first', 'First')
-    assert not tasks.declared(history, 'second-root', task['id'], 'Wrong holder', 'working', 'second', 'Second')
+    assert tasks.declared(history, 'second-root', task['id'], 'Second step', 'working', 'second', 'Second') == task['id']
     steps = [n for n in read_document(task['session_path'])['nodes'] if n.get('params', {}).get('workshop_step')]
     assert len(steps) == 1 and steps[-1]['params']['agent'] == 'Second'
-    assert tasks.get(history, task['id'])['owner'] == 'first'
-    assert not tasks.complete(history, task['id'], 'second', 'not the holder')
-    assert read_document(task['session_path'])['nodes'][-1]['params']['status'] == 'working'
+    assert sorted(m['owner'] for m in tasks.get(history, task['id'])['members']) == ['first', 'second']
+    assert tasks.complete(history, task['id'], 'second', 'my part')          # its step is done; first still works
+    assert tasks.get(history, task['id'])['status'] == 'claimed'
+    assert not tasks.complete(history, task['id'], 'outsider', 'not a member')
+    assert read_document(task['session_path'])['nodes'][-1]['params']['status'] == 'done'
 
 
 def test_declared_task_and_new_purpose_share_one_file(history):

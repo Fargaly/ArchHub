@@ -7,6 +7,7 @@ A lease that lapses frees the task for the next agent; nothing runs on a timer.
 Adapted from DeepSeek Harness 8bd07339 (MIT, (c) 2026 DeepSeek).
 Every task write names the revision it read. A stale revision conflicts.
 """
+import json
 import re
 import time
 from datetime import datetime, timedelta, timezone
@@ -18,7 +19,7 @@ SCHEMA = ("CREATE TABLE IF NOT EXISTS workshop_tasks(id TEXT PRIMARY KEY, title 
           "lease_until REAL, result TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL, "
           "updated_at TEXT NOT NULL, session_path TEXT, purpose TEXT, project TEXT, "
           "archived INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL DEFAULT 0, "
-          "outcome TEXT, write_open INTEGER NOT NULL DEFAULT 0, capacity TEXT) STRICT")
+          "outcome TEXT, write_open INTEGER NOT NULL DEFAULT 0, capacity TEXT, members TEXT) STRICT")
 TASKS_NODE = {'id': 'workshop.tasks', 'params': {'lease_seconds': 900, 'stale_hours': 24, 'max_runs': 2}}
 UI_STATUS = {"open": "PLANNED", "claimed": "WIP", "done": "DONE"}
 
@@ -84,6 +85,8 @@ def _ensure(history):
         history._db.execute("ALTER TABLE workshop_tasks ADD COLUMN write_open INTEGER NOT NULL DEFAULT 0")
     if "capacity" not in names:
         history._db.execute("ALTER TABLE workshop_tasks ADD COLUMN capacity TEXT")
+    if "members" not in names:
+        history._db.execute("ALTER TABLE workshop_tasks ADD COLUMN members TEXT")
 
 
 def _write(history, sql, values):
@@ -95,10 +98,41 @@ def _write(history, sql, values):
 def _locked(history, task):
     _ensure(history)
     found = history._db.execute(
-        "SELECT revision, status, owner FROM workshop_tasks WHERE id=?", (task,)).fetchone()
+        "SELECT revision, status, owner, owner_label, lease_until, members FROM workshop_tasks WHERE id=?", (task,)).fetchone()
     if found is None:
         return None
-    return {"revision": found[0], "status": found[1], "owner": found[2]}
+    return {"revision": found[0], "status": found[1], "owner": found[2],
+            "members": _member_list(found[5], found[2], found[3], found[4])}
+
+
+def _member_list(text, owner=None, label=None, lease=None):
+    """Every agent that joined the session, in join order. A row from before members holds its one owner."""
+    try:
+        held = json.loads(text) if text else []
+    except ValueError:
+        held = []
+    held = [m for m in held if isinstance(m, dict) and isinstance(m.get("owner"), str)] if isinstance(held, list) else []
+    if not held and owner:
+        held = [{"owner": owner, "label": label or owner, "lease_until": lease}]
+    return held
+
+
+def _live(members, now=None):
+    now = time.time() if now is None else now
+    return [m for m in members if (m.get("lease_until") or 0) >= now]
+
+
+def _holds(row, owner):
+    return row["status"] == "claimed" and any(m["owner"] == owner for m in _live(row["members"]))
+
+
+def _seat(members, now):
+    """The row's owner columns name the latest live member; none live frees the session for the next agent."""
+    live = _live(members, now)
+    if not live:
+        return "open", None, None, None
+    latest = max(live, key=lambda m: m["lease_until"])
+    return "claimed", latest["owner"], latest.get("label") or latest["owner"], max(m["lease_until"] for m in live)
 
 
 def _update(history, task, revision, statement, *, holder=None):
@@ -116,7 +150,7 @@ def _update(history, task, revision, statement, *, holder=None):
             raise TaskNotFound(task)
         if revision is not None and int(revision) != row["revision"]:
             raise TaskConflict(task, revision)
-        if holder is not None and (row["status"] != "claimed" or row["owner"] != holder):
+        if holder is not None and not _holds(row, holder):
             if revision is None:
                 return False
             raise TaskLeaseLost(task)
@@ -156,8 +190,8 @@ def mark_writing(history, task, owner, revision=None):
     """The holder has started a write. A lease that lapses before it finishes is outcome unknown."""
     def writing(expected):
         return ("UPDATE workshop_tasks SET write_open=1, updated_at=?, revision=revision+1 "
-                "WHERE id=? AND revision=? AND owner=? AND status='claimed'",
-                (_now(), task, expected, owner))
+                "WHERE id=? AND revision=? AND status='claimed'",
+                (_now(), task, expected))
     return _update(history, task, revision, writing, holder=owner)
 
 
@@ -205,8 +239,12 @@ def create(history, title, creator, *, agent='', workspace='', zoom=1):
     return get(history, task)
 
 
+def _members_now(history, task):
+    return (_locked(history, task) or {"members": []})["members"]
+
+
 def claim(history, task, owner, label, lease_seconds=None, revision=None):
-    """True when this owner holds the task after the call; False when another holds it."""
+    """Join the session as a member, or renew this member's lease. Any agent may join; done stays done."""
     lease_seconds = TASKS_NODE['params']['lease_seconds'] if lease_seconds is None else lease_seconds
     if type(lease_seconds) is not int or not 30 <= lease_seconds <= 86400:
         raise ValueError("Lease must be 30 to 86400 seconds")
@@ -214,34 +252,57 @@ def claim(history, task, owner, label, lease_seconds=None, revision=None):
     _settle_lapsed(history)
 
     def statement(expected):
-        return ("UPDATE workshop_tasks SET status='claimed', owner=?, owner_label=?, lease_until=?, "
+        members = _members_now(history, task)
+        mine = next((m for m in members if m["owner"] == owner), None)
+        if mine is None:
+            mine = {"owner": owner}
+            members.append(mine)
+        mine.update(label=label, lease_until=now + lease_seconds)
+        _, _, _, lease = _seat(members, now)
+        return ("UPDATE workshop_tasks SET status='claimed', owner=?, owner_label=?, lease_until=?, members=?, "
                 "outcome=NULL, write_open=0, updated_at=?, revision=revision+1 WHERE id=? AND revision=? "
-                "AND status!='done' AND (owner IS NULL OR owner=?)",
-                (owner, label, now + lease_seconds, _now(), task, expected, owner))
+                "AND status!='done'",
+                (owner, label, lease, json.dumps(members), _now(), task, expected))
     return _update(history, task, revision, statement)
+
+
+def _leave(history, task, owner, now):
+    """This member's lease ends; it stays listed. The latest live member, if any, keeps the session."""
+    members = _members_now(history, task)
+    for member in members:
+        if member["owner"] == owner:
+            member["lease_until"] = None
+    return members, _seat(members, now)
 
 
 def release(history, task, owner, revision=None):
     def statement(expected):
-        return ("UPDATE workshop_tasks SET status='open', owner=NULL, owner_label=NULL, lease_until=NULL, "
-                "updated_at=?, revision=revision+1 WHERE id=? AND revision=? AND owner=? AND status='claimed'",
-                (_now(), task, expected, owner))
+        members, (status, holder, label, lease) = _leave(history, task, owner, time.time())
+        return ("UPDATE workshop_tasks SET status=?, owner=?, owner_label=?, lease_until=?, members=?, "
+                "updated_at=?, revision=revision+1 WHERE id=? AND revision=? AND status='claimed'",
+                (status, holder, label, lease, json.dumps(members), _now(), task, expected))
     return _update(history, task, revision, statement, holder=owner)
 
 
 def complete(history, task, owner, result="", revision=None):
-    """Finish only while this owner still holds the lease. A lapsed lease is already closed."""
+    """A member finishes. The session is done when no other member still holds a live lease; else it stays open."""
     _settle_lapsed(history)
 
     def statement(expected):
-        return ("UPDATE workshop_tasks SET status='done', lease_until=NULL, write_open=0, result=?, updated_at=?, "
-                "revision=revision+1 WHERE id=? AND revision=? AND owner=? AND status='claimed'",
-                (result, _now(), task, expected, owner))
+        members, (status, holder, label, lease) = _leave(history, task, owner, time.time())
+        if status == "claimed":
+            return ("UPDATE workshop_tasks SET owner=?, owner_label=?, lease_until=?, members=?, updated_at=?, "
+                    "revision=revision+1 WHERE id=? AND revision=? AND status='claimed'",
+                    (holder, label, lease, json.dumps(members), _now(), task, expected))
+        return ("UPDATE workshop_tasks SET status='done', lease_until=NULL, write_open=0, result=?, members=?, updated_at=?, "
+                "revision=revision+1 WHERE id=? AND revision=? AND status='claimed'",
+                (result, json.dumps(members), _now(), task, expected))
     won = _update(history, task, revision, statement, holder=owner)
     row = get(history, task)
     reconciled = bool(row and row['status'] == 'done' and row['owner'] == owner and row['result'] == result)
     if won or reconciled:
-        record_step(history, task, owner, row['owner_label'] or owner, None, 'done', result)
+        label = next((m.get('label') for m in row['members'] if m['owner'] == owner), None)
+        record_step(history, task, owner, label or row['owner_label'] or owner, None, 'done', result)
     return won or reconciled
 
 
@@ -321,8 +382,9 @@ def _session_for(history, owner, project, hours):
     """
     open_rows = "status!='done' AND IFNULL(archived,0)=0 AND id NOT LIKE 'declared-%'"
     mine = history._db.execute(
-        "SELECT id FROM workshop_tasks WHERE " + open_rows + " AND owner=? ORDER BY updated_at DESC LIMIT 1",
-        (owner,)).fetchone()
+        "SELECT id FROM workshop_tasks WHERE " + open_rows + " AND EXISTS (SELECT 1 FROM json_each("
+        "CASE WHEN json_valid(members) THEN members ELSE '[]' END) WHERE json_extract(value,'$.owner')=?) "
+        "ORDER BY updated_at DESC LIMIT 1", (owner,)).fetchone()
     if mine:
         return mine[0]
     if not project:
@@ -692,7 +754,7 @@ def set_status(history, task, status, revision=None):
 
 COLUMNS = ("id", "title", "status", "owner", "owner_label", "lease_until", "result",
            "created_by", "created_at", "updated_at", "session_path", "archived", "purpose", "project",
-           "revision", "outcome", "write_open", "capacity")
+           "revision", "outcome", "write_open", "capacity", "members")
 
 
 def rows(history, task=None, *, include_archived=True, settle=True):
@@ -709,6 +771,7 @@ def rows(history, task=None, *, include_archived=True, settle=True):
         "AND (? OR IFNULL(archived,0)=0) ORDER BY created_at DESC LIMIT 500", (task, task, show))]
     for row in found:
         row["lease_expired"] = row["status"] == "claimed" and row["lease_until"] < now
+        row["members"] = _member_list(row["members"], row["owner"], row["owner_label"], row["lease_until"])
     return found
 
 

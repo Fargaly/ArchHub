@@ -148,7 +148,9 @@ def test_repeated_purpose_returns_to_its_session_without_archiving(history):
     from nodelang import workshop_tasks as tasks
     paths = []
     for purpose in ('A', 'B', 'A'):
-        paths.append(tasks.get(history, tasks.declared(history, 'root', purpose, purpose + ' task', 'working', 'agent', 'Agent'))['session_path'])
+        # A registered project: going back to request A finds A's session (an unregistered folder never joins).
+        paths.append(tasks.get(history, tasks.declared(history, 'root', purpose, purpose + ' task', 'working', 'agent', 'Agent',
+                                                       'Tower'))['session_path'])
         if len(paths) == 1:
             untouched = Path(paths[0]).read_bytes()
         if len(paths) == 2:

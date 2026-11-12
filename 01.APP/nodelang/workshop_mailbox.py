@@ -1116,7 +1116,7 @@ def _declare(history, body, context, identity, runtime, peer, native_session):
         from .workshop_tasks import declared
         work = declared(history, root, row["request_id"], row["task"], row["status"],
                         identity["sender_key"], identity["sender_label"], row["project"],
-                        inherited=_inherited_work(history, root, row["process_lineage"]))
+                        inherited=_inherited_work(history, root, row["process_lineage"]), changed=changed)
         if work:
             row["work"] = work
             with history._transaction(write=True):

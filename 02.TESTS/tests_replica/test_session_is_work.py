@@ -103,7 +103,8 @@ def test_without_a_request_never_guess_and_never_wake_a_30_hour_old_session(proj
     from nodelang import workshop_tasks as tasks
     from nodelang.workshop_mailbox import application_history
     with application_history() as history:
-        quiet = tasks.declared(history, 'root-a', '', 'Quiet tower work', 'working', 'agent-a', 'Agent A', 'Tower')
+        quiet = tasks.create_session(history, 'Quiet tower work', select=False, workspace='tower')['taskId']
+        assert tasks.declared(history, 'root-a', '', 'Tower work', 'working', 'agent-a', 'Agent A', 'Tower') == quiet
         assert tasks.declared(history, 'root-b', '', 'More tower work', 'working', 'agent-b', 'Agent B', 'Tower') == quiet
         old = (datetime.now(timezone.utc) - timedelta(hours=30)).isoformat()
         history._db.execute("UPDATE workshop_tasks SET updated_at=?, lease_until=0, "
@@ -291,7 +292,7 @@ def test_two_starters_at_the_same_depth_mean_no_inheritance(project):
     try:
         peer = SimpleNamespace(pid=child.pid, created_at=psutil.Process(child.pid).create_time(), cwd=str(project))
         work = mailbox.call('declare', {'task': 'Which one?', 'paths': [str(project / 'which.txt')], 'status': 'working',
-                                        'request_id': 'unassigned'}, CODEX('child'), peer=peer)['declaration']['work']
+                                        'request_id': 'unassigned'}, CODEX('child'), peer=peer)['declaration'].get('work')
     finally:
         child.kill()
         child.wait(timeout=10)
@@ -391,15 +392,12 @@ def test_two_processes_opening_an_old_database_together_both_succeed(tmp_path):
         assert 'members' in {row[1] for row in done.execute('PRAGMA table_info(workshop_tasks)')}
 
 
-def test_real_starts_without_a_request_join_the_single_open_session(project):
-    # Both vendors' start paths declare request id "unassigned"; no session exists yet.
+def test_real_starts_without_a_request_create_nothing_when_no_work_is_open(project):
+    # Both vendors' start paths declare request id "unassigned"; no session exists yet: no row, no file.
     first = declare(CLAUDE('start'), project, 'unassigned', task='Session start', path=project / 'start-a.txt')
     second = declare(CODEX('start'), project, 'unassigned', task='Session start', path=project / 'start-b.txt')
-    assert first['declaration']['work'] and second['declaration']['work'] == first['declaration']['work']
-    assert len(sessions()) == 1
-    again = declare(CLAUDE('start'), project, 'unassigned', task='Session start', path=project / 'start-a.txt')
-    assert again['declaration']['work'] == first['declaration']['work']   # its own session, no second file
-    assert len(sessions()) == 1
+    assert 'work' not in first['declaration'] and 'work' not in second['declaration']
+    assert sessions() == [] and work_rows() == []
 
 
 def test_real_starts_without_a_request_join_a_session_started_from_home(project):
@@ -418,3 +416,147 @@ def test_same_request_in_an_unregistered_folder_never_joins(project, tmp_path):
     second = declare(CODEX('loose'), loose, 'F337', path=loose / 'b.txt')['declaration']
     assert first['project'] == '' and first['work'] != second['work']
     assert declare(CLAUDE('loose'), loose, 'F337', path=loose / 'a.txt')['declaration']['work'] == first['work']
+
+
+def test_stop_declare_keeps_the_current_work_and_never_returns_to_an_old_one(project):
+    agent = CLAUDE('stop')
+    old = declare(agent, project, 'B-WORK', path=project / 'b.txt')['declaration']['work']
+    current = declare(agent, project, 'A-WORK', path=project / 'a.txt')['declaration']['work']
+    assert current != old
+    declare(CODEX('other'), project, 'B-WORK', path=project / 'b2.txt')          # touches the old session later
+    stop = declare(agent, project, 'unassigned', task='Session start', path=project / 'a.txt')['declaration']
+    assert stop['work'] == current
+
+
+def test_child_with_its_own_request_stays_in_its_own_session_on_stop(project):
+    import subprocess
+    import sys
+    from nodelang import workshop_tasks as tasks, workshop_mailbox as mailbox
+    from nodelang.workshop_mailbox import application_history
+    with application_history() as history:
+        facade = tasks.create_session(history, 'Tower facade', select=False, workspace='tower')['taskId']
+    declare(CLAUDE('starter'), project, facade, path=project / 'facade.txt')
+    child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'],
+                             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    try:
+        peer = SimpleNamespace(pid=child.pid, created_at=psutil.Process(child.pid).create_time(), cwd=str(project))
+        body = {'task': 'Panel check', 'paths': [str(project / 'panels.txt')], 'status': 'working', 'request_id': 'panel-check'}
+        own = mailbox.call('declare', body, CODEX('child'), peer=peer)['declaration']['work']
+        stop = mailbox.call('declare', {**body, 'task': 'Session start', 'request_id': 'unassigned'}, CODEX('child'), peer=peer)
+    finally:
+        child.kill()
+        child.wait(timeout=10)
+    assert own != facade and stop['declaration']['work'] == own
+
+
+def test_parent_in_another_project_is_not_inherited(project, tmp_path):
+    import subprocess
+    import sys
+    from nodelang import workshop_tasks as tasks, workshop_mailbox as mailbox
+    from nodelang.workshop_mailbox import application_history
+    villa_folder = tmp_path / 'Work' / 'Villa'
+    with application_history() as history:
+        villa = tasks.create_session(history, 'Villa roof', select=False, workspace='villa')['taskId']
+        tower = tasks.create_session(history, 'Tower facade', select=False, workspace='tower')['taskId']
+    assert declare(CLAUDE('villa-starter'), villa_folder, villa, path=villa_folder / 'roof.txt')['declaration']['work'] == villa
+    child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'],
+                             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    try:
+        peer = SimpleNamespace(pid=child.pid, created_at=psutil.Process(child.pid).create_time(), cwd=str(project))
+        work = mailbox.call('declare', {'task': 'Session start', 'paths': [str(project / 'x.txt')], 'status': 'working',
+                                        'request_id': 'unassigned'}, CODEX('villa-child'), peer=peer)['declaration']['work']
+    finally:
+        child.kill()
+        child.wait(timeout=10)
+    assert work == tower                                                     # its own project's work, not the parent's
+
+
+def test_startup_alias_pair_changes_nothing(project):
+    from nodelang import workshop_tasks as tasks, workshop_mailbox as mailbox
+    from nodelang.workshop_mailbox import application_history
+    with application_history() as history:
+        home = tasks.create_session(history, 'Tower facade', select=False, workspace='tower')['taskId']
+    before = sessions()
+    process = psutil.Process()
+    peer = SimpleNamespace(pid=process.pid, created_at=process.create_time(), cwd=str(project))
+    for status in ('working', 'done'):                                       # native_agent_mcp.py start alias
+        mailbox.call('declare', {'task': 'Starting; task details pending', 'paths': [str(project)], 'status': status,
+                                 'request_id': 'unassigned'}, {}, peer=peer)
+    with application_history() as history:
+        assert tasks.get(history, home)['status'] != 'done'
+    assert sessions() == before and steps(before[0]) == []
+
+
+def test_request_from_another_project_never_stays_in_this_projects_session(project, tmp_path):
+    villa_folder = tmp_path / 'Work' / 'Villa'
+    agent = CLAUDE('mover')
+    tower = declare(agent, project, 'F337', path=project / 'a.txt')['declaration']['work']
+    villa = declare(agent, villa_folder, 'F337', path=villa_folder / 'a.txt')['declaration']['work']
+    assert villa != tower
+
+
+def test_no_request_starts_spray_no_files(project, tmp_path):
+    from nodelang import workshop_tasks as tasks
+    from nodelang.workshop_mailbox import application_history
+    loose = tmp_path / 'Loose'
+    loose.mkdir()
+    for number in range(10):
+        declare((CLAUDE, CODEX)[number % 2]('loose-%d' % number), loose, 'unassigned', task='Session start',
+                path=loose / ('l%d.txt' % number))
+    assert sessions() == [] and work_rows() == []
+    with application_history() as history:
+        tasks.create_session(history, 'Tower facade', select=False, workspace='tower')
+        tasks.create_session(history, 'Tower core', select=False, workspace='tower')
+    before = sessions()
+    for number in range(10):
+        declare((CLAUDE, CODEX)[number % 2]('reg-%d' % number), project, 'unassigned', task='Session start',
+                path=project / ('r%d.txt' % number))
+    assert sessions() == before and len(work_rows()) == 2
+
+
+def test_two_first_steps_at_once_share_the_one_file(project):
+    import threading
+    from nodelang import workshop_tasks as tasks
+    from nodelang.workshop_mailbox import application_history
+    with application_history() as history:
+        tasks._write(history, "INSERT INTO workshop_tasks(id,title,status,created_by,created_at,updated_at,purpose,project) "
+                     "VALUES('session-race','Race work','open','founder',?,?,'RACE','Tower')", (tasks._now(), tasks._now()))
+    gate, results, errors = threading.Barrier(2), {}, []
+
+    def start(name):
+        try:
+            with application_history(busy_timeout_seconds=2.0) as history:
+                gate.wait()
+                results[name] = tasks.declared(history, 'root-' + name, 'session-race', 'Step ' + name, 'working',
+                                               name, name.title(), 'Tower')
+        except Exception:   # reported by the assertion below
+            import traceback
+            errors.append(traceback.format_exc())
+    runners = [threading.Thread(target=start, args=(name,)) for name in ('agent-a', 'agent-b')]
+    [runner.start() for runner in runners]
+    [runner.join() for runner in runners]
+    assert errors == [] and results == {'agent-a': 'session-race', 'agent-b': 'session-race'}
+    with application_history() as history:
+        path = tasks.get(history, 'session-race')['session_path']
+    assert sorted(step['params']['agent'] for step in steps(path)) == ['Agent-A', 'Agent-B']
+
+
+def test_no_change_stop_declare_with_500_rows_is_fast(project, capsys):
+    from nodelang import workshop_tasks as tasks
+    from nodelang.workshop_mailbox import application_history
+    with application_history() as history, history._transaction(write=True):
+        tasks._ensure(history)
+        for number in range(500):
+            history._db.execute("INSERT INTO workshop_tasks(id,title,status,created_by,created_at,updated_at,purpose,project) "
+                                "VALUES(?,?,'open','founder',?,?,?,?)", ('session-bulk-%d' % number, 'Bulk %d' % number,
+                                tasks._now(), tasks._now(), 'BULK-%d' % number, ('Tower', 'Villa', None)[number % 3]))
+    agent = CLAUDE('timed')
+    work = declare(agent, project, 'F337', path=project / 'timed.txt')['declaration']['work']
+    declare(agent, project, 'unassigned', task='Session start', path=project / 'timed.txt')
+    started = time.perf_counter()
+    stop = declare(agent, project, 'unassigned', task='Session start', path=project / 'timed.txt')['declaration']
+    seconds = time.perf_counter() - started
+    with capsys.disabled():
+        print('\nSESSIONWORK measured: no-change Stop declare with 500 task rows = %.3f s' % seconds)
+    assert stop['work'] == work
+    assert len(steps(next(row for row in work_rows() if row['id'] == work)['session_path'])) == 1

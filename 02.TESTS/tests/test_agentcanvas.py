@@ -215,10 +215,11 @@ def test_done_declaration_never_copies_another_agents_result(history):
     row = tasks.create(history, 'Shared task', 'founder')
     tasks.claim(history, row['id'], 'first', 'First')
     tasks.complete(history, row['id'], 'first', 'commit first-agent')
-    tasks.declared(history, 'second-root', row['id'], 'My step finished', 'done', 'second', 'Second')
-    steps = read_document(row['session_path'])['nodes']
-    assert steps[-1]['params']['result'] == ''
-    assert steps[-1]['params']['status'] == 'done'
+    assert not tasks.declared(history, 'second-root', row['id'], 'My step finished', 'done', 'second', 'Second')
+    steps = [n for n in read_document(row['session_path'])['nodes'] if n.get('params', {}).get('workshop_step')]
+    # A failed completion writes no step (no ghost done card); the first agent's step keeps its own result.
+    assert [s['params']['agent'] for s in steps] == ['First']
+    assert steps[-1]['params']['result'] == 'commit first-agent' and steps[-1]['params']['status'] == 'done'
     assert tasks.get(history, row['id'])['result'] == 'commit first-agent'
 
 

@@ -97,6 +97,8 @@ def _ensure(history):
         _add_column(history, "capacity TEXT")
     if "members" not in names:
         _add_column(history, "members TEXT")
+    history._db.execute("CREATE INDEX IF NOT EXISTS workshop_tasks_open_work "
+                        "ON workshop_tasks(project, status, archived, updated_at)")
 
 
 def _write(history, sql, values):
@@ -399,30 +401,39 @@ _MEMBER = ("EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(members) THEN m
            "WHERE json_extract(value,'$.owner')=?)")
 
 
-def _session_for(history, owner, project, request, hours):
-    """The session an agent that passed no session id joins, or None for a new one. Never a guess.
+_LIVE_MEMBER = ("EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(members) THEN members ELSE '[]' END) "
+                "WHERE json_extract(value,'$.owner')=? AND json_extract(value,'$.lease_until')>=?)")
 
-    The same work is the same project and the same request. With a request: the one open session of
-    that project started for that request. Without one: the agent's own open session, else the single
-    open session of the project active in the last `hours`, and only when that session has no request.
-    Rows from older builds (declared-*) are never joined, so their files stay as they are.
+
+def _session_for(history, owner, project, request, inherited, hours):
+    """The session an agent that passed no session id joins, or None. Never a guess.
+
+    First the work the agent is a live member of now (for a request: of that project and request), so a
+    Stop or refresh declare never moves it. Then the starter's session when it is the same work (same
+    project, and no request or that session's own request or id). Then, in a registered project only:
+    for a request, the one open session started for it; without one, the single open session active in
+    the last `hours` that has no request. Rows from older builds (declared-*) are never joined.
     """
+    now = time.time()
     if request:
-        mine = history._db.execute("SELECT id FROM workshop_tasks WHERE " + _OPEN_WORK + " AND purpose=? AND " + _MEMBER +
-                                   " ORDER BY updated_at DESC LIMIT 1", (request, owner)).fetchone()
-        if mine:
-            return mine[0]
-        if not project:
-            return None
-        found = history._db.execute("SELECT id FROM workshop_tasks WHERE " + _OPEN_WORK + " AND IFNULL(project,'')=? "
-                                    "AND purpose=? LIMIT 2", (project or "", request)).fetchall()
-        return found[0][0] if len(found) == 1 else None
-    mine = history._db.execute("SELECT id FROM workshop_tasks WHERE " + _OPEN_WORK + " AND " + _MEMBER +
-                               " ORDER BY updated_at DESC LIMIT 1", (owner,)).fetchone()
+        mine = history._db.execute("SELECT id FROM workshop_tasks WHERE " + _OPEN_WORK + " AND IFNULL(project,'')=? "
+                                   "AND purpose=? AND " + _LIVE_MEMBER + " ORDER BY updated_at DESC LIMIT 1",
+                                   (project or "", request, owner, now)).fetchone()
+    else:
+        mine = history._db.execute("SELECT id FROM workshop_tasks WHERE " + _OPEN_WORK + " AND " + _LIVE_MEMBER +
+                                   " ORDER BY updated_at DESC LIMIT 1", (owner, now)).fetchone()
     if mine:
         return mine[0]
+    parent = _open_session(history, inherited)
+    if parent and (parent.get("project") or "") == (project or "") and (
+            not request or request in (parent.get("purpose"), parent["id"])):
+        return inherited
     if not project:
         return None
+    if request:
+        found = history._db.execute("SELECT id FROM workshop_tasks WHERE " + _OPEN_WORK + " AND project=? "
+                                    "AND purpose=? LIMIT 2", (project, request)).fetchall()
+        return found[0][0] if len(found) == 1 else None
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
     found = history._db.execute("SELECT id, purpose FROM workshop_tasks WHERE " + _OPEN_WORK + " AND project=? "
                                 "AND updated_at>=? LIMIT 2", (project, cutoff)).fetchall()
@@ -453,39 +464,42 @@ def _request_of(request_id):
     return "" if str(request_id or "").strip().casefold() in _NO_REQUEST else request_id
 
 
-def declared(history, root, request_id, title, status, owner, label, project="", inherited=""):
+def declared(history, root, request_id, title, status, owner, label, project="", inherited="", changed=True):
     """An agent's declare joins one session (a piece of work) and returns its task id, or False.
 
-    The session is, in order: the task id the starter passed (request_id), the session of the agent that
-    started this one (inherited), the agent's own open session, else the single open session of its project.
-    With none of these it starts a new one. A new purpose never closes or restarts a session.
+    A declare with a request (a task id, a founder or plan request id) is a real step: it joins that work
+    or starts it and records the step. A declare without one (a start, Stop or refresh) only keeps or
+    joins work that already exists; it never creates a row or file, never records a step, and a "done"
+    without a request changes nothing. A re-declare that changes nothing only renews the lease.
     """
     title = _text(title, "title", 2000)
     request = _request_of(request_id)
+    if not request and status == "done":
+        return False
     task = request if request and get(history, request) else ""
-    parent = _open_session(history, inherited) if not task else None
-    if parent and (parent.get("project") or "") == (project or "") and (
-            not request or request in (parent.get("purpose"), parent["id"])):
-        task = inherited
     if not task:
         with history._transaction(write=True):
             _ensure(history)
-            task = _session_for(history, owner, project, request, TASKS_NODE["params"]["stale_hours"])
+            task = _session_for(history, owner, project, request, inherited, TASKS_NODE["params"]["stale_hours"])
             if not task:
-                if status == "done":
+                if not request or status == "done":
                     return False
                 task = SESSION_PREFIX + uuid4().hex
                 history._db.execute("INSERT INTO workshop_tasks(id,title,status,created_by,created_at,updated_at,purpose,project) "
-                                    "VALUES(?,?,'open',?,?,?,?,?)", (task, title, label, _now(), _now(), request or None, project or None))
+                                    "VALUES(?,?,'open',?,?,?,?,?)", (task, title, label, _now(), _now(), request, project or None))
     if status == 'done':
         row = get(history, task)
         won = complete(history, task, owner)
-        result = (row.get('result') or '') if row['owner'] == owner else ''
-        record_step(history, task, owner, label, title, status, result, request=request_id)
+        if won:
+            result = (row.get('result') or '') if row['owner'] == owner else ''
+            record_step(history, task, owner, label, title, status, result, request=request_id)
         return task if won else False
+    held = get(history, task)
+    already = bool(held) and any(m["owner"] == owner for m in _live(held.get("members") or []))
     _leave_other_sessions(history, task, owner)
     won = claim(history, task, owner, label)
-    record_step(history, task, owner, label, title, status, request=request_id)
+    if request and (changed or not already):
+        record_step(history, task, owner, label, title, status, request=request_id)
     return task if won else False
 
 
@@ -497,7 +511,18 @@ def record_step(history, task, owner, label, title, status, result="", request="
     path = row.get('session_path')
     if not path:
         path = _start_session(task, row['title'], purpose=row.get('purpose') or '', generation=row['created_at'])
-        _bind_session(history, task, row['revision'], path)
+        for attempt in range(5):
+            try:
+                _bind_session(history, task, row['revision'], path)
+                break
+            except (ValueError, TaskConflict):
+                # Another agent joined or bound the file at the same moment: use its file, or bind at the new revision.
+                row = get(history, task)
+                if row.get('session_path'):
+                    path = row['session_path']
+                    break
+                if attempt == 4:
+                    raise
     message = latest_agent_message(history, label + ' [' + owner + ']')
     declaration = None
     if history._db.execute("SELECT 1 FROM sqlite_master WHERE name='workshop_declarations'").fetchone():
@@ -1109,7 +1134,10 @@ def create_session(history, title, creator="founder", *, select=True, zoom=1, ag
 _SESSION_FIELDS = {"scope", "rules", "agents", "plan", "handover", "progress", "nodes", "parameters", "messages", "folders", "references", "homePinned"}
 _HANDOVER = ("done", "next", "results")
 # A drive-letter or UNC path; inner folders may hold spaces, the last part ends at a space.
-_ABSOLUTE = re.compile(r"(?:\b[A-Za-z]:|\\\\[^\\/\s\"'<>|*?:]+)(?:[\\/][^\\/\n\"'<>|*?:]+)*[\\/][^\\/\s\"'<>|*?:]+")
+_ABSOLUTE = re.compile(
+    r"(?:\b[A-Za-z]:|\\\\[^\\/\s\"'<>|*?:]+)(?:\\[^\\/\n\"'<>|*?:]+)*\\[^\\/\s\"'<>|*?:]+"   # C:\a b\c.txt, \\server\share
+    r"|\b[A-Za-z]:(?:/[^\\/\s\"'<>|*?:]+)+"                                              # C:/a/b.txt
+    r"|(?<![\w/.~-])/[A-Za-z]/[^/\s\"'<>|*?:]+(?:/[^/\s\"'<>|*?:]+)*")                     # /c/Users/name/a.txt (git bash)
 
 
 def _clean_note(history, row, text):
@@ -1128,7 +1156,7 @@ def _clean_note(history, row, text):
     def place(match):
         whole = match.group(0)
         path = whole.rstrip(".,;:)")
-        found = PureWindowsPath(path)
+        found = PureWindowsPath(path[1].upper() + ":" + path[2:]) if path.startswith("/") else PureWindowsPath(path)
         root = next((base for base in roots if found.is_relative_to(base)), None)
         return (found.relative_to(root).as_posix() if root else "[path removed]") + whole[len(path):]
     text = _ABSOLUTE.sub(place, text)

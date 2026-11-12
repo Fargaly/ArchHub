@@ -1,6 +1,23 @@
 {
   "schema_version": 1,
   "intents": {
+    "SITELINKS": {
+      "source": "Founder website-and-links LIGHT lane, 2026-11-12: one public links source, Git-history changelog, stdlib static generator using v48 identity and current documentation, README repair, archived exporter instructions and one scoped test. Branch only; hooks on; Cargo allowed for the commit hook only by coordinator decision 2026-11-12; no push, deploy, publish, install or live profiles.",
+      "scope": [
+        "03.TOOLS/packaging/links.json",
+        "03.TOOLS/packaging/links.py",
+        "CHANGELOG.md",
+        "03.TOOLS/packaging/website/build_site.py",
+        "03.TOOLS/packaging/website/Dockerfile",
+        "03.TOOLS/packaging/website/fly.toml",
+        "03.TOOLS/packaging/website/httpd.conf",
+        "03.TOOLS/packaging/website/.dockerignore",
+        "README.md",
+        "06.CLOUD/public_site/README.md",
+        "03.TOOLS/packaging/README.md",
+        "02.TESTS/test_site_links.py"
+      ]
+    },
     "FOCUSWFCAT": {
   "source": "Founder sole-builder F326 F327 F328, 2026-11-12; res-036 2026-11-11: existing owners only, workflow/agent-session classification, one category tree, one skills location; branch-only commits, hooks on, isolated profiles, no push/install/release or live data access.",
   "scope": [

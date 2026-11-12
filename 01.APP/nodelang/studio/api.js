@@ -1156,7 +1156,7 @@ async function settingsAction(functionName, args=[]) {
  }
 
  if(Object.hasOwn(result,'accountChecking'))values.profile={...state.profile,checking:result.accountChecking};
- for(const key of ['firms','activeFirm','people','billing','dependencies','officeInvitations','settingsScope','activeWorkspace','devices','activeDevice','backups','companion','secrets','providerPreferences','providerModels','libraryCollapsed','homeLayout'])if(Object.hasOwn(result,key))values[key]=result[key];
+ for(const key of ['firms','activeFirm','people','billing','dependencies','officeInvitations','settingsScope','activeWorkspace','devices','activeDevice','backups','companion','secrets','providerPreferences','providerModels','libraryCollapsed','libraryCategories','sessionListFilters','homeLayout'])if(Object.hasOwn(result,key))values[key]=result[key];
  if(result.controlErrors){
   values.controlErrors={...state.controlErrors};
   for(const key of functionName==='read'?['officeInvitations']:['secrets','providerModels'])delete values.controlErrors[key];
@@ -1195,6 +1195,8 @@ function setAppearance(id,value){
 api.setInspectorWidth=value=>setAppearance('Appearance.Inspector width',value);
 api.readCanvasTabs=()=>settingsAction('readCanvasTabs');
 api.setCanvasTabs=value=>settingsAction('setCanvasTabs',[value]);
+api.readSessionListFilters=()=>settingsAction('readSessionListFilters');
+api.setSessionListFilter=(list,value)=>settingsAction('setSessionListFilter',[list,value]);
 api.readHomeLayout=()=>settingsAction('readHomeLayout');
 api.setHomeLayout=value=>settingsAction('setHomeLayout',[value]);
 api.setSettingsScope=async scope=>{const result=await settingsAction('setSettingsScope',[scope,state.activeWorkspace||state.graph.workspaceIds?.[0]||'',state.graph.id]);scopeEpoch++;publish({hostSkillsReady:false,hostSkills:[],connectorBundle:null});await commands.load();project();await api.refreshSettingsOperations();await refreshHostSkills();return result;};
@@ -1731,7 +1733,8 @@ api.selectGraph=path=>{
 };
 api.getGraph=()=>copy(state.graph);
 api.setLibraryCollapsed=async groups=>{
- if(!Array.isArray(groups)||groups.some(name=>!['Start','Programs','Change','Decide','Deliver'].includes(name)))throw Error('Unknown Library category.');
+ if(!state.libraryCategories)await settingsAction('readLibraryCollapsed');
+ if(!Array.isArray(groups)||groups.some(name=>!state.libraryCategories.includes(name)))throw Error('Unknown Library category.');
  return settingsAction('setLibraryCollapsed',[groups]);
 };
 api.refreshProjects=async()=>{if(!ready)await api.ready;projectFile();return copy(state.graph);};

@@ -14,17 +14,18 @@ def test_workflows_are_separate_from_agent_sessions_without_rewriting_old_files(
     directory.mkdir()
     monkeypatch.setattr(session_files, 'sessions_directory', lambda: directory)
     owner = SessionFiles(directory)
-    for index in range(8):
-        document = new_document('Workflow ' + str(index) if index < 3 else 'Agent ' + str(index))
-        if index >= 3:
+    for index in range(146):
+        document = new_document('Workflow ' + str(index) if index < 31 else 'Agent ' + str(index))
+        if index >= 31:
             document['properties']['taskContext'] = {'task': 'task-' + str(index)}
         # Legacy fixture bytes include noncanonical whitespace and no kind field.
         (directory / (str(index) + '.archhub')).write_text(json.dumps(document), encoding='utf-8')
     path = directory / '0.archhub'
     before = path.read_bytes()
     rows = owner.dispatch({'action': 'catalogue'})['sessions']
-    assert len([row for row in rows if row['kind'] == 'workflow']) == 3
-    assert len([row for row in rows if row['kind'] == 'agent-session']) == 5
+    assert len(rows) == 146
+    assert len([row for row in rows if row['kind'] == 'workflow']) == 31
+    assert len([row for row in rows if row['kind'] == 'agent-session']) == 115
     effects = []
     opened = owner.dispatch({'action': 'open', 'path': str(path)}, invoke=lambda *args: effects.append(args))
     owner.dispatch({'action': 'save', 'path': str(path), 'document': opened['document']})
@@ -35,10 +36,53 @@ def test_workflows_are_separate_from_agent_sessions_without_rewriting_old_files(
 def test_legacy_agent_markers_and_explicit_workflow_kind():
     from nodelang.session_files import document_kind
     document = new_document('Replay')
-    document['nodes'] = [{'agentWork': {'role': 'session'}}]
-    assert document_kind(document) == 'agent-session'
-    document['properties']['kind'] = 'workflow'
+    document['nodes'] = [{'type': 'thing.agent', 'params': {'session': 'native'}, 'agentWork': {'role': 'session'}}]
     assert document_kind(document) == 'workflow'
+    document['properties']['taskContext'] = {'task': 'task-1'}
+    assert document_kind(document) == 'agent-session'
+    for kind in ('workflow', 'agent-session', 'skill'):
+        document['properties']['kind'] = kind
+        assert document_kind(document) == kind
+
+
+def test_unsupported_kind_does_not_abort_catalogue(tmp_path, monkeypatch, caplog):
+    import json
+    from nodelang import session_files
+    monkeypatch.setattr(session_files, 'sessions_directory', lambda: tmp_path)
+    owner = SessionFiles(tmp_path)
+    for name, properties in [('good', {}), ('bad', {'kind': 'unsupported'}),
+                             ('agent', {'kind': 'unsupported', 'taskContext': {'task': 'task-1'}})]:
+        document = new_document(name)
+        document['properties'].update(properties)
+        (tmp_path / (name + '.archhub')).write_text(json.dumps(document), encoding='utf-8')
+    before = {path: path.read_bytes() for path in tmp_path.glob('*.archhub')}
+    for _ in range(2):
+        rows = owner.dispatch({'action': 'catalogue'})['sessions']
+        assert {row['title']: row['kind'] for row in rows} == {'good': 'workflow', 'bad': 'workflow', 'agent': 'agent-session'}
+    assert len([record for record in caplog.records if 'Unsupported document kind' in record.message]) == 2
+    assert all(path.read_bytes() == data for path, data in before.items())
+
+
+def test_library_collapse_and_list_filters_persist_and_reject_unknown(tmp_path):
+    from nodelang.nograph_server import JsonFile, Refused, r_settings_action
+    from nodelang.library_engines import LIBRARY_PRESENTATION
+    from types import SimpleNamespace
+    path = tmp_path / 'settings.json'
+    def action(function, args=()):
+        server = SimpleNamespace(files={'companion': None, 'settings': JsonFile(path, {})})
+        return r_settings_action(server, SimpleNamespace(body={'function': function, 'args': args}))['result']
+    categories = list(dict.fromkeys(category for category, _ in LIBRARY_PRESENTATION))
+    assert action('readLibraryCollapsed')['libraryCategories'] == categories
+    assert action('setLibraryCollapsed', [categories])['libraryCollapsed'] == categories
+    assert action('readLibraryCollapsed')['libraryCollapsed'] == categories
+    with pytest.raises(Refused, match='valid Library categories'):
+        action('setLibraryCollapsed', [['unknown']])
+    assert action('readSessionListFilters')['sessionListFilters'] == {}
+    action('setSessionListFilter', ['home', 'workflow'])
+    action('setSessionListFilter', ['library', 'agent-session'])
+    assert action('readSessionListFilters')['sessionListFilters'] == {'home': 'workflow', 'library': 'agent-session'}
+    with pytest.raises(Refused, match='session list and filter'):
+        action('setSessionListFilter', ['library', 'skill'])
 
 
 def test_every_engine_has_one_declared_category_and_unavailable_cards_have_reasons(monkeypatch):

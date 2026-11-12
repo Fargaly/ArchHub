@@ -1229,13 +1229,24 @@ def r_settings_action(s, req):
         from .settings_owner import home_layout
         return {'ok': True, 'result': home_layout(function, args, settings)}
     if function in ('readLibraryCollapsed', 'setLibraryCollapsed'):
+        from .library_engines import LIBRARY_PRESENTATION
+        categories = list(dict.fromkeys(category for category, _ in LIBRARY_PRESENTATION))
         if function == 'setLibraryCollapsed':
             groups = args[0] if args else None
-            if (not isinstance(groups, list) or len(groups) > 5 or any(
-                    group not in ('Start', 'Programs', 'Change', 'Decide', 'Deliver') for group in groups)):
+            if (not isinstance(groups, list) or len(groups) > len(categories) or any(
+                    group not in categories for group in groups)):
                 raise Refused('Choose valid Library categories.')
             settings.update({'libraryCollapsed': list(dict.fromkeys(groups))})
-        return {'ok': True, 'result': {'libraryCollapsed': settings.read().get('libraryCollapsed', [])}}
+        return {'ok': True, 'result': {'libraryCollapsed': settings.read().get('libraryCollapsed', []),
+                                      'libraryCategories': categories}}
+    if function in ('readSessionListFilters', 'setSessionListFilter'):
+        filters = settings.read().get('sessionListFilters', {})
+        if function == 'setSessionListFilter':
+            if len(args) != 2 or args[0] not in ('home', 'library') or args[1] not in ('all', 'workflow', 'agent-session'):
+                raise Refused('Choose a session list and filter.')
+            filters = {**filters, args[0]: args[1]}
+            settings.update({'sessionListFilters': filters})
+        return {'ok': True, 'result': {'sessionListFilters': filters}}
     if function in ('readControls', 'setAppearance'):
         from .settings_owner import appearance_settings
         appearance = appearance_settings(function, args, settings)

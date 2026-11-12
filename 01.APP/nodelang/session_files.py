@@ -234,19 +234,20 @@ def new_document(title='Untitled'):
             'viewport': {'x': 0, 'y': 0, 'zoom': 1}, 'properties': {'viewportSaved': False}}
 
 
+_WARNED_DOCUMENT_KINDS = set()
+
+
 def document_kind(document):
-    """Old unmarked files are workflows; task context or native agent work marks sessions."""
+    # A known explicit kind wins; otherwise truthy taskContext means agent session; everything else is a workflow.
     properties = document.get('properties', {})
     kind = properties.get('kind')
-    if kind is not None:
-        if kind not in ('workflow', 'agent-session', 'skill'):
-            raise ValueError('Document kind must be workflow, agent-session or skill')
+    if kind in ('workflow', 'agent-session', 'skill'):
         return kind
-    if properties.get('taskContext') or any(
-            node.get('agentWork') or node.get('type') == 'thing.agent' and node.get('params', {}).get('session')
-            for node in document.get('nodes', [])):
-        return 'agent-session'
-    return 'workflow'
+    identity = document.get('id')
+    if kind is not None and identity not in _WARNED_DOCUMENT_KINDS:
+        logging.getLogger(__name__).warning('Unsupported document kind %r in %s; using task context', kind, identity)
+        _WARNED_DOCUMENT_KINDS.add(identity)
+    return 'agent-session' if properties.get('taskContext') else 'workflow'
 
 
 def wire_rule(document, identity, rule):

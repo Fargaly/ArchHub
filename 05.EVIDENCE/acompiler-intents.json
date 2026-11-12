@@ -21,6 +21,7 @@
         "02.TESTS/tests_replica/test_baboom_work_presence.py",
         "02.TESTS/tests_js/studio_sessionwork.test.cjs",
         "02.TESTS/tests_js/agentcanvas.cjs",
+        "02.TESTS/tests_replica/test_ng_workshop.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
     },

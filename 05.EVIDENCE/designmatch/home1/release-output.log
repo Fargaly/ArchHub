@@ -1,0 +1,368 @@
+CHECKPOINT paths=11; changed since f222fc38 paths=37
+.......F.....................................F.......................... [  9%]
+........................................................................ [ 18%]
+.................F........................F............................. [ 28%]
+........................................................................ [ 37%]
+........................................................................ [ 46%]
+........................................................................ [ 56%]
+........................................................................ [ 65%]
+........................................................................ [ 74%]
+......................................................................s. [ 84%]
+........................................................................ [ 93%]
+......................................F........F...TESTISO final profile leaks: []; protected write attempts: 0
+                                                                         [100%]
+================================== FAILURES ===================================
+_______________________ test_designbuild_board[resume] ________________________
+
+tmp_path = WindowsPath('C:/Users/fargaly/AppData/Local/Temp/lane-designmatch/.cache/canvas-release-fgzifkiz/TEMP/pytest-of-Fargaly/pytest-0/test_designbuild_board_resume_0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000020F7B493A10>
+board = 'resume'
+
+    @pytest.mark.parametrize("board", ["home", "workshop", "canvas", "settings", "canvas_fit", "fluid_shell", "resume", "zero_home", "canvas_open", "canvas_reading", "canvas_input", "approval_wrong", "approval_nested"])
+    def test_designbuild_board(tmp_path, monkeypatch, board):
+        browser_cache = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '')
+        if not browser_cache:
+            browser_cache = subprocess.check_output(['node', '-p', "require('node:path').join(require('node:os').userInfo().homedir,'AppData/Local/ms-playwright')"], text=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)).strip()
+        _isolate(monkeypatch, tmp_path / 'desk')
+        from nodelang.nograph_server import NoGraphServer
+        from nodelang.session_files import new_document, insert_session, write_document
+    
+        monkeypatch.setattr(NoGraphServer, "_probe_hosts", staticmethod(lambda: []))
+        state = tmp_path / 'desk' / 'LOCALAPPDATA' / 'ArchHub'
+        state.mkdir()
+        monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(state))
+        server = NoGraphServer(state).start()
+        client = _Studio(server)
+        unbound_path = ''
+        try:
+            if board != 'zero_home':
+                task = client.workshop('createTask', 'Drawing set review')
+                client.workshop('setTaskSession', task['taskId'], {
+                    'scope': 'Review and export the drawing set', 'rules': ['Review before export'],
+                    'agents': ['Drawing coordinator'], 'folders': ['Dated issue folder'],
+                    'references': ['Drawing index'], 'plan': ['Read sheet index', 'Review drawings', 'Export PDF'],
+                    'progress': {'Read sheet index': 'done', 'Review drawings': 'done'},
+                    'messages': [{'id':'review-complete','who':'Drawing coordinator','text':'Review is complete. The drawing index matches the reviewed set.'},{'id':'ask-export','who':'You','text':'What is holding up the export?'}],
+                })
+                if board in ('canvas', 'canvas_fit', 'canvas_open', 'canvas_reading', 'canvas_input'):
+                    import copy
+                    from nodelang.session_files import catalogue
+                    items = {row['id']: row for row in catalogue()}
+                    nodes = [{'id': key, 'item': item, 'type': items[item]['engine'], 'title': items[item]['title'],
+                              'params': copy.deepcopy(items[item]['params']), 'position': {'x': x, 'y': 0}}
+                             for key, item, x in [('list','n_list',0),('slice','s_slice',340),('count','s_count',680),('pdf','o_pdf_handoff',1020)]]
+                    if board in ('canvas_fit', 'canvas_open', 'canvas_input'):
+                        nodes = nodes[:2]
+                    if board == 'canvas_reading':
+                        for node in nodes:
+                            node['position']['x'] *= 4
+                    if board in ('canvas_open', 'canvas_reading', 'canvas_input'):
+                        for node in nodes:
+                            node['position']['x'] += 800
+                    nodes[0]['params']['value'] = '[10, 20, 30, 40, 50]'
+                    nodes[1]['params']['count'] = '3'
+                    view = client.workshop('openTaskGraph', task['taskId'])
+                    opened = client.files('read', path=view['path'], id=view['id'])
+                    opened['document']['nodes'] = [*opened['document']['nodes'], *nodes] if board in ('canvas_open', 'canvas_reading', 'canvas_input') else nodes
+                    opened['document']['wires'] = [
+                        {'id':'first','from':{'node':'list','socket':'value'},'to':{'node':'slice','socket':'items'}},
+                        {'id':'second','from':{'node':'slice','socket':'items_out'},'to':{'node':'count','socket':'items'}}]
+                    if board in ('canvas_fit', 'canvas_open', 'canvas_input'):
+                        opened['document']['wires'] = opened['document']['wires'][:1]
+                    client.files('save', path=view['path'], document=opened['document'])
+                    if board == 'canvas_reading':
+                        standalone = new_document('Standalone opening check')
+                        standalone.update(nodes=copy.deepcopy(nodes), wires=copy.deepcopy(opened['document']['wires']))
+                        unbound_path = str(state / 'standalone-opening.archhub')
+                        write_document(unbound_path, standalone)
+                for title in ['Sheet index check', 'Export issue package', 'Update drawing references', 'Model view audit']:
+                    client.workshop('createTask', title)
+                client.workshop('openTaskGraph', task['taskId'])
+                if board in ('approval_wrong', 'approval_nested'):
+                    view = client.workshop('openTaskGraph', task['taskId'])
+                    original = client.files('read', path=view['path'])['document']
+                    document = new_document('Drawing set review')
+                    document.update(id=original['id'], properties=original['properties'])
+                    document['nodes'] = [{'id': 'held', 'type': 'param.value', 'params': {'type': 'number', 'value': 1}, 'position': {'x': 0, 'y': 0}}]
+                    gate = {'id': 'start', 'type': 'approval.gate', 'params': {}, 'position': {'x': 300, 'y': 0}}
+                    if board == 'approval_nested':
+                        child = new_document('Nested gate')
+                        child['nodes'] = [{**gate, 'id': 'held'}]
+                        child_path = state / 'nested-gate.archhub'
+                        write_document(child_path, child)
+                        insert_session(document, str(child_path))
+                    else:
+                        document['nodes'].append(gate)
+                    client.files('save', path=view['path'], document=document)
+                    held = client.files('run', path=view['path'], document=document)
+                    assert held['approvalId']
+            result = subprocess.run(
+                ['node', '02.TESTS/tests_js/designbuild.cjs'],
+                input=json.dumps({'url': server.public_url, 'cookie': server._cookie_token,
+                                  'browserCache': browser_cache, 'board': board,
+                                  'unboundPath': unbound_path,
+                                  'polish': os.environ.get('ARCHHUB_DESIGNPOLISH_PHASE', '')}),
+                cwd=Path(__file__).resolve().parents[2], capture_output=True, text=True,
+                encoding='utf-8', timeout=120,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            print(result.stdout)
+>           assert result.returncode == 0, result.stdout + result.stderr
+E           AssertionError: PASS Resume 900x700: readable steps, floating composer, no bottom band
+E             PASS Resume 1009x940: readable steps, floating composer, no bottom band
+E             PASS Resume 1366x768: readable steps, floating composer, no bottom band
+E             PASS Resume 1864x949: readable steps, floating composer, no bottom band
+E             PASS Resume: resize, fold, hide/restore and reset/undo use the homeLayout owner
+E             PASS Resume: existing task pin owner and real gate Reject/Ask why path
+E             page.waitForFunction: Timeout 30000ms exceeded.
+E                 at C:\Users\fargaly\AppData\Local\Temp\lane-designmatch\02.TESTS\tests_js\designbuild.cjs:288:18 {
+E               log: [],
+E               name: 'TimeoutError'
+E             }
+E             
+E           assert 1 == 0
+E            +  where 1 = CompletedProcess(args=['node', '02.TESTS/tests_js/designbuild.cjs'], returncode=1, stdout='PASS Resume 900x700: readab...\Local\\Temp\\lane-designmatch\\02.TESTS\\tests_js\\designbuild.cjs:288:18 {\n  log: [],\n  name: 'TimeoutError'\n}\n").returncode
+
+02.TESTS\tests\test_designbuild.py:99: AssertionError
+---------------------------- Captured stdout call -----------------------------
+PASS Resume 900x700: readable steps, floating composer, no bottom band
+PASS Resume 1009x940: readable steps, floating composer, no bottom band
+PASS Resume 1366x768: readable steps, floating composer, no bottom band
+PASS Resume 1864x949: readable steps, floating composer, no bottom band
+PASS Resume: resize, fold, hide/restore and reset/undo use the homeLayout owner
+PASS Resume: existing task pin owner and real gate Reject/Ask why path
+
+______ test_rendered_library_opens_the_real_session_and_exports_archhub _______
+
+profile = WindowsPath('C:/Users/fargaly/AppData/Local/Temp/lane-designmatch/.cache/canvas-release-fgzifkiz/TEMP/pytest-of-Fargaly/pytest-0/test_rendered_library_opens_th0/Local/ArchHub')
+
+    def test_rendered_library_opens_the_real_session_and_exports_archhub(profile):
+        import subprocess
+        from nodelang.nograph_server import NoGraphServer
+        root = Path(__file__).resolve().parents[2]
+        subprocess.run(['node', '--max-old-space-size=512', str(root / '03.TOOLS/packaging/compile_studio.cjs')],
+                       cwd=root, check=True, capture_output=True, text=True, timeout=180,
+                       creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        owner = session_files.SessionFiles()
+        saved = owner.dispatch({'action': 'save', 'document': session_files.new_document('Facade study')})
+        from nodelang import workshop_tasks
+        from nodelang.workshop_mailbox import application_history
+        with application_history() as history:
+            workshop_tasks.create_session(history, 'Library entry', select=False)
+        server = NoGraphServer(profile)
+        save_as = profile.parent / "Shared study.archhub"
+        def delayed_save_picker(title, name_filter="", default_path=""):
+            import time
+            time.sleep(1)  # An edit can arrive while the native Save As dialog is open.
+            return str(save_as)
+        server.native_save_file_picker = delayed_save_picker
+        server._hosts.get = lambda: []
+        server._local.get = lambda: []
+        server.start()
+        try:
+            result = subprocess.run(['node', '02.TESTS/tests_js/apptidy_sessions.test.mjs'],
+                                    input=json.dumps({'url': server.public_url + '/studio/?bootstrap=' + server.browser_bootstrap_token,
+                                                      'path': saved['path'], 'saveAs': str(save_as)}),
+                                    cwd=root, text=True, encoding='utf-8', capture_output=True, timeout=90,
+                                    creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+>           assert result.returncode == 0, result.stdout + result.stderr
+E           AssertionError: node:internal/modules/run_main:107
+E                 triggerUncaughtException(
+E                 ^
+E             
+E             AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+E             
+E             1 !== 0
+E             
+E                 at file:///C:/Users/fargaly/AppData/Local/Temp/lane-designmatch/02.TESTS/tests_js/apptidy_sessions.test.mjs:31:10 {
+E               generatedMessage: true,
+E               code: 'ERR_ASSERTION',
+E               actual: 1,
+E               expected: 0,
+E               operator: 'strictEqual',
+E               diff: 'simple'
+E             }
+E             
+E             Node.js v24.13.0
+E             
+E           assert 1 == 0
+E            +  where 1 = CompletedProcess(args=['node', '02.TESTS/tests_js/apptidy_sessions.test.mjs'], returncode=1, stdout='', stderr="node:i...'ERR_ASSERTION',\n  actual: 1,\n  expected: 0,\n  operator: 'strictEqual',\n  diff: 'simple'\n}\n\nNode.js v24.13.0\n").returncode
+
+02.TESTS\tests_replica\test_app_folder_tidy.py:497: AssertionError
+_____________________ test_rendered_checkpoint_and_width ______________________
+
+tmp_path = WindowsPath('C:/Users/fargaly/AppData/Local/Temp/lane-designmatch/.cache/canvas-release-fgzifkiz/TEMP/pytest-of-Fargaly/pytest-0/test_rendered_checkpoint_and_w0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000020F01221240>
+
+    def test_rendered_checkpoint_and_width(tmp_path, monkeypatch):
+        import os
+        import subprocess
+        root = Path(__file__).resolve().parents[2]
+        subprocess.run(["node", "--max-old-space-size=512", "03.TOOLS/packaging/compile_studio.cjs"],
+                       cwd=root, check=True, capture_output=True, timeout=180,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        _isolate(monkeypatch, tmp_path / "rendered")
+        from nodelang import host_brokers
+        from nodelang.nograph_server import NoGraphServer
+        monkeypatch.setattr(host_brokers, "_com_probe", lambda _prog: False)
+        server = NoGraphServer(tmp_path / "rendered/LOCALAPPDATA/ArchHub").start()
+        try:
+>           result = subprocess.run(["node", "--test", "02.TESTS/tests_js/checkpoint_browser.cjs"], cwd=root,
+                                    env={**os.environ, "CHECKPOINT_WIDTH": "1", "CHECKPOINT_URL": server.public_url + "/studio/?bootstrap=" + server.browser_bootstrap_token},
+                                    capture_output=True, text=True, encoding="utf-8", timeout=120,
+                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
+02.TESTS\tests\test_task_session_roundtrip.py:151: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\Python\pythoncore-3.14-64\Lib\subprocess.py:556: in run
+    stdout, stderr = process.communicate(input, timeout=timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\Python\pythoncore-3.14-64\Lib\subprocess.py:1220: in communicate
+    stdout, stderr = self._communicate(input, endtime, timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <MarkedProcess: returncode: 1 args: ['node', '--test', '02.TESTS/tests_js/ch...>
+input = None, endtime = 62140.4400542, orig_timeout = 120
+
+    def _communicate(self, input, endtime, orig_timeout):
+        # Start reader threads feeding into a list hanging off of this
+        # object, unless they've already been started.
+        if self.stdout and not hasattr(self, "_stdout_buff"):
+            self._stdout_buff = []
+            self.stdout_thread = \
+                    threading.Thread(target=self._readerthread,
+                                     args=(self.stdout, self._stdout_buff))
+            self.stdout_thread.daemon = True
+            self.stdout_thread.start()
+        if self.stderr and not hasattr(self, "_stderr_buff"):
+            self._stderr_buff = []
+            self.stderr_thread = \
+                    threading.Thread(target=self._readerthread,
+                                     args=(self.stderr, self._stderr_buff))
+            self.stderr_thread.daemon = True
+            self.stderr_thread.start()
+    
+        # Start writer thread to send input to stdin, unless already
+        # started.  The thread writes input and closes stdin when done,
+        # or continues in the background on timeout.
+        if self.stdin and not hasattr(self, "_stdin_thread"):
+            self._stdin_thread = \
+                    threading.Thread(target=self._writerthread,
+                                     args=(input,))
+            self._stdin_thread.daemon = True
+            self._stdin_thread.start()
+    
+        # Wait for the writer thread, or time out.  If we time out, the
+        # thread remains writing and the fd left open in case the user
+        # calls communicate again.
+        if hasattr(self, "_stdin_thread"):
+            self._stdin_thread.join(self._remaining_time(endtime))
+            if self._stdin_thread.is_alive():
+                raise TimeoutExpired(self.args, orig_timeout)
+    
+        # Wait for the reader threads, or time out.  If we time out, the
+        # threads remain reading and the fds left open in case the user
+        # calls communicate again.
+        if self.stdout is not None:
+            self.stdout_thread.join(self._remaining_time(endtime))
+            if self.stdout_thread.is_alive():
+>               raise TimeoutExpired(self.args, orig_timeout)
+E               subprocess.TimeoutExpired: Command '['node', '--test', '02.TESTS/tests_js/checkpoint_browser.cjs']' timed out after 120 seconds
+
+..\..\Python\pythoncore-3.14-64\Lib\subprocess.py:1663: TimeoutExpired
+_____________________ test_rendered_agents_and_task_steps _____________________
+
+    def test_rendered_agents_and_task_steps():
+        import os
+        from pathlib import Path
+        import subprocess
+        import sys
+        root = Path(__file__).resolve().parents[2]
+        browser_cache = os.environ.get('PLAYWRIGHT_BROWSERS_PATH') or subprocess.check_output(
+            ['node', '-p', "require('node:path').join(require('node:os').userInfo().homedir,'AppData/Local/ms-playwright')"],
+            text=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)).strip()
+        for command in (['node', '--max-old-space-size=512', '03.TOOLS/packaging/compile_studio.cjs'],
+                        ['node', '02.TESTS/tests_js/agentcanvas.cjs']):
+            result = subprocess.run(command, cwd=root, capture_output=True, text=True, encoding='utf-8', timeout=240,
+                                    env={**os.environ, 'PLAYWRIGHT_BROWSERS_PATH': browser_cache, 'ARCHHUB_COURT_PYTHON': sys.executable},
+                                    creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            print(result.stdout)
+>           assert result.returncode == 0, result.stdout + result.stderr
+E           AssertionError: PASS Agents: live session list opens task files; no shared canvas or wires; waiting/unassigned/missing-file states; both viewports
+E             PASS Open transcript reads real Codex and Claude fixture native logs
+E             PASS Open thread lands on the real task Workshop thread
+E             page.waitForFunction: Timeout 30000ms exceeded.
+E                 at nodeCount (C:\Users\fargaly\AppData\Local\Temp\lane-designmatch\02.TESTS\tests_js\agentcanvas.cjs:131:18)
+E                 at C:\Users\fargaly\AppData\Local\Temp\lane-designmatch\02.TESTS\tests_js\agentcanvas.cjs:179:11 {
+E               log: [],
+E               name: 'TimeoutError'
+E             }
+E             
+E           assert 1 == 0
+E            +  where 1 = CompletedProcess(args=['node', '02.TESTS/tests_js/agentcanvas.cjs'], returncode=1, stdout='PASS Agents: live session l...\Local\\Temp\\lane-designmatch\\02.TESTS\\tests_js\\agentcanvas.cjs:179:11 {\n  log: [],\n  name: 'TimeoutError'\n}\n").returncode
+
+02.TESTS\tests\test_agentcanvas.py:350: AssertionError
+---------------------------- Captured stdout call -----------------------------
+{"ok":true,"action":"compile","files":40,"output_bytes":2122176,"manifest_sha256":"cf0836302a2ba0fe4c3866b729b21f811cc8e903a4eff744a28c3c88ef4323ad","babel_version":"7.29.0"}
+
+PASS Agents: live session list opens task files; no shared canvas or wires; waiting/unassigned/missing-file states; both viewports
+PASS Open transcript reads real Codex and Claude fixture native logs
+PASS Open thread lands on the real task Workshop thread
+
+__________ test_project_label_reaches_live_claude_in_another_project __________
+
+peer = ({'agent': 'Claude Code / 11.ARCHHUB-APP / session-b6305852ea08', 'app': 'claude', 'created_at': 1794472135.1722243, '...canvas-release-fgzifkiz\\TEMP\\pytest-of-Fargaly\\pytest-0\\test_project_label_reaches_liv0\\ArchHub\\11.ARCHHUB-APP'))
+tmp_path = WindowsPath('C:/Users/fargaly/AppData/Local/Temp/lane-designmatch/.cache/canvas-release-fgzifkiz/TEMP/pytest-of-Fargaly/pytest-0/test_project_label_reaches_liv0')
+
+    def test_project_label_reaches_live_claude_in_another_project(peer, tmp_path):
+        declaration, label, transcript, context, observed = peer
+        result = mailbox.call('send', {'to': label, 'text': 'cross-project proof'},
+            {'threadId': 'wsreturned-sender'}, peer=sender(tmp_path))
+>       assert result['status'] == 'recorded', result
+E       AssertionError: {'delivery': [{'agent': 'Claude Code / ArchHub / session-b6305852ea08', 'reason': 'Not delivered to unmatched recipien...', 'Codex / OtherProject / session-1334776a9e6e'], 'matched': 0, 'message_id': '8d87d1703f8a4c049cdb2dedbc145cd0', ...}
+E       assert 'returned' == 'recorded'
+E         
+E         - recorded
+E         + returned
+
+02.TESTS\tests_replica\test_workshop_returned_truth.py:78: AssertionError
+_______ test_live_peer_with_stale_connector_registration_is_still_named _______
+
+peer = ({'agent': 'Claude Code / 11.ARCHHUB-APP / session-b6305852ea08', 'app': 'claude', 'created_at': 1794472152.2009468, '...canvas-release-fgzifkiz\\TEMP\\pytest-of-Fargaly\\pytest-0\\test_live_peer_with_stale_conn0\\ArchHub\\11.ARCHHUB-APP'))
+tmp_path = WindowsPath('C:/Users/fargaly/AppData/Local/Temp/lane-designmatch/.cache/canvas-release-fgzifkiz/TEMP/pytest-of-Fargaly/pytest-0/test_live_peer_with_stale_conn0')
+
+    def test_live_peer_with_stale_connector_registration_is_still_named(peer, tmp_path):
+        declaration, label, transcript, _context, _observed = peer
+        with mailbox.application_history() as history:
+            stale = {**declaration, 'pid': 2_000_000_000, 'created_at': 0, 'native_process': None}
+            history._db.execute('UPDATE workshop_declarations SET record=? WHERE root=?',
+                (json.dumps(stale), declaration['root']))
+            assert not next(row for row in mailbox.read_declarations(history._db, include_archived=True)
+                            if row['session'] == declaration['session'])['current']
+        result = mailbox.call('send', {'to': label, 'text': 'stale connector proof'},
+            {'threadId': 'wsreturned-sender'}, peer=sender(tmp_path))
+>       assert result['status'] == 'recorded', result
+E       AssertionError: {'delivery': [{'agent': 'Claude Code / ArchHub / session-b6305852ea08', 'reason': 'Not delivered to unmatched recipien...: ['Codex / OtherProject / session-1334776a9e6e'], 'matched': 0, 'message_id': 'cccc7d59660649659289fac259623f8f', ...}
+E       assert 'returned' == 'recorded'
+E         
+E         - recorded
+E         + returned
+
+02.TESTS\tests_replica\test_workshop_returned_truth.py:171: AssertionError
+============================== warnings summary ===============================
+..\..\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434
+  C:\Users\fargaly\AppData\Local\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434: PytestConfigWarning: Unknown config option: cache_dir
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+PROFILE-WRITE-GUARD: protected write attempts=0
+=========================== short test summary info ===========================
+FAILED 02.TESTS/tests/test_designbuild.py::test_designbuild_board[resume] - A...
+FAILED 02.TESTS/tests_replica/test_app_folder_tidy.py::test_rendered_library_opens_the_real_session_and_exports_archhub
+FAILED 02.TESTS/tests/test_task_session_roundtrip.py::test_rendered_checkpoint_and_width
+FAILED 02.TESTS/tests/test_agentcanvas.py::test_rendered_agents_and_task_steps
+FAILED 02.TESTS/tests_replica/test_workshop_returned_truth.py::test_project_label_reaches_live_claude_in_another_project
+FAILED 02.TESTS/tests_replica/test_workshop_returned_truth.py::test_live_peer_with_stale_connector_registration_is_still_named
+SKIPPED [1] 02.TESTS\tests_replica\test_real_app_check_tool.py:186: this account cannot create symbolic links
+6 failed, 764 passed, 1 skipped, 1 warning in 731.56s (0:12:11)

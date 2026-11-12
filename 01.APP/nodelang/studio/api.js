@@ -1660,7 +1660,8 @@ function queueAutosave(){
 }
 // The open file is shared with agents: pick up their edits (file revision), no background solve.
 async function pollFile(force=false){
- if(!sessionDocument||localDirty||document.hidden)return;
+ if(force&&localDirty)await flushAutosave();
+ if(!sessionDocument||localDirty||!force&&document.hidden)return;
  const id=sessionDocument.id,path=sessionPath,head=await sessionRequest('head',{path,id});
  if((!force&&!(head.revision>sessionRevision))||localDirty||sessionDocument?.id!==id)return;
  const read=await sessionRequest('read',{path,id});

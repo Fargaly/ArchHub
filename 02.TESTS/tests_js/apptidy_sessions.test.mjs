@@ -27,8 +27,9 @@ try {
   await shelf.getByRole('button', {name: 'Close Library', exact: true}).click();
   await page.getByRole('button',{name:'Library',exact:true}).click();
   await shelf.getByRole('button', {name: 'Sessions', exact: true}).click();
+  await shelf.getByRole('group', {name: 'Saved document filter', exact: true}).waitFor();
   assert.equal(await shelf.getByRole('button', {name: 'Skills', exact: true}).count(), 0);
-  assert.equal(await shelf.getByRole('button', {name: 'Workflows', exact: true}).count(), 0);
+  assert.equal(await shelf.getByRole('button', {name: 'Workflows', exact: true}).count(), 1);
   await shelf.getByRole('button', {name: 'Facade study', exact: true}).click();
   await page.waitForFunction(expected => window.ArchHubAPI.getSessionPath() === expected, input.path);
   assert.equal(await page.evaluate(() => window.ArchHubAPI.getSessionDocument().title), 'Facade study');

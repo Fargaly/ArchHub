@@ -55,6 +55,7 @@ test('RAILDOORS: rendered doors, geometry, task faces, fallback and automation c
               reason: 'Planned, not started', summary: 'Planned, not started', blockedBy: 'Unsupported dependency', messages: []
             })));
           }
+          s.tasks.forEach(task => { task.updated_at = new Date().toISOString(); });
           s.schedules = [{id: 'trigger', title: 'Repeat recent task', path: 'recent.archhub', enabled: true, time: '09:00'}];
           window.openedTasks = [];
           window.scheduledTasks = [];

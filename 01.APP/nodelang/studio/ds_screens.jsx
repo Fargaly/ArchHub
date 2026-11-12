@@ -821,7 +821,7 @@
         setRequestState(s.graph.nodes.length ? 'loaded' : 'empty');
     }, [s.graph.nodes.length]);
     const hasSession = s.graph.nodes.some(n=>n.fixed&&n.type==='thing.session');
-    const foldedOwner = n => n && (n.fixed || hasSession&&n.agentWork?.role==='session'&&!n.parent);
+    const foldedOwner = n => n && (n.fixed || hasSession&&n.agentWork?.role==='session'&&!n.agentStep&&!n.parent);
     // A node whose group is not a node at this level is drawn here, never dropped.
     const atLevel = n => {
       if(foldedOwner(n)&&n.type!=='thing.session'||s.graph.system||n.application)return false;

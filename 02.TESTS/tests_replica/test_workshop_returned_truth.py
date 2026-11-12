@@ -23,6 +23,12 @@ def peer(tmp_path, monkeypatch):
     monkeypatch.setenv('CODEX_HOME', str(tmp_path / 'codex'))
     directory = tmp_path / 'ArchHub' / '11.ARCHHUB-APP'
     directory.mkdir(parents=True)
+    from nodelang.nograph_server import JsonFile
+    from nodelang.user_paths import state_directory
+    JsonFile(state_directory() / 'settings/workspaces.json', {}).update({'roots': [
+        {'root_id': 'product', 'label': 'ArchHub', 'path': str(directory.parent)},
+        {'root_id': 'other', 'label': 'OtherProject', 'path': sender(tmp_path).cwd},
+    ]})
     native = 'wsreturned-live-claude'
     script = Path(__file__).parents[1] / 'tests' / 'workshop_wsinject.mjs'
     process = subprocess.Popen(['node', str(script), str(directory), 'claude', native],

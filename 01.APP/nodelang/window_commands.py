@@ -97,6 +97,26 @@ class WindowCommands(QObject):
             self.title_bar.layout(caption, holes, buttons)
 
 
+class StudioGone(QObject):
+    """The window hidden to the tray, minimised or closed, or its renderer dead: the Studio shows no screen.
+
+    The shell tells the surface owner directly, so the companion never waits on a page that cannot speak.
+    """
+
+    def __init__(self, window, page, clear):
+        super().__init__(window)
+        self.window, self.clear = window, clear
+        window.installEventFilter(self)
+        page.renderProcessTerminated.connect(lambda *_: self.clear(''))
+
+    def eventFilter(self, watched, event):
+        kind = event.type()
+        if watched is self.window and (kind in (QEvent.Type.Hide, QEvent.Type.Close)
+                                       or (kind == QEvent.Type.WindowStateChange and self.window.isMinimized())):
+            self.clear('')
+        return False
+
+
 class CloseToTray(QObject):
     """Closing the window (title bar x, Alt+F4, taskbar) hides it to the tray; the app keeps running.
 

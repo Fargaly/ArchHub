@@ -274,6 +274,9 @@ def run(state_dir, instance_lock=None, serve_launch_requests=None):
         tray.show()
     from .studio_downloads import install_studio_downloads
     window_commands = bind_window_commands(view, window, quit_app, server.public_url, title_bar)  # Studio window buttons
+    from .baboom_nograph import set_studio_surface
+    from .window_commands import StudioGone
+    StudioGone(window, view.page(), set_studio_surface)  # the pet comes back when the Studio is gone
     downloads = install_studio_downloads(view.page().profile(), view.page(), server.public_url, parent=window,
                                          on_status=lambda status: window.statusBar().showMessage(status['detail']))
     app.aboutToQuit.connect(downloads.close)

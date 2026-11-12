@@ -22,7 +22,7 @@ function executable() {
   return process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || (process.platform === 'win32' && (shell || full) ? path.join(cache, shell || full, shell ? 'chrome-headless-shell-win64/chrome-headless-shell.exe' : 'chrome-win64/chrome.exe') : undefined);
 }
 
-async function mount(page, profile) {
+async function mount(page, profile, extra = {}) {
   await page.route('**/*', route => route.fulfill({contentType: 'text/html', body: '<div id="root"></div>'}));
   await page.goto('http://settingsmatch.test');
   await page.addStyleTag({path: path.join(studio, 'style.css')});
@@ -32,13 +32,14 @@ async function mount(page, profile) {
   await page.addScriptTag({path: path.join(studio, 'compiled/react-resizable-panels.js')});
   await page.evaluate(() => { window.fetch = () => new Promise(() => {}); });
   await page.addScriptTag({path: path.join(studio, 'compiled/api.js')});
-  await page.evaluate(({profile, SESSIONS, LONG_TASK}) => {
+  await page.evaluate(({profile, SESSIONS, LONG_TASK, extra}) => {
     const s = window.structuredClone(window.ArchHubAPI.getSnapshot());
     Object.assign(s.profile, profile);
     s.sync = 'Local session file';
     s.sessionsFolder = SESSIONS;
     s.graph = {...s.graph, id: 'long', name: LONG_TASK};
     s.tasks = [];
+    Object.assign(s, extra);
     window.surfaces = [];
     window.ArchHubAPI = {...window.ArchHubAPI, getSnapshot: () => s, subscribe: () => () => {},
       executeAction: (id, callback) => { if (id === 'ui.select') return callback(); throw Error('Unexpected action: ' + id); },
@@ -46,9 +47,9 @@ async function mount(page, profile) {
       readCanvasTabs: async () => ({canvasTabs: {tabs: [], active: '', split: '', collapsed: false}}), setCanvasTabs: async () => ({ok: true}),
       readSessionListFilters: async () => ({sessionListFilters: {home: 'all', library: 'all'}}), setSessionListFilter: async () => ({ok: true}),
       readHomeLayout: async () => ({homeLayout: {width: 300, collapsed: false, resume: '', order: [], hidden: []}}), setHomeLayout: async () => ({ok: true}),
-      refreshAgentSurface: async () => null, refreshRouter: async () => ({default_model: 'free', models: [], fallback_models: [], requests: []}),
+      refreshAgentSurface: async () => null, refreshRouter: async () => ({default_model: 'free', models: [], fallback_models: [], requests: [], free_first: true}),
       readHostAvailability: async () => [], listAgentsWorking: async () => [], refreshSettingsControls: async () => ({}), readSessionsFolder: async () => SESSIONS};
-  }, {profile, SESSIONS, LONG_TASK});
+  }, {profile, SESSIONS, LONG_TASK, extra});
   for (let i = 0; i < sources.length - 1; i++) await page.addScriptTag({content: sources[i]});
   await page.evaluate(() => {
     const blank = () => null;
@@ -61,7 +62,7 @@ async function mount(page, profile) {
 test('SETTINGSMATCH: Account sheet matches the board at 900-1920 and the composer chip stays one line', async () => {
   const browser = await chromium.launch({headless: true, executablePath: executable()});
   try {
-    for (const [profile, account] of [[{name: 'Account', email: EMAIL, signedIn: false, checking: true}, 'Local session'],
+    for (const [profile, account] of [[{name: 'Account', email: EMAIL, signedIn: false, checking: false}, 'Local session'],
                                        [{name: 'Fixture Person', email: EMAIL, signedIn: true, checking: false}, 'Signed in · ' + EMAIL]]) {
       for (const [width, height] of [[900, 900], [1009, 940], [1366, 900], [1440, 900], [1920, 1032]]) {
         const page = await browser.newPage({viewport: {width, height}});
@@ -142,4 +143,64 @@ test('SETTINGSMATCH: the active surface is reported to the app so the desktop co
   window.ArchHubAPI.setActiveSurface('home');
   await new Promise(resolve => setTimeout(resolve, 10));
   assert.deepEqual(requests.filter(row => row.url === '/api/universal/studio-surface').map(row => row.body.surface), ['settings/Account', 'home']);
+});
+
+test('SETTINGSMATCH review: header keeps what waits for you, the account check ends and acts, sections never stand empty', async () => {
+  const browser = await chromium.launch({headless: true, executablePath: executable()});
+  try {
+    const page = await browser.newPage({viewport: {width: 1440, height: 900}});
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await mount(page, {name: 'Account', email: '', signedIn: false, checking: true},
+      {runtimeParameters: {account_http_ms: 1500}, approvals: [{id: 'a1', title: 'Send', status: 'pending', rows: []}, {id: 'a2', title: 'Post', status: 'pending', rows: []}]});
+    const nav = page.getByRole('navigation', {name: 'Main navigation'});
+    await nav.getByRole('button', {name: 'Settings', exact: true}).click();
+    await page.locator('[data-screen="settings/Account"] .sheet-columns:not([hidden])').waitFor();
+    // 1. Something waiting for him is never hidden on Settings.
+    assert.equal((await page.locator('.header-status').innerText()).trim(), '2 wait for you');
+    // 6. The account check shows, then ends in a real state, and the row acts.
+    const account = page.locator('.sheet-field').filter({has: page.locator(':scope > span', {hasText: /^Account/})}).first().locator(':scope > div');
+    assert.equal((await account.innerText()).trim(), 'Checking…');
+    await page.waitForFunction(() => [...window.document.querySelectorAll('.sheet-field')].some(row => row.innerText.includes('Local session')), null, {timeout: 12000});
+    await account.locator('button').click();
+    await page.getByRole('heading', {name: 'Sign in'}).first().waitFor();
+    await page.getByRole('button', {name: 'Close dialog', exact: true}).click();
+    // 3 + 4. Models: no empty section heading, no constant value, one label per switch.
+    await page.getByRole('navigation', {name: 'Settings categories'}).getByRole('button', {name: 'Models', exact: true}).click();
+    await page.locator('select[aria-label="Default model"]').waitFor();
+    assert.equal(await page.getByRole('heading', {name: 'Follow through', exact: true}).count(), 0);
+    assert.equal(await page.getByRole('heading', {name: 'Knowledge', exact: true}).count(), 0);
+    assert.equal(await page.getByText('Not reported', {exact: true}).count(), 0);
+    const free = page.locator('.sheet-field').filter({hasText: 'Prefer free models'});
+    assert.equal(await free.locator(':scope > div span').count(), 0, 'a second On/Off label beside the switch');
+    assert.equal(await free.getByRole('switch').getAttribute('aria-checked'), 'true');
+    assert.equal(await page.locator('select[aria-label="Default model"]').getAttribute('title'), 'free');
+    for (const section of await page.locator('.sheet-columns > section').all()) {
+      assert.ok((await section.locator('.sheet-field, button, p, select').count()) > 0, 'empty section: ' + await section.innerText());
+    }
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); }
+});
+
+test('SETTINGSMATCH review: a refused surface report is retried on the next change', async () => {
+  const requests = [];
+  let refuse = true;
+  const window = {ARCHHUB_AUTHORITY: {}, structuredClone: globalThis.structuredClone, ARCHHUB_BOOT: {home_load_ms: 60000, token: 'lease', csrf: 'csrf'},
+    Uint8Array: globalThis.Uint8Array, dispatchEvent() {}, addEventListener() {}, AH: {inkSoft: '#888'}, crypto: require('node:crypto')};
+  window.ArchHubStudioAuthority = {create: ({get}) => { let snapshot = null; return {load: async () => { snapshot = {canvas: await get('/api/universal/canvas')}; return snapshot.canvas; }, getSnapshot: () => snapshot, clear: () => { snapshot = null; }, adopt: async canvas => { snapshot = {canvas}; return canvas; }, transact: async action => { const canvas = await action(); snapshot = {canvas}; return canvas; }}; }};
+  const context = {window, setTimeout, clearTimeout, document: {hidden: false, addEventListener() {}}, CustomEvent: class {}, sessionStorage: {getItem() { return null; }},
+    URLSearchParams, TextEncoder: globalThis.TextEncoder, AbortSignal: globalThis.AbortSignal, console,
+    fetch: async (url, options) => {
+      requests.push({url, body: options.body && JSON.parse(options.body)});
+      if (url === '/api/universal/studio-surface' && refuse) { refuse = false; return {ok: false, status: 500, json: async () => ({ok: false, error: 'refused'})}; }
+      const data = url === '/api/universal/canvas' ? {root: 'canvas', nodes: [], wires: [], authorization: {principal: 'local-process'}} : {ok: true};
+      return {ok: true, status: 200, json: async () => data};
+    }};
+  vm.runInNewContext(fs.readFileSync(path.join(studio, 'api.js'), 'utf8'), context);
+  await window.ArchHubAPI.ready;
+  window.ArchHubAPI.setActiveSurface('settings/Account');
+  await new Promise(resolve => setTimeout(resolve, 10));
+  window.ArchHubAPI.setActiveSurface('settings/Account');
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.deepEqual(requests.filter(row => row.url === '/api/universal/studio-surface').map(row => row.body.surface), ['settings/Account', 'settings/Account']);
 });

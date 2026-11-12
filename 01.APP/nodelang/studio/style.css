@@ -1222,3 +1222,17 @@ body{min-width:900px;overflow-x:auto}.app-window{min-width:900px}.app-window>div
 .settings-sheet .sheet-field [role=switch][aria-checked=true]::before{content:"On"}
 .settings-sheet .sheet-field [role=switch][aria-checked=false]::before{content:"Off"}
 .settings-sheet .sheet-field .setting-row .reset{right:194px}
+/* Review of ae900c9e: clipped selects keep an ellipsis, named values and units, board category fill, left-aligned sheet buttons, Search all at 1000px and up. */
+.settings-sheet .sheet-field select{min-width:0;width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.settings-sheet .sheet-field .sheet-stepper{position:relative}
+.settings-sheet .sheet-field[data-unit] .sheet-stepper{gap:0!important}.settings-sheet .sheet-field[data-unit] .sheet-stepper input{flex:0 0 3.4ch;width:3.4ch;min-width:0!important}
+.settings-sheet .sheet-field[data-unit="%"] .sheet-stepper::after{content:"%";font-weight:600;font-size:calc(14px * var(--text-scale,1));color:var(--color-ink)}
+.settings-sheet .sheet-field[data-named] .sheet-stepper input:not(:focus){color:transparent}
+.settings-sheet .sheet-field[data-named="Default"] .sheet-stepper::after{content:"Default";position:absolute;left:0;top:50%;transform:translateY(-50%);pointer-events:none;font-weight:600;font-size:calc(14px * var(--text-scale,1));color:var(--color-ink)}
+.settings-sheet .sheet-field[data-named] .sheet-stepper:focus-within::after{content:none}
+.settings-sheet .sheet-tabs button[aria-current=page]{background:color-mix(in srgb,var(--color-accent) 16%,transparent);color:var(--color-accent)}
+.settings-sheet>header .sheet-action,.settings-sheet .sheet-page-heading .sheet-action{text-align:left;justify-content:flex-start}
+@media(min-width:1000px){.app-header.settings-header .header-search{width:220px!important;min-width:0!important}.app-header.settings-header .header-search>span,.app-header.settings-header .header-search>kbd{display:inline-block}}
+.app-header.settings-header .header-status>.header-phrase{display:inline-flex!important;align-items:center;gap:8px;min-width:0}
+.app-header.settings-header .header-phrase>*{display:inline-flex!important;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.settings-sheet .sheet-field select{appearance:none;-webkit-appearance:none;background:transparent;background-image:none;border:0;padding:0;font-weight:600}

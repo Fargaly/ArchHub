@@ -1,6 +1,22 @@
 {
   "schema_version": 1,
   "intents": {
+    "RUNRESUME": {
+  "source": "Founder F329 Run pause/resume and conditional F169 portable parameters, 2026-11-12. Research res-036 sections 2 and 4; SPEC 3.2. Extend existing run and approval owners, no new store/service; branch commits only, hooks on; isolated profiles, no push/install/release or live user stores.",
+  "scope": [
+    "01.APP/nodelang/session_files.py",
+    "01.APP/nodelang/agent_work.py",
+    "01.APP/nodelang/canvas_tools.py",
+    "01.APP/nodelang/canvas_triggers.py",
+    "01.APP/nodelang/studio/api.js",
+    "01.APP/nodelang/studio/ds_screens.jsx",
+    "01.APP/nodelang/studio/app.jsx",
+    "02.TESTS/tests_replica/test_run_resume.py",
+    "02.TESTS/tests_replica/test_portable_parameters.py",
+    "02.TESTS/tests_js/run_resume.test.cjs",
+    "04.DOCS/FAILURE_LOG.md"
+  ]
+},
     "FOCUSWFCAT": {
   "source": "Founder sole-builder F326 F327 F328, 2026-11-12; res-036 2026-11-11: existing owners only, workflow/agent-session classification, one category tree, one skills location; branch-only commits, hooks on, isolated profiles, no push/install/release or live data access.",
   "scope": [

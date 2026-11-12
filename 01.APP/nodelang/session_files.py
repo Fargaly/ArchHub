@@ -234,6 +234,21 @@ def new_document(title='Untitled'):
             'viewport': {'x': 0, 'y': 0, 'zoom': 1}, 'properties': {'viewportSaved': False}}
 
 
+def document_kind(document):
+    """Old unmarked files are workflows; task context or native agent work marks sessions."""
+    properties = document.get('properties', {})
+    kind = properties.get('kind')
+    if kind is not None:
+        if kind not in ('workflow', 'agent-session', 'skill'):
+            raise ValueError('Document kind must be workflow, agent-session or skill')
+        return kind
+    if properties.get('taskContext') or any(
+            node.get('agentWork') or node.get('type') == 'thing.agent' and node.get('params', {}).get('session')
+            for node in document.get('nodes', [])):
+        return 'agent-session'
+    return 'workflow'
+
+
 def wire_rule(document, identity, rule):
     from .stem_graph_evaluation import rule_holds
     wire = next((w for w in document['wires'] if w['id'] == identity), None)
@@ -379,6 +394,9 @@ def read_document(path):
 def write_document(path, document):
     target = local_path(str(path))
     validate(document)
+    # Preserve formatting and bytes when an old document is saved without edits.
+    if target.exists() and read_document(target) == document:
+        return str(target)
     if writer := test_writer():
         document = {**document, 'properties': {**document.get('properties', {}),
                     '_test_writer': {**writer, 'had_properties': 'properties' in document}}}
@@ -1432,7 +1450,8 @@ class SessionFiles:
             invoke = invoke or guard_effect
         if action == 'catalogue':
             return {'ok':True,'items':catalogue(),'recent':self.recent(),'directory':str(self.directory),
-                    'sessions':[{'id':row['skill']['id'], 'title':row['skill']['title'], 'path':str(row['path'])} for row in load_skills()]}
+                    'sessions':[{'id':row['skill']['id'], 'title':row['skill']['title'], 'path':str(row['path']),
+                                 'kind':document_kind(row['skill'])} for row in load_skills()]}
         if action == 'initial':
             import sys
             launch = next((a for a in sys.argv[1:] if str(a).lower().endswith('.archhub')), None)

@@ -7,6 +7,40 @@ import pytest
 from nodelang.session_files import SessionFiles, catalogue, new_document, read_document, run_document, write_document
 
 
+def test_workflows_are_separate_from_agent_sessions_without_rewriting_old_files(tmp_path, monkeypatch):
+    import json
+    from nodelang import session_files
+    directory = tmp_path / 'Sessions'
+    directory.mkdir()
+    monkeypatch.setattr(session_files, 'sessions_directory', lambda: directory)
+    owner = SessionFiles(directory)
+    for index in range(8):
+        document = new_document('Workflow ' + str(index) if index < 3 else 'Agent ' + str(index))
+        if index >= 3:
+            document['properties']['taskContext'] = {'task': 'task-' + str(index)}
+        # Legacy fixture bytes include noncanonical whitespace and no kind field.
+        (directory / (str(index) + '.archhub')).write_text(json.dumps(document), encoding='utf-8')
+    path = directory / '0.archhub'
+    before = path.read_bytes()
+    rows = owner.dispatch({'action': 'catalogue'})['sessions']
+    assert len([row for row in rows if row['kind'] == 'workflow']) == 3
+    assert len([row for row in rows if row['kind'] == 'agent-session']) == 5
+    effects = []
+    opened = owner.dispatch({'action': 'open', 'path': str(path)}, invoke=lambda *args: effects.append(args))
+    owner.dispatch({'action': 'save', 'path': str(path), 'document': opened['document']})
+    assert owner.dispatch({'action': 'open', 'path': str(path)})['document'] == opened['document']
+    assert path.read_bytes() == before and effects == []
+
+
+def test_legacy_agent_markers_and_explicit_workflow_kind():
+    from nodelang.session_files import document_kind
+    document = new_document('Replay')
+    document['nodes'] = [{'agentWork': {'role': 'session'}}]
+    assert document_kind(document) == 'agent-session'
+    document['properties']['kind'] = 'workflow'
+    assert document_kind(document) == 'workflow'
+
+
 def test_external_filename_survives_open_autosave_save_and_reopen(tmp_path):
     owner = SessionFiles()
     path = tmp_path / 'bbc4-af-wfl-all-001-2026-11-08.archhub'

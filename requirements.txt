@@ -92,4 +92,4 @@ distro==1.9.0
 docstring_parser==0.18.0
 truststore==0.10.5
 # OpenTelemetry GenAI spans for every router call (contract C4); API only, no exporter.
-opentelemetry-api==1.45.1
+opentelemetry-api==1.45.2

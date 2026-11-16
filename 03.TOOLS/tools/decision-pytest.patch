@@ -1,0 +1,38 @@
+--- a/00.GOVERNANCE/03.AGENT-HOOKS/decision_check.py
++++ b/00.GOVERNANCE/03.AGENT-HOOKS/decision_check.py
+@@ -15,6 +15,7 @@
+ import re
+ import subprocess
+ import sys
++import tomllib
+ from pathlib import Path
+ 
+ LOG = "docs/DECISIONS.md"
+@@ -51,6 +52,17 @@
+     return git(root, "show", f":{path}").count("\n")
+ 
+ 
++def pytest_configuration_only(root, path):
++    before = tomllib.loads(git(root, "show", f"HEAD:{path}"))
++    after = tomllib.loads(git(root, "show", f":{path}"))
++    for data in (before, after):
++        tool = data.get("tool", {})
++        tool.pop("pytest", None)
++        if not tool:
++            data.pop("tool", None)
++    return before == after
++
++
+ def decisions(root):
+     found = []
+     for status, path in staged(root):
+@@ -63,7 +75,8 @@
+         if GATE.search(path) and status == "A":
+             found.append(f"new gate/hook {path}")
+         added = added_lines(root, path)
+-        if MANIFEST.search(path) and any(re.search(r"[\"']?[\w.-]+[\"']?\s*[=:<>~^]", l) for l in added):
++        if (MANIFEST.search(path) and any(re.search(r"[\"']?[\w.-]+[\"']?\s*[=:<>~^]", l) for l in added)
++                and not (path.endswith("pyproject.toml") and status != "A" and pytest_configuration_only(root, path))):
+             found.append(f"dependency change in {path}")
+         if path.endswith((".py", ".js", ".jsx", ".ts", ".tsx", ".rs")):
+             if any(STORE.search(l) for l in added):

@@ -1039,3 +1039,23 @@ def test_report_normalizes_each_path_once_per_validation(repository, monkeypatch
     normalizer.reset_mock()
     strict_check._validate_report(report(diagnostic("../artifact.py")), repository, artifact=True)
     normalizer.assert_not_called()
+
+
+def test_decision_gate_distinguishes_pytest_settings_from_dependencies(repository):
+    source = Path("C:/Users/fargaly/00.ARCHUB/00.GOVERNANCE/03.AGENT-HOOKS/decision_check.py")
+    assert hashlib.sha256(source.read_bytes()).hexdigest() == "55348820bd7d3759464c17c97620524dbbee6f7a95881e0490ef19f450b8b866", \
+        "Reviewed decision-checker input changed; verify its behavior before updating the digest"
+    spec = importlib.util.spec_from_file_location("court_decision_check", source)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    project = repository / "pyproject.toml"
+    decision_manifest = '[project]\ndependencies = ["pytest==9.0.3"]\n[tool.pytest.ini_options]\naddopts = "--capture=fd"\n'
+    project.write_text(decision_manifest, encoding="utf-8")
+    run_git(repository, "add", "pyproject.toml")
+    run_git(repository, "commit", "-qm", "project")
+    project.write_text(decision_manifest.replace("--capture=fd", "--capture=sys"), encoding="utf-8")
+    run_git(repository, "add", "pyproject.toml")
+    assert module.decisions(repository) == []
+    project.write_text(decision_manifest.replace("pytest==9.0.3", "pytest==9.0.4"), encoding="utf-8")
+    run_git(repository, "add", "pyproject.toml")
+    assert module.decisions(repository) == ["dependency change in pyproject.toml"]

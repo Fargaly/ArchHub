@@ -24,6 +24,7 @@ import re
 import threading
 import time
 import uuid
+from collections import deque
 from contextlib import nullcontext
 from pathlib import Path
 
@@ -37,6 +38,7 @@ class TriggerService:
         self.files = files or SessionFiles()
         self.lock = threading.Lock()
         self.timers = {}
+        self.generations = {}
         self.refresh_revision = 0
         self.startup_refresh = True
         self.armed = []
@@ -51,6 +53,7 @@ class TriggerService:
             for timer in self.timers.values():
                 timer.cancel()
             self.timers.clear()
+            self.generations.clear()
 
     def workflows(self):
         paths = []
@@ -88,6 +91,7 @@ class TriggerService:
             for key, timer in list(self.timers.items()):
                 if key not in wanted or previous.get(key) != wanted[key][:2]:
                     timer.cancel()
+                    self.generations.pop(key, None)
                     del self.timers[key]
             self.armed = [{'path': p, 'node': n, 'kind': kind, 'title': title, 'params': params}
                           for (p, n), (kind, params, title, _last) in wanted.items()]
@@ -207,6 +211,7 @@ class TriggerService:
             delay = max(TRIGGER_NODE['params']['file_poll_floor_seconds'], float(params.get('debounce_seconds') or 5))
         timer = threading.Timer(delay, lambda: self._tick(key, kind, params, state, timer), args=())
         timer.daemon = True
+        self.generations.setdefault(key, object())
         self.timers[key] = timer
         timer.start()
 
@@ -232,7 +237,7 @@ class TriggerService:
         session's run history; nothing runs until approve()."""
         from .canvas_documents import locked
         from .session_files import read_document
-        asking = reason != 'approved' and self._asks(key)
+        asking = reason != 'approved' and timer is None and self._asks(key)
         with locked(key[0]) if timer is not None else nullcontext(), self.lock:
             if timer is not None:
                 try:
@@ -240,6 +245,7 @@ class TriggerService:
                         return 'superseded'
                 except (OSError, ValueError):
                     return 'superseded'
+                asking = not _off(params.get('ask_before_running', True))
             if timer is not None and (self.timers.get(key) is not timer or self.stopped.is_set()):
                 return 'superseded'
             if asking:
@@ -247,10 +253,14 @@ class TriggerService:
                                     'state': 'asking', 'start': time.time()})
                 self._record(key, kind, time.time(), 'asking')
                 return 'asking'
+            expected = ({'params': dict(params), 'generation': self.generations[key]}
+                        if timer is not None else None)
             if key in self.running:
                 queue = str(params.get('concurrency') or 'skip') == 'queue'
-                if queue and self.queued.get(key, 0) < TRIGGER_NODE['params']['queue_cap']:
-                    self.queued[key] = self.queued.get(key, 0) + 1
+                pending = self.queued.get(key)
+                if queue and (pending is None or len(pending) < TRIGGER_NODE['params']['queue_cap']):
+                    self.queued.setdefault(key, deque()).append((kind, expected,
+                                                                 'approved' if reason == 'approved' else 'queued'))
                     outcome = 'queued'
                 else:
                     outcome = 'skipped'
@@ -259,19 +269,23 @@ class TriggerService:
                                     'state': outcome, 'start': time.time(), 'end': time.time()})
                 return outcome
             self.running.add(key)
-        more = True
+        completed = False
         try:
-            while more:
-                self.fire(key, kind, reason=reason, **({'expected': params} if timer is not None else {}))
+            while True:
+                self.fire(key, kind, reason=reason, **({'expected': expected} if expected is not None else {}))
                 with self.lock:
-                    more = bool(self.queued.get(key))
-                    if more:
-                        self.queued[key] -= 1
-                reason = 'queued'
+                    queue = self.queued.get(key)
+                    if not queue:
+                        self.running.discard(key)
+                        self.queued.pop(key, None)
+                        completed = True
+                        break
+                    kind, expected, reason = queue.popleft()
         finally:
-            with self.lock:
-                self.running.discard(key)
-                self.queued.pop(key, None)
+            if not completed:
+                with self.lock:
+                    self.running.discard(key)
+                    self.queued.pop(key, None)
         return 'ran'
 
     def fire(self, key, kind, reason='scheduled', *, expected=None):
@@ -288,8 +302,12 @@ class TriggerService:
         run = {'id': uuid.uuid4().hex, 'trigger': node_id, 'kind': kind, 'reason': reason, 'state': 'running', 'start': started}
 
         def change(document):
-            if expected is not None and not _schedule_matches(document, key, kind, expected):
-                raise ValueError('The schedule was changed or paused before execution.')
+            if expected is not None:
+                with self.lock:
+                    if self.stopped.is_set() or self.generations.get(key) is not expected['generation']:
+                        raise _Superseded()
+                if not _schedule_matches(document, key, kind, expected['params']):
+                    raise _Superseded()
             downstream = sorted(docs.downstream(document, [node_id]))
             ran = run_document(document, invoke=guard_effect, roots=downstream, path=path, again=True)
             run['id'] = ran['run']['id']
@@ -305,6 +323,8 @@ class TriggerService:
         try:
             docs.edit(path, 'trigger:' + kind.split('.')[1], 'fired %s' % node_id, change, solve_changed=False)
             outcome = 'ran'
+        except _Superseded:
+            return {'outcome': 'superseded'}
         except Exception as refused:  # noqa: BLE001 - a failed run is recorded, the timer stays armed
             outcome = 'failed: %s' % refused
             run.update(state='failed', failedNode='', error=str(refused)[:500])
@@ -365,6 +385,10 @@ class TriggerService:
         from .session_files import claim_run_approval
         node = claim_run_approval(path, run_id)
         return self.dispatch((str(path), node['id']), node['type'], dict(node['params']), reason='approved')
+
+
+class _Superseded(Exception):
+    pass
 
 
 def _effective_params(node, path):

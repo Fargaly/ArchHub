@@ -138,7 +138,7 @@ def test_routine_catch_up_policy(profile, policy, fires):
     service = TriggerService()
     calls = []
     def fire(key, kind, reason='scheduled', *, expected=None):
-        assert expected['every_seconds'] == '600'
+        assert expected['params']['every_seconds'] == '600'
         calls.append(reason)
 
     service.fire = fire
@@ -297,12 +297,14 @@ def test_schedule_paused_during_callback_cannot_emit_after_resume(profile, monke
     reached, release = Event(), Event()
     dispatches = []
 
-    def admission(_key):
+    dispatch = service.dispatch
+
+    def admission(*args, **kwargs):
         reached.set()
         assert release.wait(5)
-        return False
+        return dispatch(*args, **kwargs)
 
-    monkeypatch.setattr(service, '_asks', admission)
+    monkeypatch.setattr(service, 'dispatch', admission)
     monkeypatch.setattr(service, 'fire', lambda *args, **kwargs: dispatches.append(args))
     service.refresh()
     timer = service.timers[key]
@@ -354,4 +356,75 @@ def test_persisted_schedule_edit_blocks_old_timer_before_refresh(profile, monkey
         timer.function()
         assert calls == [] and service.fired == [] and session_files.read_runs(path) == []
     finally:
+        service.close()
+
+
+def test_timed_approval_uses_the_same_saved_parameters_as_admission(profile, monkeypatch):
+    from nodelang.canvas_triggers import TriggerService
+    from nodelang.session_files import read_runs
+
+    path = profile / 'saved-ask.archhub'
+    workflow(path, 'tr_schedule', {'every_seconds': '600', 'ask_before_running': True})
+    service = TriggerService()
+    key = (str(path), 't')
+    monkeypatch.setattr(service, '_asks', lambda _: False)
+    calls = []
+    monkeypatch.setattr(service, 'fire', lambda *args, **kwargs: calls.append(args))
+    try:
+        service.refresh()
+        assert service.dispatch(key, 'trigger.schedule', service.armed[0]['params'],
+                                timer=service.timers[key]) == 'asking'
+        assert calls == []
+        assert [run['state'] for run in read_runs(path)] == ['asking']
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize('transition', ['pause', 'pause-resume', 'close'])
+def test_approved_run_does_not_drain_a_superseded_timed_occurrence(profile, monkeypatch, transition):
+    from threading import Event, Thread
+    from nodelang import canvas_triggers, session_files
+
+    path = profile / 'queued-before-pause.archhub'
+    workflow(path, 'tr_schedule', {'every_seconds': '600', 'concurrency': 'queue'})
+    service = canvas_triggers.TriggerService()
+    key = (str(path), 't')
+    reached, release = Event(), Event()
+    results, posted = [], []
+    fire = service.fire
+
+    def record(key, kind, reason='scheduled', *, expected=None):
+        if reason == 'approved':
+            reached.set()
+            assert release.wait(5)
+        else:
+            results.append(fire(key, kind, reason, expected=expected))
+
+    monkeypatch.setattr(service, 'fire', record)
+    monkeypatch.setattr(service, '_post', lambda *args: posted.append(args) or {})
+    first = Thread(target=service.dispatch, args=(key, 'trigger.schedule', {}, 'approved'))
+    try:
+        service.refresh()
+        first.start()
+        assert reached.wait(5)
+        assert service.dispatch(key, 'trigger.schedule', service.armed[0]['params'],
+                                timer=service.timers[key]) == 'queued'
+        if transition == 'close':
+            service.close()
+        else:
+            session_files.set_session_fields(str(path), {'automation': [{'node': 't', 'armed': False}]})
+            service.refresh()
+            if transition == 'pause-resume':
+                session_files.set_session_fields(str(path), {'automation': [{'node': 't', 'armed': True}]})
+                service.refresh()
+                assert key in service.timers
+        release.set()
+        first.join(5)
+        assert not first.is_alive()
+        assert results == [{'outcome': 'superseded'}]
+        assert posted == []
+        assert [run['state'] for run in session_files.read_runs(path)] == ['queued']
+    finally:
+        release.set()
+        first.join(5)
         service.close()

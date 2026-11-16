@@ -319,7 +319,8 @@
     const messages = taskMessages(task);
     const showCanvas = () => setFace('canvas');
     const choices = [...(people.choices || [])];
-    for (const name of agents) if (!choices.some(choice => [choice.name,choice.handle,choice.key].includes(name))) choices.push({key:name,handle:name,name});
+    // An assigned agent that has not joined is listed but cannot receive yet (no handle), like the Workshop To-list.
+    for (const name of agents) if (!choices.some(choice => [choice.name,choice.handle,choice.key].includes(name))) choices.push({key:name,handle:undefined,name});
     if (!choices.length) choices.push({key:'baboom',handle:'',name:'BABOOM'});
     const assigned = choices.find(choice => agents.some(name => [choice.name,choice.handle,choice.key].includes(name)));
     const recipient = to ?? assigned?.handle ?? (task && (s.liveAgents || []).find(a => a.agent === task.owner)?.handle) ?? choices[0]?.handle ?? '';
@@ -372,7 +373,7 @@
       const clearedRevision = (u.composerDraft[draftKey]?.revision || 0) + 1;
       setText('');
       try {
-        const result = await u.act(() => api.apiRouterChat(prompt, 'BABOOM'));
+        const result = await u.act(() => api.apiRouterChat(prompt, 'BABOOM', undefined, task && !task.fileOnly ? task.id : undefined));
         if (result == null) u.setComposerDraft(current => {
           const held = current[draftKey];
           return held?.revision === clearedRevision ? {...current,[draftKey]:{text:body,revision:held.revision+1}} : current;

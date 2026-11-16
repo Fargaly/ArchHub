@@ -197,7 +197,7 @@
         });
         if (!t) setDraft(current => current.text ? current : {text,revision:current.revision+1});
         if (t) {
-          if(u.route==='home'&&!taskId&&!onSent){await u.openTaskFile(t.taskId);return;}
+          if(u.route==='home'&&!taskId&&!onSent){await u.openTaskFile(t.taskId);await u.act(()=>api.apiRouterChat(message,'BABOOM',undefined,t.taskId));await api.listTasks?.();return;}
           if (typeof t.answer === 'string') {
             onSent?.(t);
             return;

@@ -83,12 +83,12 @@ async function request(path,body=undefined,readRetry=true,signal=undefined) {
  return result;
 }
 function rows(node){return node?.properties||node?.params||[];}
-async function routerChat(prompt,agent,replyTo) {
+async function routerChat(prompt,agent,replyTo,task) {
  const generation=++composerGeneration;let answer='';
  publish({composerAnswer:{answer:'',provider:'Routing',model:'Free model'}});
  const response=await fetch('/api/router/chat',{method:'POST',headers:{'Content-Type':'application/json',
   'X-ArchHub-Session':session?.token||'','X-ArchHub-CSRF':session?.csrf||'',
-  'X-ArchHub-Canvas-Key':window.ARCHHUB_AUTHORITY?.canvas_key||''},body:JSON.stringify({prompt,agent,...(replyTo?{reply_to:replyTo}:{})})});
+  'X-ArchHub-Canvas-Key':window.ARCHHUB_AUTHORITY?.canvas_key||''},body:JSON.stringify({prompt,agent,...(replyTo?{reply_to:replyTo}:{}),...(task?{task}:{})})});
  if(!response.ok){const result=await response.json();throw Error(result.error||'The model request was refused.');}
  const reader=response.body.getReader(),decoder=new TextDecoder();let pending='',result;
  try{for(;;){const {done,value}=await reader.read();pending+=decoder.decode(value||new window.Uint8Array(),{stream:!done});
@@ -499,7 +499,7 @@ Object.assign(api,{
  getKnowledgeGraph:()=>({nodes:[],edges:[],status:'not_connected',message:'Knowledge graph is unavailable.'}),
  contextLabel:id=>state.files.find(x=>x.id===id)?.name||state.graph.nodes.find(x=>x.id===id)?.title||id,
  compatibleNodes:()=>[],getDecisionState:()=>null,
- async sendToBaboom(text,options={}){return routerChat(text,options.provider||'BABOOM',undefined);},
+ async sendToBaboom(text,options={}){return routerChat(text,options.provider||'BABOOM',undefined,options.taskId);},
  async setSetting(id,value){
   if(window.ARCHHUB_BOOT?.nograph&&id.startsWith('Appearance.')&&state.settings.some(row=>row.id===id))return setAppearance(id,value);
   const row=state.settings.find(r=>r.id===id);if(!row)return unavailable('setSetting');
@@ -1057,7 +1057,7 @@ api.exposeSettingsPage=async page=>{
  }else{await commands.load();project();}
  return state.graph.nodes.find(n=>n.id===result.id)||result;
 };
-api.apiRouterChat=(prompt,agent,replyTo)=>routerChat(prompt,agent,replyTo);  // replyTo: the Workshop message this answers
+api.apiRouterChat=(prompt,agent,replyTo,task)=>routerChat(prompt,agent,replyTo,task);  // replyTo: the Workshop message this answers; task: the session thread it belongs to
 function documentationTutorials(rows){return rows.map(d=>({id:d.id,category:d.id.startsWith('tutorial-')?'Tutorial':'Guide',title:d.title,summary:d.description||'',steps:String(d.text||'').split(/\n+/).map(line=>line.trim()).filter(Boolean),route:({'getting-started':'home','composer-canvas':'canvas','brain':'brain','connectors':'watcher','account-web':'settings/Account','workshop':'workshop','tasks':'workshop','approvals':'settings/Hooks','routines':'canvas'})[d.id]||'canvas',bookSource:'ArchHub documentation'}));}
 api.refreshDocs=async()=>{
  const result=await request('/api/documentation');

@@ -1,6 +1,27 @@
 {
   "schema_version": 1,
   "intents": {
+    "BASELINEGREEN": {
+      "source": "Founder BASELINE GREEN: unchanged main 60dc0f8e release-test baseline; fix frozen/explicit test inputs and Windows-update test/commit tooling causes, preserve all assertions, list product defects without product edits. Solo builder on lane/baseline-green; hooks on; no push, install, release, deploy or live-profile access.",
+      "scope": [
+        "pyproject.toml",
+        "02.TESTS/conftest.py",
+        "02.TESTS/README.md",
+        "02.TESTS/design-reference.json",
+        "02.TESTS/tests_js/frozen_design.test.cjs",
+        "02.TESTS/tests_replica/test_acompiler_gate.py",
+        "02.TESTS/tests_js/studio_canvasold.test.cjs",
+        "02.TESTS/tests_js/studio_fixcanvas_rendered.test.cjs",
+        "02.TESTS/tests_js/studio_workshop_detail.test.cjs",
+        "02.TESTS/tests_js/wsadd.test.cjs",
+        "02.TESTS/tests_js/studio_foundations_tokens.test.cjs",
+        "03.TOOLS/tools/designsplit_proof.cjs",
+        "03.TOOLS/tools/frozen_design.cjs",
+        "03.TOOLS/tools/run-heavy-python.patch",
+        "03.TOOLS/tools/pipeline/strict_check.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
     "SESSIONWORK": {
       "source": "Founder F337 SESSION-IS-THE-WORK (T0), 2026-11-12, res-039 and res-038: a session is a piece of work with one task id; whoever starts an agent passes it and the agent joins; no id joins the single open session of its registered project active in 24 h, else a new one, never a guess; sub-agents inherit the starter's session; several agents are members of one session and write steps into the one file through the canvas_documents merge; interruption keeps the session open, it ends only by done or archive; the session carries plan and handover note; Home rows are pieces of work per frozen design v50. Existing per-run files and task rows are not merged or rewritten. Isolated profile tests only, branch-only commits, hooks on, no push/install/release or live profile access.",
       "scope": [

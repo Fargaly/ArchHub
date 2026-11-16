@@ -2023,6 +2023,17 @@ api.ready.then(()=>{
  window.addEventListener('pagehide',()=>window.clearInterval(timer),{once:true});
 }).catch(error=>notice(error.message));
 // WIRE-projects end
+// SESSION MODEL (ONE BUILD 1): every session field is read and set through /api/session-model; screens bind these.
+// Read on open, after a save and on a file change: never polled.
+const sessionModel=(action,extra={})=>request('/api/session-model',{action,...extra});
+api.listSessionModel=()=>sessionModel('list');
+api.readSessionModel=path=>sessionModel('get',{path}).then(data=>data.session);
+api.setSessionModel=(path,values)=>sessionModel('set',{path,values}).then(data=>data.session);
+api.sessionInputLinks=path=>sessionModel('links',{path}).then(data=>data.links);
+api.sessionRuns=(path,limit=200)=>sessionModel('runs',{path,limit}).then(data=>data.runs);
+api.sessionSetting=(path,id)=>sessionModel('setting',{path,id});
+api.approveSessionRun=(path,run)=>sessionModel('approve-run',{path,run}).then(data=>data.outcome);
+// SESSION MODEL end
 // Settings load on their existing screen; Canvas boot reads only its file.
 window.ArchHubAPI=Object.freeze(api);
 })();

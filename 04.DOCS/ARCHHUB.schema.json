@@ -208,7 +208,60 @@
       }
     },
     "properties": {
-      "type": "object"
+      "type": "object",
+      "properties": {
+        "project": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Registered workspace root_id (settings/workspaces.json owns its label)."
+        },
+        "state": {
+          "enum": ["open", "done", "archived"]
+        },
+        "pinned": {
+          "type": "boolean"
+        },
+        "doneCheck": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "command": {"type": "string", "minLength": 1, "maxLength": 2000},
+            "node": {"type": "string", "minLength": 1},
+            "tries": {"type": "integer", "minimum": 0},
+            "blocked": {"type": "boolean"},
+            "lastError": {"type": "string"}
+          },
+          "oneOf": [{"required": ["command"]}, {"required": ["node"]}]
+        },
+        "settings": {
+          "type": "object",
+          "description": "Session overrides keyed by Settings row id; the global value stays with its owner.",
+          "additionalProperties": {"type": ["string", "number", "boolean"]}
+        },
+        "inputLinks": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "type": "object",
+            "required": ["source", "output", "input"],
+            "additionalProperties": false,
+            "properties": {
+              "source": {
+                "type": "object",
+                "required": ["path", "id"],
+                "additionalProperties": false,
+                "properties": {
+                  "path": {"type": "string", "pattern": "^(?![A-Za-z]:|[\\\\/]).*\\.archhub$"},
+                  "id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$"}
+                }
+              },
+              "output": {"type": "string", "minLength": 1, "maxLength": 128},
+              "input": {"type": "string", "minLength": 1, "maxLength": 128},
+              "rule": {"type": "string", "maxLength": 4096}
+            }
+          }
+        }
+      }
     }
   }
 }

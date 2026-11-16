@@ -20,7 +20,8 @@ SCHEMA = ("CREATE TABLE IF NOT EXISTS workshop_tasks(id TEXT PRIMARY KEY, title 
           "updated_at TEXT NOT NULL, session_path TEXT, purpose TEXT, project TEXT, "
           "archived INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL DEFAULT 0, "
           "outcome TEXT, write_open INTEGER NOT NULL DEFAULT 0, capacity TEXT, members TEXT) STRICT")
-TASKS_NODE = {'id': 'workshop.tasks', 'params': {'lease_seconds': 900, 'stale_hours': 24, 'max_runs': 2}}
+TASKS_NODE = {'id': 'workshop.tasks', 'params': {'lease_seconds': 900, 'stale_hours': 24, 'max_runs': 2,
+                                                  'done_check_seconds': 300}}
 UI_STATUS = {"open": "PLANNED", "claimed": "WIP", "done": "DONE"}
 
 
@@ -59,6 +60,17 @@ class TaskLimitReached(Exception):
     def __init__(self, task):
         self.task = task
         super().__init__("LIMIT_REACHED")
+
+
+class TaskCheckFailed(ValueError):
+    """The session's done check did not pass; the session stays open (blocked after three tries)."""
+    code = "CHECK_FAILED"
+
+    def __init__(self, task, reason, blocked=False):
+        self.task = task
+        self.blocked = blocked
+        lead = "Done refused, blocked after 3 failed checks: " if blocked else "Done refused, the done check failed: "
+        super().__init__(lead + reason)
 
 
 def _now():
@@ -310,8 +322,14 @@ def release(history, task, owner, revision=None):
 
 
 def complete(history, task, owner, result="", revision=None):
-    """A member finishes. The session is done when no other member still holds a live lease; else it stays open."""
+    """A member finishes. The session is done when no other member still holds a live lease; else it stays open.
+
+    F344: when this would close the session and its file has a done check, the check runs first; a failure
+    is a failed step on the canvas and refuses Done (three failures block it). No check is today's behaviour."""
     _settle_lapsed(history)
+    held = get(history, task)
+    if held and held.get("session_path") and not any(m["owner"] != owner for m in _live(held["members"])):
+        _done_check(task, held)
 
     def statement(expected):
         members, (status, holder, label, lease) = _leave(history, task, owner, time.time())
@@ -328,6 +346,8 @@ def complete(history, task, owner, result="", revision=None):
     if won or reconciled:
         label = next((m.get('label') for m in row['members'] if m['owner'] == owner), None)
         record_step(history, task, owner, label or row['owner_label'] or owner, None, 'done', result)
+        if row['status'] == 'done':
+            _file_state(row, 'done')
     return won or reconciled
 
 
@@ -382,7 +402,10 @@ def archive(history, task, revision=None):
         return ("UPDATE workshop_tasks SET status='done', archived=1, lease_until=NULL, updated_at=?, "
                 "revision=revision+1 WHERE id=? AND revision=?",
                 (_now(), task, expected))
-    return _update(history, task, revision, statement)
+    won = _update(history, task, revision, statement)
+    if won:
+        _file_state(get(history, task), 'archived')
+    return won
 
 
 def _declared_id(owner):
@@ -555,7 +578,7 @@ def record_step(history, task, owner, label, title, status, result="", request="
         context = document.get('properties', {}).get('taskContext', {})
         if context.get('task') != task:
             raise ValueError('Session file belongs to another task')
-        if row.get('project'):
+        if row.get('project') and 'project' not in document['properties']:  # a set session project wins
             context['project'] = row['project']
             if not context.get('workspace'):
                 from .workspace_roots_catalogue import read_registered_roots
@@ -869,13 +892,19 @@ def set_status(history, task, status, revision=None):
             return ("UPDATE workshop_tasks SET status='open', owner=NULL, owner_label=NULL, "
                     "lease_until=NULL, updated_at=?, revision=revision+1 WHERE id=? AND revision=?",
                     (_now(), task, expected))
-        return _update(history, task, revision, planned)
+        won = _update(history, task, revision, planned)
+        if won:
+            _file_state(get(history, task), 'open')
+        return won
     if status == "DONE":
         def finished(expected):
             return ("UPDATE workshop_tasks SET status='done', lease_until=NULL, updated_at=?, "
                     "revision=revision+1 WHERE id=? AND revision=?",
                     (_now(), task, expected))
-        return _update(history, task, revision, finished)
+        won = _update(history, task, revision, finished)
+        if won:
+            _file_state(get(history, task), 'done')
+        return won
     raise ValueError("An agent claims a task; the board sets PLANNED or DONE")
 
 
@@ -929,8 +958,8 @@ def _held_context(document):
         "scope": "" if held.get("scope") == document["id"] else (held.get("scope") or ""),
         "rules": held["rules"] if isinstance(held.get("rules"), list) else [],
         "pinnedMessages": list(held.get('pinnedMessages') or []),
-        "workspace": held.get('workspace') or '',
-        "homePinned": held.get('homePinned') is True,
+        "workspace": props.get('project') or held.get('workspace') or '',
+        "homePinned": props['pinned'] if type(props.get('pinned')) is bool else held.get('homePinned') is True,
         "agents": agents,
         "plan": held["plan"] if isinstance(held.get("plan"), list) else [],
         "handover": held["handover"] if isinstance(held.get("handover"), dict) else {},
@@ -1324,7 +1353,8 @@ def update_session(history, task, values):
         if 'homePinned' in values:
             if type(values['homePinned']) is not bool:
                 raise ValueError('Choose whether to show this task at the top of Home.')
-            held['homePinned'] = values['homePinned']
+            props['pinned'] = values['homePinned']  # the session's one pinned value (session model)
+            held.pop('homePinned', None)
         if "scope" in values:
             held["scope"] = _short_text(values["scope"], "scope", 200)
         if "rules" in values:
@@ -1360,3 +1390,82 @@ def update_session(history, task, values):
         return []
     canvas_documents.edit(path, 'You', 'update task session', change, solve_changed=False)
     return _show(task, path, read_document(path), select=False)
+
+
+# ------------------------------------------------ session model (ONE BUILD 1) --
+def _file_state(row, state):
+    """The task's lifecycle lands in its session file's one state field (open / done / archived)."""
+    if not row or not row.get('session_path'):
+        return
+    from pathlib import Path
+    from .session_files import set_session_fields
+    if not Path(row['session_path']).exists():
+        return False  # a file moved away outside the app: the task row stays the record until it is reopened
+    set_session_fields(row['session_path'], {'state': state}, by='Workshop')
+    return True
+
+
+def _check_passes(document, check, row):
+    """Run the done check: a command in the session's registered workspace, or one check node on the canvas."""
+    import subprocess
+    if 'node' in check:
+        from .enforce import guard_effect
+        from .session_files import run_document
+        ran = run_document(document, invoke=guard_effect, roots=[check['node']])
+        result = ran['results'].get(check['node']) or {}
+        return result.get('status') == 'Done', str(result.get('error') or result.get('status') or 'did not run')
+    from .session_files import _project_of, _registered_roots
+    roots = _registered_roots()
+    root = (roots.get(_project_of(document.get('properties') or {}, roots, row)['id']) or {}).get('path')
+    if not root:
+        return False, 'A done check command runs only in a registered workspace project.'
+    try:
+        done = subprocess.run(check['command'], shell=True, cwd=root, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                              timeout=TASKS_NODE['params']['done_check_seconds'],
+                              creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    except subprocess.TimeoutExpired:
+        return False, 'The check ran longer than %s seconds.' % TASKS_NODE['params']['done_check_seconds']
+    tail = ((done.stderr or '') + (done.stdout or '')).strip().splitlines()[-3:]
+    return done.returncode == 0, ' '.join(tail)[:400] or 'exit code %d' % done.returncode
+
+
+def _done_check(task, row):
+    """F344: refuse Done until the session's check passes. The result is a step on the canvas."""
+    from . import canvas_documents
+    from .session_files import DONE_CHECK_TRIES, read_document
+    path = row['session_path']
+    try:
+        document = read_document(path)
+    except FileNotFoundError:
+        return
+    check = (document.get('properties') or {}).get('doneCheck')
+    if not check:
+        return
+    if check.get('blocked'):
+        raise TaskCheckFailed(task, check.get('lastError') or 'the check failed', blocked=True)
+    passed, reason = _check_passes(document, check, row)
+    outcome = {}
+
+    def change(document):
+        held = document['properties']['doneCheck']
+        held['tries'] = 0 if passed else held.get('tries', 0) + 1
+        held['blocked'] = not passed and held['tries'] >= DONE_CHECK_TRIES
+        if passed:
+            held.pop('lastError', None)
+        else:
+            held['lastError'] = reason
+        outcome.update(held)
+        node = next((n for n in document['nodes'] if n['id'] == check.get('node', 'done-check')), None)
+        if node is None:
+            right = max([n['position']['x'] for n in document['nodes']] or [0])
+            node = {'id': 'done-check', 'type': 'note', 'title': 'Done check', 'params': {'command': check['command']},
+                    'position': {'x': right + 384, 'y': 80}}
+            document['nodes'].append(node)
+        if node['id'] == 'done-check' and 'command' in check:
+            node['params']['command'] = check['command']
+        node['result'] = {'status': 'Done' if passed else 'Error', 'error': '' if passed else reason,
+                          'output': {'tries': held['tries'], 'blocked': held['blocked']}}
+        return []
+    canvas_documents.edit(path, 'Done check', 'done check passed' if passed else 'done check failed', change, solve_changed=False)
+    if not passed:
+        raise TaskCheckFailed(task, reason, blocked=outcome['blocked'])

@@ -22,6 +22,7 @@ import hashlib
 import os
 import threading
 import time
+import uuid
 from pathlib import Path
 
 TRIGGER_NODE = {'id': 'canvas.triggers', 'params': {'min_every_seconds': 10, 'file_poll_floor_seconds': 1,
@@ -66,7 +67,8 @@ class TriggerService:
                 print('  triggers   : %s not read (%s)' % (path, refused), flush=True)
                 continue
             for node in document['nodes']:
-                if node['type'] in ('trigger.schedule', 'trigger.file') and not node.get('frozen'):
+                # Armed is the stored switch (default on); it times only while the app is open.
+                if node['type'] in ('trigger.schedule', 'trigger.file') and not node.get('frozen') and not _off(node['params'].get('armed', True)):
                     wanted[(path, node['id'])] = (node['type'], dict(node['params']), node.get('title', ''),
                                                   (node.get('result') or {}).get('fired_at'))
         missed = []
@@ -111,7 +113,15 @@ class TriggerService:
             self.dispatch(key, kind, params)
 
     def dispatch(self, key, kind, params, reason='scheduled'):
-        """Concurrency policy: a fire while this node's last run is going is skipped, or queued (capped)."""
+        """Concurrency policy: a fire while this node's last run is going is skipped, or queued (capped).
+
+        Ask before running (the trigger's switch, default on) keeps the fire as an "asking" run in the
+        session's run history; nothing runs until approve()."""
+        if reason != 'approved' and self._asks(key):
+            self._history(key, {'id': uuid.uuid4().hex, 'trigger': key[1], 'kind': kind, 'reason': reason,
+                                'state': 'asking', 'start': time.time()})
+            self._record(key, kind, time.time(), 'asking')
+            return 'asking'
         with self.lock:
             if key in self.running:
                 queue = str(params.get('concurrency') or 'skip') == 'queue'
@@ -121,6 +131,8 @@ class TriggerService:
                 else:
                     outcome = 'skipped'
                 self._record(key, kind, time.time(), outcome)
+                self._history(key, {'id': uuid.uuid4().hex, 'trigger': key[1], 'kind': kind, 'reason': reason,
+                                    'state': outcome, 'start': time.time(), 'end': time.time()})
                 return outcome
             self.running.add(key)
         more = True
@@ -143,13 +155,17 @@ class TriggerService:
         from . import canvas_documents as docs
         from .enforce import guard_effect
         from .session_files import run_document
+        from .session_files import run_outcome
         path, node_id = key
         started = time.time()
         trigger = {}
+        run = {'id': uuid.uuid4().hex, 'trigger': node_id, 'kind': kind, 'reason': reason, 'state': 'running', 'start': started}
+        self._history(key, run)
 
         def change(document):
             downstream = sorted(docs.downstream(document, [node_id]))
             ran = run_document(document, invoke=guard_effect, roots=downstream)
+            run.update(run_outcome(ran))
             for node in document['nodes']:
                 if node['id'] in ran['results']:
                     node['result'] = {k: v for k, v in ran['results'][node['id']].items()
@@ -163,6 +179,8 @@ class TriggerService:
             outcome = 'ran'
         except Exception as refused:  # noqa: BLE001 - a failed run is recorded, the timer stays armed
             outcome = 'failed: %s' % refused
+            run.update(state='failed', failedNode='', error=str(refused)[:500])
+        self._history(key, {**run, 'end': time.time()})
         entry = self._record(key, kind, started, outcome)
         entry.update(self._post(key, trigger, reason, outcome, started))
         return entry
@@ -195,6 +213,41 @@ class TriggerService:
         self.fired.append(entry)
         del self.fired[:-50]
         return entry
+
+    # --------------------------------------------- session model (ONE BUILD 1) --
+    def _asks(self, key):
+        """The trigger's stored Ask before running switch, read from the file now (default on)."""
+        from .session_files import read_document
+        try:
+            node = next(n for n in read_document(key[0])['nodes'] if n['id'] == key[1])
+        except (OSError, ValueError, StopIteration):
+            return False  # nothing readable to ask about: the fire fails and is recorded as failed
+        return not _off(node['params'].get('ask_before_running', True))
+
+    def _history(self, key, entry):
+        """Persist one run line beside the session; a history write failure never stops the timer."""
+        from .session_files import append_run
+        try:
+            append_run(key[0], entry)
+        except (OSError, ValueError) as refused:
+            print('  triggers   : run history for %s not written (%s)' % (key[0], refused), flush=True)
+
+    def approve(self, path, run_id):
+        """Run an "asking" fire now: the asking run becomes approved and a new run starts."""
+        from .session_files import read_document, read_runs
+        asking = next((run for run in read_runs(path) if run['id'] == run_id and run.get('state') == 'asking'), None)
+        if asking is None:
+            raise ValueError('That run is not waiting to be asked.')
+        node = next((n for n in read_document(path)['nodes'] if n['id'] == asking['trigger']), None)
+        if node is None:
+            raise ValueError('The trigger node is no longer on this canvas.')
+        self._history((str(path), node['id']), {**asking, 'state': 'approved', 'end': time.time()})
+        return self.dispatch((str(path), node['id']), node['type'], dict(node['params']), reason='approved')
+
+
+def _off(value):
+    from .session_files import _off as switched_off
+    return switched_off(value)
 
 
 def missed_while_closed(params, last, now=None):

@@ -17,6 +17,7 @@ def profile(tmp_path, monkeypatch):
 def workflow(path, trigger, params):
     from nodelang.session_files import SessionFiles, catalogue, new_document, write_document
     items = {row['id']: row for row in catalogue()}
+    params = {'ask_before_running': False, **params}  # these routines run at once; asking is the default (session model)
     doc = new_document('Triggered')
     doc['nodes'] = [
         {'id': 't', 'item': trigger, 'type': items[trigger]['engine'], 'title': 'Trigger',

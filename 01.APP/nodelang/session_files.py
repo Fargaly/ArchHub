@@ -285,6 +285,7 @@ def validate(document):
         elif isinstance(value, float) and not math.isfinite(value):
             raise ValueError('Session numbers must be finite')
     safe(document)
+    _check_model(document.get('properties'))
     nodes = {}
     for node in document['nodes']:
         if not isinstance(node, dict) or not isinstance(node.get('id'), str) or not node['id'] or node['id'] in nodes:
@@ -1607,7 +1608,9 @@ class SessionFiles:
         if action == 'validate':
             return {'ok':True,'document':validate(body.get('document'))}
         if action == 'run':
-            return run_document(body.get('document'),invoke=invoke,roots=body.get('roots'),stopped=stopped,path=body.get('path'))
+            run = lambda: run_document(body.get('document'),invoke=invoke,roots=body.get('roots'),stopped=stopped,path=body.get('path'))
+            # A Run of a saved session keeps its start and end in the run history beside the file.
+            return record_run(body['path'], 'manual', run) if body.get('path') and Path(str(body['path'])).exists() else run()
         if action in ('agent-history', 'fork-node'):
             document = validate(body.get('document'))
             node = next(n for n in document['nodes'] if n['id'] == body.get('node'))
@@ -1618,6 +1621,364 @@ class SessionFiles:
             ids = fork(document, node['id'])
             return {'ok': True, 'document': validate(document), 'ids': ids}
         raise ValueError('Unknown session file action')
+
+
+# ------------------------------------------------ session model (ONE BUILD 1) --
+# Founder 2026-11-16: one .archhub session = one piece of work; the file (plus one append-only run
+# history file beside it) holds everything about it. Every key is optional: a missing key is its default,
+# so old files read unchanged and opening never writes. Values that have another owner are referenced,
+# never copied (project label -> settings/workspaces.json, global settings -> settings owner,
+# members and lease -> workshop_tasks, an input link's value -> the source file, read live).
+SESSION_STATES = ('open', 'done', 'archived')
+_MODEL_KEYS = frozenset({'project', 'state', 'pinned', 'doneCheck', 'settings', 'inputLinks', 'automation'})
+_PORTABLE_ID = re.compile(r'[A-Za-z0-9_-]{1,128}')
+DONE_CHECK_TRIES = 3
+
+
+def _off(value):
+    """A trigger switch is on unless it was switched off (bool, or the text a widget sends)."""
+    return value is False or str(value).strip().lower() in ('false', 'off', 'no', '0')
+
+
+def _check_link(link):
+    if not isinstance(link, dict) or set(link) - {'source', 'output', 'input', 'rule'} or not {'source', 'output', 'input'} <= set(link):
+        raise ValueError('An input link holds only source, output, input and rule.')
+    source = link['source']
+    if not isinstance(source, dict) or set(source) != {'path', 'id'} or not isinstance(source['path'], str) or not isinstance(source['id'], str):
+        raise ValueError('An input link source is the session path and its document id.')
+    relative = source['path'].replace('\\', '/')
+    if (not relative.lower().endswith('.archhub') or relative.startswith('/') or ':' in relative
+            or any(part in ('', '.', '..') for part in relative.split('/')) or not _PORTABLE_ID.fullmatch(source['id'])):
+        raise ValueError('An input link source path is relative to the workspace root, never absolute.')
+    for key in ('output', 'input'):
+        if not isinstance(link[key], str) or not link[key].strip() or len(link[key]) > 128:
+            raise ValueError('An input link names one source output and one receiving input.')
+    if not isinstance(link.get('rule', ''), str) or len(link.get('rule', '')) > 4096:
+        raise ValueError('An input link rule is text.')
+
+
+def _check_model(props):
+    """The shape of the session-model keys a file may carry; validate() calls this on every read and write."""
+    if not isinstance(props, dict):
+        return
+    if 'project' in props and (not isinstance(props['project'], str) or len(props['project']) > 128):
+        raise ValueError('Session project must be a workspace id.')
+    if 'state' in props and props['state'] not in SESSION_STATES:
+        raise ValueError('Session state must be open, done or archived.')
+    if 'pinned' in props and type(props['pinned']) is not bool:
+        raise ValueError('Session pinned must be Boolean.')
+    if 'doneCheck' in props:
+        check = props['doneCheck']
+        if (not isinstance(check, dict) or len({'command', 'node'} & set(check)) != 1
+                or set(check) - {'command', 'node', 'tries', 'blocked', 'lastError'}
+                or not isinstance(check.get('command', check.get('node')), str) or not check.get('command', check.get('node')).strip()
+                or len(check.get('command', '')) > 2000 or type(check.get('tries', 0)) is not int or check.get('tries', 0) < 0
+                or type(check.get('blocked', False)) is not bool or not isinstance(check.get('lastError', ''), str)):
+            raise ValueError('A done check is one command or one check node.')
+    if 'settings' in props and (not isinstance(props['settings'], dict) or any(
+            not isinstance(key, str) or len(key) > 120 or type(value) not in (str, int, float, bool)
+            for key, value in props['settings'].items())):
+        raise ValueError('Session settings map a Settings row to one value.')
+    if 'inputLinks' in props:
+        if not isinstance(props['inputLinks'], list) or len(props['inputLinks']) > 200:
+            raise ValueError('Input links must be a list of at most 200 links.')
+        for link in props['inputLinks']:
+            _check_link(link)
+
+
+def _registered_roots():
+    from .workspace_roots_catalogue import read_registered_roots
+    return read_registered_roots()[0]
+
+
+def _project_of(props, roots, task_row=None):
+    held = props.get('taskContext') if isinstance(props.get('taskContext'), dict) else {}
+    identity = props.get('project') or held.get('workspace') or ''
+    if not identity:  # files from before projects: the task's project label, mapped to its registered root
+        label = held.get('project') or (task_row or {}).get('project') or ''
+        identity = next((key for key, row in roots.items() if label and row.get('label') == label), '')
+    row = roots.get(identity)
+    return {'id': identity, 'label': (row.get('label') or identity) if row else ''}
+
+
+def _state_of(props, task_row=None):
+    if props.get('state') in SESSION_STATES:
+        return props['state']
+    if task_row and task_row.get('archived'):
+        return 'archived'
+    return 'done' if task_row and task_row.get('status') == 'done' else 'open'
+
+
+def _pinned_of(props):
+    held = props.get('taskContext') if isinstance(props.get('taskContext'), dict) else {}
+    return props['pinned'] if type(props.get('pinned')) is bool else held.get('homePinned') is True
+
+
+def session_fields(document, path=None, *, roots=None, task_row=None):
+    """Every session-model field with its default; reads only, never writes."""
+    props = document.get('properties') if isinstance(document.get('properties'), dict) else {}
+    held = props.get('taskContext') if isinstance(props.get('taskContext'), dict) else {}
+    roots = _registered_roots() if roots is None else roots
+    state, pinned = _state_of(props, task_row), _pinned_of(props)
+    automation = [{'node': node['id'], 'kind': node['type'], 'title': node.get('title', ''),
+                   'armed': not _off(node['params'].get('armed', True)),
+                   'askBeforeRunning': not _off(node['params'].get('ask_before_running', True))}
+                  for node in document['nodes'] if node['type'].startswith('trigger.')]
+    return {'id': document['id'], 'title': document['title'], 'path': str(path) if path else '',
+            'kind': document_kind(document), 'task': held.get('task') or '',
+            'revision': canvas_documents.revision(document),
+            'project': _project_of(props, roots, task_row), 'state': state, 'pinned': pinned,
+            'onHome': pinned or state == 'open',
+            'doneCheck': copy.deepcopy(props['doneCheck']) if isinstance(props.get('doneCheck'), dict) else None,
+            'automation': automation, 'settings': dict(props.get('settings') or {}),
+            'inputLinks': copy.deepcopy(props.get('inputLinks') or []),
+            'context': {'plan': list(held['plan']) if isinstance(held.get('plan'), list) else [],
+                        'handover': dict(held['handover']) if isinstance(held.get('handover'), dict) else {}}}
+
+
+def _setting_value(identity, value):
+    """A session override must be a value the global Settings row accepts (that row stays its owner)."""
+    from .settings_owner import appearance_setting
+    row = appearance_setting(identity)
+    default = row['default']
+    kind = bool if type(default) is bool else int if type(default) is int else str
+    if type(value) is not kind or (row.get('options') and value not in row['options']) or (
+            'min' in row and not row['min'] <= value <= row['max']):
+        raise ValueError('Choose a valid value for ' + row['label'] + '.')
+    return value
+
+
+def resolve_setting(document, identity):
+    """The session value when this session sets one, otherwise the global value from its owner."""
+    from .settings_owner import appearance_setting
+    held = (document.get('properties') or {}).get('settings') or {}
+    if identity in held:
+        return {'value': held[identity], 'scope': 'session'}
+    return {'value': appearance_setting(identity)['value'], 'scope': 'global'}
+
+
+def _link_root(document, path):
+    """Input-link paths are relative to the receiving session's workspace root, else to its own folder."""
+    project = _project_of(document.get('properties') or {}, _registered_roots())
+    row = _registered_roots().get(project['id']) if project['id'] else None
+    return Path(row['path']) if row and row.get('path') else Path(path).parent
+
+
+def _link_source(document, path, link):
+    """Find a link's source by its relative path, then by its document id; None when it is missing."""
+    candidate = _link_root(document, path) / link['source']['path']
+    try:
+        held = read_document(candidate) if candidate.exists() else None
+    except (OSError, ValueError):
+        held = None
+    if held and held['id'] == link['source']['id']:
+        return candidate, held
+    for folder in {Path(path).parent, sessions_directory()}:
+        for other in folder.glob('*.archhub'):
+            try:
+                found = read_document(other)
+            except (OSError, ValueError):
+                continue
+            if found['id'] == link['source']['id']:
+                return other, found
+    return None, None
+
+
+def link_states(document, path):
+    """State of each input link, read live from its source: waiting, ready, failed or source missing."""
+    states = []
+    for link in (document.get('properties') or {}).get('inputLinks') or []:
+        _found, source = _link_source(document, path, link)
+        node_id = link['output'].split('.', 1)[0]
+        node = next((n for n in (source or {}).get('nodes', []) if n['id'] == node_id), None)
+        status = (node or {}).get('result', {}).get('status', '') if source else ''
+        state = ('source missing' if source is None else 'output missing' if node is None else
+                 'ready' if status in ('Done', 'Solved') else 'failed' if status == 'Error' else 'waiting')
+        states.append({**copy.deepcopy(link), 'state': state})
+    return states
+
+
+def _link_cycle(document, path, depth=0, seen=None):
+    """Refuse input links that lead back to this session (spec 3.2), before anything runs."""
+    seen = [document['id']] if seen is None else seen
+    if depth > 16:
+        raise ValueError('Input links exceed 16 levels.')
+    for link in (document.get('properties') or {}).get('inputLinks') or []:
+        if link['source']['id'] in seen:
+            raise ValueError('Cycle detected in input links: ' + link['source']['path'])
+        found, source = _link_source(document, path, link)
+        if source is not None:
+            _link_cycle(source, found, depth + 1, seen + [source['id']])
+
+
+def set_session_fields(path, values, by='You'):
+    """Change session-model fields through the one file edit (lock, attributed history, atomic replace)."""
+    if not isinstance(values, dict) or not values or set(values) - _MODEL_KEYS:
+        raise ValueError('Unsupported session fields')
+    roots = _registered_roots()
+
+    def change(document):
+        props = document.setdefault('properties', {})
+        held = props.get('taskContext') if isinstance(props.get('taskContext'), dict) else None
+        if 'project' in values:
+            if values['project'] and values['project'] not in roots:
+                raise ValueError('Choose a registered workspace for the project.')
+            props['project'] = values['project']
+            if held is not None:  # the file's one project value from now on
+                held.pop('workspace', None)
+                held.pop('project', None)
+        if 'state' in values:
+            props['state'] = values['state']
+        if 'pinned' in values:
+            props['pinned'] = values['pinned']
+            if held is not None:
+                held.pop('homePinned', None)
+        if 'doneCheck' in values:
+            check = values['doneCheck']
+            if check is None:
+                props.pop('doneCheck', None)
+            else:
+                if not isinstance(check, dict) or set(check) - {'command', 'node'}:
+                    raise ValueError('A done check is one command or one check node.')
+                if 'node' in check and not any(n['id'] == check['node'] for n in document['nodes']):
+                    raise ValueError('Choose a check node on this canvas.')
+                props['doneCheck'] = {**check, 'tries': 0, 'blocked': False}
+        if 'settings' in values:
+            if not isinstance(values['settings'], dict):
+                raise ValueError('Session settings map a Settings row to one value.')
+            merged = dict(props.get('settings') or {})
+            for identity, value in values['settings'].items():
+                if value is None:
+                    merged.pop(identity, None)
+                else:
+                    merged[identity] = _setting_value(identity, value)
+            props['settings'] = merged
+        if 'inputLinks' in values:
+            from .stem_graph_evaluation import rule_holds
+            links = values['inputLinks']
+            if not isinstance(links, list):
+                raise ValueError('Input links must be a list.')
+            for link in links:
+                _check_link(link)
+                if link.get('rule', '').strip() and rule_holds(link['rule'], None) is None:
+                    raise ValueError('Use a wire comparison such as value > 0 or count >= 1.')
+            props['inputLinks'] = copy.deepcopy(links)
+            _link_cycle(document, path)
+        if 'automation' in values:
+            if not isinstance(values['automation'], list):
+                raise ValueError('Automation lists trigger nodes and their switches.')
+            for row in values['automation']:
+                node = next((n for n in document['nodes'] if isinstance(row, dict) and n['id'] == row.get('node')), None)
+                if node is None or not node['type'].startswith('trigger.') or set(row) - {'node', 'armed', 'askBeforeRunning'} or any(
+                        type(row[key]) is not bool for key in ('armed', 'askBeforeRunning') if key in row):
+                    raise ValueError('Choose a trigger node and set armed or ask before running on or off.')
+                if 'armed' in row:
+                    node['params']['armed'] = row['armed']
+                if 'askBeforeRunning' in row:
+                    node['params']['ask_before_running'] = row['askBeforeRunning']
+        for key in ('settings', 'inputLinks', 'project'):
+            if key in props and not props[key]:
+                props.pop(key)
+        return []
+    document, _ = canvas_documents.edit(str(local_path(str(path))), by, 'session settings', change, solve_changed=False)
+    return session_fields(document, path, roots=roots)
+
+
+def list_sessions(directory=None):
+    """Home and the Sessions panel: every session file with its fields, grouped by project.
+
+    One directory scan, one workspace read and one task-table read; no polling (the caller refreshes on
+    a save or a file change)."""
+    roots = _registered_roots()
+    tasks = {}
+    try:
+        from .workshop_mailbox import application_history
+        from .workshop_tasks import rows
+        with application_history(read_only=True) as history:
+            tasks = {row['session_path']: row for row in rows(history, settle=False) if row.get('session_path')}
+    except Exception as error:  # noqa: BLE001 - no Workshop database yet: files still list, without members
+        logging.getLogger(__name__).debug('Session list without task rows: %s', error)
+    groups = {}
+    for path in sorted((Path(directory) if directory else sessions_directory()).glob('*.archhub')):
+        try:
+            document = read_document(path)
+        except (OSError, ValueError):
+            continue
+        row = tasks.get(str(path))
+        fields = session_fields(document, path, roots=roots, task_row=row)
+        fields['members'] = [{'name': m.get('label') or m['owner'], 'live': (m.get('lease_until') or 0) >= time.time()}
+                             for m in (row or {}).get('members') or []]
+        fields['task'] = fields['task'] or (row or {}).get('id', '')
+        fields['updated'] = (document.get('properties', {}).get('history') or [{}])[-1].get('at', '')
+        group = groups.setdefault(fields['project']['id'] if fields['project']['label'] else '',
+                                  {'project': fields['project'] if fields['project']['label'] else {'id': '', 'label': ''}, 'sessions': []})
+        group['sessions'].append(fields)
+    ordered = sorted(groups.values(), key=lambda g: (not g['project']['label'], g['project']['label'].casefold()))
+    return {'ok': True, 'groups': ordered, 'count': sum(len(g['sessions']) for g in ordered)}
+
+
+def runs_path(path, identity=None):
+    """The append-only run history beside the session, named by the document id so a rename keeps it."""
+    path = Path(path)
+    return path.parent / ((identity or read_document(path)['id']) + '.runs.jsonl')
+
+
+def append_run(path, entry, identity=None):
+    """Append one run line. A later line with the same id is the newer state of that run."""
+    target = runs_path(path, identity)
+    line = json.dumps({**entry, 'at': time.time()}, ensure_ascii=False, allow_nan=False)
+    with canvas_documents.locked(target):
+        with target.open('a', encoding='utf-8') as stream:
+            stream.write(line + '\n')
+            stream.flush()
+            os.fsync(stream.fileno())
+    return entry
+
+
+def read_runs(path, limit=200, identity=None):
+    """Runs oldest first, each at its newest state. A missing file is no runs yet."""
+    try:
+        target = runs_path(path, identity)
+        lines = target.read_text(encoding='utf-8').splitlines()
+    except (OSError, ValueError):
+        return []
+    merged = {}
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(entry, dict) and isinstance(entry.get('id'), str):
+            merged[entry['id']] = {**merged.get(entry['id'], {}), **entry}
+    return list(merged.values())[-limit:]
+
+
+def run_outcome(result):
+    """The run state the engine reported: waiting for approval, succeeded or failed (with the failed node)."""
+    if not isinstance(result, dict):
+        return {'state': 'failed', 'failedNode': '', 'error': str(result)[:500]}
+    if result.get('approvalId'):
+        return {'state': 'waiting-for-approval', 'approvalId': result['approvalId']}
+    if result.get('succeeded'):
+        return {'state': 'succeeded'}
+    results = result.get('results') or {}
+    failed = next((key for key in list(result.get('order') or []) + list(results)
+                   if (results.get(key) or {}).get('status') == 'Error'), '')
+    return {'state': 'failed', 'failedNode': failed, 'error': str((results.get(failed) or {}).get('error', ''))[:500]}
+
+
+def record_run(path, trigger, run, *, kind='manual', reason=''):
+    """Run once and keep its start and end in the run history; the engine's result is returned unchanged."""
+    identity = read_document(path)['id']
+    entry = {'id': uuid4().hex, 'trigger': trigger, 'kind': kind, 'reason': reason, 'state': 'running', 'start': time.time()}
+    append_run(path, entry, identity)
+    try:
+        result = run()
+    except Exception as refused:
+        append_run(path, {**entry, 'state': 'failed', 'failedNode': '', 'error': str(refused)[:500], 'end': time.time()}, identity)
+        raise
+    append_run(path, {**entry, **run_outcome(result), 'end': time.time()}, identity)
+    return result
 
 
 _SAMPLE_REF_PREFIX = "samples/"

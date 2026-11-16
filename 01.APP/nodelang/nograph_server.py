@@ -1661,7 +1661,59 @@ def r_stop(s, req):
 
 BRAIN = ('Brain', r_brain)
 # path -> (owner, handler). Every route the Studio calls (studio/api.js + screens).
+# ------------------------------------------------ session model (ONE BUILD 1) --
+def _live_triggers(s):
+    """Trigger nodes the service is timing now (only while the app is open), as (path, node) pairs."""
+    service = getattr(s, 'triggers', None)
+    return {(row['path'], row['node']) for row in (service.armed if service is not None else [])}
+
+
+def _mark_live(fields, live):
+    for trigger in fields['automation']:
+        trigger['live'] = (fields['path'], trigger['node']) in live
+    return fields
+
+
+def r_session_model(s, req):
+    """Every session-model field, read and set through its owners: the .archhub file (session_files), the
+    run history beside it, the task table (members, lease) and the trigger service (live timers)."""
+    from . import session_files as files
+    action, body = _action(req)
+    if action == 'list':
+        listed, live = files.list_sessions(), _live_triggers(s)
+        for group in listed['groups']:
+            for row in group['sessions']:
+                _mark_live(row, live)
+        return listed
+    path = str(files.local_path(str(body.get('path') or '')))
+    if action == 'get':
+        return {'ok': True, 'session': _mark_live(files.session_fields(files.read_document(path), path), _live_triggers(s))}
+    if action == 'links':
+        return {'ok': True, 'links': files.link_states(files.read_document(path), path)}
+    if action == 'runs':
+        limit = body.get('limit', 200)
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise Refused('Choose 1 to 1000 runs.')
+        return {'ok': True, 'runs': files.read_runs(path, limit)}
+    if action == 'setting':
+        return {'ok': True, **files.resolve_setting(files.read_document(path), body.get('id'))}
+    if s.is_halted():
+        raise Refused('Stopped by you. Press Resume to continue.', 403)
+    if action == 'set':
+        values = body.get('values')
+        fields = files.set_session_fields(path, values)
+        if isinstance(values, dict) and 'automation' in values and getattr(s, 'triggers', None) is not None:
+            s.triggers.refresh()
+        return {'ok': True, 'session': _mark_live(fields, _live_triggers(s))}
+    if action == 'approve-run':
+        if getattr(s, 'triggers', None) is None:
+            raise Refused('Triggers run only while the app is open.')
+        return {'ok': True, 'outcome': s.triggers.approve(path, body.get('run'))}
+    raise Refused('Unknown session model action.', 404)
+
+
 ROUTES = {
+    '/api/session-model': ('session_files (.archhub + runs beside it) + workshop_tasks + canvas_triggers', r_session_model),
     '/api/router/settings': ('settings/router.json + router.sqlite', r_router_settings),
     '/api/documentation': ('site_export + SPEC.md terms', r_documentation),
     '/api/session-files': ('session_files (.archhub)', r_session_files),
@@ -1725,7 +1777,7 @@ ROUTES = {
 }
 # Effects never run on a GET (a link or prefetch must not open a sign-in or a picker).
 POST_ONLY = frozenset({
-    '/api/session-files', '/api/universal/canvas-op', '/api/universal/settings-action', '/api/universal/workspace-roots',
+    '/api/session-files', '/api/session-model', '/api/universal/canvas-op', '/api/universal/settings-action', '/api/universal/workspace-roots',
     '/api/universal/pick-file', '/api/universal/mods', '/api/universal/cloud-signout', '/api/universal/social-credential-remove',
     '/api/universal/social-surface', '/api/universal/studio-surface', '/api/universal/provider-key', '/api/universal/notion-connect', '/stop-all', '/resume',
     '/api/universal/social-credential', '/api/universal/social-linkedin-finish', '/api/universal/social-meta-finish',

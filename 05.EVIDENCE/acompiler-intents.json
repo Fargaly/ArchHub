@@ -1,6 +1,17 @@
 {
   "schema_version": 1,
   "intents": {
+    "F177": {
+      "source": "Founder F177 SAME RULES FOR EVERY AGENT (T1, 2026-11-16): provider agnostic, the app, hooks and onboarding work on any installed agent. Cursor (#13113-13115, #13197-13200) and Antigravity (#13133) joins were refused with 'Installed governance adapter unavailable for this agent'; every Cursor tool call was blocked because cursor-agent runs its PowerShell-wrapped hooks in Git Bash. Table-driven onboarding for Cursor, Antigravity, OpenCode, Goose and a generic path for unknown agents; plain hook command line under bash and PowerShell; cursor-agent children without Git Bash markers. Isolated profile tests only, branch-only commits, hooks on, no push/install/release or live profile access.",
+      "scope": [
+        "01.APP/nodelang/agent_onboard.py",
+        "01.APP/nodelang/model_execution_broker.py",
+        "01.APP/nodelang/native_agent_hooks.py",
+        "01.APP/nodelang/workshop_gateway.py",
+        "02.TESTS/tests_replica/test_every_agent_joins.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
     "F343": {
       "source": "Founder F343 RELEASE-NOTES-KEEP-BUILD-BLOCK (T2): release path refuses GitHub release notes missing the ## Build block (## Build, BUILD_ID, SHA256 ArchHub-Setup-0.exe) and verifies readability via quiet_update.read_latest_release(); branch-only commit, hooks on, isolated tests.",
       "scope": [

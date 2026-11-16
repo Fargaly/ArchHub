@@ -212,3 +212,36 @@ def test_refresh_replaces_changed_schedule_and_ignores_superseded_callback(profi
         assert calls[0][2]['every_seconds'] == '1200'
     finally:
         service.close()
+
+
+def test_asking_run_can_be_approved_only_once(profile, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from nodelang.canvas_triggers import TriggerService
+    from nodelang.session_files import append_run, read_runs
+
+    path = profile / 'approve-once.archhub'
+    workflow(path, 'tr_schedule', {'ask_before_running': True})
+    append_run(path, {'id': 'pending', 'trigger': 't', 'kind': 'trigger.schedule', 'state': 'asking'})
+    service = TriggerService()
+    ready = Barrier(2)
+    dispatches = []
+    monkeypatch.setattr(service, 'dispatch', lambda *args, **kwargs: dispatches.append((args, kwargs)) or 'ran')
+
+    def approve():
+        ready.wait(timeout=5)
+        try:
+            return service.approve(path, 'pending')
+        except ValueError:
+            return 'refused'
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            attempts = [pool.submit(approve) for _ in range(2)]
+            assert sorted(result.result(timeout=10) for result in attempts) == ['ran', 'refused']
+        with pytest.raises(ValueError):
+            service.approve(path, 'pending')
+        assert len(dispatches) == 1
+        assert next(row for row in read_runs(path) if row['id'] == 'pending')['state'] == 'approved'
+    finally:
+        service.close()

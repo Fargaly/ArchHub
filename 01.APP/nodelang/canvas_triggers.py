@@ -341,15 +341,9 @@ class TriggerService:
             print('  triggers   : run history for %s not written (%s)' % (key[0], refused), flush=True)
 
     def approve(self, path, run_id):
-        """Run an "asking" fire now: the asking run becomes approved and a new run starts."""
-        from .session_files import read_document, read_runs
-        asking = next((run for run in read_runs(path) if run['id'] == run_id and run.get('state') == 'asking'), None)
-        if asking is None:
-            raise ValueError('That run is not waiting to be asked.')
-        node = next((n for n in read_document(path)['nodes'] if n['id'] == asking['trigger']), None)
-        if node is None:
-            raise ValueError('The trigger node is no longer on this canvas.')
-        self._history((str(path), node['id']), {**asking, 'state': 'approved', 'end': time.time()})
+        """Claim the asking run before dispatch so repeated approvals cannot run it twice."""
+        from .session_files import claim_run_approval
+        node = claim_run_approval(path, run_id)
         return self.dispatch((str(path), node['id']), node['type'], dict(node['params']), reason='approved')
 
 

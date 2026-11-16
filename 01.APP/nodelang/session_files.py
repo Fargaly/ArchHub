@@ -2222,16 +2222,39 @@ def runs_path(path, identity=None):
     return path.parent / ((identity or read_document(path)['id']) + '.runs.jsonl')
 
 
+def _append_run_line(target, entry):
+    line = json.dumps({**entry, 'at': time.time()}, ensure_ascii=False, allow_nan=False)
+    with target.open('a', encoding='utf-8') as stream:
+        stream.write(line + '\n')
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
 def append_run(path, entry, identity=None):
     """Append one run line. A later line with the same id is the newer state of that run."""
     target = runs_path(path, identity)
-    line = json.dumps({**entry, 'at': time.time()}, ensure_ascii=False, allow_nan=False)
     with canvas_documents.locked(target):
-        with target.open('a', encoding='utf-8') as stream:
-            stream.write(line + '\n')
-            stream.flush()
-            os.fsync(stream.fileno())
+        _append_run_line(target, entry)
     return entry
+
+
+def claim_run_approval(path, run_id):
+    """Consume an asking run once across all writers before dispatch can start."""
+    identity = read_document(path)['id']
+    target = runs_path(path, identity)
+    with canvas_documents.locked(target):
+        asking = next((run for run in read_runs(path, identity=identity)
+                       if run['id'] == run_id and run.get('state') == 'asking'), None)
+        if asking is None:
+            raise ValueError('That run is not waiting to be asked.')
+        document = read_document(path)
+        if document['id'] != identity:
+            raise ValueError('The session file changed. Reopen it before approving.')
+        node = next((node for node in document['nodes'] if node['id'] == asking['trigger']), None)
+        if node is None:
+            raise ValueError('The trigger node is no longer on this canvas.')
+        _append_run_line(target, {**asking, 'state': 'approved', 'end': time.time()})
+        return node
 
 
 def read_runs(path, limit=200, identity=None):

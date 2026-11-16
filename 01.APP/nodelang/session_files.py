@@ -172,6 +172,12 @@ def _params_and_feeds(node, engine, feeds):
             extra[definition['id']] = feeds[definition['id']]
     for socket in [s for s in list(feeds) if str(s).startswith('param:')]:
         extra[socket[6:]] = feeds.pop(socket)
+    if engine == 'thing.file.write':
+        # Imported file-write nodes may have base sockets without parameter definitions.
+        for name in ('path', 'content'):
+            if name in feeds:
+                extra.setdefault(name, feeds[name])
+                feeds[name] = extra[name]
     params = own if engine in ('skill', PARAM_ENGINE) or engine in THING_ENGINES else canonical_engine_parameters(engine, own)
     return {**params, **extra}, feeds
 

@@ -219,3 +219,33 @@ def test_named_workspace_root_follows_settings_relocation(tmp_path, monkeypatch)
     roots[0]['path'] = str(moved)
     assert resolve_file_parameter(reference, path) == str(moved / 'input.txt')
     assert Path(resolve_file_parameter(reference, path)).read_text(encoding='utf-8') == 'workspace input'
+
+
+def test_approved_wired_content_is_written_without_parameter_definitions(tmp_path):
+    from nodelang.hook_decision import ask_apply, ask_reviews
+    from nodelang.session_files import SessionFiles, new_document, read_document
+
+    target = tmp_path / 'approved.txt'
+    path = tmp_path / 'wired-write.archhub'
+    document = new_document('Write an approved payload')
+    document['nodes'] = [
+        {'id': 'text', 'item': 'n_text', 'type': 'data.constant',
+         'params': {'value': 'payload-6'}, 'position': {'x': 0, 'y': 0}},
+        {'id': 'writer', 'type': 'thing.file.write', 'item': 'thing:file:write',
+         'params': {'path': str(target), 'content': ''},
+         'ports': {'source': [{'id': 'path', 'type': 'file'}],
+                   'target': [{'id': 'content', 'type': 'string'}]},
+         'position': {'x': 300, 'y': 0}},
+    ]
+    document['wires'] = [{'id': 'text-to-writer', 'from': {'node': 'text', 'socket': 'value'},
+                          'to': {'node': 'writer', 'socket': 'content'}}]
+    owner = SessionFiles(tmp_path / 'owner')
+    saved = owner.dispatch({'action': 'save', 'path': str(path), 'document': document})
+    paused = owner.dispatch({'action': 'run', 'path': str(path), 'document': saved['document']})
+    assert paused['results']['writer']['status'] == 'Waiting for approval'
+    assert not target.exists()
+    card = next(value for value in ask_reviews() if value['id'] == paused['approvalId'])
+    assert 'payload-6' in card['summary'] or 'payload-6' in card['text']
+    ask_apply(card['id'], card['input_digest'], 'approve')
+    assert read_document(path)['nodes'][1]['result']['status'] == 'Done'
+    assert target.read_bytes() == b'payload-6'

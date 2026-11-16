@@ -931,7 +931,7 @@ def skill_ports(skill, items=()):
         entry = known.get(n.get('item')) or next((i for i in known.values() if i['engine'] == n['type']), None) or {}
         for port in node_ports(n, entry.get('ports') or {})['source']:
             source.append({'id': 'out:%s:%s' % (n['id'], port['id']), 'type': port.get('type', 'any'),
-                           'label': '%s Â· %s' % (n.get('title') or n['type'], port.get('label') or port['id'])})
+                           'label': '%s · %s' % (n.get('title') or n['type'], port.get('label') or port['id'])})
     for side, ports in (('source', source), ('target', target)):
         for port in skill.get('properties', {}).get('sessionPorts', {}).get(side, []):
             if not any(p['id'] == port['id'] for p in ports):

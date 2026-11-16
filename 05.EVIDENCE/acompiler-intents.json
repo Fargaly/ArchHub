@@ -11282,6 +11282,19 @@
         "02.TESTS/tests_replica/test_nothing_given_up.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
+    },
+    "CHAT-WORKS": {
+      "source": "Founder 2026-11-16 T0 \"even its chat does not work\": a message typed in the app chat reaches the session's agent (any vendor, Session Link) or BABOOM/the model, and every answer lands in that session's thread. Sole builder on lane/chat-works, isolated checks, commit no push, no install.",
+      "scope": [
+        "01.APP/nodelang/nograph_server.py",
+        "01.APP/nodelang/workshop_live.py",
+        "01.APP/nodelang/workshop_mailbox.py",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/ds_home2.jsx",
+        "01.APP/nodelang/studio/ui.jsx",
+        "02.TESTS/tests_replica/test_chat_works.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

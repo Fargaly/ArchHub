@@ -7,6 +7,7 @@ const {transformSync} = require('esbuild');
 const {chromium} = require('playwright');
 const xyflow = require('./studio_xyflow.cjs'); // CANVASXY: the canvas runs on the bundled xyflow
 const studio = path.resolve(__dirname, '../../01.APP/nodelang/studio');
+const commandRegistry = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../.cache/testiso-commandregistry/commands.json'), 'utf8'));
 const read = name => fs.readFileSync(path.join(process.env.CANVASOLD_STUDIO || studio,name),'utf8');
 const prop = (label,value,type='number',unit='') => ({label,value,type,editor:type,unit,editable:true,relation:'property-'+label});
 const port = (id,name,side,type,list=false,extra={}) => ({id,name,side,logical_type:type,contract_root:'contract-'+type,contract:'contract-'+type,cardinality:list?'many':'one',connectable:true,...extra});
@@ -32,11 +33,12 @@ async function mount(t,{raw=fixture(),shell=false,system=false}={}) {
  for(const name of ['vendor/react.js','vendor/react-dom.js','xyflow','tokens.jsx','ds/index.jsx','icons.jsx'])
   await page.addScriptTag({content:name==='xyflow'?xyflow.script():name.endsWith('.jsx')?transformSync(read(name),{loader:'jsx'}).code:read(name)});
  await page.addScriptTag({path:path.join(studio,'compiled/react-resizable-panels.js')});
- await page.evaluate(raw=>{
+ await page.evaluate(({raw,commands})=>{
   window.fixtureRaw=raw; window.fixtureCalls=[];
   window.fetch=async (url,options={})=>{
    let data={ok:true,result:[],tasks:[],providers:[],agents:[],items:[],workspaces:[]};
-   if(url==='/api/universal/session')data={token:'fixture',csrf:'fixture'};
+   if(url==='/api/commands')data=commands;
+   else if(url==='/api/universal/session')data={token:'fixture',csrf:'fixture'};
    else if(url.startsWith('/api/universal/canvas?')||url==='/api/universal/canvas')data=window.fixtureRaw;
    else if(url.startsWith('/api/universal/graphs'))data={graphs:[{id:'root',title:'System'},{id:'user',title:'User graph'}],current_graph:window.fixtureRaw.scope.current};
    else if(url==='/api/universal/gesture'){
@@ -51,7 +53,7 @@ async function mount(t,{raw=fixture(),shell=false,system=false}={}) {
    }
    return {ok:true,status:200,json:async()=>data};
   };
- },raw);
+ },{raw,commands:commandRegistry});
  for(const name of ['studio-authority.js','api.js'])await page.addScriptTag({content:read(name)});
  await page.evaluate(async()=>{await window.ArchHubAPI.ready;});
  await page.addScriptTag({content:transformSync(read('ui.jsx'),{loader:'jsx'}).code});
@@ -176,6 +178,7 @@ async function navigation({delayCanvas=async()=>{}}={}) {
   ArchHubStudioAuthority:{create:({get})=>{let canvas;return {getSnapshot:()=>({canvas}),clear:()=>{canvas=null;},adopt:async result=>canvas=result,transact:async action=>canvas=await action(),load:async()=>canvas=await get('/api/universal/canvas')};}}};
  const fetch=async(url,options={})=>{
   const body=options.body?JSON.parse(options.body):null;calls.push({url,body});let data={ok:true,result:[],mods:{rows:[]}};
+  if(url==='/api/commands')data=commandRegistry;
   if(url==='/api/universal/canvas'){data=snapshot();await delayCanvas(current);}
   if(url==='/api/universal/graphs?screen=home')data={ok:true,graphs:[{id:'root'},{id:'user'},{id:'other'}],current_graph:current};
   if(url==='/api/universal/graph-open'){current=body.root;data={ok:true};}

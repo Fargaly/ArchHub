@@ -6,6 +6,7 @@ const {execFileSync} = require('node:child_process');
 const {chromium} = require('playwright');
 const xyflow = require('./studio_xyflow.cjs'); // CANVASXY: the canvas runs on the bundled xyflow
 const root = path.resolve(__dirname,'../..'), studio=path.join(root,'01.APP/nodelang/studio');
+const commandRegistry = JSON.parse(fs.readFileSync(path.join(root, '.cache/testiso-commandregistry/commands.json'), 'utf8'));
 const baseline=process.env.FIXCANVAS_BASELINE==='1';
 const read=name=>baseline ? execFileSync('git',['show','4d8dd06b:01.APP/nodelang/studio/'+name],{cwd:root,encoding:'utf8',maxBuffer:5*1024*1024}) : fs.readFileSync(path.join(studio,name),'utf8');
 const script=name=>name.endsWith('.jsx') ? baseline ? require('esbuild').transformSync(read(name),{loader:'jsx'}).code : fs.readFileSync(path.join(studio,'compiled',name.replaceAll('/','-').replace('.jsx','.js')),'utf8') : read(name);
@@ -19,7 +20,7 @@ test('30 shell tab returns preserve the actual Canvas, viewport, selection and d
   await page.addStyleTag({content:xyflow.css()+read('style.css')+'html,body{margin:0;height:100%}'});
   for(const name of ['vendor/react.js','vendor/react-dom.js','xyflow','tokens.jsx','ds/index.jsx','icons.jsx'])await page.addScriptTag({content:name==='xyflow'?xyflow.script():script(name)});
   await page.addScriptTag({path:path.join(studio,'compiled/react-resizable-panels.js')});
-  await page.evaluate(()=>{
+  await page.evaluate(commands=>{
     window.calls=[];
     const prop={label:'value',value:'initial',editable:true,editor:'text',relation:'value'};
     let raw={ok:true,application_root:'app',canvas_root:'top',revision:4,scope:{current:'nested',current_label:'Fixture'},
@@ -28,14 +29,15 @@ test('30 shell tab returns preserve the actual Canvas, viewport, selection and d
       const call={url,time:window.performance.now(),body:init.body?JSON.parse(init.body):null};window.calls.push(call);
       if(url==='/api/universal/set-property')return new Promise(resolve=>{window.releaseDraft=()=>{raw={...raw,revision:raw.revision+1,nodes:raw.nodes.map(n=>({...n,properties:n.properties.map(p=>p.relation===call.body.relation?{...p,value:call.body.value}:p)}))};resolve({ok:true,status:200,json:async()=>raw});};});
       let data={ok:true,result:[],providers:[],agents:[],items:[],workspaces:[],templates:[]};
-      if(url==='/api/universal/session')data={token:'fixture',csrf:'fixture'};
+      if(url==='/api/commands')data=commands;
+      else if(url==='/api/universal/session')data={token:'fixture',csrf:'fixture'};
       else if(url==='/api/universal/canvas'||url.startsWith('/api/universal/canvas?'))data=url.includes('screen=home')?{...raw,nodes:[],canvas_deferred:true}:url.includes('since_revision')?{ok:true,unchanged:true,revision:raw.revision,scope:'nested',graph_id:'app'}:raw;
       else if(url==='/api/universal/gesture'){raw={...raw,revision:raw.revision+1,viewport:{...raw.viewport,...call.body.viewport}};data=raw;}
       else if(url.startsWith('/api/universal/graphs'))data={ok:true,graphs:[{id:'nested',title:'Fixture'}],current_graph:'nested'};
       else if(url==='/api/universal/graph-open'){if(window.holdGraph){window.graphOpenWaiting=true;await new Promise(resolve=>{window.releaseGraph=resolve;});}raw={...raw,revision:raw.revision+1,scope:{...raw.scope,current:call.body.root}};data={ok:true,canvas:raw};}
       call.bytes=JSON.stringify(data).length;call.finished=window.performance.now();return {ok:true,status:200,json:async()=>data};
     };
-  });
+  },commandRegistry);
   for(const name of ['studio-authority.js','api.js'])await page.addScriptTag({content:script(name)});
   await page.evaluate(async()=>{await window.ArchHubAPI.ready;});
   await page.addScriptTag({content:script('ui.jsx')});

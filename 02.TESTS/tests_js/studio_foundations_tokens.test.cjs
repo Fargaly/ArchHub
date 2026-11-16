@@ -27,7 +27,7 @@ test('DS-FOUNDATIONS §3 tokens are the single product source', () => {
     l_ink:AH.l_ink, l_inkSoft:AH.l_inkSoft, l_inkMuted:AH.l_inkMuted,
     l_line:AH.l_line, l_accent:AH.l_accent,
   }, {
-    bgDeep:'#0a0a0d', bg:'#0e0e11', bgCanvas:'#101015', bgPanel:'#15151a',
+    bgDeep:'#0a0a0d', bg:'#0e0e11', bgCanvas:'#0e0e11', bgPanel:'#15151a',
     bgSoft:'#1c1c23', bgRaised:'#1d1d22', bgHover:'#22222a',
     line:'#26262e', lineSoft:'#1e1e24', ink:'#ece8e0', inkSoft:'#9b938a',
     inkMuted:'#8b837a', accent:'#d97757', accentSoft:'#3a2018',

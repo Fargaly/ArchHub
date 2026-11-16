@@ -820,7 +820,7 @@ THEME = {
     'bg_soft': '#1c1c23',
     'bg_hover': '#22222a',
     'bg_deep': '#0a0a0d',
-    'bg_canvas': '#101015',
+    'bg_canvas': '#0e0e11',
     'bg_raised': '#1d1d22',
     'bg_ink': '#18181e',
     'ink': '#ece8e0',

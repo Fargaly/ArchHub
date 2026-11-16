@@ -37,7 +37,7 @@
     "$description": ""
    },
    "bgCanvas": {
-    "$value": "#101015",
+    "$value": "#0E0E11",
     "$type": "color",
     "$description": ""
    },
@@ -1150,7 +1150,7 @@
   },
   "node": {
    "radius": {
-    "$value": "8px",
+    "$value": "6px",
     "$type": "borderRadius",
     "$description": ""
    }

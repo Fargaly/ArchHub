@@ -18,7 +18,7 @@ window.AH = {
   bgHover: '#22222a',
   bgRaised:'#1d1d22',
   bgInk:   '#18181e',
-  bgCanvas:'#101015',
+  bgCanvas:'#0e0e11',
   // ── ink ──
   ink:      '#ece8e0',
   inkSoft:  '#9b938a',

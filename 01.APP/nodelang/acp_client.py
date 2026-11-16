@@ -5,6 +5,14 @@ from ACP UI (MIT, read as reference): an agent table name -> {command, args}, a 
 `cmd /C` with no console window, and the agent's permission request turned into the user's decision.
 From AionUi (Apache-2.0, as summarised by R&D res-051): an agent is offered only when its command is installed.
 Nothing starts by itself: a session starts only because the user sent it a message.
+
+Claude Code and Codex need no adapter: each installed CLI already has a structured stdio mode (`claude -p` with
+stream-json in and out; `codex app-server`). A small dialect per CLI turns that mode's lines into the ACP messages
+this client already reads, so the callbacks, the Approve card and the reply are the same for every agent.
+The Claude mapping (which line is a text chunk, a tool call, a permission request, the end of a turn; tool titles
+and kinds) follows @zed-industries/claude-agent-acp 0.23.1, Copyright 2022-2025 Zed Industries, Inc., Apache-2.0,
+read as reference and rewritten here; that package is neither installed nor shipped. @zed-industries/codex-acp
+0.16.0 (Apache-2.0) publishes only a launcher for a binary, so the Codex mapping follows Codex's own app-server schema.
 """
 from __future__ import annotations
 
@@ -21,13 +29,18 @@ from pathlib import Path
 from .model_router import ModelRouteRefused
 
 # The node of this client: how long an agent may take to start, and to finish one turn (an Approve card waits inside it).
-ACP_NODE = {'id': 'agents.acp', 'params': {'start_seconds': 30, 'turn_seconds': 900, 'close_seconds': 2, 'card_poll_seconds': 0.2}}
+ACP_NODE = {'id': 'agents.acp', 'params': {'start_seconds': 30, 'turn_seconds': 900, 'close_seconds': 2, 'card_poll_seconds': 0.2,
+                                          'quiet_seconds': 10}}   # no word for this long: the thread says "not responding"
 
 # The start-command table, keyed by the agent registry's ids. First installed command wins; never a download.
-# A Settings override (router.json agents.<id>.acp = {command, args}) replaces a row; see start_command().
+# 'speaks' names the CLI's own stdio mode (a dialect below); a row without it speaks ACP itself.
+# No row carries a flag that skips the agent's permission prompts: they come here and become the Approve card.
+# A Settings override (router.json agents.<id>.acp = {command, args}) replaces a row with an ACP command; see start_command().
 AGENTS = {
-    'claude': {'commands': ('claude-agent-acp', 'claude-code-acp'), 'args': ()},
-    'codex': {'commands': ('codex-acp',), 'args': ()},
+    'claude': {'commands': ('claude',), 'speaks': 'claude', 'args': (
+        '-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose',
+        '--include-partial-messages', '--permission-prompt-tool', 'stdio')},
+    'codex': {'commands': ('codex',), 'speaks': 'codex', 'args': ('app-server',)},
     'gemini': {'commands': ('gemini',), 'args': ('--acp',), 'fallback_args': ('--experimental-acp',)},
     'opencode': {'commands': ('opencode',), 'args': ('acp',)},
     'goose': {'commands': ('goose',), 'args': ('acp',)},
@@ -46,18 +59,176 @@ def _refuse_permission(_permission, _request_params, _tool_calls):
     return {"outcome": "cancelled"}
 
 
+def _update(session, **item):
+    return {'method': 'session/update', 'params': {'sessionId': session, 'update': item}}
+
+
+def _ask_permission(ident, session, call):
+    return {'id': ident, 'method': 'session/request_permission', 'params': {'sessionId': session, 'toolCall': call,
+            'options': [{'optionId': 'allow', 'name': 'Allow', 'kind': 'allow_once'},
+                        {'optionId': 'reject', 'name': 'Reject', 'kind': 'reject_once'}]}}
+
+
+def _allowed(message):
+    return ((message.get('result') or {}).get('outcome') or {}).get('optionId') == 'allow'
+
+
+class _ClaudeCode:
+    """`claude -p --input-format stream-json --output-format stream-json`: its lines <-> ACP messages."""
+    _KINDS = {'Bash': 'execute', 'PowerShell': 'execute', 'Read': 'read', 'Write': 'edit', 'Edit': 'edit',
+              'NotebookEdit': 'edit', 'Glob': 'search', 'Grep': 'search', 'WebFetch': 'fetch', 'WebSearch': 'fetch',
+              'Task': 'think', 'Agent': 'think'}
+
+    def __init__(self, wire, hear):
+        self.wire, self.hear, self.prompt, self.asked = wire, hear, None, {}
+
+    def _call(self, ident, name, data):
+        data = data if isinstance(data, dict) else {}
+        kind = self._KINDS.get(name, 'other')
+        detail = next((str(data[key]) for key in ('command', 'description', 'file_path', 'pattern', 'url', 'query')
+                       if data.get(key)), '')
+        title = detail if detail and kind in ('execute', 'think') else ('%s %s' % (name, detail)).strip()
+        return {'toolCallId': ident, 'title': title or 'Tool', 'kind': kind, 'rawInput': data}
+
+    def say(self, message):
+        method = message.get('method')
+        if method in ('initialize', 'session/new'):   # the CLI is ready as started; it has one conversation per process
+            self.hear({'id': message['id'], 'result': {'protocolVersion': 1, 'sessionId': 'claude'}})
+        elif method == 'session/prompt':
+            self.prompt = message['id']
+            self.wire({'type': 'user', 'message': {'role': 'user', 'content': message['params']['prompt']},
+                       'parent_tool_use_id': None, 'session_id': 'default'})
+        elif message.get('id') in self.asked:         # the Approve card's decision on its permission request
+            data = self.asked.pop(message['id'])
+            self.wire({'type': 'control_response', 'response': {'subtype': 'success', 'request_id': message['id'],
+                       'response': {'behavior': 'allow', 'updatedInput': data} if _allowed(message) else
+                                   {'behavior': 'deny', 'message': 'User refused permission to run tool'}}})
+
+    def heard(self, line):
+        kind, content = line.get('type'), (line.get('message') or {}).get('content')
+        if kind == 'stream_event':
+            delta = (line.get('event') or {}).get('delta') or {}
+            if delta.get('type') == 'text_delta' and line.get('parent_tool_use_id') is None:
+                self.hear(_update('claude', sessionUpdate='agent_message_chunk',
+                                  content={'type': 'text', 'text': delta.get('text')}))
+        elif kind in ('assistant', 'user') and isinstance(content, list):
+            for block in content:   # the text of a whole assistant message was already streamed above
+                block = block if isinstance(block, dict) else {}
+                if kind == 'assistant' and block.get('type') in ('tool_use', 'server_tool_use', 'mcp_tool_use'):
+                    self.hear(_update('claude', sessionUpdate='tool_call', status='pending',
+                                      **self._call(block.get('id'), str(block.get('name')), block.get('input'))))
+                elif kind == 'user' and str(block.get('type')).endswith('tool_result'):
+                    self.hear(_update('claude', sessionUpdate='tool_call_update', toolCallId=block.get('tool_use_id'),
+                                      status='failed' if block.get('is_error') else 'completed'))
+        elif kind == 'control_request':
+            request, ident = line.get('request') or {}, line.get('request_id')
+            if request.get('subtype') == 'can_use_tool':
+                self.asked[ident] = request.get('input')
+                self.hear(_ask_permission(ident, 'claude', self._call(
+                    request.get('tool_use_id'), str(request.get('tool_name')), request.get('input'))))
+            else:
+                self.wire({'type': 'control_response', 'response': {'subtype': 'error', 'request_id': ident,
+                                                                    'error': 'Capability not admitted'}})
+        elif kind == 'result' and self.prompt is not None:
+            ident, self.prompt = self.prompt, None
+            if line.get('subtype') == 'success' and not line.get('is_error'):
+                self.hear({'id': ident, 'result': {
+                    'stopReason': 'max_tokens' if line.get('stop_reason') == 'max_tokens' else 'end_turn'}})
+            else:
+                self.hear({'id': ident, 'error': {'code': -32603, 'message': str(line.get('result') or line.get('subtype'))}})
+
+
+class _Codex:
+    """`codex app-server` (its own JSON-RPC over stdio): threads, turns and items <-> ACP messages."""
+    _STEPS = {'commandExecution': 'execute', 'fileChange': 'edit', 'mcpToolCall': 'other', 'dynamicToolCall': 'other',
+              'webSearch': 'fetch', 'collabAgentToolCall': 'think'}
+
+    def __init__(self, wire, hear):
+        self.wire, self.hear, self.sent, self.prompt, self.asked = wire, hear, {}, None, set()
+
+    def say(self, message):
+        method, ident, params = message.get('method'), message.get('id'), message.get('params') or {}
+        if method == 'initialize':
+            self.sent[ident] = method
+            self.wire({'id': ident, 'method': 'initialize',
+                       'params': {'clientInfo': {'name': 'archhub', 'title': 'ArchHub', 'version': '1'}}})
+        elif method == 'session/new':   # its approval policy and sandbox stay as the user's own Codex config sets them
+            self.sent[ident] = method
+            self.wire({'id': ident, 'method': 'thread/start', 'params': {'cwd': params.get('cwd')}})
+        elif method == 'session/prompt':
+            self.sent[ident], self.prompt = method, ident
+            self.wire({'id': ident, 'method': 'turn/start', 'params': {'threadId': params.get('sessionId'), 'input': [
+                {'type': 'text', 'text': part.get('text')} for part in params.get('prompt') or ()]}})
+        elif ident in self.asked:       # the Approve card's decision on its approval request
+            self.asked.discard(ident)
+            self.wire({'id': ident, 'result': {'decision': 'accept' if _allowed(message) else 'decline'}})
+        else:
+            self.wire(message)          # this client's refusal of a request it does not admit
+
+    def _step(self, thread, item, update):
+        kind = self._STEPS.get(item.get('type'))
+        if kind is None:
+            return
+        title = (item.get('command') or item.get('query') or ' '.join(filter(None, (item.get('server'), item.get('tool'))))
+                 or ' '.join(['Edit'] + [str(change.get('path')) for change in item.get('changes') or ()
+                                         if isinstance(change, dict)]))
+        status = {'completed': 'completed', 'failed': 'failed', 'declined': 'failed'}.get(item.get('status'), 'in_progress')
+        self.hear(_update(thread, sessionUpdate=update, toolCallId=item.get('id'), title=str(title), kind=kind, status=status))
+
+    def heard(self, line):
+        method, ident, params = line.get('method'), line.get('id'), line.get('params') or {}
+        thread = params.get('threadId')
+        if method is None:
+            asked = self.sent.pop(ident, None)
+            if 'error' in line:
+                self.prompt = None if asked == 'session/prompt' else self.prompt
+                self.hear(line)
+            elif asked == 'initialize':
+                self.wire({'method': 'initialized'})
+                self.hear({'id': ident, 'result': {'protocolVersion': 1}})
+            elif asked == 'session/new':
+                self.hear({'id': ident, 'result': {'sessionId': ((line.get('result') or {}).get('thread') or {}).get('id')}})
+            # the answer to turn/start only says the turn began; turn/completed settles the prompt
+        elif method == 'item/agentMessage/delta':
+            self.hear(_update(thread, sessionUpdate='agent_message_chunk', content={'type': 'text', 'text': params.get('delta')}))
+        elif method in ('item/started', 'item/completed'):
+            self._step(thread, params.get('item') or {}, 'tool_call' if method == 'item/started' else 'tool_call_update')
+        elif method == 'turn/completed' and self.prompt is not None:
+            ident, self.prompt = self.prompt, None
+            turn = params.get('turn') or {}
+            if turn.get('status') == 'completed':
+                self.hear({'id': ident, 'result': {'stopReason': 'end_turn'}})
+            else:
+                self.hear({'id': ident, 'error': {'code': -32603, 'message': str((turn.get('error') or {}).get('message') or turn.get('status'))}})
+        elif method in ('item/commandExecution/requestApproval', 'item/fileChange/requestApproval'):
+            self.asked.add(ident)
+            command = method == 'item/commandExecution/requestApproval'
+            self.hear(_ask_permission(ident, thread, {
+                'toolCallId': params.get('itemId'), 'title': params.get('command') or params.get('reason'),
+                'kind': 'execute' if command else 'edit',
+                'rawInput': {key: params[key] for key in ('command', 'cwd', 'reason', 'grantRoot') if params.get(key)}}))
+        elif method and 'id' in line:
+            self.hear(line)             # any other request: the client answers "not admitted"
+
+
+_DIALECTS = {'claude': _ClaudeCode, 'codex': _Codex}
+
+
 class AcpTransport:
     """One bounded JSON-RPC connection to an owned stdio process."""
 
-    def __init__(self, process, *, label="The agent"):
+    def __init__(self, process, *, label="The agent", speaks=None):
         self.process = process
         self.label = label
+        self.dialect = None   # set below, after the inbox it feeds exists
         self.inbox = queue.Queue(maxsize=256)
         self.outbox = queue.Queue(maxsize=16)
         self.sequence = 0
         self.closed = False
         self.ended = threading.Event()   # the agent's stream ended (exit, broken pipe, oversized or bad line)
         self.failure = None
+        if speaks:
+            self.dialect = _DIALECTS[speaks](self._wire, self.inbox.put_nowait)
         self.reader = threading.Thread(target=self._read, name="archhub-acp-read", daemon=True)
         self.reader.start()
         self.writer = threading.Thread(target=self._write, name="archhub-acp-write", daemon=True)
@@ -82,19 +253,28 @@ class AcpTransport:
                 if not line or len(line) > 1_048_576:
                     break
                 value = json.loads(line)
-                self.inbox.put_nowait(value)
+                if self.dialect is None:
+                    self.inbox.put_nowait(value)
+                elif isinstance(value, dict):
+                    self.dialect.heard(value)
         except (OSError, ValueError, queue.Full) as error:
             self.failure = error
         finally:
             self.ended.set()
 
+    def _wire(self, value):
+        try:
+            self.outbox.put_nowait((json.dumps(value) + "\n").encode())
+        except queue.Full:
+            raise AcpRefused("The %s connection closed; the request was not replayed." % self.label) from None
+
     def send(self, value):
         if self.closed:
             raise AcpRefused("The %s connection is closed." % self.label)
-        try:
-            self.outbox.put_nowait((json.dumps({"jsonrpc": "2.0", **value}) + "\n").encode())
-        except queue.Full:
-            raise AcpRefused("The %s connection closed; the request was not replayed." % self.label) from None
+        if self.dialect is None:
+            self._wire({"jsonrpc": "2.0", **value})
+        else:
+            self.dialect.say(value)
 
     def request(self, method, params, *, deadline, update=lambda _: None, stopped=lambda: False,
                 response_error=lambda _: None, permission=_refuse_permission):
@@ -179,7 +359,7 @@ def agent_for(handle):
 
 
 def start_command(agent):
-    """[argv, fallback argv or None] for an installed agent; refuses (names it) when it is not installed."""
+    """(argv, fallback argv or None, the dialect it speaks or None) for an installed agent; refuses (names it) when it is not installed."""
     row = dict(AGENTS[agent])
     try:
         from .settings_owner import read_router_settings
@@ -195,7 +375,7 @@ def start_command(agent):
     # npm installs agents as .cmd shims: run them through cmd /C like ACP UI; args come from this table only.
     head = [os.environ.get('COMSPEC') or 'cmd.exe', '/C', found] if found.lower().endswith(('.cmd', '.bat')) else [found]
     fallback = row.get('fallback_args')
-    return head + list(row['args']), (head + list(fallback)) if fallback else None
+    return head + list(row['args']), (head + list(fallback)) if fallback else None, row.get('speaks')
 
 
 # -- an Approve card for a permission request -------------------------------------------------------------
@@ -243,7 +423,7 @@ class AgentSession:
         self.lock = threading.Lock()
 
     def start(self):
-        argv, fallback = start_command(self.agent)
+        argv, fallback, self.speaks = start_command(self.agent)
         try:
             self._open(argv)
         except AcpRefused:
@@ -263,7 +443,7 @@ class AgentSession:
         Path(self.cwd).mkdir(parents=True, exist_ok=True)
         process = subprocess.Popen(command, cwd=self.cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                    stderr=subprocess.DEVNULL, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-        self.transport = AcpTransport(process, label=self.label)
+        self.transport = AcpTransport(process, label=self.label, speaks=self.speaks)
         from .workshop_transport import _OwnedProcessJob
         self.job = _OwnedProcessJob(process)   # the agent closes with the app
         deadline = time.monotonic() + ACP_NODE['params']['start_seconds']

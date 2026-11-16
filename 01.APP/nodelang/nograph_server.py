@@ -706,9 +706,25 @@ def _ask_installed(agent, prompt, task, on_delta, on_step):
     record = {'id': str(uuid.uuid4()), 'ts': time.time(), 'agent': name, 'model': 'agent session',
               'provider': 'acp:' + agent, 'tokens': None, 'ms': 0, 'outcome': 'refused'}
     on_step({'who': name})   # the live row names who is answering before the first word
+    # One state row under the user's line (R&D thread study): starting, then answering; after quiet_seconds with
+    # no word it says so. It is said from the asking thread's own poll, and the agent is never stopped for it.
+    state, phase = {'id': 'agent-state', 'tool': name, 'status': 'starting…'}, ['starting']
+    on_step(dict(state))
+    halted = _SERVER.is_halted if _SERVER is not None else (lambda: False)
+
+    def stopped():
+        if phase[0] == 'starting' and time.monotonic() - started > acp_client.ACP_NODE['params']['quiet_seconds']:
+            phase[0] = 'quiet'
+            on_step({**state, 'status': 'not responding'})
+        return halted()
+
+    def delta(text):
+        if phase[0] != 'answering':
+            phase[0] = 'answering'
+            on_step({**state, 'status': 'answering'})
+        on_delta(text)
     try:
-        reply = acp_client.ask(agent, prompt, task=task, on_delta=on_delta, on_step=on_step,
-                               stopped=_SERVER.is_halted if _SERVER is not None else (lambda: False))
+        reply = acp_client.ask(agent, prompt, task=task, on_delta=delta, on_step=on_step, stopped=stopped)
         record['outcome'] = 'answered'
     finally:
         record['ms'] = int((time.monotonic() - started) * 1000)

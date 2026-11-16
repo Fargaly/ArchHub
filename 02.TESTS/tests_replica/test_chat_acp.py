@@ -54,6 +54,100 @@ for line in sys.stdin:
 '''
 
 
+# Claude Code and Codex are started as the CLIs already installed, in the structured mode each one already has;
+# these fakes speak those two modes (claude -p stream-json; codex app-server), not ACP.
+CLAUDE_ARGS = ['-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose',
+               '--include-partial-messages', '--permission-prompt-tool', 'stdio']
+
+FAKE_CLAUDE = r"""
+import json, os, sys
+log = open(sys.argv[1], "a", encoding="utf-8")
+log.write(json.dumps(sys.argv[2:]) + "\n"); log.write(json.dumps({"pid": os.getpid()}) + "\n"); log.flush()
+def send(value):
+    sys.stdout.write(json.dumps(value) + "\n"); sys.stdout.flush()
+def delta(text):
+    send({"type": "stream_event", "parent_tool_use_id": None,
+          "event": {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": text}}})
+def assistant(*content):
+    send({"type": "assistant", "parent_tool_use_id": None, "message": {"role": "assistant", "content": list(content)}})
+def tool_result(ident, failed):
+    send({"type": "user", "parent_tool_use_id": None, "message": {"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": ident, "is_error": failed, "content": "done"}]}})
+send({"type": "system", "subtype": "init", "session_id": "s1"})
+for line in sys.stdin:
+    message = json.loads(line)
+    if message.get("type") != "user":
+        continue
+    text = message["message"]["content"][0]["text"]
+    if "hang" in text:
+        delta("Thinking")
+        continue
+    if "write" in text:
+        call = {"file_path": "sheets.txt", "content": "A-101"}
+        assistant({"type": "tool_use", "id": "t2", "name": "Write", "input": call})
+        send({"type": "control_request", "request_id": "perm-1", "request": {"subtype": "can_use_tool",
+              "tool_name": "Write", "input": call, "tool_use_id": "t2"}})
+        answer = json.loads(sys.stdin.readline())
+        reply = answer["response"]["response"] if answer["response"]["request_id"] == "perm-1" else {}
+        allowed = reply.get("behavior") == "allow" and reply.get("updatedInput") == call
+        tool_result("t2", not allowed)
+        said = "File written." if allowed else "File not written."
+        delta(said)
+        assistant({"type": "text", "text": said})
+    else:
+        delta("There are ")
+        assistant({"type": "text", "text": "There are "}, {"type": "tool_use", "id": "t1", "name": "Read", "input": {"file_path": "sheets"}})
+        tool_result("t1", False)
+        delta("12 sheets.")
+        assistant({"type": "text", "text": "12 sheets."})   # the whole message repeats what was streamed
+    send({"type": "result", "subtype": "success", "is_error": False, "stop_reason": "end_turn", "result": "done"})
+"""
+
+FAKE_CODEX = r"""
+import json, os, sys
+log = open(sys.argv[1], "a", encoding="utf-8")
+log.write(json.dumps(sys.argv[2:]) + "\n"); log.write(json.dumps({"pid": os.getpid()}) + "\n"); log.flush()
+def send(value):
+    sys.stdout.write(json.dumps(value) + "\n"); sys.stdout.flush()
+def note(method, **params):
+    send({"method": method, "params": {"threadId": "thread-1", "turnId": "turn-1", **params}})
+def command(ident, text, status):
+    return {"type": "commandExecution", "id": ident, "command": text, "status": status}
+ready = False
+for line in sys.stdin:
+    message = json.loads(line)
+    method, ident, params = message.get("method"), message.get("id"), message.get("params") or {}
+    if method == "initialize":
+        send({"id": ident, "result": {"userAgent": "fake"}})
+    elif method == "initialized":
+        ready = True
+    elif method == "thread/start":
+        send({"id": ident, "result": {"thread": {"id": "thread-1"}}} if ready and params.get("cwd") else
+             {"id": ident, "error": {"code": -32600, "message": "Not initialized"}})
+    elif method == "turn/start":
+        text = params["input"][0]["text"]
+        send({"id": ident, "result": {"turn": {"id": "turn-1", "status": "inProgress"}}})
+        if "hang" in text:
+            note("item/agentMessage/delta", itemId="m1", delta="Thinking")
+            continue
+        if "write" in text:
+            note("item/started", item=command("t2", "Write sheets.txt", "inProgress"))
+            send({"id": 70, "method": "item/commandExecution/requestApproval", "params": {"threadId": "thread-1",
+                  "turnId": "turn-1", "itemId": "t2", "command": "Write sheets.txt", "cwd": "."}})
+            answer = json.loads(sys.stdin.readline())
+            allowed = answer.get("id") == 70 and (answer.get("result") or {}).get("decision") == "accept"
+            note("item/completed", item=command("t2", "Write sheets.txt", "completed" if allowed else "declined"))
+            note("item/agentMessage/delta", itemId="m1", delta="File written." if allowed else "File not written.")
+        else:
+            note("item/agentMessage/delta", itemId="m1", delta="There are ")
+            note("item/started", item=command("t1", "Read sheets", "inProgress"))
+            note("item/completed", item=command("t1", "Read sheets", "completed"))
+            note("item/agentMessage/delta", itemId="m1", delta="12 sheets.")
+            note("item/completed", item={"type": "agentMessage", "id": "m1", "text": "There are 12 sheets."})
+        send({"method": "turn/completed", "params": {"threadId": "thread-1", "turn": {"id": "turn-1", "status": "completed"}}})
+"""
+
+
 @pytest.fixture(autouse=True)
 def profile(tmp_path, monkeypatch):
     for name in ('LOCALAPPDATA', 'APPDATA', 'USERPROFILE', 'HOME', 'TEMP', 'TMP'):
@@ -72,11 +166,13 @@ def installed(tmp_path, monkeypatch):
     """Put fake agents on PATH under their real start commands; returns the argv log."""
     bin_dir, log = tmp_path / 'bin', tmp_path / 'argv.log'
     bin_dir.mkdir()
-    (bin_dir / 'fake_acp.py').write_text(FAKE_AGENT, encoding='utf-8')
+    scripts = {'claude': 'fake_claude.py', 'codex': 'fake_codex.py'}   # these two speak their own CLI mode
+    for name, source in (('fake_acp.py', FAKE_AGENT), ('fake_claude.py', FAKE_CLAUDE), ('fake_codex.py', FAKE_CODEX)):
+        (bin_dir / name).write_text(source, encoding='utf-8')
 
     def install(command):
         (bin_dir / (command + '.cmd')).write_text(
-            '@"%s" "%s" "%s" %%*\r\n' % (sys.executable, bin_dir / 'fake_acp.py', log), encoding='utf-8')
+            '@"%s" "%s" "%s" %%*\r\n' % (sys.executable, bin_dir / scripts.get(command, 'fake_acp.py'), log), encoding='utf-8')
     monkeypatch.setenv('PATH', str(bin_dir))
     return install, log
 
@@ -96,7 +192,8 @@ def _thread(task):
     return [m['text'] for m in row['agentLog'] + row['fileMessages']]
 
 
-@pytest.mark.parametrize('handle, command, argv', [('claude', 'claude-agent-acp', []), ('opencode', 'opencode', ['acp'])])
+@pytest.mark.parametrize('handle, command, argv', [('claude', 'claude', CLAUDE_ARGS), ('codex', 'codex', ['app-server']),
+                                                   ('opencode', 'opencode', ['acp'])])
 def test_an_agent_that_is_not_running_is_started_and_its_reply_streams_into_the_thread(installed, handle, command, argv):
     from nodelang import nograph_server
     install, log = installed
@@ -126,28 +223,81 @@ def test_the_same_thread_reuses_its_agent_session(installed):
     assert len(log.read_text(encoding='utf-8').splitlines()) == 1         # started once, asked twice
 
 
+@pytest.mark.parametrize('agent, who', [('claude', 'Claude Code'), ('codex', 'Codex'), ('opencode', 'OpenCode')])
 @pytest.mark.parametrize('decision, reply, status', [('approve', 'File written.', 'ok'), ('deny', 'File not written.', 'failed')])
-def test_a_permission_request_becomes_the_approve_card_and_the_agent_waits(installed, decision, reply, status):
-    from nodelang import hook_decision, nograph_server
+def test_a_permission_request_becomes_the_approve_card_and_the_agent_waits(installed, decision, reply, status, agent, who):
+    from nodelang import acp_client, hook_decision, nograph_server
     install, _log = installed
-    install('claude-agent-acp')
+    install(agent)
+    assert acp_client.label(agent) == who
     task = _task('Write sheets')
     done = {}
     worker = threading.Thread(target=lambda: done.update(result=nograph_server._chat(
-        {'prompt': '@claude write the sheet list', 'task': task}, lambda text: None)), daemon=True)
+        {'prompt': '@%s write the sheet list' % agent, 'task': task}, lambda text: None)), daemon=True)
     worker.start()
     deadline = time.monotonic() + 20
     cards = []
     while time.monotonic() < deadline and not cards:
         cards = [c for c in hook_decision.ask_reviews() if c['status'] == 'pending']
         time.sleep(0.05)
-    assert cards and cards[0]['who'] == 'Claude Code' and 'Write sheets.txt' in cards[0]['summary']
+    assert cards and cards[0]['who'] == who and 'Write sheets.txt' in cards[0]['summary']
     time.sleep(0.3)
     assert 'result' not in done                                          # the agent waits for the card
     hook_decision.ask_apply(cards[0]['id'], cards[0]['input_digest'], decision)
     worker.join(20)
     assert done['result']['text'] == reply
     assert [s['status'] for s in done['result']['steps'] if s['tool'] == 'Write sheets.txt'] == [status]
+
+
+def _alive(pid):
+    import ctypes
+    handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)   # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return False
+    code = ctypes.c_ulong()
+    ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+    ctypes.windll.kernel32.CloseHandle(handle)
+    return code.value == 259   # STILL_ACTIVE
+
+
+@pytest.mark.parametrize('agent', ['claude', 'codex'])
+def test_stop_ends_the_agent_process(installed, agent):
+    from nodelang import acp_client
+    install, log = installed
+    install(agent)
+    seen, halted = [], threading.Event()
+    with pytest.raises(acp_client.AcpRefused, match='Stopped by you'):
+        acp_client.ask(agent, 'hang on this one', on_delta=lambda text: (seen.append(text), halted.set()),
+                       stopped=halted.is_set)
+    assert seen == ['Thinking']                                          # it was mid-answer when Stop was pressed
+    pid = json.loads(log.read_text(encoding='utf-8').splitlines()[1])['pid']
+    deadline = time.monotonic() + 10
+    while _alive(pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not _alive(pid)                                               # the CLI itself, not only its .cmd shim
+
+
+@pytest.mark.parametrize('quiet, states', [(10, ['starting…', 'answering']), (0, ['starting…', 'not responding', 'answering'])])
+def test_one_state_row_says_starting_then_answering_and_says_when_the_agent_is_quiet(installed, monkeypatch, quiet, states):
+    from nodelang import acp_client, nograph_server
+    install, _log = installed
+    install('codex')
+    monkeypatch.setitem(acp_client.ACP_NODE['params'], 'quiet_seconds', quiet)
+    events = []
+    result = nograph_server._chat({'prompt': '@codex how many sheets?'}, events.append, on_step=events.append)
+    assert events[0] == {'who': 'Codex'} and events[1] == {'id': 'agent-state', 'tool': 'Codex', 'status': 'starting…'}
+    assert [e['status'] for e in events if isinstance(e, dict) and e.get('id') == 'agent-state'] == states
+    assert events.index('There are ') > max(i for i, e in enumerate(events) if isinstance(e, dict) and e.get('id') == 'agent-state')
+    assert result['text'] == 'There are 12 sheets.'                      # a quiet agent is told about, never stopped
+    assert not [s for s in result['steps'] if s['id'] == 'agent-state']  # the state row is not part of the settled answer
+
+
+def test_claude_and_codex_start_as_the_installed_cli_never_an_adapter_or_a_permission_skip():
+    from nodelang import acp_client
+    for agent in ('claude', 'codex'):
+        row = acp_client.AGENTS[agent]
+        assert row['commands'] == (agent,)                               # no claude-agent-acp / codex-acp dependency
+        assert not [arg for arg in row['args'] if 'skip' in arg or 'bypass' in arg or 'dangerous' in arg]
 
 
 def test_a_settings_start_command_replaces_the_table_row(installed):

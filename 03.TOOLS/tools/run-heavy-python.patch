@@ -1,0 +1,18 @@
+--- a/50.TOOLING/53.AGENT-TOOLS/53.05-REPAIR-OPERATIONS/run-heavy.ps1
++++ b/50.TOOLING/53.AGENT-TOOLS/53.05-REPAIR-OPERATIONS/run-heavy.ps1
+@@ -313,12 +313,13 @@
+     # pip3 ...), which start the real interpreter as an ordinary child. What
+     # still activates outside the job (py.exe has no unpackaged form; packaged
+     # pwsh) is adopted by ArchHubJob.Sweep, because its parent is in our tree.
+-    $real = try { (& python -c "import sys; print(sys.executable)" 2>$null | Select-Object -First 1) } catch { $null }
++    $shims = Join-Path $env:LOCALAPPDATA 'Python\bin'
++    $python = if ($env:ARCHHUB_PYTHON) { $env:ARCHHUB_PYTHON } elseif (Test-Path -LiteralPath (Join-Path $shims 'python.exe')) { Join-Path $shims 'python.exe' } else { 'python' }
++    $real = try { (& $python -c "import sys; print(sys.executable)" 2>$null | Select-Object -First 1) } catch { $null }
+     $front = @()
+     if ($real -and (Test-Path -LiteralPath $real) -and $real -notlike '*\WindowsApps\*') {
+         $front += (Split-Path -Parent $real), (Join-Path (Split-Path -Parent $real) 'Scripts')
+     }
+-    $shims = Join-Path $env:LOCALAPPDATA 'Python\bin'
+     if (Test-Path -LiteralPath $shims) { $front += $shims }
+     $env:PATH = (@($front) + @($env:PATH)) -join ';'
+     if ($CommandLine) {

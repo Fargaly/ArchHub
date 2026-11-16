@@ -472,7 +472,8 @@ def test_one_engine_for_run_button_agent_tool_and_trigger(running, monkeypatch):
     doc = session_files.new_document('Triggered')
     doc['nodes'] = [
         {'id': 't', 'item': 'tr_schedule', 'type': items['tr_schedule']['engine'], 'title': 'Trigger',
-         'params': {**copy.deepcopy(items['tr_schedule']['params']), 'every_seconds': '600'}, 'position': {'x': 0, 'y': 0}},
+             # Exercise immediate execution explicitly; default-on approval has its own regression.
+             'params': {**copy.deepcopy(items['tr_schedule']['params']), 'every_seconds': '600', 'ask_before_running': False}, 'position': {'x': 0, 'y': 0}},
         {'id': 'c', 'item': 'data.convert', 'type': 'data.convert', 'title': 'Convert',
          'params': {'target_type': 'text'}, 'position': {'x': 300, 'y': 0}}]
     doc['wires'] = [{'id': 'w', 'from': {'node': 't', 'socket': 'payload'}, 'to': {'node': 'c', 'socket': 'in'}}]

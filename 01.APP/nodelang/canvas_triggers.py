@@ -36,6 +36,8 @@ class TriggerService:
         self.files = files or SessionFiles()
         self.lock = threading.Lock()
         self.timers = {}
+        self.refresh_revision = 0
+        self.startup_refresh = True
         self.armed = []
         self.fired = []
         self.running = set()
@@ -60,6 +62,9 @@ class TriggerService:
     def refresh(self):
         """Re-arm every trigger node in the known workflows (called at start and after a save)."""
         from .session_files import read_document, file_parameters, resolve_file_parameter
+        with self.lock:
+            self.refresh_revision += 1
+            revision = self.refresh_revision
         wanted = {}
         for path in self.workflows():
             try:
@@ -78,6 +83,9 @@ class TriggerService:
                                                   (node.get('result') or {}).get('fired_at'))
         missed = []
         with self.lock:
+            if revision != self.refresh_revision or self.stopped.is_set():
+                return self.armed
+            startup, self.startup_refresh = self.startup_refresh, False
             previous = {(row['path'], row['node']): (row['kind'], row['params']) for row in self.armed}
             for key, timer in list(self.timers.items()):
                 if key not in wanted or previous.get(key) != wanted[key][:2]:
@@ -88,10 +96,10 @@ class TriggerService:
             for key, (kind, params, _title, last) in wanted.items():
                 if key not in self.timers:
                     self._arm(key, kind, params, state=None)
-                    if key not in previous and kind == 'trigger.schedule' and missed_while_closed(params, last):
-                        missed.append((key, kind, params))
-        for key, kind, params in missed:
-            threading.Thread(target=self.dispatch, args=(key, kind, params, 'catch-up'),
+                    if startup and kind == 'trigger.schedule' and missed_while_closed(params, last):
+                        missed.append((key, kind, params, self.timers[key]))
+        for key, kind, params, timer in missed:
+            threading.Thread(target=self.dispatch, args=(key, kind, params, 'catch-up'), kwargs={'timer': timer},
                              name='archhub-trigger-catchup', daemon=True).start()
         return self.armed
 
@@ -215,20 +223,24 @@ class TriggerService:
             if self.timers.get(key) is not timer or self.stopped.is_set():
                 return
             self._arm(key, kind, params, state)
+            next_timer = self.timers[key]
         if changed:
-            self.dispatch(key, kind, params)
+            self.dispatch(key, kind, params, timer=next_timer)
 
-    def dispatch(self, key, kind, params, reason='scheduled'):
+    def dispatch(self, key, kind, params, reason='scheduled', *, timer=None):
         """Concurrency policy: a fire while this node's last run is going is skipped, or queued (capped).
 
         Ask before running (the trigger's switch, default on) keeps the fire as an "asking" run in the
         session's run history; nothing runs until approve()."""
-        if reason != 'approved' and self._asks(key):
-            self._history(key, {'id': uuid.uuid4().hex, 'trigger': key[1], 'kind': kind, 'reason': reason,
-                                'state': 'asking', 'start': time.time()})
-            self._record(key, kind, time.time(), 'asking')
-            return 'asking'
+        asking = reason != 'approved' and self._asks(key)
         with self.lock:
+            if timer is not None and (self.timers.get(key) is not timer or self.stopped.is_set()):
+                return 'superseded'
+            if asking:
+                self._history(key, {'id': uuid.uuid4().hex, 'trigger': key[1], 'kind': kind, 'reason': reason,
+                                    'state': 'asking', 'start': time.time()})
+                self._record(key, kind, time.time(), 'asking')
+                return 'asking'
             if key in self.running:
                 queue = str(params.get('concurrency') or 'skip') == 'queue'
                 if queue and self.queued.get(key, 0) < TRIGGER_NODE['params']['queue_cap']:

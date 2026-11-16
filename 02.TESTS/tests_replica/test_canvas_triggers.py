@@ -188,7 +188,7 @@ def test_refresh_replaces_changed_schedule_and_ignores_superseded_callback(profi
     key = (str(path), 't')
     service = canvas_triggers.TriggerService()
     calls = []
-    monkeypatch.setattr(service, 'dispatch', lambda *args: calls.append(args))
+    monkeypatch.setattr(service, 'dispatch', lambda *args, **kwargs: calls.append(args))
 
     def set_interval(document):
         document['nodes'][0]['params']['every_seconds'] = '1200'
@@ -244,4 +244,82 @@ def test_asking_run_can_be_approved_only_once(profile, monkeypatch):
         assert len(dispatches) == 1
         assert next(row for row in read_runs(path) if row['id'] == 'pending')['state'] == 'approved'
     finally:
+        service.close()
+
+
+def test_overlapping_refresh_cannot_rearm_a_paused_schedule(profile, monkeypatch):
+    from threading import Event, Thread, current_thread
+    from nodelang import canvas_triggers, session_files
+
+    path = profile / 'refresh-race.archhub'
+    original = workflow(path, 'tr_schedule', {'every_seconds': '600'})
+    service = canvas_triggers.TriggerService()
+    captured, release = Event(), Event()
+    read_document = session_files.read_document
+
+    def delayed_read(filename):
+        document = read_document(filename)
+        if current_thread().name == 'old-refresh':
+            captured.set()
+            assert release.wait(5)
+        return document
+
+    monkeypatch.setattr(session_files, 'read_document', delayed_read)
+    old = Thread(target=service.refresh, name='old-refresh')
+    try:
+        old.start()
+        assert captured.wait(5)
+        original['nodes'][0]['params']['armed'] = False
+        session_files.write_document(path, original)
+        service.refresh()
+        release.set()
+        old.join(5)
+        assert not old.is_alive()
+        assert service.armed == [] and service.timers == {}
+    finally:
+        release.set()
+        old.join(5)
+        service.close()
+
+
+def test_schedule_paused_during_callback_cannot_emit_after_resume(profile, monkeypatch):
+    from threading import Event, Thread
+    from nodelang import canvas_triggers, session_files
+
+    path = profile / 'pause-race.archhub'
+    document = workflow(path, 'tr_schedule', {'every_seconds': '600', 'catch_up': 'run_once'})
+    service = canvas_triggers.TriggerService()
+    key = (str(path), 't')
+    reached, release = Event(), Event()
+    dispatches = []
+
+    def admission(_key):
+        reached.set()
+        assert release.wait(5)
+        return False
+
+    monkeypatch.setattr(service, '_asks', admission)
+    monkeypatch.setattr(service, 'fire', lambda *args, **kwargs: dispatches.append(args))
+    service.refresh()
+    timer = service.timers[key]
+    timer.cancel()
+    callback = Thread(target=timer.function)
+    try:
+        callback.start()
+        assert reached.wait(5)
+        document['nodes'][0]['result'] = {'fired_at': time.time() - 1200}
+        document['nodes'][0]['params']['armed'] = False
+        session_files.write_document(path, document)
+        service.refresh()
+        document['nodes'][0]['params']['armed'] = True
+        session_files.write_document(path, document)
+        service.refresh()
+        release.set()
+        callback.join(5)
+        assert not callback.is_alive()
+        assert key in service.timers
+        assert dispatches == [] and service.fired == []
+    finally:
+        release.set()
+        callback.join(5)
         service.close()

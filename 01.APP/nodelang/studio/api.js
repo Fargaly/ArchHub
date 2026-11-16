@@ -1667,12 +1667,15 @@ function queueAutosave(){
 }
 // The open file is shared with agents: pick up their edits (file revision), no background solve.
 async function pollFile(force=false){
+ const navigation=fileNavigation;
  if(force&&localDirty)await flushAutosave();
- if(!sessionDocument||localDirty||!force&&document.hidden)return;
- const id=sessionDocument.id,path=sessionPath,head=await sessionRequest('head',{path,id});
- if((!force&&!(head.revision>sessionRevision))||localDirty||sessionDocument?.id!==id)return;
+ if(!sessionDocument||localDirty||!force&&document.hidden||navigation!==fileNavigation)return;
+ const id=sessionDocument.id,path=sessionPath;
+ const current=()=>navigation===fileNavigation&&path===sessionPath&&sessionDocument?.id===id&&!localDirty;
+ const head=await sessionRequest('head',{path,id});
+ if(!current()||head.revision<=sessionRevision)return;
  const read=await sessionRequest('read',{path,id});
- if(localDirty||sessionDocument?.id!==id||(!force&&read.revision<=sessionRevision))return;
+ if(!current()||read.document?.id!==id||read.revision<=sessionRevision)return;
  fileHistory.push(copy(sessionDocument));sessionDocument=copy(read.document);sessionRevision=read.revision;runEpoch++;
  solveNote=read.by&&read.by!=='You'?'Updated by '+read.by:solveNote;projectFile();publish({liveEditBy:read.by,liveRevision:read.revision});
 }

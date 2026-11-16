@@ -62,6 +62,18 @@ if ((Get-FileHash -LiteralPath $assets[0] -Algorithm SHA256).Hash.ToLowerInvaria
     (Get-Item -LiteralPath $assets[0]).Length -ne $offer.asset_bytes) {
     throw 'Release installer no longer matches the checked build; nothing was published.'
 }
+$notesPath = Join-Path $release 'release-notes.md'
+$notesText = [IO.File]::ReadAllText($notesPath)
+$buildHeading = [regex]::Match($notesText, '(?m)^## Build[ \t]*\r?$')
+$buildMatches = [regex]::Matches($notesText, '(?m)^BUILD_ID:[ \t]*([A-Za-z0-9._-]{1,128})[ \t]*\r?$')
+$shaMatches = [regex]::Matches($notesText, '(?m)^SHA256 ArchHub-Setup-0\.exe:[ \t]*([0-9a-fA-F]{64})(?: \([1-9][0-9]{0,9} bytes\))?[ \t]*\r?$')
+if (-not $buildHeading.Success -or
+    $buildMatches.Count -ne 1 -or $buildMatches[0].Groups[1].Value -cne $offer.build_id -or
+    $buildMatches[0].Index -lt $buildHeading.Index -or
+    $shaMatches.Count -ne 1 -or $shaMatches[0].Groups[1].Value.ToLowerInvariant() -cne $offer.asset_sha256 -or
+    $shaMatches[0].Index -lt $buildHeading.Index) {
+    throw 'Release notes are missing the ## Build block (BUILD_ID and SHA256 ArchHub-Setup-0.exe); nothing was published.'
+}
 $create = @('release', 'create', $tag) + $assets + @(
     '--repo', $Repository, '--draft', '--target', $offer.source_revision,
     '--title', "ArchHub $($offer.build_id)", '--notes-file', (Join-Path $release 'release-notes.md'))

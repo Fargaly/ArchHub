@@ -937,6 +937,7 @@ $metadata = [ordered]@{
 }
 [IO.File]::WriteAllText((Join-Path $output 'release.json'), ($metadata | ConvertTo-Json) + "`n", $utf8)
 $notes = @(
+    "## Build",
     "BUILD_ID: $BuildId",
     "BUILT_AT: $builtAt",
     "SHA256 ${assetName}: $assetSha",

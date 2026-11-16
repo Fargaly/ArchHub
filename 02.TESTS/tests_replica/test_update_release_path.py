@@ -38,6 +38,7 @@ PWSH = shutil.which("powershell") or shutil.which("pwsh")
 
 @pytest.mark.parametrize("fault", ["refused", "empty_tag", "empty_revision", "wrong_tag", "wrong_revision",
                                   "wrong_build", "empty_asset", "wrong_asset", "string_ok", "malformed",
+                                  "missing_build_heading", "missing_build_id", "missing_sha256",
                                   "native_checker", "auth", "create", "edit", "valid"])
 def test_publisher_fails_closed_before_github_mutations(tmp_path, monkeypatch, fault):
     if not PWSH:
@@ -56,6 +57,15 @@ def test_publisher_fails_closed_before_github_mutations(tmp_path, monkeypatch, f
         (release / "release.json").write_text(json.dumps(manifest))
     elif fault == "string_ok":
         report["ok"] = "true"
+    elif fault == "missing_build_heading":
+        notes = (release / "release-notes.md").read_text(encoding="utf-8").replace("## Build\n", "")
+        (release / "release-notes.md").write_bytes(notes.encode("utf-8"))
+    elif fault == "missing_build_id":
+        notes = re.sub(r"(?m)^BUILD_ID:.*\n", "", (release / "release-notes.md").read_text(encoding="utf-8"))
+        (release / "release-notes.md").write_bytes(notes.encode("utf-8"))
+    elif fault == "missing_sha256":
+        notes = re.sub(r"(?m)^SHA256 .*\n", "", (release / "release-notes.md").read_text(encoding="utf-8"))
+        (release / "release-notes.md").write_bytes(notes.encode("utf-8"))
     report_path = tmp_path / "report.json"
     report_path.write_text("not JSON" if fault == "malformed" else json.dumps(report))
     # Native stand-ins on PATH: no real checker, network, or GitHub writes.
@@ -85,7 +95,7 @@ $LASTEXITCODE = 0
                "-ExpectedSourceRevision", REVISION]
     if fault == "valid":
         command.append("-DryRun")
-    result = subprocess.run(command, capture_output=True, text=True, timeout=60)
+    result = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
     recorded = calls.read_text().splitlines() if calls.exists() else []
     assert result.returncode == (0 if fault == "valid" else 1), result.stdout + result.stderr
     assert len(recorded) == {"auth": 1, "create": 2, "edit": 3}.get(fault, 0), recorded
@@ -124,7 +134,7 @@ $statusName = 'status.txt'; $utf8 = [Text.UTF8Encoding]::new($false)
 ''')
     result = subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-File", str(harness),
                              "-Build", str(ROOT / "03.TOOLS/installer/build_release.ps1"),
-                             "-Root", str(tmp_path)], capture_output=True, text=True, timeout=60)
+                             "-Root", str(tmp_path)], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
     assert result.returncode == 1, result.stdout + result.stderr
     assert "HTTP 422: refused" in result.stderr
     assert calls.read_text().splitlines() == ["dryrun=True"]
@@ -165,7 +175,7 @@ def _build_output(folder: Path, build_id: str, built_at: str) -> Path:
         "asset_name": qu.ASSET_NAME, "asset_sha256": _sha(asset), "asset_bytes": len(asset),
     }
     (folder / "release.json").write_text(json.dumps(manifest, indent=4) + "\n", encoding="utf-8")
-    notes = "BUILD_ID: %s\nBUILT_AT: %s\nSHA256 %s: %s\nSOURCE_REVISION: %s\n" % (
+    notes = "## Build\nBUILD_ID: %s\nBUILT_AT: %s\nSHA256 %s: %s\nSOURCE_REVISION: %s\n" % (
         build_id, built_at, qu.ASSET_NAME, _sha(asset), REVISION)
     (folder / "release-notes.md").write_bytes(notes.encode("utf-8"))
     return folder
@@ -344,6 +354,42 @@ def test_a_prose_release_body_is_unreadable_to_installed_users(tmp_path):
     (release / "release-notes.md").write_bytes(b"Studio built from the founder's design.\n")
     with pytest.raises(offer_check.Refused, match="notes"):
         offer_check.reconcile(release)
+
+
+def test_release_notes_must_keep_build_block_and_parse_with_quiet_update(tmp_path):
+    """F343: prose release notes are admitted only when they keep the ## Build
+    block (exactly one BUILD_ID and one SHA256 ArchHub-Setup-0.exe line)."""
+    build_id = "20261113-0022-60dc0f8"
+    built_at = "2026-11-12T20:22:42Z"
+    release = _build_output(tmp_path / "release", build_id, built_at)
+    asset_sha = _sha((release / qu.ASSET_NAME).read_bytes())
+    valid_with_prose = (
+        "## What changed\n\n- Settings follows the approved board.\n\n"
+        "## Build\n```\n"
+        f"BUILD_ID: {build_id}\n"
+        f"BUILT_AT: {built_at}\n"
+        f"SHA256 {qu.ASSET_NAME}: {asset_sha}\n"
+        f"SOURCE_REVISION: {REVISION}\n"
+        "```\n"
+    )
+    (release / "release-notes.md").write_bytes(valid_with_prose.encode("utf-8"))
+    offer = offer_check.reconcile(release)
+    parsed = offer_check.updater_reads(offer["github_release"])
+    assert parsed is not None
+    assert parsed["build_id"] == build_id
+    assert parsed["sha256"] == asset_sha
+
+    for bad_notes in (
+        valid_with_prose.replace("## Build\n", ""),
+        re.sub(r"(?m)^BUILD_ID:.*\n", "", valid_with_prose),
+        re.sub(r"(?m)^SHA256 .*\n", "", valid_with_prose),
+        valid_with_prose + f"BUILD_ID: {build_id}\n",
+        valid_with_prose + f"SHA256 {qu.ASSET_NAME}: {asset_sha}\n",
+        f"BUILD_ID: {build_id}\nBUILT_AT: {built_at}\nSHA256 {qu.ASSET_NAME}: {asset_sha}\n## Build\n",
+    ):
+        (release / "release-notes.md").write_bytes(bad_notes.encode("utf-8"))
+        with pytest.raises(offer_check.Refused, match="notes"):
+            offer_check.reconcile(release)
 
 
 OLDER_LIVE = lambda *_repository: {"build_id": "20260918-1700-b63fdf3", "built_at": "2026-09-18T12:43:29Z"}

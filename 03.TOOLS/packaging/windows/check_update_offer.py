@@ -65,6 +65,24 @@ def _json(path: Path) -> dict:
     return data
 
 
+def _valid_build_notes(notes: str, build_id: str, built_at: str, asset_sha: str) -> bool:
+    if "\r" in notes:
+        return False
+    heading = re.search(r"(?m)^## Build[ \t]*\n", notes)
+    if heading is None:
+        return False
+    tail = notes[heading.end():]
+    return (qu._BUILD_RE.findall(notes) == [build_id]
+            and qu._BUILD_RE.findall(tail) == [build_id]
+            and len(re.findall(r"(?m)^[ \t]*BUILD_ID\b[^\r\n]*", notes)) == 1
+            and qu._SHA_RE.findall(notes) == [asset_sha]
+            and qu._SHA_RE.findall(tail) == [asset_sha]
+            and len(re.findall(r"(?m)^[ \t]*SHA256 " + re.escape(qu.ASSET_NAME) + r"\b[^\r\n]*", notes)) == 1
+            and ("BUILD_ID: %s\n" % build_id) in tail
+            and ("BUILT_AT: %s\n" % built_at) in tail
+            and ("SHA256 %s: %s\n" % (qu.ASSET_NAME, asset_sha)) in tail)
+
+
 def reconcile(release_dir: Path, expected_revision: str = "", repository: str = REPOSITORY) -> dict:
     """Return the release offer; raise Refused when any claimed byte differs."""
     release_dir = Path(release_dir)
@@ -94,10 +112,7 @@ def reconcile(release_dir: Path, expected_revision: str = "", repository: str = 
         "source_revision": type(manifest.get("source_revision")) is str
         and re.fullmatch(r"[0-9a-f]{40}", manifest["source_revision"]) is not None
         and (not expected_revision or manifest["source_revision"] == expected_revision),
-        "notes": "\r" not in notes
-        and ("BUILD_ID: %s\n" % build_id) in notes
-        and ("BUILT_AT: %s\n" % built_at) in notes
-        and ("SHA256 %s: %s\n" % (qu.ASSET_NAME, asset_sha)) in notes,
+        "notes": _valid_build_notes(notes, build_id, built_at, asset_sha),
     }
     failed = sorted(name for name, ok in checks.items() if not ok)
     if failed:

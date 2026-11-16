@@ -380,7 +380,8 @@ def local_path(path):
 def read_document(path):
     target = local_path(str(path))
     with _metadata_io(target.open, 'rb') as stream:
-        raw = stream.read(MAX_BYTES + 1)
+        # read(n) allocates n bytes up front: size the read by the file (still bounded) so a list stays fast.
+        raw = stream.read(min(os.fstat(stream.fileno()).st_size, MAX_BYTES) + 1)
     if len(raw) > MAX_BYTES:
         raise ValueError('Session exceeds 8 MiB')
     document = validate(json.loads(raw.decode('utf-8-sig')))

@@ -11265,6 +11265,23 @@
         "04.DOCS/FAILURE_LOG.md",
         "05.EVIDENCE/designv22g/"
       ]
+    },
+    "NOTHINGGIVENUP": {
+      "source": "Founder 2026-11-16 on the installed app: Community, Cloud, Cockpit, Website and Profiles were cancelled as if they never existed; where is Social media; we are not redoing the work. NOTHING-GIVEN-UP: recover the removed Social media, Community and Plan & access work from git history and bind it to file owners (NODE-SPEC 1.7, section 12); open items show a visible notice. Lane commit only, no push, install or release.",
+      "scope": [
+        "01.APP/nodelang/social_surface.py",
+        "01.APP/nodelang/community_owner.py",
+        "01.APP/nodelang/access_owner.py",
+        "01.APP/nodelang/nograph_server.py",
+        "01.APP/nodelang/hook_decision.py",
+        "01.APP/nodelang/native_agent_mcp.py",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/social.jsx",
+        "01.APP/nodelang/studio/community-tools.jsx",
+        "01.APP/nodelang/studio/access.jsx",
+        "02.TESTS/tests_replica/test_nothing_given_up.py",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
     }
   }
 }

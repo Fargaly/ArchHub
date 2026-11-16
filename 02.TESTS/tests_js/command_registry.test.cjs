@@ -73,14 +73,14 @@ test('a newly declared context reuses an existing command without another handle
   assert.deepEqual(plain(rig.calls),[['u.setSelectedNodeId','node']]);
 });
 
-test('node, group and frame registrations contain exactly their reachable menu actions',()=>{
+test('node and group registrations contain exactly their reachable menu actions',()=>{
   const contexts={};
-  for(const [context,kind,extra] of [['node','Node menu',{}],['group','Group menu',{children:['child']}],['frame','Frame menu',{frameMembers:['child']}]]){
+  for(const [context,kind,extra] of [['node','Node menu',{}],['group','Group menu',{children:['child']}],['group','Frame menu',{frameMembers:['child']}]]){
     const state={graph:{nodes:[{id:'node',title:'Node',type:'script.python',inputs:[],outputs:[],parameterSchema:[],...extra}],wires:[]},tasks:[]};
     const rig=runtime(fs.readFileSync(path.join(studio,'compiled/context-menus.js'),'utf8'),state);
     const ids=new Set();
     for(const more of [false,true])for(const row of rig.sandbox.window.UI.contextCommandGroups({kind,nodeId:'node',selected:['node','child'],close:()=>{}},state,rig.u,rig.actionState,more).flat())ids.add(row.command.id);
-    contexts[context]=[...ids].sort();
+    contexts[context]=[...new Set([...(contexts[context]||[]),...ids])].sort();
   }
   fs.writeFileSync(path.join(profileRoot,'menu-contexts.json'),JSON.stringify(contexts,null,2));
   const registry=JSON.parse(fs.readFileSync(registryPath,'utf8'));

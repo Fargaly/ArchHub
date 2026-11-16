@@ -154,3 +154,13 @@ def test_approved_replay_has_no_direct_call_bypass():
     import pytest
     with pytest.raises(ValueError, match='Approve this action first'):
         invoke_approved('revit_open_document', {'path': 'synthetic.rvt'})
+
+
+def test_group_context_keeps_every_former_frame_command():
+    from nodelang.command_registry import commands_for_context, payload
+    data = payload()
+    expected = {'menu.rename.25', 'menu.colour', 'menu.select.contents', 'menu.remove.frame.keep.nodes'}
+    assert 'frame' not in data['contexts']
+    assert all('frame' not in row['contexts'] for row in data['commands'])
+    assert expected <= {row['id'] for row in commands_for_context('group')}
+    assert len({row['id'] for row in data['commands']}) == len(data['commands'])

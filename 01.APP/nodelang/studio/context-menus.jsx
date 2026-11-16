@@ -1,7 +1,7 @@
 // Menus stay anchored to the object. Dialogs are reserved for a decision/form.
 (() => {
   // COMMANDREGISTRY: both menu and palette use this bounded, data-only reader.
-  const contextNames = {'Node menu':'node','Group menu':'group','Frame menu':'frame','Wire menu':'wire',
+  const contextNames = {'Node menu':'node','Group menu':'group','Frame menu':'group','Wire menu':'wire',
     'Port menu':'socket','Selection menu':'selection','Canvas menu':'canvas','Task tab menu':'session',
     'Open tasks':'session','Canvas attachments':'session','Task message menu':'message','Tray':'tray','App menu':'navigation'};
   function commandsForContext(registry, context, selection = {}, bindings = {}) {

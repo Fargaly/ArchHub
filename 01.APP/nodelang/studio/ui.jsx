@@ -257,7 +257,7 @@
           setText,
           u
         }, event)} title="Talk · F2">🎙 Talk</Btn>}<Btn data-design="composer.send" p sm type="submit" aria-label="Send ↵" title="Send · Enter" aria-busy={sending} disabled={!text.trim()}><window.AHIcon name="send" size={15} />{u.route==='home'?'Send':null}</Btn></div>
- {s.composerAnswer&&<div className="composer-answer" role="status" aria-label="Model answer"><small className="muted">{s.composerAnswer.provider} · {s.composerAnswer.model}</small><p style={{whiteSpace:'pre-wrap'}}>{s.composerAnswer.answer}</p></div>}
+ {s.composerAnswer&&<div className="composer-answer" role="status" aria-label="Model answer"><small className="muted">{s.composerAnswer.provider} · {s.composerAnswer.model}</small><p style={{whiteSpace:'pre-wrap'}}>{s.composerAnswer.answer}</p>{!s.composerAnswer.request_id&&(s.composerAnswer.steps||[]).map((step,i)=><small key={step.id||i} className="muted" style={{display:'block'}}>{step.tool} · {step.status}</small>)}</div>}
  </D.Composer>;
   }
   const approvalDecisions = new Set();

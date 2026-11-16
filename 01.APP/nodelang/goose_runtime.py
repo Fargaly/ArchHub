@@ -11,7 +11,8 @@ import subprocess
 import threading
 import time
 
-from .goose_adapter import AcpTransport, GooseAdapter, GooseRefused
+from .acp_client import AcpTransport
+from .goose_adapter import GooseAdapter, GooseRefused
 
 # The private host-read extension node: how long a live server may take to report started.
 HOST_EXTENSION_NODE = {'id': 'baboom.goose.host_read', 'params': {'start_seconds': 30}}
@@ -73,7 +74,7 @@ class GooseRuntime:
             process = self.process_factory([str(binary), "acp"], cwd=str(self.work_dir), env=env,
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            self.transport = AcpTransport(process)
+            self.transport = AcpTransport(process, label="Goose")
             from .workshop_transport import _OwnedProcessJob
             self.job = _OwnedProcessJob(process)
             init = self.transport.request("initialize", {"protocolVersion": 1,

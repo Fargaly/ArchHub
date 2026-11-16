@@ -7,24 +7,15 @@ from __future__ import annotations
 
 import base64
 import json
-import queue
 import re
-import subprocess
 import sys
 from pathlib import Path
 from uuid import uuid4
 import threading
 import time
 
-from .model_router import ModelRouteRefused
-
-
-class GooseRefused(ModelRouteRefused):
-    pass
-
-
-class GooseResponseRefused(GooseRefused):
-    """A complete remote refusal: the connection remains synchronised."""
+# Goose is one row of the one ACP client; its transport and refusals live there.
+from .acp_client import AcpRefused as GooseRefused, AcpResponseRefused as GooseResponseRefused
 
 
 def safe_workshop_call(identity, arguments):
@@ -73,134 +64,18 @@ def free_route(route: str) -> tuple[str, str]:
     raise GooseRefused("BABOOM needs an OpenRouter free route or a local Ollama model.")
 
 
-class AcpTransport:
-    """One bounded JSON-RPC connection to an owned stdio process."""
-
-    def __init__(self, process):
-        self.process = process
-        self.inbox = queue.Queue(maxsize=256)
-        self.outbox = queue.Queue(maxsize=16)
-        self.sequence = 0
-        self.closed = False
-        self.reader = threading.Thread(target=self._read, name="archhub-goose-acp", daemon=True)
-        self.reader.start()
-        self.writer = threading.Thread(target=self._write, name="archhub-goose-input", daemon=True)
-        self.writer.start()
-
-    def _write(self):
-        try:
-            while not self.closed:
-                value = self.outbox.get()
-                if value is None:
-                    break
-                self.process.stdin.write(value)
-                self.process.stdin.flush()
-        except (OSError, ValueError):
-            try:
-                self.inbox.put_nowait(None)
-            except queue.Full:
-                pass
-
-    def _read(self):
-        try:
-            while not self.closed:
-                line = self.process.stdout.readline(1_048_577)
-                if not line or len(line) > 1_048_576:
-                    break
-                value = json.loads(line)
-                self.inbox.put_nowait(value)
-        except (OSError, ValueError, queue.Full):
-            pass
-        finally:
-            try:
-                self.inbox.put_nowait(None)
-            except queue.Full:
-                pass
-
-    def send(self, value):
-        if self.closed:
-            raise GooseRefused("The managed Goose connection is closed.")
-        try:
-            self.outbox.put_nowait((json.dumps({"jsonrpc": "2.0", **value}) + "\n").encode())
-        except queue.Full:
-            raise GooseRefused("The managed Goose connection closed; the request was not replayed.") from None
-
-    def request(self, method, params, *, deadline, update=lambda _: None, stopped=lambda: False,
-                response_error=lambda _: None):
-        self.sequence += 1
-        request_id = self.sequence
-        tool_identities = {}
-        self.send({"id": request_id, "method": method, "params": params})
-        while not self.closed:
-            if stopped():
-                raise GooseRefused("Stopped by you")
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise GooseRefused("Goose did not answer in time; the request was not replayed.")
-            try:
-                message = self.inbox.get(timeout=min(remaining, 0.1))
-            except queue.Empty:
-                continue
-            if not isinstance(message, dict):
-                raise GooseRefused("The managed Goose connection closed; the request was not replayed.")
-            if message.get("method"):
-                if "id" in message:
-                    if message["method"] == "session/request_permission":
-                        permission = message.get("params") or {}
-                        call = permission.get("toolCall") or {}
-                        identity = tool_identities.get((permission.get("sessionId"), call.get("toolCallId")))
-                        safe = permission.get("sessionId") == params.get("sessionId") and (
-                            identity == {"extensionName": "archhub-hosts", "toolName": "archhub-hosts__hosts_state"}
-                            and call.get("rawInput") == {} or safe_workshop_call(identity, call.get("rawInput")))
-                        option = next((row.get("optionId") for row in permission.get("options", ())
-                                       if row.get("kind") == "allow_once"), None) if safe else None
-                        outcome = {"outcome": "selected", "optionId": option} if option else {"outcome": "cancelled"}
-                        self.send({"id": message["id"], "result": {"outcome": outcome}})
-                    else:
-                        self.send({"id": message["id"], "error": {"code": -32601, "message": "Capability not admitted"}})
-                elif message["method"] == "session/update":
-                    notification = message.get("params") or {}
-                    item = notification.get("update") or {}
-                    if item.get("sessionUpdate") == "tool_call":
-                        meta = (item.get("_meta") or {}).get("goose") or {}
-                        identity = meta.get("toolCall")
-                        if isinstance(identity, dict):
-                            tool_identities[(notification.get("sessionId"), item.get("toolCallId"))] = {
-                                k: identity.get(k) for k in ("extensionName", "toolName")}
-                    update(notification)
-                continue
-            if message.get("id") != request_id:
-                raise GooseRefused("Goose returned an unexpected response identity.")
-            if "error" in message:
-                response_error(message["error"])
-                # Provider diagnostics may contain credentials. Only the typed
-                # failure crosses into the face, never the provider's raw text.
-                raise GooseResponseRefused("Goose could not complete this request. No action was approved.")
-            result = message.get("result")
-            if not isinstance(result, dict):
-                raise GooseRefused("Goose returned an invalid response.")
-            return result
-        raise GooseRefused("The managed Goose connection is closed.")
-
-    def close(self):
-        if self.closed:
-            return
-        self.closed = True
-        if self.process.poll() is None:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-                self.process.wait(timeout=2)
-        self.reader.join(timeout=2)
-        try:
-            self.outbox.put_nowait(None)
-        except queue.Full:
-            pass
-        self.writer.join(timeout=2)
-        self.process.stdin.close()
-        self.process.stdout.close()
+def goose_permission(permission, params, tool_calls):
+    """Goose's own grant: only the read-only host state and the Workshop mailbox fields; everything else is cancelled."""
+    call = permission.get("toolCall") or {}
+    seen = tool_calls.get((permission.get("sessionId"), call.get("toolCallId"))) or {}
+    meta = ((seen.get("_meta") or {}).get("goose") or {}).get("toolCall")
+    identity = {k: meta.get(k) for k in ("extensionName", "toolName")} if isinstance(meta, dict) else None
+    safe = permission.get("sessionId") == params.get("sessionId") and (
+        identity == {"extensionName": "archhub-hosts", "toolName": "archhub-hosts__hosts_state"}
+        and call.get("rawInput") == {} or safe_workshop_call(identity, call.get("rawInput")))
+    option = next((row.get("optionId") for row in permission.get("options", ())
+                   if row.get("kind") == "allow_once"), None) if safe else None
+    return {"outcome": "selected", "optionId": option} if option else {"outcome": "cancelled"}
 
 
 class GooseAdapter:
@@ -241,7 +116,7 @@ class GooseAdapter:
                     "type": "mcp", "server": self.runtime.host_extension,
                     "available_tools": ["hosts_state"],
                 }]},
-            }, deadline=deadline, stopped=stopped)
+            }, deadline=deadline, stopped=stopped, permission=goose_permission)
             session_id = session.get("sessionId")
             if not isinstance(session_id, str) or not session_id:
                 raise GooseRefused("Goose did not create a session.")
@@ -270,7 +145,8 @@ class GooseAdapter:
                                   "status": str(row["status"]), "summary": ""})
             final = transport.request("session/prompt", {"sessionId": session_id, "prompt": [
                 {"type": "text", "text": context_block + "\n\nUser: " + prompt},
-            ]}, deadline=deadline, update=update, stopped=stopped)
+            ]}, deadline=deadline, update=update, stopped=stopped,
+                permission=goose_permission)
             if stopped():
                 raise GooseRefused("Stopped by you")
             if final.get("stopReason") != "end_turn":

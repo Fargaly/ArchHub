@@ -84,7 +84,7 @@ async function request(path,body=undefined,readRetry=true,signal=undefined) {
 }
 function rows(node){return node?.properties||node?.params||[];}
 async function routerChat(prompt,agent,replyTo,task) {
- const generation=++composerGeneration;let answer='';
+ const generation=++composerGeneration;let answer='',who='Routing',steps=[];
  publish({composerAnswer:{answer:'',provider:'Routing',model:'Free model'}});
  const response=await fetch('/api/router/chat',{method:'POST',headers:{'Content-Type':'application/json',
   'X-ArchHub-Session':session?.token||'','X-ArchHub-CSRF':session?.csrf||'',
@@ -95,7 +95,8 @@ async function routerChat(prompt,agent,replyTo,task) {
   let split;while((split=pending.indexOf('\n\n'))>=0){const block=pending.slice(0,split);pending=pending.slice(split+2);
    for(const line of block.split('\n'))if(line.startsWith('data:')){const data=JSON.parse(line.slice(5));
     if(data.error)throw Error(data.error);
-    if(data.delta){answer+=data.delta;if(generation===composerGeneration)publish({composerAnswer:{provider:'Routing',model:'Free model',answer}});}
+    if(data.step){if(data.step.who)who=data.step.who;else steps=[...steps.filter(s=>s.id!==data.step.id),data.step];if(generation===composerGeneration)publish({composerAnswer:{provider:who,model:who==='Routing'?'Free model':'ACP',answer,steps}});}
+    if(data.delta){answer+=data.delta;if(generation===composerGeneration)publish({composerAnswer:{provider:who,model:who==='Routing'?'Free model':'ACP',answer,steps}});}
     if(data.result){result=data.result;if(generation===composerGeneration)publish({composerAnswer:result});}
    }}if(done)break;}
  }finally{reader.releaseLock();}

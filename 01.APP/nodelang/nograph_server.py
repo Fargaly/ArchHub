@@ -586,7 +586,7 @@ class NoGraphServer:
             handler.wfile.write(('data: ' + json.dumps(value) + '\n\n').encode('utf-8'))
             handler.wfile.flush()
         try:
-            event({'result': _chat(body, lambda text: event({'delta': text}))})
+            event({'result': _chat(body, lambda text: event({'delta': text}), lambda step: event({'step': step}))})
         except Exception as error:  # noqa: BLE001 - the composer shows the refusal text
             message = str(error) or 'The router is unavailable. Check provider availability.'
             if streaming:
@@ -646,9 +646,9 @@ def _ask_baboom(prompt):
             'request_id': record['id'], 'applied': [], 'steps': result.get('steps', [])}
 
 
-def _chat(body, on_delta):
-    """One composer turn. @agents go live into those sessions; no mention goes to BABOOM or the model.
-    With a task, the question, the answer and every later reply are that task's thread."""
+def _chat(body, on_delta, on_step=lambda step: None):
+    """One composer turn. @agents go live into those sessions (or are started over ACP when not running);
+    no mention goes to BABOOM or the model. With a task, the question, the answer and every later reply are that task's thread."""
     import re
     from .model_router import composer_chat
     prompt = str(body.get('prompt') or '')
@@ -660,8 +660,11 @@ def _chat(body, on_delta):
             if type(task) is not str or get(history, task) is None:
                 raise ValueError('This session is no longer in the Workshop. Reopen it from Home.')
     handles = [h.casefold() for h in re.findall(r'(?<![\w@])@([A-Za-z0-9][\w.-]*)', prompt)]
+    from .acp_client import agent_for
+    if not handles and agent_for(body.get('agent')):   # the composer's agent picker named an installed agent
+        handles = [agent_for(body['agent'])]
     if handles:
-        return _route_to_agents(prompt, handles, body.get('reply_to') or None, task=task)
+        return _route_to_agents(prompt, handles, body.get('reply_to') or None, task=task, on_delta=on_delta, on_step=on_step)
     if body.get('agent', 'BABOOM') == 'BABOOM' and _baboom_brain() is not None:
         result = _ask_baboom(prompt)
     else:
@@ -674,8 +677,55 @@ def _chat(body, on_delta):
     return result
 
 
-def _route_to_agents(prompt, handles, reply_to=None, task=None):
-    """@mentions: one Workshop message from Ahmed, pushed live; a profiling row per recipient."""
+def _route_to_agents(prompt, handles, reply_to=None, task=None, on_delta=lambda text: None, on_step=lambda step: None):
+    """@mentions: one Workshop message from Ahmed, pushed live to joined agents; an installed agent that is not
+    running is started over ACP for this thread and its answer streams back. A profiling row per recipient."""
+    from .acp_client import agent_for
+    from .workshop_live import live_agents
+    live = {a['handle'] for a in live_agents()}
+    starting = [h for h in handles if h not in live and h != 'everyone' and agent_for(h)]
+    rest = [h for h in handles if h not in starting]
+    answers = [_ask_installed(agent_for(h), prompt, task, on_delta, on_step) for h in starting]
+    if rest and (not answers or any(h in live or h == 'everyone' for h in rest)):
+        answers.append(_inject(prompt, rest, reply_to, task))
+    elif rest:
+        answers.append({'answer': '\n'.join('✗ @%s · no joined agent with this name' % h for h in rest), 'steps': []})
+    if len(answers) == 1:
+        return answers[0]
+    return {**answers[0], 'answer': '\n\n'.join(a['answer'] for a in answers),
+            'steps': [s for a in answers for s in a.get('steps') or []]}
+
+
+def _ask_installed(agent, prompt, task, on_delta, on_step):
+    """One message to an installed agent over the one ACP client; the settled reply is recorded once in the thread."""
+    import uuid
+    from . import acp_client
+    from .model_router import request_profiles
+    from .workshop_live import record_answer
+    started, name = time.monotonic(), acp_client.label(agent)
+    record = {'id': str(uuid.uuid4()), 'ts': time.time(), 'agent': name, 'model': 'agent session',
+              'provider': 'acp:' + agent, 'tokens': None, 'ms': 0, 'outcome': 'refused'}
+    on_step({'who': name})   # the live row names who is answering before the first word
+    try:
+        reply = acp_client.ask(agent, prompt, task=task, on_delta=on_delta, on_step=on_step,
+                               stopped=_SERVER.is_halted if _SERVER is not None else (lambda: False))
+        record['outcome'] = 'answered'
+    finally:
+        record['ms'] = int((time.monotonic() - started) * 1000)
+        request_profiles(record)
+    # The settled message carries its steps as lines, the same shape as a BABOOM answer (_ask_baboom).
+    steps = ''.join('\n• %s: %s' % (s.get('tool'), s.get('status')) for s in reply['steps'])
+    result = {'ok': True, 'answer': reply['text'] + steps, 'text': reply['text'], 'provider': name, 'model': 'ACP',
+              'request_id': record['id'], 'applied': [], 'steps': reply['steps'], 'ms': record['ms']}
+    try:
+        record_answer(prompt, result['answer'], name, task=task, to=name)
+    except Exception as error:  # noqa: BLE001 - the answer stands even if history is busy
+        result['history_error'] = str(error)
+    return result
+
+
+def _inject(prompt, handles, reply_to=None, task=None):
+    """Joined agents: one Workshop message from Ahmed, pushed live (direct injection, as before)."""
     import uuid
     from .model_router import request_profiles
     from .workshop_live import send_as_founder

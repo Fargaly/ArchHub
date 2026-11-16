@@ -652,7 +652,7 @@ _TRAILING = {"in", "on", "at", "to", "for", "of", "and", "the", "a", "with", "fr
 def short_title(text, limit=60):
     """A human task name: the first clause of the declared text without id/path tokens, at most `limit` chars."""
     text = re.sub(r"^\s*[A-Z0-9][A-Z0-9-]*:\s+", "", str(text or "").strip())  # a leading lane tag ("WSFIX: ")
-    first = re.split(r"(?<=[.;:!?])\s|\n|\s[–—-]\s|\s\(", text, maxsplit=1)[0]
+    first = re.split(r"(?<=[.;!?])\s|\n|\s[–—-]\s|\s\(", text, maxsplit=1)[0]  # a colon keeps its clause ("Check doors: level 2")
     words = [w for w in first.split() if not _JARGON.search(w)]
     while len(words) > 1 and words[-1].casefold() in _TRAILING:
         words.pop()
@@ -702,12 +702,20 @@ def _session_context(path):
     return context
 
 
+def _without_header(text):
+    header, newline, body = str(text or '').partition('\n')
+    if newline and header.startswith('To ') and header.endswith(':'):
+        return re.sub(r'^(?:@[\w.-]+\s+)+', '', body)
+    return text
+
+
 def _bound_messages(history, task):
     """Messages whose refs name this task. Traffic addressed only to the owner stays out."""
     from .workshop_mailbox import DELIVERY_AUTHOR, DELIVERY_CATEGORY, ROOM
     if not history._db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='messages'").fetchone():
         return []
-    return [{"id": row[0], "who": row[1], "text": row[2]} for row in history._db.execute(
+    # Display only, as the room does (nograph_server._list_messages): the stored "To <name>:" routing line stays in the file.
+    return [{"id": row[0], "who": row[1], "text": _without_header(row[2])} for row in history._db.execute(
         "SELECT id, author, content FROM messages WHERE conversation_id=? AND author!=? AND category!=? "
         "AND EXISTS (SELECT 1 FROM json_each(refs) WHERE value=?) ORDER BY sequence",
         (ROOM, DELIVERY_AUTHOR, DELIVERY_CATEGORY, task))]

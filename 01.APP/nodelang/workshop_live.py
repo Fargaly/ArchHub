@@ -320,14 +320,14 @@ def send_as_founder(text, handles, *, reply_to=None, task=None):
     return {'message_id': sent['message_id'], 'deliveries': rows, 'unknown': unknown}
 
 
-def record_answer(question, answer, model, task=None):
-    """A plain composer question and the model's answer join the one Workshop history (that task's thread if given)."""
+def record_answer(question, answer, model, task=None, to='Router'):
+    """A composer question and its settled answer (model or agent) join the one Workshop history (that task's thread if given)."""
     from .workshop_mailbox import application_history
     from .workshop_mailbox import ROOM, CATEGORY
     refs = (task,) if task else ()
     with application_history() as history:
         with history._transaction(write=True):
-            asked = history.append(ROOM, author=FOUNDER, content='To Router:\n' + question, category=CATEGORY, refs=refs,
+            asked = history.append(ROOM, author=FOUNDER, content='To %s:\n' % to + question, category=CATEGORY, refs=refs,
                                    recipients=(), reply_principal=FOUNDER, idempotency_key='composer:' + os.urandom(8).hex())
             history.append(ROOM, author=model, content='To Ahmed:\n' + answer, category=CATEGORY, recipients=(), refs=refs,
                            reply_to=asked['id'], reply_principal=model, idempotency_key='composer:' + os.urandom(8).hex())

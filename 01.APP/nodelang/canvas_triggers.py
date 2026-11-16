@@ -24,6 +24,7 @@ import re
 import threading
 import time
 import uuid
+from contextlib import nullcontext
 from pathlib import Path
 
 TRIGGER_NODE = {'id': 'canvas.triggers', 'params': {'min_every_seconds': 10, 'file_poll_floor_seconds': 1,
@@ -61,7 +62,7 @@ class TriggerService:
 
     def refresh(self):
         """Re-arm every trigger node in the known workflows (called at start and after a save)."""
-        from .session_files import read_document, file_parameters, resolve_file_parameter
+        from .session_files import read_document
         with self.lock:
             self.refresh_revision += 1
             revision = self.refresh_revision
@@ -75,10 +76,7 @@ class TriggerService:
             for node in document['nodes']:
                 # Armed is the stored switch (default on); it times only while the app is open.
                 if node['type'] in ('trigger.schedule', 'trigger.file') and not node.get('frozen') and not _off(node['params'].get('armed', True)):
-                    params = dict(node['params'])
-                    for name in file_parameters(node):
-                        if name in params:
-                            params[name] = resolve_file_parameter(params[name], path)
+                    params = _effective_params(node, path)
                     wanted[(path, node['id'])] = (node['type'], params, node.get('title', ''),
                                                   (node.get('result') or {}).get('fired_at'))
         missed = []
@@ -232,8 +230,16 @@ class TriggerService:
 
         Ask before running (the trigger's switch, default on) keeps the fire as an "asking" run in the
         session's run history; nothing runs until approve()."""
+        from .canvas_documents import locked
+        from .session_files import read_document
         asking = reason != 'approved' and self._asks(key)
-        with self.lock:
+        with locked(key[0]) if timer is not None else nullcontext(), self.lock:
+            if timer is not None:
+                try:
+                    if not _schedule_matches(read_document(key[0]), key, kind, params):
+                        return 'superseded'
+                except (OSError, ValueError):
+                    return 'superseded'
             if timer is not None and (self.timers.get(key) is not timer or self.stopped.is_set()):
                 return 'superseded'
             if asking:
@@ -256,7 +262,7 @@ class TriggerService:
         more = True
         try:
             while more:
-                self.fire(key, kind, reason=reason)
+                self.fire(key, kind, reason=reason, **({'expected': params} if timer is not None else {}))
                 with self.lock:
                     more = bool(self.queued.get(key))
                     if more:
@@ -268,9 +274,9 @@ class TriggerService:
                 self.queued.pop(key, None)
         return 'ran'
 
-    def fire(self, key, kind, reason='scheduled'):
+    def fire(self, key, kind, reason='scheduled', *, expected=None):
         """Run the trigger's downstream nodes once, save their outputs into the workflow, post it to the Workshop."""
-        if reason != 'approved' and self._asks(key):
+        if expected is None and reason != 'approved' and self._asks(key):
             return self.dispatch(key, kind, {}, reason)
         from . import canvas_documents as docs
         from .enforce import guard_effect
@@ -282,6 +288,8 @@ class TriggerService:
         run = {'id': uuid.uuid4().hex, 'trigger': node_id, 'kind': kind, 'reason': reason, 'state': 'running', 'start': started}
 
         def change(document):
+            if expected is not None and not _schedule_matches(document, key, kind, expected):
+                raise ValueError('The schedule was changed or paused before execution.')
             downstream = sorted(docs.downstream(document, [node_id]))
             ran = run_document(document, invoke=guard_effect, roots=downstream, path=path, again=True)
             run['id'] = ran['run']['id']
@@ -357,6 +365,22 @@ class TriggerService:
         from .session_files import claim_run_approval
         node = claim_run_approval(path, run_id)
         return self.dispatch((str(path), node['id']), node['type'], dict(node['params']), reason='approved')
+
+
+def _effective_params(node, path):
+    from .session_files import file_parameters, resolve_file_parameter
+    result = dict(node['params'])
+    for name in file_parameters(node):
+        if name in result:
+            result[name] = resolve_file_parameter(result[name], path)
+    return result
+
+
+def _schedule_matches(document, key, kind, params):
+    node = next((row for row in document['nodes'] if row['id'] == key[1]), None)
+    return bool(node and node['type'] == kind and not node.get('frozen')
+                and not _off(node['params'].get('armed', True))
+                and _effective_params(node, key[0]) == params)
 
 
 def _off(value):

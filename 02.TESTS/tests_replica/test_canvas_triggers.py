@@ -137,7 +137,11 @@ def test_routine_catch_up_policy(profile, policy, fires):
     write_document(path, doc)
     service = TriggerService()
     calls = []
-    service.fire = lambda key, kind, reason='scheduled': calls.append(reason)
+    def fire(key, kind, reason='scheduled', *, expected=None):
+        assert expected['every_seconds'] == '600'
+        calls.append(reason)
+
+    service.fire = fire
     try:
         service.refresh()
         time.sleep(0.5)
@@ -322,4 +326,32 @@ def test_schedule_paused_during_callback_cannot_emit_after_resume(profile, monke
     finally:
         release.set()
         callback.join(5)
+        service.close()
+
+
+@pytest.mark.parametrize('change', [{'armed': False}, {'every_seconds': '1200'}])
+@pytest.mark.parametrize('ask', [True, False])
+def test_persisted_schedule_edit_blocks_old_timer_before_refresh(profile, monkeypatch, change, ask):
+    from nodelang import canvas_documents, canvas_triggers, session_files
+
+    path = profile / 'before-refresh.archhub'
+    workflow(path, 'tr_schedule', {'every_seconds': '600', 'ask_before_running': ask})
+    service = canvas_triggers.TriggerService()
+    key = (str(path), 't')
+    calls = []
+    monkeypatch.setattr(service, 'fire', lambda *args, **kwargs: calls.append(args))
+
+    def save(document):
+        document['nodes'][0]['params'].update(change)
+        return ['t']
+
+    try:
+        service.refresh()
+        timer = service.timers[key]
+        timer.cancel()
+        canvas_documents.edit(path, 'Test', 'Change schedule before refresh', save, solve_changed=False)
+        assert service.timers[key] is timer
+        timer.function()
+        assert calls == [] and service.fired == [] and session_files.read_runs(path) == []
+    finally:
         service.close()

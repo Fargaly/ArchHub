@@ -5,6 +5,7 @@
       "source": "Founder 2026-11-16 ONE BUILD step 6, res-047 section 3, res-048 step 6 and res-045 section 6: one command registry serves existing context menus, Ctrl K, navigation and agent tools; Library category ids; read-only grouped tools and existing approval policies; existing parameter owners; no redesign. Sole builder on lane/command-registry; isolated tests only; hooks on; no push/install/release/deploy or live-profile access.",
       "scope": [
         "01.APP/nodelang/command_registry.py",
+        "01.APP/nodelang/host_exec.py",
         "01.APP/nodelang/native_agent_mcp.py",
         "01.APP/nodelang/nograph_server.py",
         "01.APP/nodelang/studio/api.js",

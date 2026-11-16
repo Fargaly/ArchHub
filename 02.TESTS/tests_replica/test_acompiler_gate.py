@@ -22,6 +22,26 @@ def run_git(root, *args):
     return subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True).stdout
 
 
+def test_worktree_reuses_primary_rust_and_msvc(repository, tmp_path, monkeypatch):
+    main = tmp_path / "workspace" / "10.PRODUCT" / "app"
+    run_git(tmp_path, "clone", "--local", str(repository), str(main))
+    lane = tmp_path / "lane"
+    run_git(main, "worktree", "add", "--detach", str(lane))
+    rust = tmp_path / "workspace" / "50.TOOLING" / "53.AGENT-TOOLS" / "53.08-RUST-TOOLCHAIN"
+    rust.mkdir(parents=True)
+    setup = main / "03.TOOLS" / "tools" / "archhub-compiler" / "target" / "msvc" / "setup_x64.bat"
+    setup.parent.mkdir(parents=True)
+    setup.write_text("@echo off\nset ARCHHUB_COURT_MSVC=primary\n", encoding="ascii")
+    monkeypatch.delenv("CARGO_HOME", raising=False)
+    monkeypatch.delenv("RUSTUP_HOME", raising=False)
+    assert strict_check.rust_root(lane / "03.TOOLS") == rust
+    environment = strict_check._environment(owner=lane / "03.TOOLS")
+    assert environment["CARGO_HOME"] == str(rust / "cargo")
+    assert environment["RUSTUP_HOME"] == str(rust / "rustup")
+    if os.name == "nt":
+        assert environment["ARCHHUB_COURT_MSVC"] == "primary"
+
+
 @pytest.fixture
 def repository(tmp_path, monkeypatch):
     root = tmp_path / "repo"

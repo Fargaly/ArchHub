@@ -306,8 +306,17 @@ def _command(root, options=None, *, executable_only=False):
         return [str(cargo), "run", "--quiet", "--release", "--locked", "--jobs", str(options["jobs"]), "--manifest-path", str(manifest), "--"]
 
 
+def _toolchain_owner(owner):
+    numbered = owner.name == "03.TOOLS"
+    product = owner.parent if numbered else owner
+    if (product / ".git").is_file():
+        product = Path(git(product, "rev-parse", "--path-format=absolute", "--git-common-dir").decode("utf-8").strip()).parent
+    return product / "03.TOOLS" if numbered else product
+
+
 def rust_root(owner):
     """The supplied Rust toolchain: 10.PRODUCT/rust, or its workspace home since 2026-10-20 (50.TOOLING)."""
+    owner = _toolchain_owner(owner)
     owner = owner.parent if owner.name == "03.TOOLS" else owner
     moved = owner.parents[1] / "50.TOOLING" / "53.AGENT-TOOLS" / "53.08-RUST-TOOLCHAIN"
     return owner.parent / "rust" if (owner.parent / "rust").is_dir() or not moved.is_dir() else moved
@@ -329,7 +338,7 @@ def _environment(compiler_command=None, owner=None, options=None):
     if not explicit_owner and (owner / "runtime" / "acompiler").exists():
         return _build_environment(env, options)
     rust = rust_root(owner)
-    setup = owner / "tools" / "archhub-compiler" / "target" / "msvc" / "setup_x64.bat"
+    setup = _toolchain_owner(owner) / "tools" / "archhub-compiler" / "target" / "msvc" / "setup_x64.bat"
     if os.name == "nt" and setup.is_file():
         command = f'"{env.get("COMSPEC", "cmd.exe")}" /d /s /c ""{setup}" >nul && set"'
         result = subprocess.run(command,

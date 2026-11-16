@@ -11304,6 +11304,12 @@
         "01.APP/nodelang/studio/ds_home2.jsx",
         "01.APP/nodelang/studio/ui.jsx",
         "02.TESTS/tests_replica/test_chat_works.py",
+        "01.APP/nodelang/acp_client.py",
+        "01.APP/nodelang/goose_adapter.py",
+        "01.APP/nodelang/goose_runtime.py",
+        "01.APP/nodelang/settings_owner.py",
+        "01.APP/nodelang/workshop_tasks.py",
+        "02.TESTS/tests_replica/test_chat_acp.py",
         "05.EVIDENCE/acompiler-intents.json"
       ]
     },

@@ -15,6 +15,8 @@
   const curve = (a, b) => `M${a.x} ${a.y} C${(a.x + b.x) / 2} ${a.y},${(a.x + b.x) / 2} ${b.y},${b.x} ${b.y}`;
   const wirePath = (a, b, kind) => kind === 'Straight' ? `M${a.x} ${a.y} L${b.x} ${b.y}` : kind === 'Step' ? `M${a.x} ${a.y} L${(a.x + b.x) / 2} ${a.y} L${(a.x + b.x) / 2} ${b.y} L${b.x} ${b.y}` : curve(a, b);
   const isGroup = n => n.children?.length > 0 || n.kind === 'Group' || n.kind === 'Workshop';
+  const editableGroup = n => n && !n.fixed && !!(n.children?.length || n.frameMembers);
+  const expandedGroup = n => editableGroup(n) && (!!n.frameMembers || !n.collapsed);
   const NODE_FAMILY_STYLE = {
     get:[A.cyan,'folder'],host:[A.cyan,'folder'],read:[A.cyan,'folder'],input:[A.blue,'code'],trigger:[A.cyan,'clock'],
     change:[A.warn,'edit'],shape:[A.warn,'group'],filter:[A.warn,'group'],transform:[A.warn,'edit'],document:[A.accent,'docs'],compose:[A.accent,'docs'],annotate:[A.accent,'edit'],
@@ -700,7 +702,7 @@
       return () => observer.disconnect();
     }, [id, handles, updateInternals]);
     const design = n.fixed ? ({'thing.session':'pin.session','thing.agent':'pin.agent','thing.you':'pin.you','thing.workshop':'pin.workshop'}[n.type]) : 'node.step';
-    const frame=n.frameMembers || !n.fixed && n.children?.length && !n.collapsed;
+    const frame=expandedGroup(n);
     return <div ref={box} data-graph-node={id} data-design={frame ? n.frameMembers ? 'frame.box' : 'group.frame' : !n.fixed&&n.children?.length ? 'group.node' : design} data-fixed={n.fixed || undefined} style={{fontSize:'calc('+(frame?13:12)+'px * var(--text-scale,1))'}}><div inert={c.preview || undefined}>{frame ? c.renderFrame(n,selected) : c.renderNode(n, selected)}</div></div>;
   }
   function FlowWire({id, sourceX, sourceY, targetX, targetY, data}) {
@@ -933,7 +935,7 @@
         }
         if (e.ctrlKey && e.key.toLowerCase() === 'g') {
           e.preventDefault();
-          e.altKey ? frame() : e.shiftKey && node?.children?.length ? u.act(()=>api.ungroupNode(node.id)) : group();
+          e.shiftKey && editableGroup(node) ? u.act(()=>api.ungroupNode(node.id)) : group();
         }
         const editable=selected.filter(id=>!s.graph.nodes.find(n=>n.id===id)?.fixed);
         const center={x:(area.current?.clientWidth/2-view.current.pan.x)/view.current.zoom,y:(area.current?.clientHeight/2-view.current.pan.y)/view.current.zoom,...(parent?{parent}:{})};
@@ -980,7 +982,9 @@
         return visible.map(n => {
           const f = prior.get(n.id);
           // ComfyUI/Grasshopper: a card moves by its title bar; its fields and buttons keep the pointer.
-          return {id: n.id, type: 'archhub', data: {n}, zIndex:n.frameMembers||!n.fixed&&n.children?.length&&!n.collapsed?-1:0, dragHandle: '.node-header', selected: selected.includes(n.id), measured: f?.measured, dragging: f?.dragging,
+          const groupBounds=expandedGroup(n), picked=selected.includes(n.id);
+          // The group header must sit above the pane while member nodes keep their own hit areas.
+          return {id: n.id, type: 'archhub', data: {n}, zIndex:groupBounds?0:picked?2:1, style:groupBounds?{pointerEvents:'none'}:undefined, dragHandle: '.node-header', selected:picked, measured:f?.measured, dragging:f?.dragging,
             position: f?.dragging ? f.position : held.current?.[n.id] || {x: n.x, y: n.y}};
         });
       });
@@ -1061,13 +1065,22 @@
       const r = area.current.getBoundingClientRect(), point = e.changedTouches?.[0] || e;
       return {x: (point.clientX - r.left - view.current.pan.x) / view.current.zoom, y: (point.clientY - r.top - view.current.pan.y) / view.current.zoom};
     };
-    const frame = async()=>{const made=await u.act(()=>api.groupNodes(selected.filter(id=>!s.graph.nodes.find(n=>n.id===id)?.fixed),true));if(made)setSelected([made.id]);};
-    const canvasActions = point=>({point:{...point,...(parent?{parent}:{})},group,frame,fit,select:ids=>setSelected(ids),selectAll:()=>setSelected(visible.map(n=>n.id)),inspectWire:id=>{setWireId(id);setSelected([]);}});
+    const canvasActions = point=>({point:{...point,...(parent?{parent}:{})},group,fit,select:ids=>setSelected(ids),selectAll:()=>setSelected(visible.map(n=>n.id)),inspectWire:id=>{setWireId(id);setSelected([]);}});
+    const showGroupMenu = (event,n) => {
+      event.stopPropagation();
+      const target=event.currentTarget;
+      const trigger=target.matches('[data-group-menu]')?target:target.querySelector('[data-group-menu]');
+      const box=target.getBoundingClientRect();
+      const anchor=event.type==='contextmenu'?{x:event.clientX,y:event.clientY}:{x:box.left,y:box.bottom};
+      trigger?.focus({preventScroll:true});
+      setSelected([n.id]);
+      u.show('Group menu',{id:n.id,selected:[n.id],open:()=>openNode(n),canvas:canvasActions({x:n.x,y:n.y}),anchor});
+    };
     const renderFrame = (n,isSelected)=>{
       const members=(n.frameMembers||n.children).map(id=>visible.find(row=>row.id===id)||s.graph.nodes.find(row=>row.id===id)).filter(Boolean);
       const width=Math.max(241,...members.map(child=>child.x+(area.current?.querySelector('[data-graph-node="'+child.id+'"]')?.offsetWidth||241)-n.x))+24;
       const height=Math.max(100,...members.map(child=>child.y+(area.current?.querySelector('[data-graph-node="'+child.id+'"]')?.offsetHeight||160)-n.y))+24;
-      return <div className="v22g-group-frame" data-frame={n.frameMembers?true:undefined} style={{width,height,borderColor:n.color||undefined,outline:isSelected?'2px solid var(--color-accent)':undefined}}><header className="node-header"><b data-design="group.title">{n.title}</b><span>{members.length} nodes</span>{!n.frameMembers&&<button type="button" className="button-reset nodrag" data-design="group.collapse" aria-label="Collapse group" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.setGroupCollapsed(n.id,true))},event)}>−</button>}<button type="button" className="button-reset canvas-node-menu nodrag" aria-label={n.title+' menu'} onClick={()=>u.show(n.frameMembers?'Frame menu':'Group menu',{id:n.id,selected,open:()=>openNode(n),canvas:canvasActions({x:n.x,y:n.y})})}>⋯</button></header></div>;
+      return <div className="v22g-group-frame" data-frame={n.frameMembers?true:undefined} style={{width,height,borderColor:n.color||undefined,outline:isSelected?'2px solid var(--color-accent)':undefined}}><header className="node-header" onClick={event=>{if(!event.target.closest('button'))showGroupMenu(event,n);}}><b data-design="group.title">{n.title}</b><span>{members.length} nodes</span>{!n.frameMembers&&<button type="button" className="button-reset nodrag" data-design="group.collapse" aria-label="Collapse group" onClick={event=>executeAction('projects.controls.activate',{handler:()=>u.act(()=>api.setGroupCollapsed(n.id,true))},event)}>−</button>}<button type="button" className="dx-quiet nodrag" data-group-menu="" aria-label={n.title+' menu'} aria-haspopup="menu" aria-expanded={u.modal?.kind==='Group menu'&&u.modal?.id===n.id} onKeyDown={event=>{if(event.key==='Enter'||event.key===' ')event.stopPropagation();}} onClick={event=>executeAction('projects.controls.activate',{handler:()=>showGroupMenu(event,n)},event)}>⋯</button></header></div>;
     };
     const socket = (n, p, side) => {
       const locked = !!preview || p.connectable === false || p.read_only;
@@ -1098,7 +1111,7 @@
       return <FlowCard onOpen={()=>openNode(n)} n={n} s={s} u={u} selected={isSelected} refusal={rejected?.to.id === n.id ? rejected : null} onConvert={insertConverter} members={members} socket={(p, side = 'in') => socket(n, p, side)}
         onMember={m=>{if (s.graph.nodes.some(row => row.id === m.id)) {setParent(n.id);setSelected([m.id]);} else {setParent(null);u.act(async()=>{await api.selectGraph(n.id);setSelected([m.id]);});}}}
         onDetach={(m, event) => { const under = document.elementFromPoint(event.clientX, event.clientY); if (under && under.closest && under.closest('[data-graph-node="' + n.id + '"]')) return; u.act(() => api.detachMember(n.id, {id: m.id, title: m.title, agent: m.agent || m.id}, toFlow(event))); }}
-        menu={<button className="button-reset canvas-node-menu nodrag" aria-label={n.title+' menu'} title={n.title+' actions'} onClick={event=>executeAction('projects.ds_screens.NodeMenu.16',{n,openNode,setSelected,u,canvas:canvasActions({x:n.x,y:n.y})},event)}>⋯</button>} />;
+        menu={<button className="button-reset canvas-node-menu nodrag" aria-label={n.title+' menu'} title={n.title+' actions'} data-group-menu={editableGroup(n)?'':undefined} aria-haspopup={editableGroup(n)?'menu':undefined} aria-expanded={editableGroup(n)?u.modal?.kind==='Group menu'&&u.modal?.id===n.id:undefined} onKeyDown={event=>{if(editableGroup(n)&&(event.key==='Enter'||event.key===' '))event.stopPropagation();}} onClick={event=>editableGroup(n)?showGroupMenu(event,n):executeAction('projects.ds_screens.NodeMenu.16',{n,openNode,setSelected,u,canvas:canvasActions({x:n.x,y:n.y})},event)}>⋯</button>} />;
     };
     const stale = (s.solveStale || []).filter(id => s.graph.nodes.some(n => n.id === id)).length;
     const shownIds = new Set(visible.map(n => n.id));
@@ -1175,7 +1188,7 @@
       if (preview || !active) return;
       const read = event => {
         const node = s.graph.nodes.find(n=>n.id===selected.at(-1));
-        return {kind: selected.length>1?'Selection menu':node?.frameMembers?'Frame menu':node?.children?.length&&!node.fixed?'Group menu':node?'Node menu':wireId?'Wire menu':'Canvas menu',
+        return {kind: selected.length>1?'Selection menu':editableGroup(node)?'Group menu':node?'Node menu':wireId?'Wire menu':'Canvas menu',
           id:node?.id,wireId,selected,open:node?()=>openNode(node):undefined,canvas:canvasActions(toFlow(event))};
       };
       window.UI.canvasCommandContext = read;
@@ -1280,11 +1293,11 @@
           });
         }}>
     <CanvasContext.Provider value={{renderNode, renderFrame, openNode, preview:!!preview}}>
-     <RF.ReactFlow nodes={flowNodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} nodesDraggable={!preview} nodesConnectable={!preview}
+     <RF.ReactFlow nodes={flowNodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} nodesDraggable={!preview} nodesConnectable={!preview} elevateNodesOnSelect={false}
        viewport={{x: pan.x, y: pan.y, zoom}} onMove={(event,v) => {if(event instanceof window.Event) updateView({zoom:v.zoom,pan:{x:v.x,y:v.y}},false);}}
        onMoveEnd={(event, v) => { if (event instanceof window.Event) persistView(v); }} minZoom={zoomMin} maxZoom={zoomMax}
        onNodesChange={onNodesChange} onNodeClick={(event,node)=>preview ? onActivate?.() : onInspect?.({nodeId:node.id,wireId:null})} onNodeDragStop={onNodeDragStop} onNodeDoubleClick={(e, f) => preview ? onActivate?.() : openNode(f.data.n)}
-       onNodeContextMenu={(event,node)=>{event.preventDefault();event.stopPropagation();if(preview)return;const next=selected.includes(node.id)?selected:[node.id];setSelected(next);u.show(next.length>1?'Selection menu':node.data.n.frameMembers?'Frame menu':node.data.n.children?.length&&!node.data.n.fixed?'Group menu':'Node menu',{id:node.id,selected:next,open:()=>openNode(node.data.n),canvas:canvasActions(toFlow(event)),anchor:{x:event.clientX,y:event.clientY}});}}
+       onNodeContextMenu={(event,node)=>{event.preventDefault();event.stopPropagation();if(preview)return;if(editableGroup(node.data.n)){showGroupMenu(event,node.data.n);return;}const next=selected.includes(node.id)?selected:[node.id];setSelected(next);u.show(next.length>1?'Selection menu':'Node menu',{id:node.id,selected:next,open:()=>openNode(node.data.n),canvas:canvasActions(toFlow(event)),anchor:{x:event.clientX,y:event.clientY}});}}
        onEdgeContextMenu={(event,edge)=>{event.preventDefault();event.stopPropagation();if(preview||edge.id==='rejected')return;setWireId(edge.id);setSelected([]);u.show('Wire menu',{wireId:edge.id,canvas:canvasActions(toFlow(event)),anchor:{x:event.clientX,y:event.clientY}});}}
        onEdgesChange={changes => setSelectedWires(old => {const next=new Set(old);for(const c of changes)if(c.type==='select'&&c.id!=='rejected')c.selected?next.add(c.id):next.delete(c.id);return [...next];})}
        onConnect={c => connect({id: c.source, port: c.sourceHandle}, {id: c.target, port: c.targetHandle})}

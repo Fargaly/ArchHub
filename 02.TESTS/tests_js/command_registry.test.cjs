@@ -75,7 +75,7 @@ test('a newly declared context reuses an existing command without another handle
 
 test('node and group registrations contain exactly their reachable menu actions',()=>{
   const contexts={};
-  for(const [context,kind,extra] of [['node','Node menu',{}],['group','Group menu',{children:['child']}],['group','Frame menu',{frameMembers:['child']}]]){
+  for(const [context,kind,extra] of [['node','Node menu',{}],['group','Group menu',{children:['child']}],['group','Group menu',{frameMembers:['child']}]]){
     const state={graph:{nodes:[{id:'node',title:'Node',type:'script.python',inputs:[],outputs:[],parameterSchema:[],...extra}],wires:[]},tasks:[]};
     const rig=runtime(fs.readFileSync(path.join(studio,'compiled/context-menus.js'),'utf8'),state);
     const ids=new Set();
@@ -110,13 +110,14 @@ test('every existing menu item preserves label, order, state and action calls', 
     const state={copied:fixture.copied,graph:{nodes:[{...node,...fixture.node}],wires:[{id:'wire',from:'node',fromPort:'param:value',to:'node',toPort:'in',...fixture.wire}]},
       tasks:[{id:'task',title:'Task',pinnedMessages:fixture.pinned?['message']:[]},{id:'third',title:'Third'},{id:'fourth',title:'Fourth'}]};
     const old=runtime(baseline,state,fixture),now=runtime(current,state,fixture);
-    const props=rig=>({kind:fixture.kind,nodeId:fixture.kind==='Task tab menu'?'task':'node',wireId:'wire',taskId:'task',
+    const props=rig=>({kind:rig===now&&fixture.kind==='Frame menu'?'Group menu':fixture.kind,nodeId:fixture.kind==='Task tab menu'?'task':'node',wireId:'wire',taskId:'task',
       message:{id:'message',text:'Node message'},port:'param:value',paramKey:'value',selected:['node','child'],
       close:()=>rig.calls.push(['close']),open:()=>rig.calls.push(['open']),
       canvas:new Proxy({point:{x:10,y:20}},{get:(target,key)=>target[key]||((...args)=>{rig.calls.push(['canvas.'+String(key),...args]);return {ok:true};})})});
-    const oldButtons=buttons(old.sandbox.window.UI.ContextMenu(props(old)));
+    const labelOf=row=>row.children[1].children[0];
+    const oldButtons=buttons(old.sandbox.window.UI.ContextMenu(props(old))).filter(row=>labelOf(row)!=='Frame');
     const newButtons=buttons(now.sandbox.window.UI.ContextMenu(props(now)));
-    const shape=rows=>plain(rows.map(row=>({label:row.children[1].children[0],key:row.children[2].children[0],
+    const shape=rows=>plain(rows.map(row=>({label:labelOf(row)==='Remove frame, keep nodes'?'Remove group, keep nodes':labelOf(row),key:row.children[2].children[0],
       disabled:!!row.props.disabled,danger:row.props.className==='danger'})));
     assert.deepEqual(shape(newButtons),shape(oldButtons),fixture.kind+JSON.stringify(fixture));
     for(let index=0;index<oldButtons.length;index++){
@@ -209,9 +210,9 @@ test('compiled Canvas supplies the real selection and callbacks to both readers'
     await page.evaluate(async()=>{
       const context=window.UI.canvasCommandContext({clientX:400,clientY:300});
       const items=window.UI.paletteCommands(window.commandFixture,window.commandApp,window.ArchHubAPI,{context,actionState:{run:fn=>fn()}});
-      await items.find(x=>x.label==='Frame').action();
+      await items.find(x=>x.label==='Group').action();
     });
-    assert.deepEqual(await page.evaluate(()=>window.commandCalls),[['groupNodes',['1'],true]]);
+    assert.deepEqual(await page.evaluate(()=>window.commandCalls),[['groupNodes',['1'],false]]);
     assert.deepEqual(errors,[]);
     await page.evaluate(()=>window.commandRoot.unmount());
     assert.equal(await page.evaluate(()=>typeof window.UI.canvasCommandContext),'undefined');

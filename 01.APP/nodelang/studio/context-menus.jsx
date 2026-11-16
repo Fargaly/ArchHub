@@ -1,7 +1,7 @@
 // Menus stay anchored to the object. Dialogs are reserved for a decision/form.
 (() => {
   // COMMANDREGISTRY: both menu and palette use this bounded, data-only reader.
-  const contextNames = {'Node menu':'node','Group menu':'group','Frame menu':'group','Wire menu':'wire',
+  const contextNames = {'Node menu':'node','Group menu':'group','Wire menu':'wire',
     'Port menu':'socket','Selection menu':'selection','Canvas menu':'canvas','Task tab menu':'session',
     'Open tasks':'session','Canvas attachments':'session','Task message menu':'message','Tray':'tray','App menu':'navigation'};
   function commandsForContext(registry, context, selection = {}, bindings = {}) {
@@ -179,7 +179,7 @@
       groups.unshift([bind('menu.disconnect', ()=>run(()=>api.deleteSelection([],connected.map(w=>w.id))), null, !connected.length),bind('menu.show.compatible.nodes', ()=>u.show('Compatible nodes',{endpoint:{id:n.id,side:n.outputs.some(p=>p.id===port)?'out':'in',port}}), null, false)]);
       if (param && api.promoteParam) groups.unshift([bind('menu.return.to.inline.parameter', () =>
         run(() => param.promoted ? api.demoteParam(n.id, param.key) : api.promoteParam(n.id, param.key)), param.promoted ? 'Return to inline parameter' : 'Expose as node', false)]);
-    } else if ((kind === 'Node menu' || kind === 'Group menu' || kind === 'Frame menu') && n) {
+    } else if ((kind === 'Node menu' || kind === 'Group menu') && n) {
       const group=n.children?.length>0&&!n.fixed,frame=!!n.frameMembers;
       if(frame)groups=[[bind('menu.rename.25', ()=>u.show('Rename node',{id:n.id,text:n.title}), null, false),bind('menu.colour', ()=>u.show('Node colour',{id:n.id}), null, false),bind('menu.select.contents', ()=>{canvas?.select?.(n.frameMembers);close();}, null, false),bind('menu.remove.frame.keep.nodes', ()=>run(()=>api.ungroupNode(n.id)), null, false)]];
       else if(group)groups=[[bind('menu.open', ()=>{close();open?.();}, null, false),
@@ -196,14 +196,14 @@
         bind('menu.unbypass', ()=>run(()=>api.setNodeFlags(n.id,{bypassed:!n.bypassed})), n.bypassed?'Unbypass':'Bypass', false)],
         [bind('menu.duplicate', ()=>run(()=>api.duplicateNodes([n.id])), null, false),bind('menu.copy', ()=>run(()=>api.copyNodes([n.id])), null, false),bind('menu.cut', ()=>run(()=>api.cutNodes([n.id])), null, false),
         bind('menu.rename.25', ()=>u.show('Rename node',{id:n.id,text:n.title}), null, false),bind('menu.colour', ()=>u.show('Node colour',{id:n.id}), null, false)],
-        [bind('menu.group', ()=>run(()=>canvas?.group?.()), null, selected.length<2),bind('menu.frame', ()=>run(()=>canvas?.frame?.()), null, selected.length<1),
+        [bind('menu.group', ()=>run(()=>canvas?.group?.()), null, selected.length<1),
         ...(n.type==='script.python'?[bind('menu.save.as.node.type', ()=>u.show('Save node type',{id:n.id}), null, false)]:[]),
         bind('menu.more', ()=>setMore(true), null, false)],
         [bind('menu.delete.50', ()=>u.confirm('Delete '+n.title+'?',()=>api.deleteNode(n.id)), null, n.fixed?'Pinned nodes stay on this task.':false)]];
     } else if (kind === 'Selection menu') {
       const editable=selected.filter(id=>!s.graph.nodes.find(n=>n.id===id)?.fixed);
       groups=[[bind('menu.item.51', ()=>run(()=>api.runSelection(editable)), 'Run '+editable.length+' steps', false),bind('menu.ask.the.agent.52', ()=>{close();u.setTaskFace('split');}, null, false)],
-        [bind('menu.group', ()=>run(()=>canvas?.group?.()), null, false),bind('menu.frame', ()=>run(()=>canvas?.frame?.()), null, false),bind('menu.save.as.skill.53', ()=>u.show('Save node type',{ids:editable,skill:true}), null, false)],
+        [bind('menu.group', ()=>run(()=>canvas?.group?.()), null, false),bind('menu.save.as.skill.53', ()=>u.show('Save node type',{ids:editable,skill:true}), null, false)],
         [bind('menu.align.left', ()=>run(()=>api.alignNodes(editable,'x')), null, false),bind('menu.align.top', ()=>run(()=>api.alignNodes(editable,'y')), null, false)],
         [bind('menu.duplicate.56', ()=>run(()=>api.duplicateNodes(editable)), null, false),bind('menu.copy.57', ()=>run(()=>api.copyNodes(editable)), null, false),bind('menu.cut.58', ()=>run(()=>api.cutNodes(editable)), null, false)],
         [bind('menu.item.59', ()=>u.confirm('Delete '+editable.length+' nodes?',()=>api.deleteSelection(editable)), 'Delete '+editable.length+' nodes', false)]];
@@ -271,7 +271,7 @@
           const at = buttons.indexOf(document.activeElement);
           buttons[(at + (e.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length]?.focus();
         }
-        if (e.key === 'Escape') close();
+        if (e.key === 'Escape') { e.stopPropagation(); close(); }
       }}><window.UI.ActionStatus action={actionState} />{groups.map((rows, i) => <div className="context-group" key={i}>{rows.map(([label, icon, key, action, danger, disabled]) => <button data-design={'menu.' + label.toLowerCase().replace(/\W+/g,'-')} key={label} disabled={!!disabled} title={typeof disabled === 'string' ? disabled : undefined} className={danger ? 'danger' : ''} onClick={(event) => dispatch("context-menus.1", action, event)}><Icon name={icon} size={15} /><span>{label}</span><kbd>{key}</kbd></button>)}</div>)}</section></>;
   }
   window.UI.ContextMenu = ContextMenu;

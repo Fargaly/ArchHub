@@ -1178,7 +1178,7 @@ body{min-width:900px;overflow-x:auto}.app-window{min-width:900px}.app-window>div
 .screen-with-composer:has([data-home-page]) .composer-scope .tab-button{font-size:12px;max-width:none;white-space:nowrap}
 .resume-session-scroll>.shelf-tabs{position:sticky;top:0;background:var(--color-bg-panel);z-index:2;display:flex;flex-wrap:wrap;flex:none;padding:8px 0}
 .resume-session-scroll>.shelf-tabs button{white-space:nowrap;padding:5px 7px;font-size:11px;flex:none}
-.sessions-rail .resume-session-scroll>.shelf-tabs{position:fixed;top:50px;left:124px;border:1px solid var(--color-line);border-radius:7px;padding:4px;box-shadow:0 4px 12px #0005}
+.sessions-rail .resume-session-scroll>.shelf-tabs,.sessions-rail .home-section-heading,.sessions-rail .resume-continue,.sessions-rail .resume-members{display:none}
 .agent-avatar{position:relative;display:inline-flex;flex:none}.agent-avatar>small{position:absolute;right:-4px;bottom:-3px;min-width:13px;padding:0 2px;border-radius:4px;background:var(--color-bg-panel);color:var(--color-ink);font:11px/13px var(--type-family-ui);border:1px solid var(--color-line)}
 .resume-row .dx-task span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .resume-step>p:empty{display:none}.resume-summary p{color:var(--color-ink-soft);font-size:13px}
@@ -1186,7 +1186,7 @@ body{min-width:900px;overflow-x:auto}.app-window{min-width:900px}.app-window>div
 @media(max-width:1450px){.header-status>button:first-of-type{display:none}}
 @media(max-width:1100px){.header-status>span{display:none}}
 
-.home-session-section{flex:none;min-width:0}.home-section-heading{display:flex;align-items:center;justify-content:space-between;width:100%;padding:12px 6px 5px;border:0;background:none;color:var(--color-ink-soft);font-size:11px;text-align:left}.home-section-heading b{font-size:11px;font-weight:500}.sessions-rail .home-section-heading{font-size:0;padding:5px}.sessions-rail .home-section-heading b{font-size:11px}
+.home-session-section{flex:none;min-width:0}.home-section-heading{display:flex;align-items:center;justify-content:space-between;width:100%;padding:12px 6px 5px;border:0;background:none;color:var(--color-ink-soft);font-size:11px;text-align:left}.home-section-heading b{font-size:11px;font-weight:500}
 /* DESIGNMATCH v48 Home: Send holds icon and label; rows show initials with a state dot; names wrap to two lines; step cards show what the step made. */
 .screen-with-composer:has([data-home-page]) .composer-tools>button[type=submit]{width:auto;min-width:0;padding:0 12px;gap:6px;white-space:nowrap;flex:none}
 .resume-row .agent-avatar>small{display:none}.resume-row .resume-avatar{position:relative}.resume-row .resume-avatar::after{content:'';position:absolute;right:-3px;bottom:-3px;width:8px;height:8px;border-radius:50%;border:2px solid var(--color-bg-deep);background:var(--color-ink-soft)}.resume-row[data-status=working] .resume-avatar::after{background:var(--color-cyan)}.resume-row[data-status=review] .resume-avatar::after{background:var(--color-warn)}.resume-row[data-status=done] .resume-avatar::after{background:var(--color-ok)}.resume-row[data-status=stopped] .resume-avatar::after{background:var(--color-err)}
@@ -1200,7 +1200,7 @@ body{min-width:900px;overflow-x:auto}.app-window{min-width:900px}.app-window>div
 /* F337: other agents on a piece of work sit as small avatars at the row's right edge (v50 hAmore). */
 .resume-members{display:flex;flex:none;align-items:center;margin-left:auto}
 .resume-members>*+*{margin-left:-6px}
-.resume-continue{flex:none;align-self:center}
+.resume-continue{grid-column:2 / -1;justify-self:start;white-space:nowrap}
 /* SETTINGSMATCH (board penpot-settings-1680-r1963): white label + grey description, one-line value box, Search all on Settings, one-line composer chip. */
 .settings-sheet .sheet-field>span{font-size:calc(15px * var(--text-scale,1));line-height:20px;font-weight:500;color:var(--color-ink);min-width:0}
 .settings-sheet .sheet-field>span small{display:block;margin-top:2px;font-size:calc(13px * var(--text-scale,1));line-height:18px;font-weight:400;color:var(--color-ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

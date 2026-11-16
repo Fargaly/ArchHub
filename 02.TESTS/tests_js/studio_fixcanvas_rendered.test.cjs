@@ -18,6 +18,7 @@ test('30 shell tab returns preserve the actual Canvas, viewport, selection and d
   await page.goto('http://fixcanvas.test');
   await page.addStyleTag({content:xyflow.css()+read('style.css')+'html,body{margin:0;height:100%}'});
   for(const name of ['vendor/react.js','vendor/react-dom.js','xyflow','tokens.jsx','ds/index.jsx','icons.jsx'])await page.addScriptTag({content:name==='xyflow'?xyflow.script():script(name)});
+  await page.addScriptTag({path:path.join(studio,'compiled/react-resizable-panels.js')});
   await page.evaluate(()=>{
     window.calls=[];
     const prop={label:'value',value:'initial',editable:true,editor:'text',relation:'value'};
@@ -38,6 +39,7 @@ test('30 shell tab returns preserve the actual Canvas, viewport, selection and d
   for(const name of ['studio-authority.js','api.js'])await page.addScriptTag({content:script(name)});
   await page.evaluate(async()=>{await window.ArchHubAPI.ready;});
   await page.addScriptTag({content:script('ui.jsx')});
+  await page.addScriptTag({content:script('answer-widgets.jsx')});
   await page.evaluate(()=>{Object.assign(window.UI,{Home:()=>null,Workshop:()=>null,Settings:()=>null,Composer:()=>null,AccountIdentity:()=>null,BaboomSprite:()=>null,GraphProperties:()=>null,NodeRunPolicy:()=>null,MixedProperties:()=>null,CapabilityRows:()=>null});});
   for(const name of ['ds_library.jsx','ds_screens.jsx','context-menus.jsx','app.jsx'])await page.addScriptTag({content:script(name)});
   await page.getByRole('button',{name:'Canvas',exact:true}).click();

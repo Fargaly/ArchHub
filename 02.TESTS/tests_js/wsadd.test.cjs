@@ -11,7 +11,11 @@ const read = name => fs.readFileSync(path.join(root, '01.APP/nodelang/studio', n
 async function mount(outcome) {
   const dom = new JSDOM('<div id="root"></div>', {url:'http://localhost/', runScripts:'outside-only'});
   const win = dom.window;
+  try {
   win.structuredClone = globalThis.structuredClone;
+  // shortcut: JSDOM has no layout; resize behavior belongs to the browser courts.
+  win.matchMedia = () => ({matches:false, addEventListener() {}, removeEventListener() {}});
+  win.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
   const requests = [];
   let roots = [];
   win.fetch = async (url, options = {}) => {
@@ -41,6 +45,7 @@ async function mount(outcome) {
   win.eval(`window.AH={};window.AH_DS={Toggle:()=>null};`);
   win.eval(transformSync(read('ds/index.jsx'), {loader:'jsx',target:'es2022'}).code);
   win.eval(transformSync(read('ui.jsx'), {loader:'jsx',target:'es2022'}).code);
+  win.eval(transformSync(read('answer-widgets.jsx'), {loader:'jsx',target:'es2022'}).code);
   win.eval(`
     window.UI.Btn=({children,onClick,sm,ghost,p,variant,...props})=>React.createElement('button',{...props,onClick},children);
     window.UI.Card=({children})=>React.createElement('section',null,children);
@@ -57,7 +62,7 @@ async function mount(outcome) {
   }
   const settle = () => new Promise(resolve => setTimeout(resolve, 40));
   await settle();
-  const add = [...win.document.querySelectorAll('button')].find(b => b.textContent === 'Add workspace');
+  const add = [...win.document.querySelectorAll('section button')].find(b => b.textContent === 'Add workspace' && b.closest('section').querySelector('h2')?.textContent === 'Workspaces');
   assert.ok(add, 'real Settings Add rendered');
   if (outcome === 'owner-idle') await win.ArchHubAPI.listWorkspaces();
   else add.click();
@@ -70,6 +75,10 @@ async function mount(outcome) {
     win.ReactDOM.flushSync(() => win.__root.unmount());
     win.close();
   }};
+  } catch (error) {
+    win.close();
+    throw error;
+  }
 }
 
 test('Add picks, registers and refreshes the rendered list', async () => {

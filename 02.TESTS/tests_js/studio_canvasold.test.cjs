@@ -31,6 +31,7 @@ async function mount(t,{raw=fixture(),shell=false,system=false}={}) {
  await page.addStyleTag({content:xyflow.css()+read('style.css')+'html,body{margin:0;height:100%}'});
  for(const name of ['vendor/react.js','vendor/react-dom.js','xyflow','tokens.jsx','ds/index.jsx','icons.jsx'])
   await page.addScriptTag({content:name==='xyflow'?xyflow.script():name.endsWith('.jsx')?transformSync(read(name),{loader:'jsx'}).code:read(name)});
+ await page.addScriptTag({path:path.join(studio,'compiled/react-resizable-panels.js')});
  await page.evaluate(raw=>{
   window.fixtureRaw=raw; window.fixtureCalls=[];
   window.fetch=async (url,options={})=>{
@@ -54,6 +55,7 @@ async function mount(t,{raw=fixture(),shell=false,system=false}={}) {
  for(const name of ['studio-authority.js','api.js'])await page.addScriptTag({content:read(name)});
  await page.evaluate(async()=>{await window.ArchHubAPI.ready;});
  await page.addScriptTag({content:transformSync(read('ui.jsx'),{loader:'jsx'}).code});
+ await page.addScriptTag({content:transformSync(read('answer-widgets.jsx'),{loader:'jsx'}).code});
  await page.evaluate(()=>{
   const R=window.React,h=R.createElement,real=window.ArchHubAPI;
   let state={...real.getSnapshot(),connectionNotice:'● Isolated fixture'};const listeners=new Set();

@@ -13,7 +13,10 @@ const js = transformSync(source, {loader: 'jsx', jsx: 'transform'}).code;
 const sharedWindow = {ArchHubAPI: {}, AH: {}, AH_DS: {}, registerActions() {}};
 vm.runInNewContext(transformSync(fs.readFileSync(path.join(studio, 'ui.jsx'), 'utf8'), {loader: 'jsx', jsx: 'transform'}).code,
   {window: sharedWindow, React, console});
+vm.runInNewContext(transformSync(fs.readFileSync(path.join(studio, 'icons.jsx'), 'utf8'), {loader:'jsx'}).code,
+  {window: sharedWindow, React, console});
 const window = {
+  AHIcon: sharedWindow.AHIcon,
   ArchHubAPI: {executeAction() {}},
   UI: {
     taskRowReason: sharedWindow.UI.taskRowReason,
@@ -189,15 +192,18 @@ test('home canvas at 1440 keeps fitted nodes off the plan pane', async () => {
   }
 });
 
-test('a 1440 canvas fit keeps canonical nodes inside the graph and off the plan pane', () => {
+test('a 1440 canvas fit keeps canonical nodes inside the graph and off the plan pane', t => {
   const screens = fs.readFileSync(path.join(studio, 'ds_screens.jsx'), 'utf8');
   const ui = {
     taskRowReason: sharedWindow.UI.taskRowReason,
     A: {ok: '#3a3', warn: '#a80', err: '#a33', ink: '#111', inkSoft: '#666', inkDim: '#888', accent: '#d97757', purple: '#86f', cyan: '#5cc', bgCanvas: '#101015', bgPanel: '#15151a', bgSoft: '#1a1a20', bgHover: '#222', line: '#26262e', lineSoft: '#333', accentDim: '#2a1812', rad: {xs: 3, sm: 5, md: 6, lg: 8, xl: 10, pill: 999}},
     D: {}, api: {}, useData() { return {}; }, useApp() { return {}; }, Btn() { return null; }, Chip() { return null; },
   };
+  const layout = new (require('jsdom').JSDOM)('<!doctype html><html></html>');
+  t.after(() => layout.window.close());
+  Object.assign(layout.window, {UI:ui, ReactResizablePanels:require('react-resizable-panels'), executeAction() {}, registerActions() {}});
   vm.runInNewContext(transformSync(screens, {loader: 'jsx', jsx: 'transform'}).code, {
-    window: {UI: ui, executeAction() {}, registerActions() {}}, React, console,
+    window: layout.window, document:layout.window.document, React, console,
   });
   const graphWidth = 398, graphHeight = 420, planX = graphWidth + 16, planWidth = 336;
   const nodes = [{id: 'design', x: 640, y: 80, w: 280, h: 160}, {id: 'verify', x: 980, y: 80, w: 280, h: 160}];
@@ -265,7 +271,7 @@ test('workshop and canvas routes open that face of the selected task on Home', (
   const ui = {
     taskRowReason: sharedWindow.UI.taskRowReason,
     useData() {
-      return {tasks: [{id: 't1', title: 'Ship the hall', status: 'WIP', description: 'Ship the hall', plan: [], messages: []}], liveAgents: [], approvals: [], hosts: []};
+      return {settings: [], graph: {nodes: [], wires: []}, tasks: [{id: 't1', title: 'Ship the hall', status: 'WIP', description: 'Ship the hall', plan: [], messages: []}], liveAgents: [], approvals: [], hosts: []};
     },
     useApp() { return {task: 't1', composerDraft: {}, setComposerDraft() {}, act: fn => fn(), setTask() {}, go() {}, libraryOpen: false, setLibraryOpen() {}, show() {}}; },
     Btn(props) { return React.createElement('button', props, props.children); },
@@ -310,7 +316,7 @@ test('the workshop face shows task-file messages and refreshes them when the tas
   };
   const ui = {
     taskRowReason: sharedWindow.UI.taskRowReason,
-    useData() { return {tasks: [task], liveAgents: [], approvals: [], hosts: [], providers: []}; },
+    useData() { return {settings: [], graph: {nodes: [], wires: []}, tasks: [task], liveAgents: [], approvals: [], hosts: [], providers: []}; },
     useApp() { return {task: 't1', composerDraft: {}, setComposerDraft() {}, act: fn => fn(), setTask() {}, go() {}, libraryOpen: false, setLibraryOpen() {}, show() {}}; },
     Btn(props) { return React.createElement('button', props, props.children); },
   };
@@ -338,7 +344,7 @@ test('home at 1440 keeps the conversation dominant and says an empty task once',
   const ui = {
     taskRowReason: sharedWindow.UI.taskRowReason,
     useData() {
-      return {tasks: [current], liveAgents: [], approvals: [], hosts: [], providers: []};
+      return {settings: [], graph: {nodes: [], wires: []}, tasks: [current], liveAgents: [], approvals: [], hosts: [], providers: []};
     },
     useApp() { return {task: 't1', composerDraft: {}, setComposerDraft() {}, act: fn => fn(), setTask() {}, go() {}, libraryOpen: false, setLibraryOpen() {}, show() {}}; },
     Btn(props) { return React.createElement('button', props, props.children); },

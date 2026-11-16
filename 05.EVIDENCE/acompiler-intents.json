@@ -10,6 +10,7 @@
         "01.APP/nodelang/studio/api.js",
         "01.APP/nodelang/studio/app.jsx",
         "01.APP/nodelang/studio/context-menus.jsx",
+        "01.APP/nodelang/studio/ds_screens.jsx",
         "02.TESTS/tests_replica/test_command_registry.py",
         "02.TESTS/tests_js/command_registry.test.cjs",
         "04.DOCS/DECISIONS.md",

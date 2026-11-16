@@ -11266,6 +11266,17 @@
         "05.EVIDENCE/designv22g/"
       ]
     },
+    "INTERFACESTUDIO": {
+      "source": "Founder Interface Studio repair and Claude717 handoff bc28b9ab8a214b7c9bf6e93af0fc6b66: restore typed Button, Card and Text placement in the existing session document, preserve editor behavior and verify installed in isolation.",
+      "scope": [
+        "01.APP/nodelang/library_engines.py",
+        "01.APP/nodelang/nograph_server.py",
+        "01.APP/nodelang/studio/api.js",
+        "02.TESTS/tests_replica/test_nothing_given_up.py",
+        "02.TESTS/tests_js/newapp_account.test.cjs",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
     "NOTHINGGIVENUP": {
       "source": "Founder 2026-11-16 on the installed app: Community, Cloud, Cockpit, Website and Profiles were cancelled as if they never existed; where is Social media; we are not redoing the work. NOTHING-GIVEN-UP: recover the removed Social media, Community and Plan & access work from git history and bind it to file owners (NODE-SPEC 1.7, section 12); open items show a visible notice. Lane commit only, no push, install or release.",
       "scope": [

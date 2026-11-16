@@ -500,7 +500,9 @@ class NoGraphServer:
     def _studio(self, handler, parsed):
         name = parsed.path[len('/studio'):].lstrip('/') if parsed.path.startswith('/studio') else ''
         target = (STUDIO_DIR / (name or 'studio.html')).resolve()
-        if STUDIO_DIR not in target.parents or not target.is_file():
+        if name == 'baboom-sprite.png':  # the one BABOOM sheet (data/baboom), drawn parked in the rail
+            target = Path(__file__).resolve().parent / 'data' / 'baboom' / 'spritesheet.png'
+        elif STUDIO_DIR not in target.parents or not target.is_file():
             raise Refused('no such file', 404)
         headers = []
         raw = target.read_bytes()

@@ -535,7 +535,7 @@
               r
             }, event)} badge={r === 'workshop' ? s.tasks.filter(t => t.status === 'IN REVIEW').length || undefined : undefined} style={{
               flex: 'none', width: 64, height: 58
-            }} />)}<span className="fill" /><D.Rail variant="home" glyph={<window.AHIcon name="docs" size={18} />} label="Docs" active={route==='docs'} onClick={()=>go('docs')} style={{flex:'none',width:64,height:58}} /><D.Rail variant="home" glyph={<window.AHIcon name="settings" size={18} />} label="Settings" active={route.startsWith('settings/')} onClick={event => executeAction("appShell.Control.11", {
+            }} />)}<span className="fill" /><window.UI.BaboomSprite open={companion} setOpen={setCompanion} rail /><D.Rail variant="home" glyph={<window.AHIcon name="docs" size={18} />} label="Docs" active={route==='docs'} onClick={()=>go('docs')} style={{flex:'none',width:64,height:58}} /><D.Rail variant="home" glyph={<window.AHIcon name="settings" size={18} />} label="Settings" active={route.startsWith('settings/')} onClick={event => executeAction("appShell.Control.11", {
               go
             }, event)} style={{
               flex: 'none', width: 64, height: 58
@@ -553,7 +553,6 @@
               flex: 'none'
             }}>{window.UI.profileInitials(s.profile)}</button></nav><div className="screen-with-composer has-local-composer" style={{'--canvas-library-width':libraryOpen ? '248px' : '0px'}}>{(canvasOpened || route==='canvas') && <div hidden={route!=='canvas'} ref={element=>{element?.toggleAttribute('inert',route!=='canvas'||!!s.graphOpening);}} style={{display:route==='canvas'?'grid':'none',minHeight:0,height:'100%'}}><window.UI.Canvas key={s.graph.scopeKey || s.graph.id} active={route==='canvas'&&!s.graphOpening} /></div>}{screen}{route !== 'task-file' && !route.startsWith('settings/') && <div className="global-composer"><window.UI.Composer compact /></div>}</div></div>
   </div>}
-  <window.UI.BaboomSprite open={companion} setOpen={setCompanion} />
   {toast && <div role="alert" className="flex" style={{
         position: 'fixed',
         top: 100,

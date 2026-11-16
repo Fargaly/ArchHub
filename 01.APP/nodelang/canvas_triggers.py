@@ -164,11 +164,11 @@ class TriggerService:
         started = time.time()
         trigger = {}
         run = {'id': uuid.uuid4().hex, 'trigger': node_id, 'kind': kind, 'reason': reason, 'state': 'running', 'start': started}
-        self._history(key, run)
 
         def change(document):
             downstream = sorted(docs.downstream(document, [node_id]))
             ran = run_document(document, invoke=guard_effect, roots=downstream, path=path, again=True)
+            run['id'] = ran['run']['id']
             run.update(run_outcome(ran))
             for node in document['nodes']:
                 if node['id'] in ran['results']:

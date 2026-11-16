@@ -1253,6 +1253,8 @@ def input_signature(node, incoming, path):
 
 def persist_run(document, path, source=None):
     """Caller holds the document lock; retain portable inputs for linked invocations."""
+    run = document['properties']['canvasRun']
+    run.setdefault('start', time.time())
     saved = copy.deepcopy(source) if source is not None else document
     if source is not None:
         results = {node['id']: node.get('result') for node in document['nodes']}
@@ -1261,6 +1263,22 @@ def persist_run(document, path, source=None):
                 node['result'] = copy.deepcopy(results[node['id']])
         saved.setdefault('properties', {})['canvasRun'] = copy.deepcopy(document['properties']['canvasRun'])
     write_document(path, saved)
+    results = {node['id']: node.get('result') or {} for node in document['nodes']}
+    state = run.get('state')
+    if state in ('Waiting', 'Ended'):
+        approval = next((result['output'].get('approvalId') for result in results.values()
+                         if result.get('status') == 'Waiting for approval'
+                         and isinstance(result.get('output'), dict)), None)
+        outcome = run_outcome({'approvalId': approval, 'results': results,
+                               'succeeded': state == 'Ended' and all(
+                                   result.get('status') in ('Done', 'Disabled', 'Skipped')
+                                   for result in results.values())})
+    else:
+        outcome = {'state': 'unconfirmed' if state == 'Unconfirmed' else 'running'}
+    # The history holds status only; node results remain in the document.
+    append_run(path, {'id': run['id'], 'trigger': 'manual', 'kind': 'manual', 'start': run['start'],
+                     'end': time.time() if state == 'Ended' else None,
+                     'approvalId': None, 'failedNode': '', 'error': '', **outcome}, saved['id'])
 
 
 def begin_attempt(continuation, node, params, feeds):
@@ -1369,6 +1387,7 @@ def run_document(document, *, invoke=None, roots=None, stopped=None, depth=0, pl
                 if identity in pending:
                     withdraw_approval(os.environ, identity, 'canvas input changed' if not again else 'Run all again')
         run = {'id': previous.get('id') or str(uuid4()), 'inputs': signatures, 'budget_s': budget_s,
+               'start': time.time() if again else previous.get('start', time.time()),
                'attempts': copy.deepcopy(previous.get('attempts', {}))}
         if again:
             run['id'] = str(uuid4())

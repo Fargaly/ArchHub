@@ -513,3 +513,26 @@ def test_run_budget_stops_deterministically_and_nothing_polls(running, monkeypat
     assert counts == {'one': 1, 'two': 1, 'three': 1}
     with pytest.raises(ValueError, match='budget'):
         run(budget_s=-1)
+
+
+def test_canvas_run_history_keeps_one_id_through_approval_and_reopen(running):
+    from nodelang.session_files import read_document, read_runs, runs_path
+    path, counts, run = running
+    waiting = run()
+    identity = read_document(path)['properties']['canvasRun']['id']
+    history = read_runs(path)
+    assert len(history) == 1 and history[0]['id'] == identity
+    assert history[0]['state'] == 'waiting-for-approval'
+    assert history[0]['approvalId'] == waiting['approvalId']
+    assert counts == {'one': 1, 'two': 0, 'three': 0}
+    approve(waiting)
+    history = read_runs(path)
+    assert len(history) == 1 and history[0]['id'] == identity
+    assert history[0]['state'] == 'succeeded' and history[0]['trigger'] == 'manual'
+    assert history[0].get('approvalId') is None and not history[0].get('error')
+    assert counts == {'one': 1, 'two': 1, 'three': 1}
+    lines = runs_path(path).read_bytes()
+    read_document(path)
+    assert runs_path(path).read_bytes() == lines
+    for line in lines.decode('utf-8').splitlines():
+        assert not {'results', 'outputs', 'attempts', 'document'} & json.loads(line).keys()

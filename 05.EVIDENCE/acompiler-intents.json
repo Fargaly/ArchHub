@@ -1,6 +1,22 @@
 {
   "schema_version": 1,
   "intents": {
+    "SESSIONMODEL": {
+      "source": "Founder ONE BUILD workstream 1, 2026-11-16 (\"كل حاجة بتصب في بعضها\"; \"مش هنعيد كسم الشغل من تاني\"), rows F337 rest, F334, F344, F199 parts, F273, F315, D-038; R&D res-047 section 1, res-045, res-039, res-038: one .archhub session holds project (registered workspace), state open/done/archived + pinned, done check run by complete(), trigger armed + ask before running, append-only run history beside the file, per-session settings above global, input links read live with cycle refusal, plan/handover context. Extends session_files, workshop_tasks, canvas_triggers, nograph_server and api.js; members and join rules unchanged. Isolated profile tests only, branch-only commits, hooks on, no push/install/release or live profile access.",
+      "scope": [
+        "01.APP/nodelang/session_files.py",
+        "01.APP/nodelang/workshop_tasks.py",
+        "01.APP/nodelang/canvas_triggers.py",
+        "01.APP/nodelang/nograph_server.py",
+        "01.APP/nodelang/studio/api.js",
+        "02.TESTS/tests_replica/test_session_model.py",
+        "02.TESTS/tests_replica/test_canvas_triggers.py",
+        "04.DOCS/FORMAT.md",
+        "04.DOCS/ARCHHUB.schema.json",
+        "04.DOCS/DECISIONS.md",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
     "F177": {
       "source": "Founder F177 SAME RULES FOR EVERY AGENT (T1, 2026-11-16): provider agnostic, the app, hooks and onboarding work on any installed agent. Cursor (#13113-13115, #13197-13200) and Antigravity (#13133) joins were refused with 'Installed governance adapter unavailable for this agent'; every Cursor tool call was blocked because cursor-agent runs its PowerShell-wrapped hooks in Git Bash. Table-driven onboarding for Cursor, Antigravity, OpenCode, Goose and a generic path for unknown agents; plain hook command line under bash and PowerShell; cursor-agent children without Git Bash markers. Isolated profile tests only, branch-only commits, hooks on, no push/install/release or live profile access.",
       "scope": [

@@ -295,8 +295,8 @@ class NoGraphServer:
     @staticmethod
     def _probe_models():
         from .cloud_relay import load_cloud_session
-        from .model_catalogue import groups_with_routes, held_model_groups
-        held = held_model_groups(load_cloud_session())
+        from .model_catalogue import groups_with_routes, held_model_groups_read_only
+        held = held_model_groups_read_only(load_cloud_session())
         return groups_with_routes(held) if held is not None else {'ok': True, 'groups': [], 'count': 0}
 
     def _probe_providers(self):
@@ -728,7 +728,8 @@ def r_router_settings(s, req):
     from .settings_owner import SettingsOwner
     owner = SettingsOwner(None, dependencies=object())
     if req.method == 'GET' or not req.body:
-        return {'ok': True, **owner.routerSettings(), 'live_agents': s._live_agents.get() or {'processes': [], 'complete': False}}
+        return {'ok': True, **owner.routerSettings(refresh_catalogue=req.query.get('refresh_catalogue') == ['1']),
+                'live_agents': s._live_agents.get() or {'processes': [], 'complete': False}}
     return {'ok': True, **owner.setRouterSettings(req.body)}
 
 

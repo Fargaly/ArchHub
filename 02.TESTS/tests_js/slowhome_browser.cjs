@@ -25,7 +25,7 @@ const {chromium} = require('playwright');
     });
     await page.goto(process.env.SLOWHOME_URL, {waitUntil:'domcontentloaded'});
     await page.waitForFunction(() => window.ArchHubAPI && !document.getElementById('studio-boot')
-      && document.querySelector('[data-home-ready]') && window.slowhomeLoading().length === 0, null, {timeout:15000})
+      && document.querySelector('[data-home-page]') && window.slowhomeLoading().length === 0, null, {timeout:15000})
       .catch(async error => {
         console.log(JSON.stringify({errors, page:await page.locator('body').innerText(),
           loading:await page.evaluate(() => window.slowhomeLoading())}));
@@ -54,12 +54,21 @@ const {chromium} = require('playwright');
       loading:window.slowhomeLoading()}), started);
     console.log(JSON.stringify({surface:'Settings', first_render_ms:firstRender, ...settings}));
     await page.getByLabel('Settings categories').getByRole('button', {name:'Account', exact:true}).click();
-    await page.getByText('Sessions folder', {exact:true}).waitFor();
-    assert.ok(await page.getByText(await page.evaluate(() => window.ArchHubAPI.getSnapshot().sessionsFolder), {exact:true}).isVisible());
+    await page.getByText('Where each session file is saved', {exact:true}).waitFor({timeout:5000});
+    assert.ok(await page.getByTitle(await page.evaluate(() => window.ArchHubAPI.getSnapshot().sessionsFolder), {exact:true}).isVisible());
     assert.deepEqual(await page.locator('[role="alert"]:visible').allTextContents(), []);
     assert.deepEqual(errors, []);
     assert.ok(home.hydrated_ms < 6000, 'Home clears loading before the reported 6 s stall');
     assert.ok(settings.hydrated_ms < 6000, 'Settings clears loading before the reported 6 s stall');
+    const opened = await page.evaluate(async () => {
+      const api = window.ArchHubAPI;
+      const created = await api.createTask('Open existing work from Home');
+      await api.openSession(created.path);
+      return created.path;
+    });
+    assert.ok(fs.existsSync(opened), 'the selected workflow exists on disk');
+    assert.ok(!fs.readdirSync(path.dirname(opened)).includes('Untitled.archhub'),
+      'opening the first saved workflow does not persist the untouched in-memory draft');
   } finally {
     await browser.close();
   }

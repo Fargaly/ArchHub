@@ -76,7 +76,16 @@ _refreshing: set[bytes] = set()
 _router_refreshes: dict[Path, tuple[float, bool, str]] = {}
 
 
-def cached_free_routes():
+def openrouter_configured():
+    from .model_router import ModelRouteRefused, discover_key
+    try:
+        discover_key('openrouter')
+    except ModelRouteRefused:
+        return False
+    return True
+
+
+def cached_free_routes(*, refresh=False):
     """Disposable public catalogue; a cold or stale read never waits for HTTP."""
     from .model_router import _OPENROUTER_FREE_MODELS_DEFAULT
     path = state_directory() / 'settings' / 'openrouter-catalogue.json'
@@ -92,10 +101,11 @@ def cached_free_routes():
     except FileNotFoundError:
         held = {}
     except (OSError, ValueError):
-        cache_error = 'Saved model list could not be read. Using built-in free models; discovery retries automatically.'
+        cache_error = 'Saved model list could not be read. Using built-in free models. Refresh models to try again.'
+    refresh = refresh and openrouter_configured()
     with _lock:
         attempted, running, error = _router_refreshes.get(path, (0.0, False, ''))
-        if time.time() - held.get('at', 0) >= _CACHE_SECONDS and not running and time.monotonic() - attempted >= _FRESH_SECONDS:
+        if refresh and time.time() - held.get('at', 0) >= _CACHE_SECONDS and not running and time.monotonic() - attempted >= _FRESH_SECONDS:
             _router_refreshes[path] = (time.monotonic(), True, error)
             threading.Thread(target=_refresh_free_routes, args=(path,), name='archhub-router-catalogue', daemon=True).start()
             running = True
@@ -112,7 +122,7 @@ def _refresh_free_routes(path):
         rows = openrouter_models(opener=urllib.request.urlopen, timeout=_FREE_ROTATION_ATTEMPT_SECONDS)
         routes = openrouter_free_chat_routes({'groups': [{'name': BYO_GROUP, 'items': rows}]})
         if not routes:
-            error = 'OpenRouter returned no free chat models. Using the saved list; discovery retries automatically.'
+            error = 'OpenRouter returned no free chat models. Using the saved list. Refresh models to try again.'
             return  # A failed/empty catalogue never replaces a useful last answer.
         path.parent.mkdir(parents=True, exist_ok=True)
         fd, temporary = tempfile.mkstemp(dir=path.parent, suffix='.tmp')
@@ -120,7 +130,7 @@ def _refresh_free_routes(path):
             json.dump({'at': time.time(), 'routes': routes}, stream)
         os.replace(temporary, path)
     except (OSError, ValueError):
-        error = 'OpenRouter is unavailable. Using saved or built-in free models; discovery retries automatically.'
+        error = 'OpenRouter is unavailable. Using saved or built-in free models. Refresh models to try again.'
     finally:
         if temporary is not None:
             Path(temporary).unlink(missing_ok=True)
@@ -459,7 +469,8 @@ def direct_models(*, opener: Callable, timeout: float, prices: Mapping[str, tupl
 
 
 def live_model_groups(session: Optional[Mapping[str, str]] = None, *, opener: Optional[Callable] = None,
-                      timeout: float = 6.0, now: Optional[float] = None, force: bool = False) -> dict:
+                      timeout: float = 6.0, now: Optional[float] = None, force: bool = False,
+                      include_openrouter: bool = True) -> dict:
     """Groups for the picker, cached ten minutes; every source best effort."""
     opener = opener or urllib.request.urlopen
     moment = time.time() if now is None else now
@@ -473,9 +484,11 @@ def live_model_groups(session: Optional[Mapping[str, str]] = None, *, opener: Op
     notes: dict[str, str] = {}
     groups = []
     prices: dict = {}
-    for name, fn in ((BYO_GROUP, lambda: openrouter_models(opener=opener, timeout=timeout, prices=prices)),
-                     (LOCAL_GROUP, lambda: local_models(opener=opener, timeout=timeout)),
-                     (SUBSCRIPTION_GROUP, lambda: subscription_cli_models())):
+    sources = [(LOCAL_GROUP, lambda: local_models(opener=opener, timeout=timeout)),
+               (SUBSCRIPTION_GROUP, subscription_cli_models)]
+    if include_openrouter:
+        sources.insert(0, (BYO_GROUP, lambda: openrouter_models(opener=opener, timeout=timeout, prices=prices)))
+    for name, fn in sources:
         failure = None
         try:
             items = fn()

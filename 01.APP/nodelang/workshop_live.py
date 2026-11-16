@@ -238,8 +238,9 @@ def live_ids():
 
 def _refresh_live_ids():
     from .workshop_mailbox import _local_transport
-    transport = _local_transport()
+    transport = None
     try:
+        transport = _local_transport()
         found = transport.discover(timeout_seconds=LIVE_NODE['params']['discover_timeout_seconds'],
                                    apps=['claude', 'codex', 'opencode', 'antigravity', 'antigravity-ide'])
     except Exception as error:  # noqa: BLE001 - no list means nothing is dropped; the reason is logged

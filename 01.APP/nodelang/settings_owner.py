@@ -219,10 +219,13 @@ class SettingsOwner:
             return next((id for id, name in _CLI_ROUTE_NAME.items() if name == assistant), '')
         return destination.family
 
-    def _provider_models(self):
-        from .model_catalogue import live_model_groups, groups_with_routes
+    def _provider_models(self, refresh):
+        from .model_catalogue import groups_with_routes, held_model_groups_read_only, live_model_groups, openrouter_configured
         from .model_router import default_cloud_session
-        payload = groups_with_routes(live_model_groups(default_cloud_session()))
+        session = default_cloud_session()
+        held = (live_model_groups(session, force=True, include_openrouter=openrouter_configured())
+                if refresh else held_model_groups_read_only(session))
+        payload = groups_with_routes(held or {'groups': []})
         if payload.get('ok') is False:
             raise ValueError('Model catalogue unavailable. Refresh Agents and retry.')
         result = {}
@@ -255,10 +258,10 @@ class SettingsOwner:
             return self.setRouterSettings({'default_model': model, 'providerPreferences': {
                 **read_router_settings()['providerPreferences'], id: model}})
 
-    def routerSettings(self):
+    def routerSettings(self, *, refresh_catalogue=False):
         from .model_router import request_profiles
         from .model_catalogue import cached_free_routes
-        return {**read_router_settings(), **cached_free_routes(), 'requests': request_profiles()}
+        return {**read_router_settings(), **cached_free_routes(refresh=refresh_catalogue), 'requests': request_profiles()}
 
     def setRouterSettings(self, changes):
         if type(changes) is not dict:
@@ -311,7 +314,7 @@ class SettingsOwner:
         self._save(self._subject(), {'companion': {**self.companionState(), **values}})
         return {'companion': self.companionState()}
 
-    def readControls(self):
+    def readControls(self, refresh_models=False):
         from .model_router import ProviderCredentialError, list_social_credentials
         result = {'companion': self.companionState(),
                   'providerPreferences': read_router_settings()['providerPreferences'],
@@ -325,7 +328,7 @@ class SettingsOwner:
             result['secrets'] = []
             result['controlErrors']['secrets'] = 'Connected account index could not be read. Refresh Connections.'
         try:
-            result['providerModels'] = self._provider_models()
+            result['providerModels'] = self._provider_models(refresh_models is True)
         except ValueError:
             result['providerModels'] = {}
             result['controlErrors']['providerModels'] = 'Model catalogue unavailable. Refresh Agents.'

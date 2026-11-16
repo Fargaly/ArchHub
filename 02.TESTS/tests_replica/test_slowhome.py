@@ -111,7 +111,7 @@ def test_cold_reads_do_not_wait_for_network_or_hosts(tmp_path, monkeypatch):
 def test_catalogue_cold_stale_fresh_and_failure(tmp_path, monkeypatch):
     from nodelang import model_catalogue as catalogue
     from nodelang.model_router import _OPENROUTER_FREE_MODELS_DEFAULT
-    monkeypatch.setenv('LOCALAPPDATA', str(tmp_path))
+    _profile(tmp_path, monkeypatch)
     pending, released = threading.Event(), threading.Event()
 
     def fetch(**_kwargs):
@@ -120,13 +120,18 @@ def test_catalogue_cold_stale_fresh_and_failure(tmp_path, monkeypatch):
         raise OSError('offline')
 
     monkeypatch.setattr(catalogue, 'openrouter_models', fetch)
+    monkeypatch.setattr(catalogue, 'openrouter_configured', lambda: False)
+    assert not catalogue.cached_free_routes(refresh=True)['refreshing']
+    monkeypatch.setattr(catalogue, 'openrouter_configured', lambda: True)
+    assert not catalogue.cached_free_routes()['refreshing']
+    assert not pending.is_set()
     started = time.perf_counter()
-    cold = catalogue.cached_free_routes()
+    cold = catalogue.cached_free_routes(refresh=True)
     assert time.perf_counter() - started < .3
     assert cold['models'] == ['openrouter/free', *['openrouter/' + route for route in _OPENROUTER_FREE_MODELS_DEFAULT]]
     assert cold['refreshing']
     assert pending.wait(1)
-    path = tmp_path / 'ArchHub/settings/openrouter-catalogue.json'
+    path = tmp_path / 'state/settings/openrouter-catalogue.json'
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({'at': 0, 'routes': ['fixture/cached:free']}), encoding='utf-8')
     assert catalogue.cached_free_routes()['models'][-1] == 'openrouter/fixture/cached:free'
@@ -138,7 +143,7 @@ def test_catalogue_cold_stale_fresh_and_failure(tmp_path, monkeypatch):
     assert 'unavailable' in catalogue.cached_free_routes()['catalogue_error']
     assert json.loads(path.read_text())['routes'] == ['fixture/cached:free']
     path.write_text(json.dumps({'at': time.time(), 'routes': ['fixture/fresh:free']}), encoding='utf-8')
-    fresh = catalogue.cached_free_routes()
+    fresh = catalogue.cached_free_routes(refresh=True)
     assert fresh['models'][-1] == 'openrouter/fixture/fresh:free'
     assert not fresh['refreshing']
     # Zero-priced catalogue ids need not carry OpenRouter's :free suffix.
@@ -147,11 +152,32 @@ def test_catalogue_cold_stale_fresh_and_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(catalogue, 'openrouter_models', lambda **_kwargs: [
         {'route': 'fixture/zero-priced', 'prompt_price_per_m': 0,
          'completion_price_per_m': 0, 'all_prices_zero': True}])
-    catalogue.cached_free_routes()
+    catalogue.cached_free_routes(refresh=True)
     deadline = time.monotonic() + 2
     while catalogue.cached_free_routes()['refreshing'] and time.monotonic() < deadline:
         time.sleep(.01)
     assert catalogue.cached_free_routes()['models'][-1] == 'openrouter/fixture/zero-priced'
+
+
+def test_provider_choices_use_held_catalogue_until_explicit_refresh(monkeypatch):
+    from nodelang import model_catalogue, model_router
+    from nodelang.settings_owner import SettingsOwner
+
+    monkeypatch.setattr(model_router, 'default_cloud_session', lambda: None)
+    monkeypatch.setattr(model_catalogue, '_cache', {'at': 0.0, 'value': None, 'identity': None})
+    monkeypatch.setattr(model_catalogue, 'local_models', lambda **kwargs: [])
+    monkeypatch.setattr(model_catalogue, 'subscription_cli_models', lambda: [])
+    calls = []
+    monkeypatch.setattr(model_catalogue, 'openrouter_models', lambda **kwargs: calls.append(True) or [])
+    owner = SettingsOwner(None, dependencies=object())
+
+    monkeypatch.setattr(model_catalogue, 'openrouter_configured', lambda: False)
+    assert owner._provider_models(True) == {}
+    monkeypatch.setattr(model_catalogue, 'openrouter_configured', lambda: True)
+    assert owner._provider_models(False) == {}
+    assert calls == []
+    owner._provider_models(True)
+    assert calls == [True]
 
 
 def test_account_returns_saved_value_while_cloud_waits(tmp_path, monkeypatch):

@@ -973,7 +973,7 @@ const socialOperations={refreshSocialState:'get_state',updateOfficePage:'update_
  checkVerdictPattern:'check_verdict_pattern',setMeeting:'set_meeting',setMeetingActionOwner:'set_meeting_action_owner'};
 for(const [socialFunction,operation] of Object.entries(socialOperations))api[socialFunction]=(...args)=>socialOperation(operation,args);
 api.readContentSource=({kind,url})=>socialOperation('read_content_source',[kind,url]);
-api.refreshModelRoster=async()=>{const rows=await api.listProviders();publish({modelNotice:rows.length+' providers returned by the live provider owner.'});return rows;};
+api.refreshModelRoster=async()=>{await refreshSettingsControls(true);const rows=await api.listProviders();publish({modelNotice:rows.length+' providers returned by the live provider owner.'});return rows;};
 api.createMeetingTask=async index=>{
  const meeting=state.meeting,held=meeting.actionTasks?.[index];
  if(held){await refreshTasks();const existing=state.tasks.find(t=>t.id===held);if(existing)return existing;throw Error('The linked task needs reconciliation in the Workshop.');}
@@ -1030,8 +1030,8 @@ api.importMeetingTranscript=async()=>{
 };
 api.refreshSocialMemory=refreshBrain;
 api.setSourceReadSeconds=seconds=>socialOperation('set_source_read_seconds',[seconds]);
-async function refreshSettingsControls(){
- const result=await settingsAction('readControls');projectProviders();return result;
+async function refreshSettingsControls(refreshModels=false){
+ const result=await settingsAction('readControls',[refreshModels]);projectProviders();return result;
 }
 async function refreshNotifications(){
  const epoch=scopeEpoch,binding=JSON.stringify(workshopBinding()),generation=notificationGeneration;
@@ -1066,7 +1066,7 @@ api.refreshDocs=async()=>{
  publish({docs,bookGlossary:result.glossary.map(entry=>`| ${entry.term} | ${entry.definition} |`)});
  return docs;
 };
-api.refreshRouter=async()=>{const result=await request('/api/router/settings',{});publish({router:result,providerPreferences:result.providerPreferences,providers:state.providers.map(p=>({...p,...result.agents[p.id]}))});return result;};
+api.refreshRouter=async(refreshCatalogue=false)=>{const result=await request('/api/router/settings'+(refreshCatalogue?'?refresh_catalogue=1':''),{});publish({router:result,providerPreferences:result.providerPreferences,providers:state.providers.map(p=>({...p,...result.agents[p.id]}))});return result;};
 api.setRouterSettings=async values=>{await request('/api/router/settings',values);return api.refreshRouter();};
 api.setProviderModel=async(id,model)=>{const current=await api.refreshRouter();return api.setRouterSettings({default_model:model,providerPreferences:{...current.providerPreferences,[id]:model}});};
 api.setAgentProfile=async(id,values)=>{const current=await api.refreshRouter();return api.setRouterSettings({agents:{...current.agents,[id]:{...current.agents[id],...values}}});};
@@ -1684,7 +1684,8 @@ function portableDocument(){return copy(sessionDocument);}
 async function adoptFile(document,path='',navigation=++fileNavigation){
  const checked=await sessionRequest('validate',{document});
  if(navigation!==fileNavigation)return {cancelled:true};
- if(sessionDocument)await flushAutosave();
+ // The untouched startup draft has no file to flush when another workflow opens.
+ if(sessionDocument&&(sessionPath||localDirty||autosaveTimer!==null))await flushAutosave();
  if(navigation!==fileNavigation)return {cancelled:true};
  sessionDocument=copy(checked.document);sessionPath=path;sessionRevision=checked.document.properties?.revision||0;localDirty=false;solveNote='';fileHistory=[];fileFuture=[];runEpoch++;scopeEpoch++;projectFile();queueAutosave();return state.graph;
 }

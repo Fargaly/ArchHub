@@ -146,6 +146,21 @@ def test_gateway_applies_once_per_stamp(profile, monkeypatch):
     assert len(started) == 2 and gateway.counts() == (2, 2)
 
 
+def test_live_discovery_can_retry_when_transport_cannot_start(monkeypatch, capsys):
+    from nodelang import workshop_live, workshop_mailbox
+
+    def unavailable():
+        raise FileNotFoundError('No admitted Node executable')
+
+    monkeypatch.setattr(workshop_mailbox, '_local_transport', unavailable)
+    monkeypatch.setattr(workshop_live, '_LIVE', {'at': 0.0, 'ids': {}, 'running': True})
+    workshop_live._refresh_live_ids()
+
+    assert not workshop_live._LIVE['running']
+    assert workshop_live._LIVE['at'] > 0
+    assert 'No admitted Node executable' in capsys.readouterr().err
+
+
 def test_a_declaration_the_live_list_does_not_return_is_dropped(monkeypatch):
     from nodelang import workshop_live
     from nodelang.workshop_mailbox import call

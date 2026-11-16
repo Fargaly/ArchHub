@@ -89,7 +89,6 @@ def application_history(source=None, *, read_only=False, busy_timeout_seconds: f
                 if selected._db.execute("SELECT 1 FROM conversations WHERE id=?", (ROOM,)).fetchone() is None:
                     selected.ensure_conversation(ROOM)
                 selected._db.execute("CREATE TABLE IF NOT EXISTS workshop_waiting(message_id TEXT PRIMARY KEY, target TEXT NOT NULL)")
-                _retain_messages(selected)
             if not read_only and _SESSION_MIGRATION_LOCK.acquire(blocking=False):
                 try:
                     key = str(path.resolve())
@@ -116,26 +115,43 @@ def latest_agent_message(history, author):
         (ROOM, author)).fetchone()
 
 
+# Founder rule: never delete his data without his word. Opening the mailbox deletes nothing; it ran this on every
+# open and the uncommitted delete locked out every send ("database is locked", 2026-11-16).
+_RETAIN_BATCH, _RETAIN_BATCH_SECONDS, _RETAIN_RUN_SECONDS = 8, 1.0, 5.0
+_EXPIRED = (" FROM messages WHERE conversation_id=? AND created_at<? "
+            "AND id NOT IN (SELECT message_id FROM workshop_waiting)")
+
+
+def _retention_cutoff():
+    return (datetime.now(timezone.utc) - timedelta(days=20)).isoformat()
+
+
 def _retain_messages(history):
-    """Bounded expiry in this Workshop file only; recent reply text survives its parent."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=20)).isoformat()
-    if history._db.execute("SELECT 1 FROM messages WHERE conversation_id=? AND created_at<? LIMIT 1",
-            (ROOM, cutoff)).fetchone() is None:
+    """EXPLICIT ONLY, nothing calls this automatically: kept for a founder-approved archive.
+    Expires room rows older than 20 days; recent reply text survives its parent.
+    Small batches, each committed under its own deadline: an interrupted run keeps the batches before it."""
+    cutoff = _retention_cutoff()
+    if history._db.execute("SELECT 1" + _EXPIRED + " LIMIT 1", (ROOM, cutoff)).fetchone() is None:
         return
-    with history._transaction(write=True):
-        rows = history._db.execute("SELECT rowid,* FROM messages WHERE conversation_id=? "
-            "AND created_at<? AND id NOT IN (SELECT message_id FROM workshop_waiting) ORDER BY sequence DESC LIMIT 128", (ROOM, cutoff)).fetchall()
-        for row in rows:
-            history._db.execute("UPDATE messages SET reply_to=NULL WHERE conversation_id=? AND reply_to=?",
-                (ROOM, row["id"]))
-            history._db.execute("INSERT INTO message_search(message_search,rowid,content) VALUES('delete',?,?)",
-                (row["rowid"], row["content"]))
-            history._db.execute("UPDATE category_counts SET amount=amount-1 WHERE conversation_id=? "
-                "AND category=? AND audience_kind IN ('all','public')", (ROOM, row["category"]))
-            history._db.execute("DELETE FROM recipients WHERE conversation_id=? AND message_id=?", (ROOM, row["id"]))
-            history._db.execute("DELETE FROM messages WHERE conversation_id=? AND id=?", (ROOM, row["id"]))
-        if rows:
-            history._db.execute("DELETE FROM category_counts WHERE conversation_id=? AND amount=0", (ROOM,))
+    run_ends = time.monotonic() + _RETAIN_RUN_SECONDS
+    while True:
+        with history._bounded_operations(deadline=time.monotonic() + _RETAIN_BATCH_SECONDS, cancelled=lambda: False), \
+                history._transaction(write=True):
+            rows = history._db.execute("SELECT rowid,*" + _EXPIRED + " ORDER BY sequence DESC LIMIT ?",
+                (ROOM, cutoff, _RETAIN_BATCH)).fetchall()
+            for row in rows:
+                history._db.execute("UPDATE messages SET reply_to=NULL WHERE conversation_id=? AND reply_to=?",
+                    (ROOM, row["id"]))
+                history._db.execute("INSERT INTO message_search(message_search,rowid,content) VALUES('delete',?,?)",
+                    (row["rowid"], row["content"]))
+                history._db.execute("UPDATE category_counts SET amount=amount-1 WHERE conversation_id=? "
+                    "AND category=? AND audience_kind IN ('all','public')", (ROOM, row["category"]))
+                history._db.execute("DELETE FROM recipients WHERE conversation_id=? AND message_id=?", (ROOM, row["id"]))
+                history._db.execute("DELETE FROM messages WHERE conversation_id=? AND id=?", (ROOM, row["id"]))
+            if rows:
+                history._db.execute("DELETE FROM category_counts WHERE conversation_id=? AND amount=0", (ROOM,))
+        if len(rows) < _RETAIN_BATCH or time.monotonic() >= run_ends:
+            return
 
 
 ACTIVITY_SCHEMA = ("CREATE TABLE IF NOT EXISTS workshop_activity(sequence INTEGER PRIMARY KEY, at TEXT NOT NULL, "
@@ -1239,7 +1255,9 @@ def call(method, body, context, *, database=None, peer=None, history=None, accou
         body = {**body, "idempotency_key":body.get("idempotency_key") or repeat or uuid4().hex}
     while True:
         try:
-            with application_history(database=database, busy_timeout_seconds=min(store_busy_timeout_seconds, 0.05)) as selected:
+            # Wait out a busy writer for 1-2 s per try (jittered); a 50 ms wait reopened the store dozens of times.
+            wait = min(store_busy_timeout_seconds, random.uniform(1.0, 2.0), max(deadline - time.monotonic(), 0.001))
+            with application_history(database=database, busy_timeout_seconds=wait) as selected:
                 if method == "read":
                     result = _read(selected, body, identity, runtime)
                     if result["read_cursor"]:

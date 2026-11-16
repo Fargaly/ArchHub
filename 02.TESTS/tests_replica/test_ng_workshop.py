@@ -202,6 +202,7 @@ print(json.dumps({'lock_errors':0}))
                 category=mailbox.CATEGORY, idempotency_key='child', created_at=recent,
                 reply_to=parent['id'])
         with mailbox.application_history(None) as history:
+            mailbox._retain_messages(history)  # explicit archive only: no open deletes (founder rule)
             self.assertIsNone(history.get(mailbox.ROOM, parent['id'], principal='test'))
             kept = history.get(mailbox.ROOM, child['id'], principal='test')
             self.assertEqual(kept['content'], 'recentreply')
@@ -214,7 +215,8 @@ print(json.dumps({'lock_errors':0}))
                 'WHERE conversation_id=? AND category=?', (mailbox.ROOM, mailbox.CATEGORY)).fetchall()
             self.assertEqual({row[0]:row[1] for row in counts}, {'all':1, 'public':1})
 
-    def test_retention_is_bounded_to_128_rows_per_open(self):
+    def test_opening_never_deletes_and_the_explicit_archive_drains_in_small_batches(self):
+        # Founder rule: never delete his data without his word. 2026-11-16 "database is locked": the delete ran on every open.
         from datetime import datetime, timedelta, timezone
         old = (datetime.now(timezone.utc) - timedelta(days=21)).isoformat()
         with mailbox.application_history(None) as history:
@@ -222,7 +224,8 @@ print(json.dumps({'lock_errors':0}))
                 history.append(mailbox.ROOM, author='test', content='expired',
                     category=mailbox.CATEGORY, idempotency_key=str(index), created_at=old)
         with mailbox.application_history(None) as history:
-            self.assertEqual(history._db.execute('SELECT count(*) FROM messages').fetchone()[0], 1)
+            self.assertEqual(history._db.execute('SELECT count(*) FROM messages').fetchone()[0], 129)
+            mailbox._retain_messages(history)
         with mailbox.application_history(None) as history:
             self.assertEqual(history._db.execute('SELECT count(*) FROM messages').fetchone()[0], 0)
 

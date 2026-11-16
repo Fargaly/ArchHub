@@ -19,6 +19,7 @@
         "03.TOOLS/tools/frozen_design.cjs",
         "03.TOOLS/tools/run-heavy-python.patch",
         "03.TOOLS/tools/pipeline/strict_check.py",
+        "05.EVIDENCE/acompiler-governance-hooks.patch",
         "05.EVIDENCE/acompiler-intents.json"
       ]
     },

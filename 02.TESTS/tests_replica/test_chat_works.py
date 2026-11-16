@@ -64,3 +64,54 @@ def test_a_thread_question_with_no_mention_is_answered_in_that_thread(monkeypatc
     assert result['answer'] == 'There are 12 sheets.'
     thread = _thread(task)
     assert any('how many sheets?' in text for text in thread) and any('There are 12 sheets.' in text for text in thread)
+
+
+def test_reply_task_survives_open_and_busy_writer(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    import sqlite3
+    import threading
+    import time
+    from nodelang import workshop_live, workshop_mailbox
+    from nodelang.nograph_server import _route_to_agents
+    from nodelang.workshop_mailbox import application_history, call, profile_database, ROOM
+    context = {'threadId': 'chat-lock-codex'}
+    _declare(context, 'Codex Lock')
+    task, other = _task('Busy session'), _task('Other session')
+    monkeypatch.setattr(workshop_live, 'push', lambda *_args, **_kwargs: ('delivered', 'workshop', ''))
+    question = _route_to_agents('@codex-lock check the lock', ['codex-lock'], task=task)['request_id']
+    with application_history() as history, history._transaction(write=True):
+        history._db.execute('UPDATE messages SET created_at=? WHERE conversation_id=? AND id=?',
+                            ((datetime.now(timezone.utc) - timedelta(days=30)).isoformat(), ROOM, question))
+        history._db.execute('DELETE FROM workshop_waiting WHERE message_id=?', (question,))
+    with application_history() as history:
+        assert history._db.execute('SELECT id FROM messages WHERE id=?', (question,)).fetchone()
+    holding = threading.Event()
+    def writer():
+        connection = sqlite3.connect(profile_database(), isolation_level=None, timeout=2)
+        try:
+            connection.execute('BEGIN IMMEDIATE')
+            holding.set()
+            time.sleep(3)
+            connection.execute('ROLLBACK')
+        finally:
+            connection.close()
+    opened = []
+    real = workshop_mailbox.application_history
+    def counted(*args, **kwargs):
+        opened.append(kwargs.get('busy_timeout_seconds'))
+        return real(*args, **kwargs)
+    thread = threading.Thread(target=writer)
+    thread.start()
+    assert holding.wait(5)
+    monkeypatch.setattr(workshop_mailbox, 'application_history', counted)
+    try:
+        sent = call('send', {'to': 'Ahmed', 'text': 'Reply after the writer', 'reply_to': question}, context)
+    finally:
+        thread.join()
+    assert sent['message_id']
+    tries = [wait for wait in opened if wait is not None]
+    assert 1 <= len(tries) <= 4 and all(1.0 <= wait <= 2.0 for wait in tries)
+    assert 'Reply after the writer' in '\n'.join(_thread(task))
+    assert not any('Reply after the writer' in text for text in _thread(other))
+    with application_history() as history:
+        assert history._db.execute('SELECT id FROM messages WHERE id=?', (question,)).fetchone()

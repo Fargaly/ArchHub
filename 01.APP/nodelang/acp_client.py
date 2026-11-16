@@ -500,13 +500,15 @@ class AgentSession:
             self.lock.release()
 
     def close(self):
-        try:
-            if self.transport is not None:
-                self.transport.close()
-        finally:
+        try:   # the job first: a CLI behind its .cmd shim outlives the shim and would hold the pipe (and this close) open
             if self.job is not None:
                 self.job.close()
-            self.transport, self.job = None, None
+        finally:
+            try:
+                if self.transport is not None:
+                    self.transport.close()
+            finally:
+                self.transport, self.job = None, None
 
 
 _SESSIONS = {}

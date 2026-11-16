@@ -74,6 +74,7 @@ def tool_result(ident, failed):
     send({"type": "user", "parent_tool_use_id": None, "message": {"role": "user", "content": [
         {"type": "tool_result", "tool_use_id": ident, "is_error": failed, "content": "done"}]}})
 send({"type": "system", "subtype": "init", "session_id": "s1"})
+stubborn = False
 for line in sys.stdin:
     message = json.loads(line)
     if message.get("type") != "user":
@@ -81,6 +82,7 @@ for line in sys.stdin:
     text = message["message"]["content"][0]["text"]
     if "hang" in text:
         delta("Thinking")
+        stubborn = True
         continue
     if "write" in text:
         call = {"file_path": "sheets.txt", "content": "A-101"}
@@ -101,6 +103,9 @@ for line in sys.stdin:
         delta("12 sheets.")
         assistant({"type": "text", "text": "12 sheets."})   # the whole message repeats what was streamed
     send({"type": "result", "subtype": "success", "is_error": False, "stop_reason": "end_turn", "result": "done"})
+if stubborn:
+    import time
+    time.sleep(600)   # like a real CLI behind its .cmd shim: it does not leave because its input closed
 """
 
 FAKE_CODEX = r"""
@@ -113,7 +118,7 @@ def note(method, **params):
     send({"method": method, "params": {"threadId": "thread-1", "turnId": "turn-1", **params}})
 def command(ident, text, status):
     return {"type": "commandExecution", "id": ident, "command": text, "status": status}
-ready = False
+ready = stubborn = False
 for line in sys.stdin:
     message = json.loads(line)
     method, ident, params = message.get("method"), message.get("id"), message.get("params") or {}
@@ -129,6 +134,7 @@ for line in sys.stdin:
         send({"id": ident, "result": {"turn": {"id": "turn-1", "status": "inProgress"}}})
         if "hang" in text:
             note("item/agentMessage/delta", itemId="m1", delta="Thinking")
+            stubborn = True
             continue
         if "write" in text:
             note("item/started", item=command("t2", "Write sheets.txt", "inProgress"))
@@ -145,6 +151,9 @@ for line in sys.stdin:
             note("item/agentMessage/delta", itemId="m1", delta="12 sheets.")
             note("item/completed", item={"type": "agentMessage", "id": "m1", "text": "There are 12 sheets."})
         send({"method": "turn/completed", "params": {"threadId": "thread-1", "turn": {"id": "turn-1", "status": "completed"}}})
+if stubborn:
+    import time
+    time.sleep(600)   # like a real CLI behind its .cmd shim: it does not leave because its input closed
 """
 
 

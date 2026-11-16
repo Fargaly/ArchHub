@@ -268,3 +268,24 @@ def test_route_reads_and_sets_every_field(profile):
     assert call({'action': 'runs', 'path': path})['runs'] == []
     assert call({'action': 'links', 'path': path})['links'] == []
     assert call({'action': 'setting', 'path': path, 'id': 'Appearance.Theme'})['scope'] == 'global'
+
+
+def test_direct_trigger_fire_asks_before_running_the_engine(profile, monkeypatch):
+    from nodelang import session_files
+    from nodelang.canvas_triggers import TriggerService
+    path = trigger_session()
+    attempted = []
+    original = session_files.run_document
+    def tracked(*args, **kwargs):
+        attempted.append(True)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(session_files, 'run_document', tracked)
+    service = TriggerService()
+    monkeypatch.setattr(service, '_post', lambda *_args: {})
+    try:
+        service.fire((path, 't'), 'trigger.schedule')
+        assert not attempted
+        assert session_files.read_runs(path)[-1]['state'] == 'asking'
+        assert 'canvasRun' not in session_files.read_document(path)['properties']
+    finally:
+        service.close()

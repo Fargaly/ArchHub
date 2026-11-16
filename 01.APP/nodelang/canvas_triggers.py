@@ -156,6 +156,8 @@ class TriggerService:
 
     def fire(self, key, kind, reason='scheduled'):
         """Run the trigger's downstream nodes once, save their outputs into the workflow, post it to the Workshop."""
+        if reason != 'approved' and self._asks(key):
+            return self.dispatch(key, kind, {}, reason)
         from . import canvas_documents as docs
         from .enforce import guard_effect
         from .session_files import run_document

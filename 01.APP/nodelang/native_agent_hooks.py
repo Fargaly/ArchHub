@@ -259,6 +259,12 @@ def _append_cursor_hook(hooks, name, command, *, loop_limit=None):
         hooks[name] = rows
     if any(command in _hook_commands(row) for row in rows):
         return
+    for row in rows:  # an older spelling of our own entry: rewrite its command, keep everything else
+        for hook in [row, *(row.get("hooks") or [])] if type(row) is dict else []:
+            text = hook.get("command") if type(hook) is dict else None
+            if type(text) is str and "native_stop_hook.py" in text and text.endswith("--vendor cursor"):
+                hook["command"] = command
+                return
     if rows and type(rows[0]) is dict and "hooks" in rows[0] and "command" not in rows[0]:
         hook = {"type": "command", "command": command}
         if loop_limit is not None:
@@ -271,10 +277,17 @@ def _append_cursor_hook(hooks, name, command, *, loop_limit=None):
     rows.append(item)
 
 
+def plain_hook_command(*parts):
+    """Absolute forward-slash paths and plain words: one line Git Bash and PowerShell both run as a command.
+    shortcut: a path with a space is quoted, which PowerShell runs only behind a call operator (Cursor adds one)."""
+    words = [str(part).replace("\\", "/") for part in parts]
+    return " ".join('"%s"' % word if " " in word else word for word in words)
+
+
 def cursor_hook_command():
     from . import native_stop_hook
     script = Path(native_stop_hook.__file__).resolve()
-    return '"%s" "%s" --vendor cursor' % (sys.executable, script)
+    return plain_hook_command(sys.executable, script, "--vendor", "cursor")
 
 
 def install_cursor_hook_entries(home, command=None):

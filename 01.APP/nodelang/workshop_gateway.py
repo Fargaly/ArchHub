@@ -148,7 +148,8 @@ def apply(runtime, current):
         ok, reason = False, str(error)[:300]
     rules, hooks = counts()
     _write_state(runtime, stamp=current, state='current' if ok else 'failed', reason=reason, rules=rules, hooks=hooks)
-    line = ('%s joined - rules+hooks saved; native activation unverified (%d rules, %d hooks, stamp %s)' % (runtime, rules, hooks, current[:12]) if ok
+    said = (done.stdout.strip().splitlines() or ['rules+hooks saved; native activation unverified'])[-1] if ok else ''
+    line = ('%s joined - %s (%d rules, %d hooks, stamp %s)' % (runtime, said[:300], rules, hooks, current[:12]) if ok
             else '%s joined - governance failed: %s' % (runtime, reason[:160]))
     from .workshop_mailbox import application_history, ROOM, CATEGORY
     with application_history() as history:

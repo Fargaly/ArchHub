@@ -143,13 +143,29 @@ class ApplicationOpenRouterCredentialResolver:
         return key or None
 
 
-def launch_environment(command):
-    """The child's environment: every OpenCode ArchHub starts gets its own random server password; others inherit."""
-    name = Path(str(command[0])).stem.casefold() if command else ""
-    if not name.startswith("opencode"):
-        return None
+def _opencode_environment(environ):
     from .agent_runtime_defs.opencode import server_password_environment
-    return server_password_environment(os.environ)
+    return server_password_environment(environ)
+
+
+def _without_git_bash(environ):
+    """cursor-agent wraps every hook in PowerShell but runs it in Git Bash when it sees Git Bash's markers,
+    so every hook fails with exit 2 and blocks every tool. Without the markers it runs them in PowerShell."""
+    return {key: value for key, value in environ.items() if key.upper() not in ("MSYSTEM", "EXEPATH", "SHELL")}
+
+
+# Per agent CLI (program name prefix): the environment its child needs; every other program inherits.
+_LAUNCH_ENVIRONMENTS = {"opencode": _opencode_environment, "cursor-agent": _without_git_bash}
+
+
+def launch_environment(command):
+    """The child's environment, or None to inherit: OpenCode gets its own random server password;
+    cursor-agent loses the Git Bash markers that break its hooks."""
+    name = Path(str(command[0])).stem.casefold() if command else ""
+    for prefix, build in _LAUNCH_ENVIRONMENTS.items():
+        if name.startswith(prefix):
+            return build(os.environ)
+    return None
 
 class LocalModelExecutionHost:
     """Default subprocess and HTTP implementation for one broker invocation."""

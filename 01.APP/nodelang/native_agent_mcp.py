@@ -94,7 +94,7 @@ def _mailbox_call(method, body, context, **limits):
     return call(method, body, context, **limits)
 
 
-def build_server(*, session=None, mailbox_call=None):
+def build_server(*, session=None, mailbox_call=None, read_only=False, _registry_catalogue=False):
     """The shared message tools are available before any Work identity is needed."""
     from contextlib import asynccontextmanager
     import logging
@@ -322,10 +322,13 @@ def build_server(*, session=None, mailbox_call=None):
     register_host_tools(server)
     from .canvas_tools import register_canvas_tools
     register_canvas_tools(server)
+    if not _registry_catalogue:
+        from .command_registry import apply_agent_registry
+        apply_agent_registry(server, read_only=read_only or os.environ.get('ARCHHUB_CONNECTOR_READ_ONLY') == '1')
     # A client may be given only some tools (Goose gets the Workshop and the canvas): the names or
     # name prefixes in ARCHHUB_CONNECTOR_TOOLS; every other tool is not offered to it at all.
     allowed = [part.strip() for part in os.environ.get("ARCHHUB_CONNECTOR_TOOLS", "").split(",") if part.strip()]
-    if allowed:
+    if allowed and not _registry_catalogue:
         for name in [tool.name for tool in server._tool_manager.list_tools()
                      if not any(tool.name == part or (part.endswith(".") and tool.name.startswith(part)) for part in allowed)]:
             server._tool_manager._tools.pop(name)

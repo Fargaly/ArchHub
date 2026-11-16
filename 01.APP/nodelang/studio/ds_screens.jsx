@@ -1170,6 +1170,18 @@
         id: n.id
       });
     };
+    // COMMANDREGISTRY: expose this active Canvas's existing selection/actions to Ctrl K.
+    React.useLayoutEffect(() => {
+      if (preview || !active) return;
+      const read = event => {
+        const node = s.graph.nodes.find(n=>n.id===selected.at(-1));
+        return {kind: selected.length>1?'Selection menu':node?.frameMembers?'Frame menu':node?.children?.length&&!node.fixed?'Group menu':node?'Node menu':wireId?'Wire menu':'Canvas menu',
+          id:node?.id,wireId,selected,open:node?()=>openNode(node):undefined,canvas:canvasActions(toFlow(event))};
+      };
+      window.UI.canvasCommandContext = read;
+      return () => {if(window.UI.canvasCommandContext===read)delete window.UI.canvasCommandContext;};
+    });
+    // COMMANDREGISTRY end
     React.useImperativeHandle(controlsRef, () => ({
       clearSelection: () => { setSelected([]); setSelectedWires([]); setWireId(null); },
       addNode: () => u.setLibraryOpen(true),

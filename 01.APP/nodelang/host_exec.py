@@ -779,6 +779,9 @@ def register_connector(connector_id, label, list_actions, invoke):
 
 def _ensure_registry():
     """Fill any connector the brokers already registered. A prior registration is kept."""
+    if 'archhub.commands' not in LISTERS:
+        from .command_registry import approved_action_list, invoke_approved
+        register_connector('archhub.commands', 'Commands', approved_action_list, invoke_approved)
     if "notion" not in LISTERS:
         LISTERS["notion"] = _notion_tools
         INVOKERS["notion"] = _notion_invoke

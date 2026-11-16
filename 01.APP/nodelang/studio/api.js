@@ -1,34 +1,8 @@
 // The approved design's only domain boundary. Real owners; no demonstration data.
 (() => {
 'use strict';
-  const NAVIGATION_ROUTES = {
-    'home': 'Home',
-    'workshop': 'Workshop',
-    'canvas': 'Canvas',
-    'library': 'Library',
-    'baboom': 'BABOOM',
-    'colleagues': 'Team',
-    'watcher': 'Watcher',
-    'brain': 'Brain',
-    'system': 'System graph',
-    'first-run': 'First run',
-    'runs': 'Runs',
-    'receipts': 'Logs & receipts',
-    'automations': 'Automations',
-    'docs': 'Docs',
-    'meetings': 'Meetings',
-    'dependencies': 'Dependencies',
-    'present': 'Present',
-    'community': 'Community',
-    'model-review': 'Model review',
-    'interface': 'Interface studio',
-    'feedback': 'Feedback',
-    'social': 'Social media',
-    'xray': 'X-RAY',
-    'access': 'Plan & access',
-    'routing': 'Model routing'
-  };
-window.ArchHubRouteNames = Object.freeze(NAVIGATION_ROUTES);
+  const NAVIGATION_ROUTES = {};
+window.ArchHubRouteNames = NAVIGATION_ROUTES;
 let state = {"revision": 0, "sessionApprovals": [], "activeWorkspace": "", "activeFile": "", "profile": {"id": "", "isFounder": false, "name": "", "firm": "", "email": "", "signedIn": false, "plan": ""}, "nodeSchemas": {}, "providers": [], "catalogue": [], "templates": [], "pages": ["Account", "Connections", "BABOOM", "Agents", "Brain", "System graph", "Workshop", "Library & Mods", "Automations", "Hooks", "Dependencies", "Privacy", "Appearance", "Updates & About", "Advanced"], "settings": [], "companion": {"mode": "idle", "x": null, "y": null, "pinned": false}, "workspaces": [], "tasks": [], "approvals": [], "graph": {"id": "", "name": "", "nodes": [], "wires": [], "workspaceIds": [], "documentation": "", "customProperties": [], "courtStatus": ""}, "brain": [], "dependencies": [], "connections": [], "files": [], "secrets": [], "people": [], "archives": [], "schedules": [], "mods": [], "receipts": [], "runs": [], "drafts": [], "feedback": [], "notifications": [], "meeting": {"title": "", "actions": [], "calendarId": "", "platform": "", "agent": "", "status": "", "consent": false, "transcript": [], "actionOwners": {}, "actionTasks": {}}, "watcher": {"geometry": {"outline": [], "walls": [], "doors": [], "tags": []}, "host": "", "view": "", "views": [], "rooms": [], "imageEdits": [], "wallY": 0, "pendingY": 0, "marks": [], "comments": [], "mask": null, "applied": false, "lengthMm": 0, "appliedLengthMm": 0, "thicknessMm": 0, "appliedThicknessMm": 0, "snap": false, "gridMm": 0, "orthogonal": false, "showDimensions": false, "dimensionAlignment": "", "dimensions": []}, "update": {"available": false, "installed": "", "next": ""}, "app": {"hidden": false, "quit": false, "stopped": false}, "backups": [], "sync": "", "lastResult": null, "docs": [], "bookGlossary": [], "social": {"office": {"name": "", "headline": "", "bio": "", "website": "", "audience": ""}, "inbox": [], "drafts": [], "groups": [], "digest": {"enabled": false, "time": "", "summary": ""}, "research": [], "tutorials": [], "triaged": false}, "learning": {"concept": "", "hosts": [], "baseline": "", "residual": "", "why": "", "sources": [], "findings": [], "status": "", "destination": "", "layer": "", "layers": {"Host": {"program": "", "operation": "", "preserveRelationships": false}, "Habit": {"pattern": "", "minimumRepeats": 0, "learn": false}, "Intent": {"baseline": "", "deviation": "", "why": ""}, "Self": {"metric": "", "threshold": null, "rebaseline": false}, "Agent": {"provider": "", "checkResults": false, "maxIterations": 0}, "Session": {"graph": "", "shareContext": false, "retainCheckpoints": false}}}, "modelSources": [], "devices": [], "activeDevice": "", "graphs": [], "capabilities": [], "mcpServers": [], "suggestions": [], "community": {"tab": "", "peers": [], "patterns": [], "shared": [], "points": [], "groups": [], "joinStatus": "", "marketQuery": "", "listing": {"title": "", "price": 0, "creatorShare": 0}, "charge": {"client": "", "project": "", "basis": "", "amount": 0}, "charges": [], "marketplace": []}, "modelReview": {"operation": "", "results": [], "issues": []}, "usage": {"tokens": 0, "cost": 0, "runs": 0, "quota": 0, "seats": 0, "grace": false}, "hostSkills": [], "provenance": [], "presentation": {"slides": [], "walkthrough": 0}, "healthHistory": [], "prototype": {"name": "", "threshold": null, "samples": 0, "baseline": 0, "status": "", "linkedModel": false, "pattern": null}, "composerAttachments": [], "settingsScope": "User", "officeItems": [], "timesheet": {"status": "", "rows": []}, "desktop": {"program": "", "stage": "", "taskId": null}, "meetingCalendar": [], "refine": {"breadth": 0, "depth": 0, "trials": 0, "tokens": 0, "results": [], "accepted": null}, "intakeRules": [], "uncertainLinks": [], "onboarding": {"role": "", "assessment": ""}, "firms": [], "activeFirm": "", "officeInvitations": [], "billing": {"status": "", "requestedPlan": "", "cycle": "", "checkout": null, "limitReached": null, "invoices": []}};
 Object.assign(state,{agents:[],agentSummary:'Checking running agents…',agentHealth:'Checking running agents…'});
 const emptyWatcher=window.structuredClone(state.watcher);
@@ -1993,6 +1967,10 @@ api.ready=(async()=>{
  try {const saved=typeof sessionStorage==='undefined'?null:JSON.parse(sessionStorage.getItem('archhub.studio.session')||'null');session=session?{...session,lastGraphId:saved?.lastGraphId}:saved;}
  catch {notice('The saved browser session could not be read. Reconnecting this window.');}
  if((!session?.token||!session?.csrf)&&!window.ARCHHUB_AUTHORITY?.canvas_key)await signIn();else window.__archhubSession=session;
+ // COMMANDREGISTRY: served by the owner; this is a disposable projection, never a settings store.
+ window.ArchHubCommandRegistry = await request('/api/commands');
+ Object.assign(NAVIGATION_ROUTES,Object.fromEntries(window.ArchHubCommandRegistry.commands.filter(c=>c.action.route).map(c=>[c.action.route,c.label])));
+ Object.freeze(NAVIGATION_ROUTES);
  commands=window.ArchHubStudioAuthority.create({get:path=>request(path),post:(path,body)=>request(path,body)});
  // Library collapse is advisory. A refused or slow settings read stays expanded and does not gate the first session file.
  // The refusal still belongs on the status footer; a later update read must not erase it.

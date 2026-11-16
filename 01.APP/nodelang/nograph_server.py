@@ -695,6 +695,11 @@ def r_session_files(s, req):
     return result
 
 
+def r_commands(s, req):
+    from .command_registry import payload
+    return payload()
+
+
 def r_documentation(s, req):
     from .site_export import project_documentation
     import re
@@ -1735,6 +1740,8 @@ def r_session_model(s, req):
 
 ROUTES = {
     '/api/session-model': ('session_files (.archhub + runs beside it) + workshop_tasks + canvas_triggers', r_session_model),
+
+    '/api/commands': ('command_registry', r_commands),
     '/api/router/settings': ('settings/router.json + router.sqlite', r_router_settings),
     '/api/documentation': ('site_export + SPEC.md terms', r_documentation),
     '/api/session-files': ('session_files (.archhub)', r_session_files),

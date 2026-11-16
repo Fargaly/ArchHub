@@ -199,6 +199,9 @@
     };
     const show = (kind, data = {}) => {
       if (modalActions[kind] && !api.supportsAction(modalActions[kind])) return;
+      if(kind==='Search'){
+        data = {...data,commandContext: data.commandContext || (window.UI.commandContextNames?.[modal?.kind] ? modal : ['canvas','task-file'].includes(route) ? window.UI.canvasCommandContext?.({clientX:menuAnchor.current.x,clientY:menuAnchor.current.y}) : null)};
+      }
       priorFocus.current = document.activeElement;
       setModal({
         kind,
@@ -693,62 +696,17 @@
         api,
         u
       }, event)}>Read status</Btn></>;else if (k === 'Approve') body = <window.UI.ApprovalCard id={m.id} />;else if (k === 'Search') {
-      const searchOrder = ['Agents', 'Workflows', 'Hosts', 'Settings', 'Chats', 'Pages', 'Add node'];
-      const items = [...s.catalogue.map(c => ({
-        label: c.name,
-        group: 'Add node',
-        action: async () => {
-          await u.act(() => api.addNode(c.name));
-          u.go('canvas');
-        }
-      })), ...s.templates.map(t => ({
-        label: t.title,
-        group: 'Workflows',
-        action: () => u.show('Skill', {
-          id: t.id
-        })
-      })), ...s.tasks.map(t => ({
-        label: t.title,
-        group: 'Chats',
-        action: () => u.openTaskFile(t.id)
-      })), ...(s.liveAgents || []).map(a => ({
-        label: a.name + (a.task ? ' · ' + a.task : ''),
-        group: 'Agents',
-        action: () => u.go('workshop')
-      })), ...(s.agents || []).filter(p => !(s.liveAgents || []).some(a => a.app === p.runtime)).map(p => ({
-        label: p.name + ' · not joined',
-        group: 'Agents',
-        action: () => u.go('workshop')
-      })), ...(s.graphs || []).map(g => ({
-        label: g.name || g.title || g.id,
-        group: 'Workflows',
-        action: async () => {
-          await u.act(() => api.selectGraph(g.id));
-          u.go('canvas');
-        }
-      })), ...(s.hosts || []).map(h => ({
-        label: h.name + (h.state ? ' · ' + ({absent: 'Not installed', unavailable: 'Not available', 'prerequisites-ready': 'Ready to connect', 'needs-sign-in': 'Needs sign-in', installed: 'Installed', connected: 'Connected', listening: 'Connected'}[h.state] || h.state) : ''),
-        group: 'Hosts',
-        action: () => u.go('connections')
-      })), ...(s.pages || []).map(page => ({
-        label: page,
-        group: 'Settings',
-        action: () => u.openSystem(page)
-      })), ...Object.entries(routeNames).map(([r, label]) => ({
-        label,
-        group: 'Pages',
-        action: () => u.go(r)
-      }))].filter(x => (mode === 'All' || x.group === mode) && x.label.toLowerCase().includes(query.toLowerCase()))
-        .sort((a, b) => searchOrder.indexOf(a.group) - searchOrder.indexOf(b.group));  // stable: agents, workflows, hosts, settings first; nodes last
+      const searchOrder = window.ArchHubCommandRegistry.palette_order;
+      const items = window.UI.paletteCommands(s,u,api,{query,mode,context:m.commandContext,actionState:formAction});
       body = <><input data-design="palette.input" aria-label="Search everything" placeholder="Find an agent, workflow, program, setting, node or chat…" value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => {
-          if (e.key === 'Enter') items[0]?.action();
+          if (e.key === 'Enter' && items[0] && !items[0].disabled) items[0].action();
         }} /><div className="flex">{['All', ...searchOrder].map(t => <Btn key={t} sm ghost plain aria-pressed={mode === t} onClick={event => executeAction("appShell.Control.29", {
             setMode,
             t
           }, event)}>{t}</Btn>)}</div><div className="v22g-palette-results" style={{
           maxHeight: '55vh',
           overflow: 'auto'
-        }}>{items.map((item, i) => <button data-design="palette.row" className="listbutton spread" key={i} onClick={event => executeAction("appShell.Control.30", {
+        }}>{items.map((item, i) => <button data-design="palette.row" data-command-id={item.id} disabled={!!item.disabled} title={item.disabledReason || undefined} className="listbutton spread" key={i} onClick={event => executeAction("appShell.Control.30", {
             item
           }, event)}><span>{item.label}</span><span className="muted" style={{
               fontSize: 'calc(11px * var(--text-scale,1))'

@@ -1,6 +1,7 @@
 """Disposable test state, run attribution and a final real-profile scan."""
 import json
 import os
+import site
 from pathlib import Path
 import subprocess
 import tempfile
@@ -8,6 +9,9 @@ import time
 from uuid import uuid4
 
 import pytest
+
+# Profile isolation must not relocate the interpreter's installed dependencies.
+os.environ.setdefault('PYTHONUSERBASE', site.getuserbase())
 
 # Use the existing child wrapper so grandchildren keep the same provenance.
 import sys

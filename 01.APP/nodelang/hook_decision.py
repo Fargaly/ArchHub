@@ -1449,7 +1449,7 @@ def _baboom(request, decision):
 
 
 # kind -> the owner that applies the decided effect in its own store.
-APPROVALS = {"watcher": _watcher, "hostskills": _owner_apply, "baboom": _baboom}
+APPROVALS = {"watcher": _watcher, "hostskills": _owner_apply, "baboom": _baboom, "social": _owner_apply}
 
 
 def _decide_approval(request: dict, environment):

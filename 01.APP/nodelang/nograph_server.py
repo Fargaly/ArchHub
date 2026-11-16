@@ -730,6 +730,7 @@ SYSTEM_OWNERS = (
     ('owner:brokers', 'Brokers', 'Hosts', 'broker sessions/*.json + BridgeAuth', ['canvas']),
     ('owner:settings', 'Settings', 'Settings', 'settings/*.json', ['router']),
     ('owner:secrets', 'Secrets', 'Settings', 'Windows Credential Manager (by reference)', ['router']),
+    ('owner:social', 'Social media', 'Social', 'settings/social.json', ['workshop']),
 )
 
 
@@ -1043,9 +1044,25 @@ def _answer_approval(request_id, kind, root, digest, decision):
                    'decision': decision})
 
 
+def _workshop_item_exists(identity):
+    """A Workshop task or message id, answered by the Workshop owner's own file."""
+    from .workshop_mailbox import ROOM, application_history
+    with application_history() as history:
+        db = history._db
+        if db.execute("SELECT 1 FROM messages WHERE conversation_id=? AND id=?", (ROOM, identity)).fetchone():
+            return True
+        tasks = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='workshop_tasks'").fetchone()
+        return bool(tasks and db.execute("SELECT 1 FROM workshop_tasks WHERE id=?", (identity,)).fetchone())
+
+
+def _social():
+    from .social_surface import SocialSurface
+    return SocialSurface(_SERVER.files['social'], task_exists=_workshop_item_exists)
+
+
 def _list_approvals():
     from .hook_decision import ask_reviews
-    return _watcher().reviews() + _host_skills().reviews() + ask_reviews()
+    return _watcher().reviews() + _host_skills().reviews() + ask_reviews() + _social().reviews()
 
 
 # Studio action -> owner method; each owner keeps one plain file under settings/.
@@ -1598,11 +1615,23 @@ def r_social_signin(provider):
 
 def r_social_surface(s, req):
     body = req.body or {}
-    store = s.files['social']
-    state = store.read()['state']
-    if body.get('op') == 'get_state':
-        return {'ok': True, 'state': state, 'result': state}
-    return {'ok': True, 'state': state, 'result': not_available('Social operation "%s"' % body.get('op'))}
+    return {'ok': True, **_social().dispatch(body.get('op'), body.get('args') or [])}
+
+
+def r_social_approvals(s, req):
+    return {'ok': True, 'items': _social().pending()}
+
+
+def r_social_approve(s, req):
+    """The user's Approve or Deny on one exact post: the one decision (hook_decision.decide)."""
+    from .hook_decision import decide
+    body = req.body or {}
+    root, digest, word = body.get('delegation'), body.get('input_digest'), body.get('decision')
+    card = decide({'approval': 'social', 'owner': _social(), 'id': root, 'digest': digest, 'decision': word})
+    decided = 'denied' if card['status'] == 'denied' else 'approved'
+    return {'ok': True, 'delegation': root, 'input_digest': digest, 'decision': decided, 'status': card['status'],
+            'card': card, **({'message': card['error']} if card.get('error') else {})}
+
 
 
 def r_provider_key(s, req):
@@ -1791,9 +1820,9 @@ ROUTES = {
     '/api/universal/social-meta-finish': ('protected store', r_social_finish('meta')),
     '/api/universal/social-linkedin-app': ('ArchHub cloud', r_graph_only('LinkedIn app configuration (ArchHub cloud owns it)')),
     '/api/universal/social-meta-app': ('ArchHub cloud', r_graph_only('Meta app configuration (ArchHub cloud owns it)')),
-    '/api/universal/social-approvals': ('graph only (read: empty)', lambda s, req: {'ok': True, 'items': []}),
-    '/api/universal/social-approve': ('graph only', r_graph_only('Social approval')),
-    '/api/universal/social-surface': ('settings/social.json', r_social_surface),
+    '/api/universal/social-approvals': ('social_surface (settings/social.json)', r_social_approvals),
+    '/api/universal/social-approve': ('social_surface + hook_decision', r_social_approve),
+    '/api/universal/social-surface': ('social_surface (settings/social.json)', r_social_surface),
     '/api/universal/provider-key': ('Credential Manager', r_provider_key),
     '/api/universal/notion-connect': ('host_brokers.notion_connect', r_notion_connect),
     '/api/universal/terminal': ('terminal_sessions', r_terminal),
@@ -1809,4 +1838,5 @@ POST_ONLY = frozenset({
     '/api/universal/pick-file', '/api/universal/mods', '/api/universal/cloud-signout', '/api/universal/social-credential-remove',
     '/api/universal/social-surface', '/api/universal/studio-surface', '/api/universal/provider-key', '/api/universal/notion-connect', '/stop-all', '/resume',
     '/api/universal/social-credential', '/api/universal/social-linkedin-finish', '/api/universal/social-meta-finish',
+    '/api/universal/social-approve',
 } | {path for path, (owner, _handler) in ROUTES.items() if owner == 'graph only'})

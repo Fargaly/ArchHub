@@ -440,13 +440,27 @@ def _register_work_tools(server):
 
     @server.tool(name="social.work_prepare")
     def social_work_prepare(work_root: str, note: str = "") -> dict[str, object]:
-        """Open item: graph-held social Works have no NOGRAPH request owner yet. Posts nothing."""
+        """Hold one saved Social media draft (work_root = its draft id) on the user's Approve card. Posts nothing."""
+        if not work_root.startswith('assembly-instance:'):
+            from .social_surface import SocialSurface
+            try:
+                return {'ok': True, 'state': 'awaiting_approval', **SocialSurface().prepare_post(work_root)}
+            except ValueError as refused:
+                return {'ok': False, 'state': 'refused', 'reason': str(refused)}
         return {'ok': False, 'state': 'not_available',
                 'reason': 'Open item: graph-held social Work inputs and approval have no NOGRAPH owner yet. Nothing was posted.'}
 
     @server.tool(name="social.work_execute")
     def social_work_execute(work_root: str) -> dict[str, object]:
-        """Open item: graph-held social approval cannot execute without a NOGRAPH owner."""
+        """Read a prepared post's outcome. A post is sent only when the user approves it on the Approve card."""
+        if not work_root.startswith('assembly-instance:'):
+            from .social_surface import SocialSurface
+            owner = SocialSurface()
+            cards = [card for card in owner.reviews() if work_root in (card['id'], card['work'])]
+            if not cards:
+                return {'ok': False, 'state': 'refused', 'reason': 'Prepare this draft first with social.work_prepare.'}
+            return {'ok': cards[-1]['status'] == 'posted', 'state': cards[-1]['status'], **cards[-1],
+                    'reason': 'Sent only when the user approves it on the Approve card.'}
         return social_work_prepare(work_root)
 
 

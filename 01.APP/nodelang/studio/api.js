@@ -426,7 +426,7 @@ api.supportsAction=(name,mode)=>boundAction(name,mode)&&
  (!desktopActions.includes(name)||state.desktopReady===true&&!state.nativeApproval)&&
  (!watcherActions.includes(name)||state.watcherReady===true&&!state.nativeApproval)&&
  (!hostSkillActions.includes(name)||state.hostSkillsReady===true&&!state.nativeApproval)&&
- (name!=='decline'||state.nativeApproval||state.approvals.some(card=>['watcher','hostskills','desktop','schedule','ask','canvas'].includes(card.approvalKind)&&card.status==='pending'))&&
+ (name!=='decline'||state.nativeApproval||state.approvals.some(card=>['watcher','hostskills','desktop','schedule','ask','canvas','social'].includes(card.approvalKind)&&card.status==='pending'))&&
  (!['startVoiceInput','stopVoiceInput'].includes(name)||typeof window.ARCHHUB_VOICE_START==='function'&&typeof window.ARCHHUB_VOICE_STOP==='function')&&
  (name!=='speak'||typeof window.speechSynthesis?.speak==='function'&&typeof window.SpeechSynthesisUtterance==='function');
 window.addEventListener('archhub:capabilities',()=>publish());
@@ -727,6 +727,10 @@ api.decline=async id=>{
   const result=await workshop('answerApproval',['hostskills',id,card.input_digest,'deny']);
   if(result?.status!=='declined')throw Error(result?.error||'Package decline was not confirmed.');
   await refreshHostSkills();await refreshApprovals();return result;
+ }
+ if(card?.approvalKind==='social'){
+  const result=await request('/api/universal/social-approve',{delegation:card.delegation,input_digest:card.input_digest,decision:'deny'});
+  await refreshApprovals();return result;
  }
  if(card?.approvalKind!=='watcher')throw Error('Choose the exact Watcher proposal to decline.');
  const result=await workshop('answerApproval',['watcher',id,card.input_digest,'deny']);

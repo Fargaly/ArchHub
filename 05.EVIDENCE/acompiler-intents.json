@@ -1,6 +1,22 @@
 {
   "schema_version": 1,
   "intents": {
+    "COMMANDREGISTRY": {
+      "source": "Founder 2026-11-16 ONE BUILD step 6, res-047 section 3, res-048 step 6 and res-045 section 6: one command registry serves existing context menus, Ctrl K, navigation and agent tools; Library category ids; read-only grouped tools and existing approval policies; existing parameter owners; no redesign. Sole builder on lane/command-registry; isolated tests only; hooks on; no push/install/release/deploy or live-profile access.",
+      "scope": [
+        "01.APP/nodelang/command_registry.py",
+        "01.APP/nodelang/native_agent_mcp.py",
+        "01.APP/nodelang/nograph_server.py",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/app.jsx",
+        "01.APP/nodelang/studio/context-menus.jsx",
+        "02.TESTS/tests_replica/test_command_registry.py",
+        "02.TESTS/tests_js/command_registry.test.cjs",
+        "04.DOCS/DECISIONS.md",
+        "04.DOCS/FAILURE_LOG.md",
+        "05.EVIDENCE/acompiler-intents.json"
+      ]
+    },
     "SESSIONMODEL": {
       "source": "Founder ONE BUILD workstream 1, 2026-11-16 (\"كل حاجة بتصب في بعضها\"; \"مش هنعيد كسم الشغل من تاني\"), rows F337 rest, F334, F344, F199 parts, F273, F315, D-038; R&D res-047 section 1, res-045, res-039, res-038: one .archhub session holds project (registered workspace), state open/done/archived + pinned, done check run by complete(), trigger armed + ask before running, append-only run history beside the file, per-session settings above global, input links read live with cycle refusal, plan/handover context. Extends session_files, workshop_tasks, canvas_triggers, nograph_server and api.js; members and join rules unchanged. Isolated profile tests only, branch-only commits, hooks on, no push/install/release or live profile access.",
       "scope": [
@@ -93,24 +109,24 @@
       ]
     },
     "RUNRESUME": {
-  "source": "Founder F329 Run pause/resume and conditional F169 portable parameters, 2026-11-12. Research res-036 sections 2 and 4; SPEC 3.2. Extend existing run and approval owners, no new store/service; branch commits only, hooks on; isolated profiles, no push/install/release or live user stores.",
-  "scope": [
-    "01.APP/nodelang/session_files.py",
+      "source": "Founder F329 Run pause/resume and conditional F169 portable parameters, 2026-11-12. Research res-036 sections 2 and 4; SPEC 3.2. Extend existing run and approval owners, no new store/service; branch commits only, hooks on; isolated profiles, no push/install/release or live user stores.",
+      "scope": [
+        "01.APP/nodelang/session_files.py",
         "01.APP/nodelang/nograph_server.py",
         "01.APP/nodelang/canvas_documents.py",
-    "01.APP/nodelang/agent_work.py",
-    "01.APP/nodelang/canvas_tools.py",
-    "01.APP/nodelang/canvas_triggers.py",
-    "01.APP/nodelang/studio/api.js",
-    "01.APP/nodelang/studio/ds_screens.jsx",
-    "01.APP/nodelang/studio/app.jsx",
-    "02.TESTS/tests_replica/test_run_resume.py",
-    "02.TESTS/tests_replica/test_portable_parameters.py",
-    "02.TESTS/tests_js/run_resume.test.cjs",
-    "02.TESTS/tests_js/apptidy_sessions.test.mjs",
-    "04.DOCS/FAILURE_LOG.md"
-  ]
-},
+        "01.APP/nodelang/agent_work.py",
+        "01.APP/nodelang/canvas_tools.py",
+        "01.APP/nodelang/canvas_triggers.py",
+        "01.APP/nodelang/studio/api.js",
+        "01.APP/nodelang/studio/ds_screens.jsx",
+        "01.APP/nodelang/studio/app.jsx",
+        "02.TESTS/tests_replica/test_run_resume.py",
+        "02.TESTS/tests_replica/test_portable_parameters.py",
+        "02.TESTS/tests_js/run_resume.test.cjs",
+        "02.TESTS/tests_js/apptidy_sessions.test.mjs",
+        "04.DOCS/FAILURE_LOG.md"
+      ]
+    },
     "FOCUSWFCAT": {
       "source": "Founder sole-builder F326 F327 F328, 2026-11-12; res-036 2026-11-11: existing owners only, workflow/agent-session classification, one category tree, one skills location; branch-only commits, hooks on, isolated profiles, no push/install/release or live data access.",
       "scope": [

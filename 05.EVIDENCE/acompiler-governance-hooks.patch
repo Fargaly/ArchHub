@@ -1,8 +1,8 @@
 diff --git a/00.GOVERNANCE/03.AGENT-HOOKS/agent_stop_gate.py b/00.GOVERNANCE/03.AGENT-HOOKS/agent_stop_gate.py
-index ac320f6..434916f 100644
+index 50e2b6700d32a4fcc3678bcd61506ce06a538f0c..84dd31773ce71df79747e4e87b1f0c2aafc99929 100644
 --- a/00.GOVERNANCE/03.AGENT-HOOKS/agent_stop_gate.py
 +++ b/00.GOVERNANCE/03.AGENT-HOOKS/agent_stop_gate.py
-@@ -8,7 +8,7 @@ Two modes:
+@@ -8,7 +8,7 @@
              tools/ratchet.py + evidence/ratchet.json), runs the mess ratchet and, when the pinned dev deps
              exist, the strict check of changed files. A failure blocks the stop (exit 2). A session that
              edited nothing in the tree is never blocked (reviewers and coordinators are not trapped by
@@ -11,7 +11,7 @@ index ac320f6..434916f 100644
  It never edits product files.
  """
  import hashlib
-@@ -19,7 +19,6 @@ import subprocess
+@@ -19,7 +19,6 @@
  import sys
  import tempfile
  
@@ -19,13 +19,13 @@ index ac320f6..434916f 100644
  TMP = pathlib.Path(tempfile.gettempdir())
  
  
-@@ -38,46 +37,37 @@ def record(event: dict) -> int:
-     tool_input = event.get("tool_input") or {}
-     target = tool_input.get("file_path") or tool_input.get("notebook_path")
+@@ -49,46 +48,37 @@
+     target = (tool_input.get("file_path") or tool_input.get("notebook_path") or tool_input.get("path")
+               or event.get("file_path"))
      if target:
--        with record_path(str(event.get("session_id") or "nosession")).open("a", encoding="utf-8") as fh:
+-        with record_path(session_of(event)).open("a", encoding="utf-8") as fh:
 -            fh.write(str(pathlib.Path(target).resolve()) + "\n")
-+        path = record_path(str(event.get("session_id") or "nosession"))
++        path = record_path(session_of(event))
 +        text = path.read_text(encoding="utf-8") if path.exists() else ""
 +        value = str(pathlib.Path(target).resolve())
 +        if text.lstrip().startswith("{"):
@@ -39,7 +39,7 @@ index ac320f6..434916f 100644
  
  
  def gate(event: dict) -> int:
-     session = str(event.get("session_id") or "nosession")
+     session = session_of(event)
 -    counter = TMP / f"archhub-stop-gate-{hashlib.sha1(session.encode()).hexdigest()[:16]}.txt"
 -    blocks = int(counter.read_text()) if counter.exists() else 0
 -    if blocks >= MAX_BLOCKS:
@@ -79,15 +79,13 @@ index ac320f6..434916f 100644
          return 0
      problems = []
      py = sys.executable
-@@ -87,18 +77,15 @@ def gate(event: dict) -> int:
+@@ -98,18 +88,13 @@
          env.setdefault("CARGO_HOME", str(rs / "cargo"))
          env.setdefault("RUSTUP_HOME", str(rs / "rustup"))
      for root in roots:
 -        r = subprocess.run([py, "tools/ratchet.py", "compare", ".", "evidence/ratchet.json"], cwd=root,
 -                           capture_output=True, text=True, timeout=240, env=env)
-+        # Forward only this session's recorded edits; the compiler selects the owned, still-changed
-+        # files and runs the strict check. JSON records may carry author/intent/why; plain
-+        # PostToolUse records need ARCHHUB_INTENT_CONTEXT.
++        # The compiler selects only this session's recorded edits.
 +        r = subprocess.run([py, "tools/ratchet.py", "compare", ".", "evidence/ratchet.json",
 +                            "--session-record", str(rec)], cwd=root,
 +                           capture_output=True, text=True, timeout=300, env=env)
@@ -104,8 +102,8 @@ index ac320f6..434916f 100644
 -        counter.unlink(missing_ok=True)
          passed.write_text(stamp)
          return 0
-     print("archhub stop gate: the files you edited do not pass yet; fix them before ending the turn: "
-@@ -109,14 +96,15 @@ def gate(event: dict) -> int:
+     reason = ("archhub stop gate: the files you edited do not pass yet; fix them before ending the turn: "
+@@ -123,14 +108,15 @@
  def main() -> int:
      try:
          event = json.loads(sys.stdin.read() or "{}")
@@ -127,10 +125,10 @@ index ac320f6..434916f 100644
 +        print(f"archhub stop gate error (refused): {exc}", file=sys.stderr)
 +        sys.exit(2)
 diff --git a/00.GOVERNANCE/03.AGENT-HOOKS/archhub_enforcer.py b/00.GOVERNANCE/03.AGENT-HOOKS/archhub_enforcer.py
-index 8601c49..cde9a09 100644
+index 8601c49c60fcb52e4bbba9aef031d3c3e5436fa2..cde9a0939542a5715f48cdb236492846c6bf6771 100644
 --- a/00.GOVERNANCE/03.AGENT-HOOKS/archhub_enforcer.py
 +++ b/00.GOVERNANCE/03.AGENT-HOOKS/archhub_enforcer.py
-@@ -33,21 +33,15 @@ def main() -> int:
+@@ -33,21 +33,15 @@
          return 0
      errors: list[str] = []
  
@@ -161,7 +159,7 @@ index 8601c49..cde9a09 100644
  
      head_tests = sum(1 for f in git(root, "ls-tree", "-r", "--name-only", "HEAD").splitlines() if TEST_RX.search(f))
      staged_tests = sum(1 for f in git(root, "ls-files").splitlines() if TEST_RX.search(f))
-@@ -56,12 +50,12 @@ def main() -> int:
+@@ -56,12 +50,12 @@
      if deleted and staged_tests < head_tests:
          errors.append(f"TESTS: {head_tests} -> {staged_tests} test files; deleting tests is refused ({', '.join(deleted[:5])}).")
  
@@ -179,7 +177,7 @@ index 8601c49..cde9a09 100644
      else:
          import os
          env = dict(os.environ)
-@@ -69,8 +63,9 @@ def main() -> int:
+@@ -69,8 +63,9 @@
          if (rs / "cargo" / "bin" / "cargo.exe").is_file():
              env.setdefault("CARGO_HOME", str(rs / "cargo"))
              env.setdefault("RUSTUP_HOME", str(rs / "rustup"))

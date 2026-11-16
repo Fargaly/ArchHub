@@ -44,6 +44,7 @@ def test_worktree_reuses_primary_rust_and_msvc(repository, tmp_path, monkeypatch
 
 @pytest.fixture
 def repository(tmp_path, monkeypatch):
+    monkeypatch.delenv("ARCHHUB_INTENT_CONTEXT", raising=False)
     root = tmp_path / "repo"
     root.mkdir()
     run_git(root, "init", "-q")
@@ -605,9 +606,14 @@ def patched_stop_gate(tmp_path):
         pytest.skip("external governance handoff source unavailable on this machine")
     destination = tmp_path / "governance" / "00.GOVERNANCE" / "03.AGENT-HOOKS"
     destination.mkdir(parents=True)
-    for name in ("agent_stop_gate.py", "archhub_enforcer.py"):
+    frozen = {"agent_stop_gate.py": "c08636f3c3d709238284b6cbef0085434049c1418c3eccaaf3352e25b3e2b121",
+              "archhub_enforcer.py": "a2b8054d3190663293e58ecf43222d7da87bd22b1ce64cb05215a0d5917269de"}
+    for name, digest in frozen.items():
+        assert hashlib.sha256((external / name).read_bytes()).hexdigest() == digest, \
+            "Frozen handoff input changed; review and rebase the governance patch before updating its digest: " + name
         shutil.copyfile(external / name, destination / name)
     patch = Path(os.environ.get("ACOMPILER_GOVERNANCE_HANDOFF", str(Path(__file__).resolve().parents[2] / "05.EVIDENCE" / "acompiler-governance-hooks.patch")))
+    run_git(destination.parents[1], "init", "-q")
     subprocess.run(["git", "-c", "core.autocrlf=false", "apply", str(patch)], cwd=destination.parents[1],
                    capture_output=True, check=True)
     source = destination / "agent_stop_gate.py"

@@ -217,9 +217,10 @@ _DIALECTS = {'claude': _ClaudeCode, 'codex': _Codex}
 class AcpTransport:
     """One bounded JSON-RPC connection to an owned stdio process."""
 
-    def __init__(self, process, *, label="The agent", speaks=None):
+    def __init__(self, process, *, label="The agent", speaks=None, cancelled=lambda: False):
         self.process = process
         self.label = label
+        self.cancelled = cancelled   # the owning session's stop flag: once true, not one more byte is written
         self.dialect = None   # set below, after the inbox it feeds exists
         self.inbox = queue.Queue(maxsize=256)
         self.outbox = queue.Queue(maxsize=16)
@@ -238,8 +239,8 @@ class AcpTransport:
         try:
             while not self.closed:
                 value = self.outbox.get()
-                if value is None:
-                    break
+                if value is None or self.cancelled():   # the single write point: a stopped session writes nothing,
+                    break                                # whoever queued the line (a request, a reply, the dialect)
                 self.process.stdin.write(value)
                 self.process.stdin.flush()
         except (OSError, ValueError) as error:
@@ -263,6 +264,8 @@ class AcpTransport:
             self.ended.set()
 
     def _wire(self, value):
+        if self.cancelled():
+            raise AcpRefused("Stopped by you")
         try:
             self.outbox.put_nowait((json.dumps(value) + "\n").encode())
         except queue.Full:
@@ -470,8 +473,8 @@ class AgentSession:
     def _stopped(self, stopped):
         return lambda: self.cancelled.is_set() or stopped()
 
-    def _check(self):
-        if self.cancelled.is_set():
+    def _check(self, stopped=lambda: False):
+        if self.cancelled.is_set() or stopped():
             raise AcpRefused('Stopped by you')
 
     def start(self, stopped=lambda: False):
@@ -494,7 +497,7 @@ class AgentSession:
             raise
 
     def _connect(self, command, stopped):
-        self._check()                        # before the launch
+        self._check(stopped)                 # before the launch
         Path(self.cwd).mkdir(parents=True, exist_ok=True)
         windows = os.name == 'nt'
         # Started suspended, put in its job, then resumed: nothing it starts can be outside the job that ends it.
@@ -504,15 +507,15 @@ class AgentSession:
         try:
             from .workshop_transport import _OwnedProcessJob
             self.job = _OwnedProcessJob(process)   # the agent and everything under it close with the session and the app
-            self._check()                    # before the resume: a start stopped meanwhile never runs one instruction
+            self._check(stopped)             # before the resume: a start stopped meanwhile never runs one instruction
             if windows:
                 import ctypes
                 resume = ctypes.WinDLL('ntdll').NtResumeProcess
                 resume.argtypes = [ctypes.c_void_p]
                 if resume(int(process._handle)):
                     raise AcpRefused('%s could not be started.' % self.label)
-            self.transport = AcpTransport(process, label=self.label, speaks=self.speaks)
-            self._check()                    # close() may have run between the two lines above and seen no transport
+            self.transport = AcpTransport(process, label=self.label, speaks=self.speaks, cancelled=self.cancelled.is_set)
+            self._check(stopped)             # close() may have run between the two lines above and seen no transport
         except BaseException:
             process.kill()   # no orphan on any way out; _open then closes the job
             raise
@@ -593,30 +596,38 @@ _SESSIONS = {}
 _SESSIONS_LOCK = threading.Lock()
 
 
-def ask(agent, prompt, *, task=None, on_delta=lambda _t: None, on_step=lambda _s: None, stopped=lambda: False):
-    """One message to an installed agent; started for this thread on first use (only because the user sent it)."""
+def ask(agent, prompt, *, task=None, on_delta=lambda _t: None, on_step=lambda _s: None, stopped=lambda: False,
+        cancelled=lambda: False):
+    """One message to an installed agent; started for this thread on first use (only because the user sent it).
+    `cancelled` is the caller's irreversible stop for this one request (the server: Stop or app close since the
+    request was admitted). When true, no session is registered, launched or resumed, and nothing is sent."""
     from .user_paths import state_directory
     key = (agent, task or '')
+    halted = lambda: cancelled() or stopped()
     with _SESSIONS_LOCK:   # registration: one session object per key; a stopped one is never used again
+        if cancelled():
+            raise AcpRefused('Stopped by you')
         current = _SESSIONS.get(key)
         if current is None or current.cancelled.is_set():
             current = _SESSIONS[key] = AgentSession(agent, state_directory() / 'agents' / agent)
     try:
         with current.starting:   # start and publication: a second send on this key waits, then finds it ready
             if not current.ready:
-                current.start(stopped)
+                current.start(halted)
     except BaseException:
         current.close()
         with _SESSIONS_LOCK:
             if _SESSIONS.get(key) is current:
                 del _SESSIONS[key]
         raise
-    return {**current.ask(prompt, on_delta=on_delta, on_step=on_step, stopped=stopped), 'label': current.label}
+    return {**current.ask(prompt, on_delta=on_delta, on_step=on_step, stopped=halted), 'label': current.label}
 
 
 def close_all():
     with _SESSIONS_LOCK:
         held = list(_SESSIONS.values())
         _SESSIONS.clear()
+        for session in held:   # every one is stopped before the first is cleaned up: a slow close frees no start
+            session.cancelled.set()
     for session in held:
         session.close()

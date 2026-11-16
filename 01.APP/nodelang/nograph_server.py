@@ -146,6 +146,8 @@ class NoGraphServer:
         self._cookie_token = secrets.token_urlsafe(32)
         self._bootstrap_used = False
         self._halted = threading.Event()
+        self._stop_epoch = 0                  # bumped by Stop everything and by app close; never goes back
+        self._closing = threading.Event()     # set by app close; never cleared
         self.studio_first_run = False
         # The launcher binds these exactly as it did for the old server.
         self.native_file_picker = self.native_folder_picker = self.native_save_file_picker = None
@@ -257,6 +259,8 @@ class NoGraphServer:
             return self.cloud_relay
 
     def close(self):
+        self._closing.set()   # admission is closed for good, and every admitted request is cancelled
+        self._stop_epoch += 1
         from .acp_client import close_all
         close_all()   # no agent this app started outlives it
         if getattr(self, 'triggers', None) is not None:
@@ -286,7 +290,18 @@ class NoGraphServer:
     def is_halted(self):
         return self._halted.is_set()
 
+    def admit_chat(self):
+        """Admits one chat request (refused while stopped or closing) and returns its `cancelled`: true for good once
+        Stop everything or app close happens after this point. Resume clears the halted flag, never this."""
+        epoch = self._stop_epoch   # read before the halted check: a Stop in between either refuses or cancels
+        if self._closing.is_set():
+            raise Refused('ArchHub is closing.', 403)
+        if self._halted.is_set():
+            raise Refused('Stopped by you. Press Resume to continue.', 403)
+        return lambda: self._closing.is_set() or self._stop_epoch != epoch
+
     def halt_all(self):
+        self._stop_epoch += 1
         self._halted.set()
         from .acp_client import close_all
         close_all()   # Stop everything ends every agent this app started; the next send starts one again
@@ -573,8 +588,7 @@ class NoGraphServer:
 
     def _router_chat(self, handler):
         body = handler.body()
-        if self.is_halted():
-            raise Refused('Stopped by you. Press Resume to continue.', 403)
+        cancelled = self.admit_chat()
         streaming = False
 
         def event(value):
@@ -590,7 +604,8 @@ class NoGraphServer:
             handler.wfile.write(('data: ' + json.dumps(value) + '\n\n').encode('utf-8'))
             handler.wfile.flush()
         try:
-            event({'result': _chat(body, lambda text: event({'delta': text}), lambda step: event({'step': step}))})
+            event({'result': _chat(body, lambda text: event({'delta': text}), lambda step: event({'step': step}),
+                                   cancelled=cancelled)})
         except Exception as error:  # noqa: BLE001 - the composer shows the refusal text
             message = str(error) or 'The router is unavailable. Check provider availability.'
             if streaming:
@@ -650,7 +665,7 @@ def _ask_baboom(prompt):
             'request_id': record['id'], 'applied': [], 'steps': result.get('steps', [])}
 
 
-def _chat(body, on_delta, on_step=lambda step: None):
+def _chat(body, on_delta, on_step=lambda step: None, cancelled=lambda: False):
     """One composer turn. @agents go live into those sessions (or are started over ACP when not running);
     no mention goes to BABOOM or the model. With a task, the question, the answer and every later reply are that task's thread."""
     import re
@@ -668,7 +683,8 @@ def _chat(body, on_delta, on_step=lambda step: None):
     if not handles and agent_for(body.get('agent')):   # the composer's agent picker named an installed agent
         handles = [agent_for(body['agent'])]
     if handles:
-        return _route_to_agents(prompt, handles, body.get('reply_to') or None, task=task, on_delta=on_delta, on_step=on_step)
+        return _route_to_agents(prompt, handles, body.get('reply_to') or None, task=task, on_delta=on_delta, on_step=on_step,
+                                cancelled=cancelled)
     if body.get('agent', 'BABOOM') == 'BABOOM' and _baboom_brain() is not None:
         result = _ask_baboom(prompt)
     else:
@@ -681,7 +697,8 @@ def _chat(body, on_delta, on_step=lambda step: None):
     return result
 
 
-def _route_to_agents(prompt, handles, reply_to=None, task=None, on_delta=lambda text: None, on_step=lambda step: None):
+def _route_to_agents(prompt, handles, reply_to=None, task=None, on_delta=lambda text: None, on_step=lambda step: None,
+                     cancelled=lambda: False):
     """@mentions: one Workshop message from Ahmed, pushed live to joined agents; an installed agent that is not
     running is started over ACP for this thread and its answer streams back. A profiling row per recipient."""
     from .acp_client import agent_for
@@ -689,7 +706,7 @@ def _route_to_agents(prompt, handles, reply_to=None, task=None, on_delta=lambda 
     live = {a['handle'] for a in live_agents()}
     starting = [h for h in handles if h not in live and h != 'everyone' and agent_for(h)]
     rest = [h for h in handles if h not in starting]
-    answers = [_ask_installed(agent_for(h), prompt, task, on_delta, on_step) for h in starting]
+    answers = [_ask_installed(agent_for(h), prompt, task, on_delta, on_step, cancelled) for h in starting]
     if rest and (not answers or any(h in live or h == 'everyone' for h in rest)):
         answers.append(_inject(prompt, rest, reply_to, task))
     elif rest:
@@ -700,7 +717,7 @@ def _route_to_agents(prompt, handles, reply_to=None, task=None, on_delta=lambda 
             'steps': [s for a in answers for s in a.get('steps') or []]}
 
 
-def _ask_installed(agent, prompt, task, on_delta, on_step):
+def _ask_installed(agent, prompt, task, on_delta, on_step, cancelled=lambda: False):
     """One message to an installed agent over the one ACP client; the settled reply is recorded once in the thread."""
     import uuid
     from . import acp_client
@@ -728,7 +745,8 @@ def _ask_installed(agent, prompt, task, on_delta, on_step):
             on_step({**state, 'status': 'answering'})
         on_delta(text)
     try:
-        reply = acp_client.ask(agent, prompt, task=task, on_delta=delta, on_step=on_step, stopped=stopped)
+        reply = acp_client.ask(agent, prompt, task=task, on_delta=delta, on_step=on_step, stopped=stopped,
+                               cancelled=cancelled)
         record['outcome'] = 'answered'
     finally:
         record['ms'] = int((time.monotonic() - started) * 1000)

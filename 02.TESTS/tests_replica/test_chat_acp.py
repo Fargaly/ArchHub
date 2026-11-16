@@ -283,6 +283,14 @@ def test_a_permission_request_becomes_the_approve_card_and_the_agent_waits(insta
     assert [s['status'] for s in done['result']['steps'] if s['tool'] == 'Write sheets.txt'] == [status]
 
 
+def _server(tmp_path):
+    """The server's stop state without its HTTP side: what halt_all, resume_all, close and admit_chat use."""
+    import types
+    quiet = types.SimpleNamespace(shutdown=lambda: None, server_close=lambda: None)
+    return types.SimpleNamespace(_halted=threading.Event(), _closing=threading.Event(), _stop_epoch=0, triggers=None,
+                                 cloud_relay=None, httpd=quiet, state_dir=tmp_path)
+
+
 def _alive(pid):
     import ctypes
     handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)   # PROCESS_QUERY_LIMITED_INFORMATION
@@ -325,15 +333,13 @@ def test_a_start_that_never_answers_ends_on_stop_not_on_its_timeout(installed):
 
 @pytest.mark.parametrize('ending', ['halt_all', 'close'])
 def test_stop_everything_and_closing_the_app_end_every_agent(installed, tmp_path, ending):
-    import types
     from nodelang import acp_client, nograph_server
     install, log = installed
     install('codex')
     assert acp_client.ask('codex', 'how many sheets?')['text'] == 'There are 12 sheets.'
     pid = json.loads(log.read_text(encoding='utf-8').splitlines()[1])['pid']
     assert _alive(pid)                                                   # the session is kept for the next message
-    quiet = types.SimpleNamespace(shutdown=lambda: None, server_close=lambda: None)
-    server = types.SimpleNamespace(_halted=threading.Event(), triggers=None, cloud_relay=None, httpd=quiet, state_dir=tmp_path)
+    server = _server(tmp_path)
     getattr(nograph_server.NoGraphServer, ending)(server)
     deadline = time.monotonic() + 10
     while _alive(pid) and time.monotonic() < deadline:
@@ -417,7 +423,6 @@ def test_two_sends_on_one_thread_while_its_agent_starts_start_exactly_one_agent(
 @pytest.mark.parametrize('point', ['before the launch', 'before the resume'])
 @pytest.mark.parametrize('ending', ['close_all', 'stop_then_resume', 'app_close'])
 def test_stop_during_a_start_leaves_no_agent_and_a_later_resume_does_not_revive_it(installed, monkeypatch, tmp_path, point, ending):
-    import types
     from nodelang import acp_client, nograph_server
     install, log = installed
     install('codex')
@@ -432,8 +437,7 @@ def test_stop_during_a_start_leaves_no_agent_and_a_later_resume_does_not_revive_
     worker = threading.Thread(target=send, daemon=True)
     worker.start()
     assert entered.wait(10)
-    quiet = types.SimpleNamespace(shutdown=lambda: None, server_close=lambda: None)
-    server = types.SimpleNamespace(_halted=threading.Event(), triggers=None, cloud_relay=None, httpd=quiet, state_dir=tmp_path)
+    server = _server(tmp_path)
     if ending == 'close_all':
         acp_client.close_all()
     elif ending == 'app_close':
@@ -466,6 +470,89 @@ def test_nothing_is_sent_to_an_agent_after_its_session_is_stopped(installed):
     assert sent == []
     acp_client.ask('codex', 'how many sheets?', task='t')                # the next send starts a new session
     assert acp_client._SESSIONS[('codex', 't')] is not session
+
+
+@pytest.mark.parametrize('ending', ['stop_then_resume', 'app_close'])
+def test_a_send_admitted_before_stop_never_starts_an_agent_after_it(installed, monkeypatch, tmp_path, ending):
+    """The send is past admission but has no agent session yet when Stop (then Resume) or app close happens."""
+    from nodelang import acp_client, nograph_server
+    install, log = installed
+    install('codex')
+    server = _server(tmp_path)
+    cancelled = nograph_server.NoGraphServer.admit_chat(server)
+    entered, release, real, outcome = threading.Event(), threading.Event(), acp_client.ask, []
+
+    def held(*args, **kwargs):          # the admitted request, just before it registers a session
+        entered.set()
+        assert release.wait(20)
+        return real(*args, **kwargs)
+    monkeypatch.setattr(acp_client, 'ask', held)
+
+    def send():
+        try:
+            outcome.append(nograph_server._chat({'prompt': '@codex how many sheets?'}, lambda text: None, cancelled=cancelled))
+        except BaseException as refused:  # noqa: BLE001 - the test reads what the send returned
+            outcome.append(refused)
+    worker = threading.Thread(target=send, daemon=True)
+    worker.start()
+    assert entered.wait(10)
+    if ending == 'app_close':
+        nograph_server.NoGraphServer.close(server)
+    else:
+        nograph_server.NoGraphServer.halt_all(server)
+        nograph_server.NoGraphServer.resume_all(server)
+    release.set()
+    worker.join(20)
+    assert len(outcome) == 1 and isinstance(outcome[0], acp_client.AcpRefused) and str(outcome[0]) == 'Stopped by you'
+    assert not log.exists() and not acp_client._SESSIONS                 # no child, no session
+    if ending == 'app_close':
+        nograph_server.NoGraphServer.resume_all(server)
+        with pytest.raises(nograph_server.Refused):                      # admission stays closed for good
+            nograph_server.NoGraphServer.admit_chat(server)
+    else:
+        assert nograph_server.NoGraphServer.admit_chat(server)() is False   # after Resume a new send is admitted
+        nograph_server.NoGraphServer.halt_all(server)
+        with pytest.raises(nograph_server.Refused):
+            nograph_server.NoGraphServer.admit_chat(server)
+
+
+def test_close_all_marks_every_session_stopped_before_it_cleans_up_the_first(installed, monkeypatch):
+    from nodelang import acp_client
+    install, _log = installed
+    install('codex')
+    for task in ('a', 'b', 'c'):
+        acp_client.ask('codex', 'how many sheets?', task=task)
+    sessions, seen, real = list(acp_client._SESSIONS.values()), [], acp_client.AgentSession._release
+
+    def release(session):
+        seen.append([one.cancelled.is_set() for one in sessions])
+        real(session)
+    monkeypatch.setattr(acp_client.AgentSession, '_release', release)
+    acp_client.close_all()
+    assert len(sessions) == 3 and seen[0] == [True, True, True]
+
+
+def test_nothing_is_written_to_an_agent_after_its_session_is_stopped_whatever_queued_it(installed):
+    from nodelang import acp_client
+    install, _log = installed
+    install('codex')
+    acp_client.ask('codex', 'how many sheets?', task='t')
+    session = acp_client._SESSIONS[('codex', 't')]
+    transport, written = session.transport, []
+
+    class Spy:
+        write = staticmethod(written.append)
+        flush = close = staticmethod(lambda: None)
+    real, transport.process.stdin = transport.process.stdin, Spy()
+    try:
+        session.cancelled.set()
+        transport.outbox.put_nowait(b'{"method": "queued-before-stop"}\n')   # a line already in the writer's queue
+        with pytest.raises(acp_client.AcpRefused, match='Stopped by you'):  # Codex's read-side `initialized`, and any other
+            transport.dialect.wire({'method': 'initialized'})
+        time.sleep(0.5)
+        assert written == []
+    finally:
+        transport.process.stdin = real
 
 
 def test_claude_and_codex_start_as_the_installed_cli_never_an_adapter_or_a_permission_skip():

@@ -1271,6 +1271,15 @@ for(const name of researchActions)api[name]=async(...args)=>{
 };
 // Other contract operations have no verified backend owner: the fallback is a visible plain state.
 // WIRE-projects
+async function changeSchedule(op,args,add=false){
+ const navigation=fileNavigation;
+ if(sessionDocument&&(localDirty||add&&!sessionPath))await flushAutosave();
+ if(fileNavigation!==navigation)throw Error('The open workflow changed.');
+ const {result}=await request('/api/universal/canvas-op',{op,args:add?[...args,sessionPath]:args});
+ if(fileNavigation===navigation&&sessionPath&&(add||args[0].startsWith(sessionPath+'#')))await pollFile(true);
+ await refreshProjectData();
+ return result;
+}
 async function refreshProjectData() {
  const [schedules,skills,library]=await Promise.all([
   canvasOperation('project_schedules',[]),canvasOperation('list_skills',[]),request('/api/universal/node-library?templates=1').catch(error=>({error:error.message}))]);
@@ -1321,6 +1330,8 @@ Object.assign(api,{
   return result;
  },
  async addSchedule(target,time){
+  if(!sessionDocument)throw Error('Open a workflow before adding a schedule.');
+  const navigation=fileNavigation;
   let roots;
   if(target===state.graph.id||target===state.graph.name)roots=state.graph.id;
   else{
@@ -1330,11 +1341,12 @@ Object.assign(api,{
    else if(node)roots=node.id;
    else throw Error('Choose the node or saved skill to repeat on the canvas, then add its schedule.');
   }
-  const result=await canvasOperation('add_schedule',[roots,time]);await refreshProjectData();return result;
+  if(fileNavigation!==navigation)throw Error('The open workflow changed.');
+  return changeSchedule('add_schedule',[roots,time],true);
  },
- async setScheduleEnabled(id,enabled){const result=await canvasOperation('set_schedule_enabled',[id,enabled]);await refreshProjectData();return result;},
- async setScheduleTime(id,time){const result=await canvasOperation('set_schedule_time',[id,time]);await refreshProjectData();return result;},
- async removeSchedule(id){const result=await canvasOperation('remove_schedule',[id]);await refreshProjectData();return result;},
+ setScheduleEnabled:(id,enabled)=>changeSchedule('set_schedule_enabled',[id,enabled]),
+ setScheduleTime:(id,time)=>changeSchedule('set_schedule_time',[id,time]),
+ removeSchedule:id=>changeSchedule('remove_schedule',[id]),
  importRecipe:yaml=>canvasOperation('import_recipe',[yaml]),
  importFlow:flow=>canvasOperation('import_recipe',[flow]),
  async saveSkill(name){const result=await canvasOperation('save_skill',[name]);await refreshProjectData();return result;},

@@ -314,3 +314,53 @@ def test_direct_trigger_fire_asks_before_running_the_engine(profile, monkeypatch
         assert 'canvasRun' not in session_files.read_document(path)['properties']
     finally:
         service.close()
+
+
+def test_schedule_actions_persist_and_paused_schedule_can_resume(profile, monkeypatch):
+    from nodelang import nograph_server
+    from nodelang.canvas_triggers import TriggerService
+    from nodelang.session_files import SessionFiles, read_document
+
+    path, document = session('Repeat work', nodes=[convert('target')])
+    files = SessionFiles()
+    files.remember(path, document)
+    files._current(document['id'], path)
+    service = TriggerService(files)
+    server = SimpleNamespace(triggers=service, is_halted=lambda: False)
+    monkeypatch.setattr(nograph_server, '_SERVER', server)
+
+    def action(op, *args):
+        return nograph_server.r_canvas_op(server, SimpleNamespace(body={'op': op, 'args': list(args)}))['result']
+
+    try:
+        before = Path(path).read_bytes()
+        with pytest.raises(ValueError, match='HH:MM'):
+            action('add_schedule', 'target', '25:00', path)
+        assert Path(path).read_bytes() == before
+        made = action('add_schedule', 'target', '23:59', path)
+        saved = read_document(path)
+        trigger = next(node for node in saved['nodes'] if node['type'] == 'trigger.schedule')
+        key = (path, trigger['id'])
+        assert trigger['params']['ask_before_running'] is True
+        assert saved['wires'][0]['to']['node'] == 'target'
+        assert key in service.timers
+        timer = service.timers[key]
+
+        action('set_schedule_time', made['id'], '22:59')
+        assert service.timers[key] is not timer
+        action('set_schedule_enabled', made['id'], False)
+        assert key not in service.timers
+        assert read_document(path)['nodes'][-1]['params']['armed'] is False
+        assert [(row['id'], row['time'], row['enabled']) for row in action('project_schedules')] == [
+            (made['id'], '22:59', False),
+        ]
+        action('set_schedule_enabled', made['id'], True)
+        assert key in service.timers and action('project_schedules')[0]['enabled']
+        action('remove_schedule', made['id'])
+        assert key not in service.timers
+        assert action('project_schedules') == []
+        saved = read_document(path)
+        assert [node['id'] for node in saved['nodes']] == ['target']
+        assert saved['wires'] == []
+    finally:
+        service.close()

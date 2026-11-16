@@ -769,6 +769,12 @@ def r_canvas_op(s, req):
     op, args = body.get('op'), body.get('args') or []
     if op == 'project_schedules':
         return {'ok': True, 'result': _schedules()}
+    if op in ('add_schedule', 'set_schedule_enabled', 'set_schedule_time', 'remove_schedule'):
+        if s.is_halted():
+            raise Refused('Stopped by you. Press Resume to continue.', 403)
+        if getattr(s, 'triggers', None) is None:
+            raise Refused('Schedules are available while the app is open.')
+        return {'ok': True, 'result': s.triggers.change_schedule(op, args)}
     from .community_owner import CommunityOwner
     if op in CommunityOwner.PUBLIC:
         return {'ok': True, 'result': CommunityOwner(s.files['community']).dispatch(op, list(args))}
@@ -1040,20 +1046,32 @@ def _list_messages(before=None):
 
 
 def _schedules():
-    from .canvas_triggers import next_delay
+    from .canvas_triggers import next_delay, _off
+    from .session_files import read_document
     service = getattr(_SERVER, 'triggers', None)
     if service is None:
         return []
+    armed = {(row['path'], row['node']) for row in service.armed}
+    fired = {(row['path'], row['node']): row for row in service.fired}
     rows = []
-    for row in service.armed:
-        last = next((f for f in reversed(service.fired) if (f['path'], f['node']) == (row['path'], row['node'])), None)
-        params = row['params']
-        every = params.get('every_seconds') if row['kind'] == 'trigger.schedule' else None
-        rows.append({'id': row['path'] + '#' + row['node'], 'title': (row['title'] or row['kind']) + ' \u00b7 ' + Path(row['path']).stem,
-                     'time': ('every %ss' % every) if every not in (None, '', '0') else params.get('daily_at') or ('on change in ' + str(params.get('folder'))),
-                     'enabled': True, 'kind': row['kind'], 'path': row['path'],
-                     'nextInSeconds': round(next_delay(params)) if row['kind'] == 'trigger.schedule' else None,
-                     'lastResult': last})
+    for path in service.workflows():
+        try:
+            document = read_document(path)
+        except (OSError, ValueError):
+            continue
+        for node in document['nodes']:
+            kind, node_id, params = node['type'], node['id'], node['params']
+            if kind not in ('trigger.schedule', 'trigger.file'):
+                continue
+            enabled = not _off(params.get('armed', True))
+            live = (path, node_id) in armed
+            every = params.get('every_seconds') if kind == 'trigger.schedule' else None
+            display_time = ('every %ss' % every) if every not in (None, '', '0', 0) else (
+                params.get('daily_at') or ('on change in ' + str(params.get('folder'))))
+            rows.append({'id': path + '#' + node_id, 'title': (node.get('title') or kind) + ' · ' + Path(path).stem,
+                         'time': display_time, 'enabled': enabled, 'kind': kind, 'path': path,
+                         'nextInSeconds': round(next_delay(params)) if live and kind == 'trigger.schedule' else None,
+                         'lastResult': fired.get((path, node_id))})
     return rows
 
 

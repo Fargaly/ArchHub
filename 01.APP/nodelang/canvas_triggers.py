@@ -20,6 +20,7 @@ import datetime
 import fnmatch
 import hashlib
 import os
+import re
 import threading
 import time
 import uuid
@@ -77,19 +78,119 @@ class TriggerService:
                                                   (node.get('result') or {}).get('fired_at'))
         missed = []
         with self.lock:
-            for key in [k for k in self.timers if k not in wanted]:
-                self.timers.pop(key).cancel()
+            previous = {(row['path'], row['node']): (row['kind'], row['params']) for row in self.armed}
+            for key, timer in list(self.timers.items()):
+                if key not in wanted or previous.get(key) != wanted[key][:2]:
+                    timer.cancel()
+                    del self.timers[key]
             self.armed = [{'path': p, 'node': n, 'kind': kind, 'title': title, 'params': params}
                           for (p, n), (kind, params, title, _last) in wanted.items()]
             for key, (kind, params, _title, last) in wanted.items():
                 if key not in self.timers:
                     self._arm(key, kind, params, state=None)
-                    if kind == 'trigger.schedule' and missed_while_closed(params, last):
+                    if key not in previous and kind == 'trigger.schedule' and missed_while_closed(params, last):
                         missed.append((key, kind, params))
         for key, kind, params in missed:
             threading.Thread(target=self.dispatch, args=(key, kind, params, 'catch-up'),
                              name='archhub-trigger-catchup', daemon=True).start()
         return self.armed
+
+    def change_schedule(self, op, args):
+        from .canvas_documents import edit
+        from .library_engines import library_item_ports
+        from .node_params import compatible, ports
+        from .session_files import catalogue, local_path
+
+        if not args:
+            raise ValueError('Choose a schedule.')
+        addition = op == 'add_schedule'
+        identity = None
+        if addition:
+            path = self.files.current_path()
+            if not path:
+                raise ValueError('Open a workflow before adding a schedule.')
+            if len(args) > 2 and local_path(args[2]) != local_path(path):
+                raise ValueError('The open workflow changed. Reopen it before adding a schedule.')
+        else:
+            path, separator, identity = str(args[0]).rpartition('#')
+            if not separator or path not in self.workflows() or not identity:
+                raise ValueError('Choose a schedule in a known workflow.')
+
+        value = args[1] if len(args) > 1 else None
+        if op in ('add_schedule', 'set_schedule_time'):
+            if not isinstance(value, str) or not re.fullmatch(r'(?:[01][0-9]|2[0-3]):[0-5][0-9]', value):
+                raise ValueError('Choose a time in HH:MM.')
+        if op == 'set_schedule_enabled' and type(value) is not bool:
+            raise ValueError('Choose whether the schedule is enabled.')
+        item = next(row for row in catalogue() if row['id'] == 'tr_schedule') if addition else None
+        result = {}
+
+        def change(document):
+            nodes = {node['id']: node for node in document['nodes']}
+            if addition:
+                selection = args[0]
+                if selection == document['id']:
+                    runnable = {key for key, node in nodes.items() if not node['type'].startswith('trigger.')}
+                    upstream = {wire['from']['node'] for wire in document['wires']
+                                if wire['to']['node'] in runnable and wire.get('enabled') is not False}
+                    targets = sorted(runnable - upstream)
+                else:
+                    targets = selection if isinstance(selection, list) else [selection]
+                if not targets or any(not isinstance(key, str) or key not in nodes for key in targets):
+                    raise ValueError('Choose at least one runnable node on this workflow.')
+                occupied = {(wire['to']['node'], wire['to']['socket']) for wire in document['wires']}
+                key = str(uuid.uuid4())
+                links = []
+                for target in dict.fromkeys(targets):
+                    node = nodes[target]
+                    base = node.get('ports') or library_item_ports(node.get('item', ''), node['type'])
+                    target_ports = ports(node, base)['target']
+                    connection = next(((out['id'], inp['id'])
+                                       for out in item['ports']['source'] for inp in target_ports
+                                       if not inp['id'].startswith('param:')
+                                       and compatible(out['type'], inp['type'], inp['id'])
+                                       and (target, inp['id']) not in occupied), None)
+                    if connection:
+                        out, into = connection
+                        links.append({'id': str(uuid.uuid4()), 'from': {'node': key, 'socket': out},
+                                      'to': {'node': target, 'socket': into}})
+                    else:
+                        raise ValueError('The selected node has no free schedule input.')
+                if not links:
+                    raise ValueError('Choose a node with a free schedule input.')
+                position = nodes[links[0]['to']['node']]['position']
+                document['nodes'].append({
+                    'id': key, 'type': item['engine'], 'item': item['id'], 'title': 'Daily ' + value,
+                    'params': {**item['params'], 'every_seconds': None, 'daily_at': value,
+                               'armed': True, 'ask_before_running': True},
+                    'paramDefs': item['paramDefs'],
+                    'position': {'x': position['x'] - 220, 'y': position['y']},
+                })
+                document['wires'].extend(links)
+                result.update(id=path + '#' + key, time=value, enabled=True)
+                return [key]
+
+            node = nodes.get(identity)
+            if node is None or node['type'] not in ('trigger.schedule', 'trigger.file'):
+                raise ValueError('That is not a schedule node.')
+            result['id'] = args[0]
+            if op == 'set_schedule_time':
+                if node['type'] != 'trigger.schedule':
+                    raise ValueError('File change triggers do not have a daily time.')
+                node['params'].update(daily_at=value, every_seconds=None)
+                result['time'] = value
+            elif op == 'set_schedule_enabled':
+                node['params']['armed'] = value
+                result['enabled'] = value
+            else:
+                document['nodes'].remove(node)
+                document['wires'] = [wire for wire in document['wires']
+                                     if identity not in (wire['from']['node'], wire['to']['node'])]
+            return [identity]
+
+        edit(path, 'Studio', op.replace('_', ' '), change, solve_changed=False)
+        self.refresh()
+        return result
 
     def _arm(self, key, kind, params, state):
         if self.stopped.is_set():
@@ -98,12 +199,12 @@ class TriggerService:
             delay = next_delay(params)
         else:
             delay = max(TRIGGER_NODE['params']['file_poll_floor_seconds'], float(params.get('debounce_seconds') or 5))
-        timer = threading.Timer(delay, self._tick, args=(key, kind, params, state))
+        timer = threading.Timer(delay, lambda: self._tick(key, kind, params, state, timer), args=())
         timer.daemon = True
         self.timers[key] = timer
         timer.start()
 
-    def _tick(self, key, kind, params, state):
+    def _tick(self, key, kind, params, state, timer):
         if kind == 'trigger.file':
             snapshot = folder_snapshot(params)
             changed = state is not None and snapshot != state
@@ -111,8 +212,9 @@ class TriggerService:
         else:
             changed = True
         with self.lock:
-            if key in self.timers:  # the next fire stays on the clock while this run goes
-                self._arm(key, kind, params, state)
+            if self.timers.get(key) is not timer or self.stopped.is_set():
+                return
+            self._arm(key, kind, params, state)
         if changed:
             self.dispatch(key, kind, params)
 

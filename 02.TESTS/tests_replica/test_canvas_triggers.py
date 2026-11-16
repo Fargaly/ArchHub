@@ -163,3 +163,52 @@ def test_routine_addressed_to_an_agent_is_pushed_live_through_the_composer_path(
         service.close()
     assert pushed == [('Routine Trigger (agent) fired, scheduled: ran', ['coord'])]
     assert entry['workshop'] == 'm1' and entry['deliveries'][0]['state'] == 'delivered'
+
+
+def test_refresh_replaces_changed_schedule_and_ignores_superseded_callback(profile, monkeypatch):
+    from nodelang import canvas_documents, canvas_triggers
+
+    class ManualTimer:
+        def __init__(self, delay, callback, args):
+            self.delay, self.callback, self.args = delay, callback, args
+            self.cancelled = False
+
+        def start(self):
+            pass
+
+        def cancel(self):
+            self.cancelled = True
+
+        def fire(self):
+            self.callback(*self.args)
+
+    monkeypatch.setattr(canvas_triggers.threading, 'Timer', ManualTimer)
+    path = profile / 'editable.archhub'
+    workflow(path, 'tr_schedule', {'every_seconds': '600'})
+    key = (str(path), 't')
+    service = canvas_triggers.TriggerService()
+    calls = []
+    monkeypatch.setattr(service, 'dispatch', lambda *args: calls.append(args))
+
+    def set_interval(document):
+        document['nodes'][0]['params']['every_seconds'] = '1200'
+        return ['t']
+
+    try:
+        service.refresh()
+        previous = service.timers[key]
+        assert previous.delay == 600
+        canvas_documents.edit(path, 'Test', 'Change schedule', set_interval, solve_changed=False)
+        service.refresh()
+        current = service.timers[key]
+        assert previous.cancelled
+        assert current is not previous
+        assert current.delay == 1200
+        previous.fire()
+        assert service.timers[key] is current
+        assert calls == []
+        current.fire()
+        assert len(calls) == 1
+        assert calls[0][2]['every_seconds'] == '1200'
+    finally:
+        service.close()

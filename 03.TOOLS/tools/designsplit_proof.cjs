@@ -3,6 +3,7 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const {spawn, execFileSync} = require('node:child_process');
 const {chromium} = require('playwright');
+const source = require('./frozen_design.cjs')();
 
 const root = process.cwd(), stage = process.argv[2] || 'settings';
 const scratch = path.join(root, '.cache/designsplit');
@@ -36,7 +37,6 @@ let browser;
     await page.waitForSelector('.app-window');
     await page.evaluate(()=>window.ArchHubAPI.ready);
   }
-  const source='C:/Users/fargaly/00.ARCHUB/30.KNOWLEDGE/35.DESIGN-SYSTEM/35.02-APP-DESIGN/01.WIP';
   const metrics=[];
   async function capture(name,svg){
     await page.evaluate(()=>document.fonts.ready);
